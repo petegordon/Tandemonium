@@ -103,31 +103,25 @@
             // Check if we need iOS 13+ permission
             if (typeof DeviceMotionEvent !== 'undefined' &&
                 typeof DeviceMotionEvent.requestPermission === 'function') {
-                // iOS 13+ requires user gesture to enable motion
-                this._showiOSPermission();
+                // iOS 13+ - defer permission request to first user gesture (tap to start)
+                this.needsMotionPermission = true;
             } else if (typeof DeviceOrientationEvent !== 'undefined') {
                 // Android / older iOS - just start listening
                 this._startMotionListening();
             }
         }
 
-        _showiOSPermission() {
-            const overlay = document.getElementById('motion-permission');
-            const btn = document.getElementById('motion-btn');
-            overlay.style.display = 'flex';
-
-            btn.addEventListener('click', async () => {
-                try {
-                    const response = await DeviceMotionEvent.requestPermission();
-                    if (response === 'granted') {
-                        this._startMotionListening();
-                    }
-                } catch (e) {
-                    // Permission denied or error, fall back to no motion
-                    console.warn('Motion permission denied:', e);
+        async requestMotionPermission() {
+            if (!this.needsMotionPermission) return;
+            this.needsMotionPermission = false;
+            try {
+                const response = await DeviceMotionEvent.requestPermission();
+                if (response === 'granted') {
+                    this._startMotionListening();
                 }
-                overlay.style.display = 'none';
-            }, { once: true });
+            } catch (e) {
+                console.warn('Motion permission denied:', e);
+            }
         }
 
         _startMotionListening() {
@@ -135,8 +129,23 @@
             this.motionRawRelative = 0; // unscaled relative tilt in degrees (for HUD)
             window.addEventListener('deviceorientation', (e) => {
                 this.motionEnabled = true;
-                if (e.gamma !== null) {
-                    this.rawGamma = e.gamma;
+
+                // In landscape mode, gamma is forward/backward tilt.
+                // We need beta for the steering-wheel left/right tilt,
+                // with sign flipped based on landscape direction.
+                const orient = screen.orientation ? screen.orientation.angle
+                    : (window.orientation || 0);
+                let rawTilt;
+                if (orient === 90) {
+                    rawTilt = e.beta;
+                } else if (orient === 270 || orient === -90) {
+                    rawTilt = -e.beta;
+                } else {
+                    rawTilt = e.gamma; // portrait fallback
+                }
+
+                if (rawTilt !== null) {
+                    this.rawGamma = rawTilt;
 
                     if (this.motionOffset === null) {
                         this.motionOffset = this.rawGamma;
@@ -475,7 +484,7 @@
             }
         }
 
-        update(pedalResult, balanceResult, dt) {
+        update(pedalResult, balanceResult, dt, safetyMode) {
             if (this.fallen) {
                 this.fallTimer -= dt;
                 if (this.fallTimer <= 0) this._reset();
@@ -516,6 +525,11 @@
             this.leanVelocity += (gravity + playerLean + gyro + damping +
                 pedalWobble + lowSpeedWobble + pedalLeanKick) * dt;
             this.lean += this.leanVelocity * dt;
+
+            // --- Safety mode: clamp lean so bike can never reach fall threshold ---
+            if (safetyMode) {
+                this.lean = Math.max(-0.6, Math.min(0.6, this.lean));
+            }
 
             // --- Steering from lean ---
             const turnRate = this.lean * this.speed * 0.35;
@@ -833,20 +847,11 @@
                 this.touchRightEl.className = rClass;
             }
 
-            // Tilt gauge - on mobile show device tilt input, on desktop show bike lean
-            let gaugeDeg, gaugeLabel, danger;
-            if (isMobile && input.motionEnabled) {
-                // Show raw relative device tilt so user sees their actual input
-                const rawRel = input.motionRawRelative || 0;
-                gaugeDeg = Math.max(-90, Math.min(90, rawRel));
-                gaugeLabel = Math.abs(rawRel).toFixed(1) + '\u00B0';
-                danger = Math.abs(input.getMotionLean());  // 0 to 1
-            } else {
-                const tiltDeg = (bike.lean * 180 / Math.PI);
-                gaugeDeg = Math.max(-90, Math.min(90, tiltDeg));
-                gaugeLabel = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
-                danger = Math.abs(bike.lean) / 0.85;
-            }
+            // Tilt gauge - always show actual bike lean angle
+            const tiltDeg = (bike.lean * 180 / Math.PI);
+            const gaugeDeg = Math.max(-90, Math.min(90, tiltDeg));
+            const gaugeLabel = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
+            const danger = Math.abs(bike.lean) / 0.85;
             this.tiltNeedle.setAttribute('transform', 'rotate(' + gaugeDeg.toFixed(1) + ', 60, 60)');
             this.tiltLabel.textContent = gaugeLabel;
             if (danger > 0.75) {
@@ -914,6 +919,15 @@
             this.chaseCamera = new ChaseCamera(this.camera);
             this.hud = new HUD(this.input);
 
+            // Safety mode
+            this.safetyMode = true;
+            this.safetyBtn = document.getElementById('safety-btn');
+            this.safetyBtn.addEventListener('click', () => {
+                this.safetyMode = !this.safetyMode;
+                this.safetyBtn.textContent = 'SAFETY: ' + (this.safetyMode ? 'ON' : 'OFF');
+                this.safetyBtn.className = this.safetyMode ? '' : 'off';
+            });
+
             // Countdown / game state
             this.state = 'waiting';  // 'waiting' | 'countdown' | 'playing'
             this.countdownTimer = 0;
@@ -929,10 +943,14 @@
 
             window.addEventListener('resize', () => this._onResize());
 
-            // Tap anywhere to start (dismiss intro card)
+            // Tap anywhere to start (dismiss intro card + request iOS motion permission)
             const startHandler = (e) => {
                 if (this.state === 'waiting') {
                     e.preventDefault();
+                    // Request iOS motion permission on this user gesture
+                    if (this.input.needsMotionPermission) {
+                        this.input.requestMotionPermission();
+                    }
                     this._startCountdown();
                 }
             };
@@ -1100,7 +1118,7 @@
             const pedalResult = this.pedalCtrl.update(dt);
             const balanceResult = this.balanceCtrl.update();
 
-            this.bike.update(pedalResult, balanceResult, dt);
+            this.bike.update(pedalResult, balanceResult, dt, this.safetyMode);
 
             // Recalibrate tilt when bike recovers from a crash
             if (wasFallen && !this.bike.fallen && this.input.motionEnabled) {

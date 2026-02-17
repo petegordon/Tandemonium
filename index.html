@@ -47,46 +47,6 @@
             #rotate-device { display: flex !important; }
         }
 
-        /* iOS motion permission overlay */
-        #motion-permission {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.9);
-            z-index: 1000;
-            color: white;
-            font-family: 'Courier New', monospace;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            padding: 30px;
-            cursor: pointer;
-        }
-        #motion-permission h2 {
-            font-size: 28px;
-            color: #4CAF50;
-            margin-bottom: 15px;
-        }
-        #motion-permission p {
-            font-size: 16px;
-            margin: 8px 0;
-            max-width: 400px;
-        }
-        #motion-permission .tap-btn {
-            margin-top: 25px;
-            padding: 15px 40px;
-            font-size: 20px;
-            font-family: 'Courier New', monospace;
-            font-weight: bold;
-            background: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            animation: pulse 1.5s infinite;
-        }
-
         #hud {
             position: fixed;
             top: 0; left: 0; right: 0;
@@ -367,6 +327,39 @@
             padding: 6px 16px;
         }
 
+        /* ===== SAFETY MODE BUTTON ===== */
+        #safety-btn {
+            position: fixed;
+            bottom: 12px;
+            right: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            font-weight: bold;
+            color: #fff;
+            background: rgba(0,160,0,0.6);
+            border: 2px solid rgba(0,200,0,0.7);
+            border-radius: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            z-index: 10;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #safety-btn:active {
+            opacity: 0.7;
+        }
+        #safety-btn.off {
+            background: rgba(160,0,0,0.5);
+            border-color: rgba(200,0,0,0.6);
+        }
+        .is-mobile #safety-btn {
+            bottom: auto;
+            top: 10px;
+            right: auto;
+            left: 10px;
+            font-size: 11px;
+            padding: 6px 10px;
+        }
+
         /* ===== MOBILE TOUCH BUTTONS ===== */
         #touch-controls {
             display: none;
@@ -447,13 +440,6 @@
         <p>Please rotate your device to<br><strong>LANDSCAPE</strong> mode</p>
     </div>
 
-    <!-- iOS motion permission -->
-    <div id="motion-permission">
-        <h2>TANDEMONIUM</h2>
-        <p>This game uses your device's motion sensor for balance control.</p>
-        <button class="tap-btn" id="motion-btn">TAP TO ENABLE MOTION</button>
-    </div>
-
     <div id="hud">
         <div id="speed">Speed: 0 km/h</div>
         <div id="distance">Distance: 0 m</div>
@@ -500,6 +486,9 @@
 
     <!-- Reset button -->
     <button id="reset-btn">RESET</button>
+
+    <!-- Safety mode toggle -->
+    <button id="safety-btn">SAFETY: ON</button>
 
     <!-- Mobile touch pedal buttons -->
     <div id="touch-controls">
