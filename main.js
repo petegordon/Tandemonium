@@ -137,9 +137,9 @@
                     : (window.orientation || 0);
                 let rawTilt;
                 if (orient === 90) {
-                    rawTilt = e.beta;
-                } else if (orient === 270 || orient === -90) {
                     rawTilt = -e.beta;
+                } else if (orient === 270 || orient === -90) {
+                    rawTilt = e.beta;
                 } else {
                     rawTilt = e.gamma; // portrait fallback
                 }
@@ -154,17 +154,17 @@
                     let relative = this.rawGamma - this.motionOffset;
                     this.motionRawRelative = relative;
 
-                    // Dead zone: ignore small tilts (under ~6 degrees)
-                    const deadZone = 6;
+                    // Dead zone: ignore tiny tilts (under ~2 degrees)
+                    const deadZone = 2;
                     if (Math.abs(relative) < deadZone) {
                         relative = 0;
                     } else {
                         relative = relative - Math.sign(relative) * deadZone;
                     }
 
-                    // ~55 degrees beyond dead zone = full lean input
-                    // Total range: ~61 degrees from center for max lean
-                    this.motionLean = Math.max(-1, Math.min(1, relative / 55));
+                    // ~25 degrees beyond dead zone = full lean input
+                    // Total range: ~27 degrees from center for max lean
+                    this.motionLean = Math.max(-1, Math.min(1, relative / 25));
                 }
             });
         }
