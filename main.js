@@ -306,7 +306,7 @@
             // Device motion input (mobile)
             const motion = this.input.getMotionLean();
             if (motion !== 0) {
-                leanInput += motion;
+                leanInput -= motion;
             }
 
             // Clamp combined
