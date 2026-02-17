@@ -387,6 +387,37 @@
             padding: 6px 10px;
         }
 
+        /* ===== AUTO-SPEED BUTTON ===== */
+        #speed-btn {
+            position: fixed;
+            bottom: 12px;
+            right: 130px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            font-weight: bold;
+            color: #fff;
+            background: rgba(0,0,160,0.6);
+            border: 2px solid rgba(0,0,200,0.7);
+            border-radius: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            z-index: 10;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #speed-btn:active { opacity: 0.7; }
+        #speed-btn.off {
+            background: rgba(100,100,100,0.4);
+            border-color: rgba(150,150,150,0.5);
+        }
+        .is-mobile #speed-btn {
+            bottom: auto;
+            top: 40px;
+            right: auto;
+            left: 10px;
+            font-size: 11px;
+            padding: 6px 10px;
+        }
+
         /* ===== MOBILE TOUCH BUTTONS ===== */
         #touch-controls {
             display: none;
@@ -578,6 +609,9 @@
 
     <!-- Safety mode toggle -->
     <button id="safety-btn">SAFETY: ON</button>
+
+    <!-- Auto-speed toggle -->
+    <button id="speed-btn" class="off">SPEED: OFF</button>
 
     <!-- Mobile touch pedal buttons -->
     <div id="touch-controls">

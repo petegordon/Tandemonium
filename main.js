@@ -226,7 +226,7 @@
                 this.motionEnabled = true;
 
                 // Low-pass filter
-                const k = 0.7;
+                const k = 0.3;
                 if (!this._gravityInit) {
                     this._gx = a.x; this._gy = a.y; this._gz = a.z;
                     this._gravityInit = true;
@@ -623,12 +623,20 @@
             }
         }
 
-        update(pedalResult, balanceResult, dt, safetyMode) {
+        update(pedalResult, balanceResult, dt, safetyMode, autoSpeed) {
             if (this.fallen) {
                 this.fallTimer -= dt;
                 if (this.fallTimer <= 0) this._reset();
                 this._applyTransform();
                 return;
+            }
+
+            // --- Auto-speed: maintain a constant slow cruise ---
+            if (autoSpeed && !pedalResult.braking) {
+                const cruiseSpeed = 3.0;
+                if (this.speed < cruiseSpeed) {
+                    this.speed += 2.0 * dt;
+                }
             }
 
             // --- Braking ---
@@ -648,7 +656,7 @@
             const gravity = Math.sin(this.lean) * 4.0;
             const playerLean = balanceResult.leanInput * 26.0;
             const gyro = -this.lean * Math.min(this.speed * 0.6, 5.0);
-            const damping = -this.leanVelocity * 1.5;
+            const damping = -this.leanVelocity * 2.2;
 
             const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
 
@@ -1088,6 +1096,17 @@
                 });
             }
 
+            // Auto-speed mode
+            this.autoSpeed = false;
+            this.speedBtn = document.getElementById('speed-btn');
+            if (this.speedBtn) {
+                this.speedBtn.addEventListener('click', () => {
+                    this.autoSpeed = !this.autoSpeed;
+                    this.speedBtn.textContent = 'SPEED: ' + (this.autoSpeed ? 'ON' : 'OFF');
+                    this.speedBtn.className = this.autoSpeed ? '' : 'off';
+                });
+            }
+
             // Countdown / game state
             this.state = 'waiting';  // 'waiting' | 'countdown' | 'playing'
             this.countdownTimer = 0;
@@ -1302,7 +1321,7 @@
             const pedalResult = this.pedalCtrl.update(dt);
             const balanceResult = this.balanceCtrl.update();
 
-            this.bike.update(pedalResult, balanceResult, dt, this.safetyMode);
+            this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
 
             // Recalibrate tilt when bike recovers from a crash
             if (wasFallen && !this.bike.fallen && this.input.motionEnabled) {
