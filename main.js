@@ -145,17 +145,17 @@
                     let relative = this.rawGamma - this.motionOffset;
                     this.motionRawRelative = relative;
 
-                    // Dead zone: ignore small tilts (under ~4 degrees)
-                    const deadZone = 4;
+                    // Dead zone: ignore small tilts (under ~6 degrees)
+                    const deadZone = 6;
                     if (Math.abs(relative) < deadZone) {
                         relative = 0;
                     } else {
-                        // Subtract dead zone so response starts from 0
                         relative = relative - Math.sign(relative) * deadZone;
                     }
 
-                    // ~30 degrees beyond dead zone = full lean input
-                    this.motionLean = Math.max(-1, Math.min(1, relative / 30));
+                    // ~55 degrees beyond dead zone = full lean input
+                    // Total range: ~61 degrees from center for max lean
+                    this.motionLean = Math.max(-1, Math.min(1, relative / 55));
                 }
             });
         }
