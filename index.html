@@ -462,25 +462,18 @@
         #debug-btn {
             position: fixed;
             top: 10px;
-            right: 15px;
+            left: calc(50% + 50px);
             font-family: 'Courier New', monospace;
-            font-size: 11px;
+            font-size: 13px;
             font-weight: bold;
             color: rgba(255,255,255,0.6);
             background: rgba(0,0,0,0.4);
             border: 1px solid rgba(255,255,255,0.3);
-            border-radius: 6px;
-            padding: 5px 10px;
+            border-radius: 8px;
+            padding: 6px 12px;
             cursor: pointer;
             z-index: 101;
             -webkit-tap-highlight-color: transparent;
-        }
-        .is-mobile #debug-btn {
-            top: 10px;
-            right: auto;
-            left: 130px;
-            font-size: 11px;
-            padding: 6px 10px;
         }
         #debug-console {
             display: none;
