@@ -349,9 +349,11 @@
         .is-mobile #reset-btn {
             bottom: auto;
             top: 10px;
-            left: 50%;
-            font-size: 13px;
-            padding: 6px 16px;
+            left: auto;
+            right: calc(50% + 40px);
+            transform: none;
+            font-size: 11px;
+            padding: 5px 12px;
         }
 
         /* ===== SAFETY MODE BUTTON ===== */
@@ -380,11 +382,11 @@
         }
         .is-mobile #safety-btn {
             bottom: auto;
-            top: 10px;
+            top: 70px;
             right: auto;
             left: 10px;
             font-size: 11px;
-            padding: 6px 10px;
+            padding: 5px 10px;
         }
 
         /* ===== AUTO-SPEED BUTTON ===== */
@@ -411,11 +413,11 @@
         }
         .is-mobile #speed-btn {
             bottom: auto;
-            top: 40px;
+            top: 95px;
             right: auto;
             left: 10px;
             font-size: 11px;
-            padding: 6px 10px;
+            padding: 5px 10px;
         }
 
         /* ===== MOBILE TOUCH BUTTONS ===== */
@@ -492,19 +494,26 @@
         /* ===== DEBUG CONSOLE ===== */
         #debug-btn {
             position: fixed;
-            top: 10px;
-            left: calc(50% + 50px);
+            bottom: 12px;
+            left: calc(50% + 60px);
             font-family: 'Courier New', monospace;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: bold;
-            color: rgba(255,255,255,0.6);
+            color: rgba(255,255,255,0.7);
             background: rgba(0,0,0,0.4);
-            border: 1px solid rgba(255,255,255,0.3);
+            border: 2px solid rgba(255,255,255,0.3);
             border-radius: 8px;
-            padding: 6px 12px;
+            padding: 8px 20px;
             cursor: pointer;
             z-index: 101;
             -webkit-tap-highlight-color: transparent;
+        }
+        .is-mobile #debug-btn {
+            bottom: auto;
+            top: 10px;
+            left: calc(50% + 40px);
+            font-size: 11px;
+            padding: 5px 12px;
         }
         #debug-console {
             display: none;
@@ -526,6 +535,219 @@
             pointer-events: none;
         }
         #debug-console.visible { display: block; }
+
+        /* ===== LOBBY ===== */
+        #lobby {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            color: white;
+            text-align: center;
+            z-index: 30;
+            background: rgba(0,0,0,0.85);
+        }
+        #lobby .card {
+            background: rgba(0,0,0,0.75);
+            padding: 25px 35px;
+            border-radius: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            max-width: 400px;
+        }
+        #lobby h1 { font-size: 32px; margin-bottom: 8px; color: #4CAF50; }
+        #lobby .subtitle { font-size: 13px; color: #aaa; margin-bottom: 15px; }
+
+        .lobby-step { margin-top: 15px; }
+        .lobby-prompt { font-size: 14px; color: #ccc; margin-bottom: 10px; }
+        .lobby-hint { font-size: 11px; color: #888; margin-top: 8px; }
+
+        .lobby-btn {
+            display: inline-block;
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            font-weight: bold;
+            color: #fff;
+            background: rgba(255,255,255,0.1);
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 10px;
+            padding: 14px 28px;
+            margin: 6px;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .lobby-btn:hover { background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.6); }
+        .lobby-btn:active { background: rgba(255,255,255,0.25); }
+        .lobby-btn-accent {
+            background: rgba(76,175,80,0.3);
+            border-color: rgba(76,175,80,0.7);
+        }
+        .lobby-btn-accent:hover { background: rgba(76,175,80,0.5); }
+
+        .role-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+        .role-btn {
+            width: 140px;
+            padding: 16px 10px;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        .role-icon { font-size: 28px; display: block; margin-bottom: 6px; }
+        .role-desc { font-size: 11px; color: #aaa; font-weight: normal; }
+
+        .lobby-back {
+            display: block;
+            margin: 12px auto 0;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #888;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px 8px;
+        }
+        .lobby-back:hover { color: #ccc; }
+
+        .room-code {
+            font-size: 42px;
+            font-weight: bold;
+            letter-spacing: 6px;
+            color: #4CAF50;
+            text-shadow: 0 0 20px rgba(76,175,80,0.5);
+            margin: 10px 0;
+        }
+        .room-code-input {
+            font-family: 'Courier New', monospace;
+            font-size: 28px;
+            font-weight: bold;
+            text-align: center;
+            letter-spacing: 4px;
+            color: #fff;
+            background: rgba(255,255,255,0.1);
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 8px;
+            padding: 10px 16px;
+            width: 220px;
+            outline: none;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+        .room-code-input:focus { border-color: #4CAF50; }
+
+        .conn-status {
+            font-size: 13px;
+            color: #aaa;
+            margin-top: 10px;
+            min-height: 20px;
+            animation: pulse 1.5s infinite;
+        }
+        .conn-status.connected { color: #4CAF50; animation: none; }
+        .conn-status.error { color: #ff4444; animation: none; }
+
+        /* ===== MULTIPLAYER PEDAL BUTTON ===== */
+        #mp-pedal-controls {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            height: 35vh;
+            z-index: 15;
+            pointer-events: none;
+        }
+        .mp-pedal-btn {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60vw;
+            max-width: 400px;
+            height: 28vh;
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            font-family: 'Courier New', monospace;
+            font-size: 32px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.8);
+            background: rgba(76,175,80,0.2);
+            border: 3px solid rgba(76,175,80,0.5);
+            pointer-events: auto;
+            -webkit-tap-highlight-color: transparent;
+            transition: background 0.08s, border-color 0.08s;
+            cursor: pointer;
+        }
+        .mp-pedal-btn.pressed {
+            background: rgba(50,200,50,0.5);
+            border-color: rgba(50,255,50,0.7);
+        }
+        .mp-pedal-btn.wrong {
+            background: rgba(200,50,50,0.5);
+            border-color: rgba(255,50,50,0.7);
+        }
+        .mp-pedal-btn.brake {
+            background: rgba(200,200,0,0.5);
+            border-color: rgba(255,255,0,0.7);
+        }
+        .mp-pedal-btn .pedal-label {
+            font-size: 14px;
+            opacity: 0.6;
+            margin-top: 6px;
+        }
+
+        /* ===== DISCONNECT OVERLAY ===== */
+        #disconnect-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 40;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .disconnect-box {
+            font-family: 'Courier New', monospace;
+            text-align: center;
+            color: white;
+            padding: 30px;
+        }
+        .disconnect-box p {
+            font-size: 22px;
+            font-weight: bold;
+            color: #ff6644;
+            margin-bottom: 20px;
+        }
+
+        /* ===== CONNECTION BADGE ===== */
+        #conn-badge {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: rgba(255,255,255,0.6);
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 12px;
+            padding: 3px 10px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #conn-badge #conn-type { color: #4CAF50; font-weight: bold; margin-right: 6px; }
+
+        /* ===== MULTIPLAYER ROLE LABEL ON HUD ===== */
+        .role-label-hud {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .role-label-hud.captain { color: #3388dd; }
+        .role-label-hud.stoker { color: #dd3344; }
+
+        /* In multiplayer: keep Up/Down touch buttons visible, hide old single PEDAL button */
+        .mp-mode #mp-pedal-controls { display: none !important; }
     </style>
 </head>
 <body>
@@ -539,8 +761,8 @@
         <div id="speed">Speed: 0 km/h</div>
         <div id="distance">Distance: 0 m</div>
         <div id="pedal-indicator">
-            <div class="pedal-key" id="pedal-l">&larr; L</div>
-            <div class="pedal-key" id="pedal-r">R &rarr;</div>
+            <div class="pedal-key" id="pedal-l">&uarr;</div>
+            <div class="pedal-key" id="pedal-r">&darr;</div>
         </div>
     </div>
 
@@ -597,7 +819,7 @@
         </div>
     </div>
 
-    <button id="debug-btn">DBG</button>
+    <button id="debug-btn">DEBUG</button>
     <div id="debug-console"></div>
     <div id="crash-overlay"></div>
 
@@ -619,35 +841,115 @@
     <!-- Mobile touch pedal buttons -->
     <div id="touch-controls">
         <div class="touch-pedal touch-pedal-left" id="touch-left">
-            &larr; L
-            <span class="pedal-label">LEFT PEDAL</span>
+            &uarr;
+            <span class="pedal-label">UP PEDAL</span>
         </div>
         <div class="touch-pedal touch-pedal-right" id="touch-right">
-            R &rarr;
-            <span class="pedal-label">RIGHT PEDAL</span>
+            &darr;
+            <span class="pedal-label">DOWN PEDAL</span>
         </div>
     </div>
 
-    <div id="instructions">
+    <!-- Lobby screen (before instructions) -->
+    <div id="lobby">
+        <div class="card">
+            <h1>TANDEMONIUM</h1>
+            <p class="subtitle">A Tandem Bicycle Physics Game</p>
+
+            <!-- Step 1: Mode selection -->
+            <div id="lobby-mode" class="lobby-step">
+                <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
+                <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
+            </div>
+
+            <!-- Step 2: Role selection -->
+            <div id="lobby-role" class="lobby-step" style="display:none;">
+                <p class="lobby-prompt">Choose your seat:</p>
+                <div class="role-buttons">
+                    <button class="lobby-btn role-btn" id="btn-captain">
+                        <span class="role-icon" style="color:#3388dd;">&#x1F6A2;</span>
+                        START A RIDE<br><span class="role-desc">Captain &middot; Front seat<br>Lean + Pedal</span>
+                    </button>
+                    <button class="lobby-btn role-btn" id="btn-stoker">
+                        <span class="role-icon" style="color:#dd3344;">&#x1F525;</span>
+                        JOIN A RIDE<br><span class="role-desc">Stoker &middot; Back seat<br>Lean + Pedal</span>
+                    </button>
+                </div>
+                <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
+            </div>
+
+            <!-- Step 3a: Captain waiting room -->
+            <div id="lobby-host" class="lobby-step" style="display:none;">
+                <p class="lobby-prompt">Your room code:</p>
+                <div id="room-code-display" class="room-code">----</div>
+                <p class="lobby-hint">Share this code with your partner</p>
+                <div id="host-status" class="conn-status">Waiting for partner...</div>
+                <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
+            </div>
+
+            <!-- Step 3b: Stoker join room -->
+            <div id="lobby-join" class="lobby-step" style="display:none;">
+                <p class="lobby-prompt">Enter room code:</p>
+                <input type="text" id="room-code-input" class="room-code-input" maxlength="9" placeholder="TNDM-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+                <button class="lobby-btn lobby-btn-accent" id="btn-join">JOIN</button>
+                <div id="join-status" class="conn-status"></div>
+                <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="instructions" style="display:none;">
         <div class="card">
             <h1>TANDEMONIUM</h1>
             <p class="subtitle">A Tandem Bicycle Physics Game</p>
             <div class="desktop-controls">
-                <p><span class="key">&larr;</span> <span class="key">&rarr;</span> Alternate to pedal</p>
-                <p><span class="key">&larr;</span>+<span class="key">&rarr;</span> Hold both to brake</p>
+                <p><span class="key">&uarr;</span> <span class="key">&darr;</span> Alternate to pedal</p>
+                <p><span class="key">&uarr;</span>+<span class="key">&darr;</span> Hold both to brake</p>
                 <p><span class="key">A</span> <span class="key">D</span> Lean left / right for balance</p>
                 <p class="start-hint">Tap anywhere to start!</p>
             </div>
             <div class="mobile-controls">
-                <p>Tap <strong>L</strong> and <strong>R</strong> buttons to pedal</p>
+                <p>Tap <strong>&uarr;</strong> and <strong>&darr;</strong> buttons to pedal</p>
                 <p>Hold <strong>both</strong> to brake</p>
                 <p><strong>Tilt your device</strong> to balance!</p>
+                <p class="start-hint">Tap anywhere to start!</p>
+            </div>
+            <!-- Multiplayer instructions (hidden in solo) -->
+            <div class="mp-controls" style="display:none;">
+                <p id="mp-role-label" class="role-label-hud"></p>
+                <p><strong>Both riders lean</strong> — tilt to balance together (or fight!)</p>
+                <p><span class="key">&uarr;</span> <span class="key">&darr;</span> Pedal with <strong>offset</strong> — when you press Up, partner presses Down!</p>
+                <p><strong>Good offset</strong> = max power &middot; <strong>Same foot</strong> = wobble</p>
                 <p class="start-hint">Tap anywhere to start!</p>
             </div>
         </div>
     </div>
 
+    <!-- Multiplayer single pedal button (replaces L/R in multiplayer) -->
+    <div id="mp-pedal-controls" style="display:none;">
+        <div class="mp-pedal-btn" id="mp-pedal">
+            PEDAL
+            <span class="pedal-label">TAP IN RHYTHM</span>
+        </div>
+    </div>
+
+    <!-- Disconnect overlay -->
+    <div id="disconnect-overlay" style="display:none;">
+        <div class="disconnect-box">
+            <p id="disconnect-msg">Partner disconnected</p>
+            <button class="lobby-btn" id="btn-reconnect" style="display:none;">Reconnecting...</button>
+            <button class="lobby-btn" id="btn-return-lobby">Return to Lobby</button>
+        </div>
+    </div>
+
+    <!-- Connection status badge -->
+    <div id="conn-badge" style="display:none;">
+        <span id="conn-type">P2P</span>
+        <span id="conn-ping">--ms</span>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script src="main.js"></script>
 </body>
 </html>

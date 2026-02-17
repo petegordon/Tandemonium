@@ -1,0 +1,12 @@
+name = "tandemonium-relay"
+main = "relay.js"
+compatibility_date = "2024-01-01"
+
+[durable_objects]
+bindings = [
+    { name = "TANDEM_ROOM", class_name = "TandemRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["TandemRoom"]
