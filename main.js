@@ -112,15 +112,35 @@
         }
 
         async requestMotionPermission() {
-            if (!this.needsMotionPermission) return;
+            if (this.motionEnabled) return; // already working
             this.needsMotionPermission = false;
+            if (typeof DeviceMotionEvent === 'undefined' ||
+                typeof DeviceMotionEvent.requestPermission !== 'function') return;
             try {
                 const response = await DeviceMotionEvent.requestPermission();
                 if (response === 'granted') {
                     this._startMotionListening();
+                } else {
+                    this._showMotionDenied();
                 }
             } catch (e) {
-                console.warn('Motion permission denied:', e);
+                console.warn('Motion permission error:', e);
+                this._showMotionDenied();
+            }
+        }
+
+        _showMotionDenied() {
+            const status = document.getElementById('status');
+            if (status) {
+                status.textContent = 'Motion denied — tap aA in Safari address bar → Website Settings → Motion';
+                status.style.color = '#ffaa22';
+                status.style.fontSize = '14px';
+                setTimeout(() => {
+                    if (status.textContent.includes('Motion denied')) {
+                        status.textContent = '';
+                        status.style.fontSize = '';
+                    }
+                }, 8000);
             }
         }
 
@@ -1005,8 +1025,11 @@
             document.getElementById('instructions').addEventListener('click', startHandler);
             document.getElementById('instructions').addEventListener('touchstart', startHandler, { passive: false });
 
-            // Reset button
+            // Reset button — also re-attempt motion permission in case user fixed it
             document.getElementById('reset-btn').addEventListener('click', () => {
+                if (isMobile && !this.input.motionEnabled) {
+                    this.input.requestMotionPermission();
+                }
                 this._resetGame();
             });
 
