@@ -304,8 +304,8 @@
                 relative = relative - Math.sign(relative) * deadZone;
             }
 
-            // ~25 degrees beyond dead zone = full lean input
-            this.motionLean = Math.max(-1, Math.min(1, relative / 25));
+            // ~40 degrees beyond dead zone = full lean input
+            this.motionLean = Math.max(-1, Math.min(1, relative / 40));
         }
 
         _setupCalibration() {
@@ -654,7 +654,7 @@
 
             // --- Balance physics ---
             const gravity = Math.sin(this.lean) * 4.0;
-            const playerLean = balanceResult.leanInput * 26.0;
+            const playerLean = balanceResult.leanInput * 16.0;
             const gyro = -this.lean * Math.min(this.speed * 0.6, 5.0);
             const damping = -this.leanVelocity * 2.2;
 
