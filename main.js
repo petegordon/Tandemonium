@@ -26,6 +26,27 @@
     }
 
     // ============================================================
+    // DEBUG CONSOLE (on-screen for mobile)
+    // ============================================================
+    const _debugLines = [];
+    const _debugMax = 20;
+    let _debugEl = null;
+    let _debugThrottle = {};
+    function dbg(msg, throttleKey) {
+        if (throttleKey) {
+            const now = Date.now();
+            if (_debugThrottle[throttleKey] && now - _debugThrottle[throttleKey] < 500) return;
+            _debugThrottle[throttleKey] = now;
+        }
+        if (!_debugEl) _debugEl = document.getElementById('debug-console');
+        if (!_debugEl) return;
+        _debugLines.push(msg);
+        if (_debugLines.length > _debugMax) _debugLines.shift();
+        _debugEl.textContent = _debugLines.join('\n');
+        _debugEl.scrollTop = _debugEl.scrollHeight;
+    }
+
+    // ============================================================
     // INPUT MANAGER
     // Unified input: keyboard + touch + device motion
     // ============================================================
@@ -100,30 +121,43 @@
         }
 
         _setupMotion() {
+            dbg('setupMotion: DME=' + (typeof DeviceMotionEvent !== 'undefined') +
+                ' reqPerm=' + (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'));
             // Check if we need iOS 13+ permission
             if (typeof DeviceMotionEvent !== 'undefined' &&
                 typeof DeviceMotionEvent.requestPermission === 'function') {
                 // iOS 13+ - defer permission request to first user gesture (tap to start)
                 this.needsMotionPermission = true;
+                dbg('setupMotion: iOS path, needsPermission=true');
             } else if (typeof DeviceMotionEvent !== 'undefined') {
                 // Android / older iOS - just start listening
+                dbg('setupMotion: non-iOS path, start listening');
                 this._startMotionListening();
+            } else {
+                dbg('setupMotion: no DeviceMotionEvent support');
             }
         }
 
         async requestMotionPermission() {
+            dbg('reqPerm: motionEnabled=' + this.motionEnabled);
             if (this.motionEnabled) return; // already working
             this.needsMotionPermission = false;
             if (typeof DeviceMotionEvent === 'undefined' ||
-                typeof DeviceMotionEvent.requestPermission !== 'function') return;
+                typeof DeviceMotionEvent.requestPermission !== 'function') {
+                dbg('reqPerm: no requestPermission fn, skip');
+                return;
+            }
             try {
+                dbg('reqPerm: calling requestPermission...');
                 const response = await DeviceMotionEvent.requestPermission();
+                dbg('reqPerm: response=' + response);
                 if (response === 'granted') {
                     this._startMotionListening();
                 } else {
                     this._showMotionDenied();
                 }
             } catch (e) {
+                dbg('reqPerm: error=' + e.message);
                 console.warn('Motion permission error:', e);
                 this._showMotionDenied();
             }
@@ -145,9 +179,12 @@
         }
 
         _startMotionListening() {
+            dbg('startMotionListening called');
             this.motionReady = true;
             this.motionRawRelative = 0;
-            this._useAccel = false; // true once devicemotion delivers real data
+            this._useAccel = false;
+            this._dmCount = 0;
+            this._doCount = 0;
 
             // Smoothed gravity vector (for accelerometer path)
             this._gx = 0;
@@ -157,8 +194,16 @@
 
             // --- PRIMARY: devicemotion (accelerometer, no Euler cross-talk) ---
             window.addEventListener('devicemotion', (e) => {
+                this._dmCount++;
                 const a = e.accelerationIncludingGravity;
-                if (!a || a.x == null) return;
+                if (!a || a.x == null) {
+                    dbg('devicemotion: no data a=' + JSON.stringify(a), 'dm-nodata');
+                    return;
+                }
+
+                if (this._dmCount <= 3) {
+                    dbg('devicemotion #' + this._dmCount + ': x=' + a.x.toFixed(2) + ' y=' + a.y.toFixed(2) + ' z=' + a.z.toFixed(2));
+                }
 
                 this._useAccel = true;
                 this.motionEnabled = true;
@@ -192,7 +237,13 @@
             // --- FALLBACK: deviceorientation (Euler angles, has pitch cross-talk
             //     but works on devices where devicemotion gives no data) ---
             window.addEventListener('deviceorientation', (e) => {
+                this._doCount++;
                 if (this._useAccel) return; // accelerometer is working, ignore this
+
+                if (this._doCount <= 3) {
+                    dbg('deviceorientation #' + this._doCount + ': a=' + (e.alpha && e.alpha.toFixed(1)) +
+                        ' b=' + (e.beta && e.beta.toFixed(1)) + ' g=' + (e.gamma && e.gamma.toFixed(1)));
+                }
 
                 const orient = screen.orientation ? screen.orientation.angle
                     : (window.orientation || 0);
@@ -210,6 +261,12 @@
                     this._applyTilt(rawTilt);
                 }
             });
+
+            // Log event counts after 3 seconds to see what's firing
+            setTimeout(() => {
+                dbg('after 3s: dmEvents=' + this._dmCount + ' doEvents=' + this._doCount +
+                    ' useAccel=' + this._useAccel + ' motionEnabled=' + this.motionEnabled);
+            }, 3000);
         }
 
         _applyTilt(rawTilt) {
@@ -1031,6 +1088,8 @@
             const startHandler = (e) => {
                 if (this.state === 'waiting') {
                     e.preventDefault();
+                    dbg('startHandler: needsPerm=' + this.input.needsMotionPermission +
+                        ' motionEnabled=' + this.input.motionEnabled);
                     // Request iOS motion permission on this user gesture
                     if (this.input.needsMotionPermission) {
                         this.input.requestMotionPermission();
