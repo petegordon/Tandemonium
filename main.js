@@ -1819,6 +1819,7 @@
 
         _createRoom() {
             this.net = new NetworkManager();
+            this.net._fallbackUrl = 'wss://tandemonium-relay.pete-872.workers.dev';
             const statusEl = document.getElementById('host-status');
             const codeEl = document.getElementById('room-code-display');
 
@@ -1848,6 +1849,7 @@
 
         _joinRoom(code) {
             this.net = new NetworkManager();
+            this.net._fallbackUrl = 'wss://tandemonium-relay.pete-872.workers.dev';
             const statusEl = document.getElementById('join-status');
 
             statusEl.textContent = 'Connecting...';
