@@ -226,7 +226,40 @@
             z-index: 10;
             pointer-events: none;
         }
-        .is-mobile #tilt-gauge { width: 80px; height: 80px; top: 8px; right: 10px; }
+        .is-mobile #tilt-gauge {
+            width: 90px; height: 90px; top: 8px; right: 10px;
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
+        #calibrate-hint {
+            display: none;
+            position: absolute;
+            bottom: -32px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            color: rgba(255,255,255,0.6);
+            white-space: nowrap;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+        }
+        .is-mobile #calibrate-hint { display: block; }
+
+        #calibrate-flash {
+            display: none;
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            color: #4f4;
+            text-shadow: 0 0 8px rgba(0,255,0,0.6);
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 11;
+        }
 
         #tilt-gauge svg {
             width: 100%;
@@ -375,6 +408,8 @@
             <polygon points="60,8 56,15 64,15" fill="#fff" opacity="0.8"/>
         </svg>
         <div id="tilt-label">0.0&deg;</div>
+        <div id="calibrate-hint">TAP TO CALIBRATE</div>
+        <div id="calibrate-flash">CALIBRATED!</div>
     </div>
 
     <div id="crash-overlay"></div>

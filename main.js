@@ -37,10 +37,13 @@
             this.motionLean = 0;       // -1 to 1 from device tilt
             this.motionEnabled = false;
             this.motionReady = false;   // true after iOS permission granted
+            this.rawGamma = 0;         // raw gamma from device orientation
+            this.motionOffset = null;  // calibration offset (null = not calibrated)
             this._setupKeyboard();
             if (isMobile) {
                 this._setupTouch();
                 this._setupMotion();
+                this._setupCalibration();
             }
         }
 
@@ -131,19 +134,47 @@
             this.motionReady = true;
             window.addEventListener('deviceorientation', (e) => {
                 this.motionEnabled = true;
-                // In landscape mode:
-                // gamma = left/right tilt (-90 to 90)
-                // We use gamma for balance
                 if (e.gamma !== null) {
-                    // Clamp and normalize: gamma of ~15 degrees = full lean input
-                    const raw = e.gamma;
-                    this.motionLean = Math.max(-1, Math.min(1, raw / 18));
+                    this.rawGamma = e.gamma;
+
+                    // Auto-calibrate on first reading if not yet calibrated
+                    if (this.motionOffset === null) {
+                        this.motionOffset = this.rawGamma;
+                    }
+
+                    // Steering wheel mapping:
+                    // Tilt relative to calibrated zero position.
+                    // Drop left side (gamma decreases from offset) → go left (negative)
+                    // Drop right side (gamma increases from offset) → go right (positive)
+                    const relative = this.rawGamma - this.motionOffset;
+                    // ~18 degrees of tilt from center = full lean input
+                    this.motionLean = Math.max(-1, Math.min(1, relative / 18));
                 }
             });
         }
 
+        _setupCalibration() {
+            const gauge = document.getElementById('tilt-gauge');
+            const flash = document.getElementById('calibrate-flash');
+
+            const doCalibrate = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.motionOffset = this.rawGamma;
+                this.motionLean = 0;
+
+                // Visual feedback
+                if (flash) {
+                    flash.style.display = 'block';
+                    setTimeout(() => { flash.style.display = 'none'; }, 800);
+                }
+            };
+
+            gauge.addEventListener('touchstart', doCalibrate, { passive: false });
+            gauge.addEventListener('click', doCalibrate);
+        }
+
         isPressed(code) {
-            // Merge keyboard + touch
             if (code === 'ArrowLeft') return !!this.keys[code] || this.touchLeft;
             if (code === 'ArrowRight') return !!this.keys[code] || this.touchRight;
             return !!this.keys[code];
