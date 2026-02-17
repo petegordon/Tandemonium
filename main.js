@@ -294,6 +294,10 @@
             }
 
             let relative = this.rawGamma - this.motionOffset;
+            // Normalize to [-180, 180] to handle atan2 wraparound at ±180°
+            // Without this, crossing the boundary causes a 360° jump
+            if (relative > 180) relative -= 360;
+            else if (relative < -180) relative += 360;
             this.motionRawRelative = relative;
 
             // Dead zone: ignore tiny tilts (under ~2 degrees)
