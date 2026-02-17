@@ -137,9 +137,9 @@
                     : (window.orientation || 0);
                 let rawTilt;
                 if (orient === 90) {
-                    rawTilt = -e.beta;
-                } else if (orient === 270 || orient === -90) {
                     rawTilt = e.beta;
+                } else if (orient === 270 || orient === -90) {
+                    rawTilt = -e.beta;
                 } else {
                     rawTilt = e.gamma; // portrait fallback
                 }
