@@ -146,7 +146,7 @@
                 this.motionEnabled = true;
 
                 // Low-pass filter to smooth accelerometer noise
-                const k = 0.15;
+                const k = 0.35;
                 if (!this._gravityInit) {
                     this._gx = a.x; this._gy = a.y; this._gz = a.z;
                     this._gravityInit = true;
@@ -175,7 +175,7 @@
                     rollRad = Math.atan2(this._gx, this._gy);
                 }
 
-                const rawTilt = rollRad * 180 / Math.PI;
+                const rawTilt = -rollRad * 180 / Math.PI;
                 this.rawGamma = rawTilt;
 
                 if (this.motionOffset === null) {
@@ -335,7 +335,7 @@
             // Device motion input (mobile)
             const motion = this.input.getMotionLean();
             if (motion !== 0) {
-                leanInput -= motion;
+                leanInput += motion;
             }
 
             // Clamp combined
