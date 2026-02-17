@@ -29,8 +29,9 @@
     // DEBUG CONSOLE (on-screen for mobile)
     // ============================================================
     const _debugLines = [];
-    const _debugMax = 20;
+    const _debugMax = 30;
     let _debugEl = null;
+    let _debugReady = false;
     let _debugThrottle = {};
     function dbg(msg, throttleKey) {
         if (throttleKey) {
@@ -38,12 +39,28 @@
             if (_debugThrottle[throttleKey] && now - _debugThrottle[throttleKey] < 500) return;
             _debugThrottle[throttleKey] = now;
         }
-        if (!_debugEl) _debugEl = document.getElementById('debug-console');
-        if (!_debugEl) return;
         _debugLines.push(msg);
         if (_debugLines.length > _debugMax) _debugLines.shift();
-        _debugEl.textContent = _debugLines.join('\n');
-        _debugEl.scrollTop = _debugEl.scrollHeight;
+        if (_debugReady && _debugEl) {
+            _debugEl.textContent = _debugLines.join('\n');
+            _debugEl.scrollTop = _debugEl.scrollHeight;
+        }
+    }
+    function _initDebug() {
+        _debugEl = document.getElementById('debug-console');
+        const btn = document.getElementById('debug-btn');
+        _debugReady = true;
+        if (btn && _debugEl) {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                _debugEl.classList.toggle('visible');
+            });
+        }
+        // Flush buffered messages
+        if (_debugEl && _debugLines.length > 0) {
+            _debugEl.textContent = _debugLines.join('\n');
+        }
     }
 
     // ============================================================
@@ -1035,6 +1052,8 @@
     // ============================================================
     class Game {
         constructor() {
+            _initDebug();
+            dbg('Game init, isMobile=' + isMobile);
             this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile });
             this.renderer.setSize(window.innerWidth, window.innerHeight);
             this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2));
