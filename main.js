@@ -132,23 +132,30 @@
 
         _startMotionListening() {
             this.motionReady = true;
+            this.motionRawRelative = 0; // unscaled relative tilt in degrees (for HUD)
             window.addEventListener('deviceorientation', (e) => {
                 this.motionEnabled = true;
                 if (e.gamma !== null) {
                     this.rawGamma = e.gamma;
 
-                    // Auto-calibrate on first reading if not yet calibrated
                     if (this.motionOffset === null) {
                         this.motionOffset = this.rawGamma;
                     }
 
-                    // Steering wheel mapping:
-                    // Tilt relative to calibrated zero position.
-                    // Drop left side (gamma decreases from offset) → go left (negative)
-                    // Drop right side (gamma increases from offset) → go right (positive)
-                    const relative = this.rawGamma - this.motionOffset;
-                    // ~18 degrees of tilt from center = full lean input
-                    this.motionLean = Math.max(-1, Math.min(1, relative / 18));
+                    let relative = this.rawGamma - this.motionOffset;
+                    this.motionRawRelative = relative;
+
+                    // Dead zone: ignore small tilts (under ~4 degrees)
+                    const deadZone = 4;
+                    if (Math.abs(relative) < deadZone) {
+                        relative = 0;
+                    } else {
+                        // Subtract dead zone so response starts from 0
+                        relative = relative - Math.sign(relative) * deadZone;
+                    }
+
+                    // ~30 degrees beyond dead zone = full lean input
+                    this.motionLean = Math.max(-1, Math.min(1, relative / 30));
                 }
             });
         }
@@ -826,12 +833,22 @@
                 this.touchRightEl.className = rClass;
             }
 
-            // Tilt gauge
-            const tiltDeg = (bike.lean * 180 / Math.PI);
-            const clampedDeg = Math.max(-90, Math.min(90, tiltDeg));
-            this.tiltNeedle.setAttribute('transform', 'rotate(' + clampedDeg.toFixed(1) + ', 60, 60)');
-            this.tiltLabel.textContent = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
-            const danger = Math.abs(bike.lean) / 0.85;
+            // Tilt gauge - on mobile show device tilt input, on desktop show bike lean
+            let gaugeDeg, gaugeLabel, danger;
+            if (isMobile && input.motionEnabled) {
+                // Show raw relative device tilt so user sees their actual input
+                const rawRel = input.motionRawRelative || 0;
+                gaugeDeg = Math.max(-90, Math.min(90, rawRel));
+                gaugeLabel = Math.abs(rawRel).toFixed(1) + '\u00B0';
+                danger = Math.abs(input.getMotionLean());  // 0 to 1
+            } else {
+                const tiltDeg = (bike.lean * 180 / Math.PI);
+                gaugeDeg = Math.max(-90, Math.min(90, tiltDeg));
+                gaugeLabel = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
+                danger = Math.abs(bike.lean) / 0.85;
+            }
+            this.tiltNeedle.setAttribute('transform', 'rotate(' + gaugeDeg.toFixed(1) + ', 60, 60)');
+            this.tiltLabel.textContent = gaugeLabel;
             if (danger > 0.75) {
                 this.tiltLabel.style.color = '#ff4444';
             } else if (danger > 0.5) {
