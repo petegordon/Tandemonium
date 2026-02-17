@@ -146,7 +146,7 @@
                 this.motionEnabled = true;
 
                 // Low-pass filter to smooth accelerometer noise
-                const k = 0.35;
+                const k = 0.5;
                 if (!this._gravityInit) {
                     this._gx = a.x; this._gy = a.y; this._gz = a.z;
                     this._gravityInit = true;
@@ -536,9 +536,9 @@
 
             // --- Balance physics ---
             const gravity = Math.sin(this.lean) * 12.0;
-            const playerLean = balanceResult.leanInput * 11.0;
-            const gyro = -this.lean * Math.min(this.speed * 0.55, 4.5);
-            const damping = -this.leanVelocity * 2.8;
+            const playerLean = balanceResult.leanInput * 18.0;
+            const gyro = -this.lean * Math.min(this.speed * 0.4, 3.5);
+            const damping = -this.leanVelocity * 2.0;
 
             const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 8;
 
