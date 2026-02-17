@@ -105,7 +105,7 @@
                 typeof DeviceMotionEvent.requestPermission === 'function') {
                 // iOS 13+ - defer permission request to first user gesture (tap to start)
                 this.needsMotionPermission = true;
-            } else if (typeof DeviceOrientationEvent !== 'undefined') {
+            } else if (typeof DeviceMotionEvent !== 'undefined') {
                 // Android / older iOS - just start listening
                 this._startMotionListening();
             }
@@ -141,7 +141,7 @@
             // atan2 — pitch only affects the out-of-screen component.
             window.addEventListener('devicemotion', (e) => {
                 const a = e.accelerationIncludingGravity;
-                if (!a || a.x === null) return;
+                if (!a || a.x == null) return;
 
                 this.motionEnabled = true;
 
