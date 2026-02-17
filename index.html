@@ -461,7 +461,7 @@
         /* ===== DEBUG CONSOLE ===== */
         #debug-btn {
             position: fixed;
-            bottom: 12px;
+            top: 10px;
             right: 15px;
             font-family: 'Courier New', monospace;
             font-size: 11px;
@@ -474,6 +474,13 @@
             cursor: pointer;
             z-index: 101;
             -webkit-tap-highlight-color: transparent;
+        }
+        .is-mobile #debug-btn {
+            top: 10px;
+            right: auto;
+            left: 130px;
+            font-size: 11px;
+            padding: 6px 10px;
         }
         #debug-console {
             display: none;

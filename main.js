@@ -1109,9 +1109,24 @@
                     e.preventDefault();
                     dbg('startHandler: needsPerm=' + this.input.needsMotionPermission +
                         ' motionEnabled=' + this.input.motionEnabled);
-                    // Request iOS motion permission on this user gesture
-                    if (this.input.needsMotionPermission) {
-                        this.input.requestMotionPermission();
+                    // Request iOS motion permission SYNCHRONOUSLY in this
+                    // user gesture — async wrappers break the gesture chain.
+                    if (this.input.needsMotionPermission && !this.input.motionEnabled &&
+                        typeof DeviceMotionEvent !== 'undefined' &&
+                        typeof DeviceMotionEvent.requestPermission === 'function') {
+                        this.input.needsMotionPermission = false;
+                        dbg('calling requestPermission (sync)...');
+                        DeviceMotionEvent.requestPermission().then((response) => {
+                            dbg('permission response=' + response);
+                            if (response === 'granted') {
+                                this.input._startMotionListening();
+                            } else {
+                                this.input._showMotionDenied();
+                            }
+                        }).catch((err) => {
+                            dbg('permission error=' + err.message);
+                            this.input._showMotionDenied();
+                        });
                     }
                     this._startCountdown();
                 }
@@ -1121,8 +1136,12 @@
 
             // Reset button — also re-attempt motion permission in case user fixed it
             document.getElementById('reset-btn').addEventListener('click', () => {
-                if (isMobile && !this.input.motionEnabled) {
-                    this.input.requestMotionPermission();
+                if (isMobile && !this.input.motionEnabled &&
+                    typeof DeviceMotionEvent !== 'undefined' &&
+                    typeof DeviceMotionEvent.requestPermission === 'function') {
+                    DeviceMotionEvent.requestPermission().then((response) => {
+                        if (response === 'granted') this.input._startMotionListening();
+                    }).catch(() => {});
                 }
                 this._resetGame();
             });
