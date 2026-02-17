@@ -126,46 +126,75 @@
 
         _startMotionListening() {
             this.motionReady = true;
-            this.motionRawRelative = 0; // unscaled relative tilt in degrees (for HUD)
-            window.addEventListener('deviceorientation', (e) => {
+            this.motionRawRelative = 0;
+
+            // Smoothed gravity vector in device coords (low-pass filtered)
+            this._gx = 0;
+            this._gy = 0;
+            this._gz = 0;
+            this._gravityInit = false;
+
+            // Use devicemotion (raw accelerometer) instead of deviceorientation
+            // (Euler angles) to extract pure roll without pitch cross-talk.
+            // accelerationIncludingGravity gives the gravity vector in device
+            // coords; we project it onto the screen plane and compute roll via
+            // atan2 — pitch only affects the out-of-screen component.
+            window.addEventListener('devicemotion', (e) => {
+                const a = e.accelerationIncludingGravity;
+                if (!a || a.x === null) return;
+
                 this.motionEnabled = true;
 
-                // In landscape mode, gamma is forward/backward tilt.
-                // We need beta for the steering-wheel left/right tilt,
-                // with sign flipped based on landscape direction.
+                // Low-pass filter to smooth accelerometer noise
+                const k = 0.15;
+                if (!this._gravityInit) {
+                    this._gx = a.x; this._gy = a.y; this._gz = a.z;
+                    this._gravityInit = true;
+                } else {
+                    this._gx += (a.x - this._gx) * k;
+                    this._gy += (a.y - this._gy) * k;
+                    this._gz += (a.z - this._gz) * k;
+                }
+
+                // Compute roll from gravity projected onto the screen plane.
+                // Device coords: +X right, +Y up, +Z out-of-screen (portrait).
+                // When stationary, accelerationIncludingGravity ≈ support force
+                // (opposite of gravity), so "up" in the real world = positive
+                // along whichever device axis points up.
                 const orient = screen.orientation ? screen.orientation.angle
                     : (window.orientation || 0);
-                let rawTilt;
+                let rollRad;
                 if (orient === 90) {
-                    rawTilt = e.beta;
+                    // screen right = device +Y, screen up = device −X
+                    rollRad = Math.atan2(this._gy, -this._gx);
                 } else if (orient === 270 || orient === -90) {
-                    rawTilt = -e.beta;
+                    // screen right = device −Y, screen up = device +X
+                    rollRad = Math.atan2(-this._gy, this._gx);
                 } else {
-                    rawTilt = e.gamma; // portrait fallback
+                    // portrait: screen right = device +X, screen up = device +Y
+                    rollRad = Math.atan2(this._gx, this._gy);
                 }
 
-                if (rawTilt !== null) {
-                    this.rawGamma = rawTilt;
+                const rawTilt = rollRad * 180 / Math.PI;
+                this.rawGamma = rawTilt;
 
-                    if (this.motionOffset === null) {
-                        this.motionOffset = this.rawGamma;
-                    }
-
-                    let relative = this.rawGamma - this.motionOffset;
-                    this.motionRawRelative = relative;
-
-                    // Dead zone: ignore tiny tilts (under ~2 degrees)
-                    const deadZone = 2;
-                    if (Math.abs(relative) < deadZone) {
-                        relative = 0;
-                    } else {
-                        relative = relative - Math.sign(relative) * deadZone;
-                    }
-
-                    // ~25 degrees beyond dead zone = full lean input
-                    // Total range: ~27 degrees from center for max lean
-                    this.motionLean = Math.max(-1, Math.min(1, relative / 25));
+                if (this.motionOffset === null) {
+                    this.motionOffset = this.rawGamma;
                 }
+
+                let relative = this.rawGamma - this.motionOffset;
+                this.motionRawRelative = relative;
+
+                // Dead zone: ignore tiny tilts (under ~2 degrees)
+                const deadZone = 2;
+                if (Math.abs(relative) < deadZone) {
+                    relative = 0;
+                } else {
+                    relative = relative - Math.sign(relative) * deadZone;
+                }
+
+                // ~25 degrees beyond dead zone = full lean input
+                this.motionLean = Math.max(-1, Math.min(1, relative / 25));
             });
         }
 
