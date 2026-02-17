@@ -289,6 +289,57 @@
             transition: background 0.1s;
         }
 
+        /* ===== COUNTDOWN ===== */
+        #countdown {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Courier New', monospace;
+            font-size: 120px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 30px rgba(0,200,255,0.7), 0 0 60px rgba(0,200,255,0.3);
+            z-index: 25;
+            pointer-events: none;
+            animation: countdown-pop 0.5s ease-out;
+        }
+        @keyframes countdown-pop {
+            0% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+
+        /* ===== RESET BUTTON ===== */
+        #reset-btn {
+            position: fixed;
+            bottom: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.7);
+            background: rgba(0,0,0,0.4);
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 8px;
+            padding: 8px 20px;
+            cursor: pointer;
+            z-index: 10;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #reset-btn:active {
+            background: rgba(255,255,255,0.2);
+            border-color: rgba(255,255,255,0.6);
+        }
+        .is-mobile #reset-btn {
+            bottom: auto;
+            top: 10px;
+            left: 50%;
+            font-size: 13px;
+            padding: 6px 16px;
+        }
+
         /* ===== MOBILE TOUCH BUTTONS ===== */
         #touch-controls {
             display: none;
@@ -413,6 +464,12 @@
     </div>
 
     <div id="crash-overlay"></div>
+
+    <!-- Countdown overlay -->
+    <div id="countdown" style="display:none;">3</div>
+
+    <!-- Reset button -->
+    <button id="reset-btn">RESET</button>
 
     <!-- Mobile touch pedal buttons -->
     <div id="touch-controls">

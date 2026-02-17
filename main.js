@@ -864,14 +864,7 @@
                 }
             }
 
-            // Hide instructions on first input
-            if (this.instructionsVisible && (leftHeld || rightHeld)) {
-                this.instructions.style.opacity = '0';
-                this.instructionsVisible = false;
-                setTimeout(() => {
-                    this.instructions.style.display = 'none';
-                }, 800);
-            }
+            // Instructions hiding is handled by the Game countdown state
         }
     }
 
@@ -904,16 +897,63 @@
             this.chaseCamera = new ChaseCamera(this.camera);
             this.hud = new HUD(this.input);
 
+            // Countdown / game state
+            this.state = 'waiting';  // 'waiting' | 'countdown' | 'playing'
+            this.countdownTimer = 0;
+            this.countdownEl = document.getElementById('countdown');
+
             this.lastTime = performance.now();
 
             window.addEventListener('resize', () => this._onResize());
 
-            // Lock screen orientation on mobile if supported
+            // Reset button
+            document.getElementById('reset-btn').addEventListener('click', () => {
+                this._resetGame();
+            });
+
             if (isMobile && screen.orientation && screen.orientation.lock) {
                 screen.orientation.lock('landscape').catch(() => {});
             }
 
             this._loop();
+        }
+
+        _startCountdown() {
+            this.state = 'countdown';
+            this.countdownTimer = 3.0;
+            this.countdownEl.style.display = 'block';
+            this.countdownEl.textContent = '3';
+
+            // Hide instructions
+            const inst = document.getElementById('instructions');
+            if (inst) {
+                inst.style.opacity = '0';
+                setTimeout(() => { inst.style.display = 'none'; }, 800);
+            }
+        }
+
+        _resetGame() {
+            this.bike._reset();
+            this.bike.position.set(0, 0, 0);
+            this.bike.heading = 0;
+            this.bike.distanceTraveled = 0;
+            this.bike._applyTransform();
+
+            this.pedalCtrl.lastPedal = null;
+            this.pedalCtrl.pedalPower = 0;
+            this.pedalCtrl.crankAngle = 0;
+            this.pedalCtrl.prevLeft = false;
+            this.pedalCtrl.prevRight = false;
+
+            // Re-calibrate motion on reset
+            if (this.input.motionEnabled) {
+                this.input.motionOffset = this.input.rawGamma;
+            }
+
+            this.state = 'countdown';
+            this.countdownTimer = 3.0;
+            this.countdownEl.style.display = 'block';
+            this.countdownEl.textContent = '3';
         }
 
         _onResize() {
@@ -930,6 +970,49 @@
             this.lastTime = now;
             dt = Math.min(dt, 0.05);
 
+            // --- State machine ---
+            if (this.state === 'waiting') {
+                // Wait for first pedal input to start countdown
+                if (this.input.isPressed('ArrowLeft') || this.input.isPressed('ArrowRight')) {
+                    this._startCountdown();
+                }
+                // Bike stays frozen, just render
+                this.chaseCamera.update(this.bike, dt);
+                this.world.updateSun(this.bike.position);
+                this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
+                this.renderer.render(this.scene, this.camera);
+                return;
+            }
+
+            if (this.state === 'countdown') {
+                this.countdownTimer -= dt;
+                const num = Math.ceil(this.countdownTimer);
+
+                if (this.countdownTimer <= 0) {
+                    this.state = 'playing';
+                    this.countdownEl.textContent = 'GO!';
+                    // Re-trigger pop animation
+                    this.countdownEl.style.animation = 'none';
+                    void this.countdownEl.offsetHeight;
+                    this.countdownEl.style.animation = 'countdown-pop 0.5s ease-out';
+                    setTimeout(() => { this.countdownEl.style.display = 'none'; }, 600);
+                } else if (this.countdownEl.textContent !== String(num)) {
+                    this.countdownEl.textContent = String(num);
+                    // Re-trigger pop animation on number change
+                    this.countdownEl.style.animation = 'none';
+                    void this.countdownEl.offsetHeight;
+                    this.countdownEl.style.animation = 'countdown-pop 0.5s ease-out';
+                }
+
+                // Bike stays frozen during countdown, just render
+                this.chaseCamera.update(this.bike, dt);
+                this.world.updateSun(this.bike.position);
+                this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
+                this.renderer.render(this.scene, this.camera);
+                return;
+            }
+
+            // --- Playing state ---
             const pedalResult = this.pedalCtrl.update(dt);
             const balanceResult = this.balanceCtrl.update();
 
