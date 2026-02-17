@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="screen-orientation" content="landscape">
+    <title>Tandemonium - Tandem Bike Physics Game</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #000;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        canvas { display: block; }
+
+        /* Force landscape overlay */
+        #rotate-device {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #111;
+            z-index: 9999;
+            color: white;
+            font-family: 'Courier New', monospace;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 30px;
+        }
+        #rotate-device .phone-icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+            animation: rotate-hint 2s ease-in-out infinite;
+        }
+        #rotate-device p { font-size: 18px; }
+        @keyframes rotate-hint {
+            0%, 100% { transform: rotate(0deg); }
+            50% { transform: rotate(90deg); }
+        }
+        @media screen and (orientation: portrait) and (max-width: 900px) {
+            #rotate-device { display: flex !important; }
+        }
+
+        /* iOS motion permission overlay */
+        #motion-permission {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 1000;
+            color: white;
+            font-family: 'Courier New', monospace;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 30px;
+            cursor: pointer;
+        }
+        #motion-permission h2 {
+            font-size: 28px;
+            color: #4CAF50;
+            margin-bottom: 15px;
+        }
+        #motion-permission p {
+            font-size: 16px;
+            margin: 8px 0;
+            max-width: 400px;
+        }
+        #motion-permission .tap-btn {
+            margin-top: 25px;
+            padding: 15px 40px;
+            font-size: 20px;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            animation: pulse 1.5s infinite;
+        }
+
+        #hud {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            padding: 10px 15px;
+            font-family: 'Courier New', monospace;
+            color: white;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #speed, #distance {
+            font-size: 18px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            margin-bottom: 3px;
+        }
+
+        #pedal-indicator {
+            display: flex;
+            gap: 10px;
+            margin-top: 6px;
+        }
+
+        /* Hide desktop pedal indicator on mobile */
+        .is-mobile #pedal-indicator { display: none; }
+
+        .pedal-key {
+            width: 50px;
+            height: 40px;
+            border: 2px solid rgba(255,255,255,0.5);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: bold;
+            background: rgba(0,0,0,0.4);
+            transition: background 0.1s, border-color 0.1s;
+        }
+
+        .pedal-key.active {
+            background: rgba(0, 200, 0, 0.6);
+            border-color: #0f0;
+        }
+
+        .pedal-key.wrong {
+            background: rgba(200, 0, 0, 0.6);
+            border-color: #f00;
+        }
+
+        .pedal-key.brake {
+            background: rgba(200, 200, 0, 0.6);
+            border-color: #ff0;
+        }
+
+        #status {
+            position: fixed;
+            bottom: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff4444;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 10;
+            text-align: center;
+        }
+        .is-mobile #status { bottom: 30%; font-size: 20px; }
+
+        #instructions {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Courier New', monospace;
+            color: white;
+            text-align: center;
+            z-index: 20;
+            pointer-events: none;
+            background: rgba(0,0,0,0.75);
+            padding: 25px 35px;
+            border-radius: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            transition: opacity 0.8s;
+        }
+
+        #instructions h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+            color: #4CAF50;
+        }
+
+        #instructions .subtitle {
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 15px;
+        }
+
+        #instructions p {
+            font-size: 14px;
+            margin: 6px 0;
+            line-height: 1.5;
+        }
+
+        #instructions .key {
+            display: inline-block;
+            background: rgba(255,255,255,0.15);
+            padding: 2px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.3);
+            font-size: 13px;
+        }
+
+        #instructions .start-hint {
+            margin-top: 15px;
+            color: #8f8;
+            animation: pulse 1.5s infinite;
+        }
+
+        #instructions .desktop-controls { display: block; }
+        #instructions .mobile-controls { display: none; }
+        .is-mobile #instructions .desktop-controls { display: none; }
+        .is-mobile #instructions .mobile-controls { display: block; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #tilt-gauge {
+            position: fixed;
+            top: 10px;
+            right: 15px;
+            width: 100px;
+            height: 100px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .is-mobile #tilt-gauge { width: 80px; height: 80px; top: 8px; right: 10px; }
+
+        #tilt-gauge svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 0 6px rgba(0,0,0,0.6));
+        }
+
+        #tilt-label {
+            position: absolute;
+            bottom: -18px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+            white-space: nowrap;
+        }
+
+        #crash-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 0, 0, 0);
+            pointer-events: none;
+            z-index: 5;
+            transition: background 0.1s;
+        }
+
+        /* ===== MOBILE TOUCH BUTTONS ===== */
+        #touch-controls {
+            display: none;
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            height: 35vh;
+            z-index: 15;
+            pointer-events: none;
+        }
+        .is-mobile #touch-controls { display: flex; }
+
+        .touch-pedal {
+            position: absolute;
+            bottom: 10px;
+            width: 38vw;
+            height: 30vh;
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            font-size: 28px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.7);
+            pointer-events: auto;
+            -webkit-tap-highlight-color: transparent;
+            transition: background 0.08s, border-color 0.08s;
+        }
+
+        .touch-pedal-left {
+            left: 10px;
+            background: rgba(50, 120, 255, 0.2);
+            border: 3px solid rgba(50, 120, 255, 0.4);
+        }
+        .touch-pedal-left.pressed {
+            background: rgba(50, 200, 50, 0.5);
+            border-color: rgba(50, 255, 50, 0.7);
+        }
+        .touch-pedal-left.wrong {
+            background: rgba(200, 50, 50, 0.5);
+            border-color: rgba(255, 50, 50, 0.7);
+        }
+        .touch-pedal-left.brake {
+            background: rgba(200, 200, 0, 0.5);
+            border-color: rgba(255, 255, 0, 0.7);
+        }
+
+        .touch-pedal-right {
+            right: 10px;
+            background: rgba(255, 80, 50, 0.2);
+            border: 3px solid rgba(255, 80, 50, 0.4);
+        }
+        .touch-pedal-right.pressed {
+            background: rgba(50, 200, 50, 0.5);
+            border-color: rgba(50, 255, 50, 0.7);
+        }
+        .touch-pedal-right.wrong {
+            background: rgba(200, 50, 50, 0.5);
+            border-color: rgba(255, 50, 50, 0.7);
+        }
+        .touch-pedal-right.brake {
+            background: rgba(200, 200, 0, 0.5);
+            border-color: rgba(255, 255, 0, 0.7);
+        }
+
+        .touch-pedal .pedal-label {
+            font-size: 16px;
+            opacity: 0.6;
+            position: absolute;
+            bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Force landscape on mobile -->
+    <div id="rotate-device">
+        <div class="phone-icon">&#x1F4F1;</div>
+        <p>Please rotate your device to<br><strong>LANDSCAPE</strong> mode</p>
+    </div>
+
+    <!-- iOS motion permission -->
+    <div id="motion-permission">
+        <h2>TANDEMONIUM</h2>
+        <p>This game uses your device's motion sensor for balance control.</p>
+        <button class="tap-btn" id="motion-btn">TAP TO ENABLE MOTION</button>
+    </div>
+
+    <div id="hud">
+        <div id="speed">Speed: 0 km/h</div>
+        <div id="distance">Distance: 0 m</div>
+        <div id="pedal-indicator">
+            <div class="pedal-key" id="pedal-l">&larr; L</div>
+            <div class="pedal-key" id="pedal-r">R &rarr;</div>
+        </div>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="tilt-gauge">
+        <svg viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="55" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+            <path d="M 60 60 L 12.2 83.5 A 55 55 0 0 1 5 60 L 60 60" fill="rgba(255,50,50,0.25)" />
+            <path d="M 60 60 L 115 60 A 55 55 0 0 1 107.8 83.5 L 60 60" fill="rgba(255,50,50,0.25)" />
+            <line x1="60" y1="6" x2="60" y2="16" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+            <line x1="28" y1="18.5" x2="33.5" y2="27" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+            <line x1="92" y1="18.5" x2="86.5" y2="27" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+            <line x1="10" y1="45" x2="20" y2="48" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+            <line x1="110" y1="45" x2="100" y2="48" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+            <g id="tilt-needle" transform="rotate(0, 60, 60)">
+                <line x1="15" y1="60" x2="50" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+                <line x1="70" y1="60" x2="105" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+                <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
+                <line x1="56" y1="60" x2="50" y2="60" stroke="#4af" stroke-width="2"/>
+                <line x1="64" y1="60" x2="70" y2="60" stroke="#4af" stroke-width="2"/>
+                <line x1="60" y1="56" x2="60" y2="52" stroke="#4af" stroke-width="2"/>
+            </g>
+            <polygon points="60,8 56,15 64,15" fill="#fff" opacity="0.8"/>
+        </svg>
+        <div id="tilt-label">0.0&deg;</div>
+    </div>
+
+    <div id="crash-overlay"></div>
+
+    <!-- Mobile touch pedal buttons -->
+    <div id="touch-controls">
+        <div class="touch-pedal touch-pedal-left" id="touch-left">
+            &larr; L
+            <span class="pedal-label">LEFT PEDAL</span>
+        </div>
+        <div class="touch-pedal touch-pedal-right" id="touch-right">
+            R &rarr;
+            <span class="pedal-label">RIGHT PEDAL</span>
+        </div>
+    </div>
+
+    <div id="instructions">
+        <h1>TANDEMONIUM</h1>
+        <p class="subtitle">A Tandem Bicycle Physics Game</p>
+        <div class="desktop-controls">
+            <p><span class="key">&larr;</span> <span class="key">&rarr;</span> Alternate to pedal</p>
+            <p><span class="key">&larr;</span>+<span class="key">&rarr;</span> Hold both to brake</p>
+            <p><span class="key">A</span> <span class="key">D</span> Lean left / right for balance</p>
+            <p class="start-hint">Press a pedal key to start!</p>
+        </div>
+        <div class="mobile-controls">
+            <p>Tap <strong>L</strong> and <strong>R</strong> buttons to pedal</p>
+            <p>Hold <strong>both</strong> to brake</p>
+            <p><strong>Tilt your device</strong> to balance!</p>
+            <p class="start-hint">Tap a pedal to start!</p>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
