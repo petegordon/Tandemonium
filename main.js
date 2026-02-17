@@ -675,7 +675,7 @@
 
             // --- Safety mode: clamp lean so bike can never reach fall threshold ---
             if (safetyMode) {
-                this.lean = Math.max(-0.6, Math.min(0.6, this.lean));
+                this.lean = Math.max(-0.9, Math.min(0.9, this.lean));
             }
 
             // --- Steering from lean ---
@@ -688,7 +688,7 @@
             this.distanceTraveled += this.speed * dt;
 
             // --- Fall detection ---
-            if (Math.abs(this.lean) > 0.85) {
+            if (Math.abs(this.lean) > 1.2) {
                 this._fall();
             }
 
@@ -1015,7 +1015,7 @@
             // Bike gauge — actual lean angle
             const tiltDeg = (bike.lean * 180 / Math.PI);
             const bikeDeg = Math.max(-90, Math.min(90, tiltDeg));
-            const danger = Math.abs(bike.lean) / 0.85;
+            const danger = Math.abs(bike.lean) / 1.2;
             this.bikeNeedle.setAttribute('transform', 'rotate(' + bikeDeg.toFixed(1) + ', 60, 60)');
             this.bikeLabel.textContent = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
             if (danger > 0.75) {
@@ -1305,7 +1305,7 @@
                 this.bike.leanVelocity += (previewLean + previewDamp) * dt;
                 this.bike.lean += this.bike.leanVelocity * dt;
                 // Clamp lean so it can't fall during countdown
-                this.bike.lean = Math.max(-0.6, Math.min(0.6, this.bike.lean));
+                this.bike.lean = Math.max(-0.9, Math.min(0.9, this.bike.lean));
                 this.bike._applyTransform();
 
                 this.chaseCamera.update(this.bike, dt);
