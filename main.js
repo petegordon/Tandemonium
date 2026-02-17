@@ -535,20 +535,20 @@
             this.speed = Math.max(0, Math.min(this.speed, 16));
 
             // --- Balance physics ---
-            const gravity = Math.sin(this.lean) * 7.0;
+            const gravity = Math.sin(this.lean) * 4.0;
             const playerLean = balanceResult.leanInput * 26.0;
-            const gyro = -this.lean * Math.min(this.speed * 0.5, 4.0);
+            const gyro = -this.lean * Math.min(this.speed * 0.6, 5.0);
             const damping = -this.leanVelocity * 1.5;
 
-            const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 5;
+            const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
 
             const t = performance.now() / 1000;
-            const lowSpeedWobble = Math.max(0, 1 - this.speed * 0.25) *
-                (Math.sin(t * 2.7) * 0.8 + Math.sin(t * 4.3) * 0.3);
+            const lowSpeedWobble = Math.max(0, 1 - this.speed * 0.3) *
+                (Math.sin(t * 2.7) * 0.3 + Math.sin(t * 4.3) * 0.15);
 
             let pedalLeanKick = 0;
             if (pedalResult.acceleration > 0 && !pedalResult.braking) {
-                pedalLeanKick = (Math.random() - 0.5) * 0.5;
+                pedalLeanKick = (Math.random() - 0.5) * 0.2;
             }
 
             this.leanVelocity += (gravity + playerLean + gyro + damping +
