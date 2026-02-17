@@ -159,19 +159,25 @@
 
         #instructions {
             position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
             font-family: 'Courier New', monospace;
             color: white;
             text-align: center;
             z-index: 20;
-            pointer-events: none;
+            cursor: pointer;
+            transition: opacity 0.8s;
+        }
+
+        #instructions .card {
             background: rgba(0,0,0,0.75);
             padding: 25px 35px;
             border-radius: 12px;
             border: 2px solid rgba(255,255,255,0.3);
-            transition: opacity 0.8s;
+            pointer-events: none;
         }
 
         #instructions h1 {
@@ -508,19 +514,21 @@
     </div>
 
     <div id="instructions">
-        <h1>TANDEMONIUM</h1>
-        <p class="subtitle">A Tandem Bicycle Physics Game</p>
-        <div class="desktop-controls">
-            <p><span class="key">&larr;</span> <span class="key">&rarr;</span> Alternate to pedal</p>
-            <p><span class="key">&larr;</span>+<span class="key">&rarr;</span> Hold both to brake</p>
-            <p><span class="key">A</span> <span class="key">D</span> Lean left / right for balance</p>
-            <p class="start-hint">Press a pedal key to start!</p>
-        </div>
-        <div class="mobile-controls">
-            <p>Tap <strong>L</strong> and <strong>R</strong> buttons to pedal</p>
-            <p>Hold <strong>both</strong> to brake</p>
-            <p><strong>Tilt your device</strong> to balance!</p>
-            <p class="start-hint">Tap a pedal to start!</p>
+        <div class="card">
+            <h1>TANDEMONIUM</h1>
+            <p class="subtitle">A Tandem Bicycle Physics Game</p>
+            <div class="desktop-controls">
+                <p><span class="key">&larr;</span> <span class="key">&rarr;</span> Alternate to pedal</p>
+                <p><span class="key">&larr;</span>+<span class="key">&rarr;</span> Hold both to brake</p>
+                <p><span class="key">A</span> <span class="key">D</span> Lean left / right for balance</p>
+                <p class="start-hint">Tap anywhere to start!</p>
+            </div>
+            <div class="mobile-controls">
+                <p>Tap <strong>L</strong> and <strong>R</strong> buttons to pedal</p>
+                <p>Hold <strong>both</strong> to brake</p>
+                <p><strong>Tilt your device</strong> to balance!</p>
+                <p class="start-hint">Tap anywhere to start!</p>
+            </div>
         </div>
     </div>
 

@@ -929,6 +929,16 @@
 
             window.addEventListener('resize', () => this._onResize());
 
+            // Tap anywhere to start (dismiss intro card)
+            const startHandler = (e) => {
+                if (this.state === 'waiting') {
+                    e.preventDefault();
+                    this._startCountdown();
+                }
+            };
+            document.getElementById('instructions').addEventListener('click', startHandler);
+            document.getElementById('instructions').addEventListener('touchstart', startHandler, { passive: false });
+
             // Reset button
             document.getElementById('reset-btn').addEventListener('click', () => {
                 this._resetGame();
