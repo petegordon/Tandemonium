@@ -551,8 +551,9 @@
         <div id="phone-gauge" class="gauge">
             <svg viewBox="0 0 120 120">
                 <circle cx="60" cy="60" r="55" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-                <!-- Green safe zone: ±45° arc from top center -->
-                <path d="M 60 60 L 21.1 21.1 A 55 55 0 0 1 98.9 21.1 L 60 60" fill="rgba(0,180,0,0.2)" />
+                <!-- Green safe zone: ±45° from horizontal on both sides -->
+                <path d="M 60 60 L 98.9 21.1 A 55 55 0 0 1 98.9 98.9 L 60 60" fill="rgba(0,180,0,0.2)" />
+                <path d="M 60 60 L 21.1 98.9 A 55 55 0 0 0 21.1 21.1 L 60 60" fill="rgba(0,180,0,0.2)" />
                 <line x1="60" y1="6" x2="60" y2="16" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
                 <g id="phone-needle" transform="rotate(0, 60, 60)">
                     <line x1="15" y1="60" x2="50" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
