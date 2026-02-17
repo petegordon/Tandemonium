@@ -147,25 +147,23 @@
         _startMotionListening() {
             this.motionReady = true;
             this.motionRawRelative = 0;
+            this._useAccel = false; // true once devicemotion delivers real data
 
-            // Smoothed gravity vector in device coords (low-pass filtered)
+            // Smoothed gravity vector (for accelerometer path)
             this._gx = 0;
             this._gy = 0;
             this._gz = 0;
             this._gravityInit = false;
 
-            // Use devicemotion (raw accelerometer) instead of deviceorientation
-            // (Euler angles) to extract pure roll without pitch cross-talk.
-            // accelerationIncludingGravity gives the gravity vector in device
-            // coords; we project it onto the screen plane and compute roll via
-            // atan2 — pitch only affects the out-of-screen component.
+            // --- PRIMARY: devicemotion (accelerometer, no Euler cross-talk) ---
             window.addEventListener('devicemotion', (e) => {
                 const a = e.accelerationIncludingGravity;
                 if (!a || a.x == null) return;
 
+                this._useAccel = true;
                 this.motionEnabled = true;
 
-                // Low-pass filter to smooth accelerometer noise
+                // Low-pass filter
                 const k = 0.7;
                 if (!this._gravityInit) {
                     this._gx = a.x; this._gy = a.y; this._gz = a.z;
@@ -176,46 +174,64 @@
                     this._gz += (a.z - this._gz) * k;
                 }
 
-                // Compute roll from gravity projected onto the screen plane.
-                // Device coords: +X right, +Y up, +Z out-of-screen (portrait).
-                // When stationary, accelerationIncludingGravity ≈ support force
-                // (opposite of gravity), so "up" in the real world = positive
-                // along whichever device axis points up.
+                // Roll from gravity projected onto screen plane
                 const orient = screen.orientation ? screen.orientation.angle
                     : (window.orientation || 0);
                 let rollRad;
                 if (orient === 90) {
-                    // screen right = device +Y, screen up = device −X
                     rollRad = Math.atan2(this._gy, -this._gx);
                 } else if (orient === 270 || orient === -90) {
-                    // screen right = device −Y, screen up = device +X
                     rollRad = Math.atan2(-this._gy, this._gx);
                 } else {
-                    // portrait: screen right = device +X, screen up = device +Y
                     rollRad = Math.atan2(this._gx, this._gy);
                 }
 
-                const rawTilt = -rollRad * 180 / Math.PI;
-                this.rawGamma = rawTilt;
-
-                if (this.motionOffset === null) {
-                    this.motionOffset = this.rawGamma;
-                }
-
-                let relative = this.rawGamma - this.motionOffset;
-                this.motionRawRelative = relative;
-
-                // Dead zone: ignore tiny tilts (under ~2 degrees)
-                const deadZone = 2;
-                if (Math.abs(relative) < deadZone) {
-                    relative = 0;
-                } else {
-                    relative = relative - Math.sign(relative) * deadZone;
-                }
-
-                // ~25 degrees beyond dead zone = full lean input
-                this.motionLean = Math.max(-1, Math.min(1, relative / 25));
+                this._applyTilt(-rollRad * 180 / Math.PI);
             });
+
+            // --- FALLBACK: deviceorientation (Euler angles, has pitch cross-talk
+            //     but works on devices where devicemotion gives no data) ---
+            window.addEventListener('deviceorientation', (e) => {
+                if (this._useAccel) return; // accelerometer is working, ignore this
+
+                const orient = screen.orientation ? screen.orientation.angle
+                    : (window.orientation || 0);
+                let rawTilt;
+                if (orient === 90) {
+                    rawTilt = e.beta;
+                } else if (orient === 270 || orient === -90) {
+                    rawTilt = -e.beta;
+                } else {
+                    rawTilt = e.gamma;
+                }
+
+                if (rawTilt != null) {
+                    this.motionEnabled = true;
+                    this._applyTilt(rawTilt);
+                }
+            });
+        }
+
+        _applyTilt(rawTilt) {
+            this.rawGamma = rawTilt;
+
+            if (this.motionOffset === null) {
+                this.motionOffset = this.rawGamma;
+            }
+
+            let relative = this.rawGamma - this.motionOffset;
+            this.motionRawRelative = relative;
+
+            // Dead zone: ignore tiny tilts (under ~2 degrees)
+            const deadZone = 2;
+            if (Math.abs(relative) < deadZone) {
+                relative = 0;
+            } else {
+                relative = relative - Math.sign(relative) * deadZone;
+            }
+
+            // ~25 degrees beyond dead zone = full lean input
+            this.motionLean = Math.max(-1, Math.min(1, relative / 25));
         }
 
         _setupCalibration() {
