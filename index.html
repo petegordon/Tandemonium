@@ -290,24 +290,45 @@
         }
 
         /* ===== COUNTDOWN ===== */
-        #countdown {
+        #countdown-overlay {
+            display: none;
             position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 25;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+        #countdown-overlay.active { display: flex; }
+
+        #countdown-number {
             font-family: 'Courier New', monospace;
-            font-size: 120px;
+            font-size: 180px;
             font-weight: bold;
             color: #fff;
-            text-shadow: 0 0 30px rgba(0,200,255,0.7), 0 0 60px rgba(0,200,255,0.3);
-            z-index: 25;
-            pointer-events: none;
-            animation: countdown-pop 0.5s ease-out;
+            text-shadow: 0 0 40px rgba(0,200,255,0.8), 0 0 80px rgba(0,200,255,0.4);
+            animation: countdown-pop 0.6s ease-out;
         }
+        #countdown-number.go {
+            color: #4f4;
+            text-shadow: 0 0 40px rgba(0,255,100,0.8), 0 0 80px rgba(0,255,100,0.4);
+        }
+
+        #countdown-label {
+            font-family: 'Courier New', monospace;
+            font-size: 22px;
+            color: rgba(255,255,255,0.5);
+            margin-top: 10px;
+            letter-spacing: 6px;
+            text-transform: uppercase;
+        }
+
         @keyframes countdown-pop {
-            0% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
-            50% { opacity: 1; }
-            100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+            0% { transform: scale(2.5); opacity: 0; }
+            40% { opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
         }
 
         /* ===== RESET BUTTON ===== */
@@ -466,7 +487,10 @@
     <div id="crash-overlay"></div>
 
     <!-- Countdown overlay -->
-    <div id="countdown" style="display:none;">3</div>
+    <div id="countdown-overlay">
+        <div id="countdown-number">3</div>
+        <div id="countdown-label">Get Ready</div>
+    </div>
 
     <!-- Reset button -->
     <button id="reset-btn">RESET</button>

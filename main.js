@@ -917,7 +917,13 @@
             // Countdown / game state
             this.state = 'waiting';  // 'waiting' | 'countdown' | 'playing'
             this.countdownTimer = 0;
-            this.countdownEl = document.getElementById('countdown');
+            this.countdownOverlay = document.getElementById('countdown-overlay');
+            this.countdownNumber = document.getElementById('countdown-number');
+            this.countdownLabel = document.getElementById('countdown-label');
+            this.lastCountdownNum = 0;
+
+            // Audio context for countdown beeps (created on first user interaction)
+            this.audioCtx = null;
 
             this.lastTime = performance.now();
 
@@ -938,15 +944,38 @@
         _startCountdown() {
             this.state = 'countdown';
             this.countdownTimer = 3.0;
-            this.countdownEl.style.display = 'block';
-            this.countdownEl.textContent = '3';
+            this.lastCountdownNum = 4; // force first update
+            this.countdownOverlay.classList.add('active');
+            this.countdownNumber.className = '';
+            this.countdownNumber.textContent = '3';
+            this.countdownLabel.textContent = 'Get Ready';
 
-            // Hide instructions
+            // Init audio context on user gesture
+            if (!this.audioCtx) {
+                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            this._playBeep(400, 0.15);
+
             const inst = document.getElementById('instructions');
             if (inst) {
                 inst.style.opacity = '0';
                 setTimeout(() => { inst.style.display = 'none'; }, 800);
             }
+        }
+
+        _playBeep(freq, duration) {
+            if (!this.audioCtx) return;
+            const ctx = this.audioCtx;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.value = freq;
+            osc.type = 'square';
+            gain.gain.setValueAtTime(0.12, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + duration);
         }
 
         _resetGame() {
@@ -967,10 +996,7 @@
                 this.input.motionOffset = this.input.rawGamma;
             }
 
-            this.state = 'countdown';
-            this.countdownTimer = 3.0;
-            this.countdownEl.style.display = 'block';
-            this.countdownEl.textContent = '3';
+            this._startCountdown();
         }
 
         _onResize() {
@@ -1007,21 +1033,40 @@
 
                 if (this.countdownTimer <= 0) {
                     this.state = 'playing';
-                    this.countdownEl.textContent = 'GO!';
+                    this.bike.lean = 0;
+                    this.bike.leanVelocity = 0;
+                    this.bike._applyTransform();
+                    this.countdownNumber.textContent = 'GO!';
+                    this.countdownNumber.className = 'go';
+                    this.countdownLabel.textContent = '';
                     // Re-trigger pop animation
-                    this.countdownEl.style.animation = 'none';
-                    void this.countdownEl.offsetHeight;
-                    this.countdownEl.style.animation = 'countdown-pop 0.5s ease-out';
-                    setTimeout(() => { this.countdownEl.style.display = 'none'; }, 600);
-                } else if (this.countdownEl.textContent !== String(num)) {
-                    this.countdownEl.textContent = String(num);
-                    // Re-trigger pop animation on number change
-                    this.countdownEl.style.animation = 'none';
-                    void this.countdownEl.offsetHeight;
-                    this.countdownEl.style.animation = 'countdown-pop 0.5s ease-out';
+                    this.countdownNumber.style.animation = 'none';
+                    void this.countdownNumber.offsetHeight;
+                    this.countdownNumber.style.animation = 'countdown-pop 0.6s ease-out';
+                    this._playBeep(800, 0.4);
+                    setTimeout(() => { this.countdownOverlay.classList.remove('active'); }, 700);
+                } else if (num !== this.lastCountdownNum) {
+                    this.lastCountdownNum = num;
+                    this.countdownNumber.textContent = String(num);
+                    this.countdownNumber.className = '';
+                    this.countdownLabel.textContent = num === 1 ? 'Go!' : 'Get Ready';
+                    // Re-trigger pop animation
+                    this.countdownNumber.style.animation = 'none';
+                    void this.countdownNumber.offsetHeight;
+                    this.countdownNumber.style.animation = 'countdown-pop 0.6s ease-out';
+                    this._playBeep(400, 0.15);
                 }
 
-                // Bike stays frozen during countdown, just render
+                // Let tilt affect the bike during countdown so player can practice
+                const previewBalance = this.balanceCtrl.update();
+                const previewLean = previewBalance.leanInput * 11.0;
+                const previewDamp = -this.bike.leanVelocity * 3.5;
+                this.bike.leanVelocity += (previewLean + previewDamp) * dt;
+                this.bike.lean += this.bike.leanVelocity * dt;
+                // Clamp lean so it can't fall during countdown
+                this.bike.lean = Math.max(-0.6, Math.min(0.6, this.bike.lean));
+                this.bike._applyTransform();
+
                 this.chaseCamera.update(this.bike, dt);
                 this.world.updateSun(this.bike.position);
                 this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
@@ -1030,10 +1075,17 @@
             }
 
             // --- Playing state ---
+            const wasFallen = this.bike.fallen;
+
             const pedalResult = this.pedalCtrl.update(dt);
             const balanceResult = this.balanceCtrl.update();
 
             this.bike.update(pedalResult, balanceResult, dt);
+
+            // Recalibrate tilt when bike recovers from a crash
+            if (wasFallen && !this.bike.fallen && this.input.motionEnabled) {
+                this.input.motionOffset = this.input.rawGamma;
+            }
 
             if (this.bike.speed > 8) {
                 this.chaseCamera.shakeAmount = Math.max(
