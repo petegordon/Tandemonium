@@ -950,32 +950,42 @@
             this.countdownNumber.textContent = '3';
             this.countdownLabel.textContent = 'Get Ready';
 
-            // Init audio context on user gesture
-            if (!this.audioCtx) {
-                this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            this._playBeep(400, 0.15);
-
+            // Hide instructions first (before audio, which may fail)
             const inst = document.getElementById('instructions');
             if (inst) {
                 inst.style.opacity = '0';
                 setTimeout(() => { inst.style.display = 'none'; }, 800);
             }
+
+            // Init audio context - may fail if not triggered by direct user gesture
+            try {
+                if (!this.audioCtx) {
+                    this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                this._playBeep(400, 0.15);
+            } catch (e) {
+                console.warn('Audio not available:', e);
+            }
         }
 
         _playBeep(freq, duration) {
-            if (!this.audioCtx) return;
-            const ctx = this.audioCtx;
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.frequency.value = freq;
-            osc.type = 'square';
-            gain.gain.setValueAtTime(0.12, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-            osc.start(ctx.currentTime);
-            osc.stop(ctx.currentTime + duration);
+            try {
+                if (!this.audioCtx) return;
+                const ctx = this.audioCtx;
+                if (ctx.state === 'suspended') ctx.resume();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.frequency.value = freq;
+                osc.type = 'square';
+                gain.gain.setValueAtTime(0.12, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + duration);
+            } catch (e) {
+                // Audio may not be available on all browsers/contexts
+            }
         }
 
         _resetGame() {
