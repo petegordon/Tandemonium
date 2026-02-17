@@ -922,11 +922,13 @@
             // Safety mode
             this.safetyMode = true;
             this.safetyBtn = document.getElementById('safety-btn');
-            this.safetyBtn.addEventListener('click', () => {
-                this.safetyMode = !this.safetyMode;
-                this.safetyBtn.textContent = 'SAFETY: ' + (this.safetyMode ? 'ON' : 'OFF');
-                this.safetyBtn.className = this.safetyMode ? '' : 'off';
-            });
+            if (this.safetyBtn) {
+                this.safetyBtn.addEventListener('click', () => {
+                    this.safetyMode = !this.safetyMode;
+                    this.safetyBtn.textContent = 'SAFETY: ' + (this.safetyMode ? 'ON' : 'OFF');
+                    this.safetyBtn.className = this.safetyMode ? '' : 'off';
+                });
+            }
 
             // Countdown / game state
             this.state = 'waiting';  // 'waiting' | 'countdown' | 'playing'
