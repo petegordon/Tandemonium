@@ -532,7 +532,7 @@
             }
 
             // --- Steering from lean ---
-            const turnRate = this.lean * this.speed * 0.35;
+            const turnRate = -this.lean * this.speed * 0.35;
             this.heading += turnRate * dt;
 
             // --- Position ---
