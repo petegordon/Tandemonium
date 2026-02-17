@@ -170,7 +170,7 @@
         }
 
         _setupCalibration() {
-            const gauge = document.getElementById('tilt-gauge');
+            const gauge = document.getElementById('phone-gauge');
             const flash = document.getElementById('calibrate-flash');
 
             const doCalibrate = (e) => {
@@ -793,12 +793,22 @@
             this.statusEl = document.getElementById('status');
             this.pedalL = document.getElementById('pedal-l');
             this.pedalR = document.getElementById('pedal-r');
-            this.tiltNeedle = document.getElementById('tilt-needle');
-            this.tiltLabel = document.getElementById('tilt-label');
             this.crashOverlay = document.getElementById('crash-overlay');
             this.instructions = document.getElementById('instructions');
             this.instructionsVisible = true;
             this.crashFlash = 0;
+
+            // Dual gauges
+            this.phoneNeedle = document.getElementById('phone-needle');
+            this.phoneLabel = document.getElementById('phone-label');
+            this.phoneGauge = document.getElementById('phone-gauge');
+            this.bikeNeedle = document.getElementById('bike-needle');
+            this.bikeLabel = document.getElementById('bike-label');
+
+            // Hide phone gauge on desktop (no device motion)
+            if (!isMobile) {
+                this.phoneGauge.style.display = 'none';
+            }
 
             // Mobile touch button elements
             this.touchLeftEl = document.getElementById('touch-left');
@@ -847,19 +857,26 @@
                 this.touchRightEl.className = rClass;
             }
 
-            // Tilt gauge - always show actual bike lean angle
+            // Phone gauge — raw device tilt input
+            if (isMobile) {
+                const rawRel = input.motionRawRelative || 0;
+                const phoneDeg = Math.max(-90, Math.min(90, rawRel));
+                this.phoneNeedle.setAttribute('transform', 'rotate(' + phoneDeg.toFixed(1) + ', 60, 60)');
+                this.phoneLabel.textContent = Math.abs(rawRel).toFixed(1) + '\u00B0';
+            }
+
+            // Bike gauge — actual lean angle
             const tiltDeg = (bike.lean * 180 / Math.PI);
-            const gaugeDeg = Math.max(-90, Math.min(90, tiltDeg));
-            const gaugeLabel = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
+            const bikeDeg = Math.max(-90, Math.min(90, tiltDeg));
             const danger = Math.abs(bike.lean) / 0.85;
-            this.tiltNeedle.setAttribute('transform', 'rotate(' + gaugeDeg.toFixed(1) + ', 60, 60)');
-            this.tiltLabel.textContent = gaugeLabel;
+            this.bikeNeedle.setAttribute('transform', 'rotate(' + bikeDeg.toFixed(1) + ', 60, 60)');
+            this.bikeLabel.textContent = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
             if (danger > 0.75) {
-                this.tiltLabel.style.color = '#ff4444';
+                this.bikeLabel.style.color = '#ff4444';
             } else if (danger > 0.5) {
-                this.tiltLabel.style.color = '#ffaa22';
+                this.bikeLabel.style.color = '#ffaa22';
             } else {
-                this.tiltLabel.style.color = '#ffffff';
+                this.bikeLabel.style.color = '#ffffff';
             }
 
             // Status text

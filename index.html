@@ -183,29 +183,75 @@
             50% { opacity: 0.5; }
         }
 
-        #tilt-gauge {
+        #gauges {
             position: fixed;
             top: 10px;
             right: 15px;
-            width: 100px;
-            height: 100px;
+            display: flex;
+            flex-direction: row;
+            gap: 8px;
             z-index: 10;
             pointer-events: none;
         }
-        .is-mobile #tilt-gauge {
-            width: 90px; height: 90px; top: 8px; right: 10px;
+
+        .gauge {
+            position: relative;
+            width: 80px;
+            height: 80px;
+        }
+        .is-mobile .gauge {
+            width: 70px; height: 70px;
+        }
+        .is-mobile #gauges { right: 10px; top: 8px; }
+
+        #phone-gauge {
+            pointer-events: none;
+        }
+        .is-mobile #phone-gauge {
             pointer-events: auto;
             cursor: pointer;
+        }
+
+        .gauge svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 0 6px rgba(0,0,0,0.6));
+        }
+
+        .gauge-label {
+            position: absolute;
+            bottom: -16px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+            white-space: nowrap;
+        }
+
+        .gauge-title {
+            position: absolute;
+            bottom: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 9px;
+            color: rgba(255,255,255,0.5);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            white-space: nowrap;
         }
 
         #calibrate-hint {
             display: none;
             position: absolute;
-            bottom: -32px;
+            bottom: -40px;
             left: 50%;
             transform: translateX(-50%);
             font-family: 'Courier New', monospace;
-            font-size: 10px;
+            font-size: 9px;
             color: rgba(255,255,255,0.6);
             white-space: nowrap;
             text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
@@ -218,32 +264,13 @@
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             font-family: 'Courier New', monospace;
-            font-size: 11px;
+            font-size: 10px;
             font-weight: bold;
             color: #4f4;
             text-shadow: 0 0 8px rgba(0,255,0,0.6);
             white-space: nowrap;
             pointer-events: none;
             z-index: 11;
-        }
-
-        #tilt-gauge svg {
-            width: 100%;
-            height: 100%;
-            filter: drop-shadow(0 0 6px rgba(0,0,0,0.6));
-        }
-
-        #tilt-label {
-            position: absolute;
-            bottom: -18px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-            font-weight: bold;
-            color: #fff;
-            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
-            white-space: nowrap;
         }
 
         #crash-overlay {
@@ -451,29 +478,52 @@
 
     <div id="status"></div>
 
-    <div id="tilt-gauge">
-        <svg viewBox="0 0 120 120">
-            <circle cx="60" cy="60" r="55" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-            <path d="M 60 60 L 12.2 83.5 A 55 55 0 0 1 5 60 L 60 60" fill="rgba(255,50,50,0.25)" />
-            <path d="M 60 60 L 115 60 A 55 55 0 0 1 107.8 83.5 L 60 60" fill="rgba(255,50,50,0.25)" />
-            <line x1="60" y1="6" x2="60" y2="16" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-            <line x1="28" y1="18.5" x2="33.5" y2="27" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-            <line x1="92" y1="18.5" x2="86.5" y2="27" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-            <line x1="10" y1="45" x2="20" y2="48" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-            <line x1="110" y1="45" x2="100" y2="48" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-            <g id="tilt-needle" transform="rotate(0, 60, 60)">
-                <line x1="15" y1="60" x2="50" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
-                <line x1="70" y1="60" x2="105" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
-                <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
-                <line x1="56" y1="60" x2="50" y2="60" stroke="#4af" stroke-width="2"/>
-                <line x1="64" y1="60" x2="70" y2="60" stroke="#4af" stroke-width="2"/>
-                <line x1="60" y1="56" x2="60" y2="52" stroke="#4af" stroke-width="2"/>
-            </g>
-            <polygon points="60,8 56,15 64,15" fill="#fff" opacity="0.8"/>
-        </svg>
-        <div id="tilt-label">0.0&deg;</div>
-        <div id="calibrate-hint">TAP TO CALIBRATE</div>
-        <div id="calibrate-flash">CALIBRATED!</div>
+    <div id="gauges">
+        <!-- Phone tilt gauge (raw device input) — hidden on desktop -->
+        <div id="phone-gauge" class="gauge">
+            <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="55" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+                <line x1="60" y1="6" x2="60" y2="16" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                <g id="phone-needle" transform="rotate(0, 60, 60)">
+                    <line x1="15" y1="60" x2="50" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="70" y1="60" x2="105" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+                    <circle cx="60" cy="60" r="4" fill="none" stroke="#fa3" stroke-width="2"/>
+                    <line x1="56" y1="60" x2="50" y2="60" stroke="#fa3" stroke-width="2"/>
+                    <line x1="64" y1="60" x2="70" y2="60" stroke="#fa3" stroke-width="2"/>
+                    <line x1="60" y1="56" x2="60" y2="52" stroke="#fa3" stroke-width="2"/>
+                </g>
+                <polygon points="60,8 56,15 64,15" fill="#fff" opacity="0.8"/>
+            </svg>
+            <div id="phone-label" class="gauge-label">0.0&deg;</div>
+            <div class="gauge-title">PHONE</div>
+            <div id="calibrate-hint">TAP TO CALIBRATE</div>
+            <div id="calibrate-flash">CALIBRATED!</div>
+        </div>
+
+        <!-- Bike lean gauge -->
+        <div id="bike-gauge" class="gauge">
+            <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="55" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+                <path d="M 60 60 L 12.2 83.5 A 55 55 0 0 1 5 60 L 60 60" fill="rgba(255,50,50,0.25)" />
+                <path d="M 60 60 L 115 60 A 55 55 0 0 1 107.8 83.5 L 60 60" fill="rgba(255,50,50,0.25)" />
+                <line x1="60" y1="6" x2="60" y2="16" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                <line x1="28" y1="18.5" x2="33.5" y2="27" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+                <line x1="92" y1="18.5" x2="86.5" y2="27" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+                <line x1="10" y1="45" x2="20" y2="48" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+                <line x1="110" y1="45" x2="100" y2="48" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+                <g id="bike-needle" transform="rotate(0, 60, 60)">
+                    <line x1="15" y1="60" x2="50" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="70" y1="60" x2="105" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+                    <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
+                    <line x1="56" y1="60" x2="50" y2="60" stroke="#4af" stroke-width="2"/>
+                    <line x1="64" y1="60" x2="70" y2="60" stroke="#4af" stroke-width="2"/>
+                    <line x1="60" y1="56" x2="60" y2="52" stroke="#4af" stroke-width="2"/>
+                </g>
+                <polygon points="60,8 56,15 64,15" fill="#fff" opacity="0.8"/>
+            </svg>
+            <div id="bike-label" class="gauge-label">0.0&deg;</div>
+            <div class="gauge-title">BIKE</div>
+        </div>
     </div>
 
     <div id="crash-overlay"></div>
