@@ -144,7 +144,7 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["TandemRoom"]
+new_sqlite_classes = ["TandemRoom"]
 ```
 
 ### Cloudflare Costs
