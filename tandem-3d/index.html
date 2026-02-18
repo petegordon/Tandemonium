@@ -86,31 +86,107 @@
     color: white;
     cursor: pointer;
   }
+
+  /* Credits button & modal */
+  #credits-btn {
+    position: fixed;
+    top: 20px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.5);
+    color: white;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 36px;
+    text-align: center;
+    cursor: pointer;
+    z-index: 10;
+    padding: 0;
+  }
+
+  #credits-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+  }
+  #credits-modal.visible {
+    display: flex;
+  }
+  #credits-modal-inner {
+    background: white;
+    border-radius: 16px;
+    padding: 28px 24px;
+    max-width: 340px;
+    width: 90%;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: #333;
+    text-align: center;
+  }
+  #credits-modal-inner h3 {
+    margin-bottom: 12px;
+    font-size: 18px;
+    color: #111;
+  }
+  #credits-modal-inner a {
+    color: #1a73e8;
+    text-decoration: none;
+  }
+  #credits-modal-inner a:hover {
+    text-decoration: underline;
+  }
+  #credits-close {
+    margin-top: 18px;
+    padding: 10px 28px;
+    border: none;
+    border-radius: 8px;
+    background: #333;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
 
 <div id="speed-display">0 mph</div>
 
+<button id="credits-btn" title="Credits">i</button>
+
+<div id="credits-modal">
+  <div id="credits-modal-inner">
+    <h3>Credits</h3>
+    <p>
+      <a href="https://skfb.ly/pqIJQ" target="_blank" rel="noopener">"Tandem bicycle"</a>
+      by <strong>Sameer.Rayeen</strong> is licensed under
+      <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">Creative Commons Attribution</a>.
+    </p>
+    <button id="credits-close">Close</button>
+  </div>
+</div>
+
 <div id="pedals-container">
   <div class="pedal-btn" id="pedal-left">
     <svg viewBox="0 0 100 100">
-      <!-- Left pedal crank -->
       <circle cx="50" cy="55" r="18" fill="none" stroke="#222" stroke-width="4"/>
       <circle cx="50" cy="55" r="4" fill="#222"/>
-      <!-- Crank arm going upper-left -->
       <line x1="50" y1="55" x2="25" y2="30" stroke="#222" stroke-width="6" stroke-linecap="round"/>
-      <!-- Pedal platform upper-left -->
       <rect x="12" y="22" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 25 28)"/>
-      <!-- Crank arm going lower-right -->
       <line x1="50" y1="55" x2="75" y2="80" stroke="#222" stroke-width="6" stroke-linecap="round"/>
-      <!-- Pedal platform lower-right -->
       <rect x="62" y="72" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 75 78)"/>
     </svg>
   </div>
   <div class="pedal-btn" id="pedal-right">
     <svg viewBox="0 0 100 100" style="transform: scaleX(-1);">
-      <!-- Right pedal crank (mirrored) -->
       <circle cx="50" cy="55" r="18" fill="none" stroke="#222" stroke-width="4"/>
       <circle cx="50" cy="55" r="4" fill="#222"/>
       <line x1="50" y1="55" x2="25" y2="30" stroke="#222" stroke-width="6" stroke-linecap="round"/>
@@ -137,6 +213,17 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ── Credits Modal ──
+const creditsBtn = document.getElementById('credits-btn');
+const creditsModal = document.getElementById('credits-modal');
+const creditsClose = document.getElementById('credits-close');
+creditsBtn.addEventListener('click', () => creditsModal.classList.add('visible'));
+creditsClose.addEventListener('click', () => creditsModal.classList.remove('visible'));
+creditsModal.addEventListener('click', (e) => {
+  if (e.target === creditsModal) creditsModal.classList.remove('visible');
+});
 
 // ── Scene Setup ──
 const scene = new THREE.Scene();
@@ -193,258 +280,64 @@ floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-// ── Tandem Bike Construction ──
-const bikeMat = {
-  frame: new THREE.MeshStandardMaterial({ color: 0xcc2222, metalness: 0.6, roughness: 0.3 }),
-  tire: new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 }),
-  spoke: new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.8 }),
-  handlebar: new THREE.MeshStandardMaterial({ color: 0xeeeeee, metalness: 0.7, roughness: 0.2 }),
-  seat: new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.5 }),
-  pedal: new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.7 }),
-  chain: new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.5 }),
-};
-
+// ── Tandem Bike (GLB Model) ──
 const bikeGroup = new THREE.Group();
-
-// Helper to create a tube/cylinder along a direction
-function createTube(radius, length, material) {
-  const geom = new THREE.CylinderGeometry(radius, radius, length, 12);
-  return new THREE.Mesh(geom, material);
-}
-
-// Helper to create a wheel
-function createWheel(radius, tubeRadius) {
-  const group = new THREE.Group();
-
-  // Tire (torus)
-  const tireGeom = new THREE.TorusGeometry(radius, tubeRadius, 12, 32);
-  const tire = new THREE.Mesh(tireGeom, bikeMat.tire);
-  tire.castShadow = true;
-  group.add(tire);
-
-  // Hub
-  const hubGeom = new THREE.CylinderGeometry(0.04, 0.04, 0.12, 8);
-  const hub = new THREE.Mesh(hubGeom, bikeMat.spoke);
-  hub.rotation.x = Math.PI / 2;
-  group.add(hub);
-
-  // Spokes
-  for (let i = 0; i < 12; i++) {
-    const angle = (i / 12) * Math.PI * 2;
-    const spokeGeom = new THREE.CylinderGeometry(0.008, 0.008, radius - 0.02, 4);
-    const spoke = new THREE.Mesh(spokeGeom, bikeMat.spoke);
-    spoke.position.set(Math.cos(angle) * radius * 0.48, Math.sin(angle) * radius * 0.48, 0);
-    spoke.rotation.z = angle + Math.PI / 2;
-    group.add(spoke);
-  }
-
-  return group;
-}
-
-const wheelRadius = 0.42;
-const wheelTube = 0.06;
-
-// Front wheel
-const frontWheel = createWheel(wheelRadius, wheelTube);
-frontWheel.position.set(0, wheelRadius, 1.5);
-frontWheel.rotation.y = Math.PI / 2;
-bikeGroup.add(frontWheel);
-
-// Rear wheel
-const rearWheel = createWheel(wheelRadius, wheelTube);
-rearWheel.position.set(0, wheelRadius, -0.7);
-rearWheel.rotation.y = Math.PI / 2;
-bikeGroup.add(rearWheel);
-
-// ── Frame ──
-// Main top tube (longer for tandem)
-const topTube = createTube(0.03, 2.0, bikeMat.frame);
-topTube.position.set(0, 0.72, 0.4);
-topTube.rotation.x = Math.PI / 2;
-topTube.castShadow = true;
-bikeGroup.add(topTube);
-
-// Down tube front
-const downTubeFront = createTube(0.03, 0.85, bikeMat.frame);
-downTubeFront.position.set(0, 0.55, 1.15);
-downTubeFront.rotation.x = 0.4;
-downTubeFront.castShadow = true;
-bikeGroup.add(downTubeFront);
-
-// Down tube rear
-const downTubeRear = createTube(0.03, 0.75, bikeMat.frame);
-downTubeRear.position.set(0, 0.52, -0.35);
-downTubeRear.rotation.x = -0.5;
-downTubeRear.castShadow = true;
-bikeGroup.add(downTubeRear);
-
-// Seat tube front (front rider)
-const seatTubeFront = createTube(0.028, 0.55, bikeMat.frame);
-seatTubeFront.position.set(0, 0.65, 0.55);
-seatTubeFront.castShadow = true;
-bikeGroup.add(seatTubeFront);
-
-// Seat tube rear (rear rider)
-const seatTubeRear = createTube(0.028, 0.55, bikeMat.frame);
-seatTubeRear.position.set(0, 0.65, -0.2);
-seatTubeRear.castShadow = true;
-bikeGroup.add(seatTubeRear);
-
-// Chain stays
-const chainStayL = createTube(0.02, 0.65, bikeMat.frame);
-chainStayL.position.set(0, wheelRadius, -0.38);
-chainStayL.rotation.x = Math.PI / 2 + 0.25;
-chainStayL.castShadow = true;
-bikeGroup.add(chainStayL);
-
-// Head tube (steering column)
-const headTube = createTube(0.035, 0.3, bikeMat.frame);
-headTube.position.set(0, 0.78, 1.4);
-headTube.rotation.x = 0.2;
-headTube.castShadow = true;
-bikeGroup.add(headTube);
-
-// Fork
-const forkL = createTube(0.02, 0.55, bikeMat.frame);
-forkL.position.set(0.06, 0.55, 1.48);
-forkL.rotation.x = 0.15;
-forkL.castShadow = true;
-bikeGroup.add(forkL);
-
-const forkR = createTube(0.02, 0.55, bikeMat.frame);
-forkR.position.set(-0.06, 0.55, 1.48);
-forkR.rotation.x = 0.15;
-forkR.castShadow = true;
-bikeGroup.add(forkR);
-
-// Handlebar
-const handlebar = createTube(0.02, 0.5, bikeMat.handlebar);
-handlebar.position.set(0, 0.95, 1.45);
-handlebar.rotation.z = Math.PI / 2;
-handlebar.castShadow = true;
-bikeGroup.add(handlebar);
-
-// Handlebar grips
-const gripL = createTube(0.025, 0.1, bikeMat.tire);
-gripL.position.set(0.28, 0.95, 1.45);
-gripL.rotation.z = Math.PI / 2;
-bikeGroup.add(gripL);
-
-const gripR = createTube(0.025, 0.1, bikeMat.tire);
-gripR.position.set(-0.28, 0.95, 1.45);
-gripR.rotation.z = Math.PI / 2;
-bikeGroup.add(gripR);
-
-// ── Seats ──
-function createSeat() {
-  const seatGeom = new THREE.BoxGeometry(0.14, 0.04, 0.25);
-  const seat = new THREE.Mesh(seatGeom, bikeMat.seat);
-  seat.castShadow = true;
-  return seat;
-}
-
-const frontSeat = createSeat();
-frontSeat.position.set(0, 0.95, 0.5);
-bikeGroup.add(frontSeat);
-
-const rearSeat = createSeat();
-rearSeat.position.set(0, 0.93, -0.25);
-bikeGroup.add(rearSeat);
-
-// ── Pedal Cranks ──
-const crankLength = 0.22;
-
-// Front crank assembly
-const frontCrankGroup = new THREE.Group();
-frontCrankGroup.position.set(0, 0.38, 0.55);
-
-const frontCrankArm1 = createTube(0.015, crankLength, bikeMat.pedal);
-frontCrankArm1.position.set(0.12, crankLength / 2, 0);
-frontCrankArm1.rotation.z = Math.PI / 2;
-frontCrankGroup.add(frontCrankArm1);
-
-const frontCrankArm2 = createTube(0.015, crankLength, bikeMat.pedal);
-frontCrankArm2.position.set(-0.12, -crankLength / 2, 0);
-frontCrankArm2.rotation.z = Math.PI / 2;
-frontCrankGroup.add(frontCrankArm2);
-
-const frontPedal1Geom = new THREE.BoxGeometry(0.1, 0.02, 0.06);
-const frontPedal1 = new THREE.Mesh(frontPedal1Geom, bikeMat.pedal);
-frontPedal1.position.set(0.12, crankLength, 0);
-frontCrankGroup.add(frontPedal1);
-
-const frontPedal2Geom = new THREE.BoxGeometry(0.1, 0.02, 0.06);
-const frontPedal2 = new THREE.Mesh(frontPedal2Geom, bikeMat.pedal);
-frontPedal2.position.set(-0.12, -crankLength, 0);
-frontCrankGroup.add(frontPedal2);
-
-bikeGroup.add(frontCrankGroup);
-
-// Rear crank assembly (180° offset for tandem)
-const rearCrankGroup = new THREE.Group();
-rearCrankGroup.position.set(0, 0.38, -0.2);
-
-const rearCrankArm1 = createTube(0.015, crankLength, bikeMat.pedal);
-rearCrankArm1.position.set(0.12, crankLength / 2, 0);
-rearCrankArm1.rotation.z = Math.PI / 2;
-rearCrankGroup.add(rearCrankArm1);
-
-const rearCrankArm2 = createTube(0.015, crankLength, bikeMat.pedal);
-rearCrankArm2.position.set(-0.12, -crankLength / 2, 0);
-rearCrankArm2.rotation.z = Math.PI / 2;
-rearCrankGroup.add(rearCrankArm2);
-
-const rearPedal1Geom = new THREE.BoxGeometry(0.1, 0.02, 0.06);
-const rearPedal1 = new THREE.Mesh(rearPedal1Geom, bikeMat.pedal);
-rearPedal1.position.set(0.12, crankLength, 0);
-rearCrankGroup.add(rearPedal1);
-
-const rearPedal2Geom = new THREE.BoxGeometry(0.1, 0.02, 0.06);
-const rearPedal2 = new THREE.Mesh(rearPedal2Geom, bikeMat.pedal);
-rearPedal2.position.set(-0.12, -crankLength, 0);
-rearCrankGroup.add(rearPedal2);
-
-// Start rear cranks 180° offset (tandem style)
-rearCrankGroup.rotation.z = Math.PI;
-bikeGroup.add(rearCrankGroup);
-
-// Sprocket visual (front)
-const sprocketFrontGeom = new THREE.TorusGeometry(0.08, 0.015, 6, 20);
-const sprocketFront = new THREE.Mesh(sprocketFrontGeom, bikeMat.chain);
-sprocketFront.position.set(0, 0.38, 0.55);
-sprocketFront.rotation.y = Math.PI / 2;
-bikeGroup.add(sprocketFront);
-
-// Sprocket visual (rear)
-const sprocketRear = new THREE.Mesh(sprocketFrontGeom.clone(), bikeMat.chain);
-sprocketRear.position.set(0, 0.38, -0.2);
-sprocketRear.rotation.y = Math.PI / 2;
-bikeGroup.add(sprocketRear);
-
-// Sprocket on rear wheel
-const sprocketWheelGeom = new THREE.TorusGeometry(0.06, 0.012, 6, 16);
-const sprocketWheel = new THREE.Mesh(sprocketWheelGeom, bikeMat.chain);
-sprocketWheel.position.set(0, wheelRadius, -0.7);
-sprocketWheel.rotation.y = Math.PI / 2;
-bikeGroup.add(sprocketWheel);
-
 scene.add(bikeGroup);
+
+let bikeModelLoaded = false;
+
+const loader = new GLTFLoader();
+loader.load('tandem_bicycle.glb', (gltf) => {
+  const model = gltf.scene;
+
+  // Enable shadows on all meshes
+  model.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  // Measure the model to scale/position it appropriately
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+
+  // Scale so the bike is ~2m long (reasonable bike size)
+  const targetLength = 2.2;
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const scale = targetLength / maxDim;
+  model.scale.setScalar(scale);
+
+  // Recalculate after scaling
+  box.setFromObject(model);
+  box.getCenter(center);
+  const scaledSize = box.getSize(new THREE.Vector3());
+
+  // Center horizontally, sit on ground (y=0)
+  model.position.set(-center.x, -box.min.y, -center.z);
+
+  bikeGroup.add(model);
+  bikeModelLoaded = true;
+
+  console.log('Tandem bicycle loaded:', scaledSize);
+}, undefined, (err) => {
+  console.error('Failed to load tandem_bicycle.glb:', err);
+});
 
 // ── Bike Physics State ──
 const bikeState = {
   x: 0,
   z: 0,
-  heading: 0, // radians, 0 = +Z direction
+  heading: 0,
   speed: 0,
   crankAngle: 0,
-  tilt: 0, // lean angle from device orientation
-  steerAngle: 0,
 };
 
 const BIKE_CONFIG = {
   maxSpeed: 10,
   acceleration: 0.12,
-  deceleration: 0.988, // friction (gentler coast)
+  deceleration: 0.988,
   brakeDecel: 0.95,
   turnRate: 1.5,
   crankSpeedFactor: 4,
@@ -455,8 +348,8 @@ const BIKE_CONFIG = {
 const input = {
   leftPedal: false,
   rightPedal: false,
-  lastPedal: null, // track alternation
-  tiltBeta: 0, // device tilt left-right
+  lastPedal: null,
+  tiltBeta: 0,
   tiltEnabled: false,
   keyLeft: false,
   keyRight: false,
@@ -470,7 +363,6 @@ function handlePedalDown(side) {
   input[side] = true;
   document.getElementById(side === 'leftPedal' ? 'pedal-left' : 'pedal-right').classList.add('pressed');
 
-  // Alternating pedal boost
   if (input.lastPedal !== side) {
     bikeState.speed = Math.min(bikeState.speed + BIKE_CONFIG.pedalBoost, BIKE_CONFIG.maxSpeed);
     input.lastPedal = side;
@@ -491,7 +383,7 @@ pedalRightEl.addEventListener('touchstart', (e) => { e.preventDefault(); handleP
 pedalRightEl.addEventListener('touchend', (e) => { e.preventDefault(); handlePedalUp('rightPedal'); });
 pedalRightEl.addEventListener('touchcancel', (e) => { e.preventDefault(); handlePedalUp('rightPedal'); });
 
-// Mouse fallback for desktop
+// Mouse fallback
 pedalLeftEl.addEventListener('mousedown', () => handlePedalDown('leftPedal'));
 pedalLeftEl.addEventListener('mouseup', () => handlePedalUp('leftPedal'));
 pedalLeftEl.addEventListener('mouseleave', () => handlePedalUp('leftPedal'));
@@ -522,14 +414,13 @@ const enableTiltBtn = document.getElementById('enable-tilt');
 function setupDeviceOrientation() {
   window.addEventListener('deviceorientation', (e) => {
     if (e.gamma !== null) {
-      input.tiltBeta = e.gamma; // gamma = left/right tilt in portrait mode
+      input.tiltBeta = e.gamma;
       input.tiltEnabled = true;
     }
   });
 }
 
 if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-  // iOS 13+ requires permission
   tiltPermissionEl.style.display = 'block';
   enableTiltBtn.addEventListener('click', async () => {
     try {
@@ -543,12 +434,10 @@ if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEve
     tiltPermissionEl.style.display = 'none';
   });
 } else {
-  // Non-iOS or desktop
   setupDeviceOrientation();
 }
 
 // ── Camera (fixed-angle, follows position only) ──
-// Fixed world-space offset: above and behind (negative Z = "south")
 const cameraOffset = new THREE.Vector3(0, 6, -4.5);
 const smoothCamPos = new THREE.Vector3();
 const smoothCamLook = new THREE.Vector3();
@@ -566,12 +455,10 @@ const speedDisplay = document.getElementById('speed-display');
 const clock = new THREE.Clock();
 
 function update(dt) {
-  // ── Smooth tilt input (low-pass filter) ──
+  // Smooth tilt input (low-pass filter)
   let rawSteer = 0;
   if (input.tiltEnabled) {
-    // Clamp tilt to ±35 degrees, normalize to ±1
     const rawTilt = Math.max(-1, Math.min(1, input.tiltBeta / 35));
-    // Smooth the raw tilt to remove jitter
     smoothTilt += (rawTilt - smoothTilt) * Math.min(1, 6 * dt);
     rawSteer = smoothTilt;
   }
@@ -579,19 +466,18 @@ function update(dt) {
   if (input.keyRight) rawSteer += 1;
   rawSteer = Math.max(-1, Math.min(1, rawSteer));
 
-  // Smooth the final steer value for fluid feel
   smoothSteer += (rawSteer - smoothSteer) * Math.min(1, 5 * dt);
 
-  // Pedaling (either pedal adds power)
+  // Pedaling
   if (input.leftPedal || input.rightPedal) {
     bikeState.speed = Math.min(bikeState.speed + BIKE_CONFIG.acceleration * dt * 60, BIKE_CONFIG.maxSpeed);
   }
 
-  // Friction / deceleration
+  // Friction
   bikeState.speed *= BIKE_CONFIG.deceleration;
   if (bikeState.speed < 0.01) bikeState.speed = 0;
 
-  // Steering (speed-dependent, using smoothed input)
+  // Steering
   const speedFactor = Math.min(bikeState.speed / 3, 1);
   bikeState.heading += smoothSteer * BIKE_CONFIG.turnRate * speedFactor * dt;
 
@@ -599,10 +485,7 @@ function update(dt) {
   bikeState.x += Math.sin(bikeState.heading) * bikeState.speed * dt;
   bikeState.z += Math.cos(bikeState.heading) * bikeState.speed * dt;
 
-  // Crank rotation
-  bikeState.crankAngle += bikeState.speed * BIKE_CONFIG.crankSpeedFactor * dt;
-
-  // Update bike group position/rotation
+  // Update bike group
   bikeGroup.position.set(bikeState.x, 0, bikeState.z);
   bikeGroup.rotation.y = bikeState.heading;
 
@@ -610,15 +493,6 @@ function update(dt) {
   const targetLean = -smoothSteer * speedFactor * 0.18;
   smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
   bikeGroup.rotation.z = smoothLean;
-
-  // Spin wheels
-  const wheelSpin = bikeState.speed * dt * (1 / wheelRadius);
-  frontWheel.children[0].rotation.z += wheelSpin;
-  rearWheel.children[0].rotation.z += wheelSpin;
-
-  // Spin cranks
-  frontCrankGroup.rotation.z = bikeState.crankAngle;
-  rearCrankGroup.rotation.z = bikeState.crankAngle + Math.PI; // 180° offset
 
   // Move directional light with bike
   dirLight.position.set(bikeState.x + 10, 20, bikeState.z + 10);
@@ -629,8 +503,7 @@ function update(dt) {
   floor.position.x = Math.round(bikeState.x / tileSize) * tileSize;
   floor.position.z = Math.round(bikeState.z / tileSize) * tileSize;
 
-  // ── Camera Follow (fixed angle, follows position only) ──
-  // Camera stays at a fixed world-space offset — does NOT rotate with bike heading
+  // Camera follow (fixed angle, follows position only)
   const targetCamPos = new THREE.Vector3(
     bikeState.x + cameraOffset.x,
     cameraOffset.y,
@@ -649,7 +522,6 @@ function update(dt) {
     cameraInitialized = true;
   }
 
-  // Smooth follow on position
   const camSmooth = Math.min(1, 4.0 * dt);
   smoothCamPos.lerp(targetCamPos, camSmooth);
   smoothCamLook.lerp(targetLookAt, camSmooth);
