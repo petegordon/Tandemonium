@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tandemonium 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #pedals-container {
+    position: fixed;
+    bottom: 20px;
+    left: 0; right: 0;
+    display: flex;
+    justify-content: space-around;
+    padding: 0 20px;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .pedal-btn {
+    width: 130px;
+    height: 130px;
+    background: rgba(255,255,255,0.85);
+    border: 3px solid #999;
+    border-radius: 18px;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .pedal-btn:active, .pedal-btn.pressed {
+    background: rgba(200,200,200,0.95);
+    border-color: #666;
+  }
+
+  .pedal-btn svg {
+    width: 90px;
+    height: 90px;
+  }
+
+  #speed-display {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 18px;
+    font-weight: 600;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 20px;
+    border-radius: 20px;
+    z-index: 10;
+    text-align: center;
+  }
+
+  #tilt-permission {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.85);
+    color: white;
+    padding: 30px;
+    border-radius: 16px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    text-align: center;
+    z-index: 100;
+    display: none;
+  }
+  #tilt-permission button {
+    margin-top: 15px;
+    padding: 12px 30px;
+    font-size: 18px;
+    border: none;
+    border-radius: 10px;
+    background: #4CAF50;
+    color: white;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="speed-display">0 mph</div>
+
+<div id="pedals-container">
+  <div class="pedal-btn" id="pedal-left">
+    <svg viewBox="0 0 100 100">
+      <!-- Left pedal crank -->
+      <circle cx="50" cy="55" r="18" fill="none" stroke="#222" stroke-width="4"/>
+      <circle cx="50" cy="55" r="4" fill="#222"/>
+      <!-- Crank arm going upper-left -->
+      <line x1="50" y1="55" x2="25" y2="30" stroke="#222" stroke-width="6" stroke-linecap="round"/>
+      <!-- Pedal platform upper-left -->
+      <rect x="12" y="22" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 25 28)"/>
+      <!-- Crank arm going lower-right -->
+      <line x1="50" y1="55" x2="75" y2="80" stroke="#222" stroke-width="6" stroke-linecap="round"/>
+      <!-- Pedal platform lower-right -->
+      <rect x="62" y="72" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 75 78)"/>
+    </svg>
+  </div>
+  <div class="pedal-btn" id="pedal-right">
+    <svg viewBox="0 0 100 100" style="transform: scaleX(-1);">
+      <!-- Right pedal crank (mirrored) -->
+      <circle cx="50" cy="55" r="18" fill="none" stroke="#222" stroke-width="4"/>
+      <circle cx="50" cy="55" r="4" fill="#222"/>
+      <line x1="50" y1="55" x2="25" y2="30" stroke="#222" stroke-width="6" stroke-linecap="round"/>
+      <rect x="12" y="22" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 25 28)"/>
+      <line x1="50" y1="55" x2="75" y2="80" stroke="#222" stroke-width="6" stroke-linecap="round"/>
+      <rect x="62" y="72" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 75 78)"/>
+    </svg>
+  </div>
+</div>
+
+<div id="tilt-permission">
+  <p>Tap to enable tilt steering</p>
+  <button id="enable-tilt">Enable Tilt</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ── Scene Setup ──
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xc8d8e8);
+scene.fog = new THREE.Fog(0xc8d8e8, 40, 120);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+// ── Lighting ──
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+dirLight.position.set(10, 20, 10);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 80;
+dirLight.shadow.camera.left = -30;
+dirLight.shadow.camera.right = 30;
+dirLight.shadow.camera.top = 30;
+dirLight.shadow.camera.bottom = -30;
+scene.add(dirLight);
+
+// ── Checkered Floor ──
+const floorSize = 200;
+const tileSize = 4;
+const tilesPerSide = floorSize / tileSize;
+
+const floorGeom = new THREE.PlaneGeometry(floorSize, floorSize);
+const canvas2d = document.createElement('canvas');
+canvas2d.width = tilesPerSide;
+canvas2d.height = tilesPerSide;
+const ctx = canvas2d.getContext('2d');
+for (let y = 0; y < tilesPerSide; y++) {
+  for (let x = 0; x < tilesPerSide; x++) {
+    ctx.fillStyle = (x + y) % 2 === 0 ? '#d0d0d0' : '#a0a0a0';
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+const floorTexture = new THREE.CanvasTexture(canvas2d);
+floorTexture.magFilter = THREE.NearestFilter;
+floorTexture.minFilter = THREE.NearestFilter;
+const floorMat = new THREE.MeshStandardMaterial({ map: floorTexture });
+const floor = new THREE.Mesh(floorGeom, floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ── Tandem Bike Construction ──
+const bikeMat = {
+  frame: new THREE.MeshStandardMaterial({ color: 0xcc2222, metalness: 0.6, roughness: 0.3 }),
+  tire: new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 }),
+  spoke: new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.8 }),
+  handlebar: new THREE.MeshStandardMaterial({ color: 0xeeeeee, metalness: 0.7, roughness: 0.2 }),
+  seat: new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.5 }),
+  pedal: new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.7 }),
+  chain: new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.5 }),
+};
+
+const bikeGroup = new THREE.Group();
+
+// Helper to create a tube/cylinder along a direction
+function createTube(radius, length, material) {
+  const geom = new THREE.CylinderGeometry(radius, radius, length, 12);
+  return new THREE.Mesh(geom, material);
+}
+
+// Helper to create a wheel
+function createWheel(radius, tubeRadius) {
+  const group = new THREE.Group();
+
+  // Tire (torus)
+  const tireGeom = new THREE.TorusGeometry(radius, tubeRadius, 12, 32);
+  const tire = new THREE.Mesh(tireGeom, bikeMat.tire);
+  tire.castShadow = true;
+  group.add(tire);
+
+  // Hub
+  const hubGeom = new THREE.CylinderGeometry(0.04, 0.04, 0.12, 8);
+  const hub = new THREE.Mesh(hubGeom, bikeMat.spoke);
+  hub.rotation.x = Math.PI / 2;
+  group.add(hub);
+
+  // Spokes
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2;
+    const spokeGeom = new THREE.CylinderGeometry(0.008, 0.008, radius - 0.02, 4);
+    const spoke = new THREE.Mesh(spokeGeom, bikeMat.spoke);
+    spoke.position.set(Math.cos(angle) * radius * 0.48, Math.sin(angle) * radius * 0.48, 0);
+    spoke.rotation.z = angle + Math.PI / 2;
+    group.add(spoke);
+  }
+
+  return group;
+}
+
+const wheelRadius = 0.42;
+const wheelTube = 0.06;
+
+// Front wheel
+const frontWheel = createWheel(wheelRadius, wheelTube);
+frontWheel.position.set(0, wheelRadius, 1.5);
+frontWheel.rotation.y = Math.PI / 2;
+bikeGroup.add(frontWheel);
+
+// Rear wheel
+const rearWheel = createWheel(wheelRadius, wheelTube);
+rearWheel.position.set(0, wheelRadius, -0.7);
+rearWheel.rotation.y = Math.PI / 2;
+bikeGroup.add(rearWheel);
+
+// ── Frame ──
+// Main top tube (longer for tandem)
+const topTube = createTube(0.03, 2.0, bikeMat.frame);
+topTube.position.set(0, 0.72, 0.4);
+topTube.rotation.x = Math.PI / 2;
+topTube.castShadow = true;
+bikeGroup.add(topTube);
+
+// Down tube front
+const downTubeFront = createTube(0.03, 0.85, bikeMat.frame);
+downTubeFront.position.set(0, 0.55, 1.15);
+downTubeFront.rotation.x = 0.4;
+downTubeFront.castShadow = true;
+bikeGroup.add(downTubeFront);
+
+// Down tube rear
+const downTubeRear = createTube(0.03, 0.75, bikeMat.frame);
+downTubeRear.position.set(0, 0.52, -0.35);
+downTubeRear.rotation.x = -0.5;
+downTubeRear.castShadow = true;
+bikeGroup.add(downTubeRear);
+
+// Seat tube front (front rider)
+const seatTubeFront = createTube(0.028, 0.55, bikeMat.frame);
+seatTubeFront.position.set(0, 0.65, 0.55);
+seatTubeFront.castShadow = true;
+bikeGroup.add(seatTubeFront);
+
+// Seat tube rear (rear rider)
+const seatTubeRear = createTube(0.028, 0.55, bikeMat.frame);
+seatTubeRear.position.set(0, 0.65, -0.2);
+seatTubeRear.castShadow = true;
+bikeGroup.add(seatTubeRear);
+
+// Chain stays
+const chainStayL = createTube(0.02, 0.65, bikeMat.frame);
+chainStayL.position.set(0, wheelRadius, -0.38);
+chainStayL.rotation.x = Math.PI / 2 + 0.25;
+chainStayL.castShadow = true;
+bikeGroup.add(chainStayL);
+
+// Head tube (steering column)
+const headTube = createTube(0.035, 0.3, bikeMat.frame);
+headTube.position.set(0, 0.78, 1.4);
+headTube.rotation.x = 0.2;
+headTube.castShadow = true;
+bikeGroup.add(headTube);
+
+// Fork
+const forkL = createTube(0.02, 0.55, bikeMat.frame);
+forkL.position.set(0.06, 0.55, 1.48);
+forkL.rotation.x = 0.15;
+forkL.castShadow = true;
+bikeGroup.add(forkL);
+
+const forkR = createTube(0.02, 0.55, bikeMat.frame);
+forkR.position.set(-0.06, 0.55, 1.48);
+forkR.rotation.x = 0.15;
+forkR.castShadow = true;
+bikeGroup.add(forkR);
+
+// Handlebar
+const handlebar = createTube(0.02, 0.5, bikeMat.handlebar);
+handlebar.position.set(0, 0.95, 1.45);
+handlebar.rotation.z = Math.PI / 2;
+handlebar.castShadow = true;
+bikeGroup.add(handlebar);
+
+// Handlebar grips
+const gripL = createTube(0.025, 0.1, bikeMat.tire);
+gripL.position.set(0.28, 0.95, 1.45);
+gripL.rotation.z = Math.PI / 2;
+bikeGroup.add(gripL);
+
+const gripR = createTube(0.025, 0.1, bikeMat.tire);
+gripR.position.set(-0.28, 0.95, 1.45);
+gripR.rotation.z = Math.PI / 2;
+bikeGroup.add(gripR);
+
+// ── Seats ──
+function createSeat() {
+  const seatGeom = new THREE.BoxGeometry(0.14, 0.04, 0.25);
+  const seat = new THREE.Mesh(seatGeom, bikeMat.seat);
+  seat.castShadow = true;
+  return seat;
+}
+
+const frontSeat = createSeat();
+frontSeat.position.set(0, 0.95, 0.5);
+bikeGroup.add(frontSeat);
+
+const rearSeat = createSeat();
+rearSeat.position.set(0, 0.93, -0.25);
+bikeGroup.add(rearSeat);
+
+// ── Pedal Cranks ──
+const crankLength = 0.22;
+
+// Front crank assembly
+const frontCrankGroup = new THREE.Group();
+frontCrankGroup.position.set(0, 0.38, 0.55);
+
+const frontCrankArm1 = createTube(0.015, crankLength, bikeMat.pedal);
+frontCrankArm1.position.set(0.12, crankLength / 2, 0);
+frontCrankArm1.rotation.z = Math.PI / 2;
+frontCrankGroup.add(frontCrankArm1);
+
+const frontCrankArm2 = createTube(0.015, crankLength, bikeMat.pedal);
+frontCrankArm2.position.set(-0.12, -crankLength / 2, 0);
+frontCrankArm2.rotation.z = Math.PI / 2;
+frontCrankGroup.add(frontCrankArm2);
+
+const frontPedal1Geom = new THREE.BoxGeometry(0.1, 0.02, 0.06);
+const frontPedal1 = new THREE.Mesh(frontPedal1Geom, bikeMat.pedal);
+frontPedal1.position.set(0.12, crankLength, 0);
+frontCrankGroup.add(frontPedal1);
+
+const frontPedal2Geom = new THREE.BoxGeometry(0.1, 0.02, 0.06);
+const frontPedal2 = new THREE.Mesh(frontPedal2Geom, bikeMat.pedal);
+frontPedal2.position.set(-0.12, -crankLength, 0);
+frontCrankGroup.add(frontPedal2);
+
+bikeGroup.add(frontCrankGroup);
+
+// Rear crank assembly (180° offset for tandem)
+const rearCrankGroup = new THREE.Group();
+rearCrankGroup.position.set(0, 0.38, -0.2);
+
+const rearCrankArm1 = createTube(0.015, crankLength, bikeMat.pedal);
+rearCrankArm1.position.set(0.12, crankLength / 2, 0);
+rearCrankArm1.rotation.z = Math.PI / 2;
+rearCrankGroup.add(rearCrankArm1);
+
+const rearCrankArm2 = createTube(0.015, crankLength, bikeMat.pedal);
+rearCrankArm2.position.set(-0.12, -crankLength / 2, 0);
+rearCrankArm2.rotation.z = Math.PI / 2;
+rearCrankGroup.add(rearCrankArm2);
+
+const rearPedal1Geom = new THREE.BoxGeometry(0.1, 0.02, 0.06);
+const rearPedal1 = new THREE.Mesh(rearPedal1Geom, bikeMat.pedal);
+rearPedal1.position.set(0.12, crankLength, 0);
+rearCrankGroup.add(rearPedal1);
+
+const rearPedal2Geom = new THREE.BoxGeometry(0.1, 0.02, 0.06);
+const rearPedal2 = new THREE.Mesh(rearPedal2Geom, bikeMat.pedal);
+rearPedal2.position.set(-0.12, -crankLength, 0);
+rearCrankGroup.add(rearPedal2);
+
+// Start rear cranks 180° offset (tandem style)
+rearCrankGroup.rotation.z = Math.PI;
+bikeGroup.add(rearCrankGroup);
+
+// Sprocket visual (front)
+const sprocketFrontGeom = new THREE.TorusGeometry(0.08, 0.015, 6, 20);
+const sprocketFront = new THREE.Mesh(sprocketFrontGeom, bikeMat.chain);
+sprocketFront.position.set(0, 0.38, 0.55);
+sprocketFront.rotation.y = Math.PI / 2;
+bikeGroup.add(sprocketFront);
+
+// Sprocket visual (rear)
+const sprocketRear = new THREE.Mesh(sprocketFrontGeom.clone(), bikeMat.chain);
+sprocketRear.position.set(0, 0.38, -0.2);
+sprocketRear.rotation.y = Math.PI / 2;
+bikeGroup.add(sprocketRear);
+
+// Sprocket on rear wheel
+const sprocketWheelGeom = new THREE.TorusGeometry(0.06, 0.012, 6, 16);
+const sprocketWheel = new THREE.Mesh(sprocketWheelGeom, bikeMat.chain);
+sprocketWheel.position.set(0, wheelRadius, -0.7);
+sprocketWheel.rotation.y = Math.PI / 2;
+bikeGroup.add(sprocketWheel);
+
+scene.add(bikeGroup);
+
+// ── Bike Physics State ──
+const bikeState = {
+  x: 0,
+  z: 0,
+  heading: 0, // radians, 0 = +Z direction
+  speed: 0,
+  crankAngle: 0,
+  tilt: 0, // lean angle from device orientation
+  steerAngle: 0,
+};
+
+const BIKE_CONFIG = {
+  maxSpeed: 12,
+  acceleration: 0.15,
+  deceleration: 0.985, // friction
+  brakeDecel: 0.95,
+  turnRate: 1.8,
+  crankSpeedFactor: 4,
+  pedalBoost: 0.35,
+};
+
+// ── Input State ──
+const input = {
+  leftPedal: false,
+  rightPedal: false,
+  lastPedal: null, // track alternation
+  tiltBeta: 0, // device tilt left-right
+  tiltEnabled: false,
+  keyLeft: false,
+  keyRight: false,
+};
+
+// ── Pedal Controls ──
+const pedalLeftEl = document.getElementById('pedal-left');
+const pedalRightEl = document.getElementById('pedal-right');
+
+function handlePedalDown(side) {
+  input[side] = true;
+  document.getElementById(side === 'leftPedal' ? 'pedal-left' : 'pedal-right').classList.add('pressed');
+
+  // Alternating pedal boost
+  if (input.lastPedal !== side) {
+    bikeState.speed = Math.min(bikeState.speed + BIKE_CONFIG.pedalBoost, BIKE_CONFIG.maxSpeed);
+    input.lastPedal = side;
+  }
+}
+
+function handlePedalUp(side) {
+  input[side] = false;
+  document.getElementById(side === 'leftPedal' ? 'pedal-left' : 'pedal-right').classList.remove('pressed');
+}
+
+// Touch events
+pedalLeftEl.addEventListener('touchstart', (e) => { e.preventDefault(); handlePedalDown('leftPedal'); });
+pedalLeftEl.addEventListener('touchend', (e) => { e.preventDefault(); handlePedalUp('leftPedal'); });
+pedalLeftEl.addEventListener('touchcancel', (e) => { e.preventDefault(); handlePedalUp('leftPedal'); });
+
+pedalRightEl.addEventListener('touchstart', (e) => { e.preventDefault(); handlePedalDown('rightPedal'); });
+pedalRightEl.addEventListener('touchend', (e) => { e.preventDefault(); handlePedalUp('rightPedal'); });
+pedalRightEl.addEventListener('touchcancel', (e) => { e.preventDefault(); handlePedalUp('rightPedal'); });
+
+// Mouse fallback for desktop
+pedalLeftEl.addEventListener('mousedown', () => handlePedalDown('leftPedal'));
+pedalLeftEl.addEventListener('mouseup', () => handlePedalUp('leftPedal'));
+pedalLeftEl.addEventListener('mouseleave', () => handlePedalUp('leftPedal'));
+
+pedalRightEl.addEventListener('mousedown', () => handlePedalDown('rightPedal'));
+pedalRightEl.addEventListener('mouseup', () => handlePedalUp('rightPedal'));
+pedalRightEl.addEventListener('mouseleave', () => handlePedalUp('rightPedal'));
+
+// ── Keyboard Controls (Desktop) ──
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'w') handlePedalDown('leftPedal');
+  if (e.key === 'ArrowDown' || e.key === 's') handlePedalDown('rightPedal');
+  if (e.key === 'ArrowLeft' || e.key === 'a') input.keyLeft = true;
+  if (e.key === 'ArrowRight' || e.key === 'd') input.keyRight = true;
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'w') handlePedalUp('leftPedal');
+  if (e.key === 'ArrowDown' || e.key === 's') handlePedalUp('rightPedal');
+  if (e.key === 'ArrowLeft' || e.key === 'a') input.keyLeft = false;
+  if (e.key === 'ArrowRight' || e.key === 'd') input.keyRight = false;
+});
+
+// ── Device Orientation (Tilt Steering) ──
+const tiltPermissionEl = document.getElementById('tilt-permission');
+const enableTiltBtn = document.getElementById('enable-tilt');
+
+function setupDeviceOrientation() {
+  window.addEventListener('deviceorientation', (e) => {
+    if (e.gamma !== null) {
+      input.tiltBeta = e.gamma; // gamma = left/right tilt in portrait mode
+      input.tiltEnabled = true;
+    }
+  });
+}
+
+if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+  // iOS 13+ requires permission
+  tiltPermissionEl.style.display = 'block';
+  enableTiltBtn.addEventListener('click', async () => {
+    try {
+      const permission = await DeviceOrientationEvent.requestPermission();
+      if (permission === 'granted') {
+        setupDeviceOrientation();
+      }
+    } catch (err) {
+      console.warn('Tilt permission denied:', err);
+    }
+    tiltPermissionEl.style.display = 'none';
+  });
+} else {
+  // Non-iOS or desktop
+  setupDeviceOrientation();
+}
+
+// ── Camera ──
+const cameraOffset = new THREE.Vector3(0, 4.5, -5.5);
+const cameraLookOffset = new THREE.Vector3(0, 0.5, 3);
+const smoothCamPos = new THREE.Vector3();
+const smoothCamLook = new THREE.Vector3();
+let cameraInitialized = false;
+
+// ── Speed Display ──
+const speedDisplay = document.getElementById('speed-display');
+
+// ── Animation Loop ──
+const clock = new THREE.Clock();
+
+function update(dt) {
+  // Steering from tilt or keyboard
+  let steerInput = 0;
+  if (input.tiltEnabled) {
+    // Clamp tilt to ±30 degrees, normalize to ±1
+    steerInput = Math.max(-1, Math.min(1, input.tiltBeta / 30));
+  }
+  if (input.keyLeft) steerInput -= 1;
+  if (input.keyRight) steerInput += 1;
+  steerInput = Math.max(-1, Math.min(1, steerInput));
+
+  // Pedaling (either pedal adds power)
+  if (input.leftPedal || input.rightPedal) {
+    bikeState.speed = Math.min(bikeState.speed + BIKE_CONFIG.acceleration * dt * 60, BIKE_CONFIG.maxSpeed);
+  }
+
+  // Friction / deceleration
+  bikeState.speed *= BIKE_CONFIG.deceleration;
+  if (bikeState.speed < 0.01) bikeState.speed = 0;
+
+  // Steering (speed-dependent)
+  const speedFactor = Math.min(bikeState.speed / 3, 1);
+  bikeState.heading += steerInput * BIKE_CONFIG.turnRate * speedFactor * dt;
+
+  // Move bike
+  bikeState.x += Math.sin(bikeState.heading) * bikeState.speed * dt;
+  bikeState.z += Math.cos(bikeState.heading) * bikeState.speed * dt;
+
+  // Crank rotation
+  bikeState.crankAngle += bikeState.speed * BIKE_CONFIG.crankSpeedFactor * dt;
+
+  // Update bike group position/rotation
+  bikeGroup.position.set(bikeState.x, 0, bikeState.z);
+  bikeGroup.rotation.y = bikeState.heading;
+
+  // Slight lean into turns
+  const leanAngle = -steerInput * speedFactor * 0.15;
+  bikeGroup.rotation.z = leanAngle;
+
+  // Spin wheels
+  const wheelSpin = bikeState.speed * dt * (1 / wheelRadius);
+  frontWheel.children[0].rotation.z += wheelSpin;
+  rearWheel.children[0].rotation.z += wheelSpin;
+
+  // Spin cranks
+  frontCrankGroup.rotation.z = bikeState.crankAngle;
+  rearCrankGroup.rotation.z = bikeState.crankAngle + Math.PI; // 180° offset
+
+  // Move directional light with bike
+  dirLight.position.set(bikeState.x + 10, 20, bikeState.z + 10);
+  dirLight.target.position.set(bikeState.x, 0, bikeState.z);
+  dirLight.target.updateMatrixWorld();
+
+  // Move floor to follow bike (infinite floor illusion)
+  floor.position.x = Math.round(bikeState.x / tileSize) * tileSize;
+  floor.position.z = Math.round(bikeState.z / tileSize) * tileSize;
+
+  // ── Camera Follow ──
+  const bikeForward = new THREE.Vector3(Math.sin(bikeState.heading), 0, Math.cos(bikeState.heading));
+  const bikeRight = new THREE.Vector3(Math.cos(bikeState.heading), 0, -Math.sin(bikeState.heading));
+
+  const targetCamPos = new THREE.Vector3(
+    bikeState.x + bikeForward.x * cameraOffset.z + bikeRight.x * cameraOffset.x,
+    cameraOffset.y,
+    bikeState.z + bikeForward.z * cameraOffset.z + bikeRight.z * cameraOffset.x
+  );
+
+  const targetLookAt = new THREE.Vector3(
+    bikeState.x + bikeForward.x * cameraLookOffset.z,
+    cameraLookOffset.y,
+    bikeState.z + bikeForward.z * cameraLookOffset.z
+  );
+
+  if (!cameraInitialized) {
+    smoothCamPos.copy(targetCamPos);
+    smoothCamLook.copy(targetLookAt);
+    cameraInitialized = true;
+  }
+
+  // Smooth camera interpolation
+  const camSmoothing = 1 - Math.pow(0.01, dt);
+  smoothCamPos.lerp(targetCamPos, camSmoothing);
+  smoothCamLook.lerp(targetLookAt, camSmoothing);
+
+  camera.position.copy(smoothCamPos);
+  camera.lookAt(smoothCamLook);
+
+  // Speed display
+  const mph = (bikeState.speed * 2.237).toFixed(0); // rough conversion
+  speedDisplay.textContent = `${mph} mph`;
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  update(dt);
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// ── Resize ──
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+</script>
+</body>
+</html>
