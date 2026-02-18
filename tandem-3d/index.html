@@ -461,8 +461,14 @@ if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEve
   setupDeviceOrientation();
 }
 
-// ── Camera (fixed-angle, follows position only) ──
-const cameraOffset = new THREE.Vector3(0, 4.5, -8);
+// ── Camera (dynamic: close overhead when slow, pulls back at speed) ──
+// Stopped/slow camera: close, overhead
+const camOffsetSlow = new THREE.Vector3(0, 6, -3);
+const camLookSlow = new THREE.Vector3(0, 0.5, 1);
+// Full speed camera: pulled back, looking far down range
+const camOffsetFast = new THREE.Vector3(0, 4, -10);
+const camLookFast = new THREE.Vector3(0, 0.2, 8);
+
 const smoothCamPos = new THREE.Vector3();
 const smoothCamLook = new THREE.Vector3();
 let cameraInitialized = false;
@@ -529,17 +535,26 @@ function update(dt) {
   floor.position.x = Math.round(bikeState.x / snapSize) * snapSize;
   floor.position.z = Math.round(bikeState.z / snapSize) * snapSize;
 
-  // Camera follow (fixed angle, follows position only)
+  // Camera follow (dynamic: blend between slow/fast based on speed)
+  const speedT = Math.min(bikeState.speed / BIKE_CONFIG.maxSpeed, 1);
+
+  const camOffX = camOffsetSlow.x + (camOffsetFast.x - camOffsetSlow.x) * speedT;
+  const camOffY = camOffsetSlow.y + (camOffsetFast.y - camOffsetSlow.y) * speedT;
+  const camOffZ = camOffsetSlow.z + (camOffsetFast.z - camOffsetSlow.z) * speedT;
+
+  const lookOffY = camLookSlow.y + (camLookFast.y - camLookSlow.y) * speedT;
+  const lookOffZ = camLookSlow.z + (camLookFast.z - camLookSlow.z) * speedT;
+
   const targetCamPos = new THREE.Vector3(
-    bikeState.x + cameraOffset.x,
-    cameraOffset.y,
-    bikeState.z + cameraOffset.z
+    bikeState.x + camOffX,
+    camOffY,
+    bikeState.z + camOffZ
   );
 
   const targetLookAt = new THREE.Vector3(
     bikeState.x,
-    0.3,
-    bikeState.z + 6
+    lookOffY,
+    bikeState.z + lookOffZ
   );
 
   if (!cameraInitialized) {
@@ -548,7 +563,8 @@ function update(dt) {
     cameraInitialized = true;
   }
 
-  const camSmooth = Math.min(1, 4.0 * dt);
+  // Gentle lerp so camera transitions feel smooth
+  const camSmooth = Math.min(1, 2.5 * dt);
   smoothCamPos.lerp(targetCamPos, camSmooth);
   smoothCamLook.lerp(targetLookAt, camSmooth);
 
