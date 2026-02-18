@@ -243,7 +243,7 @@ const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambientLight);
 
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-dirLight.position.set(8, 18, -6);
+dirLight.position.set(-8, 18, -6);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.width = 2048;
 dirLight.shadow.mapSize.height = 2048;
@@ -519,7 +519,7 @@ function update(dt) {
   bikeGroup.rotation.z = smoothLean;
 
   // Move directional light with bike
-  dirLight.position.set(bikeState.x + 8, 18, bikeState.z - 6);
+  dirLight.position.set(bikeState.x - 8, 18, bikeState.z - 6);
   dirLight.target.position.set(bikeState.x, 0, bikeState.z);
   dirLight.target.updateMatrixWorld();
 
