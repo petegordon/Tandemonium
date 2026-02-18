@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tandemonium 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #pedals-container {
+    position: fixed;
+    bottom: 20px;
+    left: 0; right: 0;
+    display: flex;
+    justify-content: space-around;
+    padding: 0 20px;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .pedal-btn {
+    width: 130px;
+    height: 130px;
+    background: rgba(255,255,255,0.85);
+    border: 3px solid #999;
+    border-radius: 18px;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .pedal-btn:active, .pedal-btn.pressed {
+    background: rgba(200,200,200,0.95);
+    border-color: #666;
+  }
+
+  .pedal-btn svg {
+    width: 90px;
+    height: 90px;
+  }
+
+  #speed-display {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 18px;
+    font-weight: 600;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 20px;
+    border-radius: 20px;
+    z-index: 10;
+    text-align: center;
+  }
+
+  #tilt-permission {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.85);
+    color: white;
+    padding: 30px;
+    border-radius: 16px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    text-align: center;
+    z-index: 100;
+    display: none;
+  }
+  #tilt-permission button {
+    margin-top: 15px;
+    padding: 12px 30px;
+    font-size: 18px;
+    border: none;
+    border-radius: 10px;
+    background: #4CAF50;
+    color: white;
+    cursor: pointer;
+  }
+
+  /* Credits button & modal */
+  #credits-btn {
+    position: fixed;
+    top: 20px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.5);
+    color: white;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 36px;
+    text-align: center;
+    cursor: pointer;
+    z-index: 10;
+    padding: 0;
+  }
+
+  #credits-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+  }
+  #credits-modal.visible {
+    display: flex;
+  }
+  #credits-modal-inner {
+    background: white;
+    border-radius: 16px;
+    padding: 28px 24px;
+    max-width: 340px;
+    width: 90%;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    color: #333;
+    text-align: center;
+  }
+  #credits-modal-inner h3 {
+    margin-bottom: 12px;
+    font-size: 18px;
+    color: #111;
+  }
+  #credits-modal-inner a {
+    color: #1a73e8;
+    text-decoration: none;
+  }
+  #credits-modal-inner a:hover {
+    text-decoration: underline;
+  }
+  #credits-close {
+    margin-top: 18px;
+    padding: 10px 28px;
+    border: none;
+    border-radius: 8px;
+    background: #333;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="speed-display">0 mph</div>
+
+<button id="credits-btn" title="Credits">i</button>
+
+<div id="credits-modal">
+  <div id="credits-modal-inner">
+    <h3>Credits</h3>
+    <p>
+      <a href="https://skfb.ly/pqIJQ" target="_blank" rel="noopener">"Tandem bicycle"</a>
+      by <strong>Sameer.Rayeen</strong> is licensed under
+      <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">Creative Commons Attribution</a>.
+    </p>
+    <button id="credits-close">Close</button>
+  </div>
+</div>
+
+<div id="pedals-container">
+  <div class="pedal-btn" id="pedal-left">
+    <svg viewBox="0 0 100 100">
+      <circle cx="50" cy="55" r="18" fill="none" stroke="#222" stroke-width="4"/>
+      <circle cx="50" cy="55" r="4" fill="#222"/>
+      <line x1="50" y1="55" x2="25" y2="30" stroke="#222" stroke-width="6" stroke-linecap="round"/>
+      <rect x="12" y="22" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 25 28)"/>
+      <line x1="50" y1="55" x2="75" y2="80" stroke="#222" stroke-width="6" stroke-linecap="round"/>
+      <rect x="62" y="72" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 75 78)"/>
+    </svg>
+  </div>
+  <div class="pedal-btn" id="pedal-right">
+    <svg viewBox="0 0 100 100" style="transform: scaleX(-1);">
+      <circle cx="50" cy="55" r="18" fill="none" stroke="#222" stroke-width="4"/>
+      <circle cx="50" cy="55" r="4" fill="#222"/>
+      <line x1="50" y1="55" x2="25" y2="30" stroke="#222" stroke-width="6" stroke-linecap="round"/>
+      <rect x="12" y="22" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 25 28)"/>
+      <line x1="50" y1="55" x2="75" y2="80" stroke="#222" stroke-width="6" stroke-linecap="round"/>
+      <rect x="62" y="72" width="26" height="12" rx="3" fill="#333" transform="rotate(-45 75 78)"/>
+    </svg>
+  </div>
+</div>
+
+<div id="tilt-permission">
+  <p>Tap to enable tilt steering</p>
+  <button id="enable-tilt">Enable Tilt</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ── Credits Modal ──
+const creditsBtn = document.getElementById('credits-btn');
+const creditsModal = document.getElementById('credits-modal');
+const creditsClose = document.getElementById('credits-close');
+creditsBtn.addEventListener('click', () => creditsModal.classList.add('visible'));
+creditsClose.addEventListener('click', () => creditsModal.classList.remove('visible'));
+creditsModal.addEventListener('click', (e) => {
+  if (e.target === creditsModal) creditsModal.classList.remove('visible');
+});
+
+// ── Scene Setup ──
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xc8d8e8);
+scene.fog = new THREE.Fog(0xc8d8e8, 60, 160);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 250);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+// ── Lighting ──
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+dirLight.position.set(-8, 18, -6);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 80;
+dirLight.shadow.camera.left = -30;
+dirLight.shadow.camera.right = 30;
+dirLight.shadow.camera.top = 30;
+dirLight.shadow.camera.bottom = -30;
+scene.add(dirLight);
+
+// ── Checkered Floor ──
+const floorSize = 200;
+const tileSize = 4;
+const tilesPerSide = floorSize / tileSize;
+
+const floorGeom = new THREE.PlaneGeometry(floorSize, floorSize);
+const canvas2d = document.createElement('canvas');
+canvas2d.width = tilesPerSide;
+canvas2d.height = tilesPerSide;
+const ctx = canvas2d.getContext('2d');
+for (let y = 0; y < tilesPerSide; y++) {
+  for (let x = 0; x < tilesPerSide; x++) {
+    ctx.fillStyle = (x + y) % 2 === 0 ? '#d0d0d0' : '#a0a0a0';
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+const floorTexture = new THREE.CanvasTexture(canvas2d);
+floorTexture.magFilter = THREE.NearestFilter;
+floorTexture.minFilter = THREE.NearestFilter;
+const floorMat = new THREE.MeshStandardMaterial({ map: floorTexture });
+const floor = new THREE.Mesh(floorGeom, floorMat);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+// ── Tandem Bike (GLB Model) ──
+const bikeGroup = new THREE.Group();
+scene.add(bikeGroup);
+
+let bikeModelLoaded = false;
+
+const loader = new GLTFLoader();
+loader.load('tandem_bicycle.glb', (gltf) => {
+  const model = gltf.scene;
+
+  // Enable shadows on all meshes
+  model.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  // Scale so the bike is ~4.4m long
+  const targetLength = 4.4;
+  const preBox = new THREE.Box3().setFromObject(model);
+  const preSize = preBox.getSize(new THREE.Vector3());
+  const maxDim = Math.max(preSize.x, preSize.y, preSize.z);
+  const scale = targetLength / maxDim;
+  model.scale.setScalar(scale);
+
+  // Add to group and force world matrix update on all descendants
+  bikeGroup.add(model);
+  bikeGroup.updateMatrixWorld(true);
+
+  // Find the TRUE minimum Y by scanning every vertex in world space
+  // (bounding box can be wrong if model has invisible geometry or complex transforms)
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minX = Infinity, maxX = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  const v = new THREE.Vector3();
+
+  model.traverse((child) => {
+    if (child.isMesh && child.geometry && child.geometry.attributes.position) {
+      const pos = child.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        child.localToWorld(v);
+        if (v.y < minY) minY = v.y;
+        if (v.y > maxY) maxY = v.y;
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.z < minZ) minZ = v.z;
+        if (v.z > maxZ) maxZ = v.z;
+      }
+    }
+  });
+
+  const centerX = (minX + maxX) / 2;
+  const centerZ = (minZ + maxZ) / 2;
+
+  // Shift model: tires on floor (y=0), centered on X/Z
+  model.position.y -= minY;
+  model.position.x -= centerX;
+  model.position.z -= centerZ;
+
+  bikeModelLoaded = true;
+
+  console.log('Tandem bicycle loaded, vertex minY:', minY, 'size:', maxY - minY, 'x', maxX - minX, 'x', maxZ - minZ);
+}, undefined, (err) => {
+  console.error('Failed to load tandem_bicycle.glb:', err);
+});
+
+// ── Bike Physics State ──
+const bikeState = {
+  x: 0,
+  z: 0,
+  heading: 0,
+  speed: 0,
+  crankAngle: 0,
+};
+
+const BIKE_CONFIG = {
+  maxSpeed: 10,
+  acceleration: 0.12,
+  deceleration: 0.988,
+  brakeDecel: 0.95,
+  turnRate: 1.5,
+  crankSpeedFactor: 4,
+  pedalBoost: 0.28,
+};
+
+// ── Input State ──
+const input = {
+  leftPedal: false,
+  rightPedal: false,
+  lastPedal: null,
+  tiltBeta: 0,
+  tiltEnabled: false,
+  keyLeft: false,
+  keyRight: false,
+};
+
+// ── Pedal Controls ──
+const pedalLeftEl = document.getElementById('pedal-left');
+const pedalRightEl = document.getElementById('pedal-right');
+
+function handlePedalDown(side) {
+  input[side] = true;
+  document.getElementById(side === 'leftPedal' ? 'pedal-left' : 'pedal-right').classList.add('pressed');
+
+  if (input.lastPedal !== side) {
+    bikeState.speed = Math.min(bikeState.speed + BIKE_CONFIG.pedalBoost, BIKE_CONFIG.maxSpeed);
+    input.lastPedal = side;
+  }
+}
+
+function handlePedalUp(side) {
+  input[side] = false;
+  document.getElementById(side === 'leftPedal' ? 'pedal-left' : 'pedal-right').classList.remove('pressed');
+}
+
+// Touch events
+pedalLeftEl.addEventListener('touchstart', (e) => { e.preventDefault(); handlePedalDown('leftPedal'); });
+pedalLeftEl.addEventListener('touchend', (e) => { e.preventDefault(); handlePedalUp('leftPedal'); });
+pedalLeftEl.addEventListener('touchcancel', (e) => { e.preventDefault(); handlePedalUp('leftPedal'); });
+
+pedalRightEl.addEventListener('touchstart', (e) => { e.preventDefault(); handlePedalDown('rightPedal'); });
+pedalRightEl.addEventListener('touchend', (e) => { e.preventDefault(); handlePedalUp('rightPedal'); });
+pedalRightEl.addEventListener('touchcancel', (e) => { e.preventDefault(); handlePedalUp('rightPedal'); });
+
+// Mouse fallback
+pedalLeftEl.addEventListener('mousedown', () => handlePedalDown('leftPedal'));
+pedalLeftEl.addEventListener('mouseup', () => handlePedalUp('leftPedal'));
+pedalLeftEl.addEventListener('mouseleave', () => handlePedalUp('leftPedal'));
+
+pedalRightEl.addEventListener('mousedown', () => handlePedalDown('rightPedal'));
+pedalRightEl.addEventListener('mouseup', () => handlePedalUp('rightPedal'));
+pedalRightEl.addEventListener('mouseleave', () => handlePedalUp('rightPedal'));
+
+// ── Keyboard Controls (Desktop) ──
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'w') handlePedalDown('leftPedal');
+  if (e.key === 'ArrowDown' || e.key === 's') handlePedalDown('rightPedal');
+  if (e.key === 'ArrowLeft' || e.key === 'a') input.keyLeft = true;
+  if (e.key === 'ArrowRight' || e.key === 'd') input.keyRight = true;
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'w') handlePedalUp('leftPedal');
+  if (e.key === 'ArrowDown' || e.key === 's') handlePedalUp('rightPedal');
+  if (e.key === 'ArrowLeft' || e.key === 'a') input.keyLeft = false;
+  if (e.key === 'ArrowRight' || e.key === 'd') input.keyRight = false;
+});
+
+// ── Device Orientation (Tilt Steering) ──
+const tiltPermissionEl = document.getElementById('tilt-permission');
+const enableTiltBtn = document.getElementById('enable-tilt');
+
+function setupDeviceOrientation() {
+  window.addEventListener('deviceorientation', (e) => {
+    if (e.gamma !== null) {
+      input.tiltBeta = e.gamma;
+      input.tiltEnabled = true;
+    }
+  });
+}
+
+if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+  tiltPermissionEl.style.display = 'block';
+  enableTiltBtn.addEventListener('click', async () => {
+    try {
+      const permission = await DeviceOrientationEvent.requestPermission();
+      if (permission === 'granted') {
+        setupDeviceOrientation();
+      }
+    } catch (err) {
+      console.warn('Tilt permission denied:', err);
+    }
+    tiltPermissionEl.style.display = 'none';
+  });
+} else {
+  setupDeviceOrientation();
+}
+
+// ── Camera (fixed-angle, follows position only) ──
+const cameraOffset = new THREE.Vector3(0, 8, -7);
+const smoothCamPos = new THREE.Vector3();
+const smoothCamLook = new THREE.Vector3();
+let cameraInitialized = false;
+
+// ── Smoothed Input State ──
+let smoothSteer = 0;
+let smoothLean = 0;
+let smoothTilt = 0;
+
+// ── Speed Display ──
+const speedDisplay = document.getElementById('speed-display');
+
+// ── Animation Loop ──
+const clock = new THREE.Clock();
+
+function update(dt) {
+  // Smooth tilt input (low-pass filter)
+  let rawSteer = 0;
+  if (input.tiltEnabled) {
+    const rawTilt = Math.max(-1, Math.min(1, input.tiltBeta / 35));
+    smoothTilt += (rawTilt - smoothTilt) * Math.min(1, 6 * dt);
+    rawSteer = smoothTilt;
+  }
+  if (input.keyLeft) rawSteer += 1;
+  if (input.keyRight) rawSteer -= 1;
+  rawSteer = Math.max(-1, Math.min(1, rawSteer));
+
+  smoothSteer += (rawSteer - smoothSteer) * Math.min(1, 5 * dt);
+
+  // Pedaling
+  if (input.leftPedal || input.rightPedal) {
+    bikeState.speed = Math.min(bikeState.speed + BIKE_CONFIG.acceleration * dt * 60, BIKE_CONFIG.maxSpeed);
+  }
+
+  // Friction
+  bikeState.speed *= BIKE_CONFIG.deceleration;
+  if (bikeState.speed < 0.01) bikeState.speed = 0;
+
+  // Steering
+  const speedFactor = Math.min(bikeState.speed / 3, 1);
+  bikeState.heading += smoothSteer * BIKE_CONFIG.turnRate * speedFactor * dt;
+
+  // Move bike
+  bikeState.x += Math.sin(bikeState.heading) * bikeState.speed * dt;
+  bikeState.z += Math.cos(bikeState.heading) * bikeState.speed * dt;
+
+  // Update bike group
+  bikeGroup.position.set(bikeState.x, 0, bikeState.z);
+  bikeGroup.rotation.y = bikeState.heading;
+
+  // Smooth lean into turns
+  const targetLean = -smoothSteer * speedFactor * 0.18;
+  smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
+  bikeGroup.rotation.z = smoothLean;
+
+  // Move directional light with bike
+  dirLight.position.set(bikeState.x - 8, 18, bikeState.z - 6);
+  dirLight.target.position.set(bikeState.x, 0, bikeState.z);
+  dirLight.target.updateMatrixWorld();
+
+  // Move floor to follow bike (infinite floor illusion)
+  // Snap by 2*tileSize so the checkerboard pattern doesn't invert
+  const snapSize = tileSize * 2;
+  floor.position.x = Math.round(bikeState.x / snapSize) * snapSize;
+  floor.position.z = Math.round(bikeState.z / snapSize) * snapSize;
+
+  // Camera follow (fixed angle, follows position only)
+  const targetCamPos = new THREE.Vector3(
+    bikeState.x + cameraOffset.x,
+    cameraOffset.y,
+    bikeState.z + cameraOffset.z
+  );
+
+  const targetLookAt = new THREE.Vector3(
+    bikeState.x,
+    0.8,
+    bikeState.z
+  );
+
+  if (!cameraInitialized) {
+    smoothCamPos.copy(targetCamPos);
+    smoothCamLook.copy(targetLookAt);
+    cameraInitialized = true;
+  }
+
+  const camSmooth = Math.min(1, 4.0 * dt);
+  smoothCamPos.lerp(targetCamPos, camSmooth);
+  smoothCamLook.lerp(targetLookAt, camSmooth);
+
+  camera.position.copy(smoothCamPos);
+  camera.lookAt(smoothCamLook);
+
+  // Speed display
+  const mph = (bikeState.speed * 2.237).toFixed(0);
+  speedDisplay.textContent = `${mph} mph`;
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  update(dt);
+  renderer.render(scene, camera);
+}
+
+animate();
+
+// ── Resize ──
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+</script>
+</body>
+</html>
