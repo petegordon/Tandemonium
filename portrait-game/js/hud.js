@@ -73,7 +73,7 @@ export class HUD {
     // Bike gauge
     const tiltDeg = (bike.lean * 180 / Math.PI);
     const bikeDeg = Math.max(-90, Math.min(90, tiltDeg));
-    const danger = Math.abs(bike.lean) / 1.2;
+    const danger = Math.abs(bike.lean) / 1.35;
     this.bikeNeedle.setAttribute('transform', 'rotate(' + bikeDeg.toFixed(1) + ', 60, 60)');
     this.bikeLabel.textContent = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
     if (danger > 0.75) {

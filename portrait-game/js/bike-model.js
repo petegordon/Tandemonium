@@ -138,11 +138,11 @@ export class BikeModel {
     this.speed *= (1 - 0.6 * dt);
     this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
 
-    // Balance physics
+    // Balance physics (portrait-tuned: softer response, more damping)
     const gravity = Math.sin(this.lean) * 4.0;
-    const playerLean = balanceResult.leanInput * 16.0;
-    const gyro = -this.lean * Math.min(this.speed * 0.6, 5.0);
-    const damping = -this.leanVelocity * 2.2;
+    const playerLean = balanceResult.leanInput * 14.0;
+    const gyro = -this.lean * Math.min(this.speed * 0.8, 6.0);
+    const damping = -this.leanVelocity * 2.5;
 
     const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
 
@@ -155,13 +155,21 @@ export class BikeModel {
       pedalLeanKick = (Math.random() - 0.5) * 0.2;
     }
 
+    // Danger-zone wobble: progressive shake as lean approaches crash
+    let dangerWobble = 0;
+    const dangerRatio = Math.abs(this.lean) / 1.35;
+    if (dangerRatio > 0.55) {
+      const intensity = (dangerRatio - 0.55) / 0.45; // 0→1 from yellow to crash
+      dangerWobble = intensity * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
+    }
+
     this.leanVelocity += (gravity + playerLean + gyro + damping +
-      pedalWobble + lowSpeedWobble + pedalLeanKick) * dt;
+      pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble) * dt;
     this.lean += this.leanVelocity * dt;
 
     // Safety mode
     if (safetyMode) {
-      this.lean = Math.max(-0.9, Math.min(0.9, this.lean));
+      this.lean = Math.max(-1.0, Math.min(1.0, this.lean));
     }
 
     // Steering from lean
@@ -174,7 +182,7 @@ export class BikeModel {
     this.distanceTraveled += this.speed * dt;
 
     // Fall detection
-    if (Math.abs(this.lean) > 1.2) {
+    if (Math.abs(this.lean) > 1.35) {
       this._fall();
     }
 

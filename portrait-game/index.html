@@ -412,28 +412,51 @@
     <div class="gauge-wrap" id="bike-gauge">
       <div class="gauge-title">BIKE</div>
       <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
-        <line x1="60" y1="60" x2="60" y2="14" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
-        <line x1="60" y1="60" x2="14" y2="60" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-        <line x1="60" y1="60" x2="106" y2="60" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-        <g id="bike-needle">
-          <line x1="60" y1="60" x2="60" y2="12" stroke="#44ff66" stroke-width="2.5" stroke-linecap="round"/>
-          <circle cx="60" cy="60" r="4" fill="#44ff66"/>
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <!-- Red danger zones (left & right extremes) -->
+        <path d="M 60 60 L 14.4 79.6 A 52 52 0 0 1 8 60 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <path d="M 60 60 L 112 60 A 52 52 0 0 1 105.6 79.6 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <!-- Top center mark -->
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <!-- Danger threshold marks -->
+        <line x1="29" y1="20" x2="34" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="91" y1="20" x2="86" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="12" y1="44" x2="21" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="108" y1="44" x2="99" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <!-- Needle (horizontal bar style) -->
+        <g id="bike-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#4af" stroke-width="2"/>
         </g>
+        <!-- Top pointer -->
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
       </svg>
       <div class="gauge-label" id="bike-label">0.0&deg;</div>
     </div>
     <div class="gauge-wrap" id="phone-gauge">
       <div class="gauge-title">PHONE</div>
       <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
-        <line x1="60" y1="60" x2="60" y2="14" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
-        <line x1="60" y1="60" x2="14" y2="60" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-        <line x1="60" y1="60" x2="106" y2="60" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-        <g id="phone-needle">
-          <line x1="60" y1="60" x2="60" y2="12" stroke="#ffaa22" stroke-width="2.5" stroke-linecap="round"/>
-          <circle cx="60" cy="60" r="4" fill="#ffaa22"/>
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <!-- Green safe zones (left & right of vertical) -->
+        <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(0,180,0,0.2)"/>
+        <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(0,180,0,0.2)"/>
+        <!-- Top center mark -->
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <!-- Needle (horizontal bar style) -->
+        <g id="phone-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#fa3" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#fa3" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#fa3" stroke-width="2"/>
         </g>
+        <!-- Top pointer -->
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
       </svg>
       <div class="gauge-label" id="phone-label">0.0&deg;</div>
     </div>
