@@ -547,9 +547,9 @@ if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEve
   setupDeviceOrientation();
 }
 
-// ── Camera ──
-const cameraOffset = new THREE.Vector3(0, 8, -12);
-const cameraLookOffset = new THREE.Vector3(0, 0.3, 2);
+// ── Camera (fixed-angle, follows position only) ──
+// Fixed world-space offset: above and behind (negative Z = "south")
+const cameraOffset = new THREE.Vector3(0, 6, -4.5);
 const smoothCamPos = new THREE.Vector3();
 const smoothCamLook = new THREE.Vector3();
 let cameraInitialized = false;
@@ -629,20 +629,18 @@ function update(dt) {
   floor.position.x = Math.round(bikeState.x / tileSize) * tileSize;
   floor.position.z = Math.round(bikeState.z / tileSize) * tileSize;
 
-  // ── Camera Follow (smooth, lazy trail) ──
-  const bikeForward = new THREE.Vector3(Math.sin(bikeState.heading), 0, Math.cos(bikeState.heading));
-  const bikeRight = new THREE.Vector3(Math.cos(bikeState.heading), 0, -Math.sin(bikeState.heading));
-
+  // ── Camera Follow (fixed angle, follows position only) ──
+  // Camera stays at a fixed world-space offset — does NOT rotate with bike heading
   const targetCamPos = new THREE.Vector3(
-    bikeState.x + bikeForward.x * cameraOffset.z + bikeRight.x * cameraOffset.x,
+    bikeState.x + cameraOffset.x,
     cameraOffset.y,
-    bikeState.z + bikeForward.z * cameraOffset.z + bikeRight.z * cameraOffset.x
+    bikeState.z + cameraOffset.z
   );
 
   const targetLookAt = new THREE.Vector3(
-    bikeState.x + bikeForward.x * cameraLookOffset.z,
-    cameraLookOffset.y,
-    bikeState.z + bikeForward.z * cameraLookOffset.z
+    bikeState.x,
+    0.4,
+    bikeState.z
   );
 
   if (!cameraInitialized) {
@@ -651,11 +649,10 @@ function update(dt) {
     cameraInitialized = true;
   }
 
-  // Gentle camera follow - position trails lazily, look-at tracks a bit faster
-  const camPosSmooth = Math.min(1, 2.0 * dt);
-  const camLookSmooth = Math.min(1, 3.5 * dt);
-  smoothCamPos.lerp(targetCamPos, camPosSmooth);
-  smoothCamLook.lerp(targetLookAt, camLookSmooth);
+  // Smooth follow on position
+  const camSmooth = Math.min(1, 4.0 * dt);
+  smoothCamPos.lerp(targetCamPos, camSmooth);
+  smoothCamLook.lerp(targetLookAt, camSmooth);
 
   camera.position.copy(smoothCamPos);
   camera.lookAt(smoothCamLook);
