@@ -310,12 +310,8 @@ loader.load('tandem_bicycle.glb', (gltf) => {
       console.log('  Mesh:', child.name, 'verts:', verts);
     }
 
-    // DEBUG: Add ALL meshes as spoke candidates to test if fade works at all
-    // Once we confirm which meshes are spokes, we'll narrow this down
+    // DEBUG: Add ALL meshes to test visibility toggle
     if (child.isMesh) {
-      child.material = child.material.clone();
-      child.material.transparent = true;
-      child.material.depthWrite = false;
       spokeMeshes.push(child);
     }
 
@@ -553,17 +549,11 @@ function update(dt) {
   smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
   bikeGroup.rotation.z = smoothLean;
 
-  // Fade spoke candidates based on speed (motion blur effect)
-  if (spokeMeshes.length > 0) {
-    // Start fading at any movement, fully gone at 15% max speed
-    const fadeT = Math.min(bikeState.speed / (BIKE_CONFIG.maxSpeed * 0.15), 1);
-    const spokeOpacity = 1 - fadeT;
-    for (const spoke of spokeMeshes) {
-      if (spoke.material) {
-        spoke.material.opacity = spokeOpacity;
-      }
-      spoke.visible = spokeOpacity > 0.01;
-    }
+  // DEBUG: Hide ALL meshes when moving at any speed
+  // Entire bike should vanish — if it does, visibility toggle works
+  const bikeMoving = bikeState.speed > 0.5;
+  for (const mesh of spokeMeshes) {
+    mesh.visible = !bikeMoving;
   }
 
   // Animate pedal cranks (spin at a lower rate than wheels)
