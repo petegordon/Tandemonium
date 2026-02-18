@@ -463,10 +463,10 @@ if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEve
 
 // ── Camera (dynamic: close overhead when slow, pulls back at speed) ──
 // Stopped/slow camera: close, overhead
-const camOffsetSlow = new THREE.Vector3(0, 6, -3);
+const camOffsetSlow = new THREE.Vector3(0, 6, -5);
 const camLookSlow = new THREE.Vector3(0, 0.5, 1);
 // Full speed camera: pulled back, looking far down range
-const camOffsetFast = new THREE.Vector3(0, 4, -10);
+const camOffsetFast = new THREE.Vector3(0, 4, -12);
 const camLookFast = new THREE.Vector3(0, 0.2, 8);
 
 const smoothCamPos = new THREE.Vector3();
