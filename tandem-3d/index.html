@@ -285,9 +285,8 @@ const bikeGroup = new THREE.Group();
 scene.add(bikeGroup);
 
 let bikeModelLoaded = false;
-const wheelNodes = [];
+const spokeMeshes = []; // thin spoke meshes to fade for motion blur
 const pedalNodes = [];
-let estimatedWheelRadius = 0.5;
 
 const loader = new GLTFLoader();
 loader.load('tandem_bicycle.glb', (gltf) => {
@@ -304,17 +303,47 @@ loader.load('tandem_bicycle.glb', (gltf) => {
     }
 
     const n = (child.name || '').toLowerCase();
-    // Collect wheel-related nodes (spokes, tire, wheel assemblies)
-    if (n.includes('wheel') || n.includes('spoke') || n.includes('tire') || n.includes('tyre') || n.includes('rim')) {
-      wheelNodes.push(child);
-      console.log('  -> Wheel node:', child.name);
+
+    // Collect spoke meshes — look for "spoke" in name, or thin geometry inside wheels
+    if (child.isMesh && (n.includes('spoke') || n.includes('spok'))) {
+      // Make material transparent so we can fade it
+      if (child.material) {
+        child.material = child.material.clone();
+        child.material.transparent = true;
+      }
+      spokeMeshes.push(child);
+      console.log('  -> Spoke mesh:', child.name);
     }
+
     // Collect pedal/crank nodes
     if (n.includes('pedal') || n.includes('crank') || n.includes('gear') || n.includes('chain')) {
       pedalNodes.push(child);
       console.log('  -> Pedal node:', child.name);
     }
   });
+
+  // If no spoke meshes found by name, try to find them by geometry:
+  // spokes are typically thin meshes inside wheel parent nodes
+  if (spokeMeshes.length === 0) {
+    model.traverse((child) => {
+      if (!child.isMesh) return;
+      const n = (child.name || '').toLowerCase();
+      // Skip tires, frames, seats, pedals — look for unnamed or wire-like meshes inside wheel groups
+      const parentName = (child.parent?.name || '').toLowerCase();
+      if (parentName.includes('wheel') || parentName.includes('tire') || parentName.includes('rim')) {
+        // Check if this mesh has relatively few vertices (thin spoke geometry)
+        const vertCount = child.geometry?.attributes?.position?.count || 0;
+        if (vertCount < 5000) {
+          if (child.material) {
+            child.material = child.material.clone();
+            child.material.transparent = true;
+          }
+          spokeMeshes.push(child);
+          console.log('  -> Spoke mesh (by parent):', child.name, 'verts:', vertCount);
+        }
+      }
+    });
+  }
 
   // Scale so the bike is ~4.4m long
   const targetLength = 4.4;
@@ -360,13 +389,10 @@ loader.load('tandem_bicycle.glb', (gltf) => {
   model.position.x -= centerX;
   model.position.z -= centerZ;
 
-  // Estimate wheel radius as ~40% of model height (for spin rate calc)
-  estimatedWheelRadius = (maxY - minY) * 0.4;
-
   bikeModelLoaded = true;
 
   console.log('Tandem bicycle loaded, vertex minY:', minY, 'size:', maxY - minY, 'x', maxX - minX, 'x', maxZ - minZ);
-  console.log('Wheel nodes found:', wheelNodes.length, 'Pedal nodes found:', pedalNodes.length);
+  console.log('Spoke meshes found:', spokeMeshes.length, 'Pedal nodes found:', pedalNodes.length);
 }, undefined, (err) => {
   console.error('Failed to load tandem_bicycle.glb:', err);
 });
@@ -546,12 +572,14 @@ function update(dt) {
   smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
   bikeGroup.rotation.z = smoothLean;
 
-  // Animate wheels (spin based on speed)
-  if (bikeState.speed > 0.01) {
-    const wheelSpin = (bikeState.speed * dt) / estimatedWheelRadius;
-    for (const node of wheelNodes) {
-      // Try all common orientations - wheels typically spin around X or Z in local space
-      node.rotation.x += wheelSpin;
+  // Fade spokes based on speed (motion blur effect)
+  if (spokeMeshes.length > 0) {
+    // At ~30% max speed, spokes fully disappear
+    const fadeT = Math.min(bikeState.speed / (BIKE_CONFIG.maxSpeed * 0.3), 1);
+    const spokeOpacity = 1 - fadeT;
+    for (const spoke of spokeMeshes) {
+      spoke.material.opacity = spokeOpacity;
+      spoke.visible = spokeOpacity > 0.01;
     }
   }
 
