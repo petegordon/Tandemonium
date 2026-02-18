@@ -310,22 +310,13 @@ loader.load('tandem_bicycle.glb', (gltf) => {
       console.log('  Mesh:', child.name, 'verts:', verts);
     }
 
-    // Spoke meshes: cast a very wide net — wheel_joint (all variants),
-    // wainframe, nurbspath, tyre_rear
-    const isSpoke = child.isMesh && (
-      n.includes('nurbspath') ||
-      n.includes('wainframe') ||
-      n.includes('wheel_joint') ||
-      n.includes('tyre_rear')
-    );
-    if (isSpoke) {
-      if (child.material) {
-        child.material = child.material.clone();
-        child.material.transparent = true;
-        child.material.depthWrite = false;
-      }
+    // DEBUG: Add ALL meshes as spoke candidates to test if fade works at all
+    // Once we confirm which meshes are spokes, we'll narrow this down
+    if (child.isMesh) {
+      child.material = child.material.clone();
+      child.material.transparent = true;
+      child.material.depthWrite = false;
       spokeMeshes.push(child);
-      console.log('  -> Spoke candidate:', child.name);
     }
 
     // Pedal nodes: only match "pedal" specifically
