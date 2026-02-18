@@ -482,7 +482,7 @@ function update(dt) {
   // Smooth tilt input (low-pass filter)
   let rawSteer = 0;
   if (input.tiltEnabled) {
-    const rawTilt = Math.max(-1, Math.min(1, input.tiltBeta / 35));
+    const rawTilt = Math.max(-1, Math.min(1, -input.tiltBeta / 35));
     smoothTilt += (rawTilt - smoothTilt) * Math.min(1, 6 * dt);
     rawSteer = smoothTilt;
   }
