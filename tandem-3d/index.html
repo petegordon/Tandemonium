@@ -141,9 +141,9 @@ import * as THREE from 'three';
 // ── Scene Setup ──
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xc8d8e8);
-scene.fog = new THREE.Fog(0xc8d8e8, 40, 120);
+scene.fog = new THREE.Fog(0xc8d8e8, 60, 160);
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 250);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -442,13 +442,13 @@ const bikeState = {
 };
 
 const BIKE_CONFIG = {
-  maxSpeed: 12,
-  acceleration: 0.15,
-  deceleration: 0.985, // friction
+  maxSpeed: 10,
+  acceleration: 0.12,
+  deceleration: 0.988, // friction (gentler coast)
   brakeDecel: 0.95,
-  turnRate: 1.8,
+  turnRate: 1.5,
   crankSpeedFactor: 4,
-  pedalBoost: 0.35,
+  pedalBoost: 0.28,
 };
 
 // ── Input State ──
@@ -548,11 +548,16 @@ if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEve
 }
 
 // ── Camera ──
-const cameraOffset = new THREE.Vector3(0, 4.5, -5.5);
-const cameraLookOffset = new THREE.Vector3(0, 0.5, 3);
+const cameraOffset = new THREE.Vector3(0, 8, -12);
+const cameraLookOffset = new THREE.Vector3(0, 0.3, 2);
 const smoothCamPos = new THREE.Vector3();
 const smoothCamLook = new THREE.Vector3();
 let cameraInitialized = false;
+
+// ── Smoothed Input State ──
+let smoothSteer = 0;
+let smoothLean = 0;
+let smoothTilt = 0;
 
 // ── Speed Display ──
 const speedDisplay = document.getElementById('speed-display');
@@ -561,15 +566,21 @@ const speedDisplay = document.getElementById('speed-display');
 const clock = new THREE.Clock();
 
 function update(dt) {
-  // Steering from tilt or keyboard
-  let steerInput = 0;
+  // ── Smooth tilt input (low-pass filter) ──
+  let rawSteer = 0;
   if (input.tiltEnabled) {
-    // Clamp tilt to ±30 degrees, normalize to ±1
-    steerInput = Math.max(-1, Math.min(1, input.tiltBeta / 30));
+    // Clamp tilt to ±35 degrees, normalize to ±1
+    const rawTilt = Math.max(-1, Math.min(1, input.tiltBeta / 35));
+    // Smooth the raw tilt to remove jitter
+    smoothTilt += (rawTilt - smoothTilt) * Math.min(1, 6 * dt);
+    rawSteer = smoothTilt;
   }
-  if (input.keyLeft) steerInput -= 1;
-  if (input.keyRight) steerInput += 1;
-  steerInput = Math.max(-1, Math.min(1, steerInput));
+  if (input.keyLeft) rawSteer -= 1;
+  if (input.keyRight) rawSteer += 1;
+  rawSteer = Math.max(-1, Math.min(1, rawSteer));
+
+  // Smooth the final steer value for fluid feel
+  smoothSteer += (rawSteer - smoothSteer) * Math.min(1, 5 * dt);
 
   // Pedaling (either pedal adds power)
   if (input.leftPedal || input.rightPedal) {
@@ -580,9 +591,9 @@ function update(dt) {
   bikeState.speed *= BIKE_CONFIG.deceleration;
   if (bikeState.speed < 0.01) bikeState.speed = 0;
 
-  // Steering (speed-dependent)
+  // Steering (speed-dependent, using smoothed input)
   const speedFactor = Math.min(bikeState.speed / 3, 1);
-  bikeState.heading += steerInput * BIKE_CONFIG.turnRate * speedFactor * dt;
+  bikeState.heading += smoothSteer * BIKE_CONFIG.turnRate * speedFactor * dt;
 
   // Move bike
   bikeState.x += Math.sin(bikeState.heading) * bikeState.speed * dt;
@@ -595,9 +606,10 @@ function update(dt) {
   bikeGroup.position.set(bikeState.x, 0, bikeState.z);
   bikeGroup.rotation.y = bikeState.heading;
 
-  // Slight lean into turns
-  const leanAngle = -steerInput * speedFactor * 0.15;
-  bikeGroup.rotation.z = leanAngle;
+  // Smooth lean into turns
+  const targetLean = -smoothSteer * speedFactor * 0.18;
+  smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
+  bikeGroup.rotation.z = smoothLean;
 
   // Spin wheels
   const wheelSpin = bikeState.speed * dt * (1 / wheelRadius);
@@ -617,7 +629,7 @@ function update(dt) {
   floor.position.x = Math.round(bikeState.x / tileSize) * tileSize;
   floor.position.z = Math.round(bikeState.z / tileSize) * tileSize;
 
-  // ── Camera Follow ──
+  // ── Camera Follow (smooth, lazy trail) ──
   const bikeForward = new THREE.Vector3(Math.sin(bikeState.heading), 0, Math.cos(bikeState.heading));
   const bikeRight = new THREE.Vector3(Math.cos(bikeState.heading), 0, -Math.sin(bikeState.heading));
 
@@ -639,16 +651,17 @@ function update(dt) {
     cameraInitialized = true;
   }
 
-  // Smooth camera interpolation
-  const camSmoothing = 1 - Math.pow(0.01, dt);
-  smoothCamPos.lerp(targetCamPos, camSmoothing);
-  smoothCamLook.lerp(targetLookAt, camSmoothing);
+  // Gentle camera follow - position trails lazily, look-at tracks a bit faster
+  const camPosSmooth = Math.min(1, 2.0 * dt);
+  const camLookSmooth = Math.min(1, 3.5 * dt);
+  smoothCamPos.lerp(targetCamPos, camPosSmooth);
+  smoothCamLook.lerp(targetLookAt, camLookSmooth);
 
   camera.position.copy(smoothCamPos);
   camera.lookAt(smoothCamLook);
 
   // Speed display
-  const mph = (bikeState.speed * 2.237).toFixed(0); // rough conversion
+  const mph = (bikeState.speed * 2.237).toFixed(0);
   speedDisplay.textContent = `${mph} mph`;
 }
 
