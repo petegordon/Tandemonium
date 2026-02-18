@@ -304,23 +304,31 @@ loader.load('tandem_bicycle.glb', (gltf) => {
 
     const n = (child.name || '').toLowerCase();
 
-    // Spoke meshes: NurbsPath nodes (thin lines/tubes = spokes),
-    // wainframe_joint, and wheel_joint (not "_2_" which are tire/rim)
+    // Log all meshes with vertex counts to help identify spokes
+    if (child.isMesh) {
+      const verts = child.geometry?.attributes?.position?.count || 0;
+      console.log('  Mesh:', child.name, 'verts:', verts);
+    }
+
+    // Spoke meshes: cast a very wide net — wheel_joint (all variants),
+    // wainframe, nurbspath, tyre_rear
     const isSpoke = child.isMesh && (
       n.includes('nurbspath') ||
-      n.includes('wainframe_joint') ||
-      (n.includes('wheel_joint') && !n.includes('_2_'))
+      n.includes('wainframe') ||
+      n.includes('wheel_joint') ||
+      n.includes('tyre_rear')
     );
     if (isSpoke) {
       if (child.material) {
         child.material = child.material.clone();
         child.material.transparent = true;
+        child.material.depthWrite = false;
       }
       spokeMeshes.push(child);
-      console.log('  -> Spoke mesh:', child.name);
+      console.log('  -> Spoke candidate:', child.name);
     }
 
-    // Pedal nodes: only match "pedal" specifically (not gear/chain which matches too broadly)
+    // Pedal nodes: only match "pedal" specifically
     if (n.includes('pedal')) {
       pedalNodes.push(child);
       console.log('  -> Pedal node:', child.name);
@@ -554,13 +562,15 @@ function update(dt) {
   smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
   bikeGroup.rotation.z = smoothLean;
 
-  // Fade spokes based on speed (motion blur effect)
+  // Fade spoke candidates based on speed (motion blur effect)
   if (spokeMeshes.length > 0) {
-    // At ~30% max speed, spokes fully disappear
-    const fadeT = Math.min(bikeState.speed / (BIKE_CONFIG.maxSpeed * 0.3), 1);
+    // Start fading at any movement, fully gone at 15% max speed
+    const fadeT = Math.min(bikeState.speed / (BIKE_CONFIG.maxSpeed * 0.15), 1);
     const spokeOpacity = 1 - fadeT;
     for (const spoke of spokeMeshes) {
-      spoke.material.opacity = spokeOpacity;
+      if (spoke.material) {
+        spoke.material.opacity = spokeOpacity;
+      }
       spoke.visible = spokeOpacity > 0.01;
     }
   }
