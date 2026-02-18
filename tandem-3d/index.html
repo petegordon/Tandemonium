@@ -310,9 +310,10 @@ loader.load('tandem_bicycle.glb', (gltf) => {
       console.log('  Mesh:', child.name, 'verts:', verts);
     }
 
-    // DEBUG: Add ALL meshes to test visibility toggle
-    if (child.isMesh) {
+    // Spoke meshes: Cylinder035 and Cylinder024 (576 verts each = 32 spokes x 18 verts, one per wheel)
+    if (child.isMesh && (n === 'cylinder035_cycle_0' || n === 'cylinder024_cycle_0')) {
       spokeMeshes.push(child);
+      console.log('  -> Spoke mesh:', child.name);
     }
 
     // Pedal nodes: only match "pedal" specifically
