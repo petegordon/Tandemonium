@@ -310,10 +310,11 @@ loader.load('tandem_bicycle.glb', (gltf) => {
       console.log('  Mesh:', child.name, 'verts:', verts);
     }
 
-    // Spoke meshes: Cylinder035 and Cylinder024 (576 verts each = 32 spokes x 18 verts, one per wheel)
+    // Spoke meshes: Cylinder035 and Cylinder024 (576 verts each = 32 spokes per wheel)
     if (child.isMesh && (n === 'cylinder035_cycle_0' || n === 'cylinder024_cycle_0')) {
+      child.material = child.material.clone();
+      child.material.transparent = true;
       spokeMeshes.push(child);
-      console.log('  -> Spoke mesh:', child.name);
     }
 
     // Pedal nodes: only match "pedal" specifically
@@ -550,11 +551,15 @@ function update(dt) {
   smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
   bikeGroup.rotation.z = smoothLean;
 
-  // DEBUG: Hide ALL meshes when moving at any speed
-  // Entire bike should vanish — if it does, visibility toggle works
-  const bikeMoving = bikeState.speed > 0.5;
-  for (const mesh of spokeMeshes) {
-    mesh.visible = !bikeMoving;
+  // Fade spokes for motion blur effect
+  // Fully visible at rest, fade out as speed increases, gone by ~20% max speed
+  if (spokeMeshes.length > 0) {
+    const fadeT = Math.min(bikeState.speed / (BIKE_CONFIG.maxSpeed * 0.2), 1);
+    const opacity = 1 - fadeT;
+    for (const spoke of spokeMeshes) {
+      spoke.material.opacity = opacity;
+      spoke.visible = opacity > 0.02;
+    }
   }
 
   // Animate pedal cranks (spin at a lower rate than wheels)
