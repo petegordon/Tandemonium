@@ -285,16 +285,34 @@ const bikeGroup = new THREE.Group();
 scene.add(bikeGroup);
 
 let bikeModelLoaded = false;
+const wheelNodes = [];
+const pedalNodes = [];
+let estimatedWheelRadius = 0.5;
 
 const loader = new GLTFLoader();
 loader.load('tandem_bicycle.glb', (gltf) => {
   const model = gltf.scene;
 
-  // Enable shadows on all meshes
+  // Log all node names and collect wheel/pedal nodes
   model.traverse((child) => {
+    if (child.name) {
+      console.log('GLB node:', child.name, child.type, 'children:', child.children.length);
+    }
     if (child.isMesh) {
       child.castShadow = true;
       child.receiveShadow = true;
+    }
+
+    const n = (child.name || '').toLowerCase();
+    // Collect wheel-related nodes (spokes, tire, wheel assemblies)
+    if (n.includes('wheel') || n.includes('spoke') || n.includes('tire') || n.includes('tyre') || n.includes('rim')) {
+      wheelNodes.push(child);
+      console.log('  -> Wheel node:', child.name);
+    }
+    // Collect pedal/crank nodes
+    if (n.includes('pedal') || n.includes('crank') || n.includes('gear') || n.includes('chain')) {
+      pedalNodes.push(child);
+      console.log('  -> Pedal node:', child.name);
     }
   });
 
@@ -342,9 +360,13 @@ loader.load('tandem_bicycle.glb', (gltf) => {
   model.position.x -= centerX;
   model.position.z -= centerZ;
 
+  // Estimate wheel radius as ~40% of model height (for spin rate calc)
+  estimatedWheelRadius = (maxY - minY) * 0.4;
+
   bikeModelLoaded = true;
 
   console.log('Tandem bicycle loaded, vertex minY:', minY, 'size:', maxY - minY, 'x', maxX - minX, 'x', maxZ - minZ);
+  console.log('Wheel nodes found:', wheelNodes.length, 'Pedal nodes found:', pedalNodes.length);
 }, undefined, (err) => {
   console.error('Failed to load tandem_bicycle.glb:', err);
 });
@@ -523,6 +545,23 @@ function update(dt) {
   const targetLean = -smoothSteer * speedFactor * 0.18;
   smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
   bikeGroup.rotation.z = smoothLean;
+
+  // Animate wheels (spin based on speed)
+  if (bikeState.speed > 0.01) {
+    const wheelSpin = (bikeState.speed * dt) / estimatedWheelRadius;
+    for (const node of wheelNodes) {
+      // Try all common orientations - wheels typically spin around X or Z in local space
+      node.rotation.x += wheelSpin;
+    }
+  }
+
+  // Animate pedal cranks (spin at a lower rate than wheels)
+  if (bikeState.speed > 0.01) {
+    const pedalSpin = bikeState.speed * dt * 1.5;
+    for (const node of pedalNodes) {
+      node.rotation.z += pedalSpin;
+    }
+  }
 
   // Move directional light with bike
   dirLight.position.set(bikeState.x - 8, 18, bikeState.z - 6);
