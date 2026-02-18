@@ -285,57 +285,42 @@ const bikeGroup = new THREE.Group();
 scene.add(bikeGroup);
 
 let bikeModelLoaded = false;
-const wheelMeshes = []; // collected wheel objects for spinning
-let wheelRadius = 0.4; // estimated, updated after load
 
 const loader = new GLTFLoader();
 loader.load('tandem_bicycle.glb', (gltf) => {
   const model = gltf.scene;
 
-  // Log all node names so we can identify wheels
-  model.traverse((child) => {
-    if (child.name) console.log('Node:', child.name, child.type);
-  });
-
-  // Enable shadows on all meshes, collect wheel objects
+  // Enable shadows on all meshes
   model.traverse((child) => {
     if (child.isMesh) {
       child.castShadow = true;
       child.receiveShadow = true;
     }
-    // Collect wheel nodes by common naming patterns
-    const n = child.name.toLowerCase();
-    if (n.includes('wheel') || n.includes('tire') || n.includes('tyre') || n.includes('rim')) {
-      wheelMeshes.push(child);
-    }
   });
 
-  // Measure the model to scale/position it appropriately
+  // Scale so the bike is ~4.4m long
+  const targetLength = 4.4;
   const box = new THREE.Box3().setFromObject(model);
   const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
-
-  // Scale so the bike is ~4.4m (2x the previous 2.2m)
-  const targetLength = 4.4;
   const maxDim = Math.max(size.x, size.y, size.z);
   const scale = targetLength / maxDim;
   model.scale.setScalar(scale);
 
-  // Recalculate after scaling
+  // Recalculate bounds after scaling
   box.setFromObject(model);
-  box.getCenter(center);
+  const center = box.getCenter(new THREE.Vector3());
   const scaledSize = box.getSize(new THREE.Vector3());
 
-  // Estimate wheel radius from scaled model height (wheels are ~40% of bike height)
-  wheelRadius = scaledSize.y * 0.4;
-
-  // Center horizontally, sit on ground (y=0)
-  model.position.set(-center.x, -box.min.y, -center.z);
+  // Position: center X/Z on origin, drop Y so bottom touches y=0
+  // model.position is in local space, box is in world space (model currently at origin)
+  model.position.x = -center.x;
+  model.position.z = -center.z;
+  model.position.y = -box.min.y;
 
   bikeGroup.add(model);
   bikeModelLoaded = true;
 
-  console.log('Tandem bicycle loaded:', scaledSize, 'wheel meshes found:', wheelMeshes.length);
+  console.log('Tandem bicycle loaded, size:', scaledSize, 'box.min.y:', box.min.y);
 }, undefined, (err) => {
   console.error('Failed to load tandem_bicycle.glb:', err);
 });
@@ -508,15 +493,6 @@ function update(dt) {
   const targetLean = -smoothSteer * speedFactor * 0.18;
   smoothLean += (targetLean - smoothLean) * Math.min(1, 4 * dt);
   bikeGroup.rotation.z = smoothLean;
-
-  // Spin wheel meshes based on speed
-  if (wheelMeshes.length > 0 && bikeState.speed > 0) {
-    // angular velocity = linear speed / wheel radius
-    const wheelSpin = (bikeState.speed * dt) / wheelRadius;
-    for (const wheel of wheelMeshes) {
-      wheel.rotation.x += wheelSpin;
-    }
-  }
 
   // Move directional light with bike
   dirLight.position.set(bikeState.x + 10, 20, bikeState.z + 10);
