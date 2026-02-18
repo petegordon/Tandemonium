@@ -304,9 +304,10 @@ loader.load('tandem_bicycle.glb', (gltf) => {
 
     const n = (child.name || '').toLowerCase();
 
-    // Spoke meshes: "wainframe_joint" = wheel spoke framework,
-    // plus "wheel_joint" (not "_2_" which are tire/rim)
+    // Spoke meshes: NurbsPath nodes (thin lines/tubes = spokes),
+    // wainframe_joint, and wheel_joint (not "_2_" which are tire/rim)
     const isSpoke = child.isMesh && (
+      n.includes('nurbspath') ||
       n.includes('wainframe_joint') ||
       (n.includes('wheel_joint') && !n.includes('_2_'))
     );
