@@ -304,9 +304,9 @@ loader.load('tandem_bicycle.glb', (gltf) => {
 
     const n = (child.name || '').toLowerCase();
 
-    // Collect spoke meshes — look for "spoke" in name, or thin geometry inside wheels
-    if (child.isMesh && (n.includes('spoke') || n.includes('spok'))) {
-      // Make material transparent so we can fade it
+    // Spoke meshes: "wheel_joint" but NOT "_2_" (those are tire/rim at ~3k verts)
+    // The ~1100 vert meshes are the actual thin spokes
+    if (child.isMesh && n.includes('wheel_joint') && !n.includes('_2_')) {
       if (child.material) {
         child.material = child.material.clone();
         child.material.transparent = true;
@@ -315,35 +315,12 @@ loader.load('tandem_bicycle.glb', (gltf) => {
       console.log('  -> Spoke mesh:', child.name);
     }
 
-    // Collect pedal/crank nodes
-    if (n.includes('pedal') || n.includes('crank') || n.includes('gear') || n.includes('chain')) {
+    // Pedal nodes: only match "pedal" specifically (not gear/chain which matches too broadly)
+    if (n.includes('pedal')) {
       pedalNodes.push(child);
       console.log('  -> Pedal node:', child.name);
     }
   });
-
-  // If no spoke meshes found by name, try to find them by geometry:
-  // spokes are typically thin meshes inside wheel parent nodes
-  if (spokeMeshes.length === 0) {
-    model.traverse((child) => {
-      if (!child.isMesh) return;
-      const n = (child.name || '').toLowerCase();
-      // Skip tires, frames, seats, pedals — look for unnamed or wire-like meshes inside wheel groups
-      const parentName = (child.parent?.name || '').toLowerCase();
-      if (parentName.includes('wheel') || parentName.includes('tire') || parentName.includes('rim')) {
-        // Check if this mesh has relatively few vertices (thin spoke geometry)
-        const vertCount = child.geometry?.attributes?.position?.count || 0;
-        if (vertCount < 5000) {
-          if (child.material) {
-            child.material = child.material.clone();
-            child.material.transparent = true;
-          }
-          spokeMeshes.push(child);
-          console.log('  -> Spoke mesh (by parent):', child.name, 'verts:', vertCount);
-        }
-      }
-    });
-  }
 
   // Scale so the bike is ~4.4m long
   const targetLength = 4.4;
