@@ -1,0 +1,1336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Tandemonium — Portrait</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #000; touch-action: none;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* ── HUD: top bar ── */
+  #hud-top {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 10px 14px 0;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #hud-top-left {
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    line-height: 1.5;
+  }
+  #hud-top-right {
+    display: flex;
+    gap: 8px;
+  }
+
+  /* ── Gauges ── */
+  .gauge-wrap {
+    width: 60px; height: 60px;
+    position: relative;
+  }
+  .gauge-wrap svg { width: 100%; height: 100%; }
+  .gauge-label {
+    position: absolute;
+    bottom: -2px; left: 0; right: 0;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  }
+  .gauge-title {
+    position: absolute;
+    top: -2px; left: 0; right: 0;
+    text-align: center;
+    font-size: 8px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Status text (center) ── */
+  #status {
+    position: fixed;
+    top: 38%;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.7);
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  /* ── Left-side toggle buttons ── */
+  #side-buttons {
+    position: fixed;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 10;
+  }
+  .side-btn {
+    padding: 8px 12px;
+    border: 2px solid rgba(255,255,255,0.5);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.4);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    pointer-events: auto;
+    text-align: center;
+    min-width: 70px;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+  .side-btn.safety-on {
+    background: rgba(40,180,60,0.6);
+    border-color: rgba(40,180,60,0.8);
+  }
+  .side-btn.safety-off {
+    background: rgba(200,40,40,0.6);
+    border-color: rgba(200,40,40,0.8);
+  }
+  .side-btn.speed-on {
+    background: rgba(40,100,220,0.6);
+    border-color: rgba(40,100,220,0.8);
+  }
+  .side-btn.speed-off {
+    background: rgba(80,80,80,0.5);
+    border-color: rgba(150,150,150,0.4);
+  }
+  .side-btn.reset-btn {
+    background: rgba(80,80,80,0.5);
+    border-color: rgba(150,150,150,0.4);
+  }
+
+  /* ── Pedal touch buttons (bottom) ── */
+  #pedal-bar {
+    position: fixed;
+    bottom: env(safe-area-inset-bottom, 0px);
+    left: 0; right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px 10px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .pedal-touch {
+    width: 45%;
+    height: 18vh;
+    min-height: 80px;
+    max-height: 140px;
+    border-radius: 16px;
+    border: 3px solid rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    cursor: pointer;
+    transition: background 0.08s, border-color 0.08s;
+  }
+  .pedal-touch img {
+    max-width: 80%;
+    max-height: 80%;
+    object-fit: contain;
+    pointer-events: none;
+    opacity: 0.85;
+  }
+  .pedal-touch.pressed {
+    background: rgba(60,200,80,0.4);
+    border-color: rgba(60,200,80,0.8);
+  }
+  .pedal-touch.wrong {
+    background: rgba(220,60,40,0.4);
+    border-color: rgba(220,60,40,0.8);
+  }
+  .pedal-touch.brake {
+    background: rgba(220,160,20,0.4);
+    border-color: rgba(220,160,20,0.8);
+  }
+
+  /* ── Crash flash overlay ── */
+  #crash-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,0,0,0);
+    pointer-events: none;
+    z-index: 9;
+    transition: none;
+  }
+
+  /* ── Instructions overlay ── */
+  #instructions {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 30px;
+  }
+  #instructions.hidden { display: none; }
+  #instructions h1 {
+    color: #fff;
+    font-size: 28px;
+    margin-bottom: 16px;
+  }
+  #instructions p {
+    color: rgba(255,255,255,0.8);
+    font-size: 15px;
+    text-align: center;
+    line-height: 1.6;
+    max-width: 300px;
+    margin-bottom: 10px;
+  }
+  #instructions .tap-hint {
+    color: rgba(255,255,255,0.5);
+    font-size: 13px;
+    margin-top: 20px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+
+  /* ── Calibrate flash ── */
+  #calibrate-flash {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,0.3);
+    pointer-events: none;
+    z-index: 8;
+    display: none;
+  }
+
+  /* Desktop: hide pedal bar, show keyboard hint */
+  @media (hover: hover) and (pointer: fine) {
+    #pedal-bar { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HUD -->
+<div id="hud-top">
+  <div id="hud-top-left">
+    <div id="speed-display">Speed: 0 km/h</div>
+    <div id="distance-display">Distance: 0 m</div>
+  </div>
+  <div id="hud-top-right">
+    <div class="gauge-wrap" id="bike-gauge">
+      <div class="gauge-title">BIKE</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+        <line x1="60" y1="60" x2="60" y2="14" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+        <line x1="60" y1="60" x2="14" y2="60" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+        <line x1="60" y1="60" x2="106" y2="60" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+        <g id="bike-needle">
+          <line x1="60" y1="60" x2="60" y2="12" stroke="#44ff66" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="#44ff66"/>
+        </g>
+      </svg>
+      <div class="gauge-label" id="bike-label">0.0&deg;</div>
+    </div>
+    <div class="gauge-wrap" id="phone-gauge">
+      <div class="gauge-title">PHONE</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+        <line x1="60" y1="60" x2="60" y2="14" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+        <line x1="60" y1="60" x2="14" y2="60" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+        <line x1="60" y1="60" x2="106" y2="60" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+        <g id="phone-needle">
+          <line x1="60" y1="60" x2="60" y2="12" stroke="#ffaa22" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="#ffaa22"/>
+        </g>
+      </svg>
+      <div class="gauge-label" id="phone-label">0.0&deg;</div>
+    </div>
+  </div>
+</div>
+
+<div id="status"></div>
+
+<!-- Side buttons -->
+<div id="side-buttons">
+  <button class="side-btn safety-on" id="safety-btn">SAFETY ON</button>
+  <button class="side-btn speed-off" id="speed-btn">SPEED OFF</button>
+  <button class="side-btn reset-btn" id="reset-btn">RESET</button>
+</div>
+
+<!-- Pedal touch targets -->
+<div id="pedal-bar">
+  <div class="pedal-touch" id="touch-left"><img src="../images/left_pedal.png" alt="Left Pedal"></div>
+  <div class="pedal-touch" id="touch-right"><img src="../images/right_pedal.png" alt="Right Pedal"></div>
+</div>
+
+<!-- Crash flash -->
+<div id="crash-overlay"></div>
+
+<!-- Calibrate flash -->
+<div id="calibrate-flash"></div>
+
+<!-- Instructions overlay -->
+<div id="instructions">
+  <h1>Tandemonium</h1>
+  <p>Alternate LEFT/RIGHT pedals to ride.<br>Tilt your phone (or A/D keys) to steer and balance.</p>
+  <p>Don't lean too far or you'll crash!</p>
+  <p class="tap-hint">Tap anywhere to start</p>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ============================================================
+// 1. CONSTANTS & CONFIG
+// ============================================================
+const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 1);
+
+// Hide phone gauge on desktop
+if (!isMobile) {
+  document.getElementById('phone-gauge').style.display = 'none';
+}
+
+// ============================================================
+// 2. INPUT MANAGER
+// ============================================================
+class InputManager {
+  constructor() {
+    this.keys = {};
+    this.touchLeft = false;
+    this.touchRight = false;
+    this.motionLean = 0;
+    this.motionEnabled = false;
+    this.motionReady = false;
+    this.rawGamma = 0;
+    this.motionOffset = null;
+    this.motionRawRelative = 0;
+    this._setupKeyboard();
+    if (isMobile) {
+      this._setupTouch();
+      this._setupMotion();
+      this._setupCalibration();
+    }
+  }
+
+  _setupKeyboard() {
+    window.addEventListener('keydown', (e) => {
+      if (['ArrowUp','ArrowDown','KeyA','KeyD'].includes(e.code)) e.preventDefault();
+      this.keys[e.code] = true;
+    });
+    window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
+  }
+
+  _setupTouch() {
+    const leftBtn = document.getElementById('touch-left');
+    const rightBtn = document.getElementById('touch-right');
+
+    const bind = (el, side, pressed) => {
+      el.addEventListener(pressed ? 'touchstart' : 'touchend', (e) => {
+        e.preventDefault();
+        if (side === 'left') this.touchLeft = pressed;
+        else this.touchRight = pressed;
+      }, { passive: false });
+    };
+    bind(leftBtn, 'left', true);
+    bind(leftBtn, 'left', false);
+    bind(rightBtn, 'right', true);
+    bind(rightBtn, 'right', false);
+
+    leftBtn.addEventListener('touchcancel', () => { this.touchLeft = false; });
+    rightBtn.addEventListener('touchcancel', () => { this.touchRight = false; });
+
+    // Handle finger leaving button
+    leftBtn.addEventListener('touchmove', (e) => {
+      const t = e.touches[0], r = leftBtn.getBoundingClientRect();
+      if (t.clientX < r.left || t.clientX > r.right || t.clientY < r.top || t.clientY > r.bottom) this.touchLeft = false;
+    }, { passive: false });
+    rightBtn.addEventListener('touchmove', (e) => {
+      const t = e.touches[0], r = rightBtn.getBoundingClientRect();
+      if (t.clientX < r.left || t.clientX > r.right || t.clientY < r.top || t.clientY > r.bottom) this.touchRight = false;
+    }, { passive: false });
+  }
+
+  _setupMotion() {
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      this.needsMotionPermission = true;
+    } else if (typeof DeviceMotionEvent !== 'undefined') {
+      this._startMotionListening();
+    }
+  }
+
+  async requestMotionPermission() {
+    if (this.motionEnabled) return;
+    this.needsMotionPermission = false;
+    if (typeof DeviceMotionEvent === 'undefined' ||
+        typeof DeviceMotionEvent.requestPermission !== 'function') return;
+    try {
+      const response = await DeviceMotionEvent.requestPermission();
+      if (response === 'granted') this._startMotionListening();
+    } catch (e) {
+      console.warn('Motion permission error:', e);
+    }
+  }
+
+  _startMotionListening() {
+    this.motionReady = true;
+    this._useAccel = false;
+    this._gx = 0; this._gy = 0; this._gz = 0;
+    this._gravityInit = false;
+
+    window.addEventListener('devicemotion', (e) => {
+      const a = e.accelerationIncludingGravity;
+      if (!a || a.x == null) return;
+      this._useAccel = true;
+      this.motionEnabled = true;
+
+      const k = 0.3;
+      if (!this._gravityInit) {
+        this._gx = a.x; this._gy = a.y; this._gz = a.z;
+        this._gravityInit = true;
+      } else {
+        this._gx += (a.x - this._gx) * k;
+        this._gy += (a.y - this._gy) * k;
+        this._gz += (a.z - this._gz) * k;
+      }
+
+      const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+      let rollRad;
+      if (orient === 90) rollRad = Math.atan2(this._gy, -this._gx);
+      else if (orient === 270 || orient === -90) rollRad = Math.atan2(-this._gy, this._gx);
+      else rollRad = Math.atan2(this._gx, this._gy);
+
+      this._applyTilt(-rollRad * 180 / Math.PI);
+    });
+
+    window.addEventListener('deviceorientation', (e) => {
+      if (this._useAccel) return;
+      const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+      let rawTilt;
+      if (orient === 90) rawTilt = e.beta;
+      else if (orient === 270 || orient === -90) rawTilt = -e.beta;
+      else rawTilt = e.gamma;
+
+      if (rawTilt != null) {
+        this.motionEnabled = true;
+        this._applyTilt(rawTilt);
+      }
+    });
+  }
+
+  _applyTilt(rawTilt) {
+    this.rawGamma = rawTilt;
+    if (this.motionOffset === null) this.motionOffset = this.rawGamma;
+
+    let relative = this.rawGamma - this.motionOffset;
+    if (relative > 180) relative -= 360;
+    else if (relative < -180) relative += 360;
+    this.motionRawRelative = relative;
+
+    const deadZone = 2;
+    if (Math.abs(relative) < deadZone) {
+      relative = 0;
+    } else {
+      relative = relative - Math.sign(relative) * deadZone;
+    }
+    this.motionLean = Math.max(-1, Math.min(1, relative / 40));
+  }
+
+  _setupCalibration() {
+    const gauge = document.getElementById('phone-gauge');
+    const flash = document.getElementById('calibrate-flash');
+    const doCalibrate = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.motionOffset = this.rawGamma;
+      this.motionLean = 0;
+      if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 800); }
+    };
+    gauge.addEventListener('touchstart', doCalibrate, { passive: false });
+    gauge.addEventListener('click', doCalibrate);
+  }
+
+  isPressed(code) {
+    if (code === 'ArrowUp') return !!this.keys[code] || this.touchLeft;
+    if (code === 'ArrowDown') return !!this.keys[code] || this.touchRight;
+    return !!this.keys[code];
+  }
+
+  getMotionLean() {
+    return this.motionEnabled ? this.motionLean : 0;
+  }
+}
+
+// ============================================================
+// 3. PEDAL CONTROLLER
+// ============================================================
+class PedalController {
+  constructor(input) {
+    this.input = input;
+    this.lastPedal = null;
+    this.pedalPower = 0;
+    this.crankAngle = 0;
+    this.prevLeft = false;
+    this.prevRight = false;
+    this.lastPedalTime = 0;
+    this.wasCorrect = false;
+    this.wasWrong = false;
+  }
+
+  update(dt) {
+    const now = performance.now() / 1000;
+    const leftHeld = this.input.isPressed('ArrowUp');
+    const rightHeld = this.input.isPressed('ArrowDown');
+    const leftJust = leftHeld && !this.prevLeft;
+    const rightJust = rightHeld && !this.prevRight;
+    const braking = leftHeld && rightHeld;
+
+    let acceleration = 0;
+    let wobble = 0;
+    this.wasCorrect = false;
+    this.wasWrong = false;
+
+    if (braking) {
+      this.pedalPower *= 0.95;
+      this.prevLeft = leftHeld;
+      this.prevRight = rightHeld;
+      return { acceleration: 0, wobble: 0, braking: true, crankAngle: this.crankAngle };
+    }
+
+    if (leftJust) {
+      const gap = now - this.lastPedalTime;
+      if (this.lastPedal !== 'left') {
+        this.wasCorrect = true;
+        const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
+        this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
+        acceleration = 0.35 + 0.6 * this.pedalPower;
+      } else {
+        this.wasWrong = true;
+        this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
+        acceleration = 0.06;
+        wobble = 0.5;
+      }
+      this.lastPedal = 'left';
+      this.lastPedalTime = now;
+      this.crankAngle += Math.PI / 2;
+    }
+
+    if (rightJust) {
+      const gap = now - this.lastPedalTime;
+      if (this.lastPedal !== 'right') {
+        this.wasCorrect = true;
+        const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
+        this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
+        acceleration = 0.35 + 0.6 * this.pedalPower;
+      } else {
+        this.wasWrong = true;
+        this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
+        acceleration = 0.06;
+        wobble = 0.5;
+      }
+      this.lastPedal = 'right';
+      this.lastPedalTime = now;
+      this.crankAngle += Math.PI / 2;
+    }
+
+    this.pedalPower *= (1 - 0.4 * dt);
+    this.prevLeft = leftHeld;
+    this.prevRight = rightHeld;
+
+    return { acceleration, wobble, braking: false, crankAngle: this.crankAngle };
+  }
+}
+
+// ============================================================
+// 4. BALANCE CONTROLLER
+// ============================================================
+class BalanceController {
+  constructor(input) {
+    this.input = input;
+  }
+
+  update() {
+    let leanInput = 0;
+    if (this.input.isPressed('KeyA')) leanInput -= 1;
+    if (this.input.isPressed('KeyD')) leanInput += 1;
+    const motion = this.input.getMotionLean();
+    if (motion !== 0) leanInput += motion;
+    leanInput = Math.max(-1, Math.min(1, leanInput));
+    return { leanInput };
+  }
+}
+
+// ============================================================
+// 5. BIKE MODEL (GLB visuals + physics)
+// ============================================================
+class BikeModel {
+  constructor(scene) {
+    this.scene = scene;
+    this.group = new THREE.Group();
+    scene.add(this.group);
+
+    // Physics state
+    this.position = new THREE.Vector3(0, 0, 0);
+    this.heading = 0;
+    this.lean = 0;
+    this.leanVelocity = 0;
+    this.speed = 0;
+    this.distanceTraveled = 0;
+    this.crankAngle = 0;
+
+    // Fall state
+    this.fallen = false;
+    this.fallTimer = 0;
+    this._braking = false;
+
+    // GLB data
+    this.modelLoaded = false;
+    this.spokeMeshes = [];
+    this.pedalNodes = [];
+    this.smoothSpokeFade = 0;
+    this.maxSpeed = 16;
+
+    this._loadModel();
+  }
+
+  _loadModel() {
+    const loader = new GLTFLoader();
+    loader.load('../tandem-3d/tandem_bicycle.glb', (gltf) => {
+      const model = gltf.scene;
+      model.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+
+        const n = (child.name || '').toLowerCase();
+
+        // Spoke meshes: Cylinder035 and Cylinder024
+        if (child.isMesh && (n === 'cylinder035_cycle_0' || n === 'cylinder024_cycle_0')) {
+          child.material = child.material.clone();
+          child.material.transparent = true;
+          this.spokeMeshes.push(child);
+        }
+
+        // Pedal nodes
+        if (n.includes('pedal')) {
+          this.pedalNodes.push(child);
+        }
+      });
+
+      // Scale to ~4.4m long
+      const targetLength = 4.4;
+      const preBox = new THREE.Box3().setFromObject(model);
+      const preSize = preBox.getSize(new THREE.Vector3());
+      const maxDim = Math.max(preSize.x, preSize.y, preSize.z);
+      const scale = targetLength / maxDim;
+      model.scale.setScalar(scale);
+
+      this.group.add(model);
+      this.group.updateMatrixWorld(true);
+
+      // Find true bounds by scanning every vertex
+      let minY = Infinity, maxY = -Infinity;
+      let minX = Infinity, maxX = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+      const v = new THREE.Vector3();
+
+      model.traverse((child) => {
+        if (child.isMesh && child.geometry && child.geometry.attributes.position) {
+          const pos = child.geometry.attributes.position;
+          for (let i = 0; i < pos.count; i++) {
+            v.fromBufferAttribute(pos, i);
+            child.localToWorld(v);
+            if (v.y < minY) minY = v.y;
+            if (v.y > maxY) maxY = v.y;
+            if (v.x < minX) minX = v.x;
+            if (v.x > maxX) maxX = v.x;
+            if (v.z < minZ) minZ = v.z;
+            if (v.z > maxZ) maxZ = v.z;
+          }
+        }
+      });
+
+      const centerX = (minX + maxX) / 2;
+      const centerZ = (minZ + maxZ) / 2;
+      model.position.y -= minY;
+      model.position.x -= centerX;
+      model.position.z -= centerZ;
+
+      this.modelLoaded = true;
+      console.log('Bike loaded. Spokes:', this.spokeMeshes.length,
+        'Pedals:', this.pedalNodes.length);
+    }, undefined, (err) => {
+      console.error('Failed to load tandem_bicycle.glb:', err);
+    });
+  }
+
+  update(pedalResult, balanceResult, dt, safetyMode, autoSpeed) {
+    this.crankAngle = pedalResult.crankAngle;
+
+    if (this.fallen) {
+      this.fallTimer -= dt;
+      if (this.fallTimer <= 0) this._reset();
+      this._applyTransform();
+      return;
+    }
+
+    // --- Auto-speed: maintain constant slow cruise ---
+    if (autoSpeed && !pedalResult.braking) {
+      const cruiseSpeed = 3.0;
+      if (this.speed < cruiseSpeed) {
+        this.speed += 2.0 * dt;
+      }
+    }
+
+    // --- Braking ---
+    this._braking = pedalResult.braking;
+    if (pedalResult.braking) {
+      this.speed *= (1 - 2.5 * dt);
+      if (this.speed < 0.05) this.speed = 0;
+    }
+
+    // --- Acceleration ---
+    this.speed += pedalResult.acceleration;
+
+    // Friction
+    this.speed *= (1 - 0.6 * dt);
+    this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
+
+    // --- Balance physics ---
+    const gravity = Math.sin(this.lean) * 4.0;
+    const playerLean = balanceResult.leanInput * 16.0;
+    const gyro = -this.lean * Math.min(this.speed * 0.6, 5.0);
+    const damping = -this.leanVelocity * 2.2;
+
+    const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
+
+    const t = performance.now() / 1000;
+    const lowSpeedWobble = Math.max(0, 1 - this.speed * 0.3) *
+      (Math.sin(t * 2.7) * 0.3 + Math.sin(t * 4.3) * 0.15);
+
+    let pedalLeanKick = 0;
+    if (pedalResult.acceleration > 0 && !pedalResult.braking) {
+      pedalLeanKick = (Math.random() - 0.5) * 0.2;
+    }
+
+    this.leanVelocity += (gravity + playerLean + gyro + damping +
+      pedalWobble + lowSpeedWobble + pedalLeanKick) * dt;
+    this.lean += this.leanVelocity * dt;
+
+    // --- Safety mode ---
+    if (safetyMode) {
+      this.lean = Math.max(-0.9, Math.min(0.9, this.lean));
+    }
+
+    // --- Steering from lean ---
+    const turnRate = -this.lean * this.speed * 0.35;
+    this.heading += turnRate * dt;
+
+    // --- Position ---
+    this.position.x += Math.sin(this.heading) * this.speed * dt;
+    this.position.z += Math.cos(this.heading) * this.speed * dt;
+    this.distanceTraveled += this.speed * dt;
+
+    // --- Fall detection ---
+    if (Math.abs(this.lean) > 1.2) {
+      this._fall();
+    }
+
+    // --- Spoke fade (asymmetric: 8x out, 1.2x in) ---
+    if (this.spokeMeshes.length > 0) {
+      const targetFade = Math.min(this.speed / (this.maxSpeed * 0.2), 1);
+      const rate = targetFade > this.smoothSpokeFade ? 8 : 1.2;
+      this.smoothSpokeFade += (targetFade - this.smoothSpokeFade) * Math.min(1, rate * dt);
+      const opacity = 1 - this.smoothSpokeFade;
+      for (const spoke of this.spokeMeshes) {
+        spoke.material.opacity = opacity;
+        spoke.visible = opacity > 0.02;
+      }
+    }
+
+    // --- Pedal crank animation ---
+    if (this.speed > 0.01) {
+      const pedalSpin = this.speed * dt * 1.5;
+      for (const node of this.pedalNodes) {
+        node.rotation.z += pedalSpin;
+      }
+    }
+
+    this._applyTransform();
+  }
+
+  _applyTransform() {
+    this.group.position.copy(this.position);
+    const q = new THREE.Quaternion();
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0), this.heading
+    );
+    const qLean = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 0, 1), this.lean
+    );
+    q.multiplyQuaternions(qYaw, qLean);
+    this.group.quaternion.copy(q);
+  }
+
+  _fall() {
+    this.fallen = true;
+    this.fallTimer = 2.0;
+    this.speed = 0;
+    this.lean = Math.sign(this.lean) * Math.PI / 2.2;
+    this.leanVelocity = 0;
+    this.position.y = -0.15;
+  }
+
+  _reset() {
+    this.fallen = false;
+    this.lean = 0;
+    this.leanVelocity = 0;
+    this.speed = 0;
+    this.position.y = 0;
+  }
+
+  fullReset() {
+    this._reset();
+    this.position.set(0, 0, 0);
+    this.heading = 0;
+    this.distanceTraveled = 0;
+    this.crankAngle = 0;
+    this.smoothSpokeFade = 0;
+    for (const spoke of this.spokeMeshes) {
+      spoke.material.opacity = 1;
+      spoke.visible = true;
+    }
+  }
+}
+
+// ============================================================
+// 6. CHASE CAMERA (portrait-optimized)
+// ============================================================
+class ChaseCamera {
+  constructor(camera) {
+    this.camera = camera;
+    this.currentPos = new THREE.Vector3();
+    this.currentLook = new THREE.Vector3();
+    this.shakeAmount = 0;
+    this.initialized = false;
+
+    // Matches tandem-3d style: close overhead when slow, pulls back at speed
+    // Offsets are heading-relative: Y = height, Z = behind(-)/ahead(+)
+    this.offsetSlow = new THREE.Vector3(0, 6, -5);
+    this.lookSlow = new THREE.Vector3(0, 0.5, 1);
+    this.offsetFast = new THREE.Vector3(0, 4, -12);
+    this.lookFast = new THREE.Vector3(0, 0.2, 8);
+  }
+
+  update(bike, dt) {
+    // Forward direction based on bike heading
+    const fwd = new THREE.Vector3(Math.sin(bike.heading), 0, Math.cos(bike.heading));
+
+    // Blend between slow/fast based on speed (maxSpeed ~10 for tandem-3d feel)
+    const speedT = Math.min(bike.speed / 10, 1);
+
+    const offY = this.offsetSlow.y + (this.offsetFast.y - this.offsetSlow.y) * speedT;
+    const offZ = this.offsetSlow.z + (this.offsetFast.z - this.offsetSlow.z) * speedT;
+    const lookY = this.lookSlow.y + (this.lookFast.y - this.lookSlow.y) * speedT;
+    const lookZ = this.lookSlow.z + (this.lookFast.z - this.lookSlow.z) * speedT;
+
+    // Camera position: behind bike along heading direction
+    const desiredPos = bike.position.clone()
+      .add(fwd.clone().multiplyScalar(offZ))
+      .add(new THREE.Vector3(0, offY, 0));
+
+    // Look-at: ahead of bike along heading direction
+    const desiredLook = bike.position.clone()
+      .add(fwd.clone().multiplyScalar(lookZ))
+      .add(new THREE.Vector3(0, lookY, 0));
+
+    if (!this.initialized) {
+      this.currentPos.copy(desiredPos);
+      this.currentLook.copy(desiredLook);
+      this.initialized = true;
+    }
+
+    // Gentle lerp matching tandem-3d smoothing style
+    const camSmooth = Math.min(1, 2.5 * dt);
+    this.currentPos.lerp(desiredPos, camSmooth);
+    this.currentLook.lerp(desiredLook, camSmooth);
+
+    // Camera shake at high speed
+    const shake = new THREE.Vector3();
+    if (bike.speed > 8) {
+      this.shakeAmount = Math.max(this.shakeAmount, (bike.speed - 8) * 0.02);
+    }
+    if (this.shakeAmount > 0.001) {
+      shake.set(
+        (Math.random() - 0.5) * this.shakeAmount,
+        (Math.random() - 0.5) * this.shakeAmount * 0.5,
+        (Math.random() - 0.5) * this.shakeAmount
+      );
+      this.shakeAmount *= (1 - 6 * dt);
+    }
+
+    this.camera.position.copy(this.currentPos).add(shake);
+    this.camera.lookAt(this.currentLook);
+  }
+}
+
+// ============================================================
+// 7. WORLD
+// ============================================================
+class World {
+  constructor(scene) {
+    this.scene = scene;
+    this._treeMeshes = [];
+    this.floor = null;
+    this.tileSize = 4;
+    this._buildGround();
+    this._buildRoad();
+    this._buildTrees();
+    this._buildLighting();
+  }
+
+  _buildGround() {
+    // Checkered floor (snap-follow infinite illusion)
+    const floorSize = 200;
+    const tilesPerSide = floorSize / this.tileSize;
+
+    const floorGeom = new THREE.PlaneGeometry(floorSize, floorSize);
+    const canvas2d = document.createElement('canvas');
+    canvas2d.width = tilesPerSide;
+    canvas2d.height = tilesPerSide;
+    const ctx = canvas2d.getContext('2d');
+    for (let y = 0; y < tilesPerSide; y++) {
+      for (let x = 0; x < tilesPerSide; x++) {
+        ctx.fillStyle = (x + y) % 2 === 0 ? '#5a9a4a' : '#4a8a3a';
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    const floorTexture = new THREE.CanvasTexture(canvas2d);
+    floorTexture.magFilter = THREE.NearestFilter;
+    floorTexture.minFilter = THREE.NearestFilter;
+    const floorMat = new THREE.MeshStandardMaterial({ map: floorTexture });
+    this.floor = new THREE.Mesh(floorGeom, floorMat);
+    this.floor.rotation.x = -Math.PI / 2;
+    this.floor.receiveShadow = true;
+    this.scene.add(this.floor);
+  }
+
+  _buildRoad() {
+    // Road stripe
+    const roadGeo = new THREE.PlaneGeometry(5, 600);
+    const roadMat = new THREE.MeshPhongMaterial({ color: 0x555555, flatShading: true });
+    const road = new THREE.Mesh(roadGeo, roadMat);
+    road.rotation.x = -Math.PI / 2;
+    road.position.y = 0.02;
+    road.receiveShadow = true;
+    this.scene.add(road);
+
+    // Center dashes
+    const dashMat = new THREE.MeshPhongMaterial({ color: 0xdddd00, flatShading: true });
+    for (let z = -295; z < 300; z += 4) {
+      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.8), dashMat);
+      dash.rotation.x = -Math.PI / 2;
+      dash.position.set(0, 0.03, z);
+      this.scene.add(dash);
+    }
+
+    // Edge lines
+    const edgeMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true });
+    for (const xOff of [-2.3, 2.3]) {
+      const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 600), edgeMat);
+      edge.rotation.x = -Math.PI / 2;
+      edge.position.set(xOff, 0.03, 0);
+      this.scene.add(edge);
+    }
+  }
+
+  _buildTrees() {
+    const trunkMat = new THREE.MeshPhongMaterial({ color: 0x7a5230, flatShading: true });
+    const leafMat = new THREE.MeshPhongMaterial({ color: 0x2d8a2d, flatShading: true });
+    const leafMat2 = new THREE.MeshPhongMaterial({ color: 0x1f7a1f, flatShading: true });
+
+    for (let i = 0; i < 80; i++) {
+      const side = Math.random() > 0.5 ? 1 : -1;
+      const x = side * (5 + Math.random() * 50);
+      const z = (Math.random() - 0.5) * 500;
+      const scale = 0.7 + Math.random() * 0.8;
+
+      const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 2.0 * scale, 6),
+        trunkMat
+      );
+      trunk.position.set(x, scale, z);
+      trunk.castShadow = true;
+      this.scene.add(trunk);
+      this._treeMeshes.push(trunk);
+
+      const mat = Math.random() > 0.5 ? leafMat : leafMat2;
+      const canopy = new THREE.Mesh(
+        new THREE.SphereGeometry(1.0 * scale, 6, 5),
+        mat
+      );
+      canopy.position.set(x, 2.3 * scale, z);
+      canopy.castShadow = true;
+      this.scene.add(canopy);
+      this._treeMeshes.push(canopy);
+    }
+  }
+
+  _buildLighting() {
+    const ambient = new THREE.AmbientLight(0x5566aa, 0.5);
+    this.scene.add(ambient);
+
+    this.sun = new THREE.DirectionalLight(0xffffdd, 1.1);
+    this.sun.position.set(30, 40, 20);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.width = 1024;
+    this.sun.shadow.mapSize.height = 1024;
+    this.sun.shadow.camera.near = 1;
+    this.sun.shadow.camera.far = 120;
+    this.sun.shadow.camera.left = -35;
+    this.sun.shadow.camera.right = 35;
+    this.sun.shadow.camera.top = 35;
+    this.sun.shadow.camera.bottom = -35;
+    this.scene.add(this.sun);
+    this.scene.add(this.sun.target);
+
+    const hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, 0.35);
+    this.scene.add(hemi);
+  }
+
+  update(bikePos) {
+    // Sun follows bike
+    this.sun.position.set(bikePos.x + 30, 40, bikePos.z + 20);
+    this.sun.target.position.copy(bikePos);
+    this.sun.target.updateMatrixWorld();
+
+    // Infinite floor snap-follow
+    const snapSize = this.tileSize * 2;
+    this.floor.position.x = Math.round(bikePos.x / snapSize) * snapSize;
+    this.floor.position.z = Math.round(bikePos.z / snapSize) * snapSize;
+  }
+}
+
+// ============================================================
+// 8. HUD
+// ============================================================
+class HUD {
+  constructor(input) {
+    this.input = input;
+    this.speedEl = document.getElementById('speed-display');
+    this.distanceEl = document.getElementById('distance-display');
+    this.statusEl = document.getElementById('status');
+    this.crashOverlay = document.getElementById('crash-overlay');
+    this.crashFlash = 0;
+
+    // Gauges
+    this.bikeNeedle = document.getElementById('bike-needle');
+    this.bikeLabel = document.getElementById('bike-label');
+    this.phoneNeedle = document.getElementById('phone-needle');
+    this.phoneLabel = document.getElementById('phone-label');
+    this.phoneGauge = document.getElementById('phone-gauge');
+
+    // Touch buttons
+    this.touchLeftEl = document.getElementById('touch-left');
+    this.touchRightEl = document.getElementById('touch-right');
+  }
+
+  update(bike, input, pedalCtrl, dt) {
+    const kmh = Math.round(bike.speed * 3.6);
+    this.speedEl.textContent = 'Speed: ' + kmh + ' km/h';
+    this.distanceEl.textContent = 'Distance: ' + Math.round(bike.distanceTraveled) + ' m';
+
+    const leftHeld = input.isPressed('ArrowUp');
+    const rightHeld = input.isPressed('ArrowDown');
+    const braking = leftHeld && rightHeld;
+
+    // Touch button feedback
+    if (this.touchLeftEl && this.touchRightEl) {
+      let lClass = 'pedal-touch';
+      let rClass = 'pedal-touch';
+
+      if (braking) {
+        lClass += ' brake';
+        rClass += ' brake';
+      } else {
+        if (leftHeld) lClass += (pedalCtrl.wasWrong ? ' wrong' : ' pressed');
+        if (rightHeld) rClass += (pedalCtrl.wasWrong ? ' wrong' : ' pressed');
+      }
+
+      this.touchLeftEl.className = lClass;
+      this.touchRightEl.className = rClass;
+    }
+
+    // Phone gauge
+    if (isMobile) {
+      const rawRel = input.motionRawRelative || 0;
+      const phoneDeg = Math.max(-90, Math.min(90, rawRel));
+      this.phoneNeedle.setAttribute('transform', 'rotate(' + phoneDeg.toFixed(1) + ', 60, 60)');
+      this.phoneLabel.textContent = Math.abs(rawRel).toFixed(1) + '\u00B0';
+    }
+
+    // Bike gauge
+    const tiltDeg = (bike.lean * 180 / Math.PI);
+    const bikeDeg = Math.max(-90, Math.min(90, tiltDeg));
+    const danger = Math.abs(bike.lean) / 1.2;
+    this.bikeNeedle.setAttribute('transform', 'rotate(' + bikeDeg.toFixed(1) + ', 60, 60)');
+    this.bikeLabel.textContent = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
+    if (danger > 0.75) {
+      this.bikeLabel.style.color = '#ff4444';
+    } else if (danger > 0.5) {
+      this.bikeLabel.style.color = '#ffaa22';
+    } else {
+      this.bikeLabel.style.color = '#ffffff';
+    }
+
+    // Status text
+    if (bike.fallen) {
+      this.statusEl.textContent = 'CRASHED! Resetting...';
+      this.statusEl.style.color = '#ff4444';
+    } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {
+      this.statusEl.textContent = isMobile ? 'Tap pedals to ride!' : 'Pedal! Alternate \u2191 \u2193';
+      this.statusEl.style.color = '#ffdd44';
+    } else {
+      this.statusEl.textContent = '';
+    }
+
+    // Crash flash
+    if (bike.fallen && this.crashFlash === 0) {
+      this.crashFlash = 1;
+      this.crashOverlay.style.background = 'rgba(255, 0, 0, 0.35)';
+    }
+    if (this.crashFlash > 0) {
+      this.crashFlash -= dt * 0.5; // fade over ~2s
+      if (this.crashFlash <= 0) {
+        this.crashFlash = 0;
+        this.crashOverlay.style.background = 'rgba(255, 0, 0, 0)';
+      } else {
+        const alpha = (this.crashFlash * 0.35).toFixed(3);
+        this.crashOverlay.style.background = 'rgba(255, 0, 0, ' + alpha + ')';
+      }
+    }
+  }
+}
+
+// ============================================================
+// 9. GAME
+// ============================================================
+class Game {
+  constructor() {
+    // Renderer
+    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.prepend(this.renderer.domElement);
+
+    // Scene
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x7ec8e3);
+    this.scene.fog = new THREE.FogExp2(0x7ec8e3, 0.006);
+
+    // Camera (FOV 70 for portrait)
+    this.camera = new THREE.PerspectiveCamera(
+      70, window.innerWidth / window.innerHeight, 0.1, 500
+    );
+
+    // Components
+    this.input = new InputManager();
+    this.pedalCtrl = new PedalController(this.input);
+    this.balanceCtrl = new BalanceController(this.input);
+    this.world = new World(this.scene);
+    this.bike = new BikeModel(this.scene);
+    this.chaseCamera = new ChaseCamera(this.camera);
+    this.hud = new HUD(this.input);
+
+    // Safety mode (on by default)
+    this.safetyMode = true;
+    this.safetyBtn = document.getElementById('safety-btn');
+    this.safetyBtn.addEventListener('click', () => {
+      this.safetyMode = !this.safetyMode;
+      this.safetyBtn.textContent = 'SAFETY ' + (this.safetyMode ? 'ON' : 'OFF');
+      this.safetyBtn.className = 'side-btn ' + (this.safetyMode ? 'safety-on' : 'safety-off');
+    });
+
+    // Speed mode (off by default)
+    this.autoSpeed = false;
+    this.speedBtn = document.getElementById('speed-btn');
+    this.speedBtn.addEventListener('click', () => {
+      this.autoSpeed = !this.autoSpeed;
+      this.speedBtn.textContent = 'SPEED ' + (this.autoSpeed ? 'ON' : 'OFF');
+      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+    });
+
+    // Reset button
+    document.getElementById('reset-btn').addEventListener('click', () => {
+      this.bike.fullReset();
+      this.pedalCtrl = new PedalController(this.input);
+      this.chaseCamera.initialized = false;
+    });
+
+    // Game state
+    this.state = 'instructions'; // 'instructions' | 'countdown' | 'playing'
+    this.countdownTimer = 0;
+    this.instructionsEl = document.getElementById('instructions');
+
+    // Tap to start
+    const startHandler = async (e) => {
+      if (this.state !== 'instructions') return;
+      e.preventDefault();
+
+      // Request iOS motion permission on first tap
+      if (this.input.needsMotionPermission) {
+        await this.input.requestMotionPermission();
+      }
+
+      this._startCountdown();
+      document.removeEventListener('touchstart', startHandler);
+      document.removeEventListener('click', startHandler);
+    };
+    document.addEventListener('touchstart', startHandler, { passive: false });
+    document.addEventListener('click', startHandler);
+
+    // Resize
+    window.addEventListener('resize', () => this._onResize());
+
+    // Start loop
+    this.lastTime = performance.now();
+    requestAnimationFrame((t) => this._loop(t));
+  }
+
+  _startCountdown() {
+    this.state = 'countdown';
+    this.countdownTimer = 3.0;
+    this.instructionsEl.classList.add('hidden');
+
+    const statusEl = document.getElementById('status');
+    statusEl.style.color = '#ffffff';
+    statusEl.style.fontSize = '48px';
+    statusEl.textContent = '3';
+
+    // Countdown tick
+    this._lastCountNum = 3;
+  }
+
+  _updateCountdown(dt) {
+    this.countdownTimer -= dt;
+    const statusEl = document.getElementById('status');
+
+    if (this.countdownTimer <= 0) {
+      statusEl.textContent = 'GO!';
+      statusEl.style.color = '#44ff66';
+      this.state = 'playing';
+      setTimeout(() => {
+        if (this.state === 'playing') {
+          statusEl.textContent = '';
+          statusEl.style.fontSize = '';
+        }
+      }, 800);
+      return;
+    }
+
+    const num = Math.ceil(this.countdownTimer);
+    if (num !== this._lastCountNum) {
+      statusEl.textContent = '' + num;
+      this._lastCountNum = num;
+    }
+  }
+
+  _loop(timestamp) {
+    requestAnimationFrame((t) => this._loop(t));
+
+    const dt = Math.min((timestamp - this.lastTime) / 1000, 0.05);
+    this.lastTime = timestamp;
+
+    if (this.state === 'countdown') {
+      this._updateCountdown(dt);
+      // Still render scene during countdown
+      this.world.update(this.bike.position);
+      this.chaseCamera.update(this.bike, dt);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    if (this.state !== 'playing') {
+      // Instructions state — just render the static scene
+      this.world.update(this.bike.position);
+      this.chaseCamera.update(this.bike, dt);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    // --- Playing state ---
+    const pedalResult = this.pedalCtrl.update(dt);
+    const balanceResult = this.balanceCtrl.update();
+
+    this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this.world.update(this.bike.position);
+    this.chaseCamera.update(this.bike, dt);
+
+    // Camera shake on crash
+    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
+      this.chaseCamera.shakeAmount = 0.15;
+    }
+
+    this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  _onResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+const game = new Game();
+
+</script>
+</body>
+</html>
