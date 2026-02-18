@@ -406,6 +406,13 @@
             this.peer.on('open', (id) => {
                 dbg('NET: Peer open as ' + id);
                 if (callback) callback(this.roomCode);
+                // Fallback to relay if no P2P connection within 10s
+                this._p2pTimeout = setTimeout(() => {
+                    if (!this.connected && this._fallbackUrl) {
+                        dbg('NET: Captain P2P timeout, trying relay');
+                        this._connectRelay();
+                    }
+                }, 10000);
             });
 
             this.peer.on('connection', (conn) => {

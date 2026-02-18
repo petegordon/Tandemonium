@@ -1,0 +1,531 @@
+// ============================================================
+// GAME — orchestrator + boot (entry point)
+// ============================================================
+
+import * as THREE from 'three';
+import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET } from './config.js';
+import { InputManager } from './input-manager.js';
+import { PedalController } from './pedal-controller.js';
+import { SharedPedalController } from './shared-pedal-controller.js';
+import { BalanceController } from './balance-controller.js';
+import { BikeModel } from './bike-model.js';
+import { RemoteBikeState } from './remote-bike-state.js';
+import { ChaseCamera } from './chase-camera.js';
+import { World } from './world.js';
+import { HUD } from './hud.js';
+import { Lobby } from './lobby.js';
+
+class Game {
+  constructor() {
+    // Renderer
+    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.prepend(this.renderer.domElement);
+
+    // Scene
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x7ec8e3);
+    this.scene.fog = new THREE.FogExp2(0x7ec8e3, 0.006);
+
+    // Camera (FOV 70 for portrait)
+    this.camera = new THREE.PerspectiveCamera(
+      70, window.innerWidth / window.innerHeight, 0.1, 500
+    );
+
+    // Components
+    this.input = new InputManager();
+    this.pedalCtrl = new PedalController(this.input);
+    this.balanceCtrl = new BalanceController(this.input);
+    this.world = new World(this.scene);
+    this.bike = new BikeModel(this.scene);
+    this.chaseCamera = new ChaseCamera(this.camera);
+    this.hud = new HUD(this.input);
+
+    // Mode
+    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker'
+    this.net = null;
+    this.sharedPedal = null;
+    this.remoteBikeState = null;
+    this.remoteLean = 0;
+    this._stateSendTimer = 0;
+    this._stateSendInterval = 1 / 20; // 20Hz
+    this._leanSendTimer = 0;
+    this._leanSendInterval = 1 / 20; // 20Hz
+    this._mpPrevUp = false;
+    this._mpPrevDown = false;
+
+    // Safety mode (on by default)
+    this.safetyMode = true;
+    this.safetyBtn = document.getElementById('safety-btn');
+    this.safetyBtn.addEventListener('click', () => {
+      this.safetyMode = !this.safetyMode;
+      this.safetyBtn.textContent = 'SAFETY ' + (this.safetyMode ? 'ON' : 'OFF');
+      this.safetyBtn.className = 'side-btn ' + (this.safetyMode ? 'safety-on' : 'safety-off');
+    });
+
+    // Speed mode (off by default)
+    this.autoSpeed = false;
+    this.speedBtn = document.getElementById('speed-btn');
+    this.speedBtn.addEventListener('click', () => {
+      this.autoSpeed = !this.autoSpeed;
+      this.speedBtn.textContent = 'SPEED ' + (this.autoSpeed ? 'ON' : 'OFF');
+      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+    });
+
+    // Reset button
+    document.getElementById('reset-btn').addEventListener('click', () => {
+      this._resetGame();
+    });
+
+    // Return to lobby from disconnect overlay
+    document.getElementById('btn-return-lobby').addEventListener('click', () => {
+      document.getElementById('disconnect-overlay').style.display = 'none';
+      this._returnToLobby();
+    });
+
+    // Game state
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing'
+    this.countdownTimer = 0;
+    this._lastCountNum = 3;
+    this.instructionsEl = document.getElementById('instructions');
+    this.audioCtx = null;
+
+    // Lobby
+    this.lobby = new Lobby({
+      onSolo: () => this._onSolo(),
+      onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
+      input: this.input
+    });
+
+    // Resize
+    window.addEventListener('resize', () => this._onResize());
+
+    // Start loop
+    this.lastTime = performance.now();
+    requestAnimationFrame((t) => this._loop(t));
+  }
+
+  // ============================================================
+  // LOBBY CALLBACKS
+  // ============================================================
+
+  _onSolo() {
+    this.mode = 'solo';
+    this.state = 'instructions';
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  _onMultiplayerReady(net, mode) {
+    this.mode = mode;
+    this.net = net;
+
+    // Setup shared pedal controller
+    this.sharedPedal = new SharedPedalController();
+
+    // Setup remote bike state for stoker
+    if (mode === 'stoker') {
+      this.remoteBikeState = new RemoteBikeState();
+    }
+
+    // Network callbacks
+    this.net.onPedalReceived = (source, foot) => {
+      if (this.mode === 'captain' && this.sharedPedal) {
+        this.sharedPedal.receiveTap('stoker', foot);
+      }
+    };
+
+    this.net.onStateReceived = (state) => {
+      if (this.mode === 'stoker' && this.remoteBikeState) {
+        this.remoteBikeState.pushState(state);
+      }
+    };
+
+    this.net.onLeanReceived = (leanValue) => {
+      if (this.mode === 'captain') {
+        this.remoteLean = leanValue;
+      }
+    };
+
+    this.net.onEventReceived = (eventType) => {
+      if (eventType === EVT_COUNTDOWN) {
+        this._startCountdown();
+      } else if (eventType === EVT_START) {
+        // Stoker receives GO from captain
+        this.state = 'playing';
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = 'GO!';
+        statusEl.style.color = '#44ff66';
+        this._playBeep(800, 0.4);
+        setTimeout(() => {
+          if (this.state === 'playing') {
+            statusEl.textContent = '';
+            statusEl.style.fontSize = '';
+          }
+        }, 800);
+      } else if (eventType === EVT_RESET) {
+        this._resetGame();
+      }
+    };
+
+    this.net.onDisconnected = (reason) => {
+      if (this.state !== 'lobby') {
+        this._showDisconnect(reason);
+      }
+    };
+
+    // Show connection badge
+    document.getElementById('conn-badge').style.display = 'block';
+
+    // Show instructions
+    this.state = 'instructions';
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  // ============================================================
+  // START / COUNTDOWN
+  // ============================================================
+
+  _setupStartHandler() {
+    const handler = async (e) => {
+      if (this.state !== 'instructions') return;
+      e.preventDefault();
+
+      // Request iOS motion permission on first tap
+      if (this.input.needsMotionPermission) {
+        await this.input.requestMotionPermission();
+      }
+
+      // In multiplayer, only captain initiates countdown
+      // Stoker waits for EVT_COUNTDOWN from captain
+      if (this.mode === 'stoker') {
+        // Stoker just dismisses instructions and waits
+        this.instructionsEl.classList.add('hidden');
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = 'Waiting for captain...';
+        statusEl.style.color = '#ffffff';
+        statusEl.style.fontSize = '';
+        return;
+      }
+
+      this._startCountdown();
+      document.removeEventListener('touchstart', handler);
+      document.removeEventListener('click', handler);
+    };
+    document.addEventListener('touchstart', handler, { passive: false });
+    document.addEventListener('click', handler);
+  }
+
+  _startCountdown() {
+    this.state = 'countdown';
+    this.countdownTimer = 3.0;
+    this.instructionsEl.classList.add('hidden');
+
+    const statusEl = document.getElementById('status');
+    statusEl.style.color = '#ffffff';
+    statusEl.style.fontSize = '48px';
+    statusEl.textContent = '3';
+    this._lastCountNum = 3;
+
+    // Init audio
+    try {
+      if (!this.audioCtx) {
+        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      this._playBeep(400, 0.15);
+    } catch (e) {}
+
+    // Captain notifies stoker
+    if (this.mode === 'captain' && this.net) {
+      this.net.sendEvent(EVT_COUNTDOWN);
+    }
+  }
+
+  _updateCountdown(dt) {
+    this.countdownTimer -= dt;
+    const statusEl = document.getElementById('status');
+
+    if (this.countdownTimer <= 0) {
+      statusEl.textContent = 'GO!';
+      statusEl.style.color = '#44ff66';
+      this.state = 'playing';
+      this._playBeep(800, 0.4);
+
+      // Captain sends EVT_START to stoker
+      if (this.mode === 'captain' && this.net) {
+        this.net.sendEvent(EVT_START);
+      }
+
+      setTimeout(() => {
+        if (this.state === 'playing') {
+          statusEl.textContent = '';
+          statusEl.style.fontSize = '';
+        }
+      }, 800);
+      return;
+    }
+
+    const num = Math.ceil(this.countdownTimer);
+    if (num !== this._lastCountNum) {
+      statusEl.textContent = '' + num;
+      this._lastCountNum = num;
+      this._playBeep(400, 0.15);
+    }
+  }
+
+  _playBeep(freq, duration) {
+    try {
+      if (!this.audioCtx) return;
+      const ctx = this.audioCtx;
+      if (ctx.state === 'suspended') ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = freq;
+      osc.type = 'square';
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + duration);
+    } catch (e) {}
+  }
+
+  // ============================================================
+  // RESET / DISCONNECT / RETURN TO LOBBY
+  // ============================================================
+
+  _resetGame() {
+    this.bike.fullReset();
+
+    if (this.mode === 'solo') {
+      this.pedalCtrl = new PedalController(this.input);
+    } else if (this.sharedPedal) {
+      this.sharedPedal = new SharedPedalController();
+    }
+
+    this.chaseCamera.initialized = false;
+
+    if (this.input.motionEnabled) {
+      this.input.motionOffset = this.input.rawGamma;
+    }
+
+    if (this.mode === 'captain' && this.net) {
+      this.net.sendEvent(EVT_RESET);
+    }
+
+    this._startCountdown();
+  }
+
+  _showDisconnect(reason) {
+    const overlay = document.getElementById('disconnect-overlay');
+    const msg = document.getElementById('disconnect-msg');
+    overlay.style.display = 'flex';
+    msg.textContent = reason || 'Partner disconnected';
+  }
+
+  _returnToLobby() {
+    if (this.net) { this.net.destroy(); this.net = null; }
+    this.mode = 'solo';
+    this.sharedPedal = null;
+    this.remoteBikeState = null;
+    this.remoteLean = 0;
+    this._mpPrevUp = false;
+    this._mpPrevDown = false;
+    this._stateSendTimer = 0;
+    this._leanSendTimer = 0;
+    document.getElementById('conn-badge').style.display = 'none';
+
+    this.bike.fullReset();
+    this.chaseCamera.initialized = false;
+    this.pedalCtrl = new PedalController(this.input);
+
+    this.state = 'lobby';
+    this.lobby.show();
+  }
+
+  _updateConnBadge() {
+    if (!this.net) return;
+    const typeEl = document.getElementById('conn-type');
+    const pingEl = document.getElementById('conn-ping');
+    if (typeEl) typeEl.textContent = this.net.transport === 'relay' ? 'RELAY' : 'P2P';
+    if (pingEl) pingEl.textContent = Math.round(this.net.pingMs) + 'ms';
+  }
+
+  // ============================================================
+  // MAIN LOOP
+  // ============================================================
+
+  _loop(timestamp) {
+    requestAnimationFrame((t) => this._loop(t));
+
+    const dt = Math.min((timestamp - this.lastTime) / 1000, 0.05);
+    this.lastTime = timestamp;
+
+    // Lobby: just render the scene (background)
+    if (this.state === 'lobby') {
+      this.world.update(this.bike.position);
+      this.chaseCamera.update(this.bike, dt);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    // Countdown
+    if (this.state === 'countdown') {
+      this._updateCountdown(dt);
+      this.world.update(this.bike.position);
+      this.chaseCamera.update(this.bike, dt);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    // Instructions / waiting: render static scene
+    if (this.state !== 'playing') {
+      this.world.update(this.bike.position);
+      this.chaseCamera.update(this.bike, dt);
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    // Playing state — dispatch by mode
+    if (this.mode === 'solo') {
+      this._updateSolo(dt);
+    } else if (this.mode === 'captain') {
+      this._updateCaptain(dt);
+    } else if (this.mode === 'stoker') {
+      this._updateStoker(dt);
+    }
+  }
+
+  // ============================================================
+  // SOLO UPDATE
+  // ============================================================
+
+  _updateSolo(dt) {
+    const pedalResult = this.pedalCtrl.update(dt);
+    const balanceResult = this.balanceCtrl.update();
+
+    this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this.world.update(this.bike.position);
+    this.chaseCamera.update(this.bike, dt);
+
+    // Camera shake on crash
+    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
+      this.chaseCamera.shakeAmount = 0.15;
+    }
+
+    this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  // ============================================================
+  // CAPTAIN UPDATE — runs physics, sends state
+  // ============================================================
+
+  _updateCaptain(dt) {
+    // Edge-detect pedals → shared pedal controller
+    const upHeld = this.input.isPressed('ArrowUp');
+    const downHeld = this.input.isPressed('ArrowDown');
+    if (upHeld && !this._mpPrevUp) {
+      this.sharedPedal.receiveTap('captain', 'up');
+    }
+    if (downHeld && !this._mpPrevDown) {
+      this.sharedPedal.receiveTap('captain', 'down');
+    }
+    this._mpPrevUp = upHeld;
+    this._mpPrevDown = downHeld;
+
+    // Use shared pedal controller
+    const pedalResult = this.sharedPedal.update(dt);
+    const balanceResult = this.balanceCtrl.update();
+
+    // Merge lean: captain + stoker averaged
+    balanceResult.leanInput = Math.max(-1, Math.min(1,
+      (balanceResult.leanInput + this.remoteLean) * 0.5
+    ));
+
+    this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+
+    // Send state to stoker at 20Hz
+    this._stateSendTimer += dt;
+    if (this._stateSendTimer >= this._stateSendInterval && this.net && this.net.connected) {
+      this._stateSendTimer = 0;
+      this.net.sendState(this.bike);
+    }
+
+    this.world.update(this.bike.position);
+    this.chaseCamera.update(this.bike, dt);
+
+    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
+      this.chaseCamera.shakeAmount = 0.15;
+    }
+
+    this._updateConnBadge();
+    this.hud.update(this.bike, this.input, this.sharedPedal, dt);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  // ============================================================
+  // STOKER UPDATE — receives state, interpolates, renders
+  // ============================================================
+
+  _updateStoker(dt) {
+    // Edge-detect pedals → send over network
+    const upHeld = this.input.isPressed('ArrowUp');
+    const downHeld = this.input.isPressed('ArrowDown');
+    if (upHeld && !this._mpPrevUp && this.net) {
+      this.net.sendPedal('up');
+    }
+    if (downHeld && !this._mpPrevDown && this.net) {
+      this.net.sendPedal('down');
+    }
+    this._mpPrevUp = upHeld;
+    this._mpPrevDown = downHeld;
+
+    // Interpolate remote state
+    const state = this.remoteBikeState ? this.remoteBikeState.getInterpolated() : null;
+    if (state) {
+      this.bike.applyRemoteState(state);
+    }
+
+    // Send lean to captain at 20Hz
+    this._leanSendTimer += dt;
+    if (this._leanSendTimer >= this._leanSendInterval && this.net && this.net.connected) {
+      this._leanSendTimer = 0;
+      const balanceResult = this.balanceCtrl.update();
+      this.net.sendLean(balanceResult.leanInput);
+    }
+
+    this.world.update(this.bike.position);
+    this.chaseCamera.update(this.bike, dt);
+
+    if (this.bike.speed > 8) {
+      this.chaseCamera.shakeAmount = Math.max(
+        this.chaseCamera.shakeAmount, (this.bike.speed - 8) * 0.008);
+    }
+    if (this.bike.fallen) this.chaseCamera.shakeAmount = 0.15;
+
+    this._updateConnBadge();
+    this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  // ============================================================
+  // RESIZE
+  // ============================================================
+
+  _onResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+const game = new Game();
