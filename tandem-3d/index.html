@@ -524,8 +524,10 @@ function update(dt) {
   dirLight.target.updateMatrixWorld();
 
   // Move floor to follow bike (infinite floor illusion)
-  floor.position.x = Math.round(bikeState.x / tileSize) * tileSize;
-  floor.position.z = Math.round(bikeState.z / tileSize) * tileSize;
+  // Snap by 2*tileSize so the checkerboard pattern doesn't invert
+  const snapSize = tileSize * 2;
+  floor.position.x = Math.round(bikeState.x / snapSize) * snapSize;
+  floor.position.z = Math.round(bikeState.z / snapSize) * snapSize;
 
   // Camera follow (fixed angle, follows position only)
   const targetCamPos = new THREE.Vector3(
