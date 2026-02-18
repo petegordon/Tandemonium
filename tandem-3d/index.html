@@ -243,7 +243,7 @@ const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambientLight);
 
 const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-dirLight.position.set(10, 20, 10);
+dirLight.position.set(8, 18, -6);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.width = 2048;
 dirLight.shadow.mapSize.height = 2048;
@@ -306,23 +306,45 @@ loader.load('tandem_bicycle.glb', (gltf) => {
   const scale = targetLength / maxDim;
   model.scale.setScalar(scale);
 
-  // Add to group first so all world matrices are updated
+  // Add to group and force world matrix update on all descendants
   bikeGroup.add(model);
   bikeGroup.updateMatrixWorld(true);
 
-  // Now measure in world space with all transforms resolved
-  const box = new THREE.Box3().setFromObject(bikeGroup);
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
+  // Find the TRUE minimum Y by scanning every vertex in world space
+  // (bounding box can be wrong if model has invisible geometry or complex transforms)
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minX = Infinity, maxX = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  const v = new THREE.Vector3();
 
-  // Shift model so tires sit on floor (y=0) and centered on X/Z
-  model.position.y -= box.min.y;
-  model.position.x -= center.x;
-  model.position.z -= center.z;
+  model.traverse((child) => {
+    if (child.isMesh && child.geometry && child.geometry.attributes.position) {
+      const pos = child.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        child.localToWorld(v);
+        if (v.y < minY) minY = v.y;
+        if (v.y > maxY) maxY = v.y;
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.z < minZ) minZ = v.z;
+        if (v.z > maxZ) maxZ = v.z;
+      }
+    }
+  });
+
+  const centerX = (minX + maxX) / 2;
+  const centerZ = (minZ + maxZ) / 2;
+
+  // Shift model: tires on floor (y=0), centered on X/Z
+  model.position.y -= minY;
+  model.position.x -= centerX;
+  model.position.z -= centerZ;
 
   bikeModelLoaded = true;
 
-  console.log('Tandem bicycle loaded, size:', size, 'box.min.y was:', box.min.y);
+  console.log('Tandem bicycle loaded, vertex minY:', minY, 'size:', maxY - minY, 'x', maxX - minX, 'x', maxZ - minZ);
 }, undefined, (err) => {
   console.error('Failed to load tandem_bicycle.glb:', err);
 });
@@ -497,7 +519,7 @@ function update(dt) {
   bikeGroup.rotation.z = smoothLean;
 
   // Move directional light with bike
-  dirLight.position.set(bikeState.x + 10, 20, bikeState.z + 10);
+  dirLight.position.set(bikeState.x + 8, 18, bikeState.z - 6);
   dirLight.target.position.set(bikeState.x, 0, bikeState.z);
   dirLight.target.updateMatrixWorld();
 
