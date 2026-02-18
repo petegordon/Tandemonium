@@ -462,7 +462,7 @@ if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEve
 }
 
 // ── Camera (fixed-angle, follows position only) ──
-const cameraOffset = new THREE.Vector3(0, 8, -7);
+const cameraOffset = new THREE.Vector3(0, 4.5, -8);
 const smoothCamPos = new THREE.Vector3();
 const smoothCamLook = new THREE.Vector3();
 let cameraInitialized = false;
@@ -538,8 +538,8 @@ function update(dt) {
 
   const targetLookAt = new THREE.Vector3(
     bikeState.x,
-    0.8,
-    bikeState.z
+    0.3,
+    bikeState.z + 6
   );
 
   if (!cameraInitialized) {
