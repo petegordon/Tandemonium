@@ -486,8 +486,8 @@ function update(dt) {
     smoothTilt += (rawTilt - smoothTilt) * Math.min(1, 6 * dt);
     rawSteer = smoothTilt;
   }
-  if (input.keyLeft) rawSteer -= 1;
-  if (input.keyRight) rawSteer += 1;
+  if (input.keyLeft) rawSteer += 1;
+  if (input.keyRight) rawSteer -= 1;
   rawSteer = Math.max(-1, Math.min(1, rawSteer));
 
   smoothSteer += (rawSteer - smoothSteer) * Math.min(1, 5 * dt);
