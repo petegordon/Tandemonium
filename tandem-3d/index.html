@@ -504,6 +504,7 @@ let cameraInitialized = false;
 let smoothSteer = 0;
 let smoothLean = 0;
 let smoothTilt = 0;
+let smoothSpokeFade = 0; // lags behind actual speed for gradual spoke reappear
 
 // ── Speed Display ──
 const speedDisplay = document.getElementById('speed-display');
@@ -552,10 +553,13 @@ function update(dt) {
   bikeGroup.rotation.z = smoothLean;
 
   // Fade spokes for motion blur effect
-  // Fully visible at rest, fade out as speed increases, gone by ~20% max speed
+  // Asymmetric smoothing: fast fade out when accelerating, slow fade in when stopping
   if (spokeMeshes.length > 0) {
-    const fadeT = Math.min(bikeState.speed / (BIKE_CONFIG.maxSpeed * 0.2), 1);
-    const opacity = 1 - fadeT;
+    const targetFade = Math.min(bikeState.speed / (BIKE_CONFIG.maxSpeed * 0.2), 1);
+    // Fast out (8x), slow in (1.2x) — spokes linger invisible then gradually reappear
+    const rate = targetFade > smoothSpokeFade ? 8 : 1.2;
+    smoothSpokeFade += (targetFade - smoothSpokeFade) * Math.min(1, rate * dt);
+    const opacity = 1 - smoothSpokeFade;
     for (const spoke of spokeMeshes) {
       spoke.material.opacity = opacity;
       spoke.visible = opacity > 0.02;
