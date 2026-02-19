@@ -183,6 +183,7 @@ class Game {
 
     this.net.onConnected = () => {
       this._hideReconnecting();
+      document.getElementById('disconnect-overlay').style.display = 'none';
     };
 
     this.net.onDisconnected = (reason) => {

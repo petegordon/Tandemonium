@@ -30,6 +30,8 @@ export class NetworkManager {
     this._fallbackUrl = null;
     this._relayPartnerReady = false;
     this._p2pFallbackDelay = 60000; // 60 seconds before relay fallback
+    this._reconnectTimeout = null;
+    this._activeConn = null; // tracks which conn is current to ignore stale close events
   }
 
   generateRoomCode() {
@@ -112,7 +114,11 @@ export class NetworkManager {
   }
 
   _setupConnection() {
-    this.conn.on('open', () => {
+    const conn = this.conn;
+    this._activeConn = conn;
+
+    conn.on('open', () => {
+      clearTimeout(this._reconnectTimeout);
       this.connected = true;
       this.transport = 'p2p';
       this._reconnectAttempts = 0;
@@ -121,15 +127,17 @@ export class NetworkManager {
       if (this.onConnected) this.onConnected();
     });
 
-    this.conn.on('data', (data) => {
+    conn.on('data', (data) => {
       this._handleMessage(data);
     });
 
-    this.conn.on('close', () => {
+    conn.on('close', () => {
+      // Ignore close events from stale connections
+      if (conn !== this._activeConn) return;
       this._handleDisconnect();
     });
 
-    this.conn.on('error', (err) => {
+    conn.on('error', (err) => {
       console.warn('NET: Connection error:', err);
     });
   }
@@ -274,6 +282,7 @@ export class NetworkManager {
   }
 
   _handleDisconnect() {
+    clearTimeout(this._reconnectTimeout);
     this.connected = false;
     this._stopHeartbeat();
 
@@ -291,15 +300,30 @@ export class NetworkManager {
 
   _attemptReconnect() {
     if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
+
+    // Close previous hung connection before creating a new one
+    if (this.conn) { try { this.conn.close(); } catch (e) {} }
+
     if (this.role === 'stoker' && this.roomCode) {
       // Stoker reconnects by re-opening a data channel to captain's peer
       if (this.peer && !this.peer.destroyed) {
         this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
         this._setupConnection();
+        // Timeout: if connection doesn't open within 5s, force-fail this attempt
+        this._reconnectTimeout = setTimeout(() => {
+          if (!this.connected) {
+            if (this.conn) { try { this.conn.close(); } catch (e) {} }
+            this._handleDisconnect();
+          }
+        }, 5000);
       }
     } else if (this.role === 'captain') {
       // Captain: peer is still registered and listening for connections.
       // If the stoker reconnects, peer.on('connection') will fire.
+      // Timeout ensures we advance to next attempt or final failure if nobody connects.
+      this._reconnectTimeout = setTimeout(() => {
+        if (!this.connected) this._handleDisconnect();
+      }, 5000);
       // Also try relay fallback if available.
       if (this._fallbackUrl && (!this._relayWs || this._relayWs.readyState !== WebSocket.OPEN)) {
         this._relayPartnerReady = false;
@@ -331,6 +355,7 @@ export class NetworkManager {
   destroy() {
     this._stopHeartbeat();
     clearTimeout(this._p2pTimeout);
+    clearTimeout(this._reconnectTimeout);
     if (this.conn) { try { this.conn.close(); } catch (e) {} }
     if (this.peer) { try { this.peer.destroy(); } catch (e) {} }
     if (this._relayWs) { try { this._relayWs.close(); } catch (e) {} }
