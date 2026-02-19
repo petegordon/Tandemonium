@@ -418,6 +418,25 @@
   }
   #room-qr svg { width: 100%; height: 100%; }
 
+  /* ── Reconnect overlay ── */
+  #reconnect-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+  }
+  #reconnect-overlay .disconnect-box p:first-child {
+    color: #ffaa33;
+  }
+  .reconnect-pulse {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
   /* ── Disconnect overlay ── */
   #disconnect-overlay {
     position: fixed;
@@ -579,7 +598,7 @@
   <div class="lobby-card">
     <h1>Tandemonium</h1>
     <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
-    <p class="lobby-version" id="lobby-version">v.51a2ff4 | 02-19-2026 17:52</p>
+    <p class="lobby-version" id="lobby-version">v.2e2550c | 02-19-2026 17:59</p>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">
@@ -616,6 +635,14 @@
       <div id="join-status" class="conn-status"></div>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
+  </div>
+</div>
+
+<!-- Reconnect overlay (shown during retry attempts) -->
+<div id="reconnect-overlay" style="display:none;">
+  <div class="disconnect-box">
+    <p id="reconnect-msg" class="reconnect-pulse">Reconnecting...</p>
+    <p id="reconnect-timer" style="color:rgba(255,255,255,0.5);font-size:14px;">0s</p>
   </div>
 </div>
 

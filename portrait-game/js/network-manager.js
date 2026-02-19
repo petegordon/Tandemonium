@@ -22,6 +22,7 @@ export class NetworkManager {
     this.onLeanReceived = null;
     this.onConnected = null;
     this.onDisconnected = null;
+    this.onReconnecting = null;
     this._heartbeatInterval = null;
     this._reconnectAttempts = 0;
     this._maxReconnectAttempts = 3;
@@ -275,18 +276,21 @@ export class NetworkManager {
   _handleDisconnect() {
     this.connected = false;
     this._stopHeartbeat();
-    if (this.onDisconnected) this.onDisconnected('Connection lost');
 
     if (this._reconnectAttempts < this._maxReconnectAttempts) {
       this._reconnectAttempts++;
+      if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
       const delay = Math.pow(2, this._reconnectAttempts - 1) * 1000;
       setTimeout(() => {
         if (!this.connected) this._attemptReconnect();
       }, delay);
+    } else {
+      if (this.onDisconnected) this.onDisconnected('Connection lost');
     }
   }
 
   _attemptReconnect() {
+    if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
     if (this.role === 'stoker' && this.roomCode) {
       // Stoker reconnects by re-opening a data channel to captain's peer
       if (this.peer && !this.peer.destroyed) {

@@ -175,11 +175,26 @@ class Game {
       }
     };
 
+    this.net.onReconnecting = (attempt, max) => {
+      if (this.state !== 'lobby') {
+        this._showReconnecting();
+      }
+    };
+
+    this.net.onConnected = () => {
+      this._hideReconnecting();
+    };
+
     this.net.onDisconnected = (reason) => {
+      this._hideReconnecting();
       if (this.state !== 'lobby') {
         this._showDisconnect(reason);
       }
     };
+
+    // Update partner gauge label to show partner's role
+    const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
+    if (partnerTitle) partnerTitle.textContent = mode === 'captain' ? 'STOKER' : 'CAPTAIN';
 
     // Show connection badge
     document.getElementById('conn-badge').style.display = 'block';
@@ -325,6 +340,30 @@ class Game {
     this._startCountdown();
   }
 
+  _showReconnecting() {
+    const overlay = document.getElementById('reconnect-overlay');
+    overlay.style.display = 'flex';
+    if (!this._reconnectTimerStart) {
+      this._reconnectTimerStart = performance.now();
+      const timerEl = document.getElementById('reconnect-timer');
+      this._reconnectInterval = setInterval(() => {
+        const elapsed = Math.floor((performance.now() - this._reconnectTimerStart) / 1000);
+        timerEl.textContent = elapsed + 's';
+      }, 1000);
+    }
+  }
+
+  _hideReconnecting() {
+    const overlay = document.getElementById('reconnect-overlay');
+    overlay.style.display = 'none';
+    if (this._reconnectInterval) {
+      clearInterval(this._reconnectInterval);
+      this._reconnectInterval = null;
+    }
+    this._reconnectTimerStart = null;
+    document.getElementById('reconnect-timer').textContent = '0s';
+  }
+
   _showDisconnect(reason) {
     const overlay = document.getElementById('disconnect-overlay');
     const msg = document.getElementById('disconnect-msg');
@@ -345,6 +384,8 @@ class Game {
     this._stateSendTimer = 0;
     this._leanSendTimer = 0;
     document.getElementById('conn-badge').style.display = 'none';
+    const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
+    if (partnerTitle) partnerTitle.textContent = 'PARTNER';
 
     this.bike.fullReset();
     this.chaseCamera.initialized = false;
