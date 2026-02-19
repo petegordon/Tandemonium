@@ -203,6 +203,16 @@ class Game {
     const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
     if (partnerTitle) partnerTitle.textContent = mode === 'captain' ? 'STOKER' : 'CAPTAIN';
 
+    // Show partner gauge + pedal indicators immediately
+    document.getElementById('partner-gauge').style.display = '';
+    document.getElementById('partner-pedal-up').style.display = 'flex';
+    document.getElementById('partner-pedal-down').style.display = 'flex';
+
+    // Hide side buttons for stoker (only captain/solo control safety/speed/reset)
+    if (mode === 'stoker') {
+      document.getElementById('side-buttons').style.display = 'none';
+    }
+
     // Show connection badge
     document.getElementById('conn-badge').style.display = 'block';
 
@@ -391,6 +401,7 @@ class Game {
     this._stateSendTimer = 0;
     this._leanSendTimer = 0;
     document.getElementById('conn-badge').style.display = 'none';
+    document.getElementById('side-buttons').style.display = '';
     const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
     if (partnerTitle) partnerTitle.textContent = 'PARTNER';
 
