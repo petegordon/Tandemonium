@@ -168,7 +168,7 @@ export class NetworkManager {
 
     if (type === MSG_PEDAL) {
       const foot = (bytes.length >= 2 && bytes[1] === 0x01) ? 'down' : 'up';
-      if (this.onPedalReceived) this.onPedalReceived('stoker', foot);
+      if (this.onPedalReceived) this.onPedalReceived(this.role === 'captain' ? 'stoker' : 'captain', foot);
     } else if (type === MSG_STATE) {
       const state = this._decodeState(bytes);
       if (this.onStateReceived) this.onStateReceived(state);

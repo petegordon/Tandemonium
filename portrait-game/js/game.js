@@ -50,6 +50,8 @@ class Game {
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
+    this._remoteLastFoot = null;
+    this._remoteLastTapTime = 0;
     this._stateSendTimer = 0;
     this._stateSendInterval = 1 / 20; // 20Hz
     this._leanSendTimer = 0;
@@ -133,8 +135,12 @@ class Game {
 
     // Network callbacks
     this.net.onPedalReceived = (source, foot) => {
+      // Track remote pedal for HUD flash
+      this._remoteLastFoot = foot;
+      this._remoteLastTapTime = performance.now();
+      // Captain feeds stoker taps into shared pedal physics
       if (this.mode === 'captain' && this.sharedPedal) {
-        this.sharedPedal.receiveTap('stoker', foot);
+        this.sharedPedal.receiveTap(source, foot);
       }
     };
 
@@ -145,9 +151,7 @@ class Game {
     };
 
     this.net.onLeanReceived = (leanValue) => {
-      if (this.mode === 'captain') {
-        this.remoteLean = leanValue;
-      }
+      this.remoteLean = leanValue;
     };
 
     this.net.onEventReceived = (eventType) => {
@@ -334,6 +338,8 @@ class Game {
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
+    this._remoteLastFoot = null;
+    this._remoteLastTapTime = 0;
     this._mpPrevUp = false;
     this._mpPrevDown = false;
     this._stateSendTimer = 0;
@@ -427,14 +433,16 @@ class Game {
   // ============================================================
 
   _updateCaptain(dt) {
-    // Edge-detect pedals → shared pedal controller
+    // Edge-detect pedals → shared pedal controller + send to stoker
     const upHeld = this.input.isPressed('ArrowUp');
     const downHeld = this.input.isPressed('ArrowDown');
     if (upHeld && !this._mpPrevUp) {
       this.sharedPedal.receiveTap('captain', 'up');
+      if (this.net) this.net.sendPedal('up');
     }
     if (downHeld && !this._mpPrevDown) {
       this.sharedPedal.receiveTap('captain', 'down');
+      if (this.net) this.net.sendPedal('down');
     }
     this._mpPrevUp = upHeld;
     this._mpPrevDown = downHeld;
@@ -443,6 +451,9 @@ class Game {
     const pedalResult = this.sharedPedal.update(dt);
     const balanceResult = this.balanceCtrl.update();
 
+    // Capture captain's own lean before merging
+    const captainLean = balanceResult.leanInput;
+
     // Merge lean: captain + stoker averaged
     balanceResult.leanInput = Math.max(-1, Math.min(1,
       (balanceResult.leanInput + this.remoteLean) * 0.5
@@ -450,11 +461,12 @@ class Game {
 
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
 
-    // Send state to stoker at 20Hz
+    // Send state + lean to stoker at 20Hz
     this._stateSendTimer += dt;
     if (this._stateSendTimer >= this._stateSendInterval && this.net && this.net.connected) {
       this._stateSendTimer = 0;
       this.net.sendState(this.bike);
+      this.net.sendLean(captainLean);
     }
 
     this.world.update(this.bike.position);
@@ -465,7 +477,8 @@ class Game {
     }
 
     this._updateConnBadge();
-    this.hud.update(this.bike, this.input, this.sharedPedal, dt);
+    const remoteData = { remoteLean: this.remoteLean, remoteLastFoot: this._remoteLastFoot, remoteLastTapTime: this._remoteLastTapTime };
+    this.hud.update(this.bike, this.input, this.sharedPedal, dt, remoteData);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -514,7 +527,8 @@ class Game {
     if (this.bike.fallen) this.chaseCamera.shakeAmount = 0.15;
 
     this._updateConnBadge();
-    this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
+    const remoteData = { remoteLean: this.remoteLean, remoteLastFoot: this._remoteLastFoot, remoteLastTapTime: this._remoteLastTapTime };
+    this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     this.renderer.render(this.scene, this.camera);
   }
 

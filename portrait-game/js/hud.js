@@ -20,17 +20,21 @@ export class HUD {
     this.phoneLabel = document.getElementById('phone-label');
     this.phoneGauge = document.getElementById('phone-gauge');
 
+    // Partner gauge
+    this.partnerGauge = document.getElementById('partner-gauge');
+    this.partnerNeedle = document.getElementById('partner-needle');
+    this.partnerLabel = document.getElementById('partner-label');
+    this.partnerPedalUp = document.getElementById('partner-pedal-up');
+    this.partnerPedalDown = document.getElementById('partner-pedal-down');
+    this._lastRemoteTapTime = 0;
+    this._pedalFlashTimer = 0;
+
     // Touch buttons
     this.touchLeftEl = document.getElementById('touch-left');
     this.touchRightEl = document.getElementById('touch-right');
-
-    // Hide phone gauge on desktop
-    if (!isMobile && this.phoneGauge) {
-      this.phoneGauge.style.display = 'none';
-    }
   }
 
-  update(bike, input, pedalCtrl, dt) {
+  update(bike, input, pedalCtrl, dt, remoteData) {
     const kmh = Math.round(bike.speed * 3.6);
     this.speedEl.textContent = 'Speed: ' + kmh + ' km/h';
     this.distanceEl.textContent = 'Distance: ' + Math.round(bike.distanceTraveled) + ' m';
@@ -62,12 +66,19 @@ export class HUD {
       this.touchRightEl.className = rClass;
     }
 
-    // Phone gauge
+    // Phone gauge (show on both mobile and desktop)
     if (isMobile) {
       const rawRel = input.motionRawRelative || 0;
       const phoneDeg = Math.max(-90, Math.min(90, rawRel));
       this.phoneNeedle.setAttribute('transform', 'rotate(' + phoneDeg.toFixed(1) + ', 60, 60)');
       this.phoneLabel.textContent = Math.abs(rawRel).toFixed(1) + '\u00B0';
+    } else {
+      // Desktop: show keyboard lean (A/D) on the YOU gauge
+      const aHeld = input.isPressed('KeyA');
+      const dHeld = input.isPressed('KeyD');
+      const kbLean = aHeld ? -45 : (dHeld ? 45 : 0);
+      this.phoneNeedle.setAttribute('transform', 'rotate(' + kbLean + ', 60, 60)');
+      this.phoneLabel.textContent = Math.abs(kbLean).toFixed(1) + '\u00B0';
     }
 
     // Bike gauge
@@ -93,6 +104,34 @@ export class HUD {
       this.statusEl.style.color = '#ffdd44';
     } else {
       this.statusEl.textContent = '';
+    }
+
+    // Partner gauge
+    if (remoteData && this.partnerGauge) {
+      this.partnerGauge.style.display = '';
+      // Needle: remoteLean (-1..1) → degrees (-90..90)
+      const partnerDeg = Math.max(-90, Math.min(90, remoteData.remoteLean * 90));
+      this.partnerNeedle.setAttribute('transform', 'rotate(' + partnerDeg.toFixed(1) + ', 60, 60)');
+      this.partnerLabel.textContent = Math.abs(partnerDeg).toFixed(1) + '\u00B0';
+
+      // Pedal flash: detect new taps
+      if (remoteData.remoteLastTapTime && remoteData.remoteLastTapTime !== this._lastRemoteTapTime) {
+        this._lastRemoteTapTime = remoteData.remoteLastTapTime;
+        this._pedalFlashTimer = 0.3;
+        // Show correct indicator
+        if (this.partnerPedalUp) this.partnerPedalUp.classList.toggle('flash', remoteData.remoteLastFoot === 'up');
+        if (this.partnerPedalDown) this.partnerPedalDown.classList.toggle('flash', remoteData.remoteLastFoot === 'down');
+      }
+      if (this._pedalFlashTimer > 0) {
+        this._pedalFlashTimer -= dt;
+        if (this._pedalFlashTimer <= 0) {
+          this._pedalFlashTimer = 0;
+          if (this.partnerPedalUp) this.partnerPedalUp.classList.remove('flash');
+          if (this.partnerPedalDown) this.partnerPedalDown.classList.remove('flash');
+        }
+      }
+    } else if (this.partnerGauge) {
+      this.partnerGauge.style.display = 'none';
     }
 
     // Crash flash

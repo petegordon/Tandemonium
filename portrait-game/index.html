@@ -64,6 +64,21 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
+  .pedal-indicator {
+    position: absolute;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 700;
+    color: #a6f;
+    opacity: 0;
+    transition: opacity 0.08s;
+    pointer-events: none;
+    text-shadow: 0 0 6px rgba(170,102,255,0.6);
+  }
+  .pedal-indicator.flash { opacity: 1; }
+  .pedal-indicator.pedal-up { top: -16px; }
+  .pedal-indicator.pedal-down { bottom: -14px; }
 
   /* ── Status text (center) ── */
   #status {
@@ -460,7 +475,7 @@
       <div class="gauge-label" id="bike-label">0.0&deg;</div>
     </div>
     <div class="gauge-wrap" id="phone-gauge">
-      <div class="gauge-title">PHONE</div>
+      <div class="gauge-title">YOU</div>
       <svg viewBox="0 0 120 120">
         <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
         <!-- Green safe zones (left & right of vertical) -->
@@ -481,6 +496,27 @@
         <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
       </svg>
       <div class="gauge-label" id="phone-label">0.0&deg;</div>
+    </div>
+    <div class="gauge-wrap" id="partner-gauge" style="display:none;">
+      <div class="gauge-title">PARTNER</div>
+      <div class="pedal-indicator pedal-up" id="partner-pedal-up">^</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(170,102,255,0.15)"/>
+        <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(170,102,255,0.15)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <g id="partner-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#a6f" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#a6f" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#a6f" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#a6f" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#a6f" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#a6f" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="partner-label">0.0&deg;</div>
+      <div class="pedal-indicator pedal-down" id="partner-pedal-down">&#8964;</div>
     </div>
   </div>
 </div>
@@ -519,7 +555,7 @@
   <div class="lobby-card">
     <h1>Tandemonium</h1>
     <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
-    <p class="lobby-version" id="lobby-version">v.23255cc | 02-19-2026 17:03</p>
+    <p class="lobby-version" id="lobby-version">v.08978ae | 02-19-2026 17:25</p>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">
