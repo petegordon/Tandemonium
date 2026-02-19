@@ -298,8 +298,25 @@ export class NetworkManager {
     }
   }
 
+  // Public: reset retry counter and start a fresh reconnection cycle
+  retryConnection() {
+    this._reconnectAttempts = 0;
+    this._ensureBrokerConnection();
+    this._handleDisconnect();
+  }
+
+  // Re-register with PeerJS signaling server if the broker WebSocket dropped
+  _ensureBrokerConnection() {
+    if (this.peer && this.peer.disconnected && !this.peer.destroyed) {
+      this.peer.reconnect();
+    }
+  }
+
   _attemptReconnect() {
     if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
+
+    // Re-register with PeerJS broker — critical after phone lock/sleep
+    this._ensureBrokerConnection();
 
     // Close previous hung connection before creating a new one
     if (this.conn) { try { this.conn.close(); } catch (e) {} }

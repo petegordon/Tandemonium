@@ -82,6 +82,12 @@ class Game {
       this._resetGame();
     });
 
+    // Try Again from disconnect overlay
+    document.getElementById('btn-try-reconnect').addEventListener('click', () => {
+      document.getElementById('disconnect-overlay').style.display = 'none';
+      if (this.net) this.net.retryConnection();
+    });
+
     // Return to lobby from disconnect overlay
     document.getElementById('btn-return-lobby').addEventListener('click', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
