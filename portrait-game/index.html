@@ -113,29 +113,27 @@
     z-index: 10;
   }
 
-  /* ── Left-side toggle buttons ── */
+  /* ── Top-right toggle buttons ── */
   #side-buttons {
     position: fixed;
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%);
+    top: env(safe-area-inset-top, 0px);
+    right: 10px;
     display: flex;
-    flex-direction: column;
-    gap: 8px;
+    gap: 6px;
+    padding-top: 10px;
     z-index: 10;
   }
   .side-btn {
-    padding: 8px 12px;
-    border: 2px solid rgba(255,255,255,0.5);
+    padding: 6px 10px;
+    border: 1.5px solid rgba(255,255,255,0.5);
     border-radius: 8px;
     background: rgba(0,0,0,0.4);
     color: #fff;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     cursor: pointer;
     pointer-events: auto;
     text-align: center;
-    min-width: 70px;
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
   }
@@ -593,7 +591,7 @@
   <div class="lobby-card">
     <h1>Tandemonium</h1>
     <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
-    <p class="lobby-version" id="lobby-version">v.614158b | 02-19-2026 18:40</p>
+    <p class="lobby-version" id="lobby-version">v.455c9bc | 02-19-2026 18:45</p>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">

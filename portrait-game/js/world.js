@@ -10,10 +10,17 @@ export class World {
     this._treeMeshes = [];
     this.floor = null;
     this.tileSize = 4;
+    this._rngState = 42; // fixed seed for deterministic tree placement
     this._buildGround();
     this._buildRoad();
     this._buildTrees();
     this._buildLighting();
+  }
+
+  // Simple seeded PRNG — same seed produces identical trees on all devices
+  _seededRandom() {
+    this._rngState = (this._rngState * 9301 + 49297) % 233280;
+    return this._rngState / 233280;
   }
 
   _buildGround() {
@@ -73,10 +80,10 @@ export class World {
     const leafMat2 = new THREE.MeshPhongMaterial({ color: 0x1f7a1f, flatShading: true });
 
     for (let i = 0; i < 80; i++) {
-      const side = Math.random() > 0.5 ? 1 : -1;
-      const x = side * (5 + Math.random() * 50);
-      const z = (Math.random() - 0.5) * 500;
-      const scale = 0.7 + Math.random() * 0.8;
+      const side = this._seededRandom() > 0.5 ? 1 : -1;
+      const x = side * (5 + this._seededRandom() * 50);
+      const z = (this._seededRandom() - 0.5) * 500;
+      const scale = 0.7 + this._seededRandom() * 0.8;
 
       const trunk = new THREE.Mesh(
         new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 2.0 * scale, 6),
@@ -87,7 +94,7 @@ export class World {
       this.scene.add(trunk);
       this._treeMeshes.push(trunk);
 
-      const mat = Math.random() > 0.5 ? leafMat : leafMat2;
+      const mat = this._seededRandom() > 0.5 ? leafMat : leafMat2;
       const canopy = new THREE.Mesh(
         new THREE.SphereGeometry(1.0 * scale, 6, 5),
         mat
