@@ -19,9 +19,6 @@
     position: fixed;
     top: env(safe-area-inset-top, 0px);
     left: 0; right: 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
     padding: 10px 14px 0;
     pointer-events: none;
     z-index: 10;
@@ -33,14 +30,30 @@
     text-shadow: 0 1px 4px rgba(0,0,0,0.6);
     line-height: 1.5;
   }
-  #hud-top-right {
+
+  /* ── Bottom HUD: gauge bar + pedal buttons ── */
+  #bottom-hud {
+    position: fixed;
+    bottom: env(safe-area-inset-bottom, 0px);
+    left: 0; right: 0;
     display: flex;
-    gap: 8px;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding-bottom: 8px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #gauge-bar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
   }
 
   /* ── Gauges ── */
   .gauge-wrap {
-    width: 60px; height: 60px;
+    width: 54px; height: 54px;
     position: relative;
   }
   .gauge-wrap svg { width: 100%; height: 100%; }
@@ -64,24 +77,18 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
-  .pedal-row {
-    position: absolute;
-    bottom: -28px;
-    left: 0; right: 0;
-    display: flex;
-    gap: 3px;
-  }
   .pedal-indicator {
-    flex: 1;
-    text-align: center;
-    font-size: 12px;
+    width: 28px;
+    height: 54px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
     font-weight: 700;
-    line-height: 20px;
-    height: 20px;
     color: rgba(170,102,255,0.4);
     background: rgba(170,102,255,0.08);
     border: 1.5px solid rgba(170,102,255,0.2);
-    border-radius: 5px;
+    border-radius: 8px;
     pointer-events: none;
     transition: background 0.08s, color 0.08s, border-color 0.08s, box-shadow 0.08s;
   }
@@ -155,15 +162,12 @@
 
   /* ── Pedal touch buttons (bottom) ── */
   #pedal-bar {
-    position: fixed;
-    bottom: env(safe-area-inset-bottom, 0px);
-    left: 0; right: 0;
     display: flex;
     justify-content: center;
     gap: 10px;
-    padding: 8px 10px;
+    padding: 0 10px;
     pointer-events: none;
-    z-index: 10;
+    width: 100%;
   }
   .pedal-touch {
     width: 45%;
@@ -259,9 +263,9 @@
     display: none;
   }
 
-  /* Desktop: hide pedal bar, show keyboard hint */
+  /* Desktop: hide pedal buttons, keep gauges */
   @media (hover: hover) and (pointer: fine) {
-    #pedal-bar { display: none; }
+    #pedal-bar { display: none !important; }
   }
 
   /* ── Lobby overlay ── */
@@ -480,51 +484,34 @@
 </head>
 <body>
 
-<!-- HUD -->
+<!-- HUD: top bar -->
 <div id="hud-top">
   <div id="hud-top-left">
     <div id="speed-display">Speed: 0 km/h</div>
     <div id="distance-display">Distance: 0 m</div>
   </div>
-  <div id="hud-top-right">
-    <div class="gauge-wrap" id="bike-gauge">
-      <div class="gauge-title">BIKE</div>
-      <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-        <!-- Red danger zones (left & right extremes) -->
-        <path d="M 60 60 L 14.4 79.6 A 52 52 0 0 1 8 60 L 60 60" fill="rgba(255,50,50,0.25)"/>
-        <path d="M 60 60 L 112 60 A 52 52 0 0 1 105.6 79.6 L 60 60" fill="rgba(255,50,50,0.25)"/>
-        <!-- Top center mark -->
-        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-        <!-- Danger threshold marks -->
-        <line x1="29" y1="20" x2="34" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-        <line x1="91" y1="20" x2="86" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-        <line x1="12" y1="44" x2="21" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-        <line x1="108" y1="44" x2="99" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-        <!-- Needle (horizontal bar style) -->
-        <g id="bike-needle" transform="rotate(0, 60, 60)">
-          <line x1="18" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
-          <line x1="72" y1="60" x2="102" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
-          <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
-          <line x1="56" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="2"/>
-          <line x1="64" y1="60" x2="72" y2="60" stroke="#4af" stroke-width="2"/>
-          <line x1="60" y1="56" x2="60" y2="50" stroke="#4af" stroke-width="2"/>
-        </g>
-        <!-- Top pointer -->
-        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
-      </svg>
-      <div class="gauge-label" id="bike-label">0.0&deg;</div>
-    </div>
+</div>
+
+<div id="status"></div>
+
+<!-- Side buttons -->
+<div id="side-buttons">
+  <button class="side-btn safety-on" id="safety-btn">SAFETY ON</button>
+  <button class="side-btn speed-off" id="speed-btn">SPEED OFF</button>
+  <button class="side-btn reset-btn" id="reset-btn">RESET</button>
+</div>
+
+<!-- Bottom HUD: gauge bar + pedal buttons -->
+<div id="bottom-hud">
+  <div id="gauge-bar">
+    <div class="pedal-indicator" id="partner-pedal-up">&#9650;</div>
     <div class="gauge-wrap" id="phone-gauge">
       <div class="gauge-title">YOU</div>
       <svg viewBox="0 0 120 120">
         <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-        <!-- Green safe zones (left & right of vertical) -->
         <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(0,180,0,0.2)"/>
         <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(0,180,0,0.2)"/>
-        <!-- Top center mark -->
         <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-        <!-- Needle (horizontal bar style) -->
         <g id="phone-needle" transform="rotate(0, 60, 60)">
           <line x1="18" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
           <line x1="72" y1="60" x2="102" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
@@ -533,10 +520,32 @@
           <line x1="64" y1="60" x2="72" y2="60" stroke="#fa3" stroke-width="2"/>
           <line x1="60" y1="56" x2="60" y2="50" stroke="#fa3" stroke-width="2"/>
         </g>
-        <!-- Top pointer -->
         <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
       </svg>
       <div class="gauge-label" id="phone-label">0.0&deg;</div>
+    </div>
+    <div class="gauge-wrap" id="bike-gauge">
+      <div class="gauge-title">BIKE</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 14.4 79.6 A 52 52 0 0 1 8 60 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <path d="M 60 60 L 112 60 A 52 52 0 0 1 105.6 79.6 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <line x1="29" y1="20" x2="34" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="91" y1="20" x2="86" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="12" y1="44" x2="21" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="108" y1="44" x2="99" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <g id="bike-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#4af" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="bike-label">0.0&deg;</div>
     </div>
     <div class="gauge-wrap" id="partner-gauge" style="display:none;">
       <div class="gauge-title">PARTNER</div>
@@ -556,27 +565,13 @@
         <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
       </svg>
       <div class="gauge-label" id="partner-label">0.0&deg;</div>
-      <div class="pedal-row">
-        <div class="pedal-indicator" id="partner-pedal-up">&#9650;</div>
-        <div class="pedal-indicator" id="partner-pedal-down">&#9660;</div>
-      </div>
     </div>
+    <div class="pedal-indicator" id="partner-pedal-down">&#9660;</div>
   </div>
-</div>
-
-<div id="status"></div>
-
-<!-- Side buttons -->
-<div id="side-buttons">
-  <button class="side-btn safety-on" id="safety-btn">SAFETY ON</button>
-  <button class="side-btn speed-off" id="speed-btn">SPEED OFF</button>
-  <button class="side-btn reset-btn" id="reset-btn">RESET</button>
-</div>
-
-<!-- Pedal touch targets -->
-<div id="pedal-bar">
-  <div class="pedal-touch" id="touch-left"><img src="../images/left_pedal.png" alt="Left Pedal"></div>
-  <div class="pedal-touch" id="touch-right"><img src="../images/right_pedal.png" alt="Right Pedal"></div>
+  <div id="pedal-bar">
+    <div class="pedal-touch" id="touch-left"><img src="../images/left_pedal.png" alt="Left Pedal"></div>
+    <div class="pedal-touch" id="touch-right"><img src="../images/right_pedal.png" alt="Right Pedal"></div>
+  </div>
 </div>
 
 <!-- Crash flash -->
@@ -598,7 +593,7 @@
   <div class="lobby-card">
     <h1>Tandemonium</h1>
     <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
-    <p class="lobby-version" id="lobby-version">v.ed09c9b | 02-19-2026 18:21</p>
+    <p class="lobby-version" id="lobby-version">v.614158b | 02-19-2026 18:40</p>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">

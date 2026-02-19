@@ -106,9 +106,11 @@ export class HUD {
       this.statusEl.textContent = '';
     }
 
-    // Partner gauge
+    // Partner gauge + pedal indicators
     if (remoteData && this.partnerGauge) {
       this.partnerGauge.style.display = '';
+      if (this.partnerPedalUp) this.partnerPedalUp.style.display = 'flex';
+      if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'flex';
       // Needle: remoteLean (-1..1) → degrees (-90..90)
       const partnerDeg = Math.max(-90, Math.min(90, remoteData.remoteLean * 90));
       this.partnerNeedle.setAttribute('transform', 'rotate(' + partnerDeg.toFixed(1) + ', 60, 60)');
@@ -132,6 +134,8 @@ export class HUD {
       }
     } else if (this.partnerGauge) {
       this.partnerGauge.style.display = 'none';
+      if (this.partnerPedalUp) this.partnerPedalUp.style.display = 'none';
+      if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'none';
     }
 
     // Crash flash
