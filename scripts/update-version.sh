@@ -1,15 +1,14 @@
 #!/bin/bash
-# Updates the version stamp in lobby screens with current commit hash and datetime
-# Called by the pre-commit git hook
+# Manually updates the version stamp in lobby screens
+# The post-commit hook does this automatically, but this script
+# can be run manually if needed.
 
 HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
-# For pre-commit, HEAD is the previous commit. Use the index tree hash instead.
-# We'll use a placeholder that gets replaced after commit by post-commit hook.
 DATETIME=$(date +"%m-%d-%Y %H:%M")
 VERSION="v.${HASH} | ${DATETIME}"
 
-# Update portrait-game/index.html
-sed -i '' "s|>v\.[^<]*<\/p>|>${VERSION}<\/p>|" portrait-game/index.html
+# Update both HTML files (use # delimiter to avoid conflicts with | and /)
+sed -i '' "s#>v\.[^<]*<#>${VERSION}<#" portrait-game/index.html
+sed -i '' "s#>v\.[^<]*<#>${VERSION}<#" index.html
 
-# Update index.html
-sed -i '' "s|>v\.[^<]*<\/p>|>${VERSION}<\/p>|" index.html
+echo "Updated version to: ${VERSION}"
