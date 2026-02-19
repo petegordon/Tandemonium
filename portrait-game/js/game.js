@@ -486,6 +486,10 @@ class Game {
     this._mpPrevUp = upHeld;
     this._mpPrevDown = downHeld;
 
+    // Update local pedal controller for HUD button feedback only
+    // (physics are handled by captain's shared pedal controller)
+    this.pedalCtrl.update(dt);
+
     // Interpolate remote state
     const state = this.remoteBikeState ? this.remoteBikeState.getInterpolated() : null;
     if (state) {
@@ -529,3 +533,4 @@ class Game {
 // BOOT
 // ============================================================
 const game = new Game();
+window._game = game;

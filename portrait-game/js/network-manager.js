@@ -27,6 +27,8 @@ export class NetworkManager {
     this._maxReconnectAttempts = 3;
     this._relayWs = null;
     this._fallbackUrl = null;
+    this._relayPartnerReady = false;
+    this._p2pFallbackDelay = 60000; // 60 seconds before relay fallback
   }
 
   generateRoomCode() {
@@ -44,18 +46,21 @@ export class NetworkManager {
 
     this.peer = new window.Peer(this.roomCode, {
       config: {
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
       }
     });
 
     this.peer.on('open', (id) => {
       if (callback) callback(this.roomCode);
-      // Fallback to relay if no P2P connection within 10s
+      // Fallback to relay if no P2P connection within timeout
       this._p2pTimeout = setTimeout(() => {
         if (!this.connected && this._fallbackUrl) {
           this._connectRelay();
         }
-      }, 10000);
+      }, this._p2pFallbackDelay);
     });
 
     this.peer.on('connection', (conn) => {
@@ -78,7 +83,10 @@ export class NetworkManager {
 
     this.peer = new window.Peer(null, {
       config: {
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
       }
     });
 
@@ -86,6 +94,13 @@ export class NetworkManager {
       this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
       this._setupConnection();
       if (callback) callback();
+
+      // Fallback timer starts AFTER peer broker registration (inside on-open)
+      this._p2pTimeout = setTimeout(() => {
+        if (!this.connected && this._fallbackUrl) {
+          this._connectRelay();
+        }
+      }, this._p2pFallbackDelay);
     });
 
     this.peer.on('error', (err) => {
@@ -93,12 +108,6 @@ export class NetworkManager {
         if (this.onDisconnected) this.onDisconnected('Room not found');
       }
     });
-
-    this._p2pTimeout = setTimeout(() => {
-      if (!this.connected && this._fallbackUrl) {
-        this._connectRelay();
-      }
-    }, 10000);
   }
 
   _setupConnection() {
@@ -135,6 +144,21 @@ export class NetworkManager {
         const parsed = typeof data === 'string' ? JSON.parse(data) : data;
         if (parsed.type === 'relay') {
           bytes = new Uint8Array(parsed.data);
+        } else if (parsed.type === 'partner-ready') {
+          // Relay: partner has connected — now safe to start heartbeat
+          this._relayPartnerReady = true;
+          if (this.transport === 'relay' && !this._heartbeatInterval) {
+            this._startHeartbeat();
+          }
+          if (!this.connected) {
+            this.connected = true;
+            if (this.onConnected) this.onConnected();
+          }
+          return;
+        } else if (parsed.type === 'disconnect') {
+          // Relay: partner disconnected — immediate notification
+          this._handleDisconnect();
+          return;
         } else return;
       } catch (e) { return; }
     }
@@ -264,24 +288,33 @@ export class NetworkManager {
 
   _attemptReconnect() {
     if (this.role === 'stoker' && this.roomCode) {
+      // Stoker reconnects by re-opening a data channel to captain's peer
       if (this.peer && !this.peer.destroyed) {
         this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
         this._setupConnection();
+      }
+    } else if (this.role === 'captain') {
+      // Captain: peer is still registered and listening for connections.
+      // If the stoker reconnects, peer.on('connection') will fire.
+      // Also try relay fallback if available.
+      if (this._fallbackUrl && (!this._relayWs || this._relayWs.readyState !== WebSocket.OPEN)) {
+        this._relayPartnerReady = false;
+        this._connectRelay();
       }
     }
   }
 
   _connectRelay() {
     if (!this._fallbackUrl) return;
+    this._relayPartnerReady = false;
     this._relayWs = new WebSocket(this._fallbackUrl + '?room=' + this.roomCode + '&role=' + this.role);
 
     this._relayWs.binaryType = 'arraybuffer';
     this._relayWs.onopen = () => {
-      this.connected = true;
       this.transport = 'relay';
       clearTimeout(this._p2pTimeout);
-      this._startHeartbeat();
-      if (this.onConnected) this.onConnected();
+      // Don't call onConnected or start heartbeat yet —
+      // wait for 'partner-ready' message from relay
     };
     this._relayWs.onmessage = (e) => {
       this._handleMessage(e.data);

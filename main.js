@@ -381,6 +381,8 @@
             this._maxReconnectAttempts = 3;
             this._relayWs = null;
             this._fallbackUrl = null; // set if Cloudflare Worker URL is configured
+            this._relayPartnerReady = false;
+            this._p2pFallbackDelay = 60000; // 60 seconds before relay fallback
         }
 
         generateRoomCode() {
@@ -399,20 +401,23 @@
 
             this.peer = new Peer(this.roomCode, {
                 config: {
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
                 }
             });
 
             this.peer.on('open', (id) => {
                 dbg('NET: Peer open as ' + id);
                 if (callback) callback(this.roomCode);
-                // Fallback to relay if no P2P connection within 10s
+                // Fallback to relay if no P2P connection within timeout
                 this._p2pTimeout = setTimeout(() => {
                     if (!this.connected && this._fallbackUrl) {
                         dbg('NET: Captain P2P timeout, trying relay');
                         this._connectRelay();
                     }
-                }, 10000);
+                }, this._p2pFallbackDelay);
             });
 
             this.peer.on('connection', (conn) => {
@@ -439,7 +444,10 @@
 
             this.peer = new Peer(null, {
                 config: {
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
                 }
             });
 
@@ -448,6 +456,14 @@
                 this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
                 this._setupConnection();
                 if (callback) callback();
+
+                // Fallback timer starts AFTER peer broker registration (inside on-open)
+                this._p2pTimeout = setTimeout(() => {
+                    if (!this.connected && this._fallbackUrl) {
+                        dbg('NET: P2P timeout, trying relay');
+                        this._connectRelay();
+                    }
+                }, this._p2pFallbackDelay);
             });
 
             this.peer.on('error', (err) => {
@@ -456,14 +472,6 @@
                     if (this.onDisconnected) this.onDisconnected('Room not found');
                 }
             });
-
-            // Set timeout for P2P connection — fall back to relay
-            this._p2pTimeout = setTimeout(() => {
-                if (!this.connected && this._fallbackUrl) {
-                    dbg('NET: P2P timeout, trying relay');
-                    this._connectRelay();
-                }
-            }, 10000);
         }
 
         _setupConnection() {
@@ -504,6 +512,21 @@
                     const parsed = typeof data === 'string' ? JSON.parse(data) : data;
                     if (parsed.type === 'relay') {
                         bytes = new Uint8Array(parsed.data);
+                    } else if (parsed.type === 'partner-ready') {
+                        dbg('NET: Relay partner ready');
+                        this._relayPartnerReady = true;
+                        if (this.transport === 'relay' && !this._heartbeatInterval) {
+                            this._startHeartbeat();
+                        }
+                        if (!this.connected) {
+                            this.connected = true;
+                            if (this.onConnected) this.onConnected();
+                        }
+                        return;
+                    } else if (parsed.type === 'disconnect') {
+                        dbg('NET: Relay partner disconnected');
+                        this._handleDisconnect();
+                        return;
                     } else return;
                 } catch (e) { return; }
             }
@@ -637,10 +660,16 @@
 
         _attemptReconnect() {
             if (this.role === 'stoker' && this.roomCode) {
-                dbg('NET: Attempting reconnect to ' + this.roomCode);
+                dbg('NET: Attempting stoker reconnect to ' + this.roomCode);
                 if (this.peer && !this.peer.destroyed) {
                     this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
                     this._setupConnection();
+                }
+            } else if (this.role === 'captain') {
+                dbg('NET: Captain attempting relay reconnect');
+                if (this._fallbackUrl && (!this._relayWs || this._relayWs.readyState !== WebSocket.OPEN)) {
+                    this._relayPartnerReady = false;
+                    this._connectRelay();
                 }
             }
         }
@@ -648,16 +677,16 @@
         _connectRelay() {
             if (!this._fallbackUrl) return;
             dbg('NET: Connecting to relay ' + this._fallbackUrl);
+            this._relayPartnerReady = false;
             this._relayWs = new WebSocket(this._fallbackUrl + '?room=' + this.roomCode + '&role=' + this.role);
 
             this._relayWs.binaryType = 'arraybuffer';
             this._relayWs.onopen = () => {
-                dbg('NET: Relay connected');
-                this.connected = true;
+                dbg('NET: Relay WebSocket open, waiting for partner-ready...');
                 this.transport = 'relay';
                 clearTimeout(this._p2pTimeout);
-                this._startHeartbeat();
-                if (this.onConnected) this.onConnected();
+                // Don't call onConnected or start heartbeat yet —
+                // wait for 'partner-ready' message from relay
             };
             this._relayWs.onmessage = (e) => {
                 this._handleMessage(e.data);

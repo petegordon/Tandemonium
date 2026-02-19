@@ -5,7 +5,6 @@
 export class TandemRoom {
     constructor(state) {
         this.state = state;
-        this.sockets = new Map(); // role → websocket
     }
 
     async fetch(request) {
@@ -19,7 +18,26 @@ export class TandemRoom {
         const [client, server] = Object.values(pair);
 
         this.state.acceptWebSocket(server, [role]);
-        this.sockets.set(role, server);
+
+        // Notify both sides when partner is already connected
+        const partnerRole = role === 'captain' ? 'stoker' : 'captain';
+        const partnerSockets = this.state.getWebSockets(partnerRole);
+        const partnerReady = [];
+        for (const sock of partnerSockets) {
+            partnerReady.push(sock);
+        }
+
+        if (partnerReady.length > 0) {
+            // Tell the new joiner their partner is here
+            const joinMsg = JSON.stringify({ type: 'partner-ready', role: partnerRole });
+            try { server.send(joinMsg); } catch (e) { /* just connected, shouldn't fail */ }
+
+            // Tell the existing partner the new player joined
+            const readyMsg = JSON.stringify({ type: 'partner-ready', role: role });
+            for (const sock of partnerReady) {
+                try { sock.send(readyMsg); } catch (e) { /* closed */ }
+            }
+        }
 
         return new Response(null, { status: 101, webSocket: client });
     }
@@ -45,8 +63,6 @@ export class TandemRoom {
         for (const sock of this.state.getWebSockets(targetRole)) {
             try { sock.send(closeMsg); } catch (e) { /* closed */ }
         }
-
-        this.sockets.delete(senderRole);
     }
 
     async webSocketError(ws) {
