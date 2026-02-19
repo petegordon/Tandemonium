@@ -19,6 +19,7 @@ export class Lobby {
     this.joinStep = document.getElementById('lobby-join');
 
     this._setup();
+    this._checkAutoJoin();
   }
 
   show() {
@@ -88,26 +89,26 @@ export class Lobby {
       }
     });
 
-    // Auto-join from URL (e.g. ?room=TNDM-ABCD)
-    const params = new URLSearchParams(window.location.search);
-    const roomParam = params.get('room');
-    if (roomParam) {
-      history.replaceState(null, '', window.location.pathname);
-      const code = roomParam.toUpperCase();
-      const short = code.startsWith('TNDM-') ? code.slice(5) : code;
-      setTimeout(() => {
-        this._requestMotion();
-        this._showStep(this.joinStep);
-        document.getElementById('room-code-input').value = short;
-        document.getElementById('btn-join').click();
-      }, 300);
-    }
   }
 
   _requestMotion() {
     if (this.input && this.input.needsMotionPermission) {
       this.input.requestMotionPermission();
     }
+  }
+
+  _checkAutoJoin() {
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    if (!roomParam) return;
+
+    history.replaceState(null, '', window.location.pathname);
+    const code = roomParam.toUpperCase();
+    const fullCode = code.startsWith('TNDM-') ? code : 'TNDM-' + code;
+
+    try { this._requestMotion(); } catch (_) {}
+    this._showStep(this.joinStep);
+    this._joinRoom(fullCode);
   }
 
   _createRoom() {
