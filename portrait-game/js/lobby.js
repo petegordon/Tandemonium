@@ -52,6 +52,7 @@ export class Lobby {
     });
     document.getElementById('btn-back-role-host').addEventListener('click', () => {
       if (this.net) { this.net.destroy(); this.net = null; }
+      document.getElementById('room-qr').innerHTML = '';
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
@@ -86,6 +87,21 @@ export class Lobby {
         document.getElementById('btn-join').click();
       }
     });
+
+    // Auto-join from URL (e.g. ?room=TNDM-ABCD)
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    if (roomParam) {
+      history.replaceState(null, '', window.location.pathname);
+      const code = roomParam.toUpperCase();
+      const short = code.startsWith('TNDM-') ? code.slice(5) : code;
+      setTimeout(() => {
+        this._requestMotion();
+        this._showStep(this.joinStep);
+        document.getElementById('room-code-input').value = short;
+        document.getElementById('btn-join').click();
+      }, 300);
+    }
   }
 
   _requestMotion() {
@@ -106,6 +122,18 @@ export class Lobby {
     this.net.createRoom((code) => {
       codeEl.textContent = code;
       statusEl.textContent = 'Waiting for partner...';
+
+      // Generate QR code with join URL
+      const qrEl = document.getElementById('room-qr');
+      const url = window.location.origin + window.location.pathname + '?room=' + code;
+      try {
+        const qr = qrcode(0, 'M');
+        qr.addData(url);
+        qr.make();
+        qrEl.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 2 });
+      } catch (_) {
+        qrEl.style.display = 'none';
+      }
     });
 
     this.net.onConnected = () => {

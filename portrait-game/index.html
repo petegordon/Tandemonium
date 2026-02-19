@@ -395,6 +395,16 @@
   }
   .conn-status.connected { color: #44ff66; animation: none; }
   .conn-status.error { color: #ff4444; animation: none; }
+  #room-qr {
+    width: 128px; height: 128px;
+    margin: 12px auto;
+    background: #fff;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #room-qr svg { width: 100%; height: 100%; }
 
   /* ── Disconnect overlay ── */
   #disconnect-overlay {
@@ -555,7 +565,7 @@
   <div class="lobby-card">
     <h1>Tandemonium</h1>
     <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
-    <p class="lobby-version" id="lobby-version">v.08978ae | 02-19-2026 17:25</p>
+    <p class="lobby-version" id="lobby-version">v.66a5329 | 02-19-2026 17:34</p>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">
@@ -575,7 +585,8 @@
     <div id="lobby-host" class="lobby-step" style="display:none;">
       <p class="lobby-prompt">Your room code:</p>
       <div id="room-code-display" class="room-code">----</div>
-      <p class="lobby-hint">Share this code with your partner</p>
+      <div id="room-qr"></div>
+      <p class="lobby-hint">Share this code or scan QR to join</p>
       <div id="host-status" class="conn-status"></div>
       <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
     </div>
@@ -608,6 +619,8 @@
   <span id="conn-ping">--ms</span>
 </div>
 
+<!-- QR code generator (sets window.qrcode) -->
+<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
 <!-- PeerJS (sets window.Peer) -->
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 
