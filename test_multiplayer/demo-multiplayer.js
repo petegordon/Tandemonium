@@ -87,7 +87,7 @@ const mobileDevice = {
         await sleep(500);
         await stokerPage.click('#btn-stoker');
         await sleep(500);
-        await stokerPage.$eval('#room-code-input', (el, code) => { el.value = code; }, roomCode);
+        await stokerPage.$eval('#room-code-input', (el, code) => { el.value = code; }, roomCode.replace('TNDM-', ''));
         await sleep(200);
         await stokerPage.click('#btn-join');
 

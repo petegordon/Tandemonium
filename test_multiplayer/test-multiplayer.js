@@ -71,7 +71,7 @@ const TIMEOUT = 30000;
 
         // Type room code and join
         console.log('7. Stoker entering room code:', roomCode);
-        await stokerPage.$eval('#room-code-input', (el, code) => { el.value = code; }, roomCode);
+        await stokerPage.$eval('#room-code-input', (el, code) => { el.value = code; }, roomCode.replace('TNDM-', ''));
         await stokerPage.click('#btn-join');
 
         // Give PeerJS time to signal

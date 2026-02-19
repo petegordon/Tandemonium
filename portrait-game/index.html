@@ -262,7 +262,13 @@
   .lobby-subtitle {
     color: rgba(255,255,255,0.5);
     font-size: 13px;
-    margin-bottom: 24px;
+    margin-bottom: 4px;
+  }
+  .lobby-version {
+    color: rgba(255,255,255,0.3);
+    font-size: 10px;
+    margin-bottom: 20px;
+    font-family: 'Courier New', monospace;
   }
   .lobby-step {
     display: flex;
@@ -349,6 +355,22 @@
   }
   .room-code-input:focus {
     border-color: #44ff66;
+  }
+  .room-code-prefix {
+    font-size: 24px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.5);
+    letter-spacing: 3px;
+    padding: 12px 0 12px 12px;
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(255,255,255,0.4);
+    border-right: none;
+    border-radius: 10px 0 0 10px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .room-code-short {
+    max-width: 130px;
+    border-radius: 0 10px 10px 0;
   }
   .conn-status {
     font-size: 13px;
@@ -497,6 +519,7 @@
   <div class="lobby-card">
     <h1>Tandemonium</h1>
     <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
+    <p class="lobby-version" id="lobby-version">v.6b1fe8f | 02-19-2026 12:00</p>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">
@@ -524,7 +547,10 @@
     <!-- Step 3b: Stoker join room -->
     <div id="lobby-join" class="lobby-step" style="display:none;">
       <p class="lobby-prompt">Enter room code:</p>
-      <input type="text" id="room-code-input" class="room-code-input" maxlength="9" placeholder="TNDM-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <div style="display:flex;align-items:center;justify-content:center;gap:0;">
+        <span class="room-code-prefix">TNDM-</span>
+        <input type="text" id="room-code-input" class="room-code-input room-code-short" maxlength="4" placeholder="XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      </div>
       <button class="lobby-btn lobby-btn-accent" id="btn-join">JOIN</button>
       <div id="join-status" class="conn-status"></div>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>

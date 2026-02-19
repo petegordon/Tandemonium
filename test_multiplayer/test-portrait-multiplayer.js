@@ -70,61 +70,51 @@ const TIMEOUT = 30000;
         await stokerPage.click('#btn-stoker');
         await stokerPage.waitForSelector('#lobby-join', { visible: true, timeout: 5000 });
 
-        // Type room code and join
-        console.log('7. Stoker entering room code:', roomCode);
-        await stokerPage.$eval('#room-code-input', (el, code) => { el.value = code; }, roomCode);
+        // Type the 4-char suffix (input field has TNDM- prefix label)
+        const shortCode = roomCode.replace('TNDM-', '');
+        console.log('7. Stoker entering room code:', shortCode, '(full:', roomCode + ')');
+        await stokerPage.$eval('#room-code-input', (el, code) => { el.value = code; }, shortCode);
         await stokerPage.click('#btn-join');
 
-        // Wait for PeerJS signaling
-        console.log('\n   Waiting for PeerJS signaling...');
-
-        // Wait for connection on both sides (lobby disappears when connected)
+        // Wait for connection on both sides
+        // Poll from Node.js side to avoid Chrome background-tab throttling
         console.log('\n8. Waiting for connection...');
 
-        const captainConnected = captainPage.waitForFunction(
-            () => document.getElementById('lobby').style.display === 'none',
-            { timeout: 20000 }
-        ).then(() => {
-            console.log('   Captain: Connected!');
-            return true;
-        }).catch(() => {
-            console.log('   Captain: TIMEOUT waiting for connection');
+        async function waitForConnection(page, label, selector, timeout) {
+            const start = Date.now();
+            while (Date.now() - start < timeout) {
+                await page.bringToFront();
+                const text = await page.$eval(selector, el => el.textContent).catch(() => '');
+                if (text.toLowerCase().includes('connected')) {
+                    console.log('   ' + label + ': ' + text);
+                    return true;
+                }
+                await new Promise(r => setTimeout(r, 500));
+            }
             return false;
-        });
+        }
 
-        const stokerConnected = stokerPage.waitForFunction(
-            () => document.getElementById('lobby').style.display === 'none',
-            { timeout: 20000 }
-        ).then(() => {
-            console.log('   Stoker: Connected!');
-            return true;
-        }).catch(() => {
-            console.log('   Stoker: TIMEOUT waiting for connection');
-            return false;
-        });
-
-        const [capOk, stoOk] = await Promise.all([captainConnected, stokerConnected]);
+        const capOk = await waitForConnection(captainPage, 'Captain', '#host-status', 20000);
+        const stoOk = await waitForConnection(stokerPage, 'Stoker', '#join-status', 20000);
 
         if (!capOk || !stoOk) {
-            const hostStatus = await captainPage.$eval('#host-status', el => el.textContent).catch(() => 'N/A');
-            const joinStatus = await stokerPage.$eval('#join-status', el => el.textContent).catch(() => 'N/A');
-            console.log('\n   DEBUG - Host status:', hostStatus);
-            console.log('   DEBUG - Join status:', joinStatus);
-
-            // Check network transport
-            const capTransport = await captainPage.evaluate(() =>
-                window._game && window._game.net ? window._game.net.transport : 'no net'
-            );
-            const stoTransport = await stokerPage.evaluate(() =>
-                window._game && window._game.net ? window._game.net.transport : 'no net'
-            );
-            console.log('   DEBUG - Captain transport:', capTransport);
-            console.log('   DEBUG - Stoker transport:', stoTransport);
-
             console.log('\n*** CONNECTION FAILED ***');
             await browser.close();
             process.exit(1);
         }
+
+        // Bring captain to front and wait for lobby to hide (1s delay after connect)
+        await captainPage.bringToFront();
+        await captainPage.waitForFunction(
+            () => document.getElementById('lobby').style.display === 'none',
+            { timeout: 5000 }
+        );
+        await stokerPage.bringToFront();
+        await stokerPage.waitForFunction(
+            () => document.getElementById('lobby').style.display === 'none',
+            { timeout: 5000 }
+        );
+        await captainPage.bringToFront();
 
         // Check connection badges
         console.log('\n9. Checking connection status...');

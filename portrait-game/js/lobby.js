@@ -73,8 +73,9 @@ export class Lobby {
 
     // JOIN button
     document.getElementById('btn-join').addEventListener('click', () => {
-      const code = document.getElementById('room-code-input').value.trim().toUpperCase();
-      if (code.length >= 4) {
+      const raw = document.getElementById('room-code-input').value.trim().toUpperCase();
+      if (raw.length >= 4) {
+        const code = raw.startsWith('TNDM-') ? raw : 'TNDM-' + raw;
         this._joinRoom(code);
       }
     });
