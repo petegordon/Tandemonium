@@ -64,18 +64,24 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
-  .pedal-indicator {
+  .pedal-row {
     position: absolute;
+    bottom: -28px;
     left: 0; right: 0;
+    display: flex;
+    gap: 3px;
+  }
+  .pedal-indicator {
+    flex: 1;
     text-align: center;
-    font-size: 16px;
+    font-size: 12px;
     font-weight: 700;
-    line-height: 22px;
-    height: 22px;
+    line-height: 20px;
+    height: 20px;
     color: rgba(170,102,255,0.4);
     background: rgba(170,102,255,0.08);
     border: 1.5px solid rgba(170,102,255,0.2);
-    border-radius: 6px;
+    border-radius: 5px;
     pointer-events: none;
     transition: background 0.08s, color 0.08s, border-color 0.08s, box-shadow 0.08s;
   }
@@ -85,8 +91,6 @@
     border-color: rgba(170,102,255,0.8);
     box-shadow: 0 0 8px rgba(170,102,255,0.5);
   }
-  .pedal-indicator.pedal-up { top: -26px; }
-  .pedal-indicator.pedal-down { bottom: -26px; }
 
   /* ── Status text (center) ── */
   #status {
@@ -517,7 +521,6 @@
     </div>
     <div class="gauge-wrap" id="partner-gauge" style="display:none;">
       <div class="gauge-title">PARTNER</div>
-      <div class="pedal-indicator pedal-up" id="partner-pedal-up">&#9650;</div>
       <svg viewBox="0 0 120 120">
         <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
         <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(170,102,255,0.15)"/>
@@ -534,7 +537,10 @@
         <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
       </svg>
       <div class="gauge-label" id="partner-label">0.0&deg;</div>
-      <div class="pedal-indicator pedal-down" id="partner-pedal-down">&#9660;</div>
+      <div class="pedal-row">
+        <div class="pedal-indicator" id="partner-pedal-up">&#9650;</div>
+        <div class="pedal-indicator" id="partner-pedal-down">&#9660;</div>
+      </div>
     </div>
   </div>
 </div>
@@ -573,7 +579,7 @@
   <div class="lobby-card">
     <h1>Tandemonium</h1>
     <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
-    <p class="lobby-version" id="lobby-version">v.3f7d21c | 02-19-2026 17:47</p>
+    <p class="lobby-version" id="lobby-version">v.51a2ff4 | 02-19-2026 17:52</p>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">
