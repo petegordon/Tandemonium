@@ -1,5 +1,5 @@
 // ============================================================
-// INPUT MANAGER — keyboard + touch + device motion
+// INPUT MANAGER — keyboard + touch + device motion + gamepad
 // ============================================================
 
 import { isMobile } from './config.js';
@@ -15,7 +15,18 @@ export class InputManager {
     this.rawGamma = 0;
     this.motionOffset = null;
     this.motionRawRelative = 0;
+
+    // Gamepad state
+    this.gamepadIndex = null;
+    this.gamepadConnected = false;
+    this.gamepadLean = 0;
+    this._gpTriggerLeftVal = 0;
+    this._gpTriggerRightVal = 0;
+    this._gpTriggerLeftPressed = false;
+    this._gpTriggerRightPressed = false;
+
     this._setupKeyboard();
+    this._setupGamepad();
     if (isMobile) {
       this._setupTouch();
       this._setupMotion();
@@ -160,9 +171,70 @@ export class InputManager {
     gauge.addEventListener('click', doCalibrate);
   }
 
+  _setupGamepad() {
+    window.addEventListener('gamepadconnected', (e) => {
+      this.gamepadIndex = e.gamepad.index;
+      this.gamepadConnected = true;
+      console.log('Gamepad connected:', e.gamepad.id);
+      const badge = document.getElementById('gamepad-badge');
+      if (badge) badge.style.display = 'block';
+    });
+    window.addEventListener('gamepaddisconnected', (e) => {
+      if (this.gamepadIndex === e.gamepad.index) {
+        this.gamepadIndex = null;
+        this.gamepadConnected = false;
+        this.gamepadLean = 0;
+        this._gpTriggerLeftVal = 0;
+        this._gpTriggerRightVal = 0;
+        this._gpTriggerLeftPressed = false;
+        this._gpTriggerRightPressed = false;
+        console.log('Gamepad disconnected');
+        const badge = document.getElementById('gamepad-badge');
+        if (badge) badge.style.display = 'none';
+      }
+    });
+  }
+
+  pollGamepad() {
+    // Polling fallback: detect gamepads even without events
+    if (this.gamepadIndex === null) {
+      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (let i = 0; i < gamepads.length; i++) {
+        if (gamepads[i]) {
+          this.gamepadIndex = i;
+          this.gamepadConnected = true;
+          const badge = document.getElementById('gamepad-badge');
+          if (badge) badge.style.display = 'block';
+          break;
+        }
+      }
+    }
+
+    if (this.gamepadIndex === null) return;
+
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const gp = gamepads[this.gamepadIndex];
+    if (!gp) return;
+
+    // Left stick X — deadzone 0.08
+    const rawX = gp.axes[0] || 0;
+    this.gamepadLean = Math.abs(rawX) < 0.08 ? 0 : rawX;
+
+    // Triggers: buttons[6] = LT, buttons[7] = RT
+    const THRESHOLD = 0.5;
+    this._gpTriggerLeftVal = gp.buttons[6] ? gp.buttons[6].value : 0;
+    this._gpTriggerRightVal = gp.buttons[7] ? gp.buttons[7].value : 0;
+    this._gpTriggerLeftPressed = this._gpTriggerLeftVal >= THRESHOLD;
+    this._gpTriggerRightPressed = this._gpTriggerRightVal >= THRESHOLD;
+  }
+
+  getGamepadLean() {
+    return this.gamepadConnected ? this.gamepadLean : 0;
+  }
+
   isPressed(code) {
-    if (code === 'ArrowUp') return !!this.keys[code] || this.touchLeft;
-    if (code === 'ArrowDown') return !!this.keys[code] || this.touchRight;
+    if (code === 'ArrowUp') return !!this.keys[code] || this.touchLeft || this._gpTriggerLeftPressed;
+    if (code === 'ArrowDown') return !!this.keys[code] || this.touchRight || this._gpTriggerRightPressed;
     return !!this.keys[code];
   }
 

@@ -113,50 +113,73 @@
     z-index: 10;
   }
 
-  /* ── Top-right toggle buttons ── */
+  /* ── Top-right D-pad buttons ── */
   #side-buttons {
     position: fixed;
     top: env(safe-area-inset-top, 0px);
-    right: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding-top: 10px;
+    right: 6px;
+    display: grid;
+    grid-template-areas:
+      ".      safety ."
+      "lobby  .      reset"
+      ".      speed  .";
+    grid-template-columns: repeat(3, 48px);
+    grid-template-rows: repeat(3, 28px);
+    gap: 2px;
+    padding: 6px;
     z-index: 10;
+    background: rgba(0,0,0,0.3);
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.1);
   }
   .side-btn {
-    padding: 6px 10px;
-    border: 1.5px solid rgba(255,255,255,0.5);
-    border-radius: 8px;
-    background: rgba(0,0,0,0.4);
-    color: #fff;
-    font-size: 10px;
+    padding: 0;
+    margin: 0;
+    border: 1.5px solid rgba(255,255,255,0.35);
+    border-radius: 6px;
+    background: rgba(0,0,0,0.5);
+    color: rgba(255,255,255,0.9);
+    font-size: 8px;
     font-weight: 700;
+    letter-spacing: 0.5px;
     cursor: pointer;
     pointer-events: auto;
-    text-align: center;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+    box-sizing: border-box;
   }
+  .side-btn:active { filter: brightness(1.3); }
+  #safety-btn { grid-area: safety; }
+  #lobby-btn  { grid-area: lobby; }
+  #reset-btn  { grid-area: reset; }
+  #speed-btn  { grid-area: speed; }
   .side-btn.safety-on {
-    background: rgba(40,180,60,0.6);
-    border-color: rgba(40,180,60,0.8);
+    background: rgba(40,180,60,0.5);
+    border-color: rgba(40,180,60,0.7);
   }
   .side-btn.safety-off {
-    background: rgba(200,40,40,0.6);
-    border-color: rgba(200,40,40,0.8);
+    background: rgba(200,40,40,0.5);
+    border-color: rgba(200,40,40,0.7);
   }
   .side-btn.speed-on {
-    background: rgba(40,100,220,0.6);
-    border-color: rgba(40,100,220,0.8);
+    background: rgba(40,100,220,0.5);
+    border-color: rgba(40,100,220,0.7);
   }
   .side-btn.speed-off {
-    background: rgba(80,80,80,0.5);
-    border-color: rgba(150,150,150,0.4);
+    background: rgba(60,60,60,0.5);
+    border-color: rgba(255,255,255,0.2);
   }
   .side-btn.reset-btn {
-    background: rgba(80,80,80,0.5);
-    border-color: rgba(150,150,150,0.4);
+    background: rgba(60,60,60,0.5);
+    border-color: rgba(255,255,255,0.2);
+  }
+  .side-btn.exit-btn {
+    background: rgba(60,60,60,0.5);
+    border-color: rgba(255,255,255,0.2);
   }
 
   /* ── Pedal touch buttons (bottom) ── */
@@ -359,6 +382,11 @@
     -webkit-tap-highlight-color: transparent;
   }
   .lobby-back:active { color: rgba(255,255,255,0.7); }
+  .gamepad-focus {
+    outline: 3px solid #44ff66;
+    outline-offset: 3px;
+    box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
+  }
   .room-code {
     font-size: 36px;
     font-weight: 700;
@@ -479,6 +507,25 @@
     margin-top: 4px;
   }
   #conn-badge #conn-type { color: #44ff66; font-weight: 700; margin-right: 4px; }
+
+  /* ── Gamepad badge ── */
+  #gamepad-badge {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #44ff66;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(68,255,102,0.3);
+    border-radius: 10px;
+    padding: 2px 8px;
+    z-index: 11;
+    pointer-events: none;
+    display: none;
+  }
 </style>
 </head>
 <body>
@@ -493,11 +540,12 @@
 
 <div id="status"></div>
 
-<!-- Side buttons -->
+<!-- Side buttons (D-pad layout) -->
 <div id="side-buttons">
-  <button class="side-btn safety-on" id="safety-btn">SAFETY ON</button>
-  <button class="side-btn speed-off" id="speed-btn">SPEED OFF</button>
+  <button class="side-btn safety-on" id="safety-btn">SAFETY</button>
+  <button class="side-btn exit-btn" id="lobby-btn">LOBBY</button>
   <button class="side-btn reset-btn" id="reset-btn">RESET</button>
+  <button class="side-btn speed-off" id="speed-btn">SPEED</button>
 </div>
 
 <!-- Bottom HUD: gauge bar + pedal buttons -->
@@ -582,7 +630,7 @@
 <!-- Instructions overlay (hidden initially — lobby shows first) -->
 <div id="instructions" class="hidden">
   <h1>Tandemonium</h1>
-  <p>Alternate LEFT/RIGHT pedals to ride.<br>Tilt your phone (or A/D keys) to steer and balance.</p>
+  <p>Alternate LEFT/RIGHT pedals to ride.<br>Tilt your phone, use A/D keys, or a gamepad to steer.</p>
   <p>Don't lean too far or you'll crash!</p>
   <p class="tap-hint">Tap anywhere to start</p>
 </div>
@@ -654,6 +702,9 @@
   <span id="conn-type">P2P</span>
   <span id="conn-ping">--ms</span>
 </div>
+
+<!-- Gamepad badge -->
+<div id="gamepad-badge">GAMEPAD</div>
 
 <!-- QR code generator (sets window.qrcode) -->
 <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>

@@ -72,6 +72,11 @@ export class HUD {
       const phoneDeg = Math.max(-90, Math.min(90, rawRel));
       this.phoneNeedle.setAttribute('transform', 'rotate(' + phoneDeg.toFixed(1) + ', 60, 60)');
       this.phoneLabel.textContent = Math.abs(rawRel).toFixed(1) + '\u00B0';
+    } else if (input.gamepadConnected) {
+      // Gamepad: analog stick lean on the YOU gauge
+      const gpDeg = input.gamepadLean * 90;
+      this.phoneNeedle.setAttribute('transform', 'rotate(' + gpDeg.toFixed(1) + ', 60, 60)');
+      this.phoneLabel.textContent = Math.abs(gpDeg).toFixed(1) + '\u00B0';
     } else {
       // Desktop: show keyboard lean (A/D) on the YOU gauge
       const aHeld = input.isPressed('KeyA');
@@ -100,7 +105,9 @@ export class HUD {
       this.statusEl.textContent = 'CRASHED! Resetting...';
       this.statusEl.style.color = '#ff4444';
     } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {
-      this.statusEl.textContent = isMobile ? 'Tap pedals to ride!' : 'Pedal! Alternate \u2191 \u2193';
+      const hint = isMobile ? 'Tap pedals to ride!' :
+        (input.gamepadConnected ? 'Pedal! Alternate LT / RT' : 'Pedal! Alternate \u2191 \u2193');
+      this.statusEl.textContent = hint;
       this.statusEl.style.color = '#ffdd44';
     } else {
       this.statusEl.textContent = '';

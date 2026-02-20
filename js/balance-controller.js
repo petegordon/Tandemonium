@@ -13,6 +13,8 @@ export class BalanceController {
     if (this.input.isPressed('KeyD')) leanInput += 1;
     const motion = this.input.getMotionLean();
     if (motion !== 0) leanInput += motion;
+    const gpLean = this.input.getGamepadLean();
+    if (gpLean !== 0) leanInput += gpLean;
     leanInput = Math.max(-1, Math.min(1, leanInput));
     return { leanInput };
   }

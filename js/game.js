@@ -59,12 +59,17 @@ class Game {
     this._mpPrevUp = false;
     this._mpPrevDown = false;
 
+    // D-pad edge detection for gameplay buttons
+    this._dpadPrevUp = false;
+    this._dpadPrevDown = false;
+    this._dpadPrevLeft = false;
+    this._dpadPrevRight = false;
+
     // Safety mode (on by default)
     this.safetyMode = true;
     this.safetyBtn = document.getElementById('safety-btn');
     this.safetyBtn.addEventListener('click', () => {
       this.safetyMode = !this.safetyMode;
-      this.safetyBtn.textContent = 'SAFETY ' + (this.safetyMode ? 'ON' : 'OFF');
       this.safetyBtn.className = 'side-btn ' + (this.safetyMode ? 'safety-on' : 'safety-off');
     });
 
@@ -73,13 +78,17 @@ class Game {
     this.speedBtn = document.getElementById('speed-btn');
     this.speedBtn.addEventListener('click', () => {
       this.autoSpeed = !this.autoSpeed;
-      this.speedBtn.textContent = 'SPEED ' + (this.autoSpeed ? 'ON' : 'OFF');
       this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
     });
 
     // Reset button
     document.getElementById('reset-btn').addEventListener('click', () => {
       this._resetGame();
+    });
+
+    // Lobby button
+    document.getElementById('lobby-btn').addEventListener('click', () => {
+      this._returnToLobby();
     });
 
     // Try Again from disconnect overlay
@@ -227,9 +236,10 @@ class Game {
   // ============================================================
 
   _setupStartHandler() {
-    const handler = async (e) => {
-      if (this.state !== 'instructions') return;
-      e.preventDefault();
+    let started = false;
+    const doStart = async () => {
+      if (this.state !== 'instructions' || started) return;
+      started = true;
 
       // Request iOS motion permission on first tap
       if (this.input.needsMotionPermission) {
@@ -252,8 +262,32 @@ class Game {
       document.removeEventListener('touchstart', handler);
       document.removeEventListener('click', handler);
     };
+
+    const handler = (e) => {
+      e.preventDefault();
+      doStart();
+    };
     document.addEventListener('touchstart', handler, { passive: false });
     document.addEventListener('click', handler);
+
+    // Gamepad button polling to start
+    const pollGamepadStart = () => {
+      if (this.state !== 'instructions' || started) return;
+      if (this.input.gamepadConnected) {
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const gp = gamepads[this.input.gamepadIndex];
+        if (gp) {
+          for (let i = 0; i < gp.buttons.length; i++) {
+            if (gp.buttons[i].pressed) {
+              doStart();
+              return;
+            }
+          }
+        }
+      }
+      requestAnimationFrame(pollGamepadStart);
+    };
+    requestAnimationFrame(pollGamepadStart);
   }
 
   _startCountdown() {
@@ -413,6 +447,28 @@ class Game {
     this.lobby.show();
   }
 
+  _pollDpad() {
+    if (!this.input.gamepadConnected) return;
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[this.input.gamepadIndex];
+    if (!gp) return;
+
+    const up = (gp.buttons[12] && gp.buttons[12].pressed) || false;
+    const down = (gp.buttons[13] && gp.buttons[13].pressed) || false;
+    const left = (gp.buttons[14] && gp.buttons[14].pressed) || false;
+    const right = (gp.buttons[15] && gp.buttons[15].pressed) || false;
+
+    if (up && !this._dpadPrevUp) this.safetyBtn.click();
+    if (down && !this._dpadPrevDown) this.speedBtn.click();
+    if (right && !this._dpadPrevRight) document.getElementById('reset-btn').click();
+    if (left && !this._dpadPrevLeft) this._returnToLobby();
+
+    this._dpadPrevUp = up;
+    this._dpadPrevDown = down;
+    this._dpadPrevLeft = left;
+    this._dpadPrevRight = right;
+  }
+
   _updateConnBadge() {
     if (!this.net) return;
     const typeEl = document.getElementById('conn-type');
@@ -427,6 +483,9 @@ class Game {
 
   _loop(timestamp) {
     requestAnimationFrame((t) => this._loop(t));
+
+    // Poll gamepad every frame before reading any input
+    this.input.pollGamepad();
 
     const dt = Math.min((timestamp - this.lastTime) / 1000, 0.05);
     this.lastTime = timestamp;
@@ -455,6 +514,9 @@ class Game {
       this.renderer.render(this.scene, this.camera);
       return;
     }
+
+    // D-pad actions (safety/speed/reset/lobby)
+    this._pollDpad();
 
     // Playing state — dispatch by mode
     if (this.mode === 'solo') {
