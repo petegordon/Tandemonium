@@ -29,6 +29,9 @@ export class BikeModel {
     // Road path reference (set externally after construction)
     this.roadPath = null;
     this.roadD = 0;          // distance along road centerline
+    this._lateralOffset = 0; // distance from road center (for off-road wobble)
+    this._frontWheelOffset = 0; // front wheel lateral offset
+    this._rearWheelOffset = 0;  // rear wheel lateral offset
     this._smoothPitch = 0;   // smoothed pitch angle for rendering
 
     // GLB data
@@ -141,6 +144,14 @@ export class BikeModel {
 
     // Friction
     this.speed *= (1 - 0.6 * dt);
+
+    // Grass drag: off-road surface slows you down — more pedaling required
+    const offRoadDrag = Math.max(0, Math.abs(this._lateralOffset) - 2.5);
+    if (offRoadDrag > 0 && this.speed > 0) {
+      const dragIntensity = Math.min(offRoadDrag / 3, 1); // 0→1 over 3 units
+      this.speed *= (1 - dragIntensity * 0.8 * dt);       // mild extra friction
+    }
+
     this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
 
     // Balance physics (portrait-tuned: softer response, more damping)
@@ -168,8 +179,17 @@ export class BikeModel {
       dangerWobble = intensity * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
     }
 
+    // Grass wobble: rough terrain when off-road
+    let grassWobble = 0;
+    const offRoad = Math.max(0, Math.abs(this._lateralOffset) - 2.5);
+    if (offRoad > 0 && this.speed > 0.1) {
+      const grassIntensity = Math.min(offRoad / 3, 1); // ramps up over 3 units off-road
+      grassWobble = grassIntensity * this.speed * 0.15 *
+        (Math.sin(t * 13.7) * 0.5 + Math.sin(t * 23.1) * 0.3 + (Math.random() - 0.5) * 0.4);
+    }
+
     this.leanVelocity += (gravity + playerLean + gyro + damping +
-      pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble) * dt;
+      pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble) * dt;
     this.lean += this.leanVelocity * dt;
 
     // Safety mode
@@ -203,6 +223,18 @@ export class BikeModel {
         if (diff < -L / 2) diff += L;
         this.roadD += diff * Math.min(1, 15 * dt);
         this.roadD = ((this.roadD % L) + L) % L;
+        this._lateralOffset = info.lateralOffset;
+
+        // Per-wheel lateral offsets (front +2m, rear -2m along heading)
+        const sinH = Math.sin(this.heading);
+        const cosH = Math.cos(this.heading);
+        const frontInfo = this.roadPath.getClosestRoadInfo(
+          this.position.x + sinH * 2.0, this.position.z + cosH * 2.0, this.roadD);
+        const rearInfo = this.roadPath.getClosestRoadInfo(
+          this.position.x - sinH * 2.0, this.position.z - cosH * 2.0, this.roadD);
+        this._frontWheelOffset = frontInfo ? frontInfo.lateralOffset : this._lateralOffset;
+        this._rearWheelOffset = rearInfo ? rearInfo.lateralOffset : this._lateralOffset;
+
         this.position.y = this.roadPath.getPointAtDistance(this.roadD).y;
       }
     }

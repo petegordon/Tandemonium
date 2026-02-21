@@ -508,6 +508,50 @@
   }
   #conn-badge #conn-type { color: #44ff66; font-weight: 700; margin-right: 4px; }
 
+  /* ── Surface indicator ── */
+  #surface-indicator {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 22px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    z-index: 11;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  #surface-indicator.visible { opacity: 1; }
+  #surface-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #8bc34a;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    min-width: 36px;
+    text-align: center;
+  }
+  #surface-bar-bg {
+    width: 48px;
+    height: 6px;
+    background: rgba(255,255,255,0.12);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  #surface-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: #8bc34a;
+    transition: width 0.15s, background 0.3s;
+  }
+
   /* ── Gamepad badge ── */
   #gamepad-badge {
     position: fixed;
@@ -701,6 +745,12 @@
 <div id="conn-badge" style="display:none;">
   <span id="conn-type">P2P</span>
   <span id="conn-ping">--ms</span>
+</div>
+
+<!-- Surface indicator -->
+<div id="surface-indicator">
+  <span id="surface-label">ROAD</span>
+  <div id="surface-bar-bg"><div id="surface-bar-fill"></div></div>
 </div>
 
 <!-- Gamepad badge -->

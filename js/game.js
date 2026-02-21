@@ -13,6 +13,7 @@ import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
 import { World } from './world.js';
 import { HUD } from './hud.js';
+import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
 
 class Game {
@@ -44,6 +45,7 @@ class Game {
     this.bike.roadPath = this.world.roadPath;
     this.chaseCamera = new ChaseCamera(this.camera);
     this.hud = new HUD(this.input);
+    this.grassParticles = new GrassParticles(this.scene);
 
     // Mode
     this.mode = 'solo'; // 'solo' | 'captain' | 'stoker'
@@ -540,6 +542,7 @@ class Game {
     const balanceResult = this.balanceCtrl.update();
 
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this.grassParticles.update(this.bike, dt);
     this.world.update(this.bike.position, this.bike.roadD);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
@@ -584,6 +587,7 @@ class Game {
     ));
 
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this.grassParticles.update(this.bike, dt);
 
     // Send state + lean to stoker at 20Hz
     this._stateSendTimer += dt;
@@ -632,6 +636,7 @@ class Game {
     if (state) {
       this.bike.applyRemoteState(state);
     }
+    this.grassParticles.update(this.bike, dt);
 
     // Send lean to captain at 20Hz
     this._leanSendTimer += dt;
