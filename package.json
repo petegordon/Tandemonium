@@ -2,6 +2,7 @@
   "name": "tandemonium",
   "version": "1.0.0",
   "description": "A Tandem Bicycle Physics Game",
+  "author": "Pete Gordon",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
