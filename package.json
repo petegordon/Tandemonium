@@ -1,5 +1,24 @@
 {
+  "name": "tandemonium",
+  "version": "1.0.0",
+  "description": "A Tandem Bicycle Physics Game",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "download-vendors": "node scripts/download-vendors.js",
+    "build-desktop": "node scripts/build-desktop.js",
+    "package": "electron-forge package --platform win32 --arch x64",
+    "make": "electron-forge make --platform win32 --arch x64"
+  },
+  "dependencies": {
+    "three": "0.161.0",
+    "steamworks.js": "^0.3.1"
+  },
   "devDependencies": {
+    "electron": "^33.2.1",
+    "@electron-forge/cli": "^7.6.0",
+    "@electron-forge/maker-squirrel": "^7.6.0",
+    "@electron-forge/maker-zip": "^7.6.0",
     "puppeteer": "^24.37.3"
   }
 }
