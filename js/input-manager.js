@@ -178,6 +178,8 @@ export class InputManager {
       console.log('Gamepad connected:', e.gamepad.id);
       const badge = document.getElementById('gamepad-badge');
       if (badge) badge.style.display = 'block';
+      const pedalBar = document.getElementById('pedal-bar');
+      if (pedalBar) pedalBar.classList.add('gamepad-active');
     });
     window.addEventListener('gamepaddisconnected', (e) => {
       if (this.gamepadIndex === e.gamepad.index) {
@@ -191,6 +193,8 @@ export class InputManager {
         console.log('Gamepad disconnected');
         const badge = document.getElementById('gamepad-badge');
         if (badge) badge.style.display = 'none';
+        const pedalBar = document.getElementById('pedal-bar');
+        if (pedalBar) pedalBar.classList.remove('gamepad-active');
       }
     });
   }
@@ -205,6 +209,8 @@ export class InputManager {
           this.gamepadConnected = true;
           const badge = document.getElementById('gamepad-badge');
           if (badge) badge.style.display = 'block';
+          const pedalBar = document.getElementById('pedal-bar');
+          if (pedalBar) pedalBar.classList.add('gamepad-active');
           break;
         }
       }
