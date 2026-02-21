@@ -26,6 +26,11 @@ export class BikeModel {
     this.fallTimer = 0;
     this._braking = false;
 
+    // Road path reference (set externally after construction)
+    this.roadPath = null;
+    this.roadD = 0;          // distance along road centerline
+    this._smoothPitch = 0;   // smoothed pitch angle for rendering
+
     // GLB data
     this.modelLoaded = false;
     this.spokeMeshes = [];
@@ -112,7 +117,7 @@ export class BikeModel {
     if (this.fallen) {
       this.fallTimer -= dt;
       if (this.fallTimer <= 0) this._reset();
-      this._applyTransform();
+      this._applyTransform(dt);
       return;
     }
 
@@ -176,10 +181,26 @@ export class BikeModel {
     const turnRate = -this.lean * this.speed * 0.35;
     this.heading += turnRate * dt;
 
+    // Slope physics — uphill decelerates, downhill accelerates
+    if (this.roadPath && this.speed > 0.01) {
+      const slope = this.roadPath.getSlopeAtDistance(this.roadD);
+      this.speed -= slope * 9.8 * dt * 0.3;
+      this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
+    }
+
     // Position
     this.position.x += Math.sin(this.heading) * this.speed * dt;
     this.position.z += Math.cos(this.heading) * this.speed * dt;
     this.distanceTraveled += this.speed * dt;
+
+    // Track road distance (smoothed) and set terrain height from smoothed roadD
+    if (this.roadPath) {
+      const info = this.roadPath.getClosestRoadInfo(this.position.x, this.position.z, this.roadD);
+      if (info) {
+        this.roadD += (info.d - this.roadD) * Math.min(1, 15 * dt);
+        this.position.y = this.roadPath.getPointAtDistance(this.roadD).y;
+      }
+    }
 
     // Fall detection
     if (Math.abs(this.lean) > 1.35) {
@@ -206,7 +227,7 @@ export class BikeModel {
       }
     }
 
-    this._applyTransform();
+    this._applyTransform(dt);
   }
 
   // Apply remote state from network (stoker-side, no physics)
@@ -220,6 +241,19 @@ export class BikeModel {
     this.crankAngle = state.crankAngle || 0;
     this.fallen = !!(state.flags & 1);
     this._braking = !!(state.flags & 2);
+
+    // Track road distance for stoker's local rendering (smoothed, with snap for large jumps)
+    if (this.roadPath) {
+      const info = this.roadPath.getClosestRoadInfo(this.position.x, this.position.z, this.roadD);
+      if (info) {
+        const diff = info.d - this.roadD;
+        if (Math.abs(diff) > 10) {
+          this.roadD = info.d;
+        } else {
+          this.roadD += diff * Math.min(1, 15 * (1 / 60));
+        }
+      }
+    }
 
     // Spoke fade
     if (this.spokeMeshes.length > 0) {
@@ -243,19 +277,35 @@ export class BikeModel {
       }
     }
 
-    this._applyTransform();
+    this._applyTransform(1 / 60);
   }
 
-  _applyTransform() {
+  _applyTransform(dt) {
     this.group.position.copy(this.position);
-    const q = new THREE.Quaternion();
     const qYaw = new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 1, 0), this.heading
     );
     const qLean = new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 0, 1), this.lean
     );
-    q.multiplyQuaternions(qYaw, qLean);
+
+    // Pitch from road slope (smoothed)
+    let qPitch;
+    if (this.roadPath) {
+      const slope = this.roadPath.getSlopeAtDistance(this.roadD);
+      const targetPitch = -Math.atan(slope);
+      const t = dt ? Math.min(1, 20 * dt) : 1;
+      this._smoothPitch += (targetPitch - this._smoothPitch) * t;
+      qPitch = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(1, 0, 0), this._smoothPitch
+      );
+    } else {
+      qPitch = new THREE.Quaternion();
+    }
+
+    const q = new THREE.Quaternion();
+    q.multiplyQuaternions(qYaw, qPitch);
+    q.multiply(qLean);
     this.group.quaternion.copy(q);
   }
 
@@ -265,7 +315,10 @@ export class BikeModel {
     this.speed = 0;
     this.lean = Math.sign(this.lean) * Math.PI / 2.2;
     this.leanVelocity = 0;
-    this.position.y = -0.15;
+    const terrainY = this.roadPath
+      ? this.roadPath.getHeightAtWorld(this.position.x, this.position.z, this.roadD)
+      : 0;
+    this.position.y = terrainY - 0.15;
   }
 
   _reset() {
@@ -273,13 +326,30 @@ export class BikeModel {
     this.lean = 0;
     this.leanVelocity = 0;
     this.speed = 0;
-    this.position.y = 0;
+    const terrainY = this.roadPath
+      ? this.roadPath.getHeightAtWorld(this.position.x, this.position.z, this.roadD)
+      : 0;
+    this.position.y = terrainY;
   }
 
   fullReset() {
-    this._reset();
-    this.position.set(0, 0, 0);
-    this.heading = 0;
+    this.fallen = false;
+    this.lean = 0;
+    this.leanVelocity = 0;
+    this.speed = 0;
+    this.roadD = 0;
+    this._smoothPitch = 0;
+
+    // Place at road start
+    if (this.roadPath) {
+      const pt = this.roadPath.getPointAtDistance(0);
+      this.position.set(pt.x, pt.y, pt.z);
+      this.heading = pt.heading;
+    } else {
+      this.position.set(0, 0, 0);
+      this.heading = 0;
+    }
+
     this.distanceTraveled = 0;
     this.crankAngle = 0;
     this.smoothSpokeFade = 0;

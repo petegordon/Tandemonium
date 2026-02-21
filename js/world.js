@@ -1,34 +1,52 @@
 // ============================================================
-// WORLD — ground, road, trees, lighting
+// WORLD — terrain ground, road chunks, trees, lighting
 // ============================================================
 
 import * as THREE from 'three';
+import { RoadPath } from './road-path.js';
+import { RoadChunkManager } from './road-chunks.js';
+
+const GROUND_SIZE = 500;
+const GROUND_SEGS = 120;         // ~4.2-unit vertex spacing — covers visible road/tree range
+const TREE_POOL_SIZE = 100;
+const TREE_AHEAD = 250;       // trees placed this far ahead
+const TREE_BEHIND = 50;       // keep trees this far behind
 
 export class World {
   constructor(scene) {
     this.scene = scene;
-    this._treeMeshes = [];
-    this.floor = null;
     this.tileSize = 4;
-    this._rngState = 42; // fixed seed for deterministic tree placement
-    this._buildGround();
-    this._buildRoad();
-    this._buildTrees();
-    this._buildLighting();
-  }
 
-  // Simple seeded PRNG — same seed produces identical trees on all devices
-  _seededRandom() {
-    this._rngState = (this._rngState * 9301 + 49297) % 233280;
-    return this._rngState / 233280;
+    // Road path (deterministic)
+    this.roadPath = new RoadPath(42);
+
+    // Road chunks
+    this.roadChunks = new RoadChunkManager(scene, this.roadPath);
+
+    // Tree PRNG — separate seed so road path changes don't affect trees
+    this._treeRngState = 137;
+    this._treeSeededRandom = () => {
+      this._treeRngState = (this._treeRngState * 9301 + 49297) % 233280;
+      return this._treeRngState / 233280;
+    };
+
+    // Tree pool
+    this._treePool = [];     // { trunk, canopy, roadD, lateralOffset, scale }
+    this._treeNextD = 0;     // next road-distance to place trees at
+    this._treeSpacing = 6;   // average spacing along road
+
+    this._buildGround();
+    this._buildTreePool();
+    this._buildLighting();
+
+    // Initial tree placement
+    this._placeTreesUpTo(TREE_AHEAD);
   }
 
   _buildGround() {
-    const floorSize = 200;
-    const tilesPerSide = floorSize / this.tileSize;
-
-    const floorGeom = new THREE.PlaneGeometry(floorSize, floorSize);
+    const geom = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE, GROUND_SEGS, GROUND_SEGS);
     const canvas2d = document.createElement('canvas');
+    const tilesPerSide = GROUND_SIZE / this.tileSize;
     canvas2d.width = tilesPerSide;
     canvas2d.height = tilesPerSide;
     const ctx = canvas2d.getContext('2d');
@@ -38,72 +56,176 @@ export class World {
         ctx.fillRect(x, y, 1, 1);
       }
     }
-    const floorTexture = new THREE.CanvasTexture(canvas2d);
-    floorTexture.magFilter = THREE.NearestFilter;
-    floorTexture.minFilter = THREE.NearestFilter;
-    const floorMat = new THREE.MeshStandardMaterial({ map: floorTexture });
-    this.floor = new THREE.Mesh(floorGeom, floorMat);
+    const texture = new THREE.CanvasTexture(canvas2d);
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    const mat = new THREE.MeshStandardMaterial({ map: texture });
+
+    this.floor = new THREE.Mesh(geom, mat);
     this.floor.rotation.x = -Math.PI / 2;
     this.floor.receiveShadow = true;
     this.scene.add(this.floor);
   }
 
-  _buildRoad() {
-    const roadGeo = new THREE.PlaneGeometry(5, 600);
-    const roadMat = new THREE.MeshPhongMaterial({ color: 0x555555, flatShading: true });
-    const road = new THREE.Mesh(roadGeo, roadMat);
-    road.rotation.x = -Math.PI / 2;
-    road.position.y = 0.02;
-    road.receiveShadow = true;
-    this.scene.add(road);
-
-    const dashMat = new THREE.MeshPhongMaterial({ color: 0xdddd00, flatShading: true });
-    for (let z = -295; z < 300; z += 4) {
-      const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.8), dashMat);
-      dash.rotation.x = -Math.PI / 2;
-      dash.position.set(0, 0.03, z);
-      this.scene.add(dash);
-    }
-
-    const edgeMat = new THREE.MeshPhongMaterial({ color: 0xffffff, flatShading: true });
-    for (const xOff of [-2.3, 2.3]) {
-      const edge = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 600), edgeMat);
-      edge.rotation.x = -Math.PI / 2;
-      edge.position.set(xOff, 0.03, 0);
-      this.scene.add(edge);
-    }
-  }
-
-  _buildTrees() {
+  _buildTreePool() {
     const trunkMat = new THREE.MeshPhongMaterial({ color: 0x7a5230, flatShading: true });
     const leafMat = new THREE.MeshPhongMaterial({ color: 0x2d8a2d, flatShading: true });
     const leafMat2 = new THREE.MeshPhongMaterial({ color: 0x1f7a1f, flatShading: true });
 
-    for (let i = 0; i < 80; i++) {
-      const side = this._seededRandom() > 0.5 ? 1 : -1;
-      const x = side * (5 + this._seededRandom() * 50);
-      const z = (this._seededRandom() - 0.5) * 500;
-      const scale = 0.7 + this._seededRandom() * 0.8;
+    // Shared geometries for each scale bucket (3 sizes)
+    const scales = [0.7, 1.0, 1.3];
+    const trunkGeos = scales.map(s =>
+      new THREE.CylinderGeometry(0.12 * s, 0.18 * s, 2.0 * s, 6)
+    );
+    const canopyGeos = scales.map(s =>
+      new THREE.SphereGeometry(1.0 * s, 6, 5)
+    );
 
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 2.0 * scale, 6),
-        trunkMat
-      );
-      trunk.position.set(x, scale, z);
+    for (let i = 0; i < TREE_POOL_SIZE; i++) {
+      const si = i % scales.length;
+      const scale = scales[si];
+
+      const trunk = new THREE.Mesh(trunkGeos[si], trunkMat);
       trunk.castShadow = true;
+      trunk.visible = false;
       this.scene.add(trunk);
-      this._treeMeshes.push(trunk);
 
-      const mat = this._seededRandom() > 0.5 ? leafMat : leafMat2;
-      const canopy = new THREE.Mesh(
-        new THREE.SphereGeometry(1.0 * scale, 6, 5),
-        mat
-      );
-      canopy.position.set(x, 2.3 * scale, z);
+      const mat = (i % 2 === 0) ? leafMat : leafMat2;
+      const canopy = new THREE.Mesh(canopyGeos[si], mat);
       canopy.castShadow = true;
+      canopy.visible = false;
       this.scene.add(canopy);
-      this._treeMeshes.push(canopy);
+
+      this._treePool.push({
+        trunk, canopy,
+        roadD: -1,
+        lateralOffset: 0,
+        scale,
+        active: false
+      });
     }
+  }
+
+  _placeTreesUpTo(maxD) {
+    while (this._treeNextD < maxD) {
+      const d = this._treeNextD;
+      this._treeNextD += this._treeSpacing + this._treeSeededRandom() * 4;
+
+      // Find inactive tree slot
+      const slot = this._treePool.find(t => !t.active);
+      if (!slot) break;
+
+      const side = this._treeSeededRandom() > 0.5 ? 1 : -1;
+      const lateralDist = 5 + this._treeSeededRandom() * 40;
+      const lateralOffset = side * lateralDist;
+
+      const pt = this.roadPath.getPointAtDistance(d);
+      const fwdX = Math.sin(pt.heading);
+      const fwdZ = Math.cos(pt.heading);
+      const rightX = fwdZ;
+      const rightZ = -fwdX;
+
+      const worldX = pt.x + rightX * lateralOffset;
+      const worldZ = pt.z + rightZ * lateralOffset;
+      const terrainY = pt.y;  // match ground mesh which uses road elevation at this distance
+
+      slot.trunk.position.set(worldX, terrainY + slot.scale, worldZ);
+      slot.canopy.position.set(worldX, terrainY + 2.3 * slot.scale, worldZ);
+      slot.trunk.visible = true;
+      slot.canopy.visible = true;
+      slot.roadD = d;
+      slot.active = true;
+    }
+  }
+
+  _recycleTrees(bikeD) {
+    const minD = bikeD - TREE_BEHIND;
+    for (const slot of this._treePool) {
+      if (slot.active && slot.roadD < minD) {
+        slot.trunk.visible = false;
+        slot.canopy.visible = false;
+        slot.active = false;
+      }
+    }
+    // Place new trees ahead
+    this._placeTreesUpTo(bikeD + TREE_AHEAD);
+  }
+
+  _updateTreeHeights(bikeD) {
+    // Update active tree Y positions using same forward-projection as ground mesh
+    const bikePt = this.roadPath.getPointAtDistance(bikeD);
+    const fwdX = Math.sin(bikePt.heading);
+    const fwdZ = Math.cos(bikePt.heading);
+
+    for (const slot of this._treePool) {
+      if (!slot.active) continue;
+      const dx = slot.trunk.position.x - bikePt.x;
+      const dz = slot.trunk.position.z - bikePt.z;
+      const estD = bikeD + dx * fwdX + dz * fwdZ;
+      const h = this.roadPath.getPointAtDistance(Math.max(0, estD)).y;
+      slot.trunk.position.y = h + slot.scale;
+      slot.canopy.position.y = h + 2.3 * slot.scale;
+    }
+  }
+
+  _deformGround(bikePos, bikeD) {
+    const posAttr = this.floor.geometry.attributes.position;
+    const count = posAttr.count;
+
+    // Floor is rotated -PI/2 on X, so geometry X = world X, geometry Y = world -Z
+    // relative to the mesh's snap position
+    const snapSize = this.tileSize;
+    const snapX = Math.round(bikePos.x / snapSize) * snapSize;
+    const snapZ = Math.round(bikePos.z / snapSize) * snapSize;
+
+    // Pre-sample road elevations into a 1D height profile.
+    // Single dot-product projection per vertex + array lookup — no iterative refinement,
+    // no convergence issues on tight curves, ~160x fewer getPointAtDistance calls.
+    const profileHalf = 270;
+    const profileStep = 2;
+    const profileStartD = Math.max(0, bikeD - profileHalf);
+    const profileEndD = bikeD + profileHalf;
+    const profileCount = Math.ceil((profileEndD - profileStartD) / profileStep) + 1;
+
+    // Reuse typed array across frames
+    if (!this._heightProfile || this._heightProfile.length < profileCount) {
+      this._heightProfile = new Float32Array(profileCount);
+    }
+    const hp = this._heightProfile;
+    for (let i = 0; i < profileCount; i++) {
+      hp[i] = this.roadPath.getPointAtDistance(profileStartD + i * profileStep).y;
+    }
+
+    const bikePt = this.roadPath.getPointAtDistance(bikeD);
+    const fwdX = Math.sin(bikePt.heading);
+    const fwdZ = Math.cos(bikePt.heading);
+
+    for (let i = 0; i < count; i++) {
+      const gx = posAttr.getX(i);
+      const gy = posAttr.getY(i);
+
+      const worldX = snapX + gx;
+      const worldZ = snapZ - gy;
+
+      // Project vertex offset onto road forward direction to get estimated road distance
+      const dx = worldX - bikePt.x;
+      const dz = worldZ - bikePt.z;
+      const estD = bikeD + dx * fwdX + dz * fwdZ;
+
+      // Look up height from pre-sampled profile with linear interpolation
+      const profileIdx = (estD - profileStartD) / profileStep;
+      const idx0 = Math.max(0, Math.min(profileCount - 2, Math.floor(profileIdx)));
+      const frac = Math.max(0, Math.min(1, profileIdx - idx0));
+      const h = hp[idx0] + (hp[idx0 + 1] - hp[idx0]) * frac;
+
+      posAttr.setZ(i, h - 0.08);
+    }
+
+    posAttr.needsUpdate = true;
+    this.floor.geometry.computeVertexNormals();
+    this.floor.geometry.computeBoundingSphere();
   }
 
   _buildLighting() {
@@ -128,15 +250,36 @@ export class World {
     this.scene.add(hemi);
   }
 
-  update(bikePos) {
+  update(bikePos, bikeD) {
+    // Default bikeD from position if not provided (backward compat)
+    if (bikeD === undefined) {
+      bikeD = Math.max(0, bikePos.z);
+    }
+
     // Sun follows bike
-    this.sun.position.set(bikePos.x + 30, 40, bikePos.z + 20);
+    this.sun.position.set(bikePos.x + 30, bikePos.y + 40, bikePos.z + 20);
     this.sun.target.position.copy(bikePos);
     this.sun.target.updateMatrixWorld();
 
-    // Infinite floor snap-follow
-    const snapSize = this.tileSize * 2;
-    this.floor.position.x = Math.round(bikePos.x / snapSize) * snapSize;
-    this.floor.position.z = Math.round(bikePos.z / snapSize) * snapSize;
+    // Road chunks
+    this.roadChunks.update(bikeD);
+
+    // Trees
+    this._recycleTrees(bikeD);
+    this._updateTreeHeights(bikeD);
+
+    // Floor snap-follow + deform (snap at tileSize to reduce visual pop)
+    const snapSize = this.tileSize;
+    const snapX = Math.round(bikePos.x / snapSize) * snapSize;
+    const snapZ = Math.round(bikePos.z / snapSize) * snapSize;
+    this.floor.position.x = snapX;
+    this.floor.position.z = snapZ;
+
+    // Offset texture to keep checkerboard stable in world space
+    const tex = this.floor.material.map;
+    tex.offset.x = snapX / GROUND_SIZE;
+    tex.offset.y = -snapZ / GROUND_SIZE;
+
+    this._deformGround(bikePos, bikeD);
   }
 }

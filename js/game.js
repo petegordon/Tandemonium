@@ -41,6 +41,7 @@ class Game {
     this.balanceCtrl = new BalanceController(this.input);
     this.world = new World(this.scene);
     this.bike = new BikeModel(this.scene);
+    this.bike.roadPath = this.world.roadPath;
     this.chaseCamera = new ChaseCamera(this.camera);
     this.hud = new HUD(this.input);
 
@@ -490,10 +491,12 @@ class Game {
     const dt = Math.min((timestamp - this.lastTime) / 1000, 0.05);
     this.lastTime = timestamp;
 
+    const roadPath = this.world.roadPath;
+
     // Lobby: just render the scene (background)
     if (this.state === 'lobby') {
-      this.world.update(this.bike.position);
-      this.chaseCamera.update(this.bike, dt);
+      this.world.update(this.bike.position, this.bike.roadD);
+      this.chaseCamera.update(this.bike, dt, roadPath);
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -501,16 +504,16 @@ class Game {
     // Countdown
     if (this.state === 'countdown') {
       this._updateCountdown(dt);
-      this.world.update(this.bike.position);
-      this.chaseCamera.update(this.bike, dt);
+      this.world.update(this.bike.position, this.bike.roadD);
+      this.chaseCamera.update(this.bike, dt, roadPath);
       this.renderer.render(this.scene, this.camera);
       return;
     }
 
     // Instructions / waiting: render static scene
     if (this.state !== 'playing') {
-      this.world.update(this.bike.position);
-      this.chaseCamera.update(this.bike, dt);
+      this.world.update(this.bike.position, this.bike.roadD);
+      this.chaseCamera.update(this.bike, dt, roadPath);
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -537,8 +540,8 @@ class Game {
     const balanceResult = this.balanceCtrl.update();
 
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
-    this.world.update(this.bike.position);
-    this.chaseCamera.update(this.bike, dt);
+    this.world.update(this.bike.position, this.bike.roadD);
+    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     // Camera shake on crash
     if (this.bike.fallen && this.bike.fallTimer > 1.8) {
@@ -590,8 +593,8 @@ class Game {
       this.net.sendLean(captainLean);
     }
 
-    this.world.update(this.bike.position);
-    this.chaseCamera.update(this.bike, dt);
+    this.world.update(this.bike.position, this.bike.roadD);
+    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     if (this.bike.fallen && this.bike.fallTimer > 1.8) {
       this.chaseCamera.shakeAmount = 0.15;
@@ -638,8 +641,8 @@ class Game {
       this.net.sendLean(balanceResult.leanInput);
     }
 
-    this.world.update(this.bike.position);
-    this.chaseCamera.update(this.bike, dt);
+    this.world.update(this.bike.position, this.bike.roadD);
+    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     if (this.bike.speed > 8) {
       this.chaseCamera.shakeAmount = Math.max(

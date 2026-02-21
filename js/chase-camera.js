@@ -19,7 +19,7 @@ export class ChaseCamera {
     this.lookFast = new THREE.Vector3(0, 0.2, 8);
   }
 
-  update(bike, dt) {
+  update(bike, dt, roadPath) {
     const fwd = new THREE.Vector3(Math.sin(bike.heading), 0, Math.cos(bike.heading));
     const speedT = Math.min(bike.speed / 10, 1);
 
@@ -35,6 +35,17 @@ export class ChaseCamera {
     const desiredLook = bike.position.clone()
       .add(fwd.clone().multiplyScalar(lookZ))
       .add(new THREE.Vector3(0, lookY, 0));
+
+    // Lift camera and look target above terrain so they don't clip through hills
+    if (roadPath) {
+      const camTerrainY = roadPath.getHeightAtWorld(desiredPos.x, desiredPos.z, bike.roadD);
+      const minCamY = camTerrainY + offY * 0.5;
+      if (desiredPos.y < minCamY) desiredPos.y = minCamY;
+
+      const lookTerrainY = roadPath.getHeightAtWorld(desiredLook.x, desiredLook.z, bike.roadD);
+      const minLookY = lookTerrainY + lookY;
+      if (desiredLook.y < minLookY) desiredLook.y = minLookY;
+    }
 
     if (!this.initialized) {
       this.currentPos.copy(desiredPos);
