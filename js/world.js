@@ -8,7 +8,7 @@ import { RoadChunkManager } from './road-chunks.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS = 120;         // ~4.2-unit vertex spacing — covers visible road/tree range
-const TREE_POOL_SIZE = 100;
+const TREE_POOL_SIZE = 200;
 const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 
@@ -39,8 +39,8 @@ export class World {
     this._buildTreePool();
     this._buildLighting();
 
-    // Initial tree placement
-    this._placeTreesUpTo(TREE_AHEAD);
+    // Pre-place all trees for the entire loop
+    this._placeTreesUpTo(this.roadPath.loopLength);
   }
 
   _buildGround() {
@@ -109,6 +109,9 @@ export class World {
   }
 
   _placeTreesUpTo(maxD) {
+    const cap = this.roadPath.loopLength;
+    if (maxD > cap) maxD = cap;
+
     while (this._treeNextD < maxD) {
       const d = this._treeNextD;
       this._treeNextD += this._treeSpacing + this._treeSeededRandom() * 4;
@@ -129,42 +132,42 @@ export class World {
 
       const worldX = pt.x + rightX * lateralOffset;
       const worldZ = pt.z + rightZ * lateralOffset;
-      const terrainY = pt.y;  // match ground mesh which uses road elevation at this distance
+      const terrainY = pt.y;
 
       slot.trunk.position.set(worldX, terrainY + slot.scale, worldZ);
       slot.canopy.position.set(worldX, terrainY + 2.3 * slot.scale, worldZ);
-      slot.trunk.visible = true;
-      slot.canopy.visible = true;
+      slot.trunk.visible = false;
+      slot.canopy.visible = false;
       slot.roadD = d;
       slot.active = true;
     }
   }
 
-  _recycleTrees(bikeD) {
-    const minD = bikeD - TREE_BEHIND;
+  _updateTreeVisibility(bikeD) {
+    const L = this.roadPath.loopLength;
     for (const slot of this._treePool) {
-      if (slot.active && slot.roadD < minD) {
-        slot.trunk.visible = false;
-        slot.canopy.visible = false;
-        slot.active = false;
-      }
+      if (!slot.active) continue;
+      let ahead = slot.roadD - bikeD;
+      if (ahead < -L / 2) ahead += L;
+      if (ahead > L / 2) ahead -= L;
+      const visible = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
+      slot.trunk.visible = visible;
+      slot.canopy.visible = visible;
     }
-    // Place new trees ahead
-    this._placeTreesUpTo(bikeD + TREE_AHEAD);
   }
 
   _updateTreeHeights(bikeD) {
-    // Update active tree Y positions using same forward-projection as ground mesh
+    // Update visible tree Y positions using same forward-projection as ground mesh
     const bikePt = this.roadPath.getPointAtDistance(bikeD);
     const fwdX = Math.sin(bikePt.heading);
     const fwdZ = Math.cos(bikePt.heading);
 
     for (const slot of this._treePool) {
-      if (!slot.active) continue;
+      if (!slot.trunk.visible) continue;
       const dx = slot.trunk.position.x - bikePt.x;
       const dz = slot.trunk.position.z - bikePt.z;
       const estD = bikeD + dx * fwdX + dz * fwdZ;
-      const h = this.roadPath.getPointAtDistance(Math.max(0, estD)).y;
+      const h = this.roadPath.getPointAtDistance(estD).y;
       slot.trunk.position.y = h + slot.scale;
       slot.canopy.position.y = h + 2.3 * slot.scale;
     }
@@ -185,7 +188,7 @@ export class World {
     // no convergence issues on tight curves, ~160x fewer getPointAtDistance calls.
     const profileHalf = 270;
     const profileStep = 2;
-    const profileStartD = Math.max(0, bikeD - profileHalf);
+    const profileStartD = bikeD - profileHalf;
     const profileEndD = bikeD + profileHalf;
     const profileCount = Math.ceil((profileEndD - profileStartD) / profileStep) + 1;
 
@@ -220,7 +223,7 @@ export class World {
       const frac = Math.max(0, Math.min(1, profileIdx - idx0));
       const h = hp[idx0] + (hp[idx0 + 1] - hp[idx0]) * frac;
 
-      posAttr.setZ(i, h - 0.08);
+      posAttr.setZ(i, h - 0.02);
     }
 
     posAttr.needsUpdate = true;
@@ -265,7 +268,7 @@ export class World {
     this.roadChunks.update(bikeD);
 
     // Trees
-    this._recycleTrees(bikeD);
+    this._updateTreeVisibility(bikeD);
     this._updateTreeHeights(bikeD);
 
     // Floor snap-follow + deform (snap at tileSize to reduce visual pop)

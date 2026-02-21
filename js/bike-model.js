@@ -193,11 +193,16 @@ export class BikeModel {
     this.position.z += Math.cos(this.heading) * this.speed * dt;
     this.distanceTraveled += this.speed * dt;
 
-    // Track road distance (smoothed) and set terrain height from smoothed roadD
+    // Track road distance (smoothed, wrap-aware) and set terrain height
     if (this.roadPath) {
       const info = this.roadPath.getClosestRoadInfo(this.position.x, this.position.z, this.roadD);
       if (info) {
-        this.roadD += (info.d - this.roadD) * Math.min(1, 15 * dt);
+        let diff = info.d - this.roadD;
+        const L = this.roadPath.loopLength;
+        if (diff > L / 2) diff -= L;
+        if (diff < -L / 2) diff += L;
+        this.roadD += diff * Math.min(1, 15 * dt);
+        this.roadD = ((this.roadD % L) + L) % L;
         this.position.y = this.roadPath.getPointAtDistance(this.roadD).y;
       }
     }
@@ -242,13 +247,21 @@ export class BikeModel {
     this.fallen = !!(state.flags & 1);
     this._braking = !!(state.flags & 2);
 
-    // Use captain's authoritative roadD (smoothed, with snap for large jumps)
+    // Use captain's authoritative roadD (smoothed, wrap-aware, with snap for large jumps)
     if (state.roadD !== undefined) {
-      const diff = state.roadD - this.roadD;
+      let diff = state.roadD - this.roadD;
+      const L = this.roadPath ? this.roadPath.loopLength : 0;
+      if (L) {
+        if (diff > L / 2) diff -= L;
+        if (diff < -L / 2) diff += L;
+      }
       if (Math.abs(diff) > 10) {
         this.roadD = state.roadD;
       } else {
         this.roadD += diff * Math.min(1, 15 * (1 / 60));
+      }
+      if (L) {
+        this.roadD = ((this.roadD % L) + L) % L;
       }
     }
 

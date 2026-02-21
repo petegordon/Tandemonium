@@ -36,10 +36,16 @@ export class InputManager {
 
   _setupKeyboard() {
     window.addEventListener('keydown', (e) => {
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (['ArrowUp','ArrowDown','KeyA','KeyD'].includes(e.code)) e.preventDefault();
       this.keys[e.code] = true;
     });
-    window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
+    window.addEventListener('keyup', (e) => {
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      this.keys[e.code] = false;
+    });
   }
 
   _setupTouch() {

@@ -16,15 +16,19 @@ export class RoadChunkManager {
     this.scene = scene;
     this.roadPath = roadPath;
 
-    // Materials
+    // Materials — polygonOffset lets road/markings win depth test vs ground
+    // without physical Y gaps that cause shadow artifacts
     this._roadMat = new THREE.MeshPhongMaterial({
-      color: 0x555555, flatShading: true, side: THREE.DoubleSide
+      color: 0x555555, flatShading: true, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
     });
     this._dashMat = new THREE.MeshPhongMaterial({
-      color: 0xdddd00, flatShading: true, side: THREE.DoubleSide
+      color: 0xdddd00, flatShading: true, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2
     });
     this._edgeMat = new THREE.MeshPhongMaterial({
-      color: 0xffffff, flatShading: true, side: THREE.DoubleSide
+      color: 0xffffff, flatShading: true, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2
     });
 
     // Pool of chunks
@@ -55,15 +59,18 @@ export class RoadChunkManager {
     // Center dashes
     const dashGeo = this._createStripGeometry(0.06);
     const dashMesh = new THREE.Mesh(dashGeo, this._dashMat);
+    dashMesh.receiveShadow = true;
     group.add(dashMesh);
 
     // Edge lines
     const edgeGeoL = this._createStripGeometry(0.05);
     const edgeMeshL = new THREE.Mesh(edgeGeoL, this._edgeMat);
+    edgeMeshL.receiveShadow = true;
     group.add(edgeMeshL);
 
     const edgeGeoR = this._createStripGeometry(0.05);
     const edgeMeshR = new THREE.Mesh(edgeGeoR, this._edgeMat);
+    edgeMeshR.receiveShadow = true;
     group.add(edgeMeshR);
 
     return { startD: -1, group, roadMesh, dashMesh, edgeMeshL, edgeMeshR };
@@ -128,11 +135,11 @@ export class RoadChunkManager {
       const idx = i * 2 * 3;
       // Left vertex
       pos[idx]     = pt.x - rightX * ROAD_HALF_WIDTH;
-      pos[idx + 1] = pt.y + 0.12; // slight offset above terrain
+      pos[idx + 1] = pt.y;
       pos[idx + 2] = pt.z - rightZ * ROAD_HALF_WIDTH;
       // Right vertex
       pos[idx + 3] = pt.x + rightX * ROAD_HALF_WIDTH;
-      pos[idx + 4] = pt.y + 0.12;
+      pos[idx + 4] = pt.y;
       pos[idx + 5] = pt.z + rightZ * ROAD_HALF_WIDTH;
 
       // Normals pointing up
@@ -164,7 +171,7 @@ export class RoadChunkManager {
       // Dash pattern: visible when within dash portion of cycle
       const cycle = d % DASH_SPACING;
       const visible = cycle < DASH_LENGTH;
-      const y = visible ? pt.y + 0.14 : pt.y - 1.0; // hide below ground
+      const y = visible ? pt.y : pt.y - 1.0; // hide below ground when not visible
 
       const idx = i * 2 * 3;
       pos[idx]     = pt.x - rightX * hw;
@@ -205,10 +212,10 @@ export class RoadChunkManager {
 
       const idx = i * 2 * 3;
       pos[idx]     = edgeX - rightX * hw;
-      pos[idx + 1] = pt.y + 0.14;
+      pos[idx + 1] = pt.y;
       pos[idx + 2] = edgeZ - rightZ * hw;
       pos[idx + 3] = edgeX + rightX * hw;
-      pos[idx + 4] = pt.y + 0.14;
+      pos[idx + 4] = pt.y;
       pos[idx + 5] = edgeZ + rightZ * hw;
 
       nrm[idx] = 0; nrm[idx + 1] = 1; nrm[idx + 2] = 0;
@@ -231,15 +238,15 @@ export class RoadChunkManager {
 
   _rebuildAll(bikeD) {
     this._activeStartDs.clear();
+    const L = this.roadPath.loopLength;
 
     // Center chunks around bike
     const behindChunks = 2;
-    const firstChunkD = Math.max(0,
-      Math.floor(bikeD / CHUNK_LENGTH) * CHUNK_LENGTH - behindChunks * CHUNK_LENGTH
-    );
+    const firstChunkD = Math.floor(bikeD / CHUNK_LENGTH) * CHUNK_LENGTH - behindChunks * CHUNK_LENGTH;
 
     for (let i = 0; i < POOL_SIZE; i++) {
-      const startD = firstChunkD + i * CHUNK_LENGTH;
+      const rawD = firstChunkD + i * CHUNK_LENGTH;
+      const startD = ((rawD % L) + L) % L;
       this._buildChunk(this._chunks[i], startD);
       this._activeStartDs.add(startD);
     }
@@ -249,16 +256,17 @@ export class RoadChunkManager {
 
   /** Call each frame with current bike road-distance */
   update(bikeD) {
+    const L = this.roadPath.loopLength;
+
     // Determine desired range
     const behindChunks = 2;
-    const firstChunkD = Math.max(0,
-      Math.floor(bikeD / CHUNK_LENGTH) * CHUNK_LENGTH - behindChunks * CHUNK_LENGTH
-    );
+    const firstChunkD = Math.floor(bikeD / CHUNK_LENGTH) * CHUNK_LENGTH - behindChunks * CHUNK_LENGTH;
 
     // Check if we need to recycle
     const neededDs = new Set();
     for (let i = 0; i < POOL_SIZE; i++) {
-      neededDs.add(firstChunkD + i * CHUNK_LENGTH);
+      const rawD = firstChunkD + i * CHUNK_LENGTH;
+      neededDs.add(((rawD % L) + L) % L);
     }
 
     // Find chunks that are no longer needed, reassign them
