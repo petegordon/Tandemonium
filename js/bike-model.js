@@ -297,6 +297,22 @@ export class BikeModel {
       }
     }
 
+    // Compute lateral offsets for particles (stoker-side)
+    if (this.roadPath) {
+      const info = this.roadPath.getClosestRoadInfo(this.position.x, this.position.z, this.roadD);
+      if (info) {
+        this._lateralOffset = info.lateralOffset;
+        const sinH = Math.sin(this.heading);
+        const cosH = Math.cos(this.heading);
+        const frontInfo = this.roadPath.getClosestRoadInfo(
+          this.position.x + sinH * 2.0, this.position.z + cosH * 2.0, this.roadD);
+        const rearInfo = this.roadPath.getClosestRoadInfo(
+          this.position.x - sinH * 2.0, this.position.z - cosH * 2.0, this.roadD);
+        this._frontWheelOffset = frontInfo ? frontInfo.lateralOffset : this._lateralOffset;
+        this._rearWheelOffset = rearInfo ? rearInfo.lateralOffset : this._lateralOffset;
+      }
+    }
+
     // Spoke fade
     if (this.spokeMeshes.length > 0) {
       const targetFade = Math.min(this.speed / (this.maxSpeed * 0.2), 1);
