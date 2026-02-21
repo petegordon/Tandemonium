@@ -43,6 +43,7 @@ export class RemoteBikeState {
       speed: lerp(this.prev.speed, this.curr.speed, t),
       crankAngle: lerp(this.prev.crankAngle, this.curr.crankAngle, t),
       distanceTraveled: lerp(this.prev.distanceTraveled, this.curr.distanceTraveled, t),
+      roadD: lerp(this.prev.roadD, this.curr.roadD, t),
       flags: this.curr.flags
     };
   }

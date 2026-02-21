@@ -242,16 +242,13 @@ export class BikeModel {
     this.fallen = !!(state.flags & 1);
     this._braking = !!(state.flags & 2);
 
-    // Track road distance for stoker's local rendering (smoothed, with snap for large jumps)
-    if (this.roadPath) {
-      const info = this.roadPath.getClosestRoadInfo(this.position.x, this.position.z, this.roadD);
-      if (info) {
-        const diff = info.d - this.roadD;
-        if (Math.abs(diff) > 10) {
-          this.roadD = info.d;
-        } else {
-          this.roadD += diff * Math.min(1, 15 * (1 / 60));
-        }
+    // Use captain's authoritative roadD (smoothed, with snap for large jumps)
+    if (state.roadD !== undefined) {
+      const diff = state.roadD - this.roadD;
+      if (Math.abs(diff) > 10) {
+        this.roadD = state.roadD;
+      } else {
+        this.roadD += diff * Math.min(1, 15 * (1 / 60));
       }
     }
 

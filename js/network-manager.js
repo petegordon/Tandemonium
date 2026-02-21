@@ -214,7 +214,7 @@ export class NetworkManager {
   }
 
   sendState(bike) {
-    const buf = new ArrayBuffer(38);
+    const buf = new ArrayBuffer(42);
     const view = new DataView(buf);
     view.setUint8(0, MSG_STATE);
     view.setFloat32(1, bike.position.x, true);
@@ -226,10 +226,11 @@ export class NetworkManager {
     view.setFloat32(25, bike.speed, true);
     view.setFloat32(29, bike.crankAngle || 0, true);
     view.setFloat32(33, bike.distanceTraveled, true);
+    view.setFloat32(37, bike.roadD, true);
     let flags = 0;
     if (bike.fallen) flags |= 1;
     if (bike._braking) flags |= 2;
-    view.setUint8(37, flags);
+    view.setUint8(41, flags);
     this._send(new Uint8Array(buf));
   }
 
@@ -250,7 +251,8 @@ export class NetworkManager {
       speed: view.getFloat32(25, true),
       crankAngle: view.getFloat32(29, true),
       distanceTraveled: view.getFloat32(33, true),
-      flags: view.getUint8(37)
+      roadD: view.getFloat32(37, true),
+      flags: view.getUint8(41)
     };
   }
 
