@@ -145,8 +145,14 @@ export class BikeModel {
     // Friction
     this.speed *= (1 - 0.6 * dt);
 
+    // Center-strip bonus: compacted dirt in the middle 20% of road is faster
+    const centerDist = Math.abs(this._lateralOffset);
+    if (centerDist < 0.5 && this.speed > 0.5) {
+      this.speed *= (1 + 0.3 * (1 - centerDist / 0.5) * dt); // gentle boost
+    }
+
     // Grass drag: off-road surface slows you down — more pedaling required
-    const offRoadDrag = Math.max(0, Math.abs(this._lateralOffset) - 2.5);
+    const offRoadDrag = Math.max(0, centerDist - 2.5);
     if (offRoadDrag > 0 && this.speed > 0) {
       const dragIntensity = Math.min(offRoadDrag / 3, 1); // 0→1 over 3 units
       this.speed *= (1 - dragIntensity * 0.8 * dt);       // mild extra friction
