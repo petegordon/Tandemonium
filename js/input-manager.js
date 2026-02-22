@@ -69,29 +69,41 @@ export class InputManager {
     const leftBtn = document.getElementById('touch-left');
     const rightBtn = document.getElementById('touch-right');
 
-    const bind = (el, side, pressed) => {
-      el.addEventListener(pressed ? 'touchstart' : 'touchend', (e) => {
-        e.preventDefault();
-        if (side === 'left') this.touchLeft = pressed;
-        else this.touchRight = pressed;
-      }, { passive: false });
+    // Track which touch identifiers are on each pedal
+    this._leftTouchId = null;
+    this._rightTouchId = null;
+
+    // Passive listeners — touch-action:none on <body> already prevents
+    // scrolling/zooming, so e.preventDefault() is unnecessary.  Non-passive
+    // touchstart + preventDefault under rapid tapping can lock up Safari's
+    // gesture recogniser, freezing ALL touch/click dispatch on the page.
+    leftBtn.addEventListener('touchstart', (e) => {
+      this._leftTouchId = e.changedTouches[0].identifier;
+      this.touchLeft = true;
+    }, { passive: true });
+
+    rightBtn.addEventListener('touchstart', (e) => {
+      this._rightTouchId = e.changedTouches[0].identifier;
+      this.touchRight = true;
+    }, { passive: true });
+
+    // Global touchend — catches releases even if finger drifted off the button
+    const resetIfEmpty = (e) => {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const id = e.changedTouches[i].identifier;
+        if (id === this._leftTouchId) { this.touchLeft = false; this._leftTouchId = null; }
+        if (id === this._rightTouchId) { this.touchRight = false; this._rightTouchId = null; }
+      }
+      // Safety: when no fingers remain on screen, clear any stuck state
+      if (e.touches.length === 0) {
+        this.touchLeft = false;
+        this.touchRight = false;
+        this._leftTouchId = null;
+        this._rightTouchId = null;
+      }
     };
-    bind(leftBtn, 'left', true);
-    bind(leftBtn, 'left', false);
-    bind(rightBtn, 'right', true);
-    bind(rightBtn, 'right', false);
-
-    leftBtn.addEventListener('touchcancel', () => { this.touchLeft = false; });
-    rightBtn.addEventListener('touchcancel', () => { this.touchRight = false; });
-
-    leftBtn.addEventListener('touchmove', (e) => {
-      const t = e.touches[0], r = leftBtn.getBoundingClientRect();
-      if (t.clientX < r.left || t.clientX > r.right || t.clientY < r.top || t.clientY > r.bottom) this.touchLeft = false;
-    }, { passive: false });
-    rightBtn.addEventListener('touchmove', (e) => {
-      const t = e.touches[0], r = rightBtn.getBoundingClientRect();
-      if (t.clientX < r.left || t.clientX > r.right || t.clientY < r.top || t.clientY > r.bottom) this.touchRight = false;
-    }, { passive: false });
+    window.addEventListener('touchend', resetIfEmpty, { passive: true });
+    window.addEventListener('touchcancel', resetIfEmpty, { passive: true });
   }
 
   _setupMotion() {
