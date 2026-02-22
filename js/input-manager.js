@@ -4,6 +4,12 @@
 
 import { isMobile } from './config.js';
 
+// WebHID gyro constants (PlayStation DualSense / DualShock 4)
+const VENDOR_ID_SONY = 0x054c;
+const SONY_PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
+const GYRO_SCALE = 2000.0 / 32768.0; // raw → degrees/sec
+const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
+
 export class InputManager {
   constructor() {
     this.keys = {};
@@ -24,6 +30,17 @@ export class InputManager {
     this._gpTriggerRightVal = 0;
     this._gpTriggerLeftPressed = false;
     this._gpTriggerRightPressed = false;
+
+    // WebHID gyro state
+    this.gyroDevice = null;
+    this.gyroConnected = false;
+    this._gyroConnType = null;       // 'usb' | 'bluetooth'
+    this._gyroBias = { x: 0, y: 0, z: 0 };
+    this._gyroCalibrating = false;
+    this._gyroCalibSamples = [];
+    this._gyroRollAccum = 0;         // cumulative roll angle in degrees
+    this._lastGyroTime = 0;
+    this._gyroReportHandler = null;
 
     this._setupKeyboard();
     this._setupGamepad();
@@ -248,6 +265,145 @@ export class InputManager {
     if (code === 'ArrowUp') return !!this.keys[code] || this.touchLeft || this._gpTriggerLeftPressed;
     if (code === 'ArrowDown') return !!this.keys[code] || this.touchRight || this._gpTriggerRightPressed;
     return !!this.keys[code];
+  }
+
+  // ── WebHID gyro (PlayStation controllers) ──────────────────
+
+  async connectControllerGyro() {
+    if (this.gyroConnected || !navigator.hid) return;
+
+    const filters = SONY_PRODUCT_IDS.map(productId => ({
+      vendorId: VENDOR_ID_SONY, productId,
+      usagePage: 0x0001, usage: 0x0005
+    }));
+
+    const devices = await navigator.hid.requestDevice({ filters });
+    if (!devices || devices.length === 0) return;
+
+    const device = devices[0];
+    if (!device.opened) await device.open();
+
+    this.gyroDevice = device;
+    this._gyroConnType = this._detectGyroConnType(device);
+    console.log('WebHID gyro connected:', device.productName, '(' + this._gyroConnType + ')');
+
+    this._gyroReportHandler = (e) => this._handleGyroReport(e);
+    device.addEventListener('inputreport', this._gyroReportHandler);
+
+    this.gyroConnected = true;
+    this._startGyroCalibration();
+  }
+
+  disconnectControllerGyro() {
+    if (this.gyroDevice) {
+      if (this._gyroReportHandler) {
+        this.gyroDevice.removeEventListener('inputreport', this._gyroReportHandler);
+        this._gyroReportHandler = null;
+      }
+      this.gyroDevice.close().catch(() => {});
+    }
+    this.gyroDevice = null;
+    this.gyroConnected = false;
+    this._gyroConnType = null;
+    this._gyroBias = { x: 0, y: 0, z: 0 };
+    this._gyroCalibrating = false;
+    this._gyroCalibSamples = [];
+    this._gyroRollAccum = 0;
+    this._lastGyroTime = 0;
+  }
+
+  calibrateGyro() {
+    this._startGyroCalibration();
+  }
+
+  _detectGyroConnType(device) {
+    for (const col of device.collections) {
+      if (col.outputReports && col.outputReports.length > 0) {
+        for (const report of col.outputReports) {
+          if (report.reportId === 0x31) return 'bluetooth';
+        }
+      }
+    }
+    return 'usb';
+  }
+
+  _startGyroCalibration() {
+    this._gyroCalibrating = true;
+    this._gyroCalibSamples = [];
+    this._gyroRollAccum = 0;
+    this._lastGyroTime = 0;
+    this.motionOffset = null;
+  }
+
+  _finishGyroCalibration() {
+    if (this._gyroCalibSamples.length === 0) return;
+    let sx = 0, sy = 0, sz = 0;
+    for (const s of this._gyroCalibSamples) { sx += s.x; sy += s.y; sz += s.z; }
+    this._gyroBias.x = sx / this._gyroCalibSamples.length;
+    this._gyroBias.y = sy / this._gyroCalibSamples.length;
+    this._gyroBias.z = sz / this._gyroCalibSamples.length;
+    this._gyroCalibrating = false;
+    this._gyroCalibSamples = [];
+    this._gyroRollAccum = 0;
+    this._lastGyroTime = 0;
+    this.motionOffset = null;
+    console.log('Gyro bias:', this._gyroBias);
+  }
+
+  _handleGyroReport(event) {
+    const report = event.data;
+    const reportId = event.reportId;
+    const now = performance.now();
+
+    let gyroOffset;
+    if (this._gyroConnType === 'usb' && reportId === 0x01) {
+      gyroOffset = 15;
+    } else if (this._gyroConnType === 'bluetooth' && reportId === 0x31) {
+      gyroOffset = 16;
+    } else {
+      return;
+    }
+
+    const rawGx = this._readSigned16(report, gyroOffset);
+    const rawGy = this._readSigned16(report, gyroOffset + 2);
+    const rawGz = this._readSigned16(report, gyroOffset + 4);
+
+    // Calibration sampling
+    if (this._gyroCalibrating) {
+      this._gyroCalibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
+      if (this._gyroCalibSamples.length >= GYRO_CALIB_COUNT) this._finishGyroCalibration();
+      this._lastGyroTime = now;
+      return;
+    }
+
+    // Apply bias correction
+    const gx = rawGx - this._gyroBias.x;
+    const gy = rawGy - this._gyroBias.y;
+    const gz = rawGz - this._gyroBias.z;
+
+    // Integrate Z axis for steering (negated to match tilt direction)
+    if (this._lastGyroTime > 0) {
+      const dt = (now - this._lastGyroTime) / 1000.0;
+      if (dt < 0.1) {
+        this._gyroRollAccum -= gz * GYRO_SCALE * dt;
+        // Drift correction: decay toward zero to prevent runaway accumulation
+        this._gyroRollAccum *= (1 - 0.5 * dt);
+      }
+    }
+    this._lastGyroTime = now;
+
+    // Clamp to sane range
+    this._gyroRollAccum = Math.max(-90, Math.min(90, this._gyroRollAccum));
+
+    // Scale up so full lean is reached at ~15° of tilt.
+    this.motionEnabled = true;
+    this._applyTilt(this._gyroRollAccum * 2.67);
+  }
+
+  _readSigned16(data, offset) {
+    let val = data.getUint8(offset) | (data.getUint8(offset + 1) << 8);
+    if (val > 0x7FFF) val -= 0x10000;
+    return val;
   }
 
   getMotionLean() {

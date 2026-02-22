@@ -209,6 +209,22 @@ export class Lobby {
     // On mobile, device tilt is the primary steering input — disabling it
     // would leave the player unable to steer.
     if (this._motionPermitted) return;
+
+    // Gamepad + WebHID: request controller gyro
+    if (this.input && this.input.gamepadConnected && navigator.hid) {
+      this.input.connectControllerGyro().then(() => {
+        if (this.input.gyroConnected) {
+          this._motionPermitted = true;
+          this.motionActive = true;
+          this._setToggleActive('motion', true);
+        }
+      }).catch((err) => {
+        console.warn('Gyro connect failed:', err);
+      });
+      return;
+    }
+
+    // Mobile: iOS motion permission
     if (this.input) {
       this.input.requestMotionPermission();
       // Check after a short delay (iOS permission dialog is async)
@@ -277,15 +293,22 @@ export class Lobby {
       }).catch(() => {});
     }
 
-    // Motion — only auto-green if we've actually received sensor data.
-    // DeviceMotionEvent exists on desktop Chrome but no hardware sensor is present,
-    // so we can't rely on API existence alone.
-    if (this.input && this.input.motionEnabled) {
+    // Motion — auto-green if sensor data or gyro already connected.
+    if (this.input && (this.input.motionEnabled || this.input.gyroConnected)) {
       this._motionPermitted = true;
       this.motionActive = true;
       this._setToggleActive('motion', true);
     } else if (this.input && this.input.needsMotionPermission) {
       // iOS: permission needed — leave button tappable but inactive
+    } else if (this.input && this.input.gamepadConnected && navigator.hid) {
+      // Desktop with PlayStation controller: leave toggle enabled for gyro
+      const gamepads = navigator.getGamepads();
+      const gp = gamepads[this.input.gamepadIndex];
+      if (gp && /playstation|dualsense|dualshock|054c/i.test(gp.id)) {
+        // Toggle stays enabled — tapping requests WebHID gyro
+      } else {
+        this.toggleMotion.disabled = true;
+      }
     } else if (typeof DeviceMotionEvent === 'undefined') {
       // No API at all — disable the button
       this.toggleMotion.disabled = true;
