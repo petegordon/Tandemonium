@@ -31,10 +31,14 @@ export class SharedPedalController {
   update(dt) {
     let acceleration = 0;
     let wobble = 0;
-    this.wasCorrect = false;
-    this.wasWrong = false;
-    this.wasBrake = false;
-    this.wasInPhase = false;
+
+    // Only reset flags when there are new taps (so they persist while held)
+    if (this._pendingTaps.length > 0) {
+      this.wasCorrect = false;
+      this.wasWrong = false;
+      this.wasBrake = false;
+      this.wasInPhase = false;
+    }
 
     // Check for simultaneous same-foot taps (within 100ms) = crank fight
     if (this._pendingTaps.length >= 2) {

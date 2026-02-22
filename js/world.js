@@ -45,20 +45,143 @@ export class World {
 
   _buildGround() {
     const geom = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE, GROUND_SEGS, GROUND_SEGS);
+    const size = 512;
     const canvas2d = document.createElement('canvas');
-    const tilesPerSide = GROUND_SIZE / this.tileSize;
-    canvas2d.width = tilesPerSide;
-    canvas2d.height = tilesPerSide;
+    canvas2d.width = size;
+    canvas2d.height = size;
     const ctx = canvas2d.getContext('2d');
-    for (let y = 0; y < tilesPerSide; y++) {
-      for (let x = 0; x < tilesPerSide; x++) {
-        ctx.fillStyle = (x + y) % 2 === 0 ? '#5a9a4a' : '#4a8a3a';
-        ctx.fillRect(x, y, 1, 1);
+    const imgData = ctx.createImageData(size, size);
+    const d = imgData.data;
+
+    // Seeded PRNG
+    let seed = 12345;
+    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+
+    // Value noise with permutation table
+    const perm = new Uint8Array(512);
+    for (let i = 0; i < 256; i++) perm[i] = Math.floor(rand() * 256);
+    for (let i = 0; i < 256; i++) perm[i + 256] = perm[i];
+    const grad = new Float32Array(256);
+    for (let i = 0; i < 256; i++) grad[i] = rand();
+
+    const noise2d = (x, y) => {
+      const ix = Math.floor(x) & 255, iy = Math.floor(y) & 255;
+      const fx = x - Math.floor(x), fy = y - Math.floor(y);
+      const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+      const v00 = grad[perm[ix + perm[iy]]];
+      const v10 = grad[perm[ix + 1 + perm[iy]]];
+      const v01 = grad[perm[ix + perm[iy + 1]]];
+      const v11 = grad[perm[ix + 1 + perm[iy + 1]]];
+      return v00 + sx * (v10 - v00) + sy * (v01 - v00) + sx * sy * (v11 - v10 - v01 + v00);
+    };
+
+    // Multi-octave fbm
+    const fbm = (x, y) => {
+      return noise2d(x, y) * 0.5 + noise2d(x * 2.1, y * 2.1) * 0.3 + noise2d(x * 4.7, y * 4.7) * 0.2;
+    };
+
+    for (let py = 0; py < size; py++) {
+      for (let px = 0; px < size; px++) {
+        const idx = (py * size + px) * 4;
+
+        // Multi-scale noise layers
+        const terrain = fbm(px * 0.012, py * 0.012);     // large patches
+        const mid = noise2d(px * 0.05, py * 0.05);        // medium detail
+        const detail = noise2d(px * 0.12, py * 0.12);     // fine detail
+        const fine = noise2d(px * 0.35, py * 0.35);       // per-blade scale
+        const clump = fbm(px * 0.035 + 60, py * 0.035 + 60); // grass clumps
+
+        let r, g, b;
+
+        // Rock outcrops
+        const rockZone = terrain < 0.2;
+        const rockTransition = terrain >= 0.2 && terrain < 0.28;
+
+        // Dirt patches
+        const dirtZone = terrain > 0.62;
+        const dirtTransition = terrain > 0.56 && terrain <= 0.62;
+
+        if (rockZone) {
+          // Rock — gray-brown boulders with variation
+          const br = 0.55 + mid * 0.3 + fine * 0.15;
+          r = (115 + detail * 30) * br;
+          g = (108 + detail * 25) * br;
+          b = (95 + detail * 25) * br;
+          // Some rocks darker / more brown
+          if (fine > 0.6) { r *= 1.1; g *= 0.95; }
+        } else if (rockTransition) {
+          // Rock → grass blend
+          const bl = (terrain - 0.2) / 0.08;
+          const rBr = 0.55 + mid * 0.3 + fine * 0.15;
+          const rockR = (115 + detail * 30) * rBr;
+          const rockG = (108 + detail * 25) * rBr;
+          const rockB = (95 + detail * 25) * rBr;
+          const gBr = 0.5 + clump * 0.3 + fine * 0.1;
+          const grassR = (30 + mid * 20) * gBr;
+          const grassG = (85 + mid * 45 + clump * 25) * gBr;
+          const grassB = (22 + mid * 12) * gBr;
+          r = rockR * (1 - bl) + grassR * bl;
+          g = rockG * (1 - bl) + grassG * bl;
+          b = rockB * (1 - bl) + grassB * bl;
+        } else if (dirtZone) {
+          // Dirt — warm brown
+          const br = 0.75 + mid * 0.2 + fine * 0.1;
+          r = (130 + detail * 30) * br;
+          g = (100 + detail * 20) * br;
+          b = (60 + detail * 15) * br;
+        } else if (dirtTransition) {
+          // Grass → dirt blend
+          const bl = (terrain - 0.56) / 0.06;
+          const dBr = 0.75 + mid * 0.2 + fine * 0.1;
+          const dirtR = (130 + detail * 30) * dBr;
+          const dirtG = (100 + detail * 20) * dBr;
+          const dirtB = (60 + detail * 15) * dBr;
+          const gBr = 0.5 + clump * 0.3 + fine * 0.1;
+          const grassR = (30 + mid * 20) * gBr;
+          const grassG = (85 + mid * 45 + clump * 25) * gBr;
+          const grassB = (22 + mid * 12) * gBr;
+          r = grassR * (1 - bl) + dirtR * bl;
+          g = grassG * (1 - bl) + dirtG * bl;
+          b = grassB * (1 - bl) + dirtB * bl;
+        } else {
+          // GRASS — deep, lush, saturated greens with thick texture
+          const gBr = 0.5 + clump * 0.3 + fine * 0.1;
+          const hueShift = (mid - 0.5) * 18;
+          r = Math.max(0, (30 + hueShift * 0.7 + mid * 20) * gBr);
+          g = (85 + mid * 45 + clump * 25 - hueShift * 0.2) * gBr;
+          b = Math.max(0, (22 + hueShift * 0.3 + mid * 12) * gBr);
+
+          // Dark shadow tufts — simulate thick grass depth
+          if (detail > 0.55 && fine < 0.45) {
+            r *= 0.55; g *= 0.65; b *= 0.5;
+          }
+          // Bright highlight tufts — sun-lit blade tips
+          else if (detail < 0.3 && fine > 0.65) {
+            r += 12; g += 20; b += 5;
+          }
+
+          // Scattered rocks within grass
+          const rockScatter = noise2d(px * 0.09 + 40, py * 0.09 + 40);
+          if (rockScatter > 0.74) {
+            const bl = (rockScatter - 0.74) / 0.26;
+            const rb = 0.55 + fine * 0.35;
+            r = r * (1 - bl) + 105 * rb * bl;
+            g = g * (1 - bl) + 100 * rb * bl;
+            b = b * (1 - bl) + 90 * rb * bl;
+          }
+        }
+
+        d[idx]     = Math.max(0, Math.min(255, Math.floor(r)));
+        d[idx + 1] = Math.max(0, Math.min(255, Math.floor(g)));
+        d[idx + 2] = Math.max(0, Math.min(255, Math.floor(b)));
+        d[idx + 3] = 255;
       }
     }
+
+    ctx.putImageData(imgData, 0, 0);
     const texture = new THREE.CanvasTexture(canvas2d);
-    texture.magFilter = THREE.NearestFilter;
-    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearFilter;
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     const mat = new THREE.MeshStandardMaterial({ map: texture });
@@ -309,7 +432,7 @@ export class World {
     this.floor.position.x = snapX;
     this.floor.position.z = snapZ;
 
-    // Offset texture to keep checkerboard stable in world space
+    // Offset texture to keep grass stable in world space
     const tex = this.floor.material.map;
     tex.offset.x = snapX / GROUND_SIZE;
     tex.offset.y = -snapZ / GROUND_SIZE;
