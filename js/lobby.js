@@ -18,6 +18,18 @@ export class Lobby {
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
 
+    // Permission toggle buttons
+    this.toggleCamera = document.getElementById('toggle-camera');
+    this.toggleMotion = document.getElementById('toggle-motion');
+    this.toggleAudio = document.getElementById('toggle-audio');
+    this.cameraActive = false;
+    this.motionActive = false;
+    this.audioActive = false;
+    this._cameraPermitted = false;
+    this._motionPermitted = false;
+    this._audioPermitted = false;
+    this._permissionsChecked = false;
+
     // Gamepad navigation state
     this._focusIndex = 0;
     this._currentStep = null;
@@ -26,14 +38,21 @@ export class Lobby {
     this._gpPrevDown = false;
     this._gpPrevA = false;
     this._gpPrevB = false;
+    this._gpPrevLeft = false;
+    this._gpPrevRight = false;
+
+    // Column-based navigation for mode step
+    this._modeColumns = [
+      [this.toggleCamera, this.toggleMotion, this.toggleAudio],
+      [document.getElementById('btn-solo'), document.getElementById('btn-together')],
+    ];
+    this._modeCol = 1;
+    this._modeColIndex = [0, 0];
 
     // Per-step focusable items and back buttons
     this._stepItems = new Map();
     this._stepBack = new Map();
-    this._stepItems.set(this.modeStep, [
-      document.getElementById('btn-solo'),
-      document.getElementById('btn-together'),
-    ]);
+    this._stepItems.set(this.modeStep, this._modeColumns[1]);
     this._stepItems.set(this.roleStep, [
       document.getElementById('btn-captain'),
       document.getElementById('btn-stoker'),
@@ -63,12 +82,14 @@ export class Lobby {
     // re-entry from gameplay), so start gamepad nav now and set initial step.
     this._currentStep = this.modeStep;
     this._startGamepadNav();
+    this._checkPermissionStates();
   }
 
   show() {
     this.lobbyEl.style.display = 'flex';
     this._showStep(this.modeStep);
     this._startGamepadNav();
+    this._checkPermissionStates();
   }
 
   _showStep(step) {
@@ -77,6 +98,11 @@ export class Lobby {
     step.style.display = 'flex';
     this._clearFocusHighlight();
     this._currentStep = step;
+    if (step === this.modeStep) {
+      this._modeCol = 1;
+      this._modeColIndex = [0, 0];
+      this._stepItems.set(this.modeStep, this._modeColumns[1]);
+    }
     this._focusIndex = this._stepDefaultFocus.get(step) || 0;
     this._applyFocusHighlight();
   }
@@ -142,11 +168,139 @@ export class Lobby {
       }
     });
 
+    // Permission toggles
+    this.toggleCamera.addEventListener('click', () => this._toggleCamera());
+    this.toggleMotion.addEventListener('click', () => this._toggleMotion());
+    this.toggleAudio.addEventListener('click', () => this._toggleAudio());
   }
 
   _requestMotion() {
     if (this.input && this.input.needsMotionPermission) {
       this.input.requestMotionPermission();
+    }
+  }
+
+  // ── Permission toggles ──────────────────────────────────────
+  // Track whether the browser permission has been obtained (separate from
+  // the user's on/off toggle choice). Once a browser permission is granted
+  // we remember it so re-enabling doesn't re-prompt.
+
+  _toggleCamera() {
+    if (this.cameraActive) {
+      this.cameraActive = false;
+      this._setToggleActive('camera', false);
+      return;
+    }
+    if (this._cameraPermitted) {
+      this.cameraActive = true;
+      this._setToggleActive('camera', true);
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+      stream.getTracks().forEach(t => t.stop());
+      this._cameraPermitted = true;
+      this.cameraActive = true;
+      this._setToggleActive('camera', true);
+    }).catch(() => {});
+  }
+
+  _toggleMotion() {
+    // Motion is a permission-grant button only (not a true on/off toggle).
+    // On mobile, device tilt is the primary steering input — disabling it
+    // would leave the player unable to steer.
+    if (this._motionPermitted) return;
+    if (this.input) {
+      this.input.requestMotionPermission();
+      // Check after a short delay (iOS permission dialog is async)
+      setTimeout(() => {
+        if (this.input.motionEnabled) {
+          this._motionPermitted = true;
+          this.motionActive = true;
+          this._setToggleActive('motion', true);
+        }
+      }, 500);
+    }
+  }
+
+  _toggleAudio() {
+    if (this.audioActive) {
+      this.audioActive = false;
+      this._setToggleActive('audio', false);
+      return;
+    }
+    if (this._audioPermitted) {
+      this.audioActive = true;
+      this._setToggleActive('audio', true);
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      stream.getTracks().forEach(t => t.stop());
+      this._audioPermitted = true;
+      this.audioActive = true;
+      this._setToggleActive('audio', true);
+    }).catch(() => {});
+  }
+
+  _setToggleActive(name, active) {
+    const el = name === 'camera' ? this.toggleCamera
+             : name === 'motion' ? this.toggleMotion
+             : this.toggleAudio;
+    if (active) {
+      el.classList.add('active');
+    } else {
+      el.classList.remove('active');
+    }
+  }
+
+  _checkPermissionStates() {
+    // Only auto-enable on first load; don't override user's toggle choice on re-entry
+    if (this._permissionsChecked) return;
+    this._permissionsChecked = true;
+
+    // Camera
+    if (navigator.permissions) {
+      navigator.permissions.query({ name: 'camera' }).then(r => {
+        if (r.state === 'granted') {
+          this._cameraPermitted = true;
+          this.cameraActive = true;
+          this._setToggleActive('camera', true);
+        }
+      }).catch(() => {});
+
+      // Microphone
+      navigator.permissions.query({ name: 'microphone' }).then(r => {
+        if (r.state === 'granted') {
+          this._audioPermitted = true;
+          this.audioActive = true;
+          this._setToggleActive('audio', true);
+        }
+      }).catch(() => {});
+    }
+
+    // Motion — only auto-green if we've actually received sensor data.
+    // DeviceMotionEvent exists on desktop Chrome but no hardware sensor is present,
+    // so we can't rely on API existence alone.
+    if (this.input && this.input.motionEnabled) {
+      this._motionPermitted = true;
+      this.motionActive = true;
+      this._setToggleActive('motion', true);
+    } else if (this.input && this.input.needsMotionPermission) {
+      // iOS: permission needed — leave button tappable but inactive
+    } else if (typeof DeviceMotionEvent === 'undefined') {
+      // No API at all — disable the button
+      this.toggleMotion.disabled = true;
+    } else {
+      // Desktop/Android: API exists but no data yet.
+      // Listen for first real motion event to auto-enable.
+      const onFirstMotion = () => {
+        if (this.input && this.input.motionEnabled) {
+          this._motionPermitted = true;
+          this.motionActive = true;
+          this._setToggleActive('motion', true);
+        }
+        window.removeEventListener('devicemotion', onFirstMotion);
+      };
+      window.addEventListener('devicemotion', onFirstMotion);
     }
   }
 
@@ -167,6 +321,7 @@ export class Lobby {
   _createRoom() {
     this.net = new NetworkManager();
     this.net._fallbackUrl = RELAY_URL;
+    this.net.cameraEnabled = this.cameraActive;
     const statusEl = document.getElementById('host-status');
     const codeEl = document.getElementById('room-code-display');
 
@@ -208,6 +363,7 @@ export class Lobby {
   _joinRoom(code) {
     this.net = new NetworkManager();
     this.net._fallbackUrl = RELAY_URL;
+    this.net.cameraEnabled = this.cameraActive;
     const statusEl = document.getElementById('join-status');
 
     statusEl.textContent = 'Connecting...';
@@ -241,6 +397,8 @@ export class Lobby {
     this._gpPrevDown = false;
     this._gpPrevA = false;
     this._gpPrevB = false;
+    this._gpPrevLeft = false;
+    this._gpPrevRight = false;
     if (this.input && this.input.gamepadConnected) {
       const gamepads = navigator.getGamepads();
       const gp = gamepads[this.input.gamepadIndex];
@@ -249,6 +407,8 @@ export class Lobby {
         this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
         this._gpPrevA = gp.buttons[0] && gp.buttons[0].pressed;
         this._gpPrevB = gp.buttons[1] && gp.buttons[1].pressed;
+        this._gpPrevLeft = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
+        this._gpPrevRight = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
       }
     }
     this._pollGamepadNav();
@@ -280,14 +440,22 @@ export class Lobby {
     // B button (button 1)
     const b = gp.buttons[1] && gp.buttons[1].pressed;
 
+    // D-pad left/right (buttons 14/15 or left stick axis 0)
+    const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
+    const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
+
     // Edge detection: fire on press, not hold
     if (up && !this._gpPrevUp) this._moveFocus(-1);
     if (down && !this._gpPrevDown) this._moveFocus(1);
+    if (left && !this._gpPrevLeft) this._moveColumn(-1);
+    if (right && !this._gpPrevRight) this._moveColumn(1);
     if (a && !this._gpPrevA) this._confirmFocus();
     if (b && !this._gpPrevB) this._goBack();
 
     this._gpPrevUp = up;
     this._gpPrevDown = down;
+    this._gpPrevLeft = left;
+    this._gpPrevRight = right;
     this._gpPrevA = a;
     this._gpPrevB = b;
   }
@@ -298,6 +466,23 @@ export class Lobby {
 
     this._clearFocusHighlight();
     this._focusIndex = Math.max(0, Math.min(items.length - 1, this._focusIndex + dir));
+    this._applyFocusHighlight();
+  }
+
+  _moveColumn(dir) {
+    if (this._currentStep !== this.modeStep) return;
+    const newCol = Math.max(0, Math.min(this._modeColumns.length - 1, this._modeCol + dir));
+    if (newCol === this._modeCol) return;
+
+    this._clearFocusHighlight();
+    // Save current row index for the column we're leaving
+    this._modeColIndex[this._modeCol] = this._focusIndex;
+    this._modeCol = newCol;
+    // Restore row index for destination column (clamped)
+    const colItems = this._modeColumns[newCol];
+    this._focusIndex = Math.min(this._modeColIndex[newCol], colItems.length - 1);
+    // Update _stepItems to point at the active column's items
+    this._stepItems.set(this.modeStep, colItems);
     this._applyFocusHighlight();
   }
 

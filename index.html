@@ -517,6 +517,49 @@
   .lobby-btn-accent:active {
     background: rgba(60,200,80,0.4);
   }
+  .lobby-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    max-width: 280px;
+  }
+  .lobby-toggles {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .lobby-toggle {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.4);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: all 0.2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lobby-toggle.active {
+    background: rgba(60,200,80,0.25);
+    border-color: rgba(60,200,80,0.6);
+    color: #44ff66;
+  }
+  .lobby-toggle:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+  .lobby-mode-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
   .lobby-role-desc {
     font-size: 12px;
     font-weight: 400;
@@ -823,21 +866,22 @@
   }
   .clip-actions {
     display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
+    gap: 10px;
+    flex-wrap: nowrap;
     justify-content: center;
   }
   .clip-btn {
-    padding: 12px 24px;
+    padding: 10px 16px;
     border-radius: 10px;
     border: 1.5px solid rgba(255,255,255,0.3);
     background: rgba(255,255,255,0.1);
     color: #fff;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     cursor: pointer;
     font-family: 'Helvetica Neue', Arial, sans-serif;
     -webkit-tap-highlight-color: transparent;
+    white-space: nowrap;
   }
   .clip-btn:active {
     background: rgba(255,255,255,0.25);
@@ -1006,8 +1050,36 @@ ON</button>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">
-      <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
-      <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
+      <div class="lobby-mode-row">
+        <div class="lobby-toggles">
+          <button class="lobby-toggle" id="toggle-camera" title="Camera">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="5" width="11" height="10" rx="1.5"/>
+              <path d="M13 8.5l5-2.5v8l-5-2.5"/>
+            </svg>
+          </button>
+          <button class="lobby-toggle" id="toggle-motion" title="Motion">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="6" y="2" width="8" height="16" rx="2"/>
+              <circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>
+              <path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/>
+              <path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>
+            </svg>
+          </button>
+          <button class="lobby-toggle" id="toggle-audio" title="Audio">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="7.5" y="2" width="5" height="10" rx="2.5"/>
+              <path d="M5 9a5 5 0 0 0 10 0"/>
+              <line x1="10" y1="14" x2="10" y2="18"/>
+              <line x1="7" y1="18" x2="13" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="lobby-mode-buttons">
+          <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
+          <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
+        </div>
+      </div>
     </div>
 
     <!-- Step 2: Role selection -->
@@ -1040,7 +1112,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.3c60d52 | 02-21-2026 22:23</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.eb1dc14 | 02-21-2026 23:14</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -1100,7 +1172,7 @@ ON</button>
 
 <!-- Surface indicator -->
 <!-- Gamepad badge -->
-<div id="gamepad-badge">GAMEPAD</div>
+<div id="gamepad-badge">CONTROLLER</div>
 
 <!-- QR code generator (sets window.qrcode) -->
 <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>

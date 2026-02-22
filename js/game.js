@@ -47,7 +47,7 @@ class Game {
     this.chaseCamera = new ChaseCamera(this.camera);
     this.hud = new HUD(this.input);
     this.grassParticles = new GrassParticles(this.scene);
-    this.recorder = new GameRecorder(this.renderer.domElement);
+    this.recorder = new GameRecorder(this.renderer.domElement, this.input);
 
     // Mode
     this.mode = 'solo'; // 'solo' | 'captain' | 'stoker'
@@ -71,11 +71,12 @@ class Game {
     this._recFlashFoot = null;
     this._recFlashWrong = false;
 
-    // D-pad edge detection for gameplay buttons
+    // D-pad + face button edge detection for gameplay buttons
     this._dpadPrevUp = false;
     this._dpadPrevDown = false;
     this._dpadPrevLeft = false;
     this._dpadPrevRight = false;
+    this._gpPrevY = false;
 
     // Safety mode (on by default)
     this.safetyMode = true;
@@ -189,9 +190,6 @@ class Game {
       } else if (eventType === EVT_START) {
         // Stoker receives GO from captain
         this.state = 'playing';
-        this.recorder.setLabels(this.mode);
-        this.recorder.startBuffer();
-        this.recorder.startSelfie();
         const statusEl = document.getElementById('status');
         statusEl.textContent = 'GO!';
         statusEl.style.color = '#44ff66';
@@ -233,7 +231,7 @@ class Game {
 
     // Initiate video call now — connection is already open
     // (lobby waits 1s after conn.on('open') before calling _onMultiplayerReady)
-    if (mode === 'captain') {
+    if (mode === 'captain' && this.lobby.cameraActive) {
       this._initiateVideoCall();
     }
 
@@ -332,6 +330,11 @@ class Game {
     statusEl.textContent = '3';
     this._lastCountNum = 3;
 
+    // Start recording + selfie immediately so they're visible during countdown
+    this.recorder.setLabels(this.mode);
+    this.recorder.startBuffer();
+    if (this.lobby.cameraActive) this.recorder.startSelfie();
+
     // Init audio
     try {
       if (!this.audioCtx) {
@@ -355,9 +358,6 @@ class Game {
       statusEl.style.color = '#44ff66';
       this.state = 'playing';
       this._playBeep(800, 0.4);
-      this.recorder.setLabels(this.mode);
-      this.recorder.startBuffer();
-      this.recorder.startSelfie();
 
       // Captain sends EVT_START to stoker
       if (this.mode === 'captain' && this.net) {
@@ -572,6 +572,8 @@ class Game {
 
   _pollDpad() {
     if (!this.input.gamepadConnected) return;
+    // Don't process gameplay D-pad while clip preview modal is open
+    if (this.recorder._previewPollId) return;
     const gamepads = navigator.getGamepads();
     const gp = gamepads[this.input.gamepadIndex];
     if (!gp) return;
@@ -581,15 +583,20 @@ class Game {
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || false;
     const right = (gp.buttons[15] && gp.buttons[15].pressed) || false;
 
+    // Y button (button 3) — save clip
+    const y = gp.buttons[3] && gp.buttons[3].pressed;
+
     if (up && !this._dpadPrevUp) this.safetyBtn.click();
     if (down && !this._dpadPrevDown) this.speedBtn.click();
     if (right && !this._dpadPrevRight) document.getElementById('reset-btn').click();
     if (left && !this._dpadPrevLeft) this._returnToLobby();
+    if (y && !this._gpPrevY) this.recorder.saveClip();
 
     this._dpadPrevUp = up;
     this._dpadPrevDown = down;
     this._dpadPrevLeft = left;
     this._dpadPrevRight = right;
+    this._gpPrevY = y;
   }
 
   _updateConnBadge() {

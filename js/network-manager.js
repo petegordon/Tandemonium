@@ -24,6 +24,7 @@ export class NetworkManager {
     this.onDisconnected = null;
     this.onReconnecting = null;
     this.onRemoteStream = null;
+    this.cameraEnabled = true; // set false to suppress local camera in calls
     this._mediaCall = null;
     this._localMediaStream = null;
     this._heartbeatInterval = null;
@@ -360,15 +361,20 @@ export class NetworkManager {
 
   async _handleIncomingCall(call) {
     this._mediaCall = call;
-    try {
-      // Get local camera to answer with
-      this._localMediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: 240, height: 240 },
-        audio: false
-      });
-      call.answer(this._localMediaStream);
-    } catch (e) {
-      // Camera denied — answer without stream
+    if (this.cameraEnabled) {
+      try {
+        // Get local camera to answer with
+        this._localMediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: 240, height: 240 },
+          audio: false
+        });
+        call.answer(this._localMediaStream);
+      } catch (e) {
+        // Camera denied — answer without stream
+        call.answer();
+      }
+    } else {
+      // Camera disabled by user — answer without local stream
       call.answer();
     }
     call.on('stream', (remoteStream) => {

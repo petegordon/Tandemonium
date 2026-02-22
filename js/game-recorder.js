@@ -3,8 +3,9 @@
 // ============================================================
 
 export class GameRecorder {
-  constructor(gameCanvas) {
+  constructor(gameCanvas, input) {
     this.gameCanvas = gameCanvas;
+    this.input = input || null;
     this.supported = this._checkSupport();
 
     // Compositing canvas (offscreen, same size as game canvas)
@@ -72,6 +73,15 @@ export class GameRecorder {
     if (!this.supported && this.shareBtn) {
       this.shareBtn.style.display = 'none';
     }
+
+    // Gamepad navigation for clip preview modal
+    this._previewItems = [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn].filter(Boolean);
+    this._previewFocusIndex = 0;
+    this._previewPollId = null;
+    this._gpPrevLeft = false;
+    this._gpPrevRight = false;
+    this._gpPrevA = false;
+    this._gpPrevB = false;
 
     // Resize listener to keep compositing canvas in sync
     window.addEventListener('resize', () => this._syncCanvasSize());
@@ -762,6 +772,96 @@ export class GameRecorder {
     ctx.restore();
   }
 
+  // ── Clip preview gamepad navigation ──
+
+  _startPreviewGamepadNav() {
+    // Build visible items list (SHARE may be hidden)
+    this._previewItems = [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn]
+      .filter(el => el && el.style.display !== 'none');
+    this._previewFocusIndex = 0;
+    this._gpPrevUp = false;
+    this._gpPrevDown = false;
+    this._gpPrevLeft = false;
+    this._gpPrevRight = false;
+    this._gpPrevA = false;
+    this._gpPrevB = false;
+
+    // Prime edge-detect from current gamepad state
+    if (this.input && this.input.gamepadConnected) {
+      const gp = (navigator.getGamepads())[this.input.gamepadIndex];
+      if (gp) {
+        this._gpPrevUp = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
+        this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
+        this._gpPrevLeft = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
+        this._gpPrevRight = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
+        this._gpPrevA = gp.buttons[0] && gp.buttons[0].pressed;
+        this._gpPrevB = gp.buttons[1] && gp.buttons[1].pressed;
+      }
+    }
+
+    this._applyPreviewFocus();
+    this._pollPreviewGamepad();
+  }
+
+  _stopPreviewGamepadNav() {
+    if (this._previewPollId) {
+      cancelAnimationFrame(this._previewPollId);
+      this._previewPollId = null;
+    }
+    this._clearPreviewFocus();
+  }
+
+  _pollPreviewGamepad() {
+    this._previewPollId = requestAnimationFrame(() => this._pollPreviewGamepad());
+
+    if (!this.input || !this.input.gamepadConnected) return;
+    const gp = (navigator.getGamepads())[this.input.gamepadIndex];
+    if (!gp) return;
+
+    const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
+    const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
+    const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
+    const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
+    const a = gp.buttons[0] && gp.buttons[0].pressed;
+    const b = gp.buttons[1] && gp.buttons[1].pressed;
+
+    // Both axes navigate the button list (buttons wrap vertically on narrow screens)
+    if ((up && !this._gpPrevUp) || (left && !this._gpPrevLeft)) this._movePreviewFocus(-1);
+    if ((down && !this._gpPrevDown) || (right && !this._gpPrevRight)) this._movePreviewFocus(1);
+    if (a && !this._gpPrevA) this._confirmPreviewFocus();
+    if (b && !this._gpPrevB) this._discardClip();
+
+    this._gpPrevUp = up;
+    this._gpPrevDown = down;
+    this._gpPrevLeft = left;
+    this._gpPrevRight = right;
+    this._gpPrevA = a;
+    this._gpPrevB = b;
+  }
+
+  _movePreviewFocus(dir) {
+    if (!this._previewItems.length) return;
+    this._clearPreviewFocus();
+    this._previewFocusIndex = Math.max(0, Math.min(this._previewItems.length - 1, this._previewFocusIndex + dir));
+    this._applyPreviewFocus();
+  }
+
+  _confirmPreviewFocus() {
+    const el = this._previewItems[this._previewFocusIndex];
+    if (el) el.click();
+  }
+
+  _applyPreviewFocus() {
+    const el = this._previewItems[this._previewFocusIndex];
+    if (el) el.classList.add('gamepad-focus');
+  }
+
+  _clearPreviewFocus() {
+    for (const el of this._previewItems) {
+      if (el) el.classList.remove('gamepad-focus');
+    }
+  }
+
   // ── Canvas drawing helpers ──
 
   _roundRect(ctx, x, y, w, h, r, fill, stroke, lineWidth) {
@@ -899,11 +999,19 @@ export class GameRecorder {
     this.previewVideo.play().catch(() => {});
     this.previewModal.classList.add('visible');
 
-    // Show/hide share button based on Web Share API support
+    // Only show SHARE on actual mobile/tablet where the native share sheet
+    // is useful; on desktop it just falls back to download (same as SAVE).
+    // Use UA + screen heuristic since ontouchstart is unreliable on desktop.
     if (this.previewShareBtn) {
-      const canShare = navigator.share && navigator.canShare;
+      const ua = navigator.userAgent;
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(ua) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      const canShare = isMobile && navigator.share && navigator.canShare;
       this.previewShareBtn.style.display = canShare ? '' : 'none';
     }
+
+    // Start gamepad navigation for preview buttons
+    this._startPreviewGamepadNav();
   }
 
   async _shareClip() {
@@ -944,6 +1052,7 @@ export class GameRecorder {
   }
 
   _discardClip() {
+    this._stopPreviewGamepadNav();
     if (this._clipUrl) {
       URL.revokeObjectURL(this._clipUrl);
       this._clipUrl = null;
