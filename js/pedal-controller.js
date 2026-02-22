@@ -21,7 +21,10 @@ export class PedalController {
     const rightHeld = this.input.isPressed('ArrowDown');
     const leftJust = leftHeld && !this.prevLeft;
     const rightJust = rightHeld && !this.prevRight;
-    const braking = leftHeld && rightHeld;
+    // Braking requires BOTH pedals held for 2+ consecutive frames.
+    // A single frame of overlap is normal during fast alternating and
+    // must not swallow the incoming tap.
+    const braking = leftHeld && rightHeld && this.prevLeft && this.prevRight;
 
     let acceleration = 0;
     let wobble = 0;

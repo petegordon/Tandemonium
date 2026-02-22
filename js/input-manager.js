@@ -68,27 +68,53 @@ export class InputManager {
   }
 
   _setupTouch() {
-    const leftBtn = document.getElementById('touch-left');
-    const rightBtn = document.getElementById('touch-right');
+    const pedalBar = document.getElementById('pedal-bar');
 
     // Track which touch identifiers are on each pedal
     this._leftTouchId = null;
     this._rightTouchId = null;
+    this._pedalMidX = 0;
 
-    // Passive listeners — touch-action:none on <body> already prevents
-    // scrolling/zooming, so e.preventDefault() is unnecessary.  Non-passive
-    // touchstart + preventDefault under rapid tapping can lock up Safari's
-    // gesture recogniser, freezing ALL touch/click dispatch on the page.
-    leftBtn.addEventListener('touchstart', (e) => {
-      this._leftTouchId = e.changedTouches[0].identifier;
-      this.touchLeft = true;
-      this._leftTapped = true;   // buffered: persists until game loop reads it
+    // Use the full pedal-bar as the touch zone so the 10px gap between
+    // buttons isn't a dead spot.  Left/right is split at the midpoint.
+    pedalBar.style.pointerEvents = 'auto';
+
+    const assignTouch = (t) => {
+      if (t.clientX < this._pedalMidX) {
+        this._leftTouchId = t.identifier;
+        this.touchLeft = true;
+        this._leftTapped = true;   // buffered: persists until game loop reads it
+      } else {
+        this._rightTouchId = t.identifier;
+        this.touchRight = true;
+        this._rightTapped = true;
+      }
+    };
+
+    pedalBar.addEventListener('touchstart', (e) => {
+      // Cache midpoint each touchstart (handles orientation changes)
+      const rect = pedalBar.getBoundingClientRect();
+      this._pedalMidX = rect.left + rect.width / 2;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        assignTouch(e.changedTouches[i]);
+      }
     }, { passive: true });
 
-    rightBtn.addEventListener('touchstart', (e) => {
-      this._rightTouchId = e.changedTouches[0].identifier;
-      this.touchRight = true;
-      this._rightTapped = true;
+    // Finger slides between pedals — reassign the touch to the new side
+    pedalBar.addEventListener('touchmove', (e) => {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        const isLeft = t.clientX < this._pedalMidX;
+        if (isLeft && t.identifier === this._rightTouchId) {
+          this.touchRight = false; this._rightTouchId = null;
+          this._leftTouchId = t.identifier;
+          this.touchLeft = true; this._leftTapped = true;
+        } else if (!isLeft && t.identifier === this._leftTouchId) {
+          this.touchLeft = false; this._leftTouchId = null;
+          this._rightTouchId = t.identifier;
+          this.touchRight = true; this._rightTapped = true;
+        }
+      }
     }, { passive: true });
 
     // Global touchend — catches releases even if finger drifted off the button
