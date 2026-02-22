@@ -74,6 +74,7 @@ class Game {
     this.safetyBtn.addEventListener('click', () => {
       this.safetyMode = !this.safetyMode;
       this.safetyBtn.className = 'side-btn ' + (this.safetyMode ? 'safety-on' : 'safety-off');
+      this.safetyBtn.textContent = 'SAFETY\n' + (this.safetyMode ? 'ON' : 'OFF');
     });
 
     // Speed mode (off by default)
@@ -82,6 +83,7 @@ class Game {
     this.speedBtn.addEventListener('click', () => {
       this.autoSpeed = !this.autoSpeed;
       this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+      this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
     });
 
     // Reset button
@@ -374,6 +376,7 @@ class Game {
 
   _resetGame() {
     this.bike.fullReset();
+    this.grassParticles.clear();
 
     if (this.mode === 'solo') {
       this.pedalCtrl = new PedalController(this.input);

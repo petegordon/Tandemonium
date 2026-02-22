@@ -75,6 +75,14 @@ export class GrassParticles {
     scene.add(this.points);
   }
 
+  clear() {
+    this.life.fill(0);
+    this.emitAccum = 0;
+    const sizes = this.geometry.attributes.size.array;
+    sizes.fill(0);
+    this.geometry.attributes.size.needsUpdate = true;
+  }
+
   update(bike, dt) {
     // Per-wheel off-road amounts (each wheel independently touches grass)
     const frontOff = Math.max(0, Math.abs(bike._frontWheelOffset) - 2.5);
@@ -222,6 +230,18 @@ export class GrassParticles {
       }
     } else {
       this.emitAccum = 0;
+      // When stopped or on-road, kill lingering particles quickly
+      if (speed < 0.5 || bike.fallen) {
+        for (let i = 0; i < POOL_SIZE; i++) {
+          if (this.life[i] > 0) {
+            this.life[i] -= dt * 4;  // drain 4x faster
+            if (this.life[i] <= 0) {
+              this.life[i] = 0;
+              sizes[i] = 0;
+            }
+          }
+        }
+      }
     }
 
     posAttr.needsUpdate = true;

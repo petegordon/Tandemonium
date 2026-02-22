@@ -33,10 +33,6 @@ export class HUD {
     this.touchLeftEl = document.getElementById('touch-left');
     this.touchRightEl = document.getElementById('touch-right');
 
-    // Surface indicator
-    this.surfaceEl = document.getElementById('surface-indicator');
-    this.surfaceLabel = document.getElementById('surface-label');
-    this.surfaceBarFill = document.getElementById('surface-bar-fill');
   }
 
   update(bike, input, pedalCtrl, dt, remoteData) {
@@ -148,29 +144,6 @@ export class HUD {
       this.partnerGauge.style.display = 'none';
       if (this.partnerPedalUp) this.partnerPedalUp.style.display = 'none';
       if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'none';
-    }
-
-    // Surface indicator
-    if (this.surfaceEl) {
-      const offRoad = Math.max(0, Math.abs(bike._lateralOffset) - 2.5);
-      const intensity = Math.min(offRoad / 3, 1); // 0→1 over 3 units off-road
-      const speedFade = Math.min(bike.speed * 2, 1); // fade out when stationary
-
-      if (offRoad > 0) {
-        this.surfaceEl.classList.add('visible');
-        this.surfaceEl.style.opacity = (0.3 + intensity * 0.7) * speedFade;
-        this.surfaceLabel.textContent = 'GRASS';
-        // Green → yellow → orange as roughness increases
-        const r = Math.round(139 + intensity * 116);
-        const g = Math.round(195 - intensity * 75);
-        const b = Math.round(74 - intensity * 40);
-        const color = 'rgb(' + r + ',' + g + ',' + b + ')';
-        this.surfaceLabel.style.color = color;
-        this.surfaceBarFill.style.background = color;
-        this.surfaceBarFill.style.width = Math.round(intensity * 100) + '%';
-      } else {
-        this.surfaceEl.classList.remove('visible');
-      }
     }
 
     // Crash flash

@@ -113,73 +113,123 @@
     z-index: 10;
   }
 
-  /* ── Top-right D-pad buttons ── */
+  /* ── Top-right D-pad buttons (PS-style) ── */
   #side-buttons {
     position: fixed;
-    top: env(safe-area-inset-top, 0px);
-    right: 6px;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: 14px;
     display: grid;
     grid-template-areas:
       ".      safety ."
       "lobby  .      reset"
       ".      speed  .";
-    grid-template-columns: repeat(3, 48px);
-    grid-template-rows: repeat(3, 28px);
-    gap: 2px;
-    padding: 6px;
+    grid-template-columns: 56px 56px 56px;
+    grid-template-rows: 56px 56px 56px;
+    gap: 1px;
+    padding: 0;
     z-index: 10;
-    background: rgba(0,0,0,0.3);
-    border-radius: 10px;
-    border: 1px solid rgba(255,255,255,0.1);
+    background: transparent;
+    border: none;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4));
+  }
+  /* Circular disc background */
+  #side-buttons::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 148px;
+    height: 148px;
+    border-radius: 50%;
+    background: rgba(20,20,20,0.5);
+    border: 1.5px solid rgba(255,255,255,0.1);
+    pointer-events: none;
+  }
+  /* Center hub dot */
+  #side-buttons::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgba(70,70,70,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    pointer-events: none;
+    z-index: 1;
   }
   .side-btn {
     padding: 0;
     margin: 0;
-    border: 1.5px solid rgba(255,255,255,0.35);
-    border-radius: 6px;
-    background: rgba(0,0,0,0.5);
-    color: rgba(255,255,255,0.9);
+    border: none;
+    background: rgba(70,70,70,0.95);
+    color: rgba(255,255,255,0.95);
     font-size: 8px;
     font-weight: 700;
     letter-spacing: 0.5px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: pre-line;
     cursor: pointer;
     pointer-events: auto;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
     -webkit-tap-highlight-color: transparent;
     -webkit-appearance: none;
     appearance: none;
     box-sizing: border-box;
   }
-  .side-btn:active { filter: brightness(1.3); }
-  #safety-btn { grid-area: safety; }
-  #lobby-btn  { grid-area: lobby; }
-  #reset-btn  { grid-area: reset; }
-  #speed-btn  { grid-area: speed; }
-  .side-btn.safety-on {
-    background: rgba(40,180,60,0.5);
-    border-color: rgba(40,180,60,0.7);
+  .side-btn:active { filter: brightness(1.4); }
+  #safety-btn {
+    grid-area: safety;
+    clip-path: polygon(0% 0%, 100% 0%, 72% 100%, 28% 100%);
+    align-items: flex-start;
+    padding-top: 6px;
+    margin-bottom: -18px;
+    background: linear-gradient(to bottom, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
-  .side-btn.safety-off {
-    background: rgba(200,40,40,0.5);
-    border-color: rgba(200,40,40,0.7);
+  #lobby-btn {
+    grid-area: lobby;
+    clip-path: polygon(0% 0%, 100% 28%, 100% 72%, 0% 100%);
+    align-items: center;
+    justify-content: flex-start;
+    padding-left: 6px;
+    margin-right: -18px;
+    background: linear-gradient(to right, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
-  .side-btn.speed-on {
-    background: rgba(40,100,220,0.5);
-    border-color: rgba(40,100,220,0.7);
+  #reset-btn {
+    grid-area: reset;
+    clip-path: polygon(0% 28%, 100% 0%, 100% 100%, 0% 72%);
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 6px;
+    margin-left: -18px;
+    background: linear-gradient(to left, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
-  .side-btn.speed-off {
-    background: rgba(60,60,60,0.5);
-    border-color: rgba(255,255,255,0.2);
+  #speed-btn {
+    grid-area: speed;
+    clip-path: polygon(28% 0%, 72% 0%, 100% 100%, 0% 100%);
+    align-items: flex-end;
+    padding-bottom: 6px;
+    margin-top: -18px;
+    background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
-  .side-btn.reset-btn {
-    background: rgba(60,60,60,0.5);
-    border-color: rgba(255,255,255,0.2);
+  #safety-btn.safety-on {
+    background: linear-gradient(to bottom, rgba(65,220,90,0.9) 0%, rgba(35,150,50,0.9) 100%);
   }
-  .side-btn.exit-btn {
-    background: rgba(60,60,60,0.5);
-    border-color: rgba(255,255,255,0.2);
+  #safety-btn.safety-off {
+    background: linear-gradient(to bottom, rgba(240,65,65,0.9) 0%, rgba(170,35,35,0.9) 100%);
+  }
+  #speed-btn.speed-on {
+    background: linear-gradient(to top, rgba(65,140,255,0.9) 0%, rgba(35,90,190,0.9) 100%);
+  }
+  #speed-btn.speed-off {
+    background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
 
   /* ── Pedal touch buttons (bottom) ── */
@@ -509,49 +559,6 @@
   #conn-badge #conn-type { color: #44ff66; font-weight: 700; margin-right: 4px; }
 
   /* ── Surface indicator ── */
-  #surface-indicator {
-    position: fixed;
-    top: env(safe-area-inset-top, 0px);
-    left: 50%;
-    transform: translateX(-50%);
-    margin-top: 22px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 10px;
-    background: rgba(0,0,0,0.4);
-    border: 1px solid rgba(255,255,255,0.15);
-    border-radius: 10px;
-    z-index: 11;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.3s;
-  }
-  #surface-indicator.visible { opacity: 1; }
-  #surface-label {
-    font-size: 10px;
-    font-weight: 700;
-    color: #8bc34a;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    min-width: 36px;
-    text-align: center;
-  }
-  #surface-bar-bg {
-    width: 48px;
-    height: 6px;
-    background: rgba(255,255,255,0.12);
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  #surface-bar-fill {
-    height: 100%;
-    width: 0%;
-    border-radius: 3px;
-    background: #8bc34a;
-    transition: width 0.15s, background 0.3s;
-  }
-
   /* ── Gamepad badge ── */
   #gamepad-badge {
     position: fixed;
@@ -586,7 +593,8 @@
 
 <!-- Side buttons (D-pad layout) -->
 <div id="side-buttons">
-  <button class="side-btn safety-on" id="safety-btn">SAFETY</button>
+  <button class="side-btn safety-on" id="safety-btn">SAFETY
+ON</button>
   <button class="side-btn exit-btn" id="lobby-btn">LOBBY</button>
   <button class="side-btn reset-btn" id="reset-btn">RESET</button>
   <button class="side-btn speed-off" id="speed-btn">SPEED</button>
@@ -748,11 +756,6 @@
 </div>
 
 <!-- Surface indicator -->
-<div id="surface-indicator">
-  <span id="surface-label">ROAD</span>
-  <div id="surface-bar-bg"><div id="surface-bar-fill"></div></div>
-</div>
-
 <!-- Gamepad badge -->
 <div id="gamepad-badge">GAMEPAD</div>
 
