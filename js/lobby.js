@@ -205,13 +205,24 @@ export class Lobby {
   }
 
   _toggleMotion() {
-    // Motion is a permission-grant button only (not a true on/off toggle).
-    // On mobile, device tilt is the primary steering input — disabling it
-    // would leave the player unable to steer.
-    if (this._motionPermitted) return;
-
-    // Gamepad + WebHID: request controller gyro
+    // Gamepad + WebHID: true on/off toggle for controller gyro
     if (this.input && this.input.gamepadConnected && navigator.hid) {
+      if (this.motionActive) {
+        // Turn off — disable gyro steering but keep device connected
+        this.motionActive = false;
+        this.input.motionEnabled = false;
+        this.input.motionLean = 0;
+        this._setToggleActive('motion', false);
+        return;
+      }
+      if (this._motionPermitted) {
+        // Re-enable previously connected gyro
+        this.motionActive = true;
+        this.input.motionEnabled = true;
+        this._setToggleActive('motion', true);
+        return;
+      }
+      // First time — request WebHID access
       this.input.connectControllerGyro().then(() => {
         if (this.input.gyroConnected) {
           this._motionPermitted = true;
@@ -224,7 +235,9 @@ export class Lobby {
       return;
     }
 
-    // Mobile: iOS motion permission
+    // Mobile: permission-grant only (tilt is the primary steering input,
+    // disabling it would leave the player unable to steer)
+    if (this._motionPermitted) return;
     if (this.input) {
       this.input.requestMotionPermission();
       // Check after a short delay (iOS permission dialog is async)

@@ -154,8 +154,8 @@ export class BikeModel {
     // Grass drag: off-road surface slows you down — more pedaling required
     const offRoadDrag = Math.max(0, centerDist - 2.5);
     if (offRoadDrag > 0 && this.speed > 0) {
-      const dragIntensity = Math.min(offRoadDrag / 3, 1); // 0→1 over 3 units
-      this.speed *= (1 - dragIntensity * 0.8 * dt);       // mild extra friction
+      const dragIntensity = Math.min(offRoadDrag / 5, 1); // 0→1 over 5 units
+      this.speed *= (1 - dragIntensity * 0.4 * dt);       // mild extra friction
     }
 
     this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));

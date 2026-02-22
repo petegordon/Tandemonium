@@ -347,6 +347,7 @@ export class InputManager {
     this._gyroRollAccum = 0;
     this._lastGyroTime = 0;
     this.motionOffset = null;
+    this.motionEnabled = true;
     console.log('Gyro bias:', this._gyroBias);
   }
 
@@ -395,9 +396,10 @@ export class InputManager {
     // Clamp to sane range
     this._gyroRollAccum = Math.max(-90, Math.min(90, this._gyroRollAccum));
 
-    // Scale up so full lean is reached at ~15° of tilt.
-    this.motionEnabled = true;
-    this._applyTilt(this._gyroRollAccum * 2.67);
+    // Feed into tilt pipeline — full lean at ~40° of controller tilt
+    // Only update if motion is enabled (lobby toggle can disable it)
+    if (!this.motionEnabled) return;
+    this._applyTilt(this._gyroRollAccum);
   }
 
   _readSigned16(data, offset) {
