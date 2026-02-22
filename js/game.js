@@ -657,42 +657,28 @@ class Game {
 
     const roadPath = this.world.roadPath;
 
-    // Lobby: just render the scene (background)
-    if (this.state === 'lobby') {
+    if (this.state === 'playing') {
+      // D-pad actions (safety/speed/reset/lobby)
+      this._pollDpad();
+
+      // Playing state — dispatch by mode
+      if (this.mode === 'solo') {
+        this._updateSolo(dt);
+      } else if (this.mode === 'captain') {
+        this._updateCaptain(dt);
+      } else if (this.mode === 'stoker') {
+        this._updateStoker(dt);
+      }
+    } else {
+      // Lobby / countdown / instructions: render static scene
+      if (this.state === 'countdown') this._updateCountdown(dt);
       this.world.update(this.bike.position, this.bike.roadD);
       this.chaseCamera.update(this.bike, dt, roadPath);
       this.renderer.render(this.scene, this.camera);
-      return;
     }
 
-    // Countdown
-    if (this.state === 'countdown') {
-      this._updateCountdown(dt);
-      this.world.update(this.bike.position, this.bike.roadD);
-      this.chaseCamera.update(this.bike, dt, roadPath);
-      this.renderer.render(this.scene, this.camera);
-      return;
-    }
-
-    // Instructions / waiting: render static scene
-    if (this.state !== 'playing') {
-      this.world.update(this.bike.position, this.bike.roadD);
-      this.chaseCamera.update(this.bike, dt, roadPath);
-      this.renderer.render(this.scene, this.camera);
-      return;
-    }
-
-    // D-pad actions (safety/speed/reset/lobby)
-    this._pollDpad();
-
-    // Playing state — dispatch by mode
-    if (this.mode === 'solo') {
-      this._updateSolo(dt);
-    } else if (this.mode === 'captain') {
-      this._updateCaptain(dt);
-    } else if (this.mode === 'stoker') {
-      this._updateStoker(dt);
-    }
+    // Clear buffered tap flags after all input has been read this frame
+    this.input.consumeTaps();
   }
 
   // ============================================================

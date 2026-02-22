@@ -15,6 +15,8 @@ export class InputManager {
     this.keys = {};
     this.touchLeft = false;
     this.touchRight = false;
+    this._leftTapped = false;   // buffered tap: survives until consumeTaps()
+    this._rightTapped = false;
     this.motionLean = 0;
     this.motionEnabled = false;
     this.motionReady = false;
@@ -80,11 +82,13 @@ export class InputManager {
     leftBtn.addEventListener('touchstart', (e) => {
       this._leftTouchId = e.changedTouches[0].identifier;
       this.touchLeft = true;
+      this._leftTapped = true;   // buffered: persists until game loop reads it
     }, { passive: true });
 
     rightBtn.addEventListener('touchstart', (e) => {
       this._rightTouchId = e.changedTouches[0].identifier;
       this.touchRight = true;
+      this._rightTapped = true;
     }, { passive: true });
 
     // Global touchend — catches releases even if finger drifted off the button
@@ -274,9 +278,15 @@ export class InputManager {
   }
 
   isPressed(code) {
-    if (code === 'ArrowUp') return !!this.keys[code] || this.touchLeft || this._gpTriggerLeftPressed;
-    if (code === 'ArrowDown') return !!this.keys[code] || this.touchRight || this._gpTriggerRightPressed;
+    if (code === 'ArrowUp') return !!this.keys[code] || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
+    if (code === 'ArrowDown') return !!this.keys[code] || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
     return !!this.keys[code];
+  }
+
+  /** Clear buffered tap flags — call once per frame after all input reading. */
+  consumeTaps() {
+    this._leftTapped = false;
+    this._rightTapped = false;
   }
 
   // ── WebHID gyro (PlayStation controllers) ──────────────────
