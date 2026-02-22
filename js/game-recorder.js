@@ -1021,8 +1021,9 @@ export class GameRecorder {
 
     // Stop current recorder to get its blob
     this.recorder.addEventListener('stop', () => {
-      // Prefer the last full 20s cycle; fall back to current partial segment
-      const blob = this._lastBlob || this._pendingBlob;
+      // Prefer the current segment (ends at the moment the user pressed save);
+      // fall back to last full cycle if the current one produced no data.
+      const blob = this._pendingBlob || this._lastBlob;
       if (blob) {
         this._clipBlob = blob;
         this._clipUrl = URL.createObjectURL(blob);
