@@ -151,11 +151,17 @@ export class BikeModel {
       this.speed *= (1 + 0.3 * (1 - centerDist / 0.5) * dt); // gentle boost
     }
 
-    // Grass drag: off-road surface slows you down — more pedaling required
+    // Road-edge drag: drifting toward the edges of the dirt path slows you
+    if (centerDist > 0.5 && centerDist <= 2.5 && this.speed > 0) {
+      const edgeFrac = (centerDist - 0.5) / 2.0; // 0→1 across road width
+      this.speed *= (1 - edgeFrac * 0.8 * dt);    // moderate drag near edges
+    }
+
+    // Grass drag: off-road surface slows you down significantly
     const offRoadDrag = Math.max(0, centerDist - 2.5);
     if (offRoadDrag > 0 && this.speed > 0) {
-      const dragIntensity = Math.min(offRoadDrag / 5, 1); // 0→1 over 5 units
-      this.speed *= (1 - dragIntensity * 0.4 * dt);       // mild extra friction
+      const dragIntensity = Math.min(offRoadDrag / 3, 1); // 0→1 over 3 units
+      this.speed *= (1 - dragIntensity * 1.5 * dt);       // strong off-road friction
     }
 
     this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
