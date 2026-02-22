@@ -118,6 +118,12 @@ class Game {
       this._returnToLobby();
     });
 
+    // Return to lobby from reconnect overlay
+    document.getElementById('btn-reconnect-lobby').addEventListener('click', () => {
+      document.getElementById('reconnect-overlay').style.display = 'none';
+      this._returnToLobby();
+    });
+
     // Game state
     this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing'
     this.countdownTimer = 0;
