@@ -484,6 +484,22 @@ class Game {
   }
 
   // ============================================================
+  // TREE COLLISION
+  // ============================================================
+
+  _checkTreeCollision() {
+    if (this.bike.fallen || this.bike.speed < 0.5) return;
+    const result = this.world.checkTreeCollision(
+      this.bike.position, this.bike.roadD, this.bike.heading
+    );
+    if (result.hit) {
+      this.bike._fall();
+      this.chaseCamera.shakeAmount = 0.2;
+      this._playBeep(200, 0.3);
+    }
+  }
+
+  // ============================================================
   // MAIN LOOP
   // ============================================================
 
@@ -544,7 +560,13 @@ class Game {
     const pedalResult = this.pedalCtrl.update(dt);
     const balanceResult = this.balanceCtrl.update();
 
+    const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this._checkTreeCollision();
+
+    // Auto-reset after crash recovery
+    if (wasFallen && !this.bike.fallen) { this._resetGame(); return; }
+
     this.grassParticles.update(this.bike, dt);
     this.world.update(this.bike.position, this.bike.roadD);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
@@ -589,7 +611,13 @@ class Game {
       (balanceResult.leanInput + this.remoteLean) * 0.5
     ));
 
+    const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this._checkTreeCollision();
+
+    // Auto-reset after crash recovery
+    if (wasFallen && !this.bike.fallen) { this._resetGame(); return; }
+
     this.grassParticles.update(this.bike, dt);
 
     // Send state + lean to stoker at 20Hz

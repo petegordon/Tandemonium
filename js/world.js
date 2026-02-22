@@ -253,6 +253,37 @@ export class World {
     this.scene.add(hemi);
   }
 
+  checkTreeCollision(bikePos, bikeD, bikeHeading) {
+    const L = this.roadPath.loopLength;
+    const headX = bikePos.x + Math.sin(bikeHeading) * 2;
+    const headZ = bikePos.z + Math.cos(bikeHeading) * 2;
+
+    for (const slot of this._treePool) {
+      if (!slot.active || !slot.trunk.visible) continue;
+
+      // Quick road-distance filter (wrap-aware)
+      let dd = slot.roadD - bikeD;
+      if (dd < -L / 2) dd += L;
+      if (dd > L / 2) dd -= L;
+      if (Math.abs(dd) > 20) continue;
+
+      const tx = slot.trunk.position.x;
+      const tz = slot.trunk.position.z;
+      const r = 0.6 * slot.scale;
+
+      // Check bike center
+      const dx1 = bikePos.x - tx;
+      const dz1 = bikePos.z - tz;
+      if (dx1 * dx1 + dz1 * dz1 < r * r) return { hit: true, tree: slot };
+
+      // Check front of bike (2m ahead)
+      const dx2 = headX - tx;
+      const dz2 = headZ - tz;
+      if (dx2 * dx2 + dz2 * dz2 < r * r) return { hit: true, tree: slot };
+    }
+    return { hit: false, tree: null };
+  }
+
   update(bikePos, bikeD) {
     // Default bikeD from position if not provided (backward compat)
     if (bikeD === undefined) {

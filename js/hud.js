@@ -7,7 +7,8 @@ import { isMobile } from './config.js';
 export class HUD {
   constructor(input) {
     this.input = input;
-    this.speedEl = document.getElementById('speed-display');
+    this.speedValueEl = document.getElementById('speed-value');
+    this.speedBarFill = document.getElementById('speed-bar-fill');
     this.distanceEl = document.getElementById('distance-display');
     this.statusEl = document.getElementById('status');
     this.crashOverlay = document.getElementById('crash-overlay');
@@ -27,6 +28,7 @@ export class HUD {
     this.partnerPedalUp = document.getElementById('partner-pedal-up');
     this.partnerPedalDown = document.getElementById('partner-pedal-down');
     this._lastRemoteTapTime = 0;
+    this._lastRemoteFootValue = null;
     this._pedalFlashTimer = 0;
 
     // Touch buttons
@@ -37,8 +39,32 @@ export class HUD {
 
   update(bike, input, pedalCtrl, dt, remoteData) {
     const kmh = Math.round(bike.speed * 3.6);
-    this.speedEl.textContent = 'Speed: ' + kmh + ' km/h';
-    this.distanceEl.textContent = 'Distance: ' + Math.round(bike.distanceTraveled) + ' m';
+    const maxKmh = 58;
+
+    // Speed number + color coding
+    this.speedValueEl.textContent = kmh;
+    if (kmh > 35) {
+      this.speedValueEl.style.color = '#00e040';
+      this.speedBarFill.style.background = '#00e040';
+    } else if (kmh > 15) {
+      this.speedValueEl.style.color = '#88ff88';
+      this.speedBarFill.style.background = '#88ff88';
+    } else {
+      this.speedValueEl.style.color = '#ffffff';
+      this.speedBarFill.style.background = '#ffffff';
+    }
+
+    // Speed bar
+    const pct = Math.min(100, (kmh / maxKmh) * 100);
+    this.speedBarFill.style.width = pct + '%';
+
+    // Distance: "m" under 1000, "km" above
+    const dist = bike.distanceTraveled;
+    if (dist >= 1000) {
+      this.distanceEl.textContent = (dist / 1000).toFixed(2) + ' km';
+    } else {
+      this.distanceEl.textContent = Math.round(dist) + ' m';
+    }
 
     const leftHeld = input.isPressed('ArrowUp');
     const rightHeld = input.isPressed('ArrowDown');
@@ -65,6 +91,11 @@ export class HUD {
 
       this.touchLeftEl.className = lClass;
       this.touchRightEl.className = rClass;
+
+      // Idle pulse when stopped and buttons are neutral
+      const isIdle = bike.speed < 0.3 && !leftHeld && !rightHeld;
+      this.touchLeftEl.classList.toggle('idle-pulse', isIdle);
+      this.touchRightEl.classList.toggle('idle-pulse', isIdle);
     }
 
     // Phone gauge (show on both mobile and desktop)
@@ -124,20 +155,23 @@ export class HUD {
       this.partnerNeedle.setAttribute('transform', 'rotate(' + partnerDeg.toFixed(1) + ', 60, 60)');
       this.partnerLabel.textContent = Math.abs(partnerDeg).toFixed(1) + '\u00B0';
 
-      // Pedal flash: detect new taps
+      // Pedal flash: detect new taps, red for wrong (same foot repeated)
       if (remoteData.remoteLastTapTime && remoteData.remoteLastTapTime !== this._lastRemoteTapTime) {
+        const isWrong = this._lastRemoteFootValue !== null && remoteData.remoteLastFoot === this._lastRemoteFootValue;
         this._lastRemoteTapTime = remoteData.remoteLastTapTime;
+        this._lastRemoteFootValue = remoteData.remoteLastFoot;
         this._pedalFlashTimer = 0.3;
-        // Show correct indicator
-        if (this.partnerPedalUp) this.partnerPedalUp.classList.toggle('flash', remoteData.remoteLastFoot === 'up');
-        if (this.partnerPedalDown) this.partnerPedalDown.classList.toggle('flash', remoteData.remoteLastFoot === 'down');
+        const cls = isWrong ? 'flash-wrong' : 'flash';
+        this._pedalFlashClass = cls;
+        if (this.partnerPedalUp) { this.partnerPedalUp.classList.remove('flash', 'flash-wrong'); this.partnerPedalUp.classList.toggle(cls, remoteData.remoteLastFoot === 'up'); }
+        if (this.partnerPedalDown) { this.partnerPedalDown.classList.remove('flash', 'flash-wrong'); this.partnerPedalDown.classList.toggle(cls, remoteData.remoteLastFoot === 'down'); }
       }
       if (this._pedalFlashTimer > 0) {
         this._pedalFlashTimer -= dt;
         if (this._pedalFlashTimer <= 0) {
           this._pedalFlashTimer = 0;
-          if (this.partnerPedalUp) this.partnerPedalUp.classList.remove('flash');
-          if (this.partnerPedalDown) this.partnerPedalDown.classList.remove('flash');
+          if (this.partnerPedalUp) this.partnerPedalUp.classList.remove('flash', 'flash-wrong');
+          if (this.partnerPedalDown) this.partnerPedalDown.classList.remove('flash', 'flash-wrong');
         }
       }
     } else if (this.partnerGauge) {

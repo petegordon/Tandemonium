@@ -23,12 +23,56 @@
     pointer-events: none;
     z-index: 10;
   }
-  #hud-top-left {
+  #hud-dashboard {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 3px;
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 8px 14px 7px;
+  }
+  #speed-row {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  #speed-value {
+    font-size: 28px;
+    font-weight: 700;
     color: #fff;
-    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    transition: color 0.2s;
+  }
+  #speed-unit {
+    font-size: 11px;
     font-weight: 600;
-    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
-    line-height: 1.5;
+    color: rgba(255,255,255,0.5);
+  }
+  #speed-bar-wrap {
+    width: 100%;
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #speed-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 2px;
+    background: #fff;
+    transition: width 0.15s, background 0.2s;
+  }
+  #distance-row {
+    display: flex;
+  }
+  #distance-display {
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.45);
   }
 
   /* ── Bottom HUD: gauge bar + pedal buttons ── */
@@ -97,6 +141,12 @@
     background: rgba(170,102,255,0.5);
     border-color: rgba(170,102,255,0.8);
     box-shadow: 0 0 8px rgba(170,102,255,0.5);
+  }
+  .pedal-indicator.flash-wrong {
+    color: #fff;
+    background: rgba(220,60,40,0.5);
+    border-color: rgba(220,60,40,0.8);
+    box-shadow: 0 0 8px rgba(220,60,40,0.5);
   }
 
   /* ── Status text (center) ── */
@@ -242,40 +292,90 @@
     width: 100%;
   }
   .pedal-touch {
+    position: relative;
     width: 45%;
     height: 18vh;
     min-height: 80px;
     max-height: 140px;
-    border-radius: 16px;
-    border: 3px solid rgba(255,255,255,0.5);
-    background: rgba(255,255,255,0.15);
+    border-radius: 24px;
+    border: 2.5px solid rgba(255,255,255,0.35);
+    background: linear-gradient(to bottom, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.08) 100%);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
+    box-shadow:
+      0 4px 0 rgba(0,0,0,0.25),
+      inset 0 1px 0 rgba(255,255,255,0.3),
+      0 2px 10px rgba(0,0,0,0.2);
     display: flex;
     align-items: center;
     justify-content: center;
     pointer-events: auto;
     cursor: pointer;
-    transition: background 0.08s, border-color 0.08s;
+    transition: background 0.08s, border-color 0.08s, transform 0.08s, box-shadow 0.08s;
+    transform: translateY(0);
+  }
+  #touch-left {
+    border-color: rgba(100,160,255,0.4);
+  }
+  #touch-right {
+    border-color: rgba(255,160,60,0.4);
+  }
+  .pedal-touch::after {
+    position: absolute;
+    top: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.3);
+    pointer-events: none;
+  }
+  #touch-left::after {
+    content: 'L';
+    left: 10px;
+  }
+  #touch-right::after {
+    content: 'R';
+    right: 10px;
   }
   .pedal-touch img {
-    max-width: 80%;
-    max-height: 80%;
+    max-width: 95%;
+    max-height: 95%;
     object-fit: contain;
     pointer-events: none;
     opacity: 0.85;
   }
   .pedal-touch.pressed {
-    background: rgba(60,200,80,0.4);
+    background: linear-gradient(to bottom, rgba(60,220,80,0.5) 0%, rgba(40,160,50,0.35) 100%);
     border-color: rgba(60,200,80,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.2),
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      0 1px 6px rgba(60,200,80,0.3);
   }
   .pedal-touch.wrong {
-    background: rgba(220,60,40,0.4);
+    background: linear-gradient(to bottom, rgba(230,60,40,0.5) 0%, rgba(180,40,30,0.35) 100%);
     border-color: rgba(220,60,40,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.2),
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      0 1px 6px rgba(220,60,40,0.3);
   }
   .pedal-touch.brake {
-    background: rgba(220,160,20,0.4);
+    background: linear-gradient(to bottom, rgba(230,170,20,0.5) 0%, rgba(180,130,15,0.35) 100%);
     border-color: rgba(220,160,20,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.2),
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      0 1px 6px rgba(220,160,20,0.3);
+  }
+  .pedal-touch.idle-pulse {
+    animation: pedal-glow 2s ease-in-out infinite;
+  }
+  @keyframes pedal-glow {
+    0%, 100% { box-shadow: 0 4px 0 rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.3), 0 2px 10px rgba(0,0,0,0.2); }
+    50% { box-shadow: 0 4px 0 rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 16px rgba(255,255,255,0.15); }
   }
 
   /* ── Crash flash overlay ── */
@@ -347,10 +447,26 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     background: rgba(0,0,0,0.85);
     z-index: 55;
-    padding: 30px;
+    padding: 0 0 30px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #lobby-banner {
+    width: 100%;
+    height: auto;
+    border-radius: 0 0 16px 16px;
+    flex-shrink: 0;
+    margin-bottom: 10px;
+  }
+  #lobby-banner-bottom {
+    width: 100%;
+    height: auto;
+    border-radius: 0;
+    flex-shrink: 0;
+    margin-top: 10px;
   }
   .lobby-card {
     text-align: center;
@@ -559,6 +675,64 @@
   #conn-badge #conn-type { color: #44ff66; font-weight: 700; margin-right: 4px; }
 
   /* ── Surface indicator ── */
+  /* ── Lobby credits line ── */
+  .lobby-credits {
+    margin-top: 18px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+  }
+  .lobby-credits-btn {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.4);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0 2px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lobby-credits-btn:active { color: rgba(255,255,255,0.7); }
+
+  /* ── Credits modal ── */
+  #credits-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+  }
+  #credits-modal.visible {
+    display: flex;
+  }
+  #credits-modal-inner {
+    background: rgba(30,30,30,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 14px;
+    padding: 28px 24px;
+    max-width: 320px;
+    width: 90%;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: rgba(255,255,255,0.8);
+    text-align: center;
+  }
+  #credits-modal-inner h3 {
+    margin-bottom: 12px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+  }
+  #credits-modal-inner a {
+    color: #44ff66;
+    text-decoration: none;
+  }
+  #credits-modal-inner a:hover {
+    text-decoration: underline;
+  }
+
   /* ── Gamepad badge ── */
   #gamepad-badge {
     position: fixed;
@@ -583,9 +757,15 @@
 
 <!-- HUD: top bar -->
 <div id="hud-top">
-  <div id="hud-top-left">
-    <div id="speed-display">Speed: 0 km/h</div>
-    <div id="distance-display">Distance: 0 m</div>
+  <div id="hud-dashboard">
+    <div id="speed-row">
+      <span id="speed-value">0</span>
+      <span id="speed-unit">km/h</span>
+    </div>
+    <div id="speed-bar-wrap"><div id="speed-bar-fill"></div></div>
+    <div id="distance-row">
+      <span id="distance-display">0 m</span>
+    </div>
   </div>
 </div>
 
@@ -668,8 +848,8 @@ ON</button>
     <div class="pedal-indicator" id="partner-pedal-down">&#9660;</div>
   </div>
   <div id="pedal-bar">
-    <div class="pedal-touch" id="touch-left"><img src="images/left_pedal.png" alt="Left Pedal"></div>
-    <div class="pedal-touch" id="touch-right"><img src="images/right_pedal.png" alt="Right Pedal"></div>
+    <div class="pedal-touch" id="touch-left"><img src="images/pedal_left.png" alt="Left Pedal"></div>
+    <div class="pedal-touch" id="touch-right"><img src="images/pedal_right.png" alt="Right Pedal"></div>
   </div>
 </div>
 
@@ -689,8 +869,8 @@ ON</button>
 
 <!-- Lobby overlay -->
 <div id="lobby">
+  <img id="lobby-banner" src="images/tandemonium_title.png" alt="Tandemonium">
   <div class="lobby-card">
-    <h1>Tandemonium</h1>
     <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
     <p class="lobby-version" id="lobby-version">v.7fd2d9b | 02-19-2026 18:47</p>
 
@@ -729,8 +909,31 @@ ON</button>
       <div id="join-status" class="conn-status"></div>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
+
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button></p>
+  </div>
+  <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
+</div>
+
+<!-- Credits modal -->
+<div id="credits-modal">
+  <div id="credits-modal-inner">
+    <h3>Credits</h3>
+    <p>
+      <a href="https://skfb.ly/pqIJQ" target="_blank" rel="noopener">"Tandem bicycle"</a>
+      by <strong>Sameer.Rayeen</strong> is licensed under
+      <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">Creative Commons Attribution</a>.
+    </p>
   </div>
 </div>
+<script>
+(function() {
+  var btn = document.getElementById('credits-btn');
+  var modal = document.getElementById('credits-modal');
+  btn.addEventListener('click', function(e) { e.stopPropagation(); modal.classList.add('visible'); });
+  modal.addEventListener('click', function() { modal.classList.remove('visible'); });
+})();
+</script>
 
 <!-- Reconnect overlay (shown during retry attempts) -->
 <div id="reconnect-overlay" style="display:none;">

@@ -1,6 +1,8 @@
 # Tandemonium
 
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/70553ae9-f150-47a7-946a-2dd02b066b9a" />
+![Tandemonium](images/tandemonium_title.png)
+
+![Tandemonium Actions](images/tandemonium_three_actions.png)
 
 A tandem bicycle physics game with real-time P2P multiplayer. Solo or ride together — one screen each, coordinating pedaling and balance over the network.
 
