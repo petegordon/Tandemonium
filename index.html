@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Tandemonium — Portrait</title>
+<title>Tandemonium</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -736,6 +736,121 @@
     text-decoration: underline;
   }
 
+  /* ── Share / Record button ── */
+  #share-btn {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 110px);
+    left: 14px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 20px;
+    display: none;
+    text-align: center;
+    line-height: 44px;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 12;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #share-btn:active {
+    background: rgba(255,60,60,0.5);
+    border-color: rgba(255,60,60,0.8);
+  }
+
+  /* ── Selfie / Partner PiP ── */
+  .pip-wrap {
+    position: fixed;
+    z-index: 11;
+    display: none;
+    pointer-events: none;
+    text-align: center;
+  }
+  #selfie-pip-wrap {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
+    left: 14px;
+  }
+  #partner-pip-wrap {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
+    right: 14px;
+  }
+  .pip-video {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 2.5px solid #fff;
+    object-fit: cover;
+    display: block;
+    background: #000;
+  }
+  .pip-label {
+    display: block;
+    font-size: 9px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    margin-top: 3px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Clip preview modal ── */
+  #clip-preview-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 200;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #clip-preview-modal.visible {
+    display: flex;
+  }
+  #clip-preview {
+    max-width: 90%;
+    max-height: 55vh;
+    border-radius: 12px;
+    background: #000;
+    margin-bottom: 20px;
+  }
+  .clip-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .clip-btn {
+    padding: 12px 24px;
+    border-radius: 10px;
+    border: 1.5px solid rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .clip-btn:active {
+    background: rgba(255,255,255,0.25);
+  }
+  .clip-btn-share {
+    background: rgba(60,200,80,0.25);
+    border-color: rgba(60,200,80,0.6);
+  }
+  .clip-btn-discard {
+    background: rgba(255,60,60,0.15);
+    border-color: rgba(255,60,60,0.4);
+  }
+
   /* ── Gamepad badge ── */
   #gamepad-badge {
     position: fixed;
@@ -770,6 +885,19 @@
       <span id="distance-display">0 m</span>
     </div>
   </div>
+</div>
+
+<!-- Share button (recording) -->
+<button id="share-btn" aria-label="Share clip">&#x1F3AC;</button>
+
+<!-- Selfie & partner PiP videos -->
+<div id="selfie-pip-wrap" class="pip-wrap">
+  <video id="selfie-pip" class="pip-video" playsinline muted></video>
+  <span class="pip-label" id="selfie-pip-label"></span>
+</div>
+<div id="partner-pip-wrap" class="pip-wrap">
+  <video id="partner-pip" class="pip-video" playsinline muted></video>
+  <span class="pip-label" id="partner-pip-label"></span>
 </div>
 
 <div id="status"></div>
@@ -912,7 +1040,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.b10a395 | 02-21-2026 20:55</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.3c60d52 | 02-21-2026 22:23</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -936,6 +1064,16 @@ ON</button>
   modal.addEventListener('click', function() { modal.classList.remove('visible'); });
 })();
 </script>
+
+<!-- Clip preview modal -->
+<div id="clip-preview-modal">
+  <video id="clip-preview" playsinline loop></video>
+  <div class="clip-actions">
+    <button class="clip-btn clip-btn-share" id="clip-share-btn">SHARE</button>
+    <button class="clip-btn" id="clip-save-btn">SAVE</button>
+    <button class="clip-btn clip-btn-discard" id="clip-discard-btn">DISCARD</button>
+  </div>
+</div>
 
 <!-- Reconnect overlay (shown during retry attempts) -->
 <div id="reconnect-overlay" style="display:none;">

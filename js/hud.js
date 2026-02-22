@@ -76,14 +76,10 @@ export class HUD {
       let rClass = 'pedal-touch';
 
       const wasBrake = pedalCtrl.wasBrake || false;
-      const wasInPhase = pedalCtrl.wasInPhase || false;
 
       if (braking || wasBrake) {
         lClass += ' brake';
         rClass += ' brake';
-      } else if (wasInPhase) {
-        if (leftHeld) lClass += ' wrong';
-        if (rightHeld) rClass += ' wrong';
       } else {
         if (leftHeld) lClass += (pedalCtrl.wasWrong ? ' wrong' : ' pressed');
         if (rightHeld) rClass += (pedalCtrl.wasWrong ? ' wrong' : ' pressed');

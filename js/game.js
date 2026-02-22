@@ -15,6 +15,7 @@ import { World } from './world.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
+import { GameRecorder } from './game-recorder.js';
 
 class Game {
   constructor() {
@@ -46,6 +47,7 @@ class Game {
     this.chaseCamera = new ChaseCamera(this.camera);
     this.hud = new HUD(this.input);
     this.grassParticles = new GrassParticles(this.scene);
+    this.recorder = new GameRecorder(this.renderer.domElement);
 
     // Mode
     this.mode = 'solo'; // 'solo' | 'captain' | 'stoker'
@@ -61,6 +63,13 @@ class Game {
     this._leanSendInterval = 1 / 20; // 20Hz
     this._mpPrevUp = false;
     this._mpPrevDown = false;
+
+    // Recording partner pedal flash tracking
+    this._recLastTapTime = 0;
+    this._recLastFoot = null;
+    this._recFlashTimer = 0;
+    this._recFlashFoot = null;
+    this._recFlashWrong = false;
 
     // D-pad edge detection for gameplay buttons
     this._dpadPrevUp = false;
@@ -180,6 +189,9 @@ class Game {
       } else if (eventType === EVT_START) {
         // Stoker receives GO from captain
         this.state = 'playing';
+        this.recorder.setLabels(this.mode);
+        this.recorder.startBuffer();
+        this.recorder.startSelfie();
         const statusEl = document.getElementById('status');
         statusEl.textContent = 'GO!';
         statusEl.style.color = '#44ff66';
@@ -208,10 +220,22 @@ class Game {
 
     this.net.onDisconnected = (reason) => {
       this._hideReconnecting();
+      this.recorder.clearPartnerStream();
       if (this.state !== 'lobby') {
         this._showDisconnect(reason);
       }
     };
+
+    // Video call: when partner's video stream arrives
+    this.net.onRemoteStream = (remoteStream) => {
+      this.recorder.setPartnerStream(remoteStream);
+    };
+
+    // Initiate video call now — connection is already open
+    // (lobby waits 1s after conn.on('open') before calling _onMultiplayerReady)
+    if (mode === 'captain') {
+      this._initiateVideoCall();
+    }
 
     // Update partner gauge label to show partner's role
     const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
@@ -251,6 +275,10 @@ class Game {
         await this.input.requestMotionPermission();
       }
 
+      // Remove document-level start handlers now that we've started
+      document.removeEventListener('touchstart', handler);
+      document.removeEventListener('click', handler);
+
       // In multiplayer, only captain initiates countdown
       // Stoker waits for EVT_COUNTDOWN from captain
       if (this.mode === 'stoker') {
@@ -264,8 +292,6 @@ class Game {
       }
 
       this._startCountdown();
-      document.removeEventListener('touchstart', handler);
-      document.removeEventListener('click', handler);
     };
 
     const handler = (e) => {
@@ -329,6 +355,9 @@ class Game {
       statusEl.style.color = '#44ff66';
       this.state = 'playing';
       this._playBeep(800, 0.4);
+      this.recorder.setLabels(this.mode);
+      this.recorder.startBuffer();
+      this.recorder.startSelfie();
 
       // Captain sends EVT_START to stoker
       if (this.mode === 'captain' && this.net) {
@@ -429,6 +458,9 @@ class Game {
   }
 
   _returnToLobby() {
+    this.recorder.stopBuffer();
+    this.recorder.stopSelfie();
+    this.recorder.clearPartnerStream();
     if (this.net) { this.net.destroy(); this.net = null; }
     this.mode = 'solo';
     this.sharedPedal = null;
@@ -451,6 +483,91 @@ class Game {
 
     this.state = 'lobby';
     this.lobby.show();
+  }
+
+  async _initiateVideoCall() {
+    if (!this.net || !this.net.peer) return;
+    try {
+      const localStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: 240, height: 240 },
+        audio: false
+      });
+      const remotePeerId = this.net.conn && this.net.conn.peer;
+      if (remotePeerId && this.net.peer) {
+        const call = this.net.peer.call(remotePeerId, localStream);
+        if (call) {
+          call.on('stream', (stream) => {
+            this.recorder.setPartnerStream(stream);
+          });
+        }
+      }
+    } catch (e) {
+      // Camera denied — continue without video
+    }
+  }
+
+  _buildRecordState(pedalCtrl, remoteData) {
+    const leftPressed = this.input.isPressed('ArrowUp');
+    const rightPressed = this.input.isPressed('ArrowDown');
+    const braking = leftPressed && rightPressed;
+
+    let pedalState = 'normal';
+    if (braking || pedalCtrl.wasBrake) {
+      pedalState = 'brake';
+    } else if (pedalCtrl.wasWrong) {
+      pedalState = 'wrong';
+    }
+
+    // Track partner pedal flash for recording (mirrors HUD logic)
+    if (remoteData && remoteData.remoteLastTapTime && remoteData.remoteLastTapTime !== this._recLastTapTime) {
+      const isWrong = this._recLastFoot !== null && remoteData.remoteLastFoot === this._recLastFoot;
+      this._recLastTapTime = remoteData.remoteLastTapTime;
+      this._recLastFoot = remoteData.remoteLastFoot;
+      this._recFlashTimer = 0.3;
+      this._recFlashFoot = remoteData.remoteLastFoot;
+      this._recFlashWrong = isWrong;
+    }
+    if (this._recFlashTimer > 0) {
+      this._recFlashTimer -= (1 / 60); // approximate dt
+    }
+    const flashing = this._recFlashTimer > 0;
+
+    // YOU gauge angle (phone tilt / gamepad / keyboard)
+    let youDeg = 0;
+    if (isMobile) {
+      youDeg = Math.max(-90, Math.min(90, this.input.motionRawRelative || 0));
+    } else if (this.input.gamepadConnected) {
+      youDeg = this.input.gamepadLean * 90;
+    } else {
+      const aHeld = this.input.isPressed('KeyA');
+      const dHeld = this.input.isPressed('KeyD');
+      youDeg = aHeld ? -45 : (dHeld ? 45 : 0);
+    }
+
+    // BIKE gauge angle + danger level
+    const bikeLeanRad = this.bike.lean;
+    const bikeDeg = Math.max(-90, Math.min(90, bikeLeanRad * 180 / Math.PI));
+    const bikeDanger = Math.abs(bikeLeanRad) / 1.35;
+
+    // PARTNER gauge angle
+    const partnerDeg = remoteData ? Math.max(-90, Math.min(90, remoteData.remoteLean * 90)) : 0;
+
+    return {
+      speed: this.bike.speed,
+      distance: this.bike.distanceTraveled,
+      leftPressed,
+      rightPressed,
+      pedalState,
+      partnerUpFlash: flashing && this._recFlashFoot === 'up',
+      partnerDownFlash: flashing && this._recFlashFoot === 'down',
+      partnerFlashWrong: flashing && this._recFlashWrong,
+      mode: this.mode,
+      youDeg,
+      bikeDeg,
+      bikeDanger,
+      partnerDeg,
+      hasPartner: !!remoteData
+    };
   }
 
   _pollDpad() {
@@ -578,6 +695,7 @@ class Game {
 
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
     this.renderer.render(this.scene, this.camera);
+    this.recorder.composite(this._buildRecordState(this.pedalCtrl));
   }
 
   // ============================================================
@@ -639,6 +757,7 @@ class Game {
     const remoteData = { remoteLean: this.remoteLean, remoteLastFoot: this._remoteLastFoot, remoteLastTapTime: this._remoteLastTapTime };
     this.hud.update(this.bike, this.input, this.sharedPedal, dt, remoteData);
     this.renderer.render(this.scene, this.camera);
+    this.recorder.composite(this._buildRecordState(this.sharedPedal, remoteData));
   }
 
   // ============================================================
@@ -690,6 +809,7 @@ class Game {
     const remoteData = { remoteLean: this.remoteLean, remoteLastFoot: this._remoteLastFoot, remoteLastTapTime: this._remoteLastTapTime };
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     this.renderer.render(this.scene, this.camera);
+    this.recorder.composite(this._buildRecordState(this.pedalCtrl, remoteData));
   }
 
   // ============================================================
