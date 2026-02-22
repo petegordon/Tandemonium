@@ -673,6 +673,19 @@
     animation: pulse 1.5s ease-in-out infinite;
   }
 
+  /* ── Game Over overlay ── */
+  #gameover-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+  }
+
   /* ── Disconnect overlay ── */
   #disconnect-overlay {
     position: fixed;
@@ -1116,7 +1129,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.d39d965 | 02-22-2026 11:52</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.f43d54b | 02-22-2026 12:18</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -1148,6 +1161,15 @@ ON</button>
     <button class="clip-btn clip-btn-share" id="clip-share-btn">SHARE</button>
     <button class="clip-btn" id="clip-save-btn">SAVE</button>
     <button class="clip-btn clip-btn-discard" id="clip-discard-btn">DISCARD</button>
+  </div>
+</div>
+
+<!-- Game Over overlay -->
+<div id="gameover-overlay" style="display:none;">
+  <div class="disconnect-box">
+    <p style="color:#ff4444">GAME OVER</p>
+    <button class="lobby-btn lobby-btn-accent" id="btn-restart">RESTART</button>
+    <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">GO TO LOBBY</button>
   </div>
 </div>
 

@@ -19,5 +19,6 @@ export const EVT_COUNTDOWN = 0x01;
 export const EVT_START     = 0x02;
 export const EVT_CRASH     = 0x03;
 export const EVT_RESET     = 0x04;
+export const EVT_GAMEOVER  = 0x05;
 
 export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';

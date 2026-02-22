@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET } from './config.js';
+import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER } from './config.js';
 import { InputManager } from './input-manager.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
@@ -63,6 +63,7 @@ class Game {
     this._leanSendInterval = 1 / 20; // 20Hz
     this._mpPrevUp = false;
     this._mpPrevDown = false;
+    this._stokerWasFallen = false;
 
     // Recording partner pedal flash tracking
     this._recLastTapTime = 0;
@@ -118,6 +119,18 @@ class Game {
       this._returnToLobby();
     });
 
+    // Game Over: restart
+    document.getElementById('btn-restart').addEventListener('click', () => {
+      this._hideGameOver();
+      this._resetGame();
+    });
+
+    // Game Over: return to lobby
+    document.getElementById('btn-gameover-lobby').addEventListener('click', () => {
+      this._hideGameOver();
+      this._returnToLobby();
+    });
+
     // Return to lobby from reconnect overlay
     document.getElementById('btn-reconnect-lobby').addEventListener('click', () => {
       document.getElementById('reconnect-overlay').style.display = 'none';
@@ -125,7 +138,7 @@ class Game {
     });
 
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'gameover'
     this.countdownTimer = 0;
     this._lastCountNum = 3;
     this.instructionsEl = document.getElementById('instructions');
@@ -207,7 +220,10 @@ class Game {
           }
         }, 800);
       } else if (eventType === EVT_RESET) {
-        this._resetGame();
+        this._hideGameOver();
+        this._resetGame(true);
+      } else if (eventType === EVT_GAMEOVER) {
+        this._showGameOver(true);
       }
     };
 
@@ -423,9 +439,10 @@ class Game {
   // RESET / DISCONNECT / RETURN TO LOBBY
   // ============================================================
 
-  _resetGame() {
+  _resetGame(fromRemote = false) {
     this.bike.fullReset();
     this.grassParticles.clear();
+    this._stokerWasFallen = false;
 
     if (this.mode === 'solo') {
       this.pedalCtrl = new PedalController(this.input);
@@ -439,7 +456,7 @@ class Game {
       this.input.motionOffset = this.input.rawGamma;
     }
 
-    if (this.mode === 'captain' && this.net) {
+    if (!fromRemote && this.net) {
       this.net.sendEvent(EVT_RESET);
     }
 
@@ -477,7 +494,20 @@ class Game {
     msg.textContent = reason || 'Partner disconnected';
   }
 
+  _showGameOver(fromRemote = false) {
+    this.state = 'gameover';
+    document.getElementById('gameover-overlay').style.display = 'flex';
+    if (!fromRemote && this.net) {
+      this.net.sendEvent(EVT_GAMEOVER);
+    }
+  }
+
+  _hideGameOver() {
+    document.getElementById('gameover-overlay').style.display = 'none';
+  }
+
   _returnToLobby() {
+    this._hideGameOver();
     this.recorder.stopBuffer();
     this.recorder.stopSelfie();
     this.recorder.clearPartnerStream();
@@ -490,6 +520,7 @@ class Game {
     this._remoteLastTapTime = 0;
     this._mpPrevUp = false;
     this._mpPrevDown = false;
+    this._stokerWasFallen = false;
     this._stateSendTimer = 0;
     this._leanSendTimer = 0;
     document.getElementById('conn-badge').style.display = 'none';
@@ -698,8 +729,8 @@ class Game {
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
 
-    // Auto-reset after crash recovery
-    if (wasFallen && !this.bike.fallen) { this._resetGame(); return; }
+    // Show game over after crash recovery
+    if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
 
     this.grassParticles.update(this.bike, dt);
     this.world.update(this.bike.position, this.bike.roadD);
@@ -750,8 +781,8 @@ class Game {
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
 
-    // Auto-reset after crash recovery
-    if (wasFallen && !this.bike.fallen) { this._resetGame(); return; }
+    // Show game over after crash recovery
+    if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
 
     this.grassParticles.update(this.bike, dt);
 
@@ -803,6 +834,15 @@ class Game {
     if (state) {
       this.bike.applyRemoteState(state);
     }
+
+    // Detect crash recovery (backup for EVT_GAMEOVER)
+    if (this._stokerWasFallen && !this.bike.fallen) {
+      this._stokerWasFallen = false;
+      this._showGameOver(true); // captain already sent EVT_GAMEOVER
+      return;
+    }
+    this._stokerWasFallen = this.bike.fallen;
+
     this.grassParticles.update(this.bike, dt);
 
     // Send lean to captain at 20Hz
