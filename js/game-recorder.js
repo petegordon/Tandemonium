@@ -101,12 +101,13 @@ export class GameRecorder {
   }
 
   _getMimeType() {
-    // Prefer VP9 WebM (Chrome), fall back to VP8, then MP4 (Safari)
+    // Prefer MP4 (Safari/iOS — plays natively in Files/Photos),
+    // fall back to WebM (Chrome)
     const types = [
+      'video/mp4',
       'video/webm;codecs=vp9',
       'video/webm;codecs=vp8',
-      'video/webm',
-      'video/mp4'
+      'video/webm'
     ];
     for (const type of types) {
       if (MediaRecorder.isTypeSupported(type)) return type;
@@ -185,11 +186,9 @@ export class GameRecorder {
   // ── Audio mixing for clip recording ──
 
   addAudioStreams(localStream, remoteStream) {
-    if (!this._stream) return;
+    // Use the existing audio destination set up by startBuffer()
+    if (!this._audioCtx || !this._audioDestination) return;
     try {
-      this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      this._audioDestination = this._audioCtx.createMediaStreamDestination();
-
       if (localStream) {
         const localAudio = localStream.getAudioTracks();
         if (localAudio.length > 0) {
@@ -204,10 +203,6 @@ export class GameRecorder {
             .connect(this._audioDestination);
         }
       }
-
-      for (const track of this._audioDestination.stream.getAudioTracks()) {
-        this._stream.addTrack(track);
-      }
     } catch (e) {
       console.warn('Audio mix for recording failed:', e);
     }
@@ -218,13 +213,23 @@ export class GameRecorder {
   // Cycle every 20s: stop → save blob as _lastBlob → start fresh recorder.
   // Each blob is a complete, self-contained video file with proper headers.
 
-  startBuffer() {
+  startBuffer(audioCtx) {
     if (!this.supported || this.buffering) return;
 
     this._syncCanvasSize();
     this._stream = this.compCanvas.captureStream(30);
     this._mimeType = this._getMimeType();
     if (!this._mimeType) return;
+
+    // Set up audio mixing destination using the game's AudioContext
+    if (audioCtx) {
+      this._audioCtx = audioCtx;
+      this._audioDestination = audioCtx.createMediaStreamDestination();
+      // Add the mixed audio track to the recording stream
+      for (const track of this._audioDestination.stream.getAudioTracks()) {
+        this._stream.addTrack(track);
+      }
+    }
 
     this._pendingBlob = null;
     this._lastBlob = null;
@@ -237,6 +242,19 @@ export class GameRecorder {
 
     // Show share button
     if (this.shareBtn) this.shareBtn.style.display = 'block';
+
+    // Request mic in background (non-blocking) — game beeps still recorded without it
+    if (audioCtx) {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
+        this._micStream = micStream;
+        if (this._audioCtx && this._audioDestination) {
+          this._audioCtx.createMediaStreamSource(micStream)
+            .connect(this._audioDestination);
+        }
+      }).catch(() => {
+        // Mic denied — silently continue (game beeps still captured)
+      });
+    }
   }
 
   _startFreshRecorder() {
@@ -290,6 +308,14 @@ export class GameRecorder {
     this.buffering = false;
     this._pendingBlob = null;
     this._lastBlob = null;
+
+    // Stop mic stream (AudioContext is owned by game.js, don't close it)
+    if (this._micStream) {
+      this._micStream.getTracks().forEach(t => t.stop());
+      this._micStream = null;
+    }
+    this._audioDestination = null;
+    this._audioCtx = null;
 
     // Hide share button (unless preview modal is open)
     if (this.shareBtn && !this._clipUrl) {
@@ -1105,10 +1131,13 @@ export class GameRecorder {
   // ── Cleanup ──
 
   destroy() {
+    if (this._micStream) {
+      this._micStream.getTracks().forEach(t => t.stop());
+      this._micStream = null;
+    }
     this.stopBuffer();
     this.stopSelfie();
     this.clearPartnerStream();
     this._discardClip();
-    if (this._audioCtx) { this._audioCtx.close().catch(() => {}); this._audioCtx = null; }
   }
 }

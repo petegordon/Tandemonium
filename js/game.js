@@ -345,18 +345,19 @@ class Game {
     statusEl.textContent = '3';
     this._lastCountNum = 3;
 
-    // Start recording + selfie immediately so they're visible during countdown
-    this.recorder.setLabels(this.mode);
-    this.recorder.startBuffer();
-    if (this.lobby.cameraActive) this.recorder.startSelfie();
-
-    // Init audio
+    // Init audio before recording so beeps are captured
     try {
       if (!this.audioCtx) {
         this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
-      this._playBeep(400, 0.15);
     } catch (e) {}
+
+    // Start recording + selfie immediately so they're visible during countdown
+    this.recorder.setLabels(this.mode);
+    this.recorder.startBuffer(this.audioCtx);
+    if (this.lobby.cameraActive) this.recorder.startSelfie();
+
+    this._playBeep(400, 0.15);
 
     // Captain notifies stoker
     if (this.mode === 'captain' && this.net) {
@@ -405,6 +406,10 @@ class Game {
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
+      // Also route to recording audio destination (captures beeps in clips)
+      if (this.recorder && this.recorder._audioDestination) {
+        gain.connect(this.recorder._audioDestination);
+      }
       osc.frequency.value = freq;
       osc.type = 'square';
       gain.gain.setValueAtTime(0.12, ctx.currentTime);
