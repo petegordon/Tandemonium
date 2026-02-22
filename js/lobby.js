@@ -19,6 +19,7 @@ export class Lobby {
     this.joinStep = document.getElementById('lobby-join');
 
     // Permission toggle buttons
+    this.toggleAll = document.getElementById('toggle-all');
     this.toggleCamera = document.getElementById('toggle-camera');
     this.toggleMotion = document.getElementById('toggle-motion');
     this.toggleAudio = document.getElementById('toggle-audio');
@@ -43,8 +44,8 @@ export class Lobby {
 
     // Column-based navigation for mode step
     this._modeColumns = [
-      [this.toggleCamera, this.toggleMotion, this.toggleAudio],
-      [document.getElementById('btn-solo'), document.getElementById('btn-together')],
+      [this.toggleAll, this.toggleCamera, this.toggleAudio, this.toggleMotion],
+      [document.getElementById('btn-together'), document.getElementById('btn-solo')],
     ];
     this._modeCol = 1;
     this._modeColIndex = [0, 0];
@@ -169,6 +170,7 @@ export class Lobby {
     });
 
     // Permission toggles
+    this.toggleAll.addEventListener('click', () => this._toggleAll());
     this.toggleCamera.addEventListener('click', () => this._toggleCamera());
     this.toggleMotion.addEventListener('click', () => this._toggleMotion());
     this.toggleAudio.addEventListener('click', () => this._toggleAudio());
@@ -184,6 +186,79 @@ export class Lobby {
   // Track whether the browser permission has been obtained (separate from
   // the user's on/off toggle choice). Once a browser permission is granted
   // we remember it so re-enabling doesn't re-prompt.
+
+  _toggleAll() {
+    // If ALL is active, turn everything off
+    const motionOk = !this._motionAvailable() || this.motionActive;
+    if (this.cameraActive && this.audioActive && motionOk) {
+      if (this.cameraActive) this._toggleCamera();
+      if (this.audioActive)  this._toggleAudio();
+      if (this._motionAvailable() && this.motionActive) this._toggleMotion();
+      return;
+    }
+
+    // Batch camera + mic into one getUserMedia prompt when both are needed
+    const needCam = !this.cameraActive && !this._cameraPermitted;
+    const needMic = !this.audioActive  && !this._audioPermitted;
+
+    if (needCam || needMic) {
+      const constraints = {};
+      if (needCam) constraints.video = true;
+      if (needMic) constraints.audio = true;
+      navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+        stream.getTracks().forEach(t => t.stop());
+        if (needCam) {
+          this._cameraPermitted = true;
+          this.cameraActive = true;
+          this._setToggleActive('camera', true);
+        }
+        if (needMic) {
+          this._audioPermitted = true;
+          this.audioActive = true;
+          this._setToggleActive('audio', true);
+        }
+        // Already-permitted but inactive toggles
+        if (!needCam && !this.cameraActive) this._toggleCamera();
+        if (!needMic && !this.audioActive)  this._toggleAudio();
+        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
+      }).catch(() => {
+        // Even if cam+mic fails, still try the ones that are already permitted
+        if (!this.cameraActive && this._cameraPermitted) this._toggleCamera();
+        if (!this.audioActive  && this._audioPermitted)  this._toggleAudio();
+        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
+      });
+    } else {
+      // Both cam+mic already permitted — just activate any that are off
+      if (!this.cameraActive) this._toggleCamera();
+      if (!this.audioActive)  this._toggleAudio();
+      if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
+    }
+  }
+
+  _motionAvailable() {
+    return this.toggleMotion.style.display !== 'none';
+  }
+
+  _showMotionToggle() {
+    this.toggleMotion.style.display = '';
+  }
+
+  _checkGamepadGyro() {
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[this.input.gamepadIndex];
+    if (gp && /playstation|dualsense|dualshock|054c/i.test(gp.id)) {
+      this._showMotionToggle();
+    }
+  }
+
+  _updateAllToggle() {
+    const motionOk = !this._motionAvailable() || this.motionActive;
+    if (this.cameraActive && this.audioActive && motionOk) {
+      this.toggleAll.classList.add('active');
+    } else {
+      this.toggleAll.classList.remove('active');
+    }
+  }
 
   _toggleCamera() {
     if (this.cameraActive) {
@@ -279,6 +354,7 @@ export class Lobby {
     } else {
       el.classList.remove('active');
     }
+    this._updateAllToggle();
   }
 
   _checkPermissionStates() {
@@ -306,30 +382,24 @@ export class Lobby {
       }).catch(() => {});
     }
 
-    // Motion — auto-green if sensor data or gyro already connected.
+    // Motion — only show the toggle when a real sensor source exists.
+    // Hidden by default (display:none in HTML).
     if (this.input && (this.input.motionEnabled || this.input.gyroConnected)) {
+      this._showMotionToggle();
       this._motionPermitted = true;
       this.motionActive = true;
       this._setToggleActive('motion', true);
     } else if (this.input && this.input.needsMotionPermission) {
-      // iOS: permission needed — leave button tappable but inactive
+      // iOS: permission needed — show button, leave tappable but inactive
+      this._showMotionToggle();
     } else if (this.input && this.input.gamepadConnected && navigator.hid) {
-      // Desktop with PlayStation controller: leave toggle enabled for gyro
-      const gamepads = navigator.getGamepads();
-      const gp = gamepads[this.input.gamepadIndex];
-      if (gp && /playstation|dualsense|dualshock|054c/i.test(gp.id)) {
-        // Toggle stays enabled — tapping requests WebHID gyro
-      } else {
-        this.toggleMotion.disabled = true;
-      }
-    } else if (typeof DeviceMotionEvent === 'undefined') {
-      // No API at all — disable the button
-      this.toggleMotion.disabled = true;
-    } else {
+      this._checkGamepadGyro();
+    } else if (typeof DeviceMotionEvent !== 'undefined') {
       // Desktop/Android: API exists but no data yet.
-      // Listen for first real motion event to auto-enable.
+      // Listen for first real motion event to reveal + auto-enable.
       const onFirstMotion = () => {
         if (this.input && this.input.motionEnabled) {
+          this._showMotionToggle();
           this._motionPermitted = true;
           this.motionActive = true;
           this._setToggleActive('motion', true);
@@ -338,6 +408,15 @@ export class Lobby {
       };
       window.addEventListener('devicemotion', onFirstMotion);
     }
+    // else: no DeviceMotionEvent API at all — toggle stays hidden
+
+    // Show motion toggle if a gyro-capable gamepad connects later
+    window.addEventListener('gamepadconnected', () => {
+      if (this.toggleMotion.style.display !== 'none') return;
+      if (this.input && this.input.gamepadConnected && navigator.hid) {
+        this._checkGamepadGyro();
+      }
+    });
   }
 
   _checkAutoJoin() {
@@ -516,8 +595,8 @@ export class Lobby {
     // Save current row index for the column we're leaving
     this._modeColIndex[this._modeCol] = this._focusIndex;
     this._modeCol = newCol;
-    // Restore row index for destination column (clamped)
-    const colItems = this._modeColumns[newCol];
+    // Restore row index for destination column (clamped); filter hidden buttons
+    const colItems = this._modeColumns[newCol].filter(el => el.style.display !== 'none');
     this._focusIndex = Math.min(this._modeColIndex[newCol], colItems.length - 1);
     // Update _stepItems to point at the active column's items
     this._stepItems.set(this.modeStep, colItems);

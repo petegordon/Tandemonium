@@ -461,7 +461,7 @@
     height: auto;
     border-radius: 0 0 16px 16px;
     flex-shrink: 0;
-    margin-bottom: -14px;
+    margin-bottom: -30px;
   }
   #lobby-banner-bottom {
     width: 100%;
@@ -483,7 +483,7 @@
   .lobby-subtitle {
     color: rgba(255,255,255,0.5);
     font-size: 13px;
-    margin: 0 0 10px;
+    margin: 0 0 24px;
   }
   .lobby-step {
     display: flex;
@@ -521,7 +521,7 @@
   }
   .lobby-mode-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
     width: 100%;
     max-width: 280px;
@@ -1048,25 +1048,18 @@ ON</button>
 <!-- Lobby overlay -->
 <div id="lobby">
   <img id="lobby-banner" src="images/tandemonium_title.png" alt="Tandemonium">
+  <p class="lobby-subtitle">Party Physics Game on a Tandem Bicycle</p>
   <div class="lobby-card">
-    <p class="lobby-subtitle">A Tandem Bicycle Physics Game</p>
 
     <!-- Step 1: Mode selection -->
     <div id="lobby-mode" class="lobby-step">
       <div class="lobby-mode-row">
         <div class="lobby-toggles">
+          <button class="lobby-toggle" id="toggle-all" title="All permissions" style="font-size:10px;font-weight:700;letter-spacing:0.5px">ALL</button>
           <button class="lobby-toggle" id="toggle-camera" title="Camera">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="2" y="5" width="11" height="10" rx="1.5"/>
               <path d="M13 8.5l5-2.5v8l-5-2.5"/>
-            </svg>
-          </button>
-          <button class="lobby-toggle" id="toggle-motion" title="Motion">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="6" y="2" width="8" height="16" rx="2"/>
-              <circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>
-              <path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/>
-              <path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>
             </svg>
           </button>
           <button class="lobby-toggle" id="toggle-audio" title="Audio">
@@ -1077,10 +1070,18 @@ ON</button>
               <line x1="7" y1="18" x2="13" y2="18"/>
             </svg>
           </button>
+          <button class="lobby-toggle" id="toggle-motion" title="Motion" style="display:none">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="6" y="2" width="8" height="16" rx="2"/>
+              <circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>
+              <path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/>
+              <path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>
+            </svg>
+          </button>
         </div>
         <div class="lobby-mode-buttons">
-          <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
           <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
+          <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
         </div>
       </div>
     </div>
@@ -1115,7 +1116,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.2088e0d | 02-22-2026 11:22</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.d39d965 | 02-22-2026 11:52</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
