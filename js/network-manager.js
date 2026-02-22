@@ -25,6 +25,7 @@ export class NetworkManager {
     this.onReconnecting = null;
     this.onRemoteStream = null;
     this.cameraEnabled = true; // set false to suppress local camera in calls
+    this.audioEnabled = false; // set true to include microphone in calls
     this._mediaCall = null;
     this._localMediaStream = null;
     this._heartbeatInterval = null;
@@ -361,25 +362,35 @@ export class NetworkManager {
 
   async _handleIncomingCall(call) {
     this._mediaCall = call;
-    if (this.cameraEnabled) {
+    const constraints = {};
+    if (this.cameraEnabled) constraints.video = { facingMode: 'user', width: 240, height: 240 };
+    if (this.audioEnabled) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+
+    if (constraints.video || constraints.audio) {
       try {
-        // Get local camera to answer with
-        this._localMediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: 240, height: 240 },
-          audio: false
-        });
+        this._localMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         call.answer(this._localMediaStream);
       } catch (e) {
-        // Camera denied — answer without stream
+        // Permission denied — answer without stream
         call.answer();
       }
     } else {
-      // Camera disabled by user — answer without local stream
       call.answer();
     }
+
     call.on('stream', (remoteStream) => {
+      this._playRemoteAudio(remoteStream);
       if (this.onRemoteStream) this.onRemoteStream(remoteStream);
     });
+  }
+
+  _playRemoteAudio(stream) {
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length === 0) return;
+    const audioEl = document.getElementById('partner-audio');
+    if (!audioEl) return;
+    audioEl.srcObject = stream;
+    audioEl.play().catch(() => {});
   }
 
   _connectRelay() {
@@ -416,6 +427,9 @@ export class NetworkManager {
       try { this._mediaCall.close(); } catch (e) {}
       this._mediaCall = null;
     }
+    // Stop remote audio playback
+    const audioEl = document.getElementById('partner-audio');
+    if (audioEl) { audioEl.srcObject = null; }
     if (this.conn) { try { this.conn.close(); } catch (e) {} }
     if (this.peer) { try { this.peer.destroy(); } catch (e) {} }
     if (this._relayWs) { try { this._relayWs.close(); } catch (e) {} }

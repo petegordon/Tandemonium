@@ -224,15 +224,24 @@ class Game {
       }
     };
 
-    // Video call: when partner's video stream arrives
+    // Set audio enabled from lobby toggle
+    this.net.audioEnabled = this.lobby.audioActive;
+
+    // Media call: when partner's stream arrives (video + audio)
     this.net.onRemoteStream = (remoteStream) => {
       this.recorder.setPartnerStream(remoteStream);
+      // Mix remote audio into clip recording (stoker side)
+      if (this.net._localMediaStream) {
+        this.recorder.addAudioStreams(this.net._localMediaStream, remoteStream);
+      } else {
+        this.recorder.addAudioStreams(null, remoteStream);
+      }
     };
 
-    // Initiate video call now — connection is already open
+    // Initiate media call now — connection is already open
     // (lobby waits 1s after conn.on('open') before calling _onMultiplayerReady)
-    if (mode === 'captain' && this.lobby.cameraActive) {
-      this._initiateVideoCall();
+    if (mode === 'captain' && (this.lobby.cameraActive || this.lobby.audioActive)) {
+      this._initiateMediaCall();
     }
 
     // Update partner gauge label to show partner's role
@@ -485,24 +494,28 @@ class Game {
     this.lobby.show();
   }
 
-  async _initiateVideoCall() {
+  async _initiateMediaCall() {
     if (!this.net || !this.net.peer) return;
     try {
-      const localStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: 240, height: 240 },
-        audio: false
-      });
+      const constraints = {};
+      if (this.lobby.cameraActive) constraints.video = { facingMode: 'user', width: 240, height: 240 };
+      if (this.lobby.audioActive) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      if (!constraints.video && !constraints.audio) return;
+
+      const localStream = await navigator.mediaDevices.getUserMedia(constraints);
       const remotePeerId = this.net.conn && this.net.conn.peer;
       if (remotePeerId && this.net.peer) {
         const call = this.net.peer.call(remotePeerId, localStream);
         if (call) {
-          call.on('stream', (stream) => {
-            this.recorder.setPartnerStream(stream);
+          call.on('stream', (remoteStream) => {
+            this.recorder.setPartnerStream(remoteStream);
+            this.net._playRemoteAudio(remoteStream);
+            this.recorder.addAudioStreams(localStream, remoteStream);
           });
         }
       }
     } catch (e) {
-      // Camera denied — continue without video
+      // Camera/mic denied — continue without media
     }
   }
 

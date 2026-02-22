@@ -358,6 +358,7 @@ export class Lobby {
     this.net = new NetworkManager();
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
+    this.net.audioEnabled = this.audioActive;
     const statusEl = document.getElementById('host-status');
     const codeEl = document.getElementById('room-code-display');
 
@@ -400,6 +401,7 @@ export class Lobby {
     this.net = new NetworkManager();
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
+    this.net.audioEnabled = this.audioActive;
     const statusEl = document.getElementById('join-status');
 
     statusEl.textContent = 'Connecting...';

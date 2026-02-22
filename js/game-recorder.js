@@ -37,6 +37,10 @@ export class GameRecorder {
     this.partnerLabel = document.getElementById('partner-pip-label');
     this.partnerActive = false;
 
+    // Audio mixing for clip recording
+    this._audioCtx = null;
+    this._audioDestination = null;
+
     // Pedal images (pre-loaded for canvas drawing)
     this._pedalLeftImg = new Image();
     this._pedalLeftImg.src = 'images/pedal_left.png';
@@ -176,6 +180,37 @@ export class GameRecorder {
     const partnerText = mode === 'captain' ? 'STOKER' : 'CAPTAIN';
     if (this.selfieLabel) this.selfieLabel.textContent = selfieText;
     if (this.partnerLabel) this.partnerLabel.textContent = partnerText;
+  }
+
+  // ── Audio mixing for clip recording ──
+
+  addAudioStreams(localStream, remoteStream) {
+    if (!this._stream) return;
+    try {
+      this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      this._audioDestination = this._audioCtx.createMediaStreamDestination();
+
+      if (localStream) {
+        const localAudio = localStream.getAudioTracks();
+        if (localAudio.length > 0) {
+          this._audioCtx.createMediaStreamSource(new MediaStream(localAudio))
+            .connect(this._audioDestination);
+        }
+      }
+      if (remoteStream) {
+        const remoteAudio = remoteStream.getAudioTracks();
+        if (remoteAudio.length > 0) {
+          this._audioCtx.createMediaStreamSource(new MediaStream(remoteAudio))
+            .connect(this._audioDestination);
+        }
+      }
+
+      for (const track of this._audioDestination.stream.getAudioTracks()) {
+        this._stream.addTrack(track);
+      }
+    } catch (e) {
+      console.warn('Audio mix for recording failed:', e);
+    }
   }
 
   // ── Rolling buffer ──
@@ -1074,5 +1109,6 @@ export class GameRecorder {
     this.stopSelfie();
     this.clearPartnerStream();
     this._discardClip();
+    if (this._audioCtx) { this._audioCtx.close().catch(() => {}); this._audioCtx = null; }
   }
 }
