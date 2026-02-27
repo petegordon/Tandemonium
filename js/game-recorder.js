@@ -17,9 +17,11 @@ export class GameRecorder {
     this.recorder = null;
     this._stream = null;
     this._mimeType = '';
-    this._pendingBlob = null;  // blob from current recorder cycle
-    this._lastBlob = null;     // blob from previous cycle (the one we serve)
+    this._pendingBlob = null;  // blob building in current recorder cycle
+    this._lastBlob = null;     // blob from previous completed cycle (full ~20s)
     this._cycleInterval = null;
+    this._cycleStartTime = 0;  // when current recorder cycle began
+    this._saving = false;      // true while save-clip delay is pending
     this.buffering = false;
     this.bufferDuration = 20; // seconds
 
@@ -212,6 +214,7 @@ export class GameRecorder {
   // Strategy: run MediaRecorder with NO timeslice (one blob per stop).
   // Cycle every 20s: stop → save blob as _lastBlob → start fresh recorder.
   // Each blob is a complete, self-contained video file with proper headers.
+  // On save: wait 2s for post-click footage, then pick the better blob.
 
   startBuffer(audioCtx) {
     if (!this.supported || this.buffering) return;
@@ -233,9 +236,10 @@ export class GameRecorder {
 
     this._pendingBlob = null;
     this._lastBlob = null;
+    this._saving = false;
     this.buffering = true;
 
-    this._startFreshRecorder();
+    this._startRecorder();
 
     // Cycle the recorder every bufferDuration seconds
     this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
@@ -257,7 +261,7 @@ export class GameRecorder {
     }
   }
 
-  _startFreshRecorder() {
+  _startRecorder() {
     if (!this._stream || !this._mimeType) return;
 
     try {
@@ -280,6 +284,7 @@ export class GameRecorder {
     };
 
     this.recorder.start(); // No timeslice — one complete blob per stop()
+    this._cycleStartTime = performance.now();
   }
 
   _cycleRecorder() {
@@ -289,7 +294,7 @@ export class GameRecorder {
       // Previous cycle's blob becomes the serveable clip
       this._lastBlob = this._pendingBlob;
       this._pendingBlob = null;
-      this._startFreshRecorder();
+      this._startRecorder();
     }, { once: true });
 
     this.recorder.stop();
@@ -308,6 +313,7 @@ export class GameRecorder {
     this.buffering = false;
     this._pendingBlob = null;
     this._lastBlob = null;
+    this._saving = false;
 
     // Stop mic stream (AudioContext is owned by game.js, don't close it)
     if (this._micStream) {
@@ -335,6 +341,11 @@ export class GameRecorder {
 
     // Draw game canvas
     ctx.drawImage(this.gameCanvas, 0, 0, w, h);
+
+    // ── Progress bar (top, full width) ──
+    if (state.raceDistance > 0) {
+      this._drawProgressBar(ctx, w, s, state);
+    }
 
     // ── Speed dashboard (top-left, matches #hud-dashboard) ──
     this._drawSpeedDashboard(ctx, s, state);
@@ -376,6 +387,11 @@ export class GameRecorder {
       ctx.restore();
     }
 
+    // ── Checkpoint flash ──
+    if (state.checkpointFlash >= 0) {
+      this._drawCheckpointFlash(ctx, w, h, s, state.checkpointFlash);
+    }
+
     // ── Watermark ──
     ctx.save();
     ctx.font = Math.round(9 * s) + 'px Helvetica Neue, Arial, sans-serif';
@@ -394,6 +410,18 @@ export class GameRecorder {
     const dist = state.distance || 0;
     const distText = dist >= 1000 ? (dist / 1000).toFixed(1) + ' km' : Math.round(dist) + ' m';
 
+    // Timer text + color (matches HUD: green > white > yellow > red)
+    const hasTimer = state.timerRemaining != null && state.timerRemaining >= 0;
+    let timerText = '';
+    let timerColor = '#00e040';
+    if (hasTimer) {
+      const secs = Math.max(0, Math.ceil(state.timerRemaining));
+      timerText = '\u23F1 ' + secs + 's';
+      if (state.timerRemaining <= 5) timerColor = '#ff4444';
+      else if (state.timerRemaining <= 10) timerColor = '#ffd700';
+      else if (state.timerRemaining <= 15) timerColor = '#ffffff';
+    }
+
     // Speed color coding (matches HUD)
     let speedColor = '#ffffff';
     let barColor = '#ffffff';
@@ -408,6 +436,7 @@ export class GameRecorder {
     const speedFontSize = Math.round(28 * s);
     const unitFontSize = Math.round(11 * s);
     const distFontSize = Math.round(11 * s);
+    const timerFontSize = Math.round(21 * s);
     const barH = 4 * s;
     const lineGap = 3 * s;
 
@@ -419,8 +448,14 @@ export class GameRecorder {
     const rowW = speedTextW + 4 * s + unitTextW;
     ctx.font = '500 ' + distFontSize + 'px Helvetica Neue, Arial, sans-serif';
     const distTextW = ctx.measureText(distText).width;
-    const cardW = Math.max(rowW, distTextW) + padH * 2;
-    const cardH = speedFontSize + lineGap + barH + lineGap + distFontSize + padV * 2;
+    let timerTextW = 0;
+    if (hasTimer) {
+      ctx.font = 'bold ' + timerFontSize + 'px Helvetica Neue, Arial, sans-serif';
+      timerTextW = ctx.measureText(timerText).width;
+    }
+    const cardW = Math.max(rowW, distTextW, timerTextW) + padH * 2;
+    let cardH = speedFontSize + lineGap + barH + lineGap + distFontSize + padV * 2;
+    if (hasTimer) cardH += lineGap + timerFontSize;
 
     // Card background (rgba(0,0,0,0.45) + border)
     ctx.save();
@@ -460,6 +495,74 @@ export class GameRecorder {
     ctx.fillStyle = 'rgba(255,255,255,0.45)';
     ctx.textBaseline = 'top';
     ctx.fillText(distText, px + padH, cy);
+
+    // Timer
+    if (hasTimer) {
+      cy += distFontSize + lineGap;
+      ctx.font = 'bold ' + timerFontSize + 'px Helvetica Neue, Arial, sans-serif';
+      ctx.fillStyle = timerColor;
+      ctx.textBaseline = 'top';
+      ctx.fillText(timerText, px + padH, cy);
+    }
+
+    ctx.restore();
+  }
+
+  // ── Progress bar — replicates #progress-bar-wrap ──
+
+  _drawProgressBar(ctx, w, s, state) {
+    const margin = 14 * s;
+    const barY = 4 * s;
+    const barH = 6 * s;
+    const barW = w - margin * 2;
+    const r = 3 * s;
+    const pct = Math.min(1, (state.distance || 0) / state.raceDistance);
+
+    ctx.save();
+
+    // Track background
+    this._roundRect(ctx, margin, barY, barW, barH, r,
+      'rgba(255,255,255,0.1)', 'transparent', 0);
+
+    // Fill (green gradient)
+    const fillW = pct * barW;
+    if (fillW > 1) {
+      const grad = ctx.createLinearGradient(margin, 0, margin + fillW, 0);
+      grad.addColorStop(0, '#44ff66');
+      grad.addColorStop(1, '#66ffaa');
+      this._roundRect(ctx, margin, barY, fillW, barH, r,
+        grad, 'transparent', 0);
+    }
+
+    // Checkpoint diamonds
+    if (state.checkpointPositions) {
+      for (const cp of state.checkpointPositions) {
+        const cx = margin + cp.progress * barW;
+        const cy = barY + barH / 2;
+        const diamond = 4 * s;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(Math.PI / 4);
+        ctx.fillStyle = cp.passed ? '#ffd700' : 'rgba(255,255,255,0.3)';
+        ctx.fillRect(-diamond / 2, -diamond / 2, diamond, diamond);
+        ctx.restore();
+      }
+    }
+
+    // Bike emoji at current position
+    const bikeX = margin + pct * barW;
+    const bikeY = barY + barH / 2;
+    const emojiSize = Math.round(12 * s);
+    ctx.font = emojiSize + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('\uD83D\uDEB2', bikeX, bikeY - 1 * s);
+
+    // Destination icon at end
+    if (state.levelIcon) {
+      ctx.textAlign = 'right';
+      ctx.fillText(state.levelIcon, margin + barW + 2 * s, bikeY - 1 * s);
+    }
 
     ctx.restore();
   }
@@ -833,6 +936,51 @@ export class GameRecorder {
     ctx.restore();
   }
 
+  // ── Checkpoint flash — replicates #checkpoint-flash CSS animation ──
+
+  _drawCheckpointFlash(ctx, w, h, s, progress) {
+    // Replicate @keyframes checkpointPop (1.6s total):
+    //   0%   → opacity 0, scale 0.3
+    //  15%   → opacity 1, scale 1.25
+    //  30%   → opacity 1, scale 1.0
+    //  75%   → opacity 1, scale 1.0
+    // 100%   → opacity 0, scale 2.0
+    let opacity, scale;
+    if (progress < 0.15) {
+      const t = progress / 0.15;
+      opacity = t;
+      scale = 0.3 + t * 0.95;
+    } else if (progress < 0.30) {
+      const t = (progress - 0.15) / 0.15;
+      opacity = 1;
+      scale = 1.25 - t * 0.25;
+    } else if (progress < 0.75) {
+      opacity = 1;
+      scale = 1.0;
+    } else {
+      const t = (progress - 0.75) / 0.25;
+      opacity = 1 - t;
+      scale = 1.0 + t;
+    }
+
+    if (opacity <= 0.01) return;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    const fontSize = Math.round(36 * s * scale);
+    ctx.font = 'bold ' + fontSize + 'px Helvetica Neue, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const y = h * 0.30;
+    // Text shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillText('CHECK POINT', w / 2 + 2 * s, y + 2 * s);
+    // Gold text
+    ctx.fillStyle = '#ffd700';
+    ctx.fillText('CHECK POINT', w / 2, y);
+    ctx.restore();
+  }
+
   // ── Clip preview gamepad navigation ──
 
   _startPreviewGamepadNav() {
@@ -1012,46 +1160,70 @@ export class GameRecorder {
 
   saveClip() {
     if (!this.buffering || !this.recorder) return;
+    if (this._saving) return; // prevent double-tap
 
-    // Stop the cycle timer while we handle the save
+    this._saving = true;
+
+    // Pause cycling to prevent interference during save
     if (this._cycleInterval) {
       clearInterval(this._cycleInterval);
       this._cycleInterval = null;
     }
 
-    // Stop current recorder to get its blob
-    this.recorder.addEventListener('stop', () => {
-      // Prefer the current segment (ends at the moment the user pressed save);
-      // fall back to last full cycle if the current one produced no data.
-      const blob = this._pendingBlob || this._lastBlob;
-      if (blob) {
-        this._clipBlob = blob;
-        this._clipUrl = URL.createObjectURL(blob);
-        this._showPreview();
+    // Continue recording for ~2 seconds after the click so the clip
+    // includes a moment after the button was pressed.
+    setTimeout(() => {
+      if (!this.recorder || this.recorder.state !== 'recording') {
+        // Recorder was stopped externally — use last completed cycle
+        this._saving = false;
+        const blob = this._lastBlob;
+        if (blob) {
+          this._clipBlob = blob;
+          this._clipUrl = URL.createObjectURL(blob);
+          this._showPreview();
+        }
+        this._startRecorder();
+        this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
+        return;
       }
 
-      // Reset and restart buffer immediately
-      this._pendingBlob = null;
-      this._lastBlob = null;
-      this._startFreshRecorder();
-      this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
-    }, { once: true });
+      this.recorder.addEventListener('stop', () => {
+        this._saving = false;
 
-    try {
-      this.recorder.stop();
-    } catch (e) {
-      // Fallback: use last completed cycle's blob
-      const blob = this._lastBlob;
-      if (blob) {
-        this._clipBlob = blob;
-        this._clipUrl = URL.createObjectURL(blob);
-        this._showPreview();
+        // Smart selection: use current segment if it's long enough (>=12s),
+        // otherwise use the previous full cycle (~20s).
+        const cycleAge = performance.now() - this._cycleStartTime;
+        const blob = (cycleAge >= 12000 && this._pendingBlob)
+          ? this._pendingBlob
+          : (this._lastBlob || this._pendingBlob);
+
+        if (blob) {
+          this._clipBlob = blob;
+          this._clipUrl = URL.createObjectURL(blob);
+          this._showPreview();
+        }
+
+        // Restart recording
+        this._pendingBlob = null;
+        this._startRecorder();
+        this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
+      }, { once: true });
+
+      try {
+        this.recorder.stop();
+      } catch (e) {
+        this._saving = false;
+        const blob = this._lastBlob;
+        if (blob) {
+          this._clipBlob = blob;
+          this._clipUrl = URL.createObjectURL(blob);
+          this._showPreview();
+        }
+        this._pendingBlob = null;
+        this._startRecorder();
+        this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
       }
-      this._pendingBlob = null;
-      this._lastBlob = null;
-      this._startFreshRecorder();
-      this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
-    }
+    }, 2000);
   }
 
   _showPreview() {

@@ -3,3 +3,4 @@ vendor/
 desktop/
 out/
 .env
+.DS_Store

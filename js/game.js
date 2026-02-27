@@ -78,6 +78,9 @@ class Game {
     this._recFlashFoot = null;
     this._recFlashWrong = false;
 
+    // Recording checkpoint flash tracking
+    this._checkpointFlashTime = 0;
+
     // D-pad + face button edge detection for gameplay buttons
     this._dpadPrevUp = false;
     this._dpadPrevDown = false;
@@ -123,6 +126,11 @@ class Game {
     document.getElementById('btn-return-lobby').addEventListener('click', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
       this._returnToLobby();
+    });
+
+    // Game Over: save clip
+    document.getElementById('btn-gameover-clip').addEventListener('click', () => {
+      if (this.recorder) this.recorder.saveClip();
     });
 
     // Game Over: restart
@@ -590,6 +598,8 @@ class Game {
       void el.offsetWidth; // force reflow to restart animation
       el.classList.add('animate');
     }
+    // Track for recording compositor
+    this._checkpointFlashTime = performance.now();
     // Rising chime: three ascending sine tones
     this._playChime(523, 0.25);  // C5
     setTimeout(() => this._playChime(659, 0.25), 100);  // E5
@@ -709,10 +719,17 @@ class Game {
     // Clear HUD status text so "CRASHED! Resetting..." doesn't bleed through
     document.getElementById('status').textContent = '';
     document.getElementById('gameover-overlay').style.display = 'flex';
-    this._setOverlayButtons([
-      document.getElementById('btn-restart'),
-      document.getElementById('btn-gameover-lobby')
-    ]);
+
+    // Show clip button only when recording is active
+    const clipBtn = document.getElementById('btn-gameover-clip');
+    if (clipBtn) {
+      clipBtn.style.display = (this.recorder && this.recorder.buffering) ? '' : 'none';
+    }
+
+    const btns = [clipBtn, document.getElementById('btn-restart'), document.getElementById('btn-gameover-lobby')]
+      .filter(el => el && el.style.display !== 'none');
+    this._setOverlayButtons(btns);
+
     if (!fromRemote && this.net) {
       this.net.sendEvent(EVT_GAMEOVER);
     }
@@ -1064,9 +1081,27 @@ class Game {
     // PARTNER gauge angle
     const partnerDeg = remoteData ? Math.max(-90, Math.min(90, remoteData.remoteLean * 90)) : 0;
 
+    // Checkpoint flash progress (0..1 = animating, -1 = inactive)
+    const cpElapsed = (performance.now() - this._checkpointFlashTime) / 1000;
+    const cpFlash = this._checkpointFlashTime > 0 && cpElapsed < 1.6 ? cpElapsed / 1.6 : -1;
+
+    // Segment timer
+    const timerRemaining = this.raceManager ? this.raceManager.segmentTimeRemaining : -1;
+    const timerTotal = this.raceManager ? this.raceManager.segmentTimeTotal : 0;
+
+    // Progress bar
+    const raceDistance = this.raceManager ? this.raceManager.raceDistance : 0;
+    const checkpointPositions = this.raceManager ? this.raceManager.getCheckpointPositions() : [];
+    const levelIcon = this.lobby.selectedLevel ? this.lobby.selectedLevel.icon : '';
+
     return {
       speed: this.bike.speed,
       distance: this.bike.distanceTraveled,
+      timerRemaining,
+      timerTotal,
+      raceDistance,
+      checkpointPositions,
+      levelIcon,
       leftPressed,
       rightPressed,
       pedalState,
@@ -1078,7 +1113,8 @@ class Game {
       bikeDeg,
       bikeDanger,
       partnerDeg,
-      hasPartner: !!remoteData
+      hasPartner: !!remoteData,
+      checkpointFlash: cpFlash
     };
   }
 
