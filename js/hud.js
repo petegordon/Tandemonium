@@ -35,6 +35,69 @@ export class HUD {
     this.touchLeftEl = document.getElementById('touch-left');
     this.touchRightEl = document.getElementById('touch-right');
 
+    // Progress bar
+    this.progressWrap = document.getElementById('progress-bar-wrap');
+    this.progressFill = document.getElementById('progress-bar-fill');
+    this.progressBike = document.getElementById('progress-bar-bike');
+    this.progressDest = document.getElementById('progress-destination');
+    this._checkpointEls = [];
+
+    // Collectible counter
+    this.collectibleWrap = document.getElementById('collectible-counter');
+    this.collectibleIcon = document.getElementById('collectible-icon');
+    this.collectibleCount = document.getElementById('collectible-count');
+  }
+
+  initProgress(level) {
+    this.progressWrap.style.display = 'block';
+    this.progressDest.textContent = level.icon;
+
+    // Remove old checkpoint markers
+    this._checkpointEls.forEach(el => el.remove());
+    this._checkpointEls = [];
+
+    // Add checkpoint markers
+    for (let d = level.checkpointInterval; d < level.distance; d += level.checkpointInterval) {
+      const pct = (d / level.distance) * 100;
+      const marker = document.createElement('div');
+      marker.className = 'progress-checkpoint';
+      marker.style.left = pct + '%';
+      marker.dataset.distance = d;
+      this.progressWrap.appendChild(marker);
+      this._checkpointEls.push(marker);
+    }
+  }
+
+  updateProgress(distanceTraveled, raceDistance, passedCheckpoints) {
+    const pct = Math.min(100, (distanceTraveled / raceDistance) * 100);
+    this.progressFill.style.width = pct + '%';
+    this.progressBike.style.left = pct + '%';
+
+    // Mark passed checkpoints
+    this._checkpointEls.forEach(el => {
+      if (passedCheckpoints && passedCheckpoints.has(Number(el.dataset.distance))) {
+        el.classList.add('passed');
+      }
+    });
+  }
+
+  hideProgress() {
+    this.progressWrap.style.display = 'none';
+  }
+
+  showCollectibles(level) {
+    const icons = { presents: '\uD83C\uDF81', gems: '\uD83D\uDC8E' }; // 🎁 💎
+    this.collectibleIcon.textContent = icons[level.collectibles] || '\u2B50';
+    this.collectibleCount.textContent = '0';
+    this.collectibleWrap.style.display = 'flex';
+  }
+
+  updateCollectibles(collected, total) {
+    this.collectibleCount.textContent = collected + ' / ' + total;
+  }
+
+  hideCollectibles() {
+    this.collectibleWrap.style.display = 'none';
   }
 
   update(bike, input, pedalCtrl, dt, remoteData) {

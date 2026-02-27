@@ -41,6 +41,9 @@ export class World {
 
     // Pre-place all trees for the entire loop
     this._placeTreesUpTo(this.roadPath.loopLength);
+
+    // Race markers (checkpoints + destination)
+    this._raceMarkers = [];  // { mesh, roadD, type }
   }
 
   _buildGround() {
@@ -407,6 +410,105 @@ export class World {
     return { hit: false, tree: null };
   }
 
+  setRaceMarkers(level) {
+    // Remove old markers
+    this._raceMarkers.forEach(m => this.scene.remove(m.mesh));
+    this._raceMarkers = [];
+
+    const L = this.roadPath.loopLength;
+
+    // Checkpoint arches
+    for (let d = level.checkpointInterval; d < level.distance; d += level.checkpointInterval) {
+      const roadD = d % L;
+      const pt = this.roadPath.getPointAtDistance(roadD);
+
+      const group = new THREE.Group();
+
+      // Two posts + crossbar
+      const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 3.5, 6);
+      const postMat = new THREE.MeshPhongMaterial({ color: 0x44aaff, emissive: 0x112244 });
+      const barGeo = new THREE.CylinderGeometry(0.06, 0.06, 5.0, 6);
+
+      const leftPost = new THREE.Mesh(postGeo, postMat);
+      leftPost.position.set(-2.5, 1.75, 0);
+      group.add(leftPost);
+
+      const rightPost = new THREE.Mesh(postGeo, postMat);
+      rightPost.position.set(2.5, 1.75, 0);
+      group.add(rightPost);
+
+      const crossbar = new THREE.Mesh(barGeo, postMat);
+      crossbar.rotation.z = Math.PI / 2;
+      crossbar.position.set(0, 3.5, 0);
+      group.add(crossbar);
+
+      group.position.set(pt.x, pt.y, pt.z);
+      group.rotation.y = pt.heading;
+      group.visible = false;
+      this.scene.add(group);
+
+      this._raceMarkers.push({ mesh: group, roadD, type: 'checkpoint' });
+    }
+
+    // Destination marker
+    const destD = level.distance % L;
+    const destPt = this.roadPath.getPointAtDistance(destD);
+    const destGroup = new THREE.Group();
+
+    // Simple house shape: box + pyramid roof
+    const wallGeo = new THREE.BoxGeometry(3, 2.5, 3);
+    const wallMat = new THREE.MeshPhongMaterial({ color: level.id === 'grandma' ? 0xdd8844 : 0x8888cc, emissive: 0x111111 });
+    const walls = new THREE.Mesh(wallGeo, wallMat);
+    walls.position.y = 1.25;
+    destGroup.add(walls);
+
+    const roofGeo = new THREE.ConeGeometry(2.5, 1.5, 4);
+    const roofMat = new THREE.MeshPhongMaterial({ color: level.id === 'grandma' ? 0xcc3333 : 0xddaa22, emissive: 0x111100 });
+    const roof = new THREE.Mesh(roofGeo, roofMat);
+    roof.position.y = 3.25;
+    roof.rotation.y = Math.PI / 4;
+    destGroup.add(roof);
+
+    // Place off to the side of the road so it's visible but not blocking
+    const fwdX = Math.sin(destPt.heading);
+    const fwdZ = Math.cos(destPt.heading);
+    const rightX = fwdZ;
+    const rightZ = -fwdX;
+    destGroup.position.set(
+      destPt.x + rightX * 6,
+      destPt.y,
+      destPt.z + rightZ * 6
+    );
+    destGroup.rotation.y = destPt.heading;
+    destGroup.visible = false;
+    this.scene.add(destGroup);
+
+    this._raceMarkers.push({ mesh: destGroup, roadD: destD, type: 'destination' });
+  }
+
+  clearRaceMarkers() {
+    this._raceMarkers.forEach(m => this.scene.remove(m.mesh));
+    this._raceMarkers = [];
+  }
+
+  _updateRaceMarkerVisibility(bikeD) {
+    const L = this.roadPath.loopLength;
+    for (const marker of this._raceMarkers) {
+      let ahead = marker.roadD - bikeD;
+      if (ahead < -L / 2) ahead += L;
+      if (ahead > L / 2) ahead -= L;
+      marker.mesh.visible = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
+    }
+  }
+
+  _updateRaceMarkerHeights(bikeD) {
+    for (const marker of this._raceMarkers) {
+      if (!marker.mesh.visible) continue;
+      const pt = this.roadPath.getPointAtDistance(marker.roadD);
+      marker.mesh.position.y = pt.y;
+    }
+  }
+
   update(bikePos, bikeD) {
     // Default bikeD from position if not provided (backward compat)
     if (bikeD === undefined) {
@@ -424,6 +526,12 @@ export class World {
     // Trees
     this._updateTreeVisibility(bikeD);
     this._updateTreeHeights(bikeD);
+
+    // Race markers
+    if (this._raceMarkers.length > 0) {
+      this._updateRaceMarkerVisibility(bikeD);
+      this._updateRaceMarkerHeights(bikeD);
+    }
 
     // Floor snap-follow + deform (snap at tileSize to reduce visual pop)
     const snapSize = this.tileSize;

@@ -75,6 +75,243 @@
     color: rgba(255,255,255,0.45);
   }
 
+  /* ── Progress bar ── */
+  #progress-bar-wrap {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 2px);
+    left: 14px; right: 14px;
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    z-index: 11;
+    pointer-events: none;
+    display: none;
+  }
+  #progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #44ff66, #66ffaa);
+    transition: width 0.3s;
+  }
+  #progress-bar-bike {
+    position: absolute;
+    top: -5px;
+    left: 0%;
+    font-size: 12px;
+    transform: translateX(-50%);
+    transition: left 0.3s;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7));
+  }
+  .progress-checkpoint {
+    position: absolute;
+    top: -3px;
+    width: 8px; height: 12px;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+  .progress-checkpoint::before {
+    content: '';
+    display: block;
+    width: 8px; height: 8px;
+    background: rgba(255,255,255,0.3);
+    transform: rotate(45deg);
+    border-radius: 1px;
+  }
+  .progress-checkpoint.passed::before {
+    background: #44ff66;
+  }
+  #progress-destination {
+    position: absolute;
+    top: -5px;
+    right: -2px;
+    font-size: 12px;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7));
+  }
+  #collectible-counter {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    right: 14px;
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.8);
+    z-index: 11;
+    pointer-events: none;
+    display: none;
+    align-items: center;
+    gap: 4px;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  }
+  #collectible-icon { font-size: 16px; }
+  #collectible-count { font-variant-numeric: tabular-nums; }
+
+  /* ── Contribution bar (multiplayer) ── */
+  #contribution-bar {
+    display: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 1px;
+    background: rgba(255,255,255,0.1);
+  }
+  #contrib-captain {
+    height: 100%;
+    float: left;
+    background: #4af;
+    transition: width 0.5s;
+  }
+  #contrib-stoker {
+    height: 100%;
+    float: left;
+    background: #a6f;
+    transition: width 0.5s;
+  }
+
+  /* ── Victory overlay ── */
+  #victory-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+    padding: 30px;
+    text-align: center;
+  }
+  #victory-overlay h2 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #44ff66;
+    margin-bottom: 4px;
+    text-shadow: 0 0 20px rgba(68,255,102,0.4);
+  }
+  #victory-destination {
+    font-size: 18px;
+    color: rgba(255,255,255,0.8);
+    margin-bottom: 16px;
+  }
+  #victory-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 20px;
+  }
+  .victory-stat {
+    font-size: 14px;
+    color: rgba(255,255,255,0.7);
+  }
+  .victory-stat strong {
+    color: #fff;
+    font-weight: 700;
+  }
+  .victory-contrib {
+    margin-top: 12px;
+    width: 100%;
+    max-width: 280px;
+  }
+  .victory-contrib-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .contrib-label {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .captain-label { color: #4af; }
+  .stoker-label { color: #a6f; }
+  .victory-contrib-bar {
+    display: flex;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.1);
+    margin-bottom: 8px;
+  }
+  .contrib-fill-captain {
+    height: 100%;
+    background: #4af;
+  }
+  .contrib-fill-stoker {
+    height: 100%;
+    background: #a6f;
+  }
+  .victory-contrib-detail {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+  }
+  .contrib-col {
+    font-size: 12px;
+    color: rgba(255,255,255,0.6);
+    text-align: left;
+    line-height: 1.6;
+  }
+  .contrib-col strong {
+    color: #fff;
+  }
+  .victory-contrib-solo {
+    margin-top: 8px;
+  }
+
+  /* ── Level selector ── */
+  #lobby-level {
+    display: none;
+  }
+  .level-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 280px;
+  }
+  .level-card {
+    width: 100%;
+    padding: 16px 20px;
+    border-radius: 14px;
+    border: 2px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    cursor: pointer;
+    text-align: left;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .level-card:active {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.5);
+  }
+  .level-card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .level-card-icon {
+    font-size: 24px;
+  }
+  .level-card-name {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .level-card-desc {
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+  }
+  .level-card-distance {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.4);
+    margin-top: 2px;
+  }
+
   /* ── Bottom HUD: gauge bar + pedal buttons ── */
   #bottom-hud {
     position: fixed;
@@ -456,6 +693,76 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
+  #lobby-auth {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 2;
+  }
+  .lobby-auth-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+  }
+  .lobby-auth-btn:hover { background: rgba(255,255,255,0.15); }
+  #user-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #fff;
+  }
+  .user-avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.3);
+  }
+  /* Leaderboard modal */
+  #leaderboard-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 65;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .leaderboard-box {
+    background: rgba(30,30,40,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 16px;
+    padding: 20px;
+    max-width: 360px;
+    width: 90%;
+    max-height: 70vh;
+    overflow-y: auto;
+    text-align: center;
+  }
+  .leaderboard-box h3 {
+    color: #fff;
+    font-size: 20px;
+    margin-bottom: 12px;
+  }
+  .lb-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    font-size: 13px;
+    color: rgba(255,255,255,0.8);
+  }
+  .lb-rank { font-weight: 700; color: #ffcc00; min-width: 28px; text-align: left; }
+  .lb-name { flex: 1; text-align: left; }
+  .lb-time { font-variant-numeric: tabular-nums; color: #44ff66; }
   #lobby-banner {
     width: 100%;
     height: auto;
@@ -838,6 +1145,60 @@
     bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
     right: 14px;
   }
+
+  /* ── Achievement badges around PiP ── */
+  .pip-badges {
+    position: absolute;
+    width: 80px; height: 80px;
+    top: 0; left: 0;
+    pointer-events: none;
+  }
+  .pip-badge {
+    position: absolute;
+    width: 20px; height: 20px;
+    top: 30px; left: 30px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.6);
+    border: 1.5px solid #ffcc00;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  /* ── Achievement toast ── */
+  #achievement-toast-container {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 24px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 70;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .achievement-toast {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(0,0,0,0.85);
+    border: 1.5px solid #ffcc00;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 13px;
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.3s, transform 0.3s;
+  }
+  .achievement-toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .toast-icon { font-size: 22px; }
+  .toast-text small { color: #ffcc00; font-size: 10px; }
   .pip-video {
     width: 80px;
     height: 80px;
@@ -943,8 +1304,20 @@
     <div id="distance-row">
       <span id="distance-display">0 m</span>
     </div>
+    <div id="contribution-bar">
+      <div id="contrib-captain"></div>
+      <div id="contrib-stoker"></div>
+    </div>
   </div>
 </div>
+
+<!-- Progress bar -->
+<div id="progress-bar-wrap">
+  <div id="progress-bar-fill"></div>
+  <span id="progress-bar-bike">&#x1F6B2;</span>
+  <span id="progress-destination"></span>
+</div>
+<div id="collectible-counter"><span id="collectible-icon"></span><span id="collectible-count"></span></div>
 
 <!-- Share button (recording) -->
 <button id="share-btn" aria-label="Share clip">&#x1F3AC;</button>
@@ -953,10 +1326,12 @@
 <div id="selfie-pip-wrap" class="pip-wrap">
   <video id="selfie-pip" class="pip-video" playsinline muted></video>
   <span class="pip-label" id="selfie-pip-label"></span>
+  <div class="pip-badges" id="selfie-badges"></div>
 </div>
 <div id="partner-pip-wrap" class="pip-wrap">
   <video id="partner-pip" class="pip-video" playsinline muted></video>
   <span class="pip-label" id="partner-pip-label"></span>
+  <div class="pip-badges" id="partner-badges"></div>
 </div>
 <audio id="partner-audio" playsinline style="display:none;"></audio>
 
@@ -1060,6 +1435,14 @@ ON</button>
 
 <!-- Lobby overlay -->
 <div id="lobby">
+  <div id="lobby-auth">
+    <button class="lobby-auth-btn" id="btn-sign-in">Sign in with Google</button>
+    <div id="user-info" style="display:none;">
+      <img id="user-avatar" class="user-avatar" style="display:none;" alt="">
+      <span id="user-name"></span>
+    </div>
+    <button class="lobby-auth-btn" id="btn-leaderboard">Leaderboard</button>
+  </div>
   <img id="lobby-banner" src="images/tandemonium_title.png" alt="Tandemonium">
   <p class="lobby-subtitle">Party Physics Game on a Tandem Bicycle</p>
   <div class="lobby-card">
@@ -1099,6 +1482,13 @@ ON</button>
       </div>
     </div>
 
+    <!-- Step 1b: Level selection -->
+    <div id="lobby-level" class="lobby-step" style="display:none;">
+      <p class="lobby-prompt">Choose your ride:</p>
+      <div class="level-cards" id="level-cards"></div>
+      <button class="lobby-back" id="btn-back-level">&larr; Back</button>
+    </div>
+
     <!-- Step 2: Role selection -->
     <div id="lobby-role" class="lobby-step" style="display:none;">
       <p class="lobby-prompt">Choose your seat:</p>
@@ -1129,9 +1519,18 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.2c60290 | 02-22-2026 12:21</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.aa27750 | 02-26-2026 20:07</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
+</div>
+
+<!-- Leaderboard modal -->
+<div id="leaderboard-modal" style="display:none;">
+  <div class="leaderboard-box">
+    <h3>Leaderboard</h3>
+    <div id="leaderboard-list"></div>
+    <button class="lobby-btn" id="leaderboard-close" style="margin-top:12px;">Close</button>
+  </div>
 </div>
 
 <!-- Credits modal -->
@@ -1171,6 +1570,16 @@ ON</button>
     <button class="lobby-btn lobby-btn-accent" id="btn-restart">RESTART</button>
     <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">GO TO LOBBY</button>
   </div>
+</div>
+
+<!-- Victory overlay -->
+<div id="victory-overlay" style="display:none;">
+  <h2>YOU MADE IT!</h2>
+  <p id="victory-destination"></p>
+  <div id="victory-stats"></div>
+  <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
+  <button class="lobby-btn" id="btn-next-level" style="margin-top:10px;display:none;">NEXT LEVEL</button>
+  <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:10px;">GO TO LOBBY</button>
 </div>
 
 <!-- Reconnect overlay (shown during retry attempts) -->

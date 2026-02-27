@@ -3,7 +3,12 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER } from './config.js';
+import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH } from './config.js';
+import { RaceManager } from './race-manager.js';
+import { getLevelById } from './race-config.js';
+import { ContributionTracker } from './contribution-tracker.js';
+import { CollectibleManager } from './collectibles.js';
+import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
 import { InputManager } from './input-manager.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
@@ -137,8 +142,36 @@ class Game {
       this._returnToLobby();
     });
 
+    // Race
+    this.raceManager = null;
+    this.contributionTracker = null;
+    this.collectibleManager = null;
+
+    // Achievements (persists across sessions)
+    this.achievements = new AchievementManager();
+    this._updateBadges();
+
+    // Contribution bar elements
+    this._contribBar = document.getElementById('contribution-bar');
+    this._contribCaptain = document.getElementById('contrib-captain');
+    this._contribStoker = document.getElementById('contrib-stoker');
+
+    // Victory overlay buttons
+    document.getElementById('btn-play-again').addEventListener('click', () => {
+      this._hideVictory();
+      this._resetGame();
+    });
+    document.getElementById('btn-next-level').addEventListener('click', () => {
+      this._hideVictory();
+      this._returnToLobby();
+    });
+    document.getElementById('btn-victory-lobby').addEventListener('click', () => {
+      this._hideVictory();
+      this._returnToLobby();
+    });
+
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'gameover'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'gameover' | 'victory'
     this.countdownTimer = 0;
     this._lastCountNum = 3;
     this.instructionsEl = document.getElementById('instructions');
@@ -224,6 +257,20 @@ class Game {
         this._resetGame(true);
       } else if (eventType === EVT_GAMEOVER) {
         this._showGameOver(true);
+      } else if (eventType === EVT_CHECKPOINT) {
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = 'CHECKPOINT!';
+        statusEl.style.color = '#44ff66';
+        statusEl.style.fontSize = '28px';
+        this._playBeep(600, 0.2);
+        setTimeout(() => {
+          if (this.state === 'playing') {
+            statusEl.textContent = '';
+            statusEl.style.fontSize = '';
+          }
+        }, 1500);
+      } else if (eventType === EVT_FINISH) {
+        this._showVictory(true);
       }
     };
 
@@ -361,6 +408,23 @@ class Game {
     statusEl.textContent = '3';
     this._lastCountNum = 3;
 
+    // Create race manager + contribution tracker + collectibles from selected level
+    const level = this.lobby.selectedLevel;
+    this.raceManager = new RaceManager(level);
+    this.contributionTracker = new ContributionTracker(this.mode);
+    if (this.collectibleManager) this.collectibleManager.destroy();
+    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level);
+    this.hud.initProgress(level);
+    this.hud.showCollectibles(level);
+    this.world.setRaceMarkers(level);
+
+    // Show contribution bar in multiplayer
+    if (this.mode !== 'solo') {
+      this._contribBar.style.display = 'block';
+    } else {
+      this._contribBar.style.display = 'none';
+    }
+
     // Init audio before recording so beeps are captured
     try {
       if (!this.audioCtx) {
@@ -389,6 +453,7 @@ class Game {
       statusEl.textContent = 'GO!';
       statusEl.style.color = '#44ff66';
       this.state = 'playing';
+      if (this.raceManager) this.raceManager.start();
       this._playBeep(800, 0.4);
 
       // Captain sends EVT_START to stoker
@@ -506,8 +571,229 @@ class Game {
     document.getElementById('gameover-overlay').style.display = 'none';
   }
 
+  _handleRaceEvent(raceEvent) {
+    if (raceEvent.event === 'checkpoint') {
+      const statusEl = document.getElementById('status');
+      const distLabel = raceEvent.distance >= 1000
+        ? (raceEvent.distance / 1000) + ' km'
+        : raceEvent.distance + 'm';
+      statusEl.textContent = 'CHECKPOINT! ' + distLabel;
+      statusEl.style.color = '#44ff66';
+      statusEl.style.fontSize = '28px';
+      this._playBeep(600, 0.2);
+      setTimeout(() => {
+        if (this.state === 'playing') {
+          statusEl.textContent = '';
+          statusEl.style.fontSize = '';
+        }
+      }, 1500);
+
+      // Notify stoker
+      if (this.mode === 'captain' && this.net) {
+        this.net.sendEvent(EVT_CHECKPOINT);
+      }
+    } else if (raceEvent.event === 'finish') {
+      this._showVictory();
+
+      // Notify stoker
+      if (this.mode === 'captain' && this.net) {
+        this.net.sendEvent(EVT_FINISH);
+      }
+    }
+  }
+
+  _onCollect(count) {
+    if (this.raceManager) this.raceManager.collectiblesCount += count;
+    this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
+    this._playBeep(1200, 0.1);
+    setTimeout(() => this._playBeep(1600, 0.08), 80);
+  }
+
+  _checkAchievements(dt) {
+    const state = {
+      distance: this.bike.distanceTraveled,
+      speed: this.bike.speed,
+      dt,
+      offsetScore: this.sharedPedal ? this.sharedPedal.offsetScore : 0,
+      collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
+      totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
+      finishedLevel: null,
+      isMultiplayer: this.mode !== 'solo',
+      safePct: 0,
+    };
+
+    if (this.contributionTracker) {
+      const summary = this.contributionTracker.getSummary();
+      if (summary.mode === 'solo') {
+        state.safePct = summary.solo.safePct;
+      } else {
+        state.safePct = Math.max(summary.captain.safePct, summary.stoker.safePct);
+      }
+    }
+
+    const newlyEarned = this.achievements.check(state);
+    newlyEarned.forEach(a => {
+      showAchievementToast(a);
+      this._updateBadges();
+    });
+  }
+
+  _checkFinishAchievements() {
+    const level = this.lobby.selectedLevel;
+    const state = {
+      distance: this.bike.distanceTraveled,
+      speed: 0,
+      dt: 0,
+      offsetScore: 0,
+      collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
+      totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
+      finishedLevel: level.id,
+      isMultiplayer: this.mode !== 'solo',
+      safePct: 0,
+      syncDuration: 0,
+    };
+    const newlyEarned = this.achievements.check(state);
+    newlyEarned.forEach(a => {
+      showAchievementToast(a);
+      this._updateBadges();
+    });
+  }
+
+  _updateBadges() {
+    updateBadgeDisplay('selfie-badges', this.achievements.getEarned());
+  }
+
+  _showVictory(fromRemote = false) {
+    this.state = 'victory';
+    const overlay = document.getElementById('victory-overlay');
+    overlay.style.display = 'flex';
+
+    const level = this.lobby.selectedLevel;
+    document.getElementById('victory-destination').textContent =
+      level.icon + ' ' + level.name;
+
+    // Build stats
+    const statsEl = document.getElementById('victory-stats');
+    statsEl.innerHTML = '';
+
+    if (this.raceManager) {
+      const summary = this.raceManager.getSummary(this.bike.distanceTraveled);
+      const stats = [
+        { label: 'Time', value: summary.timeFormatted },
+        { label: 'Distance', value: summary.distance >= 1000 ? (summary.distance / 1000).toFixed(2) + ' km' : summary.distance + ' m' },
+        { label: 'Checkpoints', value: summary.checkpointsPassed + ' / ' + summary.checkpointsTotal },
+      ];
+      if (summary.collectibles > 0) {
+        stats.push({ label: 'Collectibles', value: '' + summary.collectibles });
+      }
+      stats.forEach(s => {
+        const div = document.createElement('div');
+        div.className = 'victory-stat';
+        div.innerHTML = s.label + ': <strong>' + s.value + '</strong>';
+        statsEl.appendChild(div);
+      });
+    }
+
+    // Contribution breakdown
+    if (this.contributionTracker) {
+      const contrib = this.contributionTracker.getSummary();
+      if (contrib.mode === 'multiplayer') {
+        const contribDiv = document.createElement('div');
+        contribDiv.className = 'victory-contrib';
+        contribDiv.innerHTML =
+          '<div class="victory-contrib-header">' +
+            '<span class="contrib-label captain-label">CAPTAIN ' + contrib.captain.overallPct + '%</span>' +
+            '<span class="contrib-label stoker-label">STOKER ' + contrib.stoker.overallPct + '%</span>' +
+          '</div>' +
+          '<div class="victory-contrib-bar">' +
+            '<div class="contrib-fill-captain" style="width:' + contrib.captain.overallPct + '%"></div>' +
+            '<div class="contrib-fill-stoker" style="width:' + contrib.stoker.overallPct + '%"></div>' +
+          '</div>' +
+          '<div class="victory-contrib-detail">' +
+            '<div class="contrib-col">' +
+              '<div>Pedaling: <strong>' + contrib.captain.totalTaps + ' taps</strong></div>' +
+              '<div>Balance: <strong>' + contrib.captain.safePct + '% safe</strong></div>' +
+              '<div>Road: <strong>' + contrib.captain.onRoadPct + '% on</strong></div>' +
+            '</div>' +
+            '<div class="contrib-col">' +
+              '<div>Pedaling: <strong>' + contrib.stoker.totalTaps + ' taps</strong></div>' +
+              '<div>Balance: <strong>' + contrib.stoker.safePct + '% safe</strong></div>' +
+              '<div>Road: <strong>' + contrib.stoker.onRoadPct + '% on</strong></div>' +
+            '</div>' +
+          '</div>';
+        statsEl.appendChild(contribDiv);
+      } else {
+        // Solo: show balance + road stats
+        const solo = contrib.solo;
+        const soloDiv = document.createElement('div');
+        soloDiv.className = 'victory-contrib-solo';
+        soloDiv.innerHTML =
+          '<div class="victory-stat">Pedal accuracy: <strong>' +
+            (solo.totalTaps > 0 ? Math.round((solo.correctTaps / solo.totalTaps) * 100) : 0) + '%</strong></div>' +
+          '<div class="victory-stat">Balance (safe): <strong>' + solo.safePct + '%</strong></div>' +
+          '<div class="victory-stat">On road: <strong>' + solo.onRoadPct + '%</strong></div>';
+        statsEl.appendChild(soloDiv);
+      }
+    }
+
+    // Check finish-specific achievements
+    this._checkFinishAchievements();
+
+    // Auto-submit score if logged in
+    this._submitScore();
+
+    this._playBeep(800, 0.3);
+    setTimeout(() => this._playBeep(1000, 0.3), 200);
+    setTimeout(() => this._playBeep(1200, 0.5), 400);
+  }
+
+  async _submitScore() {
+    const auth = this.lobby.auth;
+    if (!auth || !auth.isLoggedIn()) return;
+
+    const level = this.lobby.selectedLevel;
+    const raceSummary = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
+    if (!raceSummary) return;
+
+    const data = {
+      levelId: level.id,
+      distance: raceSummary.distance,
+      timeMs: raceSummary.timeMs,
+      mode: this.mode,
+      collectiblesCount: this.collectibleManager ? this.collectibleManager.collected : 0,
+      newAchievements: this.achievements.getNewThisSession().map(a => a.id),
+    };
+
+    if (this.contributionTracker) {
+      const contrib = this.contributionTracker.getSummary();
+      if (contrib.mode === 'multiplayer') {
+        data.contributions = { captain: contrib.captain, stoker: contrib.stoker };
+      } else {
+        data.contributions = { solo: contrib.solo };
+      }
+    }
+
+    try {
+      await auth.submitScore(data);
+      await auth.syncAchievements(this.achievements.getEarnedIds());
+    } catch (e) {}
+  }
+
+  _hideVictory() {
+    document.getElementById('victory-overlay').style.display = 'none';
+    this.hud.hideProgress();
+    this._contribBar.style.display = 'none';
+  }
+
   _returnToLobby() {
     this._hideGameOver();
+    this._hideVictory();
+    this.raceManager = null;
+    this.contributionTracker = null;
+    if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    this._contribBar.style.display = 'none';
+    this.hud.hideCollectibles();
+    this.world.clearRaceMarkers();
     this.recorder.stopBuffer();
     this.recorder.stopSelfie();
     this.recorder.clearPartnerStream();
@@ -706,7 +992,7 @@ class Game {
         this._updateStoker(dt);
       }
     } else {
-      // Lobby / countdown / instructions: render static scene
+      // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
       this.world.update(this.bike.position, this.bike.roadD);
       this.chaseCamera.update(this.bike, dt, roadPath);
@@ -728,6 +1014,27 @@ class Game {
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
+
+    // Race progress + contribution tracking
+    if (this.raceManager) {
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled);
+      if (raceEvent) this._handleRaceEvent(raceEvent);
+      this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
+    }
+    if (this.contributionTracker) {
+      this.contributionTracker.update(dt, this.bike, balanceResult.leanInput, 0, this.pedalCtrl.stats);
+    }
+
+    // Collectibles
+    if (this.collectibleManager) {
+      const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+      if (collected.length > 0) {
+        this._onCollect(collected.length);
+      }
+    }
+
+    // Achievements
+    this._checkAchievements(dt);
 
     // Show game over after crash recovery
     if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
@@ -780,6 +1087,33 @@ class Game {
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
+
+    // Race progress + contribution tracking (captain is authoritative)
+    if (this.raceManager) {
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled);
+      if (raceEvent) this._handleRaceEvent(raceEvent);
+      this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
+    }
+    if (this.contributionTracker) {
+      this.contributionTracker.update(dt, this.bike, captainLean, this.remoteLean, this.sharedPedal.stats);
+      // Update contribution bar
+      const summary = this.contributionTracker.getSummary();
+      if (summary.mode === 'multiplayer') {
+        this._contribCaptain.style.width = summary.captain.overallPct + '%';
+        this._contribStoker.style.width = summary.stoker.overallPct + '%';
+      }
+    }
+
+    // Collectibles (captain is authoritative)
+    if (this.collectibleManager) {
+      const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+      if (collected.length > 0) {
+        this._onCollect(collected.length);
+      }
+    }
+
+    // Achievements
+    this._checkAchievements(dt);
 
     // Show game over after crash recovery
     if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }

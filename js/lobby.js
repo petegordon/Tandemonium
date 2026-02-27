@@ -4,6 +4,8 @@
 
 import { NetworkManager } from './network-manager.js';
 import { RELAY_URL } from './config.js';
+import { LEVELS } from './race-config.js';
+import { AuthManager } from './auth.js';
 
 export class Lobby {
   constructor({ onSolo, onMultiplayerReady, input }) {
@@ -11,9 +13,12 @@ export class Lobby {
     this.onMultiplayerReady = onMultiplayerReady;
     this.input = input; // InputManager — needed for iOS motion permission
     this.net = null;
+    this.selectedLevel = LEVELS[0]; // default level
+    this._pendingMode = null; // 'solo' or 'multiplayer', set during level selection
 
     this.lobbyEl = document.getElementById('lobby');
     this.modeStep = document.getElementById('lobby-mode');
+    this.levelStep = document.getElementById('lobby-level');
     this.roleStep = document.getElementById('lobby-role');
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
@@ -76,6 +81,10 @@ export class Lobby {
     this._stepDefaultFocus = new Map();
     this._stepDefaultFocus.set(this.modeStep, 1); // RIDE TOGETHER
 
+    // Auth
+    this.auth = new AuthManager(''); // API base URL — set when deployed
+    this._setupAuth();
+
     this._setup();
     this._checkAutoJoin();
 
@@ -94,7 +103,7 @@ export class Lobby {
   }
 
   _showStep(step) {
-    [this.modeStep, this.roleStep, this.hostStep, this.joinStep]
+    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep]
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
@@ -114,17 +123,24 @@ export class Lobby {
   }
 
   _setup() {
-    // SOLO
+    // SOLO → level selection
     document.getElementById('btn-solo').addEventListener('click', () => {
       this._requestMotion();
-      this._hideLobby();
-      this.onSolo();
+      this._pendingMode = 'solo';
+      this._showStep(this.levelStep);
     });
 
-    // RIDE TOGETHER
+    // RIDE TOGETHER → level selection
     document.getElementById('btn-together').addEventListener('click', () => {
       this._requestMotion();
-      this._showStep(this.roleStep);
+      this._pendingMode = 'multiplayer';
+      this._showStep(this.levelStep);
+    });
+
+    // Level selection: build cards and handle clicks
+    this._buildLevelCards();
+    document.getElementById('btn-back-level').addEventListener('click', () => {
+      this._showStep(this.modeStep);
     });
 
     // Back buttons
@@ -174,6 +190,116 @@ export class Lobby {
     this.toggleCamera.addEventListener('click', () => this._toggleCamera());
     this.toggleMotion.addEventListener('click', () => this._toggleMotion());
     this.toggleAudio.addEventListener('click', () => this._toggleAudio());
+  }
+
+  _buildLevelCards() {
+    const container = document.getElementById('level-cards');
+    const buttons = [];
+    LEVELS.forEach(level => {
+      const card = document.createElement('button');
+      card.className = 'level-card';
+      card.innerHTML =
+        '<div class="level-card-top">' +
+          '<span class="level-card-icon">' + level.icon + '</span>' +
+          '<span class="level-card-name">' + level.name + '</span>' +
+        '</div>' +
+        '<div class="level-card-desc">' + level.description + '</div>' +
+        '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
+      card.addEventListener('click', () => {
+        this.selectedLevel = level;
+        if (this._pendingMode === 'solo') {
+          this._hideLobby();
+          this.onSolo();
+        } else {
+          this._showStep(this.roleStep);
+        }
+      });
+      container.appendChild(card);
+      buttons.push(card);
+    });
+
+    // Register for gamepad navigation
+    buttons.push(document.getElementById('btn-back-level'));
+    this._stepItems.set(this.levelStep, buttons);
+    this._stepBack.set(this.levelStep, document.getElementById('btn-back-level'));
+  }
+
+  _setupAuth() {
+    const signInBtn = document.getElementById('btn-sign-in');
+    const userInfo = document.getElementById('user-info');
+    const userName = document.getElementById('user-name');
+    const userAvatar = document.getElementById('user-avatar');
+    const leaderboardBtn = document.getElementById('btn-leaderboard');
+    const leaderboardModal = document.getElementById('leaderboard-modal');
+    const leaderboardClose = document.getElementById('leaderboard-close');
+    const leaderboardList = document.getElementById('leaderboard-list');
+
+    if (!signInBtn) return;
+
+    const updateUI = () => {
+      if (this.auth.isLoggedIn()) {
+        signInBtn.style.display = 'none';
+        userInfo.style.display = 'flex';
+        userName.textContent = this.auth.user.name;
+        if (this.auth.user.avatar) {
+          userAvatar.src = this.auth.user.avatar;
+          userAvatar.style.display = 'block';
+        }
+        leaderboardBtn.style.display = '';
+      } else {
+        signInBtn.style.display = '';
+        userInfo.style.display = 'none';
+        leaderboardBtn.style.display = '';
+      }
+    };
+
+    signInBtn.addEventListener('click', () => this.auth.login('google'));
+    this.auth.onLogin(() => updateUI());
+
+    // Leaderboard modal
+    if (leaderboardBtn) {
+      leaderboardBtn.addEventListener('click', async () => {
+        leaderboardModal.style.display = 'flex';
+        leaderboardList.innerHTML = '<p style="color:rgba(255,255,255,0.5)">Loading...</p>';
+        try {
+          const data = await this.auth.getLeaderboard(this.selectedLevel.id);
+          if (data.entries && data.entries.length > 0) {
+            leaderboardList.innerHTML = data.entries.map((e, i) =>
+              '<div class="lb-entry">' +
+                '<span class="lb-rank">#' + (i + 1) + '</span>' +
+                '<span class="lb-name">' + this._escapeHtml(e.display_name) + '</span>' +
+                '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
+              '</div>'
+            ).join('');
+          } else {
+            leaderboardList.innerHTML = '<p style="color:rgba(255,255,255,0.5)">No scores yet. Be the first!</p>';
+          }
+        } catch (err) {
+          leaderboardList.innerHTML = '<p style="color:rgba(255,255,255,0.5)">Could not load leaderboard</p>';
+        }
+      });
+    }
+
+    if (leaderboardClose) {
+      leaderboardClose.addEventListener('click', () => {
+        leaderboardModal.style.display = 'none';
+      });
+    }
+
+    updateUI();
+  }
+
+  _escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  _formatTime(ms) {
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m + ':' + (sec < 10 ? '0' : '') + sec;
   }
 
   _requestMotion() {
