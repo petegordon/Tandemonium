@@ -28,6 +28,11 @@ export class Lobby {
     this.toggleCamera = document.getElementById('toggle-camera');
     this.toggleMotion = document.getElementById('toggle-motion');
     this.toggleAudio = document.getElementById('toggle-audio');
+    this.toggleMusic = document.getElementById('toggle-music');
+    this.toggleHelp = document.getElementById('toggle-help');
+    this.helpModal = document.getElementById('help-modal');
+    this.toggleProfile = document.getElementById('toggle-profile');
+    this.toggleLeaderboard = document.getElementById('toggle-leaderboard');
     this.cameraActive = false;
     this.motionActive = false;
     this.audioActive = false;
@@ -35,6 +40,11 @@ export class Lobby {
     this._motionPermitted = false;
     this._audioPermitted = false;
     this._permissionsChecked = false;
+
+    // Music toggle (not a permission — just on/off, persisted in localStorage)
+    this.musicActive = localStorage.getItem('tandemonium_music') !== 'off';
+    if (this.musicActive) this.toggleMusic.classList.add('active');
+    this.onMusicChanged = null; // callback set by Game
 
     // Gamepad navigation state
     this._focusIndex = 0;
@@ -49,11 +59,13 @@ export class Lobby {
 
     // Column-based navigation for mode step
     this._modeColumns = [
-      [this.toggleAll, this.toggleCamera, this.toggleAudio, this.toggleMotion],
+      [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
       [document.getElementById('btn-together'), document.getElementById('btn-solo')],
+      [this.toggleAll, this.toggleCamera, this.toggleAudio],
+      [this.toggleMotion, this.toggleMusic],
     ];
     this._modeCol = 1;
-    this._modeColIndex = [0, 0];
+    this._modeColIndex = [0, 0, 0, 0];
 
     // Per-step focusable items and back buttons
     this._stepItems = new Map();
@@ -110,7 +122,7 @@ export class Lobby {
     this._currentStep = step;
     if (step === this.modeStep) {
       this._modeCol = 1;
-      this._modeColIndex = [0, 0];
+      this._modeColIndex = [0, 0, 0, 0];
       this._stepItems.set(this.modeStep, this._modeColumns[1]);
     }
     this._focusIndex = this._stepDefaultFocus.get(step) || 0;
@@ -123,18 +135,19 @@ export class Lobby {
   }
 
   _setup() {
-    // SOLO → level selection
+    // SOLO → start directly with Level 1
     document.getElementById('btn-solo').addEventListener('click', () => {
       this._requestMotion();
-      this._pendingMode = 'solo';
-      this._showStep(this.levelStep);
+      this.selectedLevel = LEVELS[0];
+      this._hideLobby();
+      this.onSolo();
     });
 
-    // RIDE TOGETHER → level selection
+    // RIDE TOGETHER → role selection with Level 1
     document.getElementById('btn-together').addEventListener('click', () => {
       this._requestMotion();
-      this._pendingMode = 'multiplayer';
-      this._showStep(this.levelStep);
+      this.selectedLevel = LEVELS[0];
+      this._showStep(this.roleStep);
     });
 
     // Level selection: build cards and handle clicks
@@ -190,6 +203,10 @@ export class Lobby {
     this.toggleCamera.addEventListener('click', () => this._toggleCamera());
     this.toggleMotion.addEventListener('click', () => this._toggleMotion());
     this.toggleAudio.addEventListener('click', () => this._toggleAudio());
+    this.toggleMusic.addEventListener('click', () => this._toggleMusic());
+    this.toggleHelp.addEventListener('click', () => this._openHelp());
+    this.toggleProfile.addEventListener('click', () => this._toggleProfile());
+    this.toggleLeaderboard.addEventListener('click', () => this._openLeaderboard());
   }
 
   _buildLevelCards() {
@@ -246,10 +263,12 @@ export class Lobby {
           userAvatar.style.display = 'block';
         }
         leaderboardBtn.style.display = '';
+        this.toggleProfile.classList.add('active');
       } else {
         signInBtn.style.display = '';
         userInfo.style.display = 'none';
         leaderboardBtn.style.display = '';
+        this.toggleProfile.classList.remove('active');
       }
     };
 
@@ -316,10 +335,11 @@ export class Lobby {
   _toggleAll() {
     // If ALL is active, turn everything off
     const motionOk = !this._motionAvailable() || this.motionActive;
-    if (this.cameraActive && this.audioActive && motionOk) {
+    if (this.cameraActive && this.audioActive && motionOk && this.musicActive) {
       if (this.cameraActive) this._toggleCamera();
       if (this.audioActive)  this._toggleAudio();
       if (this._motionAvailable() && this.motionActive) this._toggleMotion();
+      if (this.musicActive) this._toggleMusic();
       return;
     }
 
@@ -347,17 +367,20 @@ export class Lobby {
         if (!needCam && !this.cameraActive) this._toggleCamera();
         if (!needMic && !this.audioActive)  this._toggleAudio();
         if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
+        if (!this.musicActive) this._toggleMusic();
       }).catch(() => {
         // Even if cam+mic fails, still try the ones that are already permitted
         if (!this.cameraActive && this._cameraPermitted) this._toggleCamera();
         if (!this.audioActive  && this._audioPermitted)  this._toggleAudio();
         if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
+        if (!this.musicActive) this._toggleMusic();
       });
     } else {
       // Both cam+mic already permitted — just activate any that are off
       if (!this.cameraActive) this._toggleCamera();
       if (!this.audioActive)  this._toggleAudio();
       if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
+      if (!this.musicActive) this._toggleMusic();
     }
   }
 
@@ -379,7 +402,7 @@ export class Lobby {
 
   _updateAllToggle() {
     const motionOk = !this._motionAvailable() || this.motionActive;
-    if (this.cameraActive && this.audioActive && motionOk) {
+    if (this.cameraActive && this.audioActive && motionOk && this.musicActive) {
       this.toggleAll.classList.add('active');
     } else {
       this.toggleAll.classList.remove('active');
@@ -474,6 +497,7 @@ export class Lobby {
   _setToggleActive(name, active) {
     const el = name === 'camera' ? this.toggleCamera
              : name === 'motion' ? this.toggleMotion
+             : name === 'music'  ? this.toggleMusic
              : this.toggleAudio;
     if (active) {
       el.classList.add('active');
@@ -481,6 +505,31 @@ export class Lobby {
       el.classList.remove('active');
     }
     this._updateAllToggle();
+  }
+
+  _toggleMusic() {
+    this.musicActive = !this.musicActive;
+    this._setToggleActive('music', this.musicActive);
+    if (this.musicActive) {
+      localStorage.removeItem('tandemonium_music');
+    } else {
+      localStorage.setItem('tandemonium_music', 'off');
+    }
+    if (this.onMusicChanged) this.onMusicChanged(this.musicActive);
+  }
+
+  _openHelp() {
+    this.helpModal.classList.add('visible');
+  }
+
+  _toggleProfile() {
+    if (this.auth.isLoggedIn()) return; // already signed in
+    this.auth.login('google');
+  }
+
+  _openLeaderboard() {
+    if (this.toggleLeaderboard.disabled) return;
+    document.getElementById('btn-leaderboard').click();
   }
 
   _checkPermissionStates() {

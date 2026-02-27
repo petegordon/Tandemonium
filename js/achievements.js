@@ -4,7 +4,7 @@
 
 const ACHIEVEMENTS = [
   // Distance milestones
-  { id: 'first_500m',   name: 'First 500m',      icon: '\uD83D\uDC63', condition: s => s.distance >= 500 },    // 👣
+  { id: 'first_500m',   name: 'First 500m',      icon: '\uD83D\uDC5F', condition: s => s.distance >= 500 },  // 👟
   { id: 'first_km',     name: '1K Club',          icon: '\uD83C\uDFC5', condition: s => s.distance >= 1000 },   // 🏅
   { id: 'five_k',       name: '5K Champion',      icon: '\uD83C\uDFC6', condition: s => s.distance >= 5000 },   // 🏆
 
@@ -21,6 +21,10 @@ const ACHIEVEMENTS = [
   // Finish levels
   { id: 'home_sweet',   name: "Home Sweet Home",   icon: '\uD83C\uDFE0', condition: s => s.finishedLevel === 'grandma' }, // 🏠
   { id: 'royal',        name: 'Royal Arrival',     icon: '\uD83C\uDFF0', condition: s => s.finishedLevel === 'castle' },   // 🏰
+
+  // Perfect rides (no crashes)
+  { id: 'perfect_1k',   name: 'Flawless 1K',       icon: '\uD83D\uDCAE', condition: s => s.finishedLevel && s.crashes === 0 && s.raceDistance >= 1000 },  // 💮
+  { id: 'perfect_5k',   name: 'Untouchable',       icon: '\uD83D\uDC8E', condition: s => s.finishedLevel && s.crashes === 0 && s.raceDistance >= 5000 },  // 💎
 
   // Contribution
   { id: 'team_player',  name: 'Team Player',       icon: '\uD83E\uDD1C', condition: s => s.isMultiplayer && s.safePct >= 80 }, // 🤜
@@ -80,7 +84,12 @@ export class AchievementManager {
   }
 
   getEarned() {
-    return [...this._earned.values()];
+    // Pull icon from current definitions (not stale localStorage)
+    const defMap = new Map(ACHIEVEMENTS.map(a => [a.id, a]));
+    return [...this._earned.values()].map(e => {
+      const def = defMap.get(e.id);
+      return def ? { ...e, icon: def.icon } : e;
+    });
   }
 
   getEarnedIds() {

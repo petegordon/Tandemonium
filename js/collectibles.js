@@ -7,7 +7,7 @@ import * as THREE from 'three';
 const POOL_SIZE = 40;
 const COLLECT_RADIUS = 2.0;
 const VISIBLE_AHEAD = 200;
-const VISIBLE_BEHIND = 30;
+const VISIBLE_BEHIND = 60;
 
 // Seeded PRNG for deterministic placement
 function makeRng(seed) {
@@ -18,17 +18,74 @@ function makeRng(seed) {
   };
 }
 
+// Chromakey vertex/fragment shaders for green-screen video
+const chromakeyVertex = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const chromakeyFragment = `
+  uniform sampler2D map;
+  uniform vec3 keyColor;
+  uniform float similarity;
+  uniform float smoothness;
+  varying vec2 vUv;
+  void main() {
+    vec4 texColor = texture2D(map, vUv);
+    float d = distance(texColor.rgb, keyColor);
+    float alpha = smoothstep(similarity, similarity + smoothness, d);
+    if (alpha < 0.01) discard;
+    gl_FragColor = vec4(texColor.rgb, alpha);
+  }
+`;
+
 // Theme definitions: geometry + colors for each level type
 const THEMES = {
   presents: {
+    billboard: true,
     build(scene) {
-      const geo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-      const colors = [0xdd2222, 0x22aa22, 0xddaa22];
-      return colors.map(c => {
-        const mat = new THREE.MeshPhongMaterial({ color: c, emissive: 0x111111 });
-        return { geo, mat };
+      // Create shared video element for the gold gift animation
+      const video = document.createElement('video');
+      video.src = 'assets/gold_gift_200.mp4';
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      video.play().catch(() => {});
+
+      const videoTexture = new THREE.VideoTexture(video);
+      videoTexture.minFilter = THREE.LinearFilter;
+      videoTexture.magFilter = THREE.LinearFilter;
+
+      // Aspect ratio: 200x296 — sized to be visible against the bike
+      const w = 1.4, h = 1.4 * (296 / 200);
+      const geo = new THREE.PlaneGeometry(w, h);
+
+      // All presents share the same video + chromakey material (cloned per pool slot)
+      const baseMat = new THREE.ShaderMaterial({
+        uniforms: {
+          map: { value: videoTexture },
+          keyColor: { value: new THREE.Color(58 / 255, 180 / 255, 38 / 255) },
+          similarity: { value: 0.3 },
+          smoothness: { value: 0.08 }
+        },
+        vertexShader: chromakeyVertex,
+        fragmentShader: chromakeyFragment,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false
       });
-    }
+
+      // Return 3 identical variants (pool cycles through them)
+      return [
+        { geo, mat: baseMat },
+        { geo, mat: baseMat },
+        { geo, mat: baseMat }
+      ];
+    },
+    _video: null // stored on destroy
   },
   gems: {
     build(scene) {
@@ -43,10 +100,11 @@ const THEMES = {
 };
 
 export class CollectibleManager {
-  constructor(scene, roadPath, level) {
+  constructor(scene, roadPath, level, camera) {
     this.scene = scene;
     this.roadPath = roadPath;
     this.level = level;
+    this.camera = camera;
     this.collected = 0;
     this._pool = [];
     this._items = []; // { roadD, lateralOffset, collected, poolIdx, absoluteD }
@@ -55,12 +113,13 @@ export class CollectibleManager {
     // Build themed meshes
     const theme = THEMES[level.collectibles] || THEMES.presents;
     this._variants = theme.build(scene);
+    this._billboard = !!theme.billboard;
 
     // Create mesh pool
     for (let i = 0; i < POOL_SIZE; i++) {
       const variant = this._variants[i % this._variants.length];
       const mesh = new THREE.Mesh(variant.geo, variant.mat);
-      mesh.castShadow = true;
+      mesh.castShadow = !this._billboard;
       mesh.visible = false;
       scene.add(mesh);
       this._pool.push({ mesh, itemIdx: -1 });
@@ -88,7 +147,6 @@ export class CollectibleManager {
 
   update(dt, bikeDistanceTraveled, bikePosition) {
     const collected = [];
-    const bikeRoadD = bikeDistanceTraveled % this._loopLen;
 
     // Release pool slots for items out of range or collected
     for (const slot of this._pool) {
@@ -115,26 +173,28 @@ export class CollectibleManager {
       let ahead = item.absoluteD - bikeDistanceTraveled;
       if (ahead < -VISIBLE_BEHIND || ahead > VISIBLE_AHEAD) continue;
 
-      // Collection check
-      if (Math.abs(ahead) < COLLECT_RADIUS) {
-        const pt = this.roadPath.getPointAtDistance(item.roadD);
-        const rightX = Math.cos(pt.heading);
-        const rightZ = -Math.sin(pt.heading);
-        const itemX = pt.x + rightX * item.lateralOffset;
-        const itemZ = pt.z + rightZ * item.lateralOffset;
-        const dx = bikePosition.x - itemX;
-        const dz = bikePosition.z - itemZ;
-        if (dx * dx + dz * dz < COLLECT_RADIUS * COLLECT_RADIUS) {
-          item.collected = true;
-          this.collected++;
-          collected.push(i);
-          if (item.poolIdx >= 0) {
-            this._pool[item.poolIdx].mesh.visible = false;
-            this._pool[item.poolIdx].itemIdx = -1;
-            item.poolIdx = -1;
-          }
-          continue;
+      // Compute item world position (used for both rendering and collection)
+      const pt = this.roadPath.getPointAtDistance(item.roadD);
+      const rightX = Math.cos(pt.heading);
+      const rightZ = -Math.sin(pt.heading);
+      const worldX = pt.x + rightX * item.lateralOffset;
+      const worldZ = pt.z + rightZ * item.lateralOffset;
+
+      // Collection check — pure world-space distance
+      // (avoid using bikeDistanceTraveled here; it drifts from road distance
+      //  when the player steers, eventually exceeding COLLECT_RADIUS)
+      const dx = bikePosition.x - worldX;
+      const dz = bikePosition.z - worldZ;
+      if (dx * dx + dz * dz < COLLECT_RADIUS * COLLECT_RADIUS) {
+        item.collected = true;
+        this.collected++;
+        collected.push(i);
+        if (item.poolIdx >= 0) {
+          this._pool[item.poolIdx].mesh.visible = false;
+          this._pool[item.poolIdx].itemIdx = -1;
+          item.poolIdx = -1;
         }
+        continue;
       }
 
       // Assign pool mesh if not already assigned
@@ -147,24 +207,31 @@ export class CollectibleManager {
 
       // Position mesh
       const slot = this._pool[item.poolIdx];
-      const pt = this.roadPath.getPointAtDistance(item.roadD);
-      const fwdX = Math.sin(pt.heading);
-      const fwdZ = Math.cos(pt.heading);
-      const rightX = fwdZ;
-      const rightZ = -fwdX;
-
-      const worldX = pt.x + rightX * item.lateralOffset;
-      const worldZ = pt.z + rightZ * item.lateralOffset;
-
-      // Spin and bob
       const t = performance.now() / 1000;
       const bobY = Math.sin(t * 2 + i * 1.7) * 0.15;
       slot.mesh.position.set(worldX, pt.y + 0.8 + bobY, worldZ);
-      slot.mesh.rotation.y = t * 1.5 + i;
+      if (this._billboard && this.camera) {
+        slot.mesh.quaternion.copy(this.camera.quaternion);
+      } else {
+        slot.mesh.rotation.y = t * 1.5 + i;
+      }
       slot.mesh.visible = true;
     }
 
     return collected; // array of collected item indices
+  }
+
+  resetToCheckpoint(checkpointDistance) {
+    // Un-collect items that were past the checkpoint — they need to be re-collected
+    let restored = 0;
+    for (const item of this._items) {
+      if (item.collected && item.absoluteD > checkpointDistance) {
+        item.collected = false;
+        restored++;
+      }
+    }
+    this.collected -= restored;
+    if (this.collected < 0) this.collected = 0;
   }
 
   getTotalItems() {
@@ -174,6 +241,18 @@ export class CollectibleManager {
   destroy() {
     for (const slot of this._pool) {
       this.scene.remove(slot.mesh);
+    }
+    // Clean up video element if presents theme
+    for (const v of this._variants) {
+      if (v.mat.uniforms && v.mat.uniforms.map) {
+        const tex = v.mat.uniforms.map.value;
+        if (tex.image && tex.image.tagName === 'VIDEO') {
+          tex.image.pause();
+          tex.image.src = '';
+          tex.dispose();
+          break; // all variants share same texture
+        }
+      }
     }
     this._pool = [];
     this._items = [];

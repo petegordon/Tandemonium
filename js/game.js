@@ -5,9 +5,10 @@
 import * as THREE from 'three';
 import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH } from './config.js';
 import { RaceManager } from './race-manager.js';
-import { getLevelById } from './race-config.js';
+import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
+import { ObstacleManager } from './obstacles.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
 import { InputManager } from './input-manager.js';
 import { PedalController } from './pedal-controller.js';
@@ -159,16 +160,30 @@ class Game {
     // Victory overlay buttons
     document.getElementById('btn-play-again').addEventListener('click', () => {
       this._hideVictory();
-      this._resetGame();
+      this._resetGame(false, true);
     });
     document.getElementById('btn-next-level').addEventListener('click', () => {
       this._hideVictory();
-      this._returnToLobby();
+      // Advance to next level
+      const curIdx = LEVELS.indexOf(this.lobby.selectedLevel);
+      if (curIdx >= 0 && curIdx < LEVELS.length - 1) {
+        this.lobby.selectedLevel = LEVELS[curIdx + 1];
+        this._resetGame(false, true);
+      } else {
+        this._returnToLobby();
+      }
     });
     document.getElementById('btn-victory-lobby').addEventListener('click', () => {
       this._hideVictory();
       this._returnToLobby();
     });
+
+    // Overlay gamepad navigation (game-over & victory)
+    this._overlayButtons = [];
+    this._overlayFocusIdx = 0;
+    this._olPrevUp = false;
+    this._olPrevDown = false;
+    this._olPrevA = false;
 
     // Game state
     this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'gameover' | 'victory'
@@ -183,6 +198,19 @@ class Game {
       onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
       input: this.input
     });
+
+    // Background music
+    this._musicEl = new Audio('assets/Krampus Workshop.mp3');
+    this._musicEl.loop = true;
+    this._musicEl.volume = 0.35;
+    this._musicSourceNode = null; // created once via createMediaElementSource
+    this.lobby.onMusicChanged = (on) => {
+      if (on && (this.state === 'countdown' || this.state === 'playing')) {
+        this._musicEl.play().catch(() => {});
+      } else {
+        this._musicEl.pause();
+      }
+    };
 
     // Resize
     window.addEventListener('resize', () => this._onResize());
@@ -258,17 +286,7 @@ class Game {
       } else if (eventType === EVT_GAMEOVER) {
         this._showGameOver(true);
       } else if (eventType === EVT_CHECKPOINT) {
-        const statusEl = document.getElementById('status');
-        statusEl.textContent = 'CHECKPOINT!';
-        statusEl.style.color = '#44ff66';
-        statusEl.style.fontSize = '28px';
-        this._playBeep(600, 0.2);
-        setTimeout(() => {
-          if (this.state === 'playing') {
-            statusEl.textContent = '';
-            statusEl.style.fontSize = '';
-          }
-        }, 1500);
+        this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
         this._showVictory(true);
       }
@@ -413,8 +431,15 @@ class Game {
     this.raceManager = new RaceManager(level);
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
-    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level);
+    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera);
+    if (this.obstacleManager) this.obstacleManager.destroy();
+    this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera);
     this.hud.initProgress(level);
+    this.hud.initTimer();
+    // Show initial segment budget during countdown
+    const firstTarget = this.raceManager.checkpoints.length > 0 ? this.raceManager.checkpoints[0] : this.raceManager.raceDistance;
+    const initialBudget = this.raceManager._segmentBudget(firstTarget);
+    this.hud.updateTimer(initialBudget, initialBudget);
     this.hud.showCollectibles(level);
     this.world.setRaceMarkers(level);
 
@@ -436,6 +461,22 @@ class Game {
     this.recorder.setLabels(this.mode);
     this.recorder.startBuffer(this.audioCtx);
     if (this.lobby.cameraActive) this.recorder.startSelfie();
+
+    // Route background music through AudioContext so it's captured in recordings
+    if (this.audioCtx && !this._musicSourceNode) {
+      try {
+        this._musicSourceNode = this.audioCtx.createMediaElementSource(this._musicEl);
+        this._musicSourceNode.connect(this.audioCtx.destination);
+      } catch (e) {}
+    }
+    // Also route music to recording destination
+    if (this._musicSourceNode && this.recorder && this.recorder._audioDestination) {
+      try { this._musicSourceNode.connect(this.recorder._audioDestination); } catch (e) {}
+    }
+    // Play music if enabled
+    if (this.lobby.musicActive) {
+      this._musicEl.play().catch(() => {});
+    }
 
     this._playBeep(400, 0.15);
 
@@ -500,12 +541,93 @@ class Game {
     } catch (e) {}
   }
 
+  _playChime(freq, duration) {
+    try {
+      if (!this.audioCtx) return;
+      const ctx = this.audioCtx;
+      if (ctx.state === 'suspended') ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      if (this.recorder && this.recorder._audioDestination) {
+        gain.connect(this.recorder._audioDestination);
+      }
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + duration);
+    } catch (e) {}
+  }
+
+  _onTimerExpired() {
+    // Brief flash, then instant reset to last checkpoint (no game-over screen)
+    const statusEl = document.getElementById('status');
+    statusEl.textContent = "TIME'S UP!";
+    statusEl.style.color = '#ff4444';
+    statusEl.style.fontSize = '36px';
+    this._playBeep(200, 0.3);
+    setTimeout(() => {
+      if (this.state === 'playing' || this.state === 'countdown') {
+        statusEl.textContent = '';
+        statusEl.style.fontSize = '';
+      }
+    }, 1200);
+    // Reset segment timer before _resetGame so it reinits properly
+    if (this.raceManager) {
+      this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
+    }
+    this._resetGame();
+  }
+
+  _showCheckpointFlash() {
+    // Animated text overlay
+    const el = document.getElementById('checkpoint-flash');
+    if (el) {
+      el.classList.remove('animate');
+      void el.offsetWidth; // force reflow to restart animation
+      el.classList.add('animate');
+    }
+    // Rising chime: three ascending sine tones
+    this._playChime(523, 0.25);  // C5
+    setTimeout(() => this._playChime(659, 0.25), 100);  // E5
+    setTimeout(() => this._playChime(784, 0.35), 200);  // G5
+  }
+
   // ============================================================
   // RESET / DISCONNECT / RETURN TO LOBBY
   // ============================================================
 
-  _resetGame(fromRemote = false) {
-    this.bike.fullReset();
+  _resetGame(fromRemote = false, fromBeginning = false) {
+    // Resume from last checkpoint if the race was in progress (not finished/victory)
+    let checkpointD = 0;
+    if (!fromBeginning && this.raceManager &&
+        !this.raceManager.finished && this.raceManager.passedCheckpoints.size > 0) {
+      checkpointD = Math.max(...this.raceManager.passedCheckpoints);
+    }
+
+    if (checkpointD > 0) {
+      this.bike.resetToDistance(checkpointD);
+    } else {
+      this.bike.fullReset();
+    }
+
+    // Reset segment timer for current segment on checkpoint restart
+    if (this.raceManager && checkpointD > 0) {
+      this.raceManager.resetSegmentTimer(checkpointD);
+    }
+
+    // Reset collectibles collected after this checkpoint
+    if (this.collectibleManager && checkpointD > 0) {
+      this.collectibleManager.resetToCheckpoint(checkpointD);
+      if (this.raceManager) {
+        this.raceManager.collectiblesCount = this.collectibleManager.collected;
+      }
+      this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
+    }
+
     this.grassParticles.clear();
     this._stokerWasFallen = false;
 
@@ -525,7 +647,29 @@ class Game {
       this.net.sendEvent(EVT_RESET);
     }
 
-    this._startCountdown();
+    if (checkpointD > 0) {
+      this._resumeCountdown();
+    } else {
+      this._startCountdown();
+    }
+  }
+
+  _resumeCountdown() {
+    this.state = 'countdown';
+    this.countdownTimer = 3.0;
+    this.instructionsEl.classList.add('hidden');
+
+    const statusEl = document.getElementById('status');
+    statusEl.style.color = '#ffffff';
+    statusEl.style.fontSize = '48px';
+    statusEl.textContent = '3';
+    this._lastCountNum = 3;
+
+    this._playBeep(400, 0.15);
+
+    if (this.mode === 'captain' && this.net) {
+      this.net.sendEvent(EVT_COUNTDOWN);
+    }
   }
 
   _showReconnecting() {
@@ -561,7 +705,14 @@ class Game {
 
   _showGameOver(fromRemote = false) {
     this.state = 'gameover';
+    if (this.raceManager) this.raceManager.crashCount++;
+    // Clear HUD status text so "CRASHED! Resetting..." doesn't bleed through
+    document.getElementById('status').textContent = '';
     document.getElementById('gameover-overlay').style.display = 'flex';
+    this._setOverlayButtons([
+      document.getElementById('btn-restart'),
+      document.getElementById('btn-gameover-lobby')
+    ]);
     if (!fromRemote && this.net) {
       this.net.sendEvent(EVT_GAMEOVER);
     }
@@ -569,24 +720,12 @@ class Game {
 
   _hideGameOver() {
     document.getElementById('gameover-overlay').style.display = 'none';
+    this._clearOverlayButtons();
   }
 
   _handleRaceEvent(raceEvent) {
     if (raceEvent.event === 'checkpoint') {
-      const statusEl = document.getElementById('status');
-      const distLabel = raceEvent.distance >= 1000
-        ? (raceEvent.distance / 1000) + ' km'
-        : raceEvent.distance + 'm';
-      statusEl.textContent = 'CHECKPOINT! ' + distLabel;
-      statusEl.style.color = '#44ff66';
-      statusEl.style.fontSize = '28px';
-      this._playBeep(600, 0.2);
-      setTimeout(() => {
-        if (this.state === 'playing') {
-          statusEl.textContent = '';
-          statusEl.style.fontSize = '';
-        }
-      }, 1500);
+      this._showCheckpointFlash();
 
       // Notify stoker
       if (this.mode === 'captain' && this.net) {
@@ -605,6 +744,7 @@ class Game {
   _onCollect(count) {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
+    this.bike.boostTimer = 3; // 3-second speed boost
     this._playBeep(1200, 0.1);
     setTimeout(() => this._playBeep(1600, 0.08), 80);
   }
@@ -648,6 +788,8 @@ class Game {
       collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
       totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
       finishedLevel: level.id,
+      raceDistance: level.distance,
+      crashes: this.raceManager ? this.raceManager.crashCount : 0,
       isMultiplayer: this.mode !== 'solo',
       safePct: 0,
       syncDuration: 0,
@@ -685,6 +827,11 @@ class Game {
       ];
       if (summary.collectibles > 0) {
         stats.push({ label: 'Collectibles', value: '' + summary.collectibles });
+      }
+      if (summary.crashes > 0) {
+        stats.push({ label: 'Crashes', value: '' + summary.crashes });
+      } else {
+        stats.push({ label: '', value: '\u2B50 Perfect Ride! \u2B50' });
       }
       stats.forEach(s => {
         const div = document.createElement('div');
@@ -742,6 +889,24 @@ class Game {
     // Auto-submit score if logged in
     this._submitScore();
 
+    // Show NEXT LEVEL button if there's a next level
+    const nextBtn = document.getElementById('btn-next-level');
+    const curIdx = LEVELS.indexOf(this.lobby.selectedLevel);
+    if (nextBtn) {
+      nextBtn.style.display = (curIdx >= 0 && curIdx < LEVELS.length - 1) ? '' : 'none';
+    }
+
+    // Gamepad navigation for victory buttons
+    const victoryBtns = [
+      document.getElementById('btn-play-again'),
+      document.getElementById('btn-victory-lobby')
+    ];
+    // Include "next level" if visible
+    if (nextBtn && nextBtn.style.display !== 'none') {
+      victoryBtns.splice(1, 0, nextBtn);
+    }
+    this._setOverlayButtons(victoryBtns);
+
     this._playBeep(800, 0.3);
     setTimeout(() => this._playBeep(1000, 0.3), 200);
     setTimeout(() => this._playBeep(1200, 0.5), 400);
@@ -782,17 +947,23 @@ class Game {
   _hideVictory() {
     document.getElementById('victory-overlay').style.display = 'none';
     this.hud.hideProgress();
+    this.hud.hideTimer();
     this._contribBar.style.display = 'none';
+    this._clearOverlayButtons();
   }
 
   _returnToLobby() {
+    this._musicEl.pause();
+    this._musicEl.currentTime = 0;
     this._hideGameOver();
     this._hideVictory();
     this.raceManager = null;
     this.contributionTracker = null;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
+    this.hud.hideTimer();
     this.world.clearRaceMarkers();
     this.recorder.stopBuffer();
     this.recorder.stopSelfie();
@@ -949,6 +1120,56 @@ class Game {
   }
 
   // ============================================================
+  // OVERLAY GAMEPAD NAVIGATION (game-over & victory)
+  // ============================================================
+
+  _setOverlayButtons(buttons) {
+    this._overlayButtons = buttons.filter(Boolean);
+    this._overlayFocusIdx = 0;
+    this._olPrevUp = false;
+    this._olPrevDown = false;
+    this._olPrevA = false;
+    if (this._overlayButtons.length > 0) {
+      this._overlayButtons[0].classList.add('gamepad-focus');
+    }
+  }
+
+  _clearOverlayButtons() {
+    for (const btn of this._overlayButtons) btn.classList.remove('gamepad-focus');
+    this._overlayButtons = [];
+  }
+
+  _pollOverlayGamepad() {
+    if (this._overlayButtons.length === 0) return;
+    if (!this.input.gamepadConnected) return;
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[this.input.gamepadIndex];
+    if (!gp) return;
+
+    const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
+    const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
+    const a = gp.buttons[0] && gp.buttons[0].pressed;
+
+    if (up && !this._olPrevUp) {
+      this._overlayButtons[this._overlayFocusIdx].classList.remove('gamepad-focus');
+      this._overlayFocusIdx = Math.max(0, this._overlayFocusIdx - 1);
+      this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
+    }
+    if (down && !this._olPrevDown) {
+      this._overlayButtons[this._overlayFocusIdx].classList.remove('gamepad-focus');
+      this._overlayFocusIdx = Math.min(this._overlayButtons.length - 1, this._overlayFocusIdx + 1);
+      this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
+    }
+    if (a && !this._olPrevA) {
+      this._overlayButtons[this._overlayFocusIdx].click();
+    }
+
+    this._olPrevUp = up;
+    this._olPrevDown = down;
+    this._olPrevA = a;
+  }
+
+  // ============================================================
   // TREE COLLISION
   // ============================================================
 
@@ -961,6 +1182,13 @@ class Game {
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.2;
       this._playBeep(200, 0.3);
+      return;
+    }
+    // Pylon obstacle collision
+    if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
+      this.bike._fall();
+      this.chaseCamera.shakeAmount = 0.25;
+      this._playBeep(150, 0.4);
     }
   }
 
@@ -994,6 +1222,7 @@ class Game {
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
+      if (this.state === 'gameover' || this.state === 'victory') this._pollOverlayGamepad();
       this.world.update(this.bike.position, this.bike.roadD);
       this.chaseCamera.update(this.bike, dt, roadPath);
       this.renderer.render(this.scene, this.camera);
@@ -1017,9 +1246,13 @@ class Game {
 
     // Race progress + contribution tracking
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled);
-      if (raceEvent) this._handleRaceEvent(raceEvent);
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
+      if (raceEvent) {
+        if (raceEvent.event === 'timeout') { this._onTimerExpired(); return; }
+        this._handleRaceEvent(raceEvent);
+      }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
     }
     if (this.contributionTracker) {
       this.contributionTracker.update(dt, this.bike, balanceResult.leanInput, 0, this.pedalCtrl.stats);
@@ -1031,6 +1264,11 @@ class Game {
       if (collected.length > 0) {
         this._onCollect(collected.length);
       }
+    }
+
+    // Obstacles
+    if (this.obstacleManager) {
+      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     }
 
     // Achievements
@@ -1090,9 +1328,13 @@ class Game {
 
     // Race progress + contribution tracking (captain is authoritative)
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled);
-      if (raceEvent) this._handleRaceEvent(raceEvent);
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
+      if (raceEvent) {
+        if (raceEvent.event === 'timeout') { this._onTimerExpired(); return; }
+        this._handleRaceEvent(raceEvent);
+      }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
     }
     if (this.contributionTracker) {
       this.contributionTracker.update(dt, this.bike, captainLean, this.remoteLean, this.sharedPedal.stats);
@@ -1110,6 +1352,11 @@ class Game {
       if (collected.length > 0) {
         this._onCollect(collected.length);
       }
+    }
+
+    // Obstacles
+    if (this.obstacleManager) {
+      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     }
 
     // Achievements

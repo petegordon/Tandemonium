@@ -417,30 +417,34 @@ export class World {
 
     const L = this.roadPath.loopLength;
 
-    // Checkpoint arches
+    // Checkpoint gold cloud arches
+    const cloudTexture = this._makeCloudSprite();
+    const archMat = new THREE.SpriteMaterial({
+      map: cloudTexture, color: 0xffd700,
+      transparent: true, opacity: 0.6, depthWrite: false
+    });
     for (let d = level.checkpointInterval; d < level.distance; d += level.checkpointInterval) {
       const roadD = d % L;
       const pt = this.roadPath.getPointAtDistance(roadD);
 
       const group = new THREE.Group();
 
-      // Two posts + crossbar
-      const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 3.5, 6);
-      const postMat = new THREE.MeshPhongMaterial({ color: 0x44aaff, emissive: 0x112244 });
-      const barGeo = new THREE.CylinderGeometry(0.06, 0.06, 5.0, 6);
-
-      const leftPost = new THREE.Mesh(postGeo, postMat);
-      leftPost.position.set(-2.5, 1.75, 0);
-      group.add(leftPost);
-
-      const rightPost = new THREE.Mesh(postGeo, postMat);
-      rightPost.position.set(2.5, 1.75, 0);
-      group.add(rightPost);
-
-      const crossbar = new THREE.Mesh(barGeo, postMat);
-      crossbar.rotation.z = Math.PI / 2;
-      crossbar.position.set(0, 3.5, 0);
-      group.add(crossbar);
+      // Place puffs along a semicircular arch over the road
+      const archRadius = 2.8;   // half the road width
+      const archCenterY = 0.2;  // arch base just above ground
+      const puffCount = 16;
+      for (let i = 0; i < puffCount; i++) {
+        const angle = (i / (puffCount - 1)) * Math.PI; // 0 (right) to PI (left)
+        const x = Math.cos(angle) * archRadius;
+        const y = archCenterY + Math.sin(angle) * archRadius;
+        const puff = new THREE.Sprite(archMat.clone());
+        const s = 1.6 + Math.random() * 0.8;
+        puff.scale.set(s, s, 1);
+        puff.position.set(x, y, (Math.random() - 0.5) * 0.6);
+        puff.userData.baseY = y;
+        puff.userData.phase = Math.random() * Math.PI * 2;
+        group.add(puff);
+      }
 
       group.position.set(pt.x, pt.y, pt.z);
       group.rotation.y = pt.heading;
@@ -486,6 +490,22 @@ export class World {
     this._raceMarkers.push({ mesh: destGroup, roadD: destD, type: 'destination' });
   }
 
+  _makeCloudSprite() {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.4, 'rgba(255,255,255,0.6)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+  }
+
   clearRaceMarkers() {
     this._raceMarkers.forEach(m => this.scene.remove(m.mesh));
     this._raceMarkers = [];
@@ -502,10 +522,19 @@ export class World {
   }
 
   _updateRaceMarkerHeights(bikeD) {
+    const t = performance.now() * 0.001;
     for (const marker of this._raceMarkers) {
       if (!marker.mesh.visible) continue;
       const pt = this.roadPath.getPointAtDistance(marker.roadD);
       marker.mesh.position.y = pt.y;
+
+      // Animate checkpoint cloud puffs: gentle bob from stored base position
+      if (marker.type === 'checkpoint') {
+        for (const child of marker.mesh.children) {
+          if (child.userData.baseY === undefined) continue;
+          child.position.y = child.userData.baseY + Math.sin(t * 1.2 + child.userData.phase) * 0.08;
+        }
+      }
     }
   }
 

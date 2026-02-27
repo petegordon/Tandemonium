@@ -19,19 +19,72 @@ export class RaceManager {
     this.startTime = 0;
     this.finishTime = 0;
     this.collectiblesCount = 0;
+    this.crashCount = 0;
+
+    // Segment countdown timer (seconds)
+    this.segmentTimeRemaining = 0;
+    this.segmentTimeTotal = 0;
+  }
+
+  _segmentBudget(segmentDistance) {
+    return (segmentDistance / 250) * 60; // 60 seconds per 250m
   }
 
   start() {
-    this.startTime = performance.now();
+    // Only set on first start — preserve total time across checkpoint restarts
+    if (this.startTime === 0) {
+      this.startTime = performance.now();
+      // Init segment timer for first segment
+      const firstTarget = this.checkpoints.length > 0 ? this.checkpoints[0] : this.raceDistance;
+      this.segmentTimeTotal = this._segmentBudget(firstTarget);
+      this.segmentTimeRemaining = this.segmentTimeTotal;
+    }
   }
 
-  update(distanceTraveled) {
+  resetSegmentTimer(distanceTraveled) {
+    // Find current segment: from last passed checkpoint (or 0) to next target
+    let segStart = 0;
+    for (const cp of this.checkpoints) {
+      if (this.passedCheckpoints.has(cp)) {
+        segStart = cp;
+      }
+    }
+    // Next target: first unpassed checkpoint or finish
+    let segEnd = this.raceDistance;
+    for (const cp of this.checkpoints) {
+      if (!this.passedCheckpoints.has(cp)) {
+        segEnd = cp;
+        break;
+      }
+    }
+    const segDist = segEnd - segStart;
+    this.segmentTimeTotal = this._segmentBudget(segDist);
+    this.segmentTimeRemaining = this.segmentTimeTotal;
+  }
+
+  update(distanceTraveled, dt) {
     if (this.finished) return null;
+
+    // Decrement segment timer
+    if (dt && this.segmentTimeRemaining > 0) {
+      this.segmentTimeRemaining -= dt;
+    }
 
     // Check checkpoints
     for (const cp of this.checkpoints) {
       if (distanceTraveled >= cp && !this.passedCheckpoints.has(cp)) {
         this.passedCheckpoints.add(cp);
+        // Reset timer for next segment
+        let nextTarget = this.raceDistance;
+        for (const ncp of this.checkpoints) {
+          if (!this.passedCheckpoints.has(ncp)) {
+            nextTarget = ncp;
+            break;
+          }
+        }
+        const segDist = nextTarget - cp;
+        this.segmentTimeTotal = this._segmentBudget(segDist);
+        this.segmentTimeRemaining = this.segmentTimeTotal;
         return { event: 'checkpoint', distance: cp, total: this.checkpoints.length, passed: this.passedCheckpoints.size };
       }
     }
@@ -41,6 +94,11 @@ export class RaceManager {
       this.finished = true;
       this.finishTime = performance.now();
       return { event: 'finish' };
+    }
+
+    // Check timeout
+    if (this.segmentTimeRemaining <= 0 && this.startTime > 0) {
+      return { event: 'timeout' };
     }
 
     return null;
@@ -88,6 +146,7 @@ export class RaceManager {
       checkpointsPassed: this.passedCheckpoints.size,
       checkpointsTotal: this.checkpoints.length,
       collectibles: this.collectiblesCount,
+      crashes: this.crashCount,
       finished: this.finished
     };
   }

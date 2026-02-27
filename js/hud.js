@@ -46,6 +46,10 @@ export class HUD {
     this.collectibleWrap = document.getElementById('collectible-counter');
     this.collectibleIcon = document.getElementById('collectible-icon');
     this.collectibleCount = document.getElementById('collectible-count');
+
+    // Segment timer
+    this.timerRow = document.getElementById('timer-row');
+    this.timerEl = document.getElementById('segment-timer');
   }
 
   initProgress(level) {
@@ -83,6 +87,30 @@ export class HUD {
 
   hideProgress() {
     this.progressWrap.style.display = 'none';
+  }
+
+  initTimer() {
+    this.timerRow.classList.add('visible');
+    this.timerEl.className = '';
+    this.timerEl.textContent = '';
+  }
+
+  updateTimer(remaining, total) {
+    const secs = Math.max(0, Math.ceil(remaining));
+    this.timerEl.textContent = '\u23F1 ' + secs + 's';
+    if (remaining <= 5) {
+      this.timerEl.className = 'danger';
+    } else if (remaining <= 10) {
+      this.timerEl.className = 'warning';
+    } else if (remaining <= 15) {
+      this.timerEl.className = 'normal';
+    } else {
+      this.timerEl.className = '';
+    }
+  }
+
+  hideTimer() {
+    this.timerRow.classList.remove('visible');
   }
 
   showCollectibles(level) {
@@ -197,7 +225,7 @@ export class HUD {
       this.statusEl.style.color = '#ff4444';
     } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {
       const hint = isMobile ? 'Tap pedals to ride!' :
-        (input.gamepadConnected ? 'Pedal! Alternate LT / RT' : 'Pedal! Alternate \u2191 \u2193');
+        (input.gamepadConnected ? 'Pedal! Alternate LB/RB or LT/RT' : 'Pedal! Alternate \u2191 \u2193');
       this.statusEl.textContent = hint;
       this.statusEl.style.color = '#ffdd44';
     } else {
