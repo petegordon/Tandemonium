@@ -25,6 +25,7 @@ export class BikeModel {
     this.fallen = false;
     this.fallTimer = 0;
     this._braking = false;
+    this.boostTimer = 0;
 
     // Road path reference (set externally after construction)
     this.roadPath = null;
@@ -142,6 +143,12 @@ export class BikeModel {
     // Acceleration
     this.speed += pedalResult.acceleration;
 
+    // Collectible speed boost
+    if (this.boostTimer > 0) {
+      this.boostTimer -= dt;
+      this.speed += 4.0 * dt; // sustained push
+    }
+
     // Friction
     this.speed *= (1 - 0.6 * dt);
 
@@ -223,18 +230,26 @@ export class BikeModel {
     // Position
     this.position.x += Math.sin(this.heading) * this.speed * dt;
     this.position.z += Math.cos(this.heading) * this.speed * dt;
-    this.distanceTraveled += this.speed * dt;
 
     // Track road distance (smoothed, wrap-aware) and set terrain height
     if (this.roadPath) {
       const info = this.roadPath.getClosestRoadInfo(this.position.x, this.position.z, this.roadD);
       if (info) {
+        const prevRoadD = this.roadD;
         let diff = info.d - this.roadD;
         const L = this.roadPath.loopLength;
         if (diff > L / 2) diff -= L;
         if (diff < -L / 2) diff += L;
         this.roadD += diff * Math.min(1, 15 * dt);
         this.roadD = ((this.roadD % L) + L) % L;
+
+        // Update distanceTraveled from road progress, not path length.
+        // Going sideways or in circles doesn't count; going backward subtracts.
+        let roadDelta = this.roadD - prevRoadD;
+        if (roadDelta > L / 2) roadDelta -= L;
+        if (roadDelta < -L / 2) roadDelta += L;
+        this.distanceTraveled = Math.max(0, this.distanceTraveled + roadDelta);
+
         this._lateralOffset = info.lateralOffset;
 
         // Per-wheel lateral offsets (front +2m, rear -2m along heading)
@@ -403,16 +418,21 @@ export class BikeModel {
   }
 
   fullReset() {
+    this.resetToDistance(0);
+  }
+
+  resetToDistance(distance) {
     this.fallen = false;
     this.lean = 0;
     this.leanVelocity = 0;
     this.speed = 0;
-    this.roadD = 0;
     this._smoothPitch = 0;
 
-    // Place at road start
+    const roadD = this.roadPath ? (distance % this.roadPath.loopLength) : 0;
+    this.roadD = roadD;
+
     if (this.roadPath) {
-      const pt = this.roadPath.getPointAtDistance(0);
+      const pt = this.roadPath.getPointAtDistance(roadD);
       this.position.set(pt.x, pt.y, pt.z);
       this.heading = pt.heading;
     } else {
@@ -420,7 +440,7 @@ export class BikeModel {
       this.heading = 0;
     }
 
-    this.distanceTraveled = 0;
+    this.distanceTraveled = distance;
     this.crankAngle = 0;
     this.smoothSpokeFade = 0;
     for (const spoke of this.spokeMeshes) {

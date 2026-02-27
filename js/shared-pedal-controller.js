@@ -22,6 +22,12 @@ export class SharedPedalController {
 
     // Running offset quality score (0-1)
     this.offsetScore = 0.5;
+
+    // Stats tracking per player
+    this.stats = {
+      captain: { totalTaps: 0, correctTaps: 0, wrongTaps: 0, totalPower: 0 },
+      stoker:  { totalTaps: 0, correctTaps: 0, wrongTaps: 0, totalPower: 0 }
+    };
   }
 
   receiveTap(source, foot) {
@@ -64,29 +70,40 @@ export class SharedPedalController {
       const otherLastFoot = tap.source === 'captain' ? this.stokerLastFoot : this.captainLastFoot;
       const gap = tap.time - (tap.source === 'captain' ? this.captainLastTime : this.stokerLastTime);
 
+      const pStats = this.stats[tap.source] || this.stats.captain;
+      pStats.totalTaps++;
+
       if (playerLastFoot === tap.foot) {
         // Repeated own foot — wrong foot penalty
         this.wasWrong = true;
+        pStats.wrongTaps++;
         this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
         this.offsetScore = Math.max(0, this.offsetScore - 0.1);
         acceleration += 0.06;
+        pStats.totalPower += 0.06;
         wobble += 0.5;
       } else if (otherLastFoot !== null && tap.foot === otherLastFoot) {
         // Same foot as other player — in-phase (poor offset)
         this.wasInPhase = true;
+        pStats.correctTaps++;
         this.offsetScore = Math.max(0, this.offsetScore - 0.08);
         const cadence = gap < 0.8 ? (0.8 - gap) * 0.3 : 0;
         this.pedalPower = Math.min(this.pedalPower + 0.1 + cadence * 0.5, 1.0);
-        acceleration += 0.15 + 0.3 * this.pedalPower;
+        const accel = 0.15 + 0.3 * this.pedalPower;
+        acceleration += accel;
+        pStats.totalPower += accel;
         wobble += 0.2;
       } else {
         // Opposite foot — perfect offset!
         this.wasCorrect = true;
+        pStats.correctTaps++;
         this.offsetScore = Math.min(1, this.offsetScore + 0.1);
         const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
         const offsetBonus = this.offsetScore * 0.15;
         this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
-        acceleration += 0.35 + 0.6 * this.pedalPower + offsetBonus;
+        const accel = 0.35 + 0.6 * this.pedalPower + offsetBonus;
+        acceleration += accel;
+        pStats.totalPower += accel;
       }
 
       this._updatePlayerState(tap);

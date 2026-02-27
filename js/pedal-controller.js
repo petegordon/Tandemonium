@@ -13,6 +13,9 @@ export class PedalController {
     this.lastPedalTime = 0;
     this.wasCorrect = false;
     this.wasWrong = false;
+
+    // Stats tracking
+    this.stats = { totalTaps: 0, correctTaps: 0, wrongTaps: 0, totalPower: 0 };
   }
 
   update(dt) {
@@ -43,36 +46,44 @@ export class PedalController {
     }
 
     if (leftJust) {
+      this.stats.totalTaps++;
       const gap = now - this.lastPedalTime;
       if (this.lastPedal !== 'left') {
         this.wasCorrect = true;
+        this.stats.correctTaps++;
         const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
         this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
         acceleration = 0.35 + 0.6 * this.pedalPower;
       } else {
         this.wasWrong = true;
+        this.stats.wrongTaps++;
         this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
         acceleration = 0.06;
         wobble = 0.5;
       }
+      this.stats.totalPower += acceleration;
       this.lastPedal = 'left';
       this.lastPedalTime = now;
       this.crankAngle += Math.PI / 2;
     }
 
     if (rightJust) {
+      this.stats.totalTaps++;
       const gap = now - this.lastPedalTime;
       if (this.lastPedal !== 'right') {
         this.wasCorrect = true;
+        this.stats.correctTaps++;
         const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
         this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
         acceleration = 0.35 + 0.6 * this.pedalPower;
       } else {
         this.wasWrong = true;
+        this.stats.wrongTaps++;
         this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
         acceleration = 0.06;
         wobble = 0.5;
       }
+      this.stats.totalPower += acceleration;
       this.lastPedal = 'right';
       this.lastPedalTime = now;
       this.crankAngle += Math.PI / 2;

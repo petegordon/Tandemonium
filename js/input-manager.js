@@ -291,12 +291,14 @@ export class InputManager {
     const rawX = gp.axes[0] || 0;
     this.gamepadLean = Math.abs(rawX) < 0.08 ? 0 : rawX;
 
-    // Triggers: buttons[6] = LT, buttons[7] = RT
+    // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
     const THRESHOLD = 0.5;
+    const lb = gp.buttons[4] && gp.buttons[4].pressed;
+    const rb = gp.buttons[5] && gp.buttons[5].pressed;
     this._gpTriggerLeftVal = gp.buttons[6] ? gp.buttons[6].value : 0;
     this._gpTriggerRightVal = gp.buttons[7] ? gp.buttons[7].value : 0;
-    this._gpTriggerLeftPressed = this._gpTriggerLeftVal >= THRESHOLD;
-    this._gpTriggerRightPressed = this._gpTriggerRightVal >= THRESHOLD;
+    this._gpTriggerLeftPressed = lb || this._gpTriggerLeftVal >= THRESHOLD;
+    this._gpTriggerRightPressed = rb || this._gpTriggerRightVal >= THRESHOLD;
   }
 
   getGamepadLean() {

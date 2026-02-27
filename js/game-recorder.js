@@ -101,13 +101,13 @@ export class GameRecorder {
   }
 
   _getMimeType() {
-    // Prefer MP4 (Safari/iOS — plays natively in Files/Photos),
-    // fall back to WebM (Chrome)
+    // Prefer WebM on Chrome/Firefox (avoids avc1 codec-description warnings),
+    // fall back to MP4 for Safari/iOS (plays natively in Files/Photos)
     const types = [
-      'video/mp4',
       'video/webm;codecs=vp9',
       'video/webm;codecs=vp8',
-      'video/webm'
+      'video/webm',
+      'video/mp4'
     ];
     for (const type of types) {
       if (MediaRecorder.isTypeSupported(type)) return type;
