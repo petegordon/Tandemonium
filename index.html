@@ -241,32 +241,34 @@
     align-items: center;
     justify-content: center;
     z-index: 60;
-    padding: 30px;
+    padding: 10px 20px;
     text-align: center;
+    overflow-y: auto;
   }
   #victory-video {
-    width: 180px;
-    height: 180px;
-    margin-bottom: 12px;
+    width: 90px;
+    height: 90px;
+    margin-bottom: 0;
     border-radius: 8px;
   }
   #victory-overlay h2 {
-    font-size: 28px;
+    font-size: 24px;
     font-weight: 700;
     color: #44ff66;
-    margin-bottom: 4px;
+    margin-top: 0;
+    margin-bottom: 2px;
     text-shadow: 0 0 20px rgba(68,255,102,0.4);
   }
   #victory-destination {
-    font-size: 18px;
+    font-size: 16px;
     color: rgba(255,255,255,0.8);
-    margin-bottom: 16px;
+    margin-bottom: 8px;
   }
   #victory-stats {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-bottom: 20px;
+    gap: 3px;
+    margin-bottom: 10px;
   }
   .victory-stat {
     font-size: 14px;
@@ -837,7 +839,7 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
-  #lobby-auth {
+  #lobby-top-bar {
     position: absolute;
     top: calc(env(safe-area-inset-top, 0px) + 8px);
     right: 12px;
@@ -845,6 +847,11 @@
     align-items: center;
     gap: 8px;
     z-index: 2;
+  }
+  #lobby-auth {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .lobby-auth-btn {
     padding: 4px 10px;
@@ -907,6 +914,75 @@
   .lb-rank { font-weight: 700; color: #ffcc00; min-width: 28px; text-align: left; }
   .lb-name { flex: 1; text-align: left; }
   .lb-time { font-variant-numeric: tabular-nums; color: #44ff66; }
+  #leaderboard-video {
+    width: 100%;
+    max-width: 320px;
+    aspect-ratio: 3 / 2;
+    border-radius: 10px;
+    display: none;
+    margin: 0 auto 8px;
+  }
+  .lb-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .lb-tab {
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: transparent;
+    color: rgba(255,255,255,0.6);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .lb-tab.active {
+    border-color: #fff;
+    color: #fff;
+    background: rgba(255,255,255,0.12);
+  }
+  .lb-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+  .lb-mode {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .lb-mode-solo { background: rgba(68,255,102,0.2); color: #44ff66; }
+  .lb-mode-captain { background: rgba(68,136,255,0.2); color: #4488ff; }
+  .lb-mode-stoker { background: rgba(170,68,255,0.2); color: #aa44ff; }
+  .lb-collectibles {
+    font-size: 11px;
+    color: rgba(255,255,255,0.45);
+    flex-shrink: 0;
+  }
+  .lb-entry.lb-you {
+    border-left: 3px solid #44ff66;
+    background: rgba(68,255,102,0.06);
+  }
+  .lb-you-tag {
+    font-size: 9px;
+    font-weight: 700;
+    color: #44ff66;
+    margin-left: 2px;
+  }
+  .lb-date {
+    font-size: 10px;
+    color: rgba(255,255,255,0.3);
+    flex-shrink: 0;
+  }
   #lobby-banner {
     width: 100%;
     height: auto;
@@ -1714,13 +1790,15 @@ ON</button>
 
 <!-- Lobby overlay -->
 <div id="lobby">
-  <div id="lobby-auth" style="display:none;">
-    <button class="lobby-auth-btn" id="btn-sign-in">Sign in with Google</button>
-    <div id="user-info" style="display:none;">
-      <img id="user-avatar" class="user-avatar" style="display:none;" alt="">
-      <span id="user-name"></span>
-    </div>
+  <div id="lobby-top-bar">
     <button class="lobby-auth-btn" id="btn-leaderboard">Leaderboard</button>
+    <div id="lobby-auth" style="display:none;">
+      <button class="lobby-auth-btn" id="btn-sign-in">Sign in with Google</button>
+      <div id="user-info" style="display:none;">
+        <img id="user-avatar" class="user-avatar" style="display:none;" alt="">
+        <span id="user-name"></span>
+      </div>
+    </div>
   </div>
   <img id="lobby-banner" src="images/tandemonium_title.png" alt="Tandemonium">
   <p class="lobby-subtitle">Party Physics Game on a Tandem Bicycle</p>
@@ -1839,7 +1917,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.61b413b | 02-28-2026 11:55</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.9ee7467 | 02-28-2026 12:30</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -1847,7 +1925,9 @@ ON</button>
 <!-- Leaderboard modal -->
 <div id="leaderboard-modal" style="display:none;">
   <div class="leaderboard-box">
-    <h3>Leaderboard</h3>
+    <canvas id="leaderboard-video" width="360" height="240"></canvas>
+    <h3 id="leaderboard-title">Leaderboard</h3>
+    <div class="lb-tabs" id="lb-tabs"></div>
     <div id="leaderboard-list"></div>
     <button class="lobby-btn" id="leaderboard-close" style="margin-top:12px;">Close</button>
   </div>
@@ -1862,6 +1942,14 @@ ON</button>
 
     <div class="help-section">
       <div class="help-section-title">Toggles</div>
+      <div class="help-toggle-row">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5" fill="none"/></svg>
+        <span><span class="help-toggle-name">Leaderboard</span> <span class="help-toggle-desc">— View top scores for the current level</span></span>
+      </div>
+      <div class="help-toggle-row">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>
+        <span><span class="help-toggle-name">Profile</span> <span class="help-toggle-desc">— Sign in with Google to save scores</span></span>
+      </div>
       <div class="help-toggle-row">
         <span class="help-icon" style="font-size:10px;font-weight:700">ALL</span>
         <span><span class="help-toggle-name">All</span> <span class="help-toggle-desc">— Enable or disable all permissions at once</span></span>
@@ -1885,14 +1973,6 @@ ON</button>
       <div class="help-toggle-row">
         <span class="help-icon" style="font-size:14px;font-weight:700">?</span>
         <span><span class="help-toggle-name">Help</span> <span class="help-toggle-desc">— This help screen</span></span>
-      </div>
-      <div class="help-toggle-row">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>
-        <span><span class="help-toggle-name">Profile</span> <span class="help-toggle-desc">— Sign in with Google to save scores</span></span>
-      </div>
-      <div class="help-toggle-row">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5" fill="none"/></svg>
-        <span><span class="help-toggle-name">Leaderboard</span> <span class="help-toggle-desc">— View top scores for the current level</span></span>
       </div>
     </div>
 
@@ -1950,8 +2030,8 @@ ON</button>
   <p id="victory-destination"></p>
   <div id="victory-stats"></div>
   <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
-  <button class="lobby-btn" id="btn-next-level" style="margin-top:10px;display:none;">NEXT LEVEL</button>
-  <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:10px;">GO TO LOBBY</button>
+  <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
+  <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">RETURN TO LOBBY</button>
 </div>
 
 <!-- Reconnect overlay (shown during retry attempts) -->

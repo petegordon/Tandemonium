@@ -27,7 +27,7 @@ export class RaceManager {
   }
 
   _segmentBudget(segmentDistance) {
-    return (segmentDistance / 250) * 60; // 60 seconds per 250m
+    return Math.max(10, (segmentDistance / 250) * 60); // 60 seconds per 250m, minimum 10s
   }
 
   start() {

@@ -723,6 +723,7 @@ class Game {
 
   _showGameOver(fromRemote = false) {
     this.state = 'gameover';
+    this.hud.hideTimer();
     if (this.raceManager) this.raceManager.crashCount++;
     // Clear HUD status text so "CRASHED! Resetting..." doesn't bleed through
     document.getElementById('status').textContent = '';
@@ -832,6 +833,7 @@ class Game {
 
   _showVictory(fromRemote = false) {
     this.state = 'victory';
+    this.hud.hideTimer();
     const overlay = document.getElementById('victory-overlay');
     overlay.style.display = 'flex';
 
