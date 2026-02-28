@@ -5,8 +5,8 @@ compatibility_date = "2024-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "tandemonium-leaderboard"
-database_id = "" # Fill in after: wrangler d1 create tandemonium-leaderboard
+database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
 
 [vars]
-CORS_ORIGIN = "https://tandemonium.com"
-# Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / JWT_SECRET
+CORS_ORIGIN = "https://tandemonium.jimandi.love"
+# Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET

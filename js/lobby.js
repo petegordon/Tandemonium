@@ -207,6 +207,7 @@ export class Lobby {
     this.toggleHelp.addEventListener('click', () => this._openHelp());
     this.toggleProfile.addEventListener('click', () => this._toggleProfile());
     this.toggleLeaderboard.addEventListener('click', () => this._openLeaderboard());
+    document.getElementById('btn-leaderboard').addEventListener('click', () => this._openLeaderboard());
   }
 
   _buildLevelCards() {
@@ -284,6 +285,11 @@ export class Lobby {
       if (this.profilePopup.contains(e.target)) return;
       if (this.toggleProfile.contains(e.target)) return;
       this.profilePopup.classList.remove('visible');
+    });
+
+    // Leaderboard close
+    document.getElementById('leaderboard-close').addEventListener('click', () => {
+      document.getElementById('leaderboard-modal').style.display = 'none';
     });
 
     // Restore UI if already logged in from localStorage
@@ -501,9 +507,47 @@ export class Lobby {
     }
   }
 
-  _openLeaderboard() {
-    if (this.toggleLeaderboard.disabled) return;
-    document.getElementById('btn-leaderboard').click();
+  async _openLeaderboard() {
+    const modal = document.getElementById('leaderboard-modal');
+    const list = document.getElementById('leaderboard-list');
+    list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">Loading...</div>';
+    modal.style.display = '';
+
+    try {
+      const levelId = this.selectedLevel ? this.selectedLevel.id : 'grandma';
+      const data = await this.auth.getLeaderboard(levelId);
+      const entries = data.entries || [];
+
+      if (entries.length === 0) {
+        list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">No scores yet</div>';
+        return;
+      }
+
+      list.innerHTML = entries.map((e, i) =>
+        '<div class="lb-entry">' +
+          '<span class="lb-rank">' + (i + 1) + '</span>' +
+          '<span class="lb-name">' + this._escapeHtml(e.display_name || 'Player') + '</span>' +
+          '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
+        '</div>'
+      ).join('');
+    } catch (e) {
+      list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">Could not load leaderboard</div>';
+    }
+  }
+
+  _escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  _formatTime(ms) {
+    if (!ms) return '--:--';
+    const totalSec = Math.floor(ms / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    const frac = Math.floor((ms % 1000) / 100);
+    return min + ':' + String(sec).padStart(2, '0') + '.' + frac;
   }
 
   _checkPermissionStates() {

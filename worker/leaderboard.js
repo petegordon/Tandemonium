@@ -16,8 +16,7 @@ export default {
       const path = url.pathname;
 
       // Auth routes
-      if (path === '/auth/google') return handleGoogleAuth(env, url);
-      if (path === '/auth/google/callback') return handleGoogleCallback(request, env, url, corsOrigin);
+      if (path === '/auth/google' && request.method === 'POST') return handleGoogleAuth(request, env, corsOrigin);
 
       // Authed routes
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScore);
@@ -39,75 +38,61 @@ export default {
 // AUTH
 // ============================================================
 
-function handleGoogleAuth(env, url) {
-  const redirectUri = `${url.origin}/auth/google/callback`;
-  const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams({
-    client_id: env.GOOGLE_CLIENT_ID,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: 'openid profile email',
-    prompt: 'select_account'
-  });
-  return Response.redirect(authUrl, 302);
-}
+async function handleGoogleAuth(request, env, corsOrigin) {
+  const body = await request.json();
+  const { credential } = body;
+  if (!credential) return jsonResponse({ error: 'Missing credential' }, 400, corsOrigin);
 
-async function handleGoogleCallback(request, env, url, corsOrigin) {
-  const code = url.searchParams.get('code');
-  if (!code) return jsonResponse({ error: 'Missing code' }, 400, corsOrigin);
+  // Decode and verify the Google ID token (GSI JWT)
+  const parts = credential.split('.');
+  if (parts.length !== 3) return jsonResponse({ error: 'Invalid token format' }, 400, corsOrigin);
 
-  const redirectUri = `${url.origin}/auth/google/callback`;
+  let payload;
+  try {
+    payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+  } catch {
+    return jsonResponse({ error: 'Invalid token payload' }, 400, corsOrigin);
+  }
 
-  // Exchange code for tokens
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      code,
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: redirectUri,
-      grant_type: 'authorization_code'
-    })
-  });
-  const tokens = await tokenRes.json();
-  if (!tokens.access_token) return jsonResponse({ error: 'Token exchange failed' }, 400, corsOrigin);
+  // Verify issuer and audience
+  const validIssuers = ['accounts.google.com', 'https://accounts.google.com'];
+  if (!validIssuers.includes(payload.iss)) {
+    return jsonResponse({ error: 'Invalid token issuer' }, 401, corsOrigin);
+  }
+  if (payload.aud !== env.GOOGLE_CLIENT_ID) {
+    return jsonResponse({ error: 'Invalid token audience' }, 401, corsOrigin);
+  }
+  // Verify expiration
+  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+    return jsonResponse({ error: 'Token expired' }, 401, corsOrigin);
+  }
 
-  // Get user info
-  const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-    headers: { Authorization: `Bearer ${tokens.access_token}` }
-  });
-  const userInfo = await userRes.json();
+  const googleId = payload.sub;
+  const name = payload.name || 'Player';
+  const picture = payload.picture || null;
 
   // Upsert user
   const existing = await env.DB.prepare(
     'SELECT id FROM users WHERE provider = ? AND provider_id = ?'
-  ).bind('google', userInfo.id).first();
+  ).bind('google', googleId).first();
 
   let userId;
   if (existing) {
     userId = existing.id;
     await env.DB.prepare(
       'UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?'
-    ).bind(userInfo.name, userInfo.picture, userId).run();
+    ).bind(name, picture, userId).run();
   } else {
     const ins = await env.DB.prepare(
       'INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?)'
-    ).bind('google', userInfo.id, userInfo.name, userInfo.picture).run();
+    ).bind('google', googleId, name, picture).run();
     userId = ins.meta.last_row_id;
   }
 
-  // Create JWT
-  const jwt = await createJWT({ sub: userId, name: userInfo.name, picture: userInfo.picture }, env.JWT_SECRET);
+  // Create server JWT
+  const jwt = await createJWT({ sub: userId, name, picture }, env.JWT_SECRET);
 
-  // Return HTML that posts message to opener and closes
-  const html = `<!DOCTYPE html><html><body><script>
-    window.opener.postMessage({ type: 'auth', token: '${jwt}', user: ${JSON.stringify({
-      id: userId, name: userInfo.name, avatar: userInfo.picture
-    })} }, '*');
-    window.close();
-  </script></body></html>`;
-
-  return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture } }, 200, corsOrigin);
 }
 
 // ============================================================
