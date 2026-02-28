@@ -224,9 +224,11 @@ export class BikeModel {
     this.heading += turnRate * dt;
 
     // Slope physics — uphill decelerates, downhill accelerates
+    // Reduced at low speeds so hills don't stall startup
     if (this.roadPath && this.speed > 0.01) {
       const slope = this.roadPath.getSlopeAtDistance(this.roadD);
-      this.speed -= slope * 9.8 * dt * 0.3;
+      const slopeRamp = Math.min(1, this.speed / 4);
+      this.speed -= slope * 9.8 * dt * 0.3 * slopeRamp;
       this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
     }
 
