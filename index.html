@@ -914,6 +914,7 @@
     justify-content: center;
   }
   .leaderboard-box {
+    position: relative;
     background: rgba(30,30,40,0.95);
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 16px;
@@ -924,6 +925,19 @@
     overflow-y: auto;
     text-align: center;
   }
+  #leaderboard-x {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.7);
+    font-size: 28px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+  }
+  #leaderboard-x:hover { color: #fff; }
   .leaderboard-box h3 {
     color: #fff;
     font-size: 20px;
@@ -1663,6 +1677,67 @@
     pointer-events: none;
     display: none;
   }
+  @media (min-width: 1024px) {
+    #lobby {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto auto;
+      align-content: start;
+      justify-items: center;
+      overflow-y: hidden;
+      padding: 10px 24px 24px;
+      gap: 0 24px;
+    }
+    #lobby-banner {
+      grid-column: 1;
+      grid-row: 1 / 3;
+      align-self: center;
+      justify-self: end;
+      width: 100%;
+      max-width: 480px;
+      max-height: 60vh;
+      object-fit: contain;
+      margin-bottom: 0;
+      border-radius: 16px;
+    }
+    .lobby-subtitle {
+      grid-column: 2;
+      grid-row: 1;
+      justify-self: start;
+      align-self: end;
+      margin-bottom: 12px;
+    }
+    .lobby-card {
+      grid-column: 2;
+      grid-row: 2;
+      justify-self: start;
+      align-self: start;
+      max-width: 380px;
+    }
+    #lobby-banner-bottom {
+      grid-column: 1 / -1;
+      grid-row: 3;
+      align-self: center;
+      width: 100%;
+      max-width: 700px;
+      max-height: 35vh;
+      object-fit: contain;
+      margin-top: 0;
+      border-radius: 16px;
+    }
+  }
+  @media (min-width: 1440px) {
+    #lobby-banner {
+      grid-row: 1 / -1;
+    }
+    #lobby-banner-bottom {
+      grid-column: 2;
+      grid-row: 3;
+      justify-self: start;
+      max-width: 380px;
+      max-height: 45vh;
+    }
+  }
 </style>
 </head>
 <body>
@@ -1818,7 +1893,6 @@ ON</button>
 <!-- Lobby overlay -->
 <div id="lobby">
   <div id="lobby-top-bar">
-    <button class="lobby-auth-btn" id="btn-leaderboard">Leaderboard</button>
     <div id="lobby-auth" style="display:none;">
       <button class="lobby-auth-btn" id="btn-sign-in">Sign in with Google</button>
       <div id="user-info" style="display:none;">
@@ -1944,7 +2018,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.06f99c0 | 02-28-2026 12:53</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.9c3be84 | 02-28-2026 14:00</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -1952,6 +2026,7 @@ ON</button>
 <!-- Leaderboard modal -->
 <div id="leaderboard-modal" style="display:none;">
   <div class="leaderboard-box">
+    <button id="leaderboard-x">&times;</button>
     <canvas id="leaderboard-video" width="360" height="240"></canvas>
     <h3 id="leaderboard-title">Leaderboard</h3>
     <div class="lb-tabs" id="lb-tabs"></div>

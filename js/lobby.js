@@ -299,9 +299,14 @@ export class Lobby {
     });
 
     // Leaderboard close
-    document.getElementById('leaderboard-close').addEventListener('click', () => {
+    const closeLeaderboard = () => {
       this._stopLeaderboardVideo();
       document.getElementById('leaderboard-modal').style.display = 'none';
+    };
+    document.getElementById('leaderboard-close').addEventListener('click', closeLeaderboard);
+    document.getElementById('leaderboard-x').addEventListener('click', closeLeaderboard);
+    document.getElementById('leaderboard-modal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeLeaderboard();
     });
 
     // Restore UI if already logged in from localStorage
@@ -620,7 +625,7 @@ export class Lobby {
         return '<div class="lb-entry' + youClass + '">' +
           '<span class="lb-rank">' + (i + 1) + '</span>' +
           avatar +
-          '<span class="lb-name">' + this._escapeHtml(e.display_name || 'Player') + youTag + '</span>' +
+          '<span class="lb-name">' + this._escapeHtml((e.display_name || 'Player').split(' ')[0]) + youTag + '</span>' +
           modeHtml +
           collectHtml +
           '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
