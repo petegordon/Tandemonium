@@ -611,9 +611,9 @@ function startMotionListening() {
     const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
     input._orient = orient;
     let rollRad;
-    if (orient === 90) rollRad = Math.atan2(input._gy, Math.sqrt(input._gx * input._gx + input._gz * input._gz));
-    else if (orient === 270 || orient === -90) rollRad = Math.atan2(-input._gy, Math.sqrt(input._gx * input._gx + input._gz * input._gz));
-    else rollRad = Math.atan2(input._gx, Math.sqrt(input._gy * input._gy + input._gz * input._gz));
+    if (orient === 90) rollRad = Math.atan2(input._gy, -input._gx);
+    else if (orient === 270 || orient === -90) rollRad = Math.atan2(-input._gy, input._gx);
+    else rollRad = Math.atan2(input._gx, input._gy);
 
     applyTilt(-rollRad * 180 / Math.PI);
   });
