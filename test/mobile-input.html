@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Mobile Input Test — Tandemonium</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #1a1a2e;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+  }
+
+  /* ── iOS Motion Permission Button ── */
+  #motion-permission {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  #motion-permission h2 { font-size: 20px; margin-bottom: 12px; }
+  #motion-permission p { font-size: 14px; color: rgba(255,255,255,0.6); margin-bottom: 20px; text-align: center; padding: 0 20px; }
+  #motion-permission button {
+    padding: 14px 32px;
+    font-size: 16px;
+    font-weight: 700;
+    border: none;
+    border-radius: 12px;
+    background: #4af;
+    color: #000;
+    cursor: pointer;
+  }
+
+  /* ── Diagnostics Panel ── */
+  #diagnostics {
+    padding: 8px 10px;
+    font-size: 11px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+    line-height: 1.5;
+    background: rgba(0,0,0,0.6);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;
+    overflow-y: auto;
+    max-height: 35vh;
+  }
+  #diagnostics .section { margin-bottom: 4px; }
+  #diagnostics .label { color: rgba(255,255,255,0.5); }
+  #diagnostics .val { color: #4af; font-weight: 600; }
+  #diagnostics .val-warn { color: #fa3; font-weight: 600; }
+  #diagnostics .val-err { color: #f44; font-weight: 600; }
+
+  /* ── Gauges Row ── */
+  #gauge-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+    padding: 10px 0;
+    flex-shrink: 0;
+  }
+  .gauge-wrap {
+    width: 100px; height: 100px;
+    position: relative;
+  }
+  .gauge-wrap svg { width: 100%; height: 100%; }
+  .gauge-label {
+    position: absolute;
+    bottom: -2px; left: 0; right: 0;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  }
+  .gauge-title {
+    position: absolute;
+    top: -2px; left: 0; right: 0;
+    text-align: center;
+    font-size: 9px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── 3D Viewport ── */
+  #bike-viewport {
+    flex: 1;
+    min-height: 100px;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+  #bike-viewport canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+  }
+
+  /* ── Speed Bar ── */
+  #speed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 16px;
+    flex-shrink: 0;
+  }
+  #speed-row .speed-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.6);
+    min-width: 40px;
+  }
+  #speed-bar-outer {
+    flex: 1;
+    height: 12px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  #speed-bar-inner {
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(to right, #4af, #0f0);
+    border-radius: 6px;
+    transition: width 0.1s;
+  }
+  #speed-value {
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 60px;
+    text-align: right;
+  }
+
+  /* ── Pedal Bar ── */
+  #pedal-bar {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 10px;
+    pointer-events: auto;
+    touch-action: none;
+    width: 100%;
+    flex-shrink: 0;
+    margin-top: auto;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  .pedal-touch {
+    touch-action: none;
+    position: relative;
+    width: 45%;
+    height: 18vh;
+    min-height: 80px;
+    max-height: 140px;
+    border-radius: 24px;
+    border: 2.5px solid rgba(255,255,255,0.35);
+    background: linear-gradient(to bottom, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.08) 100%);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    box-shadow:
+      0 4px 0 rgba(0,0,0,0.25),
+      inset 0 1px 0 rgba(255,255,255,0.3),
+      0 2px 10px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    cursor: pointer;
+    transition: background 0.08s, border-color 0.08s, transform 0.08s, box-shadow 0.08s;
+    transform: translateY(0);
+  }
+  #touch-left { border-color: rgba(100,160,255,0.4); }
+  #touch-right { border-color: rgba(255,160,60,0.4); }
+  .pedal-touch::after {
+    position: absolute;
+    top: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.3);
+    pointer-events: none;
+  }
+  #touch-left::after { content: 'L'; left: 10px; }
+  #touch-right::after { content: 'R'; right: 10px; }
+  .pedal-touch img {
+    max-width: 95%;
+    max-height: 95%;
+    object-fit: contain;
+    pointer-events: none;
+    opacity: 0.85;
+  }
+  .pedal-touch.pressed {
+    background: linear-gradient(to bottom, rgba(60,220,80,0.5) 0%, rgba(40,160,50,0.35) 100%);
+    border-color: rgba(60,200,80,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 6px rgba(60,200,80,0.3);
+  }
+  .pedal-touch.wrong {
+    background: linear-gradient(to bottom, rgba(230,60,40,0.5) 0%, rgba(180,40,30,0.35) 100%);
+    border-color: rgba(220,60,40,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 6px rgba(220,60,40,0.3);
+  }
+  .pedal-touch.brake {
+    background: linear-gradient(to bottom, rgba(230,170,20,0.5) 0%, rgba(180,130,15,0.35) 100%);
+    border-color: rgba(220,160,20,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 6px rgba(220,160,20,0.3);
+  }
+
+  /* ── Crash & Calibrate Flash ── */
+  #crash-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,0,0,0);
+    pointer-events: none;
+    z-index: 9;
+    transition: none;
+  }
+  #calibrate-flash {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,0.3);
+    pointer-events: none;
+    z-index: 8;
+    display: none;
+  }
+
+  /* ── Tuning Panel ── */
+  #tuning-toggle {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 20;
+    line-height: 1;
+  }
+  #tuning-panel {
+    position: fixed;
+    top: 50px;
+    right: 8px;
+    width: 260px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 12px;
+    padding: 12px;
+    z-index: 20;
+    display: none;
+  }
+  #tuning-panel.open { display: block; }
+  .tune-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .tune-row label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.7);
+    flex-shrink: 0;
+    min-width: 90px;
+  }
+  .tune-row input[type="range"] {
+    flex: 1;
+    margin: 0 6px;
+    height: 4px;
+  }
+  .tune-row .tune-val {
+    font-size: 11px;
+    font-weight: 700;
+    color: #4af;
+    min-width: 36px;
+    text-align: right;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Diagnostics -->
+  <div id="diagnostics">
+    <div class="section" id="diag-accel"></div>
+    <div class="section" id="diag-tilt"></div>
+    <div class="section" id="diag-pedal"></div>
+    <div class="section" id="diag-bike"></div>
+  </div>
+
+  <!-- Gauges -->
+  <div id="gauge-row">
+    <div class="gauge-wrap" id="phone-gauge">
+      <div class="gauge-title">YOU</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(0,180,0,0.2)"/>
+        <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(0,180,0,0.2)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <g id="phone-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#fa3" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#fa3" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#fa3" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="phone-label">0.0&deg;</div>
+    </div>
+    <div class="gauge-wrap" id="bike-gauge">
+      <div class="gauge-title">BIKE</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 14.4 79.6 A 52 52 0 0 1 8 60 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <path d="M 60 60 L 112 60 A 52 52 0 0 1 105.6 79.6 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <line x1="29" y1="20" x2="34" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="91" y1="20" x2="86" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="12" y1="44" x2="21" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="108" y1="44" x2="99" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <g id="bike-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#4af" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="bike-label">0.0&deg;</div>
+    </div>
+  </div>
+
+  <!-- 3D Bike -->
+  <div id="bike-viewport"></div>
+
+  <!-- Speed bar -->
+  <div id="speed-row">
+    <div class="speed-label">SPD</div>
+    <div id="speed-bar-outer"><div id="speed-bar-inner"></div></div>
+    <div id="speed-value">0.0 km/h</div>
+  </div>
+
+  <!-- Pedal bar -->
+  <div id="pedal-bar">
+    <div class="pedal-touch" id="touch-left"><img src="../images/pedal_left.png" alt="Left Pedal"></div>
+    <div class="pedal-touch" id="touch-right"><img src="../images/pedal_right.png" alt="Right Pedal"></div>
+  </div>
+</div>
+
+<!-- Overlays -->
+<div id="crash-overlay"></div>
+<div id="calibrate-flash"></div>
+
+<!-- iOS Motion Permission -->
+<div id="motion-permission" style="display:none;">
+  <h2>Motion Access Required</h2>
+  <p>This test page uses your phone's accelerometer to detect tilt.</p>
+  <button id="btn-grant-motion">Enable Motion</button>
+</div>
+
+<!-- Tuning toggle -->
+<div id="tuning-toggle">&#9881;</div>
+<div id="tuning-panel">
+  <div class="tune-row">
+    <label>Sensitivity</label>
+    <input type="range" id="tune-sensitivity" min="10" max="80" step="1" value="40">
+    <span class="tune-val" id="val-sensitivity">40&deg;</span>
+  </div>
+  <div class="tune-row">
+    <label>Deadzone</label>
+    <input type="range" id="tune-deadzone" min="0" max="10" step="0.5" value="2">
+    <span class="tune-val" id="val-deadzone">2.0&deg;</span>
+  </div>
+  <div class="tune-row">
+    <label>Low-pass k</label>
+    <input type="range" id="tune-lowpass" min="0.05" max="1.0" step="0.05" value="0.3">
+    <span class="tune-val" id="val-lowpass">0.30</span>
+  </div>
+  <div class="tune-row">
+    <label>Lean force</label>
+    <input type="range" id="tune-leanforce" min="5" max="30" step="1" value="14">
+    <span class="tune-val" id="val-leanforce">14</span>
+  </div>
+  <div class="tune-row">
+    <label>Gravity force</label>
+    <input type="range" id="tune-gravity" min="1" max="10" step="0.5" value="4">
+    <span class="tune-val" id="val-gravity">4.0</span>
+  </div>
+  <div class="tune-row">
+    <label>Damping</label>
+    <input type="range" id="tune-damping" min="0.5" max="5" step="0.1" value="2.5">
+    <span class="tune-val" id="val-damping">2.5</span>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script>
+// ============================================================
+// TUNING PARAMETERS (live-adjustable)
+// ============================================================
+const TUNE = {
+  sensitivity: 40,   // degrees of tilt for full lean
+  deadzone: 2,       // degrees ignored around center
+  lowPassK: 0.3,     // accelerometer smoothing factor
+  leanForce: 14,     // leanInput * N in physics
+  gravityForce: 4,   // sin(lean) * N
+  damping: 2.5       // leanVelocity * N
+};
+
+// ============================================================
+// TUNING PANEL WIRING
+// ============================================================
+(function setupTuning() {
+  const toggle = document.getElementById('tuning-toggle');
+  const panel = document.getElementById('tuning-panel');
+  toggle.addEventListener('click', () => panel.classList.toggle('open'));
+
+  const sliders = [
+    { id: 'sensitivity', key: 'sensitivity', valId: 'val-sensitivity', fmt: v => v + '\u00B0' },
+    { id: 'deadzone',    key: 'deadzone',    valId: 'val-deadzone',    fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
+    { id: 'lowpass',     key: 'lowPassK',    valId: 'val-lowpass',     fmt: v => parseFloat(v).toFixed(2) },
+    { id: 'leanforce',   key: 'leanForce',   valId: 'val-leanforce',   fmt: v => v },
+    { id: 'gravity',     key: 'gravityForce',valId: 'val-gravity',     fmt: v => parseFloat(v).toFixed(1) },
+    { id: 'damping',     key: 'damping',     valId: 'val-damping',     fmt: v => parseFloat(v).toFixed(1) },
+  ];
+
+  sliders.forEach(s => {
+    const input = document.getElementById('tune-' + s.id);
+    const display = document.getElementById(s.valId);
+    input.addEventListener('input', () => {
+      TUNE[s.key] = parseFloat(input.value);
+      display.textContent = s.fmt(input.value);
+    });
+  });
+})();
+
+// ============================================================
+// INPUT STATE (inlined from InputManager)
+// ============================================================
+const input = {
+  touchLeft: false,
+  touchRight: false,
+  _leftTapped: false,
+  _rightTapped: false,
+  motionLean: 0,
+  motionEnabled: false,
+  motionReady: false,
+  rawGamma: 0,
+  motionOffset: null,
+  motionRawRelative: 0,
+  needsMotionPermission: false,
+
+  // Raw accel for diagnostics
+  _gx: 0, _gy: 0, _gz: 0,
+  _gravityInit: false,
+  _useAccel: false,
+  _orient: 0,
+
+  // Touch tracking
+  _leftTouchId: null,
+  _rightTouchId: null,
+  _pedalMidX: 0,
+
+  isPressed(code) {
+    if (code === 'ArrowUp') return this.touchLeft || this._leftTapped;
+    if (code === 'ArrowDown') return this.touchRight || this._rightTapped;
+    return false;
+  },
+  consumeTaps() {
+    this._leftTapped = false;
+    this._rightTapped = false;
+  }
+};
+
+// ── Touch Setup (from input-manager.js:71-138) ──
+(function setupTouch() {
+  const pedalBar = document.getElementById('pedal-bar');
+  pedalBar.style.pointerEvents = 'auto';
+
+  const assignTouch = (t) => {
+    if (t.clientX < input._pedalMidX) {
+      input._leftTouchId = t.identifier;
+      input.touchLeft = true;
+      input._leftTapped = true;
+    } else {
+      input._rightTouchId = t.identifier;
+      input.touchRight = true;
+      input._rightTapped = true;
+    }
+  };
+
+  pedalBar.addEventListener('touchstart', (e) => {
+    const rect = pedalBar.getBoundingClientRect();
+    input._pedalMidX = rect.left + rect.width / 2;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      assignTouch(e.changedTouches[i]);
+    }
+  }, { passive: true });
+
+  pedalBar.addEventListener('touchmove', (e) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      const isLeft = t.clientX < input._pedalMidX;
+      if (isLeft && t.identifier === input._rightTouchId) {
+        input.touchRight = false; input._rightTouchId = null;
+        input._leftTouchId = t.identifier;
+        input.touchLeft = true; input._leftTapped = true;
+      } else if (!isLeft && t.identifier === input._leftTouchId) {
+        input.touchLeft = false; input._leftTouchId = null;
+        input._rightTouchId = t.identifier;
+        input.touchRight = true; input._rightTapped = true;
+      }
+    }
+  }, { passive: true });
+
+  const resetIfEmpty = (e) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const id = e.changedTouches[i].identifier;
+      if (id === input._leftTouchId) { input.touchLeft = false; input._leftTouchId = null; }
+      if (id === input._rightTouchId) { input.touchRight = false; input._rightTouchId = null; }
+    }
+    if (e.touches.length === 0) {
+      input.touchLeft = false;
+      input.touchRight = false;
+      input._leftTouchId = null;
+      input._rightTouchId = null;
+    }
+  };
+  window.addEventListener('touchend', resetIfEmpty, { passive: true });
+  window.addEventListener('touchcancel', resetIfEmpty, { passive: true });
+})();
+
+// ── Motion Setup (from input-manager.js:140-224) ──
+function applyTilt(rawTilt) {
+  input.rawGamma = rawTilt;
+  if (input.motionOffset === null) input.motionOffset = input.rawGamma;
+
+  let relative = input.rawGamma - input.motionOffset;
+  if (relative > 180) relative -= 360;
+  else if (relative < -180) relative += 360;
+  input.motionRawRelative = relative;
+
+  const deadZone = TUNE.deadzone;
+  if (Math.abs(relative) < deadZone) {
+    relative = 0;
+  } else {
+    relative = relative - Math.sign(relative) * deadZone;
+  }
+  input.motionLean = Math.max(-1, Math.min(1, relative / TUNE.sensitivity));
+}
+
+function startMotionListening() {
+  input.motionReady = true;
+  input._useAccel = false;
+  input._gx = 0; input._gy = 0; input._gz = 0;
+  input._gravityInit = false;
+
+  window.addEventListener('devicemotion', (e) => {
+    const a = e.accelerationIncludingGravity;
+    if (!a || a.x == null) return;
+    input._useAccel = true;
+    input.motionEnabled = true;
+
+    const k = TUNE.lowPassK;
+    if (!input._gravityInit) {
+      input._gx = a.x; input._gy = a.y; input._gz = a.z;
+      input._gravityInit = true;
+    } else {
+      input._gx += (a.x - input._gx) * k;
+      input._gy += (a.y - input._gy) * k;
+      input._gz += (a.z - input._gz) * k;
+    }
+
+    const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+    input._orient = orient;
+    let rollRad;
+    if (orient === 90) rollRad = Math.atan2(input._gy, -input._gx);
+    else if (orient === 270 || orient === -90) rollRad = Math.atan2(-input._gy, input._gx);
+    else rollRad = Math.atan2(input._gx, input._gy);
+
+    applyTilt(-rollRad * 180 / Math.PI);
+  });
+
+  window.addEventListener('deviceorientation', (e) => {
+    if (input._useAccel) return;
+    const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+    input._orient = orient;
+    let rawTilt;
+    if (orient === 90) rawTilt = e.beta;
+    else if (orient === 270 || orient === -90) rawTilt = -e.beta;
+    else rawTilt = e.gamma;
+
+    if (rawTilt != null) {
+      input.motionEnabled = true;
+      applyTilt(rawTilt);
+    }
+  });
+}
+
+// iOS permission flow
+if (typeof DeviceMotionEvent !== 'undefined' &&
+    typeof DeviceMotionEvent.requestPermission === 'function') {
+  input.needsMotionPermission = true;
+  const permOverlay = document.getElementById('motion-permission');
+  permOverlay.style.display = 'flex';
+  document.getElementById('btn-grant-motion').addEventListener('click', async () => {
+    try {
+      const response = await DeviceMotionEvent.requestPermission();
+      if (response === 'granted') {
+        startMotionListening();
+        permOverlay.style.display = 'none';
+      }
+    } catch (e) {
+      console.warn('Motion permission error:', e);
+    }
+  });
+} else if (typeof DeviceMotionEvent !== 'undefined') {
+  startMotionListening();
+}
+
+// ── Calibration (from input-manager.js:226-238) ──
+(function setupCalibration() {
+  const gauge = document.getElementById('phone-gauge');
+  const flash = document.getElementById('calibrate-flash');
+  const doCalibrate = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    input.motionOffset = input.rawGamma;
+    input.motionLean = 0;
+    if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 800); }
+  };
+  gauge.addEventListener('touchstart', doCalibrate, { passive: false });
+  gauge.addEventListener('click', doCalibrate);
+})();
+
+// ============================================================
+// PEDAL CONTROLLER (inlined from pedal-controller.js)
+// ============================================================
+class PedalController {
+  constructor(inp) {
+    this.input = inp;
+    this.lastPedal = null;
+    this.pedalPower = 0;
+    this.crankAngle = 0;
+    this.prevLeft = false;
+    this.prevRight = false;
+    this.lastPedalTime = 0;
+    this.wasCorrect = false;
+    this.wasWrong = false;
+    this.stats = { totalTaps: 0, correctTaps: 0, wrongTaps: 0, totalPower: 0 };
+  }
+
+  update(dt) {
+    const now = performance.now() / 1000;
+    const leftHeld = this.input.isPressed('ArrowUp');
+    const rightHeld = this.input.isPressed('ArrowDown');
+    const leftJust = leftHeld && !this.prevLeft;
+    const rightJust = rightHeld && !this.prevRight;
+    const braking = leftHeld && rightHeld && this.prevLeft && this.prevRight;
+
+    let acceleration = 0;
+    let wobble = 0;
+
+    if (leftJust || rightJust) {
+      this.wasCorrect = false;
+      this.wasWrong = false;
+    }
+
+    if (braking) {
+      this.pedalPower *= 0.95;
+      this.prevLeft = leftHeld;
+      this.prevRight = rightHeld;
+      return { acceleration: 0, wobble: 0, braking: true, crankAngle: this.crankAngle };
+    }
+
+    if (leftJust) {
+      this.stats.totalTaps++;
+      const gap = now - this.lastPedalTime;
+      if (this.lastPedal !== 'left') {
+        this.wasCorrect = true;
+        this.stats.correctTaps++;
+        const startBoost = this.lastPedal === null ? 0.3 : 0;
+        const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
+        this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
+        acceleration = 0.35 + 0.6 * this.pedalPower + startBoost;
+      } else {
+        this.wasWrong = true;
+        this.stats.wrongTaps++;
+        this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
+        acceleration = 0.06;
+        wobble = 0.5;
+      }
+      this.stats.totalPower += acceleration;
+      this.lastPedal = 'left';
+      this.lastPedalTime = now;
+      this.crankAngle += Math.PI / 2;
+    }
+
+    if (rightJust) {
+      this.stats.totalTaps++;
+      const gap = now - this.lastPedalTime;
+      if (this.lastPedal !== 'right') {
+        this.wasCorrect = true;
+        this.stats.correctTaps++;
+        const startBoost = this.lastPedal === null ? 0.3 : 0;
+        const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
+        this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
+        acceleration = 0.35 + 0.6 * this.pedalPower + startBoost;
+      } else {
+        this.wasWrong = true;
+        this.stats.wrongTaps++;
+        this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
+        acceleration = 0.06;
+        wobble = 0.5;
+      }
+      this.stats.totalPower += acceleration;
+      this.lastPedal = 'right';
+      this.lastPedalTime = now;
+      this.crankAngle += Math.PI / 2;
+    }
+
+    this.pedalPower *= (1 - 0.4 * dt);
+    this.prevLeft = leftHeld;
+    this.prevRight = rightHeld;
+
+    return { acceleration, wobble, braking: false, crankAngle: this.crankAngle };
+  }
+}
+
+// ============================================================
+// SIMPLIFIED BIKE PHYSICS (inlined from bike-model.js:179-215)
+// ============================================================
+window.bike = {
+  lean: 0,
+  leanVelocity: 0,
+  speed: 0,
+  maxSpeed: 16,
+  fallen: false,
+  fallTimer: 0,
+
+  reset() {
+    this.lean = 0;
+    this.leanVelocity = 0;
+    this.speed = 0;
+    this.fallen = false;
+    this.fallTimer = 0;
+  }
+};
+
+// ============================================================
+// MAIN LOOP
+// ============================================================
+const pedals = new PedalController(input);
+const crashOverlay = document.getElementById('crash-overlay');
+const phoneNeedle = document.getElementById('phone-needle');
+const bikeNeedle = document.getElementById('bike-needle');
+const phoneLabel = document.getElementById('phone-label');
+const bikeLabel = document.getElementById('bike-label');
+const speedBarInner = document.getElementById('speed-bar-inner');
+const speedValue = document.getElementById('speed-value');
+const touchLeftEl = document.getElementById('touch-left');
+const touchRightEl = document.getElementById('touch-right');
+
+// Diagnostics elements
+const diagAccel = document.getElementById('diag-accel');
+const diagTilt = document.getElementById('diag-tilt');
+const diagPedal = document.getElementById('diag-pedal');
+const diagBike = document.getElementById('diag-bike');
+
+let lastTime = performance.now();
+
+function gameLoop(now) {
+  requestAnimationFrame(gameLoop);
+
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  // ── Fall state ──
+  if (bike.fallen) {
+    bike.fallTimer -= dt;
+    if (bike.fallTimer <= 0) {
+      bike.reset();
+      crashOverlay.style.background = 'rgba(255,0,0,0)';
+    }
+    updateUI(dt);
+    input.consumeTaps();
+    return;
+  }
+
+  // ── Pedal update ──
+  const pedalResult = pedals.update(dt);
+
+  // Acceleration & friction
+  bike.speed += pedalResult.acceleration;
+  if (pedalResult.braking) {
+    bike.speed *= (1 - 2.5 * dt);
+    if (bike.speed < 0.05) bike.speed = 0;
+  }
+  const frictionBase = 0.6;
+  const frictionMin = 0.15;
+  const frictionRamp = Math.min(1, bike.speed / 4);
+  bike.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
+  bike.speed = Math.max(0, Math.min(bike.speed, bike.maxSpeed));
+
+  // ── Balance physics (from bike-model.js:179-215) ──
+  const leanInput = input.motionEnabled ? input.motionLean : 0;
+
+  const gravity = Math.sin(bike.lean) * TUNE.gravityForce;
+  const playerLean = leanInput * TUNE.leanForce;
+  const gyro = -bike.lean * Math.min(bike.speed * 0.8, 6.0);
+  const damping = -bike.leanVelocity * TUNE.damping;
+
+  const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
+
+  const t = performance.now() / 1000;
+  const lowSpeedWobble = Math.max(0, 1 - bike.speed * 0.3) *
+    (Math.sin(t * 2.7) * 0.3 + Math.sin(t * 4.3) * 0.15);
+
+  let pedalLeanKick = 0;
+  if (pedalResult.acceleration > 0 && !pedalResult.braking) {
+    pedalLeanKick = (Math.random() - 0.5) * 0.2;
+  }
+
+  // Danger-zone wobble
+  let dangerWobble = 0;
+  const dangerRatio = Math.abs(bike.lean) / 1.35;
+  if (dangerRatio > 0.55) {
+    const intensity = (dangerRatio - 0.55) / 0.45;
+    dangerWobble = intensity * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
+  }
+
+  bike.leanVelocity += (gravity + playerLean + gyro + damping +
+    pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble) * dt;
+  bike.lean += bike.leanVelocity * dt;
+
+  // ── Fall detection ──
+  if (Math.abs(bike.lean) > 1.35) {
+    bike.fallen = true;
+    bike.fallTimer = 1.0;
+    bike.speed = 0;
+    bike.lean = Math.sign(bike.lean) * Math.PI / 2.2;
+    bike.leanVelocity = 0;
+    crashOverlay.style.background = 'rgba(255,0,0,0.4)';
+    setTimeout(() => { crashOverlay.style.background = 'rgba(255,0,0,0)'; }, 300);
+  }
+
+  updateUI(dt);
+  input.consumeTaps();
+}
+
+function updateUI(dt) {
+  // ── Gauges ──
+  const phoneDeg = input.motionRawRelative;
+  phoneNeedle.setAttribute('transform', `rotate(${phoneDeg}, 60, 60)`);
+  phoneLabel.textContent = phoneDeg.toFixed(1) + '\u00B0';
+
+  const bikeDeg = bike.lean * 180 / Math.PI;
+  bikeNeedle.setAttribute('transform', `rotate(${bikeDeg}, 60, 60)`);
+  bikeLabel.textContent = bikeDeg.toFixed(1) + '\u00B0';
+
+  // ── Speed bar ──
+  const speedKmh = bike.speed * 3.6;
+  const pct = Math.min(100, (bike.speed / bike.maxSpeed) * 100);
+  speedBarInner.style.width = pct + '%';
+  speedValue.textContent = speedKmh.toFixed(1) + ' km/h';
+
+  // ── Pedal visual states ──
+  touchLeftEl.className = 'pedal-touch';
+  touchRightEl.className = 'pedal-touch';
+  if (pedals.wasCorrect && pedals.lastPedal === 'left') {
+    touchLeftEl.classList.add('pressed');
+  } else if (pedals.wasWrong && pedals.lastPedal === 'left') {
+    touchLeftEl.classList.add('wrong');
+  } else if (input.touchLeft) {
+    touchLeftEl.classList.add('pressed');
+  }
+  if (pedals.wasCorrect && pedals.lastPedal === 'right') {
+    touchRightEl.classList.add('pressed');
+  } else if (pedals.wasWrong && pedals.lastPedal === 'right') {
+    touchRightEl.classList.add('wrong');
+  } else if (input.touchRight) {
+    touchRightEl.classList.add('pressed');
+  }
+  if (input.touchLeft && input.touchRight) {
+    touchLeftEl.className = 'pedal-touch brake';
+    touchRightEl.className = 'pedal-touch brake';
+  }
+
+  // ── Diagnostics ──
+  const lastGap = pedals.lastPedalTime > 0 ? ((performance.now() / 1000) - pedals.lastPedalTime).toFixed(2) : '—';
+
+  diagAccel.innerHTML =
+    `<span class="label">accel</span> <span class="val">x:${input._gx.toFixed(2)} y:${input._gy.toFixed(2)} z:${input._gz.toFixed(2)}</span>` +
+    ` <span class="label">orient</span> <span class="val">${input._orient}\u00B0</span>` +
+    ` <span class="label">src</span> <span class="val">${input._useAccel ? 'accel' : 'orient'}</span>`;
+
+  const rawCls = Math.abs(input.motionRawRelative) > TUNE.sensitivity ? 'val-warn' : 'val';
+  diagTilt.innerHTML =
+    `<span class="label">raw</span> <span class="val">${input.rawGamma.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">rel</span> <span class="${rawCls}">${input.motionRawRelative.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">dz-adj</span> <span class="val">${(input.motionLean * TUNE.sensitivity).toFixed(1)}\u00B0</span>` +
+    ` <span class="label">lean</span> <span class="val">${input.motionLean.toFixed(3)}</span>` +
+    ` <span class="label">off</span> <span class="val">${input.motionOffset !== null ? input.motionOffset.toFixed(1) : '—'}</span>`;
+
+  diagPedal.innerHTML =
+    `<span class="label">foot</span> <span class="val">${pedals.lastPedal || '—'}</span>` +
+    ` <span class="label">pwr</span> <span class="val">${pedals.pedalPower.toFixed(2)}</span>` +
+    ` <span class="label">\u2713/${'\u2717'}/\u03A3</span> <span class="val">${pedals.stats.correctTaps}/${pedals.stats.wrongTaps}/${pedals.stats.totalTaps}</span>` +
+    ` <span class="label">gap</span> <span class="val">${lastGap}s</span>`;
+
+  const leanDeg = bike.lean * 180 / Math.PI;
+  const leanCls = Math.abs(bike.lean) > 1.0 ? 'val-err' : (Math.abs(bike.lean) > 0.7 ? 'val-warn' : 'val');
+  diagBike.innerHTML =
+    `<span class="label">spd</span> <span class="val">${speedKmh.toFixed(1)} km/h</span>` +
+    ` <span class="label">lean</span> <span class="${leanCls}">${leanDeg.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">lv</span> <span class="val">${bike.leanVelocity.toFixed(2)}</span>` +
+    (bike.fallen ? ` <span class="val-err">CRASHED (${bike.fallTimer.toFixed(1)}s)</span>` : '');
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+
+<script type="module">
+// ============================================================
+// 3D BIKE VIEWPORT (Three.js)
+// ============================================================
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const container = document.getElementById('bike-viewport');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+
+// Camera — positioned to see the bike from a 3/4 front angle
+const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+camera.position.set(0, 3.5, -7);
+camera.lookAt(0, 1.5, 0);
+
+// Lighting
+const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambient);
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+dirLight.position.set(5, 8, 5);
+scene.add(dirLight);
+const fillLight = new THREE.DirectionalLight(0x8888ff, 0.3);
+fillLight.position.set(-3, 2, -3);
+scene.add(fillLight);
+
+// Ground plane
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(20, 20),
+  new THREE.MeshStandardMaterial({ color: 0x2a2a3e, roughness: 0.9 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// Load bike model
+const bikeGroup = new THREE.Group();
+scene.add(bikeGroup);
+let bikeModelLoaded = false;
+
+const loader = new GLTFLoader();
+loader.load('../tandem-3d/tandem_bicycle.glb', (gltf) => {
+  const model = gltf.scene;
+  model.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+    }
+  });
+
+  // Scale to ~4.4m (same as bike-model.js)
+  const targetLength = 4.4;
+  const preBox = new THREE.Box3().setFromObject(model);
+  const preSize = preBox.getSize(new THREE.Vector3());
+  const maxDim = Math.max(preSize.x, preSize.y, preSize.z);
+  const scale = targetLength / maxDim;
+  model.scale.setScalar(scale);
+
+  bikeGroup.add(model);
+  bikeGroup.updateMatrixWorld(true);
+
+  // Center and ground the model
+  const v = new THREE.Vector3();
+  let minY = Infinity, maxY = -Infinity;
+  let minX = Infinity, maxX = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+
+  model.traverse((child) => {
+    if (child.isMesh && child.geometry && child.geometry.attributes.position) {
+      const pos = child.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        child.localToWorld(v);
+        if (v.y < minY) minY = v.y;
+        if (v.y > maxY) maxY = v.y;
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.z < minZ) minZ = v.z;
+        if (v.z > maxZ) maxZ = v.z;
+      }
+    }
+  });
+
+  model.position.y -= minY;
+  model.position.x -= (minX + maxX) / 2;
+  model.position.z -= (minZ + maxZ) / 2;
+
+  bikeModelLoaded = true;
+  console.log('Test page: bike model loaded');
+}, undefined, (err) => {
+  console.error('Failed to load bike model:', err);
+});
+
+// Resize handler
+function resize() {
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  if (w === 0 || h === 0) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+resize();
+window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(container);
+
+// Access the global bike physics state
+const bikeState = window.bike;
+
+// Render loop — syncs lean from physics
+function render3D() {
+  requestAnimationFrame(render3D);
+  if (bikeState && bikeModelLoaded) {
+    // Apply lean (roll around Z axis)
+    bikeGroup.rotation.z = bikeState.lean;
+    // Subtle sway on Y position when fallen
+    if (bikeState.fallen) {
+      bikeGroup.position.y = -0.15;
+    } else {
+      bikeGroup.position.y = 0;
+    }
+  }
+  renderer.render(scene, camera);
+}
+render3D();
+</script>
+
+</body>
+</html>
