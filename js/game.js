@@ -357,6 +357,10 @@ class Game {
     this.net.onConnected = () => {
       this._hideReconnecting();
       document.getElementById('disconnect-overlay').style.display = 'none';
+      // Re-establish media call after data reconnection
+      if (this.mode === 'captain' && this.net._localMediaStream) {
+        this._initiateMediaCall();
+      }
     };
 
     this.net.onDisconnected = (reason) => {
@@ -394,10 +398,13 @@ class Game {
       }
     };
 
-    // Initiate media call now — connection is already open
-    // (lobby waits 1s after conn.on('open') before calling _onMultiplayerReady)
-    if (mode === 'captain' && (this.lobby.cameraActive || this.lobby.audioActive)) {
-      this._initiateMediaCall();
+    // Pre-acquire local media stream so calls connect instantly on both sides.
+    // Captain then initiates the media call; stoker holds the stream ready for
+    // _handleIncomingCall to answer without an async getUserMedia delay.
+    if (this.lobby.cameraActive || this.lobby.audioActive) {
+      this._acquireLocalMedia().then(() => {
+        if (mode === 'captain') this._initiateMediaCall();
+      });
     }
 
     // Update partner gauge label to show partner's role
@@ -1233,28 +1240,38 @@ class Game {
     this.lobby.show();
   }
 
-  async _initiateMediaCall() {
-    if (!this.net || !this.net.peer) return;
+  async _acquireLocalMedia() {
+    if (this.net._localMediaStream) return;
+    const constraints = {};
+    if (this.lobby.cameraActive) constraints.video = { facingMode: 'user', width: 240, height: 240 };
+    if (this.lobby.audioActive) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    if (!constraints.video && !constraints.audio) return;
     try {
-      const constraints = {};
-      if (this.lobby.cameraActive) constraints.video = { facingMode: 'user', width: 240, height: 240 };
-      if (this.lobby.audioActive) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-      if (!constraints.video && !constraints.audio) return;
-
-      const localStream = await navigator.mediaDevices.getUserMedia(constraints);
-      const remotePeerId = this.net.conn && this.net.conn.peer;
-      if (remotePeerId && this.net.peer) {
-        const call = this.net.peer.call(remotePeerId, localStream);
-        if (call) {
-          call.on('stream', (remoteStream) => {
-            this.recorder.setPartnerStream(remoteStream);
-            this.net._playRemoteAudio(remoteStream);
-            this.recorder.addAudioStreams(localStream, remoteStream);
-          });
-        }
-      }
+      this.net._localMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (e) {
       // Camera/mic denied — continue without media
+    }
+  }
+
+  _initiateMediaCall() {
+    if (!this.net || !this.net.peer) return;
+    const localStream = this.net._localMediaStream;
+    if (!localStream) return;
+    const remotePeerId = this.net.conn && this.net.conn.peer;
+    if (!remotePeerId) return;
+    clearTimeout(this._mediaRetryTimeout);
+    const call = this.net.peer.call(remotePeerId, localStream);
+    if (call) {
+      call.on('stream', (remoteStream) => {
+        clearTimeout(this._mediaRetryTimeout);
+        this.recorder.setPartnerStream(remoteStream);
+        this.net._playRemoteAudio(remoteStream);
+        this.recorder.addAudioStreams(localStream, remoteStream);
+      });
+      // Retry once if partner stream doesn't arrive within 3s
+      this._mediaRetryTimeout = setTimeout(() => {
+        if (!this.recorder.partnerActive) this._initiateMediaCall();
+      }, 3000);
     }
   }
 

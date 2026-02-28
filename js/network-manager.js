@@ -131,7 +131,9 @@ export class NetworkManager {
       clearTimeout(this._reconnectTimeout);
       this.connected = true;
       this.transport = 'p2p';
-      this._reconnectAttempts = 0;
+      // Don't reset _reconnectAttempts here — a flaky connection that
+      // opens briefly then closes would reset the counter and loop forever.
+      // Instead, reset in the heartbeat ACK handler after a verified round-trip.
       clearTimeout(this._p2pTimeout);
       this._startHeartbeat();
       if (this.onConnected) this.onConnected();
@@ -203,6 +205,8 @@ export class NetworkManager {
       }
     } else if (type === MSG_HEARTBEAT) {
       this._lastRemoteHeartbeat = performance.now();
+      // Verified data exchange — safe to reset reconnect counter
+      this._reconnectAttempts = 0;
       if (bytes.length >= 2 && bytes[1] === 0x01) {
         this.pingMs = performance.now() - this.lastPingTime;
       } else {
@@ -376,20 +380,12 @@ export class NetworkManager {
     }
   }
 
-  async _handleIncomingCall(call) {
+  _handleIncomingCall(call) {
     this._mediaCall = call;
-    const constraints = {};
-    if (this.cameraEnabled) constraints.video = { facingMode: 'user', width: 240, height: 240 };
-    if (this.audioEnabled) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-
-    if (constraints.video || constraints.audio) {
-      try {
-        this._localMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-        call.answer(this._localMediaStream);
-      } catch (e) {
-        // Permission denied — answer without stream
-        call.answer();
-      }
+    // Answer immediately with pre-acquired stream (from game.js _acquireLocalMedia)
+    // to avoid async getUserMedia delay that causes call timeouts on mobile
+    if (this._localMediaStream) {
+      call.answer(this._localMediaStream);
     } else {
       call.answer();
     }
