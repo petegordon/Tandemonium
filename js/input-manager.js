@@ -183,9 +183,9 @@ export class InputManager {
 
       const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
       let rollRad;
-      if (orient === 90) rollRad = Math.atan2(this._gy, -this._gx);
-      else if (orient === 270 || orient === -90) rollRad = Math.atan2(-this._gy, this._gx);
-      else rollRad = Math.atan2(this._gx, this._gy);
+      if (orient === 90) rollRad = Math.atan2(this._gy, Math.sqrt(this._gx * this._gx + this._gz * this._gz));
+      else if (orient === 270 || orient === -90) rollRad = Math.atan2(-this._gy, Math.sqrt(this._gx * this._gx + this._gz * this._gz));
+      else rollRad = Math.atan2(this._gx, Math.sqrt(this._gy * this._gy + this._gz * this._gz));
 
       this._applyTilt(-rollRad * 180 / Math.PI);
     });
