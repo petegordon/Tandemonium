@@ -57,6 +57,17 @@ export class AuthManager {
         callback: (response) => this._handleCredential(response),
         auto_select: true,
       });
+      // Render a persistent Sign-In button (immune to One Tap cooldown)
+      const btnContainer = document.getElementById('gsi-button-container');
+      if (btnContainer) {
+        google.accounts.id.renderButton(btnContainer, {
+          type: 'standard',
+          theme: 'filled_black',
+          size: 'medium',
+          text: 'signin_with',
+          shape: 'pill',
+        });
+      }
     };
     tryInit();
   }

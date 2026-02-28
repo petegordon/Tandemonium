@@ -271,7 +271,10 @@ export class Lobby {
       }
     };
 
-    this.auth.onLogin((user) => updateUI(user));
+    this.auth.onLogin((user) => {
+      updateUI(user);
+      this.profilePopup.classList.remove('visible');
+    });
 
     // Logout
     logoutBtn.addEventListener('click', () => {
@@ -501,8 +504,16 @@ export class Lobby {
 
   _toggleProfile() {
     if (this.auth.isLoggedIn()) {
+      // Show logged-in content, hide sign-in button
+      document.querySelector('.profile-popup-content').style.display = '';
+      document.getElementById('profile-popup-signin').style.display = 'none';
       this.profilePopup.classList.toggle('visible');
     } else {
+      // Show sign-in button, hide logged-in content
+      document.querySelector('.profile-popup-content').style.display = 'none';
+      document.getElementById('profile-popup-signin').style.display = '';
+      this.profilePopup.classList.toggle('visible');
+      // Also try One Tap prompt as a bonus
       this.auth.login();
     }
   }
