@@ -311,6 +311,13 @@ class Game {
         }, 800);
       } else if (eventType === EVT_RESET) {
         this._hideGameOver();
+        // Clear TOO SLOW overlay if showing
+        const flash = document.getElementById('timeout-flash');
+        if (flash) flash.classList.remove('visible');
+        // Reset segment timer so countdown restarts from checkpoint
+        if (this.raceManager) {
+          this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
+        }
         this._resetGame(true);
       } else if (eventType === EVT_GAMEOVER) {
         this._showGameOver(true);
@@ -1642,6 +1649,33 @@ class Game {
 
     this.world.update(this.bike.position, this.bike.roadD);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
+
+    // Race progress — display-only (captain is authoritative for events)
+    if (this.raceManager) {
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
+      if (raceEvent && raceEvent.event === 'timeout') {
+        // Show TOO SLOW visual only — captain sends EVT_RESET for actual reset
+        const flash = document.getElementById('timeout-flash');
+        flash.classList.remove('visible');
+        void flash.offsetWidth;
+        flash.classList.add('visible');
+        this._playBeep(200, 0.3);
+        setTimeout(() => this._playBeep(150, 0.2), 300);
+      }
+      // checkpoint/finish events handled via captain's network events
+      this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+    }
+
+    // Collectibles (visual only — captain handles collection)
+    if (this.collectibleManager) {
+      this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    }
+
+    // Obstacles
+    if (this.obstacleManager) {
+      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    }
 
     if (this.bike.speed > 8) {
       this.chaseCamera.shakeAmount = Math.max(
