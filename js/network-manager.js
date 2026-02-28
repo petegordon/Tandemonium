@@ -233,8 +233,8 @@ export class NetworkManager {
     this._send(new Uint8Array(buf));
   }
 
-  sendState(bike) {
-    const buf = new ArrayBuffer(42);
+  sendState(bike, timerRemaining) {
+    const buf = new ArrayBuffer(46);
     const view = new DataView(buf);
     view.setUint8(0, MSG_STATE);
     view.setFloat32(1, bike.position.x, true);
@@ -251,6 +251,7 @@ export class NetworkManager {
     if (bike.fallen) flags |= 1;
     if (bike._braking) flags |= 2;
     view.setUint8(41, flags);
+    view.setFloat32(42, timerRemaining >= 0 ? timerRemaining : -1, true);
     this._send(new Uint8Array(buf));
   }
 
@@ -270,7 +271,7 @@ export class NetworkManager {
   _decodeState(bytes) {
     const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     const view = new DataView(buf);
-    return {
+    const state = {
       x: view.getFloat32(1, true),
       y: view.getFloat32(5, true),
       z: view.getFloat32(9, true),
@@ -283,6 +284,11 @@ export class NetworkManager {
       roadD: view.getFloat32(37, true),
       flags: view.getUint8(41)
     };
+    // Timer field added in 46-byte messages; absent in legacy 42-byte messages
+    if (bytes.byteLength >= 46) {
+      state.timerRemaining = view.getFloat32(42, true);
+    }
+    return state;
   }
 
   _send(data) {

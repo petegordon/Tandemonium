@@ -303,6 +303,10 @@ class Game {
     this.net.onStateReceived = (state) => {
       if (this.mode === 'stoker' && this.remoteBikeState) {
         this.remoteBikeState.pushState(state);
+        // Use captain's authoritative timer to prevent drift
+        if (state.timerRemaining !== undefined && this.raceManager) {
+          this.raceManager.segmentTimeRemaining = state.timerRemaining;
+        }
       }
     };
 
@@ -1650,7 +1654,8 @@ class Game {
     this._stateSendTimer += dt;
     if (this._stateSendTimer >= this._stateSendInterval && this.net && this.net.connected) {
       this._stateSendTimer = 0;
-      this.net.sendState(this.bike);
+      const timerRemaining = this.raceManager ? this.raceManager.segmentTimeRemaining : -1;
+      this.net.sendState(this.bike, timerRemaining);
       this.net.sendLean(captainLean);
     }
 
@@ -1716,12 +1721,18 @@ class Game {
     this.world.update(this.bike.position, this.bike.roadD);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
-    // Race progress — display-only (captain is authoritative for events)
-    // Freeze race timer while reconnecting
+    // Race progress — display-only (captain is authoritative for timer + events)
+    // Timer value is synced from captain via onStateReceived; stoker only
+    // decrements locally between network updates to keep display smooth.
     if (this.raceManager) {
       const raceDt = this._reconnecting ? 0 : dt;
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, raceDt);
-      if (raceEvent && raceEvent.event === 'timeout' && !this._stokerTimeoutShown && !this._reconnecting) {
+      // Local decrement for smooth display between 20Hz state updates
+      if (raceDt > 0 && this.raceManager.segmentTimeRemaining > 0) {
+        this.raceManager.segmentTimeRemaining -= raceDt;
+      }
+      // Update distance-based progress (checkpoints) without touching timer
+      this.raceManager.updateProgressOnly(this.bike.distanceTraveled);
+      if (this.raceManager.segmentTimeRemaining <= 0 && !this._stokerTimeoutShown && !this._reconnecting) {
         // Show TOO SLOW visual once — captain sends EVT_RESET to clear it
         this._stokerTimeoutShown = true;
         const flash = document.getElementById('timeout-flash');

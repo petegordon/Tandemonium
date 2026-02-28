@@ -70,6 +70,18 @@ export class RaceManager {
       this.segmentTimeRemaining -= dt;
     }
 
+    // Check checkpoints + finish + timeout
+    return this._checkProgress(distanceTraveled);
+  }
+
+  // Update distance-based progress (checkpoints/finish) without touching timer.
+  // Used by the stoker whose timer is synced from captain.
+  updateProgressOnly(distanceTraveled) {
+    if (this.finished) return null;
+    return this._checkProgress(distanceTraveled);
+  }
+
+  _checkProgress(distanceTraveled) {
     // Check checkpoints
     for (const cp of this.checkpoints) {
       if (distanceTraveled >= cp && !this.passedCheckpoints.has(cp)) {
