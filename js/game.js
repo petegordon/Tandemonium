@@ -395,8 +395,10 @@ class Game {
       document.getElementById('side-buttons').style.display = 'none';
     }
 
-    // Show connection badge
+    // Show connection badge (hide gamepad badge to avoid overlap)
     document.getElementById('conn-badge').style.display = 'block';
+    const gpBadge = document.getElementById('gamepad-badge');
+    if (gpBadge) gpBadge.style.display = 'none';
 
     // Show instructions
     this.state = 'instructions';
@@ -1207,6 +1209,9 @@ class Game {
     this._stateSendTimer = 0;
     this._leanSendTimer = 0;
     document.getElementById('conn-badge').style.display = 'none';
+    // Restore gamepad badge if controller is still connected
+    const gpBadge = document.getElementById('gamepad-badge');
+    if (gpBadge && this.input.gamepadConnected) gpBadge.style.display = 'block';
     document.getElementById('side-buttons').style.display = '';
     const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
     if (partnerTitle) partnerTitle.textContent = 'PARTNER';
@@ -1360,7 +1365,8 @@ class Game {
     if (!this.net) return;
     const typeEl = document.getElementById('conn-type');
     const pingEl = document.getElementById('conn-ping');
-    if (typeEl) typeEl.textContent = this.net.transport === 'relay' ? 'RELAY' : 'P2P';
+    const transport = this.net.transport === 'relay' ? 'RELAY' : 'P2P';
+    if (typeEl) typeEl.textContent = this.input.gamepadConnected ? '🎮 ' + transport : transport;
     if (pingEl) pingEl.textContent = Math.round(this.net.pingMs) + 'ms';
   }
 
