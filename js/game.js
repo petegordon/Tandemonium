@@ -1367,8 +1367,10 @@ class Game {
     const pingEl = document.getElementById('conn-ping');
     const transport = this.net.transport === 'relay' ? 'RELAY' : 'P2P';
     if (typeEl) typeEl.textContent = transport;
-    const ping = Math.round(this.net.pingMs) + 'ms';
-    if (pingEl) pingEl.textContent = this.input.gamepadConnected ? ping + ' 🎮' : ping;
+    if (pingEl) pingEl.textContent = Math.round(this.net.pingMs) + 'ms';
+    // Keep gamepad badge hidden while conn-badge is showing (they overlap)
+    const gpBadge = document.getElementById('gamepad-badge');
+    if (gpBadge && gpBadge.style.display !== 'none') gpBadge.style.display = 'none';
   }
 
   // ============================================================
