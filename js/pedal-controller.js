@@ -51,9 +51,10 @@ export class PedalController {
       if (this.lastPedal !== 'left') {
         this.wasCorrect = true;
         this.stats.correctTaps++;
+        const startBoost = this.lastPedal === null ? 0.3 : 0;
         const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
         this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
-        acceleration = 0.35 + 0.6 * this.pedalPower;
+        acceleration = 0.35 + 0.6 * this.pedalPower + startBoost;
       } else {
         this.wasWrong = true;
         this.stats.wrongTaps++;
@@ -73,9 +74,10 @@ export class PedalController {
       if (this.lastPedal !== 'right') {
         this.wasCorrect = true;
         this.stats.correctTaps++;
+        const startBoost = this.lastPedal === null ? 0.3 : 0;
         const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
         this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
-        acceleration = 0.35 + 0.6 * this.pedalPower;
+        acceleration = 0.35 + 0.6 * this.pedalPower + startBoost;
       } else {
         this.wasWrong = true;
         this.stats.wrongTaps++;

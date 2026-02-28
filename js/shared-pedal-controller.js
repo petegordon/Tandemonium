@@ -98,10 +98,11 @@ export class SharedPedalController {
         this.wasCorrect = true;
         pStats.correctTaps++;
         this.offsetScore = Math.min(1, this.offsetScore + 0.1);
+        const startBoost = playerLastFoot === null ? 0.3 : 0;
         const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
         const offsetBonus = this.offsetScore * 0.15;
         this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
-        const accel = 0.35 + 0.6 * this.pedalPower + offsetBonus;
+        const accel = 0.35 + 0.6 * this.pedalPower + offsetBonus + startBoost;
         acceleration += accel;
         pStats.totalPower += accel;
       }

@@ -149,8 +149,11 @@ export class BikeModel {
       this.speed += 4.0 * dt; // sustained push
     }
 
-    // Friction
-    this.speed *= (1 - 0.6 * dt);
+    // Friction — reduced at low speeds so startup isn't brutally hard
+    const frictionBase = 0.6;
+    const frictionMin = 0.15;
+    const frictionRamp = Math.min(1, this.speed / 4); // full friction at ~4 m/s (~14 km/h)
+    this.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
 
     // Center-strip bonus: compacted dirt in the middle 20% of road is faster
     const centerDist = Math.abs(this._lateralOffset);

@@ -244,6 +244,12 @@
     padding: 30px;
     text-align: center;
   }
+  #victory-video {
+    width: 180px;
+    height: 180px;
+    margin-bottom: 12px;
+    border-radius: 8px;
+  }
   #victory-overlay h2 {
     font-size: 28px;
     font-weight: 700;
@@ -1833,7 +1839,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.de93ed1 | 02-28-2026 11:32</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.dc3f87f | 02-28-2026 11:43</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -1939,6 +1945,7 @@ ON</button>
 
 <!-- Victory overlay -->
 <div id="victory-overlay" style="display:none;">
+  <canvas id="victory-video" width="360" height="360"></canvas>
   <h2>YOU MADE IT!</h2>
   <p id="victory-destination"></p>
   <div id="victory-stats"></div>
