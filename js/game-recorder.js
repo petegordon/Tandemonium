@@ -30,6 +30,7 @@ export class GameRecorder {
     this.selfieVideo = document.getElementById('selfie-pip');
     this.selfieWrap = document.getElementById('selfie-pip-wrap');
     this.selfieLabel = document.getElementById('selfie-pip-label');
+    this.selfieAvatar = document.getElementById('selfie-pip-avatar');
     this.selfieActive = false;
 
     // Partner video
@@ -128,6 +129,9 @@ export class GameRecorder {
 
   async startSelfie() {
     if (this.selfieActive) return;
+    // Hide avatar fallback when real camera starts
+    if (this.selfieAvatar) this.selfieAvatar.style.display = 'none';
+    if (this.selfieVideo) this.selfieVideo.style.display = 'block';
     try {
       this.selfieStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: 240, height: 240 },
@@ -145,6 +149,14 @@ export class GameRecorder {
     }
   }
 
+  showAvatarPip(avatarUrl) {
+    if (!avatarUrl || !this.selfieAvatar || !this.selfieWrap) return;
+    this.selfieAvatar.src = avatarUrl;
+    this.selfieAvatar.style.display = 'block';
+    if (this.selfieVideo) this.selfieVideo.style.display = 'none';
+    this.selfieWrap.style.display = 'block';
+  }
+
   stopSelfie() {
     if (this.selfieStream) {
       this.selfieStream.getTracks().forEach(t => t.stop());
@@ -153,6 +165,7 @@ export class GameRecorder {
     if (this.selfieVideo) {
       this.selfieVideo.srcObject = null;
     }
+    if (this.selfieAvatar) this.selfieAvatar.style.display = 'none';
     if (this.selfieWrap) this.selfieWrap.style.display = 'none';
     this.selfieActive = false;
   }

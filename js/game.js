@@ -468,7 +468,12 @@ class Game {
     // Start recording + selfie immediately so they're visible during countdown
     this.recorder.setLabels(this.mode);
     this.recorder.startBuffer(this.audioCtx);
-    if (this.lobby.cameraActive) this.recorder.startSelfie();
+    if (this.lobby.cameraActive) {
+      this.recorder.startSelfie();
+    } else if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
+      const user = this.lobby.auth.getUser();
+      if (user && user.avatar) this.recorder.showAvatarPip(user.avatar);
+    }
 
     // Route background music through AudioContext so it's captured in recordings
     if (this.audioCtx && !this._musicSourceNode) {
