@@ -397,6 +397,8 @@ class Game {
 
     // Show connection badge (suppress gamepad badge to avoid overlap)
     document.getElementById('conn-badge').style.display = 'block';
+    const connGp = document.getElementById('conn-gamepad');
+    if (connGp) connGp.style.display = this.input.gamepadConnected ? 'inline' : 'none';
     this.input.suppressGamepadBadge = true;
     const gpBadge = document.getElementById('gamepad-badge');
     if (gpBadge) gpBadge.style.display = 'none';
