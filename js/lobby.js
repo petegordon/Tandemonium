@@ -213,7 +213,6 @@ export class Lobby {
     this.toggleHelp.addEventListener('click', () => this._openHelp());
     this.toggleProfile.addEventListener('click', () => this._toggleProfile());
     this.toggleLeaderboard.addEventListener('click', () => this._openLeaderboard());
-    document.getElementById('btn-leaderboard').addEventListener('click', () => this._openLeaderboard());
   }
 
   _buildLevelCards() {
