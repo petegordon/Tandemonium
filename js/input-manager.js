@@ -32,6 +32,7 @@ export class InputManager {
     this._gpTriggerRightVal = 0;
     this._gpTriggerLeftPressed = false;
     this._gpTriggerRightPressed = false;
+    this.suppressGamepadBadge = false;
 
     // WebHID gyro state
     this.gyroDevice = null;
@@ -241,8 +242,10 @@ export class InputManager {
       this.gamepadIndex = e.gamepad.index;
       this.gamepadConnected = true;
       console.log('Gamepad connected:', e.gamepad.id);
-      const badge = document.getElementById('gamepad-badge');
-      if (badge) badge.style.display = 'block';
+      if (!this.suppressGamepadBadge) {
+        const badge = document.getElementById('gamepad-badge');
+        if (badge) badge.style.display = 'block';
+      }
       const pedalBar = document.getElementById('pedal-bar');
       if (pedalBar) pedalBar.classList.add('gamepad-active');
     });
@@ -272,8 +275,10 @@ export class InputManager {
         if (gamepads[i]) {
           this.gamepadIndex = i;
           this.gamepadConnected = true;
-          const badge = document.getElementById('gamepad-badge');
-          if (badge) badge.style.display = 'block';
+          if (!this.suppressGamepadBadge) {
+            const badge = document.getElementById('gamepad-badge');
+            if (badge) badge.style.display = 'block';
+          }
           const pedalBar = document.getElementById('pedal-bar');
           if (pedalBar) pedalBar.classList.add('gamepad-active');
           break;

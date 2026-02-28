@@ -395,8 +395,9 @@ class Game {
       document.getElementById('side-buttons').style.display = 'none';
     }
 
-    // Show connection badge (hide gamepad badge to avoid overlap)
+    // Show connection badge (suppress gamepad badge to avoid overlap)
     document.getElementById('conn-badge').style.display = 'block';
+    this.input.suppressGamepadBadge = true;
     const gpBadge = document.getElementById('gamepad-badge');
     if (gpBadge) gpBadge.style.display = 'none';
 
@@ -1210,6 +1211,7 @@ class Game {
     this._leanSendTimer = 0;
     document.getElementById('conn-badge').style.display = 'none';
     // Restore gamepad badge if controller is still connected
+    this.input.suppressGamepadBadge = false;
     const gpBadge = document.getElementById('gamepad-badge');
     if (gpBadge && this.input.gamepadConnected) gpBadge.style.display = 'block';
     document.getElementById('side-buttons').style.display = '';
@@ -1368,9 +1370,6 @@ class Game {
     const transport = this.net.transport === 'relay' ? 'RELAY' : 'P2P';
     if (typeEl) typeEl.textContent = transport;
     if (pingEl) pingEl.textContent = Math.round(this.net.pingMs) + 'ms';
-    // Keep gamepad badge hidden while conn-badge is showing (they overlap)
-    const gpBadge = document.getElementById('gamepad-badge');
-    if (gpBadge && gpBadge.style.display !== 'none') gpBadge.style.display = 'none';
   }
 
   // ============================================================
