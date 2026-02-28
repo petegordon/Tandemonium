@@ -1692,17 +1692,8 @@ class Game {
 
     // Race progress — display-only (captain is authoritative for events)
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
-      if (raceEvent && raceEvent.event === 'timeout') {
-        // Show TOO SLOW visual only — captain sends EVT_RESET for actual reset
-        const flash = document.getElementById('timeout-flash');
-        flash.classList.remove('visible');
-        void flash.offsetWidth;
-        flash.classList.add('visible');
-        this._playBeep(200, 0.3);
-        setTimeout(() => this._playBeep(150, 0.2), 300);
-      }
-      // checkpoint/finish events handled via captain's network events
+      this.raceManager.update(this.bike.distanceTraveled, dt);
+      // checkpoint/finish/timeout events handled via captain's network events
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
       this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
     }
