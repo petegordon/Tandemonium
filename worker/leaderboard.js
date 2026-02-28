@@ -5,7 +5,11 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const corsOrigin = env.CORS_ORIGIN || '*';
+    const requestOrigin = request.headers.get('Origin') || '';
+    const allowed = env.CORS_ORIGIN || '*';
+    const corsOrigin = (allowed === '*' || requestOrigin === allowed || /^https?:\/\/localhost(:\d+)?$/.test(requestOrigin))
+      ? requestOrigin || allowed
+      : allowed;
 
     // CORS preflight
     if (request.method === 'OPTIONS') {

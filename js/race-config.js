@@ -6,9 +6,9 @@ export const LEVELS = [
   {
     id: 'grandma',
     name: "Grandma's House",
-    distance: 1000,
+    distance: 250,
     collectibles: 'presents',
-    checkpointInterval: 250,
+    checkpointInterval: 62,
     icon: '\uD83C\uDFE0',        // 🏠
     description: 'A short ride to Grandma\'s house'
   },

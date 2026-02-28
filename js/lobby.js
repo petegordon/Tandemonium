@@ -2,6 +2,7 @@
 // LOBBY — UI controller for mode/role selection + connection
 // ============================================================
 
+import * as THREE from 'three';
 import { NetworkManager } from './network-manager.js';
 import { RELAY_URL } from './config.js';
 import { LEVELS } from './race-config.js';
@@ -97,7 +98,12 @@ export class Lobby {
     this.auth = new AuthManager();
     this._setupAuth();
 
+    // Leaderboard state
+    this._lbVideo = null;
+    this._lbLevel = LEVELS[0].id;
+
     this._setup();
+    this._buildLeaderboardTabs();
     this._checkAutoJoin();
 
     // Lobby is visible by default on page load (show() is only called on
@@ -258,6 +264,7 @@ export class Lobby {
     const updateUI = (user) => {
       if (user) {
         this.toggleProfile.classList.add('active');
+        this.toggleLeaderboard.classList.add('active');
         popupAvatar.src = user.avatar || '';
         popupName.textContent = user.name || '';
         popupEmail.textContent = user.email || '';
@@ -266,6 +273,7 @@ export class Lobby {
         }
       } else {
         this.toggleProfile.classList.remove('active');
+        this.toggleLeaderboard.classList.remove('active');
         this.toggleProfile.innerHTML = profileSvg;
         this.profilePopup.classList.remove('visible');
       }
@@ -292,6 +300,7 @@ export class Lobby {
 
     // Leaderboard close
     document.getElementById('leaderboard-close').addEventListener('click', () => {
+      this._stopLeaderboardVideo();
       document.getElementById('leaderboard-modal').style.display = 'none';
     });
 
@@ -518,29 +527,106 @@ export class Lobby {
     }
   }
 
+  _buildLeaderboardTabs() {
+    const container = document.getElementById('lb-tabs');
+    LEVELS.forEach(level => {
+      const btn = document.createElement('button');
+      btn.className = 'lb-tab' + (level.id === this._lbLevel ? ' active' : '');
+      btn.textContent = level.icon + ' ' + level.name;
+      btn.dataset.levelId = level.id;
+      btn.addEventListener('click', () => {
+        container.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        this._lbLevel = level.id;
+        document.getElementById('leaderboard-title').textContent =
+          level.icon + ' ' + level.name + ' Leaderboard';
+        this._loadLeaderboard(level.id);
+        this._startLeaderboardVideo(level.id);
+      });
+      container.appendChild(btn);
+    });
+  }
+
   async _openLeaderboard() {
     const modal = document.getElementById('leaderboard-modal');
+    const levelId = this.selectedLevel ? this.selectedLevel.id : 'grandma';
+    this._lbLevel = levelId;
+
+    // Set active tab
+    const tabs = document.getElementById('lb-tabs');
+    tabs.querySelectorAll('.lb-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.levelId === levelId);
+    });
+
+    // Set title
+    const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
+    document.getElementById('leaderboard-title').textContent =
+      level.icon + ' ' + level.name + ' Leaderboard';
+
+    modal.style.display = '';
+    this._startLeaderboardVideo(levelId);
+    this._loadLeaderboard(levelId);
+  }
+
+  async _loadLeaderboard(levelId) {
     const list = document.getElementById('leaderboard-list');
     list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">Loading...</div>';
-    modal.style.display = '';
 
     try {
-      const levelId = this.selectedLevel ? this.selectedLevel.id : 'grandma';
       const data = await this.auth.getLeaderboard(levelId);
       const entries = data.entries || [];
+      const myId = this.auth.user ? this.auth.user.serverId : null;
+      const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
+      const collectibleEmoji = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81';  // 💎 or 🎁
 
       if (entries.length === 0) {
         list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">No scores yet</div>';
         return;
       }
 
-      list.innerHTML = entries.map((e, i) =>
-        '<div class="lb-entry">' +
+      list.innerHTML = entries.map((e, i) => {
+        const isYou = myId && e.user_id === myId;
+        const youClass = isYou ? ' lb-you' : '';
+        const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
+
+        // Avatar
+        const avatar = e.avatar_url
+          ? '<img class="lb-avatar" src="' + this._escapeHtml(e.avatar_url) + '" alt="" referrerpolicy="no-referrer">'
+          : '';
+
+        // Mode badge
+        let modeHtml = '';
+        if (e.mode) {
+          const modeClass = e.mode === 'captain' ? 'lb-mode-captain'
+                          : e.mode === 'stoker'  ? 'lb-mode-stoker'
+                          : 'lb-mode-solo';
+          const modeLabel = e.mode === 'captain' ? 'Capt'
+                          : e.mode === 'stoker'  ? 'Stoke'
+                          : 'Solo';
+          modeHtml = '<span class="lb-mode ' + modeClass + '">' + modeLabel + '</span>';
+        }
+
+        // Collectibles
+        let collectHtml = '';
+        if (e.collectibles_found != null) {
+          collectHtml = '<span class="lb-collectibles">' + collectibleEmoji + e.collectibles_found + '</span>';
+        }
+
+        // Relative date
+        const dateHtml = e.created_at
+          ? '<span class="lb-date">' + this._relativeDate(e.created_at) + '</span>'
+          : '';
+
+        return '<div class="lb-entry' + youClass + '">' +
           '<span class="lb-rank">' + (i + 1) + '</span>' +
-          '<span class="lb-name">' + this._escapeHtml(e.display_name || 'Player') + '</span>' +
+          avatar +
+          '<span class="lb-name">' + this._escapeHtml(e.display_name || 'Player') + youTag + '</span>' +
+          modeHtml +
+          collectHtml +
           '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
-        '</div>'
-      ).join('');
+          dateHtml +
+        '</div>';
+      }).join('');
     } catch (e) {
       list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">Could not load leaderboard</div>';
     }
@@ -559,6 +645,139 @@ export class Lobby {
     const sec = totalSec % 60;
     const frac = Math.floor((ms % 1000) / 100);
     return min + ':' + String(sec).padStart(2, '0') + '.' + frac;
+  }
+
+  _relativeDate(isoStr) {
+    if (!isoStr) return '';
+    const diff = Date.now() - new Date(isoStr).getTime();
+    const sec = Math.floor(diff / 1000);
+    if (sec < 60) return 'just now';
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + 'm ago';
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + 'h ago';
+    const days = Math.floor(hr / 24);
+    if (days < 7) return days + 'd ago';
+    const d = new Date(isoStr);
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return months[d.getMonth()] + ' ' + d.getDate();
+  }
+
+  _startLeaderboardVideo(levelId) {
+    this._stopLeaderboardVideo();
+
+    const videoConfigs = {
+      grandma: {
+        src: 'assets/grandma_house_chromakey.mp4',
+        maskSrc: 'assets/grandma_house_chromakey_mask.png',
+        trimStart: 0.00, trimEnd: 5.50,
+        threshold: -0.02, smoothness: 0.110
+      }
+    };
+    const cfg = videoConfigs[levelId];
+    const canvas = document.getElementById('leaderboard-video');
+    if (!cfg) {
+      canvas.style.display = 'none';
+      return;
+    }
+
+    canvas.style.display = '';
+
+    const video = document.createElement('video');
+    video.src = cfg.src;
+    video.loop = false;
+    video.muted = true;
+    video.playsInline = true;
+    video.play().catch(() => {});
+    video.addEventListener('timeupdate', () => {
+      if (video.currentTime > cfg.trimEnd) {
+        video.currentTime = cfg.trimStart;
+        video.play().catch(() => {});
+      }
+    });
+
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setSize(canvas.width, canvas.height);
+    renderer.setClearColor(0x000000, 0);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+    camera.position.z = 2;
+
+    const videoTexture = new THREE.VideoTexture(video);
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+
+    const fallbackMask = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
+    fallbackMask.needsUpdate = true;
+    const maskUniform = { value: fallbackMask };
+    if (cfg.maskSrc) {
+      new THREE.TextureLoader().load(
+        cfg.maskSrc,
+        (tex) => { maskUniform.value = tex; },
+        undefined,
+        () => {}
+      );
+    }
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: videoTexture },
+        maskTex: maskUniform,
+        threshold: { value: cfg.threshold },
+        smoothness: { value: cfg.smoothness }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        uniform sampler2D map;
+        uniform sampler2D maskTex;
+        uniform float threshold;
+        uniform float smoothness;
+        varying vec2 vUv;
+        void main() {
+          float mask = texture2D(maskTex, vUv).r;
+          if (mask > 0.5) discard;
+          vec4 texColor = texture2D(map, vUv);
+          float greenDom = texColor.g - max(texColor.r, texColor.b);
+          float alpha = 1.0 - smoothstep(threshold, threshold + smoothness, greenDom);
+          if (alpha < 0.01) discard;
+          vec3 col = texColor.rgb;
+          float spillMax = 0.5 * (col.r + col.b) + 0.05;
+          col.g = min(col.g, spillMax);
+          gl_FragColor = vec4(col, alpha);
+        }`,
+      transparent: true,
+      depthWrite: false
+    });
+
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    scene.add(plane);
+
+    let animId = 0;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    this._lbVideo = { video, renderer, videoTexture, mat, animId };
+  }
+
+  _stopLeaderboardVideo() {
+    if (!this._lbVideo) return;
+    const v = this._lbVideo;
+    cancelAnimationFrame(v.animId);
+    v.video.pause();
+    v.video.src = '';
+    v.videoTexture.dispose();
+    v.mat.dispose();
+    v.renderer.dispose();
+    this._lbVideo = null;
   }
 
   _checkPermissionStates() {
