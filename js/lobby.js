@@ -94,7 +94,7 @@ export class Lobby {
     this._stepDefaultFocus.set(this.modeStep, 1); // RIDE TOGETHER
 
     // Auth
-    this.auth = new AuthManager(''); // API base URL — set when deployed
+    this.auth = new AuthManager();
     this._setupAuth();
 
     this._setup();
@@ -242,83 +242,47 @@ export class Lobby {
   }
 
   _setupAuth() {
-    const signInBtn = document.getElementById('btn-sign-in');
-    const userInfo = document.getElementById('user-info');
-    const userName = document.getElementById('user-name');
-    const userAvatar = document.getElementById('user-avatar');
-    const leaderboardBtn = document.getElementById('btn-leaderboard');
-    const leaderboardModal = document.getElementById('leaderboard-modal');
-    const leaderboardClose = document.getElementById('leaderboard-close');
-    const leaderboardList = document.getElementById('leaderboard-list');
+    this.profilePopup = document.getElementById('profile-popup');
+    const popupAvatar = document.getElementById('profile-popup-avatar');
+    const popupName = document.getElementById('profile-popup-name');
+    const popupEmail = document.getElementById('profile-popup-email');
+    const logoutBtn = document.getElementById('profile-popup-logout');
 
-    if (!signInBtn) return;
+    // Initialize GSI
+    this.auth.initGSI();
 
-    const updateUI = () => {
-      if (this.auth.isLoggedIn()) {
-        signInBtn.style.display = 'none';
-        userInfo.style.display = 'flex';
-        userName.textContent = this.auth.user.name;
-        if (this.auth.user.avatar) {
-          userAvatar.src = this.auth.user.avatar;
-          userAvatar.style.display = 'block';
-        }
-        leaderboardBtn.style.display = '';
+    const updateUI = (user) => {
+      if (user) {
         this.toggleProfile.classList.add('active');
+        popupAvatar.src = user.avatar || '';
+        popupName.textContent = user.name || '';
+        popupEmail.textContent = user.email || '';
       } else {
-        signInBtn.style.display = '';
-        userInfo.style.display = 'none';
-        leaderboardBtn.style.display = '';
         this.toggleProfile.classList.remove('active');
+        this.profilePopup.classList.remove('visible');
       }
     };
 
-    signInBtn.addEventListener('click', () => this.auth.login('google'));
-    this.auth.onLogin(() => updateUI());
+    this.auth.onLogin((user) => updateUI(user));
 
-    // Leaderboard modal
-    if (leaderboardBtn) {
-      leaderboardBtn.addEventListener('click', async () => {
-        leaderboardModal.style.display = 'flex';
-        leaderboardList.innerHTML = '<p style="color:rgba(255,255,255,0.5)">Loading...</p>';
-        try {
-          const data = await this.auth.getLeaderboard(this.selectedLevel.id);
-          if (data.entries && data.entries.length > 0) {
-            leaderboardList.innerHTML = data.entries.map((e, i) =>
-              '<div class="lb-entry">' +
-                '<span class="lb-rank">#' + (i + 1) + '</span>' +
-                '<span class="lb-name">' + this._escapeHtml(e.display_name) + '</span>' +
-                '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
-              '</div>'
-            ).join('');
-          } else {
-            leaderboardList.innerHTML = '<p style="color:rgba(255,255,255,0.5)">No scores yet. Be the first!</p>';
-          }
-        } catch (err) {
-          leaderboardList.innerHTML = '<p style="color:rgba(255,255,255,0.5)">Could not load leaderboard</p>';
-        }
-      });
+    // Logout
+    logoutBtn.addEventListener('click', () => {
+      this.auth.logout();
+      updateUI(null);
+    });
+
+    // Close popup when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!this.profilePopup.classList.contains('visible')) return;
+      if (this.profilePopup.contains(e.target)) return;
+      if (this.toggleProfile.contains(e.target)) return;
+      this.profilePopup.classList.remove('visible');
+    });
+
+    // Restore UI if already logged in from localStorage
+    if (this.auth.isLoggedIn()) {
+      updateUI(this.auth.getUser());
     }
-
-    if (leaderboardClose) {
-      leaderboardClose.addEventListener('click', () => {
-        leaderboardModal.style.display = 'none';
-      });
-    }
-
-    updateUI();
-  }
-
-  _escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
-
-  _formatTime(ms) {
-    const s = Math.floor(ms / 1000);
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return m + ':' + (sec < 10 ? '0' : '') + sec;
   }
 
   _requestMotion() {
@@ -523,8 +487,11 @@ export class Lobby {
   }
 
   _toggleProfile() {
-    if (this.auth.isLoggedIn()) return; // already signed in
-    this.auth.login('google');
+    if (this.auth.isLoggedIn()) {
+      this.profilePopup.classList.toggle('visible');
+    } else {
+      this.auth.login();
+    }
   }
 
   _openLeaderboard() {

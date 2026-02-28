@@ -1,45 +1,33 @@
 // ============================================================
-// AUTH — Google sign-in + leaderboard API client
+// AUTH — Google Identity Services (GSI) client-side auth
 // ============================================================
 
-const STORAGE_TOKEN = 'tandemonium_auth_token';
 const STORAGE_USER = 'tandemonium_auth_user';
+const GOOGLE_CLIENT_ID = '640682648249-dp1dou0mmpkm6m697oakbe9odabt1dui.apps.googleusercontent.com';
 
 export class AuthManager {
-  constructor(apiBase) {
-    this.apiBase = apiBase || '';
-    this.token = null;
+  constructor() {
     this.user = null;
+    this._onLoginCallback = null;
+    this._gsiInitialized = false;
     this._load();
-
-    // Listen for auth callback from popup
-    window.addEventListener('message', (e) => {
-      if (e.data && e.data.type === 'auth') {
-        this.token = e.data.token;
-        this.user = e.data.user;
-        this._save();
-        if (this._onLoginCallback) this._onLoginCallback(this.user);
-      }
-    });
   }
 
   _load() {
     try {
-      this.token = localStorage.getItem(STORAGE_TOKEN);
-      const userRaw = localStorage.getItem(STORAGE_USER);
-      if (userRaw) this.user = JSON.parse(userRaw);
+      const raw = localStorage.getItem(STORAGE_USER);
+      if (raw) this.user = JSON.parse(raw);
     } catch (e) {}
   }
 
   _save() {
     try {
-      if (this.token) localStorage.setItem(STORAGE_TOKEN, this.token);
       if (this.user) localStorage.setItem(STORAGE_USER, JSON.stringify(this.user));
     } catch (e) {}
   }
 
   isLoggedIn() {
-    return !!this.token && !!this.user;
+    return !!this.user;
   }
 
   getUser() {
@@ -50,67 +38,52 @@ export class AuthManager {
     this._onLoginCallback = callback;
   }
 
-  login(provider = 'google') {
-    const url = this.apiBase + '/auth/' + provider;
-    window.open(url, 'auth', 'width=500,height=600,popup=yes');
+  initGSI() {
+    if (this._gsiInitialized) return;
+    this._gsiInitialized = true;
+
+    const tryInit = () => {
+      if (typeof google === 'undefined' || !google.accounts) {
+        setTimeout(tryInit, 200);
+        return;
+      }
+      google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: (response) => this._handleCredential(response),
+        auto_select: true,
+      });
+    };
+    tryInit();
+  }
+
+  _handleCredential(response) {
+    try {
+      const payload = JSON.parse(atob(response.credential.split('.')[1]));
+      this.user = {
+        id: payload.sub,
+        name: payload.name,
+        email: payload.email,
+        avatar: payload.picture,
+      };
+      this._save();
+      if (this._onLoginCallback) this._onLoginCallback(this.user);
+    } catch (e) {
+      console.error('Failed to decode Google credential', e);
+    }
+  }
+
+  login() {
+    if (typeof google === 'undefined' || !google.accounts) return;
+    google.accounts.id.prompt();
   }
 
   logout() {
-    this.token = null;
     this.user = null;
     try {
-      localStorage.removeItem(STORAGE_TOKEN);
       localStorage.removeItem(STORAGE_USER);
     } catch (e) {}
-  }
-
-  async submitScore(data) {
-    if (!this.token) return null;
-    const res = await fetch(this.apiBase + '/score', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + this.token
-      },
-      body: JSON.stringify(data)
-    });
-    if (res.status === 401) { this.logout(); return null; }
-    return res.json();
-  }
-
-  async getLeaderboard(levelId, scope = 'global', limit = 20) {
-    const params = new URLSearchParams({ level: levelId, scope, limit });
-    const headers = {};
-    if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
-    const res = await fetch(this.apiBase + '/leaderboard?' + params, { headers });
-    return res.json();
-  }
-
-  async getMe() {
-    if (!this.token) return null;
-    const res = await fetch(this.apiBase + '/me', {
-      headers: { 'Authorization': 'Bearer ' + this.token }
-    });
-    if (res.status === 401) { this.logout(); return null; }
-    return res.json();
-  }
-
-  async syncAchievements(achievementIds) {
-    if (!this.token) return null;
-    const res = await fetch(this.apiBase + '/achievements/sync', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + this.token
-      },
-      body: JSON.stringify({ achievements: achievementIds })
-    });
-    if (res.status === 401) { this.logout(); return null; }
-    return res.json();
-  }
-
-  async getPlayerProfile(playerId) {
-    const res = await fetch(this.apiBase + '/player/' + playerId);
-    return res.json();
+    if (typeof google !== 'undefined' && google.accounts) {
+      google.accounts.id.disableAutoSelect();
+    }
   }
 }

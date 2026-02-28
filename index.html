@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -894,6 +895,7 @@
     flex-direction: column;
     gap: 6px;
     flex-shrink: 0;
+    position: relative;
   }
   .lobby-toggle {
     width: 36px; height: 36px;
@@ -1217,6 +1219,64 @@
     font-size: 12px;
     line-height: 1.5;
     margin-bottom: 6px;
+  }
+
+  /* ── Profile popup ── */
+  #profile-popup {
+    display: none;
+    position: absolute;
+    bottom: 44px;
+    left: 0;
+    min-width: 220px;
+    background: rgba(30,30,30,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 14px;
+    padding: 20px 18px 16px;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  #profile-popup.visible { display: block; }
+  .profile-popup-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .profile-popup-avatar {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    border: 2px solid rgba(60,200,80,0.5);
+  }
+  .profile-popup-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+  }
+  .profile-popup-email {
+    font-size: 11px;
+    color: rgba(255,255,255,0.45);
+    text-align: center;
+    word-break: break-all;
+  }
+  .profile-popup-logout {
+    margin-top: 8px;
+    padding: 6px 18px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    border: 1px solid rgba(255,80,80,0.4);
+    border-radius: 6px;
+    background: rgba(255,80,80,0.12);
+    color: rgba(255,100,100,0.9);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .profile-popup-logout:hover {
+    background: rgba(255,80,80,0.25);
   }
 
   /* ── Share / Record button ── */
@@ -1588,6 +1648,14 @@ ON</button>
               <path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/>
             </svg>
           </button>
+          <div id="profile-popup">
+            <div class="profile-popup-content">
+              <img class="profile-popup-avatar" id="profile-popup-avatar" src="" alt="">
+              <div class="profile-popup-name" id="profile-popup-name"></div>
+              <div class="profile-popup-email" id="profile-popup-email"></div>
+              <button class="profile-popup-logout" id="profile-popup-logout">LOG OUT</button>
+            </div>
+          </div>
         </div>
         <!-- Center: mode buttons -->
         <div class="lobby-mode-buttons">
@@ -1671,7 +1739,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.7210795 | 02-27-2026 01:27</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.1026278 | 02-28-2026 08:55</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
