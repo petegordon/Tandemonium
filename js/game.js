@@ -839,6 +839,9 @@ class Game {
     document.getElementById('victory-destination').textContent =
       level.icon + ' ' + level.name;
 
+    // Animated chromakey destination video at top of victory screen
+    this._startVictoryVideo(level);
+
     // Build stats
     const statsEl = document.getElementById('victory-stats');
     statsEl.innerHTML = '';
@@ -975,6 +978,124 @@ class Game {
     this.hud.hideTimer();
     this._contribBar.style.display = 'none';
     this._clearOverlayButtons();
+    this._stopVictoryVideo();
+  }
+
+  _startVictoryVideo(level) {
+    // Video config per level
+    const videoConfigs = {
+      grandma: {
+        src: 'assets/grandma_house_chromakey.mp4',
+        maskSrc: 'assets/grandma_house_chromakey_mask.png',
+        trimStart: 0.00, trimEnd: 5.50,
+        threshold: -0.02, smoothness: 0.110
+      }
+    };
+    const cfg = videoConfigs[level.id];
+    if (!cfg) {
+      document.getElementById('victory-video').style.display = 'none';
+      return;
+    }
+
+    const canvas = document.getElementById('victory-video');
+    canvas.style.display = '';
+
+    const video = document.createElement('video');
+    video.src = cfg.src;
+    video.loop = false;
+    video.muted = true;
+    video.playsInline = true;
+    video.play().catch(() => {});
+    video.addEventListener('timeupdate', () => {
+      if (video.currentTime > cfg.trimEnd) {
+        video.currentTime = cfg.trimStart;
+        video.play().catch(() => {});
+      }
+    });
+
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setSize(canvas.width, canvas.height);
+    renderer.setClearColor(0x000000, 0);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+    camera.position.z = 2;
+
+    const videoTexture = new THREE.VideoTexture(video);
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+
+    // 1x1 transparent fallback mask
+    const fallbackMask = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
+    fallbackMask.needsUpdate = true;
+    const maskUniform = { value: fallbackMask };
+    if (cfg.maskSrc) {
+      new THREE.TextureLoader().load(
+        cfg.maskSrc,
+        (tex) => { maskUniform.value = tex; },
+        undefined,
+        () => {}
+      );
+    }
+
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: videoTexture },
+        maskTex: maskUniform,
+        threshold: { value: cfg.threshold },
+        smoothness: { value: cfg.smoothness }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        uniform sampler2D map;
+        uniform sampler2D maskTex;
+        uniform float threshold;
+        uniform float smoothness;
+        varying vec2 vUv;
+        void main() {
+          float mask = texture2D(maskTex, vUv).r;
+          if (mask > 0.5) discard;
+          vec4 texColor = texture2D(map, vUv);
+          float greenDom = texColor.g - max(texColor.r, texColor.b);
+          float alpha = 1.0 - smoothstep(threshold, threshold + smoothness, greenDom);
+          if (alpha < 0.01) discard;
+          vec3 col = texColor.rgb;
+          float spillMax = 0.5 * (col.r + col.b) + 0.05;
+          col.g = min(col.g, spillMax);
+          gl_FragColor = vec4(col, alpha);
+        }`,
+      transparent: true,
+      depthWrite: false
+    });
+
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+    scene.add(plane);
+
+    let animId = 0;
+    const animate = () => {
+      animId = requestAnimationFrame(animate);
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    this._victoryVideo = { video, renderer, videoTexture, mat, animId };
+  }
+
+  _stopVictoryVideo() {
+    if (!this._victoryVideo) return;
+    const v = this._victoryVideo;
+    cancelAnimationFrame(v.animId);
+    v.video.pause();
+    v.video.src = '';
+    v.videoTexture.dispose();
+    v.mat.dispose();
+    v.renderer.dispose();
+    this._victoryVideo = null;
   }
 
   _returnToLobby() {
