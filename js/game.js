@@ -1366,8 +1366,9 @@ class Game {
     const typeEl = document.getElementById('conn-type');
     const pingEl = document.getElementById('conn-ping');
     const transport = this.net.transport === 'relay' ? 'RELAY' : 'P2P';
-    if (typeEl) typeEl.textContent = this.input.gamepadConnected ? '🎮 ' + transport : transport;
-    if (pingEl) pingEl.textContent = Math.round(this.net.pingMs) + 'ms';
+    if (typeEl) typeEl.textContent = transport;
+    const ping = Math.round(this.net.pingMs) + 'ms';
+    if (pingEl) pingEl.textContent = this.input.gamepadConnected ? ping + ' · CONTROLLER' : ping;
   }
 
   // ============================================================
