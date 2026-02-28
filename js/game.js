@@ -71,6 +71,7 @@ class Game {
     this._mpPrevDown = false;
     this._stokerWasFallen = false;
     this._stokerTimeoutShown = false;
+    this._reconnecting = false;
 
     // Recording partner pedal flash tracking
     this._recLastTapTime = 0;
@@ -764,6 +765,7 @@ class Game {
   }
 
   _showReconnecting() {
+    this._reconnecting = true;
     const overlay = document.getElementById('reconnect-overlay');
     overlay.style.display = 'flex';
     if (!this._reconnectTimerStart) {
@@ -777,6 +779,7 @@ class Game {
   }
 
   _hideReconnecting() {
+    this._reconnecting = false;
     const overlay = document.getElementById('reconnect-overlay');
     overlay.style.display = 'none';
     if (this._reconnectInterval) {
@@ -1605,9 +1608,11 @@ class Game {
     this._checkTreeCollision();
 
     // Race progress + contribution tracking (captain is authoritative)
+    // Freeze race timer while reconnecting
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
-      if (raceEvent) {
+      const raceDt = this._reconnecting ? 0 : dt;
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, raceDt);
+      if (raceEvent && !this._reconnecting) {
         if (raceEvent.event === 'timeout') { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
       }
@@ -1716,9 +1721,11 @@ class Game {
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     // Race progress — display-only (captain is authoritative for events)
+    // Freeze race timer while reconnecting
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
-      if (raceEvent && raceEvent.event === 'timeout' && !this._stokerTimeoutShown) {
+      const raceDt = this._reconnecting ? 0 : dt;
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, raceDt);
+      if (raceEvent && raceEvent.event === 'timeout' && !this._stokerTimeoutShown && !this._reconnecting) {
         // Show TOO SLOW visual once — captain sends EVT_RESET to clear it
         this._stokerTimeoutShown = true;
         const flash = document.getElementById('timeout-flash');
