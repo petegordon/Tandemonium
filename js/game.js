@@ -213,12 +213,33 @@ class Game {
     this._musicEl.volume = 0.35;
     this._musicSourceNode = null; // created once via createMediaElementSource
     this.lobby.onMusicChanged = (on) => {
-      if (on && (this.state === 'countdown' || this.state === 'playing')) {
+      if (on) {
         this._musicEl.play().catch(() => {});
       } else {
         this._musicEl.pause();
       }
     };
+
+    // First-visit: the "Tap to Start" overlay in lobby.js handles autoplay unlock.
+    // Returning visitors (overlay skipped): start music on first user interaction.
+    if (this.lobby.musicActive) {
+      this._musicEl.play().catch(() => {});
+    }
+    if (!this.lobby._tapOverlay) {
+      const startMusic = () => {
+        if (this.lobby.musicActive) {
+          this._musicEl.play().catch(() => {});
+        }
+        document.removeEventListener('pointerdown', startMusic, true);
+        document.removeEventListener('keydown', startMusic, true);
+        document.removeEventListener('click', startMusic, true);
+      };
+      document.addEventListener('pointerdown', startMusic, true);
+      document.addEventListener('keydown', startMusic, true);
+      // Gamepad A button triggers el.click() in lobby — synthetic clicks
+      // don't fire pointerdown, so listen for click too.
+      document.addEventListener('click', startMusic, true);
+    }
 
     // Resize
     window.addEventListener('resize', () => this._onResize());
@@ -1117,8 +1138,10 @@ class Game {
   }
 
   _returnToLobby() {
-    this._musicEl.pause();
-    this._musicEl.currentTime = 0;
+    if (!this.lobby.musicActive) {
+      this._musicEl.pause();
+      this._musicEl.currentTime = 0;
+    }
     this._hideGameOver();
     this._hideVictory();
     this.raceManager = null;

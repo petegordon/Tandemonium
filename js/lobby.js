@@ -111,6 +111,35 @@ export class Lobby {
     this._currentStep = this.modeStep;
     this._startGamepadNav();
     this._checkPermissionStates();
+
+    // "Tap to Start" overlay — unlocks audio autoplay + requests permissions.
+    // Only shown once ever; after first dismissal, localStorage flag prevents it.
+    this._tapOverlay = document.getElementById('tap-to-start');
+    if (this._tapOverlay) {
+      if (localStorage.getItem('tandemonium_started')) {
+        this._tapOverlay.remove();
+        this._tapOverlay = null;
+      } else {
+        this._tapOverlay.addEventListener('click', () => this._dismissTapOverlay(), { once: true });
+      }
+    }
+  }
+
+  _dismissTapOverlay() {
+    if (!this._tapOverlay) return;
+    const overlay = this._tapOverlay;
+    this._tapOverlay = null;
+    localStorage.setItem('tandemonium_started', '1');
+    // Request all permissions (reuse _toggleAll flow)
+    this._toggleAll();
+    // Ensure music actually starts playing — _toggleAll skips _toggleMusic
+    // when musicActive is already true, so fire the callback explicitly.
+    if (this.musicActive && this.onMusicChanged) {
+      this.onMusicChanged(true);
+    }
+    // Fade out and remove
+    overlay.classList.add('fade-out');
+    setTimeout(() => overlay.remove(), 400);
   }
 
   show() {
@@ -289,6 +318,17 @@ export class Lobby {
       updateUI(null);
     });
 
+    // Back buttons close the popup
+    document.getElementById('profile-popup-back').addEventListener('click', () => {
+      this.profilePopup.classList.remove('visible');
+    });
+    document.getElementById('profile-popup-signin-back').addEventListener('click', () => {
+      this.profilePopup.classList.remove('visible');
+    });
+
+    // Profile popup gamepad focus index (0 = logout/sign-in, 1 = back)
+    this._profileFocusIndex = 0;
+
     // Close popup when clicking outside
     document.addEventListener('click', (e) => {
       if (!this.profilePopup.classList.contains('visible')) return;
@@ -298,14 +338,10 @@ export class Lobby {
     });
 
     // Leaderboard close
-    const closeLeaderboard = () => {
-      this._stopLeaderboardVideo();
-      document.getElementById('leaderboard-modal').style.display = 'none';
-    };
-    document.getElementById('leaderboard-close').addEventListener('click', closeLeaderboard);
-    document.getElementById('leaderboard-x').addEventListener('click', closeLeaderboard);
+    document.getElementById('leaderboard-close').addEventListener('click', () => this._closeLeaderboard());
+    document.getElementById('leaderboard-x').addEventListener('click', () => this._closeLeaderboard());
     document.getElementById('leaderboard-modal').addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) closeLeaderboard();
+      if (e.target === e.currentTarget) this._closeLeaderboard();
     });
 
     // Restore UI if already logged in from localStorage
@@ -515,6 +551,15 @@ export class Lobby {
     this.helpModal.classList.add('visible');
   }
 
+  _closeHelp() {
+    this.helpModal.classList.remove('visible');
+  }
+
+  _closeLeaderboard() {
+    this._stopLeaderboardVideo();
+    document.getElementById('leaderboard-modal').style.display = 'none';
+  }
+
   _toggleProfile() {
     if (this.auth.isLoggedIn()) {
       // Show logged-in content, hide sign-in button
@@ -528,6 +573,19 @@ export class Lobby {
       this.profilePopup.classList.toggle('visible');
       // Also try One Tap prompt as a bonus
       this.auth.login();
+    }
+    // Reset gamepad focus for profile popup
+    if (this.profilePopup.classList.contains('visible')) {
+      this._profileFocusIndex = 0;
+      // Apply initial highlight
+      const items = this.auth.isLoggedIn()
+        ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
+        : [document.getElementById('profile-popup-signin-back')];
+      items.forEach(el => el.classList.remove('gamepad-focus'));
+      items[0].classList.add('gamepad-focus');
+    } else {
+      // Clear highlights on close
+      this.profilePopup.querySelectorAll('.gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
     }
   }
 
@@ -987,6 +1045,57 @@ export class Lobby {
     // D-pad left/right (buttons 14/15 or left stick axis 0)
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
     const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
+
+    // If profile popup is open, navigate between logout and back
+    if (this.profilePopup.classList.contains('visible')) {
+      const isLoggedIn = this.auth.isLoggedIn();
+      const items = isLoggedIn
+        ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
+        : [document.getElementById('profile-popup-signin-back')];
+      if (up && !this._gpPrevUp) this._profileFocusIndex = Math.max(0, this._profileFocusIndex - 1);
+      if (down && !this._gpPrevDown) this._profileFocusIndex = Math.min(items.length - 1, this._profileFocusIndex + 1);
+      // Apply focus highlight
+      items.forEach(el => el.classList.remove('gamepad-focus'));
+      if (items[this._profileFocusIndex]) items[this._profileFocusIndex].classList.add('gamepad-focus');
+      if (a && !this._gpPrevA) {
+        if (items[this._profileFocusIndex]) items[this._profileFocusIndex].click();
+      }
+      if (b && !this._gpPrevB) {
+        items.forEach(el => el.classList.remove('gamepad-focus'));
+        this.profilePopup.classList.remove('visible');
+      }
+      this._gpPrevUp = up; this._gpPrevDown = down;
+      this._gpPrevLeft = left; this._gpPrevRight = right;
+      this._gpPrevA = a; this._gpPrevB = b;
+      return;
+    }
+    if (b && !this._gpPrevB) {
+      if (this.helpModal.classList.contains('visible')) {
+        this._closeHelp();
+        this._gpPrevUp = up; this._gpPrevDown = down;
+        this._gpPrevLeft = left; this._gpPrevRight = right;
+        this._gpPrevA = a; this._gpPrevB = b;
+        return;
+      }
+      if (document.getElementById('leaderboard-modal').style.display !== 'none') {
+        this._closeLeaderboard();
+        this._gpPrevUp = up; this._gpPrevDown = down;
+        this._gpPrevLeft = left; this._gpPrevRight = right;
+        this._gpPrevA = a; this._gpPrevB = b;
+        return;
+      }
+    }
+
+    // If "Tap to Start" overlay is showing, any button dismisses it
+    if (this._tapOverlay) {
+      if ((a && !this._gpPrevA) || (b && !this._gpPrevB)) {
+        this._dismissTapOverlay();
+      }
+      this._gpPrevUp = up; this._gpPrevDown = down;
+      this._gpPrevLeft = left; this._gpPrevRight = right;
+      this._gpPrevA = a; this._gpPrevB = b;
+      return;
+    }
 
     // Edge detection: fire on press, not hold
     if (up && !this._gpPrevUp) this._moveFocus(-1);

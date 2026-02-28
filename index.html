@@ -852,6 +852,33 @@
     #pedal-bar { display: flex !important; }
   }
 
+  /* ── Tap to Start overlay ── */
+  #tap-to-start {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  #tap-to-start p {
+    color: #fff;
+    font-size: 28px;
+    font-weight: 700;
+    animation: tapPulse 2s ease-in-out infinite;
+  }
+  @keyframes tapPulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+  #tap-to-start.fade-out {
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+  }
+
   /* ── Lobby overlay ── */
   #lobby {
     position: fixed;
@@ -1488,6 +1515,23 @@
   .profile-popup-logout:hover {
     background: rgba(255,80,80,0.25);
   }
+  .profile-popup-back {
+    margin-top: 4px;
+    padding: 6px 18px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .profile-popup-back:hover {
+    background: rgba(255,255,255,0.18);
+  }
 
   /* ── Share / Record button ── */
   #share-btn {
@@ -1890,6 +1934,13 @@ ON</button>
   <p class="tap-hint">Tap anywhere to start</p>
 </div>
 
+<!-- Tap to Start overlay -->
+<div id="tap-to-start">
+  <div class="tap-to-start-content">
+    <p>Tap to Start</p>
+  </div>
+</div>
+
 <!-- Lobby overlay -->
 <div id="lobby">
   <div id="lobby-top-bar">
@@ -1930,9 +1981,11 @@ ON</button>
               <div class="profile-popup-name" id="profile-popup-name"></div>
               <div class="profile-popup-email" id="profile-popup-email"></div>
               <button class="profile-popup-logout" id="profile-popup-logout">LOG OUT</button>
+              <button class="profile-popup-back" id="profile-popup-back">RETURN TO LOBBY</button>
             </div>
             <div id="profile-popup-signin" style="display:none;padding:12px;text-align:center;">
               <div id="gsi-button-container"></div>
+              <button class="profile-popup-back" id="profile-popup-signin-back" style="margin-top:10px;">RETURN TO LOBBY</button>
             </div>
           </div>
         </div>
@@ -2018,7 +2071,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.ac09123 | 02-28-2026 14:14</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.dcd8bd3 | 02-28-2026 14:58</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
