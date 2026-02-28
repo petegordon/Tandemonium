@@ -134,6 +134,7 @@ export class HUD {
   hideTimer() {
     this.timerRow.classList.remove('visible');
     this.countdownOverlay.classList.remove('visible');
+    this.countdownNumber.textContent = '';
     this._lastCountdownSec = -1;
   }
 

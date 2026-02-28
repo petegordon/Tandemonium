@@ -157,11 +157,6 @@ class Game {
       this._returnToLobby();
     });
 
-    // Return to lobby from reconnect overlay
-    document.getElementById('btn-reconnect-lobby').addEventListener('click', () => {
-      document.getElementById('reconnect-overlay').style.display = 'none';
-      this._returnToLobby();
-    });
 
     // Race
     this.raceManager = null;
@@ -766,28 +761,12 @@ class Game {
 
   _showReconnecting() {
     this._reconnecting = true;
-    const overlay = document.getElementById('reconnect-overlay');
-    overlay.style.display = 'flex';
-    if (!this._reconnectTimerStart) {
-      this._reconnectTimerStart = performance.now();
-      const timerEl = document.getElementById('reconnect-timer');
-      this._reconnectInterval = setInterval(() => {
-        const elapsed = Math.floor((performance.now() - this._reconnectTimerStart) / 1000);
-        timerEl.textContent = elapsed + 's';
-      }, 1000);
-    }
+    document.getElementById('conn-badge').classList.add('reconnecting');
   }
 
   _hideReconnecting() {
     this._reconnecting = false;
-    const overlay = document.getElementById('reconnect-overlay');
-    overlay.style.display = 'none';
-    if (this._reconnectInterval) {
-      clearInterval(this._reconnectInterval);
-      this._reconnectInterval = null;
-    }
-    this._reconnectTimerStart = null;
-    document.getElementById('reconnect-timer').textContent = '0s';
+    document.getElementById('conn-badge').classList.remove('reconnecting');
   }
 
   _showDisconnect(reason) {

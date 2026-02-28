@@ -1256,25 +1256,6 @@
   }
   #room-qr svg { width: 100%; height: 100%; }
 
-  /* ── Reconnect overlay ── */
-  #reconnect-overlay {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.85);
-    z-index: 60;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 30px;
-  }
-  #reconnect-overlay .disconnect-box p:first-child {
-    color: #ffaa33;
-  }
-  .reconnect-pulse {
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-
   /* ── Game Over overlay ── */
   #gameover-overlay {
     position: fixed;
@@ -1327,6 +1308,18 @@
     margin-top: 4px;
   }
   #conn-badge #conn-type { color: #44ff66; font-weight: 700; margin-right: 4px; }
+  #conn-badge #conn-reconnect-text { display: none; color: #ffaa33; font-weight: 700; }
+  #conn-badge.reconnecting {
+    background: rgba(80,50,0,0.7);
+    border-color: #ffaa33;
+    pointer-events: auto;
+    animation: connBadgePulse 1.5s ease-in-out infinite;
+  }
+  #conn-badge.reconnecting #conn-type,
+  #conn-badge.reconnecting #conn-ping,
+  #conn-badge.reconnecting #conn-gamepad { display: none; }
+  #conn-badge.reconnecting #conn-reconnect-text { display: inline; }
+  @keyframes connBadgePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
   /* ── Surface indicator ── */
   /* ── Lobby credits line ── */
@@ -2072,7 +2065,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.ff5f381 | 02-28-2026 17:10</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.bc25587 | 02-28-2026 17:19</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -2194,15 +2187,6 @@ ON</button>
   <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">RETURN TO LOBBY</button>
 </div>
 
-<!-- Reconnect overlay (shown during retry attempts) -->
-<div id="reconnect-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p id="reconnect-msg" class="reconnect-pulse">Reconnecting...</p>
-    <p id="reconnect-timer" style="color:rgba(255,255,255,0.5);font-size:14px;">0s</p>
-    <button class="lobby-btn" id="btn-reconnect-lobby" style="margin-top:16px;">Return to Lobby</button>
-  </div>
-</div>
-
 <!-- Disconnect overlay -->
 <div id="disconnect-overlay" style="display:none;">
   <div class="disconnect-box">
@@ -2217,6 +2201,7 @@ ON</button>
   <span id="conn-type">P2P</span>
   <span id="conn-ping">--ms</span>
   <span id="conn-gamepad" style="display:none;"> 🎮</span>
+  <span id="conn-reconnect-text">Reconnecting...</span>
 </div>
 
 <!-- Surface indicator -->
