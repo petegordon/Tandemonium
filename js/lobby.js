@@ -114,7 +114,7 @@ export class Lobby {
   }
 
   show() {
-    this.lobbyEl.style.display = 'flex';
+    this.lobbyEl.style.display = '';
     this._showStep(this.modeStep);
     this._startGamepadNav();
     this._checkPermissionStates();
