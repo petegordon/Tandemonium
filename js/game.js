@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH } from './config.js';
+import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, MSG_PROFILE } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -343,6 +343,7 @@ class Game {
     this.net.onDisconnected = (reason) => {
       this._hideReconnecting();
       this.recorder.clearPartnerStream();
+      updateBadgeDisplay('partner-badges', []);
       if (this.state !== 'lobby') {
         this._showDisconnect(reason);
       }
@@ -359,6 +360,18 @@ class Game {
         this.recorder.addAudioStreams(this.net._localMediaStream, remoteStream);
       } else {
         this.recorder.addAudioStreams(null, remoteStream);
+      }
+    };
+
+    // Partner profile: avatar + achievements
+    this.net.onProfileReceived = (profile) => {
+      // Show partner avatar if no active video stream
+      if (profile.avatar && !this.recorder.partnerActive) {
+        this.recorder.showPartnerAvatar(profile.avatar);
+      }
+      // Render partner achievement badges
+      if (profile.achievements) {
+        updateBadgeDisplay('partner-badges', profile.achievements);
       }
     };
 
@@ -526,6 +539,9 @@ class Game {
     if (this.mode === 'captain' && this.net) {
       this.net.sendEvent(EVT_COUNTDOWN);
     }
+
+    // Send profile to partner (avatar + achievements)
+    this._sendProfile();
   }
 
   _updateCountdown(dt) {
@@ -858,6 +874,20 @@ class Game {
 
   _updateBadges() {
     updateBadgeDisplay('selfie-badges', this.achievements.getEarned());
+    this._sendProfile();
+  }
+
+  _sendProfile() {
+    if (!this.net || !this.net.connected) return;
+    const profile = { achievements: this.achievements.getEarned() };
+    if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
+      const user = this.lobby.auth.getUser();
+      if (user) {
+        if (user.avatar) profile.avatar = user.avatar;
+        if (user.name) profile.name = user.name;
+      }
+    }
+    this.net.sendProfile(profile);
   }
 
   _showVictory(fromRemote = false) {
@@ -1163,6 +1193,7 @@ class Game {
     this.recorder.stopBuffer();
     this.recorder.stopSelfie();
     this.recorder.clearPartnerStream();
+    updateBadgeDisplay('partner-badges', []);
     if (this.net) { this.net.destroy(); this.net = null; }
     this.mode = 'solo';
     this.sharedPedal = null;

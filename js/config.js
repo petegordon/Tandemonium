@@ -24,5 +24,6 @@ export const EVT_CHECKPOINT  = 0x06;
 export const EVT_FINISH      = 0x07;
 
 export const MSG_COLLECT     = 0x06;
+export const MSG_PROFILE     = 0x07;
 
 export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';

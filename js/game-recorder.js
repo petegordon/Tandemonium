@@ -38,6 +38,7 @@ export class GameRecorder {
     this.partnerVideo = document.getElementById('partner-pip');
     this.partnerWrap = document.getElementById('partner-pip-wrap');
     this.partnerLabel = document.getElementById('partner-pip-label');
+    this.partnerAvatar = document.getElementById('partner-pip-avatar');
     this.partnerActive = false;
 
     // Audio mixing for clip recording
@@ -176,10 +177,21 @@ export class GameRecorder {
     this.partnerStream = stream;
     if (this.partnerVideo && stream) {
       this.partnerVideo.srcObject = stream;
+      this.partnerVideo.style.display = 'block';
       this.partnerVideo.play().catch(() => {});
+      if (this.partnerAvatar) this.partnerAvatar.style.display = 'none';
       if (this.partnerWrap) this.partnerWrap.style.display = 'block';
       this.partnerActive = true;
     }
+  }
+
+  showPartnerAvatar(avatarUrl) {
+    if (!avatarUrl || !this.partnerAvatar || !this.partnerWrap) return;
+    this.partnerAvatar.src = avatarUrl;
+    this.partnerAvatar.style.display = 'block';
+    if (this.partnerVideo) this.partnerVideo.style.display = 'none';
+    this.partnerWrap.style.display = 'block';
+    this.partnerActive = false;
   }
 
   clearPartnerStream() {
@@ -187,6 +199,7 @@ export class GameRecorder {
     if (this.partnerVideo) {
       this.partnerVideo.srcObject = null;
     }
+    if (this.partnerAvatar) this.partnerAvatar.style.display = 'none';
     if (this.partnerWrap) this.partnerWrap.style.display = 'none';
     this.partnerActive = false;
   }

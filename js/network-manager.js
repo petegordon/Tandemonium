@@ -3,7 +3,7 @@
 // ============================================================
 
 import {
-  MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN
+  MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN, MSG_PROFILE
 } from './config.js';
 
 export class NetworkManager {
@@ -24,6 +24,7 @@ export class NetworkManager {
     this.onDisconnected = null;
     this.onReconnecting = null;
     this.onRemoteStream = null;
+    this.onProfileReceived = null;
     this.cameraEnabled = true; // set false to suppress local camera in calls
     this.audioEnabled = false; // set true to include microphone in calls
     this._mediaCall = null;
@@ -207,6 +208,12 @@ export class NetworkManager {
       } else {
         this._send(new Uint8Array([MSG_HEARTBEAT, 0x01]));
       }
+    } else if (type === MSG_PROFILE) {
+      try {
+        const json = new TextDecoder().decode(bytes.slice(1));
+        const profile = JSON.parse(json);
+        if (this.onProfileReceived) this.onProfileReceived(profile);
+      } catch (e) { /* ignore malformed profile */ }
     }
   }
 
@@ -245,6 +252,15 @@ export class NetworkManager {
 
   sendEvent(eventType) {
     this._send(new Uint8Array([MSG_EVENT, eventType]));
+  }
+
+  sendProfile(data) {
+    const json = JSON.stringify(data);
+    const encoded = new TextEncoder().encode(json);
+    const msg = new Uint8Array(1 + encoded.length);
+    msg[0] = MSG_PROFILE;
+    msg.set(encoded, 1);
+    this._send(msg);
   }
 
   _decodeState(bytes) {
