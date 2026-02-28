@@ -70,6 +70,7 @@ class Game {
     this._mpPrevUp = false;
     this._mpPrevDown = false;
     this._stokerWasFallen = false;
+    this._stokerTimeoutShown = false;
 
     // Recording partner pedal flash tracking
     this._recLastTapTime = 0;
@@ -315,6 +316,7 @@ class Game {
         // Clear TOO SLOW overlay if showing
         const flash = document.getElementById('timeout-flash');
         if (flash) flash.classList.remove('visible');
+        this._stokerTimeoutShown = false;
         // Reset segment timer so countdown restarts from checkpoint
         if (this.raceManager) {
           this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
@@ -1695,8 +1697,9 @@ class Game {
     // Race progress — display-only (captain is authoritative for events)
     if (this.raceManager) {
       const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
-      if (raceEvent && raceEvent.event === 'timeout') {
-        // Show TOO SLOW visual — captain sends EVT_RESET to clear it
+      if (raceEvent && raceEvent.event === 'timeout' && !this._stokerTimeoutShown) {
+        // Show TOO SLOW visual once — captain sends EVT_RESET to clear it
+        this._stokerTimeoutShown = true;
         const flash = document.getElementById('timeout-flash');
         flash.classList.remove('visible');
         void flash.offsetWidth;
