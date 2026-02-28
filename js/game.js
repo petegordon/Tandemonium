@@ -449,7 +449,7 @@ class Game {
     const initialBudget = this.raceManager._segmentBudget(firstTarget);
     this.hud.updateTimer(initialBudget, initialBudget);
     this.hud.showCollectibles(level);
-    this.world.setRaceMarkers(level);
+    this.world.setRaceMarkers(level, this.camera);
 
     // Show contribution bar in multiplayer
     if (this.mode !== 'solo') {
@@ -576,23 +576,26 @@ class Game {
   }
 
   _onTimerExpired() {
-    // Brief flash, then instant reset to last checkpoint (no game-over screen)
-    const statusEl = document.getElementById('status');
-    statusEl.textContent = "TIME'S UP!";
-    statusEl.style.color = '#ff4444';
-    statusEl.style.fontSize = '36px';
+    // Show "TOO SLOW!" overlay, pause, then reset to last checkpoint
+    const flash = document.getElementById('timeout-flash');
+    flash.classList.remove('visible');
+    void flash.offsetWidth; // force reflow to restart animations
+    flash.classList.add('visible');
     this._playBeep(200, 0.3);
+    setTimeout(() => this._playBeep(150, 0.2), 300);
+
+    // Freeze gameplay during the pause
+    this.state = 'gameover';
+
     setTimeout(() => {
-      if (this.state === 'playing' || this.state === 'countdown') {
-        statusEl.textContent = '';
-        statusEl.style.fontSize = '';
+      flash.classList.remove('visible');
+      this.state = 'playing';
+      // Reset segment timer before _resetGame so it reinits properly
+      if (this.raceManager) {
+        this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
       }
-    }, 1200);
-    // Reset segment timer before _resetGame so it reinits properly
-    if (this.raceManager) {
-      this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
-    }
-    this._resetGame();
+      this._resetGame();
+    }, 2000);
   }
 
   _showCheckpointFlash() {

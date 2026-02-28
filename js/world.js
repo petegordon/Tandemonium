@@ -12,6 +12,40 @@ const TREE_POOL_SIZE = 200;
 const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 
+// Chromakey shaders for green-screen video billboards.
+// Uses green-dominance (G - max(R,B)) instead of distance from a single key color,
+// so it handles wide-ranging green screens (dark to light) in a single pass.
+const chromakeyVertex = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const chromakeyFragment = `
+  uniform sampler2D map;
+  uniform sampler2D maskTex;
+  uniform float threshold;
+  uniform float smoothness;
+  varying vec2 vUv;
+  void main() {
+    float mask = texture2D(maskTex, vUv).r;
+    if (mask > 0.5) discard;
+    vec4 texColor = texture2D(map, vUv);
+    // Green dominance: how much G exceeds the stronger of R and B
+    float greenDom = texColor.g - max(texColor.r, texColor.b);
+    // Pixels where green dominates → transparent
+    float alpha = 1.0 - smoothstep(threshold, threshold + smoothness, greenDom);
+    if (alpha < 0.01) discard;
+    // Spill suppression: reduce green where it exceeds average of R and B
+    vec3 col = texColor.rgb;
+    float spillMax = 0.5 * (col.r + col.b) + 0.05;
+    col.g = min(col.g, spillMax);
+    gl_FragColor = vec4(col, alpha);
+  }
+`;
+
 export class World {
   constructor(scene) {
     this.scene = scene;
@@ -410,10 +444,12 @@ export class World {
     return { hit: false, tree: null };
   }
 
-  setRaceMarkers(level) {
-    // Remove old markers
+  setRaceMarkers(level, camera) {
+    // Remove old markers + clean up video if any
+    this._cleanupDestVideo();
     this._raceMarkers.forEach(m => this.scene.remove(m.mesh));
     this._raceMarkers = [];
+    this._camera = camera || null;
 
     const L = this.roadPath.loopLength;
 
@@ -457,37 +493,109 @@ export class World {
     // Destination marker
     const destD = level.distance % L;
     const destPt = this.roadPath.getPointAtDistance(destD);
-    const destGroup = new THREE.Group();
 
-    // Simple house shape: box + pyramid roof
-    const wallGeo = new THREE.BoxGeometry(3, 2.5, 3);
-    const wallMat = new THREE.MeshPhongMaterial({ color: level.id === 'grandma' ? 0xdd8844 : 0x8888cc, emissive: 0x111111 });
-    const walls = new THREE.Mesh(wallGeo, wallMat);
-    walls.position.y = 1.25;
-    destGroup.add(walls);
+    if (level.id === 'grandma') {
+      // Grandma's House: chromakey video billboard
+      const trimStart = 0.00;
+      const trimEnd = 5.50;
 
-    const roofGeo = new THREE.ConeGeometry(2.5, 1.5, 4);
-    const roofMat = new THREE.MeshPhongMaterial({ color: level.id === 'grandma' ? 0xcc3333 : 0xddaa22, emissive: 0x111100 });
-    const roof = new THREE.Mesh(roofGeo, roofMat);
-    roof.position.y = 3.25;
-    roof.rotation.y = Math.PI / 4;
-    destGroup.add(roof);
+      const video = document.createElement('video');
+      video.src = 'assets/grandma_house_chromakey.mp4';
+      video.loop = false; // manual loop to skip fade-out frames
+      video.muted = true;
+      video.playsInline = true;
+      video.play().catch(() => {});
+      // Loop between tuned trim points (skip fade-out at end)
+      video.addEventListener('timeupdate', () => {
+        if (video.currentTime > trimEnd) {
+          video.currentTime = trimStart;
+          video.play().catch(() => {});
+        }
+      });
+      this._destVideo = video;
 
-    // Place off to the side of the road so it's visible but not blocking
-    const fwdX = Math.sin(destPt.heading);
-    const fwdZ = Math.cos(destPt.heading);
-    const rightX = fwdZ;
-    const rightZ = -fwdX;
-    destGroup.position.set(
-      destPt.x + rightX * 6,
-      destPt.y,
-      destPt.z + rightZ * 6
-    );
-    destGroup.rotation.y = destPt.heading;
-    destGroup.visible = false;
-    this.scene.add(destGroup);
+      const videoTexture = new THREE.VideoTexture(video);
+      videoTexture.minFilter = THREE.LinearFilter;
+      videoTexture.magFilter = THREE.LinearFilter;
+      this._destVideoTexture = videoTexture;
 
-    this._raceMarkers.push({ mesh: destGroup, roadD: destD, type: 'destination' });
+      // Load painted mask PNG (exported from chromakey tuner) — fallback to 1x1 empty if missing
+      const fallbackMask = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
+      fallbackMask.needsUpdate = true;
+      const maskUniform = { value: fallbackMask };
+      new THREE.TextureLoader().load(
+        'assets/grandma_house_chromakey_mask.png',
+        (tex) => { maskUniform.value = tex; },
+        undefined,
+        () => { /* mask not found — fallback already set */ }
+      );
+
+      // 560x560 source — display as a large billboard (6x6 units)
+      const size = 6;
+      const geo = new THREE.PlaneGeometry(size, size);
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          map: { value: videoTexture },
+          maskTex: maskUniform,
+          threshold: { value: -0.02 },
+          smoothness: { value: 0.110 }
+        },
+        vertexShader: chromakeyVertex,
+        fragmentShader: chromakeyFragment,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+
+      const mesh = new THREE.Mesh(geo, mat);
+      // Place off to the side, raised so bottom sits on ground
+      const fwdX = Math.sin(destPt.heading);
+      const fwdZ = Math.cos(destPt.heading);
+      const rightX = fwdZ;
+      const rightZ = -fwdX;
+      mesh.position.set(
+        destPt.x + rightX * 6,
+        destPt.y + size * 0.5,
+        destPt.z + rightZ * 6
+      );
+      // Start hidden until video is actually playing (prevents initial flash)
+      mesh.visible = false;
+      this._destVideoReady = false;
+      video.addEventListener('playing', () => { this._destVideoReady = true; });
+      this.scene.add(mesh);
+
+      this._raceMarkers.push({ mesh, roadD: destD, type: 'destination', billboard: true });
+    } else {
+      // Other levels: simple house shape (box + pyramid roof)
+      const destGroup = new THREE.Group();
+      const wallGeo = new THREE.BoxGeometry(3, 2.5, 3);
+      const wallMat = new THREE.MeshPhongMaterial({ color: 0x8888cc, emissive: 0x111111 });
+      const walls = new THREE.Mesh(wallGeo, wallMat);
+      walls.position.y = 1.25;
+      destGroup.add(walls);
+
+      const roofGeo = new THREE.ConeGeometry(2.5, 1.5, 4);
+      const roofMat = new THREE.MeshPhongMaterial({ color: 0xddaa22, emissive: 0x111100 });
+      const roof = new THREE.Mesh(roofGeo, roofMat);
+      roof.position.y = 3.25;
+      roof.rotation.y = Math.PI / 4;
+      destGroup.add(roof);
+
+      const fwdX = Math.sin(destPt.heading);
+      const fwdZ = Math.cos(destPt.heading);
+      const rightX = fwdZ;
+      const rightZ = -fwdX;
+      destGroup.position.set(
+        destPt.x + rightX * 6,
+        destPt.y,
+        destPt.z + rightZ * 6
+      );
+      destGroup.rotation.y = destPt.heading;
+      destGroup.visible = false;
+      this.scene.add(destGroup);
+
+      this._raceMarkers.push({ mesh: destGroup, roadD: destD, type: 'destination' });
+    }
   }
 
   _makeCloudSprite() {
@@ -507,8 +615,22 @@ export class World {
   }
 
   clearRaceMarkers() {
+    this._cleanupDestVideo();
     this._raceMarkers.forEach(m => this.scene.remove(m.mesh));
     this._raceMarkers = [];
+  }
+
+  _cleanupDestVideo() {
+    if (this._destVideo) {
+      this._destVideo.pause();
+      this._destVideo.src = '';
+      this._destVideo = null;
+    }
+    if (this._destVideoTexture) {
+      this._destVideoTexture.dispose();
+      this._destVideoTexture = null;
+    }
+    this._destVideoReady = false;
   }
 
   _updateRaceMarkerVisibility(bikeD) {
@@ -517,7 +639,9 @@ export class World {
       let ahead = marker.roadD - bikeD;
       if (ahead < -L / 2) ahead += L;
       if (ahead > L / 2) ahead -= L;
-      marker.mesh.visible = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
+      const inRange = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
+      // Gate billboard video on readiness to prevent black frame flash
+      marker.mesh.visible = marker.billboard ? (inRange && this._destVideoReady) : inRange;
     }
   }
 
@@ -526,7 +650,16 @@ export class World {
     for (const marker of this._raceMarkers) {
       if (!marker.mesh.visible) continue;
       const pt = this.roadPath.getPointAtDistance(marker.roadD);
-      marker.mesh.position.y = pt.y;
+
+      // Billboard destination video: offset Y so bottom sits on ground, face camera
+      if (marker.billboard) {
+        marker.mesh.position.y = pt.y + 3; // half of 6-unit billboard
+        if (this._camera) {
+          marker.mesh.quaternion.copy(this._camera.quaternion);
+        }
+      } else {
+        marker.mesh.position.y = pt.y;
+      }
 
       // Animate checkpoint cloud puffs: gentle bob from stored base position
       if (marker.type === 'checkpoint') {

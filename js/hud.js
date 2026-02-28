@@ -50,6 +50,11 @@ export class HUD {
     // Segment timer
     this.timerRow = document.getElementById('timer-row');
     this.timerEl = document.getElementById('segment-timer');
+
+    // Center countdown overlay
+    this.countdownOverlay = document.getElementById('countdown-overlay');
+    this.countdownNumber = document.getElementById('countdown-number');
+    this._lastCountdownSec = -1;
   }
 
   initProgress(level) {
@@ -107,10 +112,29 @@ export class HUD {
     } else {
       this.timerEl.className = '';
     }
+
+    // Center countdown overlay for final 3 seconds
+    if (remaining > 0 && remaining <= 3) {
+      this.countdownOverlay.classList.add('visible');
+      if (secs !== this._lastCountdownSec) {
+        this._lastCountdownSec = secs;
+        this.countdownNumber.textContent = secs;
+        this.countdownNumber.className = 'tick-' + secs;
+        // Re-trigger animation
+        this.countdownNumber.style.animation = 'none';
+        this.countdownNumber.offsetHeight; // force reflow
+        this.countdownNumber.style.animation = '';
+      }
+    } else {
+      this.countdownOverlay.classList.remove('visible');
+      this._lastCountdownSec = -1;
+    }
   }
 
   hideTimer() {
     this.timerRow.classList.remove('visible');
+    this.countdownOverlay.classList.remove('visible');
+    this._lastCountdownSec = -1;
   }
 
   showCollectibles(level) {
