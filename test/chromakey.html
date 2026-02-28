@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chromakey Shader Tuner</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #111; font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #controls {
+    position: fixed; top: 16px; right: 16px;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid #333; border-radius: 8px;
+    padding: 16px; width: 300px;
+    color: #ccc; font-size: 13px;
+    z-index: 10;
+  }
+  #controls h2 {
+    color: #fff; font-size: 15px; margin-bottom: 12px;
+    border-bottom: 1px solid #333; padding-bottom: 8px;
+  }
+  .control-group {
+    margin-bottom: 12px;
+  }
+  .control-group label {
+    display: flex; justify-content: space-between; margin-bottom: 4px;
+  }
+  .control-group label span.val {
+    color: #0f0; font-family: monospace;
+  }
+  .control-group input[type="range"] {
+    width: 100%; accent-color: #0f0;
+  }
+  .control-group select {
+    width: 100%; padding: 4px; background: #222; color: #ccc;
+    border: 1px solid #444; border-radius: 4px; font-size: 13px;
+  }
+
+  #playback {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 12px;
+  }
+  #playback button {
+    background: #333; color: #ccc; border: 1px solid #555;
+    border-radius: 4px; padding: 4px 10px; cursor: pointer;
+    font-size: 13px;
+  }
+  #playback button:hover { background: #444; }
+  #timeline {
+    flex: 1; accent-color: #0af;
+  }
+  #time-display {
+    color: #0af; font-family: monospace; font-size: 12px;
+    min-width: 70px; text-align: right;
+  }
+
+  #tool-row {
+    display: flex; gap: 4px; margin-bottom: 8px;
+  }
+  #tool-row button {
+    flex: 1; padding: 5px 0; background: #333; color: #ccc;
+    border: 1px solid #555; border-radius: 4px; cursor: pointer;
+    font-size: 12px;
+  }
+  #tool-row button:hover { background: #444; }
+  #tool-row button.active {
+    background: #1a4a4a; color: #0ff; border-color: #0ff;
+  }
+  #brush-size-group { margin-bottom: 8px; }
+  #mask-btn-row {
+    display: flex; gap: 4px; margin-bottom: 8px;
+  }
+  #clear-mask-btn {
+    flex: 1; padding: 5px;
+    background: #4a1a1a; color: #f66; border: 1px solid #f66;
+    border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  #clear-mask-btn:hover { background: #5a2a2a; }
+  #save-mask-btn {
+    flex: 1; padding: 5px;
+    background: #1a4a1a; color: #0f0; border: 1px solid #0f0;
+    border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  #save-mask-btn:hover { background: #2a5a2a; }
+
+  #copy-btn {
+    width: 100%; padding: 6px; margin-top: 4px;
+    background: #1a4a1a; color: #0f0; border: 1px solid #0f0;
+    border-radius: 4px; cursor: pointer; font-size: 13px;
+    font-family: monospace;
+  }
+  #copy-btn:hover { background: #2a5a2a; }
+  #copy-btn.copied { background: #0f0; color: #111; }
+
+  #values-display {
+    margin-top: 8px; padding: 8px;
+    background: #1a1a1a; border-radius: 4px;
+    font-family: monospace; font-size: 12px;
+    color: #888; line-height: 1.6;
+    white-space: pre;
+  }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <h2>Chromakey Tuner</h2>
+
+  <div class="control-group">
+    <label>Asset</label>
+    <select id="asset-select"></select>
+  </div>
+
+  <div id="playback">
+    <button id="play-btn">Pause</button>
+    <input type="range" id="timeline" min="0" max="1" step="0.001" value="0">
+    <span id="time-display">0:00 / 0:00</span>
+  </div>
+
+  <div class="control-group">
+    <label>threshold <span class="val" id="threshold-val">-0.02</span></label>
+    <input type="range" id="threshold" min="-0.20" max="0.50" step="0.005" value="-0.02">
+  </div>
+
+  <div class="control-group">
+    <label>smoothness <span class="val" id="smoothness-val">0.03</span></label>
+    <input type="range" id="smoothness" min="0.00" max="0.50" step="0.005" value="0.03">
+  </div>
+
+  <div class="control-group">
+    <label>trim start <span class="val" id="trim-start-val">0.00</span></label>
+    <input type="range" id="trim-start" min="0" max="1" step="0.01" value="0">
+  </div>
+
+  <div class="control-group">
+    <label>trim end <span class="val" id="trim-end-val">0.00</span></label>
+    <input type="range" id="trim-end" min="0" max="1" step="0.01" value="1">
+  </div>
+
+  <div id="tool-row">
+    <button id="tool-tune" class="active">Tune</button>
+    <button id="tool-brush">Brush</button>
+    <button id="tool-rect">Rect</button>
+  </div>
+  <div id="brush-size-group" class="control-group" style="display:none;">
+    <label>brush size <span class="val" id="brush-size-val">20</span></label>
+    <input type="range" id="brush-size" min="5" max="80" step="1" value="20">
+  </div>
+  <div id="mask-btn-row">
+    <button id="clear-mask-btn">Clear Mask</button>
+    <button id="save-mask-btn">Save Mask PNG</button>
+  </div>
+
+  <div id="values-display">threshold: -0.020
+smoothness: 0.030
+trimStart: 0.00
+trimEnd: 0.00</div>
+
+  <button id="copy-btn">Copy values to clipboard</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ── Chromakey shader (matches world.js) ── */
+const chromakeyVertex = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const chromakeyFragment = `
+uniform sampler2D map;
+uniform sampler2D maskTex;
+uniform float threshold;
+uniform float smoothness;
+varying vec2 vUv;
+void main() {
+  float mask = texture2D(maskTex, vUv).r;
+  if (mask > 0.5) discard;
+  vec4 texColor = texture2D(map, vUv);
+  // Green dominance: how much G exceeds the stronger of R and B
+  float greenDom = texColor.g - max(texColor.r, texColor.b);
+  // Pixels where green dominates → transparent
+  float alpha = 1.0 - smoothstep(threshold, threshold + smoothness, greenDom);
+  if (alpha < 0.01) discard;
+  // Spill suppression: reduce green where it exceeds average of R and B
+  vec3 col = texColor.rgb;
+  float spillMax = 0.5 * (col.r + col.b) + 0.05;
+  col.g = min(col.g, spillMax);
+  gl_FragColor = vec4(col, alpha);
+}`;
+
+/* ── Checkerboard texture ── */
+function makeCheckerboard(size = 512, squares = 16) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const sq = size / squares;
+  for (let y = 0; y < squares; y++) {
+    for (let x = 0; x < squares; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#444' : '#666';
+      ctx.fillRect(x * sq, y * sq, sq, sq);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/* ── Three.js scene setup ── */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
+camera.position.z = 2;
+
+// Checkerboard background plane
+const bgGeo = new THREE.PlaneGeometry(4, 4);
+const bgMat = new THREE.MeshBasicMaterial({ map: makeCheckerboard() });
+const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+bgMesh.position.z = -1;
+scene.add(bgMesh);
+
+/* ── Mask canvas & texture ── */
+const MASK_SIZE = 1024;
+const maskCanvas = document.createElement('canvas');
+maskCanvas.width = maskCanvas.height = MASK_SIZE;
+const maskCtx = maskCanvas.getContext('2d');
+const maskTexture = new THREE.CanvasTexture(maskCanvas);
+maskTexture.minFilter = THREE.LinearFilter;
+maskTexture.magFilter = THREE.LinearFilter;
+
+function clearMask() {
+  maskCtx.clearRect(0, 0, MASK_SIZE, MASK_SIZE);
+  maskTexture.needsUpdate = true;
+}
+
+/* ── Video + chromakey material ── */
+let video, videoTexture, chromaMat, videoMesh;
+
+function loadVideo(src) {
+  // Clean up previous
+  if (video) {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  }
+  if (videoTexture) videoTexture.dispose();
+  if (chromaMat) chromaMat.dispose();
+  if (videoMesh) scene.remove(videoMesh);
+
+  video = document.createElement('video');
+  video.src = src;
+  video.loop = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.crossOrigin = 'anonymous';
+
+  videoTexture = new THREE.VideoTexture(video);
+  videoTexture.minFilter = THREE.LinearFilter;
+  videoTexture.magFilter = THREE.LinearFilter;
+
+  clearMask();
+
+  chromaMat = new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: videoTexture },
+      maskTex: { value: maskTexture },
+      threshold: { value: parseFloat(thresholdSlider.value) },
+      smoothness: { value: parseFloat(smoothnessSlider.value) }
+    },
+    vertexShader: chromakeyVertex,
+    fragmentShader: chromakeyFragment,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+
+  video.addEventListener('loadedmetadata', () => {
+    const aspect = video.videoWidth / video.videoHeight;
+    // Size plane to fit in view while preserving aspect ratio
+    let w, h;
+    if (aspect > 1) {
+      w = 1.6;
+      h = w / aspect;
+    } else {
+      h = 1.6;
+      w = h * aspect;
+    }
+    const geo = new THREE.PlaneGeometry(w, h);
+    videoMesh = new THREE.Mesh(geo, chromaMat);
+    scene.add(videoMesh);
+
+    timelineSlider.max = video.duration;
+
+    // Set trim slider ranges to video duration
+    trimStartSlider.max = video.duration;
+    trimEndSlider.max = video.duration;
+    trimStartSlider.value = 0;
+    trimEndSlider.value = video.duration;
+
+    updateTimeDisplay();
+    updateValuesDisplay();
+  });
+
+  // Loop video between trim start and trim end
+  video.addEventListener('timeupdate', () => {
+    const trimEnd = parseFloat(trimEndSlider.value);
+    const trimStart = parseFloat(trimStartSlider.value);
+    if (video.currentTime > trimEnd) {
+      video.currentTime = trimStart;
+      video.play().catch(() => {});
+    }
+  });
+
+  video.play().catch(() => {});
+  playing = true;
+  playBtn.textContent = 'Pause';
+}
+
+/* ── UI references ── */
+const thresholdSlider = document.getElementById('threshold');
+const smoothnessSlider = document.getElementById('smoothness');
+const thresholdVal = document.getElementById('threshold-val');
+const smoothnessVal = document.getElementById('smoothness-val');
+const assetSelect = document.getElementById('asset-select');
+const playBtn = document.getElementById('play-btn');
+const timelineSlider = document.getElementById('timeline');
+const timeDisplay = document.getElementById('time-display');
+const copyBtn = document.getElementById('copy-btn');
+const valuesDisplay = document.getElementById('values-display');
+const trimStartSlider = document.getElementById('trim-start');
+const trimEndSlider = document.getElementById('trim-end');
+const trimStartVal = document.getElementById('trim-start-val');
+const trimEndVal = document.getElementById('trim-end-val');
+const saveMaskBtn = document.getElementById('save-mask-btn');
+
+let playing = true;
+let scrubbing = false;
+
+function updateValuesDisplay() {
+  const t = parseFloat(thresholdSlider.value).toFixed(3);
+  const s = parseFloat(smoothnessSlider.value).toFixed(3);
+  const ts = parseFloat(trimStartSlider.value).toFixed(2);
+  const te = parseFloat(trimEndSlider.value).toFixed(2);
+  thresholdVal.textContent = t;
+  smoothnessVal.textContent = s;
+  trimStartVal.textContent = ts;
+  trimEndVal.textContent = te;
+  valuesDisplay.textContent = `threshold: ${t}\nsmoothness: ${s}\ntrimStart: ${ts}\ntrimEnd: ${te}`;
+}
+
+function formatTime(sec) {
+  if (!isFinite(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function updateTimeDisplay() {
+  if (!video) return;
+  timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+}
+
+/* ── Event listeners ── */
+thresholdSlider.addEventListener('input', () => {
+  if (chromaMat) chromaMat.uniforms.threshold.value = parseFloat(thresholdSlider.value);
+  updateValuesDisplay();
+});
+
+smoothnessSlider.addEventListener('input', () => {
+  if (chromaMat) chromaMat.uniforms.smoothness.value = parseFloat(smoothnessSlider.value);
+  updateValuesDisplay();
+});
+
+trimStartSlider.addEventListener('input', () => { updateValuesDisplay(); });
+trimEndSlider.addEventListener('input', () => { updateValuesDisplay(); });
+
+assetSelect.addEventListener('change', () => {
+  loadVideo(assetSelect.value);
+});
+
+saveMaskBtn.addEventListener('click', () => {
+  const dataURL = maskCanvas.toDataURL('image/png');
+  const a = document.createElement('a');
+  // Derive filename from selected asset: e.g. grandma_house_chromakey.mp4 → grandma_house_chromakey_mask.png
+  const assetName = assetSelect.value.split('/').pop().replace(/\.[^.]+$/, '');
+  a.download = `${assetName}_mask.png`;
+  a.href = dataURL;
+  a.click();
+});
+
+playBtn.addEventListener('click', () => {
+  if (!video) return;
+  if (playing) {
+    video.pause();
+    playBtn.textContent = 'Play';
+  } else {
+    video.play();
+    playBtn.textContent = 'Pause';
+  }
+  playing = !playing;
+});
+
+timelineSlider.addEventListener('mousedown', () => { scrubbing = true; });
+timelineSlider.addEventListener('touchstart', () => { scrubbing = true; });
+timelineSlider.addEventListener('input', () => {
+  if (video) {
+    video.currentTime = parseFloat(timelineSlider.value);
+    updateTimeDisplay();
+  }
+});
+timelineSlider.addEventListener('mouseup', () => { scrubbing = false; });
+timelineSlider.addEventListener('touchend', () => { scrubbing = false; });
+
+copyBtn.addEventListener('click', () => {
+  const text = valuesDisplay.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    copyBtn.textContent = 'Copied!';
+    copyBtn.classList.add('copied');
+    setTimeout(() => {
+      copyBtn.textContent = 'Copy values to clipboard';
+      copyBtn.classList.remove('copied');
+    }, 1500);
+  });
+});
+
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.left = -aspect;
+  camera.right = aspect;
+  camera.top = 1;
+  camera.bottom = -1;
+  camera.updateProjectionMatrix();
+});
+
+// Fire initial resize to set correct ortho aspect
+window.dispatchEvent(new Event('resize'));
+
+/* ── Mask drawing tools ── */
+const toolBtns = {
+  tune: document.getElementById('tool-tune'),
+  brush: document.getElementById('tool-brush'),
+  rect: document.getElementById('tool-rect')
+};
+const brushSizeGroup = document.getElementById('brush-size-group');
+const brushSizeSlider = document.getElementById('brush-size');
+const brushSizeVal = document.getElementById('brush-size-val');
+const clearMaskBtn = document.getElementById('clear-mask-btn');
+
+let activeTool = 'tune';
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+// Rectangle preview outline
+const rectGeo = new THREE.BufferGeometry();
+rectGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(12), 3));
+const rectLine = new THREE.LineLoop(rectGeo, new THREE.LineBasicMaterial({ color: 0xffff00 }));
+rectLine.visible = false;
+scene.add(rectLine);
+
+function updateRectPreview(uvA, uvB) {
+  if (!videoMesh) return;
+  const p = videoMesh.geometry.parameters;
+  const x1 = (Math.min(uvA.x, uvB.x) - 0.5) * p.width;
+  const y1 = (Math.min(uvA.y, uvB.y) - 0.5) * p.height;
+  const x2 = (Math.max(uvA.x, uvB.x) - 0.5) * p.width;
+  const y2 = (Math.max(uvA.y, uvB.y) - 0.5) * p.height;
+  const pos = rectLine.geometry.attributes.position;
+  pos.setXYZ(0, x1, y1, 0.01);
+  pos.setXYZ(1, x2, y1, 0.01);
+  pos.setXYZ(2, x2, y2, 0.01);
+  pos.setXYZ(3, x1, y2, 0.01);
+  pos.needsUpdate = true;
+  rectLine.visible = true;
+}
+
+function setTool(name) {
+  activeTool = name;
+  Object.values(toolBtns).forEach(b => b.classList.remove('active'));
+  toolBtns[name].classList.add('active');
+  brushSizeGroup.style.display = name === 'brush' ? '' : 'none';
+  renderer.domElement.style.cursor = name === 'tune' ? '' : 'crosshair';
+}
+
+toolBtns.tune.addEventListener('click', () => setTool('tune'));
+toolBtns.brush.addEventListener('click', () => setTool('brush'));
+toolBtns.rect.addEventListener('click', () => setTool('rect'));
+
+brushSizeSlider.addEventListener('input', () => {
+  brushSizeVal.textContent = brushSizeSlider.value;
+});
+
+clearMaskBtn.addEventListener('click', clearMask);
+
+function setPointer(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function getUV(e) {
+  setPointer(e);
+  raycaster.setFromCamera(pointer, camera);
+  if (!videoMesh) return null;
+  const hits = raycaster.intersectObject(videoMesh);
+  if (hits.length === 0) return null;
+  return hits[0].uv;
+}
+
+// Like getUV but clamps to image edges when the click is outside the mesh
+const _planeZ = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const _intersect = new THREE.Vector3();
+
+function getUVClamped(e) {
+  // Try direct hit first
+  const direct = getUV(e);
+  if (direct) return direct;
+  if (!videoMesh) return null;
+  // Intersect ray with z=0 plane, then convert world pos → UV and clamp
+  raycaster.ray.intersectPlane(_planeZ, _intersect);
+  if (!_intersect) return null;
+  const p = videoMesh.geometry.parameters;
+  const u = _intersect.x / p.width + 0.5;
+  const v = _intersect.y / p.height + 0.5;
+  return new THREE.Vector2(
+    Math.max(0, Math.min(1, u)),
+    Math.max(0, Math.min(1, v))
+  );
+}
+
+function paintBrush(uv) {
+  const r = parseInt(brushSizeSlider.value, 10);
+  const x = uv.x * MASK_SIZE;
+  const y = (1 - uv.y) * MASK_SIZE;
+  maskCtx.fillStyle = '#ff0000';
+  maskCtx.beginPath();
+  maskCtx.arc(x, y, r, 0, Math.PI * 2);
+  maskCtx.fill();
+  maskTexture.needsUpdate = true;
+}
+
+function paintRect(uvA, uvB) {
+  const x1 = Math.min(uvA.x, uvB.x) * MASK_SIZE;
+  const y1 = (1 - Math.max(uvA.y, uvB.y)) * MASK_SIZE;
+  const x2 = Math.max(uvA.x, uvB.x) * MASK_SIZE;
+  const y2 = (1 - Math.min(uvA.y, uvB.y)) * MASK_SIZE;
+  maskCtx.fillStyle = '#ff0000';
+  maskCtx.fillRect(x1, y1, x2 - x1, y2 - y1);
+  maskTexture.needsUpdate = true;
+}
+
+let drawing = false;
+let rectStartUV = null;
+
+renderer.domElement.addEventListener('mousedown', (e) => {
+  if (activeTool === 'tune') return;
+  if (activeTool === 'brush') {
+    const uv = getUV(e);
+    if (!uv) return;
+    drawing = true;
+    paintBrush(uv);
+  } else if (activeTool === 'rect') {
+    const uv = getUVClamped(e);
+    if (!uv) return;
+    drawing = true;
+    rectStartUV = uv.clone();
+  }
+});
+
+renderer.domElement.addEventListener('mousemove', (e) => {
+  if (!drawing) return;
+  if (activeTool === 'brush') {
+    const uv = getUV(e);
+    if (uv) paintBrush(uv);
+  } else if (activeTool === 'rect' && rectStartUV) {
+    const uv = getUVClamped(e);
+    if (uv) updateRectPreview(rectStartUV, uv);
+  }
+});
+
+renderer.domElement.addEventListener('mouseup', (e) => {
+  if (!drawing) return;
+  drawing = false;
+  if (activeTool === 'rect' && rectStartUV) {
+    const uv = getUVClamped(e);
+    if (uv) paintRect(rectStartUV, uv);
+    rectStartUV = null;
+  }
+  rectLine.visible = false;
+});
+
+/* ── Render loop ── */
+function animate() {
+  requestAnimationFrame(animate);
+  if (video && !scrubbing && playing) {
+    timelineSlider.value = video.currentTime;
+    updateTimeDisplay();
+  }
+  renderer.render(scene, camera);
+}
+
+// Discover .mp4 files in assets/ via directory listing, then start
+(async () => {
+  try {
+    const res = await fetch('../assets/');
+    const html = await res.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const mp4s = [...doc.querySelectorAll('a')]
+      .map(a => decodeURIComponent(a.getAttribute('href')))
+      .filter(href => href.endsWith('.mp4'))
+      .sort();
+    for (const name of mp4s) {
+      const opt = document.createElement('option');
+      opt.value = `../assets/${name}`;
+      opt.textContent = name;
+      assetSelect.appendChild(opt);
+    }
+  } catch {
+    // Fallback if directory listing unavailable
+    const fallback = ['grandma_house_chromakey.mp4', 'gold_gift_200.mp4', 'pylon_200.mp4'];
+    for (const name of fallback) {
+      const opt = document.createElement('option');
+      opt.value = `../assets/${name}`;
+      opt.textContent = name;
+      assetSelect.appendChild(opt);
+    }
+  }
+  loadVideo(assetSelect.value);
+  animate();
+})();
+</script>
+</body>
+</html>
