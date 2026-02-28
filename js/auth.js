@@ -32,7 +32,7 @@ export class AuthManager {
   }
 
   isLoggedIn() {
-    return !!(this.user && this.token);
+    return !!this.user;
   }
 
   getUser() {
