@@ -251,14 +251,21 @@ export class Lobby {
     // Initialize GSI
     this.auth.initGSI();
 
+    // Save original SVG to restore on logout
+    const profileSvg = this.toggleProfile.innerHTML;
+
     const updateUI = (user) => {
       if (user) {
         this.toggleProfile.classList.add('active');
         popupAvatar.src = user.avatar || '';
         popupName.textContent = user.name || '';
         popupEmail.textContent = user.email || '';
+        if (user.avatar) {
+          this.toggleProfile.innerHTML = '<img src="' + user.avatar + '" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
+        }
       } else {
         this.toggleProfile.classList.remove('active');
+        this.toggleProfile.innerHTML = profileSvg;
         this.profilePopup.classList.remove('visible');
       }
     };
