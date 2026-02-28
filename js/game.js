@@ -299,6 +299,7 @@ class Game {
       } else if (eventType === EVT_START) {
         // Stoker receives GO from captain
         this.state = 'playing';
+        if (this.raceManager) this.raceManager.start();
         const statusEl = document.getElementById('status');
         statusEl.textContent = 'GO!';
         statusEl.style.color = '#44ff66';
