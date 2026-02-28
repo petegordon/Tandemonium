@@ -136,6 +136,16 @@ class Game {
 
     // Game Over: restart
     document.getElementById('btn-restart').addEventListener('click', () => {
+      if (this.mode === 'stoker' && this.net) {
+        // Stoker requests restart — captain drives the reset
+        this._hideGameOver();
+        this.net.sendEvent(EVT_RESET);
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = 'Waiting for captain...';
+        statusEl.style.color = '#ffffff';
+        statusEl.style.fontSize = '';
+        return;
+      }
       this._hideGameOver();
       this._resetGame();
     });
@@ -168,6 +178,16 @@ class Game {
 
     // Victory overlay buttons
     document.getElementById('btn-play-again').addEventListener('click', () => {
+      if (this.mode === 'stoker' && this.net) {
+        // Stoker requests restart — captain drives the reset
+        this._hideVictory();
+        this.net.sendEvent(EVT_RESET);
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = 'Waiting for captain...';
+        statusEl.style.color = '#ffffff';
+        statusEl.style.fontSize = '';
+        return;
+      }
       this._hideVictory();
       this._resetGame(false, true);
     });
@@ -313,6 +333,7 @@ class Game {
         }, 800);
       } else if (eventType === EVT_RESET) {
         this._hideGameOver();
+        this._hideVictory();
         // Clear TOO SLOW overlay if showing
         const flash = document.getElementById('timeout-flash');
         if (flash) flash.classList.remove('visible');
