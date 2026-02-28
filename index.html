@@ -267,8 +267,32 @@
   #victory-stats {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    align-items: center;
+    gap: 4px;
     margin-bottom: 10px;
+    width: 100%;
+    max-width: 280px;
+  }
+  .victory-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 12px;
+    width: 100%;
+  }
+  .vs-cell {
+    font-size: 14px;
+    color: rgba(255,255,255,0.85);
+    padding: 2px 0;
+    white-space: nowrap;
+  }
+  .vs-cell strong {
+    color: #fff;
+    font-weight: 700;
+  }
+  .vs-icon {
+    display: inline-block;
+    width: 1.2em;
+    text-align: center;
   }
   .victory-stat {
     font-size: 14px;
@@ -277,6 +301,9 @@
   .victory-stat strong {
     color: #fff;
     font-weight: 700;
+  }
+  .victory-perfect {
+    margin-top: 2px;
   }
   .victory-contrib {
     margin-top: 12px;
@@ -1917,7 +1944,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.9ba1a75 | 02-28-2026 12:31</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.6a0f825 | 02-28-2026 12:50</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>

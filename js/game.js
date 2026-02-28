@@ -850,31 +850,58 @@ class Game {
 
     if (this.raceManager) {
       const summary = this.raceManager.getSummary(this.bike.distanceTraveled);
-      const stats = [
-        { label: 'Time', value: summary.timeFormatted },
-        { label: 'Distance', value: summary.distance >= 1000 ? (summary.distance / 1000).toFixed(2) + ' km' : summary.distance + ' m' },
-        { label: 'Checkpoints', value: summary.checkpointsPassed + ' / ' + summary.checkpointsTotal },
+      const collectIcon = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81'; // 💎 or 🎁
+      const distStr = summary.distance >= 1000 ? (summary.distance / 1000).toFixed(2) + ' km' : summary.distance + ' m';
+
+      // Build left and right column stats
+      const left = [
+        { icon: '\u23F1\uFE0F', value: summary.timeFormatted },          // ⏱️ Time
+        { icon: '\uD83D\uDEB4', value: distStr },                         // 🚴 Distance
+      ];
+      const right = [
+        { icon: '\u2601\uFE0F', value: summary.checkpointsPassed + '/' + summary.checkpointsTotal }, // ☁️ Checkpoints
       ];
       if (summary.collectibles > 0) {
-        stats.push({ label: 'Collectibles', value: '' + summary.collectibles });
+        right.push({ icon: collectIcon, value: '' + summary.collectibles });
       }
-      if (summary.crashes > 0) {
-        stats.push({ label: 'Crashes', value: '' + summary.crashes });
-      } else {
-        stats.push({ label: '', value: '\u2B50 Perfect Ride! \u2B50' });
-      }
-      stats.forEach(s => {
-        const div = document.createElement('div');
-        div.className = 'victory-stat';
-        div.innerHTML = s.label + ': <strong>' + s.value + '</strong>';
-        statsEl.appendChild(div);
-      });
-    }
 
-    // Contribution breakdown
-    if (this.contributionTracker) {
-      const contrib = this.contributionTracker.getSummary();
-      if (contrib.mode === 'multiplayer') {
+      // Solo performance stats
+      let soloStats = null;
+      if (this.contributionTracker) {
+        const contrib = this.contributionTracker.getSummary();
+        if (contrib.mode !== 'multiplayer') {
+          const solo = contrib.solo;
+          const pedalPct = solo.totalTaps > 0 ? Math.round((solo.correctTaps / solo.totalTaps) * 100) : 0;
+          left.push({ icon: '\uD83E\uDDB6', value: pedalPct + '%' });       // 🦶 Pedal accuracy
+          right.push({ icon: '\u2696\uFE0F', value: solo.safePct + '%' });   // ⚖️ Balance
+        } else {
+          soloStats = contrib;
+        }
+      }
+
+      // Render two-column grid
+      const maxRows = Math.max(left.length, right.length);
+      let html = '<div class="victory-stats-grid">';
+      for (let i = 0; i < maxRows; i++) {
+        const l = left[i];
+        const r = right[i];
+        html += '<div class="vs-cell">' + (l ? '<span class="vs-icon">' + l.icon + '</span> <strong>' + l.value + '</strong>' : '') + '</div>';
+        html += '<div class="vs-cell">' + (r ? '<span class="vs-icon">' + r.icon + '</span> <strong>' + r.value + '</strong>' : '') + '</div>';
+      }
+      html += '</div>';
+
+      // Perfect ride / crashes
+      if (summary.crashes > 0) {
+        html += '<div class="victory-stat">\uD83D\uDCA5 Crashes: <strong>' + summary.crashes + '</strong></div>';
+      } else {
+        html += '<div class="victory-stat victory-perfect">\u2B50 Perfect Ride! \u2B50</div>';
+      }
+
+      statsEl.innerHTML = html;
+
+      // Multiplayer contribution breakdown
+      if (soloStats && soloStats.mode === 'multiplayer') {
+        const contrib = soloStats;
         const contribDiv = document.createElement('div');
         contribDiv.className = 'victory-contrib';
         contribDiv.innerHTML =
@@ -888,28 +915,17 @@ class Game {
           '</div>' +
           '<div class="victory-contrib-detail">' +
             '<div class="contrib-col">' +
-              '<div>Pedaling: <strong>' + contrib.captain.totalTaps + ' taps</strong></div>' +
-              '<div>Balance: <strong>' + contrib.captain.safePct + '% safe</strong></div>' +
-              '<div>Road: <strong>' + contrib.captain.onRoadPct + '% on</strong></div>' +
+              '<div>\uD83E\uDDB6 <strong>' + contrib.captain.totalTaps + '</strong></div>' +
+              '<div>\u2696\uFE0F <strong>' + contrib.captain.safePct + '%</strong></div>' +
+              '<div>\uD83D\uDEE3\uFE0F <strong>' + contrib.captain.onRoadPct + '%</strong></div>' +
             '</div>' +
             '<div class="contrib-col">' +
-              '<div>Pedaling: <strong>' + contrib.stoker.totalTaps + ' taps</strong></div>' +
-              '<div>Balance: <strong>' + contrib.stoker.safePct + '% safe</strong></div>' +
-              '<div>Road: <strong>' + contrib.stoker.onRoadPct + '% on</strong></div>' +
+              '<div>\uD83E\uDDB6 <strong>' + contrib.stoker.totalTaps + '</strong></div>' +
+              '<div>\u2696\uFE0F <strong>' + contrib.stoker.safePct + '%</strong></div>' +
+              '<div>\uD83D\uDEE3\uFE0F <strong>' + contrib.stoker.onRoadPct + '%</strong></div>' +
             '</div>' +
           '</div>';
         statsEl.appendChild(contribDiv);
-      } else {
-        // Solo: show balance + road stats
-        const solo = contrib.solo;
-        const soloDiv = document.createElement('div');
-        soloDiv.className = 'victory-contrib-solo';
-        soloDiv.innerHTML =
-          '<div class="victory-stat">Pedal accuracy: <strong>' +
-            (solo.totalTaps > 0 ? Math.round((solo.correctTaps / solo.totalTaps) * 100) : 0) + '%</strong></div>' +
-          '<div class="victory-stat">Balance (safe): <strong>' + solo.safePct + '%</strong></div>' +
-          '<div class="victory-stat">On road: <strong>' + solo.onRoadPct + '%</strong></div>';
-        statsEl.appendChild(soloDiv);
       }
     }
 

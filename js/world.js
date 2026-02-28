@@ -459,7 +459,8 @@ export class World {
       map: cloudTexture, color: 0xffd700,
       transparent: true, opacity: 0.6, depthWrite: false
     });
-    for (let d = level.checkpointInterval; d < level.distance; d += level.checkpointInterval) {
+    const minFinishGap = level.checkpointInterval * 0.5;
+    for (let d = level.checkpointInterval; d < level.distance - minFinishGap; d += level.checkpointInterval) {
       const roadD = d % L;
       const pt = this.roadPath.getPointAtDistance(roadD);
 
