@@ -1368,7 +1368,7 @@ class Game {
     const transport = this.net.transport === 'relay' ? 'RELAY' : 'P2P';
     if (typeEl) typeEl.textContent = transport;
     const ping = Math.round(this.net.pingMs) + 'ms';
-    if (pingEl) pingEl.textContent = this.input.gamepadConnected ? ping + ' · CONTROLLER' : ping;
+    if (pingEl) pingEl.textContent = this.input.gamepadConnected ? ping + ' 🎮' : ping;
   }
 
   // ============================================================
