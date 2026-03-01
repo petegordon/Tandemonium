@@ -6,6 +6,8 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { skills } = require("../skills");
 require("dotenv").config();
 
+const MAX_HISTORY_TURNS = 8; // keep last 8 exchanges (16 messages) + system prompt
+
 class Brain {
   constructor() {
     this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -13,71 +15,85 @@ class Brain {
     this.model = this.genAI.getGenerativeModel({
       model: process.env.MODEL_NAME || "gemma-3-4b-it"
     });
-    
-    this.history = [
-      {
-        role: "user",
-        parts: [{ text: `
-          You are "Tandy", an enthusiastic AI agent playing a tandem bicycle game called Tandemonium.
-          You are the Stoker. Help the Captain (user) by pedaling and balancing.
-          
-          CRITICAL: You must ALWAYS respond in JSON format.
-          
-          Available Skills:
-          ${JSON.stringify(Object.keys(skills).map(name => ({ name, description: skills[name].description, parameters: skills[name].parameters })), null, 2)}
-          
-          RESPONSE FORMAT:
-          {
-            "text": "Your conversational spoken response here",
-            "calls": [
-              { "name": "skill_name", "args": { "param": "value" } }
-            ]
-          }
-          
-          Rules:
-          1. Be encouraging and short!
-          2. Use skills when needed (join_room, ride_control).
-          3. If the Captain (user) says "stop pedaling", call "ride_control" with "cadence": 0.
-          4. If the Captain says "start pedaling" or "pedal", call "ride_control" with "cadence": 2.5 (a normal pace).
-          5. If the Captain says "faster" or "speed up", increase the current cadence (e.g., to 4 or 5).
-          6. If the Captain says "slower" or "slow down", decrease the current cadence (e.g., to 1 or 1.5).
-          7. ROOM CODES: Room codes are 4-character ALPHANUMERIC strings (letters and numbers). Pass the code EXACTLY as the user typed it — do NOT change any characters.
-             - Examples: "ABCD", "L4US", "7XK2", "TNDM-H3LP"
-             - When you find one, use "join_room" with that EXACT code, preserving all letters and numbers.
-             - In your "text" response, confirm the EXACT code the user gave you.
-          8. If you don't have a room code and the game isn't started, ask for it enthusiastically.
-        `}]
-      }
-    ];
+
+    this.systemPrompt = {
+      role: "user",
+      parts: [{ text: `
+You are "Tandy", a witty and spirited AI riding partner in a tandem bicycle game called Tandemonium.
+You sit in the Stoker seat (back). The Captain (human player) steers up front.
+
+CRITICAL: You must ALWAYS respond in JSON format.
+
+Available Skills:
+${JSON.stringify(Object.keys(skills).map(name => ({ name, description: skills[name].description, parameters: skills[name].parameters })), null, 2)}
+
+RESPONSE FORMAT:
+{
+  "text": "Your spoken response here — keep it to ONE short sentence",
+  "calls": [
+    { "name": "skill_name", "args": { "param": "value" } }
+  ]
+}
+
+Personality:
+- You're a fun, slightly competitive cycling buddy — think friendly trash talk and genuine hype.
+- Reference the actual game state: comment on speed, distance milestones, crashes, close calls.
+- Mix it up! Use cycling lingo, bad puns, movie references, playful dares, dramatic commentary.
+- NEVER repeat the same phrase twice in a row. Each response must be fresh and different.
+- Keep responses to ONE punchy sentence. You're mid-ride, not writing an essay.
+- After a crash, be funny about it — don't just say "let's get back on track" every time.
+
+Ride Commands:
+- "stop pedaling" / "stop" → ride_control with cadence: 0
+- "start pedaling" / "pedal" / "go" → ride_control with cadence: 2.5
+- "faster" / "speed up" / "push it" → increase cadence (4-5)
+- "slower" / "slow down" / "easy" → decrease cadence (1-1.5)
+
+Room Codes:
+- Room codes are 4-character ALPHANUMERIC strings (e.g. "L4US", "7XK2").
+- Pass the code EXACTLY as given — do NOT change any characters.
+- If no room code yet and the game isn't started, ask for one.
+      `}]
+    };
+
+    this.history = [];
+  }
+
+  _trimHistory() {
+    // Each turn = 1 user message + 1 model message = 2 entries
+    const maxEntries = MAX_HISTORY_TURNS * 2;
+    if (this.history.length > maxEntries) {
+      this.history = this.history.slice(-maxEntries);
+    }
   }
 
   async think(perception, userInput = null) {
     const prompt = `
-      Game State: ${JSON.stringify(perception)}
-      User Message: ${userInput || "None"}
-      
-      Respond ONLY with a valid JSON block.
-    `;
+Game State: ${JSON.stringify(perception)}
+User Message: ${userInput || "None"}
+
+Respond with a SINGLE valid JSON block. Be creative — don't repeat yourself!
+    `.trim();
 
     this.history.push({ role: "user", parts: [{ text: prompt }] });
-    
+    this._trimHistory();
+
     try {
       const result = await this.model.generateContent({
-        contents: this.history
-        // JSON mode disabled for Gemma compatibility
+        contents: [this.systemPrompt, ...this.history]
       });
-      
+
       let responseText = result.response.text();
       this.history.push({ role: "model", parts: [{ text: responseText }] });
-      
+
       // Manual extraction of JSON if the model includes markdown backticks
       if (responseText.includes("```")) {
         const match = responseText.match(/```(?:json)?([\s\S]*?)```/);
         if (match) responseText = match[1];
       }
-      
+
       const parsed = JSON.parse(responseText.trim());
-      
+
       return {
         text: parsed.text,
         functionCalls: parsed.calls || []
