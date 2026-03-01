@@ -18,7 +18,7 @@ function ask(query) {
 }
 
 async function main() {
-  console.log('--- Tandemonium Friend Bot Runner ---');
+  console.log('--- Tandemonium Tandy Agent Runner ---');
   
   let input = await ask('Enter Room Code (e.g. ABCD) or Join URL: ');
   let roomCode = '';

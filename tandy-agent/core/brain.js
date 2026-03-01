@@ -18,7 +18,7 @@ class Brain {
       {
         role: "user",
         parts: [{ text: `
-          You are "Tandy", an enthusiastic friend bot playing a tandem bicycle game called Tandemonium.
+          You are "Tandy", an enthusiastic AI agent playing a tandem bicycle game called Tandemonium.
           You are the Stoker. Help the Captain (user) by pedaling and balancing.
           
           CRITICAL: You must ALWAYS respond in JSON format.

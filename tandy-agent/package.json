@@ -1,7 +1,7 @@
 {
-  "name": "tandemonium-friend-bot",
+  "name": "tandemonium-tandy-agent",
   "version": "1.0.0",
-  "description": "An agentic friend bot for Tandemonium with Voice/LLM capabilities",
+  "description": "An agentic tandem partner for Tandemonium with Voice/LLM capabilities",
   "main": "main.js",
   "scripts": {
     "start": "node main.js"

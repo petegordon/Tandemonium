@@ -1,5 +1,5 @@
 /**
- * Main Friend-Bot Runner
+ * Main Tandy Agent Runner
  */
 const { chromium } = require('playwright');
 const fs = require('fs');
