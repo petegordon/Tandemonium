@@ -8,6 +8,7 @@ import { NetworkManager } from './network-manager.js';
 import { RELAY_URL, BIKE_MODEL_PATH } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
+import { AchievementManager } from './achievements.js';
 
 const BIKE_NAMES = {
   default: 'Old Faithful',
@@ -122,7 +123,9 @@ export class Lobby {
 
     // Leaderboard state
     this._lbVideo = null;
-    this._lbLevel = LEVELS[0].id;
+    this._lbMainTab = 'solo';   // 'solo' | 'together' | 'you'
+    this._lbSubLevel = LEVELS[0].id;
+    this._achievements = new AchievementManager();
 
     this._setup();
     this._buildLeaderboardTabs();
@@ -615,20 +618,42 @@ export class Lobby {
   }
 
   _buildLeaderboardTabs() {
-    const container = document.getElementById('lb-tabs');
+    const mainContainer = document.getElementById('lb-main-tabs');
+    const tabs = [
+      { id: 'solo', label: 'Solo' },
+      { id: 'together', label: 'Together' },
+      { id: 'you', label: 'You' }
+    ];
+    tabs.forEach(tab => {
+      const btn = document.createElement('button');
+      btn.className = 'lb-tab' + (tab.id === this._lbMainTab ? ' active' : '');
+      btn.textContent = tab.label;
+      btn.dataset.tabId = tab.id;
+      btn.addEventListener('click', () => {
+        mainContainer.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        this._lbMainTab = tab.id;
+        this._buildSubTabs();
+        this._renderLeaderboardContent();
+      });
+      mainContainer.appendChild(btn);
+    });
+  }
+
+  _buildSubTabs() {
+    const container = document.getElementById('lb-sub-tabs');
+    container.innerHTML = '';
     LEVELS.forEach(level => {
       const btn = document.createElement('button');
-      btn.className = 'lb-tab' + (level.id === this._lbLevel ? ' active' : '');
+      btn.className = 'lb-tab' + (level.id === this._lbSubLevel ? ' active' : '');
       btn.textContent = level.icon + ' ' + level.name;
       btn.dataset.levelId = level.id;
       btn.addEventListener('click', () => {
         container.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
-        this._lbLevel = level.id;
-        document.getElementById('leaderboard-title').textContent =
-          level.icon + ' ' + level.name + ' Leaderboard';
-        this._loadLeaderboard(level.id);
+        this._lbSubLevel = level.id;
         this._startLeaderboardVideo(level.id);
+        this._renderLeaderboardContent();
       });
       container.appendChild(btn);
     });
@@ -636,87 +661,144 @@ export class Lobby {
 
   async _openLeaderboard() {
     const modal = document.getElementById('leaderboard-modal');
-    const levelId = this.selectedLevel ? this.selectedLevel.id : 'grandma';
-    this._lbLevel = levelId;
+    this._lbSubLevel = this.selectedLevel ? this.selectedLevel.id : 'grandma';
 
-    // Set active tab
-    const tabs = document.getElementById('lb-tabs');
-    tabs.querySelectorAll('.lb-tab').forEach(t => {
-      t.classList.toggle('active', t.dataset.levelId === levelId);
+    // Reset main tabs active state
+    const mainTabs = document.getElementById('lb-main-tabs');
+    mainTabs.querySelectorAll('.lb-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.tabId === this._lbMainTab);
     });
 
-    // Set title
-    const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
-    document.getElementById('leaderboard-title').textContent =
-      level.icon + ' ' + level.name + ' Leaderboard';
+    this._buildSubTabs();
+
+    const level = LEVELS.find(l => l.id === this._lbSubLevel) || LEVELS[0];
+    document.getElementById('leaderboard-title').textContent = 'Leaderboard';
 
     modal.style.display = '';
-    this._startLeaderboardVideo(levelId);
-    this._loadLeaderboard(levelId);
+    this._startLeaderboardVideo(this._lbSubLevel);
+    this._renderLeaderboardContent();
   }
 
-  async _loadLeaderboard(levelId) {
+  async _renderLeaderboardContent() {
     const list = document.getElementById('leaderboard-list');
-    list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">Loading...</div>';
+    const achDiv = document.getElementById('lb-achievements');
+    const levelId = this._lbSubLevel;
+    const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
 
-    try {
-      const data = await this.auth.getLeaderboard(levelId);
-      const entries = data.entries || [];
-      const myId = this.auth.user ? this.auth.user.serverId : null;
-      const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
-      const collectibleEmoji = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81';  // 💎 or 🎁
+    if (this._lbMainTab === 'you') {
+      // Show achievements + personal rides
+      document.getElementById('leaderboard-title').textContent = 'Your Rides';
+      this._renderAchievements();
+      list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
-      if (entries.length === 0) {
-        list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">No scores yet</div>';
-        return;
+      try {
+        const data = await this.auth.getLeaderboard(levelId);
+        const entries = data.entries || [];
+        const myId = this.auth.user ? this.auth.user.serverId : null;
+
+        if (!myId) {
+          list.innerHTML = '<div class="lb-no-data">Sign in to see your rides</div>';
+          return;
+        }
+
+        const myEntries = entries.filter(e => e.user_id === myId);
+        if (myEntries.length === 0) {
+          list.innerHTML = '<div class="lb-no-data">No rides yet</div>';
+          return;
+        }
+
+        list.innerHTML = this._renderEntries(myEntries, level, myId);
+      } catch (e) {
+        list.innerHTML = '<div class="lb-no-data">Could not load rides</div>';
+      }
+    } else {
+      // SOLO or TOGETHER — hide achievements, show filtered leaderboard
+      document.getElementById('leaderboard-title').textContent = 'Leaderboard';
+      achDiv.innerHTML = '';
+      list.innerHTML = '<div class="lb-no-data">Loading...</div>';
+
+      try {
+        const data = await this.auth.getLeaderboard(levelId);
+        const entries = data.entries || [];
+        const myId = this.auth.user ? this.auth.user.serverId : null;
+
+        // Filter by mode
+        const filtered = this._lbMainTab === 'solo'
+          ? entries.filter(e => e.mode === 'solo')
+          : entries.filter(e => e.mode === 'captain' || e.mode === 'stoker');
+
+        if (filtered.length === 0) {
+          list.innerHTML = '<div class="lb-no-data">No scores yet</div>';
+          return;
+        }
+
+        list.innerHTML = this._renderEntries(filtered, level, myId);
+      } catch (e) {
+        list.innerHTML = '<div class="lb-no-data">Could not load leaderboard</div>';
+      }
+    }
+  }
+
+  _renderEntries(entries, level, myId) {
+    const collectibleEmoji = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81';
+
+    return entries.map((e, i) => {
+      const isYou = myId && e.user_id === myId;
+      const youClass = isYou ? ' lb-you' : '';
+      const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
+
+      const avatar = e.avatar_url
+        ? '<img class="lb-avatar" src="' + this._escapeHtml(e.avatar_url) + '" alt="" referrerpolicy="no-referrer">'
+        : '';
+
+      let modeHtml = '';
+      if (e.mode) {
+        const modeClass = e.mode === 'captain' ? 'lb-mode-captain'
+                        : e.mode === 'stoker'  ? 'lb-mode-stoker'
+                        : 'lb-mode-solo';
+        const modeLabel = e.mode === 'captain' ? 'Capt'
+                        : e.mode === 'stoker'  ? 'Stoke'
+                        : 'Solo';
+        modeHtml = '<span class="lb-mode ' + modeClass + '">' + modeLabel + '</span>';
       }
 
-      list.innerHTML = entries.map((e, i) => {
-        const isYou = myId && e.user_id === myId;
-        const youClass = isYou ? ' lb-you' : '';
-        const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
+      let collectHtml = '';
+      if (e.collectibles_found != null) {
+        collectHtml = '<span class="lb-collectibles">' + collectibleEmoji + e.collectibles_found + '</span>';
+      }
 
-        // Avatar
-        const avatar = e.avatar_url
-          ? '<img class="lb-avatar" src="' + this._escapeHtml(e.avatar_url) + '" alt="" referrerpolicy="no-referrer">'
-          : '';
+      const dateHtml = e.created_at
+        ? '<span class="lb-date">' + this._relativeDate(e.created_at) + '</span>'
+        : '';
 
-        // Mode badge
-        let modeHtml = '';
-        if (e.mode) {
-          const modeClass = e.mode === 'captain' ? 'lb-mode-captain'
-                          : e.mode === 'stoker'  ? 'lb-mode-stoker'
-                          : 'lb-mode-solo';
-          const modeLabel = e.mode === 'captain' ? 'Capt'
-                          : e.mode === 'stoker'  ? 'Stoke'
-                          : 'Solo';
-          modeHtml = '<span class="lb-mode ' + modeClass + '">' + modeLabel + '</span>';
-        }
+      return '<div class="lb-entry' + youClass + '">' +
+        '<span class="lb-rank">' + (i + 1) + '</span>' +
+        avatar +
+        '<span class="lb-name">' + this._escapeHtml((e.display_name || 'Player').split(' ')[0]) + youTag + '</span>' +
+        modeHtml +
+        collectHtml +
+        '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
+        dateHtml +
+      '</div>';
+    }).join('');
+  }
 
-        // Collectibles
-        let collectHtml = '';
-        if (e.collectibles_found != null) {
-          collectHtml = '<span class="lb-collectibles">' + collectibleEmoji + e.collectibles_found + '</span>';
-        }
+  _renderAchievements() {
+    const container = document.getElementById('lb-achievements');
+    const defs = this._achievements.getAllDefinitions();
+    const earnedCount = defs.filter(d => d.earned).length;
 
-        // Relative date
-        const dateHtml = e.created_at
-          ? '<span class="lb-date">' + this._relativeDate(e.created_at) + '</span>'
-          : '';
-
-        return '<div class="lb-entry' + youClass + '">' +
-          '<span class="lb-rank">' + (i + 1) + '</span>' +
-          avatar +
-          '<span class="lb-name">' + this._escapeHtml((e.display_name || 'Player').split(' ')[0]) + youTag + '</span>' +
-          modeHtml +
-          collectHtml +
-          '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
-          dateHtml +
-        '</div>';
-      }).join('');
-    } catch (e) {
-      list.innerHTML = '<div style="text-align:center;padding:16px;color:rgba(255,255,255,0.5);">Could not load leaderboard</div>';
-    }
+    let html = '<div class="lb-ach-count"><span>' + earnedCount + '</span> / ' + defs.length + ' Unlocked</div>';
+    html += '<div class="lb-achievement-grid">';
+    defs.forEach(d => {
+      const cls = d.earned ? 'earned' : 'locked';
+      html += '<div class="lb-ach-item ' + cls + '">' +
+        '<span class="lb-ach-icon">' + d.icon + '</span>' +
+        '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
+      '</div>';
+    });
+    html += '</div>';
+    container.innerHTML = html;
   }
 
   _escapeHtml(str) {

@@ -1013,6 +1013,83 @@
     color: #fff;
     background: rgba(255,255,255,0.12);
   }
+  .lb-main-tabs .lb-tab {
+    font-size: 13px;
+    padding: 6px 16px;
+  }
+  .lb-sub-tabs {
+    margin-bottom: 8px;
+  }
+  .lb-sub-tabs .lb-tab {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-width: 1px;
+  }
+  /* Achievement grid */
+  .lb-achievement-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+  .lb-ach-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 64px;
+    padding: 6px 4px;
+    border-radius: 10px;
+    border: 1.5px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.04);
+    transition: all 0.2s;
+  }
+  .lb-ach-icon {
+    font-size: 22px;
+    line-height: 1;
+    margin-bottom: 3px;
+  }
+  .lb-ach-name {
+    font-size: 8px;
+    color: rgba(255,255,255,0.5);
+    text-align: center;
+    line-height: 1.2;
+    word-break: break-word;
+  }
+  .lb-ach-item.earned {
+    background: rgba(60,200,80,0.18);
+    border-color: rgba(60,200,80,0.5);
+    box-shadow: 0 0 8px rgba(60,200,80,0.25);
+  }
+  .lb-ach-item.earned .lb-ach-name {
+    color: #44ff66;
+  }
+  .lb-ach-item.locked {
+    opacity: 0.35;
+    border-color: rgba(255,255,255,0.08);
+  }
+  .lb-ach-count {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 8px;
+  }
+  .lb-ach-count span {
+    color: #44ff66;
+    font-weight: 700;
+  }
+  .lb-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.6);
+    margin: 10px 0 6px;
+    text-align: left;
+  }
+  .lb-no-data {
+    text-align: center;
+    padding: 16px;
+    color: rgba(255,255,255,0.5);
+    font-size: 13px;
+  }
   .lb-avatar {
     width: 22px;
     height: 22px;
@@ -2132,7 +2209,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.84910c9 | 03-01-2026 10:18</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.ef06749 | 03-01-2026 10:40</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -2143,7 +2220,9 @@ ON</button>
     <button id="leaderboard-x">&times;</button>
     <canvas id="leaderboard-video" width="360" height="240"></canvas>
     <h3 id="leaderboard-title">Leaderboard</h3>
-    <div class="lb-tabs" id="lb-tabs"></div>
+    <div class="lb-tabs lb-main-tabs" id="lb-main-tabs"></div>
+    <div class="lb-tabs lb-sub-tabs" id="lb-sub-tabs"></div>
+    <div id="lb-achievements"></div>
     <div id="leaderboard-list"></div>
     <button class="lobby-btn" id="leaderboard-close" style="margin-top:12px;">Close</button>
   </div>
