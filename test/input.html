@@ -900,7 +900,7 @@ function handleGyroInputReport(event) {
   if (input._gyroLastTime > 0) {
     const dt = (now - input._gyroLastTime) / 1000.0;
     if (dt < 0.1) {
-      input._gyroAngle += correctedZ * dt;
+      input._gyroAngle -= correctedZ * dt;
     }
   }
   input._gyroLastTime = now;
