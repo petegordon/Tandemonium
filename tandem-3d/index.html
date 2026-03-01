@@ -445,17 +445,17 @@ pedalRightEl.addEventListener('mouseleave', () => handlePedalUp('rightPedal'));
 
 // ── Keyboard Controls (Desktop) ──
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowUp' || e.key === 'w') handlePedalDown('leftPedal');
-  if (e.key === 'ArrowDown' || e.key === 's') handlePedalDown('rightPedal');
-  if (e.key === 'ArrowLeft' || e.key === 'a') input.keyLeft = true;
-  if (e.key === 'ArrowRight' || e.key === 'd') input.keyRight = true;
+  if (e.key === 'ArrowLeft' || e.key === 'w') handlePedalDown('leftPedal');
+  if (e.key === 'ArrowRight' || e.key === 's') handlePedalDown('rightPedal');
+  if (e.key === 'a') input.keyLeft = true;
+  if (e.key === 'd') input.keyRight = true;
 });
 
 document.addEventListener('keyup', (e) => {
-  if (e.key === 'ArrowUp' || e.key === 'w') handlePedalUp('leftPedal');
-  if (e.key === 'ArrowDown' || e.key === 's') handlePedalUp('rightPedal');
-  if (e.key === 'ArrowLeft' || e.key === 'a') input.keyLeft = false;
-  if (e.key === 'ArrowRight' || e.key === 'd') input.keyRight = false;
+  if (e.key === 'ArrowLeft' || e.key === 'w') handlePedalUp('leftPedal');
+  if (e.key === 'ArrowRight' || e.key === 's') handlePedalUp('rightPedal');
+  if (e.key === 'a') input.keyLeft = false;
+  if (e.key === 'd') input.keyRight = false;
 });
 
 // ── Device Orientation (Tilt Steering) ──

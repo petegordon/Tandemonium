@@ -182,8 +182,8 @@ export class HUD {
       this.distanceEl.textContent = Math.round(dist) + ' m';
     }
 
-    const leftHeld = input.isPressed('ArrowUp');
-    const rightHeld = input.isPressed('ArrowDown');
+    const leftHeld = input.isPressed('ArrowLeft');
+    const rightHeld = input.isPressed('ArrowRight');
     const braking = leftHeld && rightHeld;
 
     // Touch button feedback (supports both solo and multiplayer pedal controllers)
@@ -250,7 +250,7 @@ export class HUD {
       this.statusEl.style.color = '#ff4444';
     } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {
       const hint = isMobile ? 'Tap pedals to ride!' :
-        (input.gamepadConnected ? 'Pedal! Alternate LB/RB or LT/RT' : 'Pedal! Alternate \u2191 \u2193');
+        (input.gamepadConnected ? 'Pedal! Alternate LB/RB or LT/RT' : 'Pedal! Alternate \u2190 \u2192');
       this.statusEl.textContent = hint;
       this.statusEl.style.color = '#ffdd44';
     } else {

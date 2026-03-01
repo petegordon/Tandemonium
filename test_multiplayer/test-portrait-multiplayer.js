@@ -172,10 +172,10 @@ const TIMEOUT = 30000;
         // Test offset pedaling: Captain Up → Stoker Down → Captain Down → Stoker Up
         console.log('\n12. Testing offset pedaling...');
         const pedalSequence = [
-            { page: captainPage, key: 'ArrowUp',   who: 'Captain', foot: 'UP  ' },
-            { page: stokerPage,  key: 'ArrowDown',  who: 'Stoker ', foot: 'DOWN' },
-            { page: captainPage, key: 'ArrowDown',  who: 'Captain', foot: 'DOWN' },
-            { page: stokerPage,  key: 'ArrowUp',    who: 'Stoker ', foot: 'UP  ' },
+            { page: captainPage, key: 'ArrowLeft',  who: 'Captain', foot: 'LEFT ' },
+            { page: stokerPage,  key: 'ArrowRight', who: 'Stoker ', foot: 'RIGHT' },
+            { page: captainPage, key: 'ArrowRight', who: 'Captain', foot: 'RIGHT' },
+            { page: stokerPage,  key: 'ArrowLeft',  who: 'Stoker ', foot: 'LEFT ' },
         ];
 
         for (let cycle = 0; cycle < 3; cycle++) {

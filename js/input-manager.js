@@ -58,7 +58,7 @@ export class InputManager {
     window.addEventListener('keydown', (e) => {
       const tag = document.activeElement && document.activeElement.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (['ArrowUp','ArrowDown','KeyA','KeyD'].includes(e.code)) e.preventDefault();
+      if (['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code)) e.preventDefault();
       this.keys[e.code] = true;
     });
     window.addEventListener('keyup', (e) => {
@@ -311,8 +311,8 @@ export class InputManager {
   }
 
   isPressed(code) {
-    if (code === 'ArrowUp') return !!this.keys[code] || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
-    if (code === 'ArrowDown') return !!this.keys[code] || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
+    if (code === 'ArrowLeft') return !!this.keys[code] || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
+    if (code === 'ArrowRight') return !!this.keys[code] || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
     return !!this.keys[code];
   }
 

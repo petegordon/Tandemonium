@@ -87,7 +87,7 @@
 
         _setupKeyboard() {
             window.addEventListener('keydown', (e) => {
-                if (['ArrowUp', 'ArrowDown', 'KeyA', 'KeyD'].includes(e.code)) {
+                if (['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(e.code)) {
                     e.preventDefault();
                 }
                 this.keys[e.code] = true;
@@ -334,8 +334,8 @@
         }
 
         isPressed(code) {
-            if (code === 'ArrowUp') return !!this.keys[code] || this.touchLeft;
-            if (code === 'ArrowDown') return !!this.keys[code] || this.touchRight;
+            if (code === 'ArrowLeft') return !!this.keys[code] || this.touchLeft;
+            if (code === 'ArrowRight') return !!this.keys[code] || this.touchRight;
             return !!this.keys[code];
         }
 
@@ -729,8 +729,8 @@
 
         update(dt) {
             const now = performance.now() / 1000;
-            const leftHeld = this.input.isPressed('ArrowUp');
-            const rightHeld = this.input.isPressed('ArrowDown');
+            const leftHeld = this.input.isPressed('ArrowLeft');
+            const rightHeld = this.input.isPressed('ArrowRight');
             const leftJust = leftHeld && !this.prevLeft;
             const rightJust = rightHeld && !this.prevRight;
             const braking = leftHeld && rightHeld;
@@ -1556,8 +1556,8 @@
             this.speedEl.textContent = 'Speed: ' + kmh + ' km/h';
             this.distanceEl.textContent = 'Distance: ' + Math.round(bike.distanceTraveled) + ' m';
 
-            const leftHeld = input.isPressed('ArrowUp');
-            const rightHeld = input.isPressed('ArrowDown');
+            const leftHeld = input.isPressed('ArrowLeft');
+            const rightHeld = input.isPressed('ArrowRight');
             const braking = leftHeld && rightHeld;
 
             // Desktop pedal indicators
@@ -1620,7 +1620,7 @@
                 this.statusEl.textContent = 'CRASHED! Resetting...';
                 this.statusEl.style.color = '#ff4444';
             } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {
-                this.statusEl.textContent = isMobile ? 'Tap \u2191 \u2193 to pedal!' : 'Pedal! Alternate \u2191 \u2193';
+                this.statusEl.textContent = isMobile ? 'Tap \u2190 \u2192 to pedal!' : 'Pedal! Alternate \u2190 \u2192';
                 this.statusEl.style.color = '#ffdd44';
             } else {
                 this.statusEl.textContent = '';
@@ -2178,7 +2178,7 @@
             // --- Waiting state ---
             if (this.state === 'waiting') {
                 if (this.mode === 'solo') {
-                    if (this.input.isPressed('ArrowUp') || this.input.isPressed('ArrowDown')) {
+                    if (this.input.isPressed('ArrowLeft') || this.input.isPressed('ArrowRight')) {
                         this._startCountdown();
                     }
                 }
@@ -2281,9 +2281,9 @@
         _updateCaptain(dt) {
             const wasFallen = this.bike.fallen;
 
-            // Edge detection: detect ArrowUp/ArrowDown rising edges
-            const upHeld = this.input.isPressed('ArrowUp');
-            const downHeld = this.input.isPressed('ArrowDown');
+            // Edge detection: detect ArrowLeft/ArrowRight rising edges
+            const upHeld = this.input.isPressed('ArrowLeft');
+            const downHeld = this.input.isPressed('ArrowRight');
             if (upHeld && !this._mpPrevUp) {
                 this.sharedPedal.receiveTap('captain', 'up');
             }
@@ -2341,9 +2341,9 @@
         // STOKER UPDATE (receives state, interpolates, renders)
         // ============================================================
         _updateStoker(dt) {
-            // Edge detection: detect ArrowUp/ArrowDown rising edges → send over network
-            const upHeld = this.input.isPressed('ArrowUp');
-            const downHeld = this.input.isPressed('ArrowDown');
+            // Edge detection: detect ArrowLeft/ArrowRight rising edges → send over network
+            const upHeld = this.input.isPressed('ArrowLeft');
+            const downHeld = this.input.isPressed('ArrowRight');
             if (upHeld && !this._mpPrevUp && this.net) {
                 this.net.sendPedal('up');
             }
@@ -2395,8 +2395,8 @@
             const rightEl = document.getElementById('touch-right');
             const pedalL = document.getElementById('pedal-l');
             const pedalR = document.getElementById('pedal-r');
-            const upHeld = this.input.isPressed('ArrowUp');
-            const downHeld = this.input.isPressed('ArrowDown');
+            const upHeld = this.input.isPressed('ArrowLeft');
+            const downHeld = this.input.isPressed('ArrowRight');
 
             // Touch button feedback
             if (leftEl && rightEl) {

@@ -20,8 +20,8 @@ export class PedalController {
 
   update(dt) {
     const now = performance.now() / 1000;
-    const leftHeld = this.input.isPressed('ArrowUp');
-    const rightHeld = this.input.isPressed('ArrowDown');
+    const leftHeld = this.input.isPressed('ArrowLeft');
+    const rightHeld = this.input.isPressed('ArrowRight');
     const leftJust = leftHeld && !this.prevLeft;
     const rightJust = rightHeld && !this.prevRight;
     // Braking requires BOTH pedals held for 2+ consecutive frames.

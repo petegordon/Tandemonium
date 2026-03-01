@@ -138,7 +138,7 @@
           footToHit = (footToHit === 'up' ? 'down' : 'up');
         }
 
-        const keyCode = footToHit === 'up' ? 'ArrowUp' : 'ArrowDown';
+        const keyCode = footToHit === 'up' ? 'ArrowLeft' : 'ArrowRight';
 
         if (this.game.input && this.game.input.keys) {
           this.game.input.keys[keyCode] = true;

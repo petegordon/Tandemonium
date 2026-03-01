@@ -128,8 +128,8 @@ const mobileDevice = {
 
         // --- OFFSET PEDALING ---
         console.log('--- Offset pedaling ---');
-        const captainFeet = ['ArrowUp', 'ArrowDown'];
-        const stokerFeet  = ['ArrowDown', 'ArrowUp'];
+        const captainFeet = ['ArrowLeft', 'ArrowRight'];
+        const stokerFeet  = ['ArrowRight', 'ArrowLeft'];
         let capIdx = 0, stokIdx = 0;
         for (let i = 0; i < 12; i++) {
             const isCaptain = i % 2 === 0;
@@ -140,7 +140,7 @@ const mobileDevice = {
             await tap(page, key);
             await sleep(350);
             const spd = await captainPage.$eval('#speed-display', el => el.textContent);
-            console.log('  ' + who + ' ' + (key === 'ArrowUp' ? 'UP  ' : 'DOWN') + ' -> ' + spd);
+            console.log('  ' + who + ' ' + (key === 'ArrowLeft' ? 'LEFT ' : 'RIGHT') + ' -> ' + spd);
         }
 
         // --- LEAN TOGETHER ---

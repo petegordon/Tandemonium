@@ -1017,21 +1017,28 @@ class Game {
 
     // Show NEXT LEVEL button if there's a next level
     const nextBtn = document.getElementById('btn-next-level');
+    const playAgainBtn = document.getElementById('btn-play-again');
     const curIdx = LEVELS.indexOf(this.lobby.selectedLevel);
+    const hasNext = nextBtn && curIdx >= 0 && curIdx < LEVELS.length - 1;
     if (nextBtn) {
-      nextBtn.style.display = (curIdx >= 0 && curIdx < LEVELS.length - 1) ? '' : 'none';
+      nextBtn.style.display = hasNext ? '' : 'none';
+    }
+    // Move accent style to "Next Level" when available
+    if (hasNext) {
+      playAgainBtn.classList.remove('lobby-btn-accent');
+      nextBtn.classList.add('lobby-btn-accent');
+    } else {
+      playAgainBtn.classList.add('lobby-btn-accent');
+      if (nextBtn) nextBtn.classList.remove('lobby-btn-accent');
     }
 
     // Gamepad navigation for victory buttons
-    const victoryBtns = [
-      document.getElementById('btn-play-again'),
-      document.getElementById('btn-victory-lobby')
-    ];
-    // Include "next level" if visible
-    if (nextBtn && nextBtn.style.display !== 'none') {
+    const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby')];
+    // Include "next level" if visible, and default-focus it
+    if (hasNext) {
       victoryBtns.splice(1, 0, nextBtn);
     }
-    this._setOverlayButtons(victoryBtns);
+    this._setOverlayButtons(victoryBtns, hasNext ? 1 : 0);
 
     this._playBeep(800, 0.3);
     setTimeout(() => this._playBeep(1000, 0.3), 200);
@@ -1280,8 +1287,8 @@ class Game {
   }
 
   _buildRecordState(pedalCtrl, remoteData) {
-    const leftPressed = this.input.isPressed('ArrowUp');
-    const rightPressed = this.input.isPressed('ArrowDown');
+    const leftPressed = this.input.isPressed('ArrowLeft');
+    const rightPressed = this.input.isPressed('ArrowRight');
     const braking = leftPressed && rightPressed;
 
     let pedalState = 'normal';
@@ -1404,14 +1411,14 @@ class Game {
   // OVERLAY GAMEPAD NAVIGATION (game-over & victory)
   // ============================================================
 
-  _setOverlayButtons(buttons) {
+  _setOverlayButtons(buttons, initialFocus = 0) {
     this._overlayButtons = buttons.filter(Boolean);
-    this._overlayFocusIdx = 0;
+    this._overlayFocusIdx = Math.min(initialFocus, this._overlayButtons.length - 1);
     this._olPrevUp = false;
     this._olPrevDown = false;
     this._olPrevA = false;
     if (this._overlayButtons.length > 0) {
-      this._overlayButtons[0].classList.add('gamepad-focus');
+      this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
     }
   }
 
@@ -1578,8 +1585,8 @@ class Game {
 
   _updateCaptain(dt) {
     // Edge-detect pedals → shared pedal controller + send to stoker
-    const upHeld = this.input.isPressed('ArrowUp');
-    const downHeld = this.input.isPressed('ArrowDown');
+    const upHeld = this.input.isPressed('ArrowLeft');
+    const downHeld = this.input.isPressed('ArrowRight');
     if (upHeld && !this._mpPrevUp) {
       this.sharedPedal.receiveTap('captain', 'up');
       if (this.net) this.net.sendPedal('up');
@@ -1679,8 +1686,8 @@ class Game {
 
   _updateStoker(dt) {
     // Edge-detect pedals → send over network
-    const upHeld = this.input.isPressed('ArrowUp');
-    const downHeld = this.input.isPressed('ArrowDown');
+    const upHeld = this.input.isPressed('ArrowLeft');
+    const downHeld = this.input.isPressed('ArrowRight');
     if (upHeld && !this._mpPrevUp && this.net) {
       this.net.sendPedal('up');
     }

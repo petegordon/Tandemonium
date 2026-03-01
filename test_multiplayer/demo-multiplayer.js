@@ -122,8 +122,8 @@ const mobileDevice = {
         // Each player alternates their own feet (like solo), while maintaining
         // offset with the other player: Cap Up → Stok Down → Cap Down → Stok Up
         console.log('--- Offset pedaling ---');
-        const captainFeet = ['ArrowUp', 'ArrowDown']; // alternates
-        const stokerFeet  = ['ArrowDown', 'ArrowUp'];  // opposite offset
+        const captainFeet = ['ArrowLeft', 'ArrowRight']; // alternates
+        const stokerFeet  = ['ArrowRight', 'ArrowLeft'];  // opposite offset
         let capIdx = 0, stokIdx = 0;
         for (let i = 0; i < 12; i++) {
             const isCaptain = i % 2 === 0;
@@ -134,7 +134,7 @@ const mobileDevice = {
             await tap(page, key);
             await sleep(350);
             const spd = await captainPage.$eval('#speed', el => el.textContent);
-            console.log('  ' + who + ' ' + (key === 'ArrowUp' ? 'UP  ' : 'DOWN') + ' → ' + spd);
+            console.log('  ' + who + ' ' + (key === 'ArrowLeft' ? 'LEFT ' : 'RIGHT') + ' → ' + spd);
         }
 
         // --- LEAN TOGETHER ---
