@@ -137,6 +137,69 @@
     80% { opacity: 0.9; }
     100% { opacity: 0.65; transform: scale(0.95); }
   }
+  #countdown-flavor {
+    position: fixed;
+    top: 28%;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 260px;
+    text-align: center;
+    pointer-events: none;
+    z-index: 10;
+    animation: flavorFadeIn 0.6s ease-out;
+  }
+  #countdown-flavor-icon {
+    font-size: 40px;
+    line-height: 1;
+    margin-bottom: 4px;
+    animation: flavorBounce 1.2s ease-in-out infinite;
+  }
+  #countdown-flavor-text {
+    color: #ffe8c0;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-style: italic;
+    font-size: 18px;
+    line-height: 1.4;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+    margin-bottom: 8px;
+  }
+  #countdown-flavor-num {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 900;
+    font-size: 120px;
+    line-height: 1;
+    color: #ffffff;
+    text-shadow:
+      0 0 30px rgba(255,255,255,0.6),
+      0 0 60px rgba(255,255,255,0.3),
+      0 2px 4px rgba(0,0,0,0.6);
+  }
+  #countdown-flavor-num.pop {
+    animation: countdownPop 0.9s ease-out forwards;
+  }
+  #countdown-flavor-num.tick-2 {
+    color: #ffd700;
+    text-shadow: 0 0 30px rgba(255,215,0,0.7), 0 0 60px rgba(255,180,0,0.3), 0 2px 4px rgba(0,0,0,0.6);
+    font-size: 140px;
+  }
+  #countdown-flavor-num.tick-1 {
+    color: #44ff66;
+    text-shadow: 0 0 30px rgba(68,255,102,0.7), 0 0 60px rgba(68,255,102,0.3), 0 2px 4px rgba(0,0,0,0.6);
+    font-size: 160px;
+  }
+  #countdown-flavor-num.tick-go {
+    color: #44ff66;
+    text-shadow: 0 0 40px rgba(68,255,102,0.9), 0 0 80px rgba(68,255,102,0.4), 0 2px 4px rgba(0,0,0,0.6);
+    font-size: 160px;
+  }
+  @keyframes flavorFadeIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  @keyframes flavorBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
 
   /* ── Progress bar ── */
   #progress-bar-wrap {
@@ -1941,6 +2004,7 @@
 </div>
 
 <div id="countdown-overlay"><span id="countdown-number"></span></div>
+<div id="countdown-flavor"><div id="countdown-flavor-icon"></div><div id="countdown-flavor-text"></div><div id="countdown-flavor-num"></div></div>
 
 <!-- Progress bar -->
 <div id="progress-bar-wrap">
@@ -2214,7 +2278,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.df62d3e | 03-01-2026 10:55</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.8642cd8 | 03-01-2026 11:26</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>

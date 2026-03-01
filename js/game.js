@@ -508,13 +508,21 @@ class Game {
     this.instructionsEl.classList.add('hidden');
 
     const statusEl = document.getElementById('status');
-    statusEl.style.color = '#ffffff';
-    statusEl.style.fontSize = '48px';
-    statusEl.textContent = '3';
+    statusEl.textContent = '';
     this._lastCountNum = 3;
 
     // Create race manager + contribution tracker + collectibles from selected level
     const level = this.lobby.selectedLevel;
+    // Show level icon + flavor text + countdown number
+    const flavorIcon = document.getElementById('countdown-flavor-icon');
+    const flavorText = document.getElementById('countdown-flavor-text');
+    const flavorNum = document.getElementById('countdown-flavor-num');
+    if (flavorIcon) flavorIcon.textContent = level.icon;
+    if (flavorText) flavorText.textContent = level.description;
+    if (flavorNum) {
+      flavorNum.textContent = '3';
+      flavorNum.className = 'tick-3 pop';
+    }
     this.raceManager = new RaceManager(level);
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
@@ -583,14 +591,24 @@ class Game {
 
   _updateCountdown(dt) {
     this.countdownTimer -= dt;
-    const statusEl = document.getElementById('status');
+    const flavorNum = document.getElementById('countdown-flavor-num');
 
     if (this.countdownTimer <= 0) {
-      statusEl.textContent = 'GO!';
-      statusEl.style.color = '#44ff66';
       this.state = 'playing';
-      if (this.raceManager) this.raceManager.start();
+      // Show "GO!" in the flavor block
+      const flavorIcon = document.getElementById('countdown-flavor-icon');
+      const flavorText = document.getElementById('countdown-flavor-text');
+      if (flavorIcon) flavorIcon.textContent = '';
+      if (flavorText) flavorText.textContent = '';
+      if (flavorNum) {
+        flavorNum.textContent = 'GO!';
+        flavorNum.className = 'tick-go';
+        // Re-trigger pop animation synced with beep
+        flavorNum.offsetHeight;
+        flavorNum.classList.add('pop');
+      }
       this._playBeep(800, 0.4);
+      if (this.raceManager) this.raceManager.start();
 
       // Captain sends EVT_START to stoker
       if (this.mode === 'captain' && this.net) {
@@ -598,17 +616,23 @@ class Game {
       }
 
       setTimeout(() => {
-        if (this.state === 'playing') {
-          statusEl.textContent = '';
-          statusEl.style.fontSize = '';
+        if (this.state === 'playing' && flavorNum) {
+          flavorNum.textContent = '';
+          flavorNum.className = '';
         }
-      }, 800);
+      }, 1000);
       return;
     }
 
     const num = Math.ceil(this.countdownTimer);
     if (num !== this._lastCountNum) {
-      statusEl.textContent = '' + num;
+      if (flavorNum) {
+        flavorNum.className = 'tick-' + num;
+        flavorNum.textContent = '' + num;
+        // Re-trigger pop animation synced with beep
+        flavorNum.offsetHeight;
+        flavorNum.classList.add('pop');
+      }
       this._lastCountNum = num;
       this._playBeep(400, 0.15);
     }

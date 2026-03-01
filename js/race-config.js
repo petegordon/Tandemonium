@@ -10,7 +10,7 @@ export const LEVELS = [
     collectibles: 'presents',
     checkpointInterval: 62,
     icon: '\uD83C\uDFE0',        // 🏠
-    description: 'A short ride to Grandma\'s house'
+    description: 'Grandma called — she needs her presents!'
   },
   {
     id: 'castle',
@@ -19,7 +19,7 @@ export const LEVELS = [
     collectibles: 'gems',
     checkpointInterval: 500,
     icon: '\uD83C\uDFF0',        // 🏰
-    description: 'A longer journey to the castle'
+    description: 'The King awaits! Collect gems on the road to glory!'
   }
 ];
 
