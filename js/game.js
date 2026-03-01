@@ -272,6 +272,7 @@ class Game {
 
   _onSolo() {
     this.mode = 'solo';
+    this.bike.applyPreset(this.lobby.selectedPreset);
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
@@ -280,6 +281,7 @@ class Game {
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
+    this.bike.applyPreset(this.lobby.selectedPreset);
 
     // Setup shared pedal controller
     this.sharedPedal = new SharedPedalController();

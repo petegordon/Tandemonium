@@ -3,8 +3,9 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { NetworkManager } from './network-manager.js';
-import { RELAY_URL } from './config.js';
+import { RELAY_URL, BIKE_MODEL_PATH } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 
@@ -98,12 +99,23 @@ export class Lobby {
     this.auth = new AuthManager();
     this._setupAuth();
 
+    // Bike carousel state
+    this.selectedPreset = null; // null = default, or preset data object
+    this._presetKeys = ['default'];
+    this._presetData = {};
+    this._presetIndex = 0;
+    this._previewRafId = null;
+    this._previewModel = null;
+    this._previewPivot = null;
+    this._previewOriginalMats = null;
+
     // Leaderboard state
     this._lbVideo = null;
     this._lbLevel = LEVELS[0].id;
 
     this._setup();
     this._buildLeaderboardTabs();
+    this._initBikeCarousel();
     this._checkAutoJoin();
 
     // Lobby is visible by default on page load (show() is only called on
@@ -147,6 +159,7 @@ export class Lobby {
     this._showStep(this.modeStep);
     this._startGamepadNav();
     this._checkPermissionStates();
+    if (this._previewModel) this._startPreviewLoop();
   }
 
   _showStep(step) {
@@ -167,6 +180,7 @@ export class Lobby {
   _hideLobby() {
     this.lobbyEl.style.display = 'none';
     this._stopGamepadNav();
+    this._stopPreviewLoop();
   }
 
   _setup() {
@@ -1169,5 +1183,184 @@ export class Lobby {
   _clearFocusHighlight() {
     const prev = this.lobbyEl.querySelector('.gamepad-focus');
     if (prev) prev.classList.remove('gamepad-focus');
+  }
+
+  // ============================================================
+  // BIKE CAROUSEL
+  // ============================================================
+
+  async _initBikeCarousel() {
+    // Load presets
+    try {
+      const resp = await fetch('../tandem-3d/bike-presets.json');
+      this._presetData = await resp.json();
+      this._presetKeys = ['default', ...Object.keys(this._presetData)];
+    } catch (e) {
+      console.warn('Failed to load bike presets:', e);
+    }
+
+    // Setup mini 3D preview
+    const canvas = document.getElementById('bike-preview-canvas');
+    const w = canvas.clientWidth || 220;
+    const h = canvas.clientHeight || 132;
+
+    this._previewRenderer = new THREE.WebGLRenderer({
+      canvas, antialias: true
+    });
+    this._previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this._previewRenderer.setSize(w, h);
+    this._previewRenderer.setClearColor(0x111111, 1);
+    this._previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this._previewRenderer.toneMappingExposure = 1.2;
+
+    this._previewScene = new THREE.Scene();
+    this._previewCamera = new THREE.PerspectiveCamera(28, w / h, 0.1, 100);
+    this._previewCamera.position.set(0, 1.4, 4.2);
+    this._previewCamera.lookAt(0, 0.5, 0);
+
+    // Lights
+    this._previewScene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+    dir.position.set(5, 8, 5);
+    this._previewScene.add(dir);
+    const rim = new THREE.DirectionalLight(0x8899cc, 0.5);
+    rim.position.set(-3, 4, -4);
+    this._previewScene.add(rim);
+
+    // Load bike model
+    const loader = new GLTFLoader();
+    loader.load(BIKE_MODEL_PATH, (gltf) => {
+      this._previewModel = gltf.scene;
+
+      // Scale to fit preview
+      const box = new THREE.Box3().setFromObject(this._previewModel);
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      const scale = 3.0 / maxDim;
+      this._previewModel.scale.setScalar(scale);
+
+      // Center horizontally/depth, sit on ground
+      this._previewModel.updateMatrixWorld(true);
+      const b2 = new THREE.Box3().setFromObject(this._previewModel);
+      const center = b2.getCenter(new THREE.Vector3());
+      this._previewModel.position.x -= center.x;
+      this._previewModel.position.z -= center.z;
+      this._previewModel.position.y -= b2.min.y;
+
+      // Clone all materials and store originals
+      this._previewOriginalMats = new Map();
+      this._previewModel.traverse(child => {
+        if (child.isMesh) {
+          child.material = child.material.clone();
+          this._previewOriginalMats.set(child.name, child.material.clone());
+        }
+      });
+
+      // Add to rotating pivot
+      this._previewPivot = new THREE.Group();
+      this._previewPivot.add(this._previewModel);
+      this._previewScene.add(this._previewPivot);
+
+      this._startPreviewLoop();
+      this._applyPresetToPreview();
+    });
+
+    // Arrow navigation
+    document.getElementById('bike-prev').addEventListener('click', () => {
+      this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
+      this._applyPresetToPreview();
+    });
+    document.getElementById('bike-next').addEventListener('click', () => {
+      this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
+      this._applyPresetToPreview();
+    });
+
+    // Touch swipe on canvas
+    let touchStartX = 0;
+    const previewWrap = document.getElementById('bike-preview-wrap');
+    previewWrap.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    previewWrap.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(dx) > 30) {
+        if (dx < 0) {
+          this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
+        } else {
+          this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
+        }
+        this._applyPresetToPreview();
+      }
+    }, { passive: true });
+  }
+
+  _applyPresetToPreview() {
+    const key = this._presetKeys[this._presetIndex];
+    const nameEl = document.getElementById('bike-name');
+
+    // Reset all materials to originals
+    if (this._previewModel && this._previewOriginalMats) {
+      this._previewModel.traverse(child => {
+        if (!child.isMesh) return;
+        const orig = this._previewOriginalMats.get(child.name);
+        if (!orig) return;
+        child.material.copy(orig);
+        child.material.needsUpdate = true;
+      });
+    }
+
+    if (key === 'default') {
+      nameEl.textContent = 'Default';
+      this.selectedPreset = null;
+      return;
+    }
+
+    // Format name: "bike_orange" → "Orange"
+    const label = key.replace('bike_', '');
+    nameEl.textContent = label.charAt(0).toUpperCase() + label.slice(1);
+    this.selectedPreset = this._presetData[key];
+
+    // Apply preset materials
+    if (!this._previewModel) return;
+    const preset = this._presetData[key];
+    this._previewModel.traverse(child => {
+      if (!child.isMesh) return;
+      const entry = preset[child.name];
+      if (!entry) return;
+      const mat = child.material;
+      if (entry.color && mat.color) mat.color.set(entry.color);
+      if (entry.emissive && mat.emissive) mat.emissive.set(entry.emissive);
+      if (entry.metalness !== undefined) mat.metalness = entry.metalness;
+      if (entry.roughness !== undefined) mat.roughness = entry.roughness;
+      if (entry.opacity !== undefined) {
+        mat.opacity = entry.opacity;
+        mat.transparent = entry.opacity < 1;
+      }
+      if (entry.wireframe !== undefined) mat.wireframe = entry.wireframe;
+      if (entry.side !== undefined) mat.side = entry.side;
+      if (entry.disabledTextures) {
+        for (const tk of entry.disabledTextures) mat[tk] = null;
+        mat.needsUpdate = true;
+      }
+    });
+  }
+
+  _startPreviewLoop() {
+    if (this._previewRafId) return;
+    const animate = () => {
+      this._previewRafId = requestAnimationFrame(animate);
+      if (this._previewPivot) {
+        this._previewPivot.rotation.y += 0.008;
+      }
+      this._previewRenderer.render(this._previewScene, this._previewCamera);
+    };
+    animate();
+  }
+
+  _stopPreviewLoop() {
+    if (this._previewRafId) {
+      cancelAnimationFrame(this._previewRafId);
+      this._previewRafId = null;
+    }
   }
 }

@@ -42,6 +42,10 @@ export class BikeModel {
     this.smoothSpokeFade = 0;
     this.maxSpeed = 16;
 
+    // Preset support
+    this._pendingPreset = null;
+    this._originalMats = null; // Map<meshName, clonedMaterial>
+
     this._loadModel();
   }
 
@@ -110,8 +114,73 @@ export class BikeModel {
       this.modelLoaded = true;
       console.log('Bike loaded. Spokes:', this.spokeMeshes.length,
         'Pedals:', this.pedalNodes.length);
+
+      if (this._pendingPreset) {
+        this.applyPreset(this._pendingPreset);
+        this._pendingPreset = null;
+      }
     }, undefined, (err) => {
       console.error('Failed to load tandem_bicycle.glb:', err);
+    });
+  }
+
+  applyPreset(presetData) {
+    if (!this.modelLoaded) {
+      this._pendingPreset = presetData;
+      return;
+    }
+
+    const model = this.group.children[0];
+    if (!model) return;
+
+    // Store originals on first call
+    if (!this._originalMats) {
+      this._originalMats = new Map();
+      model.traverse(child => {
+        if (child.isMesh) {
+          this._originalMats.set(child.name, child.material.clone());
+        }
+      });
+    }
+
+    // Reset all materials to original
+    model.traverse(child => {
+      if (child.isMesh) {
+        const orig = this._originalMats.get(child.name);
+        if (orig) {
+          child.material = orig.clone();
+          if (this.spokeMeshes.includes(child)) {
+            child.material.transparent = true;
+          }
+        }
+      }
+    });
+
+    if (!presetData) return; // null = default, just reset
+
+    // Apply preset overrides
+    model.traverse(child => {
+      if (!child.isMesh) return;
+      const entry = presetData[child.name];
+      if (!entry) return;
+      const mat = child.material;
+      if (entry.color && mat.color) mat.color.set(entry.color);
+      if (entry.emissive && mat.emissive) mat.emissive.set(entry.emissive);
+      if (entry.metalness !== undefined) mat.metalness = entry.metalness;
+      if (entry.roughness !== undefined) mat.roughness = entry.roughness;
+      if (entry.opacity !== undefined) {
+        mat.opacity = entry.opacity;
+        mat.transparent = entry.opacity < 1;
+      }
+      if (entry.wireframe !== undefined) mat.wireframe = entry.wireframe;
+      if (entry.side !== undefined) mat.side = entry.side;
+      if (entry.disabledTextures) {
+        for (const tk of entry.disabledTextures) mat[tk] = null;
+        mat.needsUpdate = true;
+      }
+      if (this.spokeMeshes.includes(child)) {
+        mat.transparent = true;
+      }
     });
   }
 

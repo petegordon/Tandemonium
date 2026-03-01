@@ -1078,8 +1078,66 @@
   .lobby-subtitle {
     color: rgba(255,255,255,0.5);
     font-size: 13px;
-    margin: 0 0 24px;
+    margin: 0 0 12px;
   }
+
+  /* ── Bike Carousel ── */
+  #bike-carousel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 12px;
+    width: 100%;
+    max-width: 320px;
+  }
+  #bike-preview-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+  }
+  #bike-preview-canvas {
+    width: 100%;
+    max-width: 220px;
+    aspect-ratio: 5 / 3;
+    border-radius: 12px;
+    background: #111;
+    border: 1.5px solid rgba(255,255,255,0.12);
+  }
+  #bike-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.8);
+    letter-spacing: 0.5px;
+  }
+  .bike-carousel-nav {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.6);
+    font-size: 22px;
+    font-weight: 300;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    flex-shrink: 0;
+  }
+  .bike-carousel-nav:active {
+    background: rgba(255,255,255,0.2);
+    border-color: rgba(255,255,255,0.5);
+  }
+
   .lobby-step {
     display: flex;
     flex-direction: column;
@@ -1948,6 +2006,15 @@ ON</button>
   </div>
   <img id="lobby-banner" src="images/tandemonium_title.png" alt="Tandemonium">
   <p class="lobby-subtitle">Party Physics Game on a Tandem Bicycle</p>
+  <div id="bike-carousel">
+    <button id="bike-prev" class="bike-carousel-nav">&#8249;</button>
+    <div id="bike-preview-wrap">
+      <canvas id="bike-preview-canvas"></canvas>
+      <div id="bike-name">Default</div>
+    </div>
+    <button id="bike-next" class="bike-carousel-nav">&#8250;</button>
+  </div>
+
   <div class="lobby-card">
 
     <!-- Step 1: Mode selection -->
@@ -2065,7 +2132,7 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.6de282d | 02-28-2026 22:52</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.e95edca | 03-01-2026 09:46</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
