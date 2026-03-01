@@ -63,19 +63,15 @@ export class GameRecorder {
     this._clipUrl = null;
     this._clipBlob = null;
 
-    // Bind UI events
-    if (this.shareBtn) {
-      this.shareBtn.addEventListener('click', () => this.saveClip());
-    }
-    if (this.previewShareBtn) {
-      this.previewShareBtn.addEventListener('click', () => this._shareClip());
-    }
-    if (this.previewSaveBtn) {
-      this.previewSaveBtn.addEventListener('click', () => this._downloadClip());
-    }
-    if (this.previewDiscardBtn) {
-      this.previewDiscardBtn.addEventListener('click', () => this._discardClip());
-    }
+    // Bind UI events (touchend + click for mobile reliability)
+    const onTap = (el, fn) => {
+      el.addEventListener('touchend', (e) => { e.preventDefault(); fn(); });
+      el.addEventListener('click', fn);
+    };
+    if (this.shareBtn) onTap(this.shareBtn, () => this.saveClip());
+    if (this.previewShareBtn) onTap(this.previewShareBtn, () => this._shareClip());
+    if (this.previewSaveBtn) onTap(this.previewSaveBtn, () => this._downloadClip());
+    if (this.previewDiscardBtn) onTap(this.previewDiscardBtn, () => this._discardClip());
 
     // Hide share button if not supported
     if (!this.supported && this.shareBtn) {

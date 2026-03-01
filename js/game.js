@@ -119,24 +119,24 @@ class Game {
     });
 
     // Try Again from disconnect overlay
-    document.getElementById('btn-try-reconnect').addEventListener('click', () => {
+    this._onTap('btn-try-reconnect', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
       if (this.net) this.net.retryConnection();
     });
 
     // Return to lobby from disconnect overlay
-    document.getElementById('btn-return-lobby').addEventListener('click', () => {
+    this._onTap('btn-return-lobby', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
       this._returnToLobby();
     });
 
     // Game Over: save clip
-    document.getElementById('btn-gameover-clip').addEventListener('click', () => {
+    this._onTap('btn-gameover-clip', () => {
       if (this.recorder) this.recorder.saveClip();
     });
 
     // Game Over: restart
-    document.getElementById('btn-restart').addEventListener('click', () => {
+    this._onTap('btn-restart', () => {
       if (this.mode === 'stoker' && this.net) {
         // Stoker requests restart — captain drives the reset
         this._hideGameOver();
@@ -152,7 +152,7 @@ class Game {
     });
 
     // Game Over: return to lobby
-    document.getElementById('btn-gameover-lobby').addEventListener('click', () => {
+    this._onTap('btn-gameover-lobby', () => {
       this._hideGameOver();
       this._returnToLobby();
     });
@@ -173,7 +173,7 @@ class Game {
     this._contribStoker = document.getElementById('contrib-stoker');
 
     // Victory overlay buttons
-    document.getElementById('btn-play-again').addEventListener('click', () => {
+    this._onTap('btn-play-again', () => {
       if (this.mode === 'stoker' && this.net) {
         // Stoker requests restart — captain drives the reset
         this._hideVictory();
@@ -187,7 +187,7 @@ class Game {
       this._hideVictory();
       this._resetGame(false, true);
     });
-    document.getElementById('btn-next-level').addEventListener('click', () => {
+    this._onTap('btn-next-level', () => {
       this._hideVictory();
       // Advance to next level
       const curIdx = LEVELS.indexOf(this.lobby.selectedLevel);
@@ -198,7 +198,7 @@ class Game {
         this._returnToLobby();
       }
     });
-    document.getElementById('btn-victory-lobby').addEventListener('click', () => {
+    this._onTap('btn-victory-lobby', () => {
       this._hideVictory();
       this._returnToLobby();
     });
@@ -1405,6 +1405,21 @@ class Game {
     const transport = this.net.transport === 'relay' ? 'RELAY' : 'P2P';
     if (typeEl) typeEl.textContent = transport;
     if (pingEl) pingEl.textContent = Math.round(this.net.pingMs) + 'ms';
+  }
+
+  // ============================================================
+  // OVERLAY BUTTON TAP HELPER (touch + click for mobile)
+  // ============================================================
+
+  _onTap(id, handler) {
+    const el = document.getElementById(id);
+    // touchend fires reliably on mobile even when click doesn't
+    // (body touch-action:none can suppress click synthesis in some browsers)
+    el.addEventListener('touchend', (e) => {
+      e.preventDefault();  // prevent subsequent click from double-firing
+      handler();
+    });
+    el.addEventListener('click', handler);
   }
 
   // ============================================================
