@@ -123,9 +123,11 @@ export class Lobby {
 
     // Leaderboard state
     this._lbVideo = null;
-    this._lbMainTab = 'solo';   // 'solo' | 'together' | 'you'
+    this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
     this._lbSubLevel = LEVELS[0].id;
     this._achievements = new AchievementManager();
+    this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
+    this._lbFocusCol = 0;   // index within the current row
 
     this._setup();
     this._buildLeaderboardTabs();
@@ -585,7 +587,35 @@ export class Lobby {
 
   _closeLeaderboard() {
     this._stopLeaderboardVideo();
+    this._lbClearFocus();
     document.getElementById('leaderboard-modal').style.display = 'none';
+  }
+
+  _lbGetRowItems(row) {
+    if (row === 0) return [...document.getElementById('lb-main-tabs').querySelectorAll('.lb-tab')];
+    if (row === 1) return [...document.getElementById('lb-sub-tabs').querySelectorAll('.lb-tab')];
+    if (row === 2) return [document.getElementById('leaderboard-close')];
+    return [];
+  }
+
+  _lbClearFocus() {
+    document.querySelectorAll('#leaderboard-modal .gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
+  }
+
+  _lbApplyFocus() {
+    this._lbClearFocus();
+    const items = this._lbGetRowItems(this._lbFocusRow);
+    const idx = Math.min(this._lbFocusCol, items.length - 1);
+    if (items[idx]) items[idx].classList.add('gamepad-focus');
+  }
+
+  _lbResetFocus() {
+    // Default: focus the active main tab
+    this._lbFocusRow = 0;
+    const mainTabs = document.getElementById('lb-main-tabs').querySelectorAll('.lb-tab');
+    this._lbFocusCol = [...mainTabs].findIndex(t => t.classList.contains('active'));
+    if (this._lbFocusCol < 0) this._lbFocusCol = 0;
+    this._lbApplyFocus();
   }
 
   _toggleProfile() {
@@ -677,6 +707,7 @@ export class Lobby {
     modal.style.display = '';
     this._startLeaderboardVideo(this._lbSubLevel);
     this._renderLeaderboardContent();
+    this._lbResetFocus();
   }
 
   async _renderLeaderboardContent() {
@@ -1176,16 +1207,45 @@ export class Lobby {
       this._gpPrevA = a; this._gpPrevB = b;
       return;
     }
+    // Leaderboard modal gamepad navigation
+    if (document.getElementById('leaderboard-modal').style.display !== 'none') {
+      if (left && !this._gpPrevLeft) {
+        this._lbFocusCol = Math.max(0, this._lbFocusCol - 1);
+        this._lbApplyFocus();
+      }
+      if (right && !this._gpPrevRight) {
+        const rowLen = this._lbGetRowItems(this._lbFocusRow).length;
+        this._lbFocusCol = Math.min(rowLen - 1, this._lbFocusCol + 1);
+        this._lbApplyFocus();
+      }
+      if (up && !this._gpPrevUp) {
+        this._lbFocusRow = Math.max(0, this._lbFocusRow - 1);
+        const rowLen = this._lbGetRowItems(this._lbFocusRow).length;
+        this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
+        this._lbApplyFocus();
+      }
+      if (down && !this._gpPrevDown) {
+        this._lbFocusRow = Math.min(2, this._lbFocusRow + 1);
+        const rowLen = this._lbGetRowItems(this._lbFocusRow).length;
+        this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
+        this._lbApplyFocus();
+      }
+      if (a && !this._gpPrevA) {
+        const items = this._lbGetRowItems(this._lbFocusRow);
+        const idx = Math.min(this._lbFocusCol, items.length - 1);
+        if (items[idx]) items[idx].click();
+      }
+      if (b && !this._gpPrevB) {
+        this._closeLeaderboard();
+      }
+      this._gpPrevUp = up; this._gpPrevDown = down;
+      this._gpPrevLeft = left; this._gpPrevRight = right;
+      this._gpPrevA = a; this._gpPrevB = b;
+      return;
+    }
     if (b && !this._gpPrevB) {
       if (this.helpModal.classList.contains('visible')) {
         this._closeHelp();
-        this._gpPrevUp = up; this._gpPrevDown = down;
-        this._gpPrevLeft = left; this._gpPrevRight = right;
-        this._gpPrevA = a; this._gpPrevB = b;
-        return;
-      }
-      if (document.getElementById('leaderboard-modal').style.display !== 'none') {
-        this._closeLeaderboard();
         this._gpPrevUp = up; this._gpPrevDown = down;
         this._gpPrevLeft = left; this._gpPrevRight = right;
         this._gpPrevA = a; this._gpPrevB = b;
