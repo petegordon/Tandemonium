@@ -289,7 +289,7 @@ export class BikeModel {
     }
 
     // Steering from lean
-    const turnRate = -this.lean * this.speed * 0.35;
+    const turnRate = -this.lean * this.speed * BALANCE_DEFAULTS.turnRate;
     this.heading += turnRate * dt;
 
     // Slope physics — uphill decelerates, downhill accelerates

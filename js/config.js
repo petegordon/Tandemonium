@@ -33,7 +33,8 @@ export const BALANCE_DEFAULTS = {
   sensitivity: 40,
   deadzone: 2,
   lowPassK: 0.3,
-  leanForce: 8,
-  gravityForce: 4,
-  damping: 3.0,
+  leanForce: 12,
+  gravityForce: 2.5,
+  damping: 4.0,
+  turnRate: 0.50,
 };
