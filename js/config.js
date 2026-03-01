@@ -27,3 +27,13 @@ export const MSG_COLLECT     = 0x06;
 export const MSG_PROFILE     = 0x07;
 
 export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';
+
+// Balance physics defaults — single source of truth
+export const BALANCE_DEFAULTS = {
+  sensitivity: 40,
+  deadzone: 2,
+  lowPassK: 0.3,
+  leanForce: 8,
+  gravityForce: 4,
+  damping: 3.0,
+};

@@ -496,38 +496,7 @@
 
 <!-- Tuning toggle -->
 <div id="tuning-toggle">&#9881;</div>
-<div id="tuning-panel">
-  <div class="tune-row">
-    <label>Sensitivity</label>
-    <input type="range" id="tune-sensitivity" min="10" max="80" step="1" value="40">
-    <span class="tune-val" id="val-sensitivity">40&deg;</span>
-  </div>
-  <div class="tune-row">
-    <label>Deadzone</label>
-    <input type="range" id="tune-deadzone" min="0" max="10" step="0.5" value="2">
-    <span class="tune-val" id="val-deadzone">2.0&deg;</span>
-  </div>
-  <div class="tune-row">
-    <label>Low-pass k</label>
-    <input type="range" id="tune-lowpass" min="0.05" max="1.0" step="0.05" value="0.3">
-    <span class="tune-val" id="val-lowpass">0.30</span>
-  </div>
-  <div class="tune-row">
-    <label>Lean force</label>
-    <input type="range" id="tune-leanforce" min="5" max="30" step="1" value="8">
-    <span class="tune-val" id="val-leanforce">14</span>
-  </div>
-  <div class="tune-row">
-    <label>Gravity force</label>
-    <input type="range" id="tune-gravity" min="1" max="10" step="0.5" value="4">
-    <span class="tune-val" id="val-gravity">4.0</span>
-  </div>
-  <div class="tune-row">
-    <label>Damping</label>
-    <input type="range" id="tune-damping" min="0.5" max="5" step="0.1" value="3.0">
-    <span class="tune-val" id="val-damping">3.0</span>
-  </div>
-</div>
+<div id="tuning-panel"></div>
 
 <script type="importmap">
 {
@@ -541,15 +510,19 @@
 <script>
 // ============================================================
 // TUNING PARAMETERS (live-adjustable)
+// Defaults should match BALANCE_DEFAULTS in js/config.js
 // ============================================================
-const TUNE = {
-  sensitivity: 40,   // degrees of tilt for full lean
-  deadzone: 2,       // degrees ignored around center
-  lowPassK: 0.3,     // accelerometer smoothing factor
-  leanForce: 8,      // leanInput * N in physics
-  gravityForce: 4,   // sin(lean) * N
-  damping: 3.0       // leanVelocity * N
-};
+const SLIDER_CONFIG = [
+  { key: 'sensitivity',  label: 'Sensitivity',   min: 10,   max: 80,  step: 1,    default: 40,  fmt: v => v + '\u00B0' },
+  { key: 'deadzone',     label: 'Deadzone',      min: 0,    max: 10,  step: 0.5,  default: 2,   fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
+  { key: 'lowPassK',     label: 'Low-pass k',    min: 0.05, max: 1.0, step: 0.05, default: 0.3, fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'leanForce',    label: 'Lean force',    min: 5,    max: 30,  step: 1,    default: 8,   fmt: v => v },
+  { key: 'gravityForce', label: 'Gravity force',  min: 1,    max: 10,  step: 0.5,  default: 4,   fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'damping',      label: 'Damping',       min: 0.5,  max: 5,   step: 0.1,  default: 3.0, fmt: v => parseFloat(v).toFixed(1) },
+];
+
+const TUNE = {};
+SLIDER_CONFIG.forEach(s => { TUNE[s.key] = s.default; });
 
 // Gyro (WebHID) constants
 const GYRO_SCALE = 2000.0 / 32768.0;   // raw -> deg/s
@@ -558,28 +531,27 @@ const VENDOR_ID_SONY = 0x054c;
 const GYRO_PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
 
 // ============================================================
-// TUNING PANEL WIRING
+// TUNING PANEL WIRING (generated from SLIDER_CONFIG)
 // ============================================================
 (function setupTuning() {
   const toggle = document.getElementById('tuning-toggle');
   const panel = document.getElementById('tuning-panel');
   toggle.addEventListener('click', () => panel.classList.toggle('open'));
 
-  const sliders = [
-    { id: 'sensitivity', key: 'sensitivity', valId: 'val-sensitivity', fmt: v => v + '\u00B0' },
-    { id: 'deadzone',    key: 'deadzone',    valId: 'val-deadzone',    fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
-    { id: 'lowpass',     key: 'lowPassK',    valId: 'val-lowpass',     fmt: v => parseFloat(v).toFixed(2) },
-    { id: 'leanforce',   key: 'leanForce',   valId: 'val-leanforce',   fmt: v => v },
-    { id: 'gravity',     key: 'gravityForce',valId: 'val-gravity',     fmt: v => parseFloat(v).toFixed(1) },
-    { id: 'damping',     key: 'damping',     valId: 'val-damping',     fmt: v => parseFloat(v).toFixed(1) },
-  ];
+  panel.innerHTML = SLIDER_CONFIG.map(s =>
+    `<div class="tune-row">
+      <label>${s.label}</label>
+      <input type="range" id="tune-${s.key}" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.default}">
+      <span class="tune-val" id="val-${s.key}">${s.fmt(s.default)}</span>
+    </div>`
+  ).join('');
 
-  sliders.forEach(s => {
-    const input = document.getElementById('tune-' + s.id);
-    const display = document.getElementById(s.valId);
-    input.addEventListener('input', () => {
-      TUNE[s.key] = parseFloat(input.value);
-      display.textContent = s.fmt(input.value);
+  SLIDER_CONFIG.forEach(s => {
+    const el = document.getElementById('tune-' + s.key);
+    const display = document.getElementById('val-' + s.key);
+    el.addEventListener('input', () => {
+      TUNE[s.key] = parseFloat(el.value);
+      display.textContent = s.fmt(el.value);
     });
   });
 })();
