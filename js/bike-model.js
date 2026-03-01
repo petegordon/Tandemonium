@@ -178,9 +178,9 @@ export class BikeModel {
 
     // Balance physics (portrait-tuned: softer response, more damping)
     const gravity = Math.sin(this.lean) * 4.0;
-    const playerLean = balanceResult.leanInput * 14.0;
+    const playerLean = balanceResult.leanInput * 8.0;
     const gyro = -this.lean * Math.min(this.speed * 0.8, 6.0);
-    const damping = -this.leanVelocity * 2.5;
+    const damping = -this.leanVelocity * 3.0;
 
     const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
 

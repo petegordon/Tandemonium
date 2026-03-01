@@ -256,6 +256,66 @@
     box-shadow: 0 1px 0 rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 6px rgba(220,160,20,0.3);
   }
 
+  /* ── Gyro Bar ── */
+  #gyro-bar {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 4px 10px;
+    background: rgba(0,0,0,0.5);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+  }
+  #gyro-bar.visible { display: flex; }
+  #gyro-bar label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    color: rgba(255,255,255,0.8);
+  }
+  #gyro-bar input[type="checkbox"] { accent-color: #f0a; }
+  #gyro-recalibrate {
+    padding: 2px 8px;
+    font-size: 11px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+    border: 1px solid rgba(255,0,170,0.4);
+    background: rgba(255,0,170,0.1);
+    color: #f0a;
+    border-radius: 4px;
+    cursor: pointer;
+    display: none;
+  }
+  #gyro-recalibrate.visible { display: inline-block; }
+  #gyro-recalibrate:hover { background: rgba(255,0,170,0.2); }
+  #gyro-status {
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+  }
+
+  /* ── Gyro Calibrate Toast ── */
+  #gyro-calibrate-toast {
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(30,10,40,0.9);
+    color: #f0a;
+    border: 1px solid #f0a;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+    z-index: 20;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  #gyro-calibrate-toast.visible { opacity: 1; }
+
   /* ── Crash & Calibrate Flash ── */
   #crash-overlay {
     position: fixed;
@@ -343,6 +403,13 @@
     <button data-source="motion">Motion</button>
   </div>
 
+  <!-- Gyro Steering (gamepad + PS controller) -->
+  <div id="gyro-bar">
+    <label><input type="checkbox" id="gyro-toggle"> Gyro Steering</label>
+    <button id="gyro-recalibrate">Recalibrate</button>
+    <span id="gyro-status"></span>
+  </div>
+
   <!-- Diagnostics -->
   <div id="diagnostics">
     <div class="section" id="diag-input"></div>
@@ -350,6 +417,7 @@
     <div class="section" id="diag-tilt"></div>
     <div class="section" id="diag-pedal"></div>
     <div class="section" id="diag-bike"></div>
+    <div class="section" id="diag-gyro"></div>
   </div>
 
   <!-- Gauges -->
@@ -446,7 +514,7 @@
   </div>
   <div class="tune-row">
     <label>Lean force</label>
-    <input type="range" id="tune-leanforce" min="5" max="30" step="1" value="14">
+    <input type="range" id="tune-leanforce" min="5" max="30" step="1" value="8">
     <span class="tune-val" id="val-leanforce">14</span>
   </div>
   <div class="tune-row">
@@ -456,8 +524,8 @@
   </div>
   <div class="tune-row">
     <label>Damping</label>
-    <input type="range" id="tune-damping" min="0.5" max="5" step="0.1" value="2.5">
-    <span class="tune-val" id="val-damping">2.5</span>
+    <input type="range" id="tune-damping" min="0.5" max="5" step="0.1" value="3.0">
+    <span class="tune-val" id="val-damping">3.0</span>
   </div>
 </div>
 
@@ -478,10 +546,16 @@ const TUNE = {
   sensitivity: 40,   // degrees of tilt for full lean
   deadzone: 2,       // degrees ignored around center
   lowPassK: 0.3,     // accelerometer smoothing factor
-  leanForce: 14,     // leanInput * N in physics
+  leanForce: 8,      // leanInput * N in physics
   gravityForce: 4,   // sin(lean) * N
-  damping: 2.5       // leanVelocity * N
+  damping: 3.0       // leanVelocity * N
 };
+
+// Gyro (WebHID) constants
+const GYRO_SCALE = 2000.0 / 32768.0;   // raw -> deg/s
+const GYRO_CALIB_COUNT = 150;           // ~1.5 s at 100 Hz
+const VENDOR_ID_SONY = 0x054c;
+const GYRO_PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
 
 // ============================================================
 // TUNING PANEL WIRING
@@ -522,6 +596,7 @@ let inputSource = 'keyboard'; // 'keyboard' | 'gamepad' | 'motion'
       buttons.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       inputSource = btn.dataset.source;
+      updateGyroBarVisibility();
     });
   });
 })();
@@ -569,6 +644,19 @@ const input = {
   _gpRawStickX: 0,
   _gpLB: false,
   _gpRB: false,
+
+  // Gyro (WebHID) state
+  _hidDevice: null,
+  _hidConnectionType: null,
+  _gyroCalibrating: false,
+  _gyroBias: { x: 0, y: 0, z: 0 },
+  _gyroCalibSamples: [],
+  _gyroLastTime: 0,
+  _gyroRawZ: 0,
+  _gyroAngle: 0,
+  gyroLean: 0,
+  _gyroConnected: false,
+  _gyroEnabled: false,
 
   // Active lean source for diagnostics
   _activeLeanSource: 'none',
@@ -713,6 +801,7 @@ const input = {
     input.gamepadConnected = true;
     input._gpName = e.gamepad.id;
     console.log('Gamepad connected:', e.gamepad.id);
+    updateGyroBarVisibility();
   });
   window.addEventListener('gamepaddisconnected', (e) => {
     if (input.gamepadIndex === e.gamepad.index) {
@@ -728,6 +817,192 @@ const input = {
       input._gpLB = false;
       input._gpRB = false;
       console.log('Gamepad disconnected');
+      disconnectGyro();
+      updateGyroBarVisibility();
+    }
+  });
+})();
+
+// ── WebHID Gyro Functions ──
+function readSigned16(data, offset) {
+  let val = data.getUint8(offset) | (data.getUint8(offset + 1) << 8);
+  if (val > 0x7FFF) val -= 0x10000;
+  return val;
+}
+
+function detectConnectionType(device) {
+  for (const col of device.collections) {
+    if (col.outputReports && col.outputReports.length > 0) {
+      for (const report of col.outputReports) {
+        if (report.reportId === 0x31) return 'bluetooth';
+      }
+    }
+  }
+  return 'usb';
+}
+
+function startGyroCalibration() {
+  input._gyroCalibrating = true;
+  input._gyroCalibSamples = [];
+  input._gyroAngle = 0;
+  input._gyroLastTime = 0;
+  input.gyroLean = 0;
+  const toast = document.getElementById('gyro-calibrate-toast');
+  toast.classList.add('visible');
+  document.getElementById('gyro-status').textContent = 'calibrating…';
+}
+
+function finishGyroCalibration() {
+  if (input._gyroCalibSamples.length === 0) return;
+  let sz = 0;
+  for (const s of input._gyroCalibSamples) sz += s;
+  input._gyroBias.z = sz / input._gyroCalibSamples.length;
+  input._gyroCalibrating = false;
+  input._gyroCalibSamples = [];
+  input._gyroAngle = 0;
+  input._gyroLastTime = 0;
+  input.gyroLean = 0;
+  const toast = document.getElementById('gyro-calibrate-toast');
+  toast.classList.remove('visible');
+  document.getElementById('gyro-status').textContent = 'connected';
+  console.log('Gyro bias Z:', input._gyroBias.z);
+}
+
+function handleGyroInputReport(event) {
+  const report = event.data;
+  const reportId = event.reportId;
+  const now = performance.now();
+
+  let gyroOffset;
+  if (input._hidConnectionType === 'usb' && reportId === 0x01) {
+    gyroOffset = 15;
+  } else if (input._hidConnectionType === 'bluetooth' && reportId === 0x31) {
+    gyroOffset = 16;
+  } else {
+    return;
+  }
+
+  const rawZ = readSigned16(report, gyroOffset + 4);
+  input._gyroRawZ = rawZ;
+
+  // Calibration sampling
+  if (input._gyroCalibrating) {
+    input._gyroCalibSamples.push(rawZ);
+    if (input._gyroCalibSamples.length >= GYRO_CALIB_COUNT) finishGyroCalibration();
+    input._gyroLastTime = now;
+    return;
+  }
+
+  // Bias-corrected Z in deg/s
+  const correctedZ = (rawZ - input._gyroBias.z) * GYRO_SCALE;
+
+  // Integrate angle
+  if (input._gyroLastTime > 0) {
+    const dt = (now - input._gyroLastTime) / 1000.0;
+    if (dt < 0.1) {
+      input._gyroAngle += correctedZ * dt;
+    }
+  }
+  input._gyroLastTime = now;
+
+  // Map angle through deadzone + sensitivity to lean [-1, 1]
+  let angle = input._gyroAngle;
+  const dz = TUNE.deadzone;
+  if (Math.abs(angle) < dz) {
+    angle = 0;
+  } else {
+    angle = angle - Math.sign(angle) * dz;
+  }
+  input.gyroLean = Math.max(-1, Math.min(1, angle / TUNE.sensitivity));
+}
+
+async function connectGyro() {
+  if (input._hidDevice) return;
+  const statusEl = document.getElementById('gyro-status');
+  try {
+    const filters = GYRO_PRODUCT_IDS.map(productId => ({
+      vendorId: VENDOR_ID_SONY, productId,
+      usagePage: 0x0001, usage: 0x0005
+    }));
+    const devices = await navigator.hid.requestDevice({ filters });
+    if (!devices || devices.length === 0) {
+      statusEl.textContent = 'cancelled';
+      document.getElementById('gyro-toggle').checked = false;
+      input._gyroEnabled = false;
+      return;
+    }
+    input._hidDevice = devices[0];
+    if (!input._hidDevice.opened) await input._hidDevice.open();
+    input._hidConnectionType = detectConnectionType(input._hidDevice);
+    console.log('WebHID connected:', input._hidDevice.productName, '(' + input._hidConnectionType + ')');
+
+    input._hidDevice.addEventListener('inputreport', handleGyroInputReport);
+    input._gyroConnected = true;
+    statusEl.textContent = 'calibrating…';
+    document.getElementById('gyro-recalibrate').classList.add('visible');
+
+    // Auto-calibrate on connect
+    startGyroCalibration();
+  } catch (err) {
+    console.error('WebHID connection failed:', err);
+    statusEl.textContent = 'error: ' + err.message;
+    document.getElementById('gyro-toggle').checked = false;
+    input._gyroEnabled = false;
+  }
+}
+
+function disconnectGyro() {
+  if (input._hidDevice) {
+    input._hidDevice.removeEventListener('inputreport', handleGyroInputReport);
+    try { input._hidDevice.close(); } catch (e) { /* ignore */ }
+  }
+  input._hidDevice = null;
+  input._hidConnectionType = null;
+  input._gyroConnected = false;
+  input._gyroCalibrating = false;
+  input._gyroCalibSamples = [];
+  input._gyroLastTime = 0;
+  input._gyroRawZ = 0;
+  input._gyroAngle = 0;
+  input.gyroLean = 0;
+  input._gyroEnabled = false;
+  const toggle = document.getElementById('gyro-toggle');
+  if (toggle) toggle.checked = false;
+  const recal = document.getElementById('gyro-recalibrate');
+  if (recal) recal.classList.remove('visible');
+  const status = document.getElementById('gyro-status');
+  if (status) status.textContent = '';
+  const toast = document.getElementById('gyro-calibrate-toast');
+  if (toast) toast.classList.remove('visible');
+}
+
+// ── Gyro UI Wiring ──
+function updateGyroBarVisibility() {
+  const bar = document.getElementById('gyro-bar');
+  if (!bar) return;
+  const show = inputSource === 'gamepad' &&
+    input.gamepadConnected &&
+    !!navigator.hid &&
+    /playstation|dualsense|dualshock|054c/i.test(input._gpName);
+  if (show) {
+    bar.classList.add('visible');
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+(function setupGyroToggle() {
+  const toggle = document.getElementById('gyro-toggle');
+  const recal = document.getElementById('gyro-recalibrate');
+  toggle.addEventListener('change', () => {
+    input._gyroEnabled = toggle.checked;
+    if (toggle.checked && !input._gyroConnected) {
+      connectGyro();
+    }
+  });
+  recal.addEventListener('click', () => {
+    if (input._gyroConnected && !input._gyroCalibrating) {
+      startGyroCalibration();
     }
   });
 })();
@@ -1030,7 +1305,12 @@ function gameLoop(now) {
   let leanInput = 0;
   input._activeLeanSource = inputSource;
   if (inputSource === 'gamepad') {
-    leanInput = input.gamepadConnected ? input.gamepadLean : 0;
+    if (input._gyroEnabled && input._gyroConnected && !input._gyroCalibrating) {
+      leanInput = input.gyroLean;
+      input._activeLeanSource = 'gamepad+gyro';
+    } else {
+      leanInput = input.gamepadConnected ? input.gamepadLean : 0;
+    }
   } else if (inputSource === 'motion') {
     leanInput = input.motionEnabled ? input.motionLean : 0;
   } else if (inputSource === 'keyboard') {
@@ -1084,7 +1364,11 @@ function updateUI(dt) {
   // ── Gauges — show selected lean source ──
   let phoneDeg;
   if (inputSource === 'gamepad') {
-    phoneDeg = input.gamepadLean * TUNE.sensitivity;
+    if (input._gyroEnabled && input._gyroConnected && !input._gyroCalibrating) {
+      phoneDeg = input._gyroAngle;
+    } else {
+      phoneDeg = input.gamepadLean * TUNE.sensitivity;
+    }
   } else if (inputSource === 'motion') {
     phoneDeg = input.motionRawRelative;
   } else {
@@ -1183,6 +1467,24 @@ function updateUI(dt) {
     ` <span class="label">lean</span> <span class="${leanCls}">${leanDeg.toFixed(1)}\u00B0</span>` +
     ` <span class="label">lv</span> <span class="val">${bike.leanVelocity.toFixed(2)}</span>` +
     (bike.fallen ? ` <span class="val-err">CRASHED (${bike.fallTimer.toFixed(1)}s)</span>` : '');
+
+  // Gyro diagnostics
+  const diagGyro = document.getElementById('diag-gyro');
+  if (input._gyroConnected) {
+    const corrZ = ((input._gyroRawZ - input._gyroBias.z) * GYRO_SCALE).toFixed(1);
+    const calibProg = input._gyroCalibrating
+      ? ` <span class="val-warn">calib ${input._gyroCalibSamples.length}/${GYRO_CALIB_COUNT}</span>` : '';
+    diagGyro.innerHTML =
+      `<span class="label">gyro</span>` +
+      ` <span class="label">rawZ</span> <span class="val">${input._gyroRawZ}</span>` +
+      ` <span class="label">bias</span> <span class="val">${input._gyroBias.z.toFixed(1)}</span>` +
+      ` <span class="label">corrZ</span> <span class="val">${corrZ}°/s</span>` +
+      ` <span class="label">angle</span> <span class="val">${input._gyroAngle.toFixed(1)}°</span>` +
+      ` <span class="label">lean</span> <span class="val">${input.gyroLean.toFixed(3)}</span>` +
+      calibProg;
+  } else {
+    diagGyro.innerHTML = '';
+  }
 }
 
 requestAnimationFrame(gameLoop);
@@ -1317,6 +1619,8 @@ function render3D() {
 }
 render3D();
 </script>
+
+<div id="gyro-calibrate-toast">Calibrating gyro — hold still...</div>
 
 </body>
 </html>
