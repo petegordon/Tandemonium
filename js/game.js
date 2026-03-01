@@ -882,6 +882,7 @@ class Game {
       collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
       totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
       finishedLevel: level.id,
+      bikeKey: this.lobby.selectedPresetKey,
       raceDistance: level.distance,
       crashes: this.raceManager ? this.raceManager.crashCount : 0,
       isMultiplayer: this.mode !== 'solo',

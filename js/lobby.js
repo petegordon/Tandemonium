@@ -9,6 +9,16 @@ import { RELAY_URL, BIKE_MODEL_PATH } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 
+const BIKE_NAMES = {
+  default: 'Old Faithful',
+  bike_orange: 'Marmalade Express',
+  bike_magenta: 'Berry Blaster',
+  bike_red: 'Cherry Bomb',
+  bike_blue: 'Ocean Breeze',
+  bike_green: 'Jungle Cruiser',
+  bike_yellow: 'Banana Split',
+};
+
 export class Lobby {
   constructor({ onSolo, onMultiplayerReady, input }) {
     this.onSolo = onSolo;
@@ -16,6 +26,7 @@ export class Lobby {
     this.input = input; // InputManager — needed for iOS motion permission
     this.net = null;
     this.selectedLevel = LEVELS[0]; // default level
+    this.selectedPresetKey = 'default';
     this._pendingMode = null; // 'solo' or 'multiplayer', set during level selection
 
     this.lobbyEl = document.getElementById('lobby');
@@ -1309,15 +1320,13 @@ export class Lobby {
       });
     }
 
+    this.selectedPresetKey = key;
+    nameEl.textContent = BIKE_NAMES[key] || key;
+
     if (key === 'default') {
-      nameEl.textContent = 'Default';
       this.selectedPreset = null;
       return;
     }
-
-    // Format name: "bike_orange" → "Orange"
-    const label = key.replace('bike_', '');
-    nameEl.textContent = label.charAt(0).toUpperCase() + label.slice(1);
     this.selectedPreset = this._presetData[key];
 
     // Apply preset materials
