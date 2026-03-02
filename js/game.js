@@ -121,12 +121,14 @@ class Game {
     // Try Again from disconnect overlay
     this._onTap('btn-try-reconnect', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
+      this._clearOverlayButtons();
       if (this.net) this.net.retryConnection();
     });
 
     // Return to lobby from disconnect overlay
     this._onTap('btn-return-lobby', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
+      this._clearOverlayButtons();
       this._returnToLobby();
     });
 
@@ -616,7 +618,7 @@ class Game {
       }
 
       setTimeout(() => {
-        if (this.state === 'playing' && flavorNum) {
+        if ((this.state === 'playing' || this.state === 'countdown') && flavorNum) {
           flavorNum.textContent = '';
           flavorNum.className = '';
         }
@@ -682,6 +684,9 @@ class Game {
   }
 
   _onTimerExpired() {
+    // Dismiss the countdown overlay immediately so "1" doesn't stick
+    this.hud.hideTimer();
+
     // Show "TOO SLOW!" overlay, pause, then reset to last checkpoint
     const flash = document.getElementById('timeout-flash');
     flash.classList.remove('visible');
@@ -811,6 +816,13 @@ class Game {
     const msg = document.getElementById('disconnect-msg');
     overlay.style.display = 'flex';
     msg.textContent = reason || 'Partner disconnected';
+
+    // Register buttons for gamepad navigation
+    const btns = [
+      document.getElementById('btn-try-reconnect'),
+      document.getElementById('btn-return-lobby')
+    ];
+    this._setOverlayButtons(btns);
   }
 
   _showGameOver(fromRemote = false) {
@@ -1552,7 +1564,8 @@ class Game {
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
-      if (this.state === 'gameover' || this.state === 'victory') this._pollOverlayGamepad();
+      if (this.state === 'gameover' || this.state === 'victory' ||
+          document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
       this.world.update(this.bike.position, this.bike.roadD);
       this.chaseCamera.update(this.bike, dt, roadPath);
       this.renderer.render(this.scene, this.camera);

@@ -1419,14 +1419,20 @@ export class Lobby {
     });
 
     // Arrow navigation
-    document.getElementById('bike-prev').addEventListener('click', () => {
+    const prevBtn = document.getElementById('bike-prev');
+    const nextBtn = document.getElementById('bike-next');
+    const goPrev = () => {
       this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
       this._applyPresetToPreview();
-    });
-    document.getElementById('bike-next').addEventListener('click', () => {
+    };
+    const goNext = () => {
       this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
       this._applyPresetToPreview();
-    });
+    };
+    prevBtn.addEventListener('click', goPrev);
+    nextBtn.addEventListener('click', goNext);
+    prevBtn.addEventListener('touchend', (e) => { e.preventDefault(); goPrev(); });
+    nextBtn.addEventListener('touchend', (e) => { e.preventDefault(); goNext(); });
 
     // Touch swipe on canvas
     let touchStartX = 0;
