@@ -20,6 +20,7 @@ export class RaceManager {
     this.finishTime = 0;
     this.collectiblesCount = 0;
     this.crashCount = 0;
+    this.inputSource = 'none';
 
     // Segment countdown timer (seconds)
     this.segmentTimeRemaining = 0;
@@ -159,6 +160,7 @@ export class RaceManager {
       checkpointsTotal: this.checkpoints.length,
       collectibles: this.collectiblesCount,
       crashes: this.crashCount,
+      inputSource: this.inputSource,
       finished: this.finished
     };
   }

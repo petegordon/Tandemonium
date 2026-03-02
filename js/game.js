@@ -530,6 +530,7 @@ class Game {
     }
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
+    this.balanceCtrl.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera);
@@ -987,6 +988,7 @@ class Game {
     statsEl.innerHTML = '';
 
     if (this.raceManager) {
+      this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
       const summary = this.raceManager.getSummary(this.bike.distanceTraveled);
       const collectIcon = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81'; // 💎 or 🎁
       const distStr = summary.distance >= 1000 ? (summary.distance / 1000).toFixed(2) + ' km' : summary.distance + ' m';
@@ -996,11 +998,15 @@ class Game {
         { icon: '\u23F1\uFE0F', value: summary.timeFormatted },          // ⏱️ Time
         { icon: '\uD83D\uDEB4', value: distStr },                         // 🚴 Distance
       ];
+      const inputSourceEmoji = { keyboard: '\uD83D\uDCBB', gamepad: '\uD83D\uDD79\uFE0F', motion: '\uD83D\uDCF1', 'gamepad-gyro': '\uD83C\uDFAE' };
       const right = [
         { icon: '\u2601\uFE0F', value: summary.checkpointsPassed + '/' + summary.checkpointsTotal }, // ☁️ Checkpoints
       ];
       if (summary.collectibles > 0) {
         right.push({ icon: collectIcon, value: '' + summary.collectibles });
+      }
+      if (summary.inputSource && summary.inputSource !== 'none') {
+        right.push({ icon: inputSourceEmoji[summary.inputSource] || '', value: summary.inputSource });
       }
 
       // Solo performance stats
@@ -1122,6 +1128,7 @@ class Game {
       timeMs: raceSummary.timeMs,
       mode: this.mode,
       collectiblesCount: this.collectibleManager ? this.collectibleManager.collected : 0,
+      inputSource: raceSummary.inputSource,
       newAchievements: this.achievements.getNewThisSession().map(a => a.id),
     };
 

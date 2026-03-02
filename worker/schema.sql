@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS scores (
   time_ms INTEGER NOT NULL,
   mode TEXT NOT NULL,               -- 'solo' | 'captain' | 'stoker'
   collectibles_count INTEGER DEFAULT 0,
+  input_source TEXT DEFAULT 'none',
   created_at TEXT DEFAULT (datetime('now'))
 );
 

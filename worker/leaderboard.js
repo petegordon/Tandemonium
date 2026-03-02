@@ -105,7 +105,7 @@ async function handleGoogleAuth(request, env, corsOrigin) {
 
 async function submitScore(request, env, corsOrigin, userId) {
   const body = await request.json();
-  const { levelId, distance, timeMs, mode, collectiblesCount, contributions, newAchievements } = body;
+  const { levelId, distance, timeMs, mode, collectiblesCount, inputSource, contributions, newAchievements } = body;
 
   if (!levelId || !distance || !timeMs) {
     return jsonResponse({ error: 'Missing required fields' }, 400, corsOrigin);
@@ -113,8 +113,8 @@ async function submitScore(request, env, corsOrigin, userId) {
 
   // Insert score
   const scoreRes = await env.DB.prepare(
-    'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count) VALUES (?, ?, ?, ?, ?, ?)'
-  ).bind(userId, levelId, distance, timeMs, mode || 'solo', collectiblesCount || 0).run();
+    'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).bind(userId, levelId, distance, timeMs, mode || 'solo', collectiblesCount || 0, inputSource || 'none').run();
 
   const scoreId = scoreRes.meta.last_row_id;
 
@@ -169,7 +169,7 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
 
   if (scope === 'global') {
     query = `
-      SELECT s.id, s.distance, s.time_ms, s.mode, s.collectibles_count, s.created_at,
+      SELECT s.id, s.distance, s.time_ms, s.mode, s.collectibles_count, s.input_source, s.created_at,
              u.display_name, u.avatar_url, u.id as user_id
       FROM scores s
       JOIN users u ON s.user_id = u.id
@@ -183,7 +183,7 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
     if (!userId) return jsonResponse({ error: 'Auth required for friends scope' }, 401, corsOrigin);
 
     query = `
-      SELECT s.id, s.distance, s.time_ms, s.mode, s.collectibles_count, s.created_at,
+      SELECT s.id, s.distance, s.time_ms, s.mode, s.collectibles_count, s.input_source, s.created_at,
              u.display_name, u.avatar_url, u.id as user_id
       FROM scores s
       JOIN users u ON s.user_id = u.id
@@ -240,7 +240,7 @@ async function handlePlayerProfile(request, env, url, corsOrigin) {
   ).bind(playerId).all();
 
   const recentScores = await env.DB.prepare(
-    'SELECT id, level_id, distance, time_ms, mode, collectibles_count, created_at FROM scores WHERE user_id = ? ORDER BY created_at DESC LIMIT 10'
+    'SELECT id, level_id, distance, time_ms, mode, collectibles_count, input_source, created_at FROM scores WHERE user_id = ? ORDER BY created_at DESC LIMIT 10'
   ).bind(playerId).all();
 
   return jsonResponse({
