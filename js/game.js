@@ -775,6 +775,9 @@ class Game {
       this.input.motionOffset = this.input.rawGamma;
     }
 
+    // Refresh HUD so speed/distance reflect the reset state during countdown
+    this.hud.update(this.bike, this.input, this.pedalCtrl || this.sharedPedal, 0);
+
     if (!fromRemote && this.net) {
       this.net.sendEvent(EVT_RESET);
     }
@@ -801,6 +804,12 @@ class Game {
     if (flavorNum) {
       flavorNum.textContent = '3';
       flavorNum.className = 'tick-3 pop';
+    }
+
+    // Re-show the segment timer (hidden by _onTimerExpired / _showGameOver)
+    if (this.raceManager) {
+      this.hud.initTimer();
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
     }
 
     this._playBeep(400, 0.15);
