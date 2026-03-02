@@ -529,6 +529,7 @@ class Game {
       flavorNum.className = 'tick-3 pop';
     }
     this.raceManager = new RaceManager(level);
+    this.hud.raceManager = this.raceManager;
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera);
@@ -1273,6 +1274,7 @@ class Game {
     this._hideGameOver();
     this._hideVictory();
     this.raceManager = null;
+    this.hud.raceManager = null;
     this.contributionTracker = null;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }

@@ -10,6 +10,8 @@ export class HUD {
     this.speedValueEl = document.getElementById('speed-value');
     this.speedBarFill = document.getElementById('speed-bar-fill');
     this.distanceEl = document.getElementById('distance-display');
+    this.elapsedEl = document.getElementById('elapsed-display');
+    this.raceManager = null;
     this.statusEl = document.getElementById('status');
     this.crashOverlay = document.getElementById('crash-overlay');
     this.crashFlash = 0;
@@ -136,6 +138,7 @@ export class HUD {
     this.countdownOverlay.classList.remove('visible');
     this.countdownNumber.textContent = '';
     this._lastCountdownSec = -1;
+    this.elapsedEl.textContent = '';
   }
 
   showCollectibles(level) {
@@ -180,6 +183,11 @@ export class HUD {
       this.distanceEl.textContent = (dist / 1000).toFixed(2) + ' km';
     } else {
       this.distanceEl.textContent = Math.round(dist) + ' m';
+    }
+
+    // Total elapsed time
+    if (this.raceManager && this.raceManager.startTime > 0) {
+      this.elapsedEl.textContent = '\u23F1 ' + this.raceManager.getElapsedFormatted();
     }
 
     const leftHeld = input.isPressed('ArrowLeft');
