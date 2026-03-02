@@ -107,10 +107,6 @@ export class Lobby {
     this._stepDefaultFocus = new Map();
     this._stepDefaultFocus.set(this.modeStep, 1); // RIDE TOGETHER
 
-    // Auth
-    this.auth = new AuthManager();
-    this._setupAuth();
-
     // Bike carousel state
     this.selectedPreset = null; // null = default, or preset data object
     this._presetKeys = ['default'];
@@ -127,6 +123,10 @@ export class Lobby {
     this._lbSubLevel = LEVELS[0].id;
     this._achievements = new AchievementManager();
     this._avatarCache = new Map(); // originalUrl → blobUrl (fetched once per session)
+
+    // Auth (after _avatarCache — _setupAuth triggers updateUI which reads the cache)
+    this.auth = new AuthManager();
+    this._setupAuth();
     this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
     this._lbFocusCol = 0;   // index within the current row
 
