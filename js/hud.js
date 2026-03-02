@@ -100,6 +100,7 @@ export class HUD {
     this.timerRow.classList.add('visible');
     this.timerEl.className = '';
     this.timerEl.textContent = '';
+    this.elapsedEl.textContent = '\u23F1 0s';
   }
 
   updateTimer(remaining, total) {
