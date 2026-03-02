@@ -789,10 +789,16 @@ class Game {
     this.instructionsEl.classList.add('hidden');
 
     const statusEl = document.getElementById('status');
-    statusEl.style.color = '#ffffff';
-    statusEl.style.fontSize = '48px';
-    statusEl.textContent = '3';
+    statusEl.textContent = '';
+    statusEl.style.fontSize = '';
     this._lastCountNum = 3;
+
+    // Show animated countdown "3" in flavor overlay (same as _startCountdown)
+    const flavorNum = document.getElementById('countdown-flavor-num');
+    if (flavorNum) {
+      flavorNum.textContent = '3';
+      flavorNum.className = 'tick-3 pop';
+    }
 
     this._playBeep(400, 0.15);
 
