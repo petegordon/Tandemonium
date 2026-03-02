@@ -20,6 +20,7 @@ export class InputManager {
     this.motionLean = 0;
     this.motionEnabled = false;
     this.motionReady = false;
+    this.onMotionEnabled = null; // callback when motionEnabled first becomes true
     this.rawGamma = 0;
     this.motionOffset = null;
     this.motionRawRelative = 0;
@@ -169,6 +170,7 @@ export class InputManager {
       const a = e.accelerationIncludingGravity;
       if (!a || a.x == null) return;
       this._useAccel = true;
+      if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
       this.motionEnabled = true;
 
       const k = 0.3;
@@ -199,6 +201,7 @@ export class InputManager {
       else rawTilt = e.gamma;
 
       if (rawTilt != null) {
+        if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
         this.motionEnabled = true;
         this._applyTilt(rawTilt);
       }

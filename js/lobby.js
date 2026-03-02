@@ -1033,6 +1033,18 @@ export class Lobby {
     }
     // else: no DeviceMotionEvent API at all — toggle stays hidden
 
+    // When motion sensor data starts flowing, ensure toggle shows green
+    if (this.input) {
+      this.input.onMotionEnabled = () => {
+        if (!this.motionActive) {
+          this._showMotionToggle();
+          this._motionPermitted = true;
+          this.motionActive = true;
+          this._setToggleActive('motion', true);
+        }
+      };
+    }
+
     // Show motion toggle if a gyro-capable gamepad connects later
     window.addEventListener('gamepadconnected', () => {
       if (this.toggleMotion.style.display !== 'none') return;
