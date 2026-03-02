@@ -652,7 +652,8 @@ export class Lobby {
     const tabs = [
       { id: 'solo', label: 'Solo' },
       { id: 'together', label: 'Together' },
-      { id: 'you', label: 'You' }
+      { id: 'you', label: 'You' },
+      { id: 'partners', label: 'Partners' }
     ];
     tabs.forEach(tab => {
       const btn = document.createElement('button');
@@ -673,6 +674,12 @@ export class Lobby {
   _buildSubTabs() {
     const container = document.getElementById('lb-sub-tabs');
     container.innerHTML = '';
+    if (this._lbMainTab === 'partners') {
+      this._stopLeaderboardVideo();
+      document.getElementById('leaderboard-video').style.display = 'none';
+      return;
+    }
+    document.getElementById('leaderboard-video').style.display = '';
     LEVELS.forEach(level => {
       const btn = document.createElement('button');
       btn.className = 'lb-tab' + (level.id === this._lbSubLevel ? ' active' : '');
@@ -705,7 +712,9 @@ export class Lobby {
     document.getElementById('leaderboard-title').textContent = 'Leaderboard';
 
     modal.style.display = '';
-    this._startLeaderboardVideo(this._lbSubLevel);
+    if (this._lbMainTab !== 'partners') {
+      this._startLeaderboardVideo(this._lbSubLevel);
+    }
     this._renderLeaderboardContent();
     this._lbResetFocus();
   }
@@ -740,6 +749,28 @@ export class Lobby {
         list.innerHTML = this._renderEntries(entries, level, myId);
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load rides</div>';
+      }
+    } else if (this._lbMainTab === 'partners') {
+      document.getElementById('leaderboard-title').textContent = 'Partners';
+      achDiv.innerHTML = '';
+      list.innerHTML = '<div class="lb-no-data">Loading...</div>';
+
+      try {
+        if (!this.auth.user) {
+          list.innerHTML = '<div class="lb-no-data">Sign in to see partners</div>';
+          return;
+        }
+        const data = await this.auth.getPartners();
+        const partners = data.partners || [];
+
+        if (partners.length === 0) {
+          list.innerHTML = '<div class="lb-no-data">Play together to find partners!</div>';
+          return;
+        }
+
+        list.innerHTML = this._renderPartners(partners);
+      } catch (e) {
+        list.innerHTML = '<div class="lb-no-data">Could not load partners</div>';
       }
     } else {
       // SOLO or TOGETHER — hide achievements, show filtered leaderboard
@@ -804,6 +835,25 @@ export class Lobby {
         modeHtml +
         collectHtml +
         '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
+        dateHtml +
+      '</div>';
+    }).join('');
+  }
+
+  _renderPartners(partners) {
+    return partners.map(p => {
+      const avatar = p.avatar_url
+        ? '<img class="lb-avatar" src="' + this._escapeHtml(p.avatar_url) + '" alt="" referrerpolicy="no-referrer">'
+        : '';
+      const name = (p.display_name || 'Player').split(' ')[0];
+      const rideLabel = p.rides_together === 1 ? '1 ride' : p.rides_together + ' rides';
+      const dateHtml = p.last_ride
+        ? '<span class="lb-date">' + this._relativeDate(p.last_ride) + '</span>'
+        : '';
+      return '<div class="lb-entry">' +
+        avatar +
+        '<span class="lb-name">' + this._escapeHtml(name) + '</span>' +
+        '<span class="lb-rides">' + rideLabel + '</span>' +
         dateHtml +
       '</div>';
     }).join('');
@@ -1226,16 +1276,24 @@ export class Lobby {
         this._lbApplyFocus();
       }
       if (up && !this._gpPrevUp) {
-        this._lbFocusRow = Math.max(0, this._lbFocusRow - 1);
-        const rowLen = this._lbGetRowItems(this._lbFocusRow).length;
-        this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
-        this._lbApplyFocus();
+        let r = this._lbFocusRow - 1;
+        while (r >= 0 && this._lbGetRowItems(r).length === 0) r--;
+        if (r >= 0) {
+          this._lbFocusRow = r;
+          const rowLen = this._lbGetRowItems(r).length;
+          this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
+          this._lbApplyFocus();
+        }
       }
       if (down && !this._gpPrevDown) {
-        this._lbFocusRow = Math.min(2, this._lbFocusRow + 1);
-        const rowLen = this._lbGetRowItems(this._lbFocusRow).length;
-        this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
-        this._lbApplyFocus();
+        let r = this._lbFocusRow + 1;
+        while (r <= 2 && this._lbGetRowItems(r).length === 0) r++;
+        if (r <= 2) {
+          this._lbFocusRow = r;
+          const rowLen = this._lbGetRowItems(r).length;
+          this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
+          this._lbApplyFocus();
+        }
       }
       if (a && !this._gpPrevA) {
         const items = this._lbGetRowItems(this._lbFocusRow);
