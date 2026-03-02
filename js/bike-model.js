@@ -521,5 +521,6 @@ export class BikeModel {
       spoke.material.opacity = 1;
       spoke.visible = true;
     }
+    this._applyTransform();
   }
 }
