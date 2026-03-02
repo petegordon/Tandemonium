@@ -238,7 +238,7 @@ export class GameRecorder {
   // Each blob is a complete, self-contained video file with proper headers.
   // On save: wait 2s for post-click footage, then pick the better blob.
 
-  startBuffer(audioCtx) {
+  startBuffer(audioCtx, micEnabled = false) {
     if (!this.supported || this.buffering) return;
 
     this._syncCanvasSize();
@@ -270,7 +270,7 @@ export class GameRecorder {
     if (this.shareBtn) this.shareBtn.style.display = 'block';
 
     // Request mic in background (non-blocking) — game beeps still recorded without it
-    if (audioCtx) {
+    if (audioCtx && micEnabled) {
       navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
         this._micStream = micStream;
         if (this._audioCtx && this._audioDestination) {

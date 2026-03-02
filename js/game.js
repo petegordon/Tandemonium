@@ -559,7 +559,7 @@ class Game {
 
     // Start recording + selfie immediately so they're visible during countdown
     this.recorder.setLabels(this.mode);
-    this.recorder.startBuffer(this.audioCtx);
+    this.recorder.startBuffer(this.audioCtx, this.lobby.audioActive);
     if (this.lobby.cameraActive) {
       this.recorder.startSelfie();
     } else if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
