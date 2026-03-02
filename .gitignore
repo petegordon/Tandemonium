@@ -4,3 +4,6 @@ desktop/
 out/
 .env
 .DS_Store
+
+tandemonium-octalysis-v3.jsx
+worker/.wrangler/

@@ -6,7 +6,7 @@ let steamworks = null;
 try {
   const { init, electronEnableSteamOverlay } = require('steamworks.js');
   electronEnableSteamOverlay();
-  steamworks = init(480); // 480 = Spacewar test app; replace with real App ID
+  steamworks = init(4482940);
   console.log('Steamworks initialized');
 } catch (err) {
   console.log('Steamworks unavailable, running without Steam:', err.message);
