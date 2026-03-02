@@ -402,7 +402,7 @@ class Game {
     this.net.onProfileReceived = (profile) => {
       // Show partner avatar if no active video stream
       if (profile.avatar && !this.recorder.partnerActive) {
-        this.recorder.showPartnerAvatar(profile.avatar);
+        this.recorder.showPartnerAvatar(this.lobby._avatarCache.get(profile.avatar) || profile.avatar);
       }
       // Render partner achievement badges
       if (profile.achievements) {
@@ -569,7 +569,7 @@ class Game {
       this.recorder.startSelfie();
     } else if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
       const user = this.lobby.auth.getUser();
-      if (user && user.avatar) this.recorder.showAvatarPip(user.avatar);
+      if (user && user.avatar) this.recorder.showAvatarPip(this.lobby._avatarCache.get(user.avatar) || user.avatar);
     }
 
     // Route background music through AudioContext so it's captured in recordings

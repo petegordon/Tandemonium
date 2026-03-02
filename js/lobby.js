@@ -126,6 +126,7 @@ export class Lobby {
     this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
     this._lbSubLevel = LEVELS[0].id;
     this._achievements = new AchievementManager();
+    this._avatarCache = new Map(); // originalUrl → blobUrl (fetched once per session)
     this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
     this._lbFocusCol = 0;   // index within the current row
 
@@ -327,7 +328,18 @@ export class Lobby {
         popupName.textContent = user.name || '';
         popupEmail.textContent = user.email || '';
         if (user.avatar) {
-          this.toggleProfile.innerHTML = '<img src="' + user.avatar + '" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
+          const cachedAvatar = this._avatarCache.get(user.avatar) || user.avatar;
+          this.toggleProfile.innerHTML = '<img src="' + cachedAvatar + '" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
+          // Fire-and-forget: fetch and upgrade to blob URL
+          if (!this._avatarCache.has(user.avatar)) {
+            this._cacheAvatarUrl(user.avatar).then(() => {
+              const blobUrl = this._avatarCache.get(user.avatar);
+              if (blobUrl && blobUrl !== user.avatar) {
+                const img = this.toggleProfile.querySelector('img');
+                if (img) img.src = blobUrl;
+              }
+            });
+          }
         }
       } else {
         this.toggleProfile.classList.remove('active');
@@ -746,6 +758,7 @@ export class Lobby {
           return;
         }
 
+        await this._cacheAvatarUrls(entries.map(e => e.avatar_url));
         list.innerHTML = this._renderEntries(entries, level, myId);
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load rides</div>';
@@ -768,6 +781,7 @@ export class Lobby {
           return;
         }
 
+        await this._cacheAvatarUrls(partners.map(p => p.avatar_url));
         list.innerHTML = this._renderPartners(partners);
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load partners</div>';
@@ -789,6 +803,7 @@ export class Lobby {
           return;
         }
 
+        await this._cacheAvatarUrls(entries.map(e => e.avatar_url));
         list.innerHTML = this._renderEntries(entries, level, myId);
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load leaderboard</div>';
@@ -804,8 +819,9 @@ export class Lobby {
       const youClass = isYou ? ' lb-you' : '';
       const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
 
-      const avatar = e.avatar_url
-        ? '<img class="lb-avatar" src="' + this._escapeHtml(e.avatar_url) + '" alt="" referrerpolicy="no-referrer">'
+      const avatarSrc = e.avatar_url ? (this._avatarCache.get(e.avatar_url) || e.avatar_url) : '';
+      const avatar = avatarSrc
+        ? '<img class="lb-avatar" src="' + this._escapeHtml(avatarSrc) + '" alt="" referrerpolicy="no-referrer">'
         : '';
 
       let modeHtml = '';
@@ -842,8 +858,9 @@ export class Lobby {
 
   _renderPartners(partners) {
     return partners.map(p => {
-      const avatar = p.avatar_url
-        ? '<img class="lb-avatar" src="' + this._escapeHtml(p.avatar_url) + '" alt="" referrerpolicy="no-referrer">'
+      const avatarSrc = p.avatar_url ? (this._avatarCache.get(p.avatar_url) || p.avatar_url) : '';
+      const avatar = avatarSrc
+        ? '<img class="lb-avatar" src="' + this._escapeHtml(avatarSrc) + '" alt="" referrerpolicy="no-referrer">'
         : '';
       const name = (p.display_name || 'Player').split(' ')[0];
       const rideLabel = p.rides_together === 1 ? '1 ride' : p.rides_together + ' rides';
@@ -881,6 +898,27 @@ export class Lobby {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  /** Fetch an avatar URL once, convert to blob URL, and cache it. */
+  async _cacheAvatarUrl(url) {
+    if (!url || this._avatarCache.has(url)) return;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.status);
+      const blob = await res.blob();
+      this._avatarCache.set(url, URL.createObjectURL(blob));
+    } catch (_) {
+      // Cache the original URL so we don't retry on failure
+      this._avatarCache.set(url, url);
+    }
+  }
+
+  /** Batch-cache an array of avatar URLs in parallel. */
+  async _cacheAvatarUrls(urls) {
+    const unique = [...new Set(urls.filter(u => u && !this._avatarCache.has(u)))];
+    if (unique.length === 0) return;
+    await Promise.all(unique.map(u => this._cacheAvatarUrl(u)));
   }
 
   _formatTime(ms) {
