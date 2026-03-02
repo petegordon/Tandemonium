@@ -90,6 +90,9 @@ class Game {
     this._dpadPrevRight = false;
     this._gpPrevY = false;
 
+    // Victory overlay input cooldown
+    this._overlayCooldownUntil = 0;
+
     // Safety mode (on by default)
     this.safetyMode = true;
     this.safetyBtn = document.getElementById('safety-btn');
@@ -1088,6 +1091,11 @@ class Game {
     this._playBeep(800, 0.3);
     setTimeout(() => this._playBeep(1000, 0.3), 200);
     setTimeout(() => this._playBeep(1200, 0.5), 400);
+
+    // 5-second input cooldown to prevent accidental taps
+    this._overlayCooldownUntil = performance.now() + 5000;
+    victoryBtns.forEach(b => b.style.pointerEvents = 'none');
+    setTimeout(() => victoryBtns.forEach(b => b.style.pointerEvents = ''), 5000);
   }
 
   async _submitScore() {
@@ -1508,7 +1516,7 @@ class Game {
       this._overlayFocusIdx = Math.min(this._overlayButtons.length - 1, this._overlayFocusIdx + 1);
       this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
     }
-    if (a && !this._olPrevA) {
+    if (a && !this._olPrevA && performance.now() >= this._overlayCooldownUntil) {
       this._overlayButtons[this._overlayFocusIdx].click();
     }
 
