@@ -144,13 +144,25 @@ export class AuthManager {
     return res.ok ? res.json() : null;
   }
 
-  async getLeaderboard(levelId, scope, limit) {
+  async getLeaderboard(levelId, scope, limit, options) {
     const params = new URLSearchParams({ level: levelId || 'grandma' });
     if (scope) params.set('scope', scope);
     if (limit) params.set('limit', String(limit));
+    if (options) {
+      if (options.mode) params.set('mode', options.mode);
+      if (options.userId) params.set('user_id', options.userId);
+    }
     const headers = {};
     if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
     const res = await fetch(`${API_BASE}/leaderboard?${params}`, { headers });
     return res.ok ? res.json() : { entries: [] };
+  }
+
+  async getPartners() {
+    if (!this.token) return { partners: [] };
+    const res = await fetch(`${API_BASE}/partners`, {
+      headers: { 'Authorization': `Bearer ${this.token}` },
+    });
+    return res.ok ? res.json() : { partners: [] };
   }
 }

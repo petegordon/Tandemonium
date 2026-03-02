@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS score_contributions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_contrib_score ON score_contributions(score_id);
+CREATE INDEX IF NOT EXISTS idx_contrib_player ON score_contributions(player_user_id);
 
 CREATE TABLE IF NOT EXISTS user_achievements (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

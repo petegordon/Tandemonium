@@ -723,22 +723,21 @@ export class Lobby {
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
-        const data = await this.auth.getLeaderboard(levelId);
-        const entries = data.entries || [];
         const myId = this.auth.user ? this.auth.user.serverId : null;
-
         if (!myId) {
           list.innerHTML = '<div class="lb-no-data">Sign in to see your rides</div>';
           return;
         }
 
-        const myEntries = entries.filter(e => e.user_id === myId);
-        if (myEntries.length === 0) {
+        const data = await this.auth.getLeaderboard(levelId, null, null, { userId: 'me' });
+        const entries = data.entries || [];
+
+        if (entries.length === 0) {
           list.innerHTML = '<div class="lb-no-data">No rides yet</div>';
           return;
         }
 
-        list.innerHTML = this._renderEntries(myEntries, level, myId);
+        list.innerHTML = this._renderEntries(entries, level, myId);
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load rides</div>';
       }
@@ -749,21 +748,17 @@ export class Lobby {
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
-        const data = await this.auth.getLeaderboard(levelId);
+        const mode = this._lbMainTab === 'solo' ? 'solo' : 'together';
+        const data = await this.auth.getLeaderboard(levelId, null, null, { mode });
         const entries = data.entries || [];
         const myId = this.auth.user ? this.auth.user.serverId : null;
 
-        // Filter by mode
-        const filtered = this._lbMainTab === 'solo'
-          ? entries.filter(e => e.mode === 'solo')
-          : entries.filter(e => e.mode === 'captain' || e.mode === 'stoker');
-
-        if (filtered.length === 0) {
+        if (entries.length === 0) {
           list.innerHTML = '<div class="lb-no-data">No scores yet</div>';
           return;
         }
 
-        list.innerHTML = this._renderEntries(filtered, level, myId);
+        list.innerHTML = this._renderEntries(entries, level, myId);
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load leaderboard</div>';
       }

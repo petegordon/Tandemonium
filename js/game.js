@@ -61,6 +61,7 @@ class Game {
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
+    this._partnerServerId = null;
     this._remoteLastFoot = null;
     this._remoteLastTapTime = 0;
     this._stateSendTimer = 0;
@@ -407,6 +408,8 @@ class Game {
       if (profile.achievements) {
         updateBadgeDisplay('partner-badges', profile.achievements);
       }
+      // Capture partner server ID for score attribution
+      if (profile.serverId) this._partnerServerId = profile.serverId;
     };
 
     // Pre-acquire local media stream so calls connect instantly on both sides.
@@ -965,6 +968,7 @@ class Game {
       if (user) {
         if (user.avatar) profile.avatar = user.avatar;
         if (user.name) profile.name = user.name;
+        if (user.serverId) profile.serverId = user.serverId;
       }
     }
     this.net.sendProfile(profile);
@@ -1134,9 +1138,15 @@ class Game {
 
     if (this.contributionTracker) {
       const contrib = this.contributionTracker.getSummary();
+      const myServerId = auth.user ? auth.user.serverId : null;
       if (contrib.mode === 'multiplayer') {
+        const myRole = this.mode; // 'captain' or 'stoker'
+        const partnerRole = myRole === 'captain' ? 'stoker' : 'captain';
+        contrib[myRole].userId = myServerId;
+        contrib[partnerRole].userId = this._partnerServerId;
         data.contributions = { captain: contrib.captain, stoker: contrib.stoker };
       } else {
+        contrib.solo.userId = myServerId;
         data.contributions = { solo: contrib.solo };
       }
     }

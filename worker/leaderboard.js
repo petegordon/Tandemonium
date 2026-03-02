@@ -26,6 +26,7 @@ export default {
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScore);
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
+      if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
 
       // Public routes
       if (path === '/leaderboard') return handleLeaderboard(request, env, url, corsOrigin);
@@ -162,57 +163,94 @@ async function submitScore(request, env, corsOrigin, userId) {
 async function handleLeaderboard(request, env, url, corsOrigin) {
   const levelId = url.searchParams.get('level') || 'grandma';
   const scope = url.searchParams.get('scope') || 'global';
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 100);
+  const mode = url.searchParams.get('mode');       // 'solo' | 'together'
+  const userFilter = url.searchParams.get('user_id'); // 'me'
+  let limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 200);
 
-  let query;
-  let params;
+  const conditions = ['s.level_id = ?'];
+  const params = [levelId];
 
-  if (scope === 'global') {
-    query = `
-      SELECT s.id, s.distance, s.time_ms, s.mode, s.collectibles_count, s.input_source, s.created_at,
-             u.display_name, u.avatar_url, u.id as user_id
-      FROM scores s
-      JOIN users u ON s.user_id = u.id
-      WHERE s.level_id = ?
-      ORDER BY s.time_ms ASC
-      LIMIT ?`;
-    params = [levelId, limit];
-  } else {
-    // Friends scope requires auth
-    const userId = await getUserFromRequest(request, env);
-    if (!userId) return jsonResponse({ error: 'Auth required for friends scope' }, 401, corsOrigin);
-
-    query = `
-      SELECT s.id, s.distance, s.time_ms, s.mode, s.collectibles_count, s.input_source, s.created_at,
-             u.display_name, u.avatar_url, u.id as user_id
-      FROM scores s
-      JOIN users u ON s.user_id = u.id
-      WHERE s.level_id = ? AND (s.user_id = ? OR s.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?))
-      ORDER BY s.time_ms ASC
-      LIMIT ?`;
-    params = [levelId, userId, userId, limit];
+  // Mode filter
+  if (mode === 'solo') {
+    conditions.push("s.mode = 'solo'");
+  } else if (mode === 'together') {
+    conditions.push("s.mode IN ('captain', 'stoker')");
   }
+
+  // User filter (requires auth)
+  let authedUserId = null;
+  if (userFilter === 'me' || scope === 'friends') {
+    authedUserId = await getUserFromRequest(request, env);
+    if (!authedUserId) return jsonResponse({ error: 'Auth required' }, 401, corsOrigin);
+  }
+
+  if (userFilter === 'me') {
+    conditions.push('s.user_id = ?');
+    params.push(authedUserId);
+    if (!url.searchParams.has('limit')) limit = 200;
+  }
+
+  // Friends scope
+  if (scope === 'friends') {
+    conditions.push('(s.user_id = ? OR s.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?))');
+    params.push(authedUserId, authedUserId);
+  }
+
+  params.push(limit);
+
+  const query = `
+    SELECT s.id, s.distance, s.time_ms, s.mode, s.collectibles_count, s.input_source, s.created_at,
+           u.display_name, u.avatar_url, u.id as user_id
+    FROM scores s
+    JOIN users u ON s.user_id = u.id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY s.time_ms ASC
+    LIMIT ?`;
 
   const results = await env.DB.prepare(query).bind(...params).all();
+  const rows = results.results;
 
-  // Fetch contributions for each score
-  const entries = [];
-  for (const row of results.results) {
-    const contribs = await env.DB.prepare(
-      'SELECT role, contribution_pct, pedal_taps, pedal_correct, pedal_wrong, balance_safe_pct, on_road_pct FROM score_contributions WHERE score_id = ?'
-    ).bind(row.id).all();
+  if (rows.length === 0) return jsonResponse({ entries: [] }, 200, corsOrigin);
 
-    // Fetch player achievements
-    const achievements = await env.DB.prepare(
-      'SELECT achievement_id FROM user_achievements WHERE user_id = ?'
-    ).bind(row.user_id).all();
+  // Batch contributions (fixes N+1)
+  const scoreIds = rows.map(r => r.id);
+  const placeholders = scoreIds.map(() => '?').join(',');
 
-    entries.push({
-      ...row,
-      contributions: contribs.results,
-      achievements: achievements.results.map(a => a.achievement_id)
-    });
+  const contribResults = await env.DB.prepare(
+    `SELECT sc.score_id, sc.role, sc.contribution_pct, sc.pedal_taps, sc.pedal_correct, sc.pedal_wrong,
+            sc.balance_safe_pct, sc.on_road_pct, sc.player_user_id,
+            u.display_name as partner_name, u.avatar_url as partner_avatar
+     FROM score_contributions sc
+     LEFT JOIN users u ON sc.player_user_id = u.id
+     WHERE sc.score_id IN (${placeholders})`
+  ).bind(...scoreIds).all();
+
+  const contribMap = {};
+  for (const c of contribResults.results) {
+    if (!contribMap[c.score_id]) contribMap[c.score_id] = [];
+    contribMap[c.score_id].push(c);
   }
+
+  // Batch achievements (fixes N+1)
+  const userIds = [...new Set(rows.map(r => r.user_id))];
+  const userPlaceholders = userIds.map(() => '?').join(',');
+
+  const achResults = await env.DB.prepare(
+    `SELECT user_id, achievement_id, score_id FROM user_achievements WHERE user_id IN (${userPlaceholders})`
+  ).bind(...userIds).all();
+
+  const achMap = {};
+  for (const a of achResults.results) {
+    if (!achMap[a.user_id]) achMap[a.user_id] = [];
+    achMap[a.user_id].push(a);
+  }
+
+  // Assemble entries
+  const entries = rows.map(row => ({
+    ...row,
+    contributions: contribMap[row.id] || [],
+    achievements: (achMap[row.user_id] || []).map(a => ({ achievement_id: a.achievement_id, score_id: a.score_id }))
+  }));
 
   return jsonResponse({ entries }, 200, corsOrigin);
 }
@@ -226,22 +264,36 @@ async function handlePlayerProfile(request, env, url, corsOrigin) {
   const playerId = parseInt(parts[2]);
   if (!playerId) return jsonResponse({ error: 'Invalid player ID' }, 400, corsOrigin);
 
+  const levelFilter = url.searchParams.get('level');
+
   const user = await env.DB.prepare('SELECT id, display_name, avatar_url, created_at FROM users WHERE id = ?')
     .bind(playerId).first();
   if (!user) return jsonResponse({ error: 'Player not found' }, 404, corsOrigin);
 
   const achievements = await env.DB.prepare(
-    'SELECT achievement_id, earned_at FROM user_achievements WHERE user_id = ?'
+    'SELECT achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?'
   ).bind(playerId).all();
 
-  const bestScores = await env.DB.prepare(
-    `SELECT level_id, MIN(time_ms) as best_time, MAX(distance) as max_distance, COUNT(*) as rides
-     FROM scores WHERE user_id = ? GROUP BY level_id`
-  ).bind(playerId).all();
+  let bestScores, recentScores;
+  if (levelFilter) {
+    bestScores = await env.DB.prepare(
+      `SELECT level_id, MIN(time_ms) as best_time, MAX(distance) as max_distance, COUNT(*) as rides
+       FROM scores WHERE user_id = ? AND level_id = ? GROUP BY level_id`
+    ).bind(playerId, levelFilter).all();
 
-  const recentScores = await env.DB.prepare(
-    'SELECT id, level_id, distance, time_ms, mode, collectibles_count, input_source, created_at FROM scores WHERE user_id = ? ORDER BY created_at DESC LIMIT 10'
-  ).bind(playerId).all();
+    recentScores = await env.DB.prepare(
+      'SELECT id, level_id, distance, time_ms, mode, collectibles_count, input_source, created_at FROM scores WHERE user_id = ? AND level_id = ? ORDER BY created_at DESC LIMIT 10'
+    ).bind(playerId, levelFilter).all();
+  } else {
+    bestScores = await env.DB.prepare(
+      `SELECT level_id, MIN(time_ms) as best_time, MAX(distance) as max_distance, COUNT(*) as rides
+       FROM scores WHERE user_id = ? GROUP BY level_id`
+    ).bind(playerId).all();
+
+    recentScores = await env.DB.prepare(
+      'SELECT id, level_id, distance, time_ms, mode, collectibles_count, input_source, created_at FROM scores WHERE user_id = ? ORDER BY created_at DESC LIMIT 10'
+    ).bind(playerId).all();
+  }
 
   return jsonResponse({
     user,
@@ -260,7 +312,7 @@ async function getMe(request, env, corsOrigin, userId) {
     .bind(userId).first();
 
   const achievements = await env.DB.prepare(
-    'SELECT achievement_id, earned_at FROM user_achievements WHERE user_id = ?'
+    'SELECT achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?'
   ).bind(userId).all();
 
   const bestScores = await env.DB.prepare(
@@ -293,13 +345,34 @@ async function syncAchievements(request, env, corsOrigin, userId) {
 
   // Return all server-side achievements
   const serverAchs = await env.DB.prepare(
-    'SELECT achievement_id, earned_at FROM user_achievements WHERE user_id = ?'
+    'SELECT achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?'
   ).bind(userId).all();
 
   return jsonResponse({
     synced,
     achievements: serverAchs.results
   }, 200, corsOrigin);
+}
+
+// ============================================================
+// PARTNERS
+// ============================================================
+
+async function handlePartners(request, env, corsOrigin, userId) {
+  const results = await env.DB.prepare(
+    `SELECT u.id, u.display_name, u.avatar_url,
+            COUNT(DISTINCT my.score_id) as rides_together,
+            MAX(s.created_at) as last_ride
+     FROM score_contributions my
+     JOIN score_contributions partner ON my.score_id = partner.score_id AND partner.player_user_id != ?
+     JOIN users u ON partner.player_user_id = u.id
+     JOIN scores s ON my.score_id = s.id
+     WHERE my.player_user_id = ?
+     GROUP BY partner.player_user_id
+     ORDER BY last_ride DESC`
+  ).bind(userId, userId).all();
+
+  return jsonResponse({ partners: results.results }, 200, corsOrigin);
 }
 
 // ============================================================
