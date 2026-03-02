@@ -1465,11 +1465,14 @@ export class Lobby {
     });
     this._previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this._previewRenderer.setSize(w, h);
-    this._previewRenderer.setClearColor(0x111111, 1);
+    this._previewRenderer.setClearColor(0x8b7355, 1);
     this._previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
     this._previewRenderer.toneMappingExposure = 1.2;
+    this._previewRenderer.shadowMap.enabled = true;
+    this._previewRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this._previewScene = new THREE.Scene();
+    this._previewScene.fog = new THREE.Fog(0x8b7355, 6, 14);
     this._previewCamera = new THREE.PerspectiveCamera(28, w / h, 0.1, 100);
     this._previewCamera.position.set(0, 1.4, 4.2);
     this._previewCamera.lookAt(0, 0.5, 0);
@@ -1478,10 +1481,30 @@ export class Lobby {
     this._previewScene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const dir = new THREE.DirectionalLight(0xffffff, 1.2);
     dir.position.set(5, 8, 5);
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(512, 512);
+    dir.shadow.camera.near = 0.5;
+    dir.shadow.camera.far = 20;
+    dir.shadow.camera.left = -3;
+    dir.shadow.camera.right = 3;
+    dir.shadow.camera.top = 3;
+    dir.shadow.camera.bottom = -3;
+    dir.shadow.bias = -0.002;
     this._previewScene.add(dir);
     const rim = new THREE.DirectionalLight(0x8899cc, 0.5);
     rim.position.set(-3, 4, -4);
     this._previewScene.add(rim);
+
+    // Ground plane
+    const groundGeo = new THREE.CircleGeometry(3, 32);
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x7a6548, roughness: 0.9, metalness: 0.0
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.01;
+    ground.receiveShadow = true;
+    this._previewScene.add(ground);
 
     // Load bike model
     const loader = new GLTFLoader();
@@ -1508,6 +1531,7 @@ export class Lobby {
       this._previewModel.traverse(child => {
         if (child.isMesh) {
           child.material = child.material.clone();
+          child.castShadow = true;
           this._previewOriginalMats.set(child.name, child.material.clone());
         }
       });
