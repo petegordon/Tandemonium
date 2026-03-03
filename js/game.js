@@ -22,6 +22,7 @@ import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
+import { ArchIndicator } from './arch-indicator.js';
 
 class Game {
   constructor() {
@@ -53,6 +54,8 @@ class Game {
     this.chaseCamera = new ChaseCamera(this.camera);
     this.hud = new HUD(this.input);
     this.grassParticles = new GrassParticles(this.scene);
+    this.archIndicator = new ArchIndicator(this.scene);
+    this._partnerBikeColor = null;
     this.recorder = new GameRecorder(this.renderer.domElement, this.input);
 
     // Mode
@@ -90,6 +93,14 @@ class Game {
     this._dpadPrevLeft = false;
     this._dpadPrevRight = false;
     this._gpPrevY = false;
+    this._gpPrevA = false;
+
+    // Tap center of screen to recalibrate tilt (mobile)
+    this.renderer.domElement.addEventListener('touchstart', (e) => {
+      if (this.state !== 'playing') return;
+      if (!this.input.motionEnabled && !this.input.gyroConnected) return;
+      this._recalibrateTilt();
+    });
 
     // Victory overlay input cooldown
     this._overlayCooldownUntil = 0;
@@ -410,6 +421,11 @@ class Game {
       }
       // Capture partner server ID for score attribution
       if (profile.serverId) this._partnerServerId = profile.serverId;
+      // Partner bike color for arch indicator
+      if (profile.bikeColor) {
+        this._partnerBikeColor = profile.bikeColor;
+        this.archIndicator.updatePartnerColor(profile.bikeColor);
+      }
     };
 
     // Pre-acquire local media stream so calls connect instantly on both sides.
@@ -547,6 +563,13 @@ class Game {
     this.hud.updateTimer(initialBudget, initialBudget);
     this.hud.showCollectibles(level);
     this.world.setRaceMarkers(level, this.camera);
+
+    // Setup arch tilt indicator (only for motion/gyro input)
+    if (this.input.motionEnabled || this.input.gyroConnected) {
+      const playerColor = this._getFrameColor(this.lobby.selectedPreset);
+      const partnerColor = this._partnerBikeColor || '#888888';
+      this.archIndicator.setup(this.mode, playerColor, partnerColor);
+    }
 
     // Show contribution bar in multiplayer
     if (this.mode !== 'solo') {
@@ -960,6 +983,28 @@ class Game {
     this._sendProfile();
   }
 
+  _recalibrateTilt() {
+    if (this.input.motionEnabled) {
+      this.input.motionOffset = this.input.rawGamma;
+      this.input.motionLean = 0;
+    }
+    if (this.input.gyroConnected) {
+      this.input.calibrateGyro();
+    }
+    // Flash the calibrate overlay briefly
+    const flash = document.getElementById('calibrate-flash');
+    if (flash) {
+      flash.style.display = 'block';
+      setTimeout(() => { flash.style.display = 'none'; }, 800);
+    }
+  }
+
+  _getFrameColor(presetData) {
+    if (!presetData) return '#888888';
+    const entry = presetData['Cylinder006_cycle_0'];
+    return entry?.color || '#888888';
+  }
+
   _sendProfile() {
     if (!this.net || !this.net.connected) return;
     const profile = { achievements: this.achievements.getEarned() };
@@ -971,6 +1016,7 @@ class Game {
         if (user.serverId) profile.serverId = user.serverId;
       }
     }
+    profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
     this.net.sendProfile(profile);
   }
 
@@ -1324,6 +1370,9 @@ class Game {
     const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
     if (partnerTitle) partnerTitle.textContent = 'PARTNER';
 
+    this.archIndicator.hide();
+    this._partnerBikeColor = null;
+
     this.bike.fullReset();
     this.chaseCamera.initialized = false;
     this.pedalCtrl = new PedalController(this.input);
@@ -1465,18 +1514,24 @@ class Game {
 
     // Y button (button 3) — save clip
     const y = gp.buttons[3] && gp.buttons[3].pressed;
+    // A button (button 0) — recalibrate tilt
+    const a = gp.buttons[0] && gp.buttons[0].pressed;
 
     if (up && !this._dpadPrevUp) this.safetyBtn.click();
     if (down && !this._dpadPrevDown) this.speedBtn.click();
     if (right && !this._dpadPrevRight) document.getElementById('reset-btn').click();
     if (left && !this._dpadPrevLeft) this._returnToLobby();
     if (y && !this._gpPrevY) this.recorder.saveClip();
+    if (a && !this._gpPrevA && (this.input.motionEnabled || this.input.gyroConnected)) {
+      this._recalibrateTilt();
+    }
 
     this._dpadPrevUp = up;
     this._dpadPrevDown = down;
     this._dpadPrevLeft = left;
     this._dpadPrevRight = right;
     this._gpPrevY = y;
+    this._gpPrevA = a;
   }
 
   _updateConnBadge() {
@@ -1610,6 +1665,7 @@ class Game {
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
       this.world.update(this.bike.position, this.bike.roadD);
       this.chaseCamera.update(this.bike, dt, roadPath);
+      if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
       this.renderer.render(this.scene, this.camera);
     }
 
@@ -1672,6 +1728,7 @@ class Game {
     }
 
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
+    this.archIndicator.update(this.bike, balanceResult.leanInput);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl));
   }
@@ -1773,6 +1830,7 @@ class Game {
     this._updateConnBadge();
     const remoteData = { remoteLean: this.remoteLean, remoteLastFoot: this._remoteLastFoot, remoteLastTapTime: this._remoteLastTapTime };
     this.hud.update(this.bike, this.input, this.sharedPedal, dt, remoteData);
+    this.archIndicator.update(this.bike, captainLean, this.remoteLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.sharedPedal, remoteData));
   }
@@ -1869,6 +1927,8 @@ class Game {
     this._updateConnBadge();
     const remoteData = { remoteLean: this.remoteLean, remoteLastFoot: this._remoteLastFoot, remoteLastTapTime: this._remoteLastTapTime };
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
+    const stokerLean = this.balanceCtrl.update().leanInput;
+    this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl, remoteData));
   }
