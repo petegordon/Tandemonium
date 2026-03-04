@@ -67,6 +67,8 @@ class Game {
     this._partnerServerId = null;
     this._remoteLastFoot = null;
     this._remoteLastTapTime = 0;
+    // Reusable remoteData object (avoid per-frame allocation)
+    this._remoteData = { remoteLean: 0, remoteLastFoot: null, remoteLastTapTime: 0 };
     this._stateSendTimer = 0;
     this._stateSendInterval = 1 / 20; // 20Hz
     this._leanSendTimer = 0;
@@ -1828,7 +1830,10 @@ class Game {
     }
 
     this._updateConnBadge();
-    const remoteData = { remoteLean: this.remoteLean, remoteLastFoot: this._remoteLastFoot, remoteLastTapTime: this._remoteLastTapTime };
+    const remoteData = this._remoteData;
+    remoteData.remoteLean = this.remoteLean;
+    remoteData.remoteLastFoot = this._remoteLastFoot;
+    remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.sharedPedal, dt, remoteData);
     this.archIndicator.update(this.bike, captainLean, this.remoteLean);
     this.renderer.render(this.scene, this.camera);
@@ -1925,7 +1930,10 @@ class Game {
     if (this.bike.fallen) this.chaseCamera.shakeAmount = 0.15;
 
     this._updateConnBadge();
-    const remoteData = { remoteLean: this.remoteLean, remoteLastFoot: this._remoteLastFoot, remoteLastTapTime: this._remoteLastTapTime };
+    const remoteData = this._remoteData;
+    remoteData.remoteLean = this.remoteLean;
+    remoteData.remoteLastFoot = this._remoteLastFoot;
+    remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     const stokerLean = this.balanceCtrl.update().leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);

@@ -32,8 +32,19 @@ const chromakeyFragment = `
   uniform vec3 keyColor;
   uniform float similarity;
   uniform float smoothness;
+  uniform float videoReady;
+  uniform vec3 fallbackColor;
   varying vec2 vUv;
   void main() {
+    if (videoReady < 0.5) {
+      // Video not playing yet — show colored fallback instead of black
+      float cx = abs(vUv.x - 0.5);
+      float cy = 1.0 - vUv.y;
+      float cone = smoothstep(0.4, 0.2, cx - cy * 0.15);
+      if (cone < 0.01) discard;
+      gl_FragColor = vec4(fallbackColor, cone);
+      return;
+    }
     vec4 texColor = texture2D(map, vUv);
     float d = distance(texColor.rgb, keyColor);
     float alpha = smoothstep(similarity, similarity + smoothness, d);
@@ -62,12 +73,28 @@ export class ObstacleManager {
     this._video.loop = true;
     this._video.muted = true;
     this._video.playsInline = true;
-    this._video.play().catch(() => {});
 
     const videoTexture = new THREE.VideoTexture(this._video);
     videoTexture.minFilter = THREE.LinearFilter;
     videoTexture.magFilter = THREE.LinearFilter;
     this._videoTexture = videoTexture;
+
+    // videoReady flips to 1.0 once the video is actually playing
+    const videoReadyUniform = { value: 0.0 };
+    this._video.addEventListener('playing', () => { videoReadyUniform.value = 1.0; });
+
+    // Attempt autoplay; log errors and retry on user gesture
+    this._video.play().catch(err => {
+      console.warn('Obstacle video autoplay blocked:', err.message);
+      const retry = () => {
+        this._video.play().then(() => {
+          document.removeEventListener('touchstart', retry);
+          document.removeEventListener('click', retry);
+        }).catch(() => {});
+      };
+      document.addEventListener('touchstart', retry, { once: true });
+      document.addEventListener('click', retry, { once: true });
+    });
 
     // Aspect ratio: 200x320 — sized to be visible on the road
     const w = 1.2, h = 1.2 * (320 / 200);
@@ -78,7 +105,9 @@ export class ObstacleManager {
         map: { value: videoTexture },
         keyColor: { value: new THREE.Color(58 / 255, 180 / 255, 38 / 255) },
         similarity: { value: 0.4 },
-        smoothness: { value: 0.15 }
+        smoothness: { value: 0.15 },
+        videoReady: videoReadyUniform,
+        fallbackColor: { value: new THREE.Color(1.0, 0.55, 0.0) } // orange
       },
       vertexShader: chromakeyVertex,
       fragmentShader: chromakeyFragment,
