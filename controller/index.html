@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gamepad Controller Demo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #111; font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.85);
+    z-index: 100;
+    transition: opacity 0.4s;
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  #overlay p {
+    color: #aaa; font-size: 22px; text-align: center; line-height: 1.6;
+  }
+  #overlay p strong { color: #fff; }
+
+  .hud {
+    position: fixed; top: 16px;
+    color: #888; font-size: 13px; z-index: 10;
+    pointer-events: none;
+    transition: opacity 0.8s ease;
+  }
+  .hud .label { color: #555; }
+  .hud .value { color: #0f0; font-family: monospace; }
+  .hud .gyro-value { color: #f0a; font-family: monospace; }
+  .hud .accel-value { color: #0af; font-family: monospace; }
+  .hud .hint { color: #665; font-size: 11px; margin-top: 2px; }
+
+  #stick-hud { left: 16px; }
+
+  #gyro-hud {
+    right: 16px; opacity: 0;
+    pointer-events: none;
+    text-align: right;
+  }
+  #gyro-hud.visible { opacity: 1; }
+
+  #gyro-btn {
+    position: fixed; top: 16px; right: 16px;
+    z-index: 10;
+    background: #2a2a2a; color: #f0a; border: 1px solid #f0a;
+    padding: 10px 18px; border-radius: 6px;
+    font-size: 14px; cursor: pointer;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    transition: background 0.2s, opacity 0.4s;
+  }
+  #gyro-btn:hover { background: #3a2a3a; }
+  #gyro-btn.connected { opacity: 0; pointer-events: none; }
+  #gyro-btn.hidden { opacity: 0; pointer-events: none; }
+
+  #divider {
+    position: fixed; top: 0; bottom: 0;
+    left: 50%; width: 1px;
+    background: linear-gradient(to bottom, transparent 5%, #333 20%, #444 50%, #333 80%, transparent 95%);
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    pointer-events: none;
+  }
+  #divider.visible { opacity: 1; }
+
+  #calibrate-toast {
+    position: fixed; bottom: 40px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(30,10,40,0.9); color: #f0a;
+    border: 1px solid #f0a; border-radius: 8px;
+    padding: 12px 24px; font-size: 15px;
+    z-index: 20; pointer-events: none;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  #calibrate-toast.visible { opacity: 1; }
+
+  #btn-hints {
+    position: fixed; bottom: 16px; left: 50%;
+    transform: translateX(-50%);
+    color: #aaa; font-size: 13px; z-index: 10;
+    pointer-events: none;
+    transition: opacity 0.4s;
+    display: flex; gap: 20px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  #btn-hints .hint-item {
+    display: flex; align-items: center; gap: 6px;
+  }
+  #btn-hints .btn-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px; font-weight: 700;
+    color: #fff;
+    letter-spacing: 0.5px;
+  }
+  #btn-hints .btn-badge.triangle {
+    font-size: 14px; padding: 1px 8px;
+    color: #f0a; border-color: rgba(255,0,170,0.4);
+    background: rgba(255,0,170,0.1);
+  }
+  #btn-hints .btn-badge.options {
+    color: #0f0; border-color: rgba(0,255,0,0.3);
+    background: rgba(0,255,0,0.08);
+  }
+  #btn-hints.hidden { opacity: 0; }
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <p><strong>Press a button</strong> on your gamepad<br>to connect</p>
+</div>
+
+<button id="gyro-btn" class="hidden">Connect Gyro (WebHID)</button>
+
+<div id="divider"></div>
+<div id="calibrate-toast">Calibrating — hold still...</div>
+
+<!-- Stick / Triggers HUD (stays left) -->
+<div id="stick-hud" class="hud">
+  <div>Gamepad: <span id="gp-name" class="value">—</span></div>
+  <div class="label" style="margin-top:8px">Left Stick</div>
+  <div>X: <span id="lx" class="value">0.00</span> &nbsp; Y: <span id="ly" class="value">0.00</span></div>
+  <div style="margin-top:4px">LT: <span id="lt" class="value">0.00</span> &nbsp; RT: <span id="rt" class="value">0.00</span></div>
+  <div id="debug" style="margin-top:8px; color: #555; font-size: 11px; max-width: 400px; word-break: break-all;"></div>
+</div>
+
+<!-- Gyro HUD (fades in on right) -->
+<div id="gyro-hud" class="hud">
+  <div class="label">Gyroscope (deg/s)</div>
+  <div>X: <span id="gx" class="gyro-value">0</span> &nbsp; Y: <span id="gy" class="gyro-value">0</span> &nbsp; Z: <span id="gz" class="gyro-value">0</span></div>
+  <div class="label" style="margin-top:4px">Accelerometer</div>
+  <div>X: <span id="ax" class="accel-value">0</span> &nbsp; Y: <span id="ay" class="accel-value">0</span> &nbsp; Z: <span id="az" class="accel-value">0</span></div>
+  <div class="hint" id="gyro-hint"></div>
+</div>
+
+<!-- Controller button hints -->
+<div id="btn-hints" class="hidden"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ── Renderer ──
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x111111);
+renderer.setScissorTest(false);
+document.body.appendChild(renderer.domElement);
+
+// ══════════════════════════════════════════════
+//  STICK SCENE (left side when split)
+// ══════════════════════════════════════════════
+const stickScene = new THREE.Scene();
+const stickCamera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+stickCamera.position.set(0, 4, 8);
+stickCamera.lookAt(0, 0, 0);
+
+// Camera targets for smooth pull-back
+const stickCamDefault = { y: 4, z: 8 };
+const stickCamSplit   = { y: 5, z: 12 };
+
+stickScene.add(new THREE.AmbientLight(0x404040, 2));
+const stickDirLight = new THREE.DirectionalLight(0xffffff, 3);
+stickDirLight.position.set(5, 8, 5);
+stickScene.add(stickDirLight);
+
+stickScene.add(new THREE.GridHelper(10, 20, 0x333333, 0x222222));
+
+// Joystick platform
+const platformGeo = new THREE.CylinderGeometry(1.8, 1.8, 0.12, 32);
+const platformMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, metalness: 0.6, roughness: 0.3 });
+const platform = new THREE.Mesh(platformGeo, platformMat);
+platform.position.y = 0.5;
+stickScene.add(platform);
+
+const ringGeo = new THREE.TorusGeometry(1.85, 0.06, 16, 64);
+const ringMat = new THREE.MeshStandardMaterial({ color: 0x00ff88, emissive: 0x004422 });
+const ring = new THREE.Mesh(ringGeo, ringMat);
+ring.rotation.x = -Math.PI / 2;
+ring.position.y = 0.56;
+stickScene.add(ring);
+
+const ballGeo = new THREE.SphereGeometry(0.25, 32, 32);
+const ballMat = new THREE.MeshStandardMaterial({ color: 0x00aaff, emissive: 0x002244, metalness: 0.4, roughness: 0.2 });
+const ball = new THREE.Mesh(ballGeo, ballMat);
+ball.position.y = 0.85;
+stickScene.add(ball);
+
+const arrowGeo = new THREE.ConeGeometry(0.12, 0.5, 8);
+const arrowMat = new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0x442200 });
+const arrow = new THREE.Mesh(arrowGeo, arrowMat);
+arrow.position.y = 0.7;
+arrow.visible = false;
+stickScene.add(arrow);
+
+// Trigger bars
+function createTriggerBar(targetScene, x, color) {
+  const group = new THREE.Group();
+  group.position.set(x, 0, 0);
+
+  const baseGeo = new THREE.BoxGeometry(0.6, 0.1, 0.6);
+  const baseMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
+  const base = new THREE.Mesh(baseGeo, baseMat);
+  base.position.y = 0.05;
+  group.add(base);
+
+  const barGeo = new THREE.BoxGeometry(0.5, 3, 0.5);
+  const barMat = new THREE.MeshStandardMaterial({ color, emissive: new THREE.Color(color).multiplyScalar(0.3), metalness: 0.3, roughness: 0.4 });
+  const bar = new THREE.Mesh(barGeo, barMat);
+  bar.geometry.translate(0, 1.5, 0);
+  bar.position.y = 0.1;
+  bar.scale.y = 0.01;
+  group.add(bar);
+
+  const outlineGeo = new THREE.BoxGeometry(0.5, 3, 0.5);
+  const outlineMat = new THREE.MeshBasicMaterial({ color: 0x333333, wireframe: true });
+  const outline = new THREE.Mesh(outlineGeo, outlineMat);
+  outline.position.y = 1.6;
+  group.add(outline);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 128; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#888';
+  ctx.font = 'bold 32px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(x < 0 ? 'LT' : 'RT', 64, 40);
+  const tex = new THREE.CanvasTexture(canvas);
+  const labelGeo = new THREE.PlaneGeometry(0.8, 0.4);
+  const labelMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+  const label = new THREE.Mesh(labelGeo, labelMat);
+  label.position.set(0, 3.4, 0);
+  group.add(label);
+
+  targetScene.add(group);
+  return bar;
+}
+
+const ltBar = createTriggerBar(stickScene, -3.5, 0xff4444);
+const rtBar = createTriggerBar(stickScene, 3.5, 0x4488ff);
+
+// ══════════════════════════════════════════════
+//  GYRO SCENE (right side when split)
+// ══════════════════════════════════════════════
+const gyroScene = new THREE.Scene();
+const gyroCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+gyroCamera.position.set(0, 2.5, 7);
+gyroCamera.lookAt(0, 1, 0);
+
+gyroScene.add(new THREE.AmbientLight(0x404040, 2));
+const gyroDirLight = new THREE.DirectionalLight(0xffffff, 3);
+gyroDirLight.position.set(5, 8, 5);
+gyroScene.add(gyroDirLight);
+
+gyroScene.add(new THREE.GridHelper(8, 16, 0x2a1a2a, 0x1a0a1a));
+
+// Controller-shaped box
+const gyroGroup = new THREE.Group();
+gyroGroup.position.set(0, 1.8, 0);
+gyroScene.add(gyroGroup);
+
+const ctrlGeo = new THREE.BoxGeometry(3.0, 0.5, 1.5);
+const ctrlMat = new THREE.MeshStandardMaterial({
+  color: 0x555555, emissive: 0x220033, metalness: 0.3, roughness: 0.5
+});
+gyroGroup.add(new THREE.Mesh(ctrlGeo, ctrlMat));
+gyroGroup.add(new THREE.Mesh(ctrlGeo, new THREE.MeshBasicMaterial({ color: 0xff44ff, wireframe: true })));
+
+// Axis indicators with arrow tips
+const axisLen = 1.2;
+function addAxis(parent, color, dir) {
+  const geo = new THREE.CylinderGeometry(0.03, 0.03, axisLen, 8);
+  const mat = new THREE.MeshBasicMaterial({ color });
+  const mesh = new THREE.Mesh(geo, mat);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.2, 8), mat.clone());
+  if (dir === 'x') {
+    mesh.rotation.z = Math.PI / 2; mesh.position.x = axisLen / 2 + 1.5;
+    tip.rotation.z = -Math.PI / 2; tip.position.x = axisLen + 1.5;
+  } else if (dir === 'y') {
+    mesh.position.y = axisLen / 2 + 0.25;
+    tip.position.y = axisLen + 0.25;
+  } else {
+    mesh.rotation.x = Math.PI / 2; mesh.position.z = axisLen / 2 + 0.75;
+    tip.rotation.x = Math.PI / 2; tip.position.z = axisLen + 0.75;
+  }
+  parent.add(mesh); parent.add(tip);
+}
+addAxis(gyroGroup, 0xff4444, 'x');
+addAxis(gyroGroup, 0x44ff44, 'y');
+addAxis(gyroGroup, 0x4488ff, 'z');
+
+// "GYRO" label
+const gyroLabelCanvas = document.createElement('canvas');
+gyroLabelCanvas.width = 256; gyroLabelCanvas.height = 64;
+const gyroLabelCtx = gyroLabelCanvas.getContext('2d');
+gyroLabelCtx.fillStyle = '#f0a';
+gyroLabelCtx.font = 'bold 36px Arial';
+gyroLabelCtx.textAlign = 'center';
+gyroLabelCtx.fillText('GYRO', 128, 44);
+const gyroLabelMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.6, 0.4),
+  new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(gyroLabelCanvas), transparent: true })
+);
+gyroLabelMesh.position.y = 1.4;
+gyroGroup.add(gyroLabelMesh);
+
+// ══════════════════════════════════════════════
+//  GAMEPAD STATE
+// ══════════════════════════════════════════════
+let gamepadIndex = null;
+const overlay = document.getElementById('overlay');
+const debugEl = document.getElementById('debug');
+const gyroBtn = document.getElementById('gyro-btn');
+const divider = document.getElementById('divider');
+const stickHud = document.getElementById('stick-hud');
+const gyroHudEl = document.getElementById('gyro-hud');
+const calibrateToast = document.getElementById('calibrate-toast');
+const btnHints = document.getElementById('btn-hints');
+const gyroHint = document.getElementById('gyro-hint');
+
+// PS button states for edge detection
+const btnState = {};
+function btnPressed(gp, idx) {
+  const cur = gp.buttons[idx] ? gp.buttons[idx].pressed : false;
+  const key = 'b' + idx;
+  const prev = btnState[key] || false;
+  btnState[key] = cur;
+  return cur && !prev; // rising edge
+}
+
+function showHints() {
+  if (!navigator.hid) return;
+  btnHints.classList.remove('hidden');
+  if (hidDevice) {
+    btnHints.innerHTML =
+      '<div class="hint-item"><span class="btn-badge triangle">&#x25B3;</span> Recalibrate</div>';
+  } else {
+    btnHints.innerHTML =
+      '<div class="hint-item"><span class="btn-badge options">OPTIONS</span> Connect gyro</div>';
+  }
+}
+
+window.addEventListener('gamepadconnected', (e) => {
+  gamepadIndex = e.gamepad.index;
+  document.getElementById('gp-name').textContent = e.gamepad.id;
+  overlay.classList.add('hidden');
+  if (navigator.hid && /playstation|dualsense|dualshock|054c/i.test(e.gamepad.id)) {
+    gyroBtn.classList.remove('hidden');
+    showHints();
+  }
+});
+
+window.addEventListener('gamepaddisconnected', () => {
+  gamepadIndex = null;
+  document.getElementById('gp-name').textContent = '—';
+  overlay.classList.remove('hidden');
+  btnHints.classList.add('hidden');
+});
+
+function pollForGamepad() {
+  if (gamepadIndex !== null) return;
+  const gamepads = navigator.getGamepads();
+  for (let i = 0; i < gamepads.length; i++) {
+    if (gamepads[i]) {
+      gamepadIndex = i;
+      document.getElementById('gp-name').textContent = gamepads[i].id;
+      overlay.classList.add('hidden');
+      if (navigator.hid && /playstation|dualsense|dualshock|054c/i.test(gamepads[i].id)) {
+        gyroBtn.classList.remove('hidden');
+        showHints();
+      }
+      return;
+    }
+  }
+  debugEl.textContent = 'Polling... getGamepads() returned: [' + Array.from(gamepads).map(g => g ? g.id : 'null').join(', ') + ']';
+}
+
+function readGamepad() {
+  pollForGamepad();
+  if (gamepadIndex === null) return null;
+  const gp = navigator.getGamepads()[gamepadIndex];
+  if (!gp) {
+    gamepadIndex = null;
+    overlay.classList.remove('hidden');
+    return null;
+  }
+  return gp;
+}
+
+// ══════════════════════════════════════════════
+//  WEBHID GYROSCOPE
+// ══════════════════════════════════════════════
+const VENDOR_ID_SONY = 0x054c;
+const PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
+
+let hidDevice = null;
+let connectionType = null;
+const gyroData = { gx: 0, gy: 0, gz: 0, ax: 0, ay: 0, az: 0 };
+const orientation = new THREE.Quaternion();
+let lastGyroTime = 0;
+
+// Calibration — gyro bias compensation
+const gyroBias = { x: 0, y: 0, z: 0 };
+let calibrating = false;
+let calibSamples = [];
+const CALIB_COUNT = 150; // ~1.5s at 100Hz
+
+const GYRO_SCALE = (2000.0 / 32768.0) * (Math.PI / 180.0);
+
+function readSigned16(data, offset) {
+  let val = data.getUint8(offset) | (data.getUint8(offset + 1) << 8);
+  if (val > 0x7FFF) val -= 0x10000;
+  return val;
+}
+
+function detectConnectionType(device) {
+  for (const col of device.collections) {
+    if (col.outputReports && col.outputReports.length > 0) {
+      for (const report of col.outputReports) {
+        if (report.reportId === 0x31) return 'bluetooth';
+      }
+    }
+  }
+  return 'usb';
+}
+
+function startCalibration() {
+  calibrating = true;
+  calibSamples = [];
+  orientation.identity();
+  lastGyroTime = 0;
+  calibrateToast.classList.add('visible');
+  gyroHint.textContent = 'Calibrating...';
+}
+
+function finishCalibration() {
+  if (calibSamples.length === 0) return;
+  let sx = 0, sy = 0, sz = 0;
+  for (const s of calibSamples) { sx += s.x; sy += s.y; sz += s.z; }
+  gyroBias.x = sx / calibSamples.length;
+  gyroBias.y = sy / calibSamples.length;
+  gyroBias.z = sz / calibSamples.length;
+  calibrating = false;
+  calibSamples = [];
+  orientation.identity();
+  lastGyroTime = 0;
+  calibrateToast.classList.remove('visible');
+  gyroHint.textContent = '';
+  console.log('Gyro bias:', gyroBias);
+}
+
+function handleInputReport(event) {
+  const report = event.data;
+  const reportId = event.reportId;
+  const now = performance.now();
+
+  let gyroOffset, accelOffset;
+  if (connectionType === 'usb' && reportId === 0x01) {
+    gyroOffset = 15; accelOffset = 21;
+  } else if (connectionType === 'bluetooth' && reportId === 0x31) {
+    gyroOffset = 16; accelOffset = 22;
+  } else {
+    return;
+  }
+
+  const rawGx = readSigned16(report, gyroOffset);
+  const rawGy = readSigned16(report, gyroOffset + 2);
+  const rawGz = readSigned16(report, gyroOffset + 4);
+
+  gyroData.ax = readSigned16(report, accelOffset);
+  gyroData.ay = readSigned16(report, accelOffset + 2);
+  gyroData.az = readSigned16(report, accelOffset + 4);
+
+  // Calibration sampling
+  if (calibrating) {
+    calibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
+    if (calibSamples.length >= CALIB_COUNT) finishCalibration();
+    lastGyroTime = now;
+    gyroData.gx = rawGx; gyroData.gy = rawGy; gyroData.gz = rawGz;
+    return;
+  }
+
+  // Apply bias correction
+  gyroData.gx = rawGx - gyroBias.x;
+  gyroData.gy = rawGy - gyroBias.y;
+  gyroData.gz = rawGz - gyroBias.z;
+
+  // Integrate gyro into orientation quaternion
+  if (lastGyroTime > 0) {
+    const dt = (now - lastGyroTime) / 1000.0;
+    if (dt < 0.1) {
+      const wx = gyroData.gx * GYRO_SCALE * dt;
+      const wy = gyroData.gy * GYRO_SCALE * dt;
+      const wz = gyroData.gz * GYRO_SCALE * dt;
+      const dq = new THREE.Quaternion();
+      dq.setFromEuler(new THREE.Euler(wx, wy, wz, 'XYZ'));
+      orientation.multiply(dq);
+      orientation.normalize();
+    }
+  }
+  lastGyroTime = now;
+}
+
+// ── Split transition ──
+let splitActive = false;
+let splitProgress = 0;
+const SPLIT_DURATION = 0.8;
+let splitStartTime = 0;
+
+function activateSplit() {
+  splitActive = true;
+  splitStartTime = performance.now() / 1000;
+  divider.classList.add('visible');
+  gyroHudEl.classList.add('visible');
+}
+
+async function connectGyro() {
+  if (hidDevice) return;
+
+  try {
+    const filters = PRODUCT_IDS.map(productId => ({
+      vendorId: VENDOR_ID_SONY, productId,
+      usagePage: 0x0001, usage: 0x0005
+    }));
+
+    const devices = await navigator.hid.requestDevice({ filters });
+    if (!devices || devices.length === 0) return;
+
+    hidDevice = devices[0];
+    if (!hidDevice.opened) await hidDevice.open();
+
+    connectionType = detectConnectionType(hidDevice);
+    console.log('WebHID connected:', hidDevice.productName, '(' + connectionType + ')');
+
+    hidDevice.addEventListener('inputreport', handleInputReport);
+
+    gyroBtn.classList.add('connected');
+    showHints();
+    activateSplit();
+
+    // Auto-calibrate on connect
+    startCalibration();
+
+  } catch (err) {
+    console.error('WebHID connection failed:', err);
+    debugEl.textContent = 'WebHID error: ' + err.message;
+  }
+}
+
+gyroBtn.addEventListener('click', connectGyro);
+
+// ══════════════════════════════════════════════
+//  ANIMATION LOOP
+// ══════════════════════════════════════════════
+const maxTilt = Math.PI / 6;
+const W = () => window.innerWidth;
+const H = () => window.innerHeight;
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const gp = readGamepad();
+  let lx = 0, ly = 0, lt = 0, rt = 0;
+  if (gp) {
+    const deadzone = 0.08;
+    lx = gp.axes[0] || 0;
+    ly = gp.axes[1] || 0;
+    if (Math.abs(lx) < deadzone) lx = 0;
+    if (Math.abs(ly) < deadzone) ly = 0;
+    lt = gp.buttons[6] ? gp.buttons[6].value : 0;
+    rt = gp.buttons[7] ? gp.buttons[7].value : 0;
+
+    // Controller button actions
+    // OPTIONS (button 9): Connect gyro
+    if (btnPressed(gp, 9) && !hidDevice && navigator.hid) {
+      gyroBtn.click();
+    }
+    // TRIANGLE (button 3): Recalibrate gyro
+    if (btnPressed(gp, 3) && hidDevice && !calibrating) {
+      startCalibration();
+    }
+  }
+
+  // HUD values
+  document.getElementById('lx').textContent = lx.toFixed(2);
+  document.getElementById('ly').textContent = ly.toFixed(2);
+  document.getElementById('lt').textContent = lt.toFixed(2);
+  document.getElementById('rt').textContent = rt.toFixed(2);
+
+  if (hidDevice) {
+    document.getElementById('gx').textContent = Math.round(gyroData.gx);
+    document.getElementById('gy').textContent = Math.round(gyroData.gy);
+    document.getElementById('gz').textContent = Math.round(gyroData.gz);
+    document.getElementById('ax').textContent = gyroData.ax;
+    document.getElementById('ay').textContent = gyroData.ay;
+    document.getElementById('az').textContent = gyroData.az;
+    gyroGroup.quaternion.copy(orientation);
+  }
+
+  // Update split transition
+  if (splitActive && splitProgress < 1) {
+    const elapsed = (performance.now() / 1000) - splitStartTime;
+    splitProgress = Math.min(1, elapsed / SPLIT_DURATION);
+  }
+
+  const t = splitActive ? easeInOutCubic(splitProgress) : 0;
+
+  // Animate stick camera pull-back during split
+  stickCamera.position.y = lerp(stickCamDefault.y, stickCamSplit.y, t);
+  stickCamera.position.z = lerp(stickCamDefault.z, stickCamSplit.z, t);
+  stickCamera.lookAt(0, 0, 0);
+
+  // Stick scene objects
+  platform.rotation.x = ly * maxTilt;
+  platform.rotation.z = -lx * maxTilt;
+  ring.rotation.x = -Math.PI / 2 + ly * maxTilt;
+  ring.rotation.z = -lx * maxTilt;
+
+  const ballRadius = 1.4;
+  ball.position.x = lx * ballRadius;
+  ball.position.z = ly * ballRadius;
+  ball.position.y = 0.85 + (ly * ballRadius * Math.sin(ly * maxTilt)) + (-lx * ballRadius * Math.sin(-lx * maxTilt)) * 0.3;
+
+  const mag = Math.sqrt(lx * lx + ly * ly);
+  ballMat.emissive.setHex(mag > 0.1 ? 0x004466 : 0x002244);
+
+  if (mag > 0.15) {
+    arrow.visible = true;
+    arrow.position.x = lx * 1.0;
+    arrow.position.z = ly * 1.0;
+    arrow.position.y = 0.9;
+    arrow.rotation.set(0, 0, 0);
+    arrow.lookAt(arrow.position.x + lx, arrow.position.y, arrow.position.z + ly);
+    arrow.rotateX(Math.PI / 2);
+  } else {
+    arrow.visible = false;
+  }
+
+  ltBar.scale.y = Math.max(0.01, lt);
+  rtBar.scale.y = Math.max(0.01, rt);
+  ltBar.material.emissive.setScalar(lt * 0.5);
+  rtBar.material.emissive.setScalar(rt * 0.5);
+
+  stickCamera.position.x = lx * 0.5;
+
+  // ── Render ──
+  const w = W();
+  const h = H();
+
+  if (t <= 0) {
+    // Full-screen stick view
+    renderer.setScissorTest(false);
+    stickCamera.aspect = w / h;
+    stickCamera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, w, h);
+    renderer.render(stickScene, stickCamera);
+  } else {
+    const splitW = Math.round(t * w / 2); // right side grows from 0 to w/2
+
+    renderer.setScissorTest(true);
+    renderer.setClearColor(0x111111);
+
+    // Left side — stick scene (compresses from full to left half)
+    const leftW = w - splitW;
+    stickCamera.aspect = leftW / h;
+    stickCamera.updateProjectionMatrix();
+    renderer.setViewport(0, 0, leftW, h);
+    renderer.setScissor(0, 0, leftW, h);
+    renderer.render(stickScene, stickCamera);
+
+    // Right side — gyro scene (slides in from right)
+    if (splitW > 0) {
+      const rightX = w - splitW;
+      gyroCamera.aspect = splitW / h;
+      gyroCamera.updateProjectionMatrix();
+      renderer.setViewport(rightX, 0, splitW, h);
+      renderer.setScissor(rightX, 0, splitW, h);
+      renderer.render(gyroScene, gyroCamera);
+    }
+
+    renderer.setScissorTest(false);
+  }
+}
+
+animate();
+
+// ── Resize ──
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
