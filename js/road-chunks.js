@@ -45,6 +45,7 @@ export class RoadChunkManager {
     const roadGeo = this._createRoadGeometry();
     const roadMesh = new THREE.Mesh(roadGeo, this._roadMat);
     roadMesh.receiveShadow = true;
+    roadMesh.frustumCulled = false; // road chunks always in view — skip bounding sphere
     group.add(roadMesh);
 
     return { startD: -1, group, roadMesh };
@@ -269,7 +270,6 @@ export class RoadChunkManager {
     chunk.roadMesh.geometry.attributes.position.needsUpdate = true;
     chunk.roadMesh.geometry.attributes.normal.needsUpdate = true;
     chunk.roadMesh.geometry.attributes.uv.needsUpdate = true;
-    chunk.roadMesh.geometry.computeBoundingSphere();
   }
 
   _buildChunk(chunk, startD) {

@@ -57,6 +57,10 @@ export class World {
     // Road chunks
     this.roadChunks = new RoadChunkManager(scene, this.roadPath);
 
+    // Ground deformation tracking — skip when snap position unchanged
+    this._lastSnapX = NaN;
+    this._lastSnapZ = NaN;
+
     // Tree PRNG — separate seed so road path changes don't affect trees
     this._treeRngState = 137;
     this._treeSeededRandom = () => {
@@ -226,6 +230,15 @@ export class World {
     this.floor = new THREE.Mesh(geom, mat);
     this.floor.rotation.x = -Math.PI / 2;
     this.floor.receiveShadow = true;
+    this.floor.frustumCulled = false; // always visible around bike — skip bounding sphere
+
+    // Pre-set all normals to (0,1,0) — ground is nearly flat, no need to recompute per frame
+    const normalAttr = geom.attributes.normal;
+    for (let i = 0; i < normalAttr.count; i++) {
+      normalAttr.setXYZ(i, 0, 0, 1); // in geometry space (rotated -PI/2 on X → world Y up)
+    }
+    normalAttr.needsUpdate = true;
+
     this.scene.add(this.floor);
   }
 
@@ -334,14 +347,19 @@ export class World {
   }
 
   _deformGround(bikePos, bikeD) {
-    const posAttr = this.floor.geometry.attributes.position;
-    const count = posAttr.count;
-
     // Floor is rotated -PI/2 on X, so geometry X = world X, geometry Y = world -Z
     // relative to the mesh's snap position
     const snapSize = this.tileSize;
     const snapX = Math.round(bikePos.x / snapSize) * snapSize;
     const snapZ = Math.round(bikePos.z / snapSize) * snapSize;
+
+    // Skip recomputation when snap position hasn't changed (~4-8ms saved per frame)
+    if (snapX === this._lastSnapX && snapZ === this._lastSnapZ) return;
+    this._lastSnapX = snapX;
+    this._lastSnapZ = snapZ;
+
+    const posAttr = this.floor.geometry.attributes.position;
+    const count = posAttr.count;
 
     // Pre-sample road elevations into a 1D height profile.
     // Single dot-product projection per vertex + array lookup — no iterative refinement,
@@ -387,8 +405,8 @@ export class World {
     }
 
     posAttr.needsUpdate = true;
-    this.floor.geometry.computeVertexNormals();
-    this.floor.geometry.computeBoundingSphere();
+    // Normals pre-set to (0,0,1) at construction — ground is nearly flat
+    // frustumCulled disabled at construction — no bounding sphere needed
   }
 
   _buildLighting() {

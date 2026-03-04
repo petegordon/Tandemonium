@@ -1448,7 +1448,7 @@ export class Lobby {
   async _initBikeCarousel() {
     // Load presets
     try {
-      const resp = await fetch('../tandem-3d/bike-presets.json');
+      const resp = await fetch('tandem-3d/bike-presets.json');
       this._presetData = await resp.json();
       this._presetKeys = ['default', ...Object.keys(this._presetData)];
     } catch (e) {

@@ -57,6 +57,16 @@ export class HUD {
     this.countdownOverlay = document.getElementById('countdown-overlay');
     this.countdownNumber = document.getElementById('countdown-number');
     this._lastCountdownSec = -1;
+
+    // Cached previous values — skip DOM writes when unchanged
+    this._prevKmh = -1;
+    this._prevSpeedColor = '';
+    this._prevDistText = '';
+    this._prevBikeDeg = NaN;
+    this._prevBikeDangerZone = -1;
+    this._prevPhoneDeg = NaN;
+    this._prevStatusText = '';
+    this._prevStatusColor = '';
   }
 
   initProgress(level) {
@@ -161,29 +171,28 @@ export class HUD {
     const kmh = Math.round(bike.speed * 3.6);
     const maxKmh = 58;
 
-    // Speed number + color coding
-    this.speedValueEl.textContent = kmh;
-    if (kmh > 35) {
-      this.speedValueEl.style.color = '#00e040';
-      this.speedBarFill.style.background = '#00e040';
-    } else if (kmh > 15) {
-      this.speedValueEl.style.color = '#88ff88';
-      this.speedBarFill.style.background = '#88ff88';
-    } else {
-      this.speedValueEl.style.color = '#ffffff';
-      this.speedBarFill.style.background = '#ffffff';
+    // Speed number + color coding (skip DOM write when unchanged)
+    if (kmh !== this._prevKmh) {
+      this._prevKmh = kmh;
+      this.speedValueEl.textContent = kmh;
+      const pct = Math.min(100, (kmh / maxKmh) * 100);
+      this.speedBarFill.style.width = pct + '%';
     }
-
-    // Speed bar
-    const pct = Math.min(100, (kmh / maxKmh) * 100);
-    this.speedBarFill.style.width = pct + '%';
+    const speedColor = kmh > 35 ? '#00e040' : (kmh > 15 ? '#88ff88' : '#ffffff');
+    if (speedColor !== this._prevSpeedColor) {
+      this._prevSpeedColor = speedColor;
+      this.speedValueEl.style.color = speedColor;
+      this.speedBarFill.style.background = speedColor;
+    }
 
     // Distance: "m" under 1000, "km" above
     const dist = bike.distanceTraveled;
-    if (dist >= 1000) {
-      this.distanceEl.textContent = (dist / 1000).toFixed(2) + ' km';
-    } else {
-      this.distanceEl.textContent = Math.round(dist) + ' m';
+    const distText = dist >= 1000
+      ? (dist / 1000).toFixed(2) + ' km'
+      : Math.round(dist) + ' m';
+    if (distText !== this._prevDistText) {
+      this._prevDistText = distText;
+      this.distanceEl.textContent = distText;
     }
 
     // Total elapsed time
@@ -220,50 +229,56 @@ export class HUD {
     }
 
     // Phone gauge (show on both mobile and desktop)
+    let phoneDeg;
     if (isMobile) {
       const rawRel = input.motionRawRelative || 0;
-      const phoneDeg = Math.max(-90, Math.min(90, rawRel));
-      this.phoneNeedle.setAttribute('transform', 'rotate(' + phoneDeg.toFixed(1) + ', 60, 60)');
-      this.phoneLabel.textContent = Math.abs(rawRel).toFixed(1) + '\u00B0';
+      phoneDeg = Math.round(Math.max(-90, Math.min(90, rawRel)));
     } else if (input.gamepadConnected) {
-      // Gamepad: analog stick lean on the YOU gauge
-      const gpDeg = input.gamepadLean * 90;
-      this.phoneNeedle.setAttribute('transform', 'rotate(' + gpDeg.toFixed(1) + ', 60, 60)');
-      this.phoneLabel.textContent = Math.abs(gpDeg).toFixed(1) + '\u00B0';
+      phoneDeg = Math.round(input.gamepadLean * 90);
     } else {
-      // Desktop: show keyboard lean (A/D) on the YOU gauge
       const aHeld = input.isPressed('KeyA');
       const dHeld = input.isPressed('KeyD');
-      const kbLean = aHeld ? -45 : (dHeld ? 45 : 0);
-      this.phoneNeedle.setAttribute('transform', 'rotate(' + kbLean + ', 60, 60)');
-      this.phoneLabel.textContent = Math.abs(kbLean).toFixed(1) + '\u00B0';
+      phoneDeg = aHeld ? -45 : (dHeld ? 45 : 0);
+    }
+    if (phoneDeg !== this._prevPhoneDeg) {
+      this._prevPhoneDeg = phoneDeg;
+      this.phoneNeedle.setAttribute('transform', 'rotate(' + phoneDeg + ', 60, 60)');
+      this.phoneLabel.textContent = Math.abs(phoneDeg) + '\u00B0';
     }
 
-    // Bike gauge
+    // Bike gauge (round to integer degrees to reduce DOM writes)
     const tiltDeg = (bike.lean * 180 / Math.PI);
-    const bikeDeg = Math.max(-90, Math.min(90, tiltDeg));
+    const bikeDeg = Math.round(Math.max(-90, Math.min(90, tiltDeg)));
+    if (bikeDeg !== this._prevBikeDeg) {
+      this._prevBikeDeg = bikeDeg;
+      this.bikeNeedle.setAttribute('transform', 'rotate(' + bikeDeg + ', 60, 60)');
+      this.bikeLabel.textContent = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
+    }
     const danger = Math.abs(bike.lean) / 1.35;
-    this.bikeNeedle.setAttribute('transform', 'rotate(' + bikeDeg.toFixed(1) + ', 60, 60)');
-    this.bikeLabel.textContent = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
-    if (danger > 0.75) {
-      this.bikeLabel.style.color = '#ff4444';
-    } else if (danger > 0.5) {
-      this.bikeLabel.style.color = '#ffaa22';
-    } else {
-      this.bikeLabel.style.color = '#ffffff';
+    const dangerZone = danger > 0.75 ? 2 : (danger > 0.5 ? 1 : 0);
+    if (dangerZone !== this._prevBikeDangerZone) {
+      this._prevBikeDangerZone = dangerZone;
+      this.bikeLabel.style.color = dangerZone === 2 ? '#ff4444' : (dangerZone === 1 ? '#ffaa22' : '#ffffff');
     }
 
     // Status text (only when not controlled by countdown)
+    let statusText = '';
+    let statusColor = '';
     if (bike.fallen) {
-      this.statusEl.textContent = 'CRASHED! Resetting...';
-      this.statusEl.style.color = '#ff4444';
+      statusText = 'CRASHED! Resetting...';
+      statusColor = '#ff4444';
     } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {
-      const hint = isMobile ? 'Tap pedals to ride!' :
+      statusText = isMobile ? 'Tap pedals to ride!' :
         (input.gamepadConnected ? 'Pedal! Alternate LB/RB or LT/RT' : 'Pedal! Alternate \u2190 \u2192');
-      this.statusEl.textContent = hint;
-      this.statusEl.style.color = '#ffdd44';
-    } else {
-      this.statusEl.textContent = '';
+      statusColor = '#ffdd44';
+    }
+    if (statusText !== this._prevStatusText) {
+      this._prevStatusText = statusText;
+      this.statusEl.textContent = statusText;
+    }
+    if (statusColor !== this._prevStatusColor) {
+      this._prevStatusColor = statusColor;
+      if (statusColor) this.statusEl.style.color = statusColor;
     }
 
     // Partner gauge + pedal indicators

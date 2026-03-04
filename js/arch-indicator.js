@@ -38,6 +38,13 @@ export class ArchIndicator {
     this._visible = false;
     this._mode = 'solo';
 
+    // Reusable temporaries for update() (avoid per-frame allocations)
+    this._tmpQYaw = new THREE.Quaternion();
+    this._tmpQPitch = new THREE.Quaternion();
+    this._tmpQ = new THREE.Quaternion();
+    this._tmpAxisY = new THREE.Vector3(0, 1, 0);
+    this._tmpAxisX = new THREE.Vector3(1, 0, 0);
+
     this._buildArch();
   }
 
@@ -272,15 +279,10 @@ export class ArchIndicator {
     this.group.position.copy(bike.position);
 
     // Orient with yaw + pitch only (NO lean — arch stays upright)
-    const qYaw = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 1, 0), bike.heading
-    );
-    const qPitch = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(1, 0, 0), bike._smoothPitch
-    );
-    const q = new THREE.Quaternion();
-    q.multiplyQuaternions(qYaw, qPitch);
-    this.group.quaternion.copy(q);
+    this._tmpQYaw.setFromAxisAngle(this._tmpAxisY, bike.heading);
+    this._tmpQPitch.setFromAxisAngle(this._tmpAxisX, bike._smoothPitch);
+    this._tmpQ.multiplyQuaternions(this._tmpQYaw, this._tmpQPitch);
+    this.group.quaternion.copy(this._tmpQ);
 
     // Rotate player needle — 0 = straight up, lean left tilts needle left
     if (this._playerNeedle) {
