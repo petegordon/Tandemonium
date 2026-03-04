@@ -1425,6 +1425,13 @@
     margin: 8px 0;
     text-shadow: 0 0 20px rgba(68,255,102,0.4);
   }
+  .room-code-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: rgba(68,255,102,0.7);
+    letter-spacing: 2px;
+    text-align: center;
+  }
   .room-code-input {
     font-size: 24px;
     font-weight: 700;
@@ -2301,6 +2308,7 @@ ON</button>
         <!-- Step 4: Multiplayer Room (shared lobby after P2P connects) -->
         <div id="lobby-room" class="lobby-step" style="display:none;">
           <div id="room-partner-info">
+            <div id="room-code-label" class="room-code-label"></div>
             <div id="room-partner-name"></div>
           </div>
           <div id="room-video-area">
@@ -2353,7 +2361,7 @@ ON</button>
       </div>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.40ae924 | 03-04-2026 07:30</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.bf73a66 | 03-04-2026 08:07</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>

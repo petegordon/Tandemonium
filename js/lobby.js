@@ -523,11 +523,13 @@ export class Lobby {
     if (this.cameraActive) {
       this.cameraActive = false;
       this._setToggleActive('camera', false);
+      this._applyVideoTrackState(false);
       return;
     }
     if (this._cameraPermitted) {
       this.cameraActive = true;
       this._setToggleActive('camera', true);
+      this._applyVideoTrackState(true);
       return;
     }
     navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
@@ -535,6 +537,7 @@ export class Lobby {
       this._cameraPermitted = true;
       this.cameraActive = true;
       this._setToggleActive('camera', true);
+      this._applyVideoTrackState(true);
     }).catch(() => {});
   }
 
@@ -589,11 +592,13 @@ export class Lobby {
     if (this.audioActive) {
       this.audioActive = false;
       this._setToggleActive('audio', false);
+      this._applyAudioTrackState(false);
       return;
     }
     if (this._audioPermitted) {
       this.audioActive = true;
       this._setToggleActive('audio', true);
+      this._applyAudioTrackState(true);
       return;
     }
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
@@ -601,6 +606,7 @@ export class Lobby {
       this._audioPermitted = true;
       this.audioActive = true;
       this._setToggleActive('audio', true);
+      this._applyAudioTrackState(true);
     }).catch(() => {});
   }
 
@@ -615,6 +621,36 @@ export class Lobby {
       el.classList.remove('active');
     }
     this._updateAllToggle();
+  }
+
+  _applyVideoTrackState(enabled) {
+    if (!this.net || !this.net._localMediaStream) return;
+    const track = this.net._localMediaStream.getVideoTracks()[0];
+    if (track) track.enabled = enabled;
+    const selfieVideo = document.getElementById('selfie-pip');
+    const selfieAvatar = document.getElementById('selfie-pip-avatar');
+    if (enabled && track) {
+      if (selfieVideo) {
+        selfieVideo.style.display = 'block';
+        selfieVideo.play().catch(() => {});
+      }
+      if (selfieAvatar) selfieAvatar.style.display = 'none';
+    } else {
+      if (selfieVideo) selfieVideo.style.display = 'none';
+      if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
+        const user = this.auth.getUser();
+        if (user && user.avatar) {
+          selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+          selfieAvatar.style.display = 'block';
+        }
+      }
+    }
+  }
+
+  _applyAudioTrackState(enabled) {
+    if (!this.net || !this.net._localMediaStream) return;
+    const track = this.net._localMediaStream.getAudioTracks()[0];
+    if (track) track.enabled = enabled;
   }
 
   _toggleMusic() {
@@ -1265,6 +1301,11 @@ export class Lobby {
   _showRoomStep(role) {
     this._roomRole = role;
 
+    const roomCodeLabel = document.getElementById('room-code-label');
+    if (roomCodeLabel && this.net && this.net.roomCode) {
+      roomCodeLabel.textContent = this.net.roomCode;
+    }
+
     // Show/hide start button vs waiting text based on role
     const startBtn = document.getElementById('btn-start-ride');
     const waitText = document.getElementById('room-wait-text');
@@ -1369,8 +1410,16 @@ export class Lobby {
 
   async _startRoomMedia() {
     if (!this.net) return;
-    // Acquire local media
-    await this.net.acquireLocalMedia(this.cameraActive, this.audioActive);
+    // Acquire all permitted tracks so they can be toggled on/off in the room
+    await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
+
+    // Apply current toggle states to live tracks
+    if (this.net._localMediaStream) {
+      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
+      if (videoTrack) videoTrack.enabled = this.cameraActive;
+      const audioTrack = this.net._localMediaStream.getAudioTracks()[0];
+      if (audioTrack) audioTrack.enabled = this.audioActive;
+    }
 
     // Show selfie PiP in lobby mode
     const selfieWrap = document.getElementById('selfie-pip-wrap');
@@ -1382,22 +1431,34 @@ export class Lobby {
 
     // Start selfie video from the acquired stream
     const selfieVideo = document.getElementById('selfie-pip');
+    const selfieAvatar = document.getElementById('selfie-pip-avatar');
     if (selfieVideo && this.net._localMediaStream) {
       const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-      if (videoTrack) {
-        selfieVideo.srcObject = this.net._localMediaStream;
+      // Always bind the stream so toggling on later works immediately
+      if (videoTrack) selfieVideo.srcObject = this.net._localMediaStream;
+      if (videoTrack && this.cameraActive) {
         selfieVideo.style.display = 'block';
         selfieVideo.play().catch(() => {});
-        if (selfieWrap) selfieWrap.style.display = 'block';
+        if (selfieAvatar) selfieAvatar.style.display = 'none';
+      } else {
+        selfieVideo.style.display = 'none';
+        // Show avatar fallback when camera is off
+        if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
+          const user = this.auth.getUser();
+          if (user && user.avatar) {
+            selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+            selfieAvatar.style.display = 'block';
+          }
+        }
       }
+      if (selfieWrap) selfieWrap.style.display = 'block';
     } else if (this.auth && this.auth.isLoggedIn()) {
-      // Fallback to avatar
+      // No stream at all — fallback to avatar
       const user = this.auth.getUser();
-      const selfieAvatar = document.getElementById('selfie-pip-avatar');
       if (user && user.avatar && selfieAvatar && selfieWrap) {
         selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
         selfieAvatar.style.display = 'block';
-        selfieVideo.style.display = 'none';
+        if (selfieVideo) selfieVideo.style.display = 'none';
         selfieWrap.style.display = 'block';
       }
     }
@@ -1494,6 +1555,12 @@ export class Lobby {
     // Called by game.js _returnToRoom() to re-show the lobby at roomStep
     this.net = net;
     this._roomRole = role;
+
+    const roomCodeLabel = document.getElementById('room-code-label');
+    if (roomCodeLabel && this.net && this.net.roomCode) {
+      roomCodeLabel.textContent = this.net.roomCode;
+    }
+
     this.lobbyEl.style.display = '';
     this._startGamepadNav();
     if (this._previewModel) this._startPreviewLoop();
