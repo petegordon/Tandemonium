@@ -85,21 +85,29 @@ export class Lobby {
 
     // Per-step focusable items and back buttons
     this._stepItems = new Map();
+    this._stepCenterItems = new Map(); // immutable center-column items per step
     this._stepBack = new Map();
     this._stepItems.set(this.modeStep, this._modeColumns[1]);
-    this._stepItems.set(this.roleStep, [
+    this._stepCenterItems.set(this.modeStep, this._modeColumns[1]);
+    const roleItems = [
       document.getElementById('btn-captain'),
       document.getElementById('btn-stoker'),
       document.getElementById('btn-back-mode'),
-    ]);
-    this._stepItems.set(this.hostStep, [
+    ];
+    this._stepItems.set(this.roleStep, roleItems);
+    this._stepCenterItems.set(this.roleStep, roleItems);
+    const hostItems = [
       document.getElementById('btn-back-role-host'),
-    ]);
-    this._stepItems.set(this.joinStep, [
+    ];
+    this._stepItems.set(this.hostStep, hostItems);
+    this._stepCenterItems.set(this.hostStep, hostItems);
+    const joinItems = [
       document.getElementById('room-code-input'),
       document.getElementById('btn-join'),
       document.getElementById('btn-back-role-join'),
-    ]);
+    ];
+    this._stepItems.set(this.joinStep, joinItems);
+    this._stepCenterItems.set(this.joinStep, joinItems);
     this._stepBack.set(this.modeStep, null);
     this._stepBack.set(this.roleStep, document.getElementById('btn-back-mode'));
     this._stepBack.set(this.hostStep, document.getElementById('btn-back-role-host'));
@@ -107,7 +115,7 @@ export class Lobby {
 
     // Default focus index per step (0 if not specified)
     this._stepDefaultFocus = new Map();
-    this._stepDefaultFocus.set(this.modeStep, 1); // RIDE TOGETHER
+    this._stepDefaultFocus.set(this.modeStep, 0); // RIDE TOGETHER
 
     // Bike carousel state
     this.selectedPreset = null; // null = default, or preset data object
@@ -187,11 +195,14 @@ export class Lobby {
     step.style.display = 'flex';
     this._clearFocusHighlight();
     this._currentStep = step;
-    if (step === this.modeStep) {
-      this._modeCol = 1;
-      this._modeColIndex = [0, 0, 0, 0];
-      this._stepItems.set(this.modeStep, this._modeColumns[1]);
-    }
+
+    // Always reset to center column and update its items
+    this._modeCol = 1;
+    this._modeColIndex = [0, 0, 0, 0];
+    const centerItems = this._stepCenterItems.get(step) || [];
+    this._modeColumns[1] = centerItems;
+    this._stepItems.set(step, centerItems);
+
     this._focusIndex = this._stepDefaultFocus.get(step) || 0;
     this._applyFocusHighlight();
   }
@@ -331,6 +342,7 @@ export class Lobby {
     // Register for gamepad navigation
     buttons.push(document.getElementById('btn-back-level'));
     this._stepItems.set(this.levelStep, buttons);
+    this._stepCenterItems.set(this.levelStep, buttons);
     this._stepBack.set(this.levelStep, document.getElementById('btn-back-level'));
   }
 
@@ -1252,7 +1264,6 @@ export class Lobby {
 
   _showRoomStep(role) {
     this._roomRole = role;
-    this._showStep(this.roomStep);
 
     // Show/hide start button vs waiting text based on role
     const startBtn = document.getElementById('btn-start-ride');
@@ -1266,8 +1277,9 @@ export class Lobby {
       waitText.style.display = '';
     }
 
-    // Build level cards
+    // Build level cards BEFORE _showStep so _stepItems is populated
     this._buildRoomLevelCards(role === 'captain');
+    this._showStep(this.roomStep);
 
     // Start media
     this._startRoomMedia();
@@ -1328,11 +1340,24 @@ export class Lobby {
       buttons.push(card);
     });
 
+    // Restore previously selected level
+    if (this.selectedLevel) {
+      container.querySelectorAll('.level-card').forEach(c => {
+        if (c.dataset.levelId === this.selectedLevel.id) c.classList.add('selected');
+      });
+      if (isClickable) document.getElementById('btn-start-ride').disabled = false;
+      // Re-sync level to partner (captain only)
+      if (isClickable && this.net && this.net.connected) {
+        this.net.sendProfile({ type: 'levelSync', levelId: this.selectedLevel.id });
+      }
+    }
+
     // Register for gamepad nav
     const roomItems = isClickable
       ? [...buttons, document.getElementById('btn-start-ride'), document.getElementById('btn-back-room')]
       : [document.getElementById('btn-back-room')];
     this._stepItems.set(this.roomStep, roomItems);
+    this._stepCenterItems.set(this.roomStep, roomItems);
     this._stepBack.set(this.roomStep, document.getElementById('btn-back-room'));
   }
 
@@ -1401,8 +1426,12 @@ export class Lobby {
     if (!profile || !profile.type) {
       // Legacy profile message (avatar, name, etc.) — store partner info
       if (profile && profile.avatar) {
-        const partnerName = document.getElementById('room-partner-name');
-        if (partnerName && profile.name) partnerName.textContent = profile.name;
+        const partnerNameEl = document.getElementById('room-partner-name');
+        if (partnerNameEl && profile.name) {
+          partnerNameEl.dataset.playerName = profile.name;
+          const bike = partnerNameEl.dataset.partnerBike || '';
+          partnerNameEl.textContent = bike ? profile.name + ' — ' + bike : profile.name;
+        }
         // Show partner avatar if no video
         const partnerVideo = document.getElementById('partner-pip');
         const partnerAvatar = document.getElementById('partner-pip-avatar');
@@ -1418,11 +1447,13 @@ export class Lobby {
     }
 
     if (profile.type === 'bikeSync') {
-      // Update carousel to partner's bike selection
-      const idx = this._presetKeys.indexOf(profile.presetKey);
-      if (idx >= 0) {
-        this._presetIndex = idx;
-        this._applyPresetToPreview();
+      // Display partner's bike name near their name — don't touch local carousel
+      const name = BIKE_NAMES[profile.presetKey] || profile.presetKey;
+      const el = document.getElementById('room-partner-name');
+      if (el) {
+        el.dataset.partnerBike = name;
+        const playerName = el.dataset.playerName || '';
+        el.textContent = playerName ? playerName + ' — ' + name : name;
       }
     } else if (profile.type === 'levelSync') {
       // Stoker: highlight captain's level selection
@@ -1468,9 +1499,6 @@ export class Lobby {
     this._startGamepadNav();
     if (this._previewModel) this._startPreviewLoop();
 
-    // Show room step directly
-    this._showStep(this.roomStep);
-
     // Show/hide start button vs waiting text
     const startBtn = document.getElementById('btn-start-ride');
     const waitText = document.getElementById('room-wait-text');
@@ -1483,8 +1511,11 @@ export class Lobby {
       waitText.style.display = '';
     }
 
-    // Rebuild level cards
+    // Rebuild level cards BEFORE _showStep so _stepItems is populated
     this._buildRoomLevelCards(role === 'captain');
+
+    // Show room step directly
+    this._showStep(this.roomStep);
 
     // Re-add PiP lobby mode
     const selfieWrap = document.getElementById('selfie-pip-wrap');
@@ -1502,6 +1533,11 @@ export class Lobby {
     // Re-register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
 
+    // Send current bike preset to partner on re-entry
+    if (this.net.connected) {
+      this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+    }
+
     // Re-register disconnect handler for room
     this.net.onDisconnected = (reason) => {
       const waitText = document.getElementById('room-wait-text');
@@ -1514,6 +1550,9 @@ export class Lobby {
         this._showStep(this.roleStep);
       }, 2000);
     };
+
+    // Refresh carousel visual on re-entry
+    this._applyPresetToPreview();
   }
 
   // ── Gamepad navigation ──────────────────────────────────────
@@ -1686,7 +1725,6 @@ export class Lobby {
   }
 
   _moveColumn(dir) {
-    if (this._currentStep !== this.modeStep) return;
     const newCol = Math.max(0, Math.min(this._modeColumns.length - 1, this._modeCol + dir));
     if (newCol === this._modeCol) return;
 
@@ -1698,7 +1736,7 @@ export class Lobby {
     const colItems = this._modeColumns[newCol].filter(el => el.style.display !== 'none');
     this._focusIndex = Math.min(this._modeColIndex[newCol], colItems.length - 1);
     // Update _stepItems to point at the active column's items
-    this._stepItems.set(this.modeStep, colItems);
+    this._stepItems.set(this._currentStep, colItems);
     this._applyFocusHighlight();
   }
 
@@ -1844,10 +1882,12 @@ export class Lobby {
     const goPrev = () => {
       this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
       this._applyPresetToPreview();
+      this._sendBikeSyncIfInRoom();
     };
     const goNext = () => {
       this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
       this._applyPresetToPreview();
+      this._sendBikeSyncIfInRoom();
     };
     prevBtn.addEventListener('click', goPrev);
     nextBtn.addEventListener('click', goNext);
@@ -1869,6 +1909,7 @@ export class Lobby {
           this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
         }
         this._applyPresetToPreview();
+        this._sendBikeSyncIfInRoom();
       }
     }, { passive: true });
   }
@@ -1921,9 +1962,11 @@ export class Lobby {
       }
     });
 
-    // Sync bike to partner when in room step
+  }
+
+  _sendBikeSyncIfInRoom() {
     if (this._currentStep === this.roomStep && this.net && this.net.connected) {
-      this.net.sendProfile({ type: 'bikeSync', presetKey: key });
+      this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
     }
   }
 
