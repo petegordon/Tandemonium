@@ -38,4 +38,6 @@ export const BALANCE_DEFAULTS = {
   gravityForce: 2.5,
   damping: 4.0,
   turnRate: 0.50,
+  responseCurve: 1.8,
+  outputSmoothing: 0.25,
 };

@@ -24,6 +24,7 @@ export class InputManager {
     this.rawGamma = 0;
     this.motionOffset = null;
     this.motionRawRelative = 0;
+    this._smoothedLean = 0;
 
     // Gamepad state
     this.gamepadIndex = null;
@@ -217,13 +218,21 @@ export class InputManager {
     else if (relative < -180) relative += 360;
     this.motionRawRelative = relative;
 
-    const deadZone = BALANCE_DEFAULTS.deadzone;
-    if (Math.abs(relative) < deadZone) {
-      relative = 0;
+    const { deadzone, sensitivity, responseCurve, outputSmoothing } = BALANCE_DEFAULTS;
+    const absRel = Math.abs(relative);
+    let lean;
+
+    if (absRel < deadzone) {
+      lean = 0;
     } else {
-      relative = relative - Math.sign(relative) * deadZone;
+      const reduced = absRel - deadzone;
+      const range = sensitivity - deadzone;
+      const normalized = Math.min(reduced / range, 1.0);
+      lean = Math.sign(relative) * Math.pow(normalized, responseCurve);
     }
-    this.motionLean = Math.max(-1, Math.min(1, relative / BALANCE_DEFAULTS.sensitivity));
+
+    this._smoothedLean += (lean - this._smoothedLean) * outputSmoothing;
+    this.motionLean = this._smoothedLean;
   }
 
   _setupCalibration() {
