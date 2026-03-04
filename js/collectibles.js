@@ -32,8 +32,18 @@ const chromakeyFragment = `
   uniform vec3 keyColor;
   uniform float similarity;
   uniform float smoothness;
+  uniform float videoReady;
+  uniform vec3 fallbackColor;
   varying vec2 vUv;
   void main() {
+    if (videoReady < 0.5) {
+      // Video not playing yet — show colored fallback instead of black
+      float r = length(vUv - vec2(0.5));
+      float alpha = smoothstep(0.5, 0.35, r);
+      if (alpha < 0.01) discard;
+      gl_FragColor = vec4(fallbackColor, alpha);
+      return;
+    }
     vec4 texColor = texture2D(map, vUv);
     float d = distance(texColor.rgb, keyColor);
     float alpha = smoothstep(similarity, similarity + smoothness, d);
@@ -53,7 +63,6 @@ const THEMES = {
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
-      video.play().catch(() => {});
 
       const videoTexture = new THREE.VideoTexture(video);
       videoTexture.minFilter = THREE.LinearFilter;
@@ -63,13 +72,32 @@ const THEMES = {
       const w = 1.4, h = 1.4 * (296 / 200);
       const geo = new THREE.PlaneGeometry(w, h);
 
+      // videoReady flips to 1.0 once the video is actually playing
+      const videoReadyUniform = { value: 0.0 };
+      video.addEventListener('playing', () => { videoReadyUniform.value = 1.0; });
+
+      // Attempt autoplay; log errors and retry on user gesture
+      video.play().catch(err => {
+        console.warn('Collectible video autoplay blocked:', err.message);
+        const retry = () => {
+          video.play().then(() => {
+            document.removeEventListener('touchstart', retry);
+            document.removeEventListener('click', retry);
+          }).catch(() => {});
+        };
+        document.addEventListener('touchstart', retry, { once: true });
+        document.addEventListener('click', retry, { once: true });
+      });
+
       // All presents share the same video + chromakey material (cloned per pool slot)
       const baseMat = new THREE.ShaderMaterial({
         uniforms: {
           map: { value: videoTexture },
           keyColor: { value: new THREE.Color(58 / 255, 180 / 255, 38 / 255) },
           similarity: { value: 0.3 },
-          smoothness: { value: 0.08 }
+          smoothness: { value: 0.08 },
+          videoReady: videoReadyUniform,
+          fallbackColor: { value: new THREE.Color(1.0, 0.84, 0.0) } // gold
         },
         vertexShader: chromakeyVertex,
         fragmentShader: chromakeyFragment,

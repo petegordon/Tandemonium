@@ -3,6 +3,8 @@
 // Receives state at 20Hz, interpolates for 60fps rendering
 // ============================================================
 
+function lerp(a, b, t) { return a + (b - a) * t; }
+
 export class RemoteBikeState {
   constructor() {
     this.prev = null;
@@ -10,6 +12,12 @@ export class RemoteBikeState {
     this.receiveTime = 0;
     this.interpDuration = 0.05; // 50ms default, adapts to jitter
     this._lastReceiveDelta = 0.05;
+
+    // Reusable result object (avoid per-frame allocation)
+    this._interpState = {
+      x: 0, y: 0, z: 0, heading: 0, lean: 0, leanVelocity: 0,
+      speed: 0, crankAngle: 0, distanceTraveled: 0, roadD: 0, flags: 0
+    };
   }
 
   pushState(state) {
@@ -32,19 +40,18 @@ export class RemoteBikeState {
     const elapsed = now - this.receiveTime;
     const t = Math.min(1, elapsed / this.interpDuration);
 
-    const lerp = (a, b, t) => a + (b - a) * t;
-    return {
-      x: lerp(this.prev.x, this.curr.x, t),
-      y: lerp(this.prev.y, this.curr.y, t),
-      z: lerp(this.prev.z, this.curr.z, t),
-      heading: lerp(this.prev.heading, this.curr.heading, t),
-      lean: lerp(this.prev.lean, this.curr.lean, t),
-      leanVelocity: lerp(this.prev.leanVelocity, this.curr.leanVelocity, t),
-      speed: lerp(this.prev.speed, this.curr.speed, t),
-      crankAngle: lerp(this.prev.crankAngle, this.curr.crankAngle, t),
-      distanceTraveled: lerp(this.prev.distanceTraveled, this.curr.distanceTraveled, t),
-      roadD: lerp(this.prev.roadD, this.curr.roadD, t),
-      flags: this.curr.flags
-    };
+    const s = this._interpState;
+    s.x = lerp(this.prev.x, this.curr.x, t);
+    s.y = lerp(this.prev.y, this.curr.y, t);
+    s.z = lerp(this.prev.z, this.curr.z, t);
+    s.heading = lerp(this.prev.heading, this.curr.heading, t);
+    s.lean = lerp(this.prev.lean, this.curr.lean, t);
+    s.leanVelocity = lerp(this.prev.leanVelocity, this.curr.leanVelocity, t);
+    s.speed = lerp(this.prev.speed, this.curr.speed, t);
+    s.crankAngle = lerp(this.prev.crankAngle, this.curr.crankAngle, t);
+    s.distanceTraveled = lerp(this.prev.distanceTraveled, this.curr.distanceTraveled, t);
+    s.roadD = lerp(this.prev.roadD, this.curr.roadD, t);
+    s.flags = this.curr.flags;
+    return s;
   }
 }

@@ -40,11 +40,21 @@ export class BikeModel {
     this.spokeMeshes = [];
     this.pedalNodes = [];
     this.smoothSpokeFade = 0;
+    this._prevSpokeOpacity = NaN;
     this.maxSpeed = 16;
 
     // Preset support
     this._pendingPreset = null;
     this._originalMats = null; // Map<meshName, clonedMaterial>
+
+    // Reusable temporaries for _applyTransform (avoid per-frame allocations)
+    this._tmpQYaw = new THREE.Quaternion();
+    this._tmpQLean = new THREE.Quaternion();
+    this._tmpQPitch = new THREE.Quaternion();
+    this._tmpQ = new THREE.Quaternion();
+    this._tmpAxisY = new THREE.Vector3(0, 1, 0);
+    this._tmpAxisZ = new THREE.Vector3(0, 0, 1);
+    this._tmpAxisX = new THREE.Vector3(1, 0, 0);
 
     this._loadModel();
   }
@@ -326,15 +336,23 @@ export class BikeModel {
 
         this._lateralOffset = info.lateralOffset;
 
-        // Per-wheel lateral offsets (front +2m, rear -2m along heading)
+        // Per-wheel lateral offsets — approximate from road center at ±2m along road
+        // Uses cheap getPointAtDistance instead of full getClosestRoadInfo search
         const sinH = Math.sin(this.heading);
         const cosH = Math.cos(this.heading);
-        const frontInfo = this.roadPath.getClosestRoadInfo(
-          this.position.x + sinH * 2.0, this.position.z + cosH * 2.0, this.roadD);
-        const rearInfo = this.roadPath.getClosestRoadInfo(
-          this.position.x - sinH * 2.0, this.position.z - cosH * 2.0, this.roadD);
-        this._frontWheelOffset = frontInfo ? frontInfo.lateralOffset : this._lateralOffset;
-        this._rearWheelOffset = rearInfo ? rearInfo.lateralOffset : this._lateralOffset;
+        const frontPt = this.roadPath.getPointAtDistance(this.roadD + 2);
+        const frontDx = (this.position.x + sinH * 2.0) - frontPt.x;
+        const frontDz = (this.position.z + cosH * 2.0) - frontPt.z;
+        const frontRightX = Math.cos(frontPt.heading);
+        const frontRightZ = -Math.sin(frontPt.heading);
+        this._frontWheelOffset = frontDx * frontRightX + frontDz * frontRightZ;
+
+        const rearPt = this.roadPath.getPointAtDistance(this.roadD - 2);
+        const rearDx = (this.position.x - sinH * 2.0) - rearPt.x;
+        const rearDz = (this.position.z - cosH * 2.0) - rearPt.z;
+        const rearRightX = Math.cos(rearPt.heading);
+        const rearRightZ = -Math.sin(rearPt.heading);
+        this._rearWheelOffset = rearDx * rearRightX + rearDz * rearRightZ;
 
         this.position.y = this.roadPath.getPointAtDistance(this.roadD).y;
       }
@@ -350,10 +368,13 @@ export class BikeModel {
       const targetFade = Math.min(this.speed / (this.maxSpeed * 0.2), 1);
       const rate = targetFade > this.smoothSpokeFade ? 8 : 1.2;
       this.smoothSpokeFade += (targetFade - this.smoothSpokeFade) * Math.min(1, rate * dt);
-      const opacity = 1 - this.smoothSpokeFade;
-      for (const spoke of this.spokeMeshes) {
-        spoke.material.opacity = opacity;
-        spoke.visible = opacity > 0.02;
+      const opacity = Math.round((1 - this.smoothSpokeFade) * 100) / 100;
+      if (opacity !== this._prevSpokeOpacity) {
+        this._prevSpokeOpacity = opacity;
+        for (const spoke of this.spokeMeshes) {
+          spoke.material.opacity = opacity;
+          spoke.visible = opacity > 0.02;
+        }
       }
     }
 
@@ -405,12 +426,14 @@ export class BikeModel {
         this._lateralOffset = info.lateralOffset;
         const sinH = Math.sin(this.heading);
         const cosH = Math.cos(this.heading);
-        const frontInfo = this.roadPath.getClosestRoadInfo(
-          this.position.x + sinH * 2.0, this.position.z + cosH * 2.0, this.roadD);
-        const rearInfo = this.roadPath.getClosestRoadInfo(
-          this.position.x - sinH * 2.0, this.position.z - cosH * 2.0, this.roadD);
-        this._frontWheelOffset = frontInfo ? frontInfo.lateralOffset : this._lateralOffset;
-        this._rearWheelOffset = rearInfo ? rearInfo.lateralOffset : this._lateralOffset;
+        const frontPt = this.roadPath.getPointAtDistance(this.roadD + 2);
+        const frontDx = (this.position.x + sinH * 2.0) - frontPt.x;
+        const frontDz = (this.position.z + cosH * 2.0) - frontPt.z;
+        this._frontWheelOffset = frontDx * Math.cos(frontPt.heading) + frontDz * -Math.sin(frontPt.heading);
+        const rearPt = this.roadPath.getPointAtDistance(this.roadD - 2);
+        const rearDx = (this.position.x - sinH * 2.0) - rearPt.x;
+        const rearDz = (this.position.z - cosH * 2.0) - rearPt.z;
+        this._rearWheelOffset = rearDx * Math.cos(rearPt.heading) + rearDz * -Math.sin(rearPt.heading);
       }
     }
 
@@ -420,10 +443,13 @@ export class BikeModel {
       const dt = 1 / 60;
       const rate = targetFade > this.smoothSpokeFade ? 8 : 1.2;
       this.smoothSpokeFade += (targetFade - this.smoothSpokeFade) * Math.min(1, rate * dt);
-      const opacity = 1 - this.smoothSpokeFade;
-      for (const spoke of this.spokeMeshes) {
-        spoke.material.opacity = opacity;
-        spoke.visible = opacity > 0.02;
+      const opacity = Math.round((1 - this.smoothSpokeFade) * 100) / 100;
+      if (opacity !== this._prevSpokeOpacity) {
+        this._prevSpokeOpacity = opacity;
+        for (const spoke of this.spokeMeshes) {
+          spoke.material.opacity = opacity;
+          spoke.visible = opacity > 0.02;
+        }
       }
     }
 
@@ -441,31 +467,23 @@ export class BikeModel {
 
   _applyTransform(dt) {
     this.group.position.copy(this.position);
-    const qYaw = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 1, 0), this.heading
-    );
-    const qLean = new THREE.Quaternion().setFromAxisAngle(
-      new THREE.Vector3(0, 0, 1), this.lean
-    );
+    this._tmpQYaw.setFromAxisAngle(this._tmpAxisY, this.heading);
+    this._tmpQLean.setFromAxisAngle(this._tmpAxisZ, this.lean);
 
     // Pitch from road slope (smoothed)
-    let qPitch;
     if (this.roadPath) {
       const slope = this.roadPath.getSlopeAtDistance(this.roadD);
       const targetPitch = -Math.atan(slope);
       const t = dt ? Math.min(1, 20 * dt) : 1;
       this._smoothPitch += (targetPitch - this._smoothPitch) * t;
-      qPitch = new THREE.Quaternion().setFromAxisAngle(
-        new THREE.Vector3(1, 0, 0), this._smoothPitch
-      );
+      this._tmpQPitch.setFromAxisAngle(this._tmpAxisX, this._smoothPitch);
     } else {
-      qPitch = new THREE.Quaternion();
+      this._tmpQPitch.identity();
     }
 
-    const q = new THREE.Quaternion();
-    q.multiplyQuaternions(qYaw, qPitch);
-    q.multiply(qLean);
-    this.group.quaternion.copy(q);
+    this._tmpQ.multiplyQuaternions(this._tmpQYaw, this._tmpQPitch);
+    this._tmpQ.multiply(this._tmpQLean);
+    this.group.quaternion.copy(this._tmpQ);
   }
 
   _fall() {

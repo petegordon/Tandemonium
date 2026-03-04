@@ -5,7 +5,7 @@
 export const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1);
 
-export const BIKE_MODEL_PATH = '../tandem-3d/tandem_bicycle.glb';
+export const BIKE_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
 
 // Protocol message types
 export const MSG_PEDAL     = 0x01;

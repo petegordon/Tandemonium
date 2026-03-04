@@ -38,6 +38,14 @@ export class NetworkManager {
     this._p2pFallbackDelay = 60000; // 60 seconds before relay fallback
     this._reconnectTimeout = null;
     this._activeConn = null; // tracks which conn is current to ignore stale close events
+
+    // Pre-allocated send buffers (avoid per-send allocations)
+    this._stateBuf = new ArrayBuffer(46);
+    this._stateView = new DataView(this._stateBuf);
+    this._stateBytes = new Uint8Array(this._stateBuf);
+    this._leanBuf = new ArrayBuffer(5);
+    this._leanView = new DataView(this._leanBuf);
+    this._leanBytes = new Uint8Array(this._leanBuf);
   }
 
   generateRoomCode() {
@@ -226,16 +234,14 @@ export class NetworkManager {
   }
 
   sendLean(leanValue) {
-    const buf = new ArrayBuffer(5);
-    const view = new DataView(buf);
+    const view = this._leanView;
     view.setUint8(0, MSG_LEAN);
     view.setFloat32(1, leanValue, true);
-    this._send(new Uint8Array(buf));
+    this._send(this._leanBytes);
   }
 
   sendState(bike, timerRemaining) {
-    const buf = new ArrayBuffer(46);
-    const view = new DataView(buf);
+    const view = this._stateView;
     view.setUint8(0, MSG_STATE);
     view.setFloat32(1, bike.position.x, true);
     view.setFloat32(5, bike.position.y, true);
@@ -252,7 +258,7 @@ export class NetworkManager {
     if (bike._braking) flags |= 2;
     view.setUint8(41, flags);
     view.setFloat32(42, timerRemaining >= 0 ? timerRemaining : -1, true);
-    this._send(new Uint8Array(buf));
+    this._send(this._stateBytes);
   }
 
   sendEvent(eventType) {
@@ -269,8 +275,7 @@ export class NetworkManager {
   }
 
   _decodeState(bytes) {
-    const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    const view = new DataView(buf);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const state = {
       x: view.getFloat32(1, true),
       y: view.getFloat32(5, true),
