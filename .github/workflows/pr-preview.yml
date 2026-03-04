@@ -29,7 +29,8 @@ jobs:
                    ./ _site/
           # Inject <base> tag so relative asset paths resolve from the repo root,
           # not from the /pr-preview/pr-N/ subdirectory
-          sed -i 's|<head>|<head><base href="/Tandemonium/pr-preview/pr-${{ github.event.number }}/">|' _site/index.html
+          # Custom domain (CNAME) means no /repo-name/ prefix in URLs
+          sed -i 's|<head>|<head><base href="/pr-preview/pr-${{ github.event.number }}/">|' _site/index.html
 
       - name: Deploy PR Preview
         uses: rossjrw/pr-preview-action@v1
