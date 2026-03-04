@@ -8,7 +8,7 @@ import { NetworkManager } from './network-manager.js';
 import { RELAY_URL, BIKE_MODEL_PATH } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
-import { AchievementManager } from './achievements.js';
+import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 
 const BIKE_NAMES = {
   default: 'Old Faithful',
@@ -1337,6 +1337,9 @@ export class Lobby {
     // Send current bike preset to partner
     this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
 
+    // Send profile with avatar + achievements so partner sees them in room
+    this._sendRoomProfile();
+
     // Handle partner disconnect while in room
     this.net.onDisconnected = (reason) => {
       const waitText = document.getElementById('room-wait-text');
@@ -1491,30 +1494,28 @@ export class Lobby {
 
   _handleRoomMessage(profile) {
     if (!profile || !profile.type) {
-      // Legacy profile message (avatar, name, etc.) — store partner info
-      if (profile && profile.avatar) {
-        const partnerNameEl = document.getElementById('room-partner-name');
-        if (partnerNameEl && profile.name) partnerNameEl.textContent = profile.name;
-        // Show partner avatar if no video
-        const partnerVideo = document.getElementById('partner-pip');
-        const partnerAvatar = document.getElementById('partner-pip-avatar');
-        const partnerWrap = document.getElementById('partner-pip-wrap');
-        if (partnerAvatar && partnerWrap && (!partnerVideo || !partnerVideo.srcObject)) {
-          partnerAvatar.src = this._avatarCache.get(profile.avatar) || profile.avatar;
-          partnerAvatar.style.display = 'block';
-          if (partnerVideo) partnerVideo.style.display = 'none';
-          partnerWrap.style.display = 'block';
-        }
+      // Profile message (avatar, name, achievements)
+      const partnerNameEl = document.getElementById('room-partner-name');
+      if (partnerNameEl && profile && profile.name) partnerNameEl.textContent = profile.name;
+      // Show partner avatar if no video stream active
+      const partnerVideo = document.getElementById('partner-pip');
+      const partnerAvatar = document.getElementById('partner-pip-avatar');
+      const partnerWrap = document.getElementById('partner-pip-wrap');
+      if (profile && profile.avatar && partnerAvatar && partnerWrap && (!partnerVideo || !partnerVideo.srcObject)) {
+        partnerAvatar.src = this._avatarCache.get(profile.avatar) || profile.avatar;
+        partnerAvatar.style.display = 'block';
+        if (partnerVideo) partnerVideo.style.display = 'none';
+        partnerWrap.style.display = 'block';
+      }
+      // Render partner achievement badges
+      if (profile && profile.achievements) {
+        updateBadgeDisplay('partner-badges', profile.achievements);
       }
       return;
     }
 
     if (profile.type === 'bikeSync') {
-      // Display partner's bike name below their video circle
-      const bikeName = BIKE_NAMES[profile.presetKey] || profile.presetKey;
-      const partnerLbl = document.getElementById('partner-pip-label');
-      const partnerRole = this._roomRole === 'captain' ? 'STOKER' : 'CAPTAIN';
-      if (partnerLbl) partnerLbl.textContent = partnerRole + ' — ' + bikeName;
+      // Partner changed bike — no label update needed (keep role-only labels)
     } else if (profile.type === 'levelSync') {
       // Stoker: highlight captain's level selection
       this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
@@ -1526,6 +1527,19 @@ export class Lobby {
       // Stoker: captain started the ride
       this._transitionToGame();
     }
+  }
+
+  _sendRoomProfile() {
+    if (!this.net || !this.net.connected) return;
+    const profile = { achievements: this._achievements.getEarned() };
+    if (this.auth && this.auth.isLoggedIn()) {
+      const user = this.auth.getUser();
+      if (user) {
+        if (user.avatar) profile.avatar = user.avatar;
+        if (user.name) profile.name = user.name;
+      }
+    }
+    this.net.sendProfile(profile);
   }
 
   _transitionToGame() {
@@ -1605,9 +1619,10 @@ export class Lobby {
     // Re-register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
 
-    // Send current bike preset to partner on re-entry
+    // Send current bike preset and profile to partner on re-entry
     if (this.net.connected) {
       this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+      this._sendRoomProfile();
     }
 
     // Re-register disconnect handler for room

@@ -130,9 +130,14 @@ class Game {
       this._resetGame();
     });
 
-    // Lobby button
-    document.getElementById('lobby-btn').addEventListener('click', () => {
-      this._returnToLobby();
+    // Lobby / Room button
+    this._lobbyBtn = document.getElementById('lobby-btn');
+    this._lobbyBtn.addEventListener('click', () => {
+      if (this.net) {
+        this._returnToRoom();
+      } else {
+        this._returnToLobby();
+      }
     });
 
     // Try Again from disconnect overlay
@@ -305,6 +310,7 @@ class Game {
   _onSolo() {
     this.mode = 'solo';
     this.bike.applyPreset(this.lobby.selectedPreset);
+    this._lobbyBtn.textContent = 'LOBBY';
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
@@ -313,6 +319,7 @@ class Game {
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
+    this._lobbyBtn.textContent = 'ROOM';
     this.bike.applyPreset(this.lobby.selectedPreset);
 
     // Setup shared pedal controller
@@ -352,19 +359,22 @@ class Game {
       if (eventType === EVT_COUNTDOWN) {
         this._startCountdown();
       } else if (eventType === EVT_START) {
-        // Stoker receives GO from captain
+        // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
         if (this.raceManager) this.raceManager.start();
-        const statusEl = document.getElementById('status');
-        statusEl.textContent = 'GO!';
-        statusEl.style.color = '#44ff66';
+        const flavorNum = document.getElementById('countdown-flavor-num');
+        const flavorIcon = document.getElementById('countdown-flavor-icon');
+        const flavorText = document.getElementById('countdown-flavor-text');
+        if (flavorNum) { flavorNum.textContent = 'GO!'; flavorNum.className = 'tick-go pop'; }
+        if (flavorIcon) flavorIcon.textContent = '';
+        if (flavorText) flavorText.textContent = '';
         this._playBeep(800, 0.4);
         setTimeout(() => {
-          if (this.state === 'playing') {
-            statusEl.textContent = '';
-            statusEl.style.fontSize = '';
+          if (this.state === 'playing' && flavorNum) {
+            flavorNum.textContent = '';
+            flavorNum.className = '';
           }
-        }, 800);
+        }, 1000);
       } else if (eventType === EVT_RESET) {
         this._hideGameOver();
         this._hideVictory();
@@ -1404,6 +1414,7 @@ class Game {
     updateBadgeDisplay('partner-badges', []);
     if (this.net) { this.net.destroy(); this.net = null; }
     this.mode = 'solo';
+    this._lobbyBtn.textContent = 'LOBBY';
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
@@ -1625,7 +1636,7 @@ class Game {
     if (up && !this._dpadPrevUp) this.safetyBtn.click();
     if (down && !this._dpadPrevDown) this.speedBtn.click();
     if (right && !this._dpadPrevRight) document.getElementById('reset-btn').click();
-    if (left && !this._dpadPrevLeft) this._returnToLobby();
+    if (left && !this._dpadPrevLeft) this._lobbyBtn.click();
     if (y && !this._gpPrevY) this.recorder.saveClip();
     if (a && !this._gpPrevA && (this.input.motionEnabled || this.input.gyroConnected)) {
       this._recalibrateTilt();
