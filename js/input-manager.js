@@ -2,7 +2,7 @@
 // INPUT MANAGER — keyboard + touch + device motion + gamepad
 // ============================================================
 
-import { isMobile } from './config.js';
+import { isMobile, BALANCE_DEFAULTS } from './config.js';
 
 // WebHID gyro constants (PlayStation DualSense / DualShock 4)
 const VENDOR_ID_SONY = 0x054c;
@@ -173,7 +173,7 @@ export class InputManager {
       if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
       this.motionEnabled = true;
 
-      const k = 0.3;
+      const k = BALANCE_DEFAULTS.lowPassK;
       if (!this._gravityInit) {
         this._gx = a.x; this._gy = a.y; this._gz = a.z;
         this._gravityInit = true;
@@ -217,13 +217,13 @@ export class InputManager {
     else if (relative < -180) relative += 360;
     this.motionRawRelative = relative;
 
-    const deadZone = 2;
+    const deadZone = BALANCE_DEFAULTS.deadzone;
     if (Math.abs(relative) < deadZone) {
       relative = 0;
     } else {
       relative = relative - Math.sign(relative) * deadZone;
     }
-    this.motionLean = Math.max(-1, Math.min(1, relative / 40));
+    this.motionLean = Math.max(-1, Math.min(1, relative / BALANCE_DEFAULTS.sensitivity));
   }
 
   _setupCalibration() {
