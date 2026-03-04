@@ -529,7 +529,12 @@ export class Lobby {
     if (this._cameraPermitted) {
       this.cameraActive = true;
       this._setToggleActive('camera', true);
-      this._applyVideoTrackState(true);
+      // If we're in the room but have no video track yet, acquire it now
+      if (this.net && !this.net._localMediaStream?.getVideoTracks().length) {
+        this._acquireAndShowCamera();
+      } else {
+        this._applyVideoTrackState(true);
+      }
       return;
     }
     navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
@@ -537,8 +542,36 @@ export class Lobby {
       this._cameraPermitted = true;
       this.cameraActive = true;
       this._setToggleActive('camera', true);
-      this._applyVideoTrackState(true);
+      // If in the room, acquire the real track and show it
+      if (this.net && !this.net._localMediaStream?.getVideoTracks().length) {
+        this._acquireAndShowCamera();
+      } else {
+        this._applyVideoTrackState(true);
+      }
     }).catch(() => {});
+  }
+
+  async _acquireAndShowCamera() {
+    if (!this.net) return;
+    await this.net.acquireLocalMedia(true, this._audioPermitted);
+    if (!this.net._localMediaStream) return;
+    const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
+    if (videoTrack) videoTrack.enabled = true;
+    // Wire up the selfie PiP
+    const selfieVideo = document.getElementById('selfie-pip');
+    const selfieAvatar = document.getElementById('selfie-pip-avatar');
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    if (selfieVideo) {
+      selfieVideo.srcObject = this.net._localMediaStream;
+      selfieVideo.style.display = 'block';
+      selfieVideo.play().catch(() => {});
+    }
+    if (selfieAvatar) selfieAvatar.style.display = 'none';
+    if (selfieWrap) selfieWrap.style.display = 'block';
+    // Re-initiate media call so partner gets the video
+    if (this._roomRole === 'captain') {
+      this.net.initiateCall();
+    }
   }
 
   _toggleMotion() {
@@ -2055,11 +2088,6 @@ export class Lobby {
   _sendBikeSyncIfInRoom() {
     if (this._currentStep === this.roomStep && this.net && this.net.connected) {
       this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
-      // Update own label with bike name
-      const selfieLabel = document.getElementById('selfie-pip-label');
-      const selfieRole = this._roomRole === 'captain' ? 'CAPTAIN' : 'STOKER';
-      const bikeName = BIKE_NAMES[this.selectedPresetKey] || this.selectedPresetKey;
-      if (selfieLabel) selfieLabel.textContent = selfieRole + ' — ' + bikeName;
     }
   }
 
