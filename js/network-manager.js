@@ -462,7 +462,24 @@ export class NetworkManager {
   }
 
   async acquireLocalMedia(cameraEnabled, audioEnabled) {
-    if (this._localMediaStream) return;
+    // If stream already has all requested tracks, nothing to do
+    if (this._localMediaStream) {
+      const hasVideo = this._localMediaStream.getVideoTracks().length > 0;
+      const hasAudio = this._localMediaStream.getAudioTracks().length > 0;
+      if ((!cameraEnabled || hasVideo) && (!audioEnabled || hasAudio)) return;
+      // Need to add missing tracks to the existing stream
+      const constraints = {};
+      if (cameraEnabled && !hasVideo) constraints.video = { facingMode: 'user', width: 240, height: 240 };
+      if (audioEnabled && !hasAudio) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      if (Object.keys(constraints).length === 0) return;
+      try {
+        const extra = await navigator.mediaDevices.getUserMedia(constraints);
+        for (const track of extra.getTracks()) {
+          this._localMediaStream.addTrack(track);
+        }
+      } catch (e) { /* denied — continue without */ }
+      return;
+    }
     const constraints = {};
     if (cameraEnabled) constraints.video = { facingMode: 'user', width: 240, height: 240 };
     if (audioEnabled) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
