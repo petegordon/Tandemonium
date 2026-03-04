@@ -31,7 +31,7 @@ export class NetworkManager {
     this._localMediaStream = null;
     this._heartbeatInterval = null;
     this._reconnectAttempts = 0;
-    this._maxReconnectAttempts = 3;
+    this._maxReconnectAttempts = 5;
     this._relayWs = null;
     this._fallbackUrl = null;
     this._relayPartnerReady = false;
@@ -310,7 +310,7 @@ export class NetworkManager {
     this._heartbeatInterval = setInterval(() => {
       this.lastPingTime = performance.now();
       this._send(new Uint8Array([MSG_HEARTBEAT, 0x00]));
-      if (performance.now() - this._lastRemoteHeartbeat > 3000) {
+      if (performance.now() - this._lastRemoteHeartbeat > 8000) {
         this._handleDisconnect();
       }
     }, 1000);
