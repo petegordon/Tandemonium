@@ -1277,6 +1277,12 @@ export class Lobby {
       waitText.style.display = '';
     }
 
+    // Set role labels on PiP circles
+    const selfieLabel = document.getElementById('selfie-pip-label');
+    const partnerLabel = document.getElementById('partner-pip-label');
+    if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
+    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+
     // Build level cards BEFORE _showStep so _stepItems is populated
     this._buildRoomLevelCards(role === 'captain');
     this._showStep(this.roomStep);
@@ -1427,11 +1433,7 @@ export class Lobby {
       // Legacy profile message (avatar, name, etc.) — store partner info
       if (profile && profile.avatar) {
         const partnerNameEl = document.getElementById('room-partner-name');
-        if (partnerNameEl && profile.name) {
-          partnerNameEl.dataset.playerName = profile.name;
-          const bike = partnerNameEl.dataset.partnerBike || '';
-          partnerNameEl.textContent = bike ? profile.name + ' — ' + bike : profile.name;
-        }
+        if (partnerNameEl && profile.name) partnerNameEl.textContent = profile.name;
         // Show partner avatar if no video
         const partnerVideo = document.getElementById('partner-pip');
         const partnerAvatar = document.getElementById('partner-pip-avatar');
@@ -1447,14 +1449,11 @@ export class Lobby {
     }
 
     if (profile.type === 'bikeSync') {
-      // Display partner's bike name near their name — don't touch local carousel
-      const name = BIKE_NAMES[profile.presetKey] || profile.presetKey;
-      const el = document.getElementById('room-partner-name');
-      if (el) {
-        el.dataset.partnerBike = name;
-        const playerName = el.dataset.playerName || '';
-        el.textContent = playerName ? playerName + ' — ' + name : name;
-      }
+      // Display partner's bike name below their video circle
+      const bikeName = BIKE_NAMES[profile.presetKey] || profile.presetKey;
+      const partnerLbl = document.getElementById('partner-pip-label');
+      const partnerRole = this._roomRole === 'captain' ? 'STOKER' : 'CAPTAIN';
+      if (partnerLbl) partnerLbl.textContent = partnerRole + ' — ' + bikeName;
     } else if (profile.type === 'levelSync') {
       // Stoker: highlight captain's level selection
       this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
@@ -1510,6 +1509,12 @@ export class Lobby {
       startBtn.style.display = 'none';
       waitText.style.display = '';
     }
+
+    // Set role labels on PiP circles
+    const selfieLabel = document.getElementById('selfie-pip-label');
+    const partnerLabel = document.getElementById('partner-pip-label');
+    if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
+    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
 
     // Rebuild level cards BEFORE _showStep so _stepItems is populated
     this._buildRoomLevelCards(role === 'captain');
@@ -1967,6 +1972,11 @@ export class Lobby {
   _sendBikeSyncIfInRoom() {
     if (this._currentStep === this.roomStep && this.net && this.net.connected) {
       this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+      // Update own label with bike name
+      const selfieLabel = document.getElementById('selfie-pip-label');
+      const selfieRole = this._roomRole === 'captain' ? 'CAPTAIN' : 'STOKER';
+      const bikeName = BIKE_NAMES[this.selectedPresetKey] || this.selectedPresetKey;
+      if (selfieLabel) selfieLabel.textContent = selfieRole + ' — ' + bikeName;
     }
   }
 
