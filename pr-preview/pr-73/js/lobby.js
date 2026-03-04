@@ -1847,6 +1847,7 @@ export class Lobby {
   }
 
   _applyFocusHighlight() {
+    if (!this.input || !this.input.gamepadConnected) return;
     const items = this._stepItems.get(this._currentStep);
     if (!items || items.length === 0) return;
 
