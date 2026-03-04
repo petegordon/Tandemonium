@@ -110,7 +110,7 @@ export class NetworkManager {
     });
 
     this.peer.on('open', () => {
-      this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
+      this.conn = this.peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
       this._setupConnection();
       if (callback) callback();
 
@@ -366,7 +366,7 @@ export class NetworkManager {
     if (this.role === 'stoker' && this.roomCode) {
       // Stoker reconnects by re-opening a data channel to captain's peer
       if (this.peer && !this.peer.destroyed) {
-        this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
+        this.conn = this.peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
         this._setupConnection();
         // Timeout: if connection doesn't open within 5s, force-fail this attempt
         this._reconnectTimeout = setTimeout(() => {
