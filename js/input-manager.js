@@ -25,6 +25,8 @@ export class InputManager {
     this.motionOffset = null;
     this.motionRawRelative = 0;
     this._smoothedLean = 0;
+    this._calibBuf = [];
+    this._calibrating = false;
 
     // Gamepad state
     this.gamepadIndex = null;
@@ -209,9 +211,28 @@ export class InputManager {
     });
   }
 
+  startTiltCalibration() {
+    this._calibrating = true;
+    this._calibBuf = [];
+  }
+
   _applyTilt(rawTilt) {
     this.rawGamma = rawTilt;
-    if (this.motionOffset === null) this.motionOffset = this.rawGamma;
+
+    if (this.motionOffset === null) {
+      this.startTiltCalibration();
+    }
+
+    if (this._calibrating) {
+      this._calibBuf.push(this.rawGamma);
+      if (this._calibBuf.length >= BALANCE_DEFAULTS.calibSamples) {
+        const sum = this._calibBuf.reduce((a, b) => a + b, 0);
+        this.motionOffset = sum / this._calibBuf.length;
+        this._calibrating = false;
+        this._calibBuf = [];
+      }
+      return;
+    }
 
     let relative = this.rawGamma - this.motionOffset;
     if (relative > 180) relative -= 360;
@@ -241,8 +262,7 @@ export class InputManager {
     const doCalibrate = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      this.motionOffset = this.rawGamma;
-      this.motionLean = 0;
+      this.startTiltCalibration();
       if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 800); }
     };
     gauge.addEventListener('touchstart', doCalibrate, { passive: false });

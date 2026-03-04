@@ -40,4 +40,5 @@ export const BALANCE_DEFAULTS = {
   turnRate: 0.50,
   responseCurve: 1.8,
   outputSmoothing: 0.25,
+  calibSamples: 10,
 };

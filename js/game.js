@@ -837,7 +837,7 @@ class Game {
     this.chaseCamera.initialized = false;
 
     if (this.input.motionEnabled) {
-      this.input.motionOffset = this.input.rawGamma;
+      this.input.startTiltCalibration();
     }
 
     // Refresh HUD so speed/distance reflect the reset state during countdown
@@ -1032,8 +1032,7 @@ class Game {
 
   _recalibrateTilt() {
     if (this.input.motionEnabled) {
-      this.input.motionOffset = this.input.rawGamma;
-      this.input.motionLean = 0;
+      this.input.startTiltCalibration();
     }
     if (this.input.gyroConnected) {
       this.input.calibrateGyro();
