@@ -70,9 +70,47 @@ export class TandemRoom {
     }
 }
 
+const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': 'https://tandemonium.jimandi.love',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+};
+
 export default {
     async fetch(request, env) {
         const url = new URL(request.url);
+
+        // CORS preflight
+        if (request.method === 'OPTIONS') {
+            return new Response(null, { status: 204, headers: CORS_HEADERS });
+        }
+
+        // TURN credential endpoint
+        if (url.pathname === '/turn-credentials') {
+            try {
+                const resp = await fetch(
+                    `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${env.TURN_KEY_API_TOKEN}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ ttl: 86400 }),
+                    }
+                );
+                const data = await resp.json();
+                return new Response(JSON.stringify(data), {
+                    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+                });
+            } catch (e) {
+                return new Response(JSON.stringify({ error: 'Failed to generate TURN credentials' }), {
+                    status: 502,
+                    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+                });
+            }
+        }
+
         const room = url.searchParams.get('room');
 
         if (!room) {
