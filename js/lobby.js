@@ -36,6 +36,8 @@ export class Lobby {
     this.roleStep = document.getElementById('lobby-role');
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
+    this.roomStep = document.getElementById('lobby-room');
+    this._roomRole = null; // 'captain' | 'stoker'
 
     // Permission toggle buttons
     this.toggleAll = document.getElementById('toggle-all');
@@ -180,7 +182,7 @@ export class Lobby {
   }
 
   _showStep(step) {
-    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep]
+    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep]
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
@@ -262,6 +264,31 @@ export class Lobby {
       if (e.key === 'Enter') {
         document.getElementById('btn-join').click();
       }
+    });
+
+    // Room step buttons
+    document.getElementById('btn-start-ride').addEventListener('click', () => {
+      if (this._roomRole !== 'captain') return;
+      // Send start ride to partner
+      if (this.net && this.net.connected) {
+        this.net.sendProfile({ type: 'startRide' });
+      }
+      this._transitionToGame();
+    });
+    document.getElementById('btn-back-room').addEventListener('click', () => {
+      // Leave room — destroy connection, return to role step
+      if (this.net) { this.net.destroy(); this.net = null; }
+      this._removePipLobbyMode();
+      // Stop selfie video
+      const selfieVideo = document.getElementById('selfie-pip');
+      if (selfieVideo) selfieVideo.srcObject = null;
+      const selfieWrap = document.getElementById('selfie-pip-wrap');
+      if (selfieWrap) selfieWrap.style.display = 'none';
+      const partnerVideo = document.getElementById('partner-pip');
+      if (partnerVideo) partnerVideo.srcObject = null;
+      const partnerWrap = document.getElementById('partner-pip-wrap');
+      if (partnerWrap) partnerWrap.style.display = 'none';
+      this._showStep(this.roleStep);
     });
 
     // Permission toggles
@@ -1183,8 +1210,7 @@ export class Lobby {
       statusEl.textContent = 'Partner connected!';
       statusEl.className = 'conn-status connected';
       setTimeout(() => {
-        this._hideLobby();
-        this.onMultiplayerReady(this.net, 'captain');
+        this._showRoomStep('captain');
       }, 1000);
     };
 
@@ -1212,14 +1238,281 @@ export class Lobby {
       statusEl.textContent = 'Connected!';
       statusEl.className = 'conn-status connected';
       setTimeout(() => {
-        this._hideLobby();
-        this.onMultiplayerReady(this.net, 'stoker');
+        this._showRoomStep('stoker');
       }, 1000);
     };
 
     this.net.onDisconnected = (reason) => {
       statusEl.textContent = reason || 'Could not connect';
       statusEl.className = 'conn-status error';
+    };
+  }
+
+  // ── Room Step (shared multiplayer lobby) ─────────────────────
+
+  _showRoomStep(role) {
+    this._roomRole = role;
+    this._showStep(this.roomStep);
+
+    // Show/hide start button vs waiting text based on role
+    const startBtn = document.getElementById('btn-start-ride');
+    const waitText = document.getElementById('room-wait-text');
+    if (role === 'captain') {
+      startBtn.style.display = '';
+      startBtn.disabled = true;
+      waitText.style.display = 'none';
+    } else {
+      startBtn.style.display = 'none';
+      waitText.style.display = '';
+    }
+
+    // Build level cards
+    this._buildRoomLevelCards(role === 'captain');
+
+    // Start media
+    this._startRoomMedia();
+
+    // Register room message handler
+    this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
+
+    // Send current bike preset to partner
+    this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+
+    // Handle partner disconnect while in room
+    this.net.onDisconnected = (reason) => {
+      const waitText = document.getElementById('room-wait-text');
+      waitText.textContent = 'Partner disconnected';
+      waitText.style.display = '';
+      document.getElementById('btn-start-ride').style.display = 'none';
+      setTimeout(() => {
+        if (this.net) { this.net.destroy(); this.net = null; }
+        this._removePipLobbyMode();
+        this._showStep(this.roleStep);
+      }, 2000);
+    };
+  }
+
+  _buildRoomLevelCards(isClickable) {
+    const container = document.getElementById('room-level-cards');
+    container.innerHTML = '';
+    const buttons = [];
+    LEVELS.forEach(level => {
+      const card = document.createElement('button');
+      card.className = 'level-card';
+      card.dataset.levelId = level.id;
+      card.innerHTML =
+        '<div class="level-card-top">' +
+          '<span class="level-card-icon">' + level.icon + '</span>' +
+          '<span class="level-card-name">' + level.name + '</span>' +
+        '</div>' +
+        '<div class="level-card-desc">' + level.description + '</div>' +
+        '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
+      if (isClickable) {
+        card.addEventListener('click', () => {
+          this.selectedLevel = level;
+          // Highlight selected card
+          container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
+          card.classList.add('selected');
+          // Enable start button
+          document.getElementById('btn-start-ride').disabled = false;
+          // Sync to partner
+          if (this.net && this.net.connected) {
+            this.net.sendProfile({ type: 'levelSync', levelId: level.id });
+          }
+        });
+      } else {
+        card.style.opacity = '0.7';
+        card.style.pointerEvents = 'none';
+      }
+      container.appendChild(card);
+      buttons.push(card);
+    });
+
+    // Register for gamepad nav
+    const roomItems = isClickable
+      ? [...buttons, document.getElementById('btn-start-ride'), document.getElementById('btn-back-room')]
+      : [document.getElementById('btn-back-room')];
+    this._stepItems.set(this.roomStep, roomItems);
+    this._stepBack.set(this.roomStep, document.getElementById('btn-back-room'));
+  }
+
+  async _startRoomMedia() {
+    if (!this.net) return;
+    // Acquire local media
+    await this.net.acquireLocalMedia(this.cameraActive, this.audioActive);
+
+    // Show selfie PiP in lobby mode
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    if (selfieWrap) {
+      selfieWrap.classList.add('pip-lobby-mode');
+      const videoArea = document.getElementById('room-video-area');
+      videoArea.appendChild(selfieWrap);
+    }
+
+    // Start selfie video from the acquired stream
+    const selfieVideo = document.getElementById('selfie-pip');
+    if (selfieVideo && this.net._localMediaStream) {
+      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
+      if (videoTrack) {
+        selfieVideo.srcObject = this.net._localMediaStream;
+        selfieVideo.style.display = 'block';
+        selfieVideo.play().catch(() => {});
+        if (selfieWrap) selfieWrap.style.display = 'block';
+      }
+    } else if (this.auth && this.auth.isLoggedIn()) {
+      // Fallback to avatar
+      const user = this.auth.getUser();
+      const selfieAvatar = document.getElementById('selfie-pip-avatar');
+      if (user && user.avatar && selfieAvatar && selfieWrap) {
+        selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+        selfieAvatar.style.display = 'block';
+        selfieVideo.style.display = 'none';
+        selfieWrap.style.display = 'block';
+      }
+    }
+
+    // Show partner PiP area
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    if (partnerWrap) {
+      partnerWrap.classList.add('pip-lobby-mode');
+      const videoArea = document.getElementById('room-video-area');
+      videoArea.appendChild(partnerWrap);
+    }
+
+    // Captain initiates media call
+    this.net.onRemoteStream = (remoteStream) => {
+      const partnerVideo = document.getElementById('partner-pip');
+      if (partnerVideo && remoteStream) {
+        partnerVideo.srcObject = remoteStream;
+        partnerVideo.style.display = 'block';
+        partnerVideo.play().catch(() => {});
+        if (partnerWrap) partnerWrap.style.display = 'block';
+        const partnerAvatar = document.getElementById('partner-pip-avatar');
+        if (partnerAvatar) partnerAvatar.style.display = 'none';
+      }
+    };
+
+    if (this._roomRole === 'captain') {
+      this.net.initiateCall();
+    }
+  }
+
+  _handleRoomMessage(profile) {
+    if (!profile || !profile.type) {
+      // Legacy profile message (avatar, name, etc.) — store partner info
+      if (profile && profile.avatar) {
+        const partnerName = document.getElementById('room-partner-name');
+        if (partnerName && profile.name) partnerName.textContent = profile.name;
+        // Show partner avatar if no video
+        const partnerVideo = document.getElementById('partner-pip');
+        const partnerAvatar = document.getElementById('partner-pip-avatar');
+        const partnerWrap = document.getElementById('partner-pip-wrap');
+        if (partnerAvatar && partnerWrap && (!partnerVideo || !partnerVideo.srcObject)) {
+          partnerAvatar.src = this._avatarCache.get(profile.avatar) || profile.avatar;
+          partnerAvatar.style.display = 'block';
+          if (partnerVideo) partnerVideo.style.display = 'none';
+          partnerWrap.style.display = 'block';
+        }
+      }
+      return;
+    }
+
+    if (profile.type === 'bikeSync') {
+      // Update carousel to partner's bike selection
+      const idx = this._presetKeys.indexOf(profile.presetKey);
+      if (idx >= 0) {
+        this._presetIndex = idx;
+        this._applyPresetToPreview();
+      }
+    } else if (profile.type === 'levelSync') {
+      // Stoker: highlight captain's level selection
+      this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
+      const container = document.getElementById('room-level-cards');
+      container.querySelectorAll('.level-card').forEach(c => {
+        c.classList.toggle('selected', c.dataset.levelId === profile.levelId);
+      });
+    } else if (profile.type === 'startRide') {
+      // Stoker: captain started the ride
+      this._transitionToGame();
+    }
+  }
+
+  _transitionToGame() {
+    // Remove lobby mode from PiP elements
+    this._removePipLobbyMode();
+    // Hide lobby
+    this._hideLobby();
+    // Fire multiplayer ready
+    this.onMultiplayerReady(this.net, this._roomRole);
+  }
+
+  _removePipLobbyMode() {
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    if (selfieWrap) {
+      selfieWrap.classList.remove('pip-lobby-mode');
+      // Move back to body so fixed positioning works in-game
+      document.body.appendChild(selfieWrap);
+    }
+    if (partnerWrap) {
+      partnerWrap.classList.remove('pip-lobby-mode');
+      document.body.appendChild(partnerWrap);
+    }
+  }
+
+  showRoom(net, role) {
+    // Called by game.js _returnToRoom() to re-show the lobby at roomStep
+    this.net = net;
+    this._roomRole = role;
+    this.lobbyEl.style.display = '';
+    this._startGamepadNav();
+    if (this._previewModel) this._startPreviewLoop();
+
+    // Show room step directly
+    this._showStep(this.roomStep);
+
+    // Show/hide start button vs waiting text
+    const startBtn = document.getElementById('btn-start-ride');
+    const waitText = document.getElementById('room-wait-text');
+    if (role === 'captain') {
+      startBtn.style.display = '';
+      startBtn.disabled = true;
+      waitText.style.display = 'none';
+    } else {
+      startBtn.style.display = 'none';
+      waitText.style.display = '';
+    }
+
+    // Rebuild level cards
+    this._buildRoomLevelCards(role === 'captain');
+
+    // Re-add PiP lobby mode
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    const videoArea = document.getElementById('room-video-area');
+    if (selfieWrap) {
+      selfieWrap.classList.add('pip-lobby-mode');
+      videoArea.appendChild(selfieWrap);
+    }
+    if (partnerWrap) {
+      partnerWrap.classList.add('pip-lobby-mode');
+      videoArea.appendChild(partnerWrap);
+    }
+
+    // Re-register room message handler
+    this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
+
+    // Re-register disconnect handler for room
+    this.net.onDisconnected = (reason) => {
+      const waitText = document.getElementById('room-wait-text');
+      waitText.textContent = 'Partner disconnected';
+      waitText.style.display = '';
+      document.getElementById('btn-start-ride').style.display = 'none';
+      setTimeout(() => {
+        if (this.net) { this.net.destroy(); this.net = null; }
+        this._removePipLobbyMode();
+        this._showStep(this.roleStep);
+      }, 2000);
     };
   }
 
@@ -1627,6 +1920,11 @@ export class Lobby {
         mat.needsUpdate = true;
       }
     });
+
+    // Sync bike to partner when in room step
+    if (this._currentStep === this.roomStep && this.net && this.net.connected) {
+      this.net.sendProfile({ type: 'bikeSync', presetKey: key });
+    }
   }
 
   _startPreviewLoop() {

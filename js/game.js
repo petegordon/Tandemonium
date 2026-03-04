@@ -170,7 +170,13 @@ class Game {
       this._resetGame();
     });
 
-    // Game Over: return to lobby
+    // Game Over: return to room (stay connected)
+    this._onTap('btn-gameover-room', () => {
+      this._hideGameOver();
+      this._returnToRoom();
+    });
+
+    // Game Over: quit (full disconnect)
     this._onTap('btn-gameover-lobby', () => {
       this._hideGameOver();
       this._returnToLobby();
@@ -217,6 +223,13 @@ class Game {
         this._returnToLobby();
       }
     });
+    // Victory: return to room (stay connected)
+    this._onTap('btn-victory-room', () => {
+      this._hideVictory();
+      this._returnToRoom();
+    });
+
+    // Victory: quit (full disconnect)
     this._onTap('btn-victory-lobby', () => {
       this._hideVictory();
       this._returnToLobby();
@@ -413,6 +426,8 @@ class Game {
 
     // Partner profile: avatar + achievements
     this.net.onProfileReceived = (profile) => {
+      // Ignore room sync messages (bikeSync, levelSync, startRide)
+      if (profile && profile.type) return;
       // Show partner avatar if no active video stream
       if (profile.avatar && !this.recorder.partnerActive) {
         this.recorder.showPartnerAvatar(this.lobby._avatarCache.get(profile.avatar) || profile.avatar);
@@ -431,6 +446,7 @@ class Game {
     };
 
     // Pre-acquire local media stream so calls connect instantly on both sides.
+    // If lobby already acquired media (room step), reuse it.
     // Captain then initiates the media call; stoker holds the stream ready for
     // _handleIncomingCall to answer without an async getUserMedia delay.
     if (this.lobby.cameraActive || this.lobby.audioActive) {
@@ -438,6 +454,9 @@ class Game {
         if (mode === 'captain') this._initiateMediaCall();
       });
     }
+
+    // Store room role for return-to-room
+    this._roomRole = mode;
 
     // Update partner gauge label to show partner's role
     const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
@@ -887,7 +906,11 @@ class Game {
       clipBtn.style.display = (this.recorder && this.recorder.buffering) ? '' : 'none';
     }
 
-    const btns = [clipBtn, document.getElementById('btn-restart'), document.getElementById('btn-gameover-lobby')]
+    // Show "Return to Room" in multiplayer
+    const roomBtn = document.getElementById('btn-gameover-room');
+    if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
+
+    const btns = [clipBtn, document.getElementById('btn-restart'), roomBtn, document.getElementById('btn-gameover-lobby')]
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
 
@@ -1148,11 +1171,19 @@ class Game {
       if (nextBtn) nextBtn.classList.remove('lobby-btn-accent');
     }
 
+    // Show "Return to Room" in multiplayer
+    const roomBtn = document.getElementById('btn-victory-room');
+    if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
+
     // Gamepad navigation for victory buttons
     const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby')];
     // Include "next level" if visible, and default-focus it
     if (hasNext) {
       victoryBtns.splice(1, 0, nextBtn);
+    }
+    // Include "return to room" if in multiplayer
+    if (roomBtn && this.net) {
+      victoryBtns.splice(victoryBtns.length - 1, 0, roomBtn);
     }
     this._setOverlayButtons(victoryBtns, hasNext ? 1 : 0);
 
@@ -1381,6 +1412,58 @@ class Game {
 
     this.state = 'lobby';
     this.lobby.show();
+  }
+
+  _returnToRoom() {
+    if (!this.net) {
+      // Fallback to full lobby return if no connection
+      this._returnToLobby();
+      return;
+    }
+
+    if (!this.lobby.musicActive) {
+      this._musicEl.pause();
+      this._musicEl.currentTime = 0;
+    }
+    this._hideGameOver();
+    this._hideVictory();
+
+    // Partial cleanup: game state only (keep connection + media alive)
+    this.raceManager = null;
+    this.hud.raceManager = null;
+    this.contributionTracker = null;
+    if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
+    this._contribBar.style.display = 'none';
+    this.hud.hideCollectibles();
+    this.hud.hideTimer();
+    this.world.clearRaceMarkers();
+    this.recorder.stopBuffer();
+    // Don't stop selfie or clear partner stream — keep media alive
+    this.archIndicator.hide();
+
+    // Reset bike + camera
+    this.bike.fullReset();
+    this.chaseCamera.initialized = false;
+
+    // Reset pedal state
+    this.sharedPedal = null;
+    this.remoteBikeState = null;
+    this.remoteLean = 0;
+    this._remoteLastFoot = null;
+    this._remoteLastTapTime = 0;
+    this._mpPrevUp = false;
+    this._mpPrevDown = false;
+    this._stokerWasFallen = false;
+    this._stateSendTimer = 0;
+    this._leanSendTimer = 0;
+
+    // Hide side buttons for now (lobby will show them if needed)
+    document.getElementById('side-buttons').style.display = '';
+
+    // Transition to lobby room step
+    this.state = 'lobby';
+    this.lobby.showRoom(this.net, this._roomRole);
   }
 
   async _acquireLocalMedia() {

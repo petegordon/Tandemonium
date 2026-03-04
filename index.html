@@ -1475,6 +1475,36 @@
   }
   #room-qr svg { width: 100%; height: 100%; }
 
+  /* ── Lobby Room (multiplayer shared lobby) ── */
+  .pip-wrap.pip-lobby-mode {
+    position: relative !important;
+    bottom: auto !important;
+    left: auto !important;
+    right: auto !important;
+    z-index: 56;
+    display: inline-block !important;
+    margin: 0 8px;
+    pointer-events: auto;
+  }
+  #room-video-area {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin: 12px 0;
+  }
+  #room-level-cards {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #room-level-cards .level-card.selected {
+    border-color: #44ff66;
+    box-shadow: 0 0 12px rgba(68, 255, 102, 0.4);
+  }
+  #room-wait-text {
+    color: rgba(255,255,255,0.6);
+    font-size: 14px;
+  }
+
   /* ── Game Over overlay ── */
   #gameover-overlay {
     position: fixed;
@@ -2297,7 +2327,22 @@ ON</button>
       <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.5d8bd62 | 03-04-2026 05:34</span></p>
+    <!-- Step 4: Multiplayer Room (shared lobby after P2P connects) -->
+    <div id="lobby-room" class="lobby-step" style="display:none;">
+      <div id="room-partner-info">
+        <div id="room-partner-name"></div>
+      </div>
+      <div id="room-video-area">
+        <!-- PiP elements repositioned here via CSS class -->
+      </div>
+      <p class="lobby-prompt" id="room-level-prompt">Choose your ride:</p>
+      <div class="level-cards" id="room-level-cards"></div>
+      <button class="lobby-btn lobby-btn-accent" id="btn-start-ride" disabled>START RIDE</button>
+      <p id="room-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
+      <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
+    </div>
+
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.05ddd00 | 03-04-2026 06:22</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
@@ -2406,7 +2451,8 @@ ON</button>
     <p style="color:#ff4444">GAME OVER</p>
     <button class="lobby-btn" id="btn-gameover-clip" style="margin-bottom:10px;display:none;">&#x1F3AC; SAVE CLIP</button>
     <button class="lobby-btn lobby-btn-accent" id="btn-restart">RESTART</button>
-    <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">GO TO LOBBY</button>
+    <button class="lobby-btn" id="btn-gameover-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
+    <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">QUIT</button>
   </div>
 </div>
 
@@ -2418,7 +2464,8 @@ ON</button>
   <div id="victory-stats"></div>
   <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
   <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
-  <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">RETURN TO LOBBY</button>
+  <button class="lobby-btn" id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</button>
+  <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">QUIT</button>
 </div>
 
 <!-- Disconnect overlay -->

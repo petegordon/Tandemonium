@@ -436,6 +436,34 @@ export class NetworkManager {
     };
   }
 
+  async acquireLocalMedia(cameraEnabled, audioEnabled) {
+    if (this._localMediaStream) return;
+    const constraints = {};
+    if (cameraEnabled) constraints.video = { facingMode: 'user', width: 240, height: 240 };
+    if (audioEnabled) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    if (!constraints.video && !constraints.audio) return;
+    try {
+      this._localMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      // Camera/mic denied — continue without media
+    }
+  }
+
+  initiateCall() {
+    if (!this.peer || !this.conn) return;
+    const localStream = this._localMediaStream;
+    if (!localStream) return;
+    const remotePeerId = this.conn.peer;
+    if (!remotePeerId) return;
+    const call = this.peer.call(remotePeerId, localStream);
+    if (call) {
+      call.on('stream', (remoteStream) => {
+        this._playRemoteAudio(remoteStream);
+        if (this.onRemoteStream) this.onRemoteStream(remoteStream);
+      });
+    }
+  }
+
   destroy() {
     this._stopHeartbeat();
     clearTimeout(this._p2pTimeout);
