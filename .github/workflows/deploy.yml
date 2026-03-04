@@ -19,12 +19,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Stage deploy files
+        run: |
+          mkdir -p _site
+          rsync -a --exclude='.git' --exclude='.github' --exclude='node_modules' \
+                   --exclude='out' --exclude='desktop' --exclude='electron' \
+                   --exclude='scripts' --exclude='.env' \
+                   ./ _site/
+
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./
+          publish_dir: ./_site
           publish_branch: gh-pages
           keep_files: true
-          exclude_assets: '.github,node_modules,out,desktop,.git,pr-preview/**'
+          exclude_assets: 'pr-preview/**'
           cname: tandemonium.jimandi.love

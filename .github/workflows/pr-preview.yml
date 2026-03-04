@@ -19,10 +19,19 @@ jobs:
         if: github.event.action != 'closed'
         uses: actions/checkout@v4
 
+      - name: Stage deploy files
+        if: github.event.action != 'closed'
+        run: |
+          mkdir -p _site
+          rsync -a --exclude='.git' --exclude='.github' --exclude='node_modules' \
+                   --exclude='out' --exclude='desktop' --exclude='electron' \
+                   --exclude='scripts' --exclude='.env' \
+                   ./ _site/
+
       - name: Deploy PR Preview
         uses: rossjrw/pr-preview-action@v1
         with:
-          source-dir: ./
+          source-dir: ./_site/
           preview-branch: gh-pages
           umbrella-dir: pr-preview
           action: auto
