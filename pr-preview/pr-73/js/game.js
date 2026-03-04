@@ -426,6 +426,11 @@ class Game {
 
     // Partner profile: avatar + achievements
     this.net.onProfileReceived = (profile) => {
+      // Capture authoritative finish stats from captain
+      if (profile && profile.type === 'finishStats') {
+        this._remoteFinishStats = profile;
+        return;
+      }
       // Ignore room sync messages (bikeSync, levelSync, startRide)
       if (profile && profile.type) return;
       // Show partner avatar if no active video stream
@@ -811,6 +816,7 @@ class Game {
 
     this.grassParticles.clear();
     this._stokerWasFallen = false;
+    this._remoteFinishStats = null;
 
     if (this.mode === 'solo') {
       this.pedalCtrl = new PedalController(this.input);
@@ -935,8 +941,14 @@ class Game {
     } else if (raceEvent.event === 'finish') {
       this._showVictory();
 
-      // Notify stoker
+      // Send authoritative finish stats to stoker before the finish event
       if (this.mode === 'captain' && this.net) {
+        this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
+        this.net.sendProfile({
+          type: 'finishStats',
+          raceSummary: this.raceManager.getSummary(this.bike.distanceTraveled),
+          contribSummary: this.contributionTracker ? this.contributionTracker.getSummary() : null,
+        });
         this.net.sendEvent(EVT_FINISH);
       }
     }
@@ -1062,9 +1074,18 @@ class Game {
     const statsEl = document.getElementById('victory-stats');
     statsEl.innerHTML = '';
 
-    if (this.raceManager) {
+    // Use remote authoritative stats on stoker side, local stats otherwise
+    let summary, contribData;
+    if (fromRemote && this._remoteFinishStats) {
+      summary = this._remoteFinishStats.raceSummary;
+      contribData = this._remoteFinishStats.contribSummary;
+    } else if (this.raceManager) {
       this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
-      const summary = this.raceManager.getSummary(this.bike.distanceTraveled);
+      summary = this.raceManager.getSummary(this.bike.distanceTraveled);
+      contribData = this.contributionTracker ? this.contributionTracker.getSummary() : null;
+    }
+
+    if (summary) {
       const collectIcon = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81'; // 💎 or 🎁
       const distStr = summary.distance >= 1000 ? (summary.distance / 1000).toFixed(2) + ' km' : summary.distance + ' m';
 
@@ -1086,15 +1107,14 @@ class Game {
 
       // Solo performance stats
       let soloStats = null;
-      if (this.contributionTracker) {
-        const contrib = this.contributionTracker.getSummary();
-        if (contrib.mode !== 'multiplayer') {
-          const solo = contrib.solo;
+      if (contribData) {
+        if (contribData.mode !== 'multiplayer') {
+          const solo = contribData.solo;
           const pedalPct = solo.totalTaps > 0 ? Math.round((solo.correctTaps / solo.totalTaps) * 100) : 0;
           left.push({ icon: '\uD83E\uDDB6', value: pedalPct + '%' });       // 🦶 Pedal accuracy
           right.push({ icon: '\u2696\uFE0F', value: solo.safePct + '%' });   // ⚖️ Balance
         } else {
-          soloStats = contrib;
+          soloStats = contribData;
         }
       }
 
