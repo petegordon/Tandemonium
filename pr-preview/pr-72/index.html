@@ -1,0 +1,2462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><base href="/pr-preview/pr-72/">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Tandemonium</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #000; touch-action: none;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* ── HUD: top bar ── */
+  #hud-top {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 0; right: 0;
+    padding: 10px 14px 0;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #hud-dashboard {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 3px;
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    padding: 8px 14px 7px;
+  }
+  #speed-row {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  #speed-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    transition: color 0.2s;
+  }
+  #speed-unit {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.5);
+  }
+  #speed-bar-wrap {
+    width: 100%;
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #speed-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 2px;
+    background: #fff;
+    transition: width 0.15s, background 0.2s;
+  }
+  #distance-row {
+    display: flex;
+  }
+  #distance-display {
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.45);
+  }
+  #elapsed-row {
+    display: flex;
+  }
+  #elapsed-display {
+    font-size: 11px;
+    font-weight: 500;
+    color: rgba(255,255,255,0.45);
+  }
+
+  /* ── Segment timer ── */
+  #timer-row {
+    display: none;
+  }
+  #timer-row.visible {
+    display: flex;
+  }
+  #segment-timer {
+    font-size: 21px;
+    font-weight: 700;
+    color: #44ff66;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    transition: color 0.2s;
+  }
+  #segment-timer.normal { color: #fff; }
+  #segment-timer.warning { color: #ffd700; }
+  #segment-timer.danger { color: #ff4444; animation: timerPulse 0.5s infinite; }
+  @keyframes timerPulse { 50% { opacity: 0.5; } }
+
+  /* ── Center countdown overlay ── */
+  #countdown-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 90;
+    display: none;
+  }
+  #countdown-overlay.visible { display: block; }
+  #countdown-number {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 900;
+    font-size: 120px;
+    line-height: 1;
+    text-align: center;
+    color: #ff4444;
+    text-shadow:
+      0 0 30px rgba(255,50,50,0.8),
+      0 0 60px rgba(255,50,50,0.4),
+      0 0 100px rgba(255,0,0,0.2),
+      0 2px 4px rgba(0,0,0,0.6);
+    animation: countdownPop 1s ease-out infinite;
+  }
+  #countdown-number.tick-4, #countdown-number.tick-5 {
+    color: #ffd700;
+    text-shadow:
+      0 0 30px rgba(255,215,0,0.7),
+      0 0 60px rgba(255,180,0,0.3),
+      0 2px 4px rgba(0,0,0,0.6);
+  }
+  #countdown-number.tick-3 { color: #ff8800; text-shadow: 0 0 30px rgba(255,136,0,0.8), 0 0 60px rgba(255,100,0,0.4), 0 2px 4px rgba(0,0,0,0.6); }
+  #countdown-number.tick-2 { font-size: 140px; }
+  #countdown-number.tick-1 { font-size: 160px; }
+  @keyframes countdownPop {
+    0% { transform: scale(1.3); opacity: 1; }
+    15% { transform: scale(1); }
+    80% { opacity: 0.9; }
+    100% { opacity: 0.65; transform: scale(0.95); }
+  }
+  #countdown-flavor {
+    position: fixed;
+    top: 28%;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 260px;
+    text-align: center;
+    pointer-events: none;
+    z-index: 10;
+    animation: flavorFadeIn 0.6s ease-out;
+  }
+  #countdown-flavor-icon {
+    font-size: 40px;
+    line-height: 1;
+    margin-bottom: 4px;
+    animation: flavorBounce 1.2s ease-in-out infinite;
+  }
+  #countdown-flavor-text {
+    color: #ffe8c0;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-style: italic;
+    font-size: 18px;
+    line-height: 1.4;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+    margin-bottom: 8px;
+  }
+  #countdown-flavor-num {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 900;
+    font-size: 120px;
+    line-height: 1;
+    color: #ffffff;
+    text-shadow:
+      0 0 30px rgba(255,255,255,0.6),
+      0 0 60px rgba(255,255,255,0.3),
+      0 2px 4px rgba(0,0,0,0.6);
+  }
+  #countdown-flavor-num.pop {
+    animation: countdownPop 0.9s ease-out forwards;
+  }
+  #countdown-flavor-num.tick-2 {
+    color: #ffd700;
+    text-shadow: 0 0 30px rgba(255,215,0,0.7), 0 0 60px rgba(255,180,0,0.3), 0 2px 4px rgba(0,0,0,0.6);
+    font-size: 140px;
+  }
+  #countdown-flavor-num.tick-1 {
+    color: #44ff66;
+    text-shadow: 0 0 30px rgba(68,255,102,0.7), 0 0 60px rgba(68,255,102,0.3), 0 2px 4px rgba(0,0,0,0.6);
+    font-size: 160px;
+  }
+  #countdown-flavor-num.tick-go {
+    color: #44ff66;
+    text-shadow: 0 0 40px rgba(68,255,102,0.9), 0 0 80px rgba(68,255,102,0.4), 0 2px 4px rgba(0,0,0,0.6);
+    font-size: 160px;
+  }
+  @keyframes flavorFadeIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  @keyframes flavorBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+
+  /* ── Progress bar ── */
+  #progress-bar-wrap {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 2px);
+    left: 14px; right: 14px;
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    z-index: 11;
+    pointer-events: none;
+    display: none;
+  }
+  #progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #44ff66, #66ffaa);
+    transition: width 0.3s;
+  }
+  #progress-bar-bike {
+    position: absolute;
+    top: -5px;
+    left: 0%;
+    font-size: 12px;
+    transform: translateX(-50%);
+    transition: left 0.3s;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7));
+  }
+  .progress-checkpoint {
+    position: absolute;
+    top: -3px;
+    width: 8px; height: 12px;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+  .progress-checkpoint::before {
+    content: '';
+    display: block;
+    width: 8px; height: 8px;
+    background: rgba(255,255,255,0.3);
+    transform: rotate(45deg);
+    border-radius: 1px;
+  }
+  .progress-checkpoint.passed::before {
+    background: #ffd700;
+  }
+  #progress-destination {
+    position: absolute;
+    top: -5px;
+    right: -2px;
+    font-size: 12px;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7));
+  }
+  #collectible-counter {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    right: 14px;
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.8);
+    z-index: 11;
+    pointer-events: none;
+    display: none;
+    align-items: center;
+    gap: 4px;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  }
+  #collectible-icon { font-size: 16px; }
+  #collectible-count { font-variant-numeric: tabular-nums; }
+
+  /* ── Contribution bar (multiplayer) ── */
+  #contribution-bar {
+    display: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 1px;
+    background: rgba(255,255,255,0.1);
+  }
+  #contrib-captain {
+    height: 100%;
+    float: left;
+    background: #4af;
+    transition: width 0.5s;
+  }
+  #contrib-stoker {
+    height: 100%;
+    float: left;
+    background: #a6f;
+    transition: width 0.5s;
+  }
+
+  /* ── Victory overlay ── */
+  #victory-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+    padding: 10px 20px;
+    text-align: center;
+    overflow-y: auto;
+  }
+  #victory-video {
+    width: 90px;
+    height: 90px;
+    margin-bottom: 0;
+    border-radius: 8px;
+  }
+  #victory-overlay h2 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #44ff66;
+    margin-top: 0;
+    margin-bottom: 2px;
+    text-shadow: 0 0 20px rgba(68,255,102,0.4);
+  }
+  #victory-destination {
+    font-size: 16px;
+    color: rgba(255,255,255,0.8);
+    margin-bottom: 8px;
+  }
+  #victory-stats {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 10px;
+    width: 100%;
+    max-width: 280px;
+  }
+  .victory-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px 12px;
+    width: 100%;
+  }
+  .vs-cell {
+    font-size: 14px;
+    color: rgba(255,255,255,0.85);
+    padding: 2px 0;
+    white-space: nowrap;
+  }
+  .vs-cell strong {
+    color: #fff;
+    font-weight: 700;
+  }
+  .vs-icon {
+    display: inline-block;
+    width: 1.2em;
+    text-align: center;
+  }
+  .victory-stat {
+    font-size: 14px;
+    color: rgba(255,255,255,0.7);
+  }
+  .victory-stat strong {
+    color: #fff;
+    font-weight: 700;
+  }
+  .victory-perfect {
+    margin-top: 2px;
+  }
+  .victory-contrib {
+    margin-top: 12px;
+    width: 100%;
+    max-width: 280px;
+  }
+  .victory-contrib-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .contrib-label {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .captain-label { color: #4af; }
+  .stoker-label { color: #a6f; }
+  .victory-contrib-bar {
+    display: flex;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.1);
+    margin-bottom: 8px;
+  }
+  .contrib-fill-captain {
+    height: 100%;
+    background: #4af;
+  }
+  .contrib-fill-stoker {
+    height: 100%;
+    background: #a6f;
+  }
+  .victory-contrib-detail {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+  }
+  .contrib-col {
+    font-size: 12px;
+    color: rgba(255,255,255,0.6);
+    text-align: left;
+    line-height: 1.6;
+  }
+  .contrib-col strong {
+    color: #fff;
+  }
+  .victory-contrib-solo {
+    margin-top: 8px;
+  }
+
+  /* ── Level selector ── */
+  #lobby-level {
+    display: none;
+  }
+  .level-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 280px;
+  }
+  .level-card {
+    width: 100%;
+    padding: 16px 20px;
+    border-radius: 14px;
+    border: 2px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    cursor: pointer;
+    text-align: left;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .level-card:active {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.5);
+  }
+  .level-card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .level-card-icon {
+    font-size: 24px;
+  }
+  .level-card-name {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  .level-card-desc {
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+  }
+  .level-card-distance {
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.4);
+    margin-top: 2px;
+  }
+
+  /* ── Bottom HUD: gauge bar + pedal buttons ── */
+  #bottom-hud {
+    position: fixed;
+    bottom: env(safe-area-inset-bottom, 0px);
+    left: 0; right: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding-bottom: 8px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #gauge-bar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* ── Gauges ── */
+  .gauge-wrap {
+    width: 54px; height: 54px;
+    position: relative;
+  }
+  .gauge-wrap svg { width: 100%; height: 100%; }
+  .gauge-label {
+    position: absolute;
+    bottom: -2px; left: 0; right: 0;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  }
+  .gauge-title {
+    position: absolute;
+    top: -2px; left: 0; right: 0;
+    text-align: center;
+    font-size: 8px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .pedal-indicator {
+    width: 28px;
+    height: 54px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 700;
+    color: rgba(170,102,255,0.4);
+    background: rgba(170,102,255,0.08);
+    border: 1.5px solid rgba(170,102,255,0.2);
+    border-radius: 8px;
+    pointer-events: none;
+    transition: background 0.08s, color 0.08s, border-color 0.08s, box-shadow 0.08s;
+  }
+  .pedal-indicator.flash {
+    color: #fff;
+    background: rgba(170,102,255,0.5);
+    border-color: rgba(170,102,255,0.8);
+    box-shadow: 0 0 8px rgba(170,102,255,0.5);
+  }
+  .pedal-indicator.flash-wrong {
+    color: #fff;
+    background: rgba(220,60,40,0.5);
+    border-color: rgba(220,60,40,0.8);
+    box-shadow: 0 0 8px rgba(220,60,40,0.5);
+  }
+
+  /* ── Checkpoint animation overlay ── */
+  #checkpoint-flash {
+    position: fixed;
+    top: 30%;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 52px;
+    font-weight: 900;
+    letter-spacing: 8px;
+    color: #ffd700;
+    text-shadow:
+      0 0 20px rgba(255,215,0,0.9),
+      0 0 40px rgba(255,180,0,0.6),
+      0 0 80px rgba(255,150,0,0.3),
+      0 2px 4px rgba(0,0,0,0.8);
+    pointer-events: none;
+    z-index: 15;
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  #checkpoint-flash.animate {
+    animation: checkpointPop 1.6s ease-out forwards;
+  }
+  @keyframes checkpointPop {
+    0%   { opacity: 0; transform: scale(0.3); }
+    15%  { opacity: 1; transform: scale(1.25); }
+    30%  { opacity: 1; transform: scale(1.0); }
+    70%  { opacity: 1; transform: scale(1.0); }
+    100% { opacity: 0; transform: scale(1.1) translateY(-20px); }
+  }
+
+  /* ── Timeout flash overlay ── */
+  #timeout-flash {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.4) 100%);
+    pointer-events: none;
+    z-index: 95;
+  }
+  #timeout-flash.visible { display: flex; }
+  #timeout-icon {
+    font-size: 80px;
+    opacity: 0;
+    animation: timeoutIconIn 0.5s ease-out 0.1s forwards;
+  }
+  #timeout-text {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 900;
+    font-size: 42px;
+    color: #ff4444;
+    text-transform: uppercase;
+    letter-spacing: 4px;
+    text-shadow:
+      0 0 20px rgba(255,50,50,0.9),
+      0 0 50px rgba(255,50,50,0.5),
+      0 0 80px rgba(255,0,0,0.3),
+      0 3px 6px rgba(0,0,0,0.8);
+    opacity: 0;
+    animation: timeoutTextIn 0.6s ease-out 0.3s forwards;
+  }
+  @keyframes timeoutIconIn {
+    0%   { opacity: 0; transform: scale(0.3) rotate(-20deg); }
+    60%  { opacity: 1; transform: scale(1.2) rotate(5deg); }
+    100% { opacity: 1; transform: scale(1) rotate(0deg); }
+  }
+  @keyframes timeoutTextIn {
+    0%   { opacity: 0; transform: scale(0.5) translateY(20px); }
+    50%  { opacity: 1; transform: scale(1.15) translateY(-5px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  /* ── Status text (center) ── */
+  #status {
+    position: fixed;
+    top: 38%;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.7);
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  /* ── Top-right D-pad buttons (PS-style) ── */
+  #side-buttons {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: 14px;
+    display: grid;
+    grid-template-areas:
+      ".      safety ."
+      "lobby  .      reset"
+      ".      speed  .";
+    grid-template-columns: 56px 56px 56px;
+    grid-template-rows: 56px 56px 56px;
+    gap: 1px;
+    padding: 0;
+    z-index: 10;
+    background: transparent;
+    border: none;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4));
+  }
+  /* Circular disc background */
+  #side-buttons::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 148px;
+    height: 148px;
+    border-radius: 50%;
+    background: rgba(20,20,20,0.5);
+    border: 1.5px solid rgba(255,255,255,0.1);
+    pointer-events: none;
+  }
+  /* Center hub dot */
+  #side-buttons::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgba(70,70,70,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    pointer-events: none;
+    z-index: 1;
+  }
+  .side-btn {
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: rgba(70,70,70,0.95);
+    color: rgba(255,255,255,0.95);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: pre-line;
+    cursor: pointer;
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+    box-sizing: border-box;
+  }
+  .side-btn:active { filter: brightness(1.4); }
+  #safety-btn {
+    grid-area: safety;
+    clip-path: polygon(0% 0%, 100% 0%, 72% 100%, 28% 100%);
+    align-items: flex-start;
+    padding-top: 6px;
+    margin-bottom: -18px;
+    background: linear-gradient(to bottom, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
+  }
+  #lobby-btn {
+    grid-area: lobby;
+    clip-path: polygon(0% 0%, 100% 28%, 100% 72%, 0% 100%);
+    align-items: center;
+    justify-content: flex-start;
+    padding-left: 6px;
+    margin-right: -18px;
+    background: linear-gradient(to right, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
+  }
+  #reset-btn {
+    grid-area: reset;
+    clip-path: polygon(0% 28%, 100% 0%, 100% 100%, 0% 72%);
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 6px;
+    margin-left: -18px;
+    background: linear-gradient(to left, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
+  }
+  #speed-btn {
+    grid-area: speed;
+    clip-path: polygon(28% 0%, 72% 0%, 100% 100%, 0% 100%);
+    align-items: flex-end;
+    padding-bottom: 6px;
+    margin-top: -18px;
+    background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
+  }
+  #safety-btn.safety-on {
+    background: linear-gradient(to bottom, rgba(65,220,90,0.9) 0%, rgba(35,150,50,0.9) 100%);
+  }
+  #safety-btn.safety-off {
+    background: linear-gradient(to bottom, rgba(240,65,65,0.9) 0%, rgba(170,35,35,0.9) 100%);
+  }
+  #speed-btn.speed-on {
+    background: linear-gradient(to top, rgba(65,140,255,0.9) 0%, rgba(35,90,190,0.9) 100%);
+  }
+  #speed-btn.speed-off {
+    background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
+  }
+
+  /* ── Pedal touch buttons (bottom) ── */
+  #pedal-bar {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 10px;
+    pointer-events: none;  /* overridden to auto by JS in _setupTouch */
+    touch-action: none;
+    width: 100%;
+  }
+  .pedal-touch {
+    touch-action: none;   /* explicit — suppresses Safari gesture/click-delay processing */
+    position: relative;
+    width: 45%;
+    height: 18vh;
+    min-height: 80px;
+    max-height: 140px;
+    border-radius: 24px;
+    border: 2.5px solid rgba(255,255,255,0.35);
+    background: linear-gradient(to bottom, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.08) 100%);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    box-shadow:
+      0 4px 0 rgba(0,0,0,0.25),
+      inset 0 1px 0 rgba(255,255,255,0.3),
+      0 2px 10px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    cursor: pointer;
+    transition: background 0.08s, border-color 0.08s, transform 0.08s, box-shadow 0.08s;
+    transform: translateY(0);
+  }
+  #touch-left {
+    border-color: rgba(100,160,255,0.4);
+  }
+  #touch-right {
+    border-color: rgba(255,160,60,0.4);
+  }
+  .pedal-touch::after {
+    position: absolute;
+    top: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.3);
+    pointer-events: none;
+  }
+  #touch-left::after {
+    content: 'L';
+    left: 10px;
+  }
+  #touch-right::after {
+    content: 'R';
+    right: 10px;
+  }
+  .pedal-touch img {
+    max-width: 95%;
+    max-height: 95%;
+    object-fit: contain;
+    pointer-events: none;
+    opacity: 0.85;
+  }
+  .pedal-touch.pressed {
+    background: linear-gradient(to bottom, rgba(60,220,80,0.5) 0%, rgba(40,160,50,0.35) 100%);
+    border-color: rgba(60,200,80,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.2),
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      0 1px 6px rgba(60,200,80,0.3);
+  }
+  .pedal-touch.wrong {
+    background: linear-gradient(to bottom, rgba(230,60,40,0.5) 0%, rgba(180,40,30,0.35) 100%);
+    border-color: rgba(220,60,40,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.2),
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      0 1px 6px rgba(220,60,40,0.3);
+  }
+  .pedal-touch.brake {
+    background: linear-gradient(to bottom, rgba(230,170,20,0.5) 0%, rgba(180,130,15,0.35) 100%);
+    border-color: rgba(220,160,20,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.2),
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      0 1px 6px rgba(220,160,20,0.3);
+  }
+  .pedal-touch.idle-pulse {
+    animation: pedal-glow 2s ease-in-out infinite;
+  }
+  @keyframes pedal-glow {
+    0%, 100% { box-shadow: 0 4px 0 rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.3), 0 2px 10px rgba(0,0,0,0.2); }
+    50% { box-shadow: 0 4px 0 rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 16px rgba(255,255,255,0.15); }
+  }
+
+  /* ── Crash flash overlay ── */
+  #crash-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,0,0,0);
+    pointer-events: none;
+    z-index: 9;
+    transition: none;
+  }
+
+  /* ── Instructions overlay ── */
+  #instructions {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 30px;
+  }
+  #instructions.hidden { display: none; }
+  #instructions h1 {
+    color: #fff;
+    font-size: 28px;
+    margin-bottom: 16px;
+  }
+  #instructions p {
+    color: rgba(255,255,255,0.8);
+    font-size: 15px;
+    text-align: center;
+    line-height: 1.6;
+    max-width: 300px;
+    margin-bottom: 10px;
+  }
+  #instructions .tap-hint {
+    color: rgba(255,255,255,0.5);
+    font-size: 13px;
+    margin-top: 20px;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+
+  /* ── Calibrate flash ── */
+  #calibrate-flash {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,0.3);
+    pointer-events: none;
+    z-index: 8;
+    display: none;
+  }
+
+  /* Desktop: always show pedal buttons */
+  @media (hover: hover) and (pointer: fine) {
+    #pedal-bar { display: flex !important; }
+  }
+
+  /* ── Tap to Start overlay ── */
+  #tap-to-start {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  #tap-to-start p {
+    color: #fff;
+    font-size: 28px;
+    font-weight: 700;
+    animation: tapPulse 2s ease-in-out infinite;
+  }
+  @keyframes tapPulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+  #tap-to-start.fade-out {
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+  }
+
+  /* ── Lobby overlay ── */
+  #lobby {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    background: rgba(0,0,0,0.85);
+    z-index: 55;
+    padding: 0 0 30px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #lobby-top-bar {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 2;
+  }
+  #lobby-auth {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .lobby-auth-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+  }
+  .lobby-auth-btn:hover { background: rgba(255,255,255,0.15); }
+  #user-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #fff;
+  }
+  .user-avatar {
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.3);
+  }
+  /* Leaderboard modal */
+  #leaderboard-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 65;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .leaderboard-box {
+    position: relative;
+    background: rgba(30,30,40,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 16px;
+    padding: 20px;
+    max-width: 360px;
+    width: 90%;
+    max-height: 70vh;
+    overflow-y: auto;
+    text-align: center;
+  }
+  #leaderboard-x {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.7);
+    font-size: 28px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+  }
+  #leaderboard-x:hover { color: #fff; }
+  .leaderboard-box h3 {
+    color: #fff;
+    font-size: 20px;
+    margin-bottom: 12px;
+  }
+  .lb-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    font-size: 13px;
+    color: rgba(255,255,255,0.8);
+  }
+  .lb-rank { font-weight: 700; color: #ffcc00; min-width: 28px; text-align: left; }
+  .lb-name { flex: 1; text-align: left; }
+  .lb-time { font-variant-numeric: tabular-nums; color: #44ff66; }
+  #leaderboard-video {
+    width: 100%;
+    max-width: 320px;
+    aspect-ratio: 3 / 2;
+    border-radius: 10px;
+    display: none;
+    margin: 0 auto 8px;
+  }
+  .lb-tabs {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .lb-tab {
+    padding: 5px 14px;
+    border-radius: 20px;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: transparent;
+    color: rgba(255,255,255,0.6);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .lb-tab.active {
+    border-color: #fff;
+    color: #fff;
+    background: rgba(255,255,255,0.12);
+  }
+  .lb-main-tabs .lb-tab {
+    font-size: 13px;
+    padding: 6px 16px;
+  }
+  .lb-sub-tabs {
+    margin-bottom: 8px;
+  }
+  .lb-sub-tabs .lb-tab {
+    font-size: 11px;
+    padding: 4px 10px;
+    border-width: 1px;
+  }
+  /* Achievement grid */
+  .lb-achievement-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+  .lb-ach-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 64px;
+    padding: 6px 4px;
+    border-radius: 10px;
+    border: 1.5px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.04);
+    transition: all 0.2s;
+  }
+  .lb-ach-icon {
+    font-size: 22px;
+    line-height: 1;
+    margin-bottom: 3px;
+  }
+  .lb-ach-name {
+    font-size: 8px;
+    color: rgba(255,255,255,0.5);
+    text-align: center;
+    line-height: 1.2;
+    word-break: break-word;
+  }
+  .lb-ach-item.earned {
+    background: rgba(60,200,80,0.18);
+    border-color: rgba(60,200,80,0.5);
+    box-shadow: 0 0 8px rgba(60,200,80,0.25);
+  }
+  .lb-ach-item.earned .lb-ach-name {
+    color: #44ff66;
+  }
+  .lb-ach-item.locked {
+    opacity: 0.35;
+    border-color: rgba(255,255,255,0.08);
+  }
+  .lb-ach-count {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 8px;
+  }
+  .lb-ach-count span {
+    color: #44ff66;
+    font-weight: 700;
+  }
+  .lb-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.6);
+    margin: 10px 0 6px;
+    text-align: left;
+  }
+  .lb-no-data {
+    text-align: center;
+    padding: 16px;
+    color: rgba(255,255,255,0.5);
+    font-size: 13px;
+  }
+  .lb-tab.gamepad-focus {
+    outline: 2px solid #44ff66;
+    outline-offset: 2px;
+    box-shadow: 0 0 10px rgba(68, 255, 102, 0.4);
+  }
+  .lb-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+  .lb-mode {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 6px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .lb-mode-solo { background: rgba(68,255,102,0.2); color: #44ff66; }
+  .lb-mode-captain { background: rgba(68,136,255,0.2); color: #4488ff; }
+  .lb-mode-stoker { background: rgba(170,68,255,0.2); color: #aa44ff; }
+  .lb-collectibles {
+    font-size: 11px;
+    color: rgba(255,255,255,0.45);
+    flex-shrink: 0;
+  }
+  .lb-entry.lb-you {
+    border-left: 3px solid #44ff66;
+    background: rgba(68,255,102,0.06);
+  }
+  .lb-you-tag {
+    font-size: 9px;
+    font-weight: 700;
+    color: #44ff66;
+    margin-left: 2px;
+  }
+  .lb-date {
+    font-size: 10px;
+    color: rgba(255,255,255,0.3);
+    flex-shrink: 0;
+  }
+  .lb-rides {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: #ffcc00;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  #lobby-banner {
+    width: 100%;
+    height: auto;
+    border-radius: 0 0 16px 16px;
+    flex-shrink: 0;
+    margin-bottom: -30px;
+  }
+  #lobby-banner-bottom {
+    width: 100%;
+    height: auto;
+    border-radius: 0;
+    flex-shrink: 0;
+    margin-top: 10px;
+  }
+  .lobby-card {
+    text-align: center;
+    max-width: 320px;
+    width: 100%;
+  }
+  #lobby h1 {
+    color: #fff;
+    font-size: 28px;
+    margin-bottom: 6px;
+  }
+  .lobby-subtitle {
+    color: rgba(255,255,255,0.5);
+    font-size: 13px;
+    margin: 0 0 12px;
+  }
+
+  /* ── Bike Carousel ── */
+  #bike-carousel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 12px;
+    width: 100%;
+    max-width: 320px;
+  }
+  #bike-preview-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+  }
+  #bike-preview-canvas {
+    width: 100%;
+    max-width: 220px;
+    aspect-ratio: 5 / 3;
+    border-radius: 12px;
+    background: #111;
+    border: 1.5px solid rgba(255,255,255,0.12);
+  }
+  #bike-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.8);
+    letter-spacing: 0.5px;
+  }
+  .bike-carousel-nav {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.6);
+    font-size: 22px;
+    font-weight: 300;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    flex-shrink: 0;
+    touch-action: manipulation;
+  }
+  .bike-carousel-nav:active {
+    background: rgba(255,255,255,0.2);
+    border-color: rgba(255,255,255,0.5);
+  }
+
+  .lobby-step {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
+  }
+  .lobby-btn {
+    width: 100%;
+    padding: 14px 16px;
+    border-radius: 14px;
+    border: 2px solid rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    text-align: center;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.4;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lobby-btn:active {
+    background: rgba(255,255,255,0.2);
+  }
+  .lobby-btn-accent {
+    background: rgba(60,200,80,0.25);
+    border-color: rgba(60,200,80,0.6);
+  }
+  .lobby-btn-accent:active {
+    background: rgba(60,200,80,0.4);
+  }
+  .lobby-mode-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+  }
+  .lobby-toggles {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .lobby-toggle-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .lobby-toggle {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.4);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    overflow: hidden;
+    transition: all 0.2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lobby-toggle.active {
+    background: rgba(60,200,80,0.25);
+    border-color: rgba(60,200,80,0.6);
+    color: #44ff66;
+  }
+  .lobby-toggle:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+  .lobby-mode-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+  .lobby-role-desc {
+    font-size: 12px;
+    font-weight: 400;
+    color: rgba(255,255,255,0.5);
+  }
+  .lobby-prompt {
+    color: rgba(255,255,255,0.7);
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  .lobby-hint {
+    color: rgba(255,255,255,0.4);
+    font-size: 12px;
+  }
+  .lobby-back {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.4);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 8px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lobby-back:active { color: rgba(255,255,255,0.7); }
+  .gamepad-focus {
+    outline: 3px solid #44ff66;
+    outline-offset: 3px;
+    box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
+  }
+  .room-code {
+    font-size: 36px;
+    font-weight: 700;
+    color: #44ff66;
+    letter-spacing: 4px;
+    margin: 8px 0;
+    text-shadow: 0 0 20px rgba(68,255,102,0.4);
+  }
+  .room-code-input {
+    font-size: 24px;
+    font-weight: 700;
+    text-align: center;
+    letter-spacing: 3px;
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(255,255,255,0.4);
+    border-radius: 10px;
+    padding: 12px;
+    width: 100%;
+    max-width: 240px;
+    outline: none;
+    text-transform: uppercase;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .room-code-input:focus {
+    border-color: #44ff66;
+  }
+  .room-code-prefix {
+    font-size: 24px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.5);
+    letter-spacing: 3px;
+    padding: 12px 0 12px 12px;
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(255,255,255,0.4);
+    border-right: none;
+    border-radius: 10px 0 0 10px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .room-code-short {
+    max-width: 130px;
+    border-radius: 0 10px 10px 0;
+  }
+  .conn-status {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    min-height: 20px;
+    animation: pulse 1.5s infinite;
+  }
+  .conn-status.connected { color: #44ff66; animation: none; }
+  .conn-status.error { color: #ff4444; animation: none; }
+  #room-qr {
+    width: 128px; height: 128px;
+    margin: 12px auto;
+    background: #fff;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #room-qr svg { width: 100%; height: 100%; }
+
+  /* ── Game Over overlay ── */
+  #gameover-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+  }
+
+  /* ── Disconnect overlay ── */
+  #disconnect-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+  }
+  .disconnect-box {
+    text-align: center;
+  }
+  .disconnect-box p {
+    color: #ff6644;
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 20px;
+  }
+
+  /* ── Connection badge ── */
+  #conn-badge {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: rgba(255,255,255,0.5);
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 2px 8px;
+    z-index: 11;
+    pointer-events: none;
+    margin-top: 4px;
+  }
+  #conn-badge #conn-type { color: #44ff66; font-weight: 700; margin-right: 4px; }
+  #conn-badge #conn-reconnect-text { display: none; color: #ffaa33; font-weight: 700; }
+  #conn-badge.reconnecting {
+    background: rgba(80,50,0,0.7);
+    border-color: #ffaa33;
+    pointer-events: auto;
+    animation: connBadgePulse 1.5s ease-in-out infinite;
+  }
+  #conn-badge.reconnecting #conn-type,
+  #conn-badge.reconnecting #conn-ping,
+  #conn-badge.reconnecting #conn-gamepad { display: none; }
+  #conn-badge.reconnecting #conn-reconnect-text { display: inline; }
+  @keyframes connBadgePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  /* ── Surface indicator ── */
+  /* ── Lobby credits line ── */
+  .lobby-credits {
+    margin-top: 18px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .lobby-version {
+    color: rgba(255,255,255,0.3);
+    font-size: 9px;
+    font-family: 'Courier New', monospace;
+  }
+  .lobby-credits-btn {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.4);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0 2px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lobby-credits-btn:active { color: rgba(255,255,255,0.7); }
+
+  /* ── Help modal ── */
+  #help-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+  }
+  #help-modal.visible {
+    display: flex;
+  }
+  #help-modal-inner {
+    position: relative;
+    background: rgba(30,30,30,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 14px;
+    padding: 28px 24px;
+    max-width: 400px;
+    max-height: 80vh;
+    overflow-y: auto;
+    width: 90%;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: rgba(255,255,255,0.8);
+    text-align: left;
+  }
+  #help-modal-inner h3 {
+    margin-bottom: 8px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+  }
+  #help-modal-inner a {
+    color: #44ff66;
+    text-decoration: none;
+  }
+  #help-modal-inner a:hover {
+    text-decoration: underline;
+  }
+  .help-section {
+    border-top: 1px solid rgba(255,255,255,0.1);
+    margin-top: 14px;
+    padding-top: 14px;
+  }
+  .help-section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .help-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .help-toggle-row svg, .help-toggle-row span.help-icon {
+    flex-shrink: 0;
+    color: #44ff66;
+    width: 28px;
+    height: 28px;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    border-radius: 50%;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #help-close {
+    position: absolute;
+    top: 10px;
+    right: 14px;
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.5);
+    font-size: 22px;
+    cursor: pointer;
+    padding: 4px 8px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #help-close:hover { color: rgba(255,255,255,0.8); }
+  .help-toggle-name {
+    font-weight: 600;
+    color: rgba(255,255,255,0.9);
+    white-space: nowrap;
+  }
+  .help-toggle-desc {
+    color: rgba(255,255,255,0.5);
+  }
+  .help-attribution {
+    font-size: 12px;
+    line-height: 1.5;
+    margin-bottom: 6px;
+  }
+
+  /* ── Profile popup ── */
+  #profile-popup {
+    display: none;
+    position: absolute;
+    bottom: 44px;
+    left: 0;
+    min-width: 220px;
+    background: rgba(30,30,30,0.95);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 14px;
+    padding: 20px 18px 16px;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  #profile-popup.visible { display: block; }
+  .profile-popup-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .profile-popup-avatar {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    border: 2px solid rgba(60,200,80,0.5);
+  }
+  .profile-popup-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+  }
+  .profile-popup-email {
+    font-size: 11px;
+    color: rgba(255,255,255,0.45);
+    text-align: center;
+    word-break: break-all;
+  }
+  .profile-popup-logout {
+    margin-top: 8px;
+    padding: 6px 18px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    border: 1px solid rgba(255,80,80,0.4);
+    border-radius: 6px;
+    background: rgba(255,80,80,0.12);
+    color: rgba(255,100,100,0.9);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .profile-popup-logout:hover {
+    background: rgba(255,80,80,0.25);
+  }
+  .profile-popup-back {
+    margin-top: 4px;
+    padding: 6px 18px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .profile-popup-back:hover {
+    background: rgba(255,255,255,0.18);
+  }
+
+  /* ── Share / Record button ── */
+  #share-btn {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 110px);
+    left: 14px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 20px;
+    display: none;
+    text-align: center;
+    line-height: 44px;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 12;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #share-btn:active {
+    background: rgba(255,60,60,0.5);
+    border-color: rgba(255,60,60,0.8);
+  }
+
+  /* ── Selfie / Partner PiP ── */
+  .pip-wrap {
+    position: fixed;
+    z-index: 11;
+    display: none;
+    pointer-events: none;
+    text-align: center;
+  }
+  #selfie-pip-wrap {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
+    left: 14px;
+  }
+  #partner-pip-wrap {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
+    right: 14px;
+  }
+
+  /* ── Achievement badges around PiP ── */
+  .pip-badges {
+    position: absolute;
+    width: 80px; height: 80px;
+    top: 0; left: 0;
+    pointer-events: none;
+  }
+  .pip-badge {
+    position: absolute;
+    width: 20px; height: 20px;
+    top: 30px; left: 30px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.6);
+    border: 1.5px solid #ffcc00;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  /* ── Achievement toast ── */
+  #achievement-toast-container {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 24px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 70;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .achievement-toast {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(0,0,0,0.85);
+    border: 1.5px solid #ffcc00;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 13px;
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.3s, transform 0.3s;
+  }
+  .achievement-toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .toast-icon { font-size: 22px; }
+  .toast-text small { color: #ffcc00; font-size: 10px; }
+  .pip-video {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 2.5px solid #fff;
+    object-fit: cover;
+    display: block;
+    background: #000;
+  }
+  .pip-label {
+    display: block;
+    font-size: 9px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    margin-top: 3px;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Clip preview modal ── */
+  #clip-preview-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 200;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #clip-preview-modal.visible {
+    display: flex;
+  }
+  #clip-preview {
+    max-width: 90%;
+    max-height: 55vh;
+    border-radius: 12px;
+    background: #000;
+    margin-bottom: 20px;
+  }
+  .clip-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: nowrap;
+    justify-content: center;
+  }
+  .clip-btn {
+    padding: 10px 16px;
+    border-radius: 10px;
+    border: 1.5px solid rgba(255,255,255,0.3);
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    white-space: nowrap;
+  }
+  .clip-btn:active {
+    background: rgba(255,255,255,0.25);
+  }
+  .clip-btn-share {
+    background: rgba(60,200,80,0.25);
+    border-color: rgba(60,200,80,0.6);
+  }
+  .clip-btn-discard {
+    background: rgba(255,60,60,0.15);
+    border-color: rgba(255,60,60,0.4);
+  }
+
+  /* ── Gamepad badge ── */
+  #gamepad-badge {
+    position: fixed;
+    top: env(safe-area-inset-top, 0px);
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #44ff66;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(68,255,102,0.3);
+    border-radius: 10px;
+    padding: 2px 8px;
+    z-index: 11;
+    pointer-events: none;
+    display: none;
+  }
+  @media (min-width: 1024px) {
+    #lobby {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto 1fr;
+      align-content: start;
+      justify-items: center;
+      overflow-y: hidden;
+      padding: 10px 24px 24px;
+      gap: 0 24px;
+    }
+    #lobby-banner {
+      grid-column: 1;
+      grid-row: 1 / 3;
+      align-self: end;
+      justify-self: center;
+      width: 100%;
+      max-width: 480px;
+      max-height: 50vh;
+      object-fit: contain;
+      margin-bottom: 0;
+      border-radius: 16px;
+    }
+    .lobby-subtitle {
+      grid-column: 2;
+      grid-row: 1;
+      justify-self: start;
+      align-self: end;
+      margin-bottom: 12px;
+    }
+    .lobby-card {
+      grid-column: 2;
+      grid-row: 2;
+      justify-self: start;
+      align-self: start;
+      max-width: 380px;
+    }
+    #bike-carousel {
+      grid-column: 1;
+      grid-row: 3;
+      align-self: start;
+      justify-self: center;
+      max-width: 380px;
+      margin-bottom: 0;
+    }
+    #bike-preview-canvas {
+      max-width: 280px;
+    }
+    #lobby-banner-bottom {
+      grid-column: 2;
+      grid-row: 3;
+      align-self: start;
+      justify-self: start;
+      width: 100%;
+      max-width: 380px;
+      max-height: 35vh;
+      object-fit: contain;
+      margin-top: 0;
+      border-radius: 16px;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- HUD: top bar -->
+<div id="hud-top">
+  <div id="hud-dashboard">
+    <div id="speed-row">
+      <span id="speed-value">0</span>
+      <span id="speed-unit">km/h</span>
+    </div>
+    <div id="speed-bar-wrap"><div id="speed-bar-fill"></div></div>
+    <div id="distance-row">
+      <span id="distance-display">0 m</span>
+    </div>
+    <div id="elapsed-row">
+      <span id="elapsed-display"></span>
+    </div>
+    <div id="timer-row">
+      <span id="segment-timer"></span>
+    </div>
+    <div id="contribution-bar">
+      <div id="contrib-captain"></div>
+      <div id="contrib-stoker"></div>
+    </div>
+  </div>
+</div>
+
+<div id="countdown-overlay"><span id="countdown-number"></span></div>
+<div id="countdown-flavor"><div id="countdown-flavor-icon"></div><div id="countdown-flavor-text"></div><div id="countdown-flavor-num"></div></div>
+
+<!-- Progress bar -->
+<div id="progress-bar-wrap">
+  <div id="progress-bar-fill"></div>
+  <span id="progress-bar-bike">&#x1F6B2;</span>
+  <span id="progress-destination"></span>
+</div>
+<div id="collectible-counter"><span id="collectible-icon"></span><span id="collectible-count"></span></div>
+
+<!-- Share button (recording) -->
+<button id="share-btn" aria-label="Share clip">&#x1F3AC;</button>
+
+<!-- Selfie & partner PiP videos -->
+<div id="selfie-pip-wrap" class="pip-wrap">
+  <video id="selfie-pip" class="pip-video" playsinline muted></video>
+  <img id="selfie-pip-avatar" class="pip-video" style="display:none;" alt="">
+  <span class="pip-label" id="selfie-pip-label"></span>
+  <div class="pip-badges" id="selfie-badges"></div>
+</div>
+<div id="partner-pip-wrap" class="pip-wrap">
+  <video id="partner-pip" class="pip-video" playsinline muted></video>
+  <img id="partner-pip-avatar" class="pip-video" style="display:none;" alt="">
+  <span class="pip-label" id="partner-pip-label"></span>
+  <div class="pip-badges" id="partner-badges"></div>
+</div>
+<audio id="partner-audio" playsinline style="display:none;"></audio>
+
+<div id="status"></div>
+<div id="checkpoint-flash">CHECK POINT</div>
+<div id="timeout-flash"><div id="timeout-icon">&#x1F40C;</div><div id="timeout-text">TOO SLOW!</div></div>
+
+<!-- Side buttons (D-pad layout) -->
+<div id="side-buttons">
+  <button class="side-btn safety-on" id="safety-btn">SAFETY
+ON</button>
+  <button class="side-btn exit-btn" id="lobby-btn">LOBBY</button>
+  <button class="side-btn reset-btn" id="reset-btn">RESET</button>
+  <button class="side-btn speed-off" id="speed-btn">SPEED</button>
+</div>
+
+<!-- Bottom HUD: gauge bar + pedal buttons -->
+<div id="bottom-hud">
+  <div id="gauge-bar">
+    <div class="pedal-indicator" id="partner-pedal-up">&#9650;</div>
+    <div class="gauge-wrap" id="phone-gauge">
+      <div class="gauge-title">YOU</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(0,180,0,0.2)"/>
+        <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(0,180,0,0.2)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <g id="phone-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#fa3" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#fa3" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#fa3" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="phone-label">0.0&deg;</div>
+    </div>
+    <div class="gauge-wrap" id="bike-gauge">
+      <div class="gauge-title">BIKE</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 14.4 79.6 A 52 52 0 0 1 8 60 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <path d="M 60 60 L 112 60 A 52 52 0 0 1 105.6 79.6 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <line x1="29" y1="20" x2="34" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="91" y1="20" x2="86" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="12" y1="44" x2="21" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="108" y1="44" x2="99" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <g id="bike-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#4af" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="bike-label">0.0&deg;</div>
+    </div>
+    <div class="gauge-wrap" id="partner-gauge" style="display:none;">
+      <div class="gauge-title">PARTNER</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(170,102,255,0.15)"/>
+        <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(170,102,255,0.15)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <g id="partner-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#a6f" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#a6f" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#a6f" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#a6f" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#a6f" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#a6f" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="partner-label">0.0&deg;</div>
+    </div>
+    <div class="pedal-indicator" id="partner-pedal-down">&#9660;</div>
+  </div>
+  <div id="pedal-bar">
+    <div class="pedal-touch" id="touch-left"><img src="images/pedal_left.png" alt="Left Pedal"></div>
+    <div class="pedal-touch" id="touch-right"><img src="images/pedal_right.png" alt="Right Pedal"></div>
+  </div>
+</div>
+
+<!-- Crash flash -->
+<div id="crash-overlay"></div>
+
+<!-- Calibrate flash -->
+<div id="calibrate-flash"></div>
+
+<!-- Instructions overlay (hidden initially — lobby shows first) -->
+<div id="instructions" class="hidden">
+  <h1>Tandemonium</h1>
+  <p>Alternate LEFT/RIGHT pedals to ride.<br>Tilt your phone, use A/D keys, or a gamepad to steer.</p>
+  <p>Don't lean too far or you'll crash!</p>
+  <p class="tap-hint">Tap anywhere to start</p>
+</div>
+
+<!-- Tap to Start overlay -->
+<div id="tap-to-start">
+  <div class="tap-to-start-content">
+    <p>Tap to Start</p>
+  </div>
+</div>
+
+<!-- Lobby overlay -->
+<div id="lobby">
+  <div id="lobby-top-bar">
+    <div id="lobby-auth" style="display:none;">
+      <button class="lobby-auth-btn" id="btn-sign-in">Sign in with Google</button>
+      <div id="user-info" style="display:none;">
+        <img id="user-avatar" class="user-avatar" style="display:none;" alt="">
+        <span id="user-name"></span>
+      </div>
+    </div>
+  </div>
+  <img id="lobby-banner" src="images/tandemonium_title.png" alt="Tandemonium">
+  <p class="lobby-subtitle">Party Physics Game on a Tandem Bicycle</p>
+  <div id="bike-carousel">
+    <button id="bike-prev" class="bike-carousel-nav">&#8249;</button>
+    <div id="bike-preview-wrap">
+      <canvas id="bike-preview-canvas"></canvas>
+      <div id="bike-name">Default</div>
+    </div>
+    <button id="bike-next" class="bike-carousel-nav">&#8250;</button>
+  </div>
+
+  <div class="lobby-card">
+
+    <!-- Step 1: Mode selection -->
+    <div id="lobby-mode" class="lobby-step">
+      <div class="lobby-mode-row">
+        <!-- Left column: info toggles -->
+        <div class="lobby-toggle-col">
+          <button class="lobby-toggle active" id="toggle-help" title="Help">
+            <span style="font-size:16px;font-weight:700">?</span>
+          </button>
+          <button class="lobby-toggle" id="toggle-leaderboard" title="Leaderboard">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5" fill="none"/>
+            </svg>
+          </button>
+          <button class="lobby-toggle" id="toggle-profile" title="Profile">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="10" cy="7" r="3.5"/>
+              <path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/>
+            </svg>
+          </button>
+          <div id="profile-popup">
+            <div class="profile-popup-content">
+              <img class="profile-popup-avatar" id="profile-popup-avatar" src="" alt="">
+              <div class="profile-popup-name" id="profile-popup-name"></div>
+              <div class="profile-popup-email" id="profile-popup-email"></div>
+              <button class="profile-popup-logout" id="profile-popup-logout">LOG OUT</button>
+              <button class="profile-popup-back" id="profile-popup-back">RETURN TO LOBBY</button>
+            </div>
+            <div id="profile-popup-signin" style="display:none;padding:12px;text-align:center;">
+              <div id="gsi-button-container"></div>
+              <button class="profile-popup-back" id="profile-popup-signin-back" style="margin-top:10px;">RETURN TO LOBBY</button>
+            </div>
+          </div>
+        </div>
+        <!-- Center: mode buttons -->
+        <div class="lobby-mode-buttons">
+          <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
+          <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
+        </div>
+        <!-- Right: permission toggles (2 columns) -->
+        <div class="lobby-toggles">
+          <div class="lobby-toggle-col">
+            <button class="lobby-toggle" id="toggle-all" title="All permissions" style="font-size:10px;font-weight:700;letter-spacing:0.5px">ALL</button>
+            <button class="lobby-toggle" id="toggle-camera" title="Camera">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="5" width="11" height="10" rx="1.5"/>
+                <path d="M13 8.5l5-2.5v8l-5-2.5"/>
+              </svg>
+            </button>
+            <button class="lobby-toggle" id="toggle-audio" title="Audio">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="7.5" y="2" width="5" height="10" rx="2.5"/>
+                <path d="M5 9a5 5 0 0 0 10 0"/>
+                <line x1="10" y1="14" x2="10" y2="18"/>
+                <line x1="7" y1="18" x2="13" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="lobby-toggle-col">
+            <button class="lobby-toggle" id="toggle-motion" title="Motion" style="display:none">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="2" width="8" height="16" rx="2"/>
+                <circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>
+                <path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/>
+                <path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>
+              </svg>
+            </button>
+            <button class="lobby-toggle" id="toggle-music" title="Music">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 17V6l9-3v11"/>
+                <circle cx="5.5" cy="17" r="2.5"/>
+                <circle cx="14.5" cy="14" r="2.5"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 1b: Level selection -->
+    <div id="lobby-level" class="lobby-step" style="display:none;">
+      <p class="lobby-prompt">Choose your ride:</p>
+      <div class="level-cards" id="level-cards"></div>
+      <button class="lobby-back" id="btn-back-level">&larr; Back</button>
+    </div>
+
+    <!-- Step 2: Role selection -->
+    <div id="lobby-role" class="lobby-step" style="display:none;">
+      <p class="lobby-prompt">Choose your seat:</p>
+      <button class="lobby-btn" id="btn-captain">START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span></button>
+      <button class="lobby-btn" id="btn-stoker">JOIN A RIDE<br><span class="lobby-role-desc">Stoker &middot; Back seat</span></button>
+      <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
+    </div>
+
+    <!-- Step 3a: Captain waiting room -->
+    <div id="lobby-host" class="lobby-step" style="display:none;">
+      <p class="lobby-prompt">Your room code:</p>
+      <div id="room-code-display" class="room-code">----</div>
+      <div id="room-qr"></div>
+      <p class="lobby-hint">Share this code or scan QR to join</p>
+      <div id="host-status" class="conn-status"></div>
+      <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
+    </div>
+
+    <!-- Step 3b: Stoker join room -->
+    <div id="lobby-join" class="lobby-step" style="display:none;">
+      <p class="lobby-prompt">Enter room code:</p>
+      <div style="display:flex;align-items:center;justify-content:center;gap:0;">
+        <span class="room-code-prefix">TNDM-</span>
+        <input type="text" id="room-code-input" class="room-code-input room-code-short" maxlength="4" placeholder="XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+      </div>
+      <button class="lobby-btn lobby-btn-accent" id="btn-join">JOIN</button>
+      <div id="join-status" class="conn-status"></div>
+      <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
+    </div>
+
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.abfd806 | 03-04-2026 05:29</span></p>
+  </div>
+  <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
+</div>
+
+<!-- Leaderboard modal -->
+<div id="leaderboard-modal" style="display:none;">
+  <div class="leaderboard-box">
+    <button id="leaderboard-x">&times;</button>
+    <canvas id="leaderboard-video" width="360" height="240"></canvas>
+    <h3 id="leaderboard-title">Leaderboard</h3>
+    <div class="lb-tabs lb-main-tabs" id="lb-main-tabs"></div>
+    <div class="lb-tabs lb-sub-tabs" id="lb-sub-tabs"></div>
+    <div id="lb-achievements"></div>
+    <div id="leaderboard-list"></div>
+    <button class="lobby-btn" id="leaderboard-close" style="margin-top:12px;">Close</button>
+  </div>
+</div>
+
+<!-- Help modal -->
+<div id="help-modal">
+  <div id="help-modal-inner">
+    <button id="help-close">&times;</button>
+    <h3>Tandemonium</h3>
+    <p>A party-physics game on a tandem bicycle. Ride solo or with a partner — pedal, steer, and navigate to your destination before time runs out!</p>
+
+    <div class="help-section">
+      <div class="help-section-title">Toggles</div>
+      <div class="help-toggle-row">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5" fill="none"/></svg>
+        <span><span class="help-toggle-name">Leaderboard</span> <span class="help-toggle-desc">— View top scores for the current level</span></span>
+      </div>
+      <div class="help-toggle-row">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>
+        <span><span class="help-toggle-name">Profile</span> <span class="help-toggle-desc">— Sign in with Google to save scores</span></span>
+      </div>
+      <div class="help-toggle-row">
+        <span class="help-icon" style="font-size:10px;font-weight:700">ALL</span>
+        <span><span class="help-toggle-name">All</span> <span class="help-toggle-desc">— Enable or disable all permissions at once</span></span>
+      </div>
+      <div class="help-toggle-row">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="11" height="10" rx="1.5"/><path d="M13 8.5l5-2.5v8l-5-2.5"/></svg>
+        <span><span class="help-toggle-name">Video</span> <span class="help-toggle-desc">— Share your camera for the ride</span></span>
+      </div>
+      <div class="help-toggle-row">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2" width="5" height="10" rx="2.5"/><path d="M5 9a5 5 0 0 0 10 0"/><line x1="10" y1="14" x2="10" y2="18"/><line x1="7" y1="18" x2="13" y2="18"/></svg>
+        <span><span class="help-toggle-name">Audio</span> <span class="help-toggle-desc">— Share your microphone for voice chat</span></span>
+      </div>
+      <div class="help-toggle-row">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="8" height="16" rx="2"/><circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/><path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/><path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/></svg>
+        <span><span class="help-toggle-name">Motion</span> <span class="help-toggle-desc">— Steer and lean using device tilt or controller gyro</span></span>
+      </div>
+      <div class="help-toggle-row">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 17V6l9-3v11"/><circle cx="5.5" cy="17" r="2.5"/><circle cx="14.5" cy="14" r="2.5"/></svg>
+        <span><span class="help-toggle-name">Music</span> <span class="help-toggle-desc">— Toggle background music on/off</span></span>
+      </div>
+      <div class="help-toggle-row">
+        <span class="help-icon" style="font-size:14px;font-weight:700">?</span>
+        <span><span class="help-toggle-name">Help</span> <span class="help-toggle-desc">— This help screen</span></span>
+      </div>
+    </div>
+
+    <div class="help-section">
+      <div class="help-section-title">Attributions</div>
+      <p class="help-attribution">
+        <a href="https://skfb.ly/pqIJQ" target="_blank" rel="noopener">"Tandem bicycle"</a>
+        by <strong>Sameer.Rayeen</strong> — licensed under
+        <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.
+      </p>
+      <p class="help-attribution">
+        "Krampus Workshop" by <strong>Kevin MacLeod</strong>
+        (<a href="https://incompetech.com" target="_blank" rel="noopener">incompetech.com</a>)
+        — licensed under
+        <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>.
+      </p>
+      <p class="help-attribution">
+        Thanks to <a href="https://thecogg.com" target="_blank" rel="noopener"><strong>The Central Ohio GameDev Group</strong></a>
+        — for inspiration, friendship, and fun.
+      </p>
+    </div>
+  </div>
+</div>
+<script>
+(function() {
+  var btn = document.getElementById('credits-btn');
+  var modal = document.getElementById('help-modal');
+  btn.addEventListener('click', function(e) { e.stopPropagation(); modal.classList.add('visible'); });
+  modal.addEventListener('click', function() { modal.classList.remove('visible'); });
+  modal.querySelector('#help-modal-inner').addEventListener('click', function(e) { e.stopPropagation(); });
+  document.getElementById('help-close').addEventListener('click', function() { modal.classList.remove('visible'); });
+})();
+</script>
+
+<!-- Clip preview modal -->
+<div id="clip-preview-modal">
+  <video id="clip-preview" playsinline loop></video>
+  <div class="clip-actions">
+    <button class="clip-btn clip-btn-share" id="clip-share-btn">SHARE</button>
+    <button class="clip-btn" id="clip-save-btn">SAVE</button>
+    <button class="clip-btn clip-btn-discard" id="clip-discard-btn">DISCARD</button>
+  </div>
+</div>
+
+<!-- Game Over overlay -->
+<div id="gameover-overlay" style="display:none;">
+  <div class="disconnect-box">
+    <p style="color:#ff4444">GAME OVER</p>
+    <button class="lobby-btn" id="btn-gameover-clip" style="margin-bottom:10px;display:none;">&#x1F3AC; SAVE CLIP</button>
+    <button class="lobby-btn lobby-btn-accent" id="btn-restart">RESTART</button>
+    <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">GO TO LOBBY</button>
+  </div>
+</div>
+
+<!-- Victory overlay -->
+<div id="victory-overlay" style="display:none;">
+  <canvas id="victory-video" width="360" height="360"></canvas>
+  <h2>YOU MADE IT!</h2>
+  <p id="victory-destination"></p>
+  <div id="victory-stats"></div>
+  <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
+  <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
+  <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">RETURN TO LOBBY</button>
+</div>
+
+<!-- Disconnect overlay -->
+<div id="disconnect-overlay" style="display:none;">
+  <div class="disconnect-box">
+    <p id="disconnect-msg">Partner disconnected</p>
+    <button class="lobby-btn lobby-btn-accent" id="btn-try-reconnect">Try Again</button>
+    <button class="lobby-btn" id="btn-return-lobby" style="margin-top:10px;">Return to Lobby</button>
+  </div>
+</div>
+
+<!-- Connection / gamepad badge -->
+<div id="conn-badge" style="display:none;">
+  <span id="conn-type">P2P</span>
+  <span id="conn-ping">--ms</span>
+  <span id="conn-gamepad" style="display:none;"> 🎮</span>
+  <span id="conn-reconnect-text">Reconnecting...</span>
+</div>
+
+<!-- Surface indicator -->
+<!-- Gamepad badge (solo/lobby only) -->
+<div id="gamepad-badge">🎮</div>
+
+<!-- QR code generator (sets window.qrcode) -->
+<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
+<!-- PeerJS (sets window.Peer) -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module" src="js/game.js"></script>
+
+</body>
+</html>
