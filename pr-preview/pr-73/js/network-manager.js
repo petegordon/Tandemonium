@@ -3,7 +3,8 @@
 // ============================================================
 
 import {
-  MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN, MSG_PROFILE
+  MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN, MSG_PROFILE,
+  TURN_CREDENTIALS_URL
 } from './config.js';
 
 export class NetworkManager {
@@ -38,6 +39,7 @@ export class NetworkManager {
     this._p2pFallbackDelay = 60000; // 60 seconds before relay fallback
     this._reconnectTimeout = null;
     this._activeConn = null; // tracks which conn is current to ignore stale close events
+    this._iceServers = null; // cached TURN + STUN servers
 
     // Pre-allocated send buffers (avoid per-send allocations)
     this._stateBuf = new ArrayBuffer(46);
@@ -57,17 +59,44 @@ export class NetworkManager {
     return code;
   }
 
-  createRoom(callback) {
+  _defaultIceServers() {
+    return [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ];
+  }
+
+  async _fetchIceServers() {
+    if (this._iceServers) return this._iceServers;
+    try {
+      const resp = await fetch(TURN_CREDENTIALS_URL);
+      const data = await resp.json();
+      if (data.iceServers && data.iceServers.urls) {
+        // CF returns { iceServers: { urls: [...], username, credential } }
+        // PeerJS expects an array of server objects
+        this._iceServers = [
+          ...this._defaultIceServers(),
+          data.iceServers
+        ];
+      } else if (Array.isArray(data.iceServers)) {
+        this._iceServers = [...this._defaultIceServers(), ...data.iceServers];
+      } else {
+        this._iceServers = this._defaultIceServers();
+      }
+    } catch (e) {
+      console.warn('NET: Failed to fetch TURN credentials, using STUN only', e);
+      this._iceServers = this._defaultIceServers();
+    }
+    return this._iceServers;
+  }
+
+  async createRoom(callback) {
     this.role = 'captain';
     this.roomCode = this.generateRoomCode();
 
+    const iceServers = await this._fetchIceServers();
     this.peer = new window.Peer(this.roomCode, {
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      }
+      config: { iceServers }
     });
 
     this.peer.on('open', (id) => {
@@ -96,17 +125,13 @@ export class NetworkManager {
     });
   }
 
-  joinRoom(roomCode, callback) {
+  async joinRoom(roomCode, callback) {
     this.role = 'stoker';
     this.roomCode = roomCode.toUpperCase();
 
+    const iceServers = await this._fetchIceServers();
     this.peer = new window.Peer(null, {
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      }
+      config: { iceServers }
     });
 
     this.peer.on('open', () => {

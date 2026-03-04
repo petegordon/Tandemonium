@@ -7,6 +7,10 @@ bindings = [
     { name = "TANDEM_ROOM", class_name = "TandemRoom" }
 ]
 
+[vars]
+TURN_KEY_ID = "511f7bebc794eaf760c3aeac64db8e84"
+# TURN_KEY_API_TOKEN must be set via: wrangler secret put TURN_KEY_API_TOKEN
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TandemRoom"]
