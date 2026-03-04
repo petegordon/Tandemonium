@@ -142,10 +142,13 @@ export class InputManager {
   }
 
   _setupMotion() {
-    if (typeof DeviceMotionEvent !== 'undefined' &&
-        typeof DeviceMotionEvent.requestPermission === 'function') {
+    const needsOrientationPermission = typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function';
+    const needsMotionPermission = typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function';
+    if (needsOrientationPermission || needsMotionPermission) {
       this.needsMotionPermission = true;
-    } else if (typeof DeviceMotionEvent !== 'undefined') {
+    } else if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
       this._startMotionListening();
     }
   }
@@ -153,26 +156,55 @@ export class InputManager {
   async requestMotionPermission() {
     if (this.motionEnabled) return;
     this.needsMotionPermission = false;
-    if (typeof DeviceMotionEvent === 'undefined' ||
-        typeof DeviceMotionEvent.requestPermission !== 'function') return;
-    try {
-      const response = await DeviceMotionEvent.requestPermission();
-      if (response === 'granted') this._startMotionListening();
-    } catch (e) {
-      console.warn('Motion permission error:', e);
+    // Request orientation permission first (primary API)
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const response = await DeviceOrientationEvent.requestPermission();
+        if (response === 'granted') this._startMotionListening();
+      } catch (e) {
+        console.warn('Orientation permission error:', e);
+      }
+    }
+    // Request motion permission as fallback
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
+        const response = await DeviceMotionEvent.requestPermission();
+        if (response === 'granted' && !this.motionEnabled) this._startMotionListening();
+      } catch (e) {
+        console.warn('Motion permission error:', e);
+      }
     }
   }
 
   _startMotionListening() {
     this.motionReady = true;
-    this._useAccel = false;
+    this._useOrientation = false;
     this._gx = 0; this._gy = 0; this._gz = 0;
     this._gravityInit = false;
 
+    // Primary: deviceorientation (browser sensor fusion — smoother)
+    window.addEventListener('deviceorientation', (e) => {
+      const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+      let rawTilt;
+      if (orient === 90) rawTilt = e.beta;
+      else if (orient === 270 || orient === -90) rawTilt = -e.beta;
+      else rawTilt = e.gamma;
+
+      if (rawTilt != null) {
+        this._useOrientation = true;
+        if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
+        this.motionEnabled = true;
+        this._applyTilt(rawTilt);
+      }
+    });
+
+    // Fallback: devicemotion (only if orientation events don't fire)
     window.addEventListener('devicemotion', (e) => {
+      if (this._useOrientation) return;
       const a = e.accelerationIncludingGravity;
       if (!a || a.x == null) return;
-      this._useAccel = true;
       if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
       this.motionEnabled = true;
 
@@ -193,21 +225,6 @@ export class InputManager {
       else rollRad = Math.atan2(this._gx, this._gy);
 
       this._applyTilt(-rollRad * 180 / Math.PI);
-    });
-
-    window.addEventListener('deviceorientation', (e) => {
-      if (this._useAccel) return;
-      const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-      let rawTilt;
-      if (orient === 90) rawTilt = e.beta;
-      else if (orient === 270 || orient === -90) rawTilt = -e.beta;
-      else rawTilt = e.gamma;
-
-      if (rawTilt != null) {
-        if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
-        this.motionEnabled = true;
-        this._applyTilt(rawTilt);
-      }
     });
   }
 
