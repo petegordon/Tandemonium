@@ -27,6 +27,7 @@ export const MSG_COLLECT     = 0x06;
 export const MSG_PROFILE     = 0x07;
 
 export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';
+export const TURN_CREDENTIALS_URL = 'https://tandemonium-relay.pete-872.workers.dev/turn-credentials';
 
 // Balance physics defaults — single source of truth
 export const BALANCE_DEFAULTS = {

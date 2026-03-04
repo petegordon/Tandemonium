@@ -130,9 +130,14 @@ class Game {
       this._resetGame();
     });
 
-    // Lobby button
-    document.getElementById('lobby-btn').addEventListener('click', () => {
-      this._returnToLobby();
+    // Lobby / Room button
+    this._lobbyBtn = document.getElementById('lobby-btn');
+    this._lobbyBtn.addEventListener('click', () => {
+      if (this.net) {
+        this._returnToRoom();
+      } else {
+        this._returnToLobby();
+      }
     });
 
     // Try Again from disconnect overlay
@@ -170,7 +175,13 @@ class Game {
       this._resetGame();
     });
 
-    // Game Over: return to lobby
+    // Game Over: return to room (stay connected)
+    this._onTap('btn-gameover-room', () => {
+      this._hideGameOver();
+      this._returnToRoom();
+    });
+
+    // Game Over: quit (full disconnect)
     this._onTap('btn-gameover-lobby', () => {
       this._hideGameOver();
       this._returnToLobby();
@@ -217,6 +228,13 @@ class Game {
         this._returnToLobby();
       }
     });
+    // Victory: return to room (stay connected)
+    this._onTap('btn-victory-room', () => {
+      this._hideVictory();
+      this._returnToRoom();
+    });
+
+    // Victory: quit (full disconnect)
     this._onTap('btn-victory-lobby', () => {
       this._hideVictory();
       this._returnToLobby();
@@ -292,6 +310,7 @@ class Game {
   _onSolo() {
     this.mode = 'solo';
     this.bike.applyPreset(this.lobby.selectedPreset);
+    this._lobbyBtn.textContent = 'LOBBY';
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
@@ -300,6 +319,7 @@ class Game {
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
+    this._lobbyBtn.textContent = 'ROOM';
     this.bike.applyPreset(this.lobby.selectedPreset);
 
     // Setup shared pedal controller
@@ -339,19 +359,22 @@ class Game {
       if (eventType === EVT_COUNTDOWN) {
         this._startCountdown();
       } else if (eventType === EVT_START) {
-        // Stoker receives GO from captain
+        // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
         if (this.raceManager) this.raceManager.start();
-        const statusEl = document.getElementById('status');
-        statusEl.textContent = 'GO!';
-        statusEl.style.color = '#44ff66';
+        const flavorNum = document.getElementById('countdown-flavor-num');
+        const flavorIcon = document.getElementById('countdown-flavor-icon');
+        const flavorText = document.getElementById('countdown-flavor-text');
+        if (flavorNum) { flavorNum.textContent = 'GO!'; flavorNum.className = 'tick-go pop'; }
+        if (flavorIcon) flavorIcon.textContent = '';
+        if (flavorText) flavorText.textContent = '';
         this._playBeep(800, 0.4);
         setTimeout(() => {
-          if (this.state === 'playing') {
-            statusEl.textContent = '';
-            statusEl.style.fontSize = '';
+          if (this.state === 'playing' && flavorNum) {
+            flavorNum.textContent = '';
+            flavorNum.className = '';
           }
-        }, 800);
+        }, 1000);
       } else if (eventType === EVT_RESET) {
         this._hideGameOver();
         this._hideVictory();
@@ -413,6 +436,13 @@ class Game {
 
     // Partner profile: avatar + achievements
     this.net.onProfileReceived = (profile) => {
+      // Capture authoritative finish stats from captain
+      if (profile && profile.type === 'finishStats') {
+        this._remoteFinishStats = profile;
+        return;
+      }
+      // Ignore room sync messages (bikeSync, levelSync, startRide)
+      if (profile && profile.type) return;
       // Show partner avatar if no active video stream
       if (profile.avatar && !this.recorder.partnerActive) {
         this.recorder.showPartnerAvatar(this.lobby._avatarCache.get(profile.avatar) || profile.avatar);
@@ -431,6 +461,7 @@ class Game {
     };
 
     // Pre-acquire local media stream so calls connect instantly on both sides.
+    // If lobby already acquired media (room step), reuse it.
     // Captain then initiates the media call; stoker holds the stream ready for
     // _handleIncomingCall to answer without an async getUserMedia delay.
     if (this.lobby.cameraActive || this.lobby.audioActive) {
@@ -438,6 +469,9 @@ class Game {
         if (mode === 'captain') this._initiateMediaCall();
       });
     }
+
+    // Store room role for return-to-room
+    this._roomRole = mode;
 
     // Update partner gauge label to show partner's role
     const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
@@ -792,6 +826,7 @@ class Game {
 
     this.grassParticles.clear();
     this._stokerWasFallen = false;
+    this._remoteFinishStats = null;
 
     if (this.mode === 'solo') {
       this.pedalCtrl = new PedalController(this.input);
@@ -887,7 +922,11 @@ class Game {
       clipBtn.style.display = (this.recorder && this.recorder.buffering) ? '' : 'none';
     }
 
-    const btns = [clipBtn, document.getElementById('btn-restart'), document.getElementById('btn-gameover-lobby')]
+    // Show "Return to Room" in multiplayer
+    const roomBtn = document.getElementById('btn-gameover-room');
+    if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
+
+    const btns = [clipBtn, document.getElementById('btn-restart'), roomBtn, document.getElementById('btn-gameover-lobby')]
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
 
@@ -912,8 +951,14 @@ class Game {
     } else if (raceEvent.event === 'finish') {
       this._showVictory();
 
-      // Notify stoker
+      // Send authoritative finish stats to stoker before the finish event
       if (this.mode === 'captain' && this.net) {
+        this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
+        this.net.sendProfile({
+          type: 'finishStats',
+          raceSummary: this.raceManager.getSummary(this.bike.distanceTraveled),
+          contribSummary: this.contributionTracker ? this.contributionTracker.getSummary() : null,
+        });
         this.net.sendEvent(EVT_FINISH);
       }
     }
@@ -1039,9 +1084,18 @@ class Game {
     const statsEl = document.getElementById('victory-stats');
     statsEl.innerHTML = '';
 
-    if (this.raceManager) {
+    // Use remote authoritative stats on stoker side, local stats otherwise
+    let summary, contribData;
+    if (fromRemote && this._remoteFinishStats) {
+      summary = this._remoteFinishStats.raceSummary;
+      contribData = this._remoteFinishStats.contribSummary;
+    } else if (this.raceManager) {
       this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
-      const summary = this.raceManager.getSummary(this.bike.distanceTraveled);
+      summary = this.raceManager.getSummary(this.bike.distanceTraveled);
+      contribData = this.contributionTracker ? this.contributionTracker.getSummary() : null;
+    }
+
+    if (summary) {
       const collectIcon = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81'; // 💎 or 🎁
       const distStr = summary.distance >= 1000 ? (summary.distance / 1000).toFixed(2) + ' km' : summary.distance + ' m';
 
@@ -1063,15 +1117,14 @@ class Game {
 
       // Solo performance stats
       let soloStats = null;
-      if (this.contributionTracker) {
-        const contrib = this.contributionTracker.getSummary();
-        if (contrib.mode !== 'multiplayer') {
-          const solo = contrib.solo;
+      if (contribData) {
+        if (contribData.mode !== 'multiplayer') {
+          const solo = contribData.solo;
           const pedalPct = solo.totalTaps > 0 ? Math.round((solo.correctTaps / solo.totalTaps) * 100) : 0;
           left.push({ icon: '\uD83E\uDDB6', value: pedalPct + '%' });       // 🦶 Pedal accuracy
           right.push({ icon: '\u2696\uFE0F', value: solo.safePct + '%' });   // ⚖️ Balance
         } else {
-          soloStats = contrib;
+          soloStats = contribData;
         }
       }
 
@@ -1148,11 +1201,19 @@ class Game {
       if (nextBtn) nextBtn.classList.remove('lobby-btn-accent');
     }
 
+    // Show "Return to Room" in multiplayer
+    const roomBtn = document.getElementById('btn-victory-room');
+    if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
+
     // Gamepad navigation for victory buttons
     const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby')];
     // Include "next level" if visible, and default-focus it
     if (hasNext) {
       victoryBtns.splice(1, 0, nextBtn);
+    }
+    // Include "return to room" if in multiplayer
+    if (roomBtn && this.net) {
+      victoryBtns.splice(victoryBtns.length - 1, 0, roomBtn);
     }
     this._setOverlayButtons(victoryBtns, hasNext ? 1 : 0);
 
@@ -1353,6 +1414,7 @@ class Game {
     updateBadgeDisplay('partner-badges', []);
     if (this.net) { this.net.destroy(); this.net = null; }
     this.mode = 'solo';
+    this._lobbyBtn.textContent = 'LOBBY';
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
@@ -1381,6 +1443,58 @@ class Game {
 
     this.state = 'lobby';
     this.lobby.show();
+  }
+
+  _returnToRoom() {
+    if (!this.net) {
+      // Fallback to full lobby return if no connection
+      this._returnToLobby();
+      return;
+    }
+
+    if (!this.lobby.musicActive) {
+      this._musicEl.pause();
+      this._musicEl.currentTime = 0;
+    }
+    this._hideGameOver();
+    this._hideVictory();
+
+    // Partial cleanup: game state only (keep connection + media alive)
+    this.raceManager = null;
+    this.hud.raceManager = null;
+    this.contributionTracker = null;
+    if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
+    this._contribBar.style.display = 'none';
+    this.hud.hideCollectibles();
+    this.hud.hideTimer();
+    this.world.clearRaceMarkers();
+    this.recorder.stopBuffer();
+    // Don't stop selfie or clear partner stream — keep media alive
+    this.archIndicator.hide();
+
+    // Reset bike + camera
+    this.bike.fullReset();
+    this.chaseCamera.initialized = false;
+
+    // Reset pedal state
+    this.sharedPedal = null;
+    this.remoteBikeState = null;
+    this.remoteLean = 0;
+    this._remoteLastFoot = null;
+    this._remoteLastTapTime = 0;
+    this._mpPrevUp = false;
+    this._mpPrevDown = false;
+    this._stokerWasFallen = false;
+    this._stateSendTimer = 0;
+    this._leanSendTimer = 0;
+
+    // Hide side buttons for now (lobby will show them if needed)
+    document.getElementById('side-buttons').style.display = '';
+
+    // Transition to lobby room step
+    this.state = 'lobby';
+    this.lobby.showRoom(this.net, this._roomRole);
   }
 
   async _acquireLocalMedia() {
@@ -1522,7 +1636,7 @@ class Game {
     if (up && !this._dpadPrevUp) this.safetyBtn.click();
     if (down && !this._dpadPrevDown) this.speedBtn.click();
     if (right && !this._dpadPrevRight) document.getElementById('reset-btn').click();
-    if (left && !this._dpadPrevLeft) this._returnToLobby();
+    if (left && !this._dpadPrevLeft) this._lobbyBtn.click();
     if (y && !this._gpPrevY) this.recorder.saveClip();
     if (a && !this._gpPrevA && (this.input.motionEnabled || this.input.gyroConnected)) {
       this._recalibrateTilt();

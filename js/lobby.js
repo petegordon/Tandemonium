@@ -8,7 +8,7 @@ import { NetworkManager } from './network-manager.js';
 import { RELAY_URL, BIKE_MODEL_PATH } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
-import { AchievementManager } from './achievements.js';
+import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 
 const BIKE_NAMES = {
   default: 'Old Faithful',
@@ -36,6 +36,8 @@ export class Lobby {
     this.roleStep = document.getElementById('lobby-role');
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
+    this.roomStep = document.getElementById('lobby-room');
+    this._roomRole = null; // 'captain' | 'stoker'
 
     // Permission toggle buttons
     this.toggleAll = document.getElementById('toggle-all');
@@ -83,21 +85,29 @@ export class Lobby {
 
     // Per-step focusable items and back buttons
     this._stepItems = new Map();
+    this._stepCenterItems = new Map(); // immutable center-column items per step
     this._stepBack = new Map();
     this._stepItems.set(this.modeStep, this._modeColumns[1]);
-    this._stepItems.set(this.roleStep, [
+    this._stepCenterItems.set(this.modeStep, this._modeColumns[1]);
+    const roleItems = [
       document.getElementById('btn-captain'),
       document.getElementById('btn-stoker'),
       document.getElementById('btn-back-mode'),
-    ]);
-    this._stepItems.set(this.hostStep, [
+    ];
+    this._stepItems.set(this.roleStep, roleItems);
+    this._stepCenterItems.set(this.roleStep, roleItems);
+    const hostItems = [
       document.getElementById('btn-back-role-host'),
-    ]);
-    this._stepItems.set(this.joinStep, [
+    ];
+    this._stepItems.set(this.hostStep, hostItems);
+    this._stepCenterItems.set(this.hostStep, hostItems);
+    const joinItems = [
       document.getElementById('room-code-input'),
       document.getElementById('btn-join'),
       document.getElementById('btn-back-role-join'),
-    ]);
+    ];
+    this._stepItems.set(this.joinStep, joinItems);
+    this._stepCenterItems.set(this.joinStep, joinItems);
     this._stepBack.set(this.modeStep, null);
     this._stepBack.set(this.roleStep, document.getElementById('btn-back-mode'));
     this._stepBack.set(this.hostStep, document.getElementById('btn-back-role-host'));
@@ -105,7 +115,7 @@ export class Lobby {
 
     // Default focus index per step (0 if not specified)
     this._stepDefaultFocus = new Map();
-    this._stepDefaultFocus.set(this.modeStep, 1); // RIDE TOGETHER
+    this._stepDefaultFocus.set(this.modeStep, 0); // RIDE TOGETHER
 
     // Bike carousel state
     this.selectedPreset = null; // null = default, or preset data object
@@ -180,16 +190,19 @@ export class Lobby {
   }
 
   _showStep(step) {
-    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep]
+    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep]
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
     this._currentStep = step;
-    if (step === this.modeStep) {
-      this._modeCol = 1;
-      this._modeColIndex = [0, 0, 0, 0];
-      this._stepItems.set(this.modeStep, this._modeColumns[1]);
-    }
+
+    // Always reset to center column and update its items
+    this._modeCol = 1;
+    this._modeColIndex = [0, 0, 0, 0];
+    const centerItems = this._stepCenterItems.get(step) || [];
+    this._modeColumns[1] = centerItems;
+    this._stepItems.set(step, centerItems);
+
     this._focusIndex = this._stepDefaultFocus.get(step) || 0;
     this._applyFocusHighlight();
   }
@@ -264,6 +277,31 @@ export class Lobby {
       }
     });
 
+    // Room step buttons
+    document.getElementById('btn-start-ride').addEventListener('click', () => {
+      if (this._roomRole !== 'captain') return;
+      // Send start ride to partner
+      if (this.net && this.net.connected) {
+        this.net.sendProfile({ type: 'startRide' });
+      }
+      this._transitionToGame();
+    });
+    document.getElementById('btn-back-room').addEventListener('click', () => {
+      // Leave room — destroy connection, return to role step
+      if (this.net) { this.net.destroy(); this.net = null; }
+      this._removePipLobbyMode();
+      // Stop selfie video
+      const selfieVideo = document.getElementById('selfie-pip');
+      if (selfieVideo) selfieVideo.srcObject = null;
+      const selfieWrap = document.getElementById('selfie-pip-wrap');
+      if (selfieWrap) selfieWrap.style.display = 'none';
+      const partnerVideo = document.getElementById('partner-pip');
+      if (partnerVideo) partnerVideo.srcObject = null;
+      const partnerWrap = document.getElementById('partner-pip-wrap');
+      if (partnerWrap) partnerWrap.style.display = 'none';
+      this._showStep(this.roleStep);
+    });
+
     // Permission toggles
     this.toggleAll.addEventListener('click', () => this._toggleAll());
     this.toggleCamera.addEventListener('click', () => this._toggleCamera());
@@ -304,6 +342,7 @@ export class Lobby {
     // Register for gamepad navigation
     buttons.push(document.getElementById('btn-back-level'));
     this._stepItems.set(this.levelStep, buttons);
+    this._stepCenterItems.set(this.levelStep, buttons);
     this._stepBack.set(this.levelStep, document.getElementById('btn-back-level'));
   }
 
@@ -484,11 +523,18 @@ export class Lobby {
     if (this.cameraActive) {
       this.cameraActive = false;
       this._setToggleActive('camera', false);
+      this._applyVideoTrackState(false);
       return;
     }
     if (this._cameraPermitted) {
       this.cameraActive = true;
       this._setToggleActive('camera', true);
+      // If we're in the room but have no video track yet, acquire it now
+      if (this.net && !this.net._localMediaStream?.getVideoTracks().length) {
+        this._acquireAndShowCamera();
+      } else {
+        this._applyVideoTrackState(true);
+      }
       return;
     }
     navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
@@ -496,7 +542,36 @@ export class Lobby {
       this._cameraPermitted = true;
       this.cameraActive = true;
       this._setToggleActive('camera', true);
+      // If in the room, acquire the real track and show it
+      if (this.net && !this.net._localMediaStream?.getVideoTracks().length) {
+        this._acquireAndShowCamera();
+      } else {
+        this._applyVideoTrackState(true);
+      }
     }).catch(() => {});
+  }
+
+  async _acquireAndShowCamera() {
+    if (!this.net) return;
+    await this.net.acquireLocalMedia(true, this._audioPermitted);
+    if (!this.net._localMediaStream) return;
+    const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
+    if (videoTrack) videoTrack.enabled = true;
+    // Wire up the selfie PiP
+    const selfieVideo = document.getElementById('selfie-pip');
+    const selfieAvatar = document.getElementById('selfie-pip-avatar');
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    if (selfieVideo) {
+      selfieVideo.srcObject = this.net._localMediaStream;
+      selfieVideo.style.display = 'block';
+      selfieVideo.play().catch(() => {});
+    }
+    if (selfieAvatar) selfieAvatar.style.display = 'none';
+    if (selfieWrap) selfieWrap.style.display = 'block';
+    // Re-initiate media call so partner gets the video
+    if (this._roomRole === 'captain') {
+      this.net.initiateCall();
+    }
   }
 
   _toggleMotion() {
@@ -550,11 +625,13 @@ export class Lobby {
     if (this.audioActive) {
       this.audioActive = false;
       this._setToggleActive('audio', false);
+      this._applyAudioTrackState(false);
       return;
     }
     if (this._audioPermitted) {
       this.audioActive = true;
       this._setToggleActive('audio', true);
+      this._applyAudioTrackState(true);
       return;
     }
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
@@ -562,6 +639,7 @@ export class Lobby {
       this._audioPermitted = true;
       this.audioActive = true;
       this._setToggleActive('audio', true);
+      this._applyAudioTrackState(true);
     }).catch(() => {});
   }
 
@@ -576,6 +654,36 @@ export class Lobby {
       el.classList.remove('active');
     }
     this._updateAllToggle();
+  }
+
+  _applyVideoTrackState(enabled) {
+    if (!this.net || !this.net._localMediaStream) return;
+    const track = this.net._localMediaStream.getVideoTracks()[0];
+    if (track) track.enabled = enabled;
+    const selfieVideo = document.getElementById('selfie-pip');
+    const selfieAvatar = document.getElementById('selfie-pip-avatar');
+    if (enabled && track) {
+      if (selfieVideo) {
+        selfieVideo.style.display = 'block';
+        selfieVideo.play().catch(() => {});
+      }
+      if (selfieAvatar) selfieAvatar.style.display = 'none';
+    } else {
+      if (selfieVideo) selfieVideo.style.display = 'none';
+      if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
+        const user = this.auth.getUser();
+        if (user && user.avatar) {
+          selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+          selfieAvatar.style.display = 'block';
+        }
+      }
+    }
+  }
+
+  _applyAudioTrackState(enabled) {
+    if (!this.net || !this.net._localMediaStream) return;
+    const track = this.net._localMediaStream.getAudioTracks()[0];
+    if (track) track.enabled = enabled;
   }
 
   _toggleMusic() {
@@ -1183,8 +1291,7 @@ export class Lobby {
       statusEl.textContent = 'Partner connected!';
       statusEl.className = 'conn-status connected';
       setTimeout(() => {
-        this._hideLobby();
-        this.onMultiplayerReady(this.net, 'captain');
+        this._showRoomStep('captain');
       }, 1000);
     };
 
@@ -1212,8 +1319,7 @@ export class Lobby {
       statusEl.textContent = 'Connected!';
       statusEl.className = 'conn-status connected';
       setTimeout(() => {
-        this._hideLobby();
-        this.onMultiplayerReady(this.net, 'stoker');
+        this._showRoomStep('stoker');
       }, 1000);
     };
 
@@ -1221,6 +1327,352 @@ export class Lobby {
       statusEl.textContent = reason || 'Could not connect';
       statusEl.className = 'conn-status error';
     };
+  }
+
+  // ── Room Step (shared multiplayer lobby) ─────────────────────
+
+  _showRoomStep(role) {
+    this._roomRole = role;
+
+    const roomCodeLabel = document.getElementById('room-code-label');
+    if (roomCodeLabel && this.net && this.net.roomCode) {
+      roomCodeLabel.textContent = this.net.roomCode;
+    }
+
+    // Show/hide start button vs waiting text based on role
+    const startBtn = document.getElementById('btn-start-ride');
+    const waitText = document.getElementById('room-wait-text');
+    if (role === 'captain') {
+      startBtn.style.display = '';
+      startBtn.disabled = true;
+      waitText.style.display = 'none';
+    } else {
+      startBtn.style.display = 'none';
+      waitText.style.display = '';
+    }
+
+    // Set role labels on PiP circles
+    const selfieLabel = document.getElementById('selfie-pip-label');
+    const partnerLabel = document.getElementById('partner-pip-label');
+    if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
+    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+
+    // Build level cards BEFORE _showStep so _stepItems is populated
+    this._buildRoomLevelCards(role === 'captain');
+    this._showStep(this.roomStep);
+
+    // Start media
+    this._startRoomMedia();
+
+    // Register room message handler
+    this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
+
+    // Send current bike preset to partner
+    this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+
+    // Send profile with avatar + achievements so partner sees them in room
+    this._sendRoomProfile();
+
+    // Handle partner disconnect while in room
+    this.net.onDisconnected = (reason) => {
+      const waitText = document.getElementById('room-wait-text');
+      waitText.textContent = 'Partner disconnected';
+      waitText.style.display = '';
+      document.getElementById('btn-start-ride').style.display = 'none';
+      setTimeout(() => {
+        if (this.net) { this.net.destroy(); this.net = null; }
+        this._removePipLobbyMode();
+        this._showStep(this.roleStep);
+      }, 2000);
+    };
+  }
+
+  _buildRoomLevelCards(isClickable) {
+    const container = document.getElementById('room-level-cards');
+    container.innerHTML = '';
+    const buttons = [];
+    LEVELS.forEach(level => {
+      const card = document.createElement('button');
+      card.className = 'level-card';
+      card.dataset.levelId = level.id;
+      card.innerHTML =
+        '<div class="level-card-top">' +
+          '<span class="level-card-icon">' + level.icon + '</span>' +
+          '<span class="level-card-name">' + level.name + '</span>' +
+        '</div>' +
+        '<div class="level-card-desc">' + level.description + '</div>' +
+        '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
+      if (isClickable) {
+        card.addEventListener('click', () => {
+          this.selectedLevel = level;
+          // Highlight selected card
+          container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
+          card.classList.add('selected');
+          // Enable start button
+          document.getElementById('btn-start-ride').disabled = false;
+          // Sync to partner
+          if (this.net && this.net.connected) {
+            this.net.sendProfile({ type: 'levelSync', levelId: level.id });
+          }
+        });
+      } else {
+        card.style.opacity = '0.7';
+        card.style.pointerEvents = 'none';
+      }
+      container.appendChild(card);
+      buttons.push(card);
+    });
+
+    // Restore previously selected level
+    if (this.selectedLevel) {
+      container.querySelectorAll('.level-card').forEach(c => {
+        if (c.dataset.levelId === this.selectedLevel.id) c.classList.add('selected');
+      });
+      if (isClickable) document.getElementById('btn-start-ride').disabled = false;
+      // Re-sync level to partner (captain only)
+      if (isClickable && this.net && this.net.connected) {
+        this.net.sendProfile({ type: 'levelSync', levelId: this.selectedLevel.id });
+      }
+    }
+
+    // Register for gamepad nav
+    const roomItems = isClickable
+      ? [...buttons, document.getElementById('btn-start-ride'), document.getElementById('btn-back-room')]
+      : [document.getElementById('btn-back-room')];
+    this._stepItems.set(this.roomStep, roomItems);
+    this._stepCenterItems.set(this.roomStep, roomItems);
+    this._stepBack.set(this.roomStep, document.getElementById('btn-back-room'));
+  }
+
+  async _startRoomMedia() {
+    if (!this.net) return;
+    // Acquire all permitted tracks so they can be toggled on/off in the room
+    await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
+
+    // Apply current toggle states to live tracks
+    if (this.net._localMediaStream) {
+      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
+      if (videoTrack) videoTrack.enabled = this.cameraActive;
+      const audioTrack = this.net._localMediaStream.getAudioTracks()[0];
+      if (audioTrack) audioTrack.enabled = this.audioActive;
+    }
+
+    // Show selfie PiP in lobby mode
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    if (selfieWrap) {
+      selfieWrap.classList.add('pip-lobby-mode');
+      const videoArea = document.getElementById('room-video-area');
+      videoArea.appendChild(selfieWrap);
+    }
+
+    // Start selfie video from the acquired stream
+    const selfieVideo = document.getElementById('selfie-pip');
+    const selfieAvatar = document.getElementById('selfie-pip-avatar');
+    if (selfieVideo && this.net._localMediaStream) {
+      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
+      // Always bind the stream so toggling on later works immediately
+      if (videoTrack) selfieVideo.srcObject = this.net._localMediaStream;
+      if (videoTrack && this.cameraActive) {
+        selfieVideo.style.display = 'block';
+        selfieVideo.play().catch(() => {});
+        if (selfieAvatar) selfieAvatar.style.display = 'none';
+      } else {
+        selfieVideo.style.display = 'none';
+        // Show avatar fallback when camera is off
+        if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
+          const user = this.auth.getUser();
+          if (user && user.avatar) {
+            selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+            selfieAvatar.style.display = 'block';
+          }
+        }
+      }
+      if (selfieWrap) selfieWrap.style.display = 'block';
+    } else if (this.auth && this.auth.isLoggedIn()) {
+      // No stream at all — fallback to avatar
+      const user = this.auth.getUser();
+      if (user && user.avatar && selfieAvatar && selfieWrap) {
+        selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+        selfieAvatar.style.display = 'block';
+        if (selfieVideo) selfieVideo.style.display = 'none';
+        selfieWrap.style.display = 'block';
+      }
+    }
+
+    // Show partner PiP area
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    if (partnerWrap) {
+      partnerWrap.classList.add('pip-lobby-mode');
+      const videoArea = document.getElementById('room-video-area');
+      videoArea.appendChild(partnerWrap);
+    }
+
+    // Captain initiates media call
+    this.net.onRemoteStream = (remoteStream) => {
+      const partnerVideo = document.getElementById('partner-pip');
+      if (partnerVideo && remoteStream) {
+        partnerVideo.srcObject = remoteStream;
+        partnerVideo.style.display = 'block';
+        partnerVideo.play().catch(() => {});
+        if (partnerWrap) partnerWrap.style.display = 'block';
+        const partnerAvatar = document.getElementById('partner-pip-avatar');
+        if (partnerAvatar) partnerAvatar.style.display = 'none';
+      }
+    };
+
+    if (this._roomRole === 'captain') {
+      this.net.initiateCall();
+    }
+  }
+
+  _handleRoomMessage(profile) {
+    if (!profile || !profile.type) {
+      // Profile message (avatar, name, achievements)
+      const partnerNameEl = document.getElementById('room-partner-name');
+      if (partnerNameEl && profile && profile.name) partnerNameEl.textContent = profile.name;
+      // Show partner avatar if no video stream active
+      const partnerVideo = document.getElementById('partner-pip');
+      const partnerAvatar = document.getElementById('partner-pip-avatar');
+      const partnerWrap = document.getElementById('partner-pip-wrap');
+      if (profile && profile.avatar && partnerAvatar && partnerWrap && (!partnerVideo || !partnerVideo.srcObject)) {
+        partnerAvatar.src = this._avatarCache.get(profile.avatar) || profile.avatar;
+        partnerAvatar.style.display = 'block';
+        if (partnerVideo) partnerVideo.style.display = 'none';
+        partnerWrap.style.display = 'block';
+      }
+      // Render partner achievement badges
+      if (profile && profile.achievements) {
+        updateBadgeDisplay('partner-badges', profile.achievements);
+      }
+      return;
+    }
+
+    if (profile.type === 'bikeSync') {
+      // Partner changed bike — no label update needed (keep role-only labels)
+    } else if (profile.type === 'levelSync') {
+      // Stoker: highlight captain's level selection
+      this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
+      const container = document.getElementById('room-level-cards');
+      container.querySelectorAll('.level-card').forEach(c => {
+        c.classList.toggle('selected', c.dataset.levelId === profile.levelId);
+      });
+    } else if (profile.type === 'startRide') {
+      // Stoker: captain started the ride
+      this._transitionToGame();
+    }
+  }
+
+  _sendRoomProfile() {
+    if (!this.net || !this.net.connected) return;
+    const profile = { achievements: this._achievements.getEarned() };
+    if (this.auth && this.auth.isLoggedIn()) {
+      const user = this.auth.getUser();
+      if (user) {
+        if (user.avatar) profile.avatar = user.avatar;
+        if (user.name) profile.name = user.name;
+      }
+    }
+    this.net.sendProfile(profile);
+  }
+
+  _transitionToGame() {
+    // Remove lobby mode from PiP elements
+    this._removePipLobbyMode();
+    // Hide lobby
+    this._hideLobby();
+    // Fire multiplayer ready
+    this.onMultiplayerReady(this.net, this._roomRole);
+  }
+
+  _removePipLobbyMode() {
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    if (selfieWrap) {
+      selfieWrap.classList.remove('pip-lobby-mode');
+      // Move back to body so fixed positioning works in-game
+      document.body.appendChild(selfieWrap);
+    }
+    if (partnerWrap) {
+      partnerWrap.classList.remove('pip-lobby-mode');
+      document.body.appendChild(partnerWrap);
+    }
+  }
+
+  showRoom(net, role) {
+    // Called by game.js _returnToRoom() to re-show the lobby at roomStep
+    this.net = net;
+    this._roomRole = role;
+
+    const roomCodeLabel = document.getElementById('room-code-label');
+    if (roomCodeLabel && this.net && this.net.roomCode) {
+      roomCodeLabel.textContent = this.net.roomCode;
+    }
+
+    this.lobbyEl.style.display = '';
+    this._startGamepadNav();
+    if (this._previewModel) this._startPreviewLoop();
+
+    // Show/hide start button vs waiting text
+    const startBtn = document.getElementById('btn-start-ride');
+    const waitText = document.getElementById('room-wait-text');
+    if (role === 'captain') {
+      startBtn.style.display = '';
+      startBtn.disabled = true;
+      waitText.style.display = 'none';
+    } else {
+      startBtn.style.display = 'none';
+      waitText.style.display = '';
+    }
+
+    // Set role labels on PiP circles
+    const selfieLabel = document.getElementById('selfie-pip-label');
+    const partnerLabel = document.getElementById('partner-pip-label');
+    if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
+    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+
+    // Rebuild level cards BEFORE _showStep so _stepItems is populated
+    this._buildRoomLevelCards(role === 'captain');
+
+    // Show room step directly
+    this._showStep(this.roomStep);
+
+    // Re-add PiP lobby mode
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    const videoArea = document.getElementById('room-video-area');
+    if (selfieWrap) {
+      selfieWrap.classList.add('pip-lobby-mode');
+      videoArea.appendChild(selfieWrap);
+    }
+    if (partnerWrap) {
+      partnerWrap.classList.add('pip-lobby-mode');
+      videoArea.appendChild(partnerWrap);
+    }
+
+    // Re-register room message handler
+    this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
+
+    // Send current bike preset and profile to partner on re-entry
+    if (this.net.connected) {
+      this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+      this._sendRoomProfile();
+    }
+
+    // Re-register disconnect handler for room
+    this.net.onDisconnected = (reason) => {
+      const waitText = document.getElementById('room-wait-text');
+      waitText.textContent = 'Partner disconnected';
+      waitText.style.display = '';
+      document.getElementById('btn-start-ride').style.display = 'none';
+      setTimeout(() => {
+        if (this.net) { this.net.destroy(); this.net = null; }
+        this._removePipLobbyMode();
+        this._showStep(this.roleStep);
+      }, 2000);
+    };
+
+    // Refresh carousel visual on re-entry
+    this._applyPresetToPreview();
   }
 
   // ── Gamepad navigation ──────────────────────────────────────
@@ -1393,7 +1845,6 @@ export class Lobby {
   }
 
   _moveColumn(dir) {
-    if (this._currentStep !== this.modeStep) return;
     const newCol = Math.max(0, Math.min(this._modeColumns.length - 1, this._modeCol + dir));
     if (newCol === this._modeCol) return;
 
@@ -1405,7 +1856,7 @@ export class Lobby {
     const colItems = this._modeColumns[newCol].filter(el => el.style.display !== 'none');
     this._focusIndex = Math.min(this._modeColIndex[newCol], colItems.length - 1);
     // Update _stepItems to point at the active column's items
-    this._stepItems.set(this.modeStep, colItems);
+    this._stepItems.set(this._currentStep, colItems);
     this._applyFocusHighlight();
   }
 
@@ -1429,6 +1880,7 @@ export class Lobby {
   }
 
   _applyFocusHighlight() {
+    if (!this.input || !this.input.gamepadConnected) return;
     const items = this._stepItems.get(this._currentStep);
     if (!items || items.length === 0) return;
 
@@ -1551,10 +2003,12 @@ export class Lobby {
     const goPrev = () => {
       this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
       this._applyPresetToPreview();
+      this._sendBikeSyncIfInRoom();
     };
     const goNext = () => {
       this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
       this._applyPresetToPreview();
+      this._sendBikeSyncIfInRoom();
     };
     prevBtn.addEventListener('click', goPrev);
     nextBtn.addEventListener('click', goNext);
@@ -1576,6 +2030,7 @@ export class Lobby {
           this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
         }
         this._applyPresetToPreview();
+        this._sendBikeSyncIfInRoom();
       }
     }, { passive: true });
   }
@@ -1627,6 +2082,13 @@ export class Lobby {
         mat.needsUpdate = true;
       }
     });
+
+  }
+
+  _sendBikeSyncIfInRoom() {
+    if (this._currentStep === this.roomStep && this.net && this.net.connected) {
+      this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+    }
   }
 
   _startPreviewLoop() {

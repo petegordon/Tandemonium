@@ -3,7 +3,8 @@
 // ============================================================
 
 import {
-  MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN, MSG_PROFILE
+  MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN, MSG_PROFILE,
+  TURN_CREDENTIALS_URL
 } from './config.js';
 
 export class NetworkManager {
@@ -31,13 +32,14 @@ export class NetworkManager {
     this._localMediaStream = null;
     this._heartbeatInterval = null;
     this._reconnectAttempts = 0;
-    this._maxReconnectAttempts = 3;
+    this._maxReconnectAttempts = 5;
     this._relayWs = null;
     this._fallbackUrl = null;
     this._relayPartnerReady = false;
     this._p2pFallbackDelay = 60000; // 60 seconds before relay fallback
     this._reconnectTimeout = null;
     this._activeConn = null; // tracks which conn is current to ignore stale close events
+    this._iceServers = null; // cached TURN + STUN servers
 
     // Pre-allocated send buffers (avoid per-send allocations)
     this._stateBuf = new ArrayBuffer(46);
@@ -57,17 +59,44 @@ export class NetworkManager {
     return code;
   }
 
-  createRoom(callback) {
+  _defaultIceServers() {
+    return [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' }
+    ];
+  }
+
+  async _fetchIceServers() {
+    if (this._iceServers) return this._iceServers;
+    try {
+      const resp = await fetch(TURN_CREDENTIALS_URL);
+      const data = await resp.json();
+      if (data.iceServers && data.iceServers.urls) {
+        // CF returns { iceServers: { urls: [...], username, credential } }
+        // PeerJS expects an array of server objects
+        this._iceServers = [
+          ...this._defaultIceServers(),
+          data.iceServers
+        ];
+      } else if (Array.isArray(data.iceServers)) {
+        this._iceServers = [...this._defaultIceServers(), ...data.iceServers];
+      } else {
+        this._iceServers = this._defaultIceServers();
+      }
+    } catch (e) {
+      console.warn('NET: Failed to fetch TURN credentials, using STUN only', e);
+      this._iceServers = this._defaultIceServers();
+    }
+    return this._iceServers;
+  }
+
+  async createRoom(callback) {
     this.role = 'captain';
     this.roomCode = this.generateRoomCode();
 
+    const iceServers = await this._fetchIceServers();
     this.peer = new window.Peer(this.roomCode, {
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      }
+      config: { iceServers }
     });
 
     this.peer.on('open', (id) => {
@@ -96,21 +125,17 @@ export class NetworkManager {
     });
   }
 
-  joinRoom(roomCode, callback) {
+  async joinRoom(roomCode, callback) {
     this.role = 'stoker';
     this.roomCode = roomCode.toUpperCase();
 
+    const iceServers = await this._fetchIceServers();
     this.peer = new window.Peer(null, {
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      }
+      config: { iceServers }
     });
 
     this.peer.on('open', () => {
-      this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
+      this.conn = this.peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
       this._setupConnection();
       if (callback) callback();
 
@@ -310,7 +335,7 @@ export class NetworkManager {
     this._heartbeatInterval = setInterval(() => {
       this.lastPingTime = performance.now();
       this._send(new Uint8Array([MSG_HEARTBEAT, 0x00]));
-      if (performance.now() - this._lastRemoteHeartbeat > 3000) {
+      if (performance.now() - this._lastRemoteHeartbeat > 8000) {
         this._handleDisconnect();
       }
     }, 1000);
@@ -366,7 +391,7 @@ export class NetworkManager {
     if (this.role === 'stoker' && this.roomCode) {
       // Stoker reconnects by re-opening a data channel to captain's peer
       if (this.peer && !this.peer.destroyed) {
-        this.conn = this.peer.connect(this.roomCode, { reliable: false, serialization: 'binary' });
+        this.conn = this.peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
         this._setupConnection();
         // Timeout: if connection doesn't open within 5s, force-fail this attempt
         this._reconnectTimeout = setTimeout(() => {
@@ -434,6 +459,51 @@ export class NetworkManager {
     this._relayWs.onclose = () => {
       if (this.transport === 'relay') this._handleDisconnect();
     };
+  }
+
+  async acquireLocalMedia(cameraEnabled, audioEnabled) {
+    // If stream already has all requested tracks, nothing to do
+    if (this._localMediaStream) {
+      const hasVideo = this._localMediaStream.getVideoTracks().length > 0;
+      const hasAudio = this._localMediaStream.getAudioTracks().length > 0;
+      if ((!cameraEnabled || hasVideo) && (!audioEnabled || hasAudio)) return;
+      // Need to add missing tracks to the existing stream
+      const constraints = {};
+      if (cameraEnabled && !hasVideo) constraints.video = { facingMode: 'user', width: 240, height: 240 };
+      if (audioEnabled && !hasAudio) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      if (Object.keys(constraints).length === 0) return;
+      try {
+        const extra = await navigator.mediaDevices.getUserMedia(constraints);
+        for (const track of extra.getTracks()) {
+          this._localMediaStream.addTrack(track);
+        }
+      } catch (e) { /* denied — continue without */ }
+      return;
+    }
+    const constraints = {};
+    if (cameraEnabled) constraints.video = { facingMode: 'user', width: 240, height: 240 };
+    if (audioEnabled) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    if (!constraints.video && !constraints.audio) return;
+    try {
+      this._localMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      // Camera/mic denied — continue without media
+    }
+  }
+
+  initiateCall() {
+    if (!this.peer || !this.conn) return;
+    const localStream = this._localMediaStream;
+    if (!localStream) return;
+    const remotePeerId = this.conn.peer;
+    if (!remotePeerId) return;
+    const call = this.peer.call(remotePeerId, localStream);
+    if (call) {
+      call.on('stream', (remoteStream) => {
+        this._playRemoteAudio(remoteStream);
+        if (this.onRemoteStream) this.onRemoteStream(remoteStream);
+      });
+    }
   }
 
   destroy() {
