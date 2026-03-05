@@ -166,12 +166,13 @@ export class InputManager {
         console.warn('Orientation permission error:', e);
       }
     }
-    // Request motion permission as fallback
+    // Request motion permission as fallback (also needed on iOS for accelerometer data)
     if (typeof DeviceMotionEvent !== 'undefined' &&
         typeof DeviceMotionEvent.requestPermission === 'function') {
       try {
-        const response = await DeviceMotionEvent.requestPermission();
-        if (response === 'granted' && !this.motionEnabled) this._startMotionListening();
+        await DeviceMotionEvent.requestPermission();
+        // Don't call _startMotionListening() again — orientation grant already did it
+        if (!this.motionReady) this._startMotionListening();
       } catch (e) {
         console.warn('Motion permission error:', e);
       }
@@ -179,6 +180,7 @@ export class InputManager {
   }
 
   _startMotionListening() {
+    if (this.motionReady) return; // prevent duplicate listeners
     this.motionReady = true;
     this._useOrientation = false;
     this._gx = 0; this._gy = 0; this._gz = 0;
