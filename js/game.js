@@ -842,6 +842,8 @@ class Game {
 
     this.chaseCamera.initialized = false;
 
+    // Only tilt calibration (10 samples, ~167ms) — NOT gyro calibration
+    // (150 samples, ~1.5s) which would conflict with the 3s countdown.
     if (this.input.motionEnabled) {
       this.input.startTiltCalibration();
     }
@@ -1044,6 +1046,8 @@ class Game {
       const v = parseInt(sensSlider.value);
       TUNE.sensitivity = v;
       TUNE.gyroSensitivity = v + 15;
+      TUNE.deadzone = Math.round(v * 0.16);
+      TUNE.gyroDeadzone = Math.round((v + 15) * 0.1);
       sensVal.textContent = v + '\u00B0';
       localStorage.setItem('tandemonium_sensitivity', v);
     });
@@ -1053,6 +1057,8 @@ class Game {
       const v = parseInt(saved);
       TUNE.sensitivity = v;
       TUNE.gyroSensitivity = v + 15;
+      TUNE.deadzone = Math.round(v * 0.16);
+      TUNE.gyroDeadzone = Math.round((v + 15) * 0.1);
       sensSlider.value = v;
       sensVal.textContent = v + '\u00B0';
     }

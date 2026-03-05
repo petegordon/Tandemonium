@@ -2,7 +2,7 @@
 // INPUT MANAGER — keyboard + touch + device motion + gamepad
 // ============================================================
 
-import { isMobile, BALANCE_DEFAULTS, TUNE } from './config.js';
+import { isMobile, TUNE } from './config.js';
 
 // WebHID gyro constants (PlayStation DualSense / DualShock 4)
 const VENDOR_ID_SONY = 0x054c;
@@ -48,6 +48,7 @@ export class InputManager {
     this._gyroRollAccum = 0;         // cumulative roll angle in degrees
     this._lastGyroTime = 0;
     this._gyroReportHandler = null;
+    this._accelVerified = false;     // accel byte offsets validated
 
     this._setupKeyboard();
     this._setupGamepad();
@@ -425,6 +426,7 @@ export class InputManager {
     this._gyroCalibSamples = [];
     this._gyroRollAccum = 0;
     this._lastGyroTime = 0;
+    this._accelVerified = false;
   }
 
   calibrateGyro() {
@@ -433,8 +435,8 @@ export class InputManager {
 
   recenterGyro() {
     this._gyroRollAccum = 0;
-    this._smoothedLean = 0;
-    this.motionLean = 0;
+    // Don't reset _smoothedLean/motionLean — they're shared with mobile tilt.
+    // The EMA filter (gyroOutputSmoothing: 0.3) converges within ~100ms.
   }
 
   _detectGyroConnType(device) {
@@ -513,10 +515,24 @@ export class InputManager {
       const dt = (now - this._lastGyroTime) / 1000.0;
       if (dt < 0.1) {
         this._gyroRollAccum -= gz * GYRO_SCALE * dt;
-        // Accelerometer-assisted drift correction: use gravity vector for ground truth
-        const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
-        const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
-        this._gyroRollAccum += correction;
+
+        // Accelerometer-assisted drift correction
+        if (!this._accelVerified) {
+          // Verify accel byte offsets: gravity magnitude should be ~8192 (DualSense ±2g, 16-bit)
+          const mag = Math.sqrt(rawAx * rawAx + rawAy * rawAy + rawAz * rawAz);
+          if (mag > 4000 && mag < 16000) {
+            this._accelVerified = true;
+            console.log('Accel verified, magnitude:', mag.toFixed(0));
+          } else {
+            // Bad data — fall back to blanket decay instead of accel correction
+            this._gyroRollAccum *= (1 - 0.5 * dt);
+          }
+        }
+        if (this._accelVerified) {
+          const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
+          const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
+          this._gyroRollAccum += correction;
+        }
       }
     }
     this._lastGyroTime = now;
