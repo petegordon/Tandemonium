@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { BIKE_MODEL_PATH, BALANCE_DEFAULTS } from './config.js';
+import { BIKE_MODEL_PATH, TUNE } from './config.js';
 
 export class BikeModel {
   constructor(scene) {
@@ -256,10 +256,10 @@ export class BikeModel {
     this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
 
     // Balance physics (portrait-tuned: softer response, more damping)
-    const gravity = Math.sin(this.lean) * BALANCE_DEFAULTS.gravityForce;
-    const playerLean = balanceResult.leanInput * BALANCE_DEFAULTS.leanForce;
+    const gravity = Math.sin(this.lean) * TUNE.gravityForce;
+    const playerLean = balanceResult.leanInput * TUNE.leanForce;
     const gyro = -this.lean * Math.min(this.speed * 0.8, 6.0);
-    const damping = -this.leanVelocity * BALANCE_DEFAULTS.damping;
+    const damping = -this.leanVelocity * TUNE.damping;
 
     const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
 
@@ -299,7 +299,7 @@ export class BikeModel {
     }
 
     // Steering from lean
-    const turnRate = -this.lean * this.speed * BALANCE_DEFAULTS.turnRate;
+    const turnRate = -this.lean * this.speed * TUNE.turnRate;
     this.heading += turnRate * dt;
 
     // Slope physics — uphill decelerates, downhill accelerates

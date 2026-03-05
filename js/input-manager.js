@@ -2,7 +2,7 @@
 // INPUT MANAGER — keyboard + touch + device motion + gamepad
 // ============================================================
 
-import { isMobile } from './config.js';
+import { isMobile, TUNE } from './config.js';
 
 // WebHID gyro constants (PlayStation DualSense / DualShock 4)
 const VENDOR_ID_SONY = 0x054c;
@@ -24,6 +24,9 @@ export class InputManager {
     this.rawGamma = 0;
     this.motionOffset = null;
     this.motionRawRelative = 0;
+    this._smoothedLean = 0;
+    this._calibBuf = [];
+    this._calibrating = false;
 
     // Gamepad state
     this.gamepadIndex = null;
@@ -45,6 +48,7 @@ export class InputManager {
     this._gyroRollAccum = 0;         // cumulative roll angle in degrees
     this._lastGyroTime = 0;
     this._gyroReportHandler = null;
+    this._accelVerified = false;     // accel byte offsets validated
 
     this._setupKeyboard();
     this._setupGamepad();
@@ -139,10 +143,14 @@ export class InputManager {
   }
 
   _setupMotion() {
+    // iOS 13+ requires a user-gesture-gated requestPermission() call
     if (typeof DeviceMotionEvent !== 'undefined' &&
         typeof DeviceMotionEvent.requestPermission === 'function') {
       this.needsMotionPermission = true;
-    } else if (typeof DeviceMotionEvent !== 'undefined') {
+    } else if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      this.needsMotionPermission = true;
+    } else if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
       this._startMotionListening();
     }
   }
@@ -150,30 +158,64 @@ export class InputManager {
   async requestMotionPermission() {
     if (this.motionEnabled) return;
     this.needsMotionPermission = false;
-    if (typeof DeviceMotionEvent === 'undefined' ||
-        typeof DeviceMotionEvent.requestPermission !== 'function') return;
-    try {
-      const response = await DeviceMotionEvent.requestPermission();
-      if (response === 'granted') this._startMotionListening();
-    } catch (e) {
-      console.warn('Motion permission error:', e);
+    // iOS: DeviceMotionEvent.requestPermission() grants access to BOTH
+    // motion and orientation events — call it first (proven iOS API).
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
+        const response = await DeviceMotionEvent.requestPermission();
+        if (response === 'granted') this._startMotionListening();
+      } catch (e) {
+        console.warn('Motion permission error:', e);
+      }
+    }
+    // Also request orientation permission if available and not yet listening
+    if (!this.motionReady &&
+        typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const response = await DeviceOrientationEvent.requestPermission();
+        if (response === 'granted') this._startMotionListening();
+      } catch (e) {
+        console.warn('Orientation permission error:', e);
+      }
     }
   }
 
   _startMotionListening() {
+    if (this.motionReady) return; // prevent duplicate listeners
     this.motionReady = true;
-    this._useAccel = false;
+    this._useOrientation = false;
     this._gx = 0; this._gy = 0; this._gz = 0;
     this._gravityInit = false;
 
+    // Primary: deviceorientation (browser sensor fusion — smoother)
+    window.addEventListener('deviceorientation', (e) => {
+      const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+      let rawTilt;
+      if (orient === 90) rawTilt = e.beta;
+      else if (orient === 270 || orient === -90) rawTilt = -e.beta;
+      else rawTilt = e.gamma;
+
+      if (rawTilt != null) {
+        this._useOrientation = true;
+        if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
+        this.motionEnabled = true;
+        this._applyTilt(rawTilt);
+      }
+    });
+
+    // Fallback: devicemotion (only if orientation events don't fire)
     window.addEventListener('devicemotion', (e) => {
+      if (this._useOrientation) return;
       const a = e.accelerationIncludingGravity;
       if (!a || a.x == null) return;
-      this._useAccel = true;
       if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
       this.motionEnabled = true;
 
-      const k = 0.3;
+      const dtMs = e.interval || 16;  // event.interval is in ms; fallback 16ms ≈ 60Hz
+      const dt = dtMs / 1000;
+      const k = 1 - Math.pow(1 - TUNE.lowPassK, dt * 60);
       if (!this._gravityInit) {
         this._gx = a.x; this._gy = a.y; this._gz = a.z;
         this._gravityInit = true;
@@ -191,39 +233,56 @@ export class InputManager {
 
       this._applyTilt(-rollRad * 180 / Math.PI);
     });
-
-    window.addEventListener('deviceorientation', (e) => {
-      if (this._useAccel) return;
-      const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-      let rawTilt;
-      if (orient === 90) rawTilt = e.beta;
-      else if (orient === 270 || orient === -90) rawTilt = -e.beta;
-      else rawTilt = e.gamma;
-
-      if (rawTilt != null) {
-        if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
-        this.motionEnabled = true;
-        this._applyTilt(rawTilt);
-      }
-    });
   }
 
-  _applyTilt(rawTilt) {
+  startTiltCalibration() {
+    this._calibrating = true;
+    this._calibBuf = [];
+  }
+
+  _applyTilt(rawTilt, isGyro = false) {
     this.rawGamma = rawTilt;
-    if (this.motionOffset === null) this.motionOffset = this.rawGamma;
+
+    if (this.motionOffset === null && !this._calibrating) {
+      this.startTiltCalibration();
+    }
+
+    if (this._calibrating) {
+      this._calibBuf.push(this.rawGamma);
+      if (this._calibBuf.length >= TUNE.calibSamples) {
+        const sum = this._calibBuf.reduce((a, b) => a + b, 0);
+        this.motionOffset = sum / this._calibBuf.length;
+        this._calibrating = false;
+        this._calibBuf = [];
+      }
+      return;
+    }
 
     let relative = this.rawGamma - this.motionOffset;
     if (relative > 180) relative -= 360;
     else if (relative < -180) relative += 360;
     this.motionRawRelative = relative;
 
-    const deadZone = 2;
-    if (Math.abs(relative) < deadZone) {
-      relative = 0;
+    // Select tuning parameters based on input source
+    const sensitivity = isGyro ? TUNE.gyroSensitivity : TUNE.sensitivity;
+    const deadzone = isGyro ? TUNE.gyroDeadzone : TUNE.deadzone;
+    const responseCurve = isGyro ? TUNE.gyroResponseCurve : TUNE.responseCurve;
+    const outputSmoothing = isGyro ? TUNE.gyroOutputSmoothing : TUNE.outputSmoothing;
+
+    const absRel = Math.abs(relative);
+    let lean;
+
+    if (absRel < deadzone) {
+      lean = 0;
     } else {
-      relative = relative - Math.sign(relative) * deadZone;
+      const reduced = absRel - deadzone;
+      const range = sensitivity - deadzone;
+      const normalized = Math.min(reduced / range, 1.0);
+      lean = Math.sign(relative) * Math.pow(normalized, responseCurve);
     }
-    this.motionLean = Math.max(-1, Math.min(1, relative / 40));
+
+    this._smoothedLean += (lean - this._smoothedLean) * outputSmoothing;
+    this.motionLean = this._smoothedLean;
   }
 
   _setupCalibration() {
@@ -232,8 +291,7 @@ export class InputManager {
     const doCalibrate = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      this.motionOffset = this.rawGamma;
-      this.motionLean = 0;
+      this.startTiltCalibration();
       if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 800); }
     };
     gauge.addEventListener('touchstart', doCalibrate, { passive: false });
@@ -368,10 +426,17 @@ export class InputManager {
     this._gyroCalibSamples = [];
     this._gyroRollAccum = 0;
     this._lastGyroTime = 0;
+    this._accelVerified = false;
   }
 
   calibrateGyro() {
     this._startGyroCalibration();
+  }
+
+  recenterGyro() {
+    this._gyroRollAccum = 0;
+    // Don't reset _smoothedLean/motionLean — they're shared with mobile tilt.
+    // The EMA filter (gyroOutputSmoothing: 0.3) converges within ~100ms.
   }
 
   _detectGyroConnType(device) {
@@ -427,6 +492,11 @@ export class InputManager {
     const rawGy = this._readSigned16(report, gyroOffset + 2);
     const rawGz = this._readSigned16(report, gyroOffset + 4);
 
+    // Accelerometer data sits immediately after gyro (6 bytes later)
+    const rawAx = this._readSigned16(report, gyroOffset + 6);
+    const rawAy = this._readSigned16(report, gyroOffset + 8);
+    const rawAz = this._readSigned16(report, gyroOffset + 10);
+
     // Calibration sampling
     if (this._gyroCalibrating) {
       this._gyroCalibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
@@ -445,8 +515,24 @@ export class InputManager {
       const dt = (now - this._lastGyroTime) / 1000.0;
       if (dt < 0.1) {
         this._gyroRollAccum -= gz * GYRO_SCALE * dt;
-        // Drift correction: decay toward zero to prevent runaway accumulation
-        this._gyroRollAccum *= (1 - 0.5 * dt);
+
+        // Accelerometer-assisted drift correction
+        if (!this._accelVerified) {
+          // Verify accel byte offsets: gravity magnitude should be ~8192 (DualSense ±2g, 16-bit)
+          const mag = Math.sqrt(rawAx * rawAx + rawAy * rawAy + rawAz * rawAz);
+          if (mag > 4000 && mag < 16000) {
+            this._accelVerified = true;
+            console.log('Accel verified, magnitude:', mag.toFixed(0));
+          } else {
+            // Bad data — fall back to blanket decay instead of accel correction
+            this._gyroRollAccum *= (1 - 0.5 * dt);
+          }
+        }
+        if (this._accelVerified) {
+          const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
+          const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
+          this._gyroRollAccum += correction;
+        }
       }
     }
     this._lastGyroTime = now;
@@ -454,10 +540,10 @@ export class InputManager {
     // Clamp to sane range
     this._gyroRollAccum = Math.max(-90, Math.min(90, this._gyroRollAccum));
 
-    // Feed into tilt pipeline — full lean at ~40° of controller tilt
+    // Feed into tilt pipeline with gyro-specific tuning
     // Only update if motion is enabled (lobby toggle can disable it)
     if (!this.motionEnabled) return;
-    this._applyTilt(this._gyroRollAccum);
+    this._applyTilt(this._gyroRollAccum, true);
   }
 
   _readSigned16(data, offset) {

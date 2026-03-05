@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, MSG_PROFILE } from './config.js';
+import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, MSG_PROFILE, TUNE } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -96,6 +96,7 @@ class Game {
     this._dpadPrevRight = false;
     this._gpPrevY = false;
     this._gpPrevA = false;
+    this._gpPrevL3 = false;
 
     // Tap center of screen to recalibrate tilt (mobile)
     this.renderer.domElement.addEventListener('touchstart', (e) => {
@@ -129,6 +130,9 @@ class Game {
     document.getElementById('reset-btn').addEventListener('click', () => {
       this._resetGame();
     });
+
+    // Sensitivity slider
+    this._setupSensitivitySlider();
 
     // Lobby / Room button
     this._lobbyBtn = document.getElementById('lobby-btn');
@@ -605,6 +609,7 @@ class Game {
       const playerColor = this._getFrameColor(this.lobby.selectedPreset);
       const partnerColor = this._partnerBikeColor || '#888888';
       this.archIndicator.setup(this.mode, playerColor, partnerColor);
+      this._showSensitivitySlider();
     }
 
     // Show contribution bar in multiplayer
@@ -812,6 +817,7 @@ class Game {
 
     // Reset segment timer for current segment on checkpoint restart
     if (this.raceManager && checkpointD > 0) {
+      this.raceManager.restartCount++;
       this.raceManager.resetSegmentTimer(checkpointD);
     }
 
@@ -836,8 +842,10 @@ class Game {
 
     this.chaseCamera.initialized = false;
 
+    // Only tilt calibration (10 samples, ~167ms) — NOT gyro calibration
+    // (150 samples, ~1.5s) which would conflict with the 3s countdown.
     if (this.input.motionEnabled) {
-      this.input.motionOffset = this.input.rawGamma;
+      this.input.startTiltCalibration();
     }
 
     // Refresh HUD so speed/distance reflect the reset state during countdown
@@ -1030,10 +1038,40 @@ class Game {
     this._sendProfile();
   }
 
+  _setupSensitivitySlider() {
+    const sensSlider = document.getElementById('sens-range');
+    const sensVal = document.getElementById('sens-val');
+    if (!sensSlider) return;
+    sensSlider.addEventListener('input', () => {
+      const v = parseInt(sensSlider.value);
+      TUNE.sensitivity = v;
+      TUNE.gyroSensitivity = v + 15;
+      TUNE.deadzone = Math.round(v * 0.16);
+      TUNE.gyroDeadzone = Math.round((v + 15) * 0.1);
+      sensVal.textContent = v + '\u00B0';
+      localStorage.setItem('tandemonium_sensitivity', v);
+    });
+    // Restore saved preference
+    const saved = localStorage.getItem('tandemonium_sensitivity');
+    if (saved) {
+      const v = parseInt(saved);
+      TUNE.sensitivity = v;
+      TUNE.gyroSensitivity = v + 15;
+      TUNE.deadzone = Math.round(v * 0.16);
+      TUNE.gyroDeadzone = Math.round((v + 15) * 0.1);
+      sensSlider.value = v;
+      sensVal.textContent = v + '\u00B0';
+    }
+  }
+
+  _showSensitivitySlider() {
+    const slider = document.getElementById('sensitivity-slider');
+    if (slider) slider.style.display = 'flex';
+  }
+
   _recalibrateTilt() {
     if (this.input.motionEnabled) {
-      this.input.motionOffset = this.input.rawGamma;
-      this.input.motionLean = 0;
+      this.input.startTiltCalibration();
     }
     if (this.input.gyroConnected) {
       this.input.calibrateGyro();
@@ -1143,7 +1181,10 @@ class Game {
       if (summary.crashes > 0) {
         html += '<div class="victory-stat">\uD83D\uDCA5 Crashes: <strong>' + summary.crashes + '</strong></div>';
       } else {
-        html += '<div class="victory-stat victory-perfect">\u2B50 Perfect Ride! \u2B50</div>';
+        html += '<div class="victory-stat victory-perfect">\u2B50 No Crashes! \u2B50</div>';
+      }
+      if (summary.restarts > 0) {
+        html += '<div class="victory-stat">\uD83C\uDFC1 Restarts: <strong>' + summary.restarts + '</strong></div>';
       }
 
       statsEl.innerHTML = html;
@@ -1632,6 +1673,8 @@ class Game {
     const y = gp.buttons[3] && gp.buttons[3].pressed;
     // A button (button 0) — recalibrate tilt
     const a = gp.buttons[0] && gp.buttons[0].pressed;
+    // L3 (button 10) — quick gyro recenter
+    const l3 = gp.buttons[10] && gp.buttons[10].pressed;
 
     if (up && !this._dpadPrevUp) this.safetyBtn.click();
     if (down && !this._dpadPrevDown) this.speedBtn.click();
@@ -1641,6 +1684,11 @@ class Game {
     if (a && !this._gpPrevA && (this.input.motionEnabled || this.input.gyroConnected)) {
       this._recalibrateTilt();
     }
+    if (l3 && !this._gpPrevL3 && this.input.gyroConnected) {
+      this.input.recenterGyro();
+      const flash = document.getElementById('calibrate-flash');
+      if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 400); }
+    }
 
     this._dpadPrevUp = up;
     this._dpadPrevDown = down;
@@ -1648,6 +1696,7 @@ class Game {
     this._dpadPrevRight = right;
     this._gpPrevY = y;
     this._gpPrevA = a;
+    this._gpPrevL3 = l3;
   }
 
   _updateConnBadge() {

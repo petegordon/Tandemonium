@@ -589,6 +589,7 @@ export class Lobby {
         // Re-enable previously connected gyro
         this.motionActive = true;
         this.input.motionEnabled = true;
+        this.input.startTiltCalibration();
         this._setToggleActive('motion', true);
         return;
       }
