@@ -1060,7 +1060,7 @@ class Game {
 
   _showSensitivitySlider() {
     const slider = document.getElementById('sensitivity-slider');
-    if (slider) slider.style.display = '';
+    if (slider) slider.style.display = 'flex';
   }
 
   _recalibrateTilt() {
