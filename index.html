@@ -763,6 +763,43 @@
     background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
 
+  /* ── Sensitivity slider ── */
+  #sensitivity-slider {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 180px);
+    left: 14px;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 6px 12px;
+    z-index: 10;
+    pointer-events: auto;
+  }
+  #sensitivity-slider label {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.6);
+    white-space: nowrap;
+  }
+  #sens-range {
+    width: 80px;
+    height: 4px;
+    accent-color: #4af;
+  }
+  #sens-val {
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    min-width: 28px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
   /* ── Pedal touch buttons (bottom) ── */
   #pedal-bar {
     display: flex;
@@ -2109,6 +2146,13 @@ ON</button>
   <button class="side-btn speed-off" id="speed-btn">SPEED</button>
 </div>
 
+<!-- Sensitivity slider (shown when motion/gyro active) -->
+<div id="sensitivity-slider">
+  <label>Sensitivity</label>
+  <input type="range" id="sens-range" min="10" max="45" step="1" value="25">
+  <span id="sens-val">25&deg;</span>
+</div>
+
 <!-- Bottom HUD: gauge bar + pedal buttons -->
 <div id="bottom-hud">
   <div id="gauge-bar">
@@ -2361,7 +2405,7 @@ ON</button>
       </div>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.2cd9ad7 | 03-04-2026 20:09</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.f1f338a | 03-04-2026 22:40</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>

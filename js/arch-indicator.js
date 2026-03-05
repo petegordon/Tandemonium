@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { BALANCE_DEFAULTS } from './config.js';
+import { TUNE } from './config.js';
 
 const ARCH_RADIUS = 3.0;
 const ARCH_BAND_WIDTH = 0.35;       // width of the gauge band
@@ -18,7 +18,7 @@ const NEEDLE_BASE_WIDTH = 0.10;     // wider at pivot
 const NEEDLE_TIP_WIDTH = 0.025;     // tapered tip
 
 // Derive sweep from sensitivity (degrees → radians)
-const LEAN_SCALE = BALANCE_DEFAULTS.sensitivity * Math.PI / 180;
+const LEAN_SCALE = TUNE.sensitivity * Math.PI / 180;
 const ARCH_MARGIN = 0.08;           // small pad beyond max needle travel
 // Arch spans from (90° - sweep - margin) to (90° + sweep + margin)
 const ARCH_START = Math.PI / 2 - LEAN_SCALE - ARCH_MARGIN;

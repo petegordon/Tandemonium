@@ -2,7 +2,7 @@
 // INPUT MANAGER — keyboard + touch + device motion + gamepad
 // ============================================================
 
-import { isMobile, BALANCE_DEFAULTS } from './config.js';
+import { isMobile, BALANCE_DEFAULTS, TUNE } from './config.js';
 
 // WebHID gyro constants (PlayStation DualSense / DualShock 4)
 const VENDOR_ID_SONY = 0x054c;
@@ -212,7 +212,9 @@ export class InputManager {
       if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
       this.motionEnabled = true;
 
-      const k = BALANCE_DEFAULTS.lowPassK;
+      const dtMs = e.interval || 16;  // event.interval is in ms; fallback 16ms ≈ 60Hz
+      const dt = dtMs / 1000;
+      const k = 1 - Math.pow(1 - TUNE.lowPassK, dt * 60);
       if (!this._gravityInit) {
         this._gx = a.x; this._gy = a.y; this._gz = a.z;
         this._gravityInit = true;
@@ -246,7 +248,7 @@ export class InputManager {
 
     if (this._calibrating) {
       this._calibBuf.push(this.rawGamma);
-      if (this._calibBuf.length >= BALANCE_DEFAULTS.calibSamples) {
+      if (this._calibBuf.length >= TUNE.calibSamples) {
         const sum = this._calibBuf.reduce((a, b) => a + b, 0);
         this.motionOffset = sum / this._calibBuf.length;
         this._calibrating = false;
@@ -261,10 +263,10 @@ export class InputManager {
     this.motionRawRelative = relative;
 
     // Select tuning parameters based on input source
-    const sensitivity = isGyro ? BALANCE_DEFAULTS.gyroSensitivity : BALANCE_DEFAULTS.sensitivity;
-    const deadzone = isGyro ? BALANCE_DEFAULTS.gyroDeadzone : BALANCE_DEFAULTS.deadzone;
-    const responseCurve = isGyro ? BALANCE_DEFAULTS.gyroResponseCurve : BALANCE_DEFAULTS.responseCurve;
-    const outputSmoothing = isGyro ? BALANCE_DEFAULTS.gyroOutputSmoothing : BALANCE_DEFAULTS.outputSmoothing;
+    const sensitivity = isGyro ? TUNE.gyroSensitivity : TUNE.sensitivity;
+    const deadzone = isGyro ? TUNE.gyroDeadzone : TUNE.deadzone;
+    const responseCurve = isGyro ? TUNE.gyroResponseCurve : TUNE.responseCurve;
+    const outputSmoothing = isGyro ? TUNE.gyroOutputSmoothing : TUNE.outputSmoothing;
 
     const absRel = Math.abs(relative);
     let lean;
@@ -429,6 +431,12 @@ export class InputManager {
     this._startGyroCalibration();
   }
 
+  recenterGyro() {
+    this._gyroRollAccum = 0;
+    this._smoothedLean = 0;
+    this.motionLean = 0;
+  }
+
   _detectGyroConnType(device) {
     for (const col of device.collections) {
       if (col.outputReports && col.outputReports.length > 0) {
@@ -482,6 +490,11 @@ export class InputManager {
     const rawGy = this._readSigned16(report, gyroOffset + 2);
     const rawGz = this._readSigned16(report, gyroOffset + 4);
 
+    // Accelerometer data sits immediately after gyro (6 bytes later)
+    const rawAx = this._readSigned16(report, gyroOffset + 6);
+    const rawAy = this._readSigned16(report, gyroOffset + 8);
+    const rawAz = this._readSigned16(report, gyroOffset + 10);
+
     // Calibration sampling
     if (this._gyroCalibrating) {
       this._gyroCalibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
@@ -500,8 +513,10 @@ export class InputManager {
       const dt = (now - this._lastGyroTime) / 1000.0;
       if (dt < 0.1) {
         this._gyroRollAccum -= gz * GYRO_SCALE * dt;
-        // Drift correction: decay toward zero to prevent runaway accumulation
-        this._gyroRollAccum *= (1 - 0.5 * dt);
+        // Accelerometer-assisted drift correction: use gravity vector for ground truth
+        const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
+        const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
+        this._gyroRollAccum += correction;
       }
     }
     this._lastGyroTime = now;

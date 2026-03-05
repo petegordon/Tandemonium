@@ -531,6 +531,8 @@ const SLIDER_CONFIG = [
   { key: 'gravityForce',    label: 'Gravity force',     min: 1,    max: 10,  step: 0.5,  default: 2.5,  fmt: v => parseFloat(v).toFixed(1) },
   { key: 'damping',         label: 'Damping',           min: 0.5,  max: 5,   step: 0.1,  default: 4.0,  fmt: v => parseFloat(v).toFixed(1) },
   { key: 'turnRate',        label: 'Turn rate',         min: 0.1,  max: 1.0, step: 0.05, default: 0.50, fmt: v => parseFloat(v).toFixed(2) },
+  // ── Accelerometer drift correction ──
+  { key: 'gyroAccelCorrection', label: 'Accel Drift Fix', min: 0, max: 0.1, step: 0.005, default: 0.02, fmt: v => parseFloat(v).toFixed(3) },
 ];
 
 const TUNE = {};
@@ -646,6 +648,11 @@ const input = {
   gyroLean: 0,
   _gyroConnected: false,
   _gyroEnabled: false,
+  _accelRawX: 0,
+  _accelRawY: 0,
+  _accelRawZ: 0,
+  _accelRoll: 0,
+  _accelReportCount: 0,
 
   // Active lean source for diagnostics
   _activeLeanSource: 'none',
@@ -875,6 +882,20 @@ function handleGyroInputReport(event) {
   const rawZ = readSigned16(report, gyroOffset + 4);
   input._gyroRawZ = rawZ;
 
+  // Accelerometer data sits immediately after gyro (6 bytes later)
+  const rawAx = readSigned16(report, gyroOffset + 6);
+  const rawAy = readSigned16(report, gyroOffset + 8);
+  const rawAz = readSigned16(report, gyroOffset + 10);
+  input._accelRawX = rawAx;
+  input._accelRawY = rawAy;
+  input._accelRawZ = rawAz;
+
+  // Log first 10 reports for debugging accel byte offsets
+  if (input._accelReportCount < 10) {
+    console.log(`Accel report #${input._accelReportCount}: X=${rawAx} Y=${rawAy} Z=${rawAz}`);
+    input._accelReportCount++;
+  }
+
   // Calibration sampling
   if (input._gyroCalibrating) {
     input._gyroCalibSamples.push(rawZ);
@@ -891,6 +912,11 @@ function handleGyroInputReport(event) {
     const dt = (now - input._gyroLastTime) / 1000.0;
     if (dt < 0.1) {
       input._gyroAngle -= correctedZ * dt;
+      // Accelerometer-assisted drift correction
+      const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
+      input._accelRoll = accelRoll;
+      const correction = (accelRoll - input._gyroAngle) * TUNE.gyroAccelCorrection;
+      input._gyroAngle += correction;
     }
   }
   input._gyroLastTime = now;
@@ -959,6 +985,11 @@ function disconnectGyro() {
   input._gyroRawZ = 0;
   input._gyroAngle = 0;
   input.gyroLean = 0;
+  input._accelRawX = 0;
+  input._accelRawY = 0;
+  input._accelRawZ = 0;
+  input._accelRoll = 0;
+  input._accelReportCount = 0;
   input._gyroEnabled = false;
   const toggle = document.getElementById('gyro-toggle');
   if (toggle) toggle.checked = false;
@@ -1540,7 +1571,12 @@ function updateUI(dt) {
       ` <span class="label">corrZ</span> <span class="val">${corrZ}°/s</span></div>` +
       `<div class="row"><span class="label">angle</span> <span class="val">${input._gyroAngle.toFixed(1)}°</span>` +
       ` <span class="label">lean</span> <span class="val">${input.gyroLean.toFixed(3)}</span>` +
-      calibProg + `</div>`;
+      calibProg + `</div>` +
+      `<div class="row"><span class="label">accel</span>` +
+      ` <span class="label">X</span> <span class="val">${input._accelRawX}</span>` +
+      ` <span class="label">Y</span> <span class="val">${input._accelRawY}</span>` +
+      ` <span class="label">Z</span> <span class="val">${input._accelRawZ}</span>` +
+      ` <span class="label">roll</span> <span class="val">${input._accelRoll.toFixed(1)}°</span></div>`;
   } else {
     diagGyro.innerHTML = '';
   }

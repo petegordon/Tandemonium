@@ -44,9 +44,14 @@ export const BALANCE_DEFAULTS = {
   gyroDeadzone: 4,
   gyroResponseCurve: 1.3,
   gyroOutputSmoothing: 0.3,
+  // Accelerometer-assisted gyro drift correction
+  gyroAccelCorrection: 0.02,
   // Shared physics
   leanForce: 12,
   gravityForce: 2.5,
   damping: 4.0,
   turnRate: 0.50,
 };
+
+// Mutable runtime tuning (initialized from defaults, adjustable by player)
+export const TUNE = { ...BALANCE_DEFAULTS };
