@@ -518,8 +518,8 @@ const SLIDER_CONFIG = [
   { key: 'sensitivity',     label: 'Tilt Sensitivity',  min: 10,   max: 80,  step: 1,    default: 25,   fmt: v => v + '\u00B0' },
   { key: 'deadzone',        label: 'Tilt Deadzone',     min: 0,    max: 10,  step: 0.5,  default: 4,    fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
   { key: 'lowPassK',        label: 'Low-pass k',        min: 0.05, max: 1.0, step: 0.05, default: 0.1,  fmt: v => parseFloat(v).toFixed(2) },
-  { key: 'responseCurve',   label: 'Tilt Curve',        min: 0.5,  max: 3.0, step: 0.1,  default: 1.4,  fmt: v => parseFloat(v).toFixed(1) },
-  { key: 'outputSmoothing', label: 'Tilt Smooth',       min: 0.05, max: 1.0, step: 0.05, default: 0.25, fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'responseCurve',   label: 'Tilt Curve',        min: 0.5,  max: 3.0, step: 0.1,  default: 2.0,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'outputSmoothing', label: 'Tilt Smooth',       min: 0.05, max: 1.0, step: 0.05, default: 0.4,  fmt: v => parseFloat(v).toFixed(2) },
   { key: 'calibSamples',    label: 'Calib samples',     min: 1,    max: 30,  step: 1,    default: 10,   fmt: v => v },
   // ── Controller gyro tuning ──
   { key: 'gyroSensitivity',     label: 'Gyro Sensitivity',  min: 10,   max: 80,  step: 1,    default: 40,  fmt: v => v + '\u00B0' },
