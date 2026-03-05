@@ -514,13 +514,16 @@
 // Defaults should match BALANCE_DEFAULTS in js/config.js
 // ============================================================
 const SLIDER_CONFIG = [
-  { key: 'sensitivity',  label: 'Sensitivity',   min: 10,   max: 80,  step: 1,    default: 40,  fmt: v => v + '\u00B0' },
-  { key: 'deadzone',     label: 'Deadzone',      min: 0,    max: 10,  step: 0.5,  default: 2,   fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
-  { key: 'lowPassK',     label: 'Low-pass k',    min: 0.05, max: 1.0, step: 0.05, default: 0.3, fmt: v => parseFloat(v).toFixed(2) },
-  { key: 'leanForce',    label: 'Lean force',    min: 5,    max: 30,  step: 1,    default: 12,  fmt: v => v },
-  { key: 'gravityForce', label: 'Gravity force',  min: 1,    max: 10,  step: 0.5,  default: 2.5, fmt: v => parseFloat(v).toFixed(1) },
-  { key: 'damping',      label: 'Damping',       min: 0.5,  max: 5,   step: 0.1,  default: 4.0, fmt: v => parseFloat(v).toFixed(1) },
-  { key: 'turnRate',     label: 'Turn rate',     min: 0.1,  max: 1.0, step: 0.05, default: 0.50, fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'sensitivity',     label: 'Sensitivity',      min: 10,   max: 80,  step: 1,    default: 25,   fmt: v => v + '\u00B0' },
+  { key: 'deadzone',        label: 'Deadzone',         min: 0,    max: 10,  step: 0.5,  default: 4,    fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
+  { key: 'lowPassK',        label: 'Low-pass k',       min: 0.05, max: 1.0, step: 0.05, default: 0.1,  fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'responseCurve',   label: 'Response curve',   min: 0.5,  max: 3.0, step: 0.1,  default: 1.8,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'outputSmoothing', label: 'Output smooth',    min: 0.05, max: 1.0, step: 0.05, default: 0.25, fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'calibSamples',    label: 'Calib samples',    min: 1,    max: 30,  step: 1,    default: 10,   fmt: v => v },
+  { key: 'leanForce',       label: 'Lean force',       min: 5,    max: 30,  step: 1,    default: 12,   fmt: v => v },
+  { key: 'gravityForce',    label: 'Gravity force',    min: 1,    max: 10,  step: 0.5,  default: 2.5,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'damping',         label: 'Damping',          min: 0.5,  max: 5,   step: 0.1,  default: 4.0,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'turnRate',        label: 'Turn rate',        min: 0.1,  max: 1.0, step: 0.05, default: 0.50, fmt: v => parseFloat(v).toFixed(2) },
 ];
 
 const TUNE = {};
@@ -590,11 +593,14 @@ const input = {
   motionOffset: null,
   motionRawRelative: 0,
   needsMotionPermission: false,
+  _smoothedLean: 0,
+  _calibBuf: [],
+  _calibrating: false,
 
   // Raw accel for diagnostics
   _gx: 0, _gy: 0, _gz: 0,
   _gravityInit: false,
-  _useAccel: false,
+  _useOrientation: false,
   _orient: 0,
 
   // Touch tracking
@@ -879,15 +885,18 @@ function handleGyroInputReport(event) {
   }
   input._gyroLastTime = now;
 
-  // Map angle through deadzone + sensitivity to lean [-1, 1]
-  let angle = input._gyroAngle;
-  const dz = TUNE.deadzone;
-  if (Math.abs(angle) < dz) {
-    angle = 0;
+  // Map angle through deadzone + response curve to lean [-1, 1]
+  // (mirrors _applyTilt pipeline used in game for gyro input)
+  const absAngle = Math.abs(input._gyroAngle);
+  const { deadzone: dz, sensitivity: sens, responseCurve: rc } = TUNE;
+  if (absAngle < dz) {
+    input.gyroLean = 0;
   } else {
-    angle = angle - Math.sign(angle) * dz;
+    const reduced = absAngle - dz;
+    const range = sens - dz;
+    const normalized = Math.min(reduced / range, 1.0);
+    input.gyroLean = Math.sign(input._gyroAngle) * Math.pow(normalized, rc);
   }
-  input.gyroLean = Math.max(-1, Math.min(1, angle / TUNE.sensitivity));
 }
 
 async function connectGyro() {
@@ -981,35 +990,80 @@ function updateGyroBarVisibility() {
   });
 })();
 
-// ── Motion Setup (from input-manager.js:140-224) ──
+// ── Motion Setup (mirrors input-manager.js _applyTilt / startTiltCalibration) ──
+function startTiltCalibration() {
+  input._calibrating = true;
+  input._calibBuf = [];
+}
+
 function applyTilt(rawTilt) {
   input.rawGamma = rawTilt;
-  if (input.motionOffset === null) input.motionOffset = input.rawGamma;
+
+  if (input.motionOffset === null) {
+    startTiltCalibration();
+  }
+
+  if (input._calibrating) {
+    input._calibBuf.push(input.rawGamma);
+    if (input._calibBuf.length >= TUNE.calibSamples) {
+      const sum = input._calibBuf.reduce((a, b) => a + b, 0);
+      input.motionOffset = sum / input._calibBuf.length;
+      input._calibrating = false;
+      input._calibBuf = [];
+    }
+    return;
+  }
 
   let relative = input.rawGamma - input.motionOffset;
   if (relative > 180) relative -= 360;
   else if (relative < -180) relative += 360;
   input.motionRawRelative = relative;
 
-  const deadZone = TUNE.deadzone;
-  if (Math.abs(relative) < deadZone) {
-    relative = 0;
+  const { deadzone, sensitivity, responseCurve, outputSmoothing } = TUNE;
+  const absRel = Math.abs(relative);
+  let lean;
+
+  if (absRel < deadzone) {
+    lean = 0;
   } else {
-    relative = relative - Math.sign(relative) * deadZone;
+    const reduced = absRel - deadzone;
+    const range = sensitivity - deadzone;
+    const normalized = Math.min(reduced / range, 1.0);
+    lean = Math.sign(relative) * Math.pow(normalized, responseCurve);
   }
-  input.motionLean = Math.max(-1, Math.min(1, relative / TUNE.sensitivity));
+
+  input._smoothedLean += (lean - input._smoothedLean) * outputSmoothing;
+  input.motionLean = input._smoothedLean;
 }
 
 function startMotionListening() {
+  if (input.motionReady) return; // prevent duplicate listeners
   input.motionReady = true;
-  input._useAccel = false;
+  input._useOrientation = false;
   input._gx = 0; input._gy = 0; input._gz = 0;
   input._gravityInit = false;
 
+  // Primary: deviceorientation (browser sensor fusion — smoother)
+  window.addEventListener('deviceorientation', (e) => {
+    const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+    input._orient = orient;
+    let rawTilt;
+    if (orient === 90) rawTilt = e.beta;
+    else if (orient === 270 || orient === -90) rawTilt = -e.beta;
+    else rawTilt = e.gamma;
+
+    if (rawTilt != null) {
+      input._useOrientation = true;
+      input.motionEnabled = true;
+      applyTilt(rawTilt);
+    }
+  });
+
+  // Fallback: devicemotion (only if orientation events don't fire)
   window.addEventListener('devicemotion', (e) => {
+    if (input._useOrientation) return;
     const a = e.accelerationIncludingGravity;
     if (!a || a.x == null) return;
-    input._useAccel = true;
     input.motionEnabled = true;
 
     const k = TUNE.lowPassK;
@@ -1031,53 +1085,50 @@ function startMotionListening() {
 
     applyTilt(-rollRad * 180 / Math.PI);
   });
-
-  window.addEventListener('deviceorientation', (e) => {
-    if (input._useAccel) return;
-    const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-    input._orient = orient;
-    let rawTilt;
-    if (orient === 90) rawTilt = e.beta;
-    else if (orient === 270 || orient === -90) rawTilt = -e.beta;
-    else rawTilt = e.gamma;
-
-    if (rawTilt != null) {
-      input.motionEnabled = true;
-      applyTilt(rawTilt);
-    }
-  });
 }
 
 // iOS permission flow
-if (typeof DeviceMotionEvent !== 'undefined' &&
-    typeof DeviceMotionEvent.requestPermission === 'function') {
+const needsOrientationPermission = typeof DeviceOrientationEvent !== 'undefined' &&
+    typeof DeviceOrientationEvent.requestPermission === 'function';
+const needsMotionPermission = typeof DeviceMotionEvent !== 'undefined' &&
+    typeof DeviceMotionEvent.requestPermission === 'function';
+if (needsOrientationPermission || needsMotionPermission) {
   input.needsMotionPermission = true;
   const permOverlay = document.getElementById('motion-permission');
   permOverlay.style.display = 'flex';
   document.getElementById('btn-grant-motion').addEventListener('click', async () => {
-    try {
-      const response = await DeviceMotionEvent.requestPermission();
-      if (response === 'granted') {
-        startMotionListening();
-        permOverlay.style.display = 'none';
+    // Request orientation permission first (primary API)
+    if (needsOrientationPermission) {
+      try {
+        const response = await DeviceOrientationEvent.requestPermission();
+        if (response === 'granted') startMotionListening();
+      } catch (e) {
+        console.warn('Orientation permission error:', e);
       }
-    } catch (e) {
-      console.warn('Motion permission error:', e);
     }
+    // Request motion permission (also needed on iOS for accelerometer fallback)
+    if (needsMotionPermission) {
+      try {
+        await DeviceMotionEvent.requestPermission();
+        if (!input.motionReady) startMotionListening();
+      } catch (e) {
+        console.warn('Motion permission error:', e);
+      }
+    }
+    if (input.motionReady) permOverlay.style.display = 'none';
   });
-} else if (typeof DeviceMotionEvent !== 'undefined') {
+} else if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
   startMotionListening();
 }
 
-// ── Calibration (from input-manager.js:226-238) ──
+// ── Calibration (mirrors input-manager.js startTiltCalibration) ──
 (function setupCalibration() {
   const gauge = document.getElementById('phone-gauge');
   const flash = document.getElementById('calibrate-flash');
   const doCalibrate = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    input.motionOffset = input.rawGamma;
-    input.motionLean = 0;
+    startTiltCalibration();
     if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 800); }
   };
   gauge.addEventListener('touchstart', doCalibrate, { passive: false });
