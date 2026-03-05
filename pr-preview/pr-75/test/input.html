@@ -999,7 +999,7 @@ function startTiltCalibration() {
 function applyTilt(rawTilt) {
   input.rawGamma = rawTilt;
 
-  if (input.motionOffset === null) {
+  if (input.motionOffset === null && !input._calibrating) {
     startTiltCalibration();
   }
 

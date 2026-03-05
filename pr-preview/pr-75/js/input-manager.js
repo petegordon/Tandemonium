@@ -240,7 +240,7 @@ export class InputManager {
   _applyTilt(rawTilt) {
     this.rawGamma = rawTilt;
 
-    if (this.motionOffset === null) {
+    if (this.motionOffset === null && !this._calibrating) {
       this.startTiltCalibration();
     }
 
