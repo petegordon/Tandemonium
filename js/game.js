@@ -812,6 +812,7 @@ class Game {
 
     // Reset segment timer for current segment on checkpoint restart
     if (this.raceManager && checkpointD > 0) {
+      this.raceManager.restartCount++;
       this.raceManager.resetSegmentTimer(checkpointD);
     }
 
@@ -1143,6 +1144,9 @@ class Game {
         html += '<div class="victory-stat">\uD83D\uDCA5 Crashes: <strong>' + summary.crashes + '</strong></div>';
       } else {
         html += '<div class="victory-stat victory-perfect">\u2B50 Perfect Ride! \u2B50</div>';
+      }
+      if (summary.restarts > 0) {
+        html += '<div class="victory-stat">\uD83C\uDFC1 Restarts: <strong>' + summary.restarts + '</strong></div>';
       }
 
       statsEl.innerHTML = html;
