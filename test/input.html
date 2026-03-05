@@ -535,7 +535,10 @@ const SLIDER_CONFIG = [
   { key: 'gyroAccelCorrection', label: 'Accel Drift Fix', min: 0, max: 0.1, step: 0.005, default: 0.02, fmt: v => parseFloat(v).toFixed(3) },
 ];
 
-const TUNE = {};
+// TUNE lives on window so the module script can sync slider values
+// into config.js TUNE (read by BikeModel and ArchIndicator).
+window.TUNE = {};
+const TUNE = window.TUNE;
 SLIDER_CONFIG.forEach(s => { TUNE[s.key] = s.default; });
 
 // Gyro (WebHID) constants
@@ -1308,36 +1311,9 @@ class PedalController {
 }
 
 // ============================================================
-// SIMPLIFIED BIKE PHYSICS (inlined from bike-model.js:179-215)
-// ============================================================
-window.bike = {
-  lean: 0,
-  leanVelocity: 0,
-  speed: 0,
-  maxSpeed: 16,
-  fallen: false,
-  fallTimer: 0,
-  heading: 0,
-  posX: 0,
-  posY: 0,
-  posZ: 0,
-
-  reset() {
-    this.lean = 0;
-    this.leanVelocity = 0;
-    this.speed = 0;
-    this.fallen = false;
-    this.fallTimer = 0;
-    this.heading = 0;
-    this.posX = 0;
-    this.posY = 0;
-    this.posZ = 0;
-  }
-};
-
-// ============================================================
 // MAIN LOOP
 // ============================================================
+// window.bike is set by the module script (BikeModel instance)
 const pedals = new PedalController(input);
 const crashOverlay = document.getElementById('crash-overlay');
 const phoneNeedle = document.getElementById('phone-needle');
@@ -1358,44 +1334,23 @@ const diagBike = document.getElementById('diag-bike');
 
 let lastTime = performance.now();
 
+let wasFallen = false;
+
 function gameLoop(now) {
   requestAnimationFrame(gameLoop);
 
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
+  const bike = window.bike;
+
   // ── Poll gamepad ──
   input.pollGamepad();
 
-  // ── Fall state ──
-  if (bike.fallen) {
-    bike.fallTimer -= dt;
-    if (bike.fallTimer <= 0) {
-      bike.reset();
-      crashOverlay.style.background = 'rgba(255,0,0,0)';
-    }
-    updateUI(dt);
-    input.consumeTaps();
-    return;
-  }
+  // Wait for BikeModel to be available from the module script
+  if (!bike) { input.consumeTaps(); return; }
 
-  // ── Pedal update ──
-  const pedalResult = pedals.update(dt);
-
-  // Acceleration & friction
-  bike.speed += pedalResult.acceleration;
-  if (pedalResult.braking) {
-    bike.speed *= (1 - 2.5 * dt);
-    if (bike.speed < 0.05) bike.speed = 0;
-  }
-  const frictionBase = 0.6;
-  const frictionMin = 0.15;
-  const frictionRamp = Math.min(1, bike.speed / 4);
-  bike.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
-  bike.speed = Math.max(0, Math.min(bike.speed, bike.maxSpeed));
-
-  // ── Balance physics (from bike-model.js:179-215) ──
-  // Lean from selected source only
+  // ── Lean input routing (test-page-specific: uses dropdown selector) ──
   let leanInput = 0;
   input._activeLeanSource = inputSource;
   if (inputSource === 'gamepad') {
@@ -1411,56 +1366,28 @@ function gameLoop(now) {
     leanInput = input.keyboardLean;
   }
 
-  const gravity = Math.sin(bike.lean) * TUNE.gravityForce;
-  const playerLean = leanInput * TUNE.leanForce;
-  const gyro = -bike.lean * Math.min(bike.speed * 0.8, 6.0);
-  const damping = -bike.leanVelocity * TUNE.damping;
+  // ── Pedal + physics via shared BikeModel ──
+  const pedalResult = pedals.update(dt);
+  const balanceResult = { leanInput };
+  bike.update(pedalResult, balanceResult, dt, false, false);
 
-  const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
-
-  const t = performance.now() / 1000;
-  const lowSpeedWobble = Math.max(0, 1 - bike.speed * 0.3) *
-    (Math.sin(t * 2.7) * 0.3 + Math.sin(t * 4.3) * 0.15);
-
-  let pedalLeanKick = 0;
-  if (pedalResult.acceleration > 0 && !pedalResult.braking) {
-    pedalLeanKick = (Math.random() - 0.5) * 0.2;
-  }
-
-  // Danger-zone wobble
-  let dangerWobble = 0;
-  const dangerRatio = Math.abs(bike.lean) / 1.35;
-  if (dangerRatio > 0.55) {
-    const intensity = (dangerRatio - 0.55) / 0.45;
-    dangerWobble = intensity * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
-  }
-
-  bike.leanVelocity += (gravity + playerLean + gyro + damping +
-    pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble) * dt;
-  bike.lean += bike.leanVelocity * dt;
-
-  // ── Steering + movement ──
-  const turnRate = -bike.lean * bike.speed * TUNE.turnRate;
-  bike.heading += turnRate * dt;
-  bike.posX += Math.sin(bike.heading) * bike.speed * dt;
-  bike.posZ += Math.cos(bike.heading) * bike.speed * dt;
-
-  // ── Fall detection ──
-  if (Math.abs(bike.lean) > 1.35) {
-    bike.fallen = true;
-    bike.fallTimer = 1.0;
-    bike.speed = 0;
-    bike.lean = Math.sign(bike.lean) * Math.PI / 2.2;
-    bike.leanVelocity = 0;
+  // ── Crash overlay ──
+  if (bike.fallen && !wasFallen) {
     crashOverlay.style.background = 'rgba(255,0,0,0.4)';
     setTimeout(() => { crashOverlay.style.background = 'rgba(255,0,0,0)'; }, 300);
   }
+  if (!bike.fallen && wasFallen) {
+    crashOverlay.style.background = 'rgba(255,0,0,0)';
+  }
+  wasFallen = bike.fallen;
 
   updateUI(dt);
   input.consumeTaps();
 }
 
 function updateUI(dt) {
+  const bike = window.bike;
+  if (!bike) return;
   // ── Gauges — show selected lean source ──
   let phoneDeg;
   if (inputSource === 'gamepad') {
@@ -1568,7 +1495,7 @@ function updateUI(dt) {
     ` <span class="label">lean</span> <span class="${leanCls}">${leanDeg.toFixed(1)}\u00B0</span>` +
     ` <span class="label">lv</span> <span class="val">${bike.leanVelocity.toFixed(2)}</span></div>` +
     `<div class="row"><span class="label">hdg</span> <span class="val">${headingDeg.toFixed(1)}\u00B0</span>` +
-    ` <span class="label">pos</span> <span class="val">${bike.posX.toFixed(1)},${bike.posZ.toFixed(1)}</span>` +
+    ` <span class="label">pos</span> <span class="val">${bike.position.x.toFixed(1)},${bike.position.z.toFixed(1)}</span>` +
     (bike.fallen ? ` <span class="val-err">CRASHED (${bike.fallTimer.toFixed(1)}s)</span>` : '') + `</div>`;
 
   // Gyro diagnostics
@@ -1603,8 +1530,13 @@ requestAnimationFrame(gameLoop);
 // 3D DRIVING ENVIRONMENT (Three.js)
 // ============================================================
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { TUNE as CONFIG_TUNE } from '../js/config.js';
 import { ArchIndicator } from '../js/arch-indicator.js';
+import { BikeModel } from '../js/bike-model.js';
+import { ChaseCamera } from '../js/chase-camera.js';
+
+// Sync slider TUNE values into config.js TUNE (read by BikeModel/ArchIndicator)
+if (window.TUNE) Object.assign(CONFIG_TUNE, window.TUNE);
 
 const container = document.getElementById('bike-viewport');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -1618,7 +1550,7 @@ scene.background = new THREE.Color(0x87ceeb);
 scene.fog = new THREE.Fog(0x87ceeb, 80, 200);
 
 // Camera
-const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 250);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 500);
 
 // ── Lighting ──
 const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x556633, 0.6);
@@ -1721,122 +1653,12 @@ const originMarker = new THREE.Mesh(
 originMarker.position.set(0, 0.05, 0);
 scene.add(originMarker);
 
-// ── Load bike model ──
-const bikeGroup = new THREE.Group();
-scene.add(bikeGroup);
-let bikeModelLoaded = false;
+// ── Bike model (shared with game) ──
+const bikeModel = new BikeModel(scene, '../tandem-3d/tandem_bicycle.glb');
+window.bike = bikeModel;
 
-const loader = new GLTFLoader();
-loader.load('../tandem-3d/tandem_bicycle.glb', (gltf) => {
-  const model = gltf.scene;
-  model.traverse((child) => {
-    if (child.isMesh) {
-      child.castShadow = true;
-      child.receiveShadow = true;
-    }
-  });
-
-  // Scale to ~4.4m (same as bike-model.js)
-  const targetLength = 4.4;
-  const preBox = new THREE.Box3().setFromObject(model);
-  const preSize = preBox.getSize(new THREE.Vector3());
-  const maxDim = Math.max(preSize.x, preSize.y, preSize.z);
-  const scale = targetLength / maxDim;
-  model.scale.setScalar(scale);
-
-  bikeGroup.add(model);
-  bikeGroup.updateMatrixWorld(true);
-
-  // Center and ground the model
-  const v = new THREE.Vector3();
-  let minY = Infinity, minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-
-  model.traverse((child) => {
-    if (child.isMesh && child.geometry && child.geometry.attributes.position) {
-      const pos = child.geometry.attributes.position;
-      for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i);
-        child.localToWorld(v);
-        if (v.y < minY) minY = v.y;
-        if (v.x < minX) minX = v.x;
-        if (v.x > maxX) maxX = v.x;
-        if (v.z < minZ) minZ = v.z;
-        if (v.z > maxZ) maxZ = v.z;
-      }
-    }
-  });
-
-  model.position.y -= minY;
-  model.position.x -= (minX + maxX) / 2;
-  model.position.z -= (minZ + maxZ) / 2;
-
-  bikeModelLoaded = true;
-  console.log('Test page: bike model loaded');
-}, undefined, (err) => {
-  console.error('Failed to load bike model:', err);
-});
-
-// ── Chase camera state (adapted from js/chase-camera.js) ──
-const camState = {
-  currentPos: new THREE.Vector3(0, 6, -5),
-  currentLook: new THREE.Vector3(0, 0.5, 1),
-  initialized: false,
-  offsetSlow: new THREE.Vector3(0, 6, -5),
-  lookSlow:   new THREE.Vector3(0, 0.5, 1),
-  offsetFast: new THREE.Vector3(0, 4, -12),
-  lookFast:   new THREE.Vector3(0, 0.2, 8),
-  shakeAmount: 0,
-};
-
-function updateChaseCamera(bikeState, dt) {
-  const fwd = new THREE.Vector3(
-    Math.sin(bikeState.heading),
-    0,
-    Math.cos(bikeState.heading)
-  );
-  const bikePos = new THREE.Vector3(bikeState.posX, 0, bikeState.posZ);
-  const speedT = Math.min(bikeState.speed / 10, 1);
-
-  const offY = camState.offsetSlow.y + (camState.offsetFast.y - camState.offsetSlow.y) * speedT;
-  const offZ = camState.offsetSlow.z + (camState.offsetFast.z - camState.offsetSlow.z) * speedT;
-  const lookY = camState.lookSlow.y + (camState.lookFast.y - camState.lookSlow.y) * speedT;
-  const lookZ = camState.lookSlow.z + (camState.lookFast.z - camState.lookSlow.z) * speedT;
-
-  const desiredPos = bikePos.clone()
-    .add(fwd.clone().multiplyScalar(offZ))
-    .add(new THREE.Vector3(0, offY, 0));
-
-  const desiredLook = bikePos.clone()
-    .add(fwd.clone().multiplyScalar(lookZ))
-    .add(new THREE.Vector3(0, lookY, 0));
-
-  if (!camState.initialized) {
-    camState.currentPos.copy(desiredPos);
-    camState.currentLook.copy(desiredLook);
-    camState.initialized = true;
-  }
-
-  const camSmooth = Math.min(1, 2.5 * dt);
-  camState.currentPos.lerp(desiredPos, camSmooth);
-  camState.currentLook.lerp(desiredLook, camSmooth);
-
-  // Speed shake
-  const shake = new THREE.Vector3();
-  if (bikeState.speed > 8) {
-    camState.shakeAmount = Math.max(camState.shakeAmount, (bikeState.speed - 8) * 0.02);
-  }
-  if (camState.shakeAmount > 0.001) {
-    shake.set(
-      (Math.random() - 0.5) * camState.shakeAmount,
-      (Math.random() - 0.5) * camState.shakeAmount * 0.5,
-      (Math.random() - 0.5) * camState.shakeAmount
-    );
-    camState.shakeAmount *= (1 - 6 * dt);
-  }
-
-  camera.position.copy(camState.currentPos).add(shake);
-  camera.lookAt(camState.currentLook);
-}
+// ── Chase camera (shared with game) ──
+const chaseCamera = new ChaseCamera(camera);
 
 // ── Resize handler ──
 function resize() {
@@ -1851,25 +1673,10 @@ resize();
 window.addEventListener('resize', resize);
 new ResizeObserver(resize).observe(container);
 
-// ── Access the global bike physics state ──
-const bikeState = window.bike;
-let lastRenderTime = performance.now();
-
 // ── Arch Indicator (3D gauge from the game) ──
 const archIndicator = new ArchIndicator(scene);
-// Adapter: ArchIndicator.update() expects a bike-like object with position, heading, _smoothPitch
-const archBikeAdapter = {
-  position: new THREE.Vector3(),
-  heading: 0,
-  _smoothPitch: 0,
-};
 
-// Quaternion helpers (reused each frame)
-const _qYaw = new THREE.Quaternion();
-const _qLean = new THREE.Quaternion();
-const _qFinal = new THREE.Quaternion();
-const _axisY = new THREE.Vector3(0, 1, 0);
-const _axisZ = new THREE.Vector3(0, 0, 1);
+let lastRenderTime = performance.now();
 
 // ── Render loop ──
 function render3D(now) {
@@ -1878,49 +1685,39 @@ function render3D(now) {
   const dt = Math.min((now - lastRenderTime) / 1000, 0.05);
   lastRenderTime = now;
 
-  if (bikeState && bikeModelLoaded) {
-    // Position bike group in world
-    bikeGroup.position.set(bikeState.posX, 0, bikeState.posZ);
+  // Sync slider values into config.js TUNE each frame
+  if (window.TUNE) Object.assign(CONFIG_TUNE, window.TUNE);
 
-    // Quaternion-based heading + lean (adapted from bike-model.js _applyTransform)
-    _qYaw.setFromAxisAngle(_axisY, bikeState.heading);
-    _qLean.setFromAxisAngle(_axisZ, bikeState.lean);
-    _qFinal.copy(_qYaw).multiply(_qLean);
-    bikeGroup.quaternion.copy(_qFinal);
-
-    // Drop slightly when fallen
-    if (bikeState.fallen) {
-      bikeGroup.position.y = -0.15;
-    }
+  if (bikeModel.modelLoaded) {
+    // BikeModel handles its own transform (position, heading, lean via _applyTransform)
+    // but we still need to move ground, sun, and camera to follow the bike
 
     // Move ground to follow bike (snapped to grid) for infinite-ground effect
-    const snapX = Math.round(bikeState.posX / PYLON_SPACING) * PYLON_SPACING;
-    const snapZ = Math.round(bikeState.posZ / PYLON_SPACING) * PYLON_SPACING;
+    const snapX = Math.round(bikeModel.position.x / PYLON_SPACING) * PYLON_SPACING;
+    const snapZ = Math.round(bikeModel.position.z / PYLON_SPACING) * PYLON_SPACING;
     ground.position.set(snapX, 0, snapZ);
 
     // Sun follows bike for consistent shadows
-    sunLight.position.set(bikeState.posX + 10, 20, bikeState.posZ + 10);
-    sunLight.target.position.set(bikeState.posX, 0, bikeState.posZ);
+    sunLight.position.set(bikeModel.position.x + 10, 20, bikeModel.position.z + 10);
+    sunLight.target.position.set(bikeModel.position.x, 0, bikeModel.position.z);
 
-    // Chase camera
-    updateChaseCamera(bikeState, dt);
+    // Chase camera (same class as the game)
+    chaseCamera.update(bikeModel, dt, null);
 
     // Arch indicator — show when motion or gyro input is active
     const src = window.inputSource;
-    const motionActive = src === 'motion' && bikeState && !bikeState.fallen;
+    const motionActive = src === 'motion' && !bikeModel.fallen;
     const gyroActive = src === 'gamepad' && window.input &&
-        window.input._gyroEnabled && window.input._gyroConnected && !bikeState.fallen;
+        window.input._gyroEnabled && window.input._gyroConnected && !bikeModel.fallen;
 
     if (motionActive || gyroActive) {
       if (!archIndicator._visible) {
         archIndicator.setup('solo', '#ffaa33', '#4488ff');
       }
-      archBikeAdapter.position.set(bikeState.posX, 0, bikeState.posZ);
-      archBikeAdapter.heading = bikeState.heading;
       let archLean = 0;
       if (gyroActive) archLean = window.input.gyroLean || 0;
       else archLean = window.input ? (window.input.motionLean || 0) : 0;
-      archIndicator.update(archBikeAdapter, archLean, 0);
+      archIndicator.update(bikeModel, archLean, 0);
     } else if (archIndicator._visible) {
       archIndicator.hide();
     }

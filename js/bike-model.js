@@ -7,8 +7,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
 
 export class BikeModel {
-  constructor(scene) {
+  constructor(scene, modelPath) {
     this.scene = scene;
+    this._modelPath = modelPath || BIKE_MODEL_PATH;
     this.group = new THREE.Group();
     scene.add(this.group);
 
@@ -61,7 +62,7 @@ export class BikeModel {
 
   _loadModel() {
     const loader = new GLTFLoader();
-    loader.load(BIKE_MODEL_PATH, (gltf) => {
+    loader.load(this._modelPath, (gltf) => {
       const model = gltf.scene;
       model.traverse((child) => {
         if (child.isMesh) {
