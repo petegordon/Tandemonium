@@ -1713,12 +1713,16 @@ export class Lobby {
     this._gpPrevB = false;
     this._gpPrevLeft = false;
     this._gpPrevRight = false;
+    this._gpPrevLB = false;
+    this._gpPrevRB = false;
     if (this.input && this.input.gamepadConnected) {
       const gamepads = navigator.getGamepads();
       const gp = gamepads[this.input.gamepadIndex];
       if (gp) {
         this._gpPrevUp = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
         this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
+        this._gpPrevLB = gp.buttons[4] && gp.buttons[4].pressed;
+        this._gpPrevRB = gp.buttons[5] && gp.buttons[5].pressed;
         this._gpPrevA = gp.buttons[0] && gp.buttons[0].pressed;
         this._gpPrevB = gp.buttons[1] && gp.buttons[1].pressed;
         this._gpPrevLeft = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
@@ -1757,6 +1761,14 @@ export class Lobby {
     // D-pad left/right (buttons 14/15 or left stick axis 0)
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
     const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
+
+    // LB/RB bumpers (buttons 4/5) — cycle bike color
+    const lb = gp.buttons[4] && gp.buttons[4].pressed;
+    const rb = gp.buttons[5] && gp.buttons[5].pressed;
+    if (lb && !this._gpPrevLB && this._bikePrev) this._bikePrev();
+    if (rb && !this._gpPrevRB && this._bikeNext) this._bikeNext();
+    this._gpPrevLB = lb;
+    this._gpPrevRB = rb;
 
     // If profile popup is open, navigate between logout and back
     if (this.profilePopup.classList.contains('visible')) {
@@ -2027,20 +2039,20 @@ export class Lobby {
     // Arrow navigation
     const prevBtn = document.getElementById('bike-prev');
     const nextBtn = document.getElementById('bike-next');
-    const goPrev = () => {
+    this._bikePrev = () => {
       this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
       this._applyPresetToPreview();
       this._sendBikeSyncIfInRoom();
     };
-    const goNext = () => {
+    this._bikeNext = () => {
       this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
       this._applyPresetToPreview();
       this._sendBikeSyncIfInRoom();
     };
-    prevBtn.addEventListener('click', goPrev);
-    nextBtn.addEventListener('click', goNext);
-    prevBtn.addEventListener('touchend', (e) => { e.preventDefault(); goPrev(); });
-    nextBtn.addEventListener('touchend', (e) => { e.preventDefault(); goNext(); });
+    prevBtn.addEventListener('click', this._bikePrev);
+    nextBtn.addEventListener('click', this._bikeNext);
+    prevBtn.addEventListener('touchend', (e) => { e.preventDefault(); this._bikePrev(); });
+    nextBtn.addEventListener('touchend', (e) => { e.preventDefault(); this._bikeNext(); });
 
     // Touch swipe on canvas
     let touchStartX = 0;
@@ -2051,13 +2063,8 @@ export class Lobby {
     previewWrap.addEventListener('touchend', (e) => {
       const dx = e.changedTouches[0].clientX - touchStartX;
       if (Math.abs(dx) > 30) {
-        if (dx < 0) {
-          this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
-        } else {
-          this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
-        }
-        this._applyPresetToPreview();
-        this._sendBikeSyncIfInRoom();
+        if (dx < 0) this._bikeNext();
+        else this._bikePrev();
       }
     }, { passive: true });
   }

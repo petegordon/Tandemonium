@@ -195,7 +195,20 @@ export class InputManager {
       let rawTilt;
       if (orient === 90) rawTilt = e.beta;
       else if (orient === 270 || orient === -90) rawTilt = -e.beta;
-      else rawTilt = e.gamma;
+      else {
+        // When phone is tilted past vertical (|beta| > 90°, e.g. lying in bed
+        // with screen facing down at user), gamma's left-right direction inverts.
+        // Use a smooth blend zone (80°–100°) to avoid jitter at the boundary.
+        const absBeta = Math.abs(e.beta || 0);
+        if (absBeta > 100) {
+          rawTilt = -e.gamma;
+        } else if (absBeta > 80) {
+          const t = (absBeta - 80) / 20;
+          rawTilt = e.gamma * (1 - 2 * t);
+        } else {
+          rawTilt = e.gamma;
+        }
+      }
 
       if (rawTilt != null) {
         this._useOrientation = true;
