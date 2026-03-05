@@ -142,11 +142,12 @@ export class InputManager {
   }
 
   _setupMotion() {
-    const needsOrientationPermission = typeof DeviceOrientationEvent !== 'undefined' &&
-        typeof DeviceOrientationEvent.requestPermission === 'function';
-    const needsMotionPermission = typeof DeviceMotionEvent !== 'undefined' &&
-        typeof DeviceMotionEvent.requestPermission === 'function';
-    if (needsOrientationPermission || needsMotionPermission) {
+    // iOS 13+ requires a user-gesture-gated requestPermission() call
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      this.needsMotionPermission = true;
+    } else if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
       this.needsMotionPermission = true;
     } else if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
       this._startMotionListening();
@@ -156,25 +157,26 @@ export class InputManager {
   async requestMotionPermission() {
     if (this.motionEnabled) return;
     this.needsMotionPermission = false;
-    // Request orientation permission first (primary API)
-    if (typeof DeviceOrientationEvent !== 'undefined' &&
+    // iOS: DeviceMotionEvent.requestPermission() grants access to BOTH
+    // motion and orientation events — call it first (proven iOS API).
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
+        const response = await DeviceMotionEvent.requestPermission();
+        if (response === 'granted') this._startMotionListening();
+      } catch (e) {
+        console.warn('Motion permission error:', e);
+      }
+    }
+    // Also request orientation permission if available and not yet listening
+    if (!this.motionReady &&
+        typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
       try {
         const response = await DeviceOrientationEvent.requestPermission();
         if (response === 'granted') this._startMotionListening();
       } catch (e) {
         console.warn('Orientation permission error:', e);
-      }
-    }
-    // Request motion permission as fallback (also needed on iOS for accelerometer data)
-    if (typeof DeviceMotionEvent !== 'undefined' &&
-        typeof DeviceMotionEvent.requestPermission === 'function') {
-      try {
-        await DeviceMotionEvent.requestPermission();
-        // Don't call _startMotionListening() again — orientation grant already did it
-        if (!this.motionReady) this._startMotionListening();
-      } catch (e) {
-        console.warn('Motion permission error:', e);
       }
     }
   }
