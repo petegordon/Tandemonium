@@ -1087,32 +1087,33 @@ function startMotionListening() {
   });
 }
 
-// iOS permission flow
-const needsOrientationPermission = typeof DeviceOrientationEvent !== 'undefined' &&
-    typeof DeviceOrientationEvent.requestPermission === 'function';
-const needsMotionPermission = typeof DeviceMotionEvent !== 'undefined' &&
+// iOS permission flow — DeviceMotionEvent.requestPermission() grants
+// access to BOTH motion and orientation events on iOS.
+const _needsMotionPerm = typeof DeviceMotionEvent !== 'undefined' &&
     typeof DeviceMotionEvent.requestPermission === 'function';
-if (needsOrientationPermission || needsMotionPermission) {
+const _needsOrientPerm = typeof DeviceOrientationEvent !== 'undefined' &&
+    typeof DeviceOrientationEvent.requestPermission === 'function';
+if (_needsMotionPerm || _needsOrientPerm) {
   input.needsMotionPermission = true;
   const permOverlay = document.getElementById('motion-permission');
   permOverlay.style.display = 'flex';
   document.getElementById('btn-grant-motion').addEventListener('click', async () => {
-    // Request orientation permission first (primary API)
-    if (needsOrientationPermission) {
+    // Request motion permission first (proven iOS API, covers both)
+    if (_needsMotionPerm) {
+      try {
+        const response = await DeviceMotionEvent.requestPermission();
+        if (response === 'granted') startMotionListening();
+      } catch (e) {
+        console.warn('Motion permission error:', e);
+      }
+    }
+    // Fallback: request orientation permission if motion didn't start listening
+    if (!input.motionReady && _needsOrientPerm) {
       try {
         const response = await DeviceOrientationEvent.requestPermission();
         if (response === 'granted') startMotionListening();
       } catch (e) {
         console.warn('Orientation permission error:', e);
-      }
-    }
-    // Request motion permission (also needed on iOS for accelerometer fallback)
-    if (needsMotionPermission) {
-      try {
-        await DeviceMotionEvent.requestPermission();
-        if (!input.motionReady) startMotionListening();
-      } catch (e) {
-        console.warn('Motion permission error:', e);
       }
     }
     if (input.motionReady) permOverlay.style.display = 'none';
