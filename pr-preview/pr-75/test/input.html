@@ -565,6 +565,7 @@ const GYRO_PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
 // INPUT SOURCE SELECTOR
 // ============================================================
 let inputSource = 'motion'; // 'motion' | 'gamepad' | 'keyboard'
+window.inputSource = inputSource; // expose for module script
 
 (function setupSourceSelector() {
   const buttons = document.querySelectorAll('#source-selector button');
@@ -573,6 +574,7 @@ let inputSource = 'motion'; // 'motion' | 'gamepad' | 'keyboard'
       buttons.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       inputSource = btn.dataset.source;
+      window.inputSource = inputSource;
       updateGyroBarVisibility();
     });
   });
@@ -693,6 +695,7 @@ const input = {
     this._gpTriggerRightPressed = this._gpRB || this._gpTriggerRightVal >= THRESHOLD;
   }
 };
+window.input = input; // expose for module script
 
 // ── Touch Setup (from input-manager.js:71-138) ──
 (function setupTouch() {
@@ -1477,7 +1480,7 @@ function updateUI(dt) {
   diagAccel.innerHTML =
     `<div class="row"><span class="label">accel</span> <span class="val">x:${input._gx.toFixed(2)} y:${input._gy.toFixed(2)} z:${input._gz.toFixed(2)}</span>` +
     ` <span class="label">orient</span> <span class="val">${input._orient}\u00B0</span>` +
-    ` <span class="label">src</span> <span class="val">${input._useAccel ? 'accel' : 'orient'}</span></div>`;
+    ` <span class="label">src</span> <span class="val">${input._useOrientation ? 'orient' : 'accel'}</span></div>`;
 
   const rawCls = Math.abs(input.motionRawRelative) > TUNE.sensitivity ? 'val-warn' : 'val';
   diagTilt.innerHTML =
@@ -1539,6 +1542,7 @@ requestAnimationFrame(gameLoop);
 // ============================================================
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { ArchIndicator } from '../js/arch-indicator.js';
 
 const container = document.getElementById('bike-viewport');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
@@ -1789,6 +1793,15 @@ new ResizeObserver(resize).observe(container);
 const bikeState = window.bike;
 let lastRenderTime = performance.now();
 
+// ── Arch Indicator (3D gauge from the game) ──
+const archIndicator = new ArchIndicator(scene);
+// Adapter: ArchIndicator.update() expects a bike-like object with position, heading, _smoothPitch
+const archBikeAdapter = {
+  position: new THREE.Vector3(),
+  heading: 0,
+  _smoothPitch: 0,
+};
+
 // Quaternion helpers (reused each frame)
 const _qYaw = new THREE.Quaternion();
 const _qLean = new THREE.Quaternion();
@@ -1829,6 +1842,26 @@ function render3D(now) {
 
     // Chase camera
     updateChaseCamera(bikeState, dt);
+
+    // Arch indicator — show when motion or gyro input is active
+    const src = window.inputSource;
+    const motionActive = src === 'motion' && bikeState && !bikeState.fallen;
+    const gyroActive = src === 'gamepad' && window.input &&
+        window.input._gyroEnabled && window.input._gyroConnected && !bikeState.fallen;
+
+    if (motionActive || gyroActive) {
+      if (!archIndicator._visible) {
+        archIndicator.setup('solo', '#ffaa33', '#4488ff');
+      }
+      archBikeAdapter.position.set(bikeState.posX, 0, bikeState.posZ);
+      archBikeAdapter.heading = bikeState.heading;
+      let archLean = 0;
+      if (gyroActive) archLean = window.input.gyroLean || 0;
+      else archLean = window.input ? (window.input.motionLean || 0) : 0;
+      archIndicator.update(archBikeAdapter, archLean, 0);
+    } else if (archIndicator._visible) {
+      archIndicator.hide();
+    }
   }
 
   renderer.render(scene, camera);
