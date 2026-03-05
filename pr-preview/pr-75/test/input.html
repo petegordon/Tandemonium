@@ -514,16 +514,23 @@
 // Defaults should match BALANCE_DEFAULTS in js/config.js
 // ============================================================
 const SLIDER_CONFIG = [
-  { key: 'sensitivity',     label: 'Sensitivity',      min: 10,   max: 80,  step: 1,    default: 25,   fmt: v => v + '\u00B0' },
-  { key: 'deadzone',        label: 'Deadzone',         min: 0,    max: 10,  step: 0.5,  default: 4,    fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
-  { key: 'lowPassK',        label: 'Low-pass k',       min: 0.05, max: 1.0, step: 0.05, default: 0.1,  fmt: v => parseFloat(v).toFixed(2) },
-  { key: 'responseCurve',   label: 'Response curve',   min: 0.5,  max: 3.0, step: 0.1,  default: 1.8,  fmt: v => parseFloat(v).toFixed(1) },
-  { key: 'outputSmoothing', label: 'Output smooth',    min: 0.05, max: 1.0, step: 0.05, default: 0.25, fmt: v => parseFloat(v).toFixed(2) },
-  { key: 'calibSamples',    label: 'Calib samples',    min: 1,    max: 30,  step: 1,    default: 10,   fmt: v => v },
-  { key: 'leanForce',       label: 'Lean force',       min: 5,    max: 30,  step: 1,    default: 12,   fmt: v => v },
-  { key: 'gravityForce',    label: 'Gravity force',    min: 1,    max: 10,  step: 0.5,  default: 2.5,  fmt: v => parseFloat(v).toFixed(1) },
-  { key: 'damping',         label: 'Damping',          min: 0.5,  max: 5,   step: 0.1,  default: 4.0,  fmt: v => parseFloat(v).toFixed(1) },
-  { key: 'turnRate',        label: 'Turn rate',        min: 0.1,  max: 1.0, step: 0.05, default: 0.50, fmt: v => parseFloat(v).toFixed(2) },
+  // ── Mobile tilt tuning ──
+  { key: 'sensitivity',     label: 'Tilt Sensitivity',  min: 10,   max: 80,  step: 1,    default: 25,   fmt: v => v + '\u00B0' },
+  { key: 'deadzone',        label: 'Tilt Deadzone',     min: 0,    max: 10,  step: 0.5,  default: 4,    fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
+  { key: 'lowPassK',        label: 'Low-pass k',        min: 0.05, max: 1.0, step: 0.05, default: 0.1,  fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'responseCurve',   label: 'Tilt Curve',        min: 0.5,  max: 3.0, step: 0.1,  default: 1.4,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'outputSmoothing', label: 'Tilt Smooth',       min: 0.05, max: 1.0, step: 0.05, default: 0.25, fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'calibSamples',    label: 'Calib samples',     min: 1,    max: 30,  step: 1,    default: 10,   fmt: v => v },
+  // ── Controller gyro tuning ──
+  { key: 'gyroSensitivity',     label: 'Gyro Sensitivity',  min: 10,   max: 80,  step: 1,    default: 40,  fmt: v => v + '\u00B0' },
+  { key: 'gyroDeadzone',        label: 'Gyro Deadzone',     min: 0,    max: 10,  step: 0.5,  default: 4,   fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
+  { key: 'gyroResponseCurve',   label: 'Gyro Curve',        min: 0.5,  max: 3.0, step: 0.1,  default: 1.3, fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'gyroOutputSmoothing', label: 'Gyro Smooth',       min: 0.05, max: 1.0, step: 0.05, default: 0.3, fmt: v => parseFloat(v).toFixed(2) },
+  // ── Shared physics ──
+  { key: 'leanForce',       label: 'Lean force',        min: 5,    max: 30,  step: 1,    default: 12,   fmt: v => v },
+  { key: 'gravityForce',    label: 'Gravity force',     min: 1,    max: 10,  step: 0.5,  default: 2.5,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'damping',         label: 'Damping',           min: 0.5,  max: 5,   step: 0.1,  default: 4.0,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'turnRate',        label: 'Turn rate',         min: 0.1,  max: 1.0, step: 0.05, default: 0.50, fmt: v => parseFloat(v).toFixed(2) },
 ];
 
 const TUNE = {};
@@ -888,10 +895,11 @@ function handleGyroInputReport(event) {
   }
   input._gyroLastTime = now;
 
-  // Map angle through deadzone + response curve to lean [-1, 1]
-  // (mirrors _applyTilt pipeline used in game for gyro input)
+  // Map angle through gyro-specific deadzone + response curve to lean [-1, 1]
   const absAngle = Math.abs(input._gyroAngle);
-  const { deadzone: dz, sensitivity: sens, responseCurve: rc } = TUNE;
+  const dz = TUNE.gyroDeadzone;
+  const sens = TUNE.gyroSensitivity;
+  const rc = TUNE.gyroResponseCurve;
   if (absAngle < dz) {
     input.gyroLean = 0;
   } else {
@@ -999,7 +1007,7 @@ function startTiltCalibration() {
   input._calibBuf = [];
 }
 
-function applyTilt(rawTilt) {
+function applyTilt(rawTilt, isGyro = false) {
   input.rawGamma = rawTilt;
 
   if (input.motionOffset === null && !input._calibrating) {
@@ -1022,7 +1030,12 @@ function applyTilt(rawTilt) {
   else if (relative < -180) relative += 360;
   input.motionRawRelative = relative;
 
-  const { deadzone, sensitivity, responseCurve, outputSmoothing } = TUNE;
+  // Select tuning based on input source
+  const sensitivity = isGyro ? TUNE.gyroSensitivity : TUNE.sensitivity;
+  const deadzone = isGyro ? TUNE.gyroDeadzone : TUNE.deadzone;
+  const responseCurve = isGyro ? TUNE.gyroResponseCurve : TUNE.responseCurve;
+  const outputSmoothing = isGyro ? TUNE.gyroOutputSmoothing : TUNE.outputSmoothing;
+
   const absRel = Math.abs(relative);
   let lean;
 

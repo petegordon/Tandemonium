@@ -31,14 +31,22 @@ export const TURN_CREDENTIALS_URL = 'https://tandemonium-relay.pete-872.workers.
 
 // Balance physics defaults — single source of truth
 export const BALANCE_DEFAULTS = {
+  // Mobile tilt (DeviceOrientation / DeviceMotion)
   sensitivity: 25,
   deadzone: 4,
   lowPassK: 0.1,
+  responseCurve: 1.4,
+  outputSmoothing: 0.25,
+  calibSamples: 10,
+  // Controller gyro (WebHID) — integrated angular velocity accumulates
+  // faster than absolute orientation, so needs wider range + more smoothing
+  gyroSensitivity: 40,
+  gyroDeadzone: 4,
+  gyroResponseCurve: 1.3,
+  gyroOutputSmoothing: 0.3,
+  // Shared physics
   leanForce: 12,
   gravityForce: 2.5,
   damping: 4.0,
   turnRate: 0.50,
-  responseCurve: 1.8,
-  outputSmoothing: 0.25,
-  calibSamples: 10,
 };

@@ -237,7 +237,7 @@ export class InputManager {
     this._calibBuf = [];
   }
 
-  _applyTilt(rawTilt) {
+  _applyTilt(rawTilt, isGyro = false) {
     this.rawGamma = rawTilt;
 
     if (this.motionOffset === null && !this._calibrating) {
@@ -260,7 +260,12 @@ export class InputManager {
     else if (relative < -180) relative += 360;
     this.motionRawRelative = relative;
 
-    const { deadzone, sensitivity, responseCurve, outputSmoothing } = BALANCE_DEFAULTS;
+    // Select tuning parameters based on input source
+    const sensitivity = isGyro ? BALANCE_DEFAULTS.gyroSensitivity : BALANCE_DEFAULTS.sensitivity;
+    const deadzone = isGyro ? BALANCE_DEFAULTS.gyroDeadzone : BALANCE_DEFAULTS.deadzone;
+    const responseCurve = isGyro ? BALANCE_DEFAULTS.gyroResponseCurve : BALANCE_DEFAULTS.responseCurve;
+    const outputSmoothing = isGyro ? BALANCE_DEFAULTS.gyroOutputSmoothing : BALANCE_DEFAULTS.outputSmoothing;
+
     const absRel = Math.abs(relative);
     let lean;
 
@@ -504,10 +509,10 @@ export class InputManager {
     // Clamp to sane range
     this._gyroRollAccum = Math.max(-90, Math.min(90, this._gyroRollAccum));
 
-    // Feed into tilt pipeline — full lean at ~40° of controller tilt
+    // Feed into tilt pipeline with gyro-specific tuning
     // Only update if motion is enabled (lobby toggle can disable it)
     if (!this.motionEnabled) return;
-    this._applyTilt(this._gyroRollAccum);
+    this._applyTilt(this._gyroRollAccum, true);
   }
 
   _readSigned16(data, offset) {
