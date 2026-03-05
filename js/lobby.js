@@ -1277,6 +1277,7 @@ export class Lobby {
 
       // Generate QR code with join URL
       const qrEl = document.getElementById('room-qr');
+      const urlEl = document.getElementById('room-url');
       const url = window.location.origin + window.location.pathname + '?room=' + code;
       try {
         const qr = qrcode(0, 'M');
@@ -1286,6 +1287,31 @@ export class Lobby {
       } catch (_) {
         qrEl.style.display = 'none';
       }
+
+      // Show full URL
+      if (urlEl) urlEl.textContent = url;
+
+      // Long-press to copy on both QR and URL
+      const copyUrl = () => {
+        navigator.clipboard.writeText(url).then(() => {
+          if (urlEl) {
+            const orig = urlEl.textContent;
+            urlEl.textContent = 'Copied!';
+            urlEl.classList.add('room-url-copied');
+            setTimeout(() => { urlEl.textContent = orig; urlEl.classList.remove('room-url-copied'); }, 1500);
+          }
+        }).catch(() => {});
+      };
+      [qrEl, urlEl].forEach(el => {
+        if (!el) return;
+        let timer = null;
+        const start = (e) => { e.preventDefault(); timer = setTimeout(copyUrl, 500); };
+        const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+        el.addEventListener('touchstart', start, { passive: false });
+        el.addEventListener('touchend', cancel);
+        el.addEventListener('touchcancel', cancel);
+        el.addEventListener('contextmenu', (e) => { e.preventDefault(); copyUrl(); });
+      });
     });
 
     this.net.onConnected = () => {

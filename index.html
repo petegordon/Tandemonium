@@ -1548,6 +1548,22 @@
     justify-content: center;
   }
   #room-qr svg { width: 100%; height: 100%; }
+  #room-qr { cursor: pointer; -webkit-touch-callout: none; user-select: none; }
+  .room-url {
+    font-size: 11px;
+    color: rgba(68,255,102,0.7);
+    word-break: break-all;
+    text-align: center;
+    margin: 6px auto 0;
+    max-width: 280px;
+    cursor: pointer;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  .room-url-copied {
+    color: #44ff66 !important;
+    font-weight: 700;
+  }
 
   /* ── Lobby Room (multiplayer shared lobby) ── */
   .pip-wrap.pip-lobby-mode {
@@ -2358,7 +2374,8 @@ ON</button>
           <p class="lobby-prompt">Your room code:</p>
           <div id="room-code-display" class="room-code">----</div>
           <div id="room-qr"></div>
-          <p class="lobby-hint">Share this code or scan QR to join</p>
+          <div id="room-url" class="room-url"></div>
+          <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
           <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
         </div>
@@ -2431,7 +2448,7 @@ ON</button>
       </div>
     </div>
 
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.c464388 | 03-04-2026 23:17</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.dd1c329 | 03-04-2026 23:42</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
 </div>
