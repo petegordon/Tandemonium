@@ -35,8 +35,8 @@ export const BALANCE_DEFAULTS = {
   sensitivity: 25,
   deadzone: 4,
   lowPassK: 0.1,
-  responseCurve: 1.4,
-  outputSmoothing: 0.25,
+  responseCurve: 2.0,
+  outputSmoothing: 0.4,
   calibSamples: 10,
   // Controller gyro (WebHID) — integrated angular velocity accumulates
   // faster than absolute orientation, so needs wider range + more smoothing
