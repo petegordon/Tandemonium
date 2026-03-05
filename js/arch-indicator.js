@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { BALANCE_DEFAULTS } from './config.js';
+import { TUNE } from './config.js';
 
 const ARCH_RADIUS = 3.0;
 const ARCH_BAND_WIDTH = 0.35;       // width of the gauge band
@@ -17,13 +17,7 @@ const NEEDLE_LENGTH = ARCH_RADIUS * 0.92;
 const NEEDLE_BASE_WIDTH = 0.10;     // wider at pivot
 const NEEDLE_TIP_WIDTH = 0.025;     // tapered tip
 
-// Derive sweep from sensitivity (degrees → radians)
-const LEAN_SCALE = BALANCE_DEFAULTS.sensitivity * Math.PI / 180;
 const ARCH_MARGIN = 0.08;           // small pad beyond max needle travel
-// Arch spans from (90° - sweep - margin) to (90° + sweep + margin)
-const ARCH_START = Math.PI / 2 - LEAN_SCALE - ARCH_MARGIN;
-const ARCH_END   = Math.PI / 2 + LEAN_SCALE + ARCH_MARGIN;
-const ARCH_SPAN  = ARCH_END - ARCH_START;
 
 export class ArchIndicator {
   constructor(scene) {
@@ -38,6 +32,13 @@ export class ArchIndicator {
     this._visible = false;
     this._mode = 'solo';
 
+    // Sweep parameters — recomputed when sensitivity changes
+    this._lastSensitivity = 0;
+    this._leanScale = 0;
+    this._archStart = 0;
+    this._archEnd = 0;
+    this._archSpan = 0;
+
     // Reusable temporaries for update() (avoid per-frame allocations)
     this._tmpQYaw = new THREE.Quaternion();
     this._tmpQPitch = new THREE.Quaternion();
@@ -45,6 +46,30 @@ export class ArchIndicator {
     this._tmpAxisY = new THREE.Vector3(0, 1, 0);
     this._tmpAxisX = new THREE.Vector3(1, 0, 0);
 
+    this._computeSweep();
+    this._buildArch();
+  }
+
+  // ----------------------------------------------------------
+  // Sweep computation — derived from TUNE.sensitivity
+  // ----------------------------------------------------------
+
+  _computeSweep() {
+    this._lastSensitivity = TUNE.sensitivity;
+    this._leanScale = TUNE.sensitivity * Math.PI / 180;
+    this._archStart = Math.PI / 2 - this._leanScale - ARCH_MARGIN;
+    this._archEnd   = Math.PI / 2 + this._leanScale + ARCH_MARGIN;
+    this._archSpan  = this._archEnd - this._archStart;
+  }
+
+  _rebuildArch() {
+    for (const part of this._archParts) {
+      this.group.remove(part);
+      if (part.geometry) part.geometry.dispose();
+      if (part.material) part.material.dispose();
+    }
+    this._archParts.length = 0;
+    this._computeSweep();
     this._buildArch();
   }
 
@@ -97,7 +122,7 @@ export class ArchIndicator {
   _arcPoints(radius) {
     const pts = [];
     for (let i = 0; i <= ARCH_SEGMENTS; i++) {
-      const angle = ARCH_START + ARCH_SPAN * (i / ARCH_SEGMENTS);
+      const angle = this._archStart + this._archSpan * (i / ARCH_SEGMENTS);
       pts.push(new THREE.Vector3(
         Math.cos(angle) * radius,
         ARCH_BASE_Y + Math.sin(angle) * radius,
@@ -112,7 +137,7 @@ export class ArchIndicator {
     const positions = [];
     const indices = [];
     for (let i = 0; i <= ARCH_SEGMENTS; i++) {
-      const angle = ARCH_START + ARCH_SPAN * (i / ARCH_SEGMENTS);
+      const angle = this._archStart + this._archSpan * (i / ARCH_SEGMENTS);
       const cosA = Math.cos(angle);
       const sinA = Math.sin(angle);
       // Inner vertex
@@ -136,7 +161,7 @@ export class ArchIndicator {
     // Tick marks: center, ±25%, ±50%, ±75%, ±100% of max lean
     const tickOffsets = [0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0];
     const tickLengths = [0.20, 0.08, 0.08, 0.10, 0.10, 0.08, 0.08, 0.14, 0.14];
-    const tickAngles = tickOffsets.map(f => Math.PI / 2 + f * LEAN_SCALE);
+    const tickAngles = tickOffsets.map(f => Math.PI / 2 + f * this._leanScale);
 
     for (let t = 0; t < tickAngles.length; t++) {
       const angle = tickAngles[t];
@@ -275,6 +300,11 @@ export class ArchIndicator {
   update(bike, playerLean, partnerLean) {
     if (!this._visible) return;
 
+    // Rebuild arch if sensitivity changed
+    if (TUNE.sensitivity !== this._lastSensitivity) {
+      this._rebuildArch();
+    }
+
     // Position at bike location
     this.group.position.copy(bike.position);
 
@@ -286,12 +316,12 @@ export class ArchIndicator {
 
     // Rotate player needle — 0 = straight up, lean left tilts needle left
     if (this._playerNeedle) {
-      this._playerNeedle.rotation.z = (playerLean || 0) * LEAN_SCALE;
+      this._playerNeedle.rotation.z = (playerLean || 0) * this._leanScale;
     }
 
     // Rotate partner needle
     if (this._partnerNeedle) {
-      this._partnerNeedle.rotation.z = (partnerLean || 0) * LEAN_SCALE;
+      this._partnerNeedle.rotation.z = (partnerLean || 0) * this._leanScale;
     }
   }
 
