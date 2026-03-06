@@ -7,10 +7,11 @@
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-// Temporary debug toast for iOS recording diagnostics
+// Debug overlay for recording diagnostics — enabled with ?debug in URL
+const _recDebug = new URLSearchParams(window.location.search).has('debug');
 function _dbg(msg) {
+  if (!_recDebug) return;
   console.warn('[REC]', msg);
-  if (!_isIOS) return;
   let el = document.getElementById('_rec_dbg');
   if (!el) {
     el = document.createElement('div');
@@ -22,7 +23,6 @@ function _dbg(msg) {
   }
   el.textContent += msg + '\n';
   el.scrollTop = el.scrollHeight;
-  // Auto-hide after 120s
   clearTimeout(el._timer);
   el._timer = setTimeout(() => { el.textContent = ''; }, 120000);
 }
