@@ -22,7 +22,7 @@ export default {
 
       // Auth routes
       if (path === '/auth/google' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin);
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         return handleGoogleAuth(request, env, corsOrigin);
       }
@@ -32,25 +32,40 @@ export default {
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
+      if (path === '/relay-token' && request.method === 'POST') return withAuth(request, env, corsOrigin, issueRelayToken);
 
       // Public routes (rate limited by IP)
       if (path === '/leaderboard') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin);
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         return handleLeaderboard(request, env, url, corsOrigin);
       }
       if (path.startsWith('/player/')) {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin);
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         return handlePlayerProfile(request, env, url, corsOrigin);
       }
 
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
     } catch (e) {
+      writeMetric(env, 'error', e.message);
       return jsonResponse({ error: e.message }, 500, corsOrigin);
     }
   }
 };
+
+// ============================================================
+// ANALYTICS
+// ============================================================
+
+function writeMetric(env, event, extra) {
+  if (!env.ANALYTICS) return;
+  env.ANALYTICS.writeDataPoint({
+    blobs: [event, ...(extra ? [extra] : [])],
+    doubles: [1],
+    indexes: [event],
+  });
+}
 
 // ============================================================
 // AUTH
@@ -68,6 +83,8 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   } catch (e) {
     return jsonResponse({ error: e.message }, 401, corsOrigin);
   }
+
+  writeMetric(env, 'auth_google');
 
   const googleId = payload.sub;
   const name = payload.name || 'Player';
@@ -139,6 +156,8 @@ async function submitScore(request, env, corsOrigin, userId) {
   if (recent) {
     return jsonResponse({ error: 'Too many submissions' }, 429, corsOrigin);
   }
+
+  writeMetric(env, 'score_submit', levelId);
 
   // Insert score
   const scoreRes = await env.DB.prepare(
@@ -412,6 +431,27 @@ async function syncAchievements(request, env, corsOrigin, userId) {
 }
 
 // ============================================================
+// RELAY TOKEN
+// ============================================================
+
+async function issueRelayToken(request, env, corsOrigin, userId) {
+  if (!env.RELAY_SECRET) {
+    return jsonResponse({ error: 'Relay auth not configured' }, 503, corsOrigin);
+  }
+  const body = await request.json();
+  const { room, role } = body;
+  if (!room || !role || !['captain', 'stoker'].includes(role)) {
+    return jsonResponse({ error: 'Missing room or role' }, 400, corsOrigin);
+  }
+
+  writeMetric(env, 'relay_token', room);
+
+  // Short-lived token (5 minutes)
+  const token = await createJWT({ sub: userId, room, role }, env.RELAY_SECRET, 300);
+  return jsonResponse({ token }, 200, corsOrigin);
+}
+
+// ============================================================
 // PARTNERS
 // ============================================================
 
@@ -512,10 +552,11 @@ async function verifyGoogleIdToken(token, expectedAud) {
 // RATE LIMITING
 // ============================================================
 
-async function checkRateLimit(limiter, key, corsOrigin) {
+async function checkRateLimit(limiter, key, corsOrigin, env) {
   if (!limiter) return null; // graceful fallback if binding not configured
   const { success } = await limiter.limit({ key });
   if (!success) {
+    if (env) writeMetric(env, 'rate_limit_hit', key);
     return new Response(JSON.stringify({ error: 'Too many requests' }), {
       status: 429,
       headers: {
@@ -529,7 +570,7 @@ async function checkRateLimit(limiter, key, corsOrigin) {
 }
 
 async function submitScoreWithLimit(request, env, corsOrigin, userId) {
-  const limited = await checkRateLimit(env.SCORE_LIMITER, 'user:' + userId, corsOrigin);
+  const limited = await checkRateLimit(env.SCORE_LIMITER, 'user:' + userId, corsOrigin, env);
   if (limited) return limited;
   return submitScore(request, env, corsOrigin, userId);
 }
@@ -576,10 +617,11 @@ async function getUserFromRequest(request, env) {
 }
 
 // Simple JWT implementation using Web Crypto
-async function createJWT(payload, secret) {
+async function createJWT(payload, secret, ttlSeconds) {
+  const now = Math.floor(Date.now() / 1000);
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-  const body = btoa(JSON.stringify({ ...payload, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 86400 * 30 }))
+  const body = btoa(JSON.stringify({ ...payload, iat: now, exp: now + (ttlSeconds || 86400 * 30) }))
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
   const data = `${header}.${body}`;
 

@@ -10,6 +10,11 @@ bindings = [
 [vars]
 TURN_KEY_ID = "511f7bebc794eaf760c3aeac64db8e84"
 # TURN_KEY_API_TOKEN must be set via: wrangler secret put TURN_KEY_API_TOKEN
+# RELAY_SECRET must be set via: wrangler secret put RELAY_SECRET
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "tandemonium_relay"
 
 [[migrations]]
 tag = "v1"

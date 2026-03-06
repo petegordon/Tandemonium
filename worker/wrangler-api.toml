@@ -9,7 +9,11 @@ database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
 
 [vars]
 CORS_ORIGIN = "https://tandemonium.jimandi.love"
-# Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET
+# Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "tandemonium_api"
 
 # Rate limiting
 [[unsafe.bindings]]

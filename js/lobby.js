@@ -1450,9 +1450,13 @@ export class Lobby {
     statusEl.textContent = 'Creating room...';
     statusEl.className = 'conn-status';
 
-    this.net.createRoom((code) => {
+    this.net.createRoom(async (code) => {
       codeEl.textContent = code;
       statusEl.textContent = 'Waiting for partner...';
+
+      // Fetch relay auth token (non-blocking — relay works without it if secret not configured)
+      const relayToken = await this.auth.getRelayToken(code, 'captain');
+      if (relayToken) this.net._relayToken = relayToken;
 
       // Generate QR code with join URL
       const qrEl = document.getElementById('room-qr');
@@ -1507,7 +1511,7 @@ export class Lobby {
     };
   }
 
-  _joinRoom(code) {
+  async _joinRoom(code) {
     this.net = new NetworkManager();
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
@@ -1516,6 +1520,10 @@ export class Lobby {
 
     statusEl.textContent = 'Connecting...';
     statusEl.className = 'conn-status';
+
+    // Fetch relay auth token before connecting
+    const relayToken = await this.auth.getRelayToken(code, 'stoker');
+    if (relayToken) this.net._relayToken = relayToken;
 
     this.net.joinRoom(code, () => {
       statusEl.textContent = 'Connecting to room...';
