@@ -23,6 +23,7 @@ import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { ArchIndicator } from './arch-indicator.js';
+import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad } from './haptics.js';
 
 class Game {
   constructor() {
@@ -920,6 +921,7 @@ class Game {
     this.state = 'gameover';
     this.hud.hideTimer();
     if (this.raceManager) this.raceManager.crashCount++;
+    hapticCrash();
     // Clear HUD status text so "CRASHED! Resetting..." doesn't bleed through
     document.getElementById('status').textContent = '';
     document.getElementById('gameover-overlay').style.display = 'flex';
@@ -951,6 +953,7 @@ class Game {
   _handleRaceEvent(raceEvent) {
     if (raceEvent.event === 'checkpoint') {
       this._showCheckpointFlash();
+      hapticCheckpoint();
 
       // Notify stoker
       if (this.mode === 'captain' && this.net) {
@@ -958,6 +961,7 @@ class Game {
       }
     } else if (raceEvent.event === 'finish') {
       this._showVictory();
+      hapticFinish();
 
       // Send authoritative finish stats to stoker before the finish event
       if (this.mode === 'captain' && this.net) {
@@ -1797,6 +1801,7 @@ class Game {
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.2;
       this._playBeep(200, 0.3);
+      hapticTreeHit();
       return;
     }
     // Pylon obstacle collision
@@ -1804,7 +1809,16 @@ class Game {
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.25;
       this._playBeep(150, 0.4);
+      hapticTreeHit();
     }
+  }
+
+  _hapticOffRoadCheck() {
+    if (this.bike.fallen || this.bike.speed < 1) return;
+    const frontOff = Math.max(0, Math.abs(this.bike._frontWheelOffset) - 2.5);
+    const rearOff = Math.max(0, Math.abs(this.bike._rearWheelOffset) - 2.5);
+    const intensity = Math.min(Math.max(frontOff, rearOff) / 3, 1);
+    if (intensity > 0) hapticOffRoad(intensity);
   }
 
   // ============================================================
@@ -1895,6 +1909,7 @@ class Game {
     if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
 
     this.grassParticles.update(this.bike, dt);
+    this._hapticOffRoadCheck();
     this.world.update(this.bike.position, this.bike.roadD);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
@@ -1986,6 +2001,7 @@ class Game {
     if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
 
     this.grassParticles.update(this.bike, dt);
+    this._hapticOffRoadCheck();
 
     // Send state + lean to stoker at 20Hz
     this._stateSendTimer += dt;
@@ -2050,6 +2066,7 @@ class Game {
     this._stokerWasFallen = this.bike.fallen;
 
     this.grassParticles.update(this.bike, dt);
+    this._hapticOffRoadCheck();
 
     // Send lean to captain at 20Hz
     this._leanSendTimer += dt;
