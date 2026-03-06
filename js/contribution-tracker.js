@@ -150,7 +150,7 @@ export class ContributionTracker {
       totalPower: Math.round(stats.totalPower * 100) / 100,
       safePct: Math.round((stats.safeTime / totalTime) * 100),
       dangerPct: Math.round((stats.dangerTime / totalTime) * 100),
-      onRoadPct: Math.round((stats.onRoadTime / totalTime) * 100),
+      onRoadPct: stats.lateralSamples > 0 ? Math.round((stats.onRoadTime / stats.lateralSamples) * 100) : 0,
       centerPct: stats.lateralSamples > 0 ? Math.round((stats.centerTime / stats.lateralSamples) * 100) : 0,
       avgLateral: stats.lateralSamples > 0 ? Math.round((stats.lateralAccum / stats.lateralSamples) * 100) / 100 : 0,
       leanInputTotal: Math.round(stats.leanInputAccum * 100) / 100,
