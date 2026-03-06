@@ -133,12 +133,17 @@ export class GameRecorder {
 
   async _loadMp4Muxer() {
     if (this._wcMp4Muxer) return this._wcMp4Muxer;
+    // Try importmap first, then direct CDN URL as fallback
     try {
       this._wcMp4Muxer = await import('mp4-muxer');
-    } catch (e) {
-      console.warn('Failed to load mp4-muxer:', e);
-      this._useWebCodecs = false;
-      this.supported = this._checkSupport();
+    } catch {
+      try {
+        this._wcMp4Muxer = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs');
+      } catch (e) {
+        console.warn('Failed to load mp4-muxer:', e);
+        this._useWebCodecs = false;
+        this.supported = this._checkSupport();
+      }
     }
     return this._wcMp4Muxer;
   }
@@ -146,42 +151,48 @@ export class GameRecorder {
   _startWebCodecsEncoder() {
     const w = this.compCanvas.width;
     const h = this.compCanvas.height;
+    if (w < 2 || h < 2) return;
 
     this._wcEncodedChunks = [];
     this._wcFrameIndex = 0;
     this._wcLastFrameTime = 0;
 
-    this._wcEncoder = new VideoEncoder({
-      output: (chunk, meta) => {
-        // Copy chunk data to ArrayBuffer so it outlives the callback
-        const buf = new ArrayBuffer(chunk.byteLength);
-        chunk.copyTo(buf);
-        this._wcEncodedChunks.push({
-          data: buf,
-          type: chunk.type,
-          timestamp: chunk.timestamp,
-          duration: chunk.duration,
-          wallTime: performance.now(),
-          meta: meta && meta.decoderConfig && meta.decoderConfig.description ? {
-            decoderConfig: { description: new Uint8Array(meta.decoderConfig.description).slice().buffer }
-          } : undefined
-        });
-        // Prune chunks older than bufferDuration
-        const cutoff = performance.now() - this.bufferDuration * 1000;
-        while (this._wcEncodedChunks.length > 1 && this._wcEncodedChunks[0].wallTime < cutoff) {
-          this._wcEncodedChunks.shift();
-        }
-      },
-      error: (e) => console.warn('VideoEncoder error:', e)
-    });
+    try {
+      this._wcEncoder = new VideoEncoder({
+        output: (chunk, meta) => {
+          // Copy chunk data to ArrayBuffer so it outlives the callback
+          const buf = new ArrayBuffer(chunk.byteLength);
+          chunk.copyTo(buf);
+          this._wcEncodedChunks.push({
+            data: buf,
+            type: chunk.type,
+            timestamp: chunk.timestamp,
+            duration: chunk.duration,
+            wallTime: performance.now(),
+            meta: meta && meta.decoderConfig && meta.decoderConfig.description ? {
+              decoderConfig: { description: new Uint8Array(meta.decoderConfig.description).slice().buffer }
+            } : undefined
+          });
+          // Prune chunks older than bufferDuration
+          const cutoff = performance.now() - this.bufferDuration * 1000;
+          while (this._wcEncodedChunks.length > 1 && this._wcEncodedChunks[0].wallTime < cutoff) {
+            this._wcEncodedChunks.shift();
+          }
+        },
+        error: (e) => console.warn('VideoEncoder error:', e)
+      });
 
-    this._wcEncoder.configure({
-      codec: 'avc1.42001f',
-      width: w,
-      height: h,
-      bitrate: 2_500_000,
-      framerate: this._wcTargetFps
-    });
+      this._wcEncoder.configure({
+        codec: 'avc1.42001f',
+        width: w,
+        height: h,
+        bitrate: 2_500_000,
+        framerate: this._wcTargetFps
+      });
+    } catch (e) {
+      console.warn('VideoEncoder configure failed:', e);
+      this._wcEncoder = null;
+    }
   }
 
   _feedWebCodecsFrame() {
@@ -192,12 +203,16 @@ export class GameRecorder {
     if (now - this._wcLastFrameTime < interval) return;
     this._wcLastFrameTime = now;
 
-    const timestamp = this._wcFrameIndex * (1_000_000 / this._wcTargetFps); // microseconds
-    const frame = new VideoFrame(this.compCanvas, { timestamp });
-    const keyFrame = this._wcFrameIndex % (this._wcTargetFps * 2) === 0; // keyframe every 2s
-    this._wcEncoder.encode(frame, { keyFrame });
-    frame.close();
-    this._wcFrameIndex++;
+    try {
+      const timestamp = this._wcFrameIndex * (1_000_000 / this._wcTargetFps); // microseconds
+      const frame = new VideoFrame(this.compCanvas, { timestamp });
+      const keyFrame = this._wcFrameIndex % (this._wcTargetFps * 2) === 0; // keyframe every 2s
+      this._wcEncoder.encode(frame, { keyFrame });
+      frame.close();
+      this._wcFrameIndex++;
+    } catch (e) {
+      // Frame creation can fail if canvas is zero-sized or context lost
+    }
   }
 
   async _assembleWebCodecsClip() {
@@ -242,8 +257,12 @@ export class GameRecorder {
   // ── Canvas sync ──
 
   _syncCanvasSize() {
-    this.compCanvas.width = this.gameCanvas.width;
-    this.compCanvas.height = this.gameCanvas.height;
+    let w = this.gameCanvas.width;
+    let h = this.gameCanvas.height;
+    // H.264 requires even dimensions — round down if needed
+    if (this._useWebCodecs) { w &= ~1; h &= ~1; }
+    this.compCanvas.width = w;
+    this.compCanvas.height = h;
   }
 
   // ── Selfie camera (Phase 2) ──
@@ -371,9 +390,21 @@ export class GameRecorder {
     if (this._useWebCodecs) {
       // iOS path: WebCodecs + mp4-muxer (no audio — canvas-only)
       this._loadMp4Muxer().then(() => {
-        if (this._wcMp4Muxer) this._startWebCodecsEncoder();
+        if (this._wcMp4Muxer) {
+          this._startWebCodecsEncoder();
+          if (this.shareBtn) this.shareBtn.style.display = 'block';
+        } else {
+          // mp4-muxer failed to load — disable recording
+          this.buffering = false;
+          this.supported = false;
+          if (this.shareBtn) this.shareBtn.style.display = 'none';
+        }
+      }).catch((e) => {
+        console.warn('WebCodecs init failed:', e);
+        this.buffering = false;
+        this.supported = false;
+        if (this.shareBtn) this.shareBtn.style.display = 'none';
       });
-      if (this.shareBtn) this.shareBtn.style.display = 'block';
       return;
     }
 
