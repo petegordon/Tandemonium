@@ -119,30 +119,39 @@ async function submitScore(request, env, corsOrigin, userId) {
 
   const scoreId = scoreRes.meta.last_row_id;
 
-  // Insert contributions
+  // Batch insert contributions and achievements in a single round-trip
+  const batchStmts = [];
+
   if (contributions) {
     for (const [role, stats] of Object.entries(contributions)) {
-      await env.DB.prepare(
-        `INSERT INTO score_contributions
-         (score_id, role, player_user_id, contribution_pct, pedal_taps, pedal_correct, pedal_wrong, pedal_power,
-          balance_safe_pct, balance_danger_pct, on_road_pct, center_pct, avg_lateral_offset)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(
-        scoreId, role, stats.userId || null, stats.overallPct || 0,
-        stats.totalTaps || 0, stats.correctTaps || 0, stats.wrongTaps || 0, stats.totalPower || 0,
-        stats.safePct || 0, stats.dangerPct || 0, stats.onRoadPct || 0, stats.centerPct || 0,
-        stats.avgLateral || 0
-      ).run();
+      batchStmts.push(
+        env.DB.prepare(
+          `INSERT INTO score_contributions
+           (score_id, role, player_user_id, contribution_pct, pedal_taps, pedal_correct, pedal_wrong, pedal_power,
+            balance_safe_pct, balance_danger_pct, on_road_pct, center_pct, avg_lateral_offset)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          scoreId, role, stats.userId || null, stats.overallPct || 0,
+          stats.totalTaps || 0, stats.correctTaps || 0, stats.wrongTaps || 0, stats.totalPower || 0,
+          stats.safePct || 0, stats.dangerPct || 0, stats.onRoadPct || 0, stats.centerPct || 0,
+          stats.avgLateral || 0
+        )
+      );
     }
   }
 
-  // Save achievements
   if (newAchievements && Array.isArray(newAchievements)) {
     for (const achId of newAchievements) {
-      await env.DB.prepare(
-        'INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, ?, ?)'
-      ).bind(userId, achId, scoreId).run();
+      batchStmts.push(
+        env.DB.prepare(
+          'INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, ?, ?)'
+        ).bind(userId, achId, scoreId)
+      );
     }
+  }
+
+  if (batchStmts.length > 0) {
+    await env.DB.batch(batchStmts);
   }
 
   // Check if personal best
