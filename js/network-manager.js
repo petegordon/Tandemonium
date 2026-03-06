@@ -4,8 +4,15 @@
 
 import {
   MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN, MSG_PROFILE,
-  TURN_CREDENTIALS_URL
+  TURN_CREDENTIALS_URL, PEERJS_HOST, PEERJS_PORT, PEERJS_PATH, PEERJS_SECURE
 } from './config.js';
+
+const PEERJS_CONFIG = {
+  host: PEERJS_HOST,
+  port: PEERJS_PORT,
+  path: PEERJS_PATH,
+  secure: PEERJS_SECURE,
+};
 
 export class NetworkManager {
   constructor() {
@@ -96,6 +103,7 @@ export class NetworkManager {
 
     const iceServers = await this._fetchIceServers();
     this.peer = new window.Peer(this.roomCode, {
+      ...PEERJS_CONFIG,
       config: { iceServers }
     });
 
@@ -131,6 +139,7 @@ export class NetworkManager {
 
     const iceServers = await this._fetchIceServers();
     this.peer = new window.Peer(null, {
+      ...PEERJS_CONFIG,
       config: { iceServers }
     });
 
