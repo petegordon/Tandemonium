@@ -10,6 +10,15 @@ import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 
+// Timeout wrapper for permission promises that may hang on iOS stale tabs
+const PERMISSION_TIMEOUT_MS = 8000;
+function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('permission_timeout')), ms))
+  ]);
+}
+
 const BIKE_NAMES = {
   default: 'Old Faithful',
   bike_orange: 'Marmalade Express',
@@ -162,6 +171,17 @@ export class Lobby {
         this._tapOverlay.addEventListener('click', () => this._dismissTapOverlay(), { once: true });
       }
     }
+
+    // iOS stale-tab recovery: detect when tab resumes and check if
+    // permissions/media tracks have been revoked by the OS.
+    this._tabHiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        this._tabHiddenAt = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        this._onTabResume();
+      }
+    });
   }
 
   _dismissTapOverlay() {
@@ -179,6 +199,109 @@ export class Lobby {
     // Fade out and remove
     overlay.classList.add('fade-out');
     setTimeout(() => overlay.remove(), 400);
+  }
+
+  // ── iOS stale-tab recovery ──────────────────────────────────
+
+  _onTabResume() {
+    // Only check if the tab was hidden for more than 5 seconds
+    if (this._tabHiddenAt && Date.now() - this._tabHiddenAt < 5000) return;
+
+    let stale = false;
+
+    // Check if media tracks have been ended by the OS
+    if (this.net && this.net._localMediaStream) {
+      const tracks = this.net._localMediaStream.getTracks();
+      for (const track of tracks) {
+        if (track.readyState === 'ended') {
+          stale = true;
+          break;
+        }
+      }
+    }
+
+    // Check if permission grants have been revoked
+    if (!stale && navigator.permissions) {
+      const checks = [];
+      if (this._cameraPermitted) {
+        checks.push(
+          navigator.permissions.query({ name: 'camera' }).then(r => {
+            if (r.state !== 'granted') return true;
+          }).catch(() => false)
+        );
+      }
+      if (this._audioPermitted) {
+        checks.push(
+          navigator.permissions.query({ name: 'microphone' }).then(r => {
+            if (r.state !== 'granted') return true;
+          }).catch(() => false)
+        );
+      }
+      if (checks.length > 0) {
+        Promise.all(checks).then(results => {
+          if (results.some(r => r)) this._showStaleOverlay();
+        });
+        return;
+      }
+    }
+
+    // Check if motion data stopped flowing (iOS may suspend sensors)
+    if (this.motionActive && this.input && this.input.motionEnabled) {
+      const hadMotion = this.input.motionEnabled;
+      // Wait briefly to see if motion events resume
+      setTimeout(() => {
+        // If rawGamma hasn't changed, sensors may be suspended
+        const before = this.input.rawGamma;
+        setTimeout(() => {
+          if (hadMotion && this.input.rawGamma === before && this.motionActive) {
+            // Sensors might be stale — don't show overlay for motion alone,
+            // but reset the motion permission so re-tapping will re-request
+            this._motionPermitted = false;
+            this.motionActive = false;
+            this.input.motionEnabled = false;
+            this._setToggleActive('motion', false);
+          }
+        }, 500);
+      }, 200);
+    }
+
+    if (stale) this._showStaleOverlay();
+  }
+
+  _showStaleOverlay() {
+    // Prevent duplicate overlays
+    if (document.getElementById('tap-to-start')) return;
+
+    // Reset permission state — grants are no longer valid
+    this._cameraPermitted = false;
+    this._audioPermitted = false;
+    this.cameraActive = false;
+    this.audioActive = false;
+    this._setToggleActive('camera', false);
+    this._setToggleActive('audio', false);
+
+    // Stop dead tracks
+    if (this.net && this.net._localMediaStream) {
+      this.net._localMediaStream.getTracks().forEach(t => t.stop());
+    }
+
+    // Create the overlay (reuses tap-to-start styling)
+    const overlay = document.createElement('div');
+    overlay.id = 'tap-to-start';
+    overlay.innerHTML = `<div class="tap-to-start-content">
+      <p>Permissions expired</p>
+      <p style="font-size:16px;opacity:0.6;margin-top:8px;">Tap to retry</p>
+    </div>`;
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener('click', () => {
+      // Re-request all permissions (user gesture required on iOS)
+      this._permissionsChecked = false;
+      this._toggleAll();
+      // Fade out
+      overlay.classList.add('fade-out');
+      setTimeout(() => overlay.remove(), 400);
+    }, { once: true });
   }
 
   show() {
@@ -461,7 +584,7 @@ export class Lobby {
       const constraints = {};
       if (needCam) constraints.video = true;
       if (needMic) constraints.audio = true;
-      navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+      withTimeout(navigator.mediaDevices.getUserMedia(constraints)).then(stream => {
         stream.getTracks().forEach(t => t.stop());
         if (needCam) {
           this._cameraPermitted = true;
@@ -478,7 +601,11 @@ export class Lobby {
         if (!needMic && !this.audioActive)  this._toggleAudio();
         if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
         if (!this.musicActive) this._toggleMusic();
-      }).catch(() => {
+      }).catch((err) => {
+        if (err && err.message === 'permission_timeout') {
+          this._showStaleOverlay();
+          return;
+        }
         // Even if cam+mic fails, still try the ones that are already permitted
         if (!this.cameraActive && this._cameraPermitted) this._toggleCamera();
         if (!this.audioActive  && this._audioPermitted)  this._toggleAudio();
@@ -537,7 +664,7 @@ export class Lobby {
       }
       return;
     }
-    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+    withTimeout(navigator.mediaDevices.getUserMedia({ video: true })).then(stream => {
       stream.getTracks().forEach(t => t.stop());
       this._cameraPermitted = true;
       this.cameraActive = true;
@@ -548,7 +675,9 @@ export class Lobby {
       } else {
         this._applyVideoTrackState(true);
       }
-    }).catch(() => {});
+    }).catch((err) => {
+      if (err && err.message === 'permission_timeout') this._showStaleOverlay();
+    });
   }
 
   async _acquireAndShowCamera() {
@@ -635,13 +764,15 @@ export class Lobby {
       this._applyAudioTrackState(true);
       return;
     }
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    withTimeout(navigator.mediaDevices.getUserMedia({ audio: true })).then(stream => {
       stream.getTracks().forEach(t => t.stop());
       this._audioPermitted = true;
       this.audioActive = true;
       this._setToggleActive('audio', true);
       this._applyAudioTrackState(true);
-    }).catch(() => {});
+    }).catch((err) => {
+      if (err && err.message === 'permission_timeout') this._showStaleOverlay();
+    });
   }
 
   _setToggleActive(name, active) {
