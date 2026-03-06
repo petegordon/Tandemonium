@@ -32,6 +32,17 @@ const BIKE_NAMES = {
   bike_birthday: 'Birthday Express',
 };
 
+// Map bike preset keys to their per-bike Grandma's House achievement IDs
+const BIKE_ACHIEVEMENT_MAP = {
+  default: 'grandma_default',
+  bike_red: 'grandma_red',
+  bike_blue: 'grandma_blue',
+  bike_green: 'grandma_green',
+  bike_yellow: 'grandma_yellow',
+  bike_orange: 'grandma_orange',
+  bike_magenta: 'grandma_magenta',
+};
+
 const HOLIDAY_BIKES = {
   bike_christmas: {
     requires: ['bike_green', 'bike_red'],
@@ -46,27 +57,6 @@ const HOLIDAY_BIKES = {
     hint: 'Win with Cherry Bomb, Ocean Breeze, Banana Delivery, Jungle Cruiser & Grandma\'s Classic',
   },
 };
-
-function _getColorWins() {
-  try {
-    return JSON.parse(localStorage.getItem('tandemonium_color_wins') || '[]');
-  } catch { return []; }
-}
-
-function _addColorWin(presetKey) {
-  const wins = _getColorWins();
-  if (!wins.includes(presetKey)) {
-    wins.push(presetKey);
-    localStorage.setItem('tandemonium_color_wins', JSON.stringify(wins));
-  }
-}
-
-function _isHolidayUnlocked(bikeKey) {
-  const def = HOLIDAY_BIKES[bikeKey];
-  if (!def) return true;
-  const wins = _getColorWins();
-  return def.requires.every(k => wins.includes(k));
-}
 
 export class Lobby {
   constructor({ onSolo, onMultiplayerReady, input }) {
@@ -2247,7 +2237,7 @@ export class Lobby {
   _applyPresetToPreview() {
     const key = this._presetKeys[this._presetIndex];
     const nameEl = document.getElementById('bike-name');
-    const locked = HOLIDAY_BIKES[key] && !_isHolidayUnlocked(key);
+    const locked = HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key);
 
     // Reset all materials to originals
     if (this._previewModel && this._previewOriginalMats) {
@@ -2351,7 +2341,18 @@ export class Lobby {
     }
   }
 
-  recordColorWin(presetKey) {
-    _addColorWin(presetKey);
+  _isHolidayUnlocked(bikeKey) {
+    const def = HOLIDAY_BIKES[bikeKey];
+    if (!def) return true;
+    // Read earned achievement IDs from localStorage (same store as AchievementManager)
+    let earnedIds = [];
+    try {
+      const raw = localStorage.getItem('tandemonium_achievements');
+      if (raw) earnedIds = JSON.parse(raw).map(a => a.id);
+    } catch { /* empty */ }
+    return def.requires.every(k => {
+      const achId = BIKE_ACHIEVEMENT_MAP[k];
+      return achId && earnedIds.includes(achId);
+    });
   }
 }

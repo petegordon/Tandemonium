@@ -1119,9 +1119,6 @@ class Game {
     const overlay = document.getElementById('victory-overlay');
     overlay.style.display = 'flex';
 
-    // Record bike color win for holiday unlocks
-    this.lobby.recordColorWin(this.lobby.selectedPresetKey);
-
     const level = this.lobby.selectedLevel;
     // Victory title includes role in multiplayer
     const victoryTitle = document.getElementById('victory-title');
