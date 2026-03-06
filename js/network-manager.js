@@ -39,7 +39,8 @@ export class NetworkManager {
     this._localMediaStream = null;
     this._heartbeatInterval = null;
     this._reconnectAttempts = 0;
-    this._maxReconnectAttempts = 5;
+    this._fastReconnectAttempts = 5;   // phase 1: exponential backoff (1s,2s,4s,8s,16s)
+    this._maxReconnectAttempts = 25;   // phase 2: 20 more at fixed 16s intervals
     this._relayWs = null;
     this._fallbackUrl = null;
     this._relayToken = null;
@@ -366,7 +367,9 @@ export class NetworkManager {
     if (this._reconnectAttempts < this._maxReconnectAttempts) {
       this._reconnectAttempts++;
       if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
-      const delay = Math.pow(2, this._reconnectAttempts - 1) * 1000;
+      const delay = this._reconnectAttempts <= this._fastReconnectAttempts
+        ? Math.pow(2, this._reconnectAttempts - 1) * 1000  // phase 1: exponential backoff
+        : 16000;                                            // phase 2: fixed 16s intervals
       setTimeout(() => {
         if (!this.connected) this._attemptReconnect();
       }, delay);
