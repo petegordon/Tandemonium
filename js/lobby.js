@@ -2285,7 +2285,23 @@ export class Lobby {
         hintEl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.5);margin-top:2px;text-align:center;';
         nameEl.parentNode.insertBefore(hintEl, nameEl.nextSibling);
       }
-      hintEl.textContent = HOLIDAY_BIKES[key].hint;
+      // Show per-bike progress: ✓ won / ✗ not yet
+      let earnedIds = [];
+      try {
+        const raw = localStorage.getItem('tandemonium_achievements');
+        if (raw) earnedIds = JSON.parse(raw).map(a => a.id);
+      } catch { /* empty */ }
+      const lines = HOLIDAY_BIKES[key].requires.map(k => {
+        const achId = BIKE_ACHIEVEMENT_MAP[k];
+        const done = achId && earnedIds.includes(achId);
+        const name = BIKE_NAMES[k] || k;
+        return done ? `✓ ${name}` : `✗ ${name}`;
+      });
+      hintEl.innerHTML = lines.map(l =>
+        l.startsWith('✓')
+          ? `<span style="color:rgba(100,255,100,0.7)">${l}</span>`
+          : `<span style="color:rgba(255,255,255,0.4)">${l}</span>`
+      ).join('<br>');
       hintEl.style.display = '';
 
       // Grey out the preview model
@@ -2301,11 +2317,19 @@ export class Lobby {
       return;
     }
 
-    // Hide hint if showing
     const hintEl = document.getElementById('bike-hint');
-    if (hintEl) hintEl.style.display = 'none';
-
-    nameEl.textContent = BIKE_NAMES[key] || key;
+    if (HOLIDAY_BIKES[key]) {
+      // Unlocked holiday bike — show how it was earned
+      nameEl.textContent = '🏆 ' + (BIKE_NAMES[key] || key);
+      if (hintEl) {
+        const wonWith = HOLIDAY_BIKES[key].requires.map(k => BIKE_NAMES[k] || k).join(', ');
+        hintEl.innerHTML = `<span style="color:rgba(100,255,100,0.7)">Won with ${wonWith}</span>`;
+        hintEl.style.display = '';
+      }
+    } else {
+      if (hintEl) hintEl.style.display = 'none';
+      nameEl.textContent = BIKE_NAMES[key] || key;
+    }
 
     if (key === 'default') {
       this.selectedPreset = null;

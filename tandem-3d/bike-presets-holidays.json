@@ -1,84 +1,4 @@
 {
-  "bike_birthday": {
-    "Cylinder006_cycle_0": {
-      "color": "#66ff00",
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "Cylinder009_cycle_0": {
-      "color": "#66ff00",
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "Cylinder_cycle_0": {
-      "color": "#eeff00",
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "Cylinder002_cycle_0": {
-      "roughness": 0.6,
-      "opacity": 0.6
-    },
-    "NurbsPath_cycle_0": {
-      "color": "#fbff00",
-      "emissive": "#fbff00",
-      "metalness": 0.6,
-      "roughness": 0.6,
-      "opacity": 0.6
-    },
-    "NurbsPath009_cycle_0": {
-      "color": "#fbff00",
-      "emissive": "#eeff00",
-      "metalness": 0.6,
-      "roughness": 0.6,
-      "opacity": 0.6
-    },
-    "seat_cycle_0": {
-      "color": "#ff00d0",
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "seat001_cycle_0": {
-      "color": "#0091ff",
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "Cube002_cycle_0": {
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "NurbsPath002_cycle_0": {
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "NurbsPath003_cycle_0": {
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "NurbsPath006_cycle_0": {
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "Cylinder001_cycle_0": {
-      "disabledTextures": [
-        "map"
-      ]
-    },
-    "Cylinder011_cycle_0": {
-      "disabledTextures": [
-        "map"
-      ]
-    }
-  },
   "bike_newyears": {
     "Cylinder006_cycle_0": {
       "disabledTextures": [
@@ -237,6 +157,86 @@
     },
     "Cylinder011_cycle_0": {
       "color": "#2eff46",
+      "disabledTextures": [
+        "map"
+      ]
+    }
+  },
+  "bike_birthday": {
+    "Cylinder006_cycle_0": {
+      "color": "#66ff00",
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder009_cycle_0": {
+      "color": "#66ff00",
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder_cycle_0": {
+      "color": "#eeff00",
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder002_cycle_0": {
+      "roughness": 0.6,
+      "opacity": 0.6
+    },
+    "NurbsPath_cycle_0": {
+      "color": "#fbff00",
+      "emissive": "#fbff00",
+      "metalness": 0.6,
+      "roughness": 0.6,
+      "opacity": 0.6
+    },
+    "NurbsPath009_cycle_0": {
+      "color": "#fbff00",
+      "emissive": "#eeff00",
+      "metalness": 0.6,
+      "roughness": 0.6,
+      "opacity": 0.6
+    },
+    "seat_cycle_0": {
+      "color": "#ff00d0",
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "seat001_cycle_0": {
+      "color": "#0091ff",
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cube002_cycle_0": {
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath002_cycle_0": {
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath003_cycle_0": {
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath006_cycle_0": {
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder001_cycle_0": {
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder011_cycle_0": {
       "disabledTextures": [
         "map"
       ]
