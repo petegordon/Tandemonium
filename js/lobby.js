@@ -2118,17 +2118,21 @@ export class Lobby {
   async _initBikeCarousel() {
     // Load presets
     try {
-      const [resp, holidayResp] = await Promise.all([
-        fetch('tandem-3d/bike-presets.json'),
-        fetch('tandem-3d/bike-presets-holidays.json'),
-      ]);
+      const resp = await fetch('tandem-3d/bike-presets.json');
       this._presetData = await resp.json();
-      const holidayData = await holidayResp.json();
-      Object.assign(this._presetData, holidayData);
-      this._presetKeys = ['default', ...Object.keys(this._presetData)];
     } catch (e) {
       console.warn('Failed to load bike presets:', e);
     }
+    try {
+      const holidayResp = await fetch('tandem-3d/bike-presets-holidays.json');
+      if (holidayResp.ok) {
+        const holidayData = await holidayResp.json();
+        Object.assign(this._presetData, holidayData);
+      }
+    } catch (e) {
+      console.warn('Failed to load holiday bike presets:', e);
+    }
+    this._presetKeys = ['default', ...Object.keys(this._presetData)];
 
     // Setup mini 3D preview
     const canvas = document.getElementById('bike-preview-canvas');
