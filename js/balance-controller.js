@@ -15,10 +15,13 @@ export class BalanceController {
     const motion = this.input.getMotionLean();
     if (motion !== 0) {
       leanInput += motion;
-      if (this.input.gyroConnected) {
-        this.steerFrames['gamepad-gyro']++;
-      } else {
-        this.steerFrames.motion++;
+      // Only count as intentional input above noise floor (avoids laptop sensor drift)
+      if (Math.abs(motion) > 0.01) {
+        if (this.input.gyroConnected) {
+          this.steerFrames['gamepad-gyro']++;
+        } else {
+          this.steerFrames.motion++;
+        }
       }
     }
     const gpLean = this.input.getGamepadLean();

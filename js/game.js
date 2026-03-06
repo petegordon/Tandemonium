@@ -1116,6 +1116,13 @@ class Game {
     overlay.style.display = 'flex';
 
     const level = this.lobby.selectedLevel;
+    // Victory title includes role in multiplayer
+    const victoryTitle = document.getElementById('victory-title');
+    if (this.mode === 'captain' || this.mode === 'stoker') {
+      victoryTitle.textContent = 'YOU MADE IT ' + this.mode.toUpperCase() + '!';
+    } else {
+      victoryTitle.textContent = 'YOU MADE IT!';
+    }
     document.getElementById('victory-destination').textContent =
       level.icon + ' ' + level.name;
 
