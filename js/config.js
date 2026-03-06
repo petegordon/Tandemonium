@@ -22,6 +22,7 @@ export const EVT_RESET     = 0x04;
 export const EVT_GAMEOVER    = 0x05;
 export const EVT_CHECKPOINT  = 0x06;
 export const EVT_FINISH      = 0x07;
+export const EVT_RETURN_ROOM = 0x08;
 
 export const MSG_COLLECT     = 0x06;
 export const MSG_PROFILE     = 0x07;
