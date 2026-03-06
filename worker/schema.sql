@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS scores (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scores_level_dist ON scores(level_id, distance DESC);
+CREATE INDEX IF NOT EXISTS idx_scores_level_time ON scores(level_id, time_ms ASC);
 CREATE INDEX IF NOT EXISTS idx_scores_user ON scores(user_id);
 
 CREATE TABLE IF NOT EXISTS score_contributions (
