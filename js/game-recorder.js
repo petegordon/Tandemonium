@@ -182,6 +182,7 @@ export class GameRecorder {
     this._wcFrameIndex = 0;
     this._wcLastFrameTime = 0;
     this._wcFeedErrors = 0;
+    this._wcLastDecoderConfig = null; // always keep latest decoderConfig for assembly
 
     _dbg(`startEncoder w=${w} h=${h}`);
 
@@ -212,10 +213,9 @@ export class GameRecorder {
           const buf = new ArrayBuffer(chunk.byteLength);
           chunk.copyTo(buf);
           // Deep-copy decoderConfig so it outlives the callback
-          let metaCopy;
           if (meta && meta.decoderConfig) {
             const dc = meta.decoderConfig;
-            metaCopy = { decoderConfig: {
+            this._wcLastDecoderConfig = { decoderConfig: {
               codec: dc.codec,
               codedWidth: dc.codedWidth,
               codedHeight: dc.codedHeight,
@@ -235,8 +235,7 @@ export class GameRecorder {
             type: chunk.type,
             timestamp: chunk.timestamp,
             duration: chunk.duration,
-            wallTime: performance.now(),
-            meta: metaCopy
+            wallTime: performance.now()
           });
           if (this._wcEncodedChunks.length === 1) _dbg('first chunk received!');
           // Prune chunks older than bufferDuration
@@ -286,6 +285,10 @@ export class GameRecorder {
 
   async _assembleWebCodecsClip() {
     if (!this._wcEncodedChunks.length) return;
+    if (!this._wcLastDecoderConfig) {
+      _dbg('assemble BAIL: no decoderConfig ever received');
+      return;
+    }
     const mp4 = await this._loadMp4Muxer();
     if (!mp4) return;
 
@@ -299,9 +302,10 @@ export class GameRecorder {
       fastStart: 'in-memory'
     });
 
-    // Re-timestamp chunks starting from 0
+    // Re-timestamp chunks starting from 0; always pass decoderConfig on first chunk
     const chunks = this._wcEncodedChunks;
     const baseTimestamp = chunks[0].timestamp;
+    let first = true;
 
     for (const c of chunks) {
       const chunk = new EncodedVideoChunk({
@@ -310,7 +314,8 @@ export class GameRecorder {
         duration: c.duration || Math.round(1_000_000 / this._wcTargetFps),
         data: c.data
       });
-      muxer.addVideoChunk(chunk, c.meta);
+      muxer.addVideoChunk(chunk, first ? this._wcLastDecoderConfig : undefined);
+      first = false;
     }
 
     muxer.finalize();
@@ -1429,6 +1434,11 @@ export class GameRecorder {
     if (this._useWebCodecs) {
       if (!this._wcEncoder) { _dbg('BAIL: no encoder'); return; }
       this._saving = true;
+      // Show saving indicator on the share button
+      if (this.shareBtn) {
+        this.shareBtn.textContent = '\u23F3'; // ⏳
+        this.shareBtn.style.background = 'rgba(255,165,0,0.6)';
+      }
       _dbg('saveClip: waiting 2s then assemble...');
       // Continue capturing for ~2s then assemble
       setTimeout(async () => {
@@ -1443,6 +1453,11 @@ export class GameRecorder {
           _dbg('assemble FAIL: ' + e.message);
         }
         this._saving = false;
+        // Restore share button
+        if (this.shareBtn) {
+          this.shareBtn.textContent = '\uD83C\uDFAC'; // 🎬
+          this.shareBtn.style.background = 'rgba(0,0,0,0.4)';
+        }
       }, 2000);
       return;
     }
