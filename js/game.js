@@ -1318,7 +1318,12 @@ class Game {
 
     try {
       await auth.submitScore(data);
-      await auth.syncAchievements(this.achievements.getEarnedIds());
+      const syncResult = await auth.syncAchievements(this.achievements.getEarnedIds());
+      if (syncResult && syncResult.achievements) {
+        this.achievements.mergeFromServer(
+          syncResult.achievements.map(a => ({ id: a.achievement_id, earnedAt: a.earned_at }))
+        );
+      }
     } catch (e) {}
   }
 
