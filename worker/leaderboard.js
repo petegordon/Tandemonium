@@ -48,28 +48,12 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const { credential } = body;
   if (!credential) return jsonResponse({ error: 'Missing credential' }, 400, corsOrigin);
 
-  // Decode and verify the Google ID token (GSI JWT)
-  const parts = credential.split('.');
-  if (parts.length !== 3) return jsonResponse({ error: 'Invalid token format' }, 400, corsOrigin);
-
+  // Cryptographically verify the Google ID token (RS256 JWT)
   let payload;
   try {
-    payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-  } catch {
-    return jsonResponse({ error: 'Invalid token payload' }, 400, corsOrigin);
-  }
-
-  // Verify issuer and audience
-  const validIssuers = ['accounts.google.com', 'https://accounts.google.com'];
-  if (!validIssuers.includes(payload.iss)) {
-    return jsonResponse({ error: 'Invalid token issuer' }, 401, corsOrigin);
-  }
-  if (payload.aud !== env.GOOGLE_CLIENT_ID) {
-    return jsonResponse({ error: 'Invalid token audience' }, 401, corsOrigin);
-  }
-  // Verify expiration
-  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
-    return jsonResponse({ error: 'Token expired' }, 401, corsOrigin);
+    payload = await verifyGoogleIdToken(credential, env.GOOGLE_CLIENT_ID);
+  } catch (e) {
+    return jsonResponse({ error: e.message }, 401, corsOrigin);
   }
 
   const googleId = payload.sub;
@@ -382,6 +366,82 @@ async function handlePartners(request, env, corsOrigin, userId) {
   ).bind(userId, userId).all();
 
   return jsonResponse({ partners: results.results }, 200, corsOrigin);
+}
+
+// ============================================================
+// GOOGLE ID TOKEN VERIFICATION
+// ============================================================
+
+const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+let cachedJWKS = null;
+let cachedJWKSExpiry = 0;
+
+async function fetchGoogleJWKS() {
+  const now = Date.now();
+  if (cachedJWKS && now < cachedJWKSExpiry) return cachedJWKS;
+
+  const res = await fetch(GOOGLE_JWKS_URL, {
+    cf: { cacheEverything: true, cacheTtl: 21600 }
+  });
+  if (!res.ok) throw new Error('Failed to fetch Google JWKS');
+
+  const jwks = await res.json();
+  cachedJWKS = jwks;
+  cachedJWKSExpiry = now + 6 * 60 * 60 * 1000; // 6 hours
+  return jwks;
+}
+
+function base64UrlDecode(str) {
+  const padded = str.replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(padded);
+  return Uint8Array.from(binary, c => c.charCodeAt(0));
+}
+
+async function verifyGoogleIdToken(token, expectedAud) {
+  const parts = token.split('.');
+  if (parts.length !== 3) throw new Error('Invalid token format');
+
+  // Decode header to get kid
+  let header;
+  try {
+    header = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[0])));
+  } catch {
+    throw new Error('Invalid token header');
+  }
+
+  if (header.alg !== 'RS256') throw new Error('Unsupported algorithm');
+
+  // Fetch JWKS and find matching key
+  const jwks = await fetchGoogleJWKS();
+  const jwk = jwks.keys.find(k => k.kid === header.kid);
+  if (!jwk) throw new Error('Unknown signing key');
+
+  // Import public key and verify signature
+  const key = await crypto.subtle.importKey(
+    'jwk', jwk,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false, ['verify']
+  );
+
+  const signature = base64UrlDecode(parts[2]);
+  const signedData = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+  const valid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, signedData);
+  if (!valid) throw new Error('Invalid token signature');
+
+  // Decode and validate claims
+  let payload;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])));
+  } catch {
+    throw new Error('Invalid token payload');
+  }
+
+  const validIssuers = ['accounts.google.com', 'https://accounts.google.com'];
+  if (!validIssuers.includes(payload.iss)) throw new Error('Invalid token issuer');
+  if (payload.aud !== expectedAud) throw new Error('Invalid token audience');
+  if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) throw new Error('Token expired');
+
+  return payload;
 }
 
 // ============================================================
