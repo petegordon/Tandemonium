@@ -17,10 +17,8 @@ export class GameRecorder {
     this.recorder = null;
     this._stream = null;
     this._mimeType = '';
-    this._pendingBlob = null;  // blob building in current recorder cycle
-    this._lastBlob = null;     // blob from previous completed cycle (full ~20s)
-    this._cycleInterval = null;
-    this._cycleStartTime = 0;  // when current recorder cycle began
+    this._chunks = [];          // rolling buffer of { data: Blob, time: number }
+    this._recordStartTime = 0;
     this._saving = false;      // true while save-clip delay is pending
     this.buffering = false;
     this.bufferDuration = 20; // seconds
@@ -233,10 +231,9 @@ export class GameRecorder {
   }
 
   // ── Rolling buffer ──
-  // Strategy: run MediaRecorder with NO timeslice (one blob per stop).
-  // Cycle every 20s: stop → save blob as _lastBlob → start fresh recorder.
-  // Each blob is a complete, self-contained video file with proper headers.
-  // On save: wait 2s for post-click footage, then pick the better blob.
+  // Strategy: single continuous MediaRecorder with 1s timeslice.
+  // Chunks accumulate in _chunks[]; we keep only the last bufferDuration
+  // seconds worth. On save: stop recorder, assemble kept chunks into one blob.
 
   startBuffer(audioCtx, micEnabled = false) {
     if (!this.supported || this.buffering) return;
@@ -256,15 +253,12 @@ export class GameRecorder {
       }
     }
 
-    this._pendingBlob = null;
-    this._lastBlob = null;
+    this._chunks = [];        // { data: Blob, time: number }[]
+    this._recordStartTime = performance.now();
     this._saving = false;
     this.buffering = true;
 
     this._startRecorder();
-
-    // Cycle the recorder every bufferDuration seconds
-    this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
 
     // Show share button
     if (this.shareBtn) this.shareBtn.style.display = 'block';
@@ -301,40 +295,28 @@ export class GameRecorder {
 
     this.recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) {
-        this._pendingBlob = e.data;
+        this._chunks.push({ data: e.data, time: performance.now() });
+        // Prune chunks older than bufferDuration
+        const cutoff = performance.now() - this.bufferDuration * 1000;
+        while (this._chunks.length > 1 && this._chunks[0].time < cutoff) {
+          this._chunks.shift();
+        }
       }
     };
 
-    this.recorder.start(); // No timeslice — one complete blob per stop()
-    this._cycleStartTime = performance.now();
-  }
-
-  _cycleRecorder() {
-    if (!this.recorder || this.recorder.state !== 'recording') return;
-
-    this.recorder.addEventListener('stop', () => {
-      // Previous cycle's blob becomes the serveable clip
-      this._lastBlob = this._pendingBlob;
-      this._pendingBlob = null;
-      this._startRecorder();
-    }, { once: true });
-
-    this.recorder.stop();
+    // 1-second timeslice: each chunk fires ondataavailable every ~1s
+    this.recorder.start(1000);
+    this._recordStartTime = performance.now();
   }
 
   stopBuffer() {
-    if (this._cycleInterval) {
-      clearInterval(this._cycleInterval);
-      this._cycleInterval = null;
-    }
     if (this.recorder && this.recorder.state !== 'inactive') {
       try { this.recorder.stop(); } catch (e) {}
     }
     this.recorder = null;
     this._stream = null;
     this.buffering = false;
-    this._pendingBlob = null;
-    this._lastBlob = null;
+    this._chunks = [];
     this._saving = false;
 
     // Stop mic stream (AudioContext is owned by game.js, don't close it)
@@ -1186,66 +1168,42 @@ export class GameRecorder {
 
     this._saving = true;
 
-    // Pause cycling to prevent interference during save
-    if (this._cycleInterval) {
-      clearInterval(this._cycleInterval);
-      this._cycleInterval = null;
-    }
-
     // Continue recording for ~2 seconds after the click so the clip
-    // includes a moment after the button was pressed.
+    // includes a moment after the button was pressed, then stop and assemble.
     setTimeout(() => {
       if (!this.recorder || this.recorder.state !== 'recording') {
-        // Recorder was stopped externally — use last completed cycle
         this._saving = false;
-        const blob = this._lastBlob;
-        if (blob) {
-          this._clipBlob = blob;
-          this._clipUrl = URL.createObjectURL(blob);
-          this._showPreview();
-        }
-        this._startRecorder();
-        this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
+        this._assembleClip();
         return;
       }
 
       this.recorder.addEventListener('stop', () => {
         this._saving = false;
-
-        // Smart selection: use current segment if it's long enough (>=12s),
-        // otherwise use the previous full cycle (~20s).
-        const cycleAge = performance.now() - this._cycleStartTime;
-        const blob = (cycleAge >= 12000 && this._pendingBlob)
-          ? this._pendingBlob
-          : (this._lastBlob || this._pendingBlob);
-
-        if (blob) {
-          this._clipBlob = blob;
-          this._clipUrl = URL.createObjectURL(blob);
-          this._showPreview();
-        }
-
-        // Restart recording
-        this._pendingBlob = null;
+        this._assembleClip();
+        // Restart recording for future clips
+        this._chunks = [];
         this._startRecorder();
-        this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
       }, { once: true });
 
       try {
         this.recorder.stop();
       } catch (e) {
         this._saving = false;
-        const blob = this._lastBlob;
-        if (blob) {
-          this._clipBlob = blob;
-          this._clipUrl = URL.createObjectURL(blob);
-          this._showPreview();
-        }
-        this._pendingBlob = null;
+        this._assembleClip();
+        this._chunks = [];
         this._startRecorder();
-        this._cycleInterval = setInterval(() => this._cycleRecorder(), this.bufferDuration * 1000);
       }
     }, 2000);
+  }
+
+  _assembleClip() {
+    if (!this._chunks || this._chunks.length === 0) return;
+    const blob = new Blob(this._chunks.map(c => c.data), { type: this._mimeType });
+    if (blob.size > 0) {
+      this._clipBlob = blob;
+      this._clipUrl = URL.createObjectURL(blob);
+      this._showPreview();
+    }
   }
 
   _showPreview() {
