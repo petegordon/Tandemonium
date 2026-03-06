@@ -35,7 +35,7 @@ export class GameRecorder {
     // Determine recording strategy
     this._useWebCodecs = _isIOS && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
     this.supported = this._useWebCodecs ? true : this._checkSupport();
-    _dbg(`iOS=${_isIOS} VE=${typeof VideoEncoder} VF=${typeof VideoFrame} useWC=${this._useWebCodecs} sup=${this.supported}`);
+    _dbg(`v7 iOS=${_isIOS} VE=${typeof VideoEncoder} VF=${typeof VideoFrame} useWC=${this._useWebCodecs} sup=${this.supported}`);
 
     // Compositing canvas (offscreen, same size as game canvas)
     this.compCanvas = document.createElement('canvas');
@@ -215,20 +215,22 @@ export class GameRecorder {
           // Deep-copy decoderConfig so it outlives the callback
           if (meta && meta.decoderConfig) {
             const dc = meta.decoderConfig;
+            // Safari's VideoColorSpace has getter-only props; extract manually
+            const cs = dc.colorSpace || {};
+            const descBuf = dc.description ? new Uint8Array(dc.description).slice().buffer : undefined;
             this._wcLastDecoderConfig = { decoderConfig: {
               codec: dc.codec,
-              codedWidth: dc.codedWidth,
-              codedHeight: dc.codedHeight,
-              displayAspectWidth: dc.displayAspectWidth,
-              displayAspectHeight: dc.displayAspectHeight,
-              colorSpace: dc.colorSpace ? {
-                fullRange: dc.colorSpace.fullRange,
-                matrix: dc.colorSpace.matrix,
-                primaries: dc.colorSpace.primaries,
-                transfer: dc.colorSpace.transfer
-              } : undefined,
-              description: dc.description ? new Uint8Array(dc.description).slice().buffer : undefined
+              codedWidth: dc.codedWidth || w,
+              codedHeight: dc.codedHeight || h,
+              colorSpace: {
+                fullRange: cs.fullRange || false,
+                matrix: cs.matrix || undefined,
+                primaries: cs.primaries || undefined,
+                transfer: cs.transfer || undefined
+              },
+              description: descBuf
             }};
+            _dbg('decoderConfig saved: ' + this._wcLastDecoderConfig.decoderConfig.codec);
           }
           this._wcEncodedChunks.push({
             data: buf,
