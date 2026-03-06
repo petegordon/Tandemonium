@@ -4,6 +4,18 @@
 
 const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
 
+// Prime vibration API on first user tap (Android Chrome requires user activation)
+let _primed = false;
+function _prime() {
+  if (_primed) return;
+  _primed = true;
+  if (canVibrate) navigator.vibrate(1); // silent 1ms vibration to unlock API
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('touchstart', _prime, { once: true });
+  document.addEventListener('click', _prime, { once: true });
+}
+
 let _offRoadThrottleUntil = 0;
 
 function _gamepadRumble(strong, weak, duration) {
@@ -23,13 +35,13 @@ function _gamepadRumble(strong, weak, duration) {
 }
 
 export function hapticCrash() {
-  if (canVibrate) navigator.vibrate(200);
-  _gamepadRumble(0.8, 0.4, 200);
+  if (canVibrate) navigator.vibrate([100, 30, 200]);
+  _gamepadRumble(0.8, 0.4, 300);
 }
 
 export function hapticTreeHit() {
-  if (canVibrate) navigator.vibrate(100);
-  _gamepadRumble(1.0, 0.5, 100);
+  if (canVibrate) navigator.vibrate(150);
+  _gamepadRumble(1.0, 0.5, 150);
 }
 
 export function hapticCheckpoint() {
@@ -38,8 +50,8 @@ export function hapticCheckpoint() {
 }
 
 export function hapticFinish() {
-  if (canVibrate) navigator.vibrate([50, 50, 50, 50, 100]);
-  _gamepadRumble(0.4, 0.6, 300);
+  if (canVibrate) navigator.vibrate([50, 50, 50, 50, 200]);
+  _gamepadRumble(0.4, 0.6, 400);
 }
 
 export function hapticOffRoad(intensity) {
