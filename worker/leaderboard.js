@@ -96,6 +96,37 @@ async function submitScore(request, env, corsOrigin, userId) {
     return jsonResponse({ error: 'Missing required fields' }, 400, corsOrigin);
   }
 
+  // Validate level ID
+  const VALID_LEVELS = ['grandma', 'castle'];
+  if (!VALID_LEVELS.includes(levelId)) {
+    return jsonResponse({ error: 'Invalid level' }, 400, corsOrigin);
+  }
+
+  // Validate mode
+  const VALID_MODES = ['solo', 'captain', 'stoker'];
+  if (mode && !VALID_MODES.includes(mode)) {
+    return jsonResponse({ error: 'Invalid mode' }, 400, corsOrigin);
+  }
+
+  // Plausibility checks
+  if (timeMs < 30000) {
+    return jsonResponse({ error: 'Ride too short' }, 400, corsOrigin);
+  }
+  if (distance <= 0 || distance > 50000) {
+    return jsonResponse({ error: 'Invalid distance' }, 400, corsOrigin);
+  }
+  if (distance / (timeMs / 1000) > 25) {
+    return jsonResponse({ error: 'Implausible speed' }, 400, corsOrigin);
+  }
+
+  // Reject duplicate submissions within 10 seconds
+  const recent = await env.DB.prepare(
+    'SELECT id FROM scores WHERE user_id = ? AND created_at > datetime(\'now\', \'-10 seconds\')'
+  ).bind(userId).first();
+  if (recent) {
+    return jsonResponse({ error: 'Too many submissions' }, 429, corsOrigin);
+  }
+
   // Insert score
   const scoreRes = await env.DB.prepare(
     'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source) VALUES (?, ?, ?, ?, ?, ?, ?)'
