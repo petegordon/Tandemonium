@@ -15,7 +15,7 @@ function _dbg(msg) {
   if (!el) {
     el = document.createElement('div');
     el.id = '_rec_dbg';
-    el.style.cssText = 'position:fixed;top:50px;left:10px;right:10px;z-index:9999;' +
+    el.style.cssText = 'position:fixed;top:170px;left:10px;right:10px;z-index:9999;' +
       'background:rgba(0,0,0,0.85);color:#0f0;font:11px monospace;padding:8px;' +
       'border-radius:6px;max-height:200px;overflow-y:auto;pointer-events:none;';
     document.body.appendChild(el);
@@ -211,15 +211,32 @@ export class GameRecorder {
           // Copy chunk data to ArrayBuffer so it outlives the callback
           const buf = new ArrayBuffer(chunk.byteLength);
           chunk.copyTo(buf);
+          // Deep-copy decoderConfig so it outlives the callback
+          let metaCopy;
+          if (meta && meta.decoderConfig) {
+            const dc = meta.decoderConfig;
+            metaCopy = { decoderConfig: {
+              codec: dc.codec,
+              codedWidth: dc.codedWidth,
+              codedHeight: dc.codedHeight,
+              displayAspectWidth: dc.displayAspectWidth,
+              displayAspectHeight: dc.displayAspectHeight,
+              colorSpace: dc.colorSpace ? {
+                fullRange: dc.colorSpace.fullRange,
+                matrix: dc.colorSpace.matrix,
+                primaries: dc.colorSpace.primaries,
+                transfer: dc.colorSpace.transfer
+              } : undefined,
+              description: dc.description ? new Uint8Array(dc.description).slice().buffer : undefined
+            }};
+          }
           this._wcEncodedChunks.push({
             data: buf,
             type: chunk.type,
             timestamp: chunk.timestamp,
             duration: chunk.duration,
             wallTime: performance.now(),
-            meta: meta && meta.decoderConfig && meta.decoderConfig.description ? {
-              decoderConfig: { description: new Uint8Array(meta.decoderConfig.description).slice().buffer }
-            } : undefined
+            meta: metaCopy
           });
           if (this._wcEncodedChunks.length === 1) _dbg('first chunk received!');
           // Prune chunks older than bufferDuration
