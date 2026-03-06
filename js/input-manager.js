@@ -527,7 +527,7 @@ export class InputManager {
     if (this._lastGyroTime > 0) {
       const dt = (now - this._lastGyroTime) / 1000.0;
       if (dt < 0.1) {
-        this._gyroRollAccum -= gz * GYRO_SCALE * dt;
+        this._gyroRollAccum += gz * GYRO_SCALE * dt;
 
         // Accelerometer-assisted drift correction
         if (!this._accelVerified) {
@@ -542,7 +542,7 @@ export class InputManager {
           }
         }
         if (this._accelVerified) {
-          const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
+          const accelRoll = -Math.atan2(rawAx, rawAy) * (180 / Math.PI);
           const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
           this._gyroRollAccum += correction;
         }
