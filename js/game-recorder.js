@@ -7,6 +7,26 @@
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+// Temporary debug toast for iOS recording diagnostics
+function _dbg(msg) {
+  console.warn('[REC]', msg);
+  if (!_isIOS) return;
+  let el = document.getElementById('_rec_dbg');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = '_rec_dbg';
+    el.style.cssText = 'position:fixed;top:50px;left:10px;right:10px;z-index:9999;' +
+      'background:rgba(0,0,0,0.85);color:#0f0;font:11px monospace;padding:8px;' +
+      'border-radius:6px;max-height:200px;overflow-y:auto;pointer-events:none;';
+    document.body.appendChild(el);
+  }
+  el.textContent += msg + '\n';
+  el.scrollTop = el.scrollHeight;
+  // Auto-hide after 30s
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.textContent = ''; }, 30000);
+}
+
 export class GameRecorder {
   constructor(gameCanvas, input) {
     this.gameCanvas = gameCanvas;
@@ -15,6 +35,7 @@ export class GameRecorder {
     // Determine recording strategy
     this._useWebCodecs = _isIOS && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
     this.supported = this._useWebCodecs ? true : this._checkSupport();
+    _dbg(`iOS=${_isIOS} VE=${typeof VideoEncoder} VF=${typeof VideoFrame} useWC=${this._useWebCodecs} sup=${this.supported}`);
 
     // Compositing canvas (offscreen, same size as game canvas)
     this.compCanvas = document.createElement('canvas');
@@ -135,12 +156,16 @@ export class GameRecorder {
     if (this._wcMp4Muxer) return this._wcMp4Muxer;
     // Try importmap first, then direct CDN URL as fallback
     try {
+      _dbg('import mp4-muxer via importmap...');
       this._wcMp4Muxer = await import('mp4-muxer');
-    } catch {
+      _dbg('mp4-muxer loaded OK: ' + Object.keys(this._wcMp4Muxer).join(','));
+    } catch (e1) {
+      _dbg('importmap failed: ' + e1.message);
       try {
         this._wcMp4Muxer = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs');
-      } catch (e) {
-        console.warn('Failed to load mp4-muxer:', e);
+        _dbg('mp4-muxer CDN loaded OK');
+      } catch (e2) {
+        _dbg('CDN failed: ' + e2.message);
         this._useWebCodecs = false;
         this.supported = this._checkSupport();
       }
@@ -157,6 +182,7 @@ export class GameRecorder {
     this._wcFrameIndex = 0;
     this._wcLastFrameTime = 0;
 
+    _dbg(`startEncoder w=${w} h=${h}`);
     try {
       this._wcEncoder = new VideoEncoder({
         output: (chunk, meta) => {
@@ -189,8 +215,9 @@ export class GameRecorder {
         bitrate: 2_500_000,
         framerate: this._wcTargetFps
       });
+      _dbg('encoder configured OK');
     } catch (e) {
-      console.warn('VideoEncoder configure failed:', e);
+      _dbg('encoder configure FAIL: ' + e.message);
       this._wcEncoder = null;
     }
   }
@@ -387,11 +414,13 @@ export class GameRecorder {
     this._saving = false;
     this.buffering = true;
 
+    _dbg(`startBuffer useWC=${this._useWebCodecs} sup=${this.supported}`);
     if (this._useWebCodecs) {
       // iOS path: WebCodecs + mp4-muxer (no audio — canvas-only)
       this._loadMp4Muxer().then(() => {
         if (this._wcMp4Muxer) {
           this._startWebCodecsEncoder();
+          _dbg('encoder=' + (this._wcEncoder ? this._wcEncoder.state : 'null'));
           if (this.shareBtn) this.shareBtn.style.display = 'block';
         } else {
           // mp4-muxer failed to load — disable recording
@@ -1345,22 +1374,26 @@ export class GameRecorder {
   // ── Save clip ──
 
   saveClip() {
-    if (!this.buffering) return;
-    if (this._saving) return; // prevent double-tap
+    _dbg(`saveClip buf=${this.buffering} saving=${this._saving} useWC=${this._useWebCodecs} enc=${this._wcEncoder ? this._wcEncoder.state : 'null'} chunks=${this._wcEncodedChunks.length} rec=${this.recorder ? this.recorder.state : 'null'}`);
+    if (!this.buffering) { _dbg('BAIL: not buffering'); return; }
+    if (this._saving) { _dbg('BAIL: already saving'); return; }
 
     // WebCodecs path (iOS)
     if (this._useWebCodecs) {
-      if (!this._wcEncoder) return;
+      if (!this._wcEncoder) { _dbg('BAIL: no encoder'); return; }
       this._saving = true;
+      _dbg('saveClip: waiting 2s then assemble...');
       // Continue capturing for ~2s then assemble
       setTimeout(async () => {
         try {
           if (this._wcEncoder && this._wcEncoder.state === 'configured') {
             await this._wcEncoder.flush();
           }
+          _dbg(`assembling ${this._wcEncodedChunks.length} chunks...`);
           await this._assembleWebCodecsClip();
+          _dbg('assemble done, clipUrl=' + (this._clipUrl ? 'YES' : 'NO'));
         } catch (e) {
-          console.warn('WebCodecs clip assembly failed:', e);
+          _dbg('assemble FAIL: ' + e.message);
         }
         this._saving = false;
       }, 2000);
