@@ -1023,7 +1023,11 @@ class Game {
       raceDistance: level.distance,
       crashes: this.raceManager ? this.raceManager.crashCount : 0,
       isMultiplayer: this.mode !== 'solo',
-      safePct: 0,
+      safePct: this.contributionTracker ? (() => {
+        const s = this.contributionTracker.getSummary();
+        if (this.mode === 'solo') return s.solo.safePct;
+        return this.mode === 'captain' ? s.captain.safePct : s.stoker.safePct;
+      })() : 0,
       syncDuration: 0,
     };
     const newlyEarned = this.achievements.check(state);
