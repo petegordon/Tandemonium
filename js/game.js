@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, MSG_PROFILE, TUNE } from './config.js';
+import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -398,6 +398,8 @@ class Game {
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
         this._showVictory(true);
+      } else if (eventType === EVT_RETURN_ROOM) {
+        this._returnToRoom();
       }
     };
 
@@ -1511,6 +1513,11 @@ class Game {
       // Fallback to full lobby return if no connection
       this._returnToLobby();
       return;
+    }
+
+    // Captain tells stoker to return to room too
+    if (this.mode === 'captain') {
+      this.net.sendEvent(EVT_RETURN_ROOM);
     }
 
     if (!this.lobby.musicActive) {
