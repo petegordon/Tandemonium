@@ -42,6 +42,7 @@ export class NetworkManager {
     this._maxReconnectAttempts = 5;
     this._relayWs = null;
     this._fallbackUrl = null;
+    this._relayToken = null;
     this._relayPartnerReady = false;
     this._p2pFallbackDelay = 60000; // 60 seconds before relay fallback
     this._reconnectTimeout = null;
@@ -453,7 +454,9 @@ export class NetworkManager {
   _connectRelay() {
     if (!this._fallbackUrl) return;
     this._relayPartnerReady = false;
-    this._relayWs = new WebSocket(this._fallbackUrl + '?room=' + this.roomCode + '&role=' + this.role);
+    let url = this._fallbackUrl + '?room=' + this.roomCode + '&role=' + this.role;
+    if (this._relayToken) url += '&token=' + encodeURIComponent(this._relayToken);
+    this._relayWs = new WebSocket(url);
 
     this._relayWs.binaryType = 'arraybuffer';
     this._relayWs.onopen = () => {

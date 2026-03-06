@@ -173,4 +173,23 @@ export class AuthManager {
     });
     return res.ok ? res.json() : { partners: [] };
   }
+
+  async getRelayToken(room, role) {
+    if (!this.token) return null;
+    try {
+      const res = await fetch(`${API_BASE}/relay-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({ room, role }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.token;
+      }
+    } catch (e) { /* relay auth unavailable — fall through */ }
+    return null;
+  }
 }
