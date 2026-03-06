@@ -22,9 +22,9 @@ function _dbg(msg) {
   }
   el.textContent += msg + '\n';
   el.scrollTop = el.scrollHeight;
-  // Auto-hide after 30s
+  // Auto-hide after 120s
   clearTimeout(el._timer);
-  el._timer = setTimeout(() => { el.textContent = ''; }, 30000);
+  el._timer = setTimeout(() => { el.textContent = ''; }, 120000);
 }
 
 export class GameRecorder {
@@ -173,7 +173,7 @@ export class GameRecorder {
     return this._wcMp4Muxer;
   }
 
-  _startWebCodecsEncoder() {
+  async _startWebCodecsEncoder() {
     const w = this.compCanvas.width;
     const h = this.compCanvas.height;
     if (w < 2 || h < 2) return;
@@ -181,8 +181,30 @@ export class GameRecorder {
     this._wcEncodedChunks = [];
     this._wcFrameIndex = 0;
     this._wcLastFrameTime = 0;
+    this._wcFeedErrors = 0;
 
     _dbg(`startEncoder w=${w} h=${h}`);
+
+    // Try multiple codec strings in order of preference
+    const codecs = ['avc1.4d0028', 'avc1.640028', 'avc1.42e028', 'avc1.4d0032', 'avc1.42001f'];
+    let chosenCodec = null;
+
+    for (const c of codecs) {
+      try {
+        const support = await VideoEncoder.isConfigSupported({
+          codec: c, width: w, height: h, bitrate: 2_500_000, framerate: this._wcTargetFps
+        });
+        if (support.supported) { chosenCodec = c; break; }
+      } catch { /* skip */ }
+    }
+
+    _dbg(`chosenCodec=${chosenCodec}`);
+    if (!chosenCodec) {
+      _dbg('NO supported codec found');
+      this._wcEncoder = null;
+      return;
+    }
+
     try {
       this._wcEncoder = new VideoEncoder({
         output: (chunk, meta) => {
@@ -199,6 +221,7 @@ export class GameRecorder {
               decoderConfig: { description: new Uint8Array(meta.decoderConfig.description).slice().buffer }
             } : undefined
           });
+          if (this._wcEncodedChunks.length === 1) _dbg('first chunk received!');
           // Prune chunks older than bufferDuration
           const cutoff = performance.now() - this.bufferDuration * 1000;
           while (this._wcEncodedChunks.length > 1 && this._wcEncodedChunks[0].wallTime < cutoff) {
@@ -208,23 +231,14 @@ export class GameRecorder {
         error: (e) => _dbg('ENCODER ERROR: ' + e.message)
       });
 
-      // Pick H.264 profile/level based on resolution
-      // Baseline L3.1 (42001f) maxes at 1280×720; use Main L4.0 (4d0028)
-      // for up to ~2Mpx, or Main L5.0 (4d0032) for larger
-      const pixels = w * h;
-      let codec = 'avc1.42001f'; // Baseline L3.1
-      if (pixels > 921_600) codec = 'avc1.4d0028'; // Main L4.0 (up to ~2Mpx)
-      if (pixels > 2_097_152) codec = 'avc1.4d0032'; // Main L5.0 (up to ~4Mpx)
-      _dbg(`codec=${codec} pixels=${pixels}`);
-
       this._wcEncoder.configure({
-        codec,
+        codec: chosenCodec,
         width: w,
         height: h,
         bitrate: 2_500_000,
         framerate: this._wcTargetFps
       });
-      _dbg('encoder configured OK');
+      _dbg('encoder configured OK state=' + this._wcEncoder.state);
     } catch (e) {
       _dbg('encoder configure FAIL: ' + e.message);
       this._wcEncoder = null;
@@ -245,9 +259,11 @@ export class GameRecorder {
       const keyFrame = this._wcFrameIndex % (this._wcTargetFps * 2) === 0; // keyframe every 2s
       this._wcEncoder.encode(frame, { keyFrame });
       frame.close();
+      if (this._wcFrameIndex === 0) _dbg('first frame encoded');
       this._wcFrameIndex++;
     } catch (e) {
-      // Frame creation can fail if canvas is zero-sized or context lost
+      this._wcFeedErrors = (this._wcFeedErrors || 0) + 1;
+      if (this._wcFeedErrors <= 3) _dbg('FEED ERR: ' + e.message);
     }
   }
 
@@ -426,11 +442,16 @@ export class GameRecorder {
     _dbg(`startBuffer useWC=${this._useWebCodecs} sup=${this.supported}`);
     if (this._useWebCodecs) {
       // iOS path: WebCodecs + mp4-muxer (no audio — canvas-only)
-      this._loadMp4Muxer().then(() => {
+      this._loadMp4Muxer().then(async () => {
         if (this._wcMp4Muxer) {
-          this._startWebCodecsEncoder();
-          _dbg('encoder=' + (this._wcEncoder ? this._wcEncoder.state : 'null'));
-          if (this.shareBtn) this.shareBtn.style.display = 'block';
+          await this._startWebCodecsEncoder();
+          _dbg('after init: encoder=' + (this._wcEncoder ? this._wcEncoder.state : 'null'));
+          if (this._wcEncoder) {
+            if (this.shareBtn) this.shareBtn.style.display = 'block';
+          } else {
+            this.buffering = false;
+            this.supported = false;
+          }
         } else {
           // mp4-muxer failed to load — disable recording
           this.buffering = false;
@@ -438,7 +459,7 @@ export class GameRecorder {
           if (this.shareBtn) this.shareBtn.style.display = 'none';
         }
       }).catch((e) => {
-        console.warn('WebCodecs init failed:', e);
+        _dbg('init chain FAIL: ' + e.message);
         this.buffering = false;
         this.supported = false;
         if (this.shareBtn) this.shareBtn.style.display = 'none';
