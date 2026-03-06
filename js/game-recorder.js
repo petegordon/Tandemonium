@@ -1391,13 +1391,15 @@ export class GameRecorder {
     ctx.closePath();
     ctx.clip();
 
-    // Draw video scaled to fill circle
+    // Draw video scaled to fill circle, shifted down 25% to center on face
+    // (phone held upright → camera captures above head; offset compensates)
     const vw = videoEl.videoWidth || size;
     const vh = videoEl.videoHeight || size;
     const scale = Math.max(size / vw, size / vh);
     const dw = vw * scale;
     const dh = vh * scale;
-    ctx.drawImage(videoEl, x - dw / 2, y - dh / 2, dw, dh);
+    const faceOffset = (dh - size) * 0.25; // shift crop downward
+    ctx.drawImage(videoEl, x - dw / 2, y - dh / 2 + faceOffset, dw, dh);
 
     ctx.restore();
 
