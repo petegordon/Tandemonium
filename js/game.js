@@ -28,7 +28,7 @@ import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRo
 class Game {
   constructor() {
     // Renderer
-    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile });
+    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
