@@ -29,6 +29,12 @@ export const MSG_PROFILE     = 0x07;
 export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';
 export const TURN_CREDENTIALS_URL = 'https://tandemonium-relay.pete-872.workers.dev/turn-credentials';
 
+// Self-hosted PeerJS signaling server (Cloud Run)
+export const PEERJS_HOST = 'peerjs-640682648249.us-central1.run.app';
+export const PEERJS_PORT = 443;
+export const PEERJS_PATH = '/';
+export const PEERJS_SECURE = true;
+
 // Balance physics defaults — single source of truth
 export const BALANCE_DEFAULTS = {
   // Mobile tilt (DeviceOrientation / DeviceMotion)
