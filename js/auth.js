@@ -158,6 +158,14 @@ export class AuthManager {
     return res.ok ? res.json() : { entries: [] };
   }
 
+  async getMe() {
+    if (!this.token) return null;
+    const res = await fetch(`${API_BASE}/me`, {
+      headers: { 'Authorization': `Bearer ${this.token}` },
+    });
+    return res.ok ? res.json() : null;
+  }
+
   async getPartners() {
     if (!this.token) return { partners: [] };
     const res = await fetch(`${API_BASE}/partners`, {

@@ -540,9 +540,20 @@ export class Lobby {
       }
     };
 
-    this.auth.onLogin((user) => {
+    this.auth.onLogin(async (user) => {
       updateUI(user);
       this.profilePopup.classList.remove('visible');
+      // Fetch server-side achievements (D1 is source of truth for logged-in users)
+      try {
+        const me = await this.auth.getMe();
+        if (me && me.achievements) {
+          this._achievements.mergeFromServer(
+            me.achievements.map(a => ({ id: a.achievement_id, earnedAt: a.earned_at }))
+          );
+        }
+      } catch (e) {
+        console.warn('Failed to fetch server achievements on login', e);
+      }
     });
 
     // Logout
@@ -580,6 +591,14 @@ export class Lobby {
     // Restore UI if already logged in from localStorage
     if (this.auth.isLoggedIn()) {
       updateUI(this.auth.getUser());
+      // Sync achievements from D1 for returning users
+      this.auth.getMe().then(me => {
+        if (me && me.achievements) {
+          this._achievements.mergeFromServer(
+            me.achievements.map(a => ({ id: a.achievement_id, earnedAt: a.earned_at }))
+          );
+        }
+      }).catch(() => {});
     }
   }
 
