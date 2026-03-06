@@ -20,14 +20,53 @@ function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
 }
 
 const BIKE_NAMES = {
-  default: 'Old Faithful',
+  default: "Grandma's Classic",
   bike_orange: 'Marmalade Express',
   bike_magenta: 'Berry Blaster',
   bike_red: 'Cherry Bomb',
   bike_blue: 'Ocean Breeze',
   bike_green: 'Jungle Cruiser',
-  bike_yellow: 'Banana Split',
+  bike_yellow: 'Banana Delivery',
+  bike_christmas: 'Christmas Cruiser',
+  bike_newyears: 'New Year Rider',
+  bike_birthday: 'Birthday Express',
 };
+
+const HOLIDAY_BIKES = {
+  bike_christmas: {
+    requires: ['bike_green', 'bike_red'],
+    hint: 'Win with Jungle Cruiser & Cherry Bomb',
+  },
+  bike_newyears: {
+    requires: ['bike_yellow', 'default'],
+    hint: 'Win with Banana Delivery & Grandma\'s Classic',
+  },
+  bike_birthday: {
+    requires: ['bike_red', 'bike_blue', 'bike_yellow', 'bike_green', 'default'],
+    hint: 'Win with Cherry Bomb, Ocean Breeze, Banana Delivery, Jungle Cruiser & Grandma\'s Classic',
+  },
+};
+
+function _getColorWins() {
+  try {
+    return JSON.parse(localStorage.getItem('tandemonium_color_wins') || '[]');
+  } catch { return []; }
+}
+
+function _addColorWin(presetKey) {
+  const wins = _getColorWins();
+  if (!wins.includes(presetKey)) {
+    wins.push(presetKey);
+    localStorage.setItem('tandemonium_color_wins', JSON.stringify(wins));
+  }
+}
+
+function _isHolidayUnlocked(bikeKey) {
+  const def = HOLIDAY_BIKES[bikeKey];
+  if (!def) return true;
+  const wins = _getColorWins();
+  return def.requires.every(k => wins.includes(k));
+}
 
 export class Lobby {
   constructor({ onSolo, onMultiplayerReady, input }) {
@@ -2070,8 +2109,13 @@ export class Lobby {
   async _initBikeCarousel() {
     // Load presets
     try {
-      const resp = await fetch('tandem-3d/bike-presets.json');
+      const [resp, holidayResp] = await Promise.all([
+        fetch('tandem-3d/bike-presets.json'),
+        fetch('tandem-3d/bike-presets-holidays.json'),
+      ]);
       this._presetData = await resp.json();
+      const holidayData = await holidayResp.json();
+      Object.assign(this._presetData, holidayData);
       this._presetKeys = ['default', ...Object.keys(this._presetData)];
     } catch (e) {
       console.warn('Failed to load bike presets:', e);
@@ -2203,6 +2247,7 @@ export class Lobby {
   _applyPresetToPreview() {
     const key = this._presetKeys[this._presetIndex];
     const nameEl = document.getElementById('bike-name');
+    const locked = HOLIDAY_BIKES[key] && !_isHolidayUnlocked(key);
 
     // Reset all materials to originals
     if (this._previewModel && this._previewOriginalMats) {
@@ -2215,7 +2260,38 @@ export class Lobby {
       });
     }
 
-    this.selectedPresetKey = key;
+    this.selectedPresetKey = locked ? 'default' : key;
+
+    if (locked) {
+      nameEl.textContent = '\uD83D\uDD12 ' + (BIKE_NAMES[key] || key);
+      // Show hint below name
+      let hintEl = document.getElementById('bike-hint');
+      if (!hintEl) {
+        hintEl = document.createElement('div');
+        hintEl.id = 'bike-hint';
+        hintEl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.5);margin-top:2px;text-align:center;';
+        nameEl.parentNode.insertBefore(hintEl, nameEl.nextSibling);
+      }
+      hintEl.textContent = HOLIDAY_BIKES[key].hint;
+      hintEl.style.display = '';
+
+      // Grey out the preview model
+      this.selectedPreset = null;
+      if (this._previewModel) {
+        this._previewModel.traverse(child => {
+          if (!child.isMesh) return;
+          child.material.color.set(0x444444);
+          child.material.emissive && child.material.emissive.set(0x000000);
+          child.material.needsUpdate = true;
+        });
+      }
+      return;
+    }
+
+    // Hide hint if showing
+    const hintEl = document.getElementById('bike-hint');
+    if (hintEl) hintEl.style.display = 'none';
+
     nameEl.textContent = BIKE_NAMES[key] || key;
 
     if (key === 'default') {
@@ -2273,5 +2349,9 @@ export class Lobby {
       cancelAnimationFrame(this._previewRafId);
       this._previewRafId = null;
     }
+  }
+
+  recordColorWin(presetKey) {
+    _addColorWin(presetKey);
   }
 }
