@@ -18,19 +18,32 @@ export default {
 
     try {
       const path = url.pathname;
+      const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
 
       // Auth routes
-      if (path === '/auth/google' && request.method === 'POST') return handleGoogleAuth(request, env, corsOrigin);
+      if (path === '/auth/google' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin);
+        if (limited) return limited;
+        return handleGoogleAuth(request, env, corsOrigin);
+      }
 
       // Authed routes
-      if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScore);
+      if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
 
-      // Public routes
-      if (path === '/leaderboard') return handleLeaderboard(request, env, url, corsOrigin);
-      if (path.startsWith('/player/')) return handlePlayerProfile(request, env, url, corsOrigin);
+      // Public routes (rate limited by IP)
+      if (path === '/leaderboard') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin);
+        if (limited) return limited;
+        return handleLeaderboard(request, env, url, corsOrigin);
+      }
+      if (path.startsWith('/player/')) {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin);
+        if (limited) return limited;
+        return handlePlayerProfile(request, env, url, corsOrigin);
+      }
 
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
     } catch (e) {
@@ -191,6 +204,15 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   const userFilter = url.searchParams.get('user_id'); // 'me'
   let limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 200);
 
+  // Cache public global leaderboard requests (30s TTL)
+  const isPublic = scope === 'global' && !userFilter;
+  if (isPublic) {
+    const cache = caches.default;
+    const cacheKey = new Request(url.toString(), request);
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
+  }
+
   const conditions = ['s.level_id = ?'];
   const params = [levelId];
 
@@ -276,7 +298,18 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
     achievements: (achMap[row.user_id] || []).map(a => ({ achievement_id: a.achievement_id, score_id: a.score_id }))
   }));
 
-  return jsonResponse({ entries }, 200, corsOrigin);
+  const response = jsonResponse({ entries }, 200, corsOrigin);
+
+  // Store in cache for public requests
+  if (isPublic) {
+    const cache = caches.default;
+    const cacheKey = new Request(url.toString(), request);
+    const cachedResponse = new Response(response.clone().body, response);
+    cachedResponse.headers.set('Cache-Control', 'public, max-age=30');
+    await cache.put(cacheKey, cachedResponse);
+  }
+
+  return response;
 }
 
 // ============================================================
@@ -473,6 +506,32 @@ async function verifyGoogleIdToken(token, expectedAud) {
   if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) throw new Error('Token expired');
 
   return payload;
+}
+
+// ============================================================
+// RATE LIMITING
+// ============================================================
+
+async function checkRateLimit(limiter, key, corsOrigin) {
+  if (!limiter) return null; // graceful fallback if binding not configured
+  const { success } = await limiter.limit({ key });
+  if (!success) {
+    return new Response(JSON.stringify({ error: 'Too many requests' }), {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': '60',
+        ...corsHeaders(corsOrigin || '*')
+      }
+    });
+  }
+  return null;
+}
+
+async function submitScoreWithLimit(request, env, corsOrigin, userId) {
+  const limited = await checkRateLimit(env.SCORE_LIMITER, 'user:' + userId, corsOrigin);
+  if (limited) return limited;
+  return submitScore(request, env, corsOrigin, userId);
 }
 
 // ============================================================
