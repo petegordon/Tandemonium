@@ -269,7 +269,7 @@ class Game {
     // Background music
     this._musicEl = new Audio('assets/Krampus Workshop.mp3');
     this._musicEl.loop = true;
-    this._musicEl.volume = 0.35;
+    this._musicEl.volume = 0.18;
     this._musicSourceNode = null; // created once via createMediaElementSource
     this.lobby.onMusicChanged = (on) => {
       if (on) {
