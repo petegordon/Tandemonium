@@ -205,11 +205,20 @@ export class GameRecorder {
             this._wcEncodedChunks.shift();
           }
         },
-        error: (e) => console.warn('VideoEncoder error:', e)
+        error: (e) => _dbg('ENCODER ERROR: ' + e.message)
       });
 
+      // Pick H.264 profile/level based on resolution
+      // Baseline L3.1 (42001f) maxes at 1280×720; use Main L4.0 (4d0028)
+      // for up to ~2Mpx, or Main L5.0 (4d0032) for larger
+      const pixels = w * h;
+      let codec = 'avc1.42001f'; // Baseline L3.1
+      if (pixels > 921_600) codec = 'avc1.4d0028'; // Main L4.0 (up to ~2Mpx)
+      if (pixels > 2_097_152) codec = 'avc1.4d0032'; // Main L5.0 (up to ~4Mpx)
+      _dbg(`codec=${codec} pixels=${pixels}`);
+
       this._wcEncoder.configure({
-        codec: 'avc1.42001f',
+        codec,
         width: w,
         height: h,
         bitrate: 2_500_000,
