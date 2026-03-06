@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 
-const POOL_SIZE = 20;
+const POOL_SIZE = 30;
 const HIT_RADIUS = 1.2;
 const VISIBLE_AHEAD = 200;
 const VISIBLE_BEHIND = 40;
@@ -154,11 +154,11 @@ export class ObstacleManager {
   _placeItems() {
     // Use a different seed than collectibles so they don't overlap
     const rng = makeRng(this.level.id.charCodeAt(0) * 2000 + 13);
-    const spacing = 80 + (this.level.distance > 2000 ? 40 : 0);
+    const spacing = 55 + (this.level.distance > 2000 ? 25 : 0);
 
     // Start obstacles after the first section so the player gets going
     const startD = spacing * 1.5;
-    for (let d = startD; d < this.level.distance - 50; d += spacing + rng() * 40) {
+    for (let d = startD; d < this.level.distance - 50; d += spacing + rng() * 25) {
       // Place on the road, biased toward center but still avoidable
       const lateralOffset = (rng() - 0.5) * 3; // ±1.5 units from center
       this._items.push({
