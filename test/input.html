@@ -543,12 +543,6 @@ window.TUNE = {};
 const TUNE = window.TUNE;
 SLIDER_CONFIG.forEach(s => { TUNE[s.key] = s.default; });
 
-// Gyro (WebHID) constants
-const GYRO_SCALE = 2000.0 / 32768.0;   // raw -> deg/s
-const GYRO_CALIB_COUNT = 150;           // ~1.5 s at 100 Hz
-const VENDOR_ID_SONY = 0x054c;
-const GYRO_PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
-
 // ============================================================
 // TUNING PANEL WIRING (generated from SLIDER_CONFIG)
 // ============================================================
@@ -574,635 +568,150 @@ const GYRO_PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
     });
   });
 })();
+</script>
+
+<script type="module">
+// ============================================================
+// INPUT TEST — uses shared InputManager (single source of truth)
+// ============================================================
+import * as THREE from 'three';
+import { TUNE as CONFIG_TUNE } from '../js/config.js';
+import { InputManager } from '../js/input-manager.js';
+import { ArchIndicator } from '../js/arch-indicator.js';
+import { BikeModel } from '../js/bike-model.js';
+import { ChaseCamera } from '../js/chase-camera.js';
+
+// Sync slider TUNE values into config.js TUNE (read by BikeModel/ArchIndicator)
+const TUNE = window.TUNE;
+if (TUNE) Object.assign(CONFIG_TUNE, TUNE);
+
+// Gyro constants for diagnostics display
+const GYRO_SCALE = 2000.0 / 32768.0;
+const GYRO_CALIB_COUNT = 150;
 
 // ============================================================
-// INPUT SOURCE SELECTOR
+// INPUT MANAGER (shared with game — no duplication)
 // ============================================================
-let inputSource = 'motion'; // 'motion' | 'gamepad' | 'keyboard'
-window.inputSource = inputSource; // expose for module script
-
-(function setupSourceSelector() {
-  const buttons = document.querySelectorAll('#source-selector button');
-  buttons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      buttons.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      inputSource = btn.dataset.source;
-      window.inputSource = inputSource;
-      updateGyroBarVisibility();
-    });
-  });
-})();
+const im = new InputManager();
+im.suppressGamepadBadge = true;
+window.input = im; // expose for debugging
 
 // ============================================================
-// INPUT STATE (inlined from InputManager)
+// SOURCE SELECTOR
 // ============================================================
-const input = {
-  touchLeft: false,
-  touchRight: false,
-  _leftTapped: false,
-  _rightTapped: false,
-  motionLean: 0,
-  motionEnabled: false,
-  motionReady: false,
-  rawGamma: 0,
-  motionOffset: null,
-  motionRawRelative: 0,
-  needsMotionPermission: false,
-  _smoothedLean: 0,
-  _calibBuf: [],
-  _calibrating: false,
+let inputSource = 'motion';
+window.inputSource = inputSource;
 
-  // Raw accel for diagnostics
-  _gx: 0, _gy: 0, _gz: 0,
-  _gravityInit: false,
-  _useOrientation: false,
-  _orient: 0,
-
-  // Touch tracking
-  _leftTouchId: null,
-  _rightTouchId: null,
-  _pedalMidX: 0,
-
-  // Keyboard state
-  keys: {},
-  keyboardLean: 0,
-
-  // Gamepad state
-  gamepadIndex: null,
-  gamepadConnected: false,
-  gamepadLean: 0,
-  _gpTriggerLeftVal: 0,
-  _gpTriggerRightVal: 0,
-  _gpTriggerLeftPressed: false,
-  _gpTriggerRightPressed: false,
-  _gpName: '',
-  _gpRawStickX: 0,
-  _gpLB: false,
-  _gpRB: false,
-
-  // Gyro (WebHID) state
-  _hidDevice: null,
-  _hidConnectionType: null,
-  _gyroCalibrating: false,
-  _gyroBias: { x: 0, y: 0, z: 0 },
-  _gyroCalibSamples: [],
-  _gyroLastTime: 0,
-  _gyroRawZ: 0,
-  _gyroAngle: 0,
-  gyroLean: 0,
-  _gyroConnected: false,
-  _gyroEnabled: false,
-  _accelRawX: 0,
-  _accelRawY: 0,
-  _accelRawZ: 0,
-  _accelRoll: 0,
-  _accelReportCount: 0,
-
-  // Active lean source for diagnostics
-  _activeLeanSource: 'none',
-
-  isPressed(code) {
-    if (code === 'ArrowLeft') {
-      if (inputSource === 'keyboard') return !!this.keys[code];
-      if (inputSource === 'gamepad') return this._gpTriggerLeftPressed;
-      if (inputSource === 'motion') return this.touchLeft || this._leftTapped;
-    }
-    if (code === 'ArrowRight') {
-      if (inputSource === 'keyboard') return !!this.keys[code];
-      if (inputSource === 'gamepad') return this._gpTriggerRightPressed;
-      if (inputSource === 'motion') return this.touchRight || this._rightTapped;
-    }
-    return false;
-  },
-  consumeTaps() {
-    this._leftTapped = false;
-    this._rightTapped = false;
-  },
-
-  pollGamepad() {
-    // Polling fallback: detect gamepads even without events
-    if (this.gamepadIndex === null) {
-      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-      for (let i = 0; i < gamepads.length; i++) {
-        if (gamepads[i]) {
-          this.gamepadIndex = i;
-          this.gamepadConnected = true;
-          this._gpName = gamepads[i].id;
-          break;
-        }
-      }
-    }
-    if (this.gamepadIndex === null) return;
-
-    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = gamepads[this.gamepadIndex];
-    if (!gp) return;
-
-    // Left stick X — deadzone 0.08
-    const rawX = gp.axes[0] || 0;
-    this._gpRawStickX = rawX;
-    this.gamepadLean = Math.abs(rawX) < 0.08 ? 0 : rawX;
-
-    // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
-    const THRESHOLD = 0.5;
-    this._gpLB = gp.buttons[4] && gp.buttons[4].pressed;
-    this._gpRB = gp.buttons[5] && gp.buttons[5].pressed;
-    this._gpTriggerLeftVal = gp.buttons[6] ? gp.buttons[6].value : 0;
-    this._gpTriggerRightVal = gp.buttons[7] ? gp.buttons[7].value : 0;
-    this._gpTriggerLeftPressed = this._gpLB || this._gpTriggerLeftVal >= THRESHOLD;
-    this._gpTriggerRightPressed = this._gpRB || this._gpTriggerRightVal >= THRESHOLD;
-  }
-};
-window.input = input; // expose for module script
-
-// ── Touch Setup (from input-manager.js:71-138) ──
-(function setupTouch() {
-  const pedalBar = document.getElementById('pedal-bar');
-  pedalBar.style.pointerEvents = 'auto';
-
-  const assignTouch = (t) => {
-    if (t.clientX < input._pedalMidX) {
-      input._leftTouchId = t.identifier;
-      input.touchLeft = true;
-      input._leftTapped = true;
-    } else {
-      input._rightTouchId = t.identifier;
-      input.touchRight = true;
-      input._rightTapped = true;
-    }
-  };
-
-  pedalBar.addEventListener('touchstart', (e) => {
-    const rect = pedalBar.getBoundingClientRect();
-    input._pedalMidX = rect.left + rect.width / 2;
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      assignTouch(e.changedTouches[i]);
-    }
-  }, { passive: true });
-
-  pedalBar.addEventListener('touchmove', (e) => {
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const t = e.changedTouches[i];
-      const isLeft = t.clientX < input._pedalMidX;
-      if (isLeft && t.identifier === input._rightTouchId) {
-        input.touchRight = false; input._rightTouchId = null;
-        input._leftTouchId = t.identifier;
-        input.touchLeft = true; input._leftTapped = true;
-      } else if (!isLeft && t.identifier === input._leftTouchId) {
-        input.touchLeft = false; input._leftTouchId = null;
-        input._rightTouchId = t.identifier;
-        input.touchRight = true; input._rightTapped = true;
-      }
-    }
-  }, { passive: true });
-
-  const resetIfEmpty = (e) => {
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const id = e.changedTouches[i].identifier;
-      if (id === input._leftTouchId) { input.touchLeft = false; input._leftTouchId = null; }
-      if (id === input._rightTouchId) { input.touchRight = false; input._rightTouchId = null; }
-    }
-    if (e.touches.length === 0) {
-      input.touchLeft = false;
-      input.touchRight = false;
-      input._leftTouchId = null;
-      input._rightTouchId = null;
-    }
-  };
-  window.addEventListener('touchend', resetIfEmpty, { passive: true });
-  window.addEventListener('touchcancel', resetIfEmpty, { passive: true });
-})();
-
-// ── Keyboard Setup (from input-manager.js:57-68) ──
-(function setupKeyboard() {
-  window.addEventListener('keydown', (e) => {
-    const tag = document.activeElement && document.activeElement.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-    if (['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code)) e.preventDefault();
-    input.keys[e.code] = true;
-    // Update keyboard lean
-    if (e.code === 'KeyA') input.keyboardLean = -1;
-    if (e.code === 'KeyD') input.keyboardLean = 1;
-  });
-  window.addEventListener('keyup', (e) => {
-    const tag = document.activeElement && document.activeElement.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-    input.keys[e.code] = false;
-    // Update keyboard lean
-    if (e.code === 'KeyA' || e.code === 'KeyD') {
-      input.keyboardLean = (input.keys['KeyA'] ? -1 : 0) + (input.keys['KeyD'] ? 1 : 0);
-    }
-  });
-})();
-
-// ── Gamepad Setup (from input-manager.js:240-267) ──
-(function setupGamepad() {
-  window.addEventListener('gamepadconnected', (e) => {
-    input.gamepadIndex = e.gamepad.index;
-    input.gamepadConnected = true;
-    input._gpName = e.gamepad.id;
-    console.log('Gamepad connected:', e.gamepad.id);
+const sourceButtons = document.querySelectorAll('#source-selector button');
+sourceButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    sourceButtons.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    inputSource = btn.dataset.source;
+    window.inputSource = inputSource;
     updateGyroBarVisibility();
   });
-  window.addEventListener('gamepaddisconnected', (e) => {
-    if (input.gamepadIndex === e.gamepad.index) {
-      input.gamepadIndex = null;
-      input.gamepadConnected = false;
-      input.gamepadLean = 0;
-      input._gpTriggerLeftVal = 0;
-      input._gpTriggerRightVal = 0;
-      input._gpTriggerLeftPressed = false;
-      input._gpTriggerRightPressed = false;
-      input._gpName = '';
-      input._gpRawStickX = 0;
-      input._gpLB = false;
-      input._gpRB = false;
-      console.log('Gamepad disconnected');
-      disconnectGyro();
-      updateGyroBarVisibility();
-    }
-  });
-})();
+});
 
-// ── WebHID Gyro Functions ──
-function readSigned16(data, offset) {
-  let val = data.getUint8(offset) | (data.getUint8(offset + 1) << 8);
-  if (val > 0x7FFF) val -= 0x10000;
-  return val;
-}
+// ============================================================
+// GYRO UI WIRING
+// ============================================================
+let gyroEnabled = false;
+const gyroToggle = document.getElementById('gyro-toggle');
+const gyroRecal = document.getElementById('gyro-recalibrate');
+const gyroStatus = document.getElementById('gyro-status');
+const gyroToast = document.getElementById('gyro-calibrate-toast');
 
-function detectConnectionType(device) {
-  for (const col of device.collections) {
-    if (col.outputReports && col.outputReports.length > 0) {
-      for (const report of col.outputReports) {
-        if (report.reportId === 0x31) return 'bluetooth';
-      }
-    }
-  }
-  return 'usb';
-}
-
-function startGyroCalibration() {
-  input._gyroCalibrating = true;
-  input._gyroCalibSamples = [];
-  input._gyroAngle = 0;
-  input._gyroLastTime = 0;
-  input.gyroLean = 0;
-  const toast = document.getElementById('gyro-calibrate-toast');
-  toast.classList.add('visible');
-  document.getElementById('gyro-status').textContent = 'calibrating…';
-}
-
-function finishGyroCalibration() {
-  if (input._gyroCalibSamples.length === 0) return;
-  let sz = 0;
-  for (const s of input._gyroCalibSamples) sz += s;
-  input._gyroBias.z = sz / input._gyroCalibSamples.length;
-  input._gyroCalibrating = false;
-  input._gyroCalibSamples = [];
-  input._gyroAngle = 0;
-  input._gyroLastTime = 0;
-  input.gyroLean = 0;
-  const toast = document.getElementById('gyro-calibrate-toast');
-  toast.classList.remove('visible');
-  document.getElementById('gyro-status').textContent = 'connected';
-  console.log('Gyro bias Z:', input._gyroBias.z);
-}
-
-function handleGyroInputReport(event) {
-  const report = event.data;
-  const reportId = event.reportId;
-  const now = performance.now();
-
-  let gyroOffset;
-  if (input._hidConnectionType === 'usb' && reportId === 0x01) {
-    gyroOffset = 15;
-  } else if (input._hidConnectionType === 'bluetooth' && reportId === 0x31) {
-    gyroOffset = 16;
-  } else {
-    return;
-  }
-
-  const rawZ = readSigned16(report, gyroOffset + 4);
-  input._gyroRawZ = rawZ;
-
-  // Accelerometer data sits immediately after gyro (6 bytes later)
-  const rawAx = readSigned16(report, gyroOffset + 6);
-  const rawAy = readSigned16(report, gyroOffset + 8);
-  const rawAz = readSigned16(report, gyroOffset + 10);
-  input._accelRawX = rawAx;
-  input._accelRawY = rawAy;
-  input._accelRawZ = rawAz;
-
-  // Log first 10 reports for debugging accel byte offsets
-  if (input._accelReportCount < 10) {
-    console.log(`Accel report #${input._accelReportCount}: X=${rawAx} Y=${rawAy} Z=${rawAz}`);
-    input._accelReportCount++;
-  }
-
-  // Calibration sampling
-  if (input._gyroCalibrating) {
-    input._gyroCalibSamples.push(rawZ);
-    if (input._gyroCalibSamples.length >= GYRO_CALIB_COUNT) finishGyroCalibration();
-    input._gyroLastTime = now;
-    return;
-  }
-
-  // Bias-corrected Z in deg/s
-  const correctedZ = (rawZ - input._gyroBias.z) * GYRO_SCALE;
-
-  // Integrate angle
-  if (input._gyroLastTime > 0) {
-    const dt = (now - input._gyroLastTime) / 1000.0;
-    if (dt < 0.1) {
-      input._gyroAngle -= correctedZ * dt;
-      // Accelerometer-assisted drift correction
-      const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
-      input._accelRoll = accelRoll;
-      const correction = (accelRoll - input._gyroAngle) * TUNE.gyroAccelCorrection;
-      input._gyroAngle += correction;
-    }
-  }
-  input._gyroLastTime = now;
-
-  // Map angle through gyro-specific deadzone + response curve to lean [-1, 1]
-  const absAngle = Math.abs(input._gyroAngle);
-  const dz = TUNE.gyroDeadzone;
-  const sens = TUNE.gyroSensitivity;
-  const rc = TUNE.gyroResponseCurve;
-  if (absAngle < dz) {
-    input.gyroLean = 0;
-  } else {
-    const reduced = absAngle - dz;
-    const range = sens - dz;
-    const normalized = Math.min(reduced / range, 1.0);
-    input.gyroLean = Math.sign(input._gyroAngle) * Math.pow(normalized, rc);
-  }
-}
-
-async function connectGyro() {
-  if (input._hidDevice) return;
-  const statusEl = document.getElementById('gyro-status');
-  try {
-    const filters = GYRO_PRODUCT_IDS.map(productId => ({
-      vendorId: VENDOR_ID_SONY, productId,
-      usagePage: 0x0001, usage: 0x0005
-    }));
-    const devices = await navigator.hid.requestDevice({ filters });
-    if (!devices || devices.length === 0) {
-      statusEl.textContent = 'cancelled';
-      document.getElementById('gyro-toggle').checked = false;
-      input._gyroEnabled = false;
-      return;
-    }
-    input._hidDevice = devices[0];
-    if (!input._hidDevice.opened) await input._hidDevice.open();
-    input._hidConnectionType = detectConnectionType(input._hidDevice);
-    console.log('WebHID connected:', input._hidDevice.productName, '(' + input._hidConnectionType + ')');
-
-    input._hidDevice.addEventListener('inputreport', handleGyroInputReport);
-    input._gyroConnected = true;
-    statusEl.textContent = 'calibrating…';
-    document.getElementById('gyro-recalibrate').classList.add('visible');
-
-    // Auto-calibrate on connect
-    startGyroCalibration();
-  } catch (err) {
-    console.error('WebHID connection failed:', err);
-    statusEl.textContent = 'error: ' + err.message;
-    document.getElementById('gyro-toggle').checked = false;
-    input._gyroEnabled = false;
-  }
-}
-
-function disconnectGyro() {
-  if (input._hidDevice) {
-    input._hidDevice.removeEventListener('inputreport', handleGyroInputReport);
-    try { input._hidDevice.close(); } catch (e) { /* ignore */ }
-  }
-  input._hidDevice = null;
-  input._hidConnectionType = null;
-  input._gyroConnected = false;
-  input._gyroCalibrating = false;
-  input._gyroCalibSamples = [];
-  input._gyroLastTime = 0;
-  input._gyroRawZ = 0;
-  input._gyroAngle = 0;
-  input.gyroLean = 0;
-  input._accelRawX = 0;
-  input._accelRawY = 0;
-  input._accelRawZ = 0;
-  input._accelRoll = 0;
-  input._accelReportCount = 0;
-  input._gyroEnabled = false;
-  const toggle = document.getElementById('gyro-toggle');
-  if (toggle) toggle.checked = false;
-  const recal = document.getElementById('gyro-recalibrate');
-  if (recal) recal.classList.remove('visible');
-  const status = document.getElementById('gyro-status');
-  if (status) status.textContent = '';
-  const toast = document.getElementById('gyro-calibrate-toast');
-  if (toast) toast.classList.remove('visible');
-}
-
-// ── Gyro UI Wiring ──
 function updateGyroBarVisibility() {
   const bar = document.getElementById('gyro-bar');
   if (!bar) return;
   const show = inputSource === 'gamepad' &&
-    input.gamepadConnected &&
+    im.gamepadConnected &&
     !!navigator.hid &&
-    /playstation|dualsense|dualshock|054c/i.test(input._gpName);
-  if (show) {
-    bar.classList.add('visible');
-  } else {
-    bar.classList.remove('visible');
-  }
+    /playstation|dualsense|dualshock|054c/i.test(im._gpName);
+  if (show) bar.classList.add('visible');
+  else bar.classList.remove('visible');
 }
 
-(function setupGyroToggle() {
-  const toggle = document.getElementById('gyro-toggle');
-  const recal = document.getElementById('gyro-recalibrate');
-  toggle.addEventListener('change', () => {
-    input._gyroEnabled = toggle.checked;
-    if (toggle.checked && !input._gyroConnected) {
-      connectGyro();
-    }
-  });
-  recal.addEventListener('click', () => {
-    if (input._gyroConnected && !input._gyroCalibrating) {
-      startGyroCalibration();
-    }
-  });
-})();
-
-// ── Motion Setup (mirrors input-manager.js _applyTilt / startTiltCalibration) ──
-function startTiltCalibration() {
-  input._calibrating = true;
-  input._calibBuf = [];
-}
-
-function applyTilt(rawTilt, isGyro = false) {
-  input.rawGamma = rawTilt;
-
-  if (input.motionOffset === null && !input._calibrating) {
-    startTiltCalibration();
-  }
-
-  if (input._calibrating) {
-    input._calibBuf.push(input.rawGamma);
-    if (input._calibBuf.length >= TUNE.calibSamples) {
-      const sum = input._calibBuf.reduce((a, b) => a + b, 0);
-      input.motionOffset = sum / input._calibBuf.length;
-      input._calibrating = false;
-      input._calibBuf = [];
-    }
-    return;
-  }
-
-  let relative = input.rawGamma - input.motionOffset;
-  if (relative > 180) relative -= 360;
-  else if (relative < -180) relative += 360;
-  input.motionRawRelative = relative;
-
-  // Select tuning based on input source
-  const sensitivity = isGyro ? TUNE.gyroSensitivity : TUNE.sensitivity;
-  const deadzone = isGyro ? TUNE.gyroDeadzone : TUNE.deadzone;
-  const responseCurve = isGyro ? TUNE.gyroResponseCurve : TUNE.responseCurve;
-  const outputSmoothing = isGyro ? TUNE.gyroOutputSmoothing : TUNE.outputSmoothing;
-
-  const absRel = Math.abs(relative);
-  let lean;
-
-  if (absRel < deadzone) {
-    lean = 0;
-  } else {
-    const reduced = absRel - deadzone;
-    const range = sensitivity - deadzone;
-    const normalized = Math.min(reduced / range, 1.0);
-    lean = Math.sign(relative) * Math.pow(normalized, responseCurve);
-  }
-
-  input._smoothedLean += (lean - input._smoothedLean) * outputSmoothing;
-  input.motionLean = input._smoothedLean;
-}
-
-function startMotionListening() {
-  if (input.motionReady) return; // prevent duplicate listeners
-  input.motionReady = true;
-  input._useOrientation = false;
-  input._gx = 0; input._gy = 0; input._gz = 0;
-  input._gravityInit = false;
-
-  // Primary: deviceorientation (browser sensor fusion — smoother)
-  window.addEventListener('deviceorientation', (e) => {
-    const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-    input._orient = orient;
-    let rawTilt;
-    if (orient === 90) rawTilt = e.beta;
-    else if (orient === 270 || orient === -90) rawTilt = -e.beta;
-    else {
-      // When phone is tilted past vertical (|beta| > 90°, e.g. lying in bed
-      // with screen facing down at user), gamma's left-right direction inverts.
-      // Use a smooth blend zone (80°–100°) to avoid jitter at the boundary.
-      const absBeta = Math.abs(e.beta || 0);
-      if (absBeta > 100) {
-        rawTilt = -e.gamma;
-      } else if (absBeta > 80) {
-        const t = (absBeta - 80) / 20;
-        rawTilt = e.gamma * (1 - 2 * t);
+gyroToggle.addEventListener('change', () => {
+  gyroEnabled = gyroToggle.checked;
+  if (gyroToggle.checked && !im.gyroConnected) {
+    gyroStatus.textContent = 'connecting\u2026';
+    im.connectControllerGyro().then(() => {
+      if (im.gyroConnected) {
+        gyroStatus.textContent = 'calibrating\u2026';
+        gyroRecal.classList.add('visible');
+        gyroToast.classList.add('visible');
       } else {
-        rawTilt = e.gamma;
+        gyroStatus.textContent = 'cancelled';
+        gyroToggle.checked = false;
+        gyroEnabled = false;
       }
-    }
+    }).catch(err => {
+      console.error('WebHID connection failed:', err);
+      gyroStatus.textContent = 'error: ' + err.message;
+      gyroToggle.checked = false;
+      gyroEnabled = false;
+    });
+  }
+});
 
-    if (rawTilt != null) {
-      input._useOrientation = true;
-      input.motionEnabled = true;
-      applyTilt(rawTilt);
-    }
-  });
+gyroRecal.addEventListener('click', () => {
+  if (im.gyroConnected && !im._gyroCalibrating) {
+    im.calibrateGyro();
+    gyroStatus.textContent = 'calibrating\u2026';
+    gyroToast.classList.add('visible');
+  }
+});
 
-  // Fallback: devicemotion (only if orientation events don't fire)
-  window.addEventListener('devicemotion', (e) => {
-    if (input._useOrientation) return;
-    const a = e.accelerationIncludingGravity;
-    if (!a || a.x == null) return;
-    input.motionEnabled = true;
+// Disconnect gyro when gamepad disconnects
+window.addEventListener('gamepaddisconnected', () => {
+  if (!im.gamepadConnected) {
+    im.disconnectControllerGyro();
+    gyroEnabled = false;
+    gyroToggle.checked = false;
+    gyroRecal.classList.remove('visible');
+    gyroStatus.textContent = '';
+    gyroToast.classList.remove('visible');
+    updateGyroBarVisibility();
+  }
+});
 
-    const k = TUNE.lowPassK;
-    if (!input._gravityInit) {
-      input._gx = a.x; input._gy = a.y; input._gz = a.z;
-      input._gravityInit = true;
-    } else {
-      input._gx += (a.x - input._gx) * k;
-      input._gy += (a.y - input._gy) * k;
-      input._gz += (a.z - input._gz) * k;
-    }
+window.addEventListener('gamepadconnected', () => updateGyroBarVisibility());
 
-    const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-    input._orient = orient;
-    let rollRad;
-    if (orient === 90) rollRad = Math.atan2(input._gy, -input._gx);
-    else if (orient === 270 || orient === -90) rollRad = Math.atan2(-input._gy, input._gx);
-    else rollRad = Math.atan2(input._gx, input._gy);
-
-    applyTilt(-rollRad * 180 / Math.PI);
-  });
-}
-
-// iOS permission flow — DeviceMotionEvent.requestPermission() grants
-// access to BOTH motion and orientation events on iOS.
-const _needsMotionPerm = typeof DeviceMotionEvent !== 'undefined' &&
-    typeof DeviceMotionEvent.requestPermission === 'function';
-const _needsOrientPerm = typeof DeviceOrientationEvent !== 'undefined' &&
-    typeof DeviceOrientationEvent.requestPermission === 'function';
-if (_needsMotionPerm || _needsOrientPerm) {
-  input.needsMotionPermission = true;
+// ============================================================
+// iOS MOTION PERMISSION
+// ============================================================
+if (im.needsMotionPermission) {
   const permOverlay = document.getElementById('motion-permission');
   permOverlay.style.display = 'flex';
   document.getElementById('btn-grant-motion').addEventListener('click', async () => {
-    // Request motion permission first (proven iOS API, covers both)
-    if (_needsMotionPerm) {
-      try {
-        const response = await DeviceMotionEvent.requestPermission();
-        if (response === 'granted') startMotionListening();
-      } catch (e) {
-        console.warn('Motion permission error:', e);
-      }
-    }
-    // Fallback: request orientation permission if motion didn't start listening
-    if (!input.motionReady && _needsOrientPerm) {
-      try {
-        const response = await DeviceOrientationEvent.requestPermission();
-        if (response === 'granted') startMotionListening();
-      } catch (e) {
-        console.warn('Orientation permission error:', e);
-      }
-    }
-    if (input.motionReady) permOverlay.style.display = 'none';
+    await im.requestMotionPermission();
+    if (im.motionReady) permOverlay.style.display = 'none';
   });
-} else if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
-  startMotionListening();
 }
 
-// ── Calibration (mirrors input-manager.js startTiltCalibration) ──
-(function setupCalibration() {
-  const gauge = document.getElementById('phone-gauge');
-  const flash = document.getElementById('calibrate-flash');
-  const doCalibrate = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    startTiltCalibration();
-    if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 800); }
-  };
-  gauge.addEventListener('touchstart', doCalibrate, { passive: false });
-  gauge.addEventListener('click', doCalibrate);
-})();
+// ============================================================
+// PEDAL INPUT (source-filtered wrapper for test page)
+// ============================================================
+const pedalInput = {
+  isPressed(code) {
+    if (code === 'ArrowLeft') {
+      if (inputSource === 'keyboard') return !!im.keys[code];
+      if (inputSource === 'gamepad') return im._gpTriggerLeftPressed;
+      if (inputSource === 'motion') return im.touchLeft || im._leftTapped;
+    }
+    if (code === 'ArrowRight') {
+      if (inputSource === 'keyboard') return !!im.keys[code];
+      if (inputSource === 'gamepad') return im._gpTriggerRightPressed;
+      if (inputSource === 'motion') return im.touchRight || im._rightTapped;
+    }
+    return false;
+  },
+};
 
 // ============================================================
-// PEDAL CONTROLLER (inlined from pedal-controller.js)
+// PEDAL CONTROLLER (extended with diagnostic stats)
 // ============================================================
 class PedalController {
   constructor(inp) {
@@ -1218,7 +727,7 @@ class PedalController {
     this.stats = { totalTaps: 0, correctTaps: 0, wrongTaps: 0, totalPower: 0 };
     this.streak = 0;
     this.bestStreak = 0;
-    this._correctTimestamps = [];  // rolling window for cadence
+    this._correctTimestamps = [];
   }
 
   update(dt) {
@@ -1313,10 +822,9 @@ class PedalController {
 }
 
 // ============================================================
-// MAIN LOOP
+// GAME LOOP
 // ============================================================
-// window.bike is set by the module script (BikeModel instance)
-const pedals = new PedalController(input);
+const pedals = new PedalController(pedalInput);
 const crashOverlay = document.getElementById('crash-overlay');
 const phoneNeedle = document.getElementById('phone-needle');
 const bikeNeedle = document.getElementById('bike-needle');
@@ -1327,7 +835,6 @@ const speedValue = document.getElementById('speed-value');
 const touchLeftEl = document.getElementById('touch-left');
 const touchRightEl = document.getElementById('touch-right');
 
-// Diagnostics elements
 const diagInput = document.getElementById('diag-input');
 const diagAccel = document.getElementById('diag-accel');
 const diagTilt = document.getElementById('diag-tilt');
@@ -1335,7 +842,6 @@ const diagPedal = document.getElementById('diag-pedal');
 const diagBike = document.getElementById('diag-bike');
 
 let lastTime = performance.now();
-
 let wasFallen = false;
 
 function gameLoop(now) {
@@ -1344,28 +850,28 @@ function gameLoop(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
+  // Sync slider TUNE into config.js TUNE each frame
+  if (TUNE) Object.assign(CONFIG_TUNE, TUNE);
+
+  im.pollGamepad();
+
   const bike = window.bike;
+  if (!bike) { im.consumeTaps(); return; }
 
-  // ── Poll gamepad ──
-  input.pollGamepad();
-
-  // Wait for BikeModel to be available from the module script
-  if (!bike) { input.consumeTaps(); return; }
-
-  // ── Lean input routing (test-page-specific: uses dropdown selector) ──
+  // ── Lean input routing (source-filtered) ──
   let leanInput = 0;
-  input._activeLeanSource = inputSource;
+  let activeLeanSource = inputSource;
   if (inputSource === 'gamepad') {
-    if (input._gyroEnabled && input._gyroConnected && !input._gyroCalibrating) {
-      leanInput = input.gyroLean;
-      input._activeLeanSource = 'gamepad+gyro';
+    if (gyroEnabled && im.gyroConnected && !im._gyroCalibrating) {
+      leanInput = im.motionLean;
+      activeLeanSource = 'gamepad+gyro';
     } else {
-      leanInput = input.gamepadConnected ? input.gamepadLean : 0;
+      leanInput = im.gamepadConnected ? im.gamepadLean : 0;
     }
   } else if (inputSource === 'motion') {
-    leanInput = input.motionEnabled ? input.motionLean : 0;
+    leanInput = im.motionEnabled ? im.motionLean : 0;
   } else if (inputSource === 'keyboard') {
-    leanInput = input.keyboardLean;
+    leanInput = (im.keys['KeyA'] ? -1 : 0) + (im.keys['KeyD'] ? 1 : 0);
   }
 
   // ── Pedal + physics via shared BikeModel ──
@@ -1383,25 +889,38 @@ function gameLoop(now) {
   }
   wasFallen = bike.fallen;
 
-  updateUI(dt);
-  input.consumeTaps();
+  // ── Gyro UI state ──
+  if (im.gyroConnected) {
+    if (im._gyroCalibrating) {
+      gyroStatus.textContent = 'calibrating\u2026';
+      gyroToast.classList.add('visible');
+    } else {
+      gyroStatus.textContent = 'connected';
+      gyroToast.classList.remove('visible');
+    }
+  }
+
+  updateUI(dt, activeLeanSource);
+  im.consumeTaps();
 }
 
-function updateUI(dt) {
+function updateUI(dt, activeLeanSource) {
   const bike = window.bike;
   if (!bike) return;
-  // ── Gauges — show selected lean source ──
+
+  // ── Gauges ──
   let phoneDeg;
   if (inputSource === 'gamepad') {
-    if (input._gyroEnabled && input._gyroConnected && !input._gyroCalibrating) {
-      phoneDeg = input._gyroAngle;
+    if (gyroEnabled && im.gyroConnected && !im._gyroCalibrating) {
+      phoneDeg = -im._gyroRollAccum;
     } else {
-      phoneDeg = input.gamepadLean * TUNE.sensitivity;
+      phoneDeg = im.gamepadLean * CONFIG_TUNE.sensitivity;
     }
   } else if (inputSource === 'motion') {
-    phoneDeg = input.motionRawRelative;
+    phoneDeg = im.motionRawRelative;
   } else {
-    phoneDeg = input.keyboardLean * TUNE.sensitivity;
+    const kbLean = (im.keys['KeyA'] ? -1 : 0) + (im.keys['KeyD'] ? 1 : 0);
+    phoneDeg = kbLean * CONFIG_TUNE.sensitivity;
   }
   phoneNeedle.setAttribute('transform', `rotate(${phoneDeg}, 60, 60)`);
   phoneLabel.textContent = phoneDeg.toFixed(1) + '\u00B0';
@@ -1423,65 +942,66 @@ function updateUI(dt) {
     touchLeftEl.classList.add('pressed');
   } else if (pedals.wasWrong && pedals.lastPedal === 'left') {
     touchLeftEl.classList.add('wrong');
-  } else if (input.touchLeft) {
+  } else if (im.touchLeft) {
     touchLeftEl.classList.add('pressed');
   }
   if (pedals.wasCorrect && pedals.lastPedal === 'right') {
     touchRightEl.classList.add('pressed');
   } else if (pedals.wasWrong && pedals.lastPedal === 'right') {
     touchRightEl.classList.add('wrong');
-  } else if (input.touchRight) {
+  } else if (im.touchRight) {
     touchRightEl.classList.add('pressed');
   }
-  if (input.touchLeft && input.touchRight) {
+  if (im.touchLeft && im.touchRight) {
     touchLeftEl.className = 'pedal-touch brake';
     touchRightEl.className = 'pedal-touch brake';
   }
 
   // ── Diagnostics ──
-  const lastGap = pedals.lastPedalTime > 0 ? ((performance.now() / 1000) - pedals.lastPedalTime).toFixed(2) : '—';
+  const lastGap = pedals.lastPedalTime > 0 ? ((performance.now() / 1000) - pedals.lastPedalTime).toFixed(2) : '\u2014';
 
-  // Input source diagnostics
-  const srcCls = 'val';
-  const kbA = input.keys['KeyA'] ? 'A' : '_';
-  const kbD = input.keys['KeyD'] ? 'D' : '_';
-  const kbUp = input.keys['ArrowLeft'] ? '\u2190' : '_';
-  const kbDn = input.keys['ArrowRight'] ? '\u2192' : '_';
+  // Input source
+  const kbA = im.keys['KeyA'] ? 'A' : '_';
+  const kbD = im.keys['KeyD'] ? 'D' : '_';
+  const kbUp = im.keys['ArrowLeft'] ? '\u2190' : '_';
+  const kbDn = im.keys['ArrowRight'] ? '\u2192' : '_';
+  const kbLean = (im.keys['KeyA'] ? -1 : 0) + (im.keys['KeyD'] ? 1 : 0);
   let gpInfo = '<span class="val-warn">disconnected</span>';
-  if (input.gamepadConnected) {
-    const shortName = input._gpName.length > 30 ? input._gpName.substring(0, 30) + '\u2026' : input._gpName;
+  if (im.gamepadConnected) {
+    const shortName = im._gpName.length > 30 ? im._gpName.substring(0, 30) + '\u2026' : im._gpName;
     gpInfo = `<span class="val">${shortName}</span>` +
-      ` <span class="label">stickX</span> <span class="val">${input._gpRawStickX.toFixed(3)}</span>` +
-      ` <span class="label">LT</span> <span class="val">${input._gpTriggerLeftVal.toFixed(2)}</span>` +
-      ` <span class="label">RT</span> <span class="val">${input._gpTriggerRightVal.toFixed(2)}</span>` +
-      ` <span class="label">LB</span> <span class="val">${input._gpLB ? 'ON' : '_'}</span>` +
-      ` <span class="label">RB</span> <span class="val">${input._gpRB ? 'ON' : '_'}</span>`;
+      ` <span class="label">stickX</span> <span class="val">${im._gpRawStickX.toFixed(3)}</span>` +
+      ` <span class="label">LT</span> <span class="val">${im._gpTriggerLeftVal.toFixed(2)}</span>` +
+      ` <span class="label">RT</span> <span class="val">${im._gpTriggerRightVal.toFixed(2)}</span>` +
+      ` <span class="label">LB</span> <span class="val">${im._gpLB ? 'ON' : '_'}</span>` +
+      ` <span class="label">RB</span> <span class="val">${im._gpRB ? 'ON' : '_'}</span>`;
   }
   diagInput.innerHTML =
-    `<div class="row"><span class="label">source</span> <span class="${srcCls}">${input._activeLeanSource}</span>` +
+    `<div class="row"><span class="label">source</span> <span class="val">${activeLeanSource}</span>` +
     ` <span class="label">kbd</span> <span class="val">[${kbA}${kbD}] [${kbUp}${kbDn}]</span>` +
-    ` <span class="label">lean</span> <span class="val">${input.keyboardLean}</span></div>` +
+    ` <span class="label">lean</span> <span class="val">${kbLean}</span></div>` +
     `<div class="row"><span class="label">gamepad</span> ${gpInfo}</div>`;
 
+  const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
   diagAccel.innerHTML =
-    `<div class="row"><span class="label">accel</span> <span class="val">x:${input._gx.toFixed(2)} y:${input._gy.toFixed(2)} z:${input._gz.toFixed(2)}</span>` +
-    ` <span class="label">orient</span> <span class="val">${input._orient}\u00B0</span>` +
-    ` <span class="label">src</span> <span class="val">${input._useOrientation ? 'orient' : 'accel'}</span></div>`;
+    `<div class="row"><span class="label">accel</span> <span class="val">x:${(im._gx || 0).toFixed(2)} y:${(im._gy || 0).toFixed(2)} z:${(im._gz || 0).toFixed(2)}</span>` +
+    ` <span class="label">orient</span> <span class="val">${orient}\u00B0</span>` +
+    ` <span class="label">src</span> <span class="val">${im._useOrientation ? 'orient' : 'accel'}</span></div>`;
 
-  const rawCls = Math.abs(input.motionRawRelative) > TUNE.sensitivity ? 'val-warn' : 'val';
+  const rawCls = Math.abs(im.motionRawRelative) > CONFIG_TUNE.sensitivity ? 'val-warn' : 'val';
   diagTilt.innerHTML =
-    `<div class="row"><span class="label">raw</span> <span class="val">${input.rawGamma.toFixed(1)}\u00B0</span>` +
-    ` <span class="label">rel</span> <span class="${rawCls}">${input.motionRawRelative.toFixed(1)}\u00B0</span>` +
-    ` <span class="label">dz-adj</span> <span class="val">${(input.motionLean * TUNE.sensitivity).toFixed(1)}\u00B0</span></div>` +
-    `<div class="row"><span class="label">lean</span> <span class="val">${input.motionLean.toFixed(3)}</span>` +
-    ` <span class="label">off</span> <span class="val">${input.motionOffset !== null ? input.motionOffset.toFixed(1) : '—'}</span></div>`;
+    `<div class="row"><span class="label">raw</span> <span class="val">${im.rawGamma.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">rel</span> <span class="${rawCls}">${im.motionRawRelative.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">dz-adj</span> <span class="val">${(im.motionLean * CONFIG_TUNE.sensitivity).toFixed(1)}\u00B0</span></div>` +
+    `<div class="row"><span class="label">lean</span> <span class="val">${im.motionLean.toFixed(3)}</span>` +
+    ` <span class="label">off</span> <span class="val">${im.motionOffset !== null ? im.motionOffset.toFixed(1) : '\u2014'}</span></div>`;
 
   const cadence = pedals._correctTimestamps.length >= 2
     ? (pedals._correctTimestamps.length / 5).toFixed(1) : '0.0';
   const streakCls = pedals.streak >= 10 ? 'val' : (pedals.streak >= 5 ? 'val-warn' : 'val');
 
   diagPedal.innerHTML =
-    `<div class="row"><span class="label">foot</span> <span class="val">${pedals.lastPedal || '—'}</span>` +
+    `<div class="row"><span class="label">foot</span> <span class="val">${pedals.lastPedal || '\u2014'}</span>` +
     ` <span class="label">pwr</span> <span class="val">${pedals.pedalPower.toFixed(2)}</span>` +
     ` <span class="label">\u2713/${'\u2717'}/\u03A3</span> <span class="val">${pedals.stats.correctTaps}/${pedals.stats.wrongTaps}/${pedals.stats.totalTaps}</span>` +
     ` <span class="label">gap</span> <span class="val">${lastGap}s</span></div>` +
@@ -1502,44 +1022,33 @@ function updateUI(dt) {
 
   // Gyro diagnostics
   const diagGyro = document.getElementById('diag-gyro');
-  if (input._gyroConnected) {
-    const corrZ = ((input._gyroRawZ - input._gyroBias.z) * GYRO_SCALE).toFixed(1);
-    const calibProg = input._gyroCalibrating
-      ? ` <span class="val-warn">calib ${input._gyroCalibSamples.length}/${GYRO_CALIB_COUNT}</span>` : '';
+  if (im.gyroConnected) {
+    const corrZ = ((im._gyroRawZ - im._gyroBias.z) * GYRO_SCALE).toFixed(1);
+    const calibProg = im._gyroCalibrating
+      ? ` <span class="val-warn">calib ${im._gyroCalibSamples.length}/${GYRO_CALIB_COUNT}</span>` : '';
     diagGyro.innerHTML =
       `<div class="row"><span class="label">gyro</span>` +
-      ` <span class="label">rawZ</span> <span class="val">${input._gyroRawZ}</span>` +
-      ` <span class="label">bias</span> <span class="val">${input._gyroBias.z.toFixed(1)}</span>` +
-      ` <span class="label">corrZ</span> <span class="val">${corrZ}°/s</span></div>` +
-      `<div class="row"><span class="label">angle</span> <span class="val">${input._gyroAngle.toFixed(1)}°</span>` +
-      ` <span class="label">lean</span> <span class="val">${input.gyroLean.toFixed(3)}</span>` +
+      ` <span class="label">rawZ</span> <span class="val">${im._gyroRawZ}</span>` +
+      ` <span class="label">bias</span> <span class="val">${im._gyroBias.z.toFixed(1)}</span>` +
+      ` <span class="label">corrZ</span> <span class="val">${corrZ}\u00B0/s</span></div>` +
+      `<div class="row"><span class="label">angle</span> <span class="val">${im._gyroRollAccum.toFixed(1)}\u00B0</span>` +
+      ` <span class="label">lean</span> <span class="val">${im.motionLean.toFixed(3)}</span>` +
       calibProg + `</div>` +
       `<div class="row"><span class="label">accel</span>` +
-      ` <span class="label">X</span> <span class="val">${input._accelRawX}</span>` +
-      ` <span class="label">Y</span> <span class="val">${input._accelRawY}</span>` +
-      ` <span class="label">Z</span> <span class="val">${input._accelRawZ}</span>` +
-      ` <span class="label">roll</span> <span class="val">${input._accelRoll.toFixed(1)}°</span></div>`;
+      ` <span class="label">X</span> <span class="val">${im._accelRawX}</span>` +
+      ` <span class="label">Y</span> <span class="val">${im._accelRawY}</span>` +
+      ` <span class="label">Z</span> <span class="val">${im._accelRawZ}</span>` +
+      ` <span class="label">roll</span> <span class="val">${im._accelRoll.toFixed(1)}\u00B0</span></div>`;
   } else {
     diagGyro.innerHTML = '';
   }
 }
 
 requestAnimationFrame(gameLoop);
-</script>
 
-<script type="module">
 // ============================================================
 // 3D DRIVING ENVIRONMENT (Three.js)
 // ============================================================
-import * as THREE from 'three';
-import { TUNE as CONFIG_TUNE } from '../js/config.js';
-import { ArchIndicator } from '../js/arch-indicator.js';
-import { BikeModel } from '../js/bike-model.js';
-import { ChaseCamera } from '../js/chase-camera.js';
-
-// Sync slider TUNE values into config.js TUNE (read by BikeModel/ArchIndicator)
-if (window.TUNE) Object.assign(CONFIG_TUNE, window.TUNE);
-
 const container = document.getElementById('bike-viewport');
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1551,10 +1060,8 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 scene.fog = new THREE.Fog(0x87ceeb, 80, 200);
 
-// Camera
 const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 500);
 
-// ── Lighting ──
 const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x556633, 0.6);
 scene.add(hemiLight);
 
@@ -1571,7 +1078,7 @@ sunLight.shadow.camera.bottom = -20;
 scene.add(sunLight);
 scene.add(sunLight.target);
 
-// ── Grid ground (procedural canvas texture) ──
+// ── Grid ground ──
 const GROUND_SIZE = 400;
 function createGridTexture() {
   const canvas = document.createElement('canvas');
@@ -1580,11 +1087,9 @@ function createGridTexture() {
   canvas.height = size;
   const ctx = canvas.getContext('2d');
 
-  // Base color
   ctx.fillStyle = '#4a7a3a';
   ctx.fillRect(0, 0, size, size);
 
-  // Minor grid lines (every 2 units → 1024/200 ≈ 5.12 px per unit)
   const unitsPerSide = GROUND_SIZE;
   const pxPerUnit = size / unitsPerSide;
   ctx.strokeStyle = 'rgba(255,255,255,0.08)';
@@ -1595,7 +1100,6 @@ function createGridTexture() {
     ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
   }
 
-  // Major grid lines (every 20 units)
   ctx.strokeStyle = 'rgba(255,255,255,0.2)';
   ctx.lineWidth = 2;
   for (let i = 0; i <= unitsPerSide; i += 20) {
@@ -1633,7 +1137,7 @@ const pylonTopMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
 const pylons = [];
 for (let x = -PYLON_RANGE / 2; x <= PYLON_RANGE / 2; x += PYLON_SPACING) {
   for (let z = -PYLON_RANGE / 2; z <= PYLON_RANGE / 2; z += PYLON_SPACING) {
-    if (x === 0 && z === 0) continue; // skip origin
+    if (x === 0 && z === 0) continue;
     const mat = pylonMats[Math.abs(((x / PYLON_SPACING) + (z / PYLON_SPACING)) % 3)];
     const pole = new THREE.Mesh(pylonGeo, mat);
     pole.position.set(x, 1.0, z);
@@ -1647,7 +1151,7 @@ for (let x = -PYLON_RANGE / 2; x <= PYLON_RANGE / 2; x += PYLON_SPACING) {
   }
 }
 
-// ── Origin marker (start/reset point) ──
+// ── Origin marker ──
 const originMarker = new THREE.Mesh(
   new THREE.CylinderGeometry(0.5, 0.5, 0.1, 16),
   new THREE.MeshStandardMaterial({ color: 0x44aaff, emissive: 0x2266aa })
@@ -1675,50 +1179,38 @@ resize();
 window.addEventListener('resize', resize);
 new ResizeObserver(resize).observe(container);
 
-// ── Arch Indicator (3D gauge from the game) ──
+// ── Arch Indicator ──
 const archIndicator = new ArchIndicator(scene);
 
 let lastRenderTime = performance.now();
 
-// ── Render loop ──
 function render3D(now) {
   requestAnimationFrame(render3D);
 
   const dt = Math.min((now - lastRenderTime) / 1000, 0.05);
   lastRenderTime = now;
 
-  // Sync slider values into config.js TUNE each frame
-  if (window.TUNE) Object.assign(CONFIG_TUNE, window.TUNE);
+  if (TUNE) Object.assign(CONFIG_TUNE, TUNE);
 
   if (bikeModel.modelLoaded) {
-    // BikeModel handles its own transform (position, heading, lean via _applyTransform)
-    // but we still need to move ground, sun, and camera to follow the bike
-
-    // Move ground to follow bike (snapped to grid) for infinite-ground effect
     const snapX = Math.round(bikeModel.position.x / PYLON_SPACING) * PYLON_SPACING;
     const snapZ = Math.round(bikeModel.position.z / PYLON_SPACING) * PYLON_SPACING;
     ground.position.set(snapX, 0, snapZ);
 
-    // Sun follows bike for consistent shadows
     sunLight.position.set(bikeModel.position.x + 10, 20, bikeModel.position.z + 10);
     sunLight.target.position.set(bikeModel.position.x, 0, bikeModel.position.z);
 
-    // Chase camera (same class as the game)
     chaseCamera.update(bikeModel, dt, null);
 
-    // Arch indicator — show when motion or gyro input is active
-    const src = window.inputSource;
-    const motionActive = src === 'motion' && !bikeModel.fallen;
-    const gyroActive = src === 'gamepad' && window.input &&
-        window.input._gyroEnabled && window.input._gyroConnected && !bikeModel.fallen;
+    const motionActive = inputSource === 'motion' && !bikeModel.fallen;
+    const gyroActive = inputSource === 'gamepad' &&
+        gyroEnabled && im.gyroConnected && !bikeModel.fallen;
 
     if (motionActive || gyroActive) {
       if (!archIndicator._visible) {
         archIndicator.setup('solo', '#ffaa33', '#4488ff');
       }
-      let archLean = 0;
-      if (gyroActive) archLean = window.input.gyroLean || 0;
-      else archLean = window.input ? (window.input.motionLean || 0) : 0;
+      const archLean = im.motionLean || 0;
       archIndicator.update(bikeModel, archLean, 0);
     } else if (archIndicator._visible) {
       archIndicator.hide();
