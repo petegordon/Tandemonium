@@ -50,6 +50,17 @@ export class InputManager {
     this._gyroReportHandler = null;
     this._accelVerified = false;     // accel byte offsets validated
 
+    // Diagnostic properties (exposed for test pages)
+    this._gpName = '';
+    this._gpRawStickX = 0;
+    this._gpLB = false;
+    this._gpRB = false;
+    this._gyroRawZ = 0;
+    this._accelRawX = 0;
+    this._accelRawY = 0;
+    this._accelRawZ = 0;
+    this._accelRoll = 0;
+
     this._setupKeyboard();
     this._setupGamepad();
     if (isMobile) {
@@ -315,6 +326,7 @@ export class InputManager {
     window.addEventListener('gamepadconnected', (e) => {
       this.gamepadIndex = e.gamepad.index;
       this.gamepadConnected = true;
+      this._gpName = e.gamepad.id;
       console.log('Gamepad connected:', e.gamepad.id);
       if (!this.suppressGamepadBadge) {
         const badge = document.getElementById('gamepad-badge');
@@ -328,6 +340,10 @@ export class InputManager {
         this.gamepadIndex = null;
         this.gamepadConnected = false;
         this.gamepadLean = 0;
+        this._gpName = '';
+        this._gpRawStickX = 0;
+        this._gpLB = false;
+        this._gpRB = false;
         this._gpTriggerLeftVal = 0;
         this._gpTriggerRightVal = 0;
         this._gpTriggerLeftPressed = false;
@@ -349,6 +365,7 @@ export class InputManager {
         if (gamepads[i]) {
           this.gamepadIndex = i;
           this.gamepadConnected = true;
+          this._gpName = gamepads[i].id;
           if (!this.suppressGamepadBadge) {
             const badge = document.getElementById('gamepad-badge');
             if (badge) badge.style.display = 'block';
@@ -368,16 +385,17 @@ export class InputManager {
 
     // Left stick X — deadzone 0.08
     const rawX = gp.axes[0] || 0;
+    this._gpRawStickX = rawX;
     this.gamepadLean = Math.abs(rawX) < 0.08 ? 0 : rawX;
 
     // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
     const THRESHOLD = 0.5;
-    const lb = gp.buttons[4] && gp.buttons[4].pressed;
-    const rb = gp.buttons[5] && gp.buttons[5].pressed;
+    this._gpLB = !!(gp.buttons[4] && gp.buttons[4].pressed);
+    this._gpRB = !!(gp.buttons[5] && gp.buttons[5].pressed);
     this._gpTriggerLeftVal = gp.buttons[6] ? gp.buttons[6].value : 0;
     this._gpTriggerRightVal = gp.buttons[7] ? gp.buttons[7].value : 0;
-    this._gpTriggerLeftPressed = lb || this._gpTriggerLeftVal >= THRESHOLD;
-    this._gpTriggerRightPressed = rb || this._gpTriggerRightVal >= THRESHOLD;
+    this._gpTriggerLeftPressed = this._gpLB || this._gpTriggerLeftVal >= THRESHOLD;
+    this._gpTriggerRightPressed = this._gpRB || this._gpTriggerRightVal >= THRESHOLD;
   }
 
   getGamepadLean() {
@@ -510,6 +528,12 @@ export class InputManager {
     const rawAy = this._readSigned16(report, gyroOffset + 8);
     const rawAz = this._readSigned16(report, gyroOffset + 10);
 
+    // Store raw values for diagnostics
+    this._gyroRawZ = rawGz;
+    this._accelRawX = rawAx;
+    this._accelRawY = rawAy;
+    this._accelRawZ = rawAz;
+
     // Calibration sampling
     if (this._gyroCalibrating) {
       this._gyroCalibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
@@ -543,6 +567,7 @@ export class InputManager {
         }
         if (this._accelVerified) {
           const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
+          this._accelRoll = accelRoll;
           const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
           this._gyroRollAccum += correction;
         }
