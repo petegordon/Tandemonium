@@ -32,6 +32,19 @@ const BIKE_NAMES = {
   bike_birthday: 'Birthday Express',
 };
 
+const BIKE_COLORS = {
+  default: 'rgba(68, 255, 102, 0.7)',
+  bike_orange: '#fd892b',
+  bike_magenta: '#ff61f2',
+  bike_red: '#ff4444',
+  bike_blue: '#66aaff',
+  bike_green: '#00ff00',
+  bike_yellow: '#ffff00',
+  bike_christmas: '#2eff46',
+  bike_newyears: '#fbff00',
+  bike_birthday: '#66ff00',
+};
+
 // Map bike preset keys to their per-bike Grandma's House achievement IDs
 const BIKE_ACHIEVEMENT_MAP = {
   default: 'grandma_default',
@@ -2609,6 +2622,7 @@ export class Lobby {
     const key = this._presetKeys[this._presetIndex];
     const nameEl = document.getElementById('bike-name');
     const locked = HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key);
+    nameEl.style.color = locked ? 'rgba(255,255,255,0.3)' : (BIKE_COLORS[key] || 'rgba(68, 255, 102, 0.7)');
 
     // Reset all materials to originals
     if (this._previewModel && this._previewOriginalMats) {
