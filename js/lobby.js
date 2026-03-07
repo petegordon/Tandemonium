@@ -111,6 +111,14 @@ export class Lobby {
     this._gpPrevLeft = false;
     this._gpPrevRight = false;
 
+    // Gamepad code spinner state
+    this._spinnerChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    this._spinnerValues = [0, 0, 0, 0]; // indices into _spinnerChars
+    this._spinnerSlot = 0; // which of the 4 slots is active
+    this._spinnerActive = false; // true when spinners are visible
+    this._spinnerRepeatTimer = null;
+    this._spinnerRepeatInterval = null;
+
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
@@ -151,6 +159,9 @@ export class Lobby {
     this._stepBack.set(this.hostStep, document.getElementById('btn-back-role-host'));
     this._stepBack.set(this.joinStep, document.getElementById('btn-back-role-join'));
 
+    // Fixed back button (non-gamepad, stays at bottom of steps column)
+    this._fixedBackBtn = document.getElementById('lobby-fixed-back');
+
     // Default focus index per step (0 if not specified)
     this._stepDefaultFocus = new Map();
     this._stepDefaultFocus.set(this.modeStep, 0); // RIDE TOGETHER
@@ -181,12 +192,14 @@ export class Lobby {
     this._setup();
     this._buildLeaderboardTabs();
     this._initBikeCarousel();
-    this._checkAutoJoin();
 
     // Lobby is visible by default on page load (show() is only called on
     // re-entry from gameplay), so start gamepad nav now and set initial step.
     this._currentStep = this.modeStep;
     this._startGamepadNav();
+
+    // Auto-join must run AFTER _currentStep is set so _showStep can override it
+    this._checkAutoJoin();
     this._checkPermissionStates();
 
     // "Tap to Start" overlay — unlocks audio autoplay + requests permissions.
@@ -322,15 +335,20 @@ export class Lobby {
       <p style="font-size:16px;opacity:0.6;margin-top:8px;">Tap to retry</p>
     </div>`;
     document.body.appendChild(overlay);
+    this._tapOverlay = overlay;
 
-    overlay.addEventListener('click', () => {
+    const dismiss = () => {
+      if (!this._tapOverlay) return;
+      this._tapOverlay = null;
       // Re-request all permissions (user gesture required on iOS)
       this._permissionsChecked = false;
       this._toggleAll();
       // Fade out
       overlay.classList.add('fade-out');
       setTimeout(() => overlay.remove(), 400);
-    }, { once: true });
+    };
+
+    overlay.addEventListener('click', dismiss, { once: true });
   }
 
   show() {
@@ -342,11 +360,42 @@ export class Lobby {
   }
 
   _showStep(step) {
+    // Restore toggle columns and clean up spinners if leaving join step
+    if (this._currentStep === this.joinStep && step !== this.joinStep) {
+      this._lastFailedCode = null;
+      this._spinnerStopRepeat();
+      if (this._spinnerActive) this._showSpinners(false);
+      const leftCol = document.querySelector('.lobby-left-col');
+      const rightCol = document.querySelector('.lobby-right-col');
+      if (leftCol) leftCol.style.display = '';
+      if (rightCol) rightCol.style.display = '';
+      const backHint = document.getElementById('gamepad-back-hint');
+      if (backHint) { backHint.style.display = ''; backHint.style.visibility = ''; }
+    }
     [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep]
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
     this._currentStep = step;
+
+    // Hide toggle columns and gamepad back hint on join step
+    if (step === this.joinStep) {
+      const leftCol = document.querySelector('.lobby-left-col');
+      const rightCol = document.querySelector('.lobby-right-col');
+      if (leftCol) leftCol.style.display = 'none';
+      if (rightCol) rightCol.style.display = 'none';
+      const backHint = document.getElementById('gamepad-back-hint');
+      if (backHint) { backHint.style.display = 'none'; backHint.style.visibility = 'hidden'; }
+    }
+
+    // Show/hide fixed back button at bottom (use visibility to always reserve space)
+    const hasBack = this._stepBack.get(step);
+    if (hasBack && !(this.input && this.input.gamepadConnected)) {
+      this._fixedBackBtn.textContent = step === this.roomStep ? '\u2190 Leave Room' : '\u2190 Back';
+      this._fixedBackBtn.style.visibility = 'visible';
+    } else {
+      this._fixedBackBtn.style.visibility = 'hidden';
+    }
 
     // Always reset to center column and update its items
     this._modeCol = 1;
@@ -357,6 +406,8 @@ export class Lobby {
 
     this._focusIndex = this._stepDefaultFocus.get(step) || 0;
     this._applyFocusHighlight();
+    this._updateBackHint(step);
+    this._updateCardHeader(step);
   }
 
   _hideLobby() {
@@ -398,7 +449,15 @@ export class Lobby {
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
       if (this.net) { this.net.destroy(); this.net = null; }
+      this._showSpinners(false);
+      this._spinnerStopRepeat();
       this._showStep(this.roleStep);
+    });
+
+    // Fixed back button delegates to the per-step back button
+    this._fixedBackBtn.addEventListener('click', () => {
+      const stepBackBtn = this._stepBack.get(this._currentStep);
+      if (stepBackBtn) stepBackBtn.click();
     });
 
     // CAPTAIN (START A RIDE)
@@ -410,7 +469,12 @@ export class Lobby {
     // STOKER (JOIN A RIDE)
     document.getElementById('btn-stoker').addEventListener('click', () => {
       this._showStep(this.joinStep);
-      document.getElementById('room-code-input').focus();
+      if (this.input && this.input.gamepadConnected) {
+        this._showSpinners(true);
+      } else {
+        this._showSpinners(false);
+        document.getElementById('room-code-input').focus();
+      }
     });
 
     // JOIN button
@@ -1418,9 +1482,50 @@ export class Lobby {
 
     // Show motion toggle if a gyro-capable gamepad connects later
     window.addEventListener('gamepadconnected', () => {
+      // Hide fixed back button when gamepad takes over
+      this._fixedBackBtn.style.visibility = 'hidden';
+      // Re-prime edge-detect flags so a held button from connection
+      // doesn't immediately fire a click in _pollGamepadNav.
+      if (this.input && this.input.gamepadConnected) {
+        const gamepads = navigator.getGamepads();
+        const gp = gamepads[this.input.gamepadIndex];
+        if (gp) {
+          this._gpPrevA = gp.buttons[0] && gp.buttons[0].pressed;
+          this._gpPrevB = gp.buttons[1] && gp.buttons[1].pressed;
+          this._gpPrevUp = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
+          this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
+          this._gpPrevLeft = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
+          this._gpPrevRight = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
+          this._gpPrevLB = gp.buttons[4] && gp.buttons[4].pressed;
+          this._gpPrevRB = gp.buttons[5] && gp.buttons[5].pressed;
+        }
+      }
+      this._updateBackHint(this._currentStep);
+      // Switch to spinners if currently on join step
+      if (this._currentStep === this.joinStep) {
+        if (this._lastFailedCode) {
+          this._setSpinnerValuesFromCode(this._lastFailedCode);
+          this._spinnerReshow = true;
+        }
+        this._showSpinners(true);
+      }
       if (this.toggleMotion.style.display !== 'none') return;
       if (this.input && this.input.gamepadConnected && navigator.hid) {
         this._checkGamepadGyro();
+      }
+    });
+    window.addEventListener('gamepaddisconnected', () => {
+      this._updateBackHint(this._currentStep);
+      // Show fixed back button when gamepad disconnects
+      const hasBack = this._stepBack.get(this._currentStep);
+      if (hasBack) {
+        this._fixedBackBtn.textContent = this._currentStep === this.roomStep ? '\u2190 Leave Room' : '\u2190 Back';
+        this._fixedBackBtn.style.visibility = 'visible';
+      }
+      // Switch back to text input if on join step
+      if (this._currentStep === this.joinStep) {
+        this._showSpinners(false);
+        this._spinnerStopRepeat();
       }
     });
   }
@@ -1435,7 +1540,13 @@ export class Lobby {
     const fullCode = code.startsWith('TNDM-') ? code : 'TNDM-' + code;
 
     try { this._requestMotion(); } catch (_) {}
+    // Dismiss tap-to-start overlay — user already acted by navigating via URL
+    if (this._tapOverlay) this._dismissTapOverlay();
     this._showStep(this.joinStep);
+    // Put the last 4 chars in the text input and pre-set for spinners
+    const suffix = fullCode.slice(-4);
+    document.getElementById('room-code-input').value = suffix;
+    this._lastFailedCode = fullCode;
     this._joinRoom(fullCode);
   }
 
@@ -1452,6 +1563,7 @@ export class Lobby {
 
     this.net.createRoom(async (code) => {
       codeEl.textContent = code;
+      this._updateCardHeader(this._currentStep);
       statusEl.textContent = 'Waiting for partner...';
 
       // Fetch relay auth token (non-blocking — relay works without it if secret not configured)
@@ -1530,6 +1642,7 @@ export class Lobby {
     });
 
     this.net.onConnected = () => {
+      this._lastFailedCode = null;
       statusEl.textContent = 'Connected!';
       statusEl.className = 'conn-status connected';
       setTimeout(() => {
@@ -1540,6 +1653,17 @@ export class Lobby {
     this.net.onDisconnected = (reason) => {
       statusEl.textContent = reason || 'Could not connect';
       statusEl.className = 'conn-status error';
+      // Sync error into spinner status area
+      const spinnerStatus = document.getElementById('spinner-status');
+      if (spinnerStatus) {
+        spinnerStatus.textContent = statusEl.textContent;
+        spinnerStatus.className = statusEl.className;
+        spinnerStatus.style.display = '';
+      }
+      if (this._currentStep === this.joinStep) {
+        this._lastFailedCode = code;
+        // _pollGamepadNav will detect gamepad and switch to spinners
+      }
     };
   }
 
@@ -1889,6 +2013,120 @@ export class Lobby {
     this._applyPresetToPreview();
   }
 
+  // ── Gamepad code spinners ─────────────────────────────────────
+
+  _showSpinners(show) {
+    const spinnerWrap = document.getElementById('gamepad-code-spinners');
+    const inputWrap = document.querySelector('.room-code-join-wrap');
+    if (!spinnerWrap || !inputWrap) return;
+    this._spinnerActive = show;
+    spinnerWrap.style.display = show ? '' : 'none';
+    inputWrap.style.display = show ? 'none' : '';
+    // Hide JOIN button, status, back button when spinners are active
+    const joinBtn = document.getElementById('btn-join');
+    if (joinBtn) joinBtn.style.display = show ? 'none' : '';
+    const joinStatus = document.getElementById('join-status');
+    if (joinStatus) joinStatus.style.display = show ? 'none' : '';
+    const backBtn = document.getElementById('btn-back-role-join');
+    if (backBtn) backBtn.style.display = show ? 'none' : '';
+    const backHint = document.getElementById('gamepad-back-hint');
+    if (backHint) backHint.style.visibility = show ? 'hidden' : '';
+    // Set controller-appropriate button icons (PS: ✕/◯, Xbox: A/B)
+    if (show) {
+      const submitIcon = document.getElementById('spinner-submit-icon');
+      const backIcon = document.getElementById('spinner-back-icon');
+      if (submitIcon && backIcon && this.input) {
+        const gpId = (this.input._gpName || '').toLowerCase();
+        const isPS = /playstation|dualsense|dualshock|054c/.test(gpId);
+        submitIcon.textContent = isPS ? '\u2715' : 'A';
+        backIcon.textContent = isPS ? '\u25EF' : 'B';
+        if (isPS) {
+          submitIcon.style.color = '#4a9df8';
+          submitIcon.style.borderColor = '#4a9df8';
+          submitIcon.style.borderRadius = '50%';
+          backIcon.style.color = '#ff6b81';
+          backIcon.style.borderColor = '#ff6b81';
+          backIcon.style.borderRadius = '50%';
+        }
+      }
+      // Copy status from main join-status into spinner status area
+      const mainStatus = document.getElementById('join-status');
+      const spinnerStatus = document.getElementById('spinner-status');
+      if (mainStatus && spinnerStatus) {
+        spinnerStatus.textContent = mainStatus.textContent;
+        spinnerStatus.className = mainStatus.className;
+        spinnerStatus.style.display = mainStatus.textContent ? '' : 'none';
+      }
+    }
+    if (show) {
+      if (!this._spinnerReshow) {
+        this._spinnerSlot = 0;
+        this._spinnerValues = [0, 0, 0, 0];
+      }
+      this._spinnerReshow = false;
+      this._updateSpinnerDisplay();
+      this._applySpinnerFocus();
+    }
+  }
+
+  _updateSpinnerDisplay() {
+    const slots = document.querySelectorAll('#gamepad-code-spinners .code-spinner');
+    slots.forEach((slot, i) => {
+      const charEl = slot.querySelector('.spinner-char');
+      charEl.textContent = this._spinnerChars[this._spinnerValues[i]];
+      slot.classList.toggle('active', this._spinnerActive && i === this._spinnerSlot);
+    });
+    // Always highlight JOIN when spinners are active (A submits from anywhere)
+    const joinBtn = document.getElementById('btn-join');
+    joinBtn.classList.toggle('gamepad-focus', this._spinnerActive);
+  }
+
+  _applySpinnerFocus() {
+    this._clearFocusHighlight();
+    this._updateSpinnerDisplay();
+  }
+
+  _spinnerCycleChar(dir) {
+    const len = this._spinnerChars.length;
+    this._spinnerValues[this._spinnerSlot] = (this._spinnerValues[this._spinnerSlot] + dir + len) % len;
+    this._updateSpinnerDisplay();
+  }
+
+  _spinnerStartRepeat(dir) {
+    this._spinnerStopRepeat();
+    this._spinnerCycleChar(dir);
+    this._spinnerRepeatTimer = setTimeout(() => {
+      this._spinnerRepeatInterval = setInterval(() => this._spinnerCycleChar(dir), 120);
+    }, 250);
+  }
+
+  _spinnerStopRepeat() {
+    if (this._spinnerRepeatTimer) { clearTimeout(this._spinnerRepeatTimer); this._spinnerRepeatTimer = null; }
+    if (this._spinnerRepeatInterval) { clearInterval(this._spinnerRepeatInterval); this._spinnerRepeatInterval = null; }
+  }
+
+  _spinnerSubmit() {
+    const code = 'TNDM-' + this._spinnerValues.map(i => this._spinnerChars[i]).join('');
+    // Show connecting status in spinner area
+    const spinnerStatus = document.getElementById('spinner-status');
+    if (spinnerStatus) {
+      spinnerStatus.textContent = 'Connecting...';
+      spinnerStatus.className = 'conn-status';
+      spinnerStatus.style.display = '';
+    }
+    this._joinRoom(code);
+  }
+
+  _setSpinnerValuesFromCode(code) {
+    // Parse last 4 chars into spinner indices
+    const suffix = code.slice(-4);
+    for (let i = 0; i < 4; i++) {
+      const ch = suffix[i] ? suffix[i].toUpperCase() : 'A';
+      const idx = this._spinnerChars.indexOf(ch);
+      this._spinnerValues[i] = idx >= 0 ? idx : 0;
+    }
+  }
+
   // ── Gamepad navigation ──────────────────────────────────────
 
   _startGamepadNav() {
@@ -1919,6 +2157,58 @@ export class Lobby {
     this._pollGamepadNav();
   }
 
+  _updateBackHint(step) {
+    const hint = document.getElementById('gamepad-back-hint');
+    if (!hint) return;
+    const hasBack = this._stepBack.get(step);
+    const hasGamepad = this.input && this.input.gamepadConnected;
+    if (hasBack && hasGamepad) {
+      const icon = document.getElementById('gamepad-back-icon');
+      const gpId = (this.input._gpName || '').toLowerCase();
+      const isPS = /playstation|dualsense|dualshock|054c/.test(gpId);
+      const isXbox = /xbox|microsoft|045e/.test(gpId);
+      if (isPS) {
+        icon.textContent = '\u25EF';
+        icon.style.color = '#ff6b81';
+        icon.style.borderColor = '#ff6b81';
+      } else if (isXbox) {
+        icon.textContent = 'B';
+        icon.style.color = '#ff4444';
+        icon.style.borderColor = '#ff4444';
+      } else {
+        // Steam / generic
+        icon.textContent = 'B';
+        icon.style.color = 'rgba(255,255,255,0.5)';
+        icon.style.borderColor = 'rgba(255,255,255,0.3)';
+      }
+      hint.style.visibility = 'visible';
+    } else {
+      hint.style.visibility = 'hidden';
+    }
+  }
+
+  _updateCardHeader(step) {
+    const header = document.getElementById('lobby-card-header');
+    if (!header) return;
+    const codeEl = document.getElementById('room-code-display');
+    const code = codeEl ? codeEl.textContent : '';
+    if ((step === this.hostStep || step === this.roomStep) && code && code !== '----') {
+      header.textContent = code;
+    } else {
+      header.textContent = '';
+    }
+  }
+
+  _flashBumper(el) {
+    if (!el) return;
+    el.style.boxShadow = '0 0 12px 4px rgba(68,255,102,0.8)';
+    el.style.borderColor = 'rgba(68,255,102,0.9)';
+    setTimeout(() => {
+      el.style.boxShadow = '';
+      el.style.borderColor = '';
+    }, 200);
+  }
+
   _stopGamepadNav() {
     if (this._pollRafId) {
       cancelAnimationFrame(this._pollRafId);
@@ -1931,6 +2221,13 @@ export class Lobby {
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
 
     if (!this.input || !this.input.gamepadConnected) return;
+
+    // Auto-switch to spinners on join step when gamepad is active and join failed
+    if (this._currentStep === this.joinStep && !this._spinnerActive && this._lastFailedCode) {
+      this._setSpinnerValuesFromCode(this._lastFailedCode);
+      this._spinnerReshow = true;
+      this._showSpinners(true);
+    }
 
     const gamepads = navigator.getGamepads();
     const gp = gamepads[this.input.gamepadIndex];
@@ -1952,8 +2249,14 @@ export class Lobby {
     // LB/RB bumpers (buttons 4/5) — cycle bike color
     const lb = gp.buttons[4] && gp.buttons[4].pressed;
     const rb = gp.buttons[5] && gp.buttons[5].pressed;
-    if (lb && !this._gpPrevLB && this._bikePrev) this._bikePrev();
-    if (rb && !this._gpPrevRB && this._bikeNext) this._bikeNext();
+    if (lb && !this._gpPrevLB && this._bikePrev) {
+      this._bikePrev();
+      this._flashBumper(document.getElementById('bike-prev'));
+    }
+    if (rb && !this._gpPrevRB && this._bikeNext) {
+      this._bikeNext();
+      this._flashBumper(document.getElementById('bike-next'));
+    }
     this._gpPrevLB = lb;
     this._gpPrevRB = rb;
 
@@ -1982,6 +2285,12 @@ export class Lobby {
     }
     // Leaderboard modal gamepad navigation
     if (document.getElementById('leaderboard-modal').style.display !== 'none') {
+      // Right stick (axis 3) scrolls the leaderboard list
+      const lbStickY = gp.axes[3] || 0;
+      if (Math.abs(lbStickY) > 0.15) {
+        const lbBox = document.querySelector('.leaderboard-box');
+        if (lbBox) lbBox.scrollTop += lbStickY * 12;
+      }
       if (left && !this._gpPrevLeft) {
         this._lbFocusCol = Math.max(0, this._lbFocusCol - 1);
         this._lbApplyFocus();
@@ -2024,14 +2333,20 @@ export class Lobby {
       this._gpPrevA = a; this._gpPrevB = b;
       return;
     }
-    if (b && !this._gpPrevB) {
-      if (this.helpModal.classList.contains('visible')) {
-        this._closeHelp();
-        this._gpPrevUp = up; this._gpPrevDown = down;
-        this._gpPrevLeft = left; this._gpPrevRight = right;
-        this._gpPrevA = a; this._gpPrevB = b;
-        return;
+    if (this.helpModal.classList.contains('visible')) {
+      // Right stick Y scrolls the help content
+      const helpStickY = gp.axes[3] || 0;
+      if (Math.abs(helpStickY) > 0.15) {
+        const helpInner = document.getElementById('help-modal-inner');
+        if (helpInner) helpInner.scrollTop += helpStickY * 12;
       }
+      if (b && !this._gpPrevB) {
+        this._closeHelp();
+      }
+      this._gpPrevUp = up; this._gpPrevDown = down;
+      this._gpPrevLeft = left; this._gpPrevRight = right;
+      this._gpPrevA = a; this._gpPrevB = b;
+      return;
     }
 
     // If "Tap to Start" overlay is showing, any button dismisses it
@@ -2039,6 +2354,31 @@ export class Lobby {
       if ((a && !this._gpPrevA) || (b && !this._gpPrevB)) {
         this._dismissTapOverlay();
       }
+      this._gpPrevUp = up; this._gpPrevDown = down;
+      this._gpPrevLeft = left; this._gpPrevRight = right;
+      this._gpPrevA = a; this._gpPrevB = b;
+      return;
+    }
+
+    // Gamepad code spinner navigation
+    if (this._spinnerActive) {
+      // Up/down cycles characters (with hold-to-repeat)
+      if (up && !this._gpPrevUp) this._spinnerStartRepeat(-1);
+      if (down && !this._gpPrevDown) this._spinnerStartRepeat(1);
+      if (!up && this._gpPrevUp) this._spinnerStopRepeat();
+      if (!down && this._gpPrevDown) this._spinnerStopRepeat();
+      // Left/right moves between slots
+      if (left && !this._gpPrevLeft) {
+        this._spinnerSlot = Math.max(0, this._spinnerSlot - 1);
+        this._applySpinnerFocus();
+      }
+      if (right && !this._gpPrevRight) {
+        this._spinnerSlot = Math.min(3, this._spinnerSlot + 1);
+        this._applySpinnerFocus();
+      }
+      // A button submits directly
+      if (a && !this._gpPrevA) this._spinnerSubmit();
+      if (b && !this._gpPrevB) this._goBack();
       this._gpPrevUp = up; this._gpPrevDown = down;
       this._gpPrevLeft = left; this._gpPrevRight = right;
       this._gpPrevA = a; this._gpPrevB = b;
