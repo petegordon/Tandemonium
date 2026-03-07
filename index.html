@@ -1290,6 +1290,12 @@
     flex-shrink: 0;
     margin-top: 10px;
   }
+  .lobby-desktop-img {
+    display: none;
+  }
+  .lobby-card-header {
+    display: none;
+  }
   .lobby-card {
     text-align: center;
     max-width: 460px;
@@ -1477,6 +1483,11 @@
     -webkit-tap-highlight-color: transparent;
   }
   .lobby-back:active { color: rgba(255,255,255,0.7); }
+  .lobby-step .lobby-back { display: none; }
+  #lobby-fixed-back {
+    padding: 10px 16px;
+    flex-shrink: 0;
+  }
   .gamepad-focus {
     outline: 3px solid #44ff66;
     outline-offset: 3px;
@@ -1506,32 +1517,133 @@
     background: rgba(255,255,255,0.1);
     border: 2px solid rgba(255,255,255,0.4);
     border-radius: 10px;
-    padding: 12px;
+    padding: 8px 12px;
     width: 100%;
-    max-width: 240px;
+    max-width: 180px;
     outline: none;
     text-transform: uppercase;
     font-family: 'Helvetica Neue', Arial, sans-serif;
   }
+  .room-code-input::placeholder {
+    color: rgba(255,255,255,0.2);
+    letter-spacing: 8px;
+  }
   .room-code-input:focus {
     border-color: #44ff66;
   }
-  .room-code-prefix {
-    font-size: 24px;
-    font-weight: 700;
-    color: rgba(255,255,255,0.5);
-    letter-spacing: 3px;
-    padding: 12px 0 12px 12px;
-    background: rgba(255,255,255,0.1);
-    border: 2px solid rgba(255,255,255,0.4);
-    border-right: none;
-    border-radius: 10px 0 0 10px;
+  .room-code-join-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .room-code-prefix-vert {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.35);
+    line-height: 1.3;
     font-family: 'Helvetica Neue', Arial, sans-serif;
   }
-  .room-code-short {
-    max-width: 130px;
-    border-radius: 0 10px 10px 0;
+  .room-code-dash {
+    font-size: 16px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.2);
+    align-self: center;
   }
+  .room-code-prefix {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.35);
+    letter-spacing: 2px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  /* Gamepad code spinners */
+  #gamepad-code-spinners {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  #gamepad-code-spinners .spinner-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .spinner-slots {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+  }
+  .code-spinner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 44px;
+    background: rgba(255,255,255,0.1);
+    border: 2px solid rgba(255,255,255,0.4);
+    border-radius: 10px;
+    padding: 4px 0;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .code-spinner.active {
+    border-color: #44ff66;
+    box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
+  }
+  .spinner-char {
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: 0;
+    line-height: 1.2;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .spinner-arrow {
+    font-size: 10px;
+    color: rgba(255,255,255,0.0);
+    transition: color 0.15s;
+    user-select: none;
+    line-height: 1;
+  }
+  .code-spinner.active .spinner-arrow {
+    color: rgba(255,255,255,0.35);
+  }
+  .spinner-hints {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 4px;
+  }
+  .spinner-submit-hint {
+    font-size: 13px;
+    color: rgba(255,255,255,0.4);
+  }
+  .spinner-submit-icon,
+  .spinner-back-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid;
+    border-radius: 50%;
+    line-height: 1;
+  }
+  .spinner-submit-icon {
+    color: #44ff66;
+    border-color: #44ff66;
+  }
+  .spinner-back-icon {
+    color: #ff4444;
+    border-color: #ff4444;
+  }
+
   .conn-status {
     font-size: 13px;
     color: rgba(255,255,255,0.5);
@@ -1668,6 +1780,25 @@
 
   /* ── Surface indicator ── */
   /* ── Lobby credits line ── */
+  .gamepad-back-hint {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    text-align: center;
+    margin-top: 8px;
+  }
+  .gamepad-back-hint span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: 1.5px solid rgba(255,255,255,0.3);
+    border-radius: 50%;
+    font-size: 13px;
+    font-weight: 700;
+    vertical-align: middle;
+    margin-right: 4px;
+  }
   .lobby-credits {
     margin-top: 18px;
     font-size: 11px;
@@ -2059,65 +2190,423 @@
     pointer-events: none;
     display: none;
   }
+  /* ══════════════════════════════════════════════════════════
+     Desktop / TV scaling system
+     --ls (lobby scale) ranges from 1.8px at 1080px to 4px at 2400px+.
+     All desktop lobby sizes use calc(N * var(--ls)) where N is the
+     base pixel value. This keeps proportions consistent across screens.
+     ══════════════════════════════════════════════════════════ */
   @media (min-width: 1024px) {
+    :root {
+      --ls: clamp(1.8px, calc(100vw / 600), 4px);
+    }
     #lobby {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      grid-template-rows: auto auto 1fr;
-      align-content: start;
+      grid-template-columns: 1fr calc(280 * var(--ls)) 1fr;
+      grid-template-rows: auto 1fr auto;
+      align-content: center;
+      align-items: center;
       justify-items: center;
-      overflow-y: hidden;
-      padding: 10px 24px 24px;
-      gap: 0 24px;
+      overflow-y: auto;
+      padding: 0;
+      gap: 0 calc(12 * var(--ls));
     }
-    #lobby-banner {
+    #lobby-top-bar {
+      top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
+      right: calc(12 * var(--ls));
+      gap: calc(8 * var(--ls));
+    }
+
+    /* ── Hide mobile actions image on desktop ── */
+    #lobby-banner-bottom {
+      display: none;
+    }
+
+    /* ── Left image: behind (edge-to-edge) ── */
+    .lobby-desktop-img {
+      display: block;
+      align-self: stretch;
+      justify-self: stretch;
+      max-width: 100%;
+      height: 100%;
+      object-fit: cover;
+      min-width: 0;
+    }
+    #lobby-img-left {
       grid-column: 1;
-      grid-row: 1 / 3;
-      align-self: end;
-      justify-self: center;
-      width: 100%;
-      max-width: 480px;
-      max-height: 50vh;
-      object-fit: contain;
-      margin-bottom: 0;
-      border-radius: 16px;
+      grid-row: 1 / -1;
     }
+    #lobby-img-right {
+      grid-column: 3;
+      grid-row: 1 / -1;
+    }
+
+    /* ── Title: hidden on desktop ── */
+    #lobby-banner {
+      display: none;
+    }
+
+    /* ── Subtitle: hidden on desktop ── */
     .lobby-subtitle {
+      display: none;
+    }
+
+    /* ── Center: Bike carousel ── */
+    #bike-carousel {
       grid-column: 2;
       grid-row: 1;
-      justify-self: start;
-      align-self: end;
-      margin-bottom: 12px;
-    }
-    .lobby-card {
-      grid-column: 2;
-      grid-row: 2;
-      justify-self: start;
-      align-self: start;
-      max-width: 520px;
-    }
-    #bike-carousel {
-      grid-column: 1;
-      grid-row: 3;
-      align-self: start;
+      align-self: center;
+      align-items: stretch;
       justify-self: center;
-      max-width: 380px;
+      max-width: none;
+      width: 100%;
       margin-bottom: 0;
+      margin-top: calc(20 * var(--ls));
+      padding: 0;
+      gap: calc(3 * var(--ls));
     }
     #bike-preview-canvas {
-      max-width: 280px;
-    }
-    #lobby-banner-bottom {
-      grid-column: 2;
-      grid-row: 3;
-      align-self: start;
-      justify-self: start;
+      max-width: none;
       width: 100%;
-      max-width: 380px;
-      max-height: 35vh;
-      object-fit: contain;
-      margin-top: 0;
-      border-radius: 16px;
+      border-radius: 0;
+    }
+    #bike-preview-wrap {
+      position: relative;
+      overflow: visible;
+    }
+    #bike-name {
+      position: absolute;
+      top: calc(-20 * var(--ls));
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      font-size: calc(14 * var(--ls));
+      line-height: calc(18 * var(--ls));
+    }
+    #bike-hint {
+      position: absolute !important;
+      top: calc(12 * var(--ls));
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: calc(12 * var(--ls)) !important;
+      background: rgba(0,0,0,0.7);
+      padding: calc(6 * var(--ls)) calc(12 * var(--ls));
+      border-radius: calc(8 * var(--ls));
+      width: max-content;
+      text-align: center !important;
+    }
+    /* ── Center: Buttons/toggles below carousel ── */
+    .lobby-card {
+      grid-column: 2;
+      grid-row: 2 / 4;
+      justify-self: center;
+      align-self: end;
+      padding: calc(10 * var(--ls));
+      padding-top: calc(14 * var(--ls));
+      margin-bottom: 0;
+      height: calc(150 * var(--ls));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .lobby-card-header {
+      display: none;
+    }
+    .lobby-layout {
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* ── Scaled lobby elements (20% smaller than before) ── */
+    #lobby h1 { font-size: calc(22 * var(--ls)); }
+    .lobby-btn {
+      font-size: calc(13 * var(--ls));
+      padding: calc(11 * var(--ls)) calc(13 * var(--ls));
+      border-radius: calc(11 * var(--ls));
+      white-space: nowrap;
+      min-width: calc(140 * var(--ls));
+    }
+    .lobby-step { gap: calc(6 * var(--ls)); align-items: stretch; width: 100%; }
+    .lobby-steps-col {
+      width: calc(140 * var(--ls));
+      min-width: calc(140 * var(--ls));
+      max-width: calc(140 * var(--ls));
+      flex-shrink: 0;
+    }
+    .lobby-mode-buttons { gap: calc(6 * var(--ls)); }
+    .lobby-role-desc { display: none; }
+    #btn-captain br, #btn-stoker br { display: none; }
+    .lobby-prompt { font-size: calc(9 * var(--ls)); }
+    .lobby-hint { font-size: calc(10 * var(--ls)); }
+    .lobby-back { font-size: calc(10 * var(--ls)); padding: calc(4 * var(--ls)); order: -1; }
+    .lobby-step .lobby-back { order: -1; }
+    #lobby-role .lobby-prompt { display: none; }
+    #lobby-role .lobby-back { display: none; }
+
+    /* Host/Join steps: compact for TV layout */
+    #lobby-host .lobby-btn,
+    #lobby-join .lobby-btn,
+    #lobby-room .lobby-btn {
+      min-width: auto;
+    }
+    /* All sub-steps: hide back buttons (B-button handles it) and compact layout */
+    #lobby-role .lobby-back,
+    #lobby-host .lobby-back,
+    #lobby-join .lobby-back,
+    #lobby-level .lobby-back,
+    #lobby-room .lobby-back { display: none; }
+    #lobby-fixed-back { font-size: calc(10 * var(--ls)); padding: calc(4 * var(--ls)) calc(8 * var(--ls)); order: 99; }
+
+    #lobby-role .lobby-prompt,
+    #lobby-host .lobby-prompt,
+    #lobby-join .lobby-prompt { display: none; }
+
+    /* Host step: compact room info */
+    #lobby-host .room-url { display: none; }
+    #lobby-host .lobby-hint { display: none; }
+    #lobby-host .room-code { font-size: calc(16 * var(--ls)); margin: 0; letter-spacing: calc(3 * var(--ls)); }
+
+    /* Toggle buttons */
+    .lobby-toggle {
+      width: calc(29 * var(--ls));
+      height: calc(29 * var(--ls));
+    }
+    .lobby-toggles { gap: calc(7 * var(--ls)); }
+    .lobby-toggle-col { gap: calc(5 * var(--ls)); }
+    .lobby-layout { gap: calc(8 * var(--ls)); }
+
+    /* Bike carousel nav (tab-shaped, full canvas height) */
+    #bike-carousel .bike-carousel-nav {
+      width: calc(20 * var(--ls));
+      height: unset;
+      min-height: 0;
+      border-radius: 0;
+      font-size: calc(10 * var(--ls));
+      align-self: stretch;
+      flex-shrink: 0;
+    }
+    #bike-carousel #bike-prev {
+      border-radius: calc(8 * var(--ls)) 0 0 calc(8 * var(--ls));
+    }
+    #bike-carousel #bike-next {
+      border-radius: 0 calc(8 * var(--ls)) calc(8 * var(--ls)) 0;
+    }
+
+    /* Level cards */
+    .level-cards {
+      max-width: calc(280 * var(--ls));
+      gap: calc(12 * var(--ls));
+    }
+    .level-card {
+      padding: calc(16 * var(--ls)) calc(20 * var(--ls));
+      border-radius: calc(20 * var(--ls));
+    }
+    .level-card-top { gap: calc(10 * var(--ls)); margin-bottom: calc(4 * var(--ls)); }
+    .level-card-icon { font-size: calc(24 * var(--ls)); }
+    .level-card-name { font-size: calc(16 * var(--ls)); }
+    .level-card-desc { font-size: calc(12 * var(--ls)); }
+    .level-card-distance { font-size: calc(11 * var(--ls)); }
+
+    /* Room code */
+    .room-code-label { font-size: calc(14 * var(--ls)); letter-spacing: calc(2 * var(--ls)); }
+    .room-code-input {
+      font-size: calc(24 * var(--ls));
+      padding: calc(6 * var(--ls)) calc(12 * var(--ls));
+      max-width: calc(240 * var(--ls));
+      border-radius: calc(10 * var(--ls));
+    }
+    .room-code-prefix {
+      font-size: calc(8 * var(--ls));
+      letter-spacing: calc(1.5 * var(--ls));
+    }
+    .room-code-prefix-vert {
+      font-size: calc(8 * var(--ls));
+    }
+    .room-code-dash {
+      font-size: calc(12 * var(--ls));
+    }
+    .room-code-input {
+      max-width: calc(140 * var(--ls));
+    }
+    .room-code-input::placeholder {
+      letter-spacing: calc(6 * var(--ls));
+    }
+
+    /* Gamepad code spinners */
+    .spinner-slots { gap: calc(4 * var(--ls)); }
+    .code-spinner {
+      width: calc(36 * var(--ls));
+      border-radius: calc(8 * var(--ls));
+      padding: calc(3 * var(--ls)) 0;
+    }
+    .spinner-char { font-size: calc(20 * var(--ls)); }
+    .spinner-arrow { font-size: calc(8 * var(--ls)); }
+    .spinner-hints { gap: calc(16 * var(--ls)); margin-top: calc(3 * var(--ls)); }
+    .spinner-submit-hint { font-size: calc(10 * var(--ls)); }
+    .spinner-submit-icon, .spinner-back-icon { font-size: calc(9 * var(--ls)); width: calc(18 * var(--ls)); height: calc(18 * var(--ls)); }
+
+    /* QR code — same height as two buttons */
+    #room-qr {
+      width: calc(60 * var(--ls));
+      height: calc(60 * var(--ls));
+      border-radius: calc(6 * var(--ls));
+      margin: calc(2 * var(--ls)) auto;
+    }
+    /* Shared compact text for sub-steps */
+    .room-url {
+      font-size: calc(8 * var(--ls));
+      max-width: none;
+      white-space: nowrap;
+    }
+    .conn-status { font-size: calc(9 * var(--ls)); min-height: calc(14 * var(--ls)); white-space: nowrap; }
+    .room-code {
+      font-size: calc(18 * var(--ls));
+      letter-spacing: calc(2 * var(--ls));
+      margin: calc(2 * var(--ls)) 0;
+    }
+    #lobby-host { gap: calc(3 * var(--ls)); }
+    #lobby-join { gap: calc(4 * var(--ls)); padding-top: calc(8 * var(--ls)); }
+
+    /* Room (multiplayer lobby) */
+    #room-video-area { gap: calc(16 * var(--ls)); margin: calc(12 * var(--ls)) 0; }
+    #room-wait-text { font-size: calc(14 * var(--ls)); }
+    .pip-wrap.pip-lobby-mode { margin: 0 calc(8 * var(--ls)); }
+    .pip-wrap.pip-lobby-mode .pip-label { font-size: calc(10 * var(--ls)); }
+
+    /* Auth / user info */
+    .lobby-auth-btn {
+      font-size: calc(11 * var(--ls));
+      padding: calc(4 * var(--ls)) calc(10 * var(--ls));
+      border-radius: calc(6 * var(--ls));
+    }
+    .user-avatar { width: calc(24 * var(--ls)); height: calc(24 * var(--ls)); }
+    #user-info { font-size: calc(12 * var(--ls)); gap: calc(6 * var(--ls)); }
+
+    /* Credits */
+    .gamepad-back-hint {
+      font-size: calc(10 * var(--ls));
+      min-height: calc(20 * var(--ls));
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      order: 99;
+    }
+    .gamepad-back-hint span {
+      width: calc(18 * var(--ls));
+      height: calc(18 * var(--ls));
+      font-size: calc(11 * var(--ls));
+      margin-right: calc(3 * var(--ls));
+    }
+    .lobby-credits { font-size: calc(11 * var(--ls)); gap: calc(6 * var(--ls)); margin-top: calc(4 * var(--ls)); white-space: nowrap; align-self: stretch; text-align: center; order: 100; }
+    .lobby-version { font-size: calc(11 * var(--ls)); }
+    .lobby-credits-btn { font-size: calc(11 * var(--ls)); }
+
+    /* Game over / disconnect */
+    #gameover-overlay, #disconnect-overlay { padding: calc(30 * var(--ls)); }
+    .disconnect-box p { font-size: calc(20 * var(--ls)); }
+
+    /* ── Scaled modals ── */
+    .leaderboard-box {
+      max-width: calc(360 * var(--ls));
+      padding: calc(20 * var(--ls));
+      border-radius: calc(16 * var(--ls));
+    }
+    .leaderboard-box h3 { font-size: calc(20 * var(--ls)); margin-bottom: calc(12 * var(--ls)); }
+    #leaderboard-x { font-size: calc(28 * var(--ls)); top: calc(8 * var(--ls)); right: calc(12 * var(--ls)); }
+    .lb-entry {
+      font-size: calc(13 * var(--ls));
+      padding: calc(6 * var(--ls)) calc(8 * var(--ls));
+      gap: calc(8 * var(--ls));
+    }
+    .lb-rank { min-width: calc(28 * var(--ls)); }
+    .lb-time { font-size: calc(13 * var(--ls)); }
+    .lb-tabs { gap: calc(6 * var(--ls)); margin-bottom: calc(10 * var(--ls)); }
+    .lb-tab {
+      font-size: calc(12 * var(--ls));
+      padding: calc(5 * var(--ls)) calc(14 * var(--ls));
+      border-radius: calc(20 * var(--ls));
+    }
+    .lb-main-tabs .lb-tab { font-size: calc(13 * var(--ls)); padding: calc(6 * var(--ls)) calc(16 * var(--ls)); }
+    .lb-sub-tabs .lb-tab { font-size: calc(11 * var(--ls)); padding: calc(4 * var(--ls)) calc(10 * var(--ls)); }
+    .lb-avatar { width: calc(22 * var(--ls)); height: calc(22 * var(--ls)); }
+    .lb-mode { font-size: calc(9 * var(--ls)); padding: calc(1 * var(--ls)) calc(5 * var(--ls)); }
+    .lb-collectibles { font-size: calc(11 * var(--ls)); }
+    .lb-you-tag { font-size: calc(9 * var(--ls)); }
+    .lb-date { font-size: calc(10 * var(--ls)); }
+    .lb-rides { font-size: calc(11 * var(--ls)); }
+    .lb-ach-item {
+      width: calc(64 * var(--ls));
+      padding: calc(6 * var(--ls)) calc(4 * var(--ls));
+      border-radius: calc(10 * var(--ls));
+    }
+    .lb-ach-icon { font-size: calc(22 * var(--ls)); }
+    .lb-ach-name { font-size: calc(8 * var(--ls)); }
+    .lb-ach-count { font-size: calc(11 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
+    .lb-achievement-grid { gap: calc(8 * var(--ls)); margin-bottom: calc(12 * var(--ls)); }
+    .lb-section-title { font-size: calc(13 * var(--ls)); margin: calc(10 * var(--ls)) 0 calc(6 * var(--ls)); }
+    .lb-no-data { font-size: calc(13 * var(--ls)); padding: calc(16 * var(--ls)); }
+    #leaderboard-video { max-width: calc(320 * var(--ls)); border-radius: calc(10 * var(--ls)); }
+
+    #help-modal-inner {
+      max-width: calc(400 * var(--ls));
+      padding: calc(28 * var(--ls)) calc(24 * var(--ls));
+      font-size: calc(14 * var(--ls));
+      border-radius: calc(14 * var(--ls));
+    }
+    #help-modal-inner h3 { font-size: calc(18 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
+    .help-section { margin-top: calc(14 * var(--ls)); padding-top: calc(14 * var(--ls)); }
+    .help-section-title { font-size: calc(13 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
+    .help-toggle-row { font-size: calc(13 * var(--ls)); gap: calc(10 * var(--ls)); margin-bottom: calc(6 * var(--ls)); }
+    .help-toggle-row svg, .help-toggle-row span.help-icon {
+      width: calc(28 * var(--ls));
+      height: calc(28 * var(--ls));
+      padding: calc(4 * var(--ls));
+    }
+    .help-toggle-row svg {
+      width: calc(28 * var(--ls)) !important;
+      height: calc(28 * var(--ls)) !important;
+    }
+    .help-toggle-row span.help-icon {
+      font-size: calc(14 * var(--ls)) !important;
+    }
+    .help-toggle-row span.help-icon-all {
+      font-size: calc(10 * var(--ls)) !important;
+    }
+    #help-close { font-size: calc(22 * var(--ls)); top: calc(10 * var(--ls)); right: calc(14 * var(--ls)); }
+    .help-attribution { font-size: calc(12 * var(--ls)); }
+
+    /* Profile popup */
+    #profile-popup {
+      min-width: calc(220 * var(--ls));
+      padding: calc(20 * var(--ls)) calc(18 * var(--ls)) calc(16 * var(--ls));
+      border-radius: calc(14 * var(--ls));
+      bottom: calc(44 * var(--ls));
+    }
+    .profile-popup-content { gap: calc(8 * var(--ls)); }
+    .profile-popup-avatar { width: calc(48 * var(--ls)); height: calc(48 * var(--ls)); border-width: calc(2 * var(--ls)); }
+    .profile-popup-name { font-size: calc(15 * var(--ls)); }
+    .profile-popup-email { font-size: calc(11 * var(--ls)); }
+    .profile-popup-logout, .profile-popup-back {
+      font-size: calc(11 * var(--ls));
+      padding: calc(6 * var(--ls)) calc(18 * var(--ls));
+      border-radius: calc(6 * var(--ls));
+    }
+    .profile-popup-logout { margin-top: calc(8 * var(--ls)); }
+    .profile-popup-back { margin-top: calc(4 * var(--ls)); }
+
+    /* SVGs and text inside toggle buttons */
+    .lobby-toggle svg {
+      width: calc(20 * var(--ls));
+      height: calc(20 * var(--ls));
+    }
+    .lobby-toggle span { font-size: calc(16 * var(--ls)) !important; }
+    #toggle-all { font-size: calc(10 * var(--ls)) !important; letter-spacing: calc(0.5 * var(--ls)) !important; }
+
+    /* Gamepad focus outline */
+    .gamepad-focus {
+      outline-width: calc(3 * var(--ls));
+      outline-offset: calc(3 * var(--ls));
     }
   }
 </style>
@@ -2314,6 +2803,7 @@ ON</button>
   </div>
 
   <div class="lobby-card">
+    <div id="lobby-card-header" class="lobby-card-header"></div>
     <div class="lobby-layout">
       <!-- Left column: info toggles (persistent, visible on all steps) -->
       <div class="lobby-toggle-col lobby-left-col">
@@ -2366,7 +2856,7 @@ ON</button>
         <!-- Step 2: Role selection -->
         <div id="lobby-role" class="lobby-step" style="display:none;">
           <p class="lobby-prompt">Choose your seat:</p>
-          <button class="lobby-btn" id="btn-captain">START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span></button>
+          <button class="lobby-btn lobby-btn-accent" id="btn-captain">START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span></button>
           <button class="lobby-btn" id="btn-stoker">JOIN A RIDE<br><span class="lobby-role-desc">Stoker &middot; Back seat</span></button>
           <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
         </div>
@@ -2385,9 +2875,44 @@ ON</button>
         <!-- Step 3b: Stoker join room -->
         <div id="lobby-join" class="lobby-step" style="display:none;">
           <p class="lobby-prompt">Enter room code:</p>
-          <div style="display:flex;align-items:center;justify-content:center;gap:0;">
-            <span class="room-code-prefix">TNDM-</span>
-            <input type="text" id="room-code-input" class="room-code-input room-code-short" maxlength="4" placeholder="XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <div class="room-code-join-wrap">
+            <span class="room-code-prefix-vert"><span>T</span><span>N</span><span>D</span><span>M</span></span>
+            <span class="room-code-dash">-</span>
+            <input type="text" id="room-code-input" class="room-code-input" maxlength="4" placeholder="– – – –" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          </div>
+          <!-- Gamepad spinner for room code entry -->
+          <div id="gamepad-code-spinners" style="display:none;">
+            <div class="spinner-row">
+            <span class="room-code-prefix-vert"><span>T</span><span>N</span><span>D</span><span>M</span></span>
+            <span class="room-code-dash">-</span>
+            <div class="spinner-slots">
+              <div class="code-spinner" data-slot="0">
+                <span class="spinner-arrow spinner-up">&#x25B2;</span>
+                <span class="spinner-char">A</span>
+                <span class="spinner-arrow spinner-down">&#x25BC;</span>
+              </div>
+              <div class="code-spinner" data-slot="1">
+                <span class="spinner-arrow spinner-up">&#x25B2;</span>
+                <span class="spinner-char">A</span>
+                <span class="spinner-arrow spinner-down">&#x25BC;</span>
+              </div>
+              <div class="code-spinner" data-slot="2">
+                <span class="spinner-arrow spinner-up">&#x25B2;</span>
+                <span class="spinner-char">A</span>
+                <span class="spinner-arrow spinner-down">&#x25BC;</span>
+              </div>
+              <div class="code-spinner" data-slot="3">
+                <span class="spinner-arrow spinner-up">&#x25B2;</span>
+                <span class="spinner-char">A</span>
+                <span class="spinner-arrow spinner-down">&#x25BC;</span>
+              </div>
+            </div>
+            </div>
+            <div id="spinner-status" class="conn-status" style="display:none;"></div>
+            <div class="spinner-hints">
+              <span class="spinner-submit-hint"><span id="spinner-submit-icon" class="spinner-submit-icon">A</span> to join</span>
+              <span class="spinner-submit-hint"><span id="spinner-back-icon" class="spinner-back-icon">B</span> Back</span>
+            </div>
           </div>
           <button class="lobby-btn lobby-btn-accent" id="btn-join">JOIN</button>
           <div id="join-status" class="conn-status"></div>
@@ -2409,6 +2934,7 @@ ON</button>
           <p id="room-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
           <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
         </div>
+
       </div>
 
       <!-- Right: permission toggles (persistent, visible on all steps) -->
@@ -2449,10 +2975,16 @@ ON</button>
         </div>
       </div>
     </div>
-
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.2604c83 | 03-06-2026 19:52</span></p>
+    <!-- Fixed back button row (non-gamepad, always at bottom of card) -->
+    <button class="lobby-back" id="lobby-fixed-back" style="visibility:hidden;">&larr; Back</button>
+    <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
+      <span id="gamepad-back-icon"></span> Back
+    </div>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.af6e261 | 03-07-2026 01:12</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
+  <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
+  <img id="lobby-img-right" class="lobby-desktop-img" src="images/large_action_facing.png" alt="">
 </div>
 
 <!-- Leaderboard modal -->
@@ -2487,7 +3019,7 @@ ON</button>
         <span><span class="help-toggle-name">Profile</span> <span class="help-toggle-desc">— Sign in with Google to save scores</span></span>
       </div>
       <div class="help-toggle-row">
-        <span class="help-icon" style="font-size:10px;font-weight:700">ALL</span>
+        <span class="help-icon help-icon-all" style="font-size:10px;font-weight:700">ALL</span>
         <span><span class="help-toggle-name">All</span> <span class="help-toggle-desc">— Enable or disable all permissions at once</span></span>
       </div>
       <div class="help-toggle-row">
