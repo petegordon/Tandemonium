@@ -107,6 +107,18 @@ class Game {
       this._recalibrateTilt();
     });
 
+    // WebGL context loss recovery — prevent grey screen on mobile
+    // (Creating a 2nd WebGL context for victory video can evict the main one on iOS)
+    this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      console.warn('WebGL context lost — will restore when available');
+    });
+    this.renderer.domElement.addEventListener('webglcontextrestored', () => {
+      console.log('WebGL context restored');
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    });
+
     // DDA (Dynamic Difficulty Adjustment)
     this.ddaManager = null;
     this._assistWeight = 0;
@@ -1465,6 +1477,7 @@ class Game {
 
     const canvas = document.getElementById('victory-video');
     canvas.style.display = '';
+    const ctx = canvas.getContext('2d');
 
     const video = document.createElement('video');
     video.src = cfg.src;
@@ -1479,77 +1492,59 @@ class Game {
       }
     });
 
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setSize(canvas.width, canvas.height);
-    renderer.setClearColor(0x000000, 0);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-    camera.position.z = 2;
-
-    const videoTexture = new THREE.VideoTexture(video);
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-
-    // 1x1 transparent fallback mask
-    const fallbackMask = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
-    fallbackMask.needsUpdate = true;
-    const maskUniform = { value: fallbackMask };
+    // Load mask image for transparency
+    let maskCanvas = null;
+    let maskData = null;
     if (cfg.maskSrc) {
-      new THREE.TextureLoader().load(
-        cfg.maskSrc,
-        (tex) => { maskUniform.value = tex; },
-        undefined,
-        () => {}
-      );
+      const maskImg = new Image();
+      maskImg.onload = () => {
+        maskCanvas = document.createElement('canvas');
+        maskCanvas.width = canvas.width;
+        maskCanvas.height = canvas.height;
+        const mctx = maskCanvas.getContext('2d');
+        mctx.drawImage(maskImg, 0, 0, canvas.width, canvas.height);
+        maskData = mctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      };
+      maskImg.src = cfg.maskSrc;
     }
 
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        map: { value: videoTexture },
-        maskTex: maskUniform,
-        threshold: { value: cfg.threshold },
-        smoothness: { value: cfg.smoothness }
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }`,
-      fragmentShader: `
-        uniform sampler2D map;
-        uniform sampler2D maskTex;
-        uniform float threshold;
-        uniform float smoothness;
-        varying vec2 vUv;
-        void main() {
-          float mask = texture2D(maskTex, vUv).r;
-          if (mask > 0.5) discard;
-          vec4 texColor = texture2D(map, vUv);
-          float greenDom = texColor.g - max(texColor.r, texColor.b);
-          float alpha = 1.0 - smoothstep(threshold, threshold + smoothness, greenDom);
-          if (alpha < 0.01) discard;
-          vec3 col = texColor.rgb;
-          float spillMax = 0.5 * (col.r + col.b) + 0.05;
-          col.g = min(col.g, spillMax);
-          gl_FragColor = vec4(col, alpha);
-        }`,
-      transparent: true,
-      depthWrite: false
-    });
-
-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
-    scene.add(plane);
-
+    // 2D canvas chromakey — avoids creating a second WebGL context
+    // which can cause context loss (grey screen crash) on iOS
+    const threshold = cfg.threshold;
+    const smooth = cfg.smoothness;
     let animId = 0;
     const animate = () => {
       animId = requestAnimationFrame(animate);
-      renderer.render(scene, camera);
+      if (video.readyState < 2) return;
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = imageData.data;
+
+      for (let i = 0; i < d.length; i += 4) {
+        // Apply mask if loaded
+        if (maskData && maskData[i] > 128) {
+          d[i + 3] = 0;
+          continue;
+        }
+        // Green-screen removal
+        const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+        const greenDom = g - Math.max(r, b);
+        let alpha = 1.0 - Math.min(1, Math.max(0, (greenDom - threshold) / smooth));
+        if (alpha < 0.03) {
+          d[i + 3] = 0;
+        } else {
+          // Spill suppression
+          const spillMax = 0.5 * (r + b) + 0.05;
+          if (g > spillMax) d[i + 1] = Math.round(spillMax * 255);
+          d[i + 3] = Math.round(alpha * 255);
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
     };
     animate();
 
-    this._victoryVideo = { video, renderer, videoTexture, mat, animId };
+    this._victoryVideo = { video, animId };
   }
 
   _stopVictoryVideo() {
@@ -1558,9 +1553,6 @@ class Game {
     cancelAnimationFrame(v.animId);
     v.video.pause();
     v.video.src = '';
-    v.videoTexture.dispose();
-    v.mat.dispose();
-    v.renderer.dispose();
     this._victoryVideo = null;
   }
 
@@ -1990,7 +1982,7 @@ class Game {
 
   _updateSolo(dt) {
     const pedalResult = this.pedalCtrl.update(dt);
-    const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight);
+    const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
 
     // Sync balance assist to bike model
     this.bike._balanceAssist = this._assistWeight;
@@ -2069,7 +2061,7 @@ class Game {
 
     // Use shared pedal controller
     const pedalResult = this.sharedPedal.update(dt);
-    const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight);
+    const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
     this.bike._balanceAssist = this._assistWeight;
 
     // Capture captain's own lean before merging
