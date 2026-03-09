@@ -26,6 +26,8 @@ import { ArchIndicator } from './arch-indicator.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 
+const DEMO_CHECKPOINT_LIMIT = 2; // Demo ends after 2 checkpoints
+
 class Game {
   constructor() {
     // Renderer
@@ -368,6 +370,11 @@ class Game {
   // LOBBY CALLBACKS
   // ============================================================
 
+  /** True when the player is in demo mode (unlicensed solo). */
+  get _isDemo() {
+    return this.mode === 'solo' && !this.lobby.license.isLicensed;
+  }
+
   _onSolo() {
     this.mode = 'solo';
     this.bike.applyPreset(this.lobby.selectedPreset);
@@ -668,6 +675,11 @@ class Game {
     this.hud.updateTimer(initialBudget, initialBudget);
     this.hud.showCollectibles(level);
     this.world.setRaceMarkers(level, this.camera);
+
+    // Place "DEMO END" sprite on the last demo checkpoint arch from the start
+    if (this._isDemo) {
+      this._addDemoEndSprite(DEMO_CHECKPOINT_LIMIT - 1);
+    }
 
     // Setup arch tilt indicator (only for motion/gyro input)
     if (this.input.motionEnabled || this.input.gyroConnected) {
@@ -1064,10 +1076,156 @@ class Game {
     this._clearOverlayButtons();
   }
 
+  /** Show the demo-end overlay with purchase CTA. */
+  _showDemoEnd() {
+    this.state = 'gameover';
+    this.bike.speed = 0;
+    document.getElementById('status').textContent = '';
+
+    // Brief pause so the player sees the arch, then show overlay
+    setTimeout(() => {
+      this._removeDemoEndSprite();
+      const overlay = document.getElementById('demo-end-overlay');
+      overlay.style.display = 'flex';
+
+      const buyBtn = document.getElementById('btn-demo-buy');
+      const togetherBtn = document.getElementById('btn-demo-together');
+      const lobbyBtn = document.getElementById('btn-demo-lobby');
+      const btns = [buyBtn, togetherBtn, lobbyBtn].filter(Boolean);
+      this._setOverlayButtons(btns);
+
+      if (buyBtn) {
+        buyBtn.onclick = async () => {
+          try {
+            const url = await this.lobby.license.startCheckout('tandemonium-web-early');
+            window.location.href = url;
+          } catch (e) {
+            console.error('Checkout error', e);
+          }
+        };
+      }
+      if (togetherBtn) {
+        togetherBtn.onclick = () => {
+          overlay.style.display = 'none';
+          this._clearOverlayButtons();
+          if (!this.lobby.auth.isLoggedIn()) {
+            this.lobby.auth.login();
+          }
+          this._returnToLobby();
+        };
+      }
+      if (lobbyBtn) {
+        lobbyBtn.onclick = () => {
+          overlay.style.display = 'none';
+          this._clearOverlayButtons();
+          this._returnToLobby();
+        };
+      }
+    }, 2500);
+  }
+
+  /**
+   * Add "DEMO END" canvas sprite inside a checkpoint arch, gently swaying.
+   * @param {number} cpIndex — 0-based index of the checkpoint arch to target
+   */
+  _addDemoEndSprite(cpIndex) {
+    const markers = this.world._raceMarkers;
+    if (!markers) return;
+
+    const checkpoints = markers.filter(m => m.type === 'checkpoint');
+    if (cpIndex >= checkpoints.length) return;
+    const arch = checkpoints[cpIndex].mesh;
+
+    // Canvas texture — fast, no font loading
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.font = 'bold 52px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 5;
+    ctx.strokeText('DEMO', 128, 38);
+    ctx.strokeText('END', 128, 90);
+    ctx.fillStyle = '#ff6600';
+    ctx.fillText('DEMO', 128, 38);
+    ctx.fillText('END', 128, 90);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthWrite: false,
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(2.0, 1.0, 1);
+    sprite.position.set(0, 1.6, 0);
+    sprite.name = 'demo-end-sprite';
+
+    arch.add(sprite);
+    this._demoEndArch = arch;
+    this._demoEndSprite = sprite;
+    this._demoEndTime = performance.now();
+  }
+
+  /** Called each frame from the render loop to animate the sway. */
+  _updateDemoEndSprite() {
+    if (!this._demoEndSprite) return;
+    const t = (performance.now() - this._demoEndTime) / 1000;
+    this._demoEndSprite.position.x = Math.sin(t * 1.5) * 0.4;
+    this._demoEndSprite.position.y = 1.6 + Math.sin(t * 2.0) * 0.1;
+  }
+
+  _removeDemoEndSprite() {
+    if (this._demoEndArch && this._demoEndSprite) {
+      this._demoEndArch.remove(this._demoEndSprite);
+      if (this._demoEndSprite.material.map) this._demoEndSprite.material.map.dispose();
+      this._demoEndSprite.material.dispose();
+      this._demoEndSprite = null;
+      this._demoEndArch = null;
+    }
+  }
+
+  /** Show purchase CTA after riding together as unlicensed stoker. */
+  _showStokerCTA() {
+    const overlay = document.getElementById('stoker-cta-overlay');
+    if (!overlay) return;
+    overlay.style.display = 'flex';
+
+    const buyBtn = document.getElementById('btn-stoker-cta-buy');
+    const contBtn = document.getElementById('btn-stoker-cta-continue');
+    const btns = [buyBtn, contBtn].filter(Boolean);
+    this._setOverlayButtons(btns);
+
+    if (buyBtn) {
+      buyBtn.onclick = async () => {
+        try {
+          const url = await this.lobby.license.startCheckout('tandemonium-web-early');
+          window.location.href = url;
+        } catch (e) {
+          console.error('Checkout error', e);
+        }
+      };
+    }
+    if (contBtn) {
+      contBtn.onclick = () => {
+        overlay.style.display = 'none';
+        this._clearOverlayButtons();
+      };
+    }
+  }
+
   _handleRaceEvent(raceEvent) {
     if (raceEvent.event === 'checkpoint') {
       this._showCheckpointFlash();
       hapticCheckpoint();
+
+      // Demo mode: end ride after DEMO_CHECKPOINT_LIMIT checkpoints
+      if (this._isDemo && raceEvent.passed >= DEMO_CHECKPOINT_LIMIT) {
+        this._showDemoEnd();
+        return;
+      }
+
+
 
       // DDA: reset adjustments on checkpoint pass
       if (this.ddaManager) {
@@ -1400,11 +1558,18 @@ class Game {
     this._overlayCooldownUntil = performance.now() + 5000;
     victoryBtns.forEach(b => b.style.pointerEvents = 'none');
     setTimeout(() => victoryBtns.forEach(b => b.style.pointerEvents = ''), 5000);
+
+    // Show purchase CTA for unlicensed stokers after victory
+    if (this.mode === 'stoker' && !this.lobby.license.isLicensed) {
+      setTimeout(() => this._showStokerCTA(), 6000);
+    }
   }
 
   async _submitScore() {
     const auth = this.lobby.auth;
     if (!auth || !auth.isLoggedIn()) return;
+    // Demo mode: don't save scores to leaderboard
+    if (this._isDemo) return;
 
     const level = this.lobby.selectedLevel;
     const raceSummary = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
@@ -1563,6 +1728,7 @@ class Game {
     }
     this._hideGameOver();
     this._hideVictory();
+    this._removeDemoEndSprite();
     this.raceManager = null;
     this.hud.raceManager = null;
     this.contributionTracker = null;
@@ -1969,6 +2135,7 @@ class Game {
       this.world.update(this.bike.position, this.bike.roadD);
       this.chaseCamera.update(this.bike, dt, roadPath);
       if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
+      this._updateDemoEndSprite();
       this.renderer.render(this.scene, this.camera);
     }
 
@@ -2036,6 +2203,7 @@ class Game {
 
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
     this.archIndicator.update(this.bike, balanceResult.leanInput);
+    this._updateDemoEndSprite();
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl));
   }

@@ -5,7 +5,7 @@ compatibility_date = "2024-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "usersfirst-store"
-database_id = ""  # Fill after: wrangler d1 create usersfirst-store
+database_id = "359f7a9e-75e6-4673-9eae-01c849af61d4"
 
 [vars]
 CORS_ORIGINS = "https://games.usersfirst.com,https://tandemonium.jimandi.love"
