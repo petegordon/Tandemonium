@@ -79,6 +79,7 @@ export class Lobby {
     this.net = null;
     this.selectedLevel = LEVELS[0]; // default level
     this.selectedPresetKey = 'default';
+    this.selectedDifficulty = 'normal'; // 'chill' | 'normal' | 'daredevil'
     this._pendingMode = null; // 'solo' or 'multiplayer', set during level selection
 
     this.lobbyEl = document.getElementById('lobby');
@@ -366,6 +367,8 @@ export class Lobby {
 
   show() {
     this.lobbyEl.style.display = '';
+    // Rebuild level cards to reflect newly unlocked levels
+    this._rebuildLevelCards();
     this._showStep(this.modeStep);
     this._startGamepadNav();
     this._checkPermissionStates();
@@ -401,6 +404,20 @@ export class Lobby {
       if (backHint) { backHint.style.display = 'none'; backHint.style.visibility = 'hidden'; }
     }
 
+    // Hide bike carousel on level step (use that space for level cards + difficulty)
+    const carousel = document.getElementById('bike-carousel');
+    const lobbyCard = document.querySelector('.lobby-card');
+    const hideCarousel = (step === this.levelStep);
+    if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
+    if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
+    const lobbyEl = document.getElementById('lobby');
+    if (lobbyEl) lobbyEl.classList.toggle('lobby-wide', hideCarousel);
+
+    // Show shared difficulty selector on level and room steps (captain only for room)
+    const diffSel = document.getElementById('difficulty-selector');
+    const showDiff = (step === this.levelStep) || (step === this.roomStep && !this._roomHideDifficulty);
+    if (diffSel) diffSel.style.display = showDiff ? '' : 'none';
+
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
     const hasBack = this._stepBack.get(step);
     if (hasBack && !(this.input && this.input.gamepadConnected)) {
@@ -430,23 +447,23 @@ export class Lobby {
   }
 
   _setup() {
-    // SOLO → start directly with Level 1
+    // SOLO → level/difficulty selection first
     document.getElementById('btn-solo').addEventListener('click', () => {
       this._requestMotion();
-      this.selectedLevel = LEVELS[0];
-      this._hideLobby();
-      this.onSolo();
+      this._pendingMode = 'solo';
+      this._showStep(this.levelStep);
     });
 
-    // RIDE TOGETHER → role selection with Level 1
+    // RIDE TOGETHER → straight to role selection (level chosen in room after connecting)
     document.getElementById('btn-together').addEventListener('click', () => {
       this._requestMotion();
-      this.selectedLevel = LEVELS[0];
+      this._pendingMode = 'multiplayer';
       this._showStep(this.roleStep);
     });
 
     // Level selection: build cards and handle clicks
     this._buildLevelCards();
+    this._setupDifficultySelector();
     document.getElementById('btn-back-level').addEventListener('click', () => {
       this._showStep(this.modeStep);
     });
@@ -545,34 +562,80 @@ export class Lobby {
   _buildLevelCards() {
     const container = document.getElementById('level-cards');
     const buttons = [];
+
+    // Level unlock requirements: achievement ID needed to unlock each level
+    const LEVEL_UNLOCK = { castle: 'home_sweet' }; // Castle requires finishing Grandma's House
+
     LEVELS.forEach(level => {
+      const requiredAch = LEVEL_UNLOCK[level.id];
+      const locked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
+
       const card = document.createElement('button');
-      card.className = 'level-card';
-      card.innerHTML =
-        '<div class="level-card-top">' +
-          '<span class="level-card-icon">' + level.icon + '</span>' +
-          '<span class="level-card-name">' + level.name + '</span>' +
-        '</div>' +
-        '<div class="level-card-desc">' + level.description + '</div>' +
-        '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
-      card.addEventListener('click', () => {
-        this.selectedLevel = level;
-        if (this._pendingMode === 'solo') {
-          this._hideLobby();
-          this.onSolo();
-        } else {
-          this._showStep(this.roleStep);
-        }
-      });
+      card.className = 'level-card' + (locked ? ' level-locked' : '');
+      card.dataset.levelId = level.id;
+
+      if (locked) {
+        card.innerHTML =
+          '<div class="level-card-top">' +
+            '<span class="level-card-icon">&#x1F512;</span>' +
+            '<span class="level-card-name">' + level.name + '</span>' +
+          '</div>' +
+          '<div class="level-card-desc">Complete Grandma\'s House to unlock</div>';
+        card.disabled = true;
+      } else {
+        card.innerHTML =
+          '<div class="level-card-top">' +
+            '<span class="level-card-icon">' + level.icon + '</span>' +
+            '<span class="level-card-name">' + level.name + '</span>' +
+          '</div>' +
+          '<div class="level-card-desc">' + level.description + '</div>' +
+          '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
+        card.addEventListener('click', () => {
+          this.selectedLevel = level;
+          if (this._pendingMode === 'solo') {
+            this._hideLobby();
+            this.onSolo();
+          } else {
+            this._showStep(this.roleStep);
+          }
+        });
+      }
+
       container.appendChild(card);
-      buttons.push(card);
+      if (!locked) buttons.push(card);
     });
+
+    // Add individual difficulty buttons to gamepad navigation
+    const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
+    diffBtns.forEach(b => buttons.push(b));
 
     // Register for gamepad navigation
     buttons.push(document.getElementById('btn-back-level'));
     this._stepItems.set(this.levelStep, buttons);
     this._stepCenterItems.set(this.levelStep, buttons);
     this._stepBack.set(this.levelStep, document.getElementById('btn-back-level'));
+  }
+
+  _rebuildLevelCards() {
+    const container = document.getElementById('level-cards');
+    container.innerHTML = '';
+    this._buildLevelCards();
+  }
+
+  _setupDifficultySelector() {
+    // Wire up both difficulty selectors (solo level step + room step)
+    document.querySelectorAll('.difficulty-selector').forEach(selector => {
+      const btns = selector.querySelectorAll('.difficulty-btn');
+      btns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          // Sync both selectors
+          document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
+          document.querySelectorAll('.difficulty-btn[data-difficulty="' + btn.dataset.difficulty + '"]')
+            .forEach(b => b.classList.add('selected'));
+          this.selectedDifficulty = btn.dataset.difficulty;
+        });
+      });
+    });
   }
 
   _setupAuth() {
@@ -633,10 +696,17 @@ export class Lobby {
       }
     });
 
-    // Logout
-    logoutBtn.addEventListener('click', () => {
+    // Logout: sync achievements to server, then clear local state
+    logoutBtn.addEventListener('click', async () => {
+      // Push local achievements to server before clearing
+      const ids = this._achievements.getEarnedIds();
+      if (ids.length > 0) {
+        try { await this.auth.syncAchievements(ids); } catch (e) {}
+      }
+      this._achievements.clear();
       this.auth.logout();
       updateUI(null);
+      this._rebuildLevelCards();
     });
 
     // Back buttons close the popup
@@ -1710,6 +1780,8 @@ export class Lobby {
 
     // Build level cards BEFORE _showStep so _stepItems is populated
     this._buildRoomLevelCards(role === 'captain');
+    // Only captain picks difficulty
+    this._roomHideDifficulty = (role !== 'captain');
     this._showStep(this.roomStep);
 
     // Start media
@@ -1742,36 +1814,50 @@ export class Lobby {
     const container = document.getElementById('room-level-cards');
     container.innerHTML = '';
     const buttons = [];
+    const LEVEL_UNLOCK = { castle: 'home_sweet' };
+
     LEVELS.forEach(level => {
+      const requiredAch = LEVEL_UNLOCK[level.id];
+      const locked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
+
       const card = document.createElement('button');
-      card.className = 'level-card';
+      card.className = 'level-card' + (locked ? ' level-locked' : '');
       card.dataset.levelId = level.id;
-      card.innerHTML =
-        '<div class="level-card-top">' +
-          '<span class="level-card-icon">' + level.icon + '</span>' +
-          '<span class="level-card-name">' + level.name + '</span>' +
-        '</div>' +
-        '<div class="level-card-desc">' + level.description + '</div>' +
-        '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
-      if (isClickable) {
-        card.addEventListener('click', () => {
-          this.selectedLevel = level;
-          // Highlight selected card
-          container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
-          card.classList.add('selected');
-          // Enable start button
-          document.getElementById('btn-start-ride').disabled = false;
-          // Sync to partner
-          if (this.net && this.net.connected) {
-            this.net.sendProfile({ type: 'levelSync', levelId: level.id });
-          }
-        });
+
+      if (locked) {
+        card.innerHTML =
+          '<div class="level-card-top">' +
+            '<span class="level-card-icon">&#x1F512;</span>' +
+            '<span class="level-card-name">' + level.name + '</span>' +
+          '</div>' +
+          '<div class="level-card-desc">Complete Grandma\'s House to unlock</div>';
+        card.disabled = true;
       } else {
-        card.style.opacity = '0.7';
-        card.style.pointerEvents = 'none';
+        card.innerHTML =
+          '<div class="level-card-top">' +
+            '<span class="level-card-icon">' + level.icon + '</span>' +
+            '<span class="level-card-name">' + level.name + '</span>' +
+          '</div>' +
+          '<div class="level-card-desc">' + level.description + '</div>' +
+          '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
+        if (isClickable) {
+          card.addEventListener('click', () => {
+            this.selectedLevel = level;
+            container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            document.getElementById('btn-start-ride').disabled = false;
+            if (this.net && this.net.connected) {
+              this.net.sendProfile({ type: 'levelSync', levelId: level.id });
+            }
+          });
+        } else {
+          card.style.opacity = '0.7';
+          card.style.pointerEvents = 'none';
+        }
       }
+
       container.appendChild(card);
-      buttons.push(card);
+      if (!locked) buttons.push(card);
     });
 
     // Restore previously selected level
@@ -1784,6 +1870,12 @@ export class Lobby {
       if (isClickable && this.net && this.net.connected) {
         this.net.sendProfile({ type: 'levelSync', levelId: this.selectedLevel.id });
       }
+    }
+
+    // Add shared difficulty buttons to gamepad nav (captain only)
+    if (isClickable) {
+      const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
+      diffBtns.forEach(b => buttons.push(b));
     }
 
     // Register for gamepad nav
@@ -2418,12 +2510,89 @@ export class Lobby {
     const items = this._stepItems.get(this._currentStep);
     if (!items || items.length === 0) return;
 
+    // Difficulty buttons are horizontal — up/down should skip over siblings
+    const focusedEl = items[this._focusIndex];
+    if (focusedEl && focusedEl.classList.contains('difficulty-btn')) {
+      if (dir === -1) {
+        // Up from any difficulty button: jump to last level card
+        const lastCard = [...items].reverse().find(el =>
+          el.classList.contains('level-card') && el.offsetParent !== null && el.style.display !== 'none'
+        );
+        if (lastCard) {
+          this._clearFocusHighlight();
+          this._focusIndex = items.indexOf(lastCard);
+          this._applyFocusHighlight();
+          return;
+        }
+      } else {
+        // Down from any difficulty button: jump past all difficulty buttons
+        const firstNonDiff = items.findIndex((el, i) =>
+          i > this._focusIndex && !el.classList.contains('difficulty-btn') &&
+          el.offsetParent !== null && el.style.display !== 'none'
+        );
+        if (firstNonDiff >= 0) {
+          this._clearFocusHighlight();
+          this._focusIndex = firstNonDiff;
+          this._applyFocusHighlight();
+          return;
+        }
+      }
+    }
+
+    // Down from a level card: jump to first difficulty button if next item is one
+    if (dir === 1 && focusedEl && focusedEl.classList.contains('level-card')) {
+      const next = items[this._focusIndex + 1];
+      if (next && next.classList.contains('difficulty-btn')) {
+        // Jump to the middle difficulty button (default selection)
+        const diffBtns = items.filter(el => el.classList.contains('difficulty-btn'));
+        const selected = diffBtns.find(el => el.classList.contains('selected')) || diffBtns[0];
+        if (selected) {
+          this._clearFocusHighlight();
+          this._focusIndex = items.indexOf(selected);
+          this._applyFocusHighlight();
+          return;
+        }
+      }
+    }
+
     this._clearFocusHighlight();
-    this._focusIndex = Math.max(0, Math.min(items.length - 1, this._focusIndex + dir));
+    // Skip hidden items
+    let next = this._focusIndex + dir;
+    while (next >= 0 && next < items.length) {
+      const el = items[next];
+      if (el && el.offsetParent !== null && el.style.display !== 'none') break;
+      next += dir;
+    }
+    this._focusIndex = Math.max(0, Math.min(items.length - 1, next));
+    // If we landed on a hidden item, stay put
+    const landed = items[this._focusIndex];
+    if (landed && (landed.offsetParent === null || landed.style.display === 'none')) {
+      this._focusIndex -= dir; // revert
+    }
     this._applyFocusHighlight();
   }
 
   _moveColumn(dir) {
+    // If focused on a difficulty button, move to sibling difficulty button instead of changing columns
+    const items = this._stepItems.get(this._currentStep);
+    const focusedEl = items && items[this._focusIndex];
+    if (focusedEl && focusedEl.classList.contains('difficulty-btn')) {
+      const siblings = [...focusedEl.parentElement.querySelectorAll('.difficulty-btn')];
+      const curIdx = siblings.indexOf(focusedEl);
+      const nextIdx = curIdx + dir;
+      if (nextIdx >= 0 && nextIdx < siblings.length) {
+        // Find the target button in the items list and move focus there
+        const target = siblings[nextIdx];
+        const targetFocusIdx = items.indexOf(target);
+        if (targetFocusIdx >= 0) {
+          this._clearFocusHighlight();
+          this._focusIndex = targetFocusIdx;
+          this._applyFocusHighlight();
+        }
+      }
+      return;
+    }
+
     const newCol = Math.max(0, Math.min(this._modeColumns.length - 1, this._modeCol + dir));
     if (newCol === this._modeCol) return;
 

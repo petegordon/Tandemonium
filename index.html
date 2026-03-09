@@ -480,6 +480,63 @@
     color: rgba(255,255,255,0.4);
     margin-top: 2px;
   }
+  .level-card.level-locked {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+  }
+
+  /* ── Difficulty selector ── */
+  .difficulty-selector {
+    width: 100%;
+    max-width: 280px;
+    margin: 4px auto 12px;
+  }
+  .difficulty-label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    margin: 0 0 4px 0;
+    text-align: center;
+  }
+  .difficulty-buttons {
+    display: flex;
+    gap: 6px;
+  }
+  .difficulty-btn {
+    flex: 1;
+    padding: 6px 4px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.06);
+    color: #fff;
+    text-align: center;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .difficulty-btn.selected {
+    border-color: rgba(60,200,80,0.7);
+    background: rgba(60,200,80,0.15);
+    box-shadow: 0 0 8px rgba(60,200,80,0.25);
+  }
+  .difficulty-btn:active { background: rgba(255,255,255,0.15); }
+  .diff-name {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .diff-desc {
+    display: block;
+    font-size: 9px;
+    color: rgba(255,255,255,0.45);
+    margin-top: 1px;
+  }
+  .difficulty-btn.gamepad-focus {
+    outline: 3px solid #44ff66;
+    outline-offset: 2px;
+    box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
+  }
 
   /* ── Bottom HUD: gauge bar + pedal buttons ── */
   #bottom-hud {
@@ -760,6 +817,21 @@
     background: linear-gradient(to top, rgba(65,140,255,0.9) 0%, rgba(35,90,190,0.9) 100%);
   }
   #speed-btn.speed-off {
+    background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
+  }
+  #assist-btn {
+    grid-area: speed;
+    grid-row: 3;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 6px 4px;
+    border-radius: 8px;
+    margin-top: 4px;
+  }
+  #assist-btn.assist-on {
+    background: linear-gradient(to top, rgba(200,120,255,0.9) 0%, rgba(140,60,200,0.9) 100%);
+  }
+  #assist-btn.assist-off {
     background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
 
@@ -1332,6 +1404,7 @@
     gap: 2px;
     flex: 1;
     min-width: 0;
+    position: relative;
   }
   #bike-preview-canvas {
     width: 100%;
@@ -1347,6 +1420,19 @@
     color: rgba(68, 255, 102, 0.7);
     letter-spacing: 2px;
     font-family: 'Noteworthy', 'Bradley Hand', fantasy;
+  }
+  #bike-hint {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.75);
+    padding: 8px 14px;
+    border-radius: 10px;
+    width: max-content;
+    text-align: center;
+    font-size: 11px;
+    z-index: 1;
   }
   .bike-carousel-nav {
     width: 44px;
@@ -2215,6 +2301,11 @@
       padding: 0;
       gap: 0 calc(12 * var(--ls));
     }
+    #lobby.lobby-wide {
+      grid-template-columns: 1fr minmax(auto, calc(285 * var(--ls))) 1fr;
+      gap: 0;
+      align-items: stretch;
+    }
     #lobby-top-bar {
       top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
       right: calc(12 * var(--ls));
@@ -2226,23 +2317,26 @@
       display: none;
     }
 
-    /* ── Left image: behind (edge-to-edge) ── */
+    /* ── Side images: edge-to-edge ── */
     .lobby-desktop-img {
       display: block;
       align-self: stretch;
       justify-self: stretch;
-      max-width: 100%;
+      width: 100%;
       height: 100%;
       object-fit: cover;
       min-width: 0;
+      overflow: hidden;
     }
     #lobby-img-left {
       grid-column: 1;
       grid-row: 1 / -1;
+      object-position: right center;
     }
     #lobby-img-right {
       grid-column: 3;
       grid-row: 1 / -1;
+      object-position: left center;
     }
 
     /* ── Title: hidden on desktop ── */
@@ -2313,6 +2407,61 @@
       flex-direction: column;
       align-items: center;
     }
+    .lobby-card.carousel-hidden {
+      grid-row: 1 / -1;
+      justify-self: stretch;
+      align-self: stretch;
+      position: relative;
+      z-index: 1;
+      height: auto;
+      max-height: none;
+      padding-left: 0;
+      padding-right: 0;
+      /* Switch to grid: toggles + center + toggles, with full-span rows below */
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      grid-template-rows: 1fr auto auto auto;
+      gap: calc(8 * var(--ls));
+      justify-items: stretch;
+      align-items: center;
+    }
+    .lobby-card.carousel-hidden .lobby-layout {
+      display: contents;
+    }
+    .lobby-card.carousel-hidden .lobby-left-col {
+      grid-column: 1;
+      grid-row: 1;
+      align-self: center;
+      padding-left: calc(10 * var(--ls));
+    }
+    .lobby-card.carousel-hidden .lobby-steps-col {
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+      max-width: none;
+      justify-self: center;
+      align-self: center;
+    }
+    .lobby-card.carousel-hidden .lobby-right-col {
+      grid-column: 3;
+      grid-row: 1;
+      align-self: center;
+      padding-right: calc(10 * var(--ls));
+    }
+    .lobby-card.carousel-hidden .difficulty-selector {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      justify-self: center;
+    }
+    .lobby-card.carousel-hidden #lobby-fixed-back,
+    .lobby-card.carousel-hidden .gamepad-back-hint {
+      grid-column: 1 / -1;
+      grid-row: 3;
+      justify-self: center;
+    }
+    .lobby-card.carousel-hidden .lobby-credits {
+      grid-column: 1 / -1;
+    }
     .lobby-card-header {
       display: none;
     }
@@ -2336,6 +2485,18 @@
       min-width: calc(140 * var(--ls));
       max-width: calc(140 * var(--ls));
       flex-shrink: 0;
+    }
+    /* Level step: wider to accommodate horizontal level cards */
+    .lobby-card.carousel-hidden .lobby-steps-col {
+      width: auto;
+      min-width: calc(160 * var(--ls));
+      max-width: calc(240 * var(--ls));
+    }
+    #lobby-level { align-items: center; }
+    #lobby-level .level-cards { align-items: stretch; }
+    #lobby-level .lobby-prompt {
+      font-size: calc(12 * var(--ls));
+      margin-bottom: calc(4 * var(--ls));
     }
     .lobby-mode-buttons { gap: calc(6 * var(--ls)); }
     .lobby-role-desc { display: none; }
@@ -2398,18 +2559,31 @@
 
     /* Level cards */
     .level-cards {
-      max-width: calc(280 * var(--ls));
+      max-width: none;
       gap: calc(12 * var(--ls));
+      flex-direction: row;
+      justify-content: center;
+      flex-wrap: wrap;
     }
     .level-card {
-      padding: calc(16 * var(--ls)) calc(20 * var(--ls));
-      border-radius: calc(20 * var(--ls));
+      padding: calc(12 * var(--ls)) calc(14 * var(--ls));
+      border-radius: calc(12 * var(--ls));
+      flex: 1 1 calc(100 * var(--ls));
+      min-width: calc(90 * var(--ls));
     }
-    .level-card-top { gap: calc(10 * var(--ls)); margin-bottom: calc(4 * var(--ls)); }
-    .level-card-icon { font-size: calc(24 * var(--ls)); }
-    .level-card-name { font-size: calc(16 * var(--ls)); }
-    .level-card-desc { font-size: calc(12 * var(--ls)); }
-    .level-card-distance { font-size: calc(11 * var(--ls)); }
+    .level-card-top { gap: calc(8 * var(--ls)); margin-bottom: calc(4 * var(--ls)); }
+    .level-card-icon { font-size: calc(28 * var(--ls)); }
+    .level-card-name { font-size: calc(14 * var(--ls)); }
+    .level-card-desc { font-size: calc(10 * var(--ls)); }
+    .level-card-distance { font-size: calc(9 * var(--ls)); }
+
+    /* Difficulty selector */
+    .difficulty-selector { max-width: none; width: 85%; margin: 0 auto; }
+    .difficulty-label { font-size: calc(10 * var(--ls)); margin-bottom: calc(4 * var(--ls)); }
+    .difficulty-buttons { gap: calc(5 * var(--ls)); }
+    .difficulty-btn { padding: calc(5 * var(--ls)) calc(4 * var(--ls)); border-radius: calc(8 * var(--ls)); }
+    .diff-name { font-size: calc(11 * var(--ls)); }
+    .diff-desc { font-size: calc(8 * var(--ls)); margin-top: calc(1 * var(--ls)); }
 
     /* Room code */
     .room-code-label { font-size: calc(14 * var(--ls)); letter-spacing: calc(2 * var(--ls)); }
@@ -2681,6 +2855,7 @@ ON</button>
   <button class="side-btn exit-btn" id="lobby-btn">LOBBY</button>
   <button class="side-btn reset-btn" id="reset-btn">RESET</button>
   <button class="side-btn speed-off" id="speed-btn">SPEED</button>
+  <button class="side-btn assist-off" id="assist-btn" style="display:none;">ASSIST</button>
 </div>
 
 <!-- Sensitivity slider (shown when motion/gyro active) -->
@@ -2768,6 +2943,9 @@ ON</button>
 
 <!-- Calibrate flash -->
 <div id="calibrate-flash"></div>
+
+<!-- Calibration tip (shown once per session) -->
+<div id="calib-tip" style="display:none;position:fixed;top:20%;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:#fff;padding:12px 20px;border-radius:12px;font-size:14px;z-index:200;text-align:center;pointer-events:none;">Tap screen to recalibrate tilt anytime</div>
 
 <!-- Instructions overlay (hidden initially — lobby shows first) -->
 <div id="instructions" class="hidden">
@@ -2979,12 +3157,30 @@ ON</button>
         </div>
       </div>
     </div>
+    <!-- Difficulty selector (full-width row below lobby-layout) -->
+    <div class="difficulty-selector" id="difficulty-selector" style="display:none;">
+      <p class="difficulty-label">Difficulty:</p>
+      <div class="difficulty-buttons">
+        <button class="difficulty-btn" data-difficulty="chill">
+          <span class="diff-name">Chill Ride</span>
+          <span class="diff-desc">Relaxed, forgiving</span>
+        </button>
+        <button class="difficulty-btn selected" data-difficulty="normal">
+          <span class="diff-name">Normal</span>
+          <span class="diff-desc">Balanced challenge</span>
+        </button>
+        <button class="difficulty-btn" data-difficulty="daredevil">
+          <span class="diff-name">Daredevil</span>
+          <span class="diff-desc">Tight, fast, rewarding</span>
+        </button>
+      </div>
+    </div>
     <!-- Fixed back button row (non-gamepad, always at bottom of card) -->
     <button class="lobby-back" id="lobby-fixed-back" style="visibility:hidden;">&larr; Back</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.964dca3 | 03-07-2026 17:27</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.ea81bee | 03-08-2026 20:22</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3095,6 +3291,7 @@ ON</button>
     <p style="color:#ff4444">GAME OVER</p>
     <button class="lobby-btn" id="btn-gameover-clip" style="margin-bottom:10px;display:none;">&#x1F3AC; SAVE CLIP</button>
     <button class="lobby-btn lobby-btn-accent" id="btn-restart">RESTART</button>
+    <button class="lobby-btn" id="btn-skip-checkpoint" style="margin-top:10px;display:none;">SKIP CHECKPOINT</button>
     <button class="lobby-btn" id="btn-gameover-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
     <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">QUIT</button>
   </div>
