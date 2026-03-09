@@ -120,7 +120,8 @@ async function handleGoogleAuth(request, env, corsOrigin) {
 
 async function submitScore(request, env, corsOrigin, userId) {
   const body = await request.json();
-  const { levelId, distance, timeMs, mode, collectiblesCount, inputSource, contributions, newAchievements } = body;
+  const { levelId, distance, timeMs, mode, collectiblesCount, inputSource, contributions, newAchievements,
+          difficulty, safetyUsed, scoreMultiplier } = body;
 
   if (!levelId || !distance || !timeMs) {
     return jsonResponse({ error: 'Missing required fields' }, 400, corsOrigin);
@@ -161,8 +162,9 @@ async function submitScore(request, env, corsOrigin, userId) {
 
   // Insert score
   const scoreRes = await env.DB.prepare(
-    'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(userId, levelId, distance, timeMs, mode || 'solo', collectiblesCount || 0, inputSource || 'none').run();
+    'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(userId, levelId, distance, timeMs, mode || 'solo', collectiblesCount || 0, inputSource || 'none',
+         difficulty || 'normal', safetyUsed ? 1 : 0, scoreMultiplier || 1.0).run();
 
   const scoreId = scoreRes.meta.last_row_id;
 
@@ -220,6 +222,7 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   const levelId = url.searchParams.get('level') || 'grandma';
   const scope = url.searchParams.get('scope') || 'global';
   const mode = url.searchParams.get('mode');       // 'solo' | 'together'
+  const diffFilter = url.searchParams.get('difficulty'); // 'chill' | 'normal' | 'daredevil'
   const userFilter = url.searchParams.get('user_id'); // 'me'
   let limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 200);
 
@@ -240,6 +243,12 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
     conditions.push("s.mode = 'solo'");
   } else if (mode === 'together') {
     conditions.push("s.mode IN ('captain', 'stoker')");
+  }
+
+  // Difficulty filter
+  if (diffFilter && ['chill', 'normal', 'daredevil'].includes(diffFilter)) {
+    conditions.push('s.difficulty = ?');
+    params.push(diffFilter);
   }
 
   // User filter (requires auth)
@@ -265,6 +274,7 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
 
   const query = `
     SELECT s.id, s.distance, s.time_ms, s.mode, s.collectibles_count, s.input_source, s.created_at,
+           s.difficulty, s.safety_used, s.score_multiplier,
            u.display_name, u.avatar_url, u.id as user_id
     FROM scores s
     JOIN users u ON s.user_id = u.id
