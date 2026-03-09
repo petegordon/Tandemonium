@@ -62,3 +62,42 @@ export const BALANCE_DEFAULTS = {
 
 // Mutable runtime tuning (initialized from defaults, adjustable by player)
 export const TUNE = { ...BALANCE_DEFAULTS };
+
+// Difficulty presets
+export const DIFFICULTY_PRESETS = {
+  chill: {
+    crashThreshold: 1.8,
+    gravityForce: 1.5,
+    wobbleMultiplier: 0.5,
+    dangerOnset: 0.75,
+    timeMultiplier: 1.3,
+    maxSpeed: 12,
+    scoreMultiplier: 0.75,
+    autoCorrection: true,
+  },
+  normal: {
+    crashThreshold: 1.35,
+    gravityForce: 2.5,
+    wobbleMultiplier: 1.0,
+    dangerOnset: 0.55,
+    timeMultiplier: 1.0,
+    maxSpeed: 16,
+    scoreMultiplier: 1.0,
+    autoCorrection: false,
+  },
+  daredevil: {
+    crashThreshold: 1.0,
+    gravityForce: 3.5,
+    wobbleMultiplier: 1.3,
+    dangerOnset: 0.40,
+    timeMultiplier: 0.8,
+    maxSpeed: 20,
+    scoreMultiplier: 1.5,
+    autoCorrection: false,
+  },
+};
+
+export function applyDifficulty(presetName) {
+  const preset = DIFFICULTY_PRESETS[presetName] || DIFFICULTY_PRESETS.normal;
+  Object.assign(TUNE, preset);
+}
