@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE } from './config.js';
+import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, applyDifficulty } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -24,6 +24,7 @@ import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad } from './haptics.js';
+import { DDAManager } from './dda-manager.js';
 
 class Game {
   constructor() {
@@ -106,6 +107,13 @@ class Game {
       this._recalibrateTilt();
     });
 
+    // DDA (Dynamic Difficulty Adjustment)
+    this.ddaManager = null;
+    this._assistWeight = 0;
+
+    // Calibration tip (shown once per session)
+    this._shownCalibTip = false;
+
     // Victory overlay input cooldown
     this._overlayCooldownUntil = 0;
 
@@ -125,6 +133,20 @@ class Game {
       this.autoSpeed = !this.autoSpeed;
       this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
       this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
+    });
+
+    // Assist button (hidden by default, shown by DDA)
+    this.assistBtn = document.getElementById('assist-btn');
+    this.assistBtn.addEventListener('click', () => {
+      if (this._assistWeight > 0) {
+        this._assistWeight = 0;
+        this.assistBtn.className = 'side-btn assist-off';
+        this.assistBtn.textContent = 'ASSIST';
+      } else {
+        this._assistWeight = 0.65;
+        this.assistBtn.className = 'side-btn assist-on';
+        this.assistBtn.textContent = 'ASSIST\nON';
+      }
     });
 
     // Reset button
@@ -162,6 +184,28 @@ class Game {
     // Game Over: save clip
     this._onTap('btn-gameover-clip', () => {
       if (this.recorder) this.recorder.saveClip();
+    });
+
+    // Game Over: skip checkpoint (DDA)
+    this._onTap('btn-skip-checkpoint', () => {
+      this._hideGameOver();
+      if (this.raceManager) {
+        // Find next unpassed checkpoint
+        let nextCp = this.raceManager.raceDistance;
+        for (const cp of this.raceManager.checkpoints) {
+          if (!this.raceManager.passedCheckpoints.has(cp)) {
+            nextCp = cp;
+            break;
+          }
+        }
+        // Mark it as passed with score penalty
+        this.raceManager.passedCheckpoints.add(nextCp);
+        this.raceManager.resetSegmentTimer(nextCp);
+        this.bike.resetToDistance(nextCp);
+        if (this.ddaManager) this.ddaManager.onCheckpointPassed(nextCp);
+        this._showCheckpointFlash();
+      }
+      this._resumeCountdown();
     });
 
     // Game Over: restart
@@ -574,6 +618,12 @@ class Game {
     this.countdownTimer = 3.0;
     this.instructionsEl.classList.add('hidden');
 
+    // Apply difficulty preset and create DDA manager
+    const difficultyName = this.lobby.selectedDifficulty || 'normal';
+    applyDifficulty(difficultyName);
+    this.ddaManager = new DDAManager(difficultyName);
+    this._assistWeight = 0;
+
     const statusEl = document.getElementById('status');
     statusEl.textContent = '';
     this._lastCountNum = 3;
@@ -664,6 +714,16 @@ class Game {
 
     // Send profile to partner (avatar + achievements)
     this._sendProfile();
+
+    // Show calibration tip once per session during first countdown
+    if (!this._shownCalibTip && (this.input.motionEnabled || this.input.gyroConnected)) {
+      this._shownCalibTip = true;
+      const tip = document.getElementById('calib-tip');
+      if (tip) {
+        tip.style.display = 'block';
+        setTimeout(() => { tip.style.display = 'none'; }, 4000);
+      }
+    }
   }
 
   _updateCountdown(dt) {
@@ -759,6 +819,15 @@ class Game {
   }
 
   _onTimerExpired() {
+    // DDA: timeout counts as a failure
+    if (this.ddaManager && this.mode !== 'stoker') {
+      let checkpointD = 0;
+      if (this.raceManager && this.raceManager.passedCheckpoints.size > 0) {
+        checkpointD = Math.max(...this.raceManager.passedCheckpoints);
+      }
+      this.ddaManager.recordFailure(checkpointD);
+    }
+
     // Dismiss the countdown overlay immediately so "1" doesn't stick
     this.hud.hideTimer();
 
@@ -822,6 +891,11 @@ class Game {
     if (this.raceManager && checkpointD > 0) {
       this.raceManager.restartCount++;
       this.raceManager.resetSegmentTimer(checkpointD);
+    }
+
+    // DDA: apply invisible adjustments on restart
+    if (this.ddaManager && this.mode !== 'stoker') {
+      this.ddaManager.applyInvisibleAdjustments();
     }
 
     // Reset collectibles collected after this checkpoint
@@ -924,6 +998,31 @@ class Game {
     this.hud.hideTimer();
     if (this.raceManager) this.raceManager.crashCount++;
     hapticCrash();
+
+    // DDA: record failure at current checkpoint
+    let checkpointD = 0;
+    if (this.raceManager && this.raceManager.passedCheckpoints.size > 0) {
+      checkpointD = Math.max(...this.raceManager.passedCheckpoints);
+    }
+    if (this.ddaManager && this.mode !== 'stoker') {
+      this.ddaManager.recordFailure(checkpointD);
+      const ddaResult = this.ddaManager.evaluate(checkpointD);
+
+      // Show skip button if DDA recommends it
+      const skipBtn = document.getElementById('btn-skip-checkpoint');
+      if (skipBtn) {
+        skipBtn.style.display = ddaResult.offerSkip ? '' : 'none';
+        if (ddaResult.offerSkip) this.ddaManager.markSkipOffered();
+      }
+
+      // Show assist button if DDA recommends it
+      if (ddaResult.offerAssist) {
+        this.ddaManager.markAssistOffered();
+        const assistBtn = document.getElementById('assist-btn');
+        if (assistBtn) assistBtn.style.display = '';
+      }
+    }
+
     // Clear HUD status text so "CRASHED! Resetting..." doesn't bleed through
     document.getElementById('status').textContent = '';
     document.getElementById('gameover-overlay').style.display = 'flex';
@@ -938,7 +1037,8 @@ class Game {
     const roomBtn = document.getElementById('btn-gameover-room');
     if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
 
-    const btns = [clipBtn, document.getElementById('btn-restart'), roomBtn, document.getElementById('btn-gameover-lobby')]
+    const skipBtn = document.getElementById('btn-skip-checkpoint');
+    const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn, document.getElementById('btn-gameover-lobby')]
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
 
@@ -956,6 +1056,11 @@ class Game {
     if (raceEvent.event === 'checkpoint') {
       this._showCheckpointFlash();
       hapticCheckpoint();
+
+      // DDA: reset adjustments on checkpoint pass
+      if (this.ddaManager) {
+        this.ddaManager.onCheckpointPassed(raceEvent.distance);
+      }
 
       // Notify stoker
       if (this.mode === 'captain' && this.net) {
@@ -1293,6 +1398,7 @@ class Game {
     const raceSummary = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
     if (!raceSummary) return;
 
+    const difficulty = this.lobby.selectedDifficulty || 'normal';
     const data = {
       levelId: level.id,
       distance: raceSummary.distance,
@@ -1301,6 +1407,9 @@ class Game {
       collectiblesCount: this.collectibleManager ? this.collectibleManager.collected : 0,
       inputSource: raceSummary.inputSource,
       newAchievements: this.achievements.getNewThisSession().map(a => a.id),
+      difficulty,
+      safetyUsed: this.safetyMode,
+      scoreMultiplier: TUNE.scoreMultiplier || 1.0,
     };
 
     if (this.contributionTracker) {
@@ -1881,7 +1990,10 @@ class Game {
 
   _updateSolo(dt) {
     const pedalResult = this.pedalCtrl.update(dt);
-    const balanceResult = this.balanceCtrl.update();
+    const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight);
+
+    // Sync balance assist to bike model
+    this.bike._balanceAssist = this._assistWeight;
 
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
@@ -1957,7 +2069,8 @@ class Game {
 
     // Use shared pedal controller
     const pedalResult = this.sharedPedal.update(dt);
-    const balanceResult = this.balanceCtrl.update();
+    const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight);
+    this.bike._balanceAssist = this._assistWeight;
 
     // Capture captain's own lean before merging
     const captainLean = balanceResult.leanInput;

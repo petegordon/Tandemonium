@@ -28,6 +28,11 @@ export class InputManager {
     this._calibBuf = [];
     this._calibrating = false;
 
+    // Drift compensation (mobile tilt only)
+    this._driftEma = null;
+    this._driftRate = 0.015;
+    this._driftWindowK = 0.005;
+
     // Gamepad state
     this.gamepadIndex = null;
     this.gamepadConnected = false;
@@ -280,6 +285,19 @@ export class InputManager {
         this._calibBuf = [];
       }
       return;
+    }
+
+    // Drift compensation: nudge motionOffset toward long-term average rawGamma
+    // Only for mobile tilt (!isGyro), only when not actively steering
+    if (!isGyro) {
+      if (this._driftEma === null) {
+        this._driftEma = this.rawGamma;
+      } else {
+        this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
+      }
+      if (Math.abs(this._smoothedLean) < 0.3) {
+        this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate;
+      }
     }
 
     let relative = this.rawGamma - this.motionOffset;

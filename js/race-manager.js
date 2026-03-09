@@ -2,6 +2,8 @@
 // RACE MANAGER — tracks race progress, checkpoints, finish
 // ============================================================
 
+import { TUNE } from './config.js';
+
 export class RaceManager {
   constructor(level) {
     this.level = level;
@@ -29,7 +31,8 @@ export class RaceManager {
   }
 
   _segmentBudget(segmentDistance) {
-    return Math.max(10, (segmentDistance / 250) * 60); // 60 seconds per 250m, minimum 10s
+    const base = Math.max(10, (segmentDistance / 250) * 60); // 60 seconds per 250m, minimum 10s
+    return base * (TUNE.timeMultiplier || 1.0);
   }
 
   start() {

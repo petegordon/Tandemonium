@@ -28,6 +28,9 @@ export class BikeModel {
     this._braking = false;
     this.boostTimer = 0;
 
+    // Balance assist (0 = off, 0-1 = graduated assist strength)
+    this._balanceAssist = 0;
+
     // Road path reference (set externally after construction)
     this.roadPath = null;
     this.roadD = 0;          // distance along road centerline
@@ -42,7 +45,7 @@ export class BikeModel {
     this.pedalNodes = [];
     this.smoothSpokeFade = 0;
     this._prevSpokeOpacity = NaN;
-    this.maxSpeed = 16;
+    this.maxSpeed = TUNE.maxSpeed || 16;
 
     // Preset support
     this._pendingPreset = null;
@@ -254,6 +257,7 @@ export class BikeModel {
       this.speed *= (1 - dragIntensity * 1.5 * dt);       // strong off-road friction
     }
 
+    this.maxSpeed = TUNE.maxSpeed || 16;
     this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
 
     // Balance physics (portrait-tuned: softer response, more damping)
@@ -265,8 +269,9 @@ export class BikeModel {
     const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
 
     const t = performance.now() / 1000;
+    const wobbleMul = TUNE.wobbleMultiplier || 1.0;
     const lowSpeedWobble = Math.max(0, 1 - this.speed * 0.3) *
-      (Math.sin(t * 2.7) * 0.3 + Math.sin(t * 4.3) * 0.15);
+      (Math.sin(t * 2.7) * 0.3 + Math.sin(t * 4.3) * 0.15) * wobbleMul;
 
     let pedalLeanKick = 0;
     if (pedalResult.acceleration > 0 && !pedalResult.braking) {
@@ -275,9 +280,11 @@ export class BikeModel {
 
     // Danger-zone wobble: progressive shake as lean approaches crash
     let dangerWobble = 0;
-    const dangerRatio = Math.abs(this.lean) / 1.35;
-    if (dangerRatio > 0.55) {
-      const intensity = (dangerRatio - 0.55) / 0.45; // 0→1 from yellow to crash
+    const crashThreshold = TUNE.crashThreshold || 1.35;
+    const dangerOnset = TUNE.dangerOnset || 0.55;
+    const dangerRatio = Math.abs(this.lean) / crashThreshold;
+    if (dangerRatio > dangerOnset) {
+      const intensity = (dangerRatio - dangerOnset) / (1 - dangerOnset); // 0→1 from onset to crash
       dangerWobble = intensity * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
     }
 
@@ -293,6 +300,16 @@ export class BikeModel {
     this.leanVelocity += (gravity + playerLean + gyro + damping +
       pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble) * dt;
     this.lean += this.leanVelocity * dt;
+
+    // Balance assist: proportional restoring force toward upright
+    if (this._balanceAssist > 0 && Math.abs(this.lean) > 0.3) {
+      this.leanVelocity -= this.lean * this._balanceAssist * 3.0 * dt;
+    }
+
+    // Auto-correction (Chill mode): gentle return-to-center force
+    if (TUNE.autoCorrection && Math.abs(this.lean) > 0.3) {
+      this.leanVelocity -= this.lean * 3.0 * dt;
+    }
 
     // Safety mode
     if (safetyMode) {
@@ -360,7 +377,7 @@ export class BikeModel {
     }
 
     // Fall detection
-    if (Math.abs(this.lean) > 1.35) {
+    if (Math.abs(this.lean) > (TUNE.crashThreshold || 1.35)) {
       this._fall();
     }
 
