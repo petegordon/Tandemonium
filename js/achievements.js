@@ -127,6 +127,12 @@ export class AchievementManager {
     }
     this._save();
   }
+
+  clear() {
+    this._earned.clear();
+    this._newThisSession = [];
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  }
 }
 
 // Toast notification
