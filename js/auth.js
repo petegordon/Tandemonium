@@ -82,9 +82,8 @@ export class AuthManager {
         avatar: payload.picture,
       };
       this._save();
-      if (this._onLoginCallback) this._onLoginCallback(this.user);
 
-      // Exchange GSI credential for server JWT
+      // Exchange GSI credential for server JWT before firing callback
       const res = await fetch(`${API_BASE}/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -96,6 +95,8 @@ export class AuthManager {
         if (data.user && data.user.id) this.user.serverId = data.user.id;
         this._save();
       }
+
+      if (this._onLoginCallback) this._onLoginCallback(this.user);
     } catch (e) {
       console.error('Auth error', e);
     }

@@ -470,6 +470,18 @@
     font-size: 16px;
     font-weight: 700;
   }
+  .demo-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    background: #44ff66;
+    color: #000;
+    padding: 1px 6px;
+    border-radius: 4px;
+    vertical-align: middle;
+    margin-left: 6px;
+    letter-spacing: 0.5px;
+  }
   .level-card-desc {
     font-size: 12px;
     color: rgba(255,255,255,0.5);
@@ -484,6 +496,11 @@
     opacity: 0.4;
     cursor: default;
     pointer-events: none;
+  }
+  .lobby-btn.role-locked {
+    opacity: 0.5;
+    border-color: rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.03);
   }
 
   /* ── Difficulty selector ── */
@@ -1805,6 +1822,19 @@
 
   /* ── Game Over overlay ── */
   #gameover-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+  }
+
+  /* ── Demo end / Stoker CTA overlays ── */
+  #demo-end-overlay, #stoker-cta-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
     background: rgba(0,0,0,0.85);
@@ -3180,7 +3210,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.b311764 | 03-08-2026 20:58</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.3e2d90e | 03-08-2026 23:48</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3307,6 +3337,28 @@ ON</button>
   <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
   <button class="lobby-btn" id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</button>
   <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">QUIT</button>
+</div>
+
+<!-- Demo end overlay (solo demo checkpoint limit reached) -->
+<div id="demo-end-overlay" style="display:none;">
+  <div class="disconnect-box">
+    <p style="color:#44ff66;font-size:1.2em;margin-bottom:4px;">Thanks for trying the demo!</p>
+    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">Unlock the full game with all levels, leaderboards, and solo rides.</p>
+    <button class="lobby-btn lobby-btn-accent" id="btn-demo-buy">GET FULL GAME &middot; $5.99</button>
+    <button class="lobby-btn" id="btn-demo-together" style="margin-top:10px;">JOIN A FRIEND'S RIDE</button>
+    <p style="font-size:0.75em;opacity:0.5;margin-top:4px;margin-bottom:12px;">Sign in to join someone with the full game &mdash; always free!</p>
+    <button class="lobby-btn" id="btn-demo-lobby" style="margin-top:0;">BACK TO LOBBY</button>
+  </div>
+</div>
+
+<!-- Stoker CTA overlay (shown after unlicensed stoker finishes a ride) -->
+<div id="stoker-cta-overlay" style="display:none;">
+  <div class="disconnect-box">
+    <p style="color:#44ff66;font-size:1.1em;margin-bottom:4px;">Great ride!</p>
+    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">Get the full game to be Captain, unlock all levels, and climb the leaderboards.</p>
+    <button class="lobby-btn lobby-btn-accent" id="btn-stoker-cta-buy">GET FULL GAME &middot; $5.99</button>
+    <button class="lobby-btn" id="btn-stoker-cta-continue" style="margin-top:10px;">CONTINUE</button>
+  </div>
 </div>
 
 <!-- Disconnect overlay -->

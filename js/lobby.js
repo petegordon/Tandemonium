@@ -8,6 +8,7 @@ import { NetworkManager } from './network-manager.js';
 import { RELAY_URL, BIKE_MODEL_PATH } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
+import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
@@ -199,6 +200,7 @@ export class Lobby {
 
     // Auth (after _avatarCache — _setupAuth triggers updateUI which reads the cache)
     this.auth = new AuthManager();
+    this.license = new LicenseManager(this.auth);
     this._setupAuth();
     this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
     this._lbFocusCol = 0;   // index within the current row
@@ -447,17 +449,22 @@ export class Lobby {
   }
 
   _setup() {
-    // SOLO → level/difficulty selection first
+    // SOLO → level/difficulty selection (demo users see levels but can only play Grandma's House)
     document.getElementById('btn-solo').addEventListener('click', () => {
       this._requestMotion();
       this._pendingMode = 'solo';
       this._showStep(this.levelStep);
     });
 
-    // RIDE TOGETHER → straight to role selection (level chosen in room after connecting)
+    // RIDE TOGETHER → role selection (captain locked for unlicensed, login required for anonymous)
     document.getElementById('btn-together').addEventListener('click', () => {
+      if (!this.auth.isLoggedIn()) {
+        this.auth.login();
+        return;
+      }
       this._requestMotion();
       this._pendingMode = 'multiplayer';
+      this._updateRoleButtons();
       this._showStep(this.roleStep);
     });
 
@@ -490,8 +497,17 @@ export class Lobby {
       if (stepBackBtn) stepBackBtn.click();
     });
 
-    // CAPTAIN (START A RIDE)
-    document.getElementById('btn-captain').addEventListener('click', () => {
+    // CAPTAIN (START A RIDE) — locked for unlicensed, acts as purchase CTA
+    document.getElementById('btn-captain').addEventListener('click', async () => {
+      if (!this.license.isLicensed) {
+        try {
+          const url = await this.license.startCheckout('tandemonium-web-early');
+          window.location.href = url;
+        } catch (e) {
+          console.error('Checkout error', e);
+        }
+        return;
+      }
       this._showStep(this.hostStep);
       this._createRoom();
     });
@@ -562,31 +578,37 @@ export class Lobby {
   _buildLevelCards() {
     const container = document.getElementById('level-cards');
     const buttons = [];
+    const isDemo = !this.license.isLicensed;
 
     // Level unlock requirements: achievement ID needed to unlock each level
     const LEVEL_UNLOCK = { castle: 'home_sweet' }; // Castle requires finishing Grandma's House
 
     LEVELS.forEach(level => {
       const requiredAch = LEVEL_UNLOCK[level.id];
-      const locked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
+      const achievementLocked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
+      const locked = achievementLocked || (isDemo && level.id !== 'grandma');
 
       const card = document.createElement('button');
       card.className = 'level-card' + (locked ? ' level-locked' : '');
       card.dataset.levelId = level.id;
 
       if (locked) {
+        const lockReason = isDemo && !achievementLocked
+          ? 'Get the full game to unlock'
+          : 'Complete Grandma\'s House to unlock';
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">&#x1F512;</span>' +
             '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">Complete Grandma\'s House to unlock</div>';
+          '<div class="level-card-desc">' + lockReason + '</div>';
         card.disabled = true;
       } else {
+        const demoTag = isDemo ? ' <span class="demo-tag">DEMO</span>' : '';
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">' + level.icon + '</span>' +
-            '<span class="level-card-name">' + level.name + '</span>' +
+            '<span class="level-card-name">' + level.name + demoTag + '</span>' +
           '</div>' +
           '<div class="level-card-desc">' + level.description + '</div>' +
           '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
@@ -683,6 +705,10 @@ export class Lobby {
     this.auth.onLogin(async (user) => {
       updateUI(user);
       this.profilePopup.classList.remove('visible');
+      // Check license and update mode buttons + level cards
+      await this.license.check();
+      this._updateModeButtons();
+      this._rebuildLevelCards();
       // Fetch server-side achievements (D1 is source of truth for logged-in users)
       try {
         const me = await this.auth.getMe();
@@ -704,8 +730,10 @@ export class Lobby {
         try { await this.auth.syncAchievements(ids); } catch (e) {}
       }
       this._achievements.clear();
+      this.license.clear();
       this.auth.logout();
       updateUI(null);
+      this._updateModeButtons();
       this._rebuildLevelCards();
     });
 
@@ -738,6 +766,11 @@ export class Lobby {
     // Restore UI if already logged in from localStorage
     if (this.auth.isLoggedIn()) {
       updateUI(this.auth.getUser());
+      // Check license and update mode buttons + level cards
+      this.license.check().then(() => {
+        this._updateModeButtons();
+        this._rebuildLevelCards();
+      }).catch(() => {});
       // Sync achievements from D1 for returning users
       this.auth.getMe().then(me => {
         if (me && me.achievements) {
@@ -747,11 +780,55 @@ export class Lobby {
         }
       }).catch(() => {});
     }
+    this._updateModeButtons();
   }
 
   _requestMotion() {
     if (this.input && this.input.needsMotionPermission) {
       this.input.requestMotionPermission();
+    }
+  }
+
+  /**
+   * Update mode buttons based on auth + license state.
+   *   anonymous  → SOLO DEMO only
+   *   free       → RIDE TOGETHER (join only) + SOLO DEMO
+   *   licensed   → RIDE TOGETHER + SOLO RIDE
+   */
+  _updateModeButtons() {
+    const btnSolo = document.getElementById('btn-solo');
+    const btnTogether = document.getElementById('btn-together');
+    const access = this.license.accessLevel;
+
+    if (access === 'licensed') {
+      btnSolo.textContent = 'SOLO RIDE';
+      btnTogether.classList.remove('role-locked');
+      btnTogether.innerHTML = 'RIDE TOGETHER';
+    } else if (access === 'free') {
+      btnSolo.textContent = 'SOLO DEMO';
+      btnTogether.classList.remove('role-locked');
+      btnTogether.innerHTML = 'RIDE TOGETHER';
+    } else {
+      // anonymous — show but locked
+      btnSolo.textContent = 'SOLO DEMO';
+      btnTogether.classList.add('role-locked');
+      btnTogether.innerHTML = '&#x1F512; RIDE TOGETHER<br><span class="lobby-role-desc">Sign in to ride together</span>';
+    }
+  }
+
+  /**
+   * Update role buttons: lock START A RIDE for unlicensed users.
+   */
+  _updateRoleButtons() {
+    const btnCaptain = document.getElementById('btn-captain');
+    if (!this.license.isLicensed) {
+      btnCaptain.classList.add('role-locked');
+      btnCaptain.classList.remove('lobby-btn-accent');
+      btnCaptain.innerHTML = '&#x1F512; START A RIDE<br><span class="lobby-role-desc">Get the full game to be Captain &middot; $5.99</span>';
+    } else {
+      btnCaptain.classList.remove('role-locked');
+      btnCaptain.classList.add('lobby-btn-accent');
+      btnCaptain.innerHTML = 'START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span>';
     }
   }
 
