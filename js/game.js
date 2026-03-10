@@ -331,9 +331,21 @@ class Game {
     this._musicSourceNode = null; // created once via createMediaElementSource
     this.lobby.onMusicChanged = (on) => {
       if (on) {
+        // Reconnect source node to AudioContext destination before playing
+        if (this._musicSourceNode && this.audioCtx) {
+          try { this._musicSourceNode.connect(this.audioCtx.destination); } catch (e) {}
+          // Also reconnect to recording destination if actively recording
+          if (this.recorder && this.recorder._audioDestination) {
+            try { this._musicSourceNode.connect(this.recorder._audioDestination); } catch (e) {}
+          }
+        }
         this._musicEl.play().catch(() => {});
       } else {
         this._musicEl.pause();
+        // Disconnect source node so iOS doesn't produce glitchy looping artifacts
+        if (this._musicSourceNode) {
+          try { this._musicSourceNode.disconnect(); } catch (e) {}
+        }
       }
     };
 
@@ -1725,6 +1737,9 @@ class Game {
     if (!this.lobby.musicActive) {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
+      if (this._musicSourceNode) {
+        try { this._musicSourceNode.disconnect(); } catch (e) {}
+      }
     }
     this._hideGameOver();
     this._hideVictory();
@@ -1790,6 +1805,9 @@ class Game {
     if (!this.lobby.musicActive) {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
+      if (this._musicSourceNode) {
+        try { this._musicSourceNode.disconnect(); } catch (e) {}
+      }
     }
     this._hideGameOver();
     this._hideVictory();
