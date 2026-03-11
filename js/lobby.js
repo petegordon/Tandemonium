@@ -115,6 +115,19 @@ export class Lobby {
     if (this.musicActive) this.toggleMusic.classList.add('active');
     this.onMusicChanged = null; // callback set by Game
 
+    // Volume control (0–1, persisted in localStorage, default 0.18)
+    const savedVol = localStorage.getItem('tandemonium_music_volume');
+    this.musicVolume = savedVol !== null ? parseFloat(savedVol) : 0.18;
+    this.onVolumeChanged = null; // callback set by Game
+    this._volumeSlider = document.getElementById('volume-slider-popup');
+    this._volumeTrack = document.getElementById('volume-slider-track');
+    this._volumeFill = document.getElementById('volume-slider-fill');
+    this._volumeThumb = document.getElementById('volume-slider-thumb');
+    this._volumePct = document.getElementById('volume-pct');
+    this._volumeDragging = false;
+    this._longPressTimer = null;
+    this._updateVolumeUI();
+
     // Gamepad navigation state
     this._focusIndex = 0;
     this._currentStep = null;
@@ -569,7 +582,45 @@ export class Lobby {
     this.toggleCamera.addEventListener('click', () => this._toggleCamera());
     this.toggleMotion.addEventListener('click', () => this._toggleMotion());
     this.toggleAudio.addEventListener('click', () => this._toggleAudio());
-    this.toggleMusic.addEventListener('click', () => this._toggleMusic());
+    // Music toggle: tap = mute/unmute, long press (500ms) = show volume slider
+    this._musicLongPressed = false;
+    this.toggleMusic.addEventListener('pointerdown', (e) => {
+      this._musicLongPressed = false;
+      this._longPressTimer = setTimeout(() => {
+        this._musicLongPressed = true;
+        this._showVolumeSlider();
+      }, 500);
+    });
+    this.toggleMusic.addEventListener('pointerup', () => {
+      clearTimeout(this._longPressTimer);
+      if (!this._musicLongPressed) this._toggleMusic();
+    });
+    this.toggleMusic.addEventListener('pointerleave', () => {
+      clearTimeout(this._longPressTimer);
+    });
+    this.toggleMusic.addEventListener('pointercancel', () => {
+      clearTimeout(this._longPressTimer);
+    });
+    // Volume slider drag
+    this._volumeTrack.addEventListener('pointerdown', (e) => {
+      this._volumeDragging = true;
+      this._volumeTrack.setPointerCapture(e.pointerId);
+      this._setVolumeFromPointer(e);
+    });
+    this._volumeTrack.addEventListener('pointermove', (e) => {
+      if (this._volumeDragging) this._setVolumeFromPointer(e);
+    });
+    this._volumeTrack.addEventListener('pointerup', () => { this._volumeDragging = false; });
+    this._volumeTrack.addEventListener('pointercancel', () => { this._volumeDragging = false; });
+    // Dismiss slider when clicking outside
+    document.addEventListener('pointerdown', (e) => {
+      if (this._volumeSlider.classList.contains('visible') &&
+          !this._volumeSlider.contains(e.target) &&
+          e.target !== this.toggleMusic &&
+          !this.toggleMusic.contains(e.target)) {
+        this._hideVolumeSlider();
+      }
+    });
     this.toggleHelp.addEventListener('click', () => this._openHelp());
     this.toggleProfile.addEventListener('click', () => this._toggleProfile());
     this.toggleLeaderboard.addEventListener('click', () => this._openLeaderboard());
@@ -1099,6 +1150,32 @@ export class Lobby {
       localStorage.setItem('tandemonium_music', 'off');
     }
     if (this.onMusicChanged) this.onMusicChanged(this.musicActive);
+  }
+
+  _showVolumeSlider() {
+    this._updateVolumeUI();
+    this._volumeSlider.classList.add('visible');
+  }
+
+  _hideVolumeSlider() {
+    this._volumeSlider.classList.remove('visible');
+  }
+
+  _setVolumeFromPointer(e) {
+    const rect = this._volumeTrack.getBoundingClientRect();
+    const y = Math.max(0, Math.min(1, (rect.bottom - e.clientY) / rect.height));
+    this.musicVolume = Math.round(y * 100) / 100;
+    localStorage.setItem('tandemonium_music_volume', this.musicVolume);
+    this._updateVolumeUI();
+    if (this.onVolumeChanged) this.onVolumeChanged(this.musicVolume);
+  }
+
+  _updateVolumeUI() {
+    const pct = Math.round(this.musicVolume * 100);
+    const h = `${pct}%`;
+    this._volumeFill.style.height = h;
+    this._volumeThumb.style.bottom = h;
+    this._volumePct.textContent = `${pct}%`;
   }
 
   _openHelp() {

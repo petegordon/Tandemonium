@@ -168,8 +168,6 @@ class Game {
       this._resetGame();
     });
 
-    // Sensitivity slider
-    this._setupSensitivitySlider();
 
     // Lobby / Room button
     this._lobbyBtn = document.getElementById('lobby-btn');
@@ -327,8 +325,22 @@ class Game {
     // Background music
     this._musicEl = new Audio('assets/Krampus Workshop.mp3');
     this._musicEl.loop = true;
-    this._musicEl.volume = 0.18;
+    this._musicEl.volume = this.lobby.musicVolume;
     this._musicSourceNode = null; // created once via createMediaElementSource
+
+    // In-game music mute button
+    this._musicBtn = document.getElementById('music-btn');
+    this._updateMusicBtnIcon();
+    this._musicBtn.addEventListener('click', () => {
+      this.lobby._toggleMusic();
+      this._updateMusicBtnIcon();
+    });
+
+    // Volume changes from lobby slider
+    this.lobby.onVolumeChanged = (vol) => {
+      this._musicEl.volume = vol;
+    };
+
     this.lobby.onMusicChanged = (on) => {
       if (on) {
         // Reconnect source node to AudioContext destination before playing
@@ -347,6 +359,7 @@ class Game {
           try { this._musicSourceNode.disconnect(); } catch (e) {}
         }
       }
+      this._updateMusicBtnIcon();
     };
 
     // First-visit: the "Tap to Start" overlay in lobby.js handles autoplay unlock.
@@ -369,6 +382,28 @@ class Game {
       // don't fire pointerdown, so listen for click too.
       document.addEventListener('click', startMusic, true);
     }
+
+    // Keyboard shortcuts for music: M = toggle mute, Shift+M = volume slider
+    window.addEventListener('keydown', (e) => {
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.code === 'KeyM') {
+        if (e.shiftKey) {
+          // Shift+M: toggle volume slider in lobby
+          if (this.state === 'lobby') {
+            if (this.lobby._volumeSlider.classList.contains('visible')) {
+              this.lobby._hideVolumeSlider();
+            } else {
+              this.lobby._showVolumeSlider();
+            }
+          }
+        } else {
+          // M: toggle mute
+          this.lobby._toggleMusic();
+          this._updateMusicBtnIcon();
+        }
+      }
+    });
 
     // Resize
     window.addEventListener('resize', () => this._onResize());
@@ -649,6 +684,10 @@ class Game {
     this.countdownTimer = 3.0;
     this.instructionsEl.classList.add('hidden');
 
+    // Show in-game music button
+    this._musicBtn.style.display = 'block';
+    this._updateMusicBtnIcon();
+
     // Apply difficulty preset and create DDA manager
     const difficultyName = this.lobby.selectedDifficulty || 'normal';
     applyDifficulty(difficultyName);
@@ -698,7 +737,6 @@ class Game {
       const playerColor = this._getFrameColor(this.lobby.selectedPreset);
       const partnerColor = this._partnerBikeColor || '#888888';
       this.archIndicator.setup(this.mode, playerColor, partnerColor);
-      this._showSensitivitySlider();
     }
 
     // Show contribution bar in multiplayer
@@ -1341,36 +1379,6 @@ class Game {
     this._sendProfile();
   }
 
-  _setupSensitivitySlider() {
-    const sensSlider = document.getElementById('sens-range');
-    const sensVal = document.getElementById('sens-val');
-    if (!sensSlider) return;
-    sensSlider.addEventListener('input', () => {
-      const v = parseInt(sensSlider.value);
-      TUNE.sensitivity = v;
-      TUNE.gyroSensitivity = v + 15;
-      TUNE.deadzone = Math.round(v * 0.16);
-      TUNE.gyroDeadzone = Math.round((v + 15) * 0.1);
-      sensVal.textContent = v + '\u00B0';
-      localStorage.setItem('tandemonium_sensitivity', v);
-    });
-    // Restore saved preference
-    const saved = localStorage.getItem('tandemonium_sensitivity');
-    if (saved) {
-      const v = parseInt(saved);
-      TUNE.sensitivity = v;
-      TUNE.gyroSensitivity = v + 15;
-      TUNE.deadzone = Math.round(v * 0.16);
-      TUNE.gyroDeadzone = Math.round((v + 15) * 0.1);
-      sensSlider.value = v;
-      sensVal.textContent = v + '\u00B0';
-    }
-  }
-
-  _showSensitivitySlider() {
-    const slider = document.getElementById('sensitivity-slider');
-    if (slider) slider.style.display = 'flex';
-  }
 
   _recalibrateTilt() {
     if (this.input.motionEnabled) {
@@ -1739,7 +1747,19 @@ class Game {
     this._victoryVideo = null;
   }
 
+  _updateMusicBtnIcon() {
+    if (this.lobby.musicActive) {
+      this._musicBtn.classList.remove('muted');
+      // Show note icon (already in SVG)
+      this._musicBtn.querySelector('svg').style.opacity = '';
+    } else {
+      this._musicBtn.classList.add('muted');
+      this._musicBtn.querySelector('svg').style.opacity = '0.35';
+    }
+  }
+
   _returnToLobby() {
+    this._musicBtn.style.display = 'none';
     if (!this.lobby.musicActive) {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
@@ -1797,6 +1817,7 @@ class Game {
   }
 
   _returnToRoom() {
+    this._musicBtn.style.display = 'none';
     if (!this.net) {
       // Fallback to full lobby return if no connection
       this._returnToLobby();

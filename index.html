@@ -2086,6 +2086,99 @@
     border-color: rgba(255,60,60,0.8);
   }
 
+  /* ── In-game music mute button ── */
+  #music-btn {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 180px);
+    left: 14px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 18px;
+    display: none;
+    text-align: center;
+    line-height: 44px;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 12;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #music-btn:active {
+    background: rgba(60,200,80,0.4);
+    border-color: rgba(60,200,80,0.6);
+  }
+  #music-btn.muted {
+    color: rgba(255,255,255,0.35);
+    border-color: rgba(255,255,255,0.12);
+  }
+
+  /* ── Lobby volume slider popup ── */
+  #volume-slider-popup {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 120px;
+    background: rgba(20,20,20,0.92);
+    border: 1.5px solid rgba(255,255,255,0.2);
+    border-radius: 18px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 0;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  #volume-slider-popup.visible {
+    display: flex;
+  }
+  #volume-slider-track {
+    width: 4px;
+    height: 80px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 2px;
+    position: relative;
+    cursor: pointer;
+    touch-action: none;
+  }
+  #volume-slider-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: #44ff66;
+    border-radius: 2px;
+    pointer-events: none;
+  }
+  #volume-slider-thumb {
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, 50%);
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    pointer-events: none;
+  }
+  #volume-pct {
+    color: rgba(255,255,255,0.7);
+    font-size: 9px;
+    font-weight: 700;
+    margin-top: 6px;
+    user-select: none;
+  }
+
   /* ── Selfie / Partner PiP ── */
   .pip-wrap {
     position: fixed;
@@ -2796,6 +2889,15 @@
 <!-- Share button (recording) -->
 <button id="share-btn" aria-label="Share clip">&#x1F3AC;</button>
 
+<!-- In-game music mute toggle -->
+<button id="music-btn" aria-label="Toggle music">
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 17V6l9-3v11"/>
+    <circle cx="5.5" cy="17" r="2.5"/>
+    <circle cx="14.5" cy="14" r="2.5"/>
+  </svg>
+</button>
+
 <!-- Selfie & partner PiP videos -->
 <div id="selfie-pip-wrap" class="pip-wrap">
   <video id="selfie-pip" class="pip-video" playsinline muted></video>
@@ -3107,13 +3209,22 @@ ON</button>
               <path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>
             </svg>
           </button>
-          <button class="lobby-toggle" id="toggle-music" title="Music">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M8 17V6l9-3v11"/>
-              <circle cx="5.5" cy="17" r="2.5"/>
-              <circle cx="14.5" cy="14" r="2.5"/>
-            </svg>
-          </button>
+          <div style="position:relative">
+            <button class="lobby-toggle" id="toggle-music" title="Music">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 17V6l9-3v11"/>
+                <circle cx="5.5" cy="17" r="2.5"/>
+                <circle cx="14.5" cy="14" r="2.5"/>
+              </svg>
+            </button>
+            <div id="volume-slider-popup">
+              <div id="volume-slider-track">
+                <div id="volume-slider-fill"></div>
+                <div id="volume-slider-thumb"></div>
+              </div>
+              <span id="volume-pct"></span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -3140,7 +3251,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.fc87f2a | 03-11-2026 17:59</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.0c63da6 | 03-11-2026 18:06</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
