@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Input Test — Tandemonium</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #1a1a2e;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+  }
+
+  /* ── iOS Motion Permission Button ── */
+  #motion-permission {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  #motion-permission h2 { font-size: 20px; margin-bottom: 12px; }
+  #motion-permission p { font-size: 14px; color: rgba(255,255,255,0.6); margin-bottom: 20px; text-align: center; padding: 0 20px; }
+  #motion-permission button {
+    padding: 14px 32px;
+    font-size: 16px;
+    font-weight: 700;
+    border: none;
+    border-radius: 12px;
+    background: #4af;
+    color: #000;
+    cursor: pointer;
+  }
+
+  /* ── Source Selector ── */
+  #source-selector {
+    display: flex;
+    justify-content: center;
+    gap: 0;
+    padding: 6px 10px;
+    background: rgba(0,0,0,0.6);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;
+  }
+  #source-selector button {
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'SF Mono', 'Menlo', monospace;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.5);
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s, border-color 0.1s;
+  }
+  #source-selector button:first-child { border-radius: 6px 0 0 6px; }
+  #source-selector button:last-child { border-radius: 0 6px 6px 0; }
+  #source-selector button + button { border-left: none; }
+  #source-selector button.active {
+    background: rgba(68,170,255,0.25);
+    color: #fff;
+    border-color: rgba(68,170,255,0.6);
+  }
+  #source-selector button.active + button { border-left: 1px solid rgba(68,170,255,0.6); }
+
+  /* ── Diagnostics Panel ── */
+  #diagnostics {
+    padding: 8px 10px;
+    font-size: 11px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+    line-height: 1.5;
+    background: rgba(0,0,0,0.6);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;
+    overflow-y: auto;
+    max-height: 35vh;
+  }
+  #diagnostics .section { margin-bottom: 4px; }
+  #diagnostics .section .row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #diagnostics .label { color: rgba(255,255,255,0.5); }
+  #diagnostics .val { color: #4af; font-weight: 600; }
+  #diagnostics .val-warn { color: #fa3; font-weight: 600; }
+  #diagnostics .val-err { color: #f44; font-weight: 600; }
+
+  /* ── Gauges Row ── */
+  #gauge-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 24px;
+    padding: 10px 0;
+    flex-shrink: 0;
+  }
+  .gauge-wrap {
+    width: 100px; height: 100px;
+    position: relative;
+  }
+  .gauge-wrap svg { width: 100%; height: 100%; }
+  .gauge-label {
+    position: absolute;
+    bottom: -2px; left: 0; right: 0;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  }
+  .gauge-title {
+    position: absolute;
+    top: -2px; left: 0; right: 0;
+    text-align: center;
+    font-size: 9px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── 3D Viewport ── */
+  #bike-viewport {
+    flex: 1;
+    min-height: 100px;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+  #bike-viewport canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+  }
+
+  /* ── Speed Bar ── */
+  #speed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 16px;
+    flex-shrink: 0;
+  }
+  #speed-row .speed-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.6);
+    min-width: 40px;
+  }
+  #speed-bar-outer {
+    flex: 1;
+    height: 12px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  #speed-bar-inner {
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(to right, #4af, #0f0);
+    border-radius: 6px;
+    transition: width 0.1s;
+  }
+  #speed-value {
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 60px;
+    text-align: right;
+  }
+
+  /* ── Pedal Bar ── */
+  #pedal-bar {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 10px;
+    pointer-events: auto;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    width: 100%;
+    flex-shrink: 0;
+    margin-top: auto;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  .pedal-touch {
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    position: relative;
+    width: 45%;
+    height: 18vh;
+    min-height: 80px;
+    max-height: 140px;
+    border-radius: 24px;
+    border: 2.5px solid rgba(255,255,255,0.35);
+    background: linear-gradient(to bottom, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.08) 100%);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    box-shadow:
+      0 4px 0 rgba(0,0,0,0.25),
+      inset 0 1px 0 rgba(255,255,255,0.3),
+      0 2px 10px rgba(0,0,0,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    cursor: pointer;
+    transition: background 0.08s, border-color 0.08s, transform 0.08s, box-shadow 0.08s;
+    transform: translateY(0);
+  }
+  #touch-left { border-color: rgba(100,160,255,0.4); }
+  #touch-right { border-color: rgba(255,160,60,0.4); }
+  .pedal-touch::after {
+    position: absolute;
+    top: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.3);
+    pointer-events: none;
+  }
+  #touch-left::after { content: 'L'; left: 10px; }
+  #touch-right::after { content: 'R'; right: 10px; }
+  .pedal-touch img {
+    max-width: 95%;
+    max-height: 95%;
+    object-fit: contain;
+    pointer-events: none;
+    opacity: 0.85;
+  }
+  .pedal-touch.pressed {
+    background: linear-gradient(to bottom, rgba(60,220,80,0.5) 0%, rgba(40,160,50,0.35) 100%);
+    border-color: rgba(60,200,80,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 6px rgba(60,200,80,0.3);
+  }
+  .pedal-touch.wrong {
+    background: linear-gradient(to bottom, rgba(230,60,40,0.5) 0%, rgba(180,40,30,0.35) 100%);
+    border-color: rgba(220,60,40,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 6px rgba(220,60,40,0.3);
+  }
+  .pedal-touch.brake {
+    background: linear-gradient(to bottom, rgba(230,170,20,0.5) 0%, rgba(180,130,15,0.35) 100%);
+    border-color: rgba(220,160,20,0.8);
+    transform: scale(0.95) translateY(2px);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.15), 0 1px 6px rgba(220,160,20,0.3);
+  }
+
+  /* ── Gyro Bar ── */
+  #gyro-bar {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 4px 10px;
+    background: rgba(0,0,0,0.5);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    flex-shrink: 0;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+  }
+  #gyro-bar.visible { display: flex; }
+  #gyro-bar label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    color: rgba(255,255,255,0.8);
+  }
+  #gyro-bar input[type="checkbox"] { accent-color: #f0a; }
+  #gyro-recalibrate {
+    padding: 2px 8px;
+    font-size: 11px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+    border: 1px solid rgba(255,0,170,0.4);
+    background: rgba(255,0,170,0.1);
+    color: #f0a;
+    border-radius: 4px;
+    cursor: pointer;
+    display: none;
+  }
+  #gyro-recalibrate.visible { display: inline-block; }
+  #gyro-recalibrate:hover { background: rgba(255,0,170,0.2); }
+  #gyro-status {
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+  }
+
+  /* ── Gyro Calibrate Toast ── */
+  #gyro-calibrate-toast {
+    position: fixed;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(30,10,40,0.9);
+    color: #f0a;
+    border: 1px solid #f0a;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+    z-index: 20;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  #gyro-calibrate-toast.visible { opacity: 1; }
+
+  /* ── Crash & Calibrate Flash ── */
+  #crash-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,0,0,0);
+    pointer-events: none;
+    z-index: 9;
+    transition: none;
+  }
+  #calibrate-flash {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,0.3);
+    pointer-events: none;
+    z-index: 8;
+    display: none;
+  }
+
+  /* ── Tuning Panel ── */
+  #tuning-toggle {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 20;
+    line-height: 1;
+  }
+  #tuning-panel {
+    position: fixed;
+    top: 50px;
+    right: 8px;
+    width: 260px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 12px;
+    padding: 12px;
+    z-index: 20;
+    display: none;
+  }
+  #tuning-panel.open { display: block; }
+  .tune-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .tune-row label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.7);
+    flex-shrink: 0;
+    min-width: 90px;
+  }
+  .tune-row input[type="range"] {
+    flex: 1;
+    margin: 0 6px;
+    height: 4px;
+  }
+  .tune-row .tune-val {
+    font-size: 11px;
+    font-weight: 700;
+    color: #4af;
+    min-width: 36px;
+    text-align: right;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Source Selector -->
+  <div id="source-selector">
+    <button class="active" data-source="motion">Mobile</button>
+    <button data-source="gamepad">Gamepad</button>
+    <button data-source="keyboard">Keyboard</button>
+  </div>
+
+  <!-- Gyro Steering (gamepad + PS controller) -->
+  <div id="gyro-bar">
+    <label><input type="checkbox" id="gyro-toggle"> Gyro Steering</label>
+    <button id="gyro-recalibrate">Recalibrate</button>
+    <span id="gyro-status"></span>
+  </div>
+
+  <!-- Diagnostics -->
+  <div id="diagnostics">
+    <div class="section" id="diag-input"></div>
+    <div class="section" id="diag-accel"></div>
+    <div class="section" id="diag-tilt"></div>
+    <div class="section" id="diag-pedal"></div>
+    <div class="section" id="diag-bike"></div>
+    <div class="section" id="diag-gyro"></div>
+  </div>
+
+  <!-- Gauges -->
+  <div id="gauge-row">
+    <div class="gauge-wrap" id="phone-gauge">
+      <div class="gauge-title">YOU</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(0,180,0,0.2)"/>
+        <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(0,180,0,0.2)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <g id="phone-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#fa3" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#fa3" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#fa3" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="phone-label">0.0&deg;</div>
+    </div>
+    <div class="gauge-wrap" id="bike-gauge">
+      <div class="gauge-title">BIKE</div>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+        <path d="M 60 60 L 14.4 79.6 A 52 52 0 0 1 8 60 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <path d="M 60 60 L 112 60 A 52 52 0 0 1 105.6 79.6 L 60 60" fill="rgba(255,50,50,0.25)"/>
+        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+        <line x1="29" y1="20" x2="34" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="91" y1="20" x2="86" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="12" y1="44" x2="21" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <line x1="108" y1="44" x2="99" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+        <g id="bike-needle" transform="rotate(0, 60, 60)">
+          <line x1="18" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <line x1="72" y1="60" x2="102" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
+          <line x1="56" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="64" y1="60" x2="72" y2="60" stroke="#4af" stroke-width="2"/>
+          <line x1="60" y1="56" x2="60" y2="50" stroke="#4af" stroke-width="2"/>
+        </g>
+        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
+      </svg>
+      <div class="gauge-label" id="bike-label">0.0&deg;</div>
+    </div>
+  </div>
+
+  <!-- 3D Bike -->
+  <div id="bike-viewport"></div>
+
+  <!-- Speed bar -->
+  <div id="speed-row">
+    <div class="speed-label">SPD</div>
+    <div id="speed-bar-outer"><div id="speed-bar-inner"></div></div>
+    <div id="speed-value">0.0 km/h</div>
+  </div>
+
+  <!-- Pedal bar -->
+  <div id="pedal-bar">
+    <div class="pedal-touch" id="touch-left"><img src="../images/pedal_left.png" alt="Left Pedal"></div>
+    <div class="pedal-touch" id="touch-right"><img src="../images/pedal_right.png" alt="Right Pedal"></div>
+  </div>
+</div>
+
+<!-- Overlays -->
+<div id="crash-overlay"></div>
+<div id="calibrate-flash"></div>
+
+<!-- iOS Motion Permission -->
+<div id="motion-permission" style="display:none;">
+  <h2>Motion Access Required</h2>
+  <p>This test page uses your phone's accelerometer to detect tilt.</p>
+  <button id="btn-grant-motion">Enable Motion</button>
+</div>
+
+<!-- Tuning toggle -->
+<div id="tuning-toggle">&#9881;</div>
+<div id="tuning-panel"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script>
+// ============================================================
+// TUNING PARAMETERS (live-adjustable)
+// Defaults should match BALANCE_DEFAULTS in js/config.js
+// ============================================================
+const SLIDER_CONFIG = [
+  // ── Mobile tilt tuning ──
+  { key: 'sensitivity',     label: 'Tilt Sensitivity',  min: 10,   max: 80,  step: 1,    default: 25,   fmt: v => v + '\u00B0' },
+  { key: 'deadzone',        label: 'Tilt Deadzone',     min: 0,    max: 10,  step: 0.5,  default: 4,    fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
+  { key: 'lowPassK',        label: 'Low-pass k',        min: 0.05, max: 1.0, step: 0.05, default: 0.1,  fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'responseCurve',   label: 'Tilt Curve',        min: 0.5,  max: 3.0, step: 0.1,  default: 2.0,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'outputSmoothing', label: 'Tilt Smooth',       min: 0.05, max: 1.0, step: 0.05, default: 0.4,  fmt: v => parseFloat(v).toFixed(2) },
+  { key: 'calibSamples',    label: 'Calib samples',     min: 1,    max: 30,  step: 1,    default: 10,   fmt: v => v },
+  // ── Controller gyro tuning ──
+  { key: 'gyroSensitivity',     label: 'Gyro Sensitivity',  min: 10,   max: 80,  step: 1,    default: 40,  fmt: v => v + '\u00B0' },
+  { key: 'gyroDeadzone',        label: 'Gyro Deadzone',     min: 0,    max: 10,  step: 0.5,  default: 4,   fmt: v => parseFloat(v).toFixed(1) + '\u00B0' },
+  { key: 'gyroResponseCurve',   label: 'Gyro Curve',        min: 0.5,  max: 3.0, step: 0.1,  default: 1.3, fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'gyroOutputSmoothing', label: 'Gyro Smooth',       min: 0.05, max: 1.0, step: 0.05, default: 0.3, fmt: v => parseFloat(v).toFixed(2) },
+  // ── Shared physics ──
+  { key: 'leanForce',       label: 'Lean force',        min: 5,    max: 30,  step: 1,    default: 12,   fmt: v => v },
+  { key: 'gravityForce',    label: 'Gravity force',     min: 1,    max: 10,  step: 0.5,  default: 2.5,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'damping',         label: 'Damping',           min: 0.5,  max: 5,   step: 0.1,  default: 4.0,  fmt: v => parseFloat(v).toFixed(1) },
+  { key: 'turnRate',        label: 'Turn rate',         min: 0.1,  max: 1.0, step: 0.05, default: 0.50, fmt: v => parseFloat(v).toFixed(2) },
+  // ── Accelerometer drift correction ──
+  { key: 'gyroAccelCorrection', label: 'Accel Drift Fix', min: 0, max: 0.1, step: 0.005, default: 0.02, fmt: v => parseFloat(v).toFixed(3) },
+];
+
+// TUNE lives on window so the module script can sync slider values
+// into config.js TUNE (read by BikeModel and ArchIndicator).
+window.TUNE = {};
+const TUNE = window.TUNE;
+SLIDER_CONFIG.forEach(s => { TUNE[s.key] = s.default; });
+
+// ============================================================
+// TUNING PANEL WIRING (generated from SLIDER_CONFIG)
+// ============================================================
+(function setupTuning() {
+  const toggle = document.getElementById('tuning-toggle');
+  const panel = document.getElementById('tuning-panel');
+  toggle.addEventListener('click', () => panel.classList.toggle('open'));
+
+  panel.innerHTML = SLIDER_CONFIG.map(s =>
+    `<div class="tune-row">
+      <label>${s.label}</label>
+      <input type="range" id="tune-${s.key}" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.default}">
+      <span class="tune-val" id="val-${s.key}">${s.fmt(s.default)}</span>
+    </div>`
+  ).join('');
+
+  SLIDER_CONFIG.forEach(s => {
+    const el = document.getElementById('tune-' + s.key);
+    const display = document.getElementById('val-' + s.key);
+    el.addEventListener('input', () => {
+      TUNE[s.key] = parseFloat(el.value);
+      display.textContent = s.fmt(el.value);
+    });
+  });
+})();
+</script>
+
+<script type="module">
+// ============================================================
+// INPUT TEST — uses shared InputManager (single source of truth)
+// ============================================================
+import * as THREE from 'three';
+import { TUNE as CONFIG_TUNE } from '../js/config.js';
+import { InputManager } from '../js/input-manager.js';
+import { ArchIndicator } from '../js/arch-indicator.js';
+import { BikeModel } from '../js/bike-model.js';
+import { ChaseCamera } from '../js/chase-camera.js';
+
+// Sync slider TUNE values into config.js TUNE (read by BikeModel/ArchIndicator)
+const TUNE = window.TUNE;
+if (TUNE) Object.assign(CONFIG_TUNE, TUNE);
+
+// Gyro constants for diagnostics display
+const GYRO_SCALE = 2000.0 / 32768.0;
+const GYRO_CALIB_COUNT = 150;
+
+// ============================================================
+// INPUT MANAGER (shared with game — no duplication)
+// ============================================================
+const im = new InputManager();
+im.suppressGamepadBadge = true;
+window.input = im; // expose for debugging
+
+// ============================================================
+// SOURCE SELECTOR
+// ============================================================
+let inputSource = 'motion';
+window.inputSource = inputSource;
+
+const sourceButtons = document.querySelectorAll('#source-selector button');
+sourceButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    sourceButtons.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    inputSource = btn.dataset.source;
+    window.inputSource = inputSource;
+    updateGyroBarVisibility();
+  });
+});
+
+// ============================================================
+// GYRO UI WIRING
+// ============================================================
+let gyroEnabled = false;
+const gyroToggle = document.getElementById('gyro-toggle');
+const gyroRecal = document.getElementById('gyro-recalibrate');
+const gyroStatus = document.getElementById('gyro-status');
+const gyroToast = document.getElementById('gyro-calibrate-toast');
+
+function updateGyroBarVisibility() {
+  const bar = document.getElementById('gyro-bar');
+  if (!bar) return;
+  const show = inputSource === 'gamepad' &&
+    im.gamepadConnected &&
+    !!navigator.hid &&
+    /playstation|dualsense|dualshock|054c/i.test(im._gpName);
+  if (show) bar.classList.add('visible');
+  else bar.classList.remove('visible');
+}
+
+gyroToggle.addEventListener('change', () => {
+  gyroEnabled = gyroToggle.checked;
+  if (gyroToggle.checked && !im.gyroConnected) {
+    gyroStatus.textContent = 'connecting\u2026';
+    im.connectControllerGyro().then(() => {
+      if (im.gyroConnected) {
+        gyroStatus.textContent = 'calibrating\u2026';
+        gyroRecal.classList.add('visible');
+        gyroToast.classList.add('visible');
+      } else {
+        gyroStatus.textContent = 'cancelled';
+        gyroToggle.checked = false;
+        gyroEnabled = false;
+      }
+    }).catch(err => {
+      console.error('WebHID connection failed:', err);
+      gyroStatus.textContent = 'error: ' + err.message;
+      gyroToggle.checked = false;
+      gyroEnabled = false;
+    });
+  }
+});
+
+gyroRecal.addEventListener('click', () => {
+  if (im.gyroConnected && !im._gyroCalibrating) {
+    im.calibrateGyro();
+    gyroStatus.textContent = 'calibrating\u2026';
+    gyroToast.classList.add('visible');
+  }
+});
+
+// Disconnect gyro when gamepad disconnects
+window.addEventListener('gamepaddisconnected', () => {
+  if (!im.gamepadConnected) {
+    im.disconnectControllerGyro();
+    gyroEnabled = false;
+    gyroToggle.checked = false;
+    gyroRecal.classList.remove('visible');
+    gyroStatus.textContent = '';
+    gyroToast.classList.remove('visible');
+    updateGyroBarVisibility();
+  }
+});
+
+window.addEventListener('gamepadconnected', () => updateGyroBarVisibility());
+
+// ============================================================
+// iOS MOTION PERMISSION
+// ============================================================
+if (im.needsMotionPermission) {
+  const permOverlay = document.getElementById('motion-permission');
+  permOverlay.style.display = 'flex';
+  document.getElementById('btn-grant-motion').addEventListener('click', async () => {
+    await im.requestMotionPermission();
+    if (im.motionReady) permOverlay.style.display = 'none';
+  });
+}
+
+// ============================================================
+// PEDAL INPUT (source-filtered wrapper for test page)
+// ============================================================
+const pedalInput = {
+  isPressed(code) {
+    if (code === 'ArrowLeft') {
+      if (inputSource === 'keyboard') return !!im.keys[code];
+      if (inputSource === 'gamepad') return im._gpTriggerLeftPressed;
+      if (inputSource === 'motion') return im.touchLeft || im._leftTapped;
+    }
+    if (code === 'ArrowRight') {
+      if (inputSource === 'keyboard') return !!im.keys[code];
+      if (inputSource === 'gamepad') return im._gpTriggerRightPressed;
+      if (inputSource === 'motion') return im.touchRight || im._rightTapped;
+    }
+    return false;
+  },
+};
+
+// ============================================================
+// PEDAL CONTROLLER (extended with diagnostic stats)
+// ============================================================
+class PedalController {
+  constructor(inp) {
+    this.input = inp;
+    this.lastPedal = null;
+    this.pedalPower = 0;
+    this.crankAngle = 0;
+    this.prevLeft = false;
+    this.prevRight = false;
+    this.lastPedalTime = 0;
+    this.wasCorrect = false;
+    this.wasWrong = false;
+    this.stats = { totalTaps: 0, correctTaps: 0, wrongTaps: 0, totalPower: 0 };
+    this.streak = 0;
+    this.bestStreak = 0;
+    this._correctTimestamps = [];
+  }
+
+  update(dt) {
+    const now = performance.now() / 1000;
+    const leftHeld = this.input.isPressed('ArrowLeft');
+    const rightHeld = this.input.isPressed('ArrowRight');
+    const leftJust = leftHeld && !this.prevLeft;
+    const rightJust = rightHeld && !this.prevRight;
+    const braking = leftHeld && rightHeld && this.prevLeft && this.prevRight;
+
+    let acceleration = 0;
+    let wobble = 0;
+
+    if (leftJust || rightJust) {
+      this.wasCorrect = false;
+      this.wasWrong = false;
+    }
+
+    if (braking) {
+      this.pedalPower *= 0.95;
+      this.prevLeft = leftHeld;
+      this.prevRight = rightHeld;
+      return { acceleration: 0, wobble: 0, braking: true, crankAngle: this.crankAngle };
+    }
+
+    if (leftJust) {
+      this.stats.totalTaps++;
+      const gap = now - this.lastPedalTime;
+      if (this.lastPedal !== 'left') {
+        this.wasCorrect = true;
+        this.stats.correctTaps++;
+        this.streak++;
+        if (this.streak > this.bestStreak) this.bestStreak = this.streak;
+        this._correctTimestamps.push(now);
+        const startBoost = this.lastPedal === null ? 0.3 : 0;
+        const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
+        this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
+        acceleration = 0.35 + 0.6 * this.pedalPower + startBoost;
+      } else {
+        this.wasWrong = true;
+        this.stats.wrongTaps++;
+        this.streak = 0;
+        this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
+        acceleration = 0.06;
+        wobble = 0.5;
+      }
+      this.stats.totalPower += acceleration;
+      this.lastPedal = 'left';
+      this.lastPedalTime = now;
+      this.crankAngle += Math.PI / 2;
+    }
+
+    if (rightJust) {
+      this.stats.totalTaps++;
+      const gap = now - this.lastPedalTime;
+      if (this.lastPedal !== 'right') {
+        this.wasCorrect = true;
+        this.stats.correctTaps++;
+        this.streak++;
+        if (this.streak > this.bestStreak) this.bestStreak = this.streak;
+        this._correctTimestamps.push(now);
+        const startBoost = this.lastPedal === null ? 0.3 : 0;
+        const cadence = gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
+        this.pedalPower = Math.min(this.pedalPower + 0.2 + cadence, 1.0);
+        acceleration = 0.35 + 0.6 * this.pedalPower + startBoost;
+      } else {
+        this.wasWrong = true;
+        this.stats.wrongTaps++;
+        this.streak = 0;
+        this.pedalPower = Math.max(this.pedalPower - 0.15, 0);
+        acceleration = 0.06;
+        wobble = 0.5;
+      }
+      this.stats.totalPower += acceleration;
+      this.lastPedal = 'right';
+      this.lastPedalTime = now;
+      this.crankAngle += Math.PI / 2;
+    }
+
+    this.pedalPower *= (1 - 0.4 * dt);
+    this.prevLeft = leftHeld;
+    this.prevRight = rightHeld;
+
+    // Prune rolling window to last 5 seconds
+    const windowSec = 5;
+    while (this._correctTimestamps.length > 0 && this._correctTimestamps[0] < now - windowSec) {
+      this._correctTimestamps.shift();
+    }
+
+    return { acceleration, wobble, braking: false, crankAngle: this.crankAngle };
+  }
+}
+
+// ============================================================
+// GAME LOOP
+// ============================================================
+const pedals = new PedalController(pedalInput);
+const crashOverlay = document.getElementById('crash-overlay');
+const phoneNeedle = document.getElementById('phone-needle');
+const bikeNeedle = document.getElementById('bike-needle');
+const phoneLabel = document.getElementById('phone-label');
+const bikeLabel = document.getElementById('bike-label');
+const speedBarInner = document.getElementById('speed-bar-inner');
+const speedValue = document.getElementById('speed-value');
+const touchLeftEl = document.getElementById('touch-left');
+const touchRightEl = document.getElementById('touch-right');
+
+const diagInput = document.getElementById('diag-input');
+const diagAccel = document.getElementById('diag-accel');
+const diagTilt = document.getElementById('diag-tilt');
+const diagPedal = document.getElementById('diag-pedal');
+const diagBike = document.getElementById('diag-bike');
+
+let lastTime = performance.now();
+let wasFallen = false;
+
+function gameLoop(now) {
+  requestAnimationFrame(gameLoop);
+
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  // Sync slider TUNE into config.js TUNE each frame
+  if (TUNE) Object.assign(CONFIG_TUNE, TUNE);
+
+  im.pollGamepad();
+
+  const bike = window.bike;
+  if (!bike) { im.consumeTaps(); return; }
+
+  // ── Lean input routing (source-filtered) ──
+  let leanInput = 0;
+  let activeLeanSource = inputSource;
+  if (inputSource === 'gamepad') {
+    if (gyroEnabled && im.gyroConnected && !im._gyroCalibrating) {
+      leanInput = im.motionLean;
+      activeLeanSource = 'gamepad+gyro';
+    } else {
+      leanInput = im.gamepadConnected ? im.gamepadLean : 0;
+    }
+  } else if (inputSource === 'motion') {
+    leanInput = im.motionEnabled ? im.motionLean : 0;
+  } else if (inputSource === 'keyboard') {
+    leanInput = (im.keys['KeyA'] ? -1 : 0) + (im.keys['KeyD'] ? 1 : 0);
+  }
+
+  // ── Pedal + physics via shared BikeModel ──
+  const pedalResult = pedals.update(dt);
+  const balanceResult = { leanInput };
+  bike.update(pedalResult, balanceResult, dt, false, false);
+
+  // ── Crash overlay ──
+  if (bike.fallen && !wasFallen) {
+    crashOverlay.style.background = 'rgba(255,0,0,0.4)';
+    setTimeout(() => { crashOverlay.style.background = 'rgba(255,0,0,0)'; }, 300);
+  }
+  if (!bike.fallen && wasFallen) {
+    crashOverlay.style.background = 'rgba(255,0,0,0)';
+  }
+  wasFallen = bike.fallen;
+
+  // ── Gyro UI state ──
+  if (im.gyroConnected) {
+    if (im._gyroCalibrating) {
+      gyroStatus.textContent = 'calibrating\u2026';
+      gyroToast.classList.add('visible');
+    } else {
+      gyroStatus.textContent = 'connected';
+      gyroToast.classList.remove('visible');
+    }
+  }
+
+  updateUI(dt, activeLeanSource);
+  im.consumeTaps();
+}
+
+function updateUI(dt, activeLeanSource) {
+  const bike = window.bike;
+  if (!bike) return;
+
+  // ── Gauges ──
+  let phoneDeg;
+  if (inputSource === 'gamepad') {
+    if (gyroEnabled && im.gyroConnected && !im._gyroCalibrating) {
+      phoneDeg = -im._gyroRollAccum;
+    } else {
+      phoneDeg = im.gamepadLean * CONFIG_TUNE.sensitivity;
+    }
+  } else if (inputSource === 'motion') {
+    phoneDeg = im.motionRawRelative;
+  } else {
+    const kbLean = (im.keys['KeyA'] ? -1 : 0) + (im.keys['KeyD'] ? 1 : 0);
+    phoneDeg = kbLean * CONFIG_TUNE.sensitivity;
+  }
+  phoneNeedle.setAttribute('transform', `rotate(${phoneDeg}, 60, 60)`);
+  phoneLabel.textContent = phoneDeg.toFixed(1) + '\u00B0';
+
+  const bikeDeg = bike.lean * 180 / Math.PI;
+  bikeNeedle.setAttribute('transform', `rotate(${bikeDeg}, 60, 60)`);
+  bikeLabel.textContent = bikeDeg.toFixed(1) + '\u00B0';
+
+  // ── Speed bar ──
+  const speedKmh = bike.speed * 3.6;
+  const pct = Math.min(100, (bike.speed / bike.maxSpeed) * 100);
+  speedBarInner.style.width = pct + '%';
+  speedValue.textContent = speedKmh.toFixed(1) + ' km/h';
+
+  // ── Pedal visual states ──
+  touchLeftEl.className = 'pedal-touch';
+  touchRightEl.className = 'pedal-touch';
+  if (pedals.wasCorrect && pedals.lastPedal === 'left') {
+    touchLeftEl.classList.add('pressed');
+  } else if (pedals.wasWrong && pedals.lastPedal === 'left') {
+    touchLeftEl.classList.add('wrong');
+  } else if (im.touchLeft) {
+    touchLeftEl.classList.add('pressed');
+  }
+  if (pedals.wasCorrect && pedals.lastPedal === 'right') {
+    touchRightEl.classList.add('pressed');
+  } else if (pedals.wasWrong && pedals.lastPedal === 'right') {
+    touchRightEl.classList.add('wrong');
+  } else if (im.touchRight) {
+    touchRightEl.classList.add('pressed');
+  }
+  if (im.touchLeft && im.touchRight) {
+    touchLeftEl.className = 'pedal-touch brake';
+    touchRightEl.className = 'pedal-touch brake';
+  }
+
+  // ── Diagnostics ──
+  const lastGap = pedals.lastPedalTime > 0 ? ((performance.now() / 1000) - pedals.lastPedalTime).toFixed(2) : '\u2014';
+
+  // Input source
+  const kbA = im.keys['KeyA'] ? 'A' : '_';
+  const kbD = im.keys['KeyD'] ? 'D' : '_';
+  const kbUp = im.keys['ArrowLeft'] ? '\u2190' : '_';
+  const kbDn = im.keys['ArrowRight'] ? '\u2192' : '_';
+  const kbLean = (im.keys['KeyA'] ? -1 : 0) + (im.keys['KeyD'] ? 1 : 0);
+  let gpInfo = '<span class="val-warn">disconnected</span>';
+  if (im.gamepadConnected) {
+    const shortName = im._gpName.length > 30 ? im._gpName.substring(0, 30) + '\u2026' : im._gpName;
+    gpInfo = `<span class="val">${shortName}</span>` +
+      ` <span class="label">stickX</span> <span class="val">${im._gpRawStickX.toFixed(3)}</span>` +
+      ` <span class="label">LT</span> <span class="val">${im._gpTriggerLeftVal.toFixed(2)}</span>` +
+      ` <span class="label">RT</span> <span class="val">${im._gpTriggerRightVal.toFixed(2)}</span>` +
+      ` <span class="label">LB</span> <span class="val">${im._gpLB ? 'ON' : '_'}</span>` +
+      ` <span class="label">RB</span> <span class="val">${im._gpRB ? 'ON' : '_'}</span>`;
+  }
+  diagInput.innerHTML =
+    `<div class="row"><span class="label">source</span> <span class="val">${activeLeanSource}</span>` +
+    ` <span class="label">kbd</span> <span class="val">[${kbA}${kbD}] [${kbUp}${kbDn}]</span>` +
+    ` <span class="label">lean</span> <span class="val">${kbLean}</span></div>` +
+    `<div class="row"><span class="label">gamepad</span> ${gpInfo}</div>`;
+
+  const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+  diagAccel.innerHTML =
+    `<div class="row"><span class="label">accel</span> <span class="val">x:${(im._gx || 0).toFixed(2)} y:${(im._gy || 0).toFixed(2)} z:${(im._gz || 0).toFixed(2)}</span>` +
+    ` <span class="label">orient</span> <span class="val">${orient}\u00B0</span>` +
+    ` <span class="label">src</span> <span class="val">${im._useOrientation ? 'orient' : 'accel'}</span></div>`;
+
+  const rawCls = Math.abs(im.motionRawRelative) > CONFIG_TUNE.sensitivity ? 'val-warn' : 'val';
+  diagTilt.innerHTML =
+    `<div class="row"><span class="label">raw</span> <span class="val">${im.rawGamma.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">rel</span> <span class="${rawCls}">${im.motionRawRelative.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">dz-adj</span> <span class="val">${(im.motionLean * CONFIG_TUNE.sensitivity).toFixed(1)}\u00B0</span></div>` +
+    `<div class="row"><span class="label">lean</span> <span class="val">${im.motionLean.toFixed(3)}</span>` +
+    ` <span class="label">off</span> <span class="val">${im.motionOffset !== null ? im.motionOffset.toFixed(1) : '\u2014'}</span></div>`;
+
+  const cadence = pedals._correctTimestamps.length >= 2
+    ? (pedals._correctTimestamps.length / 5).toFixed(1) : '0.0';
+  const streakCls = pedals.streak >= 10 ? 'val' : (pedals.streak >= 5 ? 'val-warn' : 'val');
+
+  diagPedal.innerHTML =
+    `<div class="row"><span class="label">foot</span> <span class="val">${pedals.lastPedal || '\u2014'}</span>` +
+    ` <span class="label">pwr</span> <span class="val">${pedals.pedalPower.toFixed(2)}</span>` +
+    ` <span class="label">\u2713/${'\u2717'}/\u03A3</span> <span class="val">${pedals.stats.correctTaps}/${pedals.stats.wrongTaps}/${pedals.stats.totalTaps}</span>` +
+    ` <span class="label">gap</span> <span class="val">${lastGap}s</span></div>` +
+    `<div class="row"><span class="label">streak</span> <span class="${streakCls}">${pedals.streak}</span>` +
+    ` <span class="label">best</span> <span class="val">${pedals.bestStreak}</span>` +
+    ` <span class="label">cadence</span> <span class="val">${cadence}/s</span></div>`;
+
+  const leanDeg = bike.lean * 180 / Math.PI;
+  const leanCls = Math.abs(bike.lean) > 1.0 ? 'val-err' : (Math.abs(bike.lean) > 0.7 ? 'val-warn' : 'val');
+  const headingDeg = (bike.heading * 180 / Math.PI) % 360;
+  diagBike.innerHTML =
+    `<div class="row"><span class="label">spd</span> <span class="val">${speedKmh.toFixed(1)} km/h</span>` +
+    ` <span class="label">lean</span> <span class="${leanCls}">${leanDeg.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">lv</span> <span class="val">${bike.leanVelocity.toFixed(2)}</span></div>` +
+    `<div class="row"><span class="label">hdg</span> <span class="val">${headingDeg.toFixed(1)}\u00B0</span>` +
+    ` <span class="label">pos</span> <span class="val">${bike.position.x.toFixed(1)},${bike.position.z.toFixed(1)}</span>` +
+    (bike.fallen ? ` <span class="val-err">CRASHED (${bike.fallTimer.toFixed(1)}s)</span>` : '') + `</div>`;
+
+  // Gyro diagnostics
+  const diagGyro = document.getElementById('diag-gyro');
+  if (im.gyroConnected) {
+    const corrZ = ((im._gyroRawZ - im._gyroBias.z) * GYRO_SCALE).toFixed(1);
+    const calibProg = im._gyroCalibrating
+      ? ` <span class="val-warn">calib ${im._gyroCalibSamples.length}/${GYRO_CALIB_COUNT}</span>` : '';
+    diagGyro.innerHTML =
+      `<div class="row"><span class="label">gyro</span>` +
+      ` <span class="label">rawZ</span> <span class="val">${im._gyroRawZ}</span>` +
+      ` <span class="label">bias</span> <span class="val">${im._gyroBias.z.toFixed(1)}</span>` +
+      ` <span class="label">corrZ</span> <span class="val">${corrZ}\u00B0/s</span></div>` +
+      `<div class="row"><span class="label">angle</span> <span class="val">${im._gyroRollAccum.toFixed(1)}\u00B0</span>` +
+      ` <span class="label">lean</span> <span class="val">${im.motionLean.toFixed(3)}</span>` +
+      calibProg + `</div>` +
+      `<div class="row"><span class="label">accel</span>` +
+      ` <span class="label">X</span> <span class="val">${im._accelRawX}</span>` +
+      ` <span class="label">Y</span> <span class="val">${im._accelRawY}</span>` +
+      ` <span class="label">Z</span> <span class="val">${im._accelRawZ}</span>` +
+      ` <span class="label">roll</span> <span class="val">${im._accelRoll.toFixed(1)}\u00B0</span></div>`;
+  } else {
+    diagGyro.innerHTML = '';
+  }
+}
+
+requestAnimationFrame(gameLoop);
+
+// ============================================================
+// 3D DRIVING ENVIRONMENT (Three.js)
+// ============================================================
+const container = document.getElementById('bike-viewport');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 80, 200);
+
+const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 500);
+
+const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x556633, 0.6);
+scene.add(hemiLight);
+
+const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.width = 1024;
+sunLight.shadow.mapSize.height = 1024;
+sunLight.shadow.camera.near = 1;
+sunLight.shadow.camera.far = 60;
+sunLight.shadow.camera.left = -20;
+sunLight.shadow.camera.right = 20;
+sunLight.shadow.camera.top = 20;
+sunLight.shadow.camera.bottom = -20;
+scene.add(sunLight);
+scene.add(sunLight.target);
+
+// ── Grid ground ──
+const GROUND_SIZE = 400;
+function createGridTexture() {
+  const canvas = document.createElement('canvas');
+  const size = 1024;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#4a7a3a';
+  ctx.fillRect(0, 0, size, size);
+
+  const unitsPerSide = GROUND_SIZE;
+  const pxPerUnit = size / unitsPerSide;
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= unitsPerSide; i += 2) {
+    const p = i * pxPerUnit;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i <= unitsPerSide; i += 20) {
+    const p = i * pxPerUnit;
+    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(size, p); ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+const groundTex = createGridTexture();
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE),
+  new THREE.MeshStandardMaterial({ map: groundTex, roughness: 0.95 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ── Reference pylons ──
+const PYLON_SPACING = 20;
+const PYLON_RANGE = 200;
+const pylonGeo = new THREE.CylinderGeometry(0.15, 0.15, 2.0, 6);
+const pylonTopGeo = new THREE.SphereGeometry(0.3, 8, 6);
+const pylonMats = [
+  new THREE.MeshStandardMaterial({ color: 0xff6633 }),
+  new THREE.MeshStandardMaterial({ color: 0x3366ff }),
+  new THREE.MeshStandardMaterial({ color: 0xffcc00 }),
+];
+const pylonTopMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+
+const pylons = [];
+for (let x = -PYLON_RANGE / 2; x <= PYLON_RANGE / 2; x += PYLON_SPACING) {
+  for (let z = -PYLON_RANGE / 2; z <= PYLON_RANGE / 2; z += PYLON_SPACING) {
+    if (x === 0 && z === 0) continue;
+    const mat = pylonMats[Math.abs(((x / PYLON_SPACING) + (z / PYLON_SPACING)) % 3)];
+    const pole = new THREE.Mesh(pylonGeo, mat);
+    pole.position.set(x, 1.0, z);
+    pole.castShadow = true;
+    scene.add(pole);
+    const top = new THREE.Mesh(pylonTopGeo, pylonTopMat);
+    top.position.set(x, 2.2, z);
+    top.castShadow = true;
+    scene.add(top);
+    pylons.push({ pole, top });
+  }
+}
+
+// ── Origin marker ──
+const originMarker = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.5, 0.5, 0.1, 16),
+  new THREE.MeshStandardMaterial({ color: 0x44aaff, emissive: 0x2266aa })
+);
+originMarker.position.set(0, 0.05, 0);
+scene.add(originMarker);
+
+// ── Bike model (shared with game) ──
+const bikeModel = new BikeModel(scene, '../tandem-3d/tandem_bicycle.glb');
+window.bike = bikeModel;
+
+// ── Chase camera (shared with game) ──
+const chaseCamera = new ChaseCamera(camera);
+
+// ── Resize handler ──
+function resize() {
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  if (w === 0 || h === 0) return;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+resize();
+window.addEventListener('resize', resize);
+new ResizeObserver(resize).observe(container);
+
+// ── Arch Indicator ──
+const archIndicator = new ArchIndicator(scene);
+
+let lastRenderTime = performance.now();
+
+function render3D(now) {
+  requestAnimationFrame(render3D);
+
+  const dt = Math.min((now - lastRenderTime) / 1000, 0.05);
+  lastRenderTime = now;
+
+  if (TUNE) Object.assign(CONFIG_TUNE, TUNE);
+
+  if (bikeModel.modelLoaded) {
+    const snapX = Math.round(bikeModel.position.x / PYLON_SPACING) * PYLON_SPACING;
+    const snapZ = Math.round(bikeModel.position.z / PYLON_SPACING) * PYLON_SPACING;
+    ground.position.set(snapX, 0, snapZ);
+
+    sunLight.position.set(bikeModel.position.x + 10, 20, bikeModel.position.z + 10);
+    sunLight.target.position.set(bikeModel.position.x, 0, bikeModel.position.z);
+
+    chaseCamera.update(bikeModel, dt, null);
+
+    const motionActive = inputSource === 'motion' && !bikeModel.fallen;
+    const gyroActive = inputSource === 'gamepad' &&
+        gyroEnabled && im.gyroConnected && !bikeModel.fallen;
+
+    if (motionActive || gyroActive) {
+      if (!archIndicator._visible) {
+        archIndicator.setup('solo', '#ffaa33', '#4488ff');
+      }
+      const archLean = im.motionLean || 0;
+      archIndicator.update(bikeModel, archLean, 0);
+    } else if (archIndicator._visible) {
+      archIndicator.hide();
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+render3D(performance.now());
+</script>
+
+<div id="gyro-calibrate-toast">Calibrating gyro — hold still...</div>
+
+</body>
+</html>
