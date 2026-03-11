@@ -248,15 +248,18 @@ export class World {
     const loader = new GLTFLoader();
     loader.load('assets/landscape/lowpoly_pine_tree.glb', (gltf) => {
       const template = gltf.scene;
-      // Enable shadows on all meshes in the model
+      // Fix Sketchfab baked transforms: node "PineTree_001" has 100x scale
+      // and a large translation offset — neutralise them so the tree is
+      // ~2.5 units tall and centred at origin.
       template.traverse((child) => {
         if (child.isMesh) {
           child.castShadow = true;
         }
+        if (child.name === 'PineTree_001') {
+          child.scale.setScalar(1);
+          child.position.set(0, 0, 0);
+        }
       });
-
-      // Model is Z-up (Sketchfab) — rotate upright for Three.js Y-up
-      template.rotation.x = -Math.PI / 2;
 
       for (let i = 0; i < TREE_POOL_SIZE; i++) {
         const si = i % scales.length;
@@ -264,8 +267,8 @@ export class World {
         const mesh = template.clone();
         mesh.scale.setScalar(scale);
         mesh.visible = false;
-        // Slight random Y rotation for variety (applied on top of X correction)
-        mesh.rotation.y = (i * 2.399) % (Math.PI * 2);
+        // Slight random Y rotation for variety
+        mesh.rotation.set(0, (i * 2.399) % (Math.PI * 2), 0);
         this.scene.add(mesh);
 
         this._treePool.push({
