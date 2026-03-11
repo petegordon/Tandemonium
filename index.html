@@ -852,69 +852,6 @@
     background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
 
-  /* ── Sensitivity slider (vertical, right edge) ── */
-  #sensitivity-slider {
-    position: fixed;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    background: rgba(0,0,0,0.5);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 10px;
-    padding: 10px 8px;
-    z-index: 10;
-    pointer-events: auto;
-  }
-  #sensitivity-slider label {
-    font-size: 10px;
-    font-weight: 600;
-    color: rgba(255,255,255,0.6);
-    white-space: nowrap;
-  }
-  #sens-range {
-    -webkit-appearance: none;
-    appearance: none;
-    writing-mode: vertical-lr;
-    direction: rtl;          /* high values at top */
-    width: 6px;
-    height: 120px;
-    background: rgba(255,255,255,0.15);
-    border-radius: 3px;
-    outline: none;
-  }
-  #sens-range::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: #4af;
-    border: 2px solid #fff;
-    cursor: pointer;
-  }
-  #sens-range::-moz-range-thumb {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: #4af;
-    border: 2px solid #fff;
-    cursor: pointer;
-  }
-  #sens-val {
-    font-size: 11px;
-    font-weight: 700;
-    color: #fff;
-    min-width: 28px;
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-  }
-
   /* ── Pedal touch buttons (bottom) ── */
   #pedal-bar {
     display: flex;
@@ -2045,6 +1982,26 @@
     line-height: 1.5;
     margin-bottom: 6px;
   }
+  .help-achievement-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .help-achievement-list li {
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 2px 0;
+  }
+  .help-achievement-list .ach-icon {
+    display: inline-block;
+    width: 22px;
+    text-align: center;
+    margin-right: 4px;
+  }
+  .help-achievement-list .ach-desc {
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+  }
 
   /* ── Profile popup ── */
   #profile-popup {
@@ -2147,6 +2104,99 @@
   #share-btn:active {
     background: rgba(255,60,60,0.5);
     border-color: rgba(255,60,60,0.8);
+  }
+
+  /* ── In-game music mute button ── */
+  #music-btn {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 180px);
+    left: 14px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 18px;
+    display: none;
+    text-align: center;
+    line-height: 44px;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 12;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #music-btn:active {
+    background: rgba(60,200,80,0.4);
+    border-color: rgba(60,200,80,0.6);
+  }
+  #music-btn.muted {
+    color: rgba(255,255,255,0.35);
+    border-color: rgba(255,255,255,0.12);
+  }
+
+  /* ── Lobby volume slider popup ── */
+  #volume-slider-popup {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 120px;
+    background: rgba(20,20,20,0.92);
+    border: 1.5px solid rgba(255,255,255,0.2);
+    border-radius: 18px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 0;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  #volume-slider-popup.visible {
+    display: flex;
+  }
+  #volume-slider-track {
+    width: 4px;
+    height: 80px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 2px;
+    position: relative;
+    cursor: pointer;
+    touch-action: none;
+  }
+  #volume-slider-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background: #44ff66;
+    border-radius: 2px;
+    pointer-events: none;
+  }
+  #volume-slider-thumb {
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, 50%);
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    pointer-events: none;
+  }
+  #volume-pct {
+    color: rgba(255,255,255,0.7);
+    font-size: 9px;
+    font-weight: 700;
+    margin-top: 6px;
+    user-select: none;
   }
 
   /* ── Selfie / Partner PiP ── */
@@ -2783,6 +2833,9 @@
     }
     #help-close { font-size: calc(22 * var(--ls)); top: calc(10 * var(--ls)); right: calc(14 * var(--ls)); }
     .help-attribution { font-size: calc(12 * var(--ls)); }
+    .help-achievement-list li { font-size: calc(13 * var(--ls)); }
+    .help-achievement-list .ach-icon { width: calc(22 * var(--ls)); margin-right: calc(4 * var(--ls)); }
+    .help-achievement-list .ach-desc { font-size: calc(11 * var(--ls)); }
 
     /* Profile popup */
     #profile-popup {
@@ -2859,6 +2912,15 @@
 <!-- Share button (recording) -->
 <button id="share-btn" aria-label="Share clip">&#x1F3AC;</button>
 
+<!-- In-game music mute toggle -->
+<button id="music-btn" aria-label="Toggle music">
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 17V6l9-3v11"/>
+    <circle cx="5.5" cy="17" r="2.5"/>
+    <circle cx="14.5" cy="14" r="2.5"/>
+  </svg>
+</button>
+
 <!-- Selfie & partner PiP videos -->
 <div id="selfie-pip-wrap" class="pip-wrap">
   <video id="selfie-pip" class="pip-video" playsinline muted></video>
@@ -2886,13 +2948,6 @@ ON</button>
   <button class="side-btn reset-btn" id="reset-btn">RESET</button>
   <button class="side-btn speed-off" id="speed-btn">SPEED</button>
   <button class="side-btn assist-off" id="assist-btn" style="display:none;">ASSIST</button>
-</div>
-
-<!-- Sensitivity slider (shown when motion/gyro active) -->
-<div id="sensitivity-slider">
-  <span id="sens-val">25&deg;</span>
-  <input type="range" id="sens-range" min="10" max="45" step="1" value="25">
-  <label>SENS</label>
 </div>
 
 <!-- Bottom HUD: gauge bar + pedal buttons -->
@@ -3177,13 +3232,22 @@ ON</button>
               <path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>
             </svg>
           </button>
-          <button class="lobby-toggle" id="toggle-music" title="Music">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M8 17V6l9-3v11"/>
-              <circle cx="5.5" cy="17" r="2.5"/>
-              <circle cx="14.5" cy="14" r="2.5"/>
-            </svg>
-          </button>
+          <div style="position:relative">
+            <button class="lobby-toggle" id="toggle-music" title="Music">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 17V6l9-3v11"/>
+                <circle cx="5.5" cy="17" r="2.5"/>
+                <circle cx="14.5" cy="14" r="2.5"/>
+              </svg>
+            </button>
+            <div id="volume-slider-popup">
+              <div id="volume-slider-track">
+                <div id="volume-slider-fill"></div>
+                <div id="volume-slider-thumb"></div>
+              </div>
+              <span id="volume-pct"></span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -3210,7 +3274,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.083f9f4 | 03-11-2026 07:12</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.5390bf9 | 03-11-2026 18:17</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3291,6 +3355,31 @@ ON</button>
         Thanks to <a href="https://thecogg.com" target="_blank" rel="noopener"><strong>The Central Ohio GameDev Group</strong></a>
         — for inspiration, friendship, and fun.
       </p>
+    </div>
+
+    <div class="help-section">
+      <div class="help-section-title">Achievements</div>
+      <ul class="help-achievement-list">
+        <li><span class="ach-icon">👟</span><strong>First 500m</strong> <span class="ach-desc">— Ride 500 meters</span></li>
+        <li><span class="ach-icon">🏅</span><strong>1K Club</strong> <span class="ach-desc">— Ride 1,000 meters</span></li>
+        <li><span class="ach-icon">🏆</span><strong>5K Champion</strong> <span class="ach-desc">— Ride 5,000 meters</span></li>
+        <li><span class="ach-icon">⚡</span><strong>Speed Demon</strong> <span class="ach-desc">— Hit 50 km/h</span></li>
+        <li><span class="ach-icon">🤝</span><strong>Perfect Sync</strong> <span class="ach-desc">— 10 seconds of coordinated pedaling</span></li>
+        <li><span class="ach-icon">🌟</span><strong>Collector</strong> <span class="ach-desc">— Grab 10 collectibles in a run</span></li>
+        <li><span class="ach-icon">👑</span><strong>Hoarder</strong> <span class="ach-desc">— Grab every collectible in a level</span></li>
+        <li><span class="ach-icon">🏠</span><strong>Home Sweet Home</strong> <span class="ach-desc">— Finish Grandma's House</span></li>
+        <li><span class="ach-icon">🏰</span><strong>Royal Arrival</strong> <span class="ach-desc">— Finish The Castle</span></li>
+        <li><span class="ach-icon">🚲</span><strong>Grandma's Classic</strong> <span class="ach-desc">— Finish Grandma's on the default bike</span></li>
+        <li><span class="ach-icon">🍊</span><strong>Marmalade Delivery</strong> <span class="ach-desc">— Finish Grandma's on the orange bike</span></li>
+        <li><span class="ach-icon">🫐</span><strong>Berry Special Visit</strong> <span class="ach-desc">— Finish Grandma's on the magenta bike</span></li>
+        <li><span class="ach-icon">🍒</span><strong>Cherry on Top</strong> <span class="ach-desc">— Finish Grandma's on the red bike</span></li>
+        <li><span class="ach-icon">🌊</span><strong>Ocean to Grandma's</strong> <span class="ach-desc">— Finish Grandma's on the blue bike</span></li>
+        <li><span class="ach-icon">🌿</span><strong>Jungle Express</strong> <span class="ach-desc">— Finish Grandma's on the green bike</span></li>
+        <li><span class="ach-icon">🍌</span><strong>Banana Delivery</strong> <span class="ach-desc">— Finish Grandma's on the yellow bike</span></li>
+        <li><span class="ach-icon">💮</span><strong>Flawless 1K</strong> <span class="ach-desc">— Finish a level with no crashes (1K+ distance)</span></li>
+        <li><span class="ach-icon">💎</span><strong>Untouchable</strong> <span class="ach-desc">— Finish a level with no crashes (5K+ distance)</span></li>
+        <li><span class="ach-icon">🤜</span><strong>Team Player</strong> <span class="ach-desc">— Stay safe 80% of a multiplayer ride</span></li>
+      </ul>
     </div>
   </div>
 </div>

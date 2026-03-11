@@ -27,6 +27,7 @@ export class InputManager {
     this._smoothedLean = 0;
     this._calibBuf = [];
     this._calibrating = false;
+    this._warmupCount = 0;
 
     // Drift compensation (mobile tilt only)
     this._driftEma = null;
@@ -267,13 +268,18 @@ export class InputManager {
   startTiltCalibration() {
     this._calibrating = true;
     this._calibBuf = [];
+    this._warmupCount = 5; // already warmed up if explicitly called
   }
 
   _applyTilt(rawTilt, isGyro = false) {
     this.rawGamma = rawTilt;
 
     if (this.motionOffset === null && !this._calibrating) {
-      this.startTiltCalibration();
+      this._warmupCount++;
+      if (this._warmupCount >= 5) {
+        this.startTiltCalibration();
+      }
+      return;
     }
 
     if (this._calibrating) {
