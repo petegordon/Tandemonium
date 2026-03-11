@@ -14,9 +14,9 @@ const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 
-const CLOUD_COUNT = 50;
-const CLOUD_AHEAD = 350;
-const CLOUD_BEHIND = 80;
+const CLOUD_COUNT = 70;
+const CLOUD_AHEAD = 400;
+const CLOUD_BEHIND = 100;
 const CLOUD_MIN_Y = 25;
 const CLOUD_MAX_Y = 50;
 const CLOUD_DRIFT = 1.5;      // units/sec lateral drift
@@ -86,7 +86,7 @@ export class World {
     // Cloud pool
     this._cloudPool = [];    // { group, roadD, lateralOffset, baseY }
     this._cloudNextD = 0;
-    this._cloudSpacing = 20;
+    this._cloudSpacing = 15;
 
     // Cloud PRNG — separate seed
     this._cloudRngState = 271;
@@ -438,7 +438,7 @@ export class World {
       if (!slot) break;
 
       const side = this._cloudSeededRandom() > 0.5 ? 1 : -1;
-      const lateralDist = 20 + this._cloudSeededRandom() * 80;
+      const lateralDist = 10 + this._cloudSeededRandom() * 180; // 10-190 units from road
       const lateralOffset = side * lateralDist;
 
       const pt = this.roadPath.getPointAtDistance(d);
