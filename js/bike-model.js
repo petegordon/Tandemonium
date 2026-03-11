@@ -4,7 +4,10 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
+
+const RIDER_FBX_PATH = 'tandem-3d/rider.fbx';
 
 export class BikeModel {
   constructor(scene, modelPath) {
@@ -46,6 +49,12 @@ export class BikeModel {
     this.smoothSpokeFade = 0;
     this._prevSpokeOpacity = NaN;
     this.maxSpeed = TUNE.maxSpeed || 16;
+
+    // Rider state
+    this.riderModel = null;
+    this.riderMixer = null;
+    this.riderAction = null;
+    this.riderLoaded = false;
 
     // Preset support
     this._pendingPreset = null;
@@ -133,8 +142,72 @@ export class BikeModel {
         this.applyPreset(this._pendingPreset);
         this._pendingPreset = null;
       }
+
+      // Load rider after bike is ready
+      this._loadRider();
     }, undefined, (err) => {
       console.error('Failed to load tandem_bicycle.glb:', err);
+    });
+  }
+
+  _loadRider() {
+    const fbxLoader = new FBXLoader();
+    fbxLoader.load(RIDER_FBX_PATH, (fbx) => {
+      // The FBX character is very large in raw units — scale to fit the bike.
+      // Bike is ~4.4m long, ~1.5m tall at handlebars. Character needs to be
+      // roughly human-sized (~1.5m) relative to the bike.
+      // FBX from Meshy AI is typically in cm, so raw height ~170 units.
+      // We need to match the bike's scale. The bike model was scaled to fit
+      // 4.4m, so we scale the rider relative to that.
+
+      // Measure the rider's raw height
+      const riderBox = new THREE.Box3().setFromObject(fbx);
+      const riderHeight = riderBox.max.y - riderBox.min.y;
+      // Target rider height relative to bike (~1.2m looks right for a cartoon kid)
+      const targetHeight = 1.2;
+      const riderScale = targetHeight / riderHeight;
+      fbx.scale.setScalar(riderScale);
+
+      // Position rider on the front seat of the tandem bike.
+      // The bike is centered at origin, facing +Z direction.
+      // Front seat is roughly at: Y = seat height, Z = forward from center.
+      // These are tuning values — adjust to position the rider on the saddle.
+      fbx.position.set(0, 0.75, 0.5);
+
+      // Rotate rider to face the same direction as the bike (+Z)
+      fbx.rotation.y = 0;
+
+      // Enable shadows on rider meshes
+      fbx.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+
+      // Add rider as child of bike group so it inherits all transforms
+      this.group.add(fbx);
+      this.riderModel = fbx;
+
+      // Setup animation mixer
+      if (fbx.animations && fbx.animations.length > 0) {
+        this.riderMixer = new THREE.AnimationMixer(fbx);
+        this.riderAction = this.riderMixer.clipAction(fbx.animations[0]);
+        this.riderAction.play();
+      }
+
+      this.riderLoaded = true;
+      console.log('Rider loaded. Animations:', fbx.animations?.length || 0,
+        'Raw height:', riderHeight.toFixed(1), 'Scale:', riderScale.toFixed(4));
+
+      // Log bone names for future reference
+      fbx.traverse((child) => {
+        if (child.isBone) {
+          console.log('  Bone:', child.name);
+        }
+      });
+    }, undefined, (err) => {
+      console.error('Failed to load rider FBX:', err);
     });
   }
 
@@ -404,6 +477,14 @@ export class BikeModel {
       }
     }
 
+    // Rider animation — speed-synced
+    if (this.riderMixer) {
+      // Scale animation speed with bike speed: idle at 0, normal at ~5 m/s
+      const timeScale = this.speed > 0.1 ? Math.max(0.2, this.speed / 5) : 0.2;
+      this.riderAction.setEffectiveTimeScale(timeScale);
+      this.riderMixer.update(dt);
+    }
+
     this._applyTransform(dt);
   }
 
@@ -478,6 +559,13 @@ export class BikeModel {
       for (const node of this.pedalNodes) {
         node.rotation.z += pedalSpin;
       }
+    }
+
+    // Rider animation — speed-synced (stoker-side)
+    if (this.riderMixer) {
+      const timeScale = this.speed > 0.1 ? Math.max(0.2, this.speed / 5) : 0.2;
+      this.riderAction.setEffectiveTimeScale(timeScale);
+      this.riderMixer.update(1 / 60);
     }
 
     this._applyTransform(1 / 60);
