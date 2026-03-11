@@ -751,11 +751,14 @@ class Game {
     }
 
     // Setup arch tilt indicator (only for motion/gyro input)
+    const playerColor = this._getFrameColor(this.lobby.selectedPreset);
     if (this.input.motionEnabled || this.input.gyroConnected) {
-      const playerColor = this._getFrameColor(this.lobby.selectedPreset);
       const partnerColor = this._partnerBikeColor || '#888888';
       this.archIndicator.setup(this.mode, playerColor, partnerColor);
     }
+
+    // Hot air balloons in the bike's color
+    this.world.setBalloonColor(playerColor);
 
     // Show contribution bar in multiplayer
     if (this.mode !== 'solo') {
