@@ -14,7 +14,7 @@ const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 
-const CLOUD_COUNT = 30;
+const CLOUD_COUNT = 50;
 const CLOUD_AHEAD = 350;
 const CLOUD_BEHIND = 80;
 const CLOUD_MIN_Y = 25;
@@ -86,7 +86,7 @@ export class World {
     // Cloud pool
     this._cloudPool = [];    // { group, roadD, lateralOffset, baseY }
     this._cloudNextD = 0;
-    this._cloudSpacing = 30;
+    this._cloudSpacing = 20;
 
     // Cloud PRNG — separate seed
     this._cloudRngState = 271;
@@ -390,24 +390,23 @@ export class World {
 
     for (let i = 0; i < CLOUD_COUNT; i++) {
       const group = new THREE.Group();
-      // Build a cluster of 5-8 overlapping spheres
-      const puffCount = 5 + Math.floor(this._cloudSeededRandom() * 4);
-      const cloudWidth = 8 + this._cloudSeededRandom() * 16; // 8-24 units wide
-      const cloudHeight = 3 + this._cloudSeededRandom() * 4; // 3-7 units tall
+      // Build a cluster of 8-14 overlapping spheres for big fluffy shapes
+      const puffCount = 8 + Math.floor(this._cloudSeededRandom() * 7);
+      const cloudWidth = 15 + this._cloudSeededRandom() * 25; // 15-40 units wide
+      const cloudHeight = 4 + this._cloudSeededRandom() * 6;  // 4-10 units tall
 
       for (let p = 0; p < puffCount; p++) {
         const geo = puffGeos[p % puffGeos.length];
         const puff = new THREE.Mesh(geo, cloudMat);
-        // Spread puffs along X with slight Y/Z variation
         const t = puffCount > 1 ? p / (puffCount - 1) : 0.5;
-        const sx = 3 + this._cloudSeededRandom() * 5;  // puff X scale
-        const sy = 2 + this._cloudSeededRandom() * 3;  // puff Y scale
-        const sz = 2.5 + this._cloudSeededRandom() * 3;
+        const sx = 4 + this._cloudSeededRandom() * 7;  // puff X scale
+        const sy = 3 + this._cloudSeededRandom() * 4;  // puff Y scale
+        const sz = 3.5 + this._cloudSeededRandom() * 5;
         puff.scale.set(sx, sy, sz);
         puff.position.set(
-          (t - 0.5) * cloudWidth + (this._cloudSeededRandom() - 0.5) * 3,
-          (this._cloudSeededRandom() - 0.3) * cloudHeight * 0.4,
-          (this._cloudSeededRandom() - 0.5) * 4
+          (t - 0.5) * cloudWidth + (this._cloudSeededRandom() - 0.5) * 5,
+          (this._cloudSeededRandom() - 0.3) * cloudHeight * 0.5,
+          (this._cloudSeededRandom() - 0.5) * 6
         );
         group.add(puff);
       }
