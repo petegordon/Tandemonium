@@ -14,11 +14,11 @@ const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 
-const CLOUD_COUNT = 20;
+const CLOUD_COUNT = 30;
 const CLOUD_AHEAD = 350;
 const CLOUD_BEHIND = 80;
-const CLOUD_MIN_Y = 80;
-const CLOUD_MAX_Y = 140;
+const CLOUD_MIN_Y = 25;
+const CLOUD_MAX_Y = 50;
 const CLOUD_DRIFT = 1.5;      // units/sec lateral drift
 
 // Chromakey shaders for green-screen video billboards.
@@ -86,7 +86,7 @@ export class World {
     // Cloud pool
     this._cloudPool = [];    // { group, roadD, lateralOffset, baseY }
     this._cloudNextD = 0;
-    this._cloudSpacing = 50;
+    this._cloudSpacing = 30;
 
     // Cloud PRNG — separate seed
     this._cloudRngState = 271;
@@ -373,12 +373,12 @@ export class World {
   // ── Clouds ──────────────────────────────────────────────────
 
   _buildClouds() {
-    const cloudMat = new THREE.MeshPhongMaterial({
+    const cloudMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
-      flatShading: true,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.9,
       depthWrite: false,
+      fog: false,
     });
 
     // Shared sphere geometries for cloud puffs (3 size tiers)
