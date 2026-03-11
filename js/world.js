@@ -374,9 +374,9 @@ export class World {
 
   _buildClouds() {
     const cloudMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      color: 0xf0f6fc,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.82,
       depthWrite: false,
       fog: false,
     });
