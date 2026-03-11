@@ -40,8 +40,26 @@ class Game {
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x7ec8e3);
-    this.scene.fog = new THREE.FogExp2(0x7ec8e3, 0.006);
+
+    // Sky gradient: rich blue top → soft light blue at horizon
+    const skyCanvas = document.createElement('canvas');
+    skyCanvas.width = 1;
+    skyCanvas.height = 512;
+    const ctx = skyCanvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0.0, '#1a6abf');   // deep blue (zenith)
+    grad.addColorStop(0.3, '#3e9ce0');   // mid blue
+    grad.addColorStop(0.6, '#8ecbf0');   // light blue
+    grad.addColorStop(0.85, '#c8e4f8');  // pale sky
+    grad.addColorStop(1.0, '#e4f0f8');   // near-white horizon
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 1, 512);
+    const skyTex = new THREE.CanvasTexture(skyCanvas);
+    skyTex.magFilter = THREE.LinearFilter;
+    this.scene.background = skyTex;
+
+    // Fog matches horizon color for seamless blending
+    this.scene.fog = new THREE.FogExp2(0xe4f0f8, 0.006);
 
     // Camera (FOV 70 for portrait)
     this.camera = new THREE.PerspectiveCamera(
@@ -389,12 +407,12 @@ class Game {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.code === 'KeyM') {
         if (e.shiftKey) {
-          // Shift+M: toggle volume slider in lobby
+          // Shift+M: toggle volume picker in lobby
           if (this.state === 'lobby') {
-            if (this.lobby._volumeSlider.classList.contains('visible')) {
-              this.lobby._hideVolumeSlider();
+            if (this.lobby._volumePicker.classList.contains('visible')) {
+              this.lobby._hideVolumePicker();
             } else {
-              this.lobby._showVolumeSlider();
+              this.lobby._showVolumePicker();
             }
           }
         } else {
@@ -733,11 +751,14 @@ class Game {
     }
 
     // Setup arch tilt indicator (only for motion/gyro input)
+    const playerColor = this._getFrameColor(this.lobby.selectedPreset);
     if (this.input.motionEnabled || this.input.gyroConnected) {
-      const playerColor = this._getFrameColor(this.lobby.selectedPreset);
       const partnerColor = this._partnerBikeColor || '#888888';
       this.archIndicator.setup(this.mode, playerColor, partnerColor);
     }
+
+    // Hot air balloons in the bike's color
+    this.world.setBalloonColor(playerColor);
 
     // Show contribution bar in multiplayer
     if (this.mode !== 'solo') {
@@ -2202,7 +2223,7 @@ class Game {
       if (this.state === 'countdown') this._updateCountdown(dt);
       if (this.state === 'gameover' || this.state === 'victory' ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
-      this.world.update(this.bike.position, this.bike.roadD);
+      this.world.update(this.bike.position, this.bike.roadD, dt);
       this.chaseCamera.update(this.bike, dt, roadPath);
       if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
       this._updateDemoEndSprite();
@@ -2263,7 +2284,7 @@ class Game {
 
     this.grassParticles.update(this.bike, dt);
     this._hapticOffRoadCheck();
-    this.world.update(this.bike.position, this.bike.roadD);
+    this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     // Camera shake on crash
@@ -2367,7 +2388,7 @@ class Game {
       this.net.sendLean(captainLean);
     }
 
-    this.world.update(this.bike.position, this.bike.roadD);
+    this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     if (this.bike.fallen && this.bike.fallTimer > 1.8) {
@@ -2431,7 +2452,7 @@ class Game {
       this.net.sendLean(balanceResult.leanInput);
     }
 
-    this.world.update(this.bike.position, this.bike.roadD);
+    this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     // Race progress — display-only (captain is authoritative for timer + events)
