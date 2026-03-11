@@ -3,12 +3,13 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoadPath } from './road-path.js';
 import { RoadChunkManager } from './road-chunks.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS = 120;         // ~4.2-unit vertex spacing — covers visible road/tree range
-const TREE_POOL_SIZE = 200;
+const TREE_POOL_SIZE = 400;
 const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 
@@ -69,16 +70,14 @@ export class World {
     };
 
     // Tree pool
-    this._treePool = [];     // { trunk, canopy, roadD, lateralOffset, scale }
+    this._treePool = [];     // { mesh, roadD, lateralOffset, scale, active }
     this._treeNextD = 0;     // next road-distance to place trees at
-    this._treeSpacing = 6;   // average spacing along road
+    this._treeSpacing = 3;   // average spacing along road
+    this._treeModelReady = false;
 
     this._buildGround();
     this._buildTreePool();
     this._buildLighting();
-
-    // Pre-place all trees for the entire loop
-    this._placeTreesUpTo(this.roadPath.loopLength);
 
     // Race markers (checkpoints + destination)
     this._raceMarkers = [];  // { mesh, roadD, type }
@@ -243,42 +242,44 @@ export class World {
   }
 
   _buildTreePool() {
-    const trunkMat = new THREE.MeshPhongMaterial({ color: 0x7a5230, flatShading: true });
-    const leafMat = new THREE.MeshPhongMaterial({ color: 0x2d8a2d, flatShading: true });
-    const leafMat2 = new THREE.MeshPhongMaterial({ color: 0x1f7a1f, flatShading: true });
-
-    // Shared geometries for each scale bucket (3 sizes)
     const scales = [0.7, 1.0, 1.3];
-    const trunkGeos = scales.map(s =>
-      new THREE.CylinderGeometry(0.12 * s, 0.18 * s, 2.0 * s, 6)
-    );
-    const canopyGeos = scales.map(s =>
-      new THREE.SphereGeometry(1.0 * s, 6, 5)
-    );
 
-    for (let i = 0; i < TREE_POOL_SIZE; i++) {
-      const si = i % scales.length;
-      const scale = scales[si];
-
-      const trunk = new THREE.Mesh(trunkGeos[si], trunkMat);
-      trunk.castShadow = true;
-      trunk.visible = false;
-      this.scene.add(trunk);
-
-      const mat = (i % 2 === 0) ? leafMat : leafMat2;
-      const canopy = new THREE.Mesh(canopyGeos[si], mat);
-      canopy.castShadow = true;
-      canopy.visible = false;
-      this.scene.add(canopy);
-
-      this._treePool.push({
-        trunk, canopy,
-        roadD: -1,
-        lateralOffset: 0,
-        scale,
-        active: false
+    // Load GLB pine tree model, then populate pool with clones
+    const loader = new GLTFLoader();
+    loader.load('assets/landscape/lowpoly_pine_tree.glb', (gltf) => {
+      const template = gltf.scene;
+      // Enable shadows on all meshes in the model
+      template.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+        }
       });
-    }
+
+      for (let i = 0; i < TREE_POOL_SIZE; i++) {
+        const si = i % scales.length;
+        const scale = scales[si];
+        const mesh = template.clone();
+        mesh.scale.setScalar(scale);
+        mesh.visible = false;
+        // Slight random Y rotation for variety
+        mesh.rotation.y = (i * 2.399) % (Math.PI * 2);
+        this.scene.add(mesh);
+
+        this._treePool.push({
+          mesh,
+          roadD: -1,
+          lateralOffset: 0,
+          scale,
+          active: false
+        });
+      }
+
+      this._treeModelReady = true;
+      // Now place all trees for the loop
+      this._placeTreesUpTo(this.roadPath.loopLength);
+    }, undefined, (err) => {
+      console.error('Failed to load pine tree model:', err);
+    });
   }
 
   _placeTreesUpTo(maxD) {
@@ -307,11 +308,10 @@ export class World {
       const worldZ = pt.z + rightZ * lateralOffset;
       const terrainY = pt.y;
 
-      slot.trunk.position.set(worldX, terrainY + slot.scale, worldZ);
-      slot.canopy.position.set(worldX, terrainY + 2.3 * slot.scale, worldZ);
-      slot.trunk.visible = false;
-      slot.canopy.visible = false;
+      slot.mesh.position.set(worldX, terrainY, worldZ);
+      slot.mesh.visible = false;
       slot.roadD = d;
+      slot.lateralOffset = lateralOffset;
       slot.active = true;
     }
   }
@@ -323,9 +323,7 @@ export class World {
       let ahead = slot.roadD - bikeD;
       if (ahead < -L / 2) ahead += L;
       if (ahead > L / 2) ahead -= L;
-      const visible = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
-      slot.trunk.visible = visible;
-      slot.canopy.visible = visible;
+      slot.mesh.visible = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
     }
   }
 
@@ -336,13 +334,12 @@ export class World {
     const fwdZ = Math.cos(bikePt.heading);
 
     for (const slot of this._treePool) {
-      if (!slot.trunk.visible) continue;
-      const dx = slot.trunk.position.x - bikePt.x;
-      const dz = slot.trunk.position.z - bikePt.z;
+      if (!slot.mesh.visible) continue;
+      const dx = slot.mesh.position.x - bikePt.x;
+      const dz = slot.mesh.position.z - bikePt.z;
       const estD = bikeD + dx * fwdX + dz * fwdZ;
       const h = this.roadPath.getPointAtDistance(estD).y;
-      slot.trunk.position.y = h + slot.scale;
-      slot.canopy.position.y = h + 2.3 * slot.scale;
+      slot.mesh.position.y = h;
     }
   }
 
@@ -437,7 +434,7 @@ export class World {
     const headZ = bikePos.z + Math.cos(bikeHeading) * 2;
 
     for (const slot of this._treePool) {
-      if (!slot.active || !slot.trunk.visible) continue;
+      if (!slot.active || !slot.mesh.visible) continue;
 
       // Quick road-distance filter (wrap-aware)
       let dd = slot.roadD - bikeD;
@@ -445,8 +442,8 @@ export class World {
       if (dd > L / 2) dd -= L;
       if (Math.abs(dd) > 20) continue;
 
-      const tx = slot.trunk.position.x;
-      const tz = slot.trunk.position.z;
+      const tx = slot.mesh.position.x;
+      const tz = slot.mesh.position.z;
       const r = 0.6 * slot.scale;
 
       // Check bike center
@@ -529,11 +526,10 @@ export class World {
       const clearRadius = 5;
       for (const slot of this._treePool) {
         if (!slot.active) continue;
-        const dx = slot.trunk.position.x - bx;
-        const dz = slot.trunk.position.z - bz;
+        const dx = slot.mesh.position.x - bx;
+        const dz = slot.mesh.position.z - bz;
         if (dx * dx + dz * dz < clearRadius * clearRadius) {
-          slot.trunk.visible = false;
-          slot.canopy.visible = false;
+          slot.mesh.visible = false;
           slot.active = false;
         }
       }
