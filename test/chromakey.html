@@ -136,7 +136,11 @@
 
   <div class="control-group">
     <label>Asset</label>
-    <select id="asset-select"></select>
+    <div style="display:flex; gap:4px;">
+      <select id="asset-select" style="flex:1;"></select>
+      <button id="upload-btn" style="padding:4px 8px; background:#1a3a4a; color:#6af; border:1px solid #334466; border-radius:4px; cursor:pointer; font-size:11px; white-space:nowrap;">Upload...</button>
+    </div>
+    <input type="file" id="file-input" accept="video/*" style="display:none;">
   </div>
 
   <div id="playback">
@@ -146,8 +150,8 @@
   </div>
 
   <div class="control-group">
-    <label>threshold <span class="val" id="threshold-val">-0.02</span></label>
-    <input type="range" id="threshold" min="-0.20" max="0.50" step="0.005" value="-0.02">
+    <label>threshold <span class="val" id="threshold-val">0.035</span></label>
+    <input type="range" id="threshold" min="-0.20" max="0.50" step="0.005" value="0.035">
   </div>
 
   <div class="control-group">
@@ -179,7 +183,7 @@
     <button id="save-mask-btn">Save Mask PNG</button>
   </div>
 
-  <div id="values-display">threshold: -0.020
+  <div id="values-display">threshold: 0.035
 smoothness: 0.030
 trimStart: 0.00
 trimEnd: 0.00</div>
@@ -427,6 +431,22 @@ assetSelect.addEventListener('change', () => {
   loadVideo(assetSelect.value);
 });
 
+// File upload
+const fileInput = document.getElementById('file-input');
+document.getElementById('upload-btn').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  // Add to dropdown and select it
+  const opt = document.createElement('option');
+  opt.value = url;
+  opt.textContent = file.name;
+  assetSelect.appendChild(opt);
+  assetSelect.value = url;
+  loadVideo(url);
+});
+
 saveMaskBtn.addEventListener('click', () => {
   const dataURL = maskCanvas.toDataURL('image/png');
   const a = document.createElement('a');
@@ -648,32 +668,39 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-// Discover .mp4 files in assets/ via directory listing, then start
+// Known asset files — listed explicitly so this works on deployed servers
+// where directory listing is disabled (not just local python3 -m http.server)
+const KNOWN_ASSETS = [
+  'pylon_200.mp4',
+  'gold_gift_200.mp4',
+  'grandma_house_chromakey.mp4',
+  'your_house_chromakey.mp4',
+];
+
+// Try directory listing first (works on dev servers), fall back to known list
 (async () => {
+  let mp4s = [];
   try {
     const res = await fetch('../assets/');
-    const html = await res.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const mp4s = [...doc.querySelectorAll('a')]
-      .map(a => decodeURIComponent(a.getAttribute('href')))
-      .filter(href => href.endsWith('.mp4'))
-      .sort();
-    for (const name of mp4s) {
-      const opt = document.createElement('option');
-      opt.value = `../assets/${name}`;
-      opt.textContent = name;
-      assetSelect.appendChild(opt);
+    if (res.ok) {
+      const html = await res.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      mp4s = [...doc.querySelectorAll('a')]
+        .map(a => decodeURIComponent(a.getAttribute('href')))
+        .filter(href => href.endsWith('.mp4'))
+        .sort();
     }
-  } catch {
-    // Fallback if directory listing unavailable
-    const fallback = ['grandma_house_chromakey.mp4', 'gold_gift_200.mp4', 'pylon_200.mp4'];
-    for (const name of fallback) {
-      const opt = document.createElement('option');
-      opt.value = `../assets/${name}`;
-      opt.textContent = name;
-      assetSelect.appendChild(opt);
-    }
+  } catch { /* directory listing not available */ }
+
+  // Fall back to known assets if directory listing returned nothing
+  if (mp4s.length === 0) mp4s = KNOWN_ASSETS;
+
+  for (const name of mp4s) {
+    const opt = document.createElement('option');
+    opt.value = `../assets/${name}`;
+    opt.textContent = name;
+    assetSelect.appendChild(opt);
   }
   loadVideo(assetSelect.value);
   animate();
