@@ -150,8 +150,8 @@
   </div>
 
   <div class="control-group">
-    <label>threshold <span class="val" id="threshold-val">-0.02</span></label>
-    <input type="range" id="threshold" min="-0.20" max="0.50" step="0.005" value="-0.02">
+    <label>threshold <span class="val" id="threshold-val">0.035</span></label>
+    <input type="range" id="threshold" min="-0.20" max="0.50" step="0.005" value="0.035">
   </div>
 
   <div class="control-group">
@@ -183,7 +183,7 @@
     <button id="save-mask-btn">Save Mask PNG</button>
   </div>
 
-  <div id="values-display">threshold: -0.020
+  <div id="values-display">threshold: 0.035
 smoothness: 0.030
 trimStart: 0.00
 trimEnd: 0.00</div>
@@ -671,9 +671,9 @@ function animate() {
 // Known asset files — listed explicitly so this works on deployed servers
 // where directory listing is disabled (not just local python3 -m http.server)
 const KNOWN_ASSETS = [
+  'pylon_200.mp4',
   'gold_gift_200.mp4',
   'grandma_house_chromakey.mp4',
-  'pylon_200.mp4',
   'your_house_chromakey.mp4',
 ];
 
