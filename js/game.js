@@ -1222,6 +1222,12 @@ class Game {
       contBtn.onclick = () => {
         overlay.style.display = 'none';
         this._clearOverlayButtons();
+        this._hideVictory();
+        if (this.net) {
+          this._returnToRoom();
+        } else {
+          this._returnToLobby();
+        }
       };
     }
   }
