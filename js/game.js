@@ -1126,6 +1126,18 @@ class Game {
     this._clearOverlayButtons();
   }
 
+  /** Dismiss any stray full-screen overlays that sit above the lobby (z-index 60)
+   *  and cancel pending timers that would re-show them. */
+  _hideAllOverlays() {
+    for (const id of ['demo-end-overlay', 'stoker-cta-overlay', 'disconnect-overlay']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    }
+    if (this._demoEndTimer) { clearTimeout(this._demoEndTimer); this._demoEndTimer = null; }
+    if (this._stokerCTATimer) { clearTimeout(this._stokerCTATimer); this._stokerCTATimer = null; }
+    this._clearOverlayButtons();
+  }
+
   /** Show the demo-end overlay with purchase CTA. */
   _showDemoEnd() {
     this.state = 'gameover';
@@ -1133,7 +1145,9 @@ class Game {
     document.getElementById('status').textContent = '';
 
     // Brief pause so the player sees the arch, then show overlay
-    setTimeout(() => {
+    this._demoEndTimer = setTimeout(() => {
+      this._demoEndTimer = null;
+      if (this.state === 'lobby') return;
       this._removeDemoEndSprite();
       const overlay = document.getElementById('demo-end-overlay');
       overlay.style.display = 'flex';
@@ -1587,7 +1601,11 @@ class Game {
 
     // Show purchase CTA for unlicensed stokers after victory
     if (this.mode === 'stoker' && !this.lobby.license.isLicensed) {
-      setTimeout(() => this._showStokerCTA(), 6000);
+      this._stokerCTATimer = setTimeout(() => {
+        this._stokerCTATimer = null;
+        if (this.state === 'lobby') return;
+        this._showStokerCTA();
+      }, 6000);
     }
   }
 
@@ -1643,6 +1661,11 @@ class Game {
 
   _hideVictory() {
     document.getElementById('victory-overlay').style.display = 'none';
+    // Clear stale pointer-events cooldown on victory buttons
+    for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby']) {
+      const el = document.getElementById(id);
+      if (el) el.style.pointerEvents = '';
+    }
     this.hud.hideProgress();
     this.hud.hideTimer();
     this._contribBar.style.display = 'none';
@@ -1770,6 +1793,7 @@ class Game {
     this._hideGameOver();
     this._hideVictory();
     this._removeDemoEndSprite();
+    this._hideAllOverlays();
     this.raceManager = null;
     this.hud.raceManager = null;
     this.contributionTracker = null;
@@ -1838,6 +1862,7 @@ class Game {
     }
     this._hideGameOver();
     this._hideVictory();
+    this._hideAllOverlays();
 
     // Partial cleanup: game state only (keep connection + media alive)
     this.raceManager = null;

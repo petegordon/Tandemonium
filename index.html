@@ -1982,6 +1982,26 @@
     line-height: 1.5;
     margin-bottom: 6px;
   }
+  .help-achievement-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .help-achievement-list li {
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 2px 0;
+  }
+  .help-achievement-list .ach-icon {
+    display: inline-block;
+    width: 22px;
+    text-align: center;
+    margin-right: 4px;
+  }
+  .help-achievement-list .ach-desc {
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+  }
 
   /* ── Profile popup ── */
   #profile-popup {
@@ -2813,6 +2833,9 @@
     }
     #help-close { font-size: calc(22 * var(--ls)); top: calc(10 * var(--ls)); right: calc(14 * var(--ls)); }
     .help-attribution { font-size: calc(12 * var(--ls)); }
+    .help-achievement-list li { font-size: calc(13 * var(--ls)); }
+    .help-achievement-list .ach-icon { width: calc(22 * var(--ls)); margin-right: calc(4 * var(--ls)); }
+    .help-achievement-list .ach-desc { font-size: calc(11 * var(--ls)); }
 
     /* Profile popup */
     #profile-popup {
@@ -3251,7 +3274,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.0c63da6 | 03-11-2026 18:06</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.5390bf9 | 03-11-2026 18:17</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3332,6 +3355,31 @@ ON</button>
         Thanks to <a href="https://thecogg.com" target="_blank" rel="noopener"><strong>The Central Ohio GameDev Group</strong></a>
         — for inspiration, friendship, and fun.
       </p>
+    </div>
+
+    <div class="help-section">
+      <div class="help-section-title">Achievements</div>
+      <ul class="help-achievement-list">
+        <li><span class="ach-icon">👟</span><strong>First 500m</strong> <span class="ach-desc">— Ride 500 meters</span></li>
+        <li><span class="ach-icon">🏅</span><strong>1K Club</strong> <span class="ach-desc">— Ride 1,000 meters</span></li>
+        <li><span class="ach-icon">🏆</span><strong>5K Champion</strong> <span class="ach-desc">— Ride 5,000 meters</span></li>
+        <li><span class="ach-icon">⚡</span><strong>Speed Demon</strong> <span class="ach-desc">— Hit 50 km/h</span></li>
+        <li><span class="ach-icon">🤝</span><strong>Perfect Sync</strong> <span class="ach-desc">— 10 seconds of coordinated pedaling</span></li>
+        <li><span class="ach-icon">🌟</span><strong>Collector</strong> <span class="ach-desc">— Grab 10 collectibles in a run</span></li>
+        <li><span class="ach-icon">👑</span><strong>Hoarder</strong> <span class="ach-desc">— Grab every collectible in a level</span></li>
+        <li><span class="ach-icon">🏠</span><strong>Home Sweet Home</strong> <span class="ach-desc">— Finish Grandma's House</span></li>
+        <li><span class="ach-icon">🏰</span><strong>Royal Arrival</strong> <span class="ach-desc">— Finish The Castle</span></li>
+        <li><span class="ach-icon">🚲</span><strong>Grandma's Classic</strong> <span class="ach-desc">— Finish Grandma's on the default bike</span></li>
+        <li><span class="ach-icon">🍊</span><strong>Marmalade Delivery</strong> <span class="ach-desc">— Finish Grandma's on the orange bike</span></li>
+        <li><span class="ach-icon">🫐</span><strong>Berry Special Visit</strong> <span class="ach-desc">— Finish Grandma's on the magenta bike</span></li>
+        <li><span class="ach-icon">🍒</span><strong>Cherry on Top</strong> <span class="ach-desc">— Finish Grandma's on the red bike</span></li>
+        <li><span class="ach-icon">🌊</span><strong>Ocean to Grandma's</strong> <span class="ach-desc">— Finish Grandma's on the blue bike</span></li>
+        <li><span class="ach-icon">🌿</span><strong>Jungle Express</strong> <span class="ach-desc">— Finish Grandma's on the green bike</span></li>
+        <li><span class="ach-icon">🍌</span><strong>Banana Delivery</strong> <span class="ach-desc">— Finish Grandma's on the yellow bike</span></li>
+        <li><span class="ach-icon">💮</span><strong>Flawless 1K</strong> <span class="ach-desc">— Finish a level with no crashes (1K+ distance)</span></li>
+        <li><span class="ach-icon">💎</span><strong>Untouchable</strong> <span class="ach-desc">— Finish a level with no crashes (5K+ distance)</span></li>
+        <li><span class="ach-icon">🤜</span><strong>Team Player</strong> <span class="ach-desc">— Stay safe 80% of a multiplayer ride</span></li>
+      </ul>
     </div>
   </div>
 </div>
