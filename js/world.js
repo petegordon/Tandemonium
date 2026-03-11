@@ -551,17 +551,17 @@ export class World {
         group.add(new THREE.Line(ropeGeo, ropeMat));
       }
 
-      // Place in world
+      // Place in world — keep closer to road so they sit in front of clouds
       const rng = this._balloonSeededRandom;
       const roadD = 200 + rng() * (this.roadPath.loopLength - 400);
       const side = rng() > 0.5 ? 1 : -1;
-      const lateralDist = 40 + rng() * 120;
+      const lateralDist = 20 + rng() * 60; // 20-80: closer than most clouds (15-295)
       const pt = this.roadPath.getPointAtDistance(roadD);
       const rightX = Math.cos(pt.heading);
       const rightZ = -Math.sin(pt.heading);
       const worldX = pt.x + rightX * side * lateralDist;
       const worldZ = pt.z + rightZ * side * lateralDist;
-      const baseY = 30 + rng() * 35; // Y 30-65
+      const baseY = 25 + rng() * 30; // Y 25-55: overlap with cloud range
       const scale = 1.5 + rng() * 1.5; // 1.5-3x
 
       group.position.set(worldX, baseY, worldZ);
