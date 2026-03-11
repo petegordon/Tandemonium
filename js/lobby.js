@@ -115,16 +115,15 @@ export class Lobby {
     if (this.musicActive) this.toggleMusic.classList.add('active');
     this.onMusicChanged = null; // callback set by Game
 
-    // Volume control (0–1, persisted in localStorage, default 0.18)
+    // Volume control (discrete levels, persisted in localStorage, default 0.18)
+    const volPresets = [0, 0.10, 0.18, 0.40];
     const savedVol = localStorage.getItem('tandemonium_music_volume');
-    this.musicVolume = savedVol !== null ? parseFloat(savedVol) : 0.18;
+    let rawVol = savedVol !== null ? parseFloat(savedVol) : 0.18;
+    // Snap to nearest preset
+    this.musicVolume = volPresets.reduce((a, b) => Math.abs(b - rawVol) < Math.abs(a - rawVol) ? b : a);
     this.onVolumeChanged = null; // callback set by Game
-    this._volumeSlider = document.getElementById('volume-slider-popup');
-    this._volumeTrack = document.getElementById('volume-slider-track');
-    this._volumeFill = document.getElementById('volume-slider-fill');
-    this._volumeThumb = document.getElementById('volume-slider-thumb');
-    this._volumePct = document.getElementById('volume-pct');
-    this._volumeDragging = false;
+    this._volumePicker = document.getElementById('volume-picker');
+    this._volBtns = this._volumePicker.querySelectorAll('.vol-btn');
     this._longPressTimer = null;
     this._updateVolumeUI();
 
@@ -588,7 +587,7 @@ export class Lobby {
       this._musicLongPressed = false;
       this._longPressTimer = setTimeout(() => {
         this._musicLongPressed = true;
-        this._showVolumeSlider();
+        this._showVolumePicker();
       }, 500);
     });
     this.toggleMusic.addEventListener('pointerup', () => {
@@ -601,24 +600,31 @@ export class Lobby {
     this.toggleMusic.addEventListener('pointercancel', () => {
       clearTimeout(this._longPressTimer);
     });
-    // Volume slider drag
-    this._volumeTrack.addEventListener('pointerdown', (e) => {
-      this._volumeDragging = true;
-      this._volumeTrack.setPointerCapture(e.pointerId);
-      this._setVolumeFromPointer(e);
-    });
-    this._volumeTrack.addEventListener('pointermove', (e) => {
-      if (this._volumeDragging) this._setVolumeFromPointer(e);
-    });
-    this._volumeTrack.addEventListener('pointerup', () => { this._volumeDragging = false; });
-    this._volumeTrack.addEventListener('pointercancel', () => { this._volumeDragging = false; });
-    // Dismiss slider when clicking outside
+    // Volume picker buttons
+    for (const btn of this._volBtns) {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const vol = parseFloat(btn.dataset.vol);
+        this.musicVolume = vol;
+        localStorage.setItem('tandemonium_music_volume', vol);
+        // Sync mute state with volume
+        if (vol === 0 && this.musicActive) {
+          this._toggleMusic();
+        } else if (vol > 0 && !this.musicActive) {
+          this._toggleMusic();
+        }
+        if (this.onVolumeChanged) this.onVolumeChanged(vol);
+        this._updateVolumeUI();
+        this._hideVolumePicker();
+      });
+    }
+    // Dismiss picker when clicking outside
     document.addEventListener('pointerdown', (e) => {
-      if (this._volumeSlider.classList.contains('visible') &&
-          !this._volumeSlider.contains(e.target) &&
+      if (this._volumePicker.classList.contains('visible') &&
+          !this._volumePicker.contains(e.target) &&
           e.target !== this.toggleMusic &&
           !this.toggleMusic.contains(e.target)) {
-        this._hideVolumeSlider();
+        this._hideVolumePicker();
       }
     });
     this.toggleHelp.addEventListener('click', () => this._openHelp());
@@ -1152,30 +1158,20 @@ export class Lobby {
     if (this.onMusicChanged) this.onMusicChanged(this.musicActive);
   }
 
-  _showVolumeSlider() {
+  _showVolumePicker() {
     this._updateVolumeUI();
-    this._volumeSlider.classList.add('visible');
+    this._volumePicker.classList.add('visible');
   }
 
-  _hideVolumeSlider() {
-    this._volumeSlider.classList.remove('visible');
-  }
-
-  _setVolumeFromPointer(e) {
-    const rect = this._volumeTrack.getBoundingClientRect();
-    const y = Math.max(0, Math.min(1, (rect.bottom - e.clientY) / rect.height));
-    this.musicVolume = Math.round(y * 100) / 100;
-    localStorage.setItem('tandemonium_music_volume', this.musicVolume);
-    this._updateVolumeUI();
-    if (this.onVolumeChanged) this.onVolumeChanged(this.musicVolume);
+  _hideVolumePicker() {
+    this._volumePicker.classList.remove('visible');
   }
 
   _updateVolumeUI() {
-    const pct = Math.round(this.musicVolume * 100);
-    const h = `${pct}%`;
-    this._volumeFill.style.height = h;
-    this._volumeThumb.style.bottom = h;
-    this._volumePct.textContent = `${pct}%`;
+    for (const btn of this._volBtns) {
+      const vol = parseFloat(btn.dataset.vol);
+      btn.classList.toggle('active', vol === this.musicVolume);
+    }
   }
 
   _openHelp() {

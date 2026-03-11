@@ -407,12 +407,12 @@ class Game {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.code === 'KeyM') {
         if (e.shiftKey) {
-          // Shift+M: toggle volume slider in lobby
+          // Shift+M: toggle volume picker in lobby
           if (this.state === 'lobby') {
-            if (this.lobby._volumeSlider.classList.contains('visible')) {
-              this.lobby._hideVolumeSlider();
+            if (this.lobby._volumePicker.classList.contains('visible')) {
+              this.lobby._hideVolumePicker();
             } else {
-              this.lobby._showVolumeSlider();
+              this.lobby._showVolumePicker();
             }
           }
         } else {
