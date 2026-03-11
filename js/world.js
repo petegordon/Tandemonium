@@ -14,9 +14,9 @@ const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 
-const CLOUD_COUNT = 70;
+const CLOUD_COUNT = 90;
 const CLOUD_AHEAD = 400;
-const CLOUD_BEHIND = 100;
+const CLOUD_BEHIND = 250;
 const CLOUD_MIN_Y = 25;
 const CLOUD_MAX_Y = 50;
 const CLOUD_DRIFT = 1.5;      // units/sec lateral drift
@@ -390,23 +390,23 @@ export class World {
 
     for (let i = 0; i < CLOUD_COUNT; i++) {
       const group = new THREE.Group();
-      // Build a cluster of 8-14 overlapping spheres for big fluffy shapes
-      const puffCount = 8 + Math.floor(this._cloudSeededRandom() * 7);
-      const cloudWidth = 15 + this._cloudSeededRandom() * 25; // 15-40 units wide
-      const cloudHeight = 4 + this._cloudSeededRandom() * 6;  // 4-10 units tall
+      // Build a cluster of 10-18 overlapping spheres for big fluffy shapes
+      const puffCount = 10 + Math.floor(this._cloudSeededRandom() * 9);
+      const cloudWidth = 25 + this._cloudSeededRandom() * 40; // 25-65 units wide
+      const cloudHeight = 6 + this._cloudSeededRandom() * 8;  // 6-14 units tall
 
       for (let p = 0; p < puffCount; p++) {
         const geo = puffGeos[p % puffGeos.length];
         const puff = new THREE.Mesh(geo, cloudMat);
         const t = puffCount > 1 ? p / (puffCount - 1) : 0.5;
-        const sx = 4 + this._cloudSeededRandom() * 7;  // puff X scale
-        const sy = 3 + this._cloudSeededRandom() * 4;  // puff Y scale
-        const sz = 3.5 + this._cloudSeededRandom() * 5;
+        const sx = 5 + this._cloudSeededRandom() * 10;  // puff X scale
+        const sy = 4 + this._cloudSeededRandom() * 6;   // puff Y scale
+        const sz = 4.5 + this._cloudSeededRandom() * 7;
         puff.scale.set(sx, sy, sz);
         puff.position.set(
-          (t - 0.5) * cloudWidth + (this._cloudSeededRandom() - 0.5) * 5,
+          (t - 0.5) * cloudWidth + (this._cloudSeededRandom() - 0.5) * 8,
           (this._cloudSeededRandom() - 0.3) * cloudHeight * 0.5,
-          (this._cloudSeededRandom() - 0.5) * 6
+          (this._cloudSeededRandom() - 0.5) * 10
         );
         group.add(puff);
       }
@@ -438,7 +438,7 @@ export class World {
       if (!slot) break;
 
       const side = this._cloudSeededRandom() > 0.5 ? 1 : -1;
-      const lateralDist = 10 + this._cloudSeededRandom() * 180; // 10-190 units from road
+      const lateralDist = 15 + this._cloudSeededRandom() * 280; // 15-295 units from road
       const lateralOffset = side * lateralDist;
 
       const pt = this.roadPath.getPointAtDistance(d);
