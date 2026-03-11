@@ -2202,7 +2202,7 @@ class Game {
       if (this.state === 'countdown') this._updateCountdown(dt);
       if (this.state === 'gameover' || this.state === 'victory' ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
-      this.world.update(this.bike.position, this.bike.roadD);
+      this.world.update(this.bike.position, this.bike.roadD, dt);
       this.chaseCamera.update(this.bike, dt, roadPath);
       if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
       this._updateDemoEndSprite();
@@ -2263,7 +2263,7 @@ class Game {
 
     this.grassParticles.update(this.bike, dt);
     this._hapticOffRoadCheck();
-    this.world.update(this.bike.position, this.bike.roadD);
+    this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     // Camera shake on crash
@@ -2367,7 +2367,7 @@ class Game {
       this.net.sendLean(captainLean);
     }
 
-    this.world.update(this.bike.position, this.bike.roadD);
+    this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     if (this.bike.fallen && this.bike.fallTimer > 1.8) {
@@ -2431,7 +2431,7 @@ class Game {
       this.net.sendLean(balanceResult.leanInput);
     }
 
-    this.world.update(this.bike.position, this.bike.roadD);
+    this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
 
     // Race progress — display-only (captain is authoritative for timer + events)

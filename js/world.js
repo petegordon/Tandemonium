@@ -14,6 +14,13 @@ const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 
+const CLOUD_COUNT = 20;
+const CLOUD_AHEAD = 350;
+const CLOUD_BEHIND = 80;
+const CLOUD_MIN_Y = 80;
+const CLOUD_MAX_Y = 140;
+const CLOUD_DRIFT = 1.5;      // units/sec lateral drift
+
 // Chromakey shaders for green-screen video billboards.
 // Uses green-dominance (G - max(R,B)) instead of distance from a single key color,
 // so it handles wide-ranging green screens (dark to light) in a single pass.
@@ -76,8 +83,21 @@ export class World {
     this._treeSpacing = 3;   // average spacing along road
     this._treeModelReady = false;
 
+    // Cloud pool
+    this._cloudPool = [];    // { group, roadD, lateralOffset, baseY }
+    this._cloudNextD = 0;
+    this._cloudSpacing = 50;
+
+    // Cloud PRNG — separate seed
+    this._cloudRngState = 271;
+    this._cloudSeededRandom = () => {
+      this._cloudRngState = (this._cloudRngState * 9301 + 49297) % 233280;
+      return this._cloudRngState / 233280;
+    };
+
     this._buildGround();
     this._buildTreePool();
+    this._buildClouds();
     this._buildLighting();
 
     // Race markers (checkpoints + destination)
@@ -349,6 +369,118 @@ export class World {
       slot.mesh.position.y = h + TREE_BASE_OFFSET * slot.scale;
     }
   }
+
+  // ── Clouds ──────────────────────────────────────────────────
+
+  _buildClouds() {
+    const cloudMat = new THREE.MeshPhongMaterial({
+      color: 0xffffff,
+      flatShading: true,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+    });
+
+    // Shared sphere geometries for cloud puffs (3 size tiers)
+    const puffGeos = [
+      new THREE.SphereGeometry(1, 7, 5),
+      new THREE.SphereGeometry(1, 7, 5),
+      new THREE.SphereGeometry(1, 7, 5),
+    ];
+
+    for (let i = 0; i < CLOUD_COUNT; i++) {
+      const group = new THREE.Group();
+      // Build a cluster of 5-8 overlapping spheres
+      const puffCount = 5 + Math.floor(this._cloudSeededRandom() * 4);
+      const cloudWidth = 8 + this._cloudSeededRandom() * 16; // 8-24 units wide
+      const cloudHeight = 3 + this._cloudSeededRandom() * 4; // 3-7 units tall
+
+      for (let p = 0; p < puffCount; p++) {
+        const geo = puffGeos[p % puffGeos.length];
+        const puff = new THREE.Mesh(geo, cloudMat);
+        // Spread puffs along X with slight Y/Z variation
+        const t = puffCount > 1 ? p / (puffCount - 1) : 0.5;
+        const sx = 3 + this._cloudSeededRandom() * 5;  // puff X scale
+        const sy = 2 + this._cloudSeededRandom() * 3;  // puff Y scale
+        const sz = 2.5 + this._cloudSeededRandom() * 3;
+        puff.scale.set(sx, sy, sz);
+        puff.position.set(
+          (t - 0.5) * cloudWidth + (this._cloudSeededRandom() - 0.5) * 3,
+          (this._cloudSeededRandom() - 0.3) * cloudHeight * 0.4,
+          (this._cloudSeededRandom() - 0.5) * 4
+        );
+        group.add(puff);
+      }
+
+      group.visible = false;
+      this.scene.add(group);
+      this._cloudPool.push({
+        group,
+        roadD: -1,
+        lateralOffset: 0,
+        baseY: 0,
+        active: false,
+      });
+    }
+
+    // Place all clouds for the loop
+    this._placeCloudsUpTo(this.roadPath.loopLength);
+  }
+
+  _placeCloudsUpTo(maxD) {
+    const cap = this.roadPath.loopLength;
+    if (maxD > cap) maxD = cap;
+
+    while (this._cloudNextD < maxD) {
+      const d = this._cloudNextD;
+      this._cloudNextD += this._cloudSpacing + this._cloudSeededRandom() * 40;
+
+      const slot = this._cloudPool.find(c => !c.active);
+      if (!slot) break;
+
+      const side = this._cloudSeededRandom() > 0.5 ? 1 : -1;
+      const lateralDist = 20 + this._cloudSeededRandom() * 80;
+      const lateralOffset = side * lateralDist;
+
+      const pt = this.roadPath.getPointAtDistance(d);
+      const fwdX = Math.sin(pt.heading);
+      const fwdZ = Math.cos(pt.heading);
+      const rightX = fwdZ;
+      const rightZ = -fwdX;
+
+      const worldX = pt.x + rightX * lateralOffset;
+      const worldZ = pt.z + rightZ * lateralOffset;
+      const baseY = CLOUD_MIN_Y + this._cloudSeededRandom() * (CLOUD_MAX_Y - CLOUD_MIN_Y);
+
+      slot.group.position.set(worldX, baseY, worldZ);
+      slot.group.visible = false;
+      slot.roadD = d;
+      slot.lateralOffset = lateralOffset;
+      slot.baseY = baseY;
+      slot.active = true;
+    }
+  }
+
+  _updateCloudVisibility(bikeD) {
+    const L = this.roadPath.loopLength;
+    for (const slot of this._cloudPool) {
+      if (!slot.active) continue;
+      let ahead = slot.roadD - bikeD;
+      if (ahead < -L / 2) ahead += L;
+      if (ahead > L / 2) ahead -= L;
+      slot.group.visible = (ahead > -CLOUD_BEHIND && ahead < CLOUD_AHEAD);
+    }
+  }
+
+  _driftClouds(dt) {
+    const drift = CLOUD_DRIFT * dt;
+    for (const slot of this._cloudPool) {
+      if (!slot.active || !slot.group.visible) continue;
+      slot.group.position.x += drift;
+    }
+  }
+
+  // ── Ground deformation ────────────────────────────────────
 
   _deformGround(bikePos, bikeD) {
     // Floor is rotated -PI/2 on X, so geometry X = world X, geometry Y = world -Z
@@ -729,7 +861,7 @@ export class World {
     }
   }
 
-  update(bikePos, bikeD) {
+  update(bikePos, bikeD, dt) {
     // Default bikeD from position if not provided (backward compat)
     if (bikeD === undefined) {
       bikeD = Math.max(0, bikePos.z);
@@ -746,6 +878,10 @@ export class World {
     // Trees
     this._updateTreeVisibility(bikeD);
     this._updateTreeHeights(bikeD);
+
+    // Clouds
+    this._updateCloudVisibility(bikeD);
+    if (dt) this._driftClouds(dt);
 
     // Race markers
     if (this._raceMarkers.length > 0) {
