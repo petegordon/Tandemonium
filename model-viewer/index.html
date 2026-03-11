@@ -52,12 +52,7 @@
     display: flex; justify-content: space-between; align-items: center;
     flex-shrink: 0;
   }
-  #browse-btn {
-    padding: 2px 8px; font-size: 10px;
-    background: #1a2a3a; color: #6af; border: 1px solid #334466;
-    border-radius: 3px; cursor: pointer;
-  }
-  #browse-btn:hover { background: #2a3a4a; }
+  #upload-btn:hover { background: #2a3a4a; }
   #file-list {
     overflow-y: auto; flex: 1;
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
@@ -278,7 +273,7 @@
     <div id="file-browser">
       <div id="file-browser-header">
         <span>Files</span>
-        <button id="browse-btn">Browse Folder...</button>
+        <button id="upload-btn" style="padding:2px 8px;font-size:10px;background:#1a2a3a;color:#6af;border:1px solid #334466;border-radius:3px;cursor:pointer;">Upload...</button>
       </div>
       <div id="file-list"></div>
     </div>
@@ -344,8 +339,8 @@
   </div>
 </div>
 
-<!-- Hidden file inputs -->
-<input type="file" id="dir-input" webkitdirectory multiple style="display:none;">
+<!-- Hidden file input for uploading individual model files -->
+<input type="file" id="file-input" multiple accept=".fbx,.obj,.glb,.gltf" style="display:none;">
 
 <script type="importmap">
 {
@@ -477,7 +472,20 @@ animate();
 // ── File Browser ──
 // ══════════════════════════════════════════
 
+const MODELS_DIR = '../models/';
 const SUPPORTED_EXTS = ['.fbx', '.obj', '.glb', '.gltf'];
+
+// Known model files — fallback when directory listing is unavailable (deployed servers)
+const KNOWN_MODELS = [
+  'Meshy_AI_Animation_air_squat_withSkin.fbx',
+  'Meshy_AI_Animation_Walking_withSkin2.fbx',
+  'Meshy_AI_Clifftop_Meadow_0309034953_texture.fbx',
+  'Meshy_AI_Little_Cyclist_0309014450_texture.fbx',
+  'Meshy_AI_Tandemonium_Title_0309020815_texture.fbx',
+  'stylized bush.fbx',
+  'tandem_bicycle.glb',
+  'TitleAsset.obj',
+];
 
 function getExt(name) {
   const i = name.lastIndexOf('.');
@@ -485,42 +493,63 @@ function getExt(name) {
 }
 
 function formatSize(bytes) {
+  if (bytes == null) return '';
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-function populateFileList(files) {
-  loadedFiles.clear();
-  fileListEl.innerHTML = '';
-  const sorted = Array.from(files).sort((a, b) => a.name.localeCompare(b.name));
-  for (const file of sorted) {
-    const ext = getExt(file.name);
-    if (!SUPPORTED_EXTS.includes(ext)) continue;
-    loadedFiles.set(file.name, file);
+function addFileItem(name, url, sizeText) {
+  const ext = getExt(name);
+  if (!SUPPORTED_EXTS.includes(ext)) return;
 
-    const item = document.createElement('div');
-    item.className = 'file-item';
-    item.dataset.filename = file.name;
+  const item = document.createElement('div');
+  item.className = 'file-item';
+  item.dataset.filename = name;
 
-    const format = document.createElement('span');
-    format.className = 'file-format ' + ext.slice(1);
-    format.textContent = ext.slice(1);
-    item.appendChild(format);
+  const format = document.createElement('span');
+  format.className = 'file-format ' + ext.slice(1);
+  format.textContent = ext.slice(1);
+  item.appendChild(format);
 
-    const name = document.createElement('span');
-    name.className = 'file-name';
-    name.textContent = file.name;
-    name.title = file.name;
-    item.appendChild(name);
+  const nameEl = document.createElement('span');
+  nameEl.className = 'file-name';
+  nameEl.textContent = name;
+  nameEl.title = name;
+  item.appendChild(nameEl);
 
+  if (sizeText) {
     const size = document.createElement('span');
     size.className = 'file-size';
-    size.textContent = formatSize(file.size);
+    size.textContent = sizeText;
     item.appendChild(size);
+  }
 
-    item.addEventListener('click', () => loadFileFromBrowser(file));
-    fileListEl.appendChild(item);
+  item.addEventListener('click', () => loadFileFromURL(name, url));
+  fileListEl.appendChild(item);
+}
+
+// Discover models from server directory listing, fall back to known list
+async function discoverModels() {
+  let modelNames = [];
+  try {
+    const res = await fetch(MODELS_DIR);
+    if (res.ok) {
+      const html = await res.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      modelNames = [...doc.querySelectorAll('a')]
+        .map(a => decodeURIComponent(a.getAttribute('href')))
+        .filter(href => SUPPORTED_EXTS.some(ext => href.toLowerCase().endsWith(ext)))
+        .sort();
+    }
+  } catch { /* directory listing not available */ }
+
+  if (modelNames.length === 0) modelNames = KNOWN_MODELS;
+
+  fileListEl.innerHTML = '';
+  for (const name of modelNames) {
+    addFileItem(name, MODELS_DIR + encodeURIComponent(name));
   }
 
   if (fileListEl.children.length === 0) {
@@ -528,15 +557,22 @@ function populateFileList(files) {
   }
 }
 
-// Browse directory button
-document.getElementById('browse-btn').addEventListener('click', () => {
-  document.getElementById('dir-input').click();
-});
+discoverModels();
 
-document.getElementById('dir-input').addEventListener('change', (e) => {
-  if (e.target.files.length > 0) {
-    populateFileList(e.target.files);
+// Upload button — adds uploaded files to the list
+const fileInput = document.getElementById('file-input');
+document.getElementById('upload-btn').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  for (const file of fileInput.files) {
+    const url = URL.createObjectURL(file);
+    loadedFiles.set(file.name, file);
+    addFileItem(file.name, url, formatSize(file.size));
+    // Auto-load the first uploaded file
+    if (fileInput.files.length === 1 || file === fileInput.files[0]) {
+      loadFileFromURL(file.name, url);
+    }
   }
+  fileInput.value = '';
 });
 
 // ══════════════════════════════════════════
@@ -593,29 +629,39 @@ function disposeMaterial(mat) {
   mat.dispose();
 }
 
-function loadFileFromBrowser(file) {
+function loadFileFromURL(filename, url) {
   // Highlight active file
   fileListEl.querySelectorAll('.file-item.active').forEach(el => el.classList.remove('active'));
-  const itemEl = fileListEl.querySelector(`[data-filename="${CSS.escape(file.name)}"]`);
+  const itemEl = fileListEl.querySelector(`[data-filename="${CSS.escape(filename)}"]`);
   if (itemEl) itemEl.classList.add('active');
 
-  showLoading(`Loading ${file.name}...`);
-  currentFileName = file.name;
-  currentFileSize = file.size;
+  showLoading(`Loading ${filename}...`);
+  currentFileName = filename;
 
-  const reader = new FileReader();
-  reader.onprogress = (e) => {
-    if (e.lengthComputable) setProgress((e.loaded / e.total) * 50);
+  const xhr = new XMLHttpRequest();
+  xhr.open('GET', url, true);
+  xhr.responseType = 'arraybuffer';
+  xhr.onprogress = (e) => {
+    if (e.lengthComputable) {
+      currentFileSize = e.total;
+      setProgress((e.loaded / e.total) * 80);
+    }
   };
-  reader.onload = () => {
-    setProgress(50);
-    parseFile(file.name, reader.result);
+  xhr.onload = () => {
+    if (xhr.status === 200 || xhr.status === 0) {
+      currentFileSize = xhr.response.byteLength;
+      setProgress(80);
+      parseFile(filename, xhr.response);
+    } else {
+      hideLoading();
+      alert('Failed to load ' + filename + ' (HTTP ' + xhr.status + ')');
+    }
   };
-  reader.onerror = () => {
+  xhr.onerror = () => {
     hideLoading();
-    alert('Failed to read file: ' + file.name);
+    alert('Failed to load: ' + filename);
   };
-  reader.readAsArrayBuffer(file);
+  xhr.send();
 }
 
 function parseFile(filename, arrayBuffer) {
@@ -1121,18 +1167,22 @@ viewport.addEventListener('drop', (e) => {
   const files = e.dataTransfer.files;
   if (files.length === 0) return;
 
-  // If multiple files dropped, add all to file list, load the first 3D one
+  // Add dropped files to the list and load the first 3D one
   const modelFiles = Array.from(files).filter(f => SUPPORTED_EXTS.includes(getExt(f.name)));
   if (modelFiles.length === 0) {
     alert('No supported 3D files found. Supported: .fbx, .obj, .glb, .gltf');
     return;
   }
 
-  // Populate file list with dropped files
-  populateFileList(modelFiles);
-
-  // Load the first one
-  loadFileFromBrowser(modelFiles[0]);
+  let firstURL = null;
+  let firstName = null;
+  for (const file of modelFiles) {
+    const url = URL.createObjectURL(file);
+    loadedFiles.set(file.name, file);
+    addFileItem(file.name, url, formatSize(file.size));
+    if (!firstURL) { firstURL = url; firstName = file.name; }
+  }
+  if (firstURL) loadFileFromURL(firstName, firstURL);
 });
 
 // ══════════════════════════════════════════
