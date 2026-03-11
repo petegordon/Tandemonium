@@ -214,6 +214,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 
 // ── Credits Modal ──
 const creditsBtn = document.getElementById('credits-btn');
@@ -372,9 +373,61 @@ loader.load('tandem_bicycle.glb', (gltf) => {
 
   console.log('Tandem bicycle loaded, vertex minY:', minY, 'size:', maxY - minY, 'x', maxX - minX, 'x', maxZ - minZ);
   console.log('Spoke meshes found:', spokeMeshes.length, 'Pedal nodes found:', pedalNodes.length);
+
+  // Load rider character onto the bike
+  loadRider();
 }, undefined, (err) => {
   console.error('Failed to load tandem_bicycle.glb:', err);
 });
+
+// ── Rider Character ──
+let riderModel = null;
+let riderMixer = null;
+let riderAction = null;
+
+function loadRider() {
+  const fbxLoader = new FBXLoader();
+  fbxLoader.load('rider.fbx', (fbx) => {
+    // Scale rider to fit the bike — measure raw height, target ~1.2m
+    const riderBox = new THREE.Box3().setFromObject(fbx);
+    const riderHeight = riderBox.max.y - riderBox.min.y;
+    const targetHeight = 1.2;
+    const riderScale = targetHeight / riderHeight;
+    fbx.scale.setScalar(riderScale);
+
+    // Position on front seat (tune these values!)
+    // X = 0 (centered), Y = seat height, Z = forward position on bike
+    fbx.position.set(0, 0.75, 0.5);
+    fbx.rotation.y = 0;
+
+    fbx.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    bikeGroup.add(fbx);
+    riderModel = fbx;
+
+    // Setup animation
+    if (fbx.animations && fbx.animations.length > 0) {
+      riderMixer = new THREE.AnimationMixer(fbx);
+      riderAction = riderMixer.clipAction(fbx.animations[0]);
+      riderAction.play();
+    }
+
+    console.log('Rider loaded. Height:', riderHeight.toFixed(1),
+      'Scale:', riderScale.toFixed(4), 'Animations:', fbx.animations?.length || 0);
+
+    // Log bones for reference
+    fbx.traverse((child) => {
+      if (child.isBone) console.log('  Bone:', child.name);
+    });
+  }, undefined, (err) => {
+    console.error('Failed to load rider FBX:', err);
+  });
+}
 
 // ── Bike Physics State ──
 const bikeState = {
@@ -572,6 +625,13 @@ function update(dt) {
     for (const node of pedalNodes) {
       node.rotation.z += pedalSpin;
     }
+  }
+
+  // Update rider animation — speed-synced
+  if (riderMixer) {
+    const timeScale = bikeState.speed > 0.1 ? Math.max(0.2, bikeState.speed / 5) : 0.2;
+    riderAction.setEffectiveTimeScale(timeScale);
+    riderMixer.update(dt);
   }
 
   // Move directional light with bike
