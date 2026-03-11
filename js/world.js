@@ -12,6 +12,7 @@ const GROUND_SEGS = 120;         // ~4.2-unit vertex spacing — covers visible 
 const TREE_POOL_SIZE = 400;
 const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
+const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 
 // Chromakey shaders for green-screen video billboards.
 // Uses green-dominance (G - max(R,B)) instead of distance from a single key color,
@@ -314,7 +315,7 @@ export class World {
       const worldZ = pt.z + rightZ * lateralOffset;
       const terrainY = pt.y;
 
-      slot.mesh.position.set(worldX, terrainY, worldZ);
+      slot.mesh.position.set(worldX, terrainY + TREE_BASE_OFFSET * slot.scale, worldZ);
       slot.mesh.visible = false;
       slot.roadD = d;
       slot.lateralOffset = lateralOffset;
@@ -345,7 +346,7 @@ export class World {
       const dz = slot.mesh.position.z - bikePt.z;
       const estD = bikeD + dx * fwdX + dz * fwdZ;
       const h = this.roadPath.getPointAtDistance(estD).y;
-      slot.mesh.position.y = h;
+      slot.mesh.position.y = h + TREE_BASE_OFFSET * slot.scale;
     }
   }
 
