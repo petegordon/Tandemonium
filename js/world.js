@@ -255,13 +255,16 @@ export class World {
         }
       });
 
+      // Model is Z-up (Sketchfab) — rotate upright for Three.js Y-up
+      template.rotation.x = -Math.PI / 2;
+
       for (let i = 0; i < TREE_POOL_SIZE; i++) {
         const si = i % scales.length;
         const scale = scales[si];
         const mesh = template.clone();
         mesh.scale.setScalar(scale);
         mesh.visible = false;
-        // Slight random Y rotation for variety
+        // Slight random Y rotation for variety (applied on top of X correction)
         mesh.rotation.y = (i * 2.399) % (Math.PI * 2);
         this.scene.add(mesh);
 
