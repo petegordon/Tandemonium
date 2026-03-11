@@ -2043,6 +2043,23 @@ export class Lobby {
 
   async _startRoomMedia() {
     if (!this.net) return;
+
+    // Register remote stream handler BEFORE acquiring local media so that
+    // an incoming call that arrives while getUserMedia is pending still
+    // gets its stream rendered in the partner PiP.
+    this.net.onRemoteStream = (remoteStream) => {
+      const partnerVideo = document.getElementById('partner-pip');
+      const partnerWrap = document.getElementById('partner-pip-wrap');
+      if (partnerVideo && remoteStream) {
+        partnerVideo.srcObject = remoteStream;
+        partnerVideo.style.display = 'block';
+        partnerVideo.play().catch(() => {});
+        if (partnerWrap) partnerWrap.style.display = 'block';
+        const partnerAvatar = document.getElementById('partner-pip-avatar');
+        if (partnerAvatar) partnerAvatar.style.display = 'none';
+      }
+    };
+
     // Acquire all permitted tracks so they can be toggled on/off in the room
     await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
 
@@ -2104,20 +2121,13 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    // Captain initiates media call
-    this.net.onRemoteStream = (remoteStream) => {
-      const partnerVideo = document.getElementById('partner-pip');
-      if (partnerVideo && remoteStream) {
-        partnerVideo.srcObject = remoteStream;
-        partnerVideo.style.display = 'block';
-        partnerVideo.play().catch(() => {});
-        if (partnerWrap) partnerWrap.style.display = 'block';
-        const partnerAvatar = document.getElementById('partner-pip-avatar');
-        if (partnerAvatar) partnerAvatar.style.display = 'none';
-      }
-    };
-
     if (this._roomRole === 'captain') {
+      this.net.initiateCall();
+    } else if (this.net._answeredWithoutMedia && this.net._localMediaStream) {
+      // Stoker answered the captain's call before local media was ready.
+      // Now that media is acquired, call the captain back so they receive
+      // the stoker's video/audio stream.
+      this.net._answeredWithoutMedia = false;
       this.net.initiateCall();
     }
   }
@@ -2245,6 +2255,21 @@ export class Lobby {
       partnerWrap.classList.add('pip-lobby-mode');
       videoArea.appendChild(partnerWrap);
     }
+
+    // Re-register remote stream handler so partner video shows in room
+    // (game.js replaces this with its own handler during gameplay)
+    this.net.onRemoteStream = (remoteStream) => {
+      const pVideo = document.getElementById('partner-pip');
+      const pWrap = document.getElementById('partner-pip-wrap');
+      if (pVideo && remoteStream) {
+        pVideo.srcObject = remoteStream;
+        pVideo.style.display = 'block';
+        pVideo.play().catch(() => {});
+        if (pWrap) pWrap.style.display = 'block';
+        const pAvatar = document.getElementById('partner-pip-avatar');
+        if (pAvatar) pAvatar.style.display = 'none';
+      }
+    };
 
     // Re-register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
