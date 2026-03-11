@@ -3,14 +3,23 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoadPath } from './road-path.js';
 import { RoadChunkManager } from './road-chunks.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS = 120;         // ~4.2-unit vertex spacing — covers visible road/tree range
-const TREE_POOL_SIZE = 200;
+const TREE_POOL_SIZE = 400;
 const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
+const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
+
+const CLOUD_COUNT = 90;
+const CLOUD_AHEAD = 400;
+const CLOUD_BEHIND = 250;
+const CLOUD_MIN_Y = 25;
+const CLOUD_MAX_Y = 50;
+const CLOUD_DRIFT = 1.5;      // units/sec lateral drift
 
 // Chromakey shaders for green-screen video billboards.
 // Uses green-dominance (G - max(R,B)) instead of distance from a single key color,
@@ -69,16 +78,35 @@ export class World {
     };
 
     // Tree pool
-    this._treePool = [];     // { trunk, canopy, roadD, lateralOffset, scale }
+    this._treePool = [];     // { mesh, roadD, lateralOffset, scale, active }
     this._treeNextD = 0;     // next road-distance to place trees at
-    this._treeSpacing = 6;   // average spacing along road
+    this._treeSpacing = 3;   // average spacing along road
+    this._treeModelReady = false;
+
+    // Cloud pool
+    this._cloudPool = [];    // { group, roadD, lateralOffset, baseY }
+    this._cloudNextD = 0;
+    this._cloudSpacing = 15;
+
+    // Cloud PRNG — separate seed
+    this._cloudRngState = 271;
+    this._cloudSeededRandom = () => {
+      this._cloudRngState = (this._cloudRngState * 9301 + 49297) % 233280;
+      return this._cloudRngState / 233280;
+    };
+
+    // Hot air balloons
+    this._balloons = [];
+    this._balloonRngState = 53;
+    this._balloonSeededRandom = () => {
+      this._balloonRngState = (this._balloonRngState * 9301 + 49297) % 233280;
+      return this._balloonRngState / 233280;
+    };
 
     this._buildGround();
     this._buildTreePool();
+    this._buildClouds();
     this._buildLighting();
-
-    // Pre-place all trees for the entire loop
-    this._placeTreesUpTo(this.roadPath.loopLength);
 
     // Race markers (checkpoints + destination)
     this._raceMarkers = [];  // { mesh, roadD, type }
@@ -243,42 +271,50 @@ export class World {
   }
 
   _buildTreePool() {
-    const trunkMat = new THREE.MeshPhongMaterial({ color: 0x7a5230, flatShading: true });
-    const leafMat = new THREE.MeshPhongMaterial({ color: 0x2d8a2d, flatShading: true });
-    const leafMat2 = new THREE.MeshPhongMaterial({ color: 0x1f7a1f, flatShading: true });
-
-    // Shared geometries for each scale bucket (3 sizes)
     const scales = [0.7, 1.0, 1.3];
-    const trunkGeos = scales.map(s =>
-      new THREE.CylinderGeometry(0.12 * s, 0.18 * s, 2.0 * s, 6)
-    );
-    const canopyGeos = scales.map(s =>
-      new THREE.SphereGeometry(1.0 * s, 6, 5)
-    );
 
-    for (let i = 0; i < TREE_POOL_SIZE; i++) {
-      const si = i % scales.length;
-      const scale = scales[si];
-
-      const trunk = new THREE.Mesh(trunkGeos[si], trunkMat);
-      trunk.castShadow = true;
-      trunk.visible = false;
-      this.scene.add(trunk);
-
-      const mat = (i % 2 === 0) ? leafMat : leafMat2;
-      const canopy = new THREE.Mesh(canopyGeos[si], mat);
-      canopy.castShadow = true;
-      canopy.visible = false;
-      this.scene.add(canopy);
-
-      this._treePool.push({
-        trunk, canopy,
-        roadD: -1,
-        lateralOffset: 0,
-        scale,
-        active: false
+    // Load GLB pine tree model, then populate pool with clones
+    const loader = new GLTFLoader();
+    loader.load('assets/landscape/lowpoly_pine_tree.glb', (gltf) => {
+      const template = gltf.scene;
+      // Fix Sketchfab baked transforms: node "PineTree_001" has 100x scale
+      // and a large translation offset — neutralise them so the tree is
+      // ~2.5 units tall and centred at origin.
+      template.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+        }
+        if (child.name === 'PineTree_001') {
+          child.scale.setScalar(1);
+          child.position.set(0, 0, 0);
+        }
       });
-    }
+
+      for (let i = 0; i < TREE_POOL_SIZE; i++) {
+        const si = i % scales.length;
+        const scale = scales[si];
+        const mesh = template.clone();
+        mesh.scale.setScalar(scale);
+        mesh.visible = false;
+        // Slight random Y rotation for variety
+        mesh.rotation.set(0, (i * 2.399) % (Math.PI * 2), 0);
+        this.scene.add(mesh);
+
+        this._treePool.push({
+          mesh,
+          roadD: -1,
+          lateralOffset: 0,
+          scale,
+          active: false
+        });
+      }
+
+      this._treeModelReady = true;
+      // Now place all trees for the loop
+      this._placeTreesUpTo(this.roadPath.loopLength);
+    }, undefined, (err) => {
+      console.error('Failed to load pine tree model:', err);
+    });
   }
 
   _placeTreesUpTo(maxD) {
@@ -307,11 +343,10 @@ export class World {
       const worldZ = pt.z + rightZ * lateralOffset;
       const terrainY = pt.y;
 
-      slot.trunk.position.set(worldX, terrainY + slot.scale, worldZ);
-      slot.canopy.position.set(worldX, terrainY + 2.3 * slot.scale, worldZ);
-      slot.trunk.visible = false;
-      slot.canopy.visible = false;
+      slot.mesh.position.set(worldX, terrainY + TREE_BASE_OFFSET * slot.scale, worldZ);
+      slot.mesh.visible = false;
       slot.roadD = d;
+      slot.lateralOffset = lateralOffset;
       slot.active = true;
     }
   }
@@ -323,9 +358,7 @@ export class World {
       let ahead = slot.roadD - bikeD;
       if (ahead < -L / 2) ahead += L;
       if (ahead > L / 2) ahead -= L;
-      const visible = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
-      slot.trunk.visible = visible;
-      slot.canopy.visible = visible;
+      slot.mesh.visible = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
     }
   }
 
@@ -336,15 +369,232 @@ export class World {
     const fwdZ = Math.cos(bikePt.heading);
 
     for (const slot of this._treePool) {
-      if (!slot.trunk.visible) continue;
-      const dx = slot.trunk.position.x - bikePt.x;
-      const dz = slot.trunk.position.z - bikePt.z;
+      if (!slot.mesh.visible) continue;
+      const dx = slot.mesh.position.x - bikePt.x;
+      const dz = slot.mesh.position.z - bikePt.z;
       const estD = bikeD + dx * fwdX + dz * fwdZ;
       const h = this.roadPath.getPointAtDistance(estD).y;
-      slot.trunk.position.y = h + slot.scale;
-      slot.canopy.position.y = h + 2.3 * slot.scale;
+      slot.mesh.position.y = h + TREE_BASE_OFFSET * slot.scale;
     }
   }
+
+  // ── Clouds ──────────────────────────────────────────────────
+
+  _buildClouds() {
+    const cloudMat = new THREE.MeshBasicMaterial({
+      color: 0xf0f6fc,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+      fog: false,
+    });
+
+    // Shared sphere geometries for cloud puffs (3 size tiers)
+    const puffGeos = [
+      new THREE.SphereGeometry(1, 7, 5),
+      new THREE.SphereGeometry(1, 7, 5),
+      new THREE.SphereGeometry(1, 7, 5),
+    ];
+
+    for (let i = 0; i < CLOUD_COUNT; i++) {
+      const group = new THREE.Group();
+      // Build a cluster of 10-18 overlapping spheres for big fluffy shapes
+      const puffCount = 10 + Math.floor(this._cloudSeededRandom() * 9);
+      const cloudWidth = 25 + this._cloudSeededRandom() * 40; // 25-65 units wide
+      const cloudHeight = 6 + this._cloudSeededRandom() * 8;  // 6-14 units tall
+
+      for (let p = 0; p < puffCount; p++) {
+        const geo = puffGeos[p % puffGeos.length];
+        const puff = new THREE.Mesh(geo, cloudMat);
+        const t = puffCount > 1 ? p / (puffCount - 1) : 0.5;
+        const sx = 5 + this._cloudSeededRandom() * 10;  // puff X scale
+        const sy = 4 + this._cloudSeededRandom() * 6;   // puff Y scale
+        const sz = 4.5 + this._cloudSeededRandom() * 7;
+        puff.scale.set(sx, sy, sz);
+        puff.position.set(
+          (t - 0.5) * cloudWidth + (this._cloudSeededRandom() - 0.5) * 8,
+          (this._cloudSeededRandom() - 0.3) * cloudHeight * 0.5,
+          (this._cloudSeededRandom() - 0.5) * 10
+        );
+        group.add(puff);
+      }
+
+      group.visible = false;
+      this.scene.add(group);
+      this._cloudPool.push({
+        group,
+        roadD: -1,
+        lateralOffset: 0,
+        baseY: 0,
+        active: false,
+      });
+    }
+
+    // Place all clouds for the loop
+    this._placeCloudsUpTo(this.roadPath.loopLength);
+  }
+
+  _placeCloudsUpTo(maxD) {
+    const cap = this.roadPath.loopLength;
+    if (maxD > cap) maxD = cap;
+
+    while (this._cloudNextD < maxD) {
+      const d = this._cloudNextD;
+      this._cloudNextD += this._cloudSpacing + this._cloudSeededRandom() * 40;
+
+      const slot = this._cloudPool.find(c => !c.active);
+      if (!slot) break;
+
+      const side = this._cloudSeededRandom() > 0.5 ? 1 : -1;
+      const lateralDist = 15 + this._cloudSeededRandom() * 280; // 15-295 units from road
+      const lateralOffset = side * lateralDist;
+
+      const pt = this.roadPath.getPointAtDistance(d);
+      const fwdX = Math.sin(pt.heading);
+      const fwdZ = Math.cos(pt.heading);
+      const rightX = fwdZ;
+      const rightZ = -fwdX;
+
+      const worldX = pt.x + rightX * lateralOffset;
+      const worldZ = pt.z + rightZ * lateralOffset;
+      const baseY = CLOUD_MIN_Y + this._cloudSeededRandom() * (CLOUD_MAX_Y - CLOUD_MIN_Y);
+
+      slot.group.position.set(worldX, baseY, worldZ);
+      slot.group.visible = false;
+      slot.roadD = d;
+      slot.lateralOffset = lateralOffset;
+      slot.baseY = baseY;
+      slot.active = true;
+    }
+  }
+
+  _updateCloudVisibility(bikeD) {
+    const L = this.roadPath.loopLength;
+    for (const slot of this._cloudPool) {
+      if (!slot.active) continue;
+      let ahead = slot.roadD - bikeD;
+      if (ahead < -L / 2) ahead += L;
+      if (ahead > L / 2) ahead -= L;
+      slot.group.visible = (ahead > -CLOUD_BEHIND && ahead < CLOUD_AHEAD);
+    }
+  }
+
+  _driftClouds(dt) {
+    const drift = CLOUD_DRIFT * dt;
+    for (const slot of this._cloudPool) {
+      if (!slot.active || !slot.group.visible) continue;
+      slot.group.position.x += drift;
+    }
+  }
+
+  // ── Hot air balloons ────────────────────────────────────
+
+  setBalloonColor(hexColor) {
+    // Remove old balloons
+    for (const b of this._balloons) this.scene.remove(b.group);
+    this._balloons = [];
+    this._balloonRngState = 53; // reset seed for determinism
+
+    const bikeColor = new THREE.Color(hexColor);
+    const white = new THREE.Color(0xffffff);
+    const BALLOON_COUNT = 3;
+    const stripeCount = 8; // vertical stripe panels
+
+    for (let i = 0; i < BALLOON_COUNT; i++) {
+      const group = new THREE.Group();
+
+      // ── Envelope (balloon) via LatheGeometry with striped materials ──
+      // Profile curve: teardrop/balloon shape
+      const pts = [];
+      const segs = 20;
+      for (let s = 0; s <= segs; s++) {
+        const t = s / segs;
+        const angle = t * Math.PI;
+        // Balloon profile: wider at top, tapering at bottom
+        let r = Math.sin(angle);
+        // Flatten the top slightly, taper the bottom
+        if (t < 0.15) r *= t / 0.15;            // neck opening
+        r *= 1.0 - 0.25 * Math.pow(t, 3);       // elongate bottom taper
+        const y = (1.0 - t) * 6;                 // 6 units tall
+        pts.push(new THREE.Vector2(r * 2.5, y)); // 2.5 radius at widest
+      }
+
+      const envelopeGeo = new THREE.LatheGeometry(pts, stripeCount);
+
+      // Assign material groups: alternating stripes
+      envelopeGeo.clearGroups();
+      const facesPerStripe = (segs) * 2; // triangles per stripe column
+      for (let s = 0; s < stripeCount; s++) {
+        envelopeGeo.addGroup(s * facesPerStripe * 3, facesPerStripe * 3, s % 2);
+      }
+
+      const matColor = new THREE.MeshBasicMaterial({ color: bikeColor, side: THREE.DoubleSide, fog: false });
+      const matWhite = new THREE.MeshBasicMaterial({ color: white, side: THREE.DoubleSide, fog: false });
+      const envelope = new THREE.Mesh(envelopeGeo, [matColor, matWhite]);
+      group.add(envelope);
+
+      // ── Basket ──
+      const basketGeo = new THREE.BoxGeometry(1.0, 0.7, 1.0);
+      const basketMat = new THREE.MeshBasicMaterial({ color: 0x8B5E3C, fog: false });
+      const basket = new THREE.Mesh(basketGeo, basketMat);
+      basket.position.y = -1.0;
+      group.add(basket);
+
+      // ── Ropes (4 lines from basket corners to envelope base) ──
+      const ropeMat = new THREE.LineBasicMaterial({ color: 0x665544 });
+      const ropeOffsets = [[0.4, 0.4], [-0.4, 0.4], [0.4, -0.4], [-0.4, -0.4]];
+      for (const [rx, rz] of ropeOffsets) {
+        const ropeGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(rx, -0.6, rz),
+          new THREE.Vector3(rx * 0.3, 0.3, rz * 0.3),
+        ]);
+        group.add(new THREE.Line(ropeGeo, ropeMat));
+      }
+
+      // Place in world — keep closer to road so they sit in front of clouds
+      const rng = this._balloonSeededRandom;
+      const roadD = 200 + rng() * (this.roadPath.loopLength - 400);
+      const side = rng() > 0.5 ? 1 : -1;
+      const lateralDist = 20 + rng() * 60; // 20-80: closer than most clouds (15-295)
+      const pt = this.roadPath.getPointAtDistance(roadD);
+      const rightX = Math.cos(pt.heading);
+      const rightZ = -Math.sin(pt.heading);
+      const worldX = pt.x + rightX * side * lateralDist;
+      const worldZ = pt.z + rightZ * side * lateralDist;
+      const baseY = 25 + rng() * 30; // Y 25-55: overlap with cloud range
+      const scale = 1.5 + rng() * 1.5; // 1.5-3x
+
+      group.position.set(worldX, baseY, worldZ);
+      group.scale.setScalar(scale);
+      group.visible = false;
+      this.scene.add(group);
+
+      this._balloons.push({
+        group,
+        roadD,
+        baseY,
+        bobPhase: rng() * Math.PI * 2,
+      });
+    }
+  }
+
+  _updateBalloons(bikeD) {
+    if (this._balloons.length === 0) return;
+    const L = this.roadPath.loopLength;
+    const t = performance.now() * 0.001;
+    for (const b of this._balloons) {
+      let ahead = b.roadD - bikeD;
+      if (ahead < -L / 2) ahead += L;
+      if (ahead > L / 2) ahead -= L;
+      b.group.visible = (ahead > -CLOUD_BEHIND && ahead < CLOUD_AHEAD);
+      if (b.group.visible) {
+        // Gentle bob
+        b.group.position.y = b.baseY + Math.sin(t * 0.4 + b.bobPhase) * 2;
+      }
+    }
+  }
+
+  // ── Ground deformation ────────────────────────────────────
 
   _deformGround(bikePos, bikeD) {
     // Floor is rotated -PI/2 on X, so geometry X = world X, geometry Y = world -Z
@@ -437,7 +687,7 @@ export class World {
     const headZ = bikePos.z + Math.cos(bikeHeading) * 2;
 
     for (const slot of this._treePool) {
-      if (!slot.active || !slot.trunk.visible) continue;
+      if (!slot.active || !slot.mesh.visible) continue;
 
       // Quick road-distance filter (wrap-aware)
       let dd = slot.roadD - bikeD;
@@ -445,8 +695,8 @@ export class World {
       if (dd > L / 2) dd -= L;
       if (Math.abs(dd) > 20) continue;
 
-      const tx = slot.trunk.position.x;
-      const tz = slot.trunk.position.z;
+      const tx = slot.mesh.position.x;
+      const tz = slot.mesh.position.z;
       const r = 0.6 * slot.scale;
 
       // Check bike center
@@ -529,11 +779,10 @@ export class World {
       const clearRadius = 5;
       for (const slot of this._treePool) {
         if (!slot.active) continue;
-        const dx = slot.trunk.position.x - bx;
-        const dz = slot.trunk.position.z - bz;
+        const dx = slot.mesh.position.x - bx;
+        const dz = slot.mesh.position.z - bz;
         if (dx * dx + dz * dz < clearRadius * clearRadius) {
-          slot.trunk.visible = false;
-          slot.canopy.visible = false;
+          slot.mesh.visible = false;
           slot.active = false;
         }
       }
@@ -726,7 +975,7 @@ export class World {
     }
   }
 
-  update(bikePos, bikeD) {
+  update(bikePos, bikeD, dt) {
     // Default bikeD from position if not provided (backward compat)
     if (bikeD === undefined) {
       bikeD = Math.max(0, bikePos.z);
@@ -743,6 +992,11 @@ export class World {
     // Trees
     this._updateTreeVisibility(bikeD);
     this._updateTreeHeights(bikeD);
+
+    // Clouds & balloons
+    this._updateCloudVisibility(bikeD);
+    if (dt) this._driftClouds(dt);
+    this._updateBalloons(bikeD);
 
     // Race markers
     if (this._raceMarkers.length > 0) {

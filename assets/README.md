@@ -1,3 +1,17 @@
+# Asset Attributions
+
+## 3D Models
+
+### Lowpoly Pine Tree
+
+- **Source:** https://skfb.ly/o6AIy
+- **Author:** Citron Legacy
+
+> "Lowpoly Pine Tree" (https://skfb.ly/o6AIy) by Citron Legacy is licensed under
+> Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
+
+---
+
 # Music Assets
 
 All music tracks by [Kevin MacLeod](https://incompetech.com) are licensed under

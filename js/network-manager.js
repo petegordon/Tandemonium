@@ -435,8 +435,10 @@ export class NetworkManager {
     // to avoid async getUserMedia delay that causes call timeouts on mobile
     if (this._localMediaStream) {
       call.answer(this._localMediaStream);
+      this._answeredWithoutMedia = false;
     } else {
       call.answer();
+      this._answeredWithoutMedia = true;
     }
 
     call.on('stream', (remoteStream) => {
