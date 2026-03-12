@@ -540,7 +540,14 @@ class Game {
     this.net.onConnected = () => {
       this._hideReconnecting();
       document.getElementById('disconnect-overlay').style.display = 'none';
-      // Re-establish media call after data reconnection
+      // Re-establish media call after data reconnection (only if P2P is already up)
+      if (this.mode === 'captain' && this.net._localMediaStream && this.net.transport === 'p2p') {
+        this._initiateMediaCall();
+      }
+    };
+
+    // P2P upgrade: initiate media call now that PeerJS data channel is available
+    this.net.onP2PUpgrade = () => {
       if (this.mode === 'captain' && this.net._localMediaStream) {
         this._initiateMediaCall();
       }

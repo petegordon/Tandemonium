@@ -34,6 +34,7 @@ export class NetworkManager {
     this.onRemoteStream = null;
     this.onProfileReceived = null;
     this.onRoomJoined = null; // fires when relay WebSocket opens (room entered, waiting for partner)
+    this.onP2PUpgrade = null; // fires when P2P transport is established (for media calls)
     this.cameraEnabled = true; // set false to suppress local camera in calls
     this.audioEnabled = false; // set true to include microphone in calls
     this._mediaCall = null;
@@ -562,6 +563,8 @@ export class NetworkManager {
       console.log('NET: Upgraded to P2P transport');
       // Start relay keepalive to keep it as hot standby
       this._startRelayKeepalive();
+      // Notify listeners (game.js uses this to start media calls)
+      if (this.onP2PUpgrade) this.onP2PUpgrade();
     });
 
     conn.on('data', (data) => {
