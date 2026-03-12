@@ -2469,9 +2469,11 @@
       padding-top: calc(14 * var(--ls));
       margin-bottom: 0;
       height: calc(150 * var(--ls));
+      max-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
+      overflow: hidden;
     }
     .lobby-card.carousel-hidden {
       grid-row: 1 / -1;
@@ -2480,9 +2482,10 @@
       position: relative;
       z-index: 1;
       height: auto;
-      max-height: none;
+      max-height: 100vh;
       padding-left: 0;
       padding-right: 0;
+      overflow: hidden;
       /* Switch to grid: toggles + center + toggles, with full-span rows below */
       display: grid;
       grid-template-columns: auto 1fr auto;
@@ -2534,6 +2537,7 @@
     .lobby-layout {
       flex: 1;
       min-height: 0;
+      overflow: hidden;
     }
 
     /* ── Scaled lobby elements (20% smaller than before) ── */
@@ -2545,7 +2549,7 @@
       white-space: nowrap;
       min-width: calc(140 * var(--ls));
     }
-    .lobby-step { gap: calc(6 * var(--ls)); align-items: stretch; width: 100%; }
+    .lobby-step { gap: calc(6 * var(--ls)); align-items: stretch; width: 100%; min-height: 0; overflow: hidden; }
     .lobby-steps-col {
       width: calc(140 * var(--ls));
       min-width: calc(140 * var(--ls));
@@ -2592,7 +2596,8 @@
 
     #lobby-role .lobby-prompt,
     #lobby-host .lobby-prompt,
-    #lobby-join .lobby-prompt { display: none; }
+    #lobby-join .lobby-prompt,
+    #lobby-room-levels .lobby-prompt { display: none; }
 
     /* Host step: compact room info */
     #lobby-host .room-url { display: none; }
@@ -2628,16 +2633,20 @@
     /* Level cards */
     .level-cards {
       max-width: none;
-      gap: calc(12 * var(--ls));
+      gap: calc(8 * var(--ls));
       flex-direction: row;
       justify-content: center;
       flex-wrap: wrap;
+      min-height: 0;
+      flex-shrink: 1;
     }
     .level-card {
-      padding: calc(12 * var(--ls)) calc(14 * var(--ls));
+      padding: calc(10 * var(--ls)) calc(14 * var(--ls));
       border-radius: calc(12 * var(--ls));
       flex: 1 1 calc(100 * var(--ls));
       min-width: calc(90 * var(--ls));
+      min-height: 0;
+      overflow: hidden;
     }
     .level-card-top { gap: calc(8 * var(--ls)); margin-bottom: calc(4 * var(--ls)); }
     .level-card-icon { font-size: calc(28 * var(--ls)); }
@@ -3269,7 +3278,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.340737f | 03-12-2026 05:59</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.b26bc78 | 03-12-2026 06:08</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">

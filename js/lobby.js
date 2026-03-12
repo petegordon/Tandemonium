@@ -691,8 +691,7 @@ export class Lobby {
             '<span class="level-card-icon">' + level.icon + '</span>' +
             '<span class="level-card-name">' + level.name + demoTag + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">' + level.description + '</div>' +
-          '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
+          '<div class="level-card-desc">' + level.description + '</div>';
         card.addEventListener('click', () => {
           this.selectedLevel = level;
           if (this._pendingMode === 'solo') {
@@ -2255,8 +2254,7 @@ export class Lobby {
             '<span class="level-card-icon">' + level.icon + '</span>' +
             '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">' + level.description + '</div>' +
-          '<div class="level-card-distance">' + (level.distance >= 1000 ? (level.distance / 1000) + ' km' : level.distance + ' m') + '</div>';
+          '<div class="level-card-desc">' + level.description + '</div>';
         if (isClickable) {
           card.addEventListener('click', () => {
             this.selectedLevel = level;
