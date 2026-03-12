@@ -107,6 +107,21 @@ export class AuthManager {
     google.accounts.id.prompt();
   }
 
+  // Clear server JWT token only (keeps user profile for re-auth)
+  clearToken() {
+    this.token = null;
+    try { localStorage.removeItem(STORAGE_TOKEN); } catch (e) {}
+  }
+
+  // Force a fresh Google sign-in to get a new server JWT
+  refreshLogin() {
+    this.clearToken();
+    if (typeof google !== 'undefined' && google.accounts) {
+      google.accounts.id.disableAutoSelect();
+      google.accounts.id.prompt();
+    }
+  }
+
   logout() {
     this.user = null;
     this.token = null;

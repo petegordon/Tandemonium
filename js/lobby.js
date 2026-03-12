@@ -815,6 +815,12 @@ export class Lobby {
         this._lastFailedCode = code;
         this._joinRoom(code);
       }
+
+      // Resume room creation after auth refresh
+      if (this._pendingCreateRoom) {
+        this._pendingCreateRoom = false;
+        this._createRoom();
+      }
     });
 
     // Logout: sync achievements to server, then clear local state
@@ -1866,7 +1872,16 @@ export class Lobby {
 
     // Fetch relay auth token before connecting
     const relayToken = await this.auth.getRelayToken(code, 'captain');
-    if (relayToken) this.net._relayToken = relayToken;
+    if (relayToken) {
+      this.net._relayToken = relayToken;
+    } else {
+      // Token fetch failed — clear stale auth and re-login
+      statusEl.textContent = 'Sign-in required...';
+      statusEl.className = 'conn-status';
+      this.auth.refreshLogin();
+      this._pendingCreateRoom = true;
+      return;
+    }
 
     this.net.onRoomJoined = () => {
       codeEl.textContent = code;
@@ -1928,6 +1943,15 @@ export class Lobby {
       statusEl.className = 'conn-status error';
     };
 
+    // Auth error: token was rejected by relay — clear and re-login
+    this.net.onAuthError = () => {
+      console.warn('LOBBY: Relay auth failed for captain — refreshing login');
+      statusEl.textContent = 'Session expired, signing in...';
+      statusEl.className = 'conn-status';
+      this.auth.refreshLogin();
+      this._pendingCreateRoom = true;
+    };
+
     this.net.enterRoom(code, 'captain');
   }
 
@@ -1943,7 +1967,16 @@ export class Lobby {
 
     // Fetch relay auth token before connecting
     const relayToken = await this.auth.getRelayToken(code, 'stoker');
-    if (relayToken) this.net._relayToken = relayToken;
+    if (relayToken) {
+      this.net._relayToken = relayToken;
+    } else {
+      // Token fetch failed — clear stale auth and re-login
+      statusEl.textContent = 'Sign-in required...';
+      statusEl.className = 'conn-status';
+      this.auth.refreshLogin();
+      this._pendingAutoJoinCode = code;
+      return;
+    }
 
     this.net.onRoomJoined = () => {
       statusEl.textContent = 'Waiting for captain...';
@@ -1972,6 +2005,25 @@ export class Lobby {
       }
       if (this._currentStep === this.joinStep) {
         this._lastFailedCode = code;
+      }
+    };
+
+    // Auth error: token was rejected by relay — clear and re-login
+    this.net.onAuthError = async () => {
+      console.warn('LOBBY: Relay auth failed for stoker — attempting token refresh');
+      statusEl.textContent = 'Session expired, retrying...';
+      statusEl.className = 'conn-status';
+
+      // Try getting a fresh token first (in case server JWT is still valid)
+      const freshToken = await this.auth.getRelayToken(code, 'stoker');
+      if (freshToken) {
+        statusEl.textContent = 'Reconnecting...';
+        this.net.retryWithToken(freshToken);
+      } else {
+        // Server JWT is also bad — need full re-login
+        statusEl.textContent = 'Sign-in required...';
+        this.auth.refreshLogin();
+        this._pendingAutoJoinCode = code;
       }
     };
 
