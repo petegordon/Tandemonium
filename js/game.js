@@ -1043,6 +1043,11 @@ class Game {
     this._stokerWasFallen = false;
     this._remoteFinishStats = null;
 
+    // Clear TOO SLOW overlay if stuck
+    const flash = document.getElementById('timeout-flash');
+    if (flash) flash.classList.remove('visible');
+    this._stokerTimeoutShown = false;
+
     if (this.mode === 'solo') {
       this.pedalCtrl = new PedalController(this.input);
     } else if (this.sharedPedal) {
