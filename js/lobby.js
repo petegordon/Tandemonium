@@ -527,28 +527,6 @@ export class Lobby {
         }
         return;
       }
-      // Ensure user is logged in before creating a room (freeplay users may not be)
-      if (!this.auth.isLoggedIn()) {
-        this._pendingCreateRoom = true;
-        this.auth.login();
-        return;
-      }
-      // Logged in but missing server token — retry exchange before prompting login again
-      if (!this.auth.token) {
-        this._showStep(this.hostStep);
-        const statusEl = document.getElementById('host-status');
-        statusEl.textContent = 'Authenticating...';
-        statusEl.className = 'conn-status';
-        const ok = await this.auth.retryTokenExchange();
-        if (!ok) {
-          // Retry failed — try a full re-login once
-          statusEl.textContent = this.auth.lastAuthError || 'Authentication failed — tap to retry';
-          statusEl.className = 'conn-status error';
-          this._pendingCreateRoom = true;
-          this.auth.refreshLogin();
-          return;
-        }
-      }
       this._showStep(this.hostStep);
       this._createRoom();
     });
@@ -1901,19 +1879,9 @@ export class Lobby {
 
     const code = this.net.generateRoomCode();
 
-    // Fetch relay auth token before connecting
+    // Fetch relay auth token if logged in (optional — relay allows unauthenticated)
     const relayToken = await this.auth.getRelayToken(code, 'captain');
-    if (relayToken) {
-      this.net._relayToken = relayToken;
-    } else {
-      // Show what actually went wrong
-      const reason = !this.auth.token
-        ? (this.auth.lastAuthError || 'Not signed in')
-        : 'Relay token unavailable';
-      statusEl.textContent = reason + ' — please reload and try again';
-      statusEl.className = 'conn-status error';
-      return;
-    }
+    if (relayToken) this.net._relayToken = relayToken;
 
     this.net.onRoomJoined = () => {
       codeEl.textContent = code;
@@ -1997,19 +1965,9 @@ export class Lobby {
     statusEl.textContent = 'Connecting...';
     statusEl.className = 'conn-status';
 
-    // Fetch relay auth token before connecting
+    // Fetch relay auth token if logged in (optional — relay allows unauthenticated)
     const relayToken = await this.auth.getRelayToken(code, 'stoker');
-    if (relayToken) {
-      this.net._relayToken = relayToken;
-    } else {
-      // Show what actually went wrong
-      const reason = !this.auth.token
-        ? (this.auth.lastAuthError || 'Not signed in')
-        : 'Relay token unavailable';
-      statusEl.textContent = reason + ' — please reload and try again';
-      statusEl.className = 'conn-status error';
-      return;
-    }
+    if (relayToken) this.net._relayToken = relayToken;
 
     this.net.onRoomJoined = () => {
       statusEl.textContent = 'Waiting for captain...';

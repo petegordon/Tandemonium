@@ -17,12 +17,9 @@ export class TandemRoom {
             return new Response('Invalid role', { status: 400 });
         }
 
-        // Verify relay token if RELAY_SECRET is configured
-        if (this.env.RELAY_SECRET) {
-            const token = url.searchParams.get('token');
-            if (!token) {
-                return new Response('Missing relay token', { status: 401 });
-            }
+        // Verify relay token if provided (optional — unauthenticated connections allowed)
+        const token = url.searchParams.get('token');
+        if (token && this.env.RELAY_SECRET) {
             try {
                 const payload = await verifyJWT(token, this.env.RELAY_SECRET);
                 const room = url.searchParams.get('room') || this.state.id.toString();
@@ -30,7 +27,8 @@ export class TandemRoom {
                     return new Response('Token mismatch', { status: 403 });
                 }
             } catch (e) {
-                return new Response('Invalid relay token', { status: 401 });
+                // Invalid token — allow connection anyway (don't block gameplay)
+                console.warn('Relay: invalid token, allowing unauthenticated connection');
             }
         }
 
