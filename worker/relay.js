@@ -1,5 +1,5 @@
 // Tandemonium WebSocket Relay — Cloudflare Worker + Durable Object
-// Fallback transport for when WebRTC P2P fails (~20% of connections)
+// Primary relay transport
 // Deploy: wrangler deploy
 
 const ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -37,6 +37,12 @@ export class TandemRoom {
         const pair = new WebSocketPair();
         const [client, server] = Object.values(pair);
 
+        // Close stale sockets for same role (reconnection dedup)
+        const existing = this.state.getWebSockets(role);
+        for (const sock of existing) {
+            try { sock.close(1000, 'replaced'); } catch (e) {}
+        }
+
         this.state.acceptWebSocket(server, [role]);
 
         // Reset room TTL on new connection
@@ -60,6 +66,9 @@ export class TandemRoom {
             for (const sock of partnerReady) {
                 try { sock.send(readyMsg); } catch (e) { /* closed */ }
             }
+        } else {
+            // No partner yet — confirm room is valid
+            try { server.send(JSON.stringify({ type: 'waiting' })); } catch (e) {}
         }
 
         return new Response(null, { status: 101, webSocket: client });

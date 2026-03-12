@@ -1829,6 +1829,7 @@ class Game {
     this.recorder.clearPartnerStream();
     updateBadgeDisplay('partner-badges', []);
     if (this.net) { this.net.destroy(); this.net = null; }
+    try { localStorage.removeItem('tandemonium-room'); } catch (e) {}
     this.mode = 'solo';
     this._lobbyBtn.textContent = 'LOBBY';
     this.sharedPedal = null;
