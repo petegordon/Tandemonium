@@ -989,7 +989,10 @@ export class Lobby {
       this._applyVideoTrackState(false);
       // Notify partner to show avatar
       if (this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'cameraToggle', enabled: false });
+        const msg = { type: 'cameraToggle', enabled: false };
+        const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+        if (user && user.avatar) msg.avatar = user.avatar;
+        this.net.sendProfile(msg);
       }
       return;
     }
@@ -2392,8 +2395,11 @@ export class Lobby {
       } else {
         // Partner turned camera off — show avatar
         if (partnerVideo) partnerVideo.style.display = 'none';
-        if (partnerAvatar && this._partnerAvatarUrl) {
-          partnerAvatar.src = this._partnerAvatarUrl;
+        // Use avatar from message, fall back to cached
+        const avatarUrl = profile.avatar || this._partnerAvatarUrl;
+        if (avatarUrl) this._partnerAvatarUrl = avatarUrl;
+        if (partnerAvatar && avatarUrl) {
+          partnerAvatar.src = this._avatarCache.get(avatarUrl) || avatarUrl;
           partnerAvatar.style.display = 'block';
         }
       }
