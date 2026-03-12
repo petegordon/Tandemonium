@@ -35,6 +35,7 @@ export class NetworkManager {
     this.onProfileReceived = null;
     this.onRoomJoined = null; // fires when relay WebSocket opens (room entered, waiting for partner)
     this.onP2PUpgrade = null; // fires when P2P transport is established (for media calls)
+    this.onAuthError = null; // fires when relay rejects connection (401/403 auth failure)
     this.cameraEnabled = true; // set false to suppress local camera in calls
     this.audioEnabled = false; // set true to include microphone in calls
     this._mediaCall = null;
@@ -53,6 +54,7 @@ export class NetworkManager {
     this._enterRoomCallback = null;
     this._relayReconnectAttempts = 0;
     this._relayKeepaliveInterval = null;
+    this._relayDidOpen = false; // tracks if relay WS ever opened (false = auth rejection)
     this._p2pUpgradeTimeout = null;
     this._p2pUpgradeRetryTimeout = null;
 
@@ -446,12 +448,15 @@ export class NetworkManager {
   _connectRelay() {
     if (!this._fallbackUrl) return;
     this._relayPartnerReady = false;
+    this._relayDidOpen = false;
     let url = this._fallbackUrl + '?room=' + this.roomCode + '&role=' + this.role;
     if (this._relayToken) url += '&token=' + encodeURIComponent(this._relayToken);
     this._relayWs = new WebSocket(url);
 
     this._relayWs.binaryType = 'arraybuffer';
     this._relayWs.onopen = () => {
+      this._relayDidOpen = true;
+      this._relayReconnectAttempts = 0;
       this.transport = 'relay';
 
       // Room joined — notify caller
@@ -468,6 +473,19 @@ export class NetworkManager {
       console.warn('NET: Relay WebSocket error:', err);
     };
     this._relayWs.onclose = () => {
+      // If WebSocket never opened, the relay rejected the connection (401/403)
+      if (!this._relayDidOpen) {
+        console.warn('NET: Relay rejected connection (likely auth error — missing or invalid token)');
+        // Fire auth error callback instead of futile reconnect loop
+        if (this.onAuthError) {
+          this.onAuthError();
+        } else {
+          // No auth error handler — surface as disconnect with clear message
+          if (this.onDisconnected) this.onDisconnected('Authentication failed');
+        }
+        return;
+      }
+
       // If P2P is active, reconnect relay in background as hot standby
       if (this.transport === 'p2p' && this.connected) {
         this._reconnectRelayBackground();
@@ -490,6 +508,14 @@ export class NetworkManager {
         }
       }
     };
+  }
+
+  // Retry relay connection with a fresh token
+  retryWithToken(token) {
+    this._relayToken = token;
+    this._relayReconnectAttempts = 0;
+    if (this._relayWs) { try { this._relayWs.close(); } catch (e) {} this._relayWs = null; }
+    this._connectRelay();
   }
 
   _reconnectRelayBackground() {
