@@ -527,6 +527,12 @@ export class Lobby {
         }
         return;
       }
+      // Ensure user is logged in before creating a room (freeplay users may not be)
+      if (!this.auth.isLoggedIn() || !this.auth.token) {
+        this._pendingCreateRoom = true;
+        this.auth.login();
+        return;
+      }
       this._showStep(this.hostStep);
       this._createRoom();
     });
@@ -816,9 +822,10 @@ export class Lobby {
         this._joinRoom(code);
       }
 
-      // Resume room creation after auth refresh
+      // Resume room creation after login / auth refresh
       if (this._pendingCreateRoom) {
         this._pendingCreateRoom = false;
+        this._showStep(this.hostStep);
         this._createRoom();
       }
     });
@@ -1874,12 +1881,21 @@ export class Lobby {
     const relayToken = await this.auth.getRelayToken(code, 'captain');
     if (relayToken) {
       this.net._relayToken = relayToken;
-    } else {
-      // Token fetch failed — clear stale auth and re-login
+      this._authRetries = 0;
+    } else if (!this._authRetries) {
+      // First failure — clear stale auth and re-login
+      this._authRetries = 1;
       statusEl.textContent = 'Sign-in required...';
       statusEl.className = 'conn-status';
       this.auth.refreshLogin();
       this._pendingCreateRoom = true;
+      return;
+    } else {
+      // Already retried — show error instead of looping
+      this._authRetries = 0;
+      statusEl.textContent = 'Unable to authenticate — please reload';
+      statusEl.className = 'conn-status error';
+      console.error('LOBBY: Relay token fetch failed after re-login. auth.token:', !!this.auth.token);
       return;
     }
 
@@ -1969,12 +1985,21 @@ export class Lobby {
     const relayToken = await this.auth.getRelayToken(code, 'stoker');
     if (relayToken) {
       this.net._relayToken = relayToken;
-    } else {
-      // Token fetch failed — clear stale auth and re-login
+      this._authRetries = 0;
+    } else if (!this._authRetries) {
+      // First failure — clear stale auth and re-login
+      this._authRetries = 1;
       statusEl.textContent = 'Sign-in required...';
       statusEl.className = 'conn-status';
       this.auth.refreshLogin();
       this._pendingAutoJoinCode = code;
+      return;
+    } else {
+      // Already retried — show error instead of looping
+      this._authRetries = 0;
+      statusEl.textContent = 'Unable to authenticate — please reload';
+      statusEl.className = 'conn-status error';
+      console.error('LOBBY: Relay token fetch failed after re-login. auth.token:', !!this.auth.token);
       return;
     }
 
