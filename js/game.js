@@ -541,14 +541,14 @@ class Game {
       this._hideReconnecting();
       document.getElementById('disconnect-overlay').style.display = 'none';
       // Re-establish media call after data reconnection (only if P2P is already up)
-      if (this.mode === 'captain' && this.net._localMediaStream && this.net.transport === 'p2p') {
+      if (this.mode === 'captain' && this.net.transport === 'p2p') {
         this._initiateMediaCall();
       }
     };
 
     // P2P upgrade: initiate media call now that PeerJS data channel is available
     this.net.onP2PUpgrade = () => {
-      if (this.mode === 'captain' && this.net._localMediaStream) {
+      if (this.mode === 'captain') {
         this._initiateMediaCall();
       }
     };
@@ -633,6 +633,9 @@ class Game {
       this._acquireLocalMedia().then(() => {
         if (mode === 'captain') this._initiateMediaCall();
       });
+    } else if (mode === 'captain') {
+      // Even without local media, initiate call so we can receive partner's stream
+      this._initiateMediaCall();
     }
 
     // Show partner avatar immediately if their camera is known to be off
@@ -1983,8 +1986,7 @@ class Game {
 
   _initiateMediaCall() {
     if (!this.net || !this.net.peer) return;
-    const localStream = this.net._localMediaStream;
-    if (!localStream) return;
+    const localStream = this.net._localMediaStream || new MediaStream();
     const remotePeerId = this.net.conn && this.net.conn.peer;
     if (!remotePeerId) return;
     clearTimeout(this._mediaRetryTimeout);
@@ -1994,7 +1996,7 @@ class Game {
         clearTimeout(this._mediaRetryTimeout);
         this.recorder.setPartnerStream(remoteStream);
         this.net._playRemoteAudio(remoteStream);
-        this.recorder.addAudioStreams(localStream, remoteStream);
+        this.recorder.addAudioStreams(this.net._localMediaStream || null, remoteStream);
       });
       // Retry once if partner stream doesn't arrive within 3s
       this._mediaRetryTimeout = setTimeout(() => {

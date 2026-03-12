@@ -633,8 +633,7 @@ export class NetworkManager {
 
   initiateCall() {
     if (!this.peer || !this.conn) return;
-    const localStream = this._localMediaStream;
-    if (!localStream) return;
+    const localStream = this._localMediaStream || new MediaStream();
     const remotePeerId = this.conn.peer;
     if (!remotePeerId) return;
     const call = this.peer.call(remotePeerId, localStream);
