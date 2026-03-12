@@ -430,7 +430,7 @@ export class Lobby {
 
     // Show shared difficulty selector on level and room steps (captain only for room)
     const diffSel = document.getElementById('difficulty-selector');
-    const showDiff = (step === this.levelStep) || (step === this.roomLevelsStep && !this._roomHideDifficulty);
+    const showDiff = (step === this.levelStep) || (step === this.roomLevelsStep);
     if (diffSel) diffSel.style.display = showDiff ? '' : 'none';
 
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
@@ -563,6 +563,7 @@ export class Lobby {
       if (this._roomRole !== 'captain') return;
       if (this.net && this.net.connected) {
         this.net.sendProfile({ type: 'playGame' });
+        this.net.sendProfile({ type: 'difficultySync', difficulty: this.selectedDifficulty });
       }
       this._showRoomLevelsStep();
     });
@@ -735,6 +736,10 @@ export class Lobby {
           document.querySelectorAll('.difficulty-btn[data-difficulty="' + btn.dataset.difficulty + '"]')
             .forEach(b => b.classList.add('selected'));
           this.selectedDifficulty = btn.dataset.difficulty;
+          // Sync difficulty to partner in multiplayer
+          if (this.net && this.net.connected) {
+            this.net.sendProfile({ type: 'difficultySync', difficulty: btn.dataset.difficulty });
+          }
         });
       });
     });
@@ -2211,8 +2216,14 @@ export class Lobby {
 
     // Build level cards BEFORE _showStep so _stepItems is populated
     this._buildRoomLevelCards(role === 'captain');
-    // Only captain picks difficulty
-    this._roomHideDifficulty = (role !== 'captain');
+
+    // Stoker can see difficulty but not interact
+    const diffSel = document.getElementById('difficulty-selector');
+    if (diffSel) {
+      diffSel.style.opacity = (role === 'captain') ? '' : '0.7';
+      diffSel.style.pointerEvents = (role === 'captain') ? '' : 'none';
+    }
+
     this._showStep(this.roomLevelsStep);
   }
 
@@ -2464,6 +2475,12 @@ export class Lobby {
           partnerAvatar.style.display = 'block';
         }
       }
+    } else if (profile.type === 'difficultySync') {
+      // Stoker: update difficulty selection to match captain's choice
+      this.selectedDifficulty = profile.difficulty;
+      document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
+      document.querySelectorAll('.difficulty-btn[data-difficulty="' + profile.difficulty + '"]')
+        .forEach(b => b.classList.add('selected'));
     } else if (profile.type === 'playGame') {
       // Stoker: captain clicked PLAY GAME → go to levels step
       this._showRoomLevelsStep();
