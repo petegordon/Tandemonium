@@ -2131,6 +2131,7 @@ export class Lobby {
 
   _showRoomStep(role) {
     this._roomRole = role;
+    this._partnerCameraOn = true; // assume on until cameraToggle received
 
     const roomCodeLabel = document.getElementById('room-code-label');
     if (roomCodeLabel && this.net && this.net.roomCode) {
@@ -2302,6 +2303,26 @@ export class Lobby {
     this._stepBack.set(this.roomLevelsStep, document.getElementById('btn-back-room-levels'));
   }
 
+  _updatePartnerPip() {
+    const partnerVideo = document.getElementById('partner-pip');
+    const partnerAvatar = document.getElementById('partner-pip-avatar');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    if (!partnerWrap) return;
+
+    if (this._partnerCameraOn && partnerVideo && partnerVideo.srcObject) {
+      partnerVideo.style.display = 'block';
+      partnerVideo.play().catch(() => {});
+      if (partnerAvatar) partnerAvatar.style.display = 'none';
+    } else {
+      if (partnerVideo) partnerVideo.style.display = 'none';
+      if (partnerAvatar && this._partnerAvatarUrl) {
+        partnerAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
+        partnerAvatar.style.display = 'block';
+      }
+    }
+    partnerWrap.style.display = 'block';
+  }
+
   async _startRoomMedia() {
     if (!this.net) return;
 
@@ -2310,34 +2331,14 @@ export class Lobby {
     // gets its stream rendered in the partner PiP.
     this.net.onRemoteStream = (remoteStream) => {
       const partnerVideo = document.getElementById('partner-pip');
-      const partnerWrap = document.getElementById('partner-pip-wrap');
       if (partnerVideo && remoteStream) {
         partnerVideo.srcObject = remoteStream;
-        partnerVideo.play().catch(() => {});
-        if (partnerWrap) partnerWrap.style.display = 'block';
+        this._updatePartnerPip();
 
+        // Track may start muted; re-evaluate when it unmutes
         const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        if (remoteVideoTrack) {
-          // Track may start muted; listen for unmute to show video
-          const showVideo = () => {
-            if (remoteVideoTrack.enabled) {
-              partnerVideo.style.display = 'block';
-              const partnerAvatar = document.getElementById('partner-pip-avatar');
-              if (partnerAvatar) partnerAvatar.style.display = 'none';
-            }
-          };
-          if (!remoteVideoTrack.muted && remoteVideoTrack.enabled) {
-            showVideo();
-          } else {
-            // Show avatar while waiting for video to unmute
-            partnerVideo.style.display = 'none';
-            const partnerAvatar = document.getElementById('partner-pip-avatar');
-            if (partnerAvatar && this._partnerAvatarUrl) {
-              partnerAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
-              partnerAvatar.style.display = 'block';
-            }
-            remoteVideoTrack.addEventListener('unmute', showVideo, { once: true });
-          }
+        if (remoteVideoTrack && remoteVideoTrack.muted) {
+          remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
         }
       }
     };
@@ -2434,16 +2435,8 @@ export class Lobby {
       if (profile && profile.avatar) {
         this._partnerAvatarUrl = this._avatarCache.get(profile.avatar) || profile.avatar;
       }
-      // Show partner avatar if no video stream active
-      const partnerVideo = document.getElementById('partner-pip');
-      const partnerAvatar = document.getElementById('partner-pip-avatar');
-      const partnerWrap = document.getElementById('partner-pip-wrap');
-      if (this._partnerAvatarUrl && partnerAvatar && partnerWrap && (!partnerVideo || !partnerVideo.srcObject)) {
-        partnerAvatar.src = this._partnerAvatarUrl;
-        partnerAvatar.style.display = 'block';
-        if (partnerVideo) partnerVideo.style.display = 'none';
-        partnerWrap.style.display = 'block';
-      }
+      // Refresh partner PiP (avatar may have just arrived)
+      this._updatePartnerPip();
       // Render partner achievement badges
       if (profile && profile.achievements) {
         updateBadgeDisplay('partner-badges', profile.achievements);
@@ -2461,27 +2454,13 @@ export class Lobby {
         c.classList.toggle('selected', c.dataset.levelId === profile.levelId);
       });
     } else if (profile.type === 'cameraToggle') {
-      // Partner toggled their camera — swap between video and avatar
-      const partnerVideo = document.getElementById('partner-pip');
-      const partnerAvatar = document.getElementById('partner-pip-avatar');
-      if (profile.enabled) {
-        // Partner turned camera on — show video (stream will arrive via media call)
-        if (partnerVideo && partnerVideo.srcObject) {
-          partnerVideo.style.display = 'block';
-          partnerVideo.play().catch(() => {});
-        }
-        if (partnerAvatar) partnerAvatar.style.display = 'none';
-      } else {
-        // Partner turned camera off — show avatar
-        if (partnerVideo) partnerVideo.style.display = 'none';
-        // Use avatar from message, fall back to cached
+      // Partner toggled their camera — update state and refresh PiP
+      this._partnerCameraOn = !!profile.enabled;
+      if (!profile.enabled) {
         const avatarUrl = profile.avatar || this._partnerAvatarUrl;
         if (avatarUrl) this._partnerAvatarUrl = avatarUrl;
-        if (partnerAvatar && avatarUrl) {
-          partnerAvatar.src = this._avatarCache.get(avatarUrl) || avatarUrl;
-          partnerAvatar.style.display = 'block';
-        }
       }
+      this._updatePartnerPip();
     } else if (profile.type === 'difficultySync') {
       // Stoker: update difficulty selection to match captain's choice
       this.selectedDifficulty = profile.difficulty;
@@ -2615,32 +2594,13 @@ export class Lobby {
     // (game.js replaces this with its own handler during gameplay)
     this.net.onRemoteStream = (remoteStream) => {
       const pVideo = document.getElementById('partner-pip');
-      const pWrap = document.getElementById('partner-pip-wrap');
       if (pVideo && remoteStream) {
         pVideo.srcObject = remoteStream;
-        pVideo.play().catch(() => {});
-        if (pWrap) pWrap.style.display = 'block';
+        this._updatePartnerPip();
 
         const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        if (remoteVideoTrack) {
-          const showVideo = () => {
-            if (remoteVideoTrack.enabled) {
-              pVideo.style.display = 'block';
-              const pAvatar = document.getElementById('partner-pip-avatar');
-              if (pAvatar) pAvatar.style.display = 'none';
-            }
-          };
-          if (!remoteVideoTrack.muted && remoteVideoTrack.enabled) {
-            showVideo();
-          } else {
-            pVideo.style.display = 'none';
-            const pAvatar = document.getElementById('partner-pip-avatar');
-            if (pAvatar && this._partnerAvatarUrl) {
-              pAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
-              pAvatar.style.display = 'block';
-            }
-            remoteVideoTrack.addEventListener('unmute', showVideo, { once: true });
-          }
+        if (remoteVideoTrack && remoteVideoTrack.muted) {
+          remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
         }
       }
     };
