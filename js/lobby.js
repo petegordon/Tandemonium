@@ -2313,23 +2313,32 @@ export class Lobby {
       const partnerWrap = document.getElementById('partner-pip-wrap');
       if (partnerVideo && remoteStream) {
         partnerVideo.srcObject = remoteStream;
-        // Check if remote video track is actually enabled
+        partnerVideo.play().catch(() => {});
+        if (partnerWrap) partnerWrap.style.display = 'block';
+
         const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        const hasActiveVideo = remoteVideoTrack && remoteVideoTrack.enabled && !remoteVideoTrack.muted;
-        const partnerAvatar = document.getElementById('partner-pip-avatar');
-        if (hasActiveVideo) {
-          partnerVideo.style.display = 'block';
-          partnerVideo.play().catch(() => {});
-          if (partnerAvatar) partnerAvatar.style.display = 'none';
-        } else {
-          partnerVideo.style.display = 'none';
-          // Show avatar fallback
-          if (partnerAvatar && this._partnerAvatarUrl) {
-            partnerAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
-            partnerAvatar.style.display = 'block';
+        if (remoteVideoTrack) {
+          // Track may start muted; listen for unmute to show video
+          const showVideo = () => {
+            if (remoteVideoTrack.enabled) {
+              partnerVideo.style.display = 'block';
+              const partnerAvatar = document.getElementById('partner-pip-avatar');
+              if (partnerAvatar) partnerAvatar.style.display = 'none';
+            }
+          };
+          if (!remoteVideoTrack.muted && remoteVideoTrack.enabled) {
+            showVideo();
+          } else {
+            // Show avatar while waiting for video to unmute
+            partnerVideo.style.display = 'none';
+            const partnerAvatar = document.getElementById('partner-pip-avatar');
+            if (partnerAvatar && this._partnerAvatarUrl) {
+              partnerAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
+              partnerAvatar.style.display = 'block';
+            }
+            remoteVideoTrack.addEventListener('unmute', showVideo, { once: true });
           }
         }
-        if (partnerWrap) partnerWrap.style.display = 'block';
       }
     };
 
@@ -2609,21 +2618,30 @@ export class Lobby {
       const pWrap = document.getElementById('partner-pip-wrap');
       if (pVideo && remoteStream) {
         pVideo.srcObject = remoteStream;
+        pVideo.play().catch(() => {});
+        if (pWrap) pWrap.style.display = 'block';
+
         const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        const hasActiveVideo = remoteVideoTrack && remoteVideoTrack.enabled && !remoteVideoTrack.muted;
-        const pAvatar = document.getElementById('partner-pip-avatar');
-        if (hasActiveVideo) {
-          pVideo.style.display = 'block';
-          pVideo.play().catch(() => {});
-          if (pAvatar) pAvatar.style.display = 'none';
-        } else {
-          pVideo.style.display = 'none';
-          if (pAvatar && this._partnerAvatarUrl) {
-            pAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
-            pAvatar.style.display = 'block';
+        if (remoteVideoTrack) {
+          const showVideo = () => {
+            if (remoteVideoTrack.enabled) {
+              pVideo.style.display = 'block';
+              const pAvatar = document.getElementById('partner-pip-avatar');
+              if (pAvatar) pAvatar.style.display = 'none';
+            }
+          };
+          if (!remoteVideoTrack.muted && remoteVideoTrack.enabled) {
+            showVideo();
+          } else {
+            pVideo.style.display = 'none';
+            const pAvatar = document.getElementById('partner-pip-avatar');
+            if (pAvatar && this._partnerAvatarUrl) {
+              pAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
+              pAvatar.style.display = 'block';
+            }
+            remoteVideoTrack.addEventListener('unmute', showVideo, { once: true });
           }
         }
-        if (pWrap) pWrap.style.display = 'block';
       }
     };
 
