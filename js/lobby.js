@@ -987,6 +987,10 @@ export class Lobby {
       this.cameraActive = false;
       this._setToggleActive('camera', false);
       this._applyVideoTrackState(false);
+      // Notify partner to show avatar
+      if (this.net && this.net.connected) {
+        this.net.sendProfile({ type: 'cameraToggle', enabled: false });
+      }
       return;
     }
     if (this._cameraPermitted) {
@@ -997,6 +1001,10 @@ export class Lobby {
         this._acquireAndShowCamera();
       } else {
         this._applyVideoTrackState(true);
+      }
+      // Notify partner to show video
+      if (this.net && this.net.connected) {
+        this.net.sendProfile({ type: 'cameraToggle', enabled: true });
       }
       return;
     }
@@ -1010,6 +1018,10 @@ export class Lobby {
         this._acquireAndShowCamera();
       } else {
         this._applyVideoTrackState(true);
+      }
+      // Notify partner to show video
+      if (this.net && this.net.connected) {
+        this.net.sendProfile({ type: 'cameraToggle', enabled: true });
       }
     }).catch((err) => {
       if (err && err.message === 'permission_timeout') this._showStaleOverlay();
@@ -2362,6 +2374,24 @@ export class Lobby {
       container.querySelectorAll('.level-card').forEach(c => {
         c.classList.toggle('selected', c.dataset.levelId === profile.levelId);
       });
+    } else if (profile.type === 'cameraToggle') {
+      // Partner toggled their camera — swap between video and avatar
+      const partnerVideo = document.getElementById('partner-pip');
+      const partnerAvatar = document.getElementById('partner-pip-avatar');
+      if (profile.enabled) {
+        // Partner turned camera on — show video (stream will arrive via media call)
+        if (partnerVideo && partnerVideo.srcObject) {
+          partnerVideo.style.display = 'block';
+          partnerVideo.play().catch(() => {});
+        }
+        if (partnerAvatar) partnerAvatar.style.display = 'none';
+      } else {
+        // Partner turned camera off — show avatar
+        if (partnerVideo) partnerVideo.style.display = 'none';
+        if (partnerAvatar && this.auth) {
+          partnerAvatar.style.display = 'block';
+        }
+      }
     } else if (profile.type === 'startRide') {
       // Stoker: captain started the ride
       this._transitionToGame();
