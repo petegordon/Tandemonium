@@ -2348,12 +2348,16 @@ export class Lobby {
       // Profile message (avatar, name, achievements)
       const partnerNameEl = document.getElementById('room-partner-name');
       if (partnerNameEl && profile && profile.name) partnerNameEl.textContent = profile.name;
+      // Cache partner avatar URL for camera toggle
+      if (profile && profile.avatar) {
+        this._partnerAvatarUrl = this._avatarCache.get(profile.avatar) || profile.avatar;
+      }
       // Show partner avatar if no video stream active
       const partnerVideo = document.getElementById('partner-pip');
       const partnerAvatar = document.getElementById('partner-pip-avatar');
       const partnerWrap = document.getElementById('partner-pip-wrap');
-      if (profile && profile.avatar && partnerAvatar && partnerWrap && (!partnerVideo || !partnerVideo.srcObject)) {
-        partnerAvatar.src = this._avatarCache.get(profile.avatar) || profile.avatar;
+      if (this._partnerAvatarUrl && partnerAvatar && partnerWrap && (!partnerVideo || !partnerVideo.srcObject)) {
+        partnerAvatar.src = this._partnerAvatarUrl;
         partnerAvatar.style.display = 'block';
         if (partnerVideo) partnerVideo.style.display = 'none';
         partnerWrap.style.display = 'block';
@@ -2388,7 +2392,8 @@ export class Lobby {
       } else {
         // Partner turned camera off — show avatar
         if (partnerVideo) partnerVideo.style.display = 'none';
-        if (partnerAvatar && this.auth) {
+        if (partnerAvatar && this._partnerAvatarUrl) {
+          partnerAvatar.src = this._partnerAvatarUrl;
           partnerAvatar.style.display = 'block';
         }
       }
