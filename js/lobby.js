@@ -2496,6 +2496,29 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
+    // Refresh selfie video from existing stream
+    const selfieVideo = document.getElementById('selfie-pip');
+    const selfieAvatar = document.getElementById('selfie-pip-avatar');
+    if (selfieVideo && this.net && this.net._localMediaStream) {
+      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
+      if (videoTrack) selfieVideo.srcObject = this.net._localMediaStream;
+      if (videoTrack && this.cameraActive) {
+        selfieVideo.style.display = 'block';
+        selfieVideo.play().catch(() => {});
+        if (selfieAvatar) selfieAvatar.style.display = 'none';
+      } else {
+        selfieVideo.style.display = 'none';
+        if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
+          const user = this.auth.getUser();
+          if (user && user.avatar) {
+            selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+            selfieAvatar.style.display = 'block';
+          }
+        }
+      }
+      if (selfieWrap) selfieWrap.style.display = 'block';
+    }
+
     // Re-register remote stream handler so partner video shows in room
     // (game.js replaces this with its own handler during gameplay)
     this.net.onRemoteStream = (remoteStream) => {
@@ -2518,6 +2541,22 @@ export class Lobby {
     if (this.net.connected) {
       this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
       this._sendRoomProfile();
+      // Notify partner of current camera state
+      const camMsg = { type: 'cameraToggle', enabled: this.cameraActive };
+      const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+      if (user && user.avatar) camMsg.avatar = user.avatar;
+      this.net.sendProfile(camMsg);
+    }
+
+    // Re-initiate media call to refresh video stream after returning from game
+    if (this.net.transport === 'p2p' && this.net._localMediaStream) {
+      this.net.initiateCall();
+    } else if (this.net._localMediaStream) {
+      const prevOnP2P = this.net.onP2PUpgrade;
+      this.net.onP2PUpgrade = () => {
+        this.net.initiateCall();
+        if (prevOnP2P) prevOnP2P();
+      };
     }
 
     // Re-register disconnect handler for room
