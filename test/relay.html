@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relay Test — Tandemonium</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    background: #1a1a2e;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 24px;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p.sub { font-size: 13px; color: rgba(255,255,255,0.5); margin-bottom: 24px; }
+  section { margin-bottom: 24px; }
+  h2 { font-size: 16px; margin-bottom: 8px; color: rgba(255,255,255,0.8); }
+  button {
+    background: #4a6cf7;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-right: 8px;
+    margin-bottom: 8px;
+  }
+  button:hover { background: #3b5de7; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.danger { background: #e74c3c; }
+  button.danger:hover { background: #c0392b; }
+  input {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+    width: 140px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    text-align: center;
+    margin-right: 8px;
+  }
+  input::placeholder { color: rgba(255,255,255,0.3); letter-spacing: 1px; }
+  #log {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.6;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .room-code {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: 3px;
+    color: #4a6cf7;
+    margin: 8px 0;
+  }
+  .status {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 8px 0;
+  }
+  .status.disconnected { background: rgba(231,76,60,0.2); color: #e74c3c; }
+  .status.connecting { background: rgba(243,156,18,0.2); color: #f39c12; }
+  .status.waiting { background: rgba(52,152,219,0.2); color: #3498db; }
+  .status.connected { background: rgba(46,204,113,0.2); color: #2ecc71; }
+  .msg-sent { color: #3498db; }
+  .msg-recv { color: #2ecc71; }
+  .msg-err { color: #e74c3c; }
+  .msg-info { color: #f39c12; }
+  .msg-sys { color: rgba(255,255,255,0.5); }
+  .ping-display { font-size: 13px; color: rgba(255,255,255,0.6); margin-left: 12px; }
+  a.back { color: rgba(255,255,255,0.5); font-size: 13px; text-decoration: none; }
+  a.back:hover { color: #fff; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <a class="back" href=".">&larr; Back to tests</a>
+  <h1>Relay Connection Test</h1>
+  <p class="sub">Test room creation and joining via the Cloudflare relay (no login required)</p>
+
+  <section>
+    <h2>Create Room (Captain)</h2>
+    <div class="row">
+      <button id="btn-create">Create Room</button>
+      <button id="btn-disconnect-host" class="danger" disabled>Disconnect</button>
+    </div>
+    <div id="host-room-code"></div>
+  </section>
+
+  <section>
+    <h2>Join Room (Stoker)</h2>
+    <div class="row">
+      <input id="join-code" type="text" placeholder="XXXX" maxlength="9" autocomplete="off" spellcheck="false">
+      <button id="btn-join">Join</button>
+      <button id="btn-disconnect-join" class="danger" disabled>Disconnect</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Status <span id="status" class="status disconnected">Disconnected</span><span id="ping" class="ping-display"></span></h2>
+    <div class="row">
+      <button id="btn-send" disabled>Send Test Message</button>
+      <button id="btn-clear">Clear Log</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <div id="log"></div>
+  </section>
+
+<script type="module">
+  import { RELAY_URL, MSG_HEARTBEAT } from '../js/config.js';
+
+  const logEl = document.getElementById('log');
+  const statusEl = document.getElementById('status');
+  const pingEl = document.getElementById('ping');
+  const btnCreate = document.getElementById('btn-create');
+  const btnJoin = document.getElementById('btn-join');
+  const btnSend = document.getElementById('btn-send');
+  const btnClear = document.getElementById('btn-clear');
+  const btnDisconnectHost = document.getElementById('btn-disconnect-host');
+  const btnDisconnectJoin = document.getElementById('btn-disconnect-join');
+  const joinCodeInput = document.getElementById('join-code');
+  const hostRoomCode = document.getElementById('host-room-code');
+
+  let ws = null;
+  let role = null;
+  let roomCode = null;
+  let heartbeatInterval = null;
+  let lastPingTime = 0;
+  let msgCount = 0;
+
+  function log(msg, cls = 'msg-sys') {
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false, fractionalSecondDigits: 1 });
+    logEl.innerHTML += `<span class="${cls}">[${time}] ${escapeHtml(msg)}</span>\n`;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = 'status ' + cls;
+  }
+
+  function generateRoomCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = 'TNDM-';
+    for (let i = 0; i < 4; i++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return code;
+  }
+
+  function connect(code, asRole) {
+    disconnect();
+    roomCode = code;
+    role = asRole;
+
+    const url = `${RELAY_URL}?room=${code}&role=${role}`;
+    log(`Connecting to relay as ${role}...`, 'msg-info');
+    log(`URL: ${url}`, 'msg-sys');
+    setStatus('Connecting...', 'connecting');
+
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      log(`WebSocket opened — relay accepted connection`, 'msg-info');
+      setStatus('Waiting for partner...', 'waiting');
+      startHeartbeat();
+      btnSend.disabled = false;
+      if (role === 'captain') {
+        btnDisconnectHost.disabled = false;
+      } else {
+        btnDisconnectJoin.disabled = false;
+      }
+    };
+
+    ws.onmessage = (e) => {
+      if (e.data instanceof ArrayBuffer) {
+        const bytes = new Uint8Array(e.data);
+        if (bytes[0] === MSG_HEARTBEAT) {
+          if (bytes.length >= 2 && bytes[1] === 0x01) {
+            const ping = (performance.now() - lastPingTime).toFixed(0);
+            pingEl.textContent = `${ping}ms`;
+          } else {
+            // Heartbeat ping from partner — send pong
+            try { ws.send(new Uint8Array([MSG_HEARTBEAT, 0x01])); } catch (_) {}
+          }
+          return;
+        }
+        msgCount++;
+        log(`Binary message received (${bytes.length} bytes, type=0x${bytes[0].toString(16).padStart(2,'0')}) [#${msgCount}]`, 'msg-recv');
+      } else {
+        try {
+          const parsed = JSON.parse(e.data);
+          if (parsed.type === 'partner-ready') {
+            log(`Partner connected! (${parsed.role})`, 'msg-recv');
+            setStatus('Connected', 'connected');
+          } else if (parsed.type === 'waiting') {
+            log(`Room confirmed — waiting for partner`, 'msg-recv');
+          } else if (parsed.type === 'disconnect') {
+            log(`Partner disconnected (${parsed.role})`, 'msg-err');
+            setStatus('Partner left', 'waiting');
+          } else if (parsed.type === 'relay') {
+            msgCount++;
+            log(`Relay message received (${parsed.data.length} bytes) [#${msgCount}]`, 'msg-recv');
+          } else {
+            log(`JSON message: ${JSON.stringify(parsed)}`, 'msg-recv');
+          }
+        } catch (_) {
+          log(`Text message: ${e.data}`, 'msg-recv');
+        }
+      }
+    };
+
+    ws.onerror = (err) => {
+      log(`WebSocket error`, 'msg-err');
+    };
+
+    ws.onclose = (e) => {
+      log(`WebSocket closed (code=${e.code}, reason="${e.reason || 'none'}")`, 'msg-err');
+      if (statusEl.textContent === 'Connecting...') {
+        // Never opened — likely auth rejection or server error
+        log(`Connection rejected by relay — WebSocket never opened`, 'msg-err');
+      }
+      setStatus('Disconnected', 'disconnected');
+      stopHeartbeat();
+      btnSend.disabled = true;
+      btnDisconnectHost.disabled = true;
+      btnDisconnectJoin.disabled = true;
+      ws = null;
+    };
+  }
+
+  function disconnect() {
+    stopHeartbeat();
+    if (ws) {
+      try { ws.close(); } catch (_) {}
+      ws = null;
+    }
+    pingEl.textContent = '';
+    btnSend.disabled = true;
+    btnDisconnectHost.disabled = true;
+    btnDisconnectJoin.disabled = true;
+    setStatus('Disconnected', 'disconnected');
+  }
+
+  function startHeartbeat() {
+    stopHeartbeat();
+    heartbeatInterval = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        lastPingTime = performance.now();
+        try { ws.send(new Uint8Array([MSG_HEARTBEAT, 0x00])); } catch (_) {}
+      }
+    }, 2000);
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+  }
+
+  // Create Room
+  btnCreate.addEventListener('click', () => {
+    const code = generateRoomCode();
+    hostRoomCode.innerHTML = `<div class="room-code">${code}</div>`;
+    joinCodeInput.value = code;
+    log(`Created room: ${code}`, 'msg-info');
+    connect(code, 'captain');
+  });
+
+  // Join Room
+  btnJoin.addEventListener('click', () => {
+    let code = joinCodeInput.value.trim().toUpperCase();
+    if (!code) { log('Enter a room code', 'msg-err'); return; }
+    if (!code.startsWith('TNDM-')) code = 'TNDM-' + code;
+    log(`Joining room: ${code}`, 'msg-info');
+    connect(code, 'stoker');
+  });
+
+  joinCodeInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') btnJoin.click();
+  });
+
+  // Send test message
+  btnSend.addEventListener('click', () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const testMsg = new Uint8Array([0xFF, 0x01, 0x02, 0x03]);
+    try {
+      ws.send(testMsg);
+      log(`Sent test message (${testMsg.length} bytes)`, 'msg-sent');
+    } catch (e) {
+      log(`Send failed: ${e.message}`, 'msg-err');
+    }
+  });
+
+  // Disconnect
+  btnDisconnectHost.addEventListener('click', () => {
+    log('Disconnecting captain...', 'msg-info');
+    disconnect();
+  });
+  btnDisconnectJoin.addEventListener('click', () => {
+    log('Disconnecting stoker...', 'msg-info');
+    disconnect();
+  });
+
+  // Clear log
+  btnClear.addEventListener('click', () => {
+    logEl.innerHTML = '';
+    msgCount = 0;
+    pingEl.textContent = '';
+  });
+
+  log('Relay test ready. Create a room or join one.', 'msg-sys');
+  log(`Relay URL: ${RELAY_URL}`, 'msg-sys');
+</script>
+</body>
+</html>
