@@ -14,11 +14,11 @@ const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
 const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 
-const CLOUD_COUNT = 90;
+const CLOUD_COUNT = 100;
 const CLOUD_AHEAD = 400;
 const CLOUD_BEHIND = 250;
-const CLOUD_MIN_Y = 25;
-const CLOUD_MAX_Y = 50;
+const CLOUD_MIN_Y = 12;
+const CLOUD_MAX_Y = 30;
 const CLOUD_DRIFT = 1.5;      // units/sec lateral drift
 
 // Chromakey shaders for green-screen video billboards.
@@ -86,7 +86,7 @@ export class World {
     // Cloud pool
     this._cloudPool = [];    // { group, roadD, lateralOffset, baseY }
     this._cloudNextD = 0;
-    this._cloudSpacing = 15;
+    this._cloudSpacing = 10;
 
     // Cloud PRNG — separate seed
     this._cloudRngState = 271;
@@ -446,7 +446,7 @@ export class World {
       if (!slot) break;
 
       const side = this._cloudSeededRandom() > 0.5 ? 1 : -1;
-      const lateralDist = 15 + this._cloudSeededRandom() * 280; // 15-295 units from road
+      const lateralDist = 8 + this._cloudSeededRandom() * 142; // 8-150 units from road
       const lateralOffset = side * lateralDist;
 
       const pt = this.roadPath.getPointAtDistance(d);
