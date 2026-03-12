@@ -2469,11 +2469,9 @@
       padding-top: calc(14 * var(--ls));
       margin-bottom: 0;
       height: calc(150 * var(--ls));
-      max-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      overflow: hidden;
     }
     .lobby-card.carousel-hidden {
       grid-row: 1 / -1;
@@ -2537,7 +2535,6 @@
     .lobby-layout {
       flex: 1;
       min-height: 0;
-      overflow: hidden;
     }
 
     /* ── Scaled lobby elements (20% smaller than before) ── */
@@ -2549,7 +2546,8 @@
       white-space: nowrap;
       min-width: calc(140 * var(--ls));
     }
-    .lobby-step { gap: calc(6 * var(--ls)); align-items: stretch; width: 100%; min-height: 0; overflow: hidden; }
+    .lobby-step { gap: calc(6 * var(--ls)); align-items: stretch; width: 100%; min-height: 0; }
+    .lobby-card.carousel-hidden .lobby-step { overflow: hidden; }
     .lobby-steps-col {
       width: calc(140 * var(--ls));
       min-width: calc(140 * var(--ls));
@@ -3278,7 +3276,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.b26bc78 | 03-12-2026 06:08</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.37b1646 | 03-12-2026 06:11</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
