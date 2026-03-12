@@ -568,6 +568,12 @@ class Game {
     // Media call: when partner's stream arrives (video + audio)
     this.net.onRemoteStream = (remoteStream) => {
       this.recorder.setPartnerStream(remoteStream);
+      // If partner camera is off, show avatar instead of black video
+      if (!this.lobby._partnerCameraOn && this.lobby._partnerAvatarUrl) {
+        this.recorder.showPartnerAvatar(
+          this.lobby._avatarCache.get(this.lobby._partnerAvatarUrl) || this.lobby._partnerAvatarUrl
+        );
+      }
       // Mix remote audio into clip recording (stoker side)
       if (this.net._localMediaStream) {
         this.recorder.addAudioStreams(this.net._localMediaStream, remoteStream);
@@ -583,7 +589,24 @@ class Game {
         this._remoteFinishStats = profile;
         return;
       }
-      // Ignore room sync messages (bikeSync, levelSync, startRide)
+      // Handle camera toggle from partner during gameplay
+      if (profile && profile.type === 'cameraToggle') {
+        if (profile.enabled) {
+          // Partner turned camera on — show video if stream exists
+          if (this.recorder.partnerVideo && this.recorder.partnerVideo.srcObject) {
+            this.recorder.partnerVideo.style.display = 'block';
+            this.recorder.partnerVideo.play().catch(() => {});
+            if (this.recorder.partnerAvatar) this.recorder.partnerAvatar.style.display = 'none';
+            this.recorder.partnerActive = true;
+          }
+        } else {
+          // Partner turned camera off — show avatar
+          const avatarUrl = profile.avatar || this.lobby._partnerAvatarUrl;
+          if (avatarUrl) this.recorder.showPartnerAvatar(this.lobby._avatarCache.get(avatarUrl) || avatarUrl);
+        }
+        return;
+      }
+      // Ignore room sync messages (bikeSync, levelSync, startRide, playGame, difficultySync)
       if (profile && profile.type) return;
       // Show partner avatar if no active video stream
       if (profile.avatar && !this.recorder.partnerActive) {
@@ -610,6 +633,13 @@ class Game {
       this._acquireLocalMedia().then(() => {
         if (mode === 'captain') this._initiateMediaCall();
       });
+    }
+
+    // Show partner avatar immediately if their camera is known to be off
+    if (!this.lobby._partnerCameraOn && this.lobby._partnerAvatarUrl) {
+      this.recorder.showPartnerAvatar(
+        this.lobby._avatarCache.get(this.lobby._partnerAvatarUrl) || this.lobby._partnerAvatarUrl
+      );
     }
 
     // Store room role for return-to-room
