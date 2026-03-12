@@ -473,13 +473,14 @@ export class NetworkManager {
         this._reconnectRelayBackground();
         return;
       }
-      if (this.transport === 'relay') {
+      if (this.transport === 'relay' || this.transport === 'none') {
         // Try relay reconnection with backoff before falling back to disconnect
         if (this._relayReconnectAttempts < 3) {
           this._relayReconnectAttempts++;
           const delay = Math.pow(2, this._relayReconnectAttempts - 1) * 1000; // 1s, 2s, 4s
+          console.warn('NET: Relay closed, retrying in ' + delay + 'ms (attempt ' + this._relayReconnectAttempts + '/3)');
           setTimeout(() => {
-            if (!this.connected || this.transport === 'relay') {
+            if (!this.connected) {
               this._connectRelay();
             }
           }, delay);
