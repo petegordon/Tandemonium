@@ -94,6 +94,8 @@ export class AuthManager {
         this.token = data.token;
         if (data.user && data.user.id) this.user.serverId = data.user.id;
         this._save();
+      } else {
+        console.error('AUTH: Server JWT exchange failed:', res.status, res.statusText);
       }
 
       if (this._onLoginCallback) this._onLoginCallback(this.user);
