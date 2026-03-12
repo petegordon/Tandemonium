@@ -90,6 +90,7 @@ export class Lobby {
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
     this.roomStep = document.getElementById('lobby-room');
+    this.roomLevelsStep = document.getElementById('lobby-room-levels');
     this._roomRole = null; // 'captain' | 'stoker'
 
     // Permission toggle buttons
@@ -402,7 +403,7 @@ export class Lobby {
       const backHint = document.getElementById('gamepad-back-hint');
       if (backHint) { backHint.style.display = ''; backHint.style.visibility = ''; }
     }
-    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep]
+    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep, this.roomLevelsStep]
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
@@ -421,7 +422,7 @@ export class Lobby {
     // Hide bike carousel on level step (use that space for level cards + difficulty)
     const carousel = document.getElementById('bike-carousel');
     const lobbyCard = document.querySelector('.lobby-card');
-    const hideCarousel = (step === this.levelStep);
+    const hideCarousel = (step === this.levelStep) || (step === this.roomLevelsStep);
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
     if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
     const lobbyEl = document.getElementById('lobby');
@@ -429,13 +430,13 @@ export class Lobby {
 
     // Show shared difficulty selector on level and room steps (captain only for room)
     const diffSel = document.getElementById('difficulty-selector');
-    const showDiff = (step === this.levelStep) || (step === this.roomStep && !this._roomHideDifficulty);
+    const showDiff = (step === this.levelStep) || (step === this.roomLevelsStep && !this._roomHideDifficulty);
     if (diffSel) diffSel.style.display = showDiff ? '' : 'none';
 
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
     const hasBack = this._stepBack.get(step);
     if (hasBack && !(this.input && this.input.gamepadConnected)) {
-      this._fixedBackBtn.textContent = step === this.roomStep ? '\u2190 Leave Room' : '\u2190 Back';
+      this._fixedBackBtn.textContent = (step === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
       this._fixedBackBtn.style.visibility = 'visible';
     } else {
       this._fixedBackBtn.style.visibility = 'hidden';
@@ -557,7 +558,16 @@ export class Lobby {
       }
     });
 
-    // Room step buttons
+    // Room step: PLAY GAME button (captain only)
+    document.getElementById('btn-play-game').addEventListener('click', () => {
+      if (this._roomRole !== 'captain') return;
+      if (this.net && this.net.connected) {
+        this.net.sendProfile({ type: 'playGame' });
+      }
+      this._showRoomLevelsStep();
+    });
+
+    // Levels step: START RIDE button (captain only)
     document.getElementById('btn-start-ride').addEventListener('click', () => {
       if (this._roomRole !== 'captain') return;
       // Send start ride to partner
@@ -566,6 +576,12 @@ export class Lobby {
       }
       this._transitionToGame();
     });
+
+    // Levels step: Back button → return to Room
+    document.getElementById('btn-back-room-levels').addEventListener('click', () => {
+      this._showStep(this.roomStep);
+    });
+
     document.getElementById('btn-back-room').addEventListener('click', () => {
       // Leave room — destroy connection, return to role step
       if (this.net) { this.net.destroy(); this.net = null; }
@@ -1781,7 +1797,7 @@ export class Lobby {
       // Show fixed back button when gamepad disconnects
       const hasBack = this._stepBack.get(this._currentStep);
       if (hasBack) {
-        this._fixedBackBtn.textContent = this._currentStep === this.roomStep ? '\u2190 Leave Room' : '\u2190 Back';
+        this._fixedBackBtn.textContent = (this._currentStep === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
         this._fixedBackBtn.style.visibility = 'visible';
       }
       // Switch back to text input if on join step
@@ -2117,16 +2133,15 @@ export class Lobby {
       roomCodeLabel.textContent = this.net.roomCode;
     }
 
-    // Show/hide start button vs waiting text based on role
-    const startBtn = document.getElementById('btn-start-ride');
-    const waitText = document.getElementById('room-wait-text');
+    // Show/hide play game button vs waiting text based on role
+    const playBtn = document.getElementById('btn-play-game');
+    const waitTextRoom = document.getElementById('room-wait-text-room');
     if (role === 'captain') {
-      startBtn.style.display = '';
-      startBtn.disabled = true;
-      waitText.style.display = 'none';
+      playBtn.style.display = '';
+      waitTextRoom.style.display = 'none';
     } else {
-      startBtn.style.display = 'none';
-      waitText.style.display = '';
+      playBtn.style.display = 'none';
+      waitTextRoom.style.display = '';
     }
 
     // Set role labels on PiP circles
@@ -2135,10 +2150,14 @@ export class Lobby {
     if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
     if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
 
-    // Build level cards BEFORE _showStep so _stepItems is populated
-    this._buildRoomLevelCards(role === 'captain');
-    // Only captain picks difficulty
-    this._roomHideDifficulty = (role !== 'captain');
+    // Register gamepad nav for room step
+    const roomItems = (role === 'captain')
+      ? [document.getElementById('btn-play-game'), document.getElementById('btn-back-room')]
+      : [document.getElementById('btn-back-room')];
+    this._stepItems.set(this.roomStep, roomItems);
+    this._stepCenterItems.set(this.roomStep, roomItems);
+    this._stepBack.set(this.roomStep, document.getElementById('btn-back-room'));
+
     this._showStep(this.roomStep);
 
     // Start media
@@ -2153,11 +2172,13 @@ export class Lobby {
     // Send profile with avatar + achievements so partner sees them in room
     this._sendRoomProfile();
 
-    // Handle partner disconnect while in room
+    // Handle partner disconnect while in room or levels
     this.net.onDisconnected = (reason) => {
+      const waitTextRoom = document.getElementById('room-wait-text-room');
       const waitText = document.getElementById('room-wait-text');
-      waitText.textContent = 'Partner disconnected';
-      waitText.style.display = '';
+      if (waitTextRoom) { waitTextRoom.textContent = 'Partner disconnected'; waitTextRoom.style.display = ''; }
+      if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
+      document.getElementById('btn-play-game').style.display = 'none';
       document.getElementById('btn-start-ride').style.display = 'none';
       setTimeout(() => {
         if (this.net) { this.net.destroy(); this.net = null; }
@@ -2165,6 +2186,28 @@ export class Lobby {
         this._showStep(this.roleStep);
       }, 2000);
     };
+  }
+
+  _showRoomLevelsStep() {
+    const role = this._roomRole;
+
+    // Show/hide start button vs waiting text based on role
+    const startBtn = document.getElementById('btn-start-ride');
+    const waitText = document.getElementById('room-wait-text');
+    if (role === 'captain') {
+      startBtn.style.display = '';
+      startBtn.disabled = true;
+      waitText.style.display = 'none';
+    } else {
+      startBtn.style.display = 'none';
+      waitText.style.display = '';
+    }
+
+    // Build level cards BEFORE _showStep so _stepItems is populated
+    this._buildRoomLevelCards(role === 'captain');
+    // Only captain picks difficulty
+    this._roomHideDifficulty = (role !== 'captain');
+    this._showStep(this.roomLevelsStep);
   }
 
   _buildRoomLevelCards(isClickable) {
@@ -2235,13 +2278,13 @@ export class Lobby {
       diffBtns.forEach(b => buttons.push(b));
     }
 
-    // Register for gamepad nav
-    const roomItems = isClickable
-      ? [...buttons, document.getElementById('btn-start-ride'), document.getElementById('btn-back-room')]
-      : [document.getElementById('btn-back-room')];
-    this._stepItems.set(this.roomStep, roomItems);
-    this._stepCenterItems.set(this.roomStep, roomItems);
-    this._stepBack.set(this.roomStep, document.getElementById('btn-back-room'));
+    // Register for gamepad nav on levels step
+    const levelsItems = isClickable
+      ? [...buttons, document.getElementById('btn-start-ride'), document.getElementById('btn-back-room-levels')]
+      : [document.getElementById('btn-back-room-levels')];
+    this._stepItems.set(this.roomLevelsStep, levelsItems);
+    this._stepCenterItems.set(this.roomLevelsStep, levelsItems);
+    this._stepBack.set(this.roomLevelsStep, document.getElementById('btn-back-room-levels'));
   }
 
   async _startRoomMedia() {
@@ -2403,6 +2446,9 @@ export class Lobby {
           partnerAvatar.style.display = 'block';
         }
       }
+    } else if (profile.type === 'playGame') {
+      // Stoker: captain clicked PLAY GAME → go to levels step
+      this._showRoomLevelsStep();
     } else if (profile.type === 'startRide') {
       // Stoker: captain started the ride
       this._transitionToGame();
@@ -2459,16 +2505,15 @@ export class Lobby {
     this._startGamepadNav();
     if (this._previewModel) this._startPreviewLoop();
 
-    // Show/hide start button vs waiting text
-    const startBtn = document.getElementById('btn-start-ride');
-    const waitText = document.getElementById('room-wait-text');
+    // Show/hide play game button vs waiting text
+    const playBtn = document.getElementById('btn-play-game');
+    const waitTextRoom = document.getElementById('room-wait-text-room');
     if (role === 'captain') {
-      startBtn.style.display = '';
-      startBtn.disabled = true;
-      waitText.style.display = 'none';
+      playBtn.style.display = '';
+      waitTextRoom.style.display = 'none';
     } else {
-      startBtn.style.display = 'none';
-      waitText.style.display = '';
+      playBtn.style.display = 'none';
+      waitTextRoom.style.display = '';
     }
 
     // Set role labels on PiP circles
@@ -2477,10 +2522,15 @@ export class Lobby {
     if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
     if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
 
-    // Rebuild level cards BEFORE _showStep so _stepItems is populated
-    this._buildRoomLevelCards(role === 'captain');
+    // Register gamepad nav for room step
+    const roomItems = (role === 'captain')
+      ? [document.getElementById('btn-play-game'), document.getElementById('btn-back-room')]
+      : [document.getElementById('btn-back-room')];
+    this._stepItems.set(this.roomStep, roomItems);
+    this._stepCenterItems.set(this.roomStep, roomItems);
+    this._stepBack.set(this.roomStep, document.getElementById('btn-back-room'));
 
-    // Show room step directly
+    // Show room step directly (not levels)
     this._showStep(this.roomStep);
 
     // Re-add PiP lobby mode
@@ -2561,9 +2611,11 @@ export class Lobby {
 
     // Re-register disconnect handler for room
     this.net.onDisconnected = (reason) => {
+      const waitTextRoom = document.getElementById('room-wait-text-room');
       const waitText = document.getElementById('room-wait-text');
-      waitText.textContent = 'Partner disconnected';
-      waitText.style.display = '';
+      if (waitTextRoom) { waitTextRoom.textContent = 'Partner disconnected'; waitTextRoom.style.display = ''; }
+      if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
+      document.getElementById('btn-play-game').style.display = 'none';
       document.getElementById('btn-start-ride').style.display = 'none';
       setTimeout(() => {
         if (this.net) { this.net.destroy(); this.net = null; }
@@ -2755,7 +2807,7 @@ export class Lobby {
     if (!header) return;
     const codeEl = document.getElementById('room-code-display');
     const code = codeEl ? codeEl.textContent : '';
-    if ((step === this.hostStep || step === this.roomStep) && code && code !== '----') {
+    if ((step === this.hostStep || step === this.roomStep || step === this.roomLevelsStep) && code && code !== '----') {
       header.textContent = code;
     } else {
       header.textContent = '';
@@ -3353,7 +3405,7 @@ export class Lobby {
   }
 
   _sendBikeSyncIfInRoom() {
-    if (this._currentStep === this.roomStep && this.net && this.net.connected) {
+    if ((this._currentStep === this.roomStep || this._currentStep === this.roomLevelsStep) && this.net && this.net.connected) {
       this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
     }
   }
