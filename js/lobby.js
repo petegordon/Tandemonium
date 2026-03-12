@@ -468,12 +468,16 @@ export class Lobby {
       this._showStep(this.levelStep);
     });
 
-    // RIDE TOGETHER → role selection (captain locked for unlicensed, login required for anonymous)
-    document.getElementById('btn-together').addEventListener('click', () => {
+    // RIDE TOGETHER → check for rejoin, then role selection
+    document.getElementById('btn-together').addEventListener('click', async () => {
       if (!this.auth.isLoggedIn()) {
         this.auth.login();
         return;
       }
+      // Check for saved room to rejoin
+      const rejoined = await this._handleRejoinCheck();
+      if (rejoined) return;
+
       this._requestMotion();
       this._pendingMode = 'multiplayer';
       this._updateRoleButtons();
@@ -492,11 +496,13 @@ export class Lobby {
       this._showStep(this.modeStep);
     });
     document.getElementById('btn-back-role-host').addEventListener('click', () => {
+      this._clearRoom();
       if (this.net) { this.net.destroy(); this.net = null; }
       document.getElementById('room-qr').innerHTML = '';
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
+      this._clearRoom();
       if (this.net) { this.net.destroy(); this.net = null; }
       this._showSpinners(false);
       this._spinnerStopRepeat();
@@ -1784,7 +1790,7 @@ export class Lobby {
     this._joinRoom(fullCode);
   }
 
-  _createRoom() {
+  async _createRoom() {
     this.net = new NetworkManager();
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
@@ -1795,14 +1801,19 @@ export class Lobby {
     statusEl.textContent = 'Creating room...';
     statusEl.className = 'conn-status';
 
-    this.net.createRoom(async (code) => {
+    const code = this.net.generateRoomCode();
+
+    // Fetch relay auth token before connecting
+    const relayToken = await this.auth.getRelayToken(code, 'captain');
+    if (relayToken) this.net._relayToken = relayToken;
+
+    this.net.onRoomJoined = () => {
       codeEl.textContent = code;
       this._updateCardHeader(this._currentStep);
       statusEl.textContent = 'Waiting for partner...';
 
-      // Fetch relay auth token (non-blocking — relay works without it if secret not configured)
-      const relayToken = await this.auth.getRelayToken(code, 'captain');
-      if (relayToken) this.net._relayToken = relayToken;
+      // Save room to localStorage for rejoin after refresh
+      this._saveRoom(code, 'captain');
 
       // Generate QR code with join URL
       const qrEl = document.getElementById('room-qr');
@@ -1841,7 +1852,7 @@ export class Lobby {
         el.addEventListener('touchcancel', cancel);
         el.addEventListener('contextmenu', (e) => { e.preventDefault(); copyUrl(); });
       });
-    });
+    };
 
     this.net.onConnected = () => {
       statusEl.textContent = 'Partner connected!';
@@ -1855,6 +1866,8 @@ export class Lobby {
       statusEl.textContent = reason || 'Disconnected';
       statusEl.className = 'conn-status error';
     };
+
+    this.net.enterRoom(code, 'captain');
   }
 
   async _joinRoom(code) {
@@ -1871,9 +1884,11 @@ export class Lobby {
     const relayToken = await this.auth.getRelayToken(code, 'stoker');
     if (relayToken) this.net._relayToken = relayToken;
 
-    this.net.joinRoom(code, () => {
-      statusEl.textContent = 'Connecting to room...';
-    });
+    this.net.onRoomJoined = () => {
+      statusEl.textContent = 'Waiting for captain...';
+      // Save room to localStorage for rejoin after refresh
+      this._saveRoom(code, 'stoker');
+    };
 
     this.net.onConnected = () => {
       this._lastFailedCode = null;
@@ -1896,9 +1911,178 @@ export class Lobby {
       }
       if (this._currentStep === this.joinStep) {
         this._lastFailedCode = code;
-        // _pollGamepadNav will detect gamepad and switch to spinners
       }
     };
+
+    this.net.enterRoom(code, 'stoker');
+  }
+
+  // ── Room Persistence (localStorage) ──────────────────────────
+
+  _saveRoom(roomCode, role) {
+    try {
+      localStorage.setItem('tandemonium-room', JSON.stringify({
+        roomCode, role, timestamp: Date.now()
+      }));
+    } catch (e) {}
+  }
+
+  _clearRoom() {
+    try { localStorage.removeItem('tandemonium-room'); } catch (e) {}
+  }
+
+  _getSavedRoom() {
+    try {
+      const raw = localStorage.getItem('tandemonium-room');
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      // Expire after 1 hour
+      if (Date.now() - data.timestamp > 3600000) {
+        localStorage.removeItem('tandemonium-room');
+        return null;
+      }
+      return data;
+    } catch (e) { return null; }
+  }
+
+  _showRejoinPrompt(saved) {
+    const roleName = saved.role === 'captain' ? 'Captain' : 'Stoker';
+    // Create a simple modal overlay for rejoin prompt
+    const overlay = document.createElement('div');
+    overlay.id = 'rejoin-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.innerHTML =
+      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:320px;text-align:center;color:#fff;font-family:inherit;">' +
+        '<div style="font-size:1.1em;margin-bottom:12px;">Rejoin room <b>' + saved.roomCode + '</b> as ' + roleName + '?</div>' +
+        '<div style="display:flex;gap:12px;justify-content:center;">' +
+          '<button id="btn-rejoin-yes" style="padding:10px 20px;border-radius:8px;border:none;background:#44ff66;color:#000;font-weight:bold;font-size:1em;cursor:pointer;">Rejoin</button>' +
+          '<button id="btn-rejoin-no" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;">New Room</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    return new Promise((resolve) => {
+      document.getElementById('btn-rejoin-yes').addEventListener('click', () => {
+        overlay.remove();
+        resolve('rejoin');
+      });
+      document.getElementById('btn-rejoin-no').addEventListener('click', () => {
+        overlay.remove();
+        this._clearRoom();
+        resolve('new');
+      });
+    });
+  }
+
+  async _handleRejoinCheck() {
+    const saved = this._getSavedRoom();
+    if (!saved) return false;
+
+    const choice = await this._showRejoinPrompt(saved);
+    if (choice !== 'rejoin') return false;
+
+    // Rejoin: skip role selection, go straight to connection
+    this._requestMotion();
+    this._pendingMode = 'multiplayer';
+
+    if (saved.role === 'captain') {
+      this._showStep(this.hostStep);
+      // Re-use _createRoom logic but with saved code
+      this.net = new NetworkManager();
+      this.net._fallbackUrl = RELAY_URL;
+      this.net.cameraEnabled = this.cameraActive;
+      this.net.audioEnabled = this.audioActive;
+      const statusEl = document.getElementById('host-status');
+      const codeEl = document.getElementById('room-code-display');
+      statusEl.textContent = 'Rejoining room...';
+      statusEl.className = 'conn-status';
+
+      const relayToken = await this.auth.getRelayToken(saved.roomCode, 'captain');
+      if (relayToken) this.net._relayToken = relayToken;
+
+      this.net.onRoomJoined = () => {
+        codeEl.textContent = saved.roomCode;
+        this._updateCardHeader(this._currentStep);
+        statusEl.textContent = 'Waiting for partner...';
+        this._saveRoom(saved.roomCode, 'captain');
+        // Start stale room timer
+        this._startStaleRoomTimer(statusEl);
+      };
+
+      this.net.onConnected = () => {
+        this._clearStaleRoomTimer();
+        statusEl.textContent = 'Partner connected!';
+        statusEl.className = 'conn-status connected';
+        setTimeout(() => this._showRoomStep('captain'), 1000);
+      };
+
+      this.net.onDisconnected = (reason) => {
+        statusEl.textContent = reason || 'Disconnected';
+        statusEl.className = 'conn-status error';
+      };
+
+      this.net.enterRoom(saved.roomCode, 'captain');
+    } else {
+      this._showStep(this.joinStep);
+      // Re-use _joinRoom logic with saved code
+      this.net = new NetworkManager();
+      this.net._fallbackUrl = RELAY_URL;
+      this.net.cameraEnabled = this.cameraActive;
+      this.net.audioEnabled = this.audioActive;
+      const statusEl = document.getElementById('join-status');
+      statusEl.textContent = 'Rejoining room...';
+      statusEl.className = 'conn-status';
+
+      const relayToken = await this.auth.getRelayToken(saved.roomCode, 'stoker');
+      if (relayToken) this.net._relayToken = relayToken;
+
+      this.net.onRoomJoined = () => {
+        statusEl.textContent = 'Waiting for captain...';
+        this._saveRoom(saved.roomCode, 'stoker');
+        this._startStaleRoomTimer(statusEl);
+      };
+
+      this.net.onConnected = () => {
+        this._clearStaleRoomTimer();
+        statusEl.textContent = 'Connected!';
+        statusEl.className = 'conn-status connected';
+        setTimeout(() => this._showRoomStep('stoker'), 1000);
+      };
+
+      this.net.onDisconnected = (reason) => {
+        statusEl.textContent = reason || 'Could not connect';
+        statusEl.className = 'conn-status error';
+      };
+
+      this.net.enterRoom(saved.roomCode, 'stoker');
+    }
+
+    return true;
+  }
+
+  _startStaleRoomTimer(statusEl) {
+    this._clearStaleRoomTimer();
+    this._staleRoomTimeout = setTimeout(() => {
+      if (this.net && !this.net.connected) {
+        statusEl.innerHTML = 'Partner hasn\'t reconnected yet. ' +
+          '<button id="btn-stale-new-room" style="background:#444;color:#fff;border:none;border-radius:6px;padding:6px 14px;margin-left:8px;cursor:pointer;">New Room</button>';
+        const newBtn = document.getElementById('btn-stale-new-room');
+        if (newBtn) {
+          newBtn.addEventListener('click', () => {
+            this._clearRoom();
+            if (this.net) { this.net.destroy(); this.net = null; }
+            this._showStep(this.roleStep);
+          });
+        }
+      }
+    }, 30000);
+  }
+
+  _clearStaleRoomTimer() {
+    if (this._staleRoomTimeout) {
+      clearTimeout(this._staleRoomTimeout);
+      this._staleRoomTimeout = null;
+    }
   }
 
   // ── Room Step (shared multiplayer lobby) ─────────────────────

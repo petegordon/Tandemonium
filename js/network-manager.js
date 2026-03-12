@@ -33,6 +33,7 @@ export class NetworkManager {
     this.onReconnecting = null;
     this.onRemoteStream = null;
     this.onProfileReceived = null;
+    this.onRoomJoined = null; // fires when relay WebSocket opens (room entered, waiting for partner)
     this.cameraEnabled = true; // set false to suppress local camera in calls
     this.audioEnabled = false; // set true to include microphone in calls
     this._mediaCall = null;
@@ -49,6 +50,11 @@ export class NetworkManager {
     this._reconnectTimeout = null;
     this._activeConn = null; // tracks which conn is current to ignore stale close events
     this._iceServers = null; // cached TURN + STUN servers
+    this._enterRoomCallback = null;
+    this._relayReconnectAttempts = 0;
+    this._relayKeepaliveInterval = null;
+    this._p2pUpgradeTimeout = null;
+    this._p2pUpgradeRetryTimeout = null;
 
     // Pre-allocated send buffers (avoid per-send allocations)
     this._stateBuf = new ArrayBuffer(46);
@@ -167,6 +173,20 @@ export class NetworkManager {
     });
   }
 
+  async enterRoom(roomCode, role, callback) {
+    this.role = role;
+    this.roomCode = roomCode;
+
+    // Fetch relay auth token (non-blocking, stored for relay connection)
+    // Token is expected to be set by caller before or after this call
+
+    // Connect to relay immediately
+    this._connectRelay();
+
+    // Store the callback for status updates
+    this._enterRoomCallback = callback;
+  }
+
   _setupConnection() {
     const conn = this.conn;
     this._activeConn = conn;
@@ -219,6 +239,11 @@ export class NetworkManager {
             this.connected = true;
             if (this.onConnected) this.onConnected();
           }
+          // Attempt P2P upgrade now that both peers are on relay
+          this._attemptP2PUpgrade();
+          return;
+        } else if (parsed.type === 'waiting') {
+          // Relay confirms room is valid, waiting for partner
           return;
         } else if (parsed.type === 'disconnect') {
           // Relay: partner disconnected — immediate notification
@@ -333,10 +358,10 @@ export class NetworkManager {
   }
 
   _send(data) {
-    if (this.conn && this.conn.open) {
-      try { this.conn.send(data); } catch (e) { /* silent */ }
+    if (this.transport === 'p2p' && this.conn && this.conn.open) {
+      try { this.conn.send(data); } catch (e) { console.warn('NET: P2P send failed:', e); }
     } else if (this._relayWs && this._relayWs.readyState === WebSocket.OPEN) {
-      this._relayWs.send(data);
+      try { this._relayWs.send(data); } catch (e) { console.warn('NET: Relay send failed:', e); }
     }
   }
 
@@ -359,6 +384,36 @@ export class NetworkManager {
     }
   }
 
+  _startRelayKeepalive() {
+    this._stopRelayKeepalive();
+    this._relayKeepaliveInterval = setInterval(() => {
+      if (this._relayWs && this._relayWs.readyState === WebSocket.OPEN) {
+        // Send a ping to keep the Durable Object alive
+        try { this._relayWs.send(new Uint8Array([MSG_HEARTBEAT, 0x02])); } catch (e) {}
+      }
+      // Refresh localStorage room timestamp
+      this._refreshRoomTimestamp();
+    }, 5 * 60 * 1000); // every 5 minutes
+  }
+
+  _stopRelayKeepalive() {
+    if (this._relayKeepaliveInterval) {
+      clearInterval(this._relayKeepaliveInterval);
+      this._relayKeepaliveInterval = null;
+    }
+  }
+
+  _refreshRoomTimestamp() {
+    try {
+      const raw = localStorage.getItem('tandemonium-room');
+      if (raw) {
+        const data = JSON.parse(raw);
+        data.timestamp = Date.now();
+        localStorage.setItem('tandemonium-room', JSON.stringify(data));
+      }
+    } catch (e) {}
+  }
+
   _handleDisconnect() {
     clearTimeout(this._reconnectTimeout);
     this.connected = false;
@@ -368,8 +423,8 @@ export class NetworkManager {
       this._reconnectAttempts++;
       if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
       const delay = this._reconnectAttempts <= this._fastReconnectAttempts
-        ? Math.pow(2, this._reconnectAttempts - 1) * 1000  // phase 1: exponential backoff
-        : 16000;                                            // phase 2: fixed 16s intervals
+        ? Math.pow(2, this._reconnectAttempts - 1) * 1000
+        : 16000;
       setTimeout(() => {
         if (!this.connected) this._attemptReconnect();
       }, delay);
@@ -388,43 +443,43 @@ export class NetworkManager {
   // Re-register with PeerJS signaling server if the broker WebSocket dropped
   _ensureBrokerConnection() {
     if (this.peer && this.peer.disconnected && !this.peer.destroyed) {
-      this.peer.reconnect();
+      try { this.peer.reconnect(); } catch (e) { console.warn('NET: Broker reconnect failed:', e); }
     }
   }
 
   _attemptReconnect() {
     if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
 
-    // Re-register with PeerJS broker — critical after phone lock/sleep
-    this._ensureBrokerConnection();
-
-    // Close previous hung connection before creating a new one
+    // Close stale connections
     if (this.conn) { try { this.conn.close(); } catch (e) {} }
+    if (this._relayWs) { try { this._relayWs.close(); } catch (e) {} this._relayWs = null; }
 
-    if (this.role === 'stoker' && this.roomCode) {
-      // Stoker reconnects by re-opening a data channel to captain's peer
-      if (this.peer && !this.peer.destroyed) {
-        this.conn = this.peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
-        this._setupConnection();
-        // Timeout: if connection doesn't open within 5s, force-fail this attempt
-        this._reconnectTimeout = setTimeout(() => {
-          if (!this.connected) {
-            if (this.conn) { try { this.conn.close(); } catch (e) {} }
-            this._handleDisconnect();
-          }
-        }, 5000);
-      }
-    } else if (this.role === 'captain') {
-      // Captain: peer is still registered and listening for connections.
-      // If the stoker reconnects, peer.on('connection') will fire.
-      // Timeout ensures we advance to next attempt or final failure if nobody connects.
+    // Reconnect via relay first (primary transport)
+    if (this._fallbackUrl) {
+      this._relayReconnectAttempts = 0;
+      this._connectRelay();
+      // Timeout: if relay doesn't reconnect within 5s, try next attempt
       this._reconnectTimeout = setTimeout(() => {
         if (!this.connected) this._handleDisconnect();
       }, 5000);
-      // Also try relay fallback if available.
-      if (this._fallbackUrl && (!this._relayWs || this._relayWs.readyState !== WebSocket.OPEN)) {
-        this._relayPartnerReady = false;
-        this._connectRelay();
+    } else {
+      // Fallback to PeerJS-only reconnection
+      this._ensureBrokerConnection();
+      if (this.role === 'stoker' && this.roomCode) {
+        if (this.peer && !this.peer.destroyed) {
+          this.conn = this.peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
+          this._setupConnection();
+          this._reconnectTimeout = setTimeout(() => {
+            if (!this.connected) {
+              if (this.conn) { try { this.conn.close(); } catch (e) {} }
+              this._handleDisconnect();
+            }
+          }, 5000);
+        }
+      } else if (this.role === 'captain') {
+        this._reconnectTimeout = setTimeout(() => {
+          if (!this.connected) this._handleDisconnect();
+        }, 5000);
       }
     }
   }
@@ -467,15 +522,148 @@ export class NetworkManager {
     this._relayWs.onopen = () => {
       this.transport = 'relay';
       clearTimeout(this._p2pTimeout);
-      // Don't call onConnected or start heartbeat yet —
-      // wait for 'partner-ready' message from relay
+      // Room joined — notify caller
+      if (this.onRoomJoined) this.onRoomJoined();
+      if (this._enterRoomCallback) {
+        this._enterRoomCallback({ status: 'waiting' });
+        this._enterRoomCallback = null;
+      }
     };
     this._relayWs.onmessage = (e) => {
       this._handleMessage(e.data);
     };
-    this._relayWs.onclose = () => {
-      if (this.transport === 'relay') this._handleDisconnect();
+    this._relayWs.onerror = (err) => {
+      console.warn('NET: Relay WebSocket error:', err);
     };
+    this._relayWs.onclose = () => {
+      // If P2P is active, reconnect relay in background as hot standby
+      if (this.transport === 'p2p' && this.connected) {
+        this._reconnectRelayBackground();
+        return;
+      }
+      if (this.transport === 'relay') {
+        // Try relay reconnection with backoff before falling back to disconnect
+        if (this._relayReconnectAttempts < 3) {
+          this._relayReconnectAttempts++;
+          const delay = Math.pow(2, this._relayReconnectAttempts - 1) * 1000; // 1s, 2s, 4s
+          setTimeout(() => {
+            if (!this.connected || this.transport === 'relay') {
+              this._connectRelay();
+            }
+          }, delay);
+        } else {
+          this._relayReconnectAttempts = 0;
+          this._handleDisconnect();
+        }
+      }
+    };
+  }
+
+  _reconnectRelayBackground() {
+    // Silently reconnect relay as hot standby while P2P is active
+    setTimeout(() => {
+      if (this.connected && this.transport === 'p2p') {
+        this._relayReconnectAttempts = 0;
+        this._connectRelay();
+      }
+    }, 2000);
+  }
+
+  _attemptP2PUpgrade() {
+    if (!this.roomCode || !this.role) return;
+    if (this.transport === 'p2p') return; // already on P2P
+
+    const peerId = this.roomCode + '-' + this.role;
+    const partnerPeerId = this.roomCode + '-' + (this.role === 'captain' ? 'stoker' : 'captain');
+
+    this._fetchIceServers().then(iceServers => {
+      this.peer = new window.Peer(peerId, {
+        ...PEERJS_CONFIG,
+        config: { iceServers }
+      });
+
+      this.peer.on('open', () => {
+        if (this.role === 'stoker') {
+          // Stoker initiates data channel to captain
+          this.conn = this.peer.connect(partnerPeerId, { reliable: true, serialization: 'binary' });
+          this._setupP2PUpgradeConnection();
+        }
+        // Captain waits for incoming connection
+      });
+
+      this.peer.on('connection', (conn) => {
+        this.conn = conn;
+        this._setupP2PUpgradeConnection();
+      });
+
+      this.peer.on('call', (call) => this._handleIncomingCall(call));
+
+      this.peer.on('error', (err) => {
+        if (err.type === 'unavailable-id') {
+          // Peer ID already taken — skip P2P upgrade
+          console.warn('NET: P2P upgrade skipped — peer ID in use');
+          return;
+        }
+        if (err.type === 'peer-unavailable') {
+          // Partner not registered yet — retry later
+          this._scheduleP2PRetry();
+          return;
+        }
+        console.warn('NET: P2P upgrade error:', err);
+      });
+
+      // Timeout: if P2P doesn't connect within 15s, stay on relay
+      this._p2pUpgradeTimeout = setTimeout(() => {
+        if (this.transport !== 'p2p') {
+          console.log('NET: P2P upgrade timed out, staying on relay');
+          this._scheduleP2PRetry();
+        }
+      }, 15000);
+    });
+  }
+
+  _setupP2PUpgradeConnection() {
+    const conn = this.conn;
+    conn.on('open', () => {
+      clearTimeout(this._p2pUpgradeTimeout);
+      this.transport = 'p2p';
+      this._activeConn = conn;
+      console.log('NET: Upgraded to P2P transport');
+      // Start relay keepalive to keep it as hot standby
+      this._startRelayKeepalive();
+    });
+
+    conn.on('data', (data) => {
+      this._handleMessage(data);
+    });
+
+    conn.on('close', () => {
+      if (conn !== this._activeConn) return;
+      // P2P dropped — fall back to relay silently if relay is alive
+      if (this._relayWs && this._relayWs.readyState === WebSocket.OPEN) {
+        console.log('NET: P2P dropped, falling back to relay');
+        this.transport = 'relay';
+        // Retry P2P upgrade later
+        this._scheduleP2PRetry();
+      } else {
+        this._handleDisconnect();
+      }
+    });
+
+    conn.on('error', (err) => {
+      console.warn('NET: P2P connection error:', err);
+    });
+  }
+
+  _scheduleP2PRetry() {
+    clearTimeout(this._p2pUpgradeRetryTimeout);
+    this._p2pUpgradeRetryTimeout = setTimeout(() => {
+      if (this.connected && this.transport !== 'p2p') {
+        // Clean up old peer before retrying
+        if (this.peer) { try { this.peer.destroy(); } catch (e) {} this.peer = null; }
+        this._attemptP2PUpgrade();
+      }
+    }, 30000);
   }
 
   async acquireLocalMedia(cameraEnabled, audioEnabled) {
@@ -527,6 +715,9 @@ export class NetworkManager {
     this._stopHeartbeat();
     clearTimeout(this._p2pTimeout);
     clearTimeout(this._reconnectTimeout);
+    clearTimeout(this._p2pUpgradeTimeout);
+    clearTimeout(this._p2pUpgradeRetryTimeout);
+    this._stopRelayKeepalive();
     // Stop local media tracks
     if (this._localMediaStream) {
       this._localMediaStream.getTracks().forEach(t => t.stop());
