@@ -1034,8 +1034,15 @@ export class Lobby {
     if (selfieAvatar) selfieAvatar.style.display = 'none';
     if (selfieWrap) selfieWrap.style.display = 'block';
     // Re-initiate media call so partner gets the video
-    if (this._roomRole === 'captain') {
+    if (this.net.transport === 'p2p') {
       this.net.initiateCall();
+    } else {
+      // P2P not up yet — initiate when upgrade completes
+      const prevOnP2P = this.net.onP2PUpgrade;
+      this.net.onP2PUpgrade = () => {
+        this.net.initiateCall();
+        if (prevOnP2P) prevOnP2P();
+      };
     }
   }
 
