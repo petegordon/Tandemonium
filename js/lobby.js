@@ -607,13 +607,14 @@ export class Lobby {
         const vol = parseFloat(btn.dataset.vol);
         this.musicVolume = vol;
         localStorage.setItem('tandemonium_music_volume', vol);
+        // Apply volume BEFORE toggling so playback starts at correct level
+        if (this.onVolumeChanged) this.onVolumeChanged(vol);
         // Sync mute state with volume
         if (vol === 0 && this.musicActive) {
           this._toggleMusic();
         } else if (vol > 0 && !this.musicActive) {
           this._toggleMusic();
         }
-        if (this.onVolumeChanged) this.onVolumeChanged(vol);
         this._updateVolumeUI();
         this._hideVolumePicker();
       });
