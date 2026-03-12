@@ -46,7 +46,6 @@ export class NetworkManager {
     this._fallbackUrl = null;
     this._relayToken = null;
     this._relayPartnerReady = false;
-    this._p2pFallbackDelay = 60000; // 60 seconds before relay fallback
     this._reconnectTimeout = null;
     this._activeConn = null; // tracks which conn is current to ignore stale close events
     this._iceServers = null; // cached TURN + STUN servers
@@ -105,74 +104,6 @@ export class NetworkManager {
     return this._iceServers;
   }
 
-  async createRoom(callback) {
-    this.role = 'captain';
-    this.roomCode = this.generateRoomCode();
-
-    const iceServers = await this._fetchIceServers();
-    this.peer = new window.Peer(this.roomCode, {
-      ...PEERJS_CONFIG,
-      config: { iceServers }
-    });
-
-    this.peer.on('open', (id) => {
-      if (callback) callback(this.roomCode);
-      // Fallback to relay if no P2P connection within timeout
-      this._p2pTimeout = setTimeout(() => {
-        if (!this.connected && this._fallbackUrl) {
-          this._connectRelay();
-        }
-      }, this._p2pFallbackDelay);
-    });
-
-    this.peer.on('connection', (conn) => {
-      this.conn = conn;
-      this._setupConnection();
-    });
-
-    this.peer.on('call', (call) => this._handleIncomingCall(call));
-
-    this.peer.on('error', (err) => {
-      if (err.type === 'unavailable-id') {
-        this.roomCode = this.generateRoomCode();
-        this.peer.destroy();
-        this.createRoom(callback);
-      }
-    });
-  }
-
-  async joinRoom(roomCode, callback) {
-    this.role = 'stoker';
-    this.roomCode = roomCode.toUpperCase();
-
-    const iceServers = await this._fetchIceServers();
-    this.peer = new window.Peer(null, {
-      ...PEERJS_CONFIG,
-      config: { iceServers }
-    });
-
-    this.peer.on('open', () => {
-      this.conn = this.peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
-      this._setupConnection();
-      if (callback) callback();
-
-      // Fallback timer starts AFTER peer broker registration (inside on-open)
-      this._p2pTimeout = setTimeout(() => {
-        if (!this.connected && this._fallbackUrl) {
-          this._connectRelay();
-        }
-      }, this._p2pFallbackDelay);
-    });
-
-    this.peer.on('call', (call) => this._handleIncomingCall(call));
-
-    this.peer.on('error', (err) => {
-      if (err.type === 'peer-unavailable') {
-        if (this.onDisconnected) this.onDisconnected('Room not found');
-      }
-    });
-  }
-
   async enterRoom(roomCode, role, callback) {
     this.role = role;
     this.roomCode = roomCode;
@@ -198,7 +129,7 @@ export class NetworkManager {
       // Don't reset _reconnectAttempts here — a flaky connection that
       // opens briefly then closes would reset the counter and loop forever.
       // Instead, reset in the heartbeat ACK handler after a verified round-trip.
-      clearTimeout(this._p2pTimeout);
+
       this._startHeartbeat();
       if (this.onConnected) this.onConnected();
     });
@@ -521,7 +452,7 @@ export class NetworkManager {
     this._relayWs.binaryType = 'arraybuffer';
     this._relayWs.onopen = () => {
       this.transport = 'relay';
-      clearTimeout(this._p2pTimeout);
+
       // Room joined — notify caller
       if (this.onRoomJoined) this.onRoomJoined();
       if (this._enterRoomCallback) {
@@ -713,7 +644,6 @@ export class NetworkManager {
 
   destroy() {
     this._stopHeartbeat();
-    clearTimeout(this._p2pTimeout);
     clearTimeout(this._reconnectTimeout);
     clearTimeout(this._p2pUpgradeTimeout);
     clearTimeout(this._p2pUpgradeRetryTimeout);
