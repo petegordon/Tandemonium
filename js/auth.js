@@ -81,27 +81,53 @@ export class AuthManager {
         email: payload.email,
         avatar: payload.picture,
       };
+      this._gsiCredential = response.credential; // keep for retry
       this._save();
 
-      // Exchange GSI credential for server JWT before firing callback
+      await this._exchangeToken(response.credential);
+
+      if (this._onLoginCallback) this._onLoginCallback(this.user);
+    } catch (e) {
+      console.error('Auth error', e);
+      this.lastAuthError = 'Sign-in error: ' + (e.message || 'unknown');
+      if (this._onLoginCallback) this._onLoginCallback(this.user);
+    }
+  }
+
+  // Exchange GSI credential for server JWT — can be retried
+  async _exchangeToken(credential) {
+    this.lastAuthError = null;
+    try {
       const res = await fetch(`${API_BASE}/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential: response.credential }),
+        body: JSON.stringify({ credential }),
       });
       if (res.ok) {
         const data = await res.json();
         this.token = data.token;
         if (data.user && data.user.id) this.user.serverId = data.user.id;
         this._save();
+        return true;
       } else {
-        console.error('AUTH: Server JWT exchange failed:', res.status, res.statusText);
+        const errBody = await res.text().catch(() => '');
+        this.lastAuthError = 'Server auth failed (' + res.status + ')';
+        console.error('AUTH: Server JWT exchange failed:', res.status, errBody);
+        return false;
       }
-
-      if (this._onLoginCallback) this._onLoginCallback(this.user);
     } catch (e) {
-      console.error('Auth error', e);
+      this.lastAuthError = 'Server unreachable';
+      console.error('AUTH: Server JWT exchange error:', e);
+      return false;
     }
+  }
+
+  // Retry the token exchange using the last GSI credential
+  async retryTokenExchange() {
+    if (this._gsiCredential) {
+      return this._exchangeToken(this._gsiCredential);
+    }
+    return false;
   }
 
   login() {

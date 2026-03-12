@@ -528,10 +528,26 @@ export class Lobby {
         return;
       }
       // Ensure user is logged in before creating a room (freeplay users may not be)
-      if (!this.auth.isLoggedIn() || !this.auth.token) {
+      if (!this.auth.isLoggedIn()) {
         this._pendingCreateRoom = true;
         this.auth.login();
         return;
+      }
+      // Logged in but missing server token — retry exchange before prompting login again
+      if (!this.auth.token) {
+        this._showStep(this.hostStep);
+        const statusEl = document.getElementById('host-status');
+        statusEl.textContent = 'Authenticating...';
+        statusEl.className = 'conn-status';
+        const ok = await this.auth.retryTokenExchange();
+        if (!ok) {
+          // Retry failed — try a full re-login once
+          statusEl.textContent = this.auth.lastAuthError || 'Authentication failed — tap to retry';
+          statusEl.className = 'conn-status error';
+          this._pendingCreateRoom = true;
+          this.auth.refreshLogin();
+          return;
+        }
       }
       this._showStep(this.hostStep);
       this._createRoom();
@@ -825,8 +841,16 @@ export class Lobby {
       // Resume room creation after login / auth refresh
       if (this._pendingCreateRoom) {
         this._pendingCreateRoom = false;
-        this._showStep(this.hostStep);
-        this._createRoom();
+        if (this.auth.token) {
+          this._showStep(this.hostStep);
+          this._createRoom();
+        } else {
+          // Login succeeded but server token exchange failed — show on host step
+          this._showStep(this.hostStep);
+          const statusEl = document.getElementById('host-status');
+          statusEl.textContent = (this.auth.lastAuthError || 'Server auth failed') + ' — please reload';
+          statusEl.className = 'conn-status error';
+        }
       }
     });
 
@@ -1881,21 +1905,13 @@ export class Lobby {
     const relayToken = await this.auth.getRelayToken(code, 'captain');
     if (relayToken) {
       this.net._relayToken = relayToken;
-      this._authRetries = 0;
-    } else if (!this._authRetries) {
-      // First failure — clear stale auth and re-login
-      this._authRetries = 1;
-      statusEl.textContent = 'Sign-in required...';
-      statusEl.className = 'conn-status';
-      this.auth.refreshLogin();
-      this._pendingCreateRoom = true;
-      return;
     } else {
-      // Already retried — show error instead of looping
-      this._authRetries = 0;
-      statusEl.textContent = 'Unable to authenticate — please reload';
+      // Show what actually went wrong
+      const reason = !this.auth.token
+        ? (this.auth.lastAuthError || 'Not signed in')
+        : 'Relay token unavailable';
+      statusEl.textContent = reason + ' — please reload and try again';
       statusEl.className = 'conn-status error';
-      console.error('LOBBY: Relay token fetch failed after re-login. auth.token:', !!this.auth.token);
       return;
     }
 
@@ -1985,21 +2001,13 @@ export class Lobby {
     const relayToken = await this.auth.getRelayToken(code, 'stoker');
     if (relayToken) {
       this.net._relayToken = relayToken;
-      this._authRetries = 0;
-    } else if (!this._authRetries) {
-      // First failure — clear stale auth and re-login
-      this._authRetries = 1;
-      statusEl.textContent = 'Sign-in required...';
-      statusEl.className = 'conn-status';
-      this.auth.refreshLogin();
-      this._pendingAutoJoinCode = code;
-      return;
     } else {
-      // Already retried — show error instead of looping
-      this._authRetries = 0;
-      statusEl.textContent = 'Unable to authenticate — please reload';
+      // Show what actually went wrong
+      const reason = !this.auth.token
+        ? (this.auth.lastAuthError || 'Not signed in')
+        : 'Relay token unavailable';
+      statusEl.textContent = reason + ' — please reload and try again';
       statusEl.className = 'conn-status error';
-      console.error('LOBBY: Relay token fetch failed after re-login. auth.token:', !!this.auth.token);
       return;
     }
 
