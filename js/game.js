@@ -1060,7 +1060,9 @@ class Game {
     // Refresh HUD so speed/distance reflect the reset state during countdown
     this.hud.update(this.bike, this.input, this.pedalCtrl || this.sharedPedal, 0);
 
-    if (!fromRemote && this.net) {
+    // Captain always broadcasts reset so stoker also resets.
+    // Stoker receiving EVT_RESET calls _resetGame(fromRemote=true) which won't re-send.
+    if (this.net && this.mode === 'captain') {
       this.net.sendEvent(EVT_RESET);
     }
 
