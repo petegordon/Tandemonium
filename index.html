@@ -1752,7 +1752,8 @@
     border-color: rgba(60,200,80,0.7);
     box-shadow: 0 0 8px rgba(60,200,80,0.25);
   }
-  #room-wait-text {
+  #room-wait-text,
+  #room-wait-text-room {
     color: rgba(255,255,255,0.6);
     font-size: 14px;
   }
@@ -2576,7 +2577,8 @@
     /* Host/Join steps: compact for TV layout */
     #lobby-host .lobby-btn,
     #lobby-join .lobby-btn,
-    #lobby-room .lobby-btn {
+    #lobby-room .lobby-btn,
+    #lobby-room-levels .lobby-btn {
       min-width: auto;
     }
     /* All sub-steps: hide back buttons (B-button handles it) and compact layout */
@@ -2585,6 +2587,7 @@
     #lobby-join .lobby-back,
     #lobby-level .lobby-back,
     #lobby-room .lobby-back { display: none; }
+    #lobby-room-levels .lobby-back { display: none; }
     #lobby-fixed-back { font-size: calc(10 * var(--ls)); padding: calc(4 * var(--ls)) calc(8 * var(--ls)); order: 99; }
 
     #lobby-role .lobby-prompt,
@@ -2712,7 +2715,8 @@
 
     /* Room (multiplayer lobby) */
     #room-video-area { gap: calc(16 * var(--ls)); margin: calc(12 * var(--ls)) 0; }
-    #room-wait-text { font-size: calc(14 * var(--ls)); }
+    #room-wait-text,
+    #room-wait-text-room { font-size: calc(14 * var(--ls)); }
     .pip-wrap.pip-lobby-mode { margin: 0 calc(8 * var(--ls)); }
     .pip-wrap.pip-lobby-mode .pip-label { font-size: calc(10 * var(--ls)); }
 
@@ -3171,7 +3175,7 @@ ON</button>
           <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
         </div>
 
-        <!-- Step 4: Multiplayer Room (shared lobby after P2P connects) -->
+        <!-- Step 4: Multiplayer Room (social/prep) -->
         <div id="lobby-room" class="lobby-step" style="display:none;">
           <div id="room-partner-info">
             <div id="room-code-label" class="room-code-label"></div>
@@ -3180,11 +3184,18 @@ ON</button>
           <div id="room-video-area">
             <!-- PiP elements repositioned here via CSS class -->
           </div>
+          <button class="lobby-btn lobby-btn-accent" id="btn-play-game">PLAY GAME</button>
+          <p id="room-wait-text-room" class="conn-status" style="display:none;">Waiting for captain...</p>
+          <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
+        </div>
+
+        <!-- Step 5: Levels (game config) -->
+        <div id="lobby-room-levels" class="lobby-step" style="display:none;">
           <p class="lobby-prompt" id="room-level-prompt">Choose your ride:</p>
           <div class="level-cards" id="room-level-cards"></div>
           <button class="lobby-btn lobby-btn-accent" id="btn-start-ride" disabled>START RIDE</button>
           <p id="room-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
-          <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
+          <button class="lobby-back" id="btn-back-room-levels">&larr; Back</button>
         </div>
 
       </div>
@@ -3258,7 +3269,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.297f9e0 | 03-11-2026 22:01</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.e60efb2 | 03-12-2026 05:43</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
