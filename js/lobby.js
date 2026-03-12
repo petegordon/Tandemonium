@@ -2172,6 +2172,12 @@ export class Lobby {
     // Send profile with avatar + achievements so partner sees them in room
     this._sendRoomProfile();
 
+    // Notify partner of current camera state so they show video or avatar
+    const camMsg = { type: 'cameraToggle', enabled: this.cameraActive };
+    const camUser = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+    if (camUser && camUser.avatar) camMsg.avatar = camUser.avatar;
+    this.net.sendProfile(camMsg);
+
     // Handle partner disconnect while in room or levels
     this.net.onDisconnected = (reason) => {
       const waitTextRoom = document.getElementById('room-wait-text-room');
@@ -2298,11 +2304,23 @@ export class Lobby {
       const partnerWrap = document.getElementById('partner-pip-wrap');
       if (partnerVideo && remoteStream) {
         partnerVideo.srcObject = remoteStream;
-        partnerVideo.style.display = 'block';
-        partnerVideo.play().catch(() => {});
-        if (partnerWrap) partnerWrap.style.display = 'block';
+        // Check if remote video track is actually enabled
+        const remoteVideoTrack = remoteStream.getVideoTracks()[0];
+        const hasActiveVideo = remoteVideoTrack && remoteVideoTrack.enabled && !remoteVideoTrack.muted;
         const partnerAvatar = document.getElementById('partner-pip-avatar');
-        if (partnerAvatar) partnerAvatar.style.display = 'none';
+        if (hasActiveVideo) {
+          partnerVideo.style.display = 'block';
+          partnerVideo.play().catch(() => {});
+          if (partnerAvatar) partnerAvatar.style.display = 'none';
+        } else {
+          partnerVideo.style.display = 'none';
+          // Show avatar fallback
+          if (partnerAvatar && this._partnerAvatarUrl) {
+            partnerAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
+            partnerAvatar.style.display = 'block';
+          }
+        }
+        if (partnerWrap) partnerWrap.style.display = 'block';
       }
     };
 
@@ -2576,11 +2594,21 @@ export class Lobby {
       const pWrap = document.getElementById('partner-pip-wrap');
       if (pVideo && remoteStream) {
         pVideo.srcObject = remoteStream;
-        pVideo.style.display = 'block';
-        pVideo.play().catch(() => {});
-        if (pWrap) pWrap.style.display = 'block';
+        const remoteVideoTrack = remoteStream.getVideoTracks()[0];
+        const hasActiveVideo = remoteVideoTrack && remoteVideoTrack.enabled && !remoteVideoTrack.muted;
         const pAvatar = document.getElementById('partner-pip-avatar');
-        if (pAvatar) pAvatar.style.display = 'none';
+        if (hasActiveVideo) {
+          pVideo.style.display = 'block';
+          pVideo.play().catch(() => {});
+          if (pAvatar) pAvatar.style.display = 'none';
+        } else {
+          pVideo.style.display = 'none';
+          if (pAvatar && this._partnerAvatarUrl) {
+            pAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
+            pAvatar.style.display = 'block';
+          }
+        }
+        if (pWrap) pWrap.style.display = 'block';
       }
     };
 
