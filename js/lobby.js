@@ -804,6 +804,17 @@ export class Lobby {
       } catch (e) {
         console.warn('Failed to fetch server achievements on login', e);
       }
+
+      // Resume auto-join if user arrived via shared URL before logging in
+      if (this._pendingAutoJoinCode) {
+        const code = this._pendingAutoJoinCode;
+        this._pendingAutoJoinCode = null;
+        this._showStep(this.joinStep);
+        const suffix = code.slice(-4);
+        document.getElementById('room-code-input').value = suffix;
+        this._lastFailedCode = code;
+        this._joinRoom(code);
+      }
     });
 
     // Logout: sync achievements to server, then clear local state
@@ -1824,6 +1835,14 @@ export class Lobby {
     try { this._requestMotion(); } catch (_) {}
     // Dismiss tap-to-start overlay — user already acted by navigating via URL
     if (this._tapOverlay) this._dismissTapOverlay();
+
+    // If not logged in, prompt sign-in first and join after auth completes
+    if (!this.auth.isLoggedIn()) {
+      this._pendingAutoJoinCode = fullCode;
+      this.auth.login();
+      return;
+    }
+
     this._showStep(this.joinStep);
     // Put the last 4 chars in the text input and pre-set for spinners
     const suffix = fullCode.slice(-4);
