@@ -2302,14 +2302,25 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    if (this._roomRole === 'captain') {
-      this.net.initiateCall();
-    } else if (this.net._answeredWithoutMedia && this.net._localMediaStream) {
-      // Stoker answered the captain's call before local media was ready.
-      // Now that media is acquired, call the captain back so they receive
-      // the stoker's video/audio stream.
-      this.net._answeredWithoutMedia = false;
-      this.net.initiateCall();
+    // Initiate media call — requires P2P, so may need to wait for upgrade
+    const tryInitiateCall = () => {
+      if (this._roomRole === 'captain') {
+        this.net.initiateCall();
+      } else if (this.net._answeredWithoutMedia && this.net._localMediaStream) {
+        this.net._answeredWithoutMedia = false;
+        this.net.initiateCall();
+      }
+    };
+
+    if (this.net.transport === 'p2p') {
+      tryInitiateCall();
+    } else {
+      // P2P not up yet — initiate call when upgrade completes
+      const prevOnP2P = this.net.onP2PUpgrade;
+      this.net.onP2PUpgrade = () => {
+        tryInitiateCall();
+        if (prevOnP2P) prevOnP2P();
+      };
     }
   }
 
