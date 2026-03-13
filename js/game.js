@@ -546,11 +546,10 @@ class Game {
       }
     };
 
-    // P2P upgrade: initiate media call now that PeerJS data channel is available
+    // P2P upgrade: both sides initiate media call now that PeerJS is available
     this.net.onP2PUpgrade = () => {
-      if (this.mode === 'captain') {
-        this._initiateMediaCall();
-      }
+      this._mediaRetryCount = 0;
+      this._initiateMediaCall();
     };
 
     this.net.onDisconnected = (reason) => {
@@ -1990,18 +1989,23 @@ class Game {
     const remotePeerId = this.net.conn && this.net.conn.peer;
     if (!remotePeerId) return;
     clearTimeout(this._mediaRetryTimeout);
+    if (!this._mediaRetryCount) this._mediaRetryCount = 0;
     const call = this.net.peer.call(remotePeerId, localStream);
     if (call) {
       call.on('stream', (remoteStream) => {
         clearTimeout(this._mediaRetryTimeout);
+        this._mediaRetryCount = 0;
         this.recorder.setPartnerStream(remoteStream);
         this.net._playRemoteAudio(remoteStream);
         this.recorder.addAudioStreams(this.net._localMediaStream || null, remoteStream);
       });
-      // Retry once if partner stream doesn't arrive within 3s
-      this._mediaRetryTimeout = setTimeout(() => {
-        if (!this.recorder.partnerActive) this._initiateMediaCall();
-      }, 3000);
+      // Retry up to 10 times if partner stream doesn't arrive
+      this._mediaRetryCount++;
+      if (this._mediaRetryCount < 10) {
+        this._mediaRetryTimeout = setTimeout(() => {
+          if (!this.recorder.partnerActive) this._initiateMediaCall();
+        }, 3000);
+      }
     }
   }
 
