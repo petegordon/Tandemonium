@@ -751,6 +751,11 @@ class Game {
     this.ddaManager = new DDAManager(difficultyName);
     this._assistWeight = 0;
 
+    // Fresh tilt calibration for new ride (player may be holding phone differently)
+    if (this.input.motionEnabled) {
+      this.input.startTiltCalibration();
+    }
+
     const statusEl = document.getElementById('status');
     statusEl.textContent = '';
     this._lastCountNum = 3;
