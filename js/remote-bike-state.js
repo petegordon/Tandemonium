@@ -1,6 +1,6 @@
 // ============================================================
 // REMOTE BIKE STATE — interpolation buffer for stoker
-// Receives state at 20Hz, interpolates for 60fps rendering
+// Receives state at 30Hz, interpolates for 60fps rendering
 // ============================================================
 
 function lerp(a, b, t) { return a + (b - a) * t; }
@@ -10,8 +10,8 @@ export class RemoteBikeState {
     this.prev = null;
     this.curr = null;
     this.receiveTime = 0;
-    this.interpDuration = 0.05; // 50ms default, adapts to jitter
-    this._lastReceiveDelta = 0.05;
+    this.interpDuration = 0.035; // 35ms default, adapts to jitter
+    this._lastReceiveDelta = 0.035;
 
     // Reusable result object (avoid per-frame allocation)
     this._interpState = {
@@ -26,8 +26,8 @@ export class RemoteBikeState {
     const now = performance.now() / 1000;
     if (this.prev) {
       this._lastReceiveDelta = now - this.receiveTime;
-      // Adaptive interpolation: clamp between 30-100ms
-      this.interpDuration = Math.max(0.03, Math.min(0.1, this._lastReceiveDelta));
+      // Adaptive interpolation: clamp between 20-60ms
+      this.interpDuration = Math.max(0.02, Math.min(0.06, this._lastReceiveDelta));
     }
     this.receiveTime = now;
   }
