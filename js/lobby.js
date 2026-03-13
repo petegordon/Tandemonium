@@ -2466,23 +2466,39 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    // Initiate media call — requires P2P, so may need to wait for upgrade
+    // Initiate media call — both sides try, with retries until stream arrives.
+    // PeerJS media calls require P2P, so we wait for the upgrade first.
+    this._mediaCallRetries = 0;
+    this._mediaCallTimer = null;
+
     const tryInitiateCall = () => {
-      if (this._roomRole === 'captain') {
-        this.net.initiateCall();
-      } else if (this.net._answeredWithoutMedia && this.net._localMediaStream) {
-        this.net._answeredWithoutMedia = false;
-        this.net.initiateCall();
+      if (!this.net || !this.net.peer || !this.net.conn) return;
+      this.net.initiateCall();
+      // Retry every 3s until partner video arrives (up to 10 attempts)
+      this._mediaCallRetries++;
+      if (this._mediaCallRetries < 10) {
+        this._mediaCallTimer = setTimeout(() => {
+          const partnerVideo = document.getElementById('partner-pip');
+          const hasStream = partnerVideo && partnerVideo.srcObject &&
+            partnerVideo.srcObject.getVideoTracks().length > 0;
+          if (!hasStream) {
+            tryInitiateCall();
+          }
+        }, 3000);
       }
     };
 
-    if (this.net.transport === 'p2p') {
+    const onP2PReady = () => {
+      // Both sides initiate — first successful call wins
       tryInitiateCall();
+    };
+
+    if (this.net.transport === 'p2p') {
+      onP2PReady();
     } else {
-      // P2P not up yet — initiate call when upgrade completes
       const prevOnP2P = this.net.onP2PUpgrade;
       this.net.onP2PUpgrade = () => {
-        tryInitiateCall();
+        onP2PReady();
         if (prevOnP2P) prevOnP2P();
       };
     }
@@ -2552,6 +2568,8 @@ export class Lobby {
   }
 
   _transitionToGame() {
+    // Stop media call retry timer
+    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
     // Remove lobby mode from PiP elements
     this._removePipLobbyMode();
     // Hide lobby
@@ -2682,12 +2700,29 @@ export class Lobby {
     }
 
     // Re-initiate media call to refresh video stream after returning from game
-    if (this.net.transport === 'p2p' && this.net._localMediaStream) {
+    this._mediaCallRetries = 0;
+    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
+
+    const retryCall = () => {
+      if (!this.net || !this.net.peer || !this.net.conn) return;
       this.net.initiateCall();
-    } else if (this.net._localMediaStream) {
+      this._mediaCallRetries++;
+      if (this._mediaCallRetries < 10) {
+        this._mediaCallTimer = setTimeout(() => {
+          const partnerVideo = document.getElementById('partner-pip');
+          const hasStream = partnerVideo && partnerVideo.srcObject &&
+            partnerVideo.srcObject.getVideoTracks().length > 0;
+          if (!hasStream) retryCall();
+        }, 3000);
+      }
+    };
+
+    if (this.net.transport === 'p2p') {
+      retryCall();
+    } else {
       const prevOnP2P = this.net.onP2PUpgrade;
       this.net.onP2PUpgrade = () => {
-        this.net.initiateCall();
+        retryCall();
         if (prevOnP2P) prevOnP2P();
       };
     }
