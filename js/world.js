@@ -17,8 +17,8 @@ const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 const CLOUD_COUNT = 100;
 const CLOUD_AHEAD = 400;
 const CLOUD_BEHIND = 250;
-const CLOUD_MIN_Y = 12;
-const CLOUD_MAX_Y = 30;
+const CLOUD_MIN_Y = 8;
+const CLOUD_MAX_Y = 20;
 const CLOUD_DRIFT = 1.5;      // units/sec lateral drift
 
 // Chromakey shaders for green-screen video billboards.
