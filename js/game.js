@@ -92,9 +92,9 @@ class Game {
     // Reusable remoteData object (avoid per-frame allocation)
     this._remoteData = { remoteLean: 0, remoteLastFoot: null, remoteLastTapTime: 0 };
     this._stateSendTimer = 0;
-    this._stateSendInterval = 1 / 20; // 20Hz
+    this._stateSendInterval = 1 / 30; // 30Hz
     this._leanSendTimer = 0;
-    this._leanSendInterval = 1 / 20; // 20Hz
+    this._leanSendInterval = 1 / 30; // 30Hz
     this._mpPrevUp = false;
     this._mpPrevDown = false;
     this._stokerWasFallen = false;

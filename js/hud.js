@@ -33,6 +33,13 @@ export class HUD {
     this._lastRemoteFootValue = null;
     this._pedalFlashTimer = 0;
 
+    // Stoker self-flash: instant feedback on own pedal taps
+    this._ownFlashTimer = 0;
+    this._ownFlashFoot = null;
+    this._ownFlashWrong = false;
+    this._prevOwnCorrect = false;
+    this._prevOwnWrong = false;
+
     // Touch buttons
     this.touchLeftEl = document.getElementById('touch-left');
     this.touchRightEl = document.getElementById('touch-right');
@@ -226,6 +233,27 @@ export class HUD {
       const isIdle = bike.speed < 0.3 && !leftHeld && !rightHeld;
       this.touchLeftEl.classList.toggle('idle-pulse', isIdle);
       this.touchRightEl.classList.toggle('idle-pulse', isIdle);
+
+      // Stoker self-flash: instant visual confirmation of own pedal taps
+      const newCorrect = pedalCtrl.wasCorrect && !this._prevOwnCorrect;
+      const newWrong = pedalCtrl.wasWrong && !this._prevOwnWrong;
+      this._prevOwnCorrect = !!pedalCtrl.wasCorrect;
+      this._prevOwnWrong = !!pedalCtrl.wasWrong;
+      if (newCorrect || newWrong) {
+        this._ownFlashTimer = 0.2;
+        this._ownFlashFoot = leftHeld ? 'left' : 'right';
+        this._ownFlashWrong = newWrong;
+      }
+      if (this._ownFlashTimer > 0) {
+        this._ownFlashTimer -= dt;
+        const cls = this._ownFlashWrong ? 'tap-flash-wrong' : 'tap-flash';
+        const el = this._ownFlashFoot === 'left' ? this.touchLeftEl : this.touchRightEl;
+        if (el) el.classList.add(cls);
+        if (this._ownFlashTimer <= 0) {
+          this.touchLeftEl.classList.remove('tap-flash', 'tap-flash-wrong');
+          this.touchRightEl.classList.remove('tap-flash', 'tap-flash-wrong');
+        }
+      }
     }
 
     // Phone gauge (show on both mobile and desktop)
