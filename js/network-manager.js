@@ -473,6 +473,15 @@ export class NetworkManager {
       console.warn('NET: Relay WebSocket error:', err);
     };
     this._relayWs.onclose = () => {
+      // If P2P is active, silently ignore relay failures (it's just a hot standby)
+      if (this.transport === 'p2p' && this.connected) {
+        if (this._relayDidOpen) {
+          this._reconnectRelayBackground();
+        }
+        // Don't fire auth errors or disconnect while P2P is working
+        return;
+      }
+
       // If WebSocket never opened, the relay rejected the connection (401/403)
       if (!this._relayDidOpen) {
         console.warn('NET: Relay rejected connection (likely auth error — missing or invalid token)');
@@ -483,12 +492,6 @@ export class NetworkManager {
           // No auth error handler — surface as disconnect with clear message
           if (this.onDisconnected) this.onDisconnected('Authentication failed');
         }
-        return;
-      }
-
-      // If P2P is active, reconnect relay in background as hot standby
-      if (this.transport === 'p2p' && this.connected) {
-        this._reconnectRelayBackground();
         return;
       }
       if (this.transport === 'relay' || this.transport === 'none') {
