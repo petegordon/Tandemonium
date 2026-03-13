@@ -7,6 +7,11 @@ const CACHE_KEY = 'tandemonium_license';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const _FREEPLAY_HASH = '960d0f6e2f5e4974bb71f690e303d0a116661ca4f3fcec9f8e7d8ce9ba82e7da';
 
+const _FW = [
+  [0x19CE7115A00, 0x19CF15E1200],  // free-play time windows (epoch-ms, hex-obfuscated)
+];
+const _inFreeWindow = _FW.some(([s, e]) => { const n = Date.now(); return n >= s && n < e; });
+
 /** Check if a valid freeplay code is present in the URL query string. */
 const _hasFreeplay = await (async () => {
   const code = new URLSearchParams(window.location.search).get('code');
@@ -30,6 +35,7 @@ export class LicenseManager {
 
   /** True if the user has an active license for Tandemonium (or freeplay code). */
   get isLicensed() {
+    if (_inFreeWindow) return true;
     if (_hasFreeplay) return true;
     return !!(this._license && this._license.licensed);
   }
@@ -46,6 +52,7 @@ export class LicenseManager {
    *   'anonymous'  — not logged in
    */
   get accessLevel() {
+    if (_inFreeWindow) return 'licensed';
     if (_hasFreeplay) return 'licensed';
     if (!this.auth || !this.auth.isLoggedIn()) return 'anonymous';
     return this.isLicensed ? 'licensed' : 'free';
