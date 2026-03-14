@@ -3522,11 +3522,17 @@ class Game {
     this.chaseCamera.initialized = false;
     this.pedalCtrl = new PedalController(this.input);
 
-    // Return to lobby (demo users see locked level cards, licensed users see level select)
+    // Return to lobby
     this.state = 'lobby';
     this.lobby.show();
-    this.lobby._pendingMode = 'solo';
-    this.lobby._showStep(this.lobby.levelStep);
+    if (this._isDemo) {
+      // Demo users go back to the first lobby screen
+      this.lobby._showStep(this.lobby.modeStep);
+    } else {
+      // Licensed users go to level/difficulty select
+      this.lobby._pendingMode = 'solo';
+      this.lobby._showStep(this.lobby.levelStep);
+    }
   }
 
   // ============================================================
