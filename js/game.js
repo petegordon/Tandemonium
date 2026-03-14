@@ -27,7 +27,7 @@ import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRo
 import { DDAManager } from './dda-manager.js';
 
 const DEMO_CHECKPOINT_LIMIT = 2; // Demo ends after 2 checkpoints
-const TUNING_STORAGE_KEY = 'tandemonium_motion_tuning';
+const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 
 // Tutorial phase boundaries (meters)
 const PHASE_1_END = 30;
@@ -2835,7 +2835,7 @@ class Game {
 
   _saveAdaptedTuning(isGyro) {
     try {
-      const existing = localStorage.getItem(TUNING_STORAGE_KEY);
+      const existing = localStorage.getItem(this._tuningKey());
       const data = existing ? JSON.parse(existing) : { version: 1 };
       data.inputType = isGyro ? 'gyro' : 'phone';
       data.timestamp = Date.now();
@@ -2849,7 +2849,7 @@ class Game {
         data.responseCurve = Math.round(TUNE.responseCurve * 100) / 100;
       }
       // Preserve steeringFeel if set
-      localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(this._tuningKey(), JSON.stringify(data));
     } catch {}
   }
 
@@ -2857,13 +2857,20 @@ class Game {
   // TUTORIAL — motion learning ride
   // ============================================================
 
+  /** Returns the per-user localStorage key for motion tuning. */
+  _tuningKey() {
+    const auth = this.lobby && this.lobby.auth;
+    const userId = auth && auth.isLoggedIn() && auth.getUser() ? auth.getUser().id : null;
+    return userId ? TUNING_KEY_PREFIX + '_' + userId : TUNING_KEY_PREFIX;
+  }
+
   _shouldRunTutorial() {
     // Only for solo mode with motion input
     if (this.mode !== 'solo') return false;
     if (!this.input.motionEnabled && !this.input.gyroConnected) return false;
     if (this.lobby._forceWizard) return true;
     try {
-      const saved = localStorage.getItem(TUNING_STORAGE_KEY);
+      const saved = localStorage.getItem(this._tuningKey());
       if (!saved) return true;
       const data = JSON.parse(saved);
       // Re-run if input type changed
@@ -2874,7 +2881,7 @@ class Game {
 
   _loadSavedTuning() {
     try {
-      const saved = localStorage.getItem(TUNING_STORAGE_KEY);
+      const saved = localStorage.getItem(this._tuningKey());
       if (!saved) return false;
       const data = JSON.parse(saved);
       if (data.version !== 1) return false;
@@ -3219,7 +3226,7 @@ class Game {
       steeringFeel: 0.5,
       timestamp: Date.now()
     };
-    try { localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(saveData)); } catch {}
+    try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}
 
     // Stop the game loop for this ride
     this.state = 'gameover'; // pause updates
@@ -3322,7 +3329,7 @@ class Game {
       responseCurve: isGyro ? BALANCE_DEFAULTS.gyroResponseCurve : BALANCE_DEFAULTS.responseCurve,
       timestamp: Date.now()
     };
-    try { localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(saveData)); } catch {}
+    try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}
     this._endTutorialRide();
   }
 
@@ -3331,11 +3338,11 @@ class Game {
     const slider = document.getElementById('steering-feel-slider');
     const feel = (slider ? slider.value : 50) / 100;
     try {
-      const saved = localStorage.getItem(TUNING_STORAGE_KEY);
+      const saved = localStorage.getItem(this._tuningKey());
       if (saved) {
         const data = JSON.parse(saved);
         data.steeringFeel = feel;
-        localStorage.setItem(TUNING_STORAGE_KEY, JSON.stringify(data));
+        localStorage.setItem(this._tuningKey(), JSON.stringify(data));
       }
     } catch {}
 

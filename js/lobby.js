@@ -1084,6 +1084,12 @@ export class Lobby {
     this._updateTutorialButton();
   }
 
+  /** Returns the per-user localStorage key for motion tuning. */
+  _tuningKey() {
+    const userId = this.auth && this.auth.isLoggedIn() && this.auth.getUser() ? this.auth.getUser().id : null;
+    return userId ? 'tandemonium_motion_tuning_' + userId : 'tandemonium_motion_tuning';
+  }
+
   _needsMotionTuning() {
     // Only gate levels for motion/gyro players — keyboard/joystick-only don't need calibration
     const hasMotion = this.motionActive && (
@@ -1092,7 +1098,7 @@ export class Lobby {
     );
     if (!hasMotion) return false;
     try {
-      const saved = localStorage.getItem('tandemonium_motion_tuning');
+      const saved = localStorage.getItem(this._tuningKey());
       if (!saved) return true;
       const data = JSON.parse(saved);
       if (data.version !== 1) return true;
@@ -1352,11 +1358,12 @@ export class Lobby {
       applySteeringFeel(feel);
       // Save immediately
       try {
-        const saved = localStorage.getItem('tandemonium_motion_tuning');
+        const tuningKey = this._tuningKey();
+        const saved = localStorage.getItem(tuningKey);
         if (saved) {
           const data = JSON.parse(saved);
           data.steeringFeel = feel;
-          localStorage.setItem('tandemonium_motion_tuning', JSON.stringify(data));
+          localStorage.setItem(tuningKey, JSON.stringify(data));
         }
       } catch {}
     };
@@ -1367,7 +1374,7 @@ export class Lobby {
     };
 
     document.getElementById('btn-recalibrate').onclick = () => {
-      try { localStorage.removeItem('tandemonium_motion_tuning'); } catch {}
+      try { localStorage.removeItem(this._tuningKey()); } catch {}
       this._forceWizard = true;
       dismiss();
     };
