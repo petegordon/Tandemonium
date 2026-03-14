@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS scores (
   mode TEXT NOT NULL,               -- 'solo' | 'captain' | 'stoker'
   collectibles_count INTEGER DEFAULT 0,
   input_source TEXT DEFAULT 'none',
+  difficulty TEXT DEFAULT 'normal',
+  safety_used INTEGER DEFAULT 0,
+  score_multiplier REAL DEFAULT 1.0,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
