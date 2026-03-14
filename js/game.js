@@ -86,6 +86,8 @@ class Game {
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
+    this._partnerHasTilt = undefined; // undefined = unknown, true/false = received
+    this._onPartnerTiltStatus = null;
     this._partnerServerId = null;
     this._remoteLastFoot = null;
     this._remoteLastTapTime = 0;
@@ -588,6 +590,12 @@ class Game {
         this._remoteFinishStats = profile;
         return;
       }
+      // Handle tilt status from partner
+      if (profile && profile.type === 'tiltStatus') {
+        this._partnerHasTilt = profile.hasTilt;
+        if (this._onPartnerTiltStatus) this._onPartnerTiltStatus(profile.hasTilt);
+        return;
+      }
       // Handle camera toggle from partner during gameplay
       if (profile && profile.type === 'cameraToggle') {
         if (profile.enabled) {
@@ -690,6 +698,66 @@ class Game {
         await this.input.requestMotionPermission();
       }
 
+      // On mobile, wait briefly for motion events to arrive
+      if (isMobile && !this.input.motionEnabled && !this.input.gyroConnected) {
+        await new Promise(r => {
+          const check = () => { if (this.input.motionEnabled) return r(); };
+          check();
+          const iv = setInterval(check, 100);
+          setTimeout(() => { clearInterval(iv); r(); }, 1500);
+        });
+        if (!this.input.motionEnabled) {
+          if (this.mode === 'solo') {
+            // Solo: block gameplay — tilt is required to steer
+            started = false;
+            this.instructionsEl.classList.add('hidden');
+            const action = await this._showMotionFixOverlay();
+            if (action === 'back' || !this.input.motionEnabled) {
+              this._returnToRoom();
+              return;
+            }
+            this.instructionsEl.classList.remove('hidden');
+          } else {
+            // Multiplayer: tell partner we have no tilt, then check if they do
+            this.net.sendProfile({ type: 'tiltStatus', hasTilt: false });
+            // Wait briefly for partner's tilt status response
+            const partnerHasTilt = await new Promise(r => {
+              // If we already know partner has tilt, resolve immediately
+              if (this._partnerHasTilt) return r(true);
+              // Listen for partner's tiltStatus message
+              const prev = this._onPartnerTiltStatus;
+              this._onPartnerTiltStatus = (has) => { this._onPartnerTiltStatus = prev; r(has); };
+              // Timeout: assume partner has tilt if no response (they may be on desktop/keyboard)
+              setTimeout(() => r(this._partnerHasTilt !== false), 3000);
+            });
+            if (partnerHasTilt) {
+              const statusEl = document.getElementById('status');
+              statusEl.textContent = 'Tilt not available — your partner will steer';
+              statusEl.style.color = '#ffaa00';
+              await new Promise(r => setTimeout(r, 2000));
+              statusEl.textContent = '';
+            } else {
+              // Neither player has tilt — block gameplay
+              started = false;
+              this.instructionsEl.classList.add('hidden');
+              const action = await this._showMotionFixOverlay();
+              if (action === 'back' || !this.input.motionEnabled) {
+                this._returnToRoom();
+                return;
+              }
+              this.instructionsEl.classList.remove('hidden');
+              // Notify partner we fixed it
+              this.net.sendProfile({ type: 'tiltStatus', hasTilt: true });
+            }
+          }
+        }
+      }
+
+      // In multiplayer, notify partner of our tilt status
+      if (this.net && this.input.motionEnabled) {
+        this.net.sendProfile({ type: 'tiltStatus', hasTilt: true });
+      }
+
       // Remove document-level start handlers now that we've started
       document.removeEventListener('touchstart', handler);
       document.removeEventListener('click', handler);
@@ -739,6 +807,8 @@ class Game {
   _startCountdown() {
     this.state = 'countdown';
     this.countdownTimer = 3.0;
+    this._hideGameOver();
+    this._hideVictory();
     this.instructionsEl.classList.add('hidden');
 
     // Show in-game music button
@@ -1125,6 +1195,61 @@ class Game {
     document.getElementById('conn-badge').classList.remove('reconnecting');
   }
 
+  _showMotionFixOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'motion-fix-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.innerHTML =
+      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:340px;text-align:center;color:#fff;font-family:inherit;">' +
+        '<div style="font-size:1.3em;font-weight:bold;margin-bottom:12px;color:#ffaa00;">Tilt Sensor Not Detected</div>' +
+        '<div style="font-size:0.95em;line-height:1.5;margin-bottom:16px;">' +
+          'This game requires your phone\'s motion sensor to steer.<br><br>' +
+          '<b>Try these fixes:</b><br>' +
+          '1. Check browser settings &rarr; enable "Motion &amp; Orientation"<br>' +
+          '2. Try <b>Safari</b> (iPhone) or <b>Chrome</b> (Android)<br>' +
+          '3. Restart your browser and try again' +
+        '</div>' +
+        '<div style="display:flex;gap:12px;justify-content:center;">' +
+          '<button id="btn-motion-retry" style="padding:10px 20px;border-radius:8px;border:none;background:#44ff66;color:#000;font-weight:bold;font-size:1em;cursor:pointer;">Try Again</button>' +
+          '<button id="btn-motion-back" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;">Back to Lobby</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    return new Promise((resolve) => {
+      // Auto-detect if motion becomes available (user toggled setting in background)
+      const pollIv = setInterval(() => {
+        if (this.input.motionEnabled) {
+          clearInterval(pollIv);
+          overlay.remove();
+          resolve('fixed');
+        }
+      }, 200);
+
+      document.getElementById('btn-motion-retry').addEventListener('click', async () => {
+        if (this.input.needsMotionPermission) {
+          await this.input.requestMotionPermission();
+        }
+        // Wait up to 2s for sensor to respond
+        await new Promise(r => {
+          const iv = setInterval(() => { if (this.input.motionEnabled) { clearInterval(iv); r(); } }, 100);
+          setTimeout(() => { clearInterval(iv); r(); }, 2000);
+        });
+        if (this.input.motionEnabled) {
+          clearInterval(pollIv);
+          overlay.remove();
+          resolve('fixed');
+        }
+      });
+
+      document.getElementById('btn-motion-back').addEventListener('click', () => {
+        clearInterval(pollIv);
+        overlay.remove();
+        resolve('back');
+      });
+    });
+  }
+
   _showDisconnect(reason) {
     const overlay = document.getElementById('disconnect-overlay');
     const msg = document.getElementById('disconnect-msg');
@@ -1182,6 +1307,10 @@ class Game {
     // Show "Return to Room" in multiplayer
     const roomBtn = document.getElementById('btn-gameover-room');
     if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
+
+    // Adjust lobby button text for solo vs multiplayer
+    const lobbyBtn = document.getElementById('btn-gameover-lobby');
+    if (lobbyBtn) lobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
     const skipBtn = document.getElementById('btn-skip-checkpoint');
     const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn, document.getElementById('btn-gameover-lobby')]
@@ -1649,6 +1778,10 @@ class Game {
     // Show "Return to Room" in multiplayer
     const roomBtn = document.getElementById('btn-victory-room');
     if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
+
+    // Adjust lobby button text for solo vs multiplayer
+    const victoryLobbyBtn = document.getElementById('btn-victory-lobby');
+    if (victoryLobbyBtn) victoryLobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
     // Gamepad navigation for victory buttons
     const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby')];
