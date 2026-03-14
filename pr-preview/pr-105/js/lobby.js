@@ -481,7 +481,8 @@ export class Lobby {
 
     // RIDE TOGETHER → check for rejoin, then role selection
     document.getElementById('btn-together').addEventListener('click', async () => {
-      if (!this.auth.isLoggedIn()) {
+      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+      if (!isLocal && !this.auth.isLoggedIn()) {
         this.auth.login();
         return;
       }
@@ -982,10 +983,16 @@ export class Lobby {
       btnTogether.classList.remove('role-locked');
       btnTogether.innerHTML = 'RIDE TOGETHER';
     } else {
-      // anonymous — show but locked
+      // anonymous — show but locked (unlocked on localhost for local testing)
+      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
       btnSolo.textContent = 'SOLO DEMO';
-      btnTogether.classList.add('role-locked');
-      btnTogether.innerHTML = '&#x1F512; RIDE TOGETHER<br><span class="lobby-role-desc">Sign in to ride together</span>';
+      if (isLocal) {
+        btnTogether.classList.remove('role-locked');
+        btnTogether.innerHTML = 'RIDE TOGETHER';
+      } else {
+        btnTogether.classList.add('role-locked');
+        btnTogether.innerHTML = '&#x1F512; RIDE TOGETHER<br><span class="lobby-role-desc">Sign in to ride together</span>';
+      }
     }
 
     // License status icon next to version: 🔒 not licensed, ✅ licensed, 🆓 free play
@@ -2657,15 +2664,15 @@ export class Lobby {
       }
     }
 
-    // Add shared difficulty buttons to gamepad nav (captain only)
+    // Register for gamepad nav on levels step
+    // Order: level cards → START RIDE → difficulty → back
     if (isClickable) {
+      buttons.push(document.getElementById('btn-start-ride'));
       const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
       diffBtns.forEach(b => buttons.push(b));
     }
-
-    // Register for gamepad nav on levels step
     const levelsItems = isClickable
-      ? [...buttons, document.getElementById('btn-start-ride'), document.getElementById('btn-back-room-levels')]
+      ? [...buttons, document.getElementById('btn-back-room-levels')]
       : [document.getElementById('btn-back-room-levels')];
     this._stepItems.set(this.roomLevelsStep, levelsItems);
     this._stepCenterItems.set(this.roomLevelsStep, levelsItems);
