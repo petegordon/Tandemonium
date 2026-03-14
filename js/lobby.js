@@ -1027,9 +1027,13 @@ export class Lobby {
 
   _showMotionToggle() {
     this.toggleMotion.style.display = '';
-    // Show "Learn to Ride" tutorial button on level select
+    // Show "Learn to Ride" tutorial button on level select with input-appropriate icon
     const tutBtn = document.getElementById('btn-tutorial');
-    if (tutBtn) tutBtn.style.display = '';
+    if (tutBtn) {
+      tutBtn.style.display = '';
+      const icon = (this.input && this.input.gamepadConnected) ? '\uD83C\uDFAE' : '\uD83D\uDCF1'; // 🎮 or 📱
+      tutBtn.textContent = icon + ' Learn to Ride';
+    }
   }
 
   _checkGamepadGyro() {
