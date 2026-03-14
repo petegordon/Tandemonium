@@ -623,6 +623,10 @@ export class Lobby {
     this.toggleMusic.addEventListener('pointercancel', () => {
       clearTimeout(this._longPressTimer);
     });
+    // Gamepad A-button fires .click() not pointerdown/pointerup — handle it
+    this.toggleMusic.addEventListener('click', () => {
+      if (!this._musicLongPressed) this._toggleMusic();
+    });
     // Volume picker buttons
     for (const btn of this._volBtns) {
       btn.addEventListener('click', (e) => {
