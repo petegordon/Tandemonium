@@ -3347,8 +3347,8 @@ class Game {
     document.getElementById('tutorial-crash').classList.remove('visible');
     document.getElementById('tutorial-complete').classList.remove('visible');
 
-    // Re-enable joystick steering
-    this.input.suppressGamepadLean = false;
+    // Restore joystick steering to lobby toggle state
+    this.input.suppressGamepadLean = !this.lobby.joystickActive;
 
     // Clean up (subset of _returnToLobby)
     this._musicBtn.style.display = 'none';

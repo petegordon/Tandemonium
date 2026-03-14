@@ -98,6 +98,7 @@ export class Lobby {
     this.toggleAll = document.getElementById('toggle-all');
     this.toggleCamera = document.getElementById('toggle-camera');
     this.toggleMotion = document.getElementById('toggle-motion');
+    this.toggleJoystick = document.getElementById('toggle-joystick');
     this.toggleAudio = document.getElementById('toggle-audio');
     this.toggleMusic = document.getElementById('toggle-music');
     this.toggleHelp = document.getElementById('toggle-help');
@@ -106,6 +107,7 @@ export class Lobby {
     this.toggleLeaderboard = document.getElementById('toggle-leaderboard');
     this.cameraActive = false;
     this.motionActive = false;
+    this.joystickActive = true; // joystick steering on by default when gamepad connected
     this.audioActive = false;
     this._cameraPermitted = false;
     this._motionPermitted = false;
@@ -153,7 +155,7 @@ export class Lobby {
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
       [document.getElementById('btn-together'), document.getElementById('btn-solo')],
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
-      [this.toggleMotion, this.toggleMusic],
+      [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
     this._modeCol = 1;
     this._modeColIndex = [0, 0, 0, 0];
@@ -613,6 +615,7 @@ export class Lobby {
     this.toggleAll.addEventListener('click', () => this._toggleAll());
     this.toggleCamera.addEventListener('click', () => this._toggleCamera());
     this.toggleMotion.addEventListener('click', () => this._toggleMotion());
+    this.toggleJoystick.addEventListener('click', () => this._toggleJoystick());
     this.toggleAudio.addEventListener('click', () => this._toggleAudio());
     // Music toggle: tap = mute/unmute, long press (500ms) = show volume slider
     this._musicLongPressed = false;
@@ -1027,6 +1030,44 @@ export class Lobby {
 
   _showMotionToggle() {
     this.toggleMotion.style.display = '';
+
+    // Update motion toggle icon: gamepad gyro vs phone tilt
+    const svg = document.getElementById('motion-icon-svg');
+    if (svg) {
+      const isGamepad = this.input && this.input.gamepadConnected;
+      if (isGamepad) {
+        // Gamepad with tilt waves — represents controller gyro
+        svg.innerHTML =
+          '<rect x="3" y="6" width="14" height="9" rx="2"/>' +
+          '<circle cx="7" cy="10.5" r="1.5" fill="currentColor" stroke="none"/>' +
+          '<line x1="11" y1="9" x2="13" y2="9"/>' +
+          '<line x1="12" y1="8" x2="12" y2="10"/>' +
+          '<path d="M4 4c-1 0.5-1 1.5 0 2" opacity="0.6"/>' +
+          '<path d="M16 4c1 0.5 1 1.5 0 2" opacity="0.6"/>';
+      } else {
+        // Phone with tilt waves — represents mobile tilt
+        svg.innerHTML =
+          '<rect x="6" y="2" width="8" height="16" rx="2"/>' +
+          '<circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>' +
+          '<path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/>' +
+          '<path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>';
+      }
+    }
+
+    // Show joystick toggle when gamepad is connected
+    if (this.input && this.input.gamepadConnected) {
+      this.toggleJoystick.style.display = '';
+      // Load persisted joystick preference
+      try {
+        const saved = localStorage.getItem('tandemonium_joystick');
+        if (saved === 'off') {
+          this.joystickActive = false;
+          if (this.input) this.input.suppressGamepadLean = true;
+        }
+      } catch {}
+      this._setToggleActive('joystick', this.joystickActive);
+    }
+
     // Show "Learn to Ride" tutorial button on level select with input-appropriate icon
     const tutBtn = document.getElementById('btn-tutorial');
     if (tutBtn) {
@@ -1182,6 +1223,18 @@ export class Lobby {
     }
   }
 
+  _toggleJoystick() {
+    this.joystickActive = !this.joystickActive;
+    this._setToggleActive('joystick', this.joystickActive);
+    if (this.input) {
+      this.input.suppressGamepadLean = !this.joystickActive;
+    }
+    // Persist choice
+    try {
+      localStorage.setItem('tandemonium_joystick', this.joystickActive ? 'on' : 'off');
+    } catch {}
+  }
+
   _showRecalPopup() {
     const popup = document.getElementById('motion-recal-popup');
     popup.classList.add('visible');
@@ -1253,6 +1306,7 @@ export class Lobby {
   _setToggleActive(name, active) {
     const el = name === 'camera' ? this.toggleCamera
              : name === 'motion' ? this.toggleMotion
+             : name === 'joystick' ? this.toggleJoystick
              : name === 'music'  ? this.toggleMusic
              : this.toggleAudio;
     if (active) {
@@ -1888,6 +1942,18 @@ export class Lobby {
         }
         this._showSpinners(true);
       }
+      // Show joystick toggle for any gamepad
+      if (this.input && this.input.gamepadConnected) {
+        this.toggleJoystick.style.display = '';
+        try {
+          const saved = localStorage.getItem('tandemonium_joystick');
+          if (saved === 'off') {
+            this.joystickActive = false;
+            this.input.suppressGamepadLean = true;
+          }
+        } catch {}
+        this._setToggleActive('joystick', this.joystickActive);
+      }
       if (this.toggleMotion.style.display !== 'none') return;
       if (this.input && this.input.gamepadConnected && navigator.hid) {
         this._checkGamepadGyro();
@@ -1906,6 +1972,8 @@ export class Lobby {
         this._showSpinners(false);
         this._spinnerStopRepeat();
       }
+      // Hide joystick toggle when gamepad disconnects
+      this.toggleJoystick.style.display = 'none';
     });
   }
 
