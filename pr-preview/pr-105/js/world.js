@@ -1014,6 +1014,20 @@ export class World {
     this._raceMarkers = [];
   }
 
+  /** Hide race markers (arches/stripes) near a specific road distance. */
+  hideMarkersNear(distance, tolerance = 2) {
+    const L = this.roadPath.loopLength;
+    const targetD = distance % L;
+    for (const marker of this._raceMarkers) {
+      let diff = Math.abs(marker.roadD - targetD);
+      if (diff > L / 2) diff = L - diff;
+      if (diff < tolerance) {
+        marker.mesh.visible = false;
+        marker._permanentlyHidden = true;
+      }
+    }
+  }
+
   _cleanupDestVideo() {
     if (this._billboardVideos) {
       for (const bv of this._billboardVideos) {
@@ -1032,6 +1046,7 @@ export class World {
       if (ahead < -L / 2) ahead += L;
       if (ahead > L / 2) ahead -= L;
       const inRange = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
+      if (marker._permanentlyHidden) { marker.mesh.visible = false; continue; }
       // Gate billboard video on readiness to prevent black frame flash
       marker.mesh.visible = marker.billboard ? (inRange && marker.videoReady) : inRange;
     }
