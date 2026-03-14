@@ -628,7 +628,10 @@ export class Lobby {
     });
     this.toggleMusic.addEventListener('pointerup', () => {
       clearTimeout(this._longPressTimer);
-      if (!this._musicLongPressed) this._toggleMusic();
+      if (!this._musicLongPressed) {
+        this._toggleMusic();
+        this._musicHandledByPointer = true; // prevent click from double-firing
+      }
     });
     this.toggleMusic.addEventListener('pointerleave', () => {
       clearTimeout(this._longPressTimer);
@@ -638,6 +641,10 @@ export class Lobby {
     });
     // Gamepad A-button fires .click() not pointerdown/pointerup — handle it
     this.toggleMusic.addEventListener('click', () => {
+      if (this._musicHandledByPointer) {
+        this._musicHandledByPointer = false;
+        return; // already handled by pointerup
+      }
       if (!this._musicLongPressed) this._toggleMusic();
     });
     // Volume picker buttons
