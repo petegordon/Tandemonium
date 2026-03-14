@@ -3199,22 +3199,22 @@ class Game {
     hintEl.textContent = hint;
     crashEl.classList.add('visible');
 
-    // Back up 15m from phase start to give pedaling runway before items
-    const restartDist = phase === 1 ? 0 : phase === 2 ? Math.max(0, PHASE_1_END - 15) : phase === 3 ? Math.max(0, PHASE_2_END - 15) : Math.max(0, PHASE_3_END - 15);
+    // Restart at the beginning of the current phase (not before it)
+    const phaseStart = phase === 1 ? 0 : phase === 2 ? PHASE_1_END : phase === 3 ? PHASE_2_END : PHASE_3_END;
     setTimeout(() => {
       crashEl.classList.remove('visible');
       document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
-      this.bike.resetToDistance(restartDist);
-      this.bike.distanceTraveled = restartDist;
-      this.bike.speed = Math.min(this.bike.speed, 2); // slow down for restart
+      this.bike.resetToDistance(phaseStart);
+      this.bike.distanceTraveled = phaseStart;
+      this.bike.speed = 4; // give a running start so player doesn't stall
       // Reset collectibles for retry
       if (this.collectibleManager) this.collectibleManager.resetCollected();
       // Reset pylon tracking for retry
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
       this._tutOffRoadTime = 0;
-      // Stay in same phase
-      this._tutorialPhase = 0; // will re-enter the phase on next update
+      // Stay in same phase (don't reset to 0 which would re-detect Phase 1)
+      this._tutorialPhase = phase;
     }, 1200);
   }
 
@@ -3244,13 +3244,13 @@ class Game {
     // Hide gameover overlay if it would show
     document.getElementById('gameover-overlay').style.display = 'none';
 
-    // Restart from current phase after brief delay
-    // Back up 15m from phase start to give pedaling runway before items
-    const restartDist = phase === 1 ? 0 : phase === 2 ? Math.max(0, PHASE_1_END - 15) : phase === 3 ? Math.max(0, PHASE_2_END - 15) : Math.max(0, PHASE_3_END - 15);
+    // Restart at the beginning of the current phase
+    const phaseStart = phase === 1 ? 0 : phase === 2 ? PHASE_1_END : phase === 3 ? PHASE_2_END : PHASE_3_END;
     setTimeout(() => {
       crashEl.classList.remove('visible');
-      this.bike.resetToDistance(restartDist);
-      this.bike.distanceTraveled = restartDist;
+      this.bike.resetToDistance(phaseStart);
+      this.bike.distanceTraveled = phaseStart;
+      this.bike.speed = 4; // give a running start
       this.state = 'playing';
       this._tutCrashPending = false;
       // Reset collectibles for retry
@@ -3259,8 +3259,8 @@ class Game {
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
       this._tutOffRoadTime = 0;
-      // Reset phase tracking
-      this._tutorialPhase = 0;
+      // Stay in same phase
+      this._tutorialPhase = phase;
       this._tutPeakLean = 0;
       this._tutPeakTime = 0;
       this._tutLastSign = 0;
