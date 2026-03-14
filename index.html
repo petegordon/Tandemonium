@@ -282,6 +282,37 @@
   #tutorial-dodge-arrow.arrow-right svg {
     transform: scaleX(-1);
   }
+  /* ── Tutorial collect indicator ── */
+  #tutorial-collect-indicator {
+    position: fixed;
+    top: 45%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 84;
+    pointer-events: none;
+    display: none;
+    text-align: center;
+    transition: opacity 0.2s;
+  }
+  #tutorial-collect-indicator.visible { display: block; }
+  #tutorial-collect-indicator .collect-icon {
+    font-size: 48px;
+    filter: drop-shadow(0 3px 8px rgba(0,0,0,0.5));
+  }
+  #tutorial-collect-indicator .collect-text {
+    font-size: 14px;
+    font-weight: bold;
+    color: #ffd700;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.7);
+    margin-top: 2px;
+    letter-spacing: 2px;
+  }
+  #tutorial-collect-indicator.collect-left {
+    left: 35%;
+  }
+  #tutorial-collect-indicator.collect-right {
+    left: 65%;
+  }
 
   #tutorial-crash {
     position: fixed;
@@ -3608,7 +3639,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.3b9cb99 | 03-14-2026 14:32</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.6a4e9a0 | 03-14-2026 15:54</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3757,7 +3788,14 @@ ON</button>
       L70 45 L20 80 L70 115 L70 95
       C95 98 115 108 130 122
       C150 140 160 165 160 210 Z"/>
+    <!-- Small orange pylon that the arrow curves around -->
+    <path fill="#ff8800" d="M35 200 L50 140 L65 200 Z"/>
+    <rect fill="#ff6600" x="31" y="200" width="38" height="8" rx="2"/>
   </svg>
+</div>
+<div id="tutorial-collect-indicator">
+  <div class="collect-icon">🎁</div>
+  <div class="collect-text">COLLECT</div>
 </div>
 <div id="tutorial-crash">
   <div id="tutorial-crash-text">Oops! Try again</div>

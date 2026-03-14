@@ -196,6 +196,23 @@ export class ObstacleManager {
     }
   }
 
+  replaceItems(positions) {
+    for (const slot of this._pool) {
+      slot.mesh.visible = false;
+      slot.shadow.visible = false;
+      slot.itemIdx = -1;
+    }
+    this._items = [];
+    for (const p of positions) {
+      this._items.push({
+        absoluteD: p.d,
+        roadD: p.d % this._loopLen,
+        lateralOffset: p.offset,
+        poolIdx: -1
+      });
+    }
+  }
+
   update(dt, bikeDistanceTraveled, bikePosition) {
     // Release pool slots for items out of range
     for (const slot of this._pool) {
@@ -288,11 +305,13 @@ export class ObstacleManager {
    * Returns tutorial pylon results: how many passed, and whether any were on the wrong side.
    * "Correct side" = bike lateral offset is opposite sign from the pylon's lateral offset.
    */
-  getTutorialResults() {
+  getTutorialResults(minD, maxD) {
     let passed = 0;
     let wrongSide = 0;
-    const total = this._items.length;
+    let total = 0;
     for (const item of this._items) {
+      if (minD !== undefined && (item.absoluteD < minD || item.absoluteD > maxD)) continue;
+      total++;
       if (item._bikeLateralAtPass === undefined) continue;
       passed++;
       const correct = (item.lateralOffset < 0 && item._bikeLateralAtPass > 0) ||

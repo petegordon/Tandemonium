@@ -200,6 +200,26 @@ export class CollectibleManager {
     }
   }
 
+  replaceItems(positions) {
+    // Release all pool slots
+    for (const slot of this._pool) {
+      slot.mesh.visible = false;
+      slot.itemIdx = -1;
+    }
+    // Clear and rebuild items
+    this._items = [];
+    for (const p of positions) {
+      this._items.push({
+        absoluteD: p.d,
+        roadD: p.d % this._loopLen,
+        lateralOffset: p.offset,
+        collected: false,
+        poolIdx: -1
+      });
+    }
+    this.collected = 0;
+  }
+
   resetCollected() {
     for (const item of this._items) {
       item.collected = false;

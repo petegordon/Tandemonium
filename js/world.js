@@ -838,10 +838,10 @@ export class World {
     // Finish line stripe at the end of every level
     this._createFinishStripe(level.distance);
 
-    // Tutorial: start line + phase boundary markers (no arch before presents)
+    // Tutorial: start line + phase boundary arches
     if (level.isTutorial) {
       this._createFinishStripe(0, 0x44ff66, 0x115511);   // Start line (green)
-      for (const d of [70, 112]) {
+      for (const d of [70, 142]) {
         this._createFinishStripe(d, 0xffd700, 0x444400);
         this._createCloudArch(d, archMat, L);
       }
