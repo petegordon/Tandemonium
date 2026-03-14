@@ -185,9 +185,9 @@ export class CollectibleManager {
       { d: 45, offset:  2.0 },
       { d: 55, offset: -2.0 },
       { d: 65, offset:  2.0 },
-      { d: 110, offset:  2.0 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
-      { d: 122, offset: -2.0 },
-      { d: 134, offset:  2.0 },
+      { d: 117, offset:  2.0 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
+      { d: 129, offset: -2.0 },
+      { d: 141, offset:  2.0 },
     ];
     for (const p of positions) {
       this._items.push({

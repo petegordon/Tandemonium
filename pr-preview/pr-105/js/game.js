@@ -34,7 +34,7 @@ const RUNWAY_END = 30;
 // Phase boundaries (content starts after runway)
 const PHASE_1_END = 70;   // Collect presents (30-70m)
 const PHASE_2_END = 112;  // Dodge pylons (70-112m)
-const PHASE_3_END = 148;  // Put it together (112-148m)
+const PHASE_3_END = 152;  // Put it together (112-152m)
 
 class Game {
   constructor() {

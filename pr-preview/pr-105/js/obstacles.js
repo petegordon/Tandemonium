@@ -182,9 +182,9 @@ export class ObstacleManager {
       { d: 87, offset:  1.5 },
       { d: 97, offset: -1.5 },
       { d: 107, offset: 1.5 },
-      { d: 116, offset: -1.5 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
-      { d: 128, offset:  1.5 },
-      { d: 140, offset: -1.5 },
+      { d: 123, offset: -1.5 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
+      { d: 135, offset:  1.5 },
+      { d: 147, offset: -1.5 },
     ];
     for (const p of positions) {
       this._items.push({
