@@ -371,6 +371,50 @@
     cursor: pointer;
     box-shadow: 0 4px 16px rgba(68,255,102,0.3);
   }
+  /* ── Keyboard-only confirmation popup ── */
+  #keyboard-confirm-popup {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1a2e;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 14px;
+    display: none;
+    z-index: 57;
+    text-align: center;
+    min-width: 180px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  #keyboard-confirm-popup.visible { display: block; }
+  #keyboard-confirm-popup .confirm-text {
+    font-size: 13px;
+    color: rgba(255,255,255,0.85);
+    margin-bottom: 10px;
+    line-height: 1.4;
+  }
+  #keyboard-confirm-popup button {
+    display: inline-block;
+    width: 45%;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 0;
+    cursor: pointer;
+    margin: 0 2%;
+  }
+  #btn-keyboard-yes {
+    background: rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.8);
+  }
+  #btn-keyboard-no {
+    background: linear-gradient(135deg, #44ff66, #22cc44);
+    color: #000;
+  }
+
   /* ── Motion recalibrate popup ── */
   #motion-recal-popup {
     position: absolute;
@@ -3486,14 +3530,21 @@ ON</button>
           </button>
         </div>
         <div class="lobby-toggle-col">
-          <button class="lobby-toggle" id="toggle-joystick" title="Joystick" style="display:none">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="10" cy="5" r="3"/>
-              <line x1="10" y1="8" x2="10" y2="14"/>
-              <line x1="5" y1="14" x2="15" y2="14"/>
-              <rect x="4" y="14" width="12" height="4" rx="1.5"/>
-            </svg>
-          </button>
+          <div style="position:relative">
+            <button class="lobby-toggle" id="toggle-joystick" title="Joystick" style="display:none">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="10" cy="5" r="3"/>
+                <line x1="10" y1="8" x2="10" y2="14"/>
+                <line x1="5" y1="14" x2="15" y2="14"/>
+                <rect x="4" y="14" width="12" height="4" rx="1.5"/>
+              </svg>
+            </button>
+            <div id="keyboard-confirm-popup">
+              <div class="confirm-text">Use keyboard only?</div>
+              <button id="btn-keyboard-yes">YES</button>
+              <button id="btn-keyboard-no">NO</button>
+            </div>
+          </div>
           <div style="position:relative">
             <button class="lobby-toggle" id="toggle-motion" title="Motion" style="display:none">
               <svg id="motion-icon-svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -3554,7 +3605,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.93e6bb8 | 03-14-2026 09:57</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.044a4e3 | 03-14-2026 10:14</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">

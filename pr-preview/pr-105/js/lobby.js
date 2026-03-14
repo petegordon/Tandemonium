@@ -1068,13 +1068,26 @@ export class Lobby {
       this._setToggleActive('joystick', this.joystickActive);
     }
 
-    // Show "Learn to Ride" tutorial button on level select with input-appropriate icon
+    this._updateTutorialButton();
+  }
+
+  _updateTutorialButton() {
     const tutBtn = document.getElementById('btn-tutorial');
-    if (tutBtn) {
-      tutBtn.style.display = '';
-      const isGyro = this.input && this.input.gyroConnected;
-      const icon = (this.input && this.input.gamepadConnected) ? '\uD83C\uDFAE' : '\uD83D\uDCF1'; // 🎮 or 📱
-      tutBtn.textContent = icon + (isGyro ? ' Learn to Ride with Gyro' : ' Learn to Ride');
+    if (!tutBtn) return;
+    const hasMotion = this.motionActive && (
+      (this.input && this.input.motionEnabled) ||
+      (this.input && this.input.gyroConnected)
+    );
+    if (!hasMotion) {
+      tutBtn.style.display = 'none';
+      return;
+    }
+    tutBtn.style.display = '';
+    const isGyro = this.input && this.input.gyroConnected;
+    if (isGyro) {
+      tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
+    } else {
+      tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
     }
   }
 
@@ -1178,11 +1191,17 @@ export class Lobby {
     // Gamepad + WebHID: true on/off toggle for controller gyro
     if (this.input && this.input.gamepadConnected && navigator.hid) {
       if (this.motionActive) {
+        // Turning off — check if joystick is also off
+        if (!this.joystickActive) {
+          this._showKeyboardConfirm('motion');
+          return;
+        }
         // Turn off — disable gyro steering but keep device connected
         this.motionActive = false;
         this.input.motionEnabled = false;
         this.input.motionLean = 0;
         this._setToggleActive('motion', false);
+        this._updateTutorialButton();
         return;
       }
       if (this._motionPermitted) {
@@ -1191,6 +1210,7 @@ export class Lobby {
         this.input.motionEnabled = true;
         this.input.startTiltCalibration();
         this._setToggleActive('motion', true);
+        this._updateTutorialButton();
         return;
       }
       // First time — request WebHID access
@@ -1199,6 +1219,7 @@ export class Lobby {
           this._motionPermitted = true;
           this.motionActive = true;
           this._setToggleActive('motion', true);
+          this._updateTutorialButton();
         }
       }).catch((err) => {
         console.warn('Gyro connect failed:', err);
@@ -1219,21 +1240,66 @@ export class Lobby {
           this._motionPermitted = true;
           this.motionActive = true;
           this._setToggleActive('motion', true);
+          this._updateTutorialButton();
         }
       }, 500);
     }
   }
 
   _toggleJoystick() {
-    this.joystickActive = !this.joystickActive;
-    this._setToggleActive('joystick', this.joystickActive);
-    if (this.input) {
-      this.input.suppressGamepadLean = !this.joystickActive;
+    if (this.joystickActive) {
+      // Turning off — check if motion is also off
+      if (!this.motionActive) {
+        this._showKeyboardConfirm('joystick');
+        return;
+      }
+      this.joystickActive = false;
+      this._setToggleActive('joystick', false);
+      if (this.input) this.input.suppressGamepadLean = true;
+      try { localStorage.setItem('tandemonium_joystick', 'off'); } catch {}
+    } else {
+      this.joystickActive = true;
+      this._setToggleActive('joystick', true);
+      if (this.input) this.input.suppressGamepadLean = false;
+      try { localStorage.setItem('tandemonium_joystick', 'on'); } catch {}
     }
-    // Persist choice
-    try {
-      localStorage.setItem('tandemonium_joystick', this.joystickActive ? 'on' : 'off');
-    } catch {}
+  }
+
+  _showKeyboardConfirm(source) {
+    // source = 'joystick' or 'motion' — whichever toggle the player just tried to turn off
+    const popup = document.getElementById('keyboard-confirm-popup');
+    popup.classList.add('visible');
+
+    const dismiss = () => {
+      popup.classList.remove('visible');
+      document.removeEventListener('click', outsideClick, true);
+    };
+
+    document.getElementById('btn-keyboard-yes').onclick = () => {
+      // Confirm: turn off the toggle they pressed
+      if (source === 'joystick') {
+        this.joystickActive = false;
+        this._setToggleActive('joystick', false);
+        if (this.input) this.input.suppressGamepadLean = true;
+        try { localStorage.setItem('tandemonium_joystick', 'off'); } catch {}
+      } else {
+        this.motionActive = false;
+        if (this.input) { this.input.motionEnabled = false; this.input.motionLean = 0; }
+        this._setToggleActive('motion', false);
+        this._updateTutorialButton();
+      }
+      dismiss();
+    };
+
+    document.getElementById('btn-keyboard-no').onclick = () => {
+      // Cancel: don't change anything
+      dismiss();
+    };
+
+    const outsideClick = (e) => {
+      if (!popup.contains(e.target)) dismiss();
+    };
+    setTimeout(() => document.addEventListener('click', outsideClick, true), 0);
   }
 
   _showRecalPopup() {
