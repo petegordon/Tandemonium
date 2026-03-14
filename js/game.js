@@ -86,6 +86,8 @@ class Game {
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
+    this._partnerHasTilt = undefined; // undefined = unknown, true/false = received
+    this._onPartnerTiltStatus = null;
     this._partnerServerId = null;
     this._remoteLastFoot = null;
     this._remoteLastTapTime = 0;
@@ -588,6 +590,12 @@ class Game {
         this._remoteFinishStats = profile;
         return;
       }
+      // Handle tilt status from partner
+      if (profile && profile.type === 'tiltStatus') {
+        this._partnerHasTilt = profile.hasTilt;
+        if (this._onPartnerTiltStatus) this._onPartnerTiltStatus(profile.hasTilt);
+        return;
+      }
       // Handle camera toggle from partner during gameplay
       if (profile && profile.type === 'cameraToggle') {
         if (profile.enabled) {
@@ -710,14 +718,44 @@ class Game {
             }
             this.instructionsEl.classList.remove('hidden');
           } else {
-            // Multiplayer: warn but allow — partner can steer
-            const statusEl = document.getElementById('status');
-            statusEl.textContent = 'Tilt not available — your partner will steer';
-            statusEl.style.color = '#ffaa00';
-            await new Promise(r => setTimeout(r, 2000));
-            statusEl.textContent = '';
+            // Multiplayer: tell partner we have no tilt, then check if they do
+            this.net.sendProfile({ type: 'tiltStatus', hasTilt: false });
+            // Wait briefly for partner's tilt status response
+            const partnerHasTilt = await new Promise(r => {
+              // If we already know partner has tilt, resolve immediately
+              if (this._partnerHasTilt) return r(true);
+              // Listen for partner's tiltStatus message
+              const prev = this._onPartnerTiltStatus;
+              this._onPartnerTiltStatus = (has) => { this._onPartnerTiltStatus = prev; r(has); };
+              // Timeout: assume partner has tilt if no response (they may be on desktop/keyboard)
+              setTimeout(() => r(this._partnerHasTilt !== false), 3000);
+            });
+            if (partnerHasTilt) {
+              const statusEl = document.getElementById('status');
+              statusEl.textContent = 'Tilt not available — your partner will steer';
+              statusEl.style.color = '#ffaa00';
+              await new Promise(r => setTimeout(r, 2000));
+              statusEl.textContent = '';
+            } else {
+              // Neither player has tilt — block gameplay
+              started = false;
+              this.instructionsEl.classList.add('hidden');
+              const action = await this._showMotionFixOverlay();
+              if (action === 'back' || !this.input.motionEnabled) {
+                this._returnToRoom();
+                return;
+              }
+              this.instructionsEl.classList.remove('hidden');
+              // Notify partner we fixed it
+              this.net.sendProfile({ type: 'tiltStatus', hasTilt: true });
+            }
           }
         }
+      }
+
+      // In multiplayer, notify partner of our tilt status
+      if (this.net && this.input.motionEnabled) {
+        this.net.sendProfile({ type: 'tiltStatus', hasTilt: true });
       }
 
       // Remove document-level start handlers now that we've started
