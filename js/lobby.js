@@ -1309,40 +1309,31 @@ export class Lobby {
   }
 
   _showKeyboardConfirm(source) {
-    // source = 'joystick' or 'motion' — whichever toggle the player just tried to turn off
+    // Turn off the toggle immediately
+    if (source === 'joystick') {
+      this.joystickActive = false;
+      this._setToggleActive('joystick', false);
+      if (this.input) this.input.suppressGamepadLean = true;
+      try { localStorage.setItem('tandemonium_joystick', 'off'); } catch {}
+    } else {
+      this.motionActive = false;
+      if (this.input) { this.input.motionEnabled = false; this.input.motionLean = 0; }
+      this._setToggleActive('motion', false);
+      this._updateTutorialButton();
+    }
+
+    // Show brief "Keyboard only!" notice — tapping the toggle again will re-enable
     const popup = document.getElementById('keyboard-confirm-popup');
     popup.classList.add('visible');
-
+    // Auto-dismiss after 2s or on any click
     const dismiss = () => {
       popup.classList.remove('visible');
-      document.removeEventListener('click', outsideClick, true);
+      document.removeEventListener('click', autoDismiss, true);
+      clearTimeout(timer);
     };
-
-    document.getElementById('btn-keyboard-yes').onclick = () => {
-      // Confirm: turn off the toggle they pressed
-      if (source === 'joystick') {
-        this.joystickActive = false;
-        this._setToggleActive('joystick', false);
-        if (this.input) this.input.suppressGamepadLean = true;
-        try { localStorage.setItem('tandemonium_joystick', 'off'); } catch {}
-      } else {
-        this.motionActive = false;
-        if (this.input) { this.input.motionEnabled = false; this.input.motionLean = 0; }
-        this._setToggleActive('motion', false);
-        this._updateTutorialButton();
-      }
-      dismiss();
-    };
-
-    document.getElementById('btn-keyboard-no').onclick = () => {
-      // Cancel: don't change anything
-      dismiss();
-    };
-
-    const outsideClick = (e) => {
-      if (!popup.contains(e.target)) dismiss();
-    };
-    setTimeout(() => document.addEventListener('click', outsideClick, true), 0);
+    const autoDismiss = () => dismiss();
+    const timer = setTimeout(dismiss, 2000);
+    setTimeout(() => document.addEventListener('click', autoDismiss, true), 0);
   }
 
   _showRecalPopup() {
