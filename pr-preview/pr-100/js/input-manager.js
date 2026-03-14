@@ -322,7 +322,7 @@ export class InputManager {
     if (isGyro) {
       // Inverse curve: sqrt gives more response in the middle, steeper at edges
       const norm = absRel < deadzone ? 0 : Math.min((absRel - deadzone) / (sensitivity - deadzone), 1.0);
-      lean = Math.sign(relative) * Math.pow(norm, 0.33);
+      lean = Math.sign(relative) * Math.pow(norm, 1.5);
     } else {
       // Mobile tilt: power-curve response
       if (absRel < deadzone) {

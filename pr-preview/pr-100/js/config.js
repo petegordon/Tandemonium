@@ -49,7 +49,7 @@ export const BALANCE_DEFAULTS = {
   // faster than absolute orientation, so needs wider range + more smoothing
   gyroSensitivity: 40,
   gyroDeadzone: 4,
-  gyroOutputSmoothing: 0.3,
+  gyroOutputSmoothing: 0.5,
   // Accelerometer-assisted gyro drift correction
   gyroAccelCorrection: 0.02,
   // Shared physics
