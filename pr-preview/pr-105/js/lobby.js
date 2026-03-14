@@ -721,13 +721,15 @@ export class Lobby {
       if (!locked) buttons.push(card);
     });
 
+    // Tutorial button sits between level cards and difficulty
+    const tutBtn = document.getElementById('btn-tutorial');
+    if (tutBtn) buttons.push(tutBtn);
+
     // Add individual difficulty buttons to gamepad navigation
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
     diffBtns.forEach(b => buttons.push(b));
 
     // Register for gamepad navigation
-    const tutBtn = document.getElementById('btn-tutorial');
-    if (tutBtn) buttons.push(tutBtn);
     buttons.push(document.getElementById('btn-back-level'));
     this._stepItems.set(this.levelStep, buttons);
     this._stepCenterItems.set(this.levelStep, buttons);

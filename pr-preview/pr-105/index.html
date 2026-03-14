@@ -663,6 +663,7 @@
     gap: 12px;
     width: 100%;
     max-width: 280px;
+    padding: 6px 8px;  /* room for gamepad focus outline */
   }
   .level-card {
     width: 100%;
@@ -1776,7 +1777,7 @@
     font-family: 'Helvetica Neue', Arial, sans-serif;
     padding: 8px 16px;
     cursor: pointer;
-    margin-top: 4px;
+    margin: 10px 0;
     -webkit-tap-highlight-color: transparent;
     transition: background 0.2s, color 0.2s;
   }
@@ -2805,6 +2806,7 @@
     }
     .lobby-step { gap: calc(6 * var(--ls)); align-items: stretch; width: 100%; min-height: 0; }
     .lobby-card.carousel-hidden .lobby-step { overflow: hidden; }
+    .lobby-card.carousel-hidden #lobby-level { overflow: visible; }
     .lobby-steps-col {
       width: calc(140 * var(--ls));
       min-width: calc(140 * var(--ls));
@@ -3368,7 +3370,6 @@ ON</button>
 
         <!-- Step 1b: Level selection -->
         <div id="lobby-level" class="lobby-step" style="display:none;">
-          <p class="lobby-prompt">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
           <button class="lobby-btn-tutorial" id="btn-tutorial" style="display:none;">&#x1F6B4; Learn to Ride</button>
           <button class="lobby-back" id="btn-back-level">&larr; Back</button>
@@ -3525,7 +3526,6 @@ ON</button>
     </div>
     <!-- Difficulty selector (full-width row below lobby-layout) -->
     <div class="difficulty-selector" id="difficulty-selector" style="display:none;">
-      <p class="difficulty-label">Difficulty:</p>
       <div class="difficulty-buttons">
         <button class="difficulty-btn" data-difficulty="chill">
           <span class="diff-name">Chill Ride</span>
@@ -3546,7 +3546,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.ea32666 | 03-14-2026 08:47</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.0300343 | 03-14-2026 09:31</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
