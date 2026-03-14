@@ -2069,6 +2069,10 @@ export class Lobby {
       '</div>';
     document.body.appendChild(overlay);
 
+    // Default-focus "Rejoin" for gamepad navigation
+    this._rejoinFocus = 0;
+    document.getElementById('btn-rejoin-yes').classList.add('gamepad-focus');
+
     return new Promise((resolve) => {
       document.getElementById('btn-rejoin-yes').addEventListener('click', () => {
         overlay.remove();
@@ -3085,6 +3089,29 @@ export class Lobby {
       this._gpPrevA = a; this._gpPrevB = b;
       return;
     }
+
+    // Rejoin prompt: navigate between Rejoin / New Room buttons
+    const rejoinOverlay = document.getElementById('rejoin-overlay');
+    if (rejoinOverlay) {
+      const btns = [document.getElementById('btn-rejoin-yes'), document.getElementById('btn-rejoin-no')];
+      if (this._rejoinFocus === undefined) this._rejoinFocus = 0;
+      if ((left && !this._gpPrevLeft) || (up && !this._gpPrevUp)) {
+        btns[this._rejoinFocus].classList.remove('gamepad-focus');
+        this._rejoinFocus = Math.max(0, this._rejoinFocus - 1);
+        btns[this._rejoinFocus].classList.add('gamepad-focus');
+      }
+      if ((right && !this._gpPrevRight) || (down && !this._gpPrevDown)) {
+        btns[this._rejoinFocus].classList.remove('gamepad-focus');
+        this._rejoinFocus = Math.min(btns.length - 1, this._rejoinFocus + 1);
+        btns[this._rejoinFocus].classList.add('gamepad-focus');
+      }
+      if (a && !this._gpPrevA) btns[this._rejoinFocus].click();
+      this._gpPrevUp = up; this._gpPrevDown = down;
+      this._gpPrevLeft = left; this._gpPrevRight = right;
+      this._gpPrevA = a; this._gpPrevB = b;
+      return;
+    }
+    this._rejoinFocus = undefined;
 
     // If "Tap to Start" overlay is showing, any button dismisses it
     if (this._tapOverlay) {
