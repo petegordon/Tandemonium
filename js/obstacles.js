@@ -264,6 +264,7 @@ export class ObstacleManager {
    * The closest-approach sample determines whether the pass was correct.
    */
   updatePassTracking(bikeDistanceTraveled, bikeLateralOffset) {
+    let result = null;
     for (const item of this._items) {
       const along = bikeDistanceTraveled - item.absoluteD;
       // Capture lateral offset in a window around the pylon
@@ -273,7 +274,15 @@ export class ObstacleManager {
           item._bikeLateralAtPass = bikeLateralOffset;
         }
       }
+      // Once past the tracking window, evaluate and report the result once
+      if (along > 1.5 && item._bikeLateralAtPass !== undefined && !item._passEvaluated) {
+        item._passEvaluated = true;
+        const correct = (item.lateralOffset < 0 && item._bikeLateralAtPass > 0) ||
+                         (item.lateralOffset > 0 && item._bikeLateralAtPass < 0);
+        result = { correct, pylonOffset: item.lateralOffset };
+      }
     }
+    return result;
   }
 
   /**
@@ -301,6 +310,7 @@ export class ObstacleManager {
     for (const item of this._items) {
       delete item._bestDist;
       delete item._bikeLateralAtPass;
+      delete item._passEvaluated;
     }
   }
 

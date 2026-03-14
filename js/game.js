@@ -3018,8 +3018,16 @@ class Game {
 
     // Pylon tracking + dodge arrow
     if (this.obstacleManager && phase > 0) {
-      this.obstacleManager.updatePassTracking(dist, this.bike._lateralOffset);
+      const passResult = this.obstacleManager.updatePassTracking(dist, this.bike._lateralOffset);
       this._updateDodgeArrow(dist);
+      if (passResult) {
+        if (!passResult.correct) {
+          this._tutorialPhaseRetry(tp, 'Weave to the other side of the pylon!');
+          return;
+        } else {
+          this._showPylonSuccess();
+        }
+      }
     } else {
       const arrow = document.getElementById('coaching-dodge-arrow');
       if (arrow) arrow.classList.remove('visible');
@@ -3208,6 +3216,14 @@ class Game {
     }
   }
 
+  _showPylonSuccess() {
+    const el = document.getElementById('coaching-pylon-success');
+    if (!el) return;
+    el.classList.add('visible');
+    clearTimeout(this._pylonSuccessTimer);
+    this._pylonSuccessTimer = setTimeout(() => el.classList.remove('visible'), 800);
+  }
+
   _tutorialPhaseRetry(phase, hint) {
     // Guard against being called multiple frames in a row
     if (this._tutRetryPending) return;
@@ -3215,6 +3231,11 @@ class Game {
 
     // Stop the bike immediately so player doesn't keep moving
     this.bike.speed = 0;
+
+    // Hide pylon success indicator if showing
+    clearTimeout(this._pylonSuccessTimer);
+    const successEl = document.getElementById('coaching-pylon-success');
+    if (successEl) successEl.classList.remove('visible');
 
     // Show a brief message and restart the phase
     const crashEl = document.getElementById('tutorial-crash');
