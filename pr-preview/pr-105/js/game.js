@@ -3143,7 +3143,8 @@ class Game {
     hintEl.textContent = hint;
     crashEl.classList.add('visible');
 
-    const restartDist = phase === 1 ? 0 : phase === 2 ? PHASE_1_END : PHASE_2_END;
+    // Back up 15m from phase start to give pedaling runway before items
+    const restartDist = phase === 1 ? 0 : phase === 2 ? Math.max(0, PHASE_1_END - 15) : Math.max(0, PHASE_2_END - 15);
     setTimeout(() => {
       crashEl.classList.remove('visible');
       document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
@@ -3188,7 +3189,8 @@ class Game {
     document.getElementById('gameover-overlay').style.display = 'none';
 
     // Restart from current phase after brief delay
-    const restartDist = phase === 1 ? 0 : phase === 2 ? PHASE_1_END : PHASE_2_END;
+    // Back up 15m from phase start to give pedaling runway before items
+    const restartDist = phase === 1 ? 0 : phase === 2 ? Math.max(0, PHASE_1_END - 15) : Math.max(0, PHASE_2_END - 15);
     setTimeout(() => {
       crashEl.classList.remove('visible');
       this.bike.resetToDistance(restartDist);
