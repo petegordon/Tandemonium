@@ -320,8 +320,9 @@ export class InputManager {
     let lean;
 
     if (isGyro) {
-      // Linear mapping: deadzone cutoff, then linear ramp 0→1
-      lean = absRel < deadzone ? 0 : Math.sign(relative) * Math.min((absRel - deadzone) / (sensitivity - deadzone), 1.0);
+      // Inverse curve: sqrt gives more response in the middle, steeper at edges
+      const norm = absRel < deadzone ? 0 : Math.min((absRel - deadzone) / (sensitivity - deadzone), 1.0);
+      lean = Math.sign(relative) * Math.sqrt(norm);
     } else {
       // Mobile tilt: power-curve response
       if (absRel < deadzone) {
