@@ -2972,6 +2972,7 @@ class Game {
     this._tutorialActive = true;
     this._tutorialPhase = -1; // will show runway prompt on first update
     this._tutCompletedPhases = new Set(); // phases successfully passed
+    this._tutFiredCheckpoints = new Set(); // phases that already showed checkpoint flash
     this._tutTargetPhase = 1; // which phase the player is working on
     this._tutorialAttempts = 0;
     this._tutorialCollected = 0;
@@ -2987,6 +2988,7 @@ class Game {
     this._tutPeakTime = 0;
     this._tutLastSign = 0;
     this._tutCrashPending = false;
+    this._tutRetryPending = false;
     this._tutHoldStillShown = false;
     this._tutOffRoadTime = 0;
 
@@ -3026,6 +3028,7 @@ class Game {
 
   _updateTutorial(dt) {
     if (!this._tutorialActive) return;
+    if (this._tutRetryPending || this._tutCrashPending) return; // wait for restart
 
     const dist = this.bike.distanceTraveled;
     const isGyro = this.input.gyroConnected;
@@ -3088,8 +3091,9 @@ class Game {
         // Hide the Phase 2→3 arch at 105m
         this.world.hideMarkersNear(PHASE_2_END);
       }
-      // Fire checkpoint flash + haptic + chime when crossing a gold arch (Phase 2+ only)
-      if (phase >= 2 && !this._tutCompletedPhases.has(phase)) {
+      // Fire checkpoint flash + haptic + chime only on first entry into a phase
+      if (phase >= 2 && !this._tutFiredCheckpoints.has(phase)) {
+        this._tutFiredCheckpoints.add(phase);
         this._showCheckpointFlash();
         hapticCheckpoint();
       }
@@ -3239,6 +3243,10 @@ class Game {
   }
 
   _tutorialPhaseRetry(phase, hint) {
+    // Guard against being called multiple frames in a row
+    if (this._tutRetryPending) return;
+    this._tutRetryPending = true;
+
     // Show a brief message and restart the phase
     const crashEl = document.getElementById('tutorial-crash');
     const hintEl = document.getElementById('tutorial-crash-hint');
@@ -3263,6 +3271,7 @@ class Game {
       this._tutOffRoadTime = 0;
       // Set to runway state — will advance to content phase after 30m
       this._tutorialPhase = -1;
+      this._tutRetryPending = false;
     }, 1200);
   }
 
@@ -3302,6 +3311,7 @@ class Game {
       this.bike.distanceTraveled = runwayStart;
       this.state = 'playing';
       this._tutCrashPending = false;
+      this._tutRetryPending = false;
       // Reset only this phase's collectibles
       if (this.collectibleManager) this.collectibleManager.resetInRange(phaseContentStart, phaseContentEnd);
       // Reset pylon tracking for retry
