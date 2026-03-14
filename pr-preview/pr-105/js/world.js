@@ -838,13 +838,41 @@ export class World {
     // Finish line stripe at the end of every level
     this._createFinishStripe(level.distance);
 
-    // Tutorial: start line + phase boundary stripes
+    // Tutorial: start line + phase boundary stripes + cloud arches
     if (level.isTutorial) {
       this._createFinishStripe(0, 0x44ff66, 0x115511);   // Start line (green)
-      this._createFinishStripe(30, 0xffd700, 0x444400);   // Runway → Phase 1 (gold)
-      this._createFinishStripe(70, 0xffd700, 0x444400);   // Phase 1 → Phase 2
-      this._createFinishStripe(105, 0xffd700, 0x444400);  // Phase 2 → Phase 3
+      for (const d of [30, 70, 105]) {
+        this._createFinishStripe(d, 0xffd700, 0x444400);
+        this._createCloudArch(d, archMat, L);
+      }
     }
+  }
+
+  /** Create a gold cloud arch at the given distance (same as checkpoint arches). */
+  _createCloudArch(distance, archMat, loopLen) {
+    const roadD = distance % loopLen;
+    const pt = this.roadPath.getPointAtDistance(roadD);
+    const group = new THREE.Group();
+    const archRadius = 2.8;
+    const archCenterY = 0.2;
+    const puffCount = 16;
+    for (let i = 0; i < puffCount; i++) {
+      const angle = (i / (puffCount - 1)) * Math.PI;
+      const x = Math.cos(angle) * archRadius;
+      const y = archCenterY + Math.sin(angle) * archRadius;
+      const puff = new THREE.Sprite(archMat.clone());
+      const s = 1.6 + Math.random() * 0.8;
+      puff.scale.set(s, s, 1);
+      puff.position.set(x, y, (Math.random() - 0.5) * 0.6);
+      puff.userData.baseY = y;
+      puff.userData.phase = Math.random() * Math.PI * 2;
+      group.add(puff);
+    }
+    group.position.set(pt.x, pt.y, pt.z);
+    group.rotation.y = pt.heading;
+    group.visible = false;
+    this.scene.add(group);
+    this._raceMarkers.push({ mesh: group, roadD, type: 'checkpoint' });
   }
 
   /** Create a checkered finish-line stripe on the road at the given distance. */
