@@ -3266,30 +3266,20 @@ class Game {
     const arrow = document.getElementById('tutorial-dodge-arrow');
     if (!arrow || !this.obstacleManager) { if (arrow) arrow.classList.remove('visible'); return; }
 
-    // Collect visible (non-hidden) pylons sorted by distance
-    const pylons = this.obstacleManager._items
-      .filter(item => !item._hidden)
-      .sort((a, b) => a.absoluteD - b.absoluteD);
-
-    // Find the next upcoming pylon and the previous one
-    let nextIdx = -1;
-    for (let i = 0; i < pylons.length; i++) {
-      if (pylons[i].absoluteD > dist + 1) { nextIdx = i; break; }
+    // Find the next upcoming pylon (not hidden, ahead of bike)
+    let next = null;
+    let aheadDist = Infinity;
+    for (const item of this.obstacleManager._items) {
+      if (item._hidden) continue;
+      const ahead = item.absoluteD - dist;
+      if (ahead > 1 && ahead < aheadDist) {
+        aheadDist = ahead;
+        next = item;
+      }
     }
-    if (nextIdx < 0) { arrow.classList.remove('visible'); return; }
 
-    const next = pylons[nextIdx];
-    const prev = nextIdx > 0 ? pylons[nextIdx - 1] : null;
-
-    // Show arrow only when past the midpoint between previous and next pylon
-    // (or halfway to the first pylon from the phase start)
-    const midpoint = prev
-      ? (prev.absoluteD + next.absoluteD) / 2
-      : next.absoluteD - (next.absoluteD - dist) / 2; // halfway to first
-
-    // Also hide once very close (within 2m) — player is already dodging
-    const aheadDist = next.absoluteD - dist;
-    if (dist >= midpoint && aheadDist > 2) {
+    // Show arrow when pylon is within 15m ahead, hide within 2m (already dodging)
+    if (next && aheadDist <= 15 && aheadDist > 2) {
       arrow.classList.add('visible');
       // Pylon on left (offset < 0) → steer right; pylon on right → steer left
       if (next.lateralOffset < 0) {
