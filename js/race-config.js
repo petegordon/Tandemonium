@@ -4,6 +4,16 @@
 
 export const LEVELS = [
   {
+    id: 'tutorial',
+    name: 'Learn to Ride',
+    distance: 100,
+    collectibles: 'presents',
+    checkpointInterval: 100,   // single checkpoint = entire ride
+    icon: '\uD83D\uDEB4',        // 🚴
+    description: 'Master pedaling and steering!',
+    isTutorial: true
+  },
+  {
     id: 'grandma',
     name: "Grandma's House",
     distance: 250,

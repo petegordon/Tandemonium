@@ -209,6 +209,232 @@
     50% { transform: translateY(-6px); }
   }
 
+  /* ── Tutorial overlays ── */
+  #tutorial-prompt {
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 85;
+    pointer-events: none;
+    text-align: center;
+    display: none;
+  }
+  #tutorial-prompt.visible { display: block; }
+  #tutorial-prompt-text {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.7), 0 0 20px rgba(68,255,102,0.3);
+    background: rgba(0,0,0,0.5);
+    padding: 10px 24px;
+    border-radius: 12px;
+    white-space: nowrap;
+  }
+  #tutorial-phase-dots {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .tutorial-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.3);
+    transition: background 0.3s;
+  }
+  .tutorial-dot.active { background: #44ff66; }
+  .tutorial-dot.done { background: #ffd700; }
+  #tutorial-skip {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 86;
+    display: none;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 8px;
+    padding: 6px 14px;
+    cursor: pointer;
+  }
+  #tutorial-skip:hover { color: #fff; background: rgba(0,0,0,0.6); }
+  #tutorial-crash {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 85;
+    display: none;
+    text-align: center;
+    pointer-events: none;
+  }
+  #tutorial-crash.visible { display: block; }
+  #tutorial-crash-text {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 700;
+    font-size: 28px;
+    color: #ff6644;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.7);
+  }
+  #tutorial-crash-hint {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 15px;
+    color: rgba(255,255,255,0.8);
+    margin-top: 6px;
+  }
+  #tutorial-complete {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.8);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 88;
+    text-align: center;
+    padding: 20px;
+  }
+  #tutorial-complete.visible { display: flex; }
+  #tutorial-complete h2 {
+    font-size: 28px;
+    font-weight: 700;
+    color: #44ff66;
+    margin: 0 0 12px;
+    text-shadow: 0 0 20px rgba(68,255,102,0.5);
+  }
+  #tutorial-complete-stats {
+    font-size: 15px;
+    color: rgba(255,255,255,0.85);
+    line-height: 1.8;
+    margin-bottom: 16px;
+  }
+  #tutorial-complete-stats .calibrated {
+    color: #ffd700;
+    font-weight: 600;
+  }
+  #steering-feel-wrap {
+    width: 100%;
+    max-width: 280px;
+    margin-bottom: 18px;
+  }
+  .steering-feel-label {
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+    margin-bottom: 6px;
+  }
+  .steering-feel-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .steering-feel-end {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    white-space: nowrap;
+    min-width: 52px;
+  }
+  .steering-feel-end:last-child { text-align: right; }
+  #steering-feel-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.15);
+    outline: none;
+  }
+  #steering-feel-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #44ff66;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(68,255,102,0.4);
+  }
+  #btn-tutorial-continue {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(135deg, #44ff66, #22cc44);
+    border: none;
+    border-radius: 10px;
+    padding: 12px 36px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(68,255,102,0.3);
+  }
+  /* ── Motion recalibrate popup ── */
+  #motion-recal-popup {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1a2e;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 14px;
+    display: none;
+    z-index: 57;
+    text-align: center;
+    min-width: 160px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+  #motion-recal-popup.visible { display: block; }
+  #motion-recal-popup .recal-title {
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+    margin-bottom: 10px;
+  }
+  #motion-recal-popup .steering-feel-row { gap: 6px; }
+  #motion-recal-popup .steering-feel-end { font-size: 10px; min-width: 44px; }
+  #lobby-feel-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.15);
+    outline: none;
+  }
+  #lobby-feel-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #44ff66;
+    cursor: pointer;
+  }
+  #motion-recal-popup button {
+    display: block;
+    width: 100%;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 0;
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+  #motion-recal-popup button:last-child { margin-bottom: 0; }
+  #btn-recalibrate {
+    background: linear-gradient(135deg, #44ff66, #22cc44);
+    color: #000;
+  }
+  #btn-recal-cancel {
+    background: rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.8);
+  }
+
   /* ── Progress bar ── */
   #progress-bar-wrap {
     position: fixed;
@@ -1540,6 +1766,24 @@
     -webkit-tap-highlight-color: transparent;
   }
   .lobby-back:active { color: rgba(255,255,255,0.7); }
+  .lobby-btn-tutorial {
+    background: none;
+    border: 1px solid rgba(68,255,102,0.3);
+    border-radius: 8px;
+    color: rgba(68,255,102,0.8);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    padding: 8px 16px;
+    cursor: pointer;
+    margin-top: 4px;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.2s, color 0.2s;
+  }
+  .lobby-btn-tutorial:hover, .lobby-btn-tutorial:active {
+    background: rgba(68,255,102,0.1);
+    color: #44ff66;
+  }
   .lobby-step .lobby-back { display: none; }
   #lobby-fixed-back {
     padding: 10px 16px;
@@ -3126,6 +3370,7 @@ ON</button>
         <div id="lobby-level" class="lobby-step" style="display:none;">
           <p class="lobby-prompt">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
+          <button class="lobby-btn-tutorial" id="btn-tutorial" style="display:none;">&#x1F6B4; Learn to Ride</button>
           <button class="lobby-back" id="btn-back-level">&larr; Back</button>
         </div>
 
@@ -3240,14 +3485,26 @@ ON</button>
           </button>
         </div>
         <div class="lobby-toggle-col">
-          <button class="lobby-toggle" id="toggle-motion" title="Motion" style="display:none">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="6" y="2" width="8" height="16" rx="2"/>
-              <circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>
-              <path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/>
-              <path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>
-            </svg>
-          </button>
+          <div style="position:relative">
+            <button class="lobby-toggle" id="toggle-motion" title="Motion" style="display:none">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="6" y="2" width="8" height="16" rx="2"/>
+                <circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>
+                <path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/>
+                <path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>
+              </svg>
+            </button>
+            <div id="motion-recal-popup">
+              <div class="recal-title">Motion Steering</div>
+              <div class="steering-feel-row" style="margin-bottom:10px;">
+                <span class="steering-feel-end">Stable</span>
+                <input type="range" id="lobby-feel-slider" min="0" max="100" value="50">
+                <span class="steering-feel-end">Responsive</span>
+              </div>
+              <button id="btn-recalibrate">RECALIBRATE</button>
+              <button id="btn-recal-cancel">CANCEL</button>
+            </div>
+          </div>
           <div style="position:relative">
             <button class="lobby-toggle" id="toggle-music" title="Music">
               <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -3289,7 +3546,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.13ba365 | 03-13-2026 23:46</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.ea32666 | 03-14-2026 08:47</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3417,6 +3674,34 @@ ON</button>
     <button class="clip-btn" id="clip-save-btn">SAVE</button>
     <button class="clip-btn clip-btn-discard" id="clip-discard-btn">DISCARD</button>
   </div>
+</div>
+
+<!-- Tutorial overlays -->
+<div id="tutorial-prompt">
+  <div id="tutorial-prompt-text"></div>
+  <div id="tutorial-phase-dots">
+    <div class="tutorial-dot" data-phase="1"></div>
+    <div class="tutorial-dot" data-phase="2"></div>
+    <div class="tutorial-dot" data-phase="3"></div>
+  </div>
+</div>
+<button id="tutorial-skip">SKIP TUTORIAL</button>
+<div id="tutorial-crash">
+  <div id="tutorial-crash-text">Oops! Try again</div>
+  <div id="tutorial-crash-hint"></div>
+</div>
+<div id="tutorial-complete">
+  <h2>You're ready to ride!</h2>
+  <div id="tutorial-complete-stats"></div>
+  <div id="steering-feel-wrap">
+    <div class="steering-feel-label">Steering Feel</div>
+    <div class="steering-feel-row">
+      <span class="steering-feel-end">Stable</span>
+      <input type="range" id="steering-feel-slider" min="0" max="100" value="50">
+      <span class="steering-feel-end">Responsive</span>
+    </div>
+  </div>
+  <button class="lobby-btn lobby-btn-accent" id="btn-tutorial-continue">LET'S GO!</button>
 </div>
 
 <!-- Game Over overlay -->

@@ -158,6 +158,10 @@ export class CollectibleManager {
   }
 
   _placeItems() {
+    if (this.level.isTutorial) {
+      this._placeTutorialItems();
+      return;
+    }
     const rng = makeRng(this.level.id.charCodeAt(0) * 1000 + 7);
     const spacing = 30 + (this.level.distance > 2000 ? 20 : 0); // wider spacing for longer races
 
@@ -171,6 +175,37 @@ export class CollectibleManager {
         poolIdx: -1
       });
     }
+  }
+
+  _placeTutorialItems() {
+    // Phase 2 zone (30–70m): 4 collectibles with deliberate left/right offsets
+    const positions = [
+      { d: 35, offset: -1.5 },
+      { d: 45, offset:  1.5 },
+      { d: 55, offset: -1.5 },
+      { d: 65, offset:  1.5 },
+    ];
+    for (const p of positions) {
+      this._items.push({
+        absoluteD: p.d,
+        roadD: p.d % this._loopLen,
+        lateralOffset: p.offset,
+        collected: false,
+        poolIdx: -1
+      });
+    }
+  }
+
+  resetCollected() {
+    for (const item of this._items) {
+      item.collected = false;
+      if (item.poolIdx >= 0) {
+        this._pool[item.poolIdx].mesh.visible = false;
+        this._pool[item.poolIdx].itemIdx = -1;
+        item.poolIdx = -1;
+      }
+    }
+    this.collected = 0;
   }
 
   update(dt, bikeDistanceTraveled, bikePosition) {

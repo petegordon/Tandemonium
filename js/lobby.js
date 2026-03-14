@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { NetworkManager } from './network-manager.js';
-import { RELAY_URL, BIKE_MODEL_PATH } from './config.js';
+import { RELAY_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -78,7 +78,8 @@ export class Lobby {
     this.onMultiplayerReady = onMultiplayerReady;
     this.input = input; // InputManager — needed for iOS motion permission
     this.net = null;
-    this.selectedLevel = LEVELS[0]; // default level
+    this.selectedLevel = LEVELS.find(l => !l.isTutorial) || LEVELS[0]; // default to first non-tutorial level
+    this._forceWizard = false;
     this.selectedPresetKey = 'default';
     this.selectedDifficulty = 'normal'; // 'chill' | 'normal' | 'daredevil'
     this._pendingMode = null; // 'solo' or 'multiplayer', set during level selection
@@ -488,6 +489,14 @@ export class Lobby {
     // Level selection: build cards and handle clicks
     this._buildLevelCards();
     this._setupDifficultySelector();
+
+    // "Learn to Ride" tutorial button
+    document.getElementById('btn-tutorial').addEventListener('click', () => {
+      this._forceWizard = true;
+      this._hideLobby();
+      this.onSolo();
+    });
+
     document.getElementById('btn-back-level').addEventListener('click', () => {
       this._showStep(this.modeStep);
     });
@@ -669,7 +678,7 @@ export class Lobby {
     // Level unlock requirements: achievement ID needed to unlock each level
     const LEVEL_UNLOCK = { castle: 'home_sweet' }; // Castle requires finishing Grandma's House
 
-    LEVELS.forEach(level => {
+    LEVELS.filter(l => !l.isTutorial).forEach(level => {
       const requiredAch = LEVEL_UNLOCK[level.id];
       const achievementLocked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
       const locked = achievementLocked || (isDemo && level.id !== 'grandma');
@@ -717,6 +726,8 @@ export class Lobby {
     diffBtns.forEach(b => buttons.push(b));
 
     // Register for gamepad navigation
+    const tutBtn = document.getElementById('btn-tutorial');
+    if (tutBtn) buttons.push(tutBtn);
     buttons.push(document.getElementById('btn-back-level'));
     this._stepItems.set(this.levelStep, buttons);
     this._stepCenterItems.set(this.levelStep, buttons);
@@ -1014,6 +1025,9 @@ export class Lobby {
 
   _showMotionToggle() {
     this.toggleMotion.style.display = '';
+    // Show "Learn to Ride" tutorial button on level select
+    const tutBtn = document.getElementById('btn-tutorial');
+    if (tutBtn) tutBtn.style.display = '';
   }
 
   _checkGamepadGyro() {
@@ -1144,9 +1158,11 @@ export class Lobby {
       return;
     }
 
-    // Mobile: permission-grant only (tilt is the primary steering input,
-    // disabling it would leave the player unable to steer)
-    if (this._motionPermitted) return;
+    // Mobile: if already permitted, show recalibrate popup
+    if (this._motionPermitted) {
+      this._showRecalPopup();
+      return;
+    }
     if (this.input) {
       this.input.requestMotionPermission();
       // Check after a short delay (iOS permission dialog is async)
@@ -1158,6 +1174,50 @@ export class Lobby {
         }
       }, 500);
     }
+  }
+
+  _showRecalPopup() {
+    const popup = document.getElementById('motion-recal-popup');
+    popup.classList.add('visible');
+
+    // Load current feel value into slider
+    const slider = document.getElementById('lobby-feel-slider');
+    const currentFeel = TUNE.steeringFeel != null ? TUNE.steeringFeel : 0.5;
+    slider.value = Math.round(currentFeel * 100);
+    slider.oninput = () => {
+      const feel = slider.value / 100;
+      applySteeringFeel(feel);
+      // Save immediately
+      try {
+        const saved = localStorage.getItem('tandemonium_motion_tuning');
+        if (saved) {
+          const data = JSON.parse(saved);
+          data.steeringFeel = feel;
+          localStorage.setItem('tandemonium_motion_tuning', JSON.stringify(data));
+        }
+      } catch {}
+    };
+
+    const dismiss = () => {
+      popup.classList.remove('visible');
+      document.removeEventListener('click', outsideClick, true);
+    };
+
+    document.getElementById('btn-recalibrate').onclick = () => {
+      try { localStorage.removeItem('tandemonium_motion_tuning'); } catch {}
+      this._forceWizard = true;
+      dismiss();
+    };
+    document.getElementById('btn-recal-cancel').onclick = dismiss;
+
+    // Click outside to dismiss
+    const outsideClick = (e) => {
+      if (!popup.contains(e.target) && e.target.id !== 'toggle-motion') {
+        dismiss();
+      }
+    };
+    // Defer to avoid immediate trigger
+    setTimeout(() => document.addEventListener('click', outsideClick, true), 0);
   }
 
   _toggleAudio() {
@@ -2305,7 +2365,7 @@ export class Lobby {
     const buttons = [];
     const LEVEL_UNLOCK = { castle: 'home_sweet' };
 
-    LEVELS.forEach(level => {
+    LEVELS.filter(l => !l.isTutorial).forEach(level => {
       const requiredAch = LEVEL_UNLOCK[level.id];
       const locked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
 
