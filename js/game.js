@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, applyDifficulty } from './config.js';
+import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -26,7 +26,41 @@ import { ArchIndicator } from './arch-indicator.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 
-const DEMO_CHECKPOINT_LIMIT = 2; // Demo ends after 2 checkpoints
+// Demo checkpoint limit removed — demo users play the tutorial instead
+const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
+
+// Tutorial phase boundaries — sequential layout so all phases are visible ahead
+const TUTORIAL_PHASES = {
+  1: { runwayStart: 0,   contentStart: 30,  contentEnd: 70  },
+  2: { runwayStart: 70,  contentStart: 100, contentEnd: 142 },
+  3: { runwayStart: 142, contentStart: 172, contentEnd: 212 }
+};
+
+// Per-phase item layouts at absolute sequential distances
+const TUTORIAL_ITEMS = {
+  1: {
+    collectibles: [
+      { d: 35, offset: -2.0 }, { d: 45, offset: 2.0 },
+      { d: 55, offset: -2.0 }, { d: 65, offset: 2.0 }
+    ],
+    obstacles: []
+  },
+  2: {
+    collectibles: [],
+    obstacles: [
+      { d: 107, offset: -1.0 }, { d: 117, offset: 1.0 },
+      { d: 127, offset: -1.0 }, { d: 137, offset: 1.0 }
+    ]
+  },
+  3: {
+    collectibles: [
+      { d: 177, offset: 2.0 }, { d: 187, offset: -2.0 }, { d: 197, offset: 2.0 }
+    ],
+    obstacles: [
+      { d: 182, offset: -1.0 }, { d: 192, offset: 1.0 }, { d: 202, offset: -1.0 }
+    ]
+  }
+};
 
 class Game {
   constructor() {
@@ -446,6 +480,16 @@ class Game {
     this.mode = 'solo';
     this.bike.applyPreset(this.lobby.selectedPreset);
     this._lobbyBtn.textContent = 'LOBBY';
+
+    // Load saved tuning on every solo start
+    this._loadSavedTuning();
+
+    // Tutorial is launched explicitly via "Learn to Ride" button, not auto-forced
+    if (this.lobby._forceWizard) {
+      this._startTutorialRide();
+      return;
+    }
+
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
@@ -821,6 +865,9 @@ class Game {
     this.ddaManager = new DDAManager(difficultyName);
     this._assistWeight = 0;
 
+    // Reset background adaptation state for fresh ride
+    this._adaptState = null;
+
     // Fresh tilt calibration for new ride (player may be holding phone differently)
     if (this.input.motionEnabled) {
       this.input.startTiltCalibration();
@@ -859,10 +906,11 @@ class Game {
     this.hud.showCollectibles(level);
     this.world.setRaceMarkers(level, this.camera);
 
-    // Place "DEMO END" sprite on the last demo checkpoint arch from the start
-    if (this._isDemo) {
-      this._addDemoEndSprite(DEMO_CHECKPOINT_LIMIT - 1);
+    // Tutorial: place all items from all phases so they're visible ahead
+    if (level.isTutorial && this._tutorialActive) {
+      this._initAllTutorialItems();
     }
+
 
     // Setup arch tilt indicator (only for motion/gyro input)
     const playerColor = this._getFrameColor(this.lobby.selectedPreset);
@@ -1330,125 +1378,27 @@ class Game {
   /** Dismiss any stray full-screen overlays that sit above the lobby (z-index 60)
    *  and cancel pending timers that would re-show them. */
   _hideAllOverlays() {
-    for (const id of ['demo-end-overlay', 'stoker-cta-overlay', 'disconnect-overlay']) {
+    for (const id of ['stoker-cta-overlay', 'disconnect-overlay']) {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
     }
-    if (this._demoEndTimer) { clearTimeout(this._demoEndTimer); this._demoEndTimer = null; }
+    // Tutorial overlays
+    const tutPrompt = document.getElementById('tutorial-prompt');
+    if (tutPrompt) tutPrompt.classList.remove('visible');
+    const tutSkip = document.getElementById('tutorial-skip');
+    if (tutSkip) tutSkip.style.display = 'none';
+    const tutCrash = document.getElementById('tutorial-crash');
+    if (tutCrash) tutCrash.classList.remove('visible');
+    const tutComplete = document.getElementById('tutorial-complete');
+    if (tutComplete) tutComplete.classList.remove('visible');
+    const tutArrow = document.getElementById('coaching-dodge-arrow');
+    if (tutArrow) tutArrow.classList.remove('visible');
+    const tutCollect = document.getElementById('coaching-collect-indicator');
+    if (tutCollect) tutCollect.classList.remove('visible');
     if (this._stokerCTATimer) { clearTimeout(this._stokerCTATimer); this._stokerCTATimer = null; }
     this._clearOverlayButtons();
   }
 
-  /** Show the demo-end overlay with purchase CTA. */
-  _showDemoEnd() {
-    this.state = 'gameover';
-    this.bike.speed = 0;
-    document.getElementById('status').textContent = '';
-
-    // Brief pause so the player sees the arch, then show overlay
-    this._demoEndTimer = setTimeout(() => {
-      this._demoEndTimer = null;
-      if (this.state === 'lobby') return;
-      this._removeDemoEndSprite();
-      const overlay = document.getElementById('demo-end-overlay');
-      overlay.style.display = 'flex';
-
-      const buyBtn = document.getElementById('btn-demo-buy');
-      const togetherBtn = document.getElementById('btn-demo-together');
-      const lobbyBtn = document.getElementById('btn-demo-lobby');
-      const btns = [buyBtn, togetherBtn, lobbyBtn].filter(Boolean);
-      this._setOverlayButtons(btns);
-
-      if (buyBtn) {
-        buyBtn.onclick = async () => {
-          try {
-            const url = await this.lobby.license.startCheckout('tandemonium-web-early');
-            window.location.href = url;
-          } catch (e) {
-            console.error('Checkout error', e);
-          }
-        };
-      }
-      if (togetherBtn) {
-        togetherBtn.onclick = () => {
-          overlay.style.display = 'none';
-          this._clearOverlayButtons();
-          if (!this.lobby.auth.isLoggedIn()) {
-            this.lobby.auth.login();
-          }
-          this._returnToLobby();
-        };
-      }
-      if (lobbyBtn) {
-        lobbyBtn.onclick = () => {
-          overlay.style.display = 'none';
-          this._clearOverlayButtons();
-          this._returnToLobby();
-        };
-      }
-    }, 2500);
-  }
-
-  /**
-   * Add "DEMO END" canvas sprite inside a checkpoint arch, gently swaying.
-   * @param {number} cpIndex — 0-based index of the checkpoint arch to target
-   */
-  _addDemoEndSprite(cpIndex) {
-    const markers = this.world._raceMarkers;
-    if (!markers) return;
-
-    const checkpoints = markers.filter(m => m.type === 'checkpoint');
-    if (cpIndex >= checkpoints.length) return;
-    const arch = checkpoints[cpIndex].mesh;
-
-    // Canvas texture — fast, no font loading
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-    ctx.font = 'bold 52px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 5;
-    ctx.strokeText('DEMO', 128, 38);
-    ctx.strokeText('END', 128, 90);
-    ctx.fillStyle = '#ff6600';
-    ctx.fillText('DEMO', 128, 38);
-    ctx.fillText('END', 128, 90);
-
-    const tex = new THREE.CanvasTexture(canvas);
-    const mat = new THREE.SpriteMaterial({
-      map: tex, transparent: true, depthWrite: false,
-    });
-    const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(2.0, 1.0, 1);
-    sprite.position.set(0, 1.6, 0);
-    sprite.name = 'demo-end-sprite';
-
-    arch.add(sprite);
-    this._demoEndArch = arch;
-    this._demoEndSprite = sprite;
-    this._demoEndTime = performance.now();
-  }
-
-  /** Called each frame from the render loop to animate the sway. */
-  _updateDemoEndSprite() {
-    if (!this._demoEndSprite) return;
-    const t = (performance.now() - this._demoEndTime) / 1000;
-    this._demoEndSprite.position.x = Math.sin(t * 1.5) * 0.4;
-    this._demoEndSprite.position.y = 1.6 + Math.sin(t * 2.0) * 0.1;
-  }
-
-  _removeDemoEndSprite() {
-    if (this._demoEndArch && this._demoEndSprite) {
-      this._demoEndArch.remove(this._demoEndSprite);
-      if (this._demoEndSprite.material.map) this._demoEndSprite.material.map.dispose();
-      this._demoEndSprite.material.dispose();
-      this._demoEndSprite = null;
-      this._demoEndArch = null;
-    }
-  }
 
   /** Show purchase CTA after riding together as unlicensed stoker. */
   _showStokerCTA() {
@@ -1490,11 +1440,6 @@ class Game {
       this._showCheckpointFlash();
       hapticCheckpoint();
 
-      // Demo mode: end ride after DEMO_CHECKPOINT_LIMIT checkpoints
-      if (this._isDemo && raceEvent.passed >= DEMO_CHECKPOINT_LIMIT) {
-        this._showDemoEnd();
-        return;
-      }
 
 
 
@@ -1508,6 +1453,8 @@ class Game {
         this.net.sendEvent(EVT_CHECKPOINT);
       }
     } else if (raceEvent.event === 'finish') {
+      // Tutorial completion is handled by _updateTutorial, not the normal victory flow
+      if (this._tutorialActive) return;
       this._showVictory();
       hapticFinish();
 
@@ -1987,6 +1934,11 @@ class Game {
   }
 
   _returnToLobby() {
+    // Clean up tutorial state if active
+    if (this._tutorialActive) {
+      this._tutorialActive = false;
+      this.input.suppressGamepadLean = !this.lobby.joystickActive;
+    }
     this._musicBtn.style.display = 'none';
     if (!this.lobby.musicActive) {
       this._musicEl.pause();
@@ -1997,7 +1949,6 @@ class Game {
     }
     this._hideGameOver();
     this._hideVictory();
-    this._removeDemoEndSprite();
     this._hideAllOverlays();
     this.raceManager = null;
     this.hud.raceManager = null;
@@ -2178,7 +2129,7 @@ class Game {
     if (isMobile) {
       youDeg = Math.max(-90, Math.min(90, this.input.motionRawRelative || 0));
     } else if (this.input.gamepadConnected) {
-      youDeg = this.input.gamepadLean * 90;
+      youDeg = this.input.suppressGamepadLean ? 0 : this.input.gamepadLean * 90;
     } else {
       const aHeld = this.input.isPressed('KeyA');
       const dHeld = this.input.isPressed('KeyD');
@@ -2306,6 +2257,8 @@ class Game {
     this._overlayFocusIdx = Math.min(initialFocus, this._overlayButtons.length - 1);
     this._olPrevUp = false;
     this._olPrevDown = false;
+    this._olPrevLeft = false;
+    this._olPrevRight = false;
     this._olPrevA = false;
     if (this._overlayButtons.length > 0) {
       this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
@@ -2315,6 +2268,7 @@ class Game {
   _clearOverlayButtons() {
     for (const btn of this._overlayButtons) btn.classList.remove('gamepad-focus');
     this._overlayButtons = [];
+    this._overlaySlider = null;
   }
 
   _pollOverlayGamepad() {
@@ -2326,6 +2280,8 @@ class Game {
 
     const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
     const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
+    const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
+    const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
     const a = gp.buttons[0] && gp.buttons[0].pressed;
 
     if (up && !this._olPrevUp) {
@@ -2338,12 +2294,56 @@ class Game {
       this._overlayFocusIdx = Math.min(this._overlayButtons.length - 1, this._overlayFocusIdx + 1);
       this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
     }
+
+    // Left/right: always drive the overlay slider if one is registered
+    const slider = this._overlaySlider;
+    if (slider) {
+      const rawX = gp.axes[0] || 0;
+      const deadzone = 0.12;
+      let changed = false;
+
+      // Analog stick: continuous proportional movement
+      if (Math.abs(rawX) > deadzone) {
+        const speed = rawX * 1.5; // ~1.5 units/frame at full deflection (60fps = full sweep in ~1s)
+        slider.value = Math.min(Number(slider.max), Math.max(Number(slider.min), Number(slider.value) + speed));
+        changed = true;
+      }
+
+      // D-pad: repeating discrete steps (fires on press, then repeats while held)
+      if (left) {
+        if (!this._olPrevLeft) {
+          slider.value = Math.max(Number(slider.min), Number(slider.value) - 3);
+          changed = true;
+          this._olDpadRepeatTime = performance.now() + 400; // initial delay
+        } else if (performance.now() > this._olDpadRepeatTime) {
+          slider.value = Math.max(Number(slider.min), Number(slider.value) - 2);
+          changed = true;
+          this._olDpadRepeatTime = performance.now() + 80; // repeat rate
+        }
+      }
+      if (right) {
+        if (!this._olPrevRight) {
+          slider.value = Math.min(Number(slider.max), Number(slider.value) + 3);
+          changed = true;
+          this._olDpadRepeatTime = performance.now() + 400;
+        } else if (performance.now() > this._olDpadRepeatTime) {
+          slider.value = Math.min(Number(slider.max), Number(slider.value) + 2);
+          changed = true;
+          this._olDpadRepeatTime = performance.now() + 80;
+        }
+      }
+
+      if (changed) slider.dispatchEvent(new Event('input'));
+    }
+
     if (a && !this._olPrevA && performance.now() >= this._overlayCooldownUntil) {
       this._overlayButtons[this._overlayFocusIdx].click();
     }
 
     this._olPrevUp = up;
     this._olPrevDown = down;
+    this._olPrevLeft = left;
+    this._olPrevRight = right;
     this._olPrevA = a;
   }
 
@@ -2353,6 +2353,18 @@ class Game {
 
   _checkTreeCollision() {
     if (this.bike.fallen || this.bike.speed < 0.5) return;
+    // Skip tree collision when level config disables it — only pylons matter
+    const level = this.lobby.selectedLevel;
+    if (level && level.treeCollision === false) {
+      // Still check pylon collision
+      if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
+        this.bike._fall();
+        this.chaseCamera.shakeAmount = 0.25;
+        this._playBeep(150, 0.4);
+        hapticTreeHit();
+      }
+      return;
+    }
     const result = this.world.checkTreeCollision(
       this.bike.position, this.bike.roadD, this.bike.heading
     );
@@ -2415,7 +2427,7 @@ class Game {
       this.world.update(this.bike.position, this.bike.roadD, dt);
       this.chaseCamera.update(this.bike, dt, roadPath);
       if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
-      this._updateDemoEndSprite();
+
       this.renderer.render(this.scene, this.camera);
     }
 
@@ -2428,6 +2440,10 @@ class Game {
   // ============================================================
 
   _updateSolo(dt) {
+    // Feed bike speed to input manager for velocity-dependent sensitivity
+    this.input.bikeSpeed = this.bike.speed;
+    this.input.bikeMaxSpeed = TUNE.maxSpeed || 19;
+
     const pedalResult = this.pedalCtrl.update(dt);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
 
@@ -2440,9 +2456,10 @@ class Game {
 
     // Race progress + contribution tracking
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
+      const timerEnabled = !this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false;
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled ? dt : 0);
       if (raceEvent) {
-        if (raceEvent.event === 'timeout') { this._onTimerExpired(); return; }
+        if (raceEvent.event === 'timeout' && timerEnabled) { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
@@ -2468,8 +2485,20 @@ class Game {
     // Achievements
     this._checkAchievements(dt);
 
-    // Show game over after crash recovery
-    if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
+    // Background motion adaptation (skip when level config disables it)
+    const adaptLevel = this.lobby.selectedLevel;
+    if ((!adaptLevel || adaptLevel.motionAdaptation !== false) && (this.input.motionEnabled || this.input.gyroConnected)) {
+      this._updateMotionAdaptation(dt);
+    }
+
+    // Tutorial: handle crash/completion internally instead of game-over screen
+    if (this._tutorialActive) {
+      this._updateTutorial(dt);
+      // Skip normal game-over on crash during tutorial
+    } else {
+      // Show game over after crash recovery
+      if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
+    }
 
     this.grassParticles.update(this.bike, dt);
     this._hapticOffRoadCheck();
@@ -2483,7 +2512,6 @@ class Game {
 
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
     this.archIndicator.update(this.bike, balanceResult.leanInput);
-    this._updateDemoEndSprite();
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl));
   }
@@ -2493,6 +2521,10 @@ class Game {
   // ============================================================
 
   _updateCaptain(dt) {
+    // Feed bike speed to input manager for velocity-dependent sensitivity
+    this.input.bikeSpeed = this.bike.speed;
+    this.input.bikeMaxSpeed = TUNE.maxSpeed || 19;
+
     // Edge-detect pedals → shared pedal controller + send to stoker
     const upHeld = this.input.isPressed('ArrowLeft');
     const downHeld = this.input.isPressed('ArrowRight');
@@ -2695,6 +2727,785 @@ class Game {
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl, remoteData));
+  }
+
+  // ============================================================
+  // BACKGROUND MOTION ADAPTATION — refines tuning during gameplay
+  // ============================================================
+
+  _updateMotionAdaptation(dt) {
+    // Initialize adaptation state on first call
+    if (!this._adaptState) {
+      this._adaptState = {
+        timer: 0,
+        samples: [],        // raw relative tilt values
+        interval: 30,       // seconds between adaptation updates
+        blend: 0.08,        // conservative blend factor (8%)
+        firstMinute: true,  // more aggressive during first minute
+        elapsed: 0,
+      };
+    }
+    const a = this._adaptState;
+    a.elapsed += dt;
+    a.timer += dt;
+
+    // More aggressive adaptation during first 60s (20% blend, 10s interval)
+    if (a.firstMinute && a.elapsed > 60) {
+      a.firstMinute = false;
+      a.blend = 0.08;
+      a.interval = 30;
+    }
+    const blend = a.firstMinute ? 0.20 : a.blend;
+    const interval = a.firstMinute ? 10 : a.interval;
+
+    // Collect samples only when actively riding (not crashed, not stopped)
+    if (!this.bike.fallen && this.bike.speed > 1) {
+      const rel = this.input.motionRawRelative;
+      if (rel !== undefined) a.samples.push(rel);
+    }
+
+    if (a.timer < interval || a.samples.length < 30) return;
+    a.timer = 0;
+
+    const isGyro = this.input.gyroConnected;
+    const samples = a.samples;
+    a.samples = [];
+
+    // Compute observed parameters from this window
+    const absSamples = samples.map(s => Math.abs(s));
+    absSamples.sort((x, y) => x - y);
+
+    // Observed noise floor (lower quartile when not steering)
+    const lowQ = absSamples[Math.floor(absSamples.length * 0.1)];
+    const observedDeadzone = Math.min(8, Math.max(2, Math.ceil(lowQ * 2)));
+
+    // Observed max range (95th percentile, avoid outliers)
+    const p95 = absSamples[Math.floor(absSamples.length * 0.95)];
+    const observedSensitivity = Math.min(60, Math.max(15, p95 * 0.85));
+
+    // Observed median lean for response curve
+    const medianLean = absSamples[Math.floor(absSamples.length * 0.5)];
+
+    // Blend toward observed values
+    if (isGyro) {
+      TUNE.gyroDeadzone += (observedDeadzone - TUNE.gyroDeadzone) * blend;
+      TUNE.gyroSensitivity += (observedSensitivity - TUNE.gyroSensitivity) * blend;
+      const targetCurve = Math.min(2.0, Math.max(1.0, 1.0 + (medianLean / observedSensitivity) * 0.5));
+      TUNE.gyroResponseCurve += (targetCurve - TUNE.gyroResponseCurve) * blend;
+    } else {
+      TUNE.deadzone += (observedDeadzone - TUNE.deadzone) * blend;
+      TUNE.sensitivity += (observedSensitivity - TUNE.sensitivity) * blend;
+      const targetCurve = Math.min(2.5, Math.max(1.2, 1.5 + medianLean / observedSensitivity));
+      TUNE.responseCurve += (targetCurve - TUNE.responseCurve) * blend;
+    }
+
+    // Update base snapshot so steering feel scaling stays relative
+    snapshotTuningBase();
+
+    // Re-apply current steering feel on top of the new base
+    if (TUNE.steeringFeel != null && TUNE.steeringFeel !== 0.5) {
+      applySteeringFeel(TUNE.steeringFeel);
+    }
+
+    // Persist updated values (throttled — only save every 30s)
+    this._saveAdaptedTuning(isGyro);
+  }
+
+  _saveAdaptedTuning(isGyro) {
+    try {
+      const existing = localStorage.getItem(this._tuningKey());
+      const data = existing ? JSON.parse(existing) : { version: 1 };
+      data.inputType = isGyro ? 'gyro' : 'phone';
+      data.timestamp = Date.now();
+      if (isGyro) {
+        data.sensitivity = Math.round(TUNE.gyroSensitivity * 10) / 10;
+        data.deadzone = Math.round(TUNE.gyroDeadzone * 10) / 10;
+        data.responseCurve = Math.round(TUNE.gyroResponseCurve * 100) / 100;
+      } else {
+        data.sensitivity = Math.round(TUNE.sensitivity * 10) / 10;
+        data.deadzone = Math.round(TUNE.deadzone * 10) / 10;
+        data.responseCurve = Math.round(TUNE.responseCurve * 100) / 100;
+      }
+      // Preserve steeringFeel if set
+      localStorage.setItem(this._tuningKey(), JSON.stringify(data));
+    } catch {}
+  }
+
+  // ============================================================
+  // TUTORIAL — motion learning ride
+  // ============================================================
+
+  /** Returns the per-user localStorage key for motion tuning. */
+  _tuningKey() {
+    const auth = this.lobby && this.lobby.auth;
+    const userId = auth && auth.isLoggedIn() && auth.getUser() ? auth.getUser().id : null;
+    return userId ? TUNING_KEY_PREFIX + '_' + userId : TUNING_KEY_PREFIX;
+  }
+
+  _shouldRunTutorial() {
+    // Only for solo mode with motion input
+    if (this.mode !== 'solo') return false;
+    if (!this.input.motionEnabled && !this.input.gyroConnected) return false;
+    if (this.lobby._forceWizard) return true;
+    try {
+      const saved = localStorage.getItem(this._tuningKey());
+      if (!saved) return true;
+      const data = JSON.parse(saved);
+      // Re-run if input type changed
+      const curType = this.input.gyroConnected ? 'gyro' : 'phone';
+      return data.inputType !== curType;
+    } catch { return true; }
+  }
+
+  _loadSavedTuning() {
+    try {
+      const saved = localStorage.getItem(this._tuningKey());
+      if (!saved) return false;
+      const data = JSON.parse(saved);
+      if (data.version !== 1) return false;
+      const curType = this.input.gyroConnected ? 'gyro' : 'phone';
+      if (data.inputType !== curType) return false;
+      // Apply saved tuning
+      if (data.sensitivity != null) TUNE.sensitivity = data.sensitivity;
+      if (data.deadzone != null) TUNE.deadzone = data.deadzone;
+      if (data.outputSmoothing != null) TUNE.outputSmoothing = data.outputSmoothing;
+      if (data.responseCurve != null) TUNE.responseCurve = data.responseCurve;
+      if (data.gyroSensitivity != null) TUNE.gyroSensitivity = data.gyroSensitivity;
+      if (data.gyroDeadzone != null) TUNE.gyroDeadzone = data.gyroDeadzone;
+      if (data.gyroOutputSmoothing != null) TUNE.gyroOutputSmoothing = data.gyroOutputSmoothing;
+      if (data.gyroResponseCurve != null) TUNE.gyroResponseCurve = data.gyroResponseCurve;
+      // Snapshot base values, then apply feel on top
+      snapshotTuningBase();
+      if (data.steeringFeel != null) {
+        applySteeringFeel(data.steeringFeel);
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  async _startTutorialRide() {
+    this.lobby._forceWizard = false;
+    this._tutorialActive = true;
+    this._tutorialPhase = -1; // will show runway prompt on first update
+    this._tutCompletedPhases = new Set(); // phases successfully passed
+    this._tutFiredCheckpoints = new Set(); // phases that already showed checkpoint flash
+    this._tutTargetPhase = 1; // which phase the player is working on
+    this._tutorialAttempts = 0;
+    this._tutorialCollected = 0;
+
+    // Measurement buffers (cumulative across attempts)
+    this._tutPhase1Samples = [];
+    this._tutPhase2Samples = [];
+    this._tutPhase2Speeds = [];
+    this._tutPhase3Recovery = [];
+    this._tutPrevTilt = null;
+    this._tutPrevTiltTime = null;
+    this._tutPeakLean = 0;
+    this._tutPeakTime = 0;
+    this._tutLastSign = 0;
+    this._tutCrashPending = false;
+    this._tutRetryPending = false;
+    this._tutHoldStillShown = false;
+    this._tutOffRoadTime = 0;
+
+    // Use tutorial level with Chill difficulty
+    const tutLevel = getLevelById('tutorial');
+    this.lobby.selectedLevel = tutLevel;
+    this.lobby.selectedDifficulty = 'chill';
+
+    // Request iOS motion permission if needed
+    if (this.input.needsMotionPermission) {
+      await this.input.requestMotionPermission();
+    }
+    // Wait briefly for motion events on mobile
+    if (isMobile && !this.input.motionEnabled && !this.input.gyroConnected) {
+      await new Promise(r => {
+        const check = () => { if (this.input.motionEnabled) return r(); };
+        check();
+        const iv = setInterval(check, 100);
+        setTimeout(() => { clearInterval(iv); r(); }, 1500);
+      });
+    }
+
+    // Suppress joystick steering so player must use gyro/tilt
+    this.input.suppressGamepadLean = true;
+
+    // Show tutorial UI
+    document.getElementById('tutorial-skip').style.display = 'block';
+    document.getElementById('tutorial-skip').onclick = () => this._skipTutorial();
+    document.getElementById('btn-tutorial-continue').onclick = () => this._finishTutorial();
+
+    // Start the ride via normal countdown flow
+    this._startCountdown();
+
+    // Hide timer (no time pressure in tutorial)
+    this.hud.hideTimer();
+  }
+
+  _updateTutorial(dt) {
+    if (!this._tutorialActive) return;
+    if (this._tutRetryPending || this._tutCrashPending) return; // wait for restart
+
+    const dist = this.bike.distanceTraveled;
+    const isGyro = this.input.gyroConnected;
+    const tp = this._tutTargetPhase;
+    const pi = TUTORIAL_PHASES[tp];
+
+    // Determine current phase: runway (before content) or active content
+    const phase = dist < pi.contentStart ? 0 : tp;
+
+    // Runway → Phase transition: show phase prompt when entering content zone
+    if (phase > 0 && phase !== this._tutorialPhase) {
+      this._tutorialPhase = phase;
+      this._showTutorialPhase(phase);
+    }
+    // Show runway prompt when in the warmup zone
+    if (phase === 0 && this._tutorialPhase !== 0) {
+      this._tutorialPhase = 0;
+      this._showTutorialPhase(0);
+    }
+
+    // Collect raw tilt sample
+    const rawTilt = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
+    const now = performance.now();
+
+    // Measurement collection based on target phase
+    if (phase === 0 && tp === 1) {
+      // First runway only: collect noise floor samples while pedaling
+      if (rawTilt !== 0 || this._tutPhase1Samples.length > 0) {
+        this._tutPhase1Samples.push(rawTilt);
+      }
+    } else if (tp === 1 && phase > 0) {
+      // Phase 1: collect steering range samples
+      const offset = this.input.motionOffset || 0;
+      const relative = rawTilt - offset;
+      this._tutPhase2Samples.push(relative);
+
+      // Track tilt speed
+      if (this._tutPrevTilt !== null && this._tutPrevTiltTime !== null) {
+        const dtMs = now - this._tutPrevTiltTime;
+        if (dtMs > 0) {
+          this._tutPhase2Speeds.push(Math.abs(relative - this._tutPrevTilt) / (dtMs / 1000));
+        }
+      }
+      this._tutPrevTilt = relative;
+      this._tutPrevTiltTime = now;
+    } else if (tp === 2 && phase > 0) {
+      // Phase 2: detect direction changes and measure recovery
+      const offset = this.input.motionOffset || 0;
+      const relative = rawTilt - offset;
+      const deadzone = isGyro ? TUNE.gyroDeadzone : TUNE.deadzone;
+      const sign = relative > deadzone ? 1 : relative < -deadzone ? -1 : 0;
+
+      if (sign !== 0 && Math.abs(relative) > Math.abs(this._tutPeakLean)) {
+        this._tutPeakLean = relative;
+        this._tutPeakTime = now;
+      }
+
+      if (sign !== 0 && this._tutLastSign !== 0 && sign !== this._tutLastSign) {
+        if (this._tutPeakTime > 0) {
+          const recoveryMs = now - this._tutPeakTime;
+          if (recoveryMs > 50 && recoveryMs < 2000) {
+            this._tutPhase3Recovery.push(recoveryMs);
+          }
+        }
+        this._tutPeakLean = 0;
+        this._tutPeakTime = now;
+      }
+
+      if (sign !== 0) this._tutLastSign = sign;
+    }
+
+    // Pylon tracking + dodge arrow
+    if (this.obstacleManager && phase > 0) {
+      this.obstacleManager.updatePassTracking(dist, this.bike._lateralOffset);
+      this._updateDodgeArrow(dist);
+    } else {
+      const arrow = document.getElementById('coaching-dodge-arrow');
+      if (arrow) arrow.classList.remove('visible');
+    }
+
+    // Collect indicator
+    if (this.collectibleManager && phase > 0) {
+      this._updateCollectIndicator(dist);
+    } else {
+      const indicator = document.getElementById('coaching-collect-indicator');
+      if (indicator) indicator.classList.remove('visible');
+    }
+
+    // Missed collectible check (only in current phase's content zone)
+    if (this.collectibleManager && phase > 0 && TUTORIAL_ITEMS[tp].collectibles.length > 0) {
+      if (dist > pi.contentStart && this.collectibleManager.hasMissedItem(dist, pi.contentStart, pi.contentEnd, 8)) {
+        this._tutorialPhaseRetry(tp, 'Missed a present! Collect them all!');
+        return;
+      }
+    }
+
+    // Off-road check
+    const offDist = Math.abs(this.bike._lateralOffset) - 3.5;
+    if (offDist > 0 && this.bike.speed > 0.5) {
+      const depthWeight = Math.min(offDist / 2.0, 2.0);
+      this._tutOffRoadTime += dt * depthWeight;
+      if (this._tutOffRoadTime > 2.0) {
+        this._tutOffRoadTime = 0;
+        this._tutorialPhaseRetry(tp, 'Stay on the road!');
+        return;
+      }
+    } else {
+      this._tutOffRoadTime = Math.max(0, this._tutOffRoadTime - dt * 2);
+    }
+
+    // Crash check
+    if (this.bike.fallen && this.bike.fallTimer > 1.2 && !this._tutCrashPending) {
+      this._tutCrashPending = true;
+      this._tutorialCrash(tp);
+      return;
+    }
+
+    // Phase completion check at contentEnd
+    if (dist >= pi.contentEnd && !this.bike.fallen) {
+      // Verify collectibles if this phase has them
+      const phaseCollectibles = TUTORIAL_ITEMS[tp].collectibles;
+      if (phaseCollectibles.length > 0 && this.collectibleManager) {
+        const collected = this.collectibleManager.countCollectedInRange(pi.contentStart, pi.contentEnd);
+        const total = this.collectibleManager.countTotalInRange(pi.contentStart, pi.contentEnd);
+        if (collected < total) {
+          this._tutorialPhaseRetry(tp, 'Collect all the presents! (' + collected + '/' + total + ')');
+          return;
+        }
+      }
+
+      // Verify pylons if this phase has them
+      const phaseObstacles = TUTORIAL_ITEMS[tp].obstacles;
+      if (phaseObstacles.length > 0 && this.obstacleManager) {
+        const pylonResult = this.obstacleManager.getPassResults(pi.contentStart, pi.contentEnd);
+        if (pylonResult.wrongSide > 0 || pylonResult.passed < phaseObstacles.length) {
+          const hint = pylonResult.wrongSide > 0
+            ? 'Stay on the correct side of each pylon!'
+            : 'Navigate past all the pylons!';
+          this._tutorialPhaseRetry(tp, hint);
+          return;
+        }
+      }
+
+      // Phase passed! Checkpoint flash + chime
+      this._showCheckpointFlash();
+      hapticCheckpoint();
+
+      // Accumulate collected presents
+      if (this.collectibleManager) {
+        this._tutorialCollected += this.collectibleManager.countCollectedInRange(pi.contentStart, pi.contentEnd);
+      }
+      this._tutCompletedPhases.add(tp);
+      if (tp < 3) {
+        // Advance to next phase — keep riding forward
+        this._tutTargetPhase = tp + 1;
+        this._tutorialPhase = -1; // will show runway prompt
+        this._tutOffRoadTime = 0;
+      } else {
+        // All 3 phases done
+        this._tutorialComplete();
+      }
+    }
+  }
+
+  _showTutorialPhase(phase) {
+    const prompt = document.getElementById('tutorial-prompt');
+    const text = document.getElementById('tutorial-prompt-text');
+    const dots = document.querySelectorAll('.tutorial-dot');
+
+    const prompts = {
+      0: 'Pedal to build speed!',
+      1: 'Tilt to steer! Collect the presents!',
+      2: 'Dodge the pylons!',
+      3: 'Put it all together! Collect and dodge!'
+    };
+    text.textContent = prompts[phase] || '';
+    prompt.classList.add('visible');
+
+    // Phase dots only show for content phases (1-3), not runway
+    dots.forEach(d => {
+      const p = parseInt(d.dataset.phase);
+      d.classList.toggle('active', p === this._tutTargetPhase);
+      d.classList.toggle('done', this._tutCompletedPhases && this._tutCompletedPhases.has(p));
+    });
+  }
+
+  _initAllTutorialItems() {
+    // Combine items from all phases into a single set so everything is visible ahead
+    const allCollectibles = [];
+    const allObstacles = [];
+    for (let p = 1; p <= 3; p++) {
+      allCollectibles.push(...TUTORIAL_ITEMS[p].collectibles);
+      allObstacles.push(...TUTORIAL_ITEMS[p].obstacles);
+    }
+    if (this.collectibleManager) this.collectibleManager.replaceItems(allCollectibles);
+    if (this.obstacleManager) this.obstacleManager.replaceItems(allObstacles);
+  }
+
+  _updateCollectIndicator(dist) {
+    const indicator = document.getElementById('coaching-collect-indicator');
+    if (!indicator || !this.collectibleManager) {
+      if (indicator) indicator.classList.remove('visible');
+      return;
+    }
+
+    // Find the next upcoming uncollected present
+    let next = null;
+    let aheadDist = Infinity;
+    for (const item of this.collectibleManager._items) {
+      if (item.collected) continue;
+      const ahead = item.absoluteD - dist;
+      if (ahead > 1 && ahead < aheadDist) {
+        aheadDist = ahead;
+        next = item;
+      }
+    }
+
+    // Show indicator when present is within 15m ahead, hide within 2m
+    if (next && aheadDist <= 15 && aheadDist > 2) {
+      indicator.classList.add('visible');
+      // Point toward the present: left present → indicator left, right → right
+      if (next.lateralOffset < 0) {
+        indicator.classList.add('collect-left');
+        indicator.classList.remove('collect-right');
+      } else {
+        indicator.classList.remove('collect-left');
+        indicator.classList.add('collect-right');
+      }
+    } else {
+      indicator.classList.remove('visible');
+    }
+  }
+
+  _updateDodgeArrow(dist) {
+    const arrow = document.getElementById('coaching-dodge-arrow');
+    if (!arrow || !this.obstacleManager) { if (arrow) arrow.classList.remove('visible'); return; }
+
+    // Find the next upcoming pylon (not hidden, ahead of bike)
+    let next = null;
+    let aheadDist = Infinity;
+    for (const item of this.obstacleManager._items) {
+      if (item._hidden) continue;
+      const ahead = item.absoluteD - dist;
+      if (ahead > 1 && ahead < aheadDist) {
+        aheadDist = ahead;
+        next = item;
+      }
+    }
+
+    // Show arrow when pylon is within 15m ahead, hide within 2m (already dodging)
+    if (next && aheadDist <= 15 && aheadDist > 2) {
+      arrow.classList.add('visible');
+      // Pylon on left (offset < 0) → arrow points right; pylon on right → arrow points left
+      if (next.lateralOffset < 0) {
+        arrow.classList.add('arrow-right');
+      } else {
+        arrow.classList.remove('arrow-right');
+      }
+    } else {
+      arrow.classList.remove('visible');
+    }
+  }
+
+  _tutorialPhaseRetry(phase, hint) {
+    // Guard against being called multiple frames in a row
+    if (this._tutRetryPending) return;
+    this._tutRetryPending = true;
+
+    // Stop the bike immediately so player doesn't keep moving
+    this.bike.speed = 0;
+
+    // Show a brief message and restart the phase
+    const crashEl = document.getElementById('tutorial-crash');
+    const hintEl = document.getElementById('tutorial-crash-hint');
+    document.getElementById('tutorial-crash-text').textContent = 'Not quite!';
+    hintEl.textContent = hint;
+    crashEl.classList.add('visible');
+
+    const pi = TUTORIAL_PHASES[phase];
+    setTimeout(() => {
+      crashEl.classList.remove('visible');
+      document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
+      // Reset bike to start of this phase's runway
+      this.bike.resetToDistance(pi.runwayStart);
+      this.bike.distanceTraveled = pi.runwayStart;
+      this.bike.speed = 0;
+      // Reset this phase's collectibles (preserve earlier phases)
+      if (this.collectibleManager) this.collectibleManager.resetInRange(pi.contentStart, pi.contentEnd);
+      // Reset pylon tracking for retry
+      if (this.obstacleManager) this.obstacleManager.resetPassTracking();
+      // Reset phase state
+      this._tutorialPhase = -1;
+      this._tutOffRoadTime = 0;
+      this._tutRetryPending = false;
+      this._tutCrashPending = false;
+    }, 1200);
+  }
+
+  _tutorialCrash(phase) {
+    this._tutorialAttempts++;
+
+    // Show crash hint
+    const crashEl = document.getElementById('tutorial-crash');
+    const hintEl = document.getElementById('tutorial-crash-hint');
+
+    // Determine crash cause
+    const absLean = Math.abs(this.bike.lean);
+    if (absLean > 1.0) {
+      hintEl.textContent = 'Try smaller tilts \u2014 gentle corrections!';
+    } else if (phase === 3) {
+      hintEl.textContent = 'Watch ahead and steer early!';
+    } else {
+      hintEl.textContent = 'Keep pedaling to stay stable!';
+    }
+    crashEl.classList.add('visible');
+
+    // Hide gameover overlay if it would show
+    document.getElementById('gameover-overlay').style.display = 'none';
+
+    const pi = TUTORIAL_PHASES[phase];
+    setTimeout(() => {
+      crashEl.classList.remove('visible');
+      // Reset bike to start of this phase's runway
+      this.bike.resetToDistance(pi.runwayStart);
+      this.bike.distanceTraveled = pi.runwayStart;
+      this.bike.speed = 0;
+      this.state = 'playing';
+      // Reset this phase's collectibles
+      if (this.collectibleManager) this.collectibleManager.resetInRange(pi.contentStart, pi.contentEnd);
+      // Reset pylon tracking
+      if (this.obstacleManager) this.obstacleManager.resetPassTracking();
+      this._tutorialPhase = -1;
+      this._tutOffRoadTime = 0;
+      this._tutCrashPending = false;
+      this._tutRetryPending = false;
+      this._tutPeakLean = 0;
+      this._tutPeakTime = 0;
+      this._tutLastSign = 0;
+    }, 1200);
+  }
+
+  _tutorialComplete() {
+    this._tutorialAttempts++;
+
+    // Compute tuning parameters from measurements
+    const isGyro = this.input.gyroConnected;
+    const params = this._computeTuningParams(isGyro);
+
+    // Apply to TUNE
+    if (isGyro) {
+      TUNE.gyroSensitivity = params.sensitivity;
+      TUNE.gyroDeadzone = params.deadzone;
+      TUNE.gyroOutputSmoothing = params.outputSmoothing;
+      TUNE.gyroResponseCurve = params.responseCurve;
+    } else {
+      TUNE.sensitivity = params.sensitivity;
+      TUNE.deadzone = params.deadzone;
+      TUNE.outputSmoothing = params.outputSmoothing;
+      TUNE.responseCurve = params.responseCurve;
+    }
+
+    // Snapshot calibrated values as the base for feel scaling
+    snapshotTuningBase();
+
+    // Save to localStorage
+    const saveData = {
+      version: 1,
+      inputType: isGyro ? 'gyro' : 'phone',
+      sensitivity: params.sensitivity,
+      deadzone: params.deadzone,
+      outputSmoothing: params.outputSmoothing,
+      responseCurve: params.responseCurve,
+      steeringFeel: 0.5,
+      timestamp: Date.now()
+    };
+    try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}
+
+    // Stop the game loop for this ride
+    this.state = 'gameover'; // pause updates
+
+    // Hide tutorial prompt, show completion screen
+    document.getElementById('tutorial-prompt').classList.remove('visible');
+    document.getElementById('tutorial-skip').style.display = 'none';
+
+    const statsEl = document.getElementById('tutorial-complete-stats');
+    let html = '';
+    if (this._tutorialAttempts > 1) {
+      html += 'Attempts: ' + this._tutorialAttempts + ' \u2014 Practice makes perfect!<br>';
+    }
+    const totalPresents = TUTORIAL_ITEMS[1].collectibles.length + TUTORIAL_ITEMS[2].collectibles.length + TUTORIAL_ITEMS[3].collectibles.length;
+    html += 'Presents collected: ' + this._tutorialCollected + '/' + totalPresents + '<br>';
+    html += '<span class="calibrated">Steering calibrated to your style!</span>';
+    statsEl.innerHTML = html;
+
+    // Set up steering feel slider
+    const slider = document.getElementById('steering-feel-slider');
+    slider.value = 50;
+    slider.oninput = () => {
+      const feel = slider.value / 100;
+      applySteeringFeel(feel);
+    };
+
+    // Show purchase CTA for demo users
+    const buyBtn = document.getElementById('btn-tutorial-buy');
+    if (buyBtn) {
+      if (this._isDemo) {
+        buyBtn.style.display = '';
+        buyBtn.onclick = async () => {
+          try {
+            const url = await this.lobby.license.startCheckout('tandemonium-web-early');
+            window.location.href = url;
+          } catch (e) {
+            console.error('Checkout error', e);
+          }
+        };
+      } else {
+        buyBtn.style.display = 'none';
+      }
+    }
+
+    document.getElementById('tutorial-complete').classList.add('visible');
+
+    // Register continue button (+ buy button for demo) for gamepad navigation
+    const continueBtn = document.getElementById('btn-tutorial-continue');
+    const overlayBtns = [continueBtn];
+    if (buyBtn && this._isDemo) overlayBtns.unshift(buyBtn);
+    this._setOverlayButtons(overlayBtns, this._isDemo ? 1 : 0);
+    this._overlaySlider = slider;
+  }
+
+  _computeTuningParams(isGyro) {
+    const defaults = BALANCE_DEFAULTS;
+
+    // Phase 1 → Deadzone + rest offset
+    let deadzone, restOffset;
+    if (this._tutPhase1Samples.length >= 5) {
+      const samples = this._tutPhase1Samples;
+      const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+      const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / samples.length;
+      const stdDev = Math.sqrt(variance);
+      deadzone = Math.min(8, Math.max(2, Math.ceil(stdDev * 3)));
+      restOffset = mean;
+      // Update input manager offset
+      this.input.motionOffset = restOffset;
+    } else {
+      deadzone = isGyro ? defaults.gyroDeadzone : defaults.deadzone;
+    }
+
+    // Phase 2 → Sensitivity
+    let sensitivity;
+    if (this._tutPhase2Samples.length >= 5) {
+      const samples = this._tutPhase2Samples;
+      let tiltMin = Infinity, tiltMax = -Infinity;
+      for (const s of samples) {
+        if (s < tiltMin) tiltMin = s;
+        if (s > tiltMax) tiltMax = s;
+      }
+      const maxRange = Math.max(Math.abs(tiltMin), Math.abs(tiltMax));
+      sensitivity = Math.min(60, Math.max(15, maxRange * 0.85));
+    } else {
+      sensitivity = isGyro ? defaults.gyroSensitivity : defaults.sensitivity;
+    }
+
+    // Phase 3 → Smoothing
+    let outputSmoothing;
+    if (this._tutPhase3Recovery.length >= 1) {
+      const recoveries = this._tutPhase3Recovery;
+      const avgRecovery = recoveries.reduce((a, b) => a + b, 0) / recoveries.length;
+      const t = Math.min(1, Math.max(0, (avgRecovery - 200) / 400));
+      outputSmoothing = 0.6 + (0.25 - 0.6) * t; // lerp(0.6, 0.25, t)
+    } else {
+      outputSmoothing = isGyro ? defaults.gyroOutputSmoothing : defaults.outputSmoothing;
+    }
+
+    // Response curve from Phase 2 lean distribution
+    let responseCurve;
+    if (this._tutPhase2Samples.length >= 5 && sensitivity > deadzone) {
+      const absSamples = this._tutPhase2Samples.map(s => Math.abs(s));
+      absSamples.sort((a, b) => a - b);
+      const medianLean = absSamples[Math.floor(absSamples.length / 2)] / sensitivity;
+      if (isGyro) {
+        responseCurve = Math.min(2.0, Math.max(1.0, 1.0 + medianLean * 0.5));
+      } else {
+        responseCurve = Math.min(2.5, Math.max(1.2, 1.5 + medianLean));
+      }
+    } else {
+      responseCurve = isGyro ? defaults.gyroResponseCurve : defaults.responseCurve;
+    }
+
+    return { sensitivity, deadzone, outputSmoothing, responseCurve };
+  }
+
+  _skipTutorial() {
+    // Apply defaults and save so tutorial doesn't re-run
+    const isGyro = this.input.gyroConnected;
+    const saveData = {
+      version: 1,
+      inputType: isGyro ? 'gyro' : 'phone',
+      sensitivity: isGyro ? BALANCE_DEFAULTS.gyroSensitivity : BALANCE_DEFAULTS.sensitivity,
+      deadzone: isGyro ? BALANCE_DEFAULTS.gyroDeadzone : BALANCE_DEFAULTS.deadzone,
+      outputSmoothing: isGyro ? BALANCE_DEFAULTS.gyroOutputSmoothing : BALANCE_DEFAULTS.outputSmoothing,
+      responseCurve: isGyro ? BALANCE_DEFAULTS.gyroResponseCurve : BALANCE_DEFAULTS.responseCurve,
+      timestamp: Date.now()
+    };
+    try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}
+    this._endTutorialRide();
+  }
+
+  _finishTutorial() {
+    // Save the final steering feel value
+    const slider = document.getElementById('steering-feel-slider');
+    const feel = (slider ? slider.value : 50) / 100;
+    try {
+      const saved = localStorage.getItem(this._tuningKey());
+      if (saved) {
+        const data = JSON.parse(saved);
+        data.steeringFeel = feel;
+        localStorage.setItem(this._tuningKey(), JSON.stringify(data));
+      }
+    } catch {}
+
+    document.getElementById('tutorial-complete').classList.remove('visible');
+    this._endTutorialRide();
+  }
+
+  _endTutorialRide() {
+    this._tutorialActive = false;
+
+    // Hide all tutorial UI
+    document.getElementById('tutorial-prompt').classList.remove('visible');
+    document.getElementById('tutorial-skip').style.display = 'none';
+    document.getElementById('tutorial-crash').classList.remove('visible');
+    document.getElementById('tutorial-complete').classList.remove('visible');
+
+    // Restore joystick steering to lobby toggle state
+    this.input.suppressGamepadLean = !this.lobby.joystickActive;
+
+    // Clean up (subset of _returnToLobby)
+    this._musicBtn.style.display = 'none';
+    this._hideGameOver();
+    this._hideVictory();
+    this._hideAllOverlays();
+    if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
+    this.raceManager = null;
+    this.hud.raceManager = null;
+    this.hud.hideCollectibles();
+    this.hud.hideTimer();
+    this.world.clearRaceMarkers();
+    this.archIndicator.hide();
+
+    // Reset bike
+    this.bike.fullReset();
+    this.chaseCamera.initialized = false;
+    this.pedalCtrl = new PedalController(this.input);
+
+    // Return to lobby (demo users see locked level cards, licensed users see level select)
+    this.state = 'lobby';
+    this.lobby.show();
+    this.lobby._pendingMode = 'solo';
+    this.lobby._showStep(this.lobby.levelStep);
   }
 
   // ============================================================

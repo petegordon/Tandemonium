@@ -10,10 +10,11 @@ const _FREEPLAY_HASH = '960d0f6e2f5e4974bb71f690e303d0a116661ca4f3fcec9f8e7d8ce9
 const _FW = [
   [0x19CE7115A00, 0x19CF15E1200],  // free-play time windows (epoch-ms, hex-obfuscated)
 ];
-const _inFreeWindow = _FW.some(([s, e]) => { const n = Date.now(); return n >= s && n < e; });
+const _demoMode = new URLSearchParams(window.location.search).get('code') === 'DEMO';
+const _inFreeWindow = _demoMode ? false : _FW.some(([s, e]) => { const n = Date.now(); return n >= s && n < e; });
 
 /** Check if a valid freeplay code is present in the URL query string. */
-const _hasFreeplay = await (async () => {
+const _hasFreeplay = _demoMode ? false : await (async () => {
   const code = new URLSearchParams(window.location.search).get('code');
   if (!code) return false;
   const buf = await crypto.subtle.digest('SHA-256',
@@ -31,6 +32,11 @@ export class LicenseManager {
     this._loading = false;
     this._loadPromise = null;
     this._restoreCache();
+  }
+
+  /** True when a free-play promo window or code is active. */
+  get isFreePlay() {
+    return _inFreeWindow || _hasFreeplay;
   }
 
   /** True if the user has an active license for Tandemonium (or freeplay code). */

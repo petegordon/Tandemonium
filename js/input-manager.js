@@ -25,9 +25,14 @@ export class InputManager {
     this.motionOffset = null;
     this.motionRawRelative = 0;
     this._smoothedLean = 0;
+    this._prevLeanRaw = 0;       // for asymmetric smoothing direction detection
     this._calibBuf = [];
     this._calibrating = false;
     this._warmupCount = 0;
+
+    // Velocity-dependent sensitivity: set by game loop each frame
+    this.bikeSpeed = 0;
+    this.bikeMaxSpeed = 19;
 
     // Drift compensation (mobile tilt only)
     this._driftEma = null;
@@ -43,6 +48,7 @@ export class InputManager {
     this._gpTriggerLeftPressed = false;
     this._gpTriggerRightPressed = false;
     this.suppressGamepadBadge = false;
+    this.suppressGamepadLean = false;
 
     // WebHID gyro state
     this.gyroDevice = null;
@@ -314,22 +320,52 @@ export class InputManager {
     // Select tuning parameters based on input source
     const sensitivity = isGyro ? TUNE.gyroSensitivity : TUNE.sensitivity;
     const deadzone = isGyro ? TUNE.gyroDeadzone : TUNE.deadzone;
-    const responseCurve = isGyro ? TUNE.gyroResponseCurve : TUNE.responseCurve;
     const outputSmoothing = isGyro ? TUNE.gyroOutputSmoothing : TUNE.outputSmoothing;
 
     const absRel = Math.abs(relative);
     let lean;
 
-    if (absRel < deadzone) {
-      lean = 0;
+    // Piecewise response curve: linear zone near deadzone edge for fine control,
+    // then power curve beyond for aggressive large corrections
+    const linearZoneFrac = 0.15; // 15% of range is linear
+
+    if (isGyro) {
+      const norm = absRel < deadzone ? 0 : Math.min((absRel - deadzone) / (sensitivity - deadzone), 1.0);
+      if (norm <= linearZoneFrac) {
+        lean = Math.sign(relative) * (norm / linearZoneFrac) * linearZoneFrac;
+      } else {
+        const curved = (norm - linearZoneFrac) / (1 - linearZoneFrac);
+        lean = Math.sign(relative) * (linearZoneFrac + (1 - linearZoneFrac) * Math.pow(curved, TUNE.gyroResponseCurve));
+      }
     } else {
-      const reduced = absRel - deadzone;
-      const range = sensitivity - deadzone;
-      const normalized = Math.min(reduced / range, 1.0);
-      lean = Math.sign(relative) * Math.pow(normalized, responseCurve);
+      // Mobile tilt: same piecewise approach
+      if (absRel < deadzone) {
+        lean = 0;
+      } else {
+        const reduced = absRel - deadzone;
+        const range = sensitivity - deadzone;
+        const norm = Math.min(reduced / range, 1.0);
+        if (norm <= linearZoneFrac) {
+          lean = Math.sign(relative) * (norm / linearZoneFrac) * linearZoneFrac;
+        } else {
+          const curved = (norm - linearZoneFrac) / (1 - linearZoneFrac);
+          lean = Math.sign(relative) * (linearZoneFrac + (1 - linearZoneFrac) * Math.pow(curved, TUNE.responseCurve));
+        }
+      }
     }
 
-    this._smoothedLean += (lean - this._smoothedLean) * outputSmoothing;
+    // Velocity-dependent sensitivity: scale down lean at high speed for stability
+    const speedFrac = Math.min(this.bikeSpeed / this.bikeMaxSpeed, 1.0);
+    const velocityScale = 1.0 - speedFrac * 0.4; // 1.0 at rest → 0.6 at max speed
+    lean *= velocityScale;
+
+    // Asymmetric smoothing: less smoothing when initiating a turn (responsive),
+    // more smoothing when returning to center (stable)
+    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > 0.05;
+    const smoothK = initiating ? Math.min(outputSmoothing * 1.6, 0.9) : outputSmoothing * 0.7;
+    this._prevLeanRaw = lean;
+
+    this._smoothedLean += (lean - this._smoothedLean) * smoothK;
     this.motionLean = this._smoothedLean;
   }
 
@@ -410,7 +446,7 @@ export class InputManager {
     // Left stick X — deadzone 0.08
     const rawX = gp.axes[0] || 0;
     this._gpRawStickX = rawX;
-    this.gamepadLean = Math.abs(rawX) < 0.08 ? 0 : rawX;
+    this.gamepadLean = this.suppressGamepadLean ? 0 : (Math.abs(rawX) < 0.08 ? 0 : rawX);
 
     // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
     const THRESHOLD = 0.5;
@@ -423,6 +459,7 @@ export class InputManager {
   }
 
   getGamepadLean() {
+    if (this.suppressGamepadLean) return 0;
     return this.gamepadConnected ? this.gamepadLean : 0;
   }
 

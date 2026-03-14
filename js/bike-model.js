@@ -311,6 +311,11 @@ export class BikeModel {
       this.leanVelocity -= this.lean * 3.0 * dt;
     }
 
+    // Gyro centering: when controller is centered but bike is leaned, pull upright
+    if (balanceResult.gyroActive && Math.abs(balanceResult.leanInput) < 0.15) {
+      this.leanVelocity -= this.lean * 5.0 * dt;
+    }
+
     // Safety mode
     if (safetyMode) {
       this.lean = Math.max(-1.0, Math.min(1.0, this.lean));

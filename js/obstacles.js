@@ -152,6 +152,7 @@ export class ObstacleManager {
   }
 
   _placeItems() {
+    if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
     // Use a different seed than collectibles so they don't overlap
     const rng = makeRng(this.level.id.charCodeAt(0) * 2000 + 13);
     const spacing = 55 + (this.level.distance > 2000 ? 25 : 0);
@@ -165,6 +166,23 @@ export class ObstacleManager {
         absoluteD: d,
         roadD: d % this._loopLen,
         lateralOffset,
+        poolIdx: -1
+      });
+    }
+  }
+
+  replaceItems(positions) {
+    for (const slot of this._pool) {
+      slot.mesh.visible = false;
+      slot.shadow.visible = false;
+      slot.itemIdx = -1;
+    }
+    this._items = [];
+    for (const p of positions) {
+      this._items.push({
+        absoluteD: p.d,
+        roadD: p.d % this._loopLen,
+        lateralOffset: p.offset,
         poolIdx: -1
       });
     }
@@ -193,6 +211,7 @@ export class ObstacleManager {
     // Assign pool slots to visible items
     for (let i = 0; i < this._items.length; i++) {
       const item = this._items[i];
+      if (item._hidden) continue;
       const ahead = item.absoluteD - bikeDistanceTraveled;
       if (ahead < -VISIBLE_BEHIND || ahead > VISIBLE_AHEAD) continue;
 
@@ -228,6 +247,7 @@ export class ObstacleManager {
 
   checkCollision(bikePosition) {
     for (const item of this._items) {
+      if (item._hidden) continue;
       if (item._worldX === undefined) continue; // not yet positioned
       const dx = bikePosition.x - item._worldX;
       const dz = bikePosition.z - item._worldZ;
@@ -236,6 +256,67 @@ export class ObstacleManager {
       }
     }
     return false;
+  }
+
+  /**
+   * For tutorial: call each frame to record which side the bike passes each pylon.
+   * Captures the bike's lateral offset when within ±1.5m of each pylon's distance.
+   * The closest-approach sample determines whether the pass was correct.
+   */
+  updatePassTracking(bikeDistanceTraveled, bikeLateralOffset) {
+    for (const item of this._items) {
+      const along = bikeDistanceTraveled - item.absoluteD;
+      // Capture lateral offset in a window around the pylon
+      if (along >= -1.5 && along <= 1.5) {
+        if (item._bestDist === undefined || Math.abs(along) < item._bestDist) {
+          item._bestDist = Math.abs(along);
+          item._bikeLateralAtPass = bikeLateralOffset;
+        }
+      }
+    }
+  }
+
+  /**
+   * Returns tutorial pylon results: how many passed, and whether any were on the wrong side.
+   * "Correct side" = bike lateral offset is opposite sign from the pylon's lateral offset.
+   */
+  getPassResults(minD, maxD) {
+    let passed = 0;
+    let wrongSide = 0;
+    let total = 0;
+    for (const item of this._items) {
+      if (minD !== undefined && (item.absoluteD < minD || item.absoluteD > maxD)) continue;
+      total++;
+      if (item._bikeLateralAtPass === undefined) continue;
+      passed++;
+      const correct = (item.lateralOffset < 0 && item._bikeLateralAtPass > 0) ||
+                       (item.lateralOffset > 0 && item._bikeLateralAtPass < 0);
+      if (!correct) wrongSide++;
+    }
+    return { passed, total, wrongSide };
+  }
+
+  /** Reset tutorial pass tracking (for retry). */
+  resetPassTracking() {
+    for (const item of this._items) {
+      delete item._bestDist;
+      delete item._bikeLateralAtPass;
+    }
+  }
+
+  /** Hide obstacles in a distance range (for skipping completed tutorial phases). */
+  hideInRange(minD, maxD) {
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD) {
+        item._hidden = true;
+        if (item.poolIdx >= 0) {
+          this._pool[item.poolIdx].mesh.visible = false;
+          this._pool[item.poolIdx].shadow.visible = false;
+          this._pool[item.poolIdx].itemIdx = -1;
+          item.poolIdx = -1;
+        }
+      }
+    }
   }
 
   destroy() {

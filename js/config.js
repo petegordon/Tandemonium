@@ -49,8 +49,10 @@ export const BALANCE_DEFAULTS = {
   // faster than absolute orientation, so needs wider range + more smoothing
   gyroSensitivity: 40,
   gyroDeadzone: 4,
-  gyroResponseCurve: 1.3,
-  gyroOutputSmoothing: 0.3,
+  gyroOutputSmoothing: 0.5,
+  gyroResponseCurve: 1.5,
+  // Steering feel: 0 = Stable (wide deadzone, heavy smoothing), 1 = Responsive (tight, snappy)
+  steeringFeel: 0.5,
   // Accelerometer-assisted gyro drift correction
   gyroAccelCorrection: 0.02,
   // Shared physics
@@ -100,4 +102,46 @@ export const DIFFICULTY_PRESETS = {
 export function applyDifficulty(presetName) {
   const preset = DIFFICULTY_PRESETS[presetName] || DIFFICULTY_PRESETS.normal;
   Object.assign(TUNE, preset);
+}
+
+// Snapshot of calibrated base values for steering feel scaling.
+// Updated by tutorial completion and background adaptation saves.
+export const TUNING_BASE = { ...BALANCE_DEFAULTS };
+
+/** Capture current TUNE motion params as the base for steering feel scaling. */
+export function snapshotTuningBase() {
+  for (const k of ['sensitivity', 'deadzone', 'outputSmoothing', 'responseCurve',
+                    'gyroSensitivity', 'gyroDeadzone', 'gyroOutputSmoothing', 'gyroResponseCurve']) {
+    TUNING_BASE[k] = TUNE[k];
+  }
+}
+
+/**
+ * Apply a steering feel value (0 = Stable, 1 = Responsive) by scaling
+ * the calibrated base tuning parameters. Call AFTER loading saved tuning
+ * or after tutorial completion.
+ * @param {number} feel — 0..1 slider value
+ */
+export function applySteeringFeel(feel) {
+  TUNE.steeringFeel = feel;
+  // Deadzone: Stable = wider (×1.4), Responsive = tighter (×0.6)
+  const dzScale = 1.4 - 0.8 * feel;
+  // Smoothing: Stable = more smoothing (×0.6 output factor), Responsive = less (×1.5)
+  const smScale = 0.6 + 0.9 * feel;
+  // Sensitivity: Stable = less (×0.85), Responsive = more (×1.15)
+  const senScale = 0.85 + 0.3 * feel;
+  // Response curve: Stable = higher exponent (more gradual center), Responsive = lower
+  const rcShift = 0.3 - 0.6 * feel; // +0.3 at Stable, -0.3 at Responsive
+
+  // Apply to mobile tilt params (scaled from calibrated base)
+  TUNE.deadzone = Math.min(8, Math.max(2, TUNING_BASE.deadzone * dzScale));
+  TUNE.outputSmoothing = Math.min(0.8, Math.max(0.15, TUNING_BASE.outputSmoothing * smScale));
+  TUNE.sensitivity = Math.min(60, Math.max(15, TUNING_BASE.sensitivity * senScale));
+  TUNE.responseCurve = Math.min(2.5, Math.max(1.0, TUNING_BASE.responseCurve + rcShift));
+
+  // Apply to gyro params
+  TUNE.gyroDeadzone = Math.min(8, Math.max(2, TUNING_BASE.gyroDeadzone * dzScale));
+  TUNE.gyroOutputSmoothing = Math.min(0.8, Math.max(0.15, TUNING_BASE.gyroOutputSmoothing * smScale));
+  TUNE.gyroSensitivity = Math.min(60, Math.max(15, TUNING_BASE.gyroSensitivity * senScale));
+  TUNE.gyroResponseCurve = Math.min(2.0, Math.max(1.0, TUNING_BASE.gyroResponseCurve + rcShift));
 }

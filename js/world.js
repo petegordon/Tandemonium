@@ -17,7 +17,7 @@ const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 const CLOUD_COUNT = 100;
 const CLOUD_AHEAD = 400;
 const CLOUD_BEHIND = 250;
-const CLOUD_MIN_Y = 8;
+const CLOUD_MIN_Y = 10;
 const CLOUD_MAX_Y = 20;
 const CLOUD_DRIFT = 1.5;      // units/sec lateral drift
 
@@ -446,7 +446,7 @@ export class World {
       if (!slot) break;
 
       const side = this._cloudSeededRandom() > 0.5 ? 1 : -1;
-      const lateralDist = 8 + this._cloudSeededRandom() * 142; // 8-150 units from road
+      const lateralDist = 25 + this._cloudSeededRandom() * 125; // 25-150 units from road
       const lateralOffset = side * lateralDist;
 
       const pt = this.roadPath.getPointAtDistance(d);
@@ -834,6 +834,94 @@ export class World {
 
       this._raceMarkers.push({ mesh: destGroup, roadD: destD, type: 'destination' });
     }
+
+    // Finish line stripe at the end of every level
+    this._createFinishStripe(level.distance);
+
+    // Tutorial: start line + phase boundary arches
+    if (level.isTutorial) {
+      this._createFinishStripe(0, 0x44ff66, 0x115511);   // Start line (green)
+      for (const d of [70, 142]) {
+        this._createFinishStripe(d, 0xffd700, 0x444400);
+        this._createCloudArch(d, archMat, L);
+      }
+    }
+  }
+
+  /** Create a gold cloud arch at the given distance (same as checkpoint arches). */
+  _createCloudArch(distance, archMat, loopLen) {
+    const roadD = distance % loopLen;
+    const pt = this.roadPath.getPointAtDistance(roadD);
+    const group = new THREE.Group();
+    const archRadius = 2.8;
+    const archCenterY = 0.2;
+    const puffCount = 16;
+    for (let i = 0; i < puffCount; i++) {
+      const angle = (i / (puffCount - 1)) * Math.PI;
+      const x = Math.cos(angle) * archRadius;
+      const y = archCenterY + Math.sin(angle) * archRadius;
+      const puff = new THREE.Sprite(archMat.clone());
+      const s = 1.6 + Math.random() * 0.8;
+      puff.scale.set(s, s, 1);
+      puff.position.set(x, y, (Math.random() - 0.5) * 0.6);
+      puff.userData.baseY = y;
+      puff.userData.phase = Math.random() * Math.PI * 2;
+      group.add(puff);
+    }
+    group.position.set(pt.x, pt.y, pt.z);
+    group.rotation.y = pt.heading;
+    group.visible = false;
+    this.scene.add(group);
+    this._raceMarkers.push({ mesh: group, roadD, type: 'checkpoint' });
+  }
+
+  /** Create a checkered finish-line stripe on the road at the given distance. */
+  _createFinishStripe(distance, color1 = 0xffffff, color2 = 0x222222) {
+    const L = this.roadPath.loopLength;
+    const roadD = distance % L;
+    const pt = this.roadPath.getPointAtDistance(roadD);
+
+    // Build checkered texture
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d');
+    const squareW = 8;
+    for (let x = 0; x < 64; x += squareW) {
+      for (let y = 0; y < 16; y += squareW) {
+        const isWhite = ((x / squareW) + (y / squareW)) % 2 === 0;
+        ctx.fillStyle = isWhite ? '#' + color1.toString(16).padStart(6, '0')
+                                 : '#' + color2.toString(16).padStart(6, '0');
+        ctx.fillRect(x, y, squareW, squareW);
+      }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+
+    // Stripe is 6m wide (road width) × 0.8m deep
+    const geo = new THREE.PlaneGeometry(6, 0.8);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const stripe = new THREE.Mesh(geo, mat);
+    stripe.rotation.x = -Math.PI / 2; // lay flat
+
+    // Use a group to handle road heading rotation independently
+    const group = new THREE.Group();
+    group.add(stripe);
+    group.position.set(pt.x, pt.y + 0.05, pt.z);
+    group.rotation.y = pt.heading; // align perpendicular to road direction
+    group.visible = false;
+    this.scene.add(group);
+
+    const mesh = group;
+
+    this._raceMarkers.push({ mesh, roadD, type: 'stripe' });
+    return mesh;
   }
 
   _createVideoBillboard({ videoSrc, trimStart, trimEnd, threshold, smoothness, maskSrc, roadPt, roadD, lateralOffset, type }) {
@@ -926,6 +1014,20 @@ export class World {
     this._raceMarkers = [];
   }
 
+  /** Hide race markers (arches/stripes) near a specific road distance. */
+  hideMarkersNear(distance, tolerance = 2) {
+    const L = this.roadPath.loopLength;
+    const targetD = distance % L;
+    for (const marker of this._raceMarkers) {
+      let diff = Math.abs(marker.roadD - targetD);
+      if (diff > L / 2) diff = L - diff;
+      if (diff < tolerance) {
+        marker.mesh.visible = false;
+        marker._permanentlyHidden = true;
+      }
+    }
+  }
+
   _cleanupDestVideo() {
     if (this._billboardVideos) {
       for (const bv of this._billboardVideos) {
@@ -944,6 +1046,7 @@ export class World {
       if (ahead < -L / 2) ahead += L;
       if (ahead > L / 2) ahead -= L;
       const inRange = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
+      if (marker._permanentlyHidden) { marker.mesh.visible = false; continue; }
       // Gate billboard video on readiness to prevent black frame flash
       marker.mesh.visible = marker.billboard ? (inRange && marker.videoReady) : inRange;
     }
@@ -961,6 +1064,8 @@ export class World {
         if (this._camera) {
           marker.mesh.quaternion.copy(this._camera.quaternion);
         }
+      } else if (marker.type === 'stripe') {
+        marker.mesh.position.y = pt.y + 0.05; // just above road surface
       } else {
         marker.mesh.position.y = pt.y;
       }
