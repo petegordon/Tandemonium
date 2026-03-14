@@ -48,7 +48,7 @@ export default {
 
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
     } catch (e) {
-      writeMetric(env, 'error', e.message);
+      try { writeMetric(env, 'error', e.message); } catch (_) { /* don't mask original error */ }
       return jsonResponse({ error: e.message }, 500, corsOrigin);
     }
   }
