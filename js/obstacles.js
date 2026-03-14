@@ -219,6 +219,7 @@ export class ObstacleManager {
     // Assign pool slots to visible items
     for (let i = 0; i < this._items.length; i++) {
       const item = this._items[i];
+      if (item._hidden) continue;
       const ahead = item.absoluteD - bikeDistanceTraveled;
       if (ahead < -VISIBLE_BEHIND || ahead > VISIBLE_AHEAD) continue;
 
@@ -254,6 +255,7 @@ export class ObstacleManager {
 
   checkCollision(bikePosition) {
     for (const item of this._items) {
+      if (item._hidden) continue;
       if (item._worldX === undefined) continue; // not yet positioned
       const dx = bikePosition.x - item._worldX;
       const dz = bikePosition.z - item._worldZ;
@@ -305,6 +307,21 @@ export class ObstacleManager {
     for (const item of this._items) {
       delete item._bestDist;
       delete item._bikeLateralAtPass;
+    }
+  }
+
+  /** Hide obstacles in a distance range (for skipping completed tutorial phases). */
+  hideInRange(minD, maxD) {
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD) {
+        item._hidden = true;
+        if (item.poolIdx >= 0) {
+          this._pool[item.poolIdx].mesh.visible = false;
+          this._pool[item.poolIdx].shadow.visible = false;
+          this._pool[item.poolIdx].itemIdx = -1;
+          item.poolIdx = -1;
+        }
+      }
     }
   }
 

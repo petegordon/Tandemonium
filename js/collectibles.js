@@ -228,6 +228,21 @@ export class CollectibleManager {
     if (this.collected < 0) this.collected = 0;
   }
 
+  /** Mark items in range as collected and hide them (for skipping completed phases). */
+  hideInRange(minD, maxD) {
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD && !item.collected) {
+        item.collected = true;
+        this.collected++;
+        if (item.poolIdx >= 0) {
+          this._pool[item.poolIdx].mesh.visible = false;
+          this._pool[item.poolIdx].itemIdx = -1;
+          item.poolIdx = -1;
+        }
+      }
+    }
+  }
+
   /** Count collected items in a distance range. */
   countCollectedInRange(minD, maxD) {
     let count = 0;

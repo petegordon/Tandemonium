@@ -2971,6 +2971,8 @@ class Game {
     this.lobby._forceWizard = false;
     this._tutorialActive = true;
     this._tutorialPhase = -1; // will show runway prompt on first update
+    this._tutCompletedPhases = new Set(); // phases successfully passed
+    this._tutTargetPhase = 1; // which phase the player is working on
     this._tutorialAttempts = 0;
     this._tutorialCollected = 0;
 
@@ -3037,6 +3039,12 @@ class Game {
 
     // Runway → Phase transition: show phase prompt when entering content zone
     if (phase > 0 && phase !== this._tutorialPhase) {
+      // Skip completed phases — jump ahead if we've already passed this one
+      if (this._tutCompletedPhases.has(phase)) {
+        this._tutorialPhase = phase;
+        return; // ride through silently
+      }
+
       // Phase 1 → 2: must have collected all Phase 1 presents
       if (this._tutorialPhase === 1 && phase === 2) {
         if (this.collectibleManager) {
@@ -3047,6 +3055,12 @@ class Game {
             return;
           }
         }
+        // Phase 1 completed — hide its items and arch for future runs
+        this._tutCompletedPhases.add(1);
+        this._tutTargetPhase = 2;
+        if (this.collectibleManager) this.collectibleManager.hideInRange(RUNWAY_END, PHASE_1_END);
+        // Hide the Phase 1→2 arch at 70m (already passed through it)
+        this.world.hideMarkersNear(PHASE_1_END);
       }
       // Phase 2 → 3: verify pylons navigated correctly
       if (this._tutorialPhase === 2 && phase === 3) {
@@ -3061,9 +3075,15 @@ class Game {
             return;
           }
         }
+        // Phase 2 completed — hide its items and arch for future runs
+        this._tutCompletedPhases.add(2);
+        this._tutTargetPhase = 3;
+        if (this.obstacleManager) this.obstacleManager.hideInRange(PHASE_1_END, PHASE_2_END);
+        // Hide the Phase 2→3 arch at 105m
+        this.world.hideMarkersNear(PHASE_2_END);
       }
       // Fire checkpoint flash + haptic + chime when crossing a gold arch (Phase 2+ only)
-      if (phase >= 2) {
+      if (phase >= 2 && !this._tutCompletedPhases.has(phase)) {
         this._showCheckpointFlash();
         hapticCheckpoint();
       }
