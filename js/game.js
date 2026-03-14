@@ -690,6 +690,24 @@ class Game {
         await this.input.requestMotionPermission();
       }
 
+      // On mobile, wait briefly for motion events to arrive
+      if (isMobile && !this.input.motionEnabled && !this.input.gyroConnected) {
+        await new Promise(r => {
+          const check = () => { if (this.input.motionEnabled) return r(); };
+          check();
+          const iv = setInterval(check, 100);
+          setTimeout(() => { clearInterval(iv); r(); }, 1500);
+        });
+        if (!this.input.motionEnabled) {
+          const statusEl = document.getElementById('status');
+          statusEl.textContent = 'Tilt sensor not detected — steering disabled';
+          statusEl.style.color = '#ffaa00';
+          statusEl.style.fontSize = '';
+          // Allow them to continue after a brief warning
+          await new Promise(r => setTimeout(r, 2000));
+        }
+      }
+
       // Remove document-level start handlers now that we've started
       document.removeEventListener('touchstart', handler);
       document.removeEventListener('click', handler);
