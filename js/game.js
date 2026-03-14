@@ -3039,10 +3039,16 @@ class Game {
 
     // Runway → Phase transition: show phase prompt when entering content zone
     if (phase > 0 && phase !== this._tutorialPhase) {
-      // Skip completed phases — jump ahead if we've already passed this one
+      // Skip completed phases — show runway prompt while riding through
       if (this._tutCompletedPhases.has(phase)) {
         this._tutorialPhase = phase;
-        return; // ride through silently
+        // Show runway prompt if we're building speed toward the active phase
+        if (phase < this._tutTargetPhase) {
+          const text = document.getElementById('tutorial-prompt-text');
+          text.textContent = 'Pedal to build speed!';
+          document.getElementById('tutorial-prompt').classList.add('visible');
+        }
+        return;
       }
 
       // Phase 1 → 2: must have collected all Phase 1 presents
@@ -3090,8 +3096,8 @@ class Game {
       this._tutorialPhase = phase;
       this._showTutorialPhase(phase);
     }
-    // Show runway prompt when in the warmup zone
-    if (phase === 0 && this._tutorialPhase <= 0) {
+    // Show runway prompt when in the warmup zone or riding through completed phases
+    if ((phase === 0 || (phase > 0 && this._tutCompletedPhases.has(phase))) && this._tutorialPhase <= 0) {
       if (this._tutorialPhase !== 0) {
         this._tutorialPhase = 0;
         this._showTutorialPhase(0);
@@ -3240,22 +3246,23 @@ class Game {
     hintEl.textContent = hint;
     crashEl.classList.add('visible');
 
-    // Always restart at 0m — the 30m runway is built into every retry
+    // Restart 30m before the phase content (runway length)
     const phaseContentStart = phase === 1 ? RUNWAY_END : phase === 2 ? PHASE_1_END : PHASE_2_END;
     const phaseContentEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : PHASE_3_END;
+    const runwayStart = Math.max(0, phaseContentStart - RUNWAY_END);
     setTimeout(() => {
       crashEl.classList.remove('visible');
       document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
-      this.bike.resetToDistance(0);
-      this.bike.distanceTraveled = 0;
+      this.bike.resetToDistance(runwayStart);
+      this.bike.distanceTraveled = runwayStart;
       // Reset only this phase's collectibles (preserve earlier phases)
       if (this.collectibleManager) this.collectibleManager.resetInRange(phaseContentStart, phaseContentEnd);
       // Reset pylon tracking for retry
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
       this._tutOffRoadTime = 0;
-      // Go to runway phase (0), will advance to content phase when rider reaches 30m
-      this._tutorialPhase = -1; // will trigger runway prompt on next update
+      // Set to runway state — will advance to content phase after 30m
+      this._tutorialPhase = -1;
     }, 1200);
   }
 
@@ -3285,13 +3292,14 @@ class Game {
     // Hide gameover overlay if it would show
     document.getElementById('gameover-overlay').style.display = 'none';
 
-    // Always restart at 0m — the 30m runway is built into every retry
+    // Restart 30m before the phase content (runway length)
     const phaseContentStart = phase === 1 ? RUNWAY_END : phase === 2 ? PHASE_1_END : PHASE_2_END;
     const phaseContentEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : PHASE_3_END;
+    const runwayStart = Math.max(0, phaseContentStart - RUNWAY_END);
     setTimeout(() => {
       crashEl.classList.remove('visible');
-      this.bike.resetToDistance(0);
-      this.bike.distanceTraveled = 0;
+      this.bike.resetToDistance(runwayStart);
+      this.bike.distanceTraveled = runwayStart;
       this.state = 'playing';
       this._tutCrashPending = false;
       // Reset only this phase's collectibles
@@ -3300,7 +3308,7 @@ class Game {
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
       this._tutOffRoadTime = 0;
-      // Go to runway, will advance to content phase at 30m
+      // Set to runway state
       this._tutorialPhase = -1;
       this._tutPeakLean = 0;
       this._tutPeakTime = 0;
