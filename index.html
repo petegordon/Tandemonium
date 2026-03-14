@@ -750,6 +750,7 @@
     gap: 12px;
     width: 100%;
     max-width: 280px;
+    padding: 6px 0;
     padding: 8px 12px;  /* room for gamepad focus outline (3px + 3px offset + margin) */
   }
   .level-card {
@@ -1766,11 +1767,13 @@
   .lobby-btn:active {
     background: rgba(255,255,255,0.2);
   }
-  .btn-start-ride {
+  #btn-start-ride, #btn-play-game {
     padding: 6px 12px;
     font-size: 13px;
+    font-weight: 400;
     width: auto;
     border-radius: 8px;
+    align-self: center;
   }
   .lobby-btn-accent {
     background: rgba(60,200,80,0.25);
@@ -2904,6 +2907,7 @@
     .lobby-step { gap: calc(6 * var(--ls)); align-items: stretch; width: 100%; min-height: 0; }
     .lobby-card.carousel-hidden .lobby-step { overflow: hidden; }
     .lobby-card.carousel-hidden #lobby-level { overflow: visible; }
+    .lobby-card.carousel-hidden #lobby-room-levels { overflow: visible; }
     .lobby-steps-col {
       width: calc(140 * var(--ls));
       min-width: calc(140 * var(--ls));
@@ -3076,8 +3080,24 @@
     #lobby-host { gap: calc(3 * var(--ls)); }
     #lobby-join { gap: calc(4 * var(--ls)); padding-top: calc(8 * var(--ls)); }
 
-    /* Room (multiplayer lobby) */
-    #room-video-area { gap: calc(16 * var(--ls)); margin: calc(12 * var(--ls)) 0; }
+    /* Room (multiplayer lobby): full-width room code row above toggle columns */
+    #lobby-room {
+      display: grid;
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr auto auto;
+      gap: calc(2 * var(--ls));
+      align-items: center;
+      justify-items: center;
+      width: 100%;
+    }
+    #lobby-room #room-partner-info {
+      grid-column: 1;
+      grid-row: 1;
+      width: 100vw;
+      margin-left: calc(-50vw + 50%);
+      text-align: center;
+    }
+    #room-video-area { gap: calc(16 * var(--ls)); margin: calc(2 * var(--ls)) 0; }
     #room-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
     .pip-wrap.pip-lobby-mode { margin: 0 calc(8 * var(--ls)); }
@@ -3657,7 +3677,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.74d0665 | 03-14-2026 17:25</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.ba9c373 | 03-14-2026 18:12</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
