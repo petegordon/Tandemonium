@@ -3062,6 +3062,9 @@ class Game {
           }
         }
       }
+      // Fire checkpoint flash + haptic + chime when crossing a gold arch
+      this._showCheckpointFlash();
+      hapticCheckpoint();
       this._tutorialPhase = phase;
       this._showTutorialPhase(phase);
     }
