@@ -111,7 +111,7 @@ export class BalanceController {
       leanInput = Math.max(-1, Math.min(1, leanInput));
     }
 
-    return { leanInput };
+    return { leanInput, gyroActive: this.input.gyroConnected };
   }
 
   getSteerSource() {

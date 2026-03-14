@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { NetworkManager } from './network-manager.js';
-import { RELAY_URL, BIKE_MODEL_PATH } from './config.js';
+import { RELAY_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -78,7 +78,8 @@ export class Lobby {
     this.onMultiplayerReady = onMultiplayerReady;
     this.input = input; // InputManager — needed for iOS motion permission
     this.net = null;
-    this.selectedLevel = LEVELS[0]; // default level
+    this.selectedLevel = LEVELS.find(l => !l.isTutorial) || LEVELS[0]; // default to first non-tutorial level
+    this._forceWizard = false;
     this.selectedPresetKey = 'default';
     this.selectedDifficulty = 'normal'; // 'chill' | 'normal' | 'daredevil'
     this._pendingMode = null; // 'solo' or 'multiplayer', set during level selection
@@ -97,6 +98,7 @@ export class Lobby {
     this.toggleAll = document.getElementById('toggle-all');
     this.toggleCamera = document.getElementById('toggle-camera');
     this.toggleMotion = document.getElementById('toggle-motion');
+    this.toggleJoystick = document.getElementById('toggle-joystick');
     this.toggleAudio = document.getElementById('toggle-audio');
     this.toggleMusic = document.getElementById('toggle-music');
     this.toggleHelp = document.getElementById('toggle-help');
@@ -105,6 +107,7 @@ export class Lobby {
     this.toggleLeaderboard = document.getElementById('toggle-leaderboard');
     this.cameraActive = false;
     this.motionActive = false;
+    this.joystickActive = true; // joystick steering on by default when gamepad connected
     this.audioActive = false;
     this._cameraPermitted = false;
     this._motionPermitted = false;
@@ -152,7 +155,7 @@ export class Lobby {
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
       [document.getElementById('btn-together'), document.getElementById('btn-solo')],
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
-      [this.toggleMotion, this.toggleMusic],
+      [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
     this._modeCol = 1;
     this._modeColIndex = [0, 0, 0, 0];
@@ -462,16 +465,24 @@ export class Lobby {
   }
 
   _setup() {
-    // SOLO → level/difficulty selection (demo users see levels but can only play Grandma's House)
+    // SOLO → demo users go straight to tutorial; licensed users see level select
     document.getElementById('btn-solo').addEventListener('click', () => {
       this._requestMotion();
       this._pendingMode = 'solo';
-      this._showStep(this.levelStep);
+      if (!this.license.isLicensed) {
+        // Demo: skip level select, go straight to tutorial
+        this._forceWizard = true;
+        this._hideLobby();
+        this.onSolo();
+      } else {
+        this._showStep(this.levelStep);
+      }
     });
 
     // RIDE TOGETHER → check for rejoin, then role selection
     document.getElementById('btn-together').addEventListener('click', async () => {
-      if (!this.auth.isLoggedIn()) {
+      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+      if (!isLocal && !this.auth.isLoggedIn()) {
         this.auth.login();
         return;
       }
@@ -488,6 +499,14 @@ export class Lobby {
     // Level selection: build cards and handle clicks
     this._buildLevelCards();
     this._setupDifficultySelector();
+
+    // "Learn to Ride" tutorial button
+    document.getElementById('btn-tutorial').addEventListener('click', () => {
+      this._forceWizard = true;
+      this._hideLobby();
+      this.onSolo();
+    });
+
     document.getElementById('btn-back-level').addEventListener('click', () => {
       this._showStep(this.modeStep);
     });
@@ -604,6 +623,7 @@ export class Lobby {
     this.toggleAll.addEventListener('click', () => this._toggleAll());
     this.toggleCamera.addEventListener('click', () => this._toggleCamera());
     this.toggleMotion.addEventListener('click', () => this._toggleMotion());
+    this.toggleJoystick.addEventListener('click', () => this._toggleJoystick());
     this.toggleAudio.addEventListener('click', () => this._toggleAudio());
     // Music toggle: tap = mute/unmute, long press (500ms) = show volume slider
     this._musicLongPressed = false;
@@ -616,7 +636,10 @@ export class Lobby {
     });
     this.toggleMusic.addEventListener('pointerup', () => {
       clearTimeout(this._longPressTimer);
-      if (!this._musicLongPressed) this._toggleMusic();
+      if (!this._musicLongPressed) {
+        this._toggleMusic();
+        this._musicHandledByPointer = true; // prevent click from double-firing
+      }
     });
     this.toggleMusic.addEventListener('pointerleave', () => {
       clearTimeout(this._longPressTimer);
@@ -626,6 +649,10 @@ export class Lobby {
     });
     // Gamepad A-button fires .click() not pointerdown/pointerup — handle it
     this.toggleMusic.addEventListener('click', () => {
+      if (this._musicHandledByPointer) {
+        this._musicHandledByPointer = false;
+        return; // already handled by pointerup
+      }
       if (!this._musicLongPressed) this._toggleMusic();
     });
     // Volume picker buttons
@@ -669,18 +696,24 @@ export class Lobby {
     // Level unlock requirements: achievement ID needed to unlock each level
     const LEVEL_UNLOCK = { castle: 'home_sweet' }; // Castle requires finishing Grandma's House
 
-    LEVELS.forEach(level => {
+    // Check if motion/gyro player needs to complete tutorial first
+    const needsTuning = this._needsMotionTuning();
+
+    LEVELS.filter(l => !l.isTutorial).forEach(level => {
       const requiredAch = LEVEL_UNLOCK[level.id];
       const achievementLocked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
-      const locked = achievementLocked || (isDemo && level.id !== 'grandma');
+      const tutorialLocked = needsTuning; // all levels locked until tutorial done
+      const locked = achievementLocked || tutorialLocked || isDemo;
 
       const card = document.createElement('button');
       card.className = 'level-card' + (locked ? ' level-locked' : '');
       card.dataset.levelId = level.id;
 
       if (locked) {
-        const lockReason = isDemo && !achievementLocked
+        const lockReason = isDemo
           ? 'Get the full game to unlock'
+          : tutorialLocked && !achievementLocked
+          ? 'Complete Learn to Ride to unlock'
           : 'Complete Grandma\'s House to unlock';
         card.innerHTML =
           '<div class="level-card-top">' +
@@ -690,7 +723,7 @@ export class Lobby {
           '<div class="level-card-desc">' + lockReason + '</div>';
         card.disabled = true;
       } else {
-        const demoTag = isDemo ? ' <span class="demo-tag">DEMO</span>' : '';
+        const demoTag = '';
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">' + level.icon + '</span>' +
@@ -711,6 +744,28 @@ export class Lobby {
       container.appendChild(card);
       if (!locked) buttons.push(card);
     });
+
+    // Tutorial button sits between level cards and difficulty
+    const tutBtn = document.getElementById('btn-tutorial');
+    if (tutBtn) {
+      // Show for demo users or motion/gyro users
+      const hasMotion = this.motionActive && (
+        (this.input && this.input.motionEnabled) ||
+        (this.input && this.input.gyroConnected)
+      );
+      if (isDemo || hasMotion) {
+        tutBtn.style.display = '';
+        const isGyro = this.input && this.input.gyroConnected;
+        if (isDemo && !hasMotion) {
+          tutBtn.textContent = '\uD83D\uDEB4 Learn to Ride'; // 🚴
+        } else if (isGyro) {
+          tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
+        } else {
+          tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
+        }
+      }
+      buttons.push(tutBtn);
+    }
 
     // Add individual difficulty buttons to gamepad navigation
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
@@ -797,6 +852,10 @@ export class Lobby {
       // Check license and update mode buttons + level cards
       await this.license.check();
       this._updateModeButtons();
+
+      // Migrate anonymous tuning to logged-in user if they don't have their own
+      this._migrateAnonymousTuning(user);
+
       this._rebuildLevelCards();
       // Fetch server-side achievements (D1 is source of truth for logged-in users)
       try {
@@ -924,10 +983,30 @@ export class Lobby {
       btnTogether.classList.remove('role-locked');
       btnTogether.innerHTML = 'RIDE TOGETHER';
     } else {
-      // anonymous — show but locked
+      // anonymous — show but locked (unlocked on localhost for local testing)
+      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
       btnSolo.textContent = 'SOLO DEMO';
-      btnTogether.classList.add('role-locked');
-      btnTogether.innerHTML = '&#x1F512; RIDE TOGETHER<br><span class="lobby-role-desc">Sign in to ride together</span>';
+      if (isLocal) {
+        btnTogether.classList.remove('role-locked');
+        btnTogether.innerHTML = 'RIDE TOGETHER';
+      } else {
+        btnTogether.classList.add('role-locked');
+        btnTogether.innerHTML = '&#x1F512; RIDE TOGETHER<br><span class="lobby-role-desc">Sign in to ride together</span>';
+      }
+    }
+
+    // License status icon next to version: 🔒 not licensed, ✅ licensed, 🆓 free play
+    const licIcon = document.getElementById('lobby-license-icon');
+    if (licIcon) {
+      const freePlay = this.license.isFreePlay;
+      const paidLicense = !!(this.license._license && this.license._license.licensed);
+      if (paidLicense) {
+        licIcon.textContent = '\u2705'; // ✅
+      } else if (freePlay) {
+        licIcon.textContent = '\uD83C\uDD93'; // 🆓
+      } else {
+        licIcon.textContent = '\uD83D\uDD12'; // 🔒
+      }
     }
   }
 
@@ -1014,6 +1093,113 @@ export class Lobby {
 
   _showMotionToggle() {
     this.toggleMotion.style.display = '';
+
+    // Update motion toggle icon: gamepad gyro vs phone tilt
+    const svg = document.getElementById('motion-icon-svg');
+    if (svg) {
+      const isGamepad = this.input && this.input.gamepadConnected;
+      if (isGamepad) {
+        // Gamepad with tilt waves — represents controller gyro
+        svg.innerHTML =
+          '<rect x="3" y="6" width="14" height="9" rx="2"/>' +
+          '<circle cx="7" cy="10.5" r="1.5" fill="currentColor" stroke="none"/>' +
+          '<line x1="11" y1="9" x2="13" y2="9"/>' +
+          '<line x1="12" y1="8" x2="12" y2="10"/>' +
+          '<path d="M4 4c-1 0.5-1 1.5 0 2" opacity="0.6"/>' +
+          '<path d="M16 4c1 0.5 1 1.5 0 2" opacity="0.6"/>';
+      } else {
+        // Phone with tilt waves — represents mobile tilt
+        svg.innerHTML =
+          '<rect x="6" y="2" width="8" height="16" rx="2"/>' +
+          '<circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>' +
+          '<path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/>' +
+          '<path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/>';
+      }
+    }
+
+    // Show joystick toggle when gamepad is connected
+    if (this.input && this.input.gamepadConnected) {
+      this.toggleJoystick.style.display = '';
+      // Load persisted joystick preference
+      try {
+        const saved = localStorage.getItem('tandemonium_joystick');
+        if (saved === 'off') {
+          this.joystickActive = false;
+          if (this.input) this.input.suppressGamepadLean = true;
+        }
+      } catch {}
+      this._setToggleActive('joystick', this.joystickActive);
+    }
+
+    this._updateTutorialButton();
+  }
+
+  /** Copy anonymous tuning to a logged-in user's key if they don't have one yet. */
+  _migrateAnonymousTuning(user) {
+    if (!user || !user.id) return;
+    const userKey = 'tandemonium_motion_tuning_' + user.id;
+    const anonKey = 'tandemonium_motion_tuning';
+    try {
+      // Only migrate if user has no saved tuning
+      if (localStorage.getItem(userKey)) return;
+      const anonData = localStorage.getItem(anonKey);
+      if (!anonData) return;
+      localStorage.setItem(userKey, anonData);
+    } catch {}
+  }
+
+  /** Returns the per-user localStorage key for motion tuning. */
+  _tuningKey() {
+    const userId = this.auth && this.auth.isLoggedIn() && this.auth.getUser() ? this.auth.getUser().id : null;
+    return userId ? 'tandemonium_motion_tuning_' + userId : 'tandemonium_motion_tuning';
+  }
+
+  _needsMotionTuning() {
+    // Only gate levels for motion/gyro players — keyboard/joystick-only don't need calibration
+    const hasMotion = this.motionActive && (
+      (this.input && this.input.motionEnabled) ||
+      (this.input && this.input.gyroConnected)
+    );
+    if (!hasMotion) return false;
+    try {
+      const saved = localStorage.getItem(this._tuningKey());
+      if (!saved) return true;
+      const data = JSON.parse(saved);
+      if (data.version !== 1) return true;
+      // Re-require if input type changed
+      const curType = (this.input && this.input.gyroConnected) ? 'gyro' : 'phone';
+      return data.inputType !== curType;
+    } catch { return true; }
+  }
+
+  _updateTutorialButton() {
+    // Rebuild level cards to update lock state based on motion tuning
+    // (only if the level step container exists and has content)
+    const container = document.getElementById('level-cards');
+    if (container && container.children.length > 0) {
+      this._rebuildLevelCards();
+    }
+    const tutBtn = document.getElementById('btn-tutorial');
+    if (!tutBtn) return;
+    const isDemo = !this.license.isLicensed;
+    const hasMotion = this.motionActive && (
+      (this.input && this.input.motionEnabled) ||
+      (this.input && this.input.gyroConnected)
+    );
+    // Show for demo users always, or for motion/gyro users
+    if (!hasMotion && !isDemo) {
+      tutBtn.style.display = 'none';
+      return;
+    }
+    tutBtn.style.display = '';
+    const isGyro = this.input && this.input.gyroConnected;
+    if (isDemo && !hasMotion) {
+      tutBtn.textContent = '\uD83D\uDEB4 Learn to Ride'; // 🚴 demo without motion
+    } else if (isGyro) {
+      tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
+    } else {
+      tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
+    }
   }
 
   _checkGamepadGyro() {
@@ -1116,11 +1302,17 @@ export class Lobby {
     // Gamepad + WebHID: true on/off toggle for controller gyro
     if (this.input && this.input.gamepadConnected && navigator.hid) {
       if (this.motionActive) {
+        // Turning off — check if joystick is also off
+        if (!this.joystickActive) {
+          this._showKeyboardConfirm('motion');
+          return;
+        }
         // Turn off — disable gyro steering but keep device connected
         this.motionActive = false;
         this.input.motionEnabled = false;
         this.input.motionLean = 0;
         this._setToggleActive('motion', false);
+        this._updateTutorialButton();
         return;
       }
       if (this._motionPermitted) {
@@ -1129,6 +1321,7 @@ export class Lobby {
         this.input.motionEnabled = true;
         this.input.startTiltCalibration();
         this._setToggleActive('motion', true);
+        this._updateTutorialButton();
         return;
       }
       // First time — request WebHID access
@@ -1137,6 +1330,7 @@ export class Lobby {
           this._motionPermitted = true;
           this.motionActive = true;
           this._setToggleActive('motion', true);
+          this._updateTutorialButton();
         }
       }).catch((err) => {
         console.warn('Gyro connect failed:', err);
@@ -1144,9 +1338,11 @@ export class Lobby {
       return;
     }
 
-    // Mobile: permission-grant only (tilt is the primary steering input,
-    // disabling it would leave the player unable to steer)
-    if (this._motionPermitted) return;
+    // Mobile: if already permitted, show recalibrate popup
+    if (this._motionPermitted) {
+      this._showRecalPopup();
+      return;
+    }
     if (this.input) {
       this.input.requestMotionPermission();
       // Check after a short delay (iOS permission dialog is async)
@@ -1155,9 +1351,102 @@ export class Lobby {
           this._motionPermitted = true;
           this.motionActive = true;
           this._setToggleActive('motion', true);
+          this._updateTutorialButton();
         }
       }, 500);
     }
+  }
+
+  _toggleJoystick() {
+    if (this.joystickActive) {
+      // Turning off — check if motion is also off
+      if (!this.motionActive) {
+        this._showKeyboardConfirm('joystick');
+        return;
+      }
+      this.joystickActive = false;
+      this._setToggleActive('joystick', false);
+      if (this.input) this.input.suppressGamepadLean = true;
+      try { localStorage.setItem('tandemonium_joystick', 'off'); } catch {}
+    } else {
+      this.joystickActive = true;
+      this._setToggleActive('joystick', true);
+      if (this.input) this.input.suppressGamepadLean = false;
+      try { localStorage.setItem('tandemonium_joystick', 'on'); } catch {}
+    }
+  }
+
+  _showKeyboardConfirm(source) {
+    // Turn off the toggle immediately
+    if (source === 'joystick') {
+      this.joystickActive = false;
+      this._setToggleActive('joystick', false);
+      if (this.input) this.input.suppressGamepadLean = true;
+      try { localStorage.setItem('tandemonium_joystick', 'off'); } catch {}
+    } else {
+      this.motionActive = false;
+      if (this.input) { this.input.motionEnabled = false; this.input.motionLean = 0; }
+      this._setToggleActive('motion', false);
+      this._updateTutorialButton();
+    }
+
+    // Show brief "Keyboard only!" notice — tapping the toggle again will re-enable
+    const popup = document.getElementById('keyboard-confirm-popup');
+    popup.classList.add('visible');
+    // Auto-dismiss after 2s or on any click
+    const dismiss = () => {
+      popup.classList.remove('visible');
+      document.removeEventListener('click', autoDismiss, true);
+      clearTimeout(timer);
+    };
+    const autoDismiss = () => dismiss();
+    const timer = setTimeout(dismiss, 2000);
+    setTimeout(() => document.addEventListener('click', autoDismiss, true), 0);
+  }
+
+  _showRecalPopup() {
+    const popup = document.getElementById('motion-recal-popup');
+    popup.classList.add('visible');
+
+    // Load current feel value into slider
+    const slider = document.getElementById('lobby-feel-slider');
+    const currentFeel = TUNE.steeringFeel != null ? TUNE.steeringFeel : 0.5;
+    slider.value = Math.round(currentFeel * 100);
+    slider.oninput = () => {
+      const feel = slider.value / 100;
+      applySteeringFeel(feel);
+      // Save immediately
+      try {
+        const tuningKey = this._tuningKey();
+        const saved = localStorage.getItem(tuningKey);
+        if (saved) {
+          const data = JSON.parse(saved);
+          data.steeringFeel = feel;
+          localStorage.setItem(tuningKey, JSON.stringify(data));
+        }
+      } catch {}
+    };
+
+    const dismiss = () => {
+      popup.classList.remove('visible');
+      document.removeEventListener('click', outsideClick, true);
+    };
+
+    document.getElementById('btn-recalibrate').onclick = () => {
+      try { localStorage.removeItem(this._tuningKey()); } catch {}
+      this._forceWizard = true;
+      dismiss();
+    };
+    document.getElementById('btn-recal-cancel').onclick = dismiss;
+
+    // Click outside to dismiss
+    const outsideClick = (e) => {
+      if (!popup.contains(e.target) && e.target.id !== 'toggle-motion') {
+        dismiss();
+      }
+    };
+    // Defer to avoid immediate trigger
+    setTimeout(() => document.addEventListener('click', outsideClick, true), 0);
   }
 
   _toggleAudio() {
@@ -1187,6 +1476,7 @@ export class Lobby {
   _setToggleActive(name, active) {
     const el = name === 'camera' ? this.toggleCamera
              : name === 'motion' ? this.toggleMotion
+             : name === 'joystick' ? this.toggleJoystick
              : name === 'music'  ? this.toggleMusic
              : this.toggleAudio;
     if (active) {
@@ -1822,6 +2112,18 @@ export class Lobby {
         }
         this._showSpinners(true);
       }
+      // Show joystick toggle for any gamepad
+      if (this.input && this.input.gamepadConnected) {
+        this.toggleJoystick.style.display = '';
+        try {
+          const saved = localStorage.getItem('tandemonium_joystick');
+          if (saved === 'off') {
+            this.joystickActive = false;
+            this.input.suppressGamepadLean = true;
+          }
+        } catch {}
+        this._setToggleActive('joystick', this.joystickActive);
+      }
       if (this.toggleMotion.style.display !== 'none') return;
       if (this.input && this.input.gamepadConnected && navigator.hid) {
         this._checkGamepadGyro();
@@ -1840,6 +2142,8 @@ export class Lobby {
         this._showSpinners(false);
         this._spinnerStopRepeat();
       }
+      // Hide joystick toggle when gamepad disconnects
+      this.toggleJoystick.style.display = 'none';
     });
   }
 
@@ -2305,7 +2609,7 @@ export class Lobby {
     const buttons = [];
     const LEVEL_UNLOCK = { castle: 'home_sweet' };
 
-    LEVELS.forEach(level => {
+    LEVELS.filter(l => !l.isTutorial).forEach(level => {
       const requiredAch = LEVEL_UNLOCK[level.id];
       const locked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
 
@@ -2360,15 +2664,15 @@ export class Lobby {
       }
     }
 
-    // Add shared difficulty buttons to gamepad nav (captain only)
+    // Register for gamepad nav on levels step
+    // Order: level cards → START RIDE → difficulty → back
     if (isClickable) {
+      buttons.push(document.getElementById('btn-start-ride'));
       const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
       diffBtns.forEach(b => buttons.push(b));
     }
-
-    // Register for gamepad nav on levels step
     const levelsItems = isClickable
-      ? [...buttons, document.getElementById('btn-start-ride'), document.getElementById('btn-back-room-levels')]
+      ? [...buttons, document.getElementById('btn-back-room-levels')]
       : [document.getElementById('btn-back-room-levels')];
     this._stepItems.set(this.roomLevelsStep, levelsItems);
     this._stepCenterItems.set(this.roomLevelsStep, levelsItems);
@@ -3175,13 +3479,15 @@ export class Lobby {
     const focusedEl = items[this._focusIndex];
     if (focusedEl && focusedEl.classList.contains('difficulty-btn')) {
       if (dir === -1) {
-        // Up from any difficulty button: jump to last level card
-        const lastCard = [...items].reverse().find(el =>
-          el.classList.contains('level-card') && el.offsetParent !== null && el.style.display !== 'none'
+        // Up from any difficulty button: jump to tutorial button if visible, else last level card
+        const preDiffItem = [...items].reverse().find(el =>
+          !el.classList.contains('difficulty-btn') &&
+          el.offsetParent !== null && el.style.display !== 'none' &&
+          items.indexOf(el) < items.indexOf(focusedEl)
         );
-        if (lastCard) {
+        if (preDiffItem) {
           this._clearFocusHighlight();
-          this._focusIndex = items.indexOf(lastCard);
+          this._focusIndex = items.indexOf(preDiffItem);
           this._applyFocusHighlight();
           return;
         }
@@ -3200,9 +3506,12 @@ export class Lobby {
       }
     }
 
-    // Down from a level card: jump to first difficulty button if next item is one
+    // Down from a level card: jump to first difficulty button if next visible item is one
     if (dir === 1 && focusedEl && focusedEl.classList.contains('level-card')) {
-      const next = items[this._focusIndex + 1];
+      // Find the next visible item
+      let nextIdx = this._focusIndex + 1;
+      while (nextIdx < items.length && items[nextIdx] && (items[nextIdx].offsetParent === null || items[nextIdx].style.display === 'none')) nextIdx++;
+      const next = items[nextIdx];
       if (next && next.classList.contains('difficulty-btn')) {
         // Jump to the middle difficulty button (default selection)
         const diffBtns = items.filter(el => el.classList.contains('difficulty-btn'));

@@ -262,7 +262,7 @@ export class HUD {
       const rawRel = input.motionRawRelative || 0;
       phoneDeg = Math.round(Math.max(-90, Math.min(90, rawRel)));
     } else if (input.gamepadConnected) {
-      phoneDeg = Math.round(input.gamepadLean * 90);
+      phoneDeg = input.suppressGamepadLean ? 0 : Math.round(input.gamepadLean * 90);
     } else {
       const aHeld = input.isPressed('KeyA');
       const dHeld = input.isPressed('KeyD');

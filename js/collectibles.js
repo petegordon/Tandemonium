@@ -158,6 +158,7 @@ export class CollectibleManager {
   }
 
   _placeItems() {
+    if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
     const rng = makeRng(this.level.id.charCodeAt(0) * 1000 + 7);
     const spacing = 30 + (this.level.distance > 2000 ? 20 : 0); // wider spacing for longer races
 
@@ -171,6 +172,97 @@ export class CollectibleManager {
         poolIdx: -1
       });
     }
+  }
+
+  replaceItems(positions) {
+    // Release all pool slots
+    for (const slot of this._pool) {
+      slot.mesh.visible = false;
+      slot.itemIdx = -1;
+    }
+    // Clear and rebuild items
+    this._items = [];
+    for (const p of positions) {
+      this._items.push({
+        absoluteD: p.d,
+        roadD: p.d % this._loopLen,
+        lateralOffset: p.offset,
+        collected: false,
+        poolIdx: -1
+      });
+    }
+    this.collected = 0;
+  }
+
+  resetCollected() {
+    for (const item of this._items) {
+      item.collected = false;
+      if (item.poolIdx >= 0) {
+        this._pool[item.poolIdx].mesh.visible = false;
+        this._pool[item.poolIdx].itemIdx = -1;
+        item.poolIdx = -1;
+      }
+    }
+    this.collected = 0;
+  }
+
+  /** Reset only items in a distance range (for tutorial phase-specific retry). */
+  resetInRange(minD, maxD) {
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD && item.collected) {
+        item.collected = false;
+        this.collected--;
+        if (item.poolIdx >= 0) {
+          this._pool[item.poolIdx].mesh.visible = false;
+          this._pool[item.poolIdx].itemIdx = -1;
+          item.poolIdx = -1;
+        }
+      }
+    }
+    if (this.collected < 0) this.collected = 0;
+  }
+
+  /** Mark items in range as collected and hide them (for skipping completed phases). */
+  hideInRange(minD, maxD) {
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD && !item.collected) {
+        item.collected = true;
+        this.collected++;
+        if (item.poolIdx >= 0) {
+          this._pool[item.poolIdx].mesh.visible = false;
+          this._pool[item.poolIdx].itemIdx = -1;
+          item.poolIdx = -1;
+        }
+      }
+    }
+  }
+
+  /** Check if any uncollected item in range is behind the bike by more than margin. */
+  hasMissedItem(bikeDistance, minD, maxD, margin = 5) {
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD && !item.collected) {
+        if (bikeDistance > item.absoluteD + margin) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Count collected items in a distance range. */
+  countCollectedInRange(minD, maxD) {
+    let count = 0;
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD && item.collected) count++;
+    }
+    return count;
+  }
+
+  /** Count total items in a distance range. */
+  countTotalInRange(minD, maxD) {
+    let count = 0;
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD) count++;
+    }
+    return count;
   }
 
   update(dt, bikeDistanceTraveled, bikePosition) {
