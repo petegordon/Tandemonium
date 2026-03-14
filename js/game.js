@@ -3257,6 +3257,9 @@ class Game {
     if (this._tutRetryPending) return;
     this._tutRetryPending = true;
 
+    // Stop the bike immediately so player doesn't keep moving
+    this.bike.speed = 0;
+
     // Show a brief message and restart the phase
     const crashEl = document.getElementById('tutorial-crash');
     const hintEl = document.getElementById('tutorial-crash-hint');
@@ -3279,9 +3282,11 @@ class Game {
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
       this._tutOffRoadTime = 0;
+      // Clear all pending flags
+      this._tutRetryPending = false;
+      this._tutCrashPending = false;
       // Set to runway state — will advance to content phase after 30m
       this._tutorialPhase = -1;
-      this._tutRetryPending = false;
     }, 1200);
   }
 
