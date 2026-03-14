@@ -869,6 +869,7 @@ export class World {
     const tex = new THREE.CanvasTexture(canvas);
     tex.wrapS = THREE.RepeatWrapping;
 
+    // Stripe is 6m wide (road width) × 0.8m deep
     const geo = new THREE.PlaneGeometry(6, 0.8);
     const mat = new THREE.MeshBasicMaterial({
       map: tex,
@@ -877,12 +878,18 @@ export class World {
       depthWrite: false,
       side: THREE.DoubleSide
     });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.x = -Math.PI / 2; // lay flat on ground
-    mesh.position.set(pt.x, pt.y + 0.03, pt.z); // just above ground
-    mesh.rotation.z = -pt.heading; // align with road direction
-    mesh.visible = false;
-    this.scene.add(mesh);
+    const stripe = new THREE.Mesh(geo, mat);
+    stripe.rotation.x = -Math.PI / 2; // lay flat
+
+    // Use a group to handle road heading rotation independently
+    const group = new THREE.Group();
+    group.add(stripe);
+    group.position.set(pt.x, pt.y + 0.05, pt.z);
+    group.rotation.y = pt.heading; // align perpendicular to road direction
+    group.visible = false;
+    this.scene.add(group);
+
+    const mesh = group;
 
     this._raceMarkers.push({ mesh, roadD, type: 'stripe' });
     return mesh;
@@ -1013,6 +1020,8 @@ export class World {
         if (this._camera) {
           marker.mesh.quaternion.copy(this._camera.quaternion);
         }
+      } else if (marker.type === 'stripe') {
+        marker.mesh.position.y = pt.y + 0.05; // just above road surface
       } else {
         marker.mesh.position.y = pt.y;
       }
