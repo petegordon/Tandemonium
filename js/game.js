@@ -1364,6 +1364,8 @@ class Game {
     if (tutCrash) tutCrash.classList.remove('visible');
     const tutComplete = document.getElementById('tutorial-complete');
     if (tutComplete) tutComplete.classList.remove('visible');
+    const tutArrow = document.getElementById('tutorial-dodge-arrow');
+    if (tutArrow) tutArrow.classList.remove('visible');
     if (this._demoEndTimer) { clearTimeout(this._demoEndTimer); this._demoEndTimer = null; }
     if (this._stokerCTATimer) { clearTimeout(this._stokerCTATimer); this._stokerCTATimer = null; }
     this._clearOverlayButtons();
@@ -3160,11 +3162,17 @@ class Game {
       if (this.obstacleManager) {
         this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
       }
+      this._updateDodgeArrow(dist);
     } else if (phase === 3) {
       // Phase 3: combination — pylon tracking
       if (this.obstacleManager) {
         this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
       }
+      this._updateDodgeArrow(dist);
+    } else {
+      // Hide arrow in non-obstacle phases
+      const arrow = document.getElementById('tutorial-dodge-arrow');
+      if (arrow) arrow.classList.remove('visible');
     }
 
     // Missed collectible check: if the bike passed a present without collecting it
@@ -3252,6 +3260,35 @@ class Game {
       d.classList.toggle('active', p === phase);
       d.classList.toggle('done', p > 0 && p < phase);
     });
+  }
+
+  _updateDodgeArrow(dist) {
+    const arrow = document.getElementById('tutorial-dodge-arrow');
+    if (!arrow || !this.obstacleManager) { if (arrow) arrow.classList.remove('visible'); return; }
+
+    // Find the nearest upcoming pylon
+    let nearest = null;
+    let nearestAhead = Infinity;
+    for (const item of this.obstacleManager._items) {
+      if (item._hidden) continue;
+      const ahead = item.absoluteD - dist;
+      if (ahead > 3 && ahead < 30 && ahead < nearestAhead) {
+        nearestAhead = ahead;
+        nearest = item;
+      }
+    }
+
+    if (nearest) {
+      arrow.classList.add('visible');
+      // Pylon on left (offset < 0) → steer right; pylon on right → steer left
+      if (nearest.lateralOffset < 0) {
+        arrow.classList.remove('arrow-left');
+      } else {
+        arrow.classList.add('arrow-left');
+      }
+    } else {
+      arrow.classList.remove('visible');
+    }
   }
 
   _tutorialPhaseRetry(phase, hint) {
