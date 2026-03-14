@@ -688,17 +688,23 @@ export class Lobby {
     // Level unlock requirements: achievement ID needed to unlock each level
     const LEVEL_UNLOCK = { castle: 'home_sweet' }; // Castle requires finishing Grandma's House
 
+    // Check if motion/gyro player needs to complete tutorial first
+    const needsTuning = this._needsMotionTuning();
+
     LEVELS.filter(l => !l.isTutorial).forEach(level => {
       const requiredAch = LEVEL_UNLOCK[level.id];
       const achievementLocked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
-      const locked = achievementLocked || (isDemo && level.id !== 'grandma');
+      const tutorialLocked = needsTuning; // all levels locked until tutorial done
+      const locked = achievementLocked || tutorialLocked || (isDemo && level.id !== 'grandma');
 
       const card = document.createElement('button');
       card.className = 'level-card' + (locked ? ' level-locked' : '');
       card.dataset.levelId = level.id;
 
       if (locked) {
-        const lockReason = isDemo && !achievementLocked
+        const lockReason = tutorialLocked && !achievementLocked
+          ? 'Complete Learn to Ride to unlock'
+          : isDemo && !achievementLocked
           ? 'Get the full game to unlock'
           : 'Complete Grandma\'s House to unlock';
         card.innerHTML =
@@ -1078,7 +1084,31 @@ export class Lobby {
     this._updateTutorialButton();
   }
 
+  _needsMotionTuning() {
+    // Only gate levels for motion/gyro players — keyboard/joystick-only don't need calibration
+    const hasMotion = this.motionActive && (
+      (this.input && this.input.motionEnabled) ||
+      (this.input && this.input.gyroConnected)
+    );
+    if (!hasMotion) return false;
+    try {
+      const saved = localStorage.getItem('tandemonium_motion_tuning');
+      if (!saved) return true;
+      const data = JSON.parse(saved);
+      if (data.version !== 1) return true;
+      // Re-require if input type changed
+      const curType = (this.input && this.input.gyroConnected) ? 'gyro' : 'phone';
+      return data.inputType !== curType;
+    } catch { return true; }
+  }
+
   _updateTutorialButton() {
+    // Rebuild level cards to update lock state based on motion tuning
+    // (only if the level step container exists and has content)
+    const container = document.getElementById('level-cards');
+    if (container && container.children.length > 0) {
+      this._rebuildLevelCards();
+    }
     const tutBtn = document.getElementById('btn-tutorial');
     if (!tutBtn) return;
     const hasMotion = this.motionActive && (
