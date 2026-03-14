@@ -699,16 +699,24 @@ class Game {
           setTimeout(() => { clearInterval(iv); r(); }, 1500);
         });
         if (!this.input.motionEnabled) {
-          // Block gameplay — tilt is required for steering on mobile
-          started = false;
-          this.instructionsEl.classList.add('hidden');
-          const action = await this._showMotionFixOverlay();
-          if (action === 'back' || !this.input.motionEnabled) {
-            this._returnToRoom();
-            return;
+          if (this.mode === 'solo') {
+            // Solo: block gameplay — tilt is required to steer
+            started = false;
+            this.instructionsEl.classList.add('hidden');
+            const action = await this._showMotionFixOverlay();
+            if (action === 'back' || !this.input.motionEnabled) {
+              this._returnToRoom();
+              return;
+            }
+            this.instructionsEl.classList.remove('hidden');
+          } else {
+            // Multiplayer: warn but allow — partner can steer
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = 'Tilt not available — your partner will steer';
+            statusEl.style.color = '#ffaa00';
+            await new Promise(r => setTimeout(r, 2000));
+            statusEl.textContent = '';
           }
-          // Motion was fixed — proceed to countdown
-          this.instructionsEl.classList.remove('hidden');
         }
       }
 
