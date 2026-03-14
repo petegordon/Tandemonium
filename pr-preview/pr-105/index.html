@@ -394,29 +394,9 @@
   #keyboard-confirm-popup.visible { display: block; }
   #keyboard-confirm-popup .confirm-text {
     font-size: 13px;
-    color: rgba(255,255,255,0.85);
-    margin-bottom: 10px;
-    line-height: 1.4;
-  }
-  #keyboard-confirm-popup button {
-    display: inline-block;
-    width: 45%;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
-    font-size: 13px;
     font-weight: 600;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 0;
-    cursor: pointer;
-    margin: 0 2%;
-  }
-  #btn-keyboard-yes {
-    background: rgba(255,255,255,0.1);
-    color: rgba(255,255,255,0.8);
-  }
-  #btn-keyboard-no {
-    background: linear-gradient(135deg, #44ff66, #22cc44);
-    color: #000;
+    color: #ffd700;
+    line-height: 1.4;
   }
 
   /* ── Motion recalibrate popup ── */
@@ -3545,9 +3525,7 @@ ON</button>
               </svg>
             </button>
             <div id="keyboard-confirm-popup">
-              <div class="confirm-text">Use keyboard only?</div>
-              <button id="btn-keyboard-yes">YES</button>
-              <button id="btn-keyboard-no">NO</button>
+              <div class="confirm-text">Keyboard only!</div>
             </div>
           </div>
           <div style="position:relative">
@@ -3610,7 +3588,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.f93a688 | 03-14-2026 11:13</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.03541ea | 03-14-2026 11:18</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
