@@ -1072,8 +1072,9 @@ export class Lobby {
     const tutBtn = document.getElementById('btn-tutorial');
     if (tutBtn) {
       tutBtn.style.display = '';
+      const isGyro = this.input && this.input.gyroConnected;
       const icon = (this.input && this.input.gamepadConnected) ? '\uD83C\uDFAE' : '\uD83D\uDCF1'; // 🎮 or 📱
-      tutBtn.textContent = icon + ' Learn to Ride';
+      tutBtn.textContent = icon + (isGyro ? ' Learn to Ride with Gyro' : ' Learn to Ride');
     }
   }
 
