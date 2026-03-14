@@ -176,13 +176,14 @@ export class ObstacleManager {
 
   _placeTutorialItems() {
     // Phase 3 zone (70–105m): 4 pylons alternating left/right
-    // Phase 4 zone (105–130m): 1 pylon for the combination test
+    // Phase 4 zone (105–130m): 2 pylons for the combination test
     const positions = [
       { d: 77, offset: -1.2 },
       { d: 85, offset:  1.2 },
       { d: 93, offset: -1.2 },
       { d: 101, offset: 1.2 },
-      { d: 122, offset: -1.2 }, // Phase 4 pylon
+      { d: 118, offset:  1.2 }, // Phase 4
+      { d: 126, offset: -1.2 }, // Phase 4
     ];
     for (const p of positions) {
       this._items.push({
