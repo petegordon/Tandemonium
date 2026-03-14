@@ -243,6 +243,16 @@ export class CollectibleManager {
     }
   }
 
+  /** Check if any uncollected item in range is behind the bike by more than margin. */
+  hasMissedItem(bikeDistance, minD, maxD, margin = 5) {
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD && !item.collected) {
+        if (bikeDistance > item.absoluteD + margin) return true;
+      }
+    }
+    return false;
+  }
+
   /** Count collected items in a distance range. */
   countCollectedInRange(minD, maxD) {
     let count = 0;
