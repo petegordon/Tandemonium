@@ -3506,6 +3506,12 @@ class Game {
     this.chaseCamera.initialized = false;
     this.pedalCtrl = new PedalController(this.input);
 
+    // Demo users: show purchase CTA instead of returning to level select
+    if (this._isDemo) {
+      this._showDemoEnd();
+      return;
+    }
+
     // Return to lobby for level select
     this.state = 'lobby';
     this.lobby.show();

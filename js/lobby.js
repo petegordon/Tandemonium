@@ -695,17 +695,17 @@ export class Lobby {
       const requiredAch = LEVEL_UNLOCK[level.id];
       const achievementLocked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
       const tutorialLocked = needsTuning; // all levels locked until tutorial done
-      const locked = achievementLocked || tutorialLocked || (isDemo && level.id !== 'grandma');
+      const locked = achievementLocked || tutorialLocked || isDemo;
 
       const card = document.createElement('button');
       card.className = 'level-card' + (locked ? ' level-locked' : '');
       card.dataset.levelId = level.id;
 
       if (locked) {
-        const lockReason = tutorialLocked && !achievementLocked
-          ? 'Complete Learn to Ride to unlock'
-          : isDemo && !achievementLocked
+        const lockReason = isDemo
           ? 'Get the full game to unlock'
+          : tutorialLocked && !achievementLocked
+          ? 'Complete Learn to Ride to unlock'
           : 'Complete Grandma\'s House to unlock';
         card.innerHTML =
           '<div class="level-card-top">' +
@@ -715,7 +715,7 @@ export class Lobby {
           '<div class="level-card-desc">' + lockReason + '</div>';
         card.disabled = true;
       } else {
-        const demoTag = isDemo ? ' <span class="demo-tag">DEMO</span>' : '';
+        const demoTag = '';
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">' + level.icon + '</span>' +
@@ -739,7 +739,25 @@ export class Lobby {
 
     // Tutorial button sits between level cards and difficulty
     const tutBtn = document.getElementById('btn-tutorial');
-    if (tutBtn) buttons.push(tutBtn);
+    if (tutBtn) {
+      // Show for demo users or motion/gyro users
+      const hasMotion = this.motionActive && (
+        (this.input && this.input.motionEnabled) ||
+        (this.input && this.input.gyroConnected)
+      );
+      if (isDemo || hasMotion) {
+        tutBtn.style.display = '';
+        const isGyro = this.input && this.input.gyroConnected;
+        if (isDemo && !hasMotion) {
+          tutBtn.textContent = '\uD83D\uDEB4 Learn to Ride'; // 🚴
+        } else if (isGyro) {
+          tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
+        } else {
+          tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
+        }
+      }
+      buttons.push(tutBtn);
+    }
 
     // Add individual difficulty buttons to gamepad navigation
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
@@ -1117,17 +1135,21 @@ export class Lobby {
     }
     const tutBtn = document.getElementById('btn-tutorial');
     if (!tutBtn) return;
+    const isDemo = !this.license.isLicensed;
     const hasMotion = this.motionActive && (
       (this.input && this.input.motionEnabled) ||
       (this.input && this.input.gyroConnected)
     );
-    if (!hasMotion) {
+    // Show for demo users always, or for motion/gyro users
+    if (!hasMotion && !isDemo) {
       tutBtn.style.display = 'none';
       return;
     }
     tutBtn.style.display = '';
     const isGyro = this.input && this.input.gyroConnected;
-    if (isGyro) {
+    if (isDemo && !hasMotion) {
+      tutBtn.textContent = '\uD83D\uDEB4 Learn to Ride'; // 🚴 demo without motion
+    } else if (isGyro) {
       tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
     } else {
       tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
