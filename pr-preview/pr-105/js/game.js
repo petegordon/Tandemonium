@@ -3168,10 +3168,12 @@ class Game {
     }
 
     // Missed collectible check: if the bike passed a present without collecting it
-    if (this.collectibleManager && (phase === 1 || phase === 3)) {
+    // Only check when the bike is actually inside the phase content zone (past the runway)
+    if (this.collectibleManager && (phase === 1 || phase === 3) && this._tutorialPhase === phase) {
       const zoneStart = phase === 1 ? RUNWAY_END : PHASE_2_END;
       const zoneEnd = phase === 1 ? PHASE_1_END : PHASE_3_END;
-      if (this.collectibleManager.hasMissedItem(dist, zoneStart, zoneEnd, 5)) {
+      // Only trigger if the bike is inside the content zone (not in the runway before it)
+      if (dist > zoneStart && this.collectibleManager.hasMissedItem(dist, zoneStart, zoneEnd, 8)) {
         this._tutorialPhaseRetry(phase, 'Missed a present! Collect them all!');
         return;
       }
