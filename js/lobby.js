@@ -844,6 +844,10 @@ export class Lobby {
       // Check license and update mode buttons + level cards
       await this.license.check();
       this._updateModeButtons();
+
+      // Migrate anonymous tuning to logged-in user if they don't have their own
+      this._migrateAnonymousTuning(user);
+
       this._rebuildLevelCards();
       // Fetch server-side achievements (D1 is source of truth for logged-in users)
       try {
@@ -1100,6 +1104,20 @@ export class Lobby {
     }
 
     this._updateTutorialButton();
+  }
+
+  /** Copy anonymous tuning to a logged-in user's key if they don't have one yet. */
+  _migrateAnonymousTuning(user) {
+    if (!user || !user.id) return;
+    const userKey = 'tandemonium_motion_tuning_' + user.id;
+    const anonKey = 'tandemonium_motion_tuning';
+    try {
+      // Only migrate if user has no saved tuning
+      if (localStorage.getItem(userKey)) return;
+      const anonData = localStorage.getItem(anonKey);
+      if (!anonData) return;
+      localStorage.setItem(userKey, anonData);
+    } catch {}
   }
 
   /** Returns the per-user localStorage key for motion tuning. */
