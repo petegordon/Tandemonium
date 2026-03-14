@@ -2352,6 +2352,7 @@ class Game {
   _clearOverlayButtons() {
     for (const btn of this._overlayButtons) btn.classList.remove('gamepad-focus');
     this._overlayButtons = [];
+    this._overlaySlider = null;
   }
 
   _pollOverlayGamepad() {
@@ -2378,30 +2379,45 @@ class Game {
       this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
     }
 
-    // Left/right: adjust slider if the focused element is a range input
-    const focused = this._overlayButtons[this._overlayFocusIdx];
-    if (focused && focused.tagName === 'INPUT' && focused.type === 'range') {
-      // Use raw stick axis for smooth proportional control
+    // Left/right: always drive the overlay slider if one is registered
+    const slider = this._overlaySlider;
+    if (slider) {
       const rawX = gp.axes[0] || 0;
-      const deadzone = 0.15;
+      const deadzone = 0.12;
+      let changed = false;
+
+      // Analog stick: continuous proportional movement
       if (Math.abs(rawX) > deadzone) {
-        // Scale: full stick deflection moves ~2 units/frame for responsive feel
-        const delta = rawX * 2.0;
-        const newVal = Math.min(Number(focused.max), Math.max(Number(focused.min), Number(focused.value) + delta));
-        if (Math.round(newVal) !== Math.round(Number(focused.value))) {
-          focused.value = newVal;
-          focused.dispatchEvent(new Event('input'));
+        const speed = rawX * 1.5; // ~1.5 units/frame at full deflection (60fps = full sweep in ~1s)
+        slider.value = Math.min(Number(slider.max), Math.max(Number(slider.min), Number(slider.value) + speed));
+        changed = true;
+      }
+
+      // D-pad: repeating discrete steps (fires on press, then repeats while held)
+      if (left) {
+        if (!this._olPrevLeft) {
+          slider.value = Math.max(Number(slider.min), Number(slider.value) - 3);
+          changed = true;
+          this._olDpadRepeatTime = performance.now() + 400; // initial delay
+        } else if (performance.now() > this._olDpadRepeatTime) {
+          slider.value = Math.max(Number(slider.min), Number(slider.value) - 2);
+          changed = true;
+          this._olDpadRepeatTime = performance.now() + 80; // repeat rate
         }
       }
-      // D-pad: discrete steps for precision
-      if (left && !this._olPrevLeft) {
-        focused.value = Math.max(Number(focused.min), Number(focused.value) - 5);
-        focused.dispatchEvent(new Event('input'));
+      if (right) {
+        if (!this._olPrevRight) {
+          slider.value = Math.min(Number(slider.max), Number(slider.value) + 3);
+          changed = true;
+          this._olDpadRepeatTime = performance.now() + 400;
+        } else if (performance.now() > this._olDpadRepeatTime) {
+          slider.value = Math.min(Number(slider.max), Number(slider.value) + 2);
+          changed = true;
+          this._olDpadRepeatTime = performance.now() + 80;
+        }
       }
-      if (right && !this._olPrevRight) {
-        focused.value = Math.min(Number(focused.max), Number(focused.value) + 5);
-        focused.dispatchEvent(new Event('input'));
-      }
+
+      if (changed) slider.dispatchEvent(new Event('input'));
     }
 
     if (a && !this._olPrevA && performance.now() >= this._overlayCooldownUntil) {
@@ -3289,9 +3305,10 @@ class Game {
 
     document.getElementById('tutorial-complete').classList.add('visible');
 
-    // Register slider + continue button for gamepad overlay navigation
+    // Register continue button for gamepad (always focused) + slider driven by stick/dpad
     const continueBtn = document.getElementById('btn-tutorial-continue');
-    this._setOverlayButtons([slider, continueBtn], 0);
+    this._setOverlayButtons([continueBtn], 0);
+    this._overlaySlider = slider;
   }
 
   _computeTuningParams(isGyro) {
