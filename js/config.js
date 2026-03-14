@@ -47,10 +47,10 @@ export const BALANCE_DEFAULTS = {
   calibSamples: 10,
   // Controller gyro (WebHID) — integrated angular velocity accumulates
   // faster than absolute orientation, so needs wider range + more smoothing
-  gyroSensitivity: 40,
-  gyroDeadzone: 4,
-  gyroResponseCurve: 1.3,
-  gyroOutputSmoothing: 0.3,
+  gyroSensitivity: 65,
+  gyroDeadzone: 6,
+  gyroResponseCurve: 1.8,
+  gyroOutputSmoothing: 0.15,
   // Accelerometer-assisted gyro drift correction
   gyroAccelCorrection: 0.02,
   // Shared physics
