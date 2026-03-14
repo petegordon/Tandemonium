@@ -179,13 +179,14 @@ export class CollectibleManager {
 
   _placeTutorialItems() {
     // Phase 2 zone (30–70m): 4 collectibles with deliberate left/right offsets
-    // Phase 4 zone (105–130m): 1 collectible for combination test
+    // Phase 4 zone (105–130m): 2 collectibles for combination test
     const positions = [
       { d: 35, offset: -1.5 },
       { d: 45, offset:  1.5 },
       { d: 55, offset: -1.5 },
       { d: 65, offset:  1.5 },
-      { d: 115, offset: 1.5 }, // Phase 4 collectible
+      { d: 112, offset:  1.5 }, // Phase 4
+      { d: 124, offset: -1.5 }, // Phase 4
     ];
     for (const p of positions) {
       this._items.push({
@@ -208,6 +209,40 @@ export class CollectibleManager {
       }
     }
     this.collected = 0;
+  }
+
+  /** Reset only items in a distance range (for tutorial phase-specific retry). */
+  resetInRange(minD, maxD) {
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD && item.collected) {
+        item.collected = false;
+        this.collected--;
+        if (item.poolIdx >= 0) {
+          this._pool[item.poolIdx].mesh.visible = false;
+          this._pool[item.poolIdx].itemIdx = -1;
+          item.poolIdx = -1;
+        }
+      }
+    }
+    if (this.collected < 0) this.collected = 0;
+  }
+
+  /** Count collected items in a distance range. */
+  countCollectedInRange(minD, maxD) {
+    let count = 0;
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD && item.collected) count++;
+    }
+    return count;
+  }
+
+  /** Count total items in a distance range. */
+  countTotalInRange(minD, maxD) {
+    let count = 0;
+    for (const item of this._items) {
+      if (item.absoluteD >= minD && item.absoluteD <= maxD) count++;
+    }
+    return count;
   }
 
   update(dt, bikeDistanceTraveled, bikePosition) {

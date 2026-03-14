@@ -2438,6 +2438,17 @@ class Game {
 
   _checkTreeCollision() {
     if (this.bike.fallen || this.bike.speed < 0.5) return;
+    // Skip tree collision during tutorial — only pylons matter
+    if (this._tutorialActive) {
+      // Still check pylon collision
+      if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
+        this.bike._fall();
+        this.chaseCamera.shakeAmount = 0.25;
+        this._playBeep(150, 0.4);
+        hapticTreeHit();
+      }
+      return;
+    }
     const result = this.world.checkTreeCollision(
       this.bike.position, this.bike.roadD, this.bike.heading
     );
@@ -3148,19 +3159,22 @@ class Game {
 
     // Check for completion
     if (dist >= PHASE_4_END && !this.bike.fallen) {
-      // Verify all collectibles gathered and all pylons navigated correctly
-      const collected = this.collectibleManager ? this.collectibleManager.collected : 0;
-      const totalCollectibles = this.collectibleManager ? this.collectibleManager.getTotalItems() : 5;
-      if (collected < totalCollectibles) {
-        this._tutorialPhaseRetry(4, 'Collect the present! (' + collected + '/' + totalCollectibles + ')');
-        return;
+      // Verify Phase 4 collectibles gathered (only check Phase 4 zone)
+      if (this.collectibleManager) {
+        const p4Collected = this.collectibleManager.countCollectedInRange(PHASE_3_END, PHASE_4_END);
+        const p4Total = this.collectibleManager.countTotalInRange(PHASE_3_END, PHASE_4_END);
+        if (p4Collected < p4Total) {
+          this._tutorialPhaseRetry(4, 'Collect the presents! (' + p4Collected + '/' + p4Total + ')');
+          return;
+        }
       }
+      // Verify Phase 4 pylons navigated correctly
       if (this.obstacleManager) {
         const pylonResult = this.obstacleManager.getTutorialResults();
         if (pylonResult.wrongSide > 0 || pylonResult.passed < pylonResult.total) {
           const hint = pylonResult.wrongSide > 0
-            ? 'Stay on the correct side of the pylon!'
-            : 'Navigate past the pylon!';
+            ? 'Stay on the correct side of the pylons!'
+            : 'Navigate past all the pylons!';
           this._tutorialPhaseRetry(4, hint);
           if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
           return;
@@ -3201,14 +3215,15 @@ class Game {
 
     // Restart at the beginning of the current phase (not before it)
     const phaseStart = phase === 1 ? 0 : phase === 2 ? PHASE_1_END : phase === 3 ? PHASE_2_END : PHASE_3_END;
+    const phaseEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : phase === 3 ? PHASE_3_END : PHASE_4_END;
     setTimeout(() => {
       crashEl.classList.remove('visible');
       document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
       this.bike.resetToDistance(phaseStart);
       this.bike.distanceTraveled = phaseStart;
       this.bike.speed = 4; // give a running start so player doesn't stall
-      // Reset collectibles for retry
-      if (this.collectibleManager) this.collectibleManager.resetCollected();
+      // Reset only this phase's collectibles (preserve earlier phases)
+      if (this.collectibleManager) this.collectibleManager.resetInRange(phaseStart, phaseEnd);
       // Reset pylon tracking for retry
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
@@ -3246,6 +3261,7 @@ class Game {
 
     // Restart at the beginning of the current phase
     const phaseStart = phase === 1 ? 0 : phase === 2 ? PHASE_1_END : phase === 3 ? PHASE_2_END : PHASE_3_END;
+    const phaseEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : phase === 3 ? PHASE_3_END : PHASE_4_END;
     setTimeout(() => {
       crashEl.classList.remove('visible');
       this.bike.resetToDistance(phaseStart);
@@ -3253,8 +3269,8 @@ class Game {
       this.bike.speed = 4; // give a running start
       this.state = 'playing';
       this._tutCrashPending = false;
-      // Reset collectibles for retry
-      if (this.collectibleManager) this.collectibleManager.resetCollected();
+      // Reset only this phase's collectibles
+      if (this.collectibleManager) this.collectibleManager.resetInRange(phaseStart, phaseEnd);
       // Reset pylon tracking for retry
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
@@ -3319,7 +3335,7 @@ class Game {
     if (this._tutorialAttempts > 1) {
       html += 'Attempts: ' + this._tutorialAttempts + ' \u2014 Practice makes perfect!<br>';
     }
-    html += 'Presents collected: ' + this._tutorialCollected + '/5<br>';
+    html += 'Presents collected: ' + this._tutorialCollected + '/6<br>';
     html += '<span class="calibrated">Steering calibrated to your style!</span>';
     statsEl.innerHTML = html;
 
