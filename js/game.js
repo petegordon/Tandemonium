@@ -3203,8 +3203,8 @@ class Game {
       return;
     }
 
-    // Check for completion
-    if (dist >= PHASE_3_END && !this.bike.fallen) {
+    // Check for completion (a few meters past the finish line)
+    if (dist >= PHASE_3_END + 8 && !this.bike.fallen) {
       // Verify Phase 3 collectibles gathered
       if (this.collectibleManager) {
         const p3Collected = this.collectibleManager.countCollectedInRange(PHASE_2_END, PHASE_3_END);
