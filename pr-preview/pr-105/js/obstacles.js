@@ -176,14 +176,15 @@ export class ObstacleManager {
 
   _placeTutorialItems() {
     // Phase 2 zone (70–105m): 4 pylons alternating left/right
-    // Phase 3 zone (105–130m): 2 pylons interleaved with collectibles
+    // Phase 3 zone (105–135m): 3 pylons interleaved with collectibles
     const positions = [
       { d: 77, offset: -1.2 },
       { d: 85, offset:  1.2 },
       { d: 93, offset: -1.2 },
       { d: 101, offset: 1.2 },
-      { d: 115, offset: -1.2 }, // Phase 3: collect → dodge → collect → dodge
-      { d: 125, offset:  1.2 },
+      { d: 113, offset: -1.2 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
+      { d: 122, offset:  1.2 },
+      { d: 131, offset: -1.2 },
     ];
     for (const p of positions) {
       this._items.push({
