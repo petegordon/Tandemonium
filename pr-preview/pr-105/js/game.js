@@ -3281,11 +3281,11 @@ class Game {
     // Show arrow when pylon is within 15m ahead, hide within 2m (already dodging)
     if (next && aheadDist <= 15 && aheadDist > 2) {
       arrow.classList.add('visible');
-      // Pylon on left (offset < 0) → steer right; pylon on right → steer left
+      // Pylon on left (offset < 0) → arrow points right; pylon on right → arrow points left
       if (next.lateralOffset < 0) {
-        arrow.classList.remove('arrow-left');
+        arrow.classList.add('arrow-right');
       } else {
-        arrow.classList.add('arrow-left');
+        arrow.classList.remove('arrow-right');
       }
     } else {
       arrow.classList.remove('visible');
