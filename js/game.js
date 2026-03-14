@@ -456,8 +456,8 @@ class Game {
     // Load saved tuning on every solo start
     this._loadSavedTuning();
 
-    // Check if tutorial should run (first time with motion, or input type changed)
-    if (this._shouldRunTutorial()) {
+    // Tutorial is launched explicitly via "Learn to Ride" button, not auto-forced
+    if (this.lobby._forceWizard) {
       this._startTutorialRide();
       return;
     }
@@ -2017,6 +2017,11 @@ class Game {
   }
 
   _returnToLobby() {
+    // Clean up tutorial state if active
+    if (this._tutorialActive) {
+      this._tutorialActive = false;
+      this.input.suppressGamepadLean = !this.lobby.joystickActive;
+    }
     this._musicBtn.style.display = 'none';
     if (!this.lobby.musicActive) {
       this._musicEl.pause();
