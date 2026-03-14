@@ -499,6 +499,7 @@ export class Lobby {
     document.getElementById('btn-back-role-host').addEventListener('click', () => {
       this._clearRoom();
       if (this.net) { this.net.destroy(); this.net = null; }
+      document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
       this._showStep(this.roleStep);
     });
@@ -1880,6 +1881,7 @@ export class Lobby {
 
     statusEl.textContent = 'Creating room...';
     statusEl.className = 'conn-status';
+    codeEl.textContent = '----';
 
     const code = this.net.generateRoomCode();
 
