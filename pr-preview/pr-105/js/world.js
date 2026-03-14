@@ -834,6 +834,58 @@ export class World {
 
       this._raceMarkers.push({ mesh: destGroup, roadD: destD, type: 'destination' });
     }
+
+    // Finish line stripe at the end of every level
+    this._createFinishStripe(level.distance);
+
+    // Tutorial: phase boundary stripes so player sees phase transitions
+    if (level.isTutorial) {
+      this._createFinishStripe(30, 0xffd700, 0x444400);  // Phase 1→2 (gold)
+      this._createFinishStripe(70, 0xffd700, 0x444400);  // Phase 2→3
+      this._createFinishStripe(105, 0xffd700, 0x444400); // Phase 3→4
+    }
+  }
+
+  /** Create a checkered finish-line stripe on the road at the given distance. */
+  _createFinishStripe(distance, color1 = 0xffffff, color2 = 0x222222) {
+    const L = this.roadPath.loopLength;
+    const roadD = distance % L;
+    const pt = this.roadPath.getPointAtDistance(roadD);
+
+    // Build checkered texture
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 16;
+    const ctx = canvas.getContext('2d');
+    const squareW = 8;
+    for (let x = 0; x < 64; x += squareW) {
+      for (let y = 0; y < 16; y += squareW) {
+        const isWhite = ((x / squareW) + (y / squareW)) % 2 === 0;
+        ctx.fillStyle = isWhite ? '#' + color1.toString(16).padStart(6, '0')
+                                 : '#' + color2.toString(16).padStart(6, '0');
+        ctx.fillRect(x, y, squareW, squareW);
+      }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+
+    const geo = new THREE.PlaneGeometry(6, 0.8);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2; // lay flat on ground
+    mesh.position.set(pt.x, pt.y + 0.03, pt.z); // just above ground
+    mesh.rotation.z = -pt.heading; // align with road direction
+    mesh.visible = false;
+    this.scene.add(mesh);
+
+    this._raceMarkers.push({ mesh, roadD, type: 'stripe' });
+    return mesh;
   }
 
   _createVideoBillboard({ videoSrc, trimStart, trimEnd, threshold, smoothness, maskSrc, roadPt, roadD, lateralOffset, type }) {
