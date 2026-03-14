@@ -2341,6 +2341,8 @@ class Game {
     this._overlayFocusIdx = Math.min(initialFocus, this._overlayButtons.length - 1);
     this._olPrevUp = false;
     this._olPrevDown = false;
+    this._olPrevLeft = false;
+    this._olPrevRight = false;
     this._olPrevA = false;
     if (this._overlayButtons.length > 0) {
       this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
@@ -2361,6 +2363,8 @@ class Game {
 
     const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
     const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
+    const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
+    const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
     const a = gp.buttons[0] && gp.buttons[0].pressed;
 
     if (up && !this._olPrevUp) {
@@ -2373,12 +2377,29 @@ class Game {
       this._overlayFocusIdx = Math.min(this._overlayButtons.length - 1, this._overlayFocusIdx + 1);
       this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
     }
+
+    // Left/right: adjust slider if the focused element is a range input
+    const focused = this._overlayButtons[this._overlayFocusIdx];
+    if (focused && focused.tagName === 'INPUT' && focused.type === 'range') {
+      const step = 5;
+      if (left && !this._olPrevLeft) {
+        focused.value = Math.max(Number(focused.min), Number(focused.value) - step);
+        focused.dispatchEvent(new Event('input'));
+      }
+      if (right && !this._olPrevRight) {
+        focused.value = Math.min(Number(focused.max), Number(focused.value) + step);
+        focused.dispatchEvent(new Event('input'));
+      }
+    }
+
     if (a && !this._olPrevA && performance.now() >= this._overlayCooldownUntil) {
       this._overlayButtons[this._overlayFocusIdx].click();
     }
 
     this._olPrevUp = up;
     this._olPrevDown = down;
+    this._olPrevLeft = left;
+    this._olPrevRight = right;
     this._olPrevA = a;
   }
 
@@ -3253,6 +3274,10 @@ class Game {
     };
 
     document.getElementById('tutorial-complete').classList.add('visible');
+
+    // Register slider + continue button for gamepad overlay navigation
+    const continueBtn = document.getElementById('btn-tutorial-continue');
+    this._setOverlayButtons([slider, continueBtn], 0);
   }
 
   _computeTuningParams(isGyro) {
