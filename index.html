@@ -439,15 +439,20 @@
     outline-offset: 6px;
     border-radius: 6px;
   }
-  #btn-tutorial-buy {
+  #tutorial-complete .lobby-btn {
     max-width: 280px;
+    width: 280px;
+    font-size: 15px;
+    padding: 12px 16px;
+  }
+  #btn-tutorial-buy {
     margin-bottom: 8px;
-    background: #ff6600;
+    background: rgba(68,255,102,0.25);
+    border-color: rgba(68,255,102,0.7);
     color: #fff;
   }
-  #btn-tutorial-buy:hover { background: #ff8833; }
+  #btn-tutorial-buy:active { background: rgba(68,255,102,0.4); }
   #btn-tutorial-continue {
-    max-width: 280px;
   }
   /* ── Keyboard-only confirmation popup ── */
   #keyboard-confirm-popup {
@@ -3693,7 +3698,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.42b6fdf | 03-14-2026 18:49</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.dbd9ffa | 03-14-2026 19:12</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
