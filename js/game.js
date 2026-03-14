@@ -699,12 +699,16 @@ class Game {
           setTimeout(() => { clearInterval(iv); r(); }, 1500);
         });
         if (!this.input.motionEnabled) {
-          const statusEl = document.getElementById('status');
-          statusEl.textContent = 'Tilt sensor not detected — steering disabled';
-          statusEl.style.color = '#ffaa00';
-          statusEl.style.fontSize = '';
-          // Allow them to continue after a brief warning
-          await new Promise(r => setTimeout(r, 2000));
+          // Block gameplay — tilt is required for steering on mobile
+          started = false;
+          this.instructionsEl.classList.add('hidden');
+          const action = await this._showMotionFixOverlay();
+          if (action === 'back' || !this.input.motionEnabled) {
+            this._returnToRoom();
+            return;
+          }
+          // Motion was fixed — proceed to countdown
+          this.instructionsEl.classList.remove('hidden');
         }
       }
 
@@ -1143,6 +1147,61 @@ class Game {
   _hideReconnecting() {
     this._reconnecting = false;
     document.getElementById('conn-badge').classList.remove('reconnecting');
+  }
+
+  _showMotionFixOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'motion-fix-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    overlay.innerHTML =
+      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:340px;text-align:center;color:#fff;font-family:inherit;">' +
+        '<div style="font-size:1.3em;font-weight:bold;margin-bottom:12px;color:#ffaa00;">Tilt Sensor Not Detected</div>' +
+        '<div style="font-size:0.95em;line-height:1.5;margin-bottom:16px;">' +
+          'This game requires your phone\'s motion sensor to steer.<br><br>' +
+          '<b>Try these fixes:</b><br>' +
+          '1. Check browser settings &rarr; enable "Motion &amp; Orientation"<br>' +
+          '2. Try <b>Safari</b> (iPhone) or <b>Chrome</b> (Android)<br>' +
+          '3. Restart your browser and try again' +
+        '</div>' +
+        '<div style="display:flex;gap:12px;justify-content:center;">' +
+          '<button id="btn-motion-retry" style="padding:10px 20px;border-radius:8px;border:none;background:#44ff66;color:#000;font-weight:bold;font-size:1em;cursor:pointer;">Try Again</button>' +
+          '<button id="btn-motion-back" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;">Back to Lobby</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    return new Promise((resolve) => {
+      // Auto-detect if motion becomes available (user toggled setting in background)
+      const pollIv = setInterval(() => {
+        if (this.input.motionEnabled) {
+          clearInterval(pollIv);
+          overlay.remove();
+          resolve('fixed');
+        }
+      }, 200);
+
+      document.getElementById('btn-motion-retry').addEventListener('click', async () => {
+        if (this.input.needsMotionPermission) {
+          await this.input.requestMotionPermission();
+        }
+        // Wait up to 2s for sensor to respond
+        await new Promise(r => {
+          const iv = setInterval(() => { if (this.input.motionEnabled) { clearInterval(iv); r(); } }, 100);
+          setTimeout(() => { clearInterval(iv); r(); }, 2000);
+        });
+        if (this.input.motionEnabled) {
+          clearInterval(pollIv);
+          overlay.remove();
+          resolve('fixed');
+        }
+      });
+
+      document.getElementById('btn-motion-back').addEventListener('click', () => {
+        clearInterval(pollIv);
+        overlay.remove();
+        resolve('back');
+      });
+    });
   }
 
   _showDisconnect(reason) {
