@@ -1185,6 +1185,10 @@ class Game {
     const roomBtn = document.getElementById('btn-gameover-room');
     if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
 
+    // Adjust lobby button text for solo vs multiplayer
+    const lobbyBtn = document.getElementById('btn-gameover-lobby');
+    if (lobbyBtn) lobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
+
     const skipBtn = document.getElementById('btn-skip-checkpoint');
     const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn, document.getElementById('btn-gameover-lobby')]
       .filter(el => el && el.style.display !== 'none');
@@ -1651,6 +1655,10 @@ class Game {
     // Show "Return to Room" in multiplayer
     const roomBtn = document.getElementById('btn-victory-room');
     if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
+
+    // Adjust lobby button text for solo vs multiplayer
+    const victoryLobbyBtn = document.getElementById('btn-victory-lobby');
+    if (victoryLobbyBtn) victoryLobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
     // Gamepad navigation for victory buttons
     const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby')];
