@@ -739,6 +739,8 @@ class Game {
   _startCountdown() {
     this.state = 'countdown';
     this.countdownTimer = 3.0;
+    this._hideGameOver();
+    this._hideVictory();
     this.instructionsEl.classList.add('hidden');
 
     // Show in-game music button
