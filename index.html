@@ -348,33 +348,32 @@
     border-radius: 3px;
     background: rgba(255,255,255,0.15);
     outline: none;
+    margin: 0;
+    padding: 0;
   }
   #steering-feel-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: #44ff66;
     cursor: pointer;
     box-shadow: 0 2px 8px rgba(68,255,102,0.4);
   }
+  #steering-feel-slider::-webkit-slider-runnable-track {
+    -webkit-appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.15);
+  }
   #steering-feel-slider.gamepad-focus {
     outline: 3px solid #44ff66;
-    outline-offset: 4px;
+    outline-offset: 6px;
     border-radius: 6px;
   }
   #btn-tutorial-continue {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
-    font-size: 16px;
-    font-weight: 700;
-    color: #fff;
-    background: linear-gradient(135deg, #44ff66, #22cc44);
-    border: none;
-    border-radius: 10px;
-    padding: 12px 36px;
-    cursor: pointer;
-    box-shadow: 0 4px 16px rgba(68,255,102,0.3);
+    max-width: 280px;
   }
   /* ── Keyboard-only confirmation popup ── */
   #keyboard-confirm-popup {
@@ -3611,7 +3610,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.32d4b08 | 03-14-2026 10:55</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.be2dc91 | 03-14-2026 11:04</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">

@@ -2381,13 +2381,25 @@ class Game {
     // Left/right: adjust slider if the focused element is a range input
     const focused = this._overlayButtons[this._overlayFocusIdx];
     if (focused && focused.tagName === 'INPUT' && focused.type === 'range') {
-      const step = 5;
+      // Use raw stick axis for smooth proportional control
+      const rawX = gp.axes[0] || 0;
+      const deadzone = 0.15;
+      if (Math.abs(rawX) > deadzone) {
+        // Scale: full stick deflection moves ~2 units/frame for responsive feel
+        const delta = rawX * 2.0;
+        const newVal = Math.min(Number(focused.max), Math.max(Number(focused.min), Number(focused.value) + delta));
+        if (Math.round(newVal) !== Math.round(Number(focused.value))) {
+          focused.value = newVal;
+          focused.dispatchEvent(new Event('input'));
+        }
+      }
+      // D-pad: discrete steps for precision
       if (left && !this._olPrevLeft) {
-        focused.value = Math.max(Number(focused.min), Number(focused.value) - step);
+        focused.value = Math.max(Number(focused.min), Number(focused.value) - 5);
         focused.dispatchEvent(new Event('input'));
       }
       if (right && !this._olPrevRight) {
-        focused.value = Math.min(Number(focused.max), Number(focused.value) + step);
+        focused.value = Math.min(Number(focused.max), Number(focused.value) + 5);
         focused.dispatchEvent(new Event('input'));
       }
     }
