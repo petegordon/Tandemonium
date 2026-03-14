@@ -279,7 +279,7 @@
   #tutorial-dodge-arrow svg {
     filter: drop-shadow(0 3px 12px rgba(0,0,0,0.6));
   }
-  #tutorial-dodge-arrow.arrow-left svg {
+  #tutorial-dodge-arrow.arrow-right svg {
     transform: scaleX(-1);
   }
 
@@ -3608,7 +3608,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.ce27fe1 | 03-14-2026 14:30</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.3b9cb99 | 03-14-2026 14:32</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3749,13 +3749,14 @@ ON</button>
 </div>
 <button id="tutorial-skip">SKIP TUTORIAL</button>
 <div id="tutorial-dodge-arrow">
-  <svg width="110" height="100" viewBox="0 0 110 100" fill="none">
-    <!-- Road-sign curve: bottom-up then sharply horizontal right, bold chevron tip -->
-    <path d="
-      M 56 95 C 56 58, 56 42, 90 30
-      L 80 14 L 105 22 L 85 36
-      C 48 46, 44 60, 44 95 Z
-    " fill="#44ff66"/>
+  <svg width="100" height="100" viewBox="0 0 256 256" fill="none">
+    <path fill="#44ff66" d="
+      M160 210 L160 170
+      C160 130 145 105 120 90
+      C100 78 85 72 70 70
+      L70 45 L20 80 L70 115 L70 95
+      C95 98 115 108 130 122
+      C150 140 160 165 160 210 Z"/>
   </svg>
 </div>
 <div id="tutorial-crash">
