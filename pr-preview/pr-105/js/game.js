@@ -29,12 +29,38 @@ import { DDAManager } from './dda-manager.js';
 const DEMO_CHECKPOINT_LIMIT = 2; // Demo ends after 2 checkpoints
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 
-// Tutorial: 0-30m is always a pedaling runway before each phase
-const RUNWAY_END = 30;
-// Phase boundaries (content starts after runway)
-const PHASE_1_END = 70;   // Collect presents (30-70m)
-const PHASE_2_END = 112;  // Dodge pylons (70-112m)
-const PHASE_3_END = 152;  // Put it together (112-152m)
+// Tutorial phase boundaries — sequential layout so all phases are visible ahead
+const TUTORIAL_PHASES = {
+  1: { runwayStart: 0,   contentStart: 30,  contentEnd: 70  },
+  2: { runwayStart: 70,  contentStart: 100, contentEnd: 142 },
+  3: { runwayStart: 142, contentStart: 172, contentEnd: 212 }
+};
+
+// Per-phase item layouts at absolute sequential distances
+const TUTORIAL_ITEMS = {
+  1: {
+    collectibles: [
+      { d: 35, offset: -2.0 }, { d: 45, offset: 2.0 },
+      { d: 55, offset: -2.0 }, { d: 65, offset: 2.0 }
+    ],
+    obstacles: []
+  },
+  2: {
+    collectibles: [],
+    obstacles: [
+      { d: 107, offset: -1.0 }, { d: 117, offset: 1.0 },
+      { d: 127, offset: -1.0 }, { d: 137, offset: 1.0 }
+    ]
+  },
+  3: {
+    collectibles: [
+      { d: 177, offset: 2.0 }, { d: 187, offset: -2.0 }, { d: 197, offset: 2.0 }
+    ],
+    obstacles: [
+      { d: 182, offset: -1.0 }, { d: 192, offset: 1.0 }, { d: 202, offset: -1.0 }
+    ]
+  }
+};
 
 class Game {
   constructor() {
@@ -880,6 +906,11 @@ class Game {
     this.hud.showCollectibles(level);
     this.world.setRaceMarkers(level, this.camera);
 
+    // Tutorial: place all items from all phases so they're visible ahead
+    if (level.isTutorial && this._tutorialActive) {
+      this._initAllTutorialItems();
+    }
+
     // Place "DEMO END" sprite on the last demo checkpoint arch from the start
     if (this._isDemo) {
       this._addDemoEndSprite(DEMO_CHECKPOINT_LIMIT - 1);
@@ -1366,6 +1397,8 @@ class Game {
     if (tutComplete) tutComplete.classList.remove('visible');
     const tutArrow = document.getElementById('tutorial-dodge-arrow');
     if (tutArrow) tutArrow.classList.remove('visible');
+    const tutCollect = document.getElementById('tutorial-collect-indicator');
+    if (tutCollect) tutCollect.classList.remove('visible');
     if (this._demoEndTimer) { clearTimeout(this._demoEndTimer); this._demoEndTimer = null; }
     if (this._stokerCTATimer) { clearTimeout(this._stokerCTATimer); this._stokerCTATimer = null; }
     this._clearOverlayButtons();
@@ -3034,92 +3067,34 @@ class Game {
 
     const dist = this.bike.distanceTraveled;
     const isGyro = this.input.gyroConnected;
+    const tp = this._tutTargetPhase;
+    const pi = TUTORIAL_PHASES[tp];
 
-    // Determine current phase (0 = runway, 1-3 = content phases)
-    let phase;
-    if (dist < RUNWAY_END) phase = 0;       // 0-30m: pedaling runway
-    else if (dist < PHASE_1_END) phase = 1; // 30-70m: collect presents
-    else if (dist < PHASE_2_END) phase = 2; // 70-105m: dodge pylons
-    else phase = 3;                          // 105-130m: put it together
+    // Determine current phase: runway (before content) or active content
+    const phase = dist < pi.contentStart ? 0 : tp;
 
     // Runway → Phase transition: show phase prompt when entering content zone
     if (phase > 0 && phase !== this._tutorialPhase) {
-      // Skip completed phases — show runway prompt while riding through
-      if (this._tutCompletedPhases.has(phase)) {
-        this._tutorialPhase = phase;
-        // Show runway prompt if we're building speed toward the active phase
-        if (phase < this._tutTargetPhase) {
-          const text = document.getElementById('tutorial-prompt-text');
-          text.textContent = 'Pedal to build speed!';
-          document.getElementById('tutorial-prompt').classList.add('visible');
-        }
-        return;
-      }
-
-      // Phase 1 → 2: must have collected all Phase 1 presents
-      if (this._tutorialPhase === 1 && phase === 2) {
-        if (this.collectibleManager) {
-          const collected = this.collectibleManager.countCollectedInRange(RUNWAY_END, PHASE_1_END);
-          const total = this.collectibleManager.countTotalInRange(RUNWAY_END, PHASE_1_END);
-          if (collected < total) {
-            this._tutorialPhaseRetry(1, 'Collect all the presents! (' + collected + '/' + total + ')');
-            return;
-          }
-        }
-        // Phase 1 completed — hide its items and arch for future runs
-        this._tutCompletedPhases.add(1);
-        this._tutTargetPhase = 2;
-        if (this.collectibleManager) this.collectibleManager.hideInRange(RUNWAY_END, PHASE_1_END);
-        // Hide the Phase 1→2 arch at 70m (already passed through it)
-        this.world.hideMarkersNear(PHASE_1_END);
-      }
-      // Phase 2 → 3: verify pylons navigated correctly
-      if (this._tutorialPhase === 2 && phase === 3) {
-        if (this.obstacleManager) {
-          const pylonResult = this.obstacleManager.getTutorialResults();
-          if (pylonResult.wrongSide > 0 || pylonResult.passed < 4) {
-            const hint = pylonResult.wrongSide > 0
-              ? 'Stay on the correct side of each pylon!'
-              : 'Navigate past all the pylons!';
-            this._tutorialPhaseRetry(2, hint);
-            if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
-            return;
-          }
-        }
-        // Phase 2 completed — hide its items and arch for future runs
-        this._tutCompletedPhases.add(2);
-        this._tutTargetPhase = 3;
-        if (this.obstacleManager) this.obstacleManager.hideInRange(PHASE_1_END, PHASE_2_END);
-        // Hide the Phase 2→3 arch at 105m
-        this.world.hideMarkersNear(PHASE_2_END);
-      }
-      // Fire checkpoint flash + haptic + chime only on first entry into a phase
-      if (phase >= 2 && !this._tutFiredCheckpoints.has(phase)) {
-        this._tutFiredCheckpoints.add(phase);
-        this._showCheckpointFlash();
-        hapticCheckpoint();
-      }
       this._tutorialPhase = phase;
       this._showTutorialPhase(phase);
     }
-    // Show runway prompt when in the warmup zone or riding through completed phases
-    if ((phase === 0 || (phase > 0 && this._tutCompletedPhases.has(phase))) && this._tutorialPhase <= 0) {
-      if (this._tutorialPhase !== 0) {
-        this._tutorialPhase = 0;
-        this._showTutorialPhase(0);
-      }
+    // Show runway prompt when in the warmup zone
+    if (phase === 0 && this._tutorialPhase !== 0) {
+      this._tutorialPhase = 0;
+      this._showTutorialPhase(0);
     }
 
     // Collect raw tilt sample
     const rawTilt = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
     const now = performance.now();
 
-    // Runway: collect noise floor samples while pedaling
-    if (phase === 0) {
+    // Measurement collection based on target phase
+    if (phase === 0 && tp === 1) {
+      // First runway only: collect noise floor samples while pedaling
       if (rawTilt !== 0 || this._tutPhase1Samples.length > 0) {
         this._tutPhase1Samples.push(rawTilt);
       }
-    } else if (phase === 1) {
+    } else if (tp === 1 && phase > 0) {
       // Phase 1: collect steering range samples
       const offset = this.input.motionOffset || 0;
       const relative = rawTilt - offset;
@@ -3134,7 +3109,7 @@ class Game {
       }
       this._tutPrevTilt = relative;
       this._tutPrevTiltTime = now;
-    } else if (phase === 2) {
+    } else if (tp === 2 && phase > 0) {
       // Phase 2: detect direction changes and measure recovery
       const offset = this.input.motionOffset || 0;
       const relative = rawTilt - offset;
@@ -3158,85 +3133,98 @@ class Game {
       }
 
       if (sign !== 0) this._tutLastSign = sign;
+    }
 
-      if (this.obstacleManager) {
-        this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
-      }
-      this._updateDodgeArrow(dist);
-    } else if (phase === 3) {
-      // Phase 3: combination — pylon tracking
-      if (this.obstacleManager) {
-        this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
-      }
+    // Pylon tracking + dodge arrow
+    if (this.obstacleManager && phase > 0) {
+      this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
       this._updateDodgeArrow(dist);
     } else {
-      // Hide arrow in non-obstacle phases
       const arrow = document.getElementById('tutorial-dodge-arrow');
       if (arrow) arrow.classList.remove('visible');
     }
 
-    // Missed collectible check: if the bike passed a present without collecting it
-    // Only check when the bike is actually inside the phase content zone (past the runway)
-    if (this.collectibleManager && (phase === 1 || phase === 3) && this._tutorialPhase === phase) {
-      const zoneStart = phase === 1 ? RUNWAY_END : PHASE_2_END;
-      const zoneEnd = phase === 1 ? PHASE_1_END : PHASE_3_END;
-      // Only trigger if the bike is inside the content zone (not in the runway before it)
-      if (dist > zoneStart && this.collectibleManager.hasMissedItem(dist, zoneStart, zoneEnd, 8)) {
-        this._tutorialPhaseRetry(phase, 'Missed a present! Collect them all!');
+    // Collect indicator
+    if (this.collectibleManager && phase > 0) {
+      this._updateCollectIndicator(dist);
+    } else {
+      const indicator = document.getElementById('tutorial-collect-indicator');
+      if (indicator) indicator.classList.remove('visible');
+    }
+
+    // Missed collectible check (only in current phase's content zone)
+    if (this.collectibleManager && phase > 0 && TUTORIAL_ITEMS[tp].collectibles.length > 0) {
+      if (dist > pi.contentStart && this.collectibleManager.hasMissedItem(dist, pi.contentStart, pi.contentEnd, 8)) {
+        this._tutorialPhaseRetry(tp, 'Missed a present! Collect them all!');
         return;
       }
     }
 
-    // Off-road check: restart phase if player goes too far into the grass.
-    // The dirt path extends to ~2.5m; grass starts beyond that. Allow the
-    // shoulder and a bit of grass — only penalize deep off-road (>3.5m).
-    const offDist = Math.abs(this.bike._lateralOffset) - 3.5; // <0 = on road/shoulder
+    // Off-road check
+    const offDist = Math.abs(this.bike._lateralOffset) - 3.5;
     if (offDist > 0 && this.bike.speed > 0.5) {
-      // Deeper off-road accumulates faster: weight by how far past the edge
-      const depthWeight = Math.min(offDist / 2.0, 2.0); // 1× at 2m off, caps at 2×
+      const depthWeight = Math.min(offDist / 2.0, 2.0);
       this._tutOffRoadTime += dt * depthWeight;
-      if (this._tutOffRoadTime > 2.0) { // ~2s at edge, ~1s at 2m deep
+      if (this._tutOffRoadTime > 2.0) {
         this._tutOffRoadTime = 0;
-        this._tutorialPhaseRetry(phase, 'Stay on the road!');
-        if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
+        this._tutorialPhaseRetry(tp, 'Stay on the road!');
         return;
       }
     } else {
-      // Drain off-road time when back on the road (forgive brief clips)
       this._tutOffRoadTime = Math.max(0, this._tutOffRoadTime - dt * 2);
     }
 
-    // Check for crash → tutorial retry (guard against repeated calls)
+    // Crash check
     if (this.bike.fallen && this.bike.fallTimer > 1.2 && !this._tutCrashPending) {
       this._tutCrashPending = true;
-      this._tutorialCrash(phase);
+      this._tutorialCrash(tp);
       return;
     }
 
-    // Check for completion (a few meters past the finish line)
-    if (dist >= PHASE_3_END + 8 && !this.bike.fallen) {
-      // Verify Phase 3 collectibles gathered
-      if (this.collectibleManager) {
-        const p3Collected = this.collectibleManager.countCollectedInRange(PHASE_2_END, PHASE_3_END);
-        const p3Total = this.collectibleManager.countTotalInRange(PHASE_2_END, PHASE_3_END);
-        if (p3Collected < p3Total) {
-          this._tutorialPhaseRetry(3, 'Collect the presents! (' + p3Collected + '/' + p3Total + ')');
+    // Phase completion check at contentEnd
+    if (dist >= pi.contentEnd && !this.bike.fallen) {
+      // Verify collectibles if this phase has them
+      const phaseCollectibles = TUTORIAL_ITEMS[tp].collectibles;
+      if (phaseCollectibles.length > 0 && this.collectibleManager) {
+        const collected = this.collectibleManager.countCollectedInRange(pi.contentStart, pi.contentEnd);
+        const total = this.collectibleManager.countTotalInRange(pi.contentStart, pi.contentEnd);
+        if (collected < total) {
+          this._tutorialPhaseRetry(tp, 'Collect all the presents! (' + collected + '/' + total + ')');
           return;
         }
       }
-      // Verify Phase 3 pylons navigated correctly
-      if (this.obstacleManager) {
-        const pylonResult = this.obstacleManager.getTutorialResults();
-        if (pylonResult.wrongSide > 0 || pylonResult.passed < pylonResult.total) {
+
+      // Verify pylons if this phase has them
+      const phaseObstacles = TUTORIAL_ITEMS[tp].obstacles;
+      if (phaseObstacles.length > 0 && this.obstacleManager) {
+        const pylonResult = this.obstacleManager.getTutorialResults(pi.contentStart, pi.contentEnd);
+        if (pylonResult.wrongSide > 0 || pylonResult.passed < phaseObstacles.length) {
           const hint = pylonResult.wrongSide > 0
-            ? 'Stay on the correct side of the pylons!'
+            ? 'Stay on the correct side of each pylon!'
             : 'Navigate past all the pylons!';
-          this._tutorialPhaseRetry(3, hint);
-          if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
+          this._tutorialPhaseRetry(tp, hint);
           return;
         }
       }
-      this._tutorialComplete();
+
+      // Phase passed! Checkpoint flash + chime
+      this._showCheckpointFlash();
+      hapticCheckpoint();
+
+      // Accumulate collected presents
+      if (this.collectibleManager) {
+        this._tutorialCollected += this.collectibleManager.countCollectedInRange(pi.contentStart, pi.contentEnd);
+      }
+      this._tutCompletedPhases.add(tp);
+      if (tp < 3) {
+        // Advance to next phase — keep riding forward
+        this._tutTargetPhase = tp + 1;
+        this._tutorialPhase = -1; // will show runway prompt
+        this._tutOffRoadTime = 0;
+      } else {
+        // All 3 phases done
+        this._tutorialComplete();
+      }
     }
   }
 
@@ -3257,9 +3245,56 @@ class Game {
     // Phase dots only show for content phases (1-3), not runway
     dots.forEach(d => {
       const p = parseInt(d.dataset.phase);
-      d.classList.toggle('active', p === phase);
-      d.classList.toggle('done', p > 0 && p < phase);
+      d.classList.toggle('active', p === this._tutTargetPhase);
+      d.classList.toggle('done', this._tutCompletedPhases && this._tutCompletedPhases.has(p));
     });
+  }
+
+  _initAllTutorialItems() {
+    // Combine items from all phases into a single set so everything is visible ahead
+    const allCollectibles = [];
+    const allObstacles = [];
+    for (let p = 1; p <= 3; p++) {
+      allCollectibles.push(...TUTORIAL_ITEMS[p].collectibles);
+      allObstacles.push(...TUTORIAL_ITEMS[p].obstacles);
+    }
+    if (this.collectibleManager) this.collectibleManager.replaceItems(allCollectibles);
+    if (this.obstacleManager) this.obstacleManager.replaceItems(allObstacles);
+  }
+
+  _updateCollectIndicator(dist) {
+    const indicator = document.getElementById('tutorial-collect-indicator');
+    if (!indicator || !this.collectibleManager) {
+      if (indicator) indicator.classList.remove('visible');
+      return;
+    }
+
+    // Find the next upcoming uncollected present
+    let next = null;
+    let aheadDist = Infinity;
+    for (const item of this.collectibleManager._items) {
+      if (item.collected) continue;
+      const ahead = item.absoluteD - dist;
+      if (ahead > 1 && ahead < aheadDist) {
+        aheadDist = ahead;
+        next = item;
+      }
+    }
+
+    // Show indicator when present is within 15m ahead, hide within 2m
+    if (next && aheadDist <= 15 && aheadDist > 2) {
+      indicator.classList.add('visible');
+      // Point toward the present: left present → indicator left, right → right
+      if (next.lateralOffset < 0) {
+        indicator.classList.add('collect-left');
+        indicator.classList.remove('collect-right');
+      } else {
+        indicator.classList.remove('collect-left');
+        indicator.classList.add('collect-right');
+      }
+    } else {
+      indicator.classList.remove('visible');
+    }
   }
 
   _updateDodgeArrow(dist) {
@@ -3307,36 +3342,28 @@ class Game {
     hintEl.textContent = hint;
     crashEl.classList.add('visible');
 
-    // Restart 30m before the phase content (runway length)
-    const phaseContentStart = phase === 1 ? RUNWAY_END : phase === 2 ? PHASE_1_END : PHASE_2_END;
-    const phaseContentEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : PHASE_3_END;
-    const runwayStart = Math.max(0, phaseContentStart - RUNWAY_END);
+    const pi = TUTORIAL_PHASES[phase];
     setTimeout(() => {
       crashEl.classList.remove('visible');
       document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
-      this.bike.resetToDistance(runwayStart);
-      this.bike.distanceTraveled = runwayStart;
-      // Reset only this phase's collectibles (preserve earlier phases)
-      if (this.collectibleManager) this.collectibleManager.resetInRange(phaseContentStart, phaseContentEnd);
+      // Reset bike to start of this phase's runway
+      this.bike.resetToDistance(pi.runwayStart);
+      this.bike.distanceTraveled = pi.runwayStart;
+      this.bike.speed = 0;
+      // Reset this phase's collectibles (preserve earlier phases)
+      if (this.collectibleManager) this.collectibleManager.resetInRange(pi.contentStart, pi.contentEnd);
       // Reset pylon tracking for retry
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
-      // Reset off-road timer
+      // Reset phase state
+      this._tutorialPhase = -1;
       this._tutOffRoadTime = 0;
-      // Clear all pending flags
       this._tutRetryPending = false;
       this._tutCrashPending = false;
-      // Set to runway state — will advance to content phase after 30m
-      this._tutorialPhase = -1;
     }, 1200);
   }
 
   _tutorialCrash(phase) {
     this._tutorialAttempts++;
-
-    // Track collectibles gathered this attempt
-    if (this.collectibleManager) {
-      this._tutorialCollected = Math.max(this._tutorialCollected, this.collectibleManager.collected);
-    }
 
     // Show crash hint
     const crashEl = document.getElementById('tutorial-crash');
@@ -3356,25 +3383,22 @@ class Game {
     // Hide gameover overlay if it would show
     document.getElementById('gameover-overlay').style.display = 'none';
 
-    // Restart 30m before the phase content (runway length)
-    const phaseContentStart = phase === 1 ? RUNWAY_END : phase === 2 ? PHASE_1_END : PHASE_2_END;
-    const phaseContentEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : PHASE_3_END;
-    const runwayStart = Math.max(0, phaseContentStart - RUNWAY_END);
+    const pi = TUTORIAL_PHASES[phase];
     setTimeout(() => {
       crashEl.classList.remove('visible');
-      this.bike.resetToDistance(runwayStart);
-      this.bike.distanceTraveled = runwayStart;
+      // Reset bike to start of this phase's runway
+      this.bike.resetToDistance(pi.runwayStart);
+      this.bike.distanceTraveled = pi.runwayStart;
+      this.bike.speed = 0;
       this.state = 'playing';
+      // Reset this phase's collectibles
+      if (this.collectibleManager) this.collectibleManager.resetInRange(pi.contentStart, pi.contentEnd);
+      // Reset pylon tracking
+      if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
+      this._tutorialPhase = -1;
+      this._tutOffRoadTime = 0;
       this._tutCrashPending = false;
       this._tutRetryPending = false;
-      // Reset only this phase's collectibles
-      if (this.collectibleManager) this.collectibleManager.resetInRange(phaseContentStart, phaseContentEnd);
-      // Reset pylon tracking for retry
-      if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
-      // Reset off-road timer
-      this._tutOffRoadTime = 0;
-      // Set to runway state
-      this._tutorialPhase = -1;
       this._tutPeakLean = 0;
       this._tutPeakTime = 0;
       this._tutLastSign = 0;
@@ -3383,10 +3407,6 @@ class Game {
 
   _tutorialComplete() {
     this._tutorialAttempts++;
-
-    if (this.collectibleManager) {
-      this._tutorialCollected = Math.max(this._tutorialCollected, this.collectibleManager.collected);
-    }
 
     // Compute tuning parameters from measurements
     const isGyro = this.input.gyroConnected;
@@ -3433,7 +3453,8 @@ class Game {
     if (this._tutorialAttempts > 1) {
       html += 'Attempts: ' + this._tutorialAttempts + ' \u2014 Practice makes perfect!<br>';
     }
-    html += 'Presents collected: ' + this._tutorialCollected + '/7<br>';
+    const totalPresents = TUTORIAL_ITEMS[1].collectibles.length + TUTORIAL_ITEMS[2].collectibles.length + TUTORIAL_ITEMS[3].collectibles.length;
+    html += 'Presents collected: ' + this._tutorialCollected + '/' + totalPresents + '<br>';
     html += '<span class="calibrated">Steering calibrated to your style!</span>';
     statsEl.innerHTML = html;
 
