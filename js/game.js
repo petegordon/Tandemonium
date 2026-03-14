@@ -32,7 +32,8 @@ const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 // Tutorial phase boundaries (meters)
 const PHASE_1_END = 30;
 const PHASE_2_END = 70;
-const PHASE_3_END = 100;
+const PHASE_3_END = 105;
+const PHASE_4_END = 130;
 
 class Game {
   constructor() {
@@ -3019,17 +3020,32 @@ class Game {
     let phase;
     if (dist < PHASE_1_END) phase = 1;
     else if (dist < PHASE_2_END) phase = 2;
-    else phase = 3;
+    else if (dist < PHASE_3_END) phase = 3;
+    else phase = 4;
 
     // Phase transition checks
     if (phase !== this._tutorialPhase) {
-      // Phase 2 → 3: must have collected all 4 presents
+      // Phase 2 → 3: must have collected all Phase 2 presents (first 4)
       if (this._tutorialPhase === 2 && phase === 3) {
         const collected = this.collectibleManager ? this.collectibleManager.collected : 0;
-        const total = this.collectibleManager ? this.collectibleManager.getTotalItems() : 4;
-        if (collected < total) {
-          this._tutorialPhaseRetry(2, 'Collect all the presents! (' + collected + '/' + total + ')');
+        if (collected < 4) {
+          this._tutorialPhaseRetry(2, 'Collect all the presents! (' + collected + '/4)');
           return;
+        }
+      }
+      // Phase 3 → 4: verify pylons navigated correctly
+      if (this._tutorialPhase === 3 && phase === 4) {
+        if (this.obstacleManager) {
+          const pylonResult = this.obstacleManager.getTutorialResults();
+          // Only check the first 4 pylons (Phase 3 pylons)
+          if (pylonResult.wrongSide > 0 || pylonResult.passed < 4) {
+            const hint = pylonResult.wrongSide > 0
+              ? 'Stay on the correct side of each pylon!'
+              : 'Navigate past all the pylons!';
+            this._tutorialPhaseRetry(3, hint);
+            if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
+            return;
+          }
         }
       }
       this._tutorialPhase = phase;
@@ -3097,6 +3113,11 @@ class Game {
       if (this.obstacleManager) {
         this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
       }
+    } else if (phase === 4) {
+      // Phase 4: combination — continue pylon tracking and recovery measurement
+      if (this.obstacleManager) {
+        this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
+      }
     }
 
     // Off-road check: restart phase if player goes too far into the grass.
@@ -3107,7 +3128,7 @@ class Game {
       // Deeper off-road accumulates faster: weight by how far past the edge
       const depthWeight = Math.min(offDist / 2.0, 2.0); // 1× at 2m off, caps at 2×
       this._tutOffRoadTime += dt * depthWeight;
-      if (this._tutOffRoadTime > 1.2) { // ~1.2s at edge, ~0.6s at 2m deep
+      if (this._tutOffRoadTime > 2.0) { // ~2s at edge, ~1s at 2m deep
         this._tutOffRoadTime = 0;
         this._tutorialPhaseRetry(phase, 'Stay on the road!');
         if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
@@ -3126,15 +3147,21 @@ class Game {
     }
 
     // Check for completion
-    if (dist >= PHASE_3_END && !this.bike.fallen) {
-      // Verify player navigated all pylons on the correct side
+    if (dist >= PHASE_4_END && !this.bike.fallen) {
+      // Verify all collectibles gathered and all pylons navigated correctly
+      const collected = this.collectibleManager ? this.collectibleManager.collected : 0;
+      const totalCollectibles = this.collectibleManager ? this.collectibleManager.getTotalItems() : 5;
+      if (collected < totalCollectibles) {
+        this._tutorialPhaseRetry(4, 'Collect the present! (' + collected + '/' + totalCollectibles + ')');
+        return;
+      }
       if (this.obstacleManager) {
         const pylonResult = this.obstacleManager.getTutorialResults();
         if (pylonResult.wrongSide > 0 || pylonResult.passed < pylonResult.total) {
           const hint = pylonResult.wrongSide > 0
-            ? 'Stay on the correct side of each pylon!'
-            : 'Navigate past all the pylons!';
-          this._tutorialPhaseRetry(3, hint);
+            ? 'Stay on the correct side of the pylon!'
+            : 'Navigate past the pylon!';
+          this._tutorialPhaseRetry(4, hint);
           if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
           return;
         }
@@ -3151,7 +3178,8 @@ class Game {
     const prompts = {
       1: 'Tap LEFT pedal... Now RIGHT pedal... Keep alternating!',
       2: 'Tilt to steer! Collect the presents!',
-      3: 'Dodge the pylons!'
+      3: 'Dodge the pylons!',
+      4: 'Put it all together! Collect and dodge!'
     };
     text.textContent = prompts[phase] || '';
     prompt.classList.add('visible');
@@ -3172,7 +3200,7 @@ class Game {
     crashEl.classList.add('visible');
 
     // Back up 15m from phase start to give pedaling runway before items
-    const restartDist = phase === 1 ? 0 : phase === 2 ? Math.max(0, PHASE_1_END - 15) : Math.max(0, PHASE_2_END - 15);
+    const restartDist = phase === 1 ? 0 : phase === 2 ? Math.max(0, PHASE_1_END - 15) : phase === 3 ? Math.max(0, PHASE_2_END - 15) : Math.max(0, PHASE_3_END - 15);
     setTimeout(() => {
       crashEl.classList.remove('visible');
       document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
@@ -3218,7 +3246,7 @@ class Game {
 
     // Restart from current phase after brief delay
     // Back up 15m from phase start to give pedaling runway before items
-    const restartDist = phase === 1 ? 0 : phase === 2 ? Math.max(0, PHASE_1_END - 15) : Math.max(0, PHASE_2_END - 15);
+    const restartDist = phase === 1 ? 0 : phase === 2 ? Math.max(0, PHASE_1_END - 15) : phase === 3 ? Math.max(0, PHASE_2_END - 15) : Math.max(0, PHASE_3_END - 15);
     setTimeout(() => {
       crashEl.classList.remove('visible');
       this.bike.resetToDistance(restartDist);
@@ -3291,7 +3319,7 @@ class Game {
     if (this._tutorialAttempts > 1) {
       html += 'Attempts: ' + this._tutorialAttempts + ' \u2014 Practice makes perfect!<br>';
     }
-    html += 'Presents collected: ' + this._tutorialCollected + '/4<br>';
+    html += 'Presents collected: ' + this._tutorialCollected + '/5<br>';
     html += '<span class="calibrated">Steering calibrated to your style!</span>';
     statsEl.innerHTML = html;
 
