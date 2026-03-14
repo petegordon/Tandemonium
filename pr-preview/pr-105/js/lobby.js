@@ -3237,13 +3237,15 @@ export class Lobby {
     const focusedEl = items[this._focusIndex];
     if (focusedEl && focusedEl.classList.contains('difficulty-btn')) {
       if (dir === -1) {
-        // Up from any difficulty button: jump to last level card
-        const lastCard = [...items].reverse().find(el =>
-          el.classList.contains('level-card') && el.offsetParent !== null && el.style.display !== 'none'
+        // Up from any difficulty button: jump to tutorial button if visible, else last level card
+        const preDiffItem = [...items].reverse().find(el =>
+          !el.classList.contains('difficulty-btn') &&
+          el.offsetParent !== null && el.style.display !== 'none' &&
+          items.indexOf(el) < items.indexOf(focusedEl)
         );
-        if (lastCard) {
+        if (preDiffItem) {
           this._clearFocusHighlight();
-          this._focusIndex = items.indexOf(lastCard);
+          this._focusIndex = items.indexOf(preDiffItem);
           this._applyFocusHighlight();
           return;
         }
@@ -3262,9 +3264,12 @@ export class Lobby {
       }
     }
 
-    // Down from a level card: jump to first difficulty button if next item is one
+    // Down from a level card: jump to first difficulty button if next visible item is one
     if (dir === 1 && focusedEl && focusedEl.classList.contains('level-card')) {
-      const next = items[this._focusIndex + 1];
+      // Find the next visible item
+      let nextIdx = this._focusIndex + 1;
+      while (nextIdx < items.length && items[nextIdx] && (items[nextIdx].offsetParent === null || items[nextIdx].style.display === 'none')) nextIdx++;
+      const next = items[nextIdx];
       if (next && next.classList.contains('difficulty-btn')) {
         // Jump to the middle difficulty button (default selection)
         const diffBtns = items.filter(el => el.classList.contains('difficulty-btn'));
