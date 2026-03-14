@@ -465,11 +465,18 @@ export class Lobby {
   }
 
   _setup() {
-    // SOLO → level/difficulty selection (demo users see levels but can only play Grandma's House)
+    // SOLO → demo users go straight to tutorial; licensed users see level select
     document.getElementById('btn-solo').addEventListener('click', () => {
       this._requestMotion();
       this._pendingMode = 'solo';
-      this._showStep(this.levelStep);
+      if (!this.license.isLicensed) {
+        // Demo: skip level select, go straight to tutorial
+        this._forceWizard = true;
+        this._hideLobby();
+        this.onSolo();
+      } else {
+        this._showStep(this.levelStep);
+      }
     });
 
     // RIDE TOGETHER → check for rejoin, then role selection
@@ -979,6 +986,20 @@ export class Lobby {
       btnSolo.textContent = 'SOLO DEMO';
       btnTogether.classList.add('role-locked');
       btnTogether.innerHTML = '&#x1F512; RIDE TOGETHER<br><span class="lobby-role-desc">Sign in to ride together</span>';
+    }
+
+    // License status icon next to version: 🔒 not licensed, ✅ licensed, 🆓 free play
+    const licIcon = document.getElementById('lobby-license-icon');
+    if (licIcon) {
+      const freePlay = this.license.isFreePlay;
+      const paidLicense = !!(this.license._license && this.license._license.licensed);
+      if (paidLicense) {
+        licIcon.textContent = '\u2705'; // ✅
+      } else if (freePlay) {
+        licIcon.textContent = '\uD83C\uDD93'; // 🆓
+      } else {
+        licIcon.textContent = '\uD83D\uDD12'; // 🔒
+      }
     }
   }
 

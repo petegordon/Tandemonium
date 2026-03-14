@@ -152,10 +152,7 @@ export class ObstacleManager {
   }
 
   _placeItems() {
-    if (this.level.isTutorial) {
-      this._placeTutorialItems();
-      return;
-    }
+    if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
     // Use a different seed than collectibles so they don't overlap
     const rng = makeRng(this.level.id.charCodeAt(0) * 2000 + 13);
     const spacing = 55 + (this.level.distance > 2000 ? 25 : 0);
@@ -169,28 +166,6 @@ export class ObstacleManager {
         absoluteD: d,
         roadD: d % this._loopLen,
         lateralOffset,
-        poolIdx: -1
-      });
-    }
-  }
-
-  _placeTutorialItems() {
-    // Phase 2 zone (70–110m): 4 pylons with wider spacing for gentler turns
-    // Phase 3 zone (105–145m): 3 pylons interleaved with collectibles
-    const positions = [
-      { d: 77, offset: -1.5 },
-      { d: 87, offset:  1.5 },
-      { d: 97, offset: -1.5 },
-      { d: 107, offset: 1.5 },
-      { d: 123, offset: -1.5 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
-      { d: 135, offset:  1.5 },
-      { d: 147, offset: -1.5 },
-    ];
-    for (const p of positions) {
-      this._items.push({
-        absoluteD: p.d,
-        roadD: p.d % this._loopLen,
-        lateralOffset: p.offset,
         poolIdx: -1
       });
     }
@@ -288,7 +263,7 @@ export class ObstacleManager {
    * Captures the bike's lateral offset when within ±1.5m of each pylon's distance.
    * The closest-approach sample determines whether the pass was correct.
    */
-  updateTutorialTracking(bikeDistanceTraveled, bikeLateralOffset) {
+  updatePassTracking(bikeDistanceTraveled, bikeLateralOffset) {
     for (const item of this._items) {
       const along = bikeDistanceTraveled - item.absoluteD;
       // Capture lateral offset in a window around the pylon
@@ -305,7 +280,7 @@ export class ObstacleManager {
    * Returns tutorial pylon results: how many passed, and whether any were on the wrong side.
    * "Correct side" = bike lateral offset is opposite sign from the pylon's lateral offset.
    */
-  getTutorialResults(minD, maxD) {
+  getPassResults(minD, maxD) {
     let passed = 0;
     let wrongSide = 0;
     let total = 0;
@@ -322,7 +297,7 @@ export class ObstacleManager {
   }
 
   /** Reset tutorial pass tracking (for retry). */
-  resetTutorialTracking() {
+  resetPassTracking() {
     for (const item of this._items) {
       delete item._bestDist;
       delete item._bikeLateralAtPass;

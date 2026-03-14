@@ -11,7 +11,11 @@ export const LEVELS = [
     checkpointInterval: 212,   // single checkpoint = entire ride
     icon: '\uD83D\uDEB4',        // 🚴
     description: 'Master pedaling and steering!',
-    isTutorial: true
+    isTutorial: true,
+    coaching: { dodgeArrow: true, collectIndicator: true },
+    timerEnabled: false,
+    treeCollision: false,
+    motionAdaptation: false
   },
   {
     id: 'grandma',
