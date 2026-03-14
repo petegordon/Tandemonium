@@ -179,11 +179,13 @@ export class CollectibleManager {
 
   _placeTutorialItems() {
     // Phase 2 zone (30–70m): 4 collectibles with deliberate left/right offsets
+    // Phase 4 zone (105–130m): 1 collectible for combination test
     const positions = [
       { d: 35, offset: -1.5 },
       { d: 45, offset:  1.5 },
       { d: 55, offset: -1.5 },
       { d: 65, offset:  1.5 },
+      { d: 115, offset: 1.5 }, // Phase 4 collectible
     ];
     for (const p of positions) {
       this._items.push({
