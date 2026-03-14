@@ -264,8 +264,8 @@
     cursor: pointer;
   }
   #tutorial-skip:hover { color: #fff; background: rgba(0,0,0,0.6); }
-  /* ── Tutorial dodge arrow ── */
-  #tutorial-dodge-arrow {
+  /* ── Coaching dodge arrow ── */
+  #coaching-dodge-arrow {
     position: fixed;
     top: 50%;
     left: 50%;
@@ -275,15 +275,15 @@
     display: none;
     transition: opacity 0.2s;
   }
-  #tutorial-dodge-arrow.visible { display: block; }
-  #tutorial-dodge-arrow svg {
+  #coaching-dodge-arrow.visible { display: block; }
+  #coaching-dodge-arrow svg {
     filter: drop-shadow(0 3px 12px rgba(0,0,0,0.6));
   }
-  #tutorial-dodge-arrow.arrow-right svg {
+  #coaching-dodge-arrow.arrow-right svg {
     transform: scaleX(-1);
   }
-  /* ── Tutorial collect indicator ── */
-  #tutorial-collect-indicator {
+  /* ── Coaching collect indicator ── */
+  #coaching-collect-indicator {
     position: fixed;
     top: 45%;
     left: 50%;
@@ -294,12 +294,12 @@
     text-align: center;
     transition: opacity 0.2s;
   }
-  #tutorial-collect-indicator.visible { display: block; }
-  #tutorial-collect-indicator .collect-icon {
+  #coaching-collect-indicator.visible { display: block; }
+  #coaching-collect-indicator .collect-icon {
     font-size: 48px;
     filter: drop-shadow(0 3px 8px rgba(0,0,0,0.5));
   }
-  #tutorial-collect-indicator .collect-text {
+  #coaching-collect-indicator .collect-text {
     font-size: 14px;
     font-weight: bold;
     color: #ffd700;
@@ -307,10 +307,10 @@
     margin-top: 2px;
     letter-spacing: 2px;
   }
-  #tutorial-collect-indicator.collect-left {
+  #coaching-collect-indicator.collect-left {
     left: 35%;
   }
-  #tutorial-collect-indicator.collect-right {
+  #coaching-collect-indicator.collect-right {
     left: 65%;
   }
 
@@ -423,6 +423,13 @@
     outline-offset: 6px;
     border-radius: 6px;
   }
+  #btn-tutorial-buy {
+    max-width: 280px;
+    margin-bottom: 8px;
+    background: #ff6600;
+    color: #fff;
+  }
+  #btn-tutorial-buy:hover { background: #ff8833; }
   #btn-tutorial-continue {
     max-width: 280px;
   }
@@ -2198,7 +2205,7 @@
   .lobby-credits {
     margin-top: 18px;
     font-size: 11px;
-    color: rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.5);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2207,6 +2214,10 @@
   .lobby-version {
     color: rgba(255,255,255,0.3);
     font-size: 11px;
+  }
+  #lobby-license-icon {
+    font-size: 13px;
+    color: rgba(255,255,255,0.8);
   }
   .lobby-credits-btn {
     background: none;
@@ -3093,6 +3104,7 @@
     }
     .lobby-credits { font-size: calc(11 * var(--ls)); gap: calc(6 * var(--ls)); margin-top: calc(4 * var(--ls)); white-space: nowrap; align-self: stretch; text-align: center; order: 100; }
     .lobby-version { font-size: calc(11 * var(--ls)); }
+    #lobby-license-icon { font-size: calc(13 * var(--ls)); }
     .lobby-credits-btn { font-size: calc(11 * var(--ls)); }
 
     /* Game over / disconnect */
@@ -3639,7 +3651,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.6a4e9a0 | 03-14-2026 15:54</span></p>
+    <p class="lobby-credits">Users First Games <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span class="lobby-version" id="lobby-version">v.84b654b | 03-14-2026 16:47</span> <span id="lobby-license-icon"></span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3779,7 +3791,7 @@ ON</button>
   </div>
 </div>
 <button id="tutorial-skip">SKIP TUTORIAL</button>
-<div id="tutorial-dodge-arrow">
+<div id="coaching-dodge-arrow">
   <svg width="100" height="100" viewBox="0 0 256 256" fill="none">
     <path fill="#44ff66" d="
       M160 210 L160 170
@@ -3793,7 +3805,7 @@ ON</button>
     <rect fill="#ff6600" x="31" y="200" width="38" height="8" rx="2"/>
   </svg>
 </div>
-<div id="tutorial-collect-indicator">
+<div id="coaching-collect-indicator">
   <div class="collect-icon">🎁</div>
   <div class="collect-text">COLLECT</div>
 </div>
@@ -3812,6 +3824,7 @@ ON</button>
       <span class="steering-feel-end">Responsive</span>
     </div>
   </div>
+  <button class="lobby-btn lobby-btn-accent" id="btn-tutorial-buy" style="display:none;">GET FULL GAME &middot; $5.99</button>
   <button class="lobby-btn lobby-btn-accent" id="btn-tutorial-continue">LET'S GO!</button>
 </div>
 

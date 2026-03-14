@@ -158,10 +158,7 @@ export class CollectibleManager {
   }
 
   _placeItems() {
-    if (this.level.isTutorial) {
-      this._placeTutorialItems();
-      return;
-    }
+    if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
     const rng = makeRng(this.level.id.charCodeAt(0) * 1000 + 7);
     const spacing = 30 + (this.level.distance > 2000 ? 20 : 0); // wider spacing for longer races
 
@@ -171,29 +168,6 @@ export class CollectibleManager {
         absoluteD: d,
         roadD: d % this._loopLen,
         lateralOffset,
-        collected: false,
-        poolIdx: -1
-      });
-    }
-  }
-
-  _placeTutorialItems() {
-    // Phase 1 zone (30–70m): 4 collectibles pushed toward road edges
-    // Phase 3 zone (105–145m): 3 collectibles interleaved with pylons
-    const positions = [
-      { d: 35, offset: -2.0 },
-      { d: 45, offset:  2.0 },
-      { d: 55, offset: -2.0 },
-      { d: 65, offset:  2.0 },
-      { d: 117, offset:  2.0 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
-      { d: 129, offset: -2.0 },
-      { d: 141, offset:  2.0 },
-    ];
-    for (const p of positions) {
-      this._items.push({
-        absoluteD: p.d,
-        roadD: p.d % this._loopLen,
-        lateralOffset: p.offset,
         collected: false,
         poolIdx: -1
       });
