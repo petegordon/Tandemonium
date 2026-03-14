@@ -34,7 +34,7 @@ const RUNWAY_END = 30;
 // Phase boundaries (content starts after runway)
 const PHASE_1_END = 70;   // Collect presents (30-70m)
 const PHASE_2_END = 105;  // Dodge pylons (70-105m)
-const PHASE_3_END = 130;  // Put it together (105-130m)
+const PHASE_3_END = 135;  // Put it together (105-135m)
 
 class Game {
   constructor() {
@@ -3338,7 +3338,7 @@ class Game {
     if (this._tutorialAttempts > 1) {
       html += 'Attempts: ' + this._tutorialAttempts + ' \u2014 Practice makes perfect!<br>';
     }
-    html += 'Presents collected: ' + this._tutorialCollected + '/6<br>';
+    html += 'Presents collected: ' + this._tutorialCollected + '/7<br>';
     html += '<span class="calibrated">Steering calibrated to your style!</span>';
     statsEl.innerHTML = html;
 

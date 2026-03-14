@@ -6,9 +6,9 @@ export const LEVELS = [
   {
     id: 'tutorial',
     name: 'Learn to Ride',
-    distance: 130,
+    distance: 135,
     collectibles: 'presents',
-    checkpointInterval: 130,   // single checkpoint = entire ride
+    checkpointInterval: 135,   // single checkpoint = entire ride
     icon: '\uD83D\uDEB4',        // 🚴
     description: 'Master pedaling and steering!',
     isTutorial: true
