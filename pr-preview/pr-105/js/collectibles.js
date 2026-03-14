@@ -178,16 +178,16 @@ export class CollectibleManager {
   }
 
   _placeTutorialItems() {
-    // Phase 1 zone (30–70m): 4 collectibles with deliberate left/right offsets
-    // Phase 3 zone (105–135m): 3 collectibles interleaved with pylons
+    // Phase 1 zone (30–70m): 4 collectibles pushed toward road edges
+    // Phase 3 zone (105–145m): 3 collectibles interleaved with pylons
     const positions = [
-      { d: 35, offset: -1.5 },
-      { d: 45, offset:  1.5 },
-      { d: 55, offset: -1.5 },
-      { d: 65, offset:  1.5 },
-      { d: 109, offset:  1.5 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
-      { d: 118, offset: -1.5 },
-      { d: 127, offset:  1.5 },
+      { d: 35, offset: -2.0 },
+      { d: 45, offset:  2.0 },
+      { d: 55, offset: -2.0 },
+      { d: 65, offset:  2.0 },
+      { d: 110, offset:  2.0 }, // Phase 3: collect-dodge-collect-dodge-collect-dodge
+      { d: 122, offset: -2.0 },
+      { d: 134, offset:  2.0 },
     ];
     for (const p of positions) {
       this._items.push({
