@@ -841,9 +841,9 @@ export class World {
     // Tutorial: start line + phase boundary stripes
     if (level.isTutorial) {
       this._createFinishStripe(0, 0x44ff66, 0x115511);   // Start line (green)
-      this._createFinishStripe(30, 0xffd700, 0x444400);   // Phase 1→2 (gold)
-      this._createFinishStripe(70, 0xffd700, 0x444400);   // Phase 2→3
-      this._createFinishStripe(105, 0xffd700, 0x444400);  // Phase 3→4
+      this._createFinishStripe(30, 0xffd700, 0x444400);   // Runway → Phase 1 (gold)
+      this._createFinishStripe(70, 0xffd700, 0x444400);   // Phase 1 → Phase 2
+      this._createFinishStripe(105, 0xffd700, 0x444400);  // Phase 2 → Phase 3
     }
   }
 

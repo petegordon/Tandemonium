@@ -29,11 +29,12 @@ import { DDAManager } from './dda-manager.js';
 const DEMO_CHECKPOINT_LIMIT = 2; // Demo ends after 2 checkpoints
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 
-// Tutorial phase boundaries (meters)
-const PHASE_1_END = 30;
-const PHASE_2_END = 70;
-const PHASE_3_END = 105;
-const PHASE_4_END = 130;
+// Tutorial: 0-30m is always a pedaling runway before each phase
+const RUNWAY_END = 30;
+// Phase boundaries (content starts after runway)
+const PHASE_1_END = 70;   // Collect presents (30-70m)
+const PHASE_2_END = 105;  // Dodge pylons (70-105m)
+const PHASE_3_END = 130;  // Put it together (105-130m)
 
 class Game {
   constructor() {
@@ -2969,7 +2970,7 @@ class Game {
   async _startTutorialRide() {
     this.lobby._forceWizard = false;
     this._tutorialActive = true;
-    this._tutorialPhase = 0; // will advance to 1 on first update
+    this._tutorialPhase = -1; // will show runway prompt on first update
     this._tutorialAttempts = 0;
     this._tutorialCollected = 0;
 
@@ -3027,33 +3028,35 @@ class Game {
     const dist = this.bike.distanceTraveled;
     const isGyro = this.input.gyroConnected;
 
-    // Determine current phase
+    // Determine current phase (0 = runway, 1-3 = content phases)
     let phase;
-    if (dist < PHASE_1_END) phase = 1;
-    else if (dist < PHASE_2_END) phase = 2;
-    else if (dist < PHASE_3_END) phase = 3;
-    else phase = 4;
+    if (dist < RUNWAY_END) phase = 0;       // 0-30m: pedaling runway
+    else if (dist < PHASE_1_END) phase = 1; // 30-70m: collect presents
+    else if (dist < PHASE_2_END) phase = 2; // 70-105m: dodge pylons
+    else phase = 3;                          // 105-130m: put it together
 
-    // Phase transition checks
-    if (phase !== this._tutorialPhase) {
-      // Phase 2 → 3: must have collected all Phase 2 presents (first 4)
-      if (this._tutorialPhase === 2 && phase === 3) {
-        const collected = this.collectibleManager ? this.collectibleManager.collected : 0;
-        if (collected < 4) {
-          this._tutorialPhaseRetry(2, 'Collect all the presents! (' + collected + '/4)');
-          return;
+    // Runway → Phase transition: show phase prompt when entering content zone
+    if (phase > 0 && phase !== this._tutorialPhase) {
+      // Phase 1 → 2: must have collected all Phase 1 presents
+      if (this._tutorialPhase === 1 && phase === 2) {
+        if (this.collectibleManager) {
+          const collected = this.collectibleManager.countCollectedInRange(RUNWAY_END, PHASE_1_END);
+          const total = this.collectibleManager.countTotalInRange(RUNWAY_END, PHASE_1_END);
+          if (collected < total) {
+            this._tutorialPhaseRetry(1, 'Collect all the presents! (' + collected + '/' + total + ')');
+            return;
+          }
         }
       }
-      // Phase 3 → 4: verify pylons navigated correctly
-      if (this._tutorialPhase === 3 && phase === 4) {
+      // Phase 2 → 3: verify pylons navigated correctly
+      if (this._tutorialPhase === 2 && phase === 3) {
         if (this.obstacleManager) {
           const pylonResult = this.obstacleManager.getTutorialResults();
-          // Only check the first 4 pylons (Phase 3 pylons)
           if (pylonResult.wrongSide > 0 || pylonResult.passed < 4) {
             const hint = pylonResult.wrongSide > 0
               ? 'Stay on the correct side of each pylon!'
               : 'Navigate past all the pylons!';
-            this._tutorialPhaseRetry(3, hint);
+            this._tutorialPhaseRetry(2, hint);
             if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
             return;
           }
@@ -3062,24 +3065,25 @@ class Game {
       this._tutorialPhase = phase;
       this._showTutorialPhase(phase);
     }
+    // Show runway prompt when in the warmup zone
+    if (phase === 0 && this._tutorialPhase <= 0) {
+      if (this._tutorialPhase !== 0) {
+        this._tutorialPhase = 0;
+        this._showTutorialPhase(0);
+      }
+    }
 
     // Collect raw tilt sample
     const rawTilt = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
     const now = performance.now();
 
-    if (phase === 1) {
-      // Phase 1: collect noise floor samples while player pedals
+    // Runway: collect noise floor samples while pedaling
+    if (phase === 0) {
       if (rawTilt !== 0 || this._tutPhase1Samples.length > 0) {
         this._tutPhase1Samples.push(rawTilt);
       }
-      // Show "hold phone steady" hint after first few meters
-      if (dist > 5 && !this._tutHoldStillShown) {
-        this._tutHoldStillShown = true;
-        const text = document.getElementById('tutorial-prompt-text');
-        text.textContent = 'Keep pedaling \u2014 hold your phone steady!';
-      }
-    } else if (phase === 2) {
-      // Phase 2: collect steering range samples
+    } else if (phase === 1) {
+      // Phase 1: collect steering range samples
       const offset = this.input.motionOffset || 0;
       const relative = rawTilt - offset;
       this._tutPhase2Samples.push(relative);
@@ -3093,8 +3097,8 @@ class Game {
       }
       this._tutPrevTilt = relative;
       this._tutPrevTiltTime = now;
-    } else if (phase === 3) {
-      // Phase 3: detect direction changes and measure recovery
+    } else if (phase === 2) {
+      // Phase 2: detect direction changes and measure recovery
       const offset = this.input.motionOffset || 0;
       const relative = rawTilt - offset;
       const deadzone = isGyro ? TUNE.gyroDeadzone : TUNE.deadzone;
@@ -3105,9 +3109,7 @@ class Game {
         this._tutPeakTime = now;
       }
 
-      // Direction change: sign flipped (non-zero to non-zero)
       if (sign !== 0 && this._tutLastSign !== 0 && sign !== this._tutLastSign) {
-        // Recovery = time from peak to now (crossing back through center)
         if (this._tutPeakTime > 0) {
           const recoveryMs = now - this._tutPeakTime;
           if (recoveryMs > 50 && recoveryMs < 2000) {
@@ -3120,12 +3122,11 @@ class Game {
 
       if (sign !== 0) this._tutLastSign = sign;
 
-      // Track which side the bike passes each pylon
       if (this.obstacleManager) {
         this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
       }
-    } else if (phase === 4) {
-      // Phase 4: combination — continue pylon tracking and recovery measurement
+    } else if (phase === 3) {
+      // Phase 3: combination — pylon tracking
       if (this.obstacleManager) {
         this.obstacleManager.updateTutorialTracking(dist, this.bike._lateralOffset);
       }
@@ -3158,24 +3159,24 @@ class Game {
     }
 
     // Check for completion
-    if (dist >= PHASE_4_END && !this.bike.fallen) {
-      // Verify Phase 4 collectibles gathered (only check Phase 4 zone)
+    if (dist >= PHASE_3_END && !this.bike.fallen) {
+      // Verify Phase 3 collectibles gathered
       if (this.collectibleManager) {
-        const p4Collected = this.collectibleManager.countCollectedInRange(PHASE_3_END, PHASE_4_END);
-        const p4Total = this.collectibleManager.countTotalInRange(PHASE_3_END, PHASE_4_END);
-        if (p4Collected < p4Total) {
-          this._tutorialPhaseRetry(4, 'Collect the presents! (' + p4Collected + '/' + p4Total + ')');
+        const p3Collected = this.collectibleManager.countCollectedInRange(PHASE_2_END, PHASE_3_END);
+        const p3Total = this.collectibleManager.countTotalInRange(PHASE_2_END, PHASE_3_END);
+        if (p3Collected < p3Total) {
+          this._tutorialPhaseRetry(3, 'Collect the presents! (' + p3Collected + '/' + p3Total + ')');
           return;
         }
       }
-      // Verify Phase 4 pylons navigated correctly
+      // Verify Phase 3 pylons navigated correctly
       if (this.obstacleManager) {
         const pylonResult = this.obstacleManager.getTutorialResults();
         if (pylonResult.wrongSide > 0 || pylonResult.passed < pylonResult.total) {
           const hint = pylonResult.wrongSide > 0
             ? 'Stay on the correct side of the pylons!'
             : 'Navigate past all the pylons!';
-          this._tutorialPhaseRetry(4, hint);
+          this._tutorialPhaseRetry(3, hint);
           if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
           return;
         }
@@ -3190,18 +3191,19 @@ class Game {
     const dots = document.querySelectorAll('.tutorial-dot');
 
     const prompts = {
-      1: 'Tap LEFT pedal... Now RIGHT pedal... Keep alternating!',
-      2: 'Tilt to steer! Collect the presents!',
-      3: 'Dodge the pylons!',
-      4: 'Put it all together! Collect and dodge!'
+      0: 'Pedal to build speed!',
+      1: 'Tilt to steer! Collect the presents!',
+      2: 'Dodge the pylons!',
+      3: 'Put it all together! Collect and dodge!'
     };
     text.textContent = prompts[phase] || '';
     prompt.classList.add('visible');
 
+    // Phase dots only show for content phases (1-3), not runway
     dots.forEach(d => {
       const p = parseInt(d.dataset.phase);
       d.classList.toggle('active', p === phase);
-      d.classList.toggle('done', p < phase);
+      d.classList.toggle('done', p > 0 && p < phase);
     });
   }
 
@@ -3213,23 +3215,22 @@ class Game {
     hintEl.textContent = hint;
     crashEl.classList.add('visible');
 
-    // Restart at the beginning of the current phase (not before it)
-    const phaseStart = phase === 1 ? 0 : phase === 2 ? PHASE_1_END : phase === 3 ? PHASE_2_END : PHASE_3_END;
-    const phaseEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : phase === 3 ? PHASE_3_END : PHASE_4_END;
+    // Always restart at 0m — the 30m runway is built into every retry
+    const phaseContentStart = phase === 1 ? RUNWAY_END : phase === 2 ? PHASE_1_END : PHASE_2_END;
+    const phaseContentEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : PHASE_3_END;
     setTimeout(() => {
       crashEl.classList.remove('visible');
       document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
-      this.bike.resetToDistance(phaseStart);
-      this.bike.distanceTraveled = phaseStart;
-      this.bike.speed = 4; // give a running start so player doesn't stall
+      this.bike.resetToDistance(0);
+      this.bike.distanceTraveled = 0;
       // Reset only this phase's collectibles (preserve earlier phases)
-      if (this.collectibleManager) this.collectibleManager.resetInRange(phaseStart, phaseEnd);
+      if (this.collectibleManager) this.collectibleManager.resetInRange(phaseContentStart, phaseContentEnd);
       // Reset pylon tracking for retry
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
       this._tutOffRoadTime = 0;
-      // Stay in same phase (don't reset to 0 which would re-detect Phase 1)
-      this._tutorialPhase = phase;
+      // Go to runway phase (0), will advance to content phase when rider reaches 30m
+      this._tutorialPhase = -1; // will trigger runway prompt on next update
     }, 1200);
   }
 
@@ -3259,24 +3260,23 @@ class Game {
     // Hide gameover overlay if it would show
     document.getElementById('gameover-overlay').style.display = 'none';
 
-    // Restart at the beginning of the current phase
-    const phaseStart = phase === 1 ? 0 : phase === 2 ? PHASE_1_END : phase === 3 ? PHASE_2_END : PHASE_3_END;
-    const phaseEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : phase === 3 ? PHASE_3_END : PHASE_4_END;
+    // Always restart at 0m — the 30m runway is built into every retry
+    const phaseContentStart = phase === 1 ? RUNWAY_END : phase === 2 ? PHASE_1_END : PHASE_2_END;
+    const phaseContentEnd = phase === 1 ? PHASE_1_END : phase === 2 ? PHASE_2_END : PHASE_3_END;
     setTimeout(() => {
       crashEl.classList.remove('visible');
-      this.bike.resetToDistance(phaseStart);
-      this.bike.distanceTraveled = phaseStart;
-      this.bike.speed = 4; // give a running start
+      this.bike.resetToDistance(0);
+      this.bike.distanceTraveled = 0;
       this.state = 'playing';
       this._tutCrashPending = false;
       // Reset only this phase's collectibles
-      if (this.collectibleManager) this.collectibleManager.resetInRange(phaseStart, phaseEnd);
+      if (this.collectibleManager) this.collectibleManager.resetInRange(phaseContentStart, phaseContentEnd);
       // Reset pylon tracking for retry
       if (this.obstacleManager) this.obstacleManager.resetTutorialTracking();
       // Reset off-road timer
       this._tutOffRoadTime = 0;
-      // Stay in same phase
-      this._tutorialPhase = phase;
+      // Go to runway, will advance to content phase at 30m
+      this._tutorialPhase = -1;
       this._tutPeakLean = 0;
       this._tutPeakTime = 0;
       this._tutLastSign = 0;
