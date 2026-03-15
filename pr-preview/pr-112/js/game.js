@@ -954,16 +954,19 @@ class Game {
     // Wire up collectibles total for analytics
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
 
-    // Analytics: start ride tracking
-    analytics.setPage('ride');
-    analytics.startRide({
-      level: level.id,
-      role: this.mode,
-      room_code: this.net ? this.net.roomCode : null,
-      difficulty: difficultyName,
-      bike_preset: this.lobby.selectedPresetKey,
-      steering_feel: TUNE.steeringFeel,
-    });
+    // Analytics: start ride tracking (only if no ride is already active —
+    // _startCountdown is also called on restart-from-beginning after early crashes)
+    if (!analytics.getCurrentRideId()) {
+      analytics.setPage('ride');
+      analytics.startRide({
+        level: level.id,
+        role: this.mode,
+        room_code: this.net ? this.net.roomCode : null,
+        difficulty: difficultyName,
+        bike_preset: this.lobby.selectedPresetKey,
+        steering_feel: TUNE.steeringFeel,
+      });
+    }
     this.hud.initProgress(level);
     this.hud.initTimer();
     // Show initial segment budget during countdown
