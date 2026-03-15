@@ -531,6 +531,15 @@ export class InputManager {
     // The EMA filter (gyroOutputSmoothing: 0.3) converges within ~100ms.
   }
 
+  /** Full lean-input reset for tutorial/demo restarts. */
+  resetLeanState() {
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this._gyroRollAccum = 0;
+    this._driftEma = null;
+  }
+
   _detectGyroConnType(device) {
     for (const col of device.collections) {
       if (col.outputReports && col.outputReports.length > 0) {

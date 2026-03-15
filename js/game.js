@@ -3252,6 +3252,8 @@ class Game {
       this.bike.resetToDistance(pi.runwayStart);
       this.bike.distanceTraveled = pi.runwayStart;
       this.bike.speed = 0;
+      // Reset input lean so bike doesn't inherit pre-crash tilt
+      this.input.resetLeanState();
       // Reset this phase's collectibles (preserve earlier phases)
       if (this.collectibleManager) this.collectibleManager.resetInRange(pi.contentStart, pi.contentEnd);
       // Reset pylon tracking for retry
@@ -3293,6 +3295,8 @@ class Game {
       this.bike.distanceTraveled = pi.runwayStart;
       this.bike.speed = 0;
       this.state = 'playing';
+      // Reset input lean so bike doesn't inherit pre-crash tilt
+      this.input.resetLeanState();
       // Reset this phase's collectibles
       if (this.collectibleManager) this.collectibleManager.resetInRange(pi.contentStart, pi.contentEnd);
       // Reset pylon tracking
