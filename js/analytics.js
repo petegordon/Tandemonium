@@ -3,6 +3,8 @@
 // ============================================================
 
 const API_BASE = 'https://tandemonium-api.pete-872.workers.dev/api/analytics';
+const DISABLED = typeof location !== 'undefined' &&
+  (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
 let sessionId = null;
 let currentInputMethod = null;
@@ -17,6 +19,7 @@ let flushTimer = null;
 // ---- Session Management ----
 
 export function initSession(opts) {
+  if (DISABLED) return null;
   sessionId = crypto.randomUUID();
   sessionStorage.setItem('tandemonium_session_id', sessionId);
   currentInputMethod = opts.input_method || null;
@@ -170,6 +173,7 @@ function flushUIEvents() {
 }
 
 function beacon(url, data, method = 'POST') {
+  if (DISABLED) return;
   try {
     const body = JSON.stringify(data);
 
