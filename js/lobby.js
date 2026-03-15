@@ -949,19 +949,27 @@ export class Lobby {
     // Restore UI if already logged in from localStorage
     if (this.auth.isLoggedIn()) {
       updateUI(this.auth.getUser());
-      // Check license and update mode buttons + level cards
-      this.license.check().then(() => {
-        this._updateModeButtons();
-        this._rebuildLevelCards();
-      }).catch(() => {});
-      // Sync achievements from D1 for returning users
-      this.auth.getMe().then(me => {
-        if (me && me.achievements) {
-          this._achievements.mergeFromServer(
-            me.achievements.map(a => ({ id: a.achievement_id, earnedAt: a.earned_at }))
-          );
-        }
-      }).catch(() => {});
+
+      // Proactively refresh expired JWT before anything needs it
+      const tokenReady = this.auth.isTokenExpired()
+        ? this.auth.ensureValidToken().catch(() => false)
+        : Promise.resolve(true);
+
+      tokenReady.then(() => {
+        // Check license and update mode buttons + level cards
+        this.license.check().then(() => {
+          this._updateModeButtons();
+          this._rebuildLevelCards();
+        }).catch(() => {});
+        // Sync achievements from D1 for returning users
+        this.auth.getMe().then(me => {
+          if (me && me.achievements) {
+            this._achievements.mergeFromServer(
+              me.achievements.map(a => ({ id: a.achievement_id, earnedAt: a.earned_at }))
+            );
+          }
+        }).catch(() => {});
+      });
     }
     this._updateModeButtons();
   }
@@ -2291,13 +2299,21 @@ export class Lobby {
       statusEl.className = 'conn-status error';
     };
 
-    // Auth error: token was rejected by relay — clear and re-login
-    this.net.onAuthError = () => {
-      console.warn('LOBBY: Relay auth failed for captain — refreshing login');
-      statusEl.textContent = 'Session expired, signing in...';
+    // Auth error: token was rejected by relay — try silent refresh first
+    this.net.onAuthError = async () => {
+      console.warn('LOBBY: Relay auth failed for captain — refreshing token');
+      statusEl.textContent = 'Session expired, refreshing...';
       statusEl.className = 'conn-status';
-      this.auth.refreshLogin();
-      this._pendingCreateRoom = true;
+      const refreshed = await this.auth.ensureValidToken();
+      if (refreshed) {
+        // Token refreshed — retry room creation
+        const freshToken = await this.auth.getRelayToken(code, 'captain');
+        if (freshToken) this.net._relayToken = freshToken;
+        this.net.enterRoom(code, 'captain');
+      } else {
+        statusEl.textContent = 'Sign-in required...';
+        this._pendingCreateRoom = true;
+      }
     };
 
     this.net.enterRoom(code, 'captain');
@@ -2359,21 +2375,24 @@ export class Lobby {
       }
     };
 
-    // Auth error: token was rejected by relay — clear and re-login
+    // Auth error: token was rejected by relay — try silent refresh first
     this.net.onAuthError = async () => {
-      console.warn('LOBBY: Relay auth failed for stoker — attempting token refresh');
-      statusEl.textContent = 'Session expired, retrying...';
+      console.warn('LOBBY: Relay auth failed for stoker — refreshing token');
+      statusEl.textContent = 'Session expired, refreshing...';
       statusEl.className = 'conn-status';
 
-      // Try getting a fresh token first (in case server JWT is still valid)
-      const freshToken = await this.auth.getRelayToken(code, 'stoker');
-      if (freshToken) {
-        statusEl.textContent = 'Reconnecting...';
-        this.net.retryWithToken(freshToken);
+      const refreshed = await this.auth.ensureValidToken();
+      if (refreshed) {
+        const freshToken = await this.auth.getRelayToken(code, 'stoker');
+        if (freshToken) {
+          statusEl.textContent = 'Reconnecting...';
+          this.net.retryWithToken(freshToken);
+        } else {
+          statusEl.textContent = 'Sign-in required...';
+          this._pendingAutoJoinCode = code;
+        }
       } else {
-        // Server JWT is also bad — need full re-login
         statusEl.textContent = 'Sign-in required...';
-        this.auth.refreshLogin();
         this._pendingAutoJoinCode = code;
       }
     };

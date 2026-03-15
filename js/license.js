@@ -149,9 +149,21 @@ export class LicenseManager {
       const serverId = this.auth.user ? this.auth.user.serverId : null;
       if (!serverId) return;
 
-      const res = await fetch(`${STORE_API}/license/${serverId}/tandemonium`, {
+      let res = await fetch(`${STORE_API}/license/${serverId}/tandemonium`, {
         headers: { 'Authorization': `Bearer ${this.auth.token}` },
       });
+
+      // On 401, attempt to refresh the JWT and retry once
+      if (res.status === 401 && this.auth.ensureValidToken) {
+        console.warn('License: 401 — attempting token refresh');
+        const refreshed = await this.auth.ensureValidToken();
+        if (refreshed) {
+          res = await fetch(`${STORE_API}/license/${serverId}/tandemonium`, {
+            headers: { 'Authorization': `Bearer ${this.auth.token}` },
+          });
+        }
+      }
+
       if (res.ok) {
         this._license = await res.json();
         this._cachedAt = Date.now();
