@@ -4,6 +4,8 @@
 
 // iOS Safari: canvas.captureStream() produces blank video (WebKit bugs 229611, 181663).
 // Detect iOS and use WebCodecs VideoEncoder + mp4-muxer instead.
+import * as analytics from './analytics.js';
+
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
@@ -1544,6 +1546,8 @@ export class GameRecorder {
           title: 'Tandemonium Clip',
           files: [file]
         });
+        analytics.trackEvent('clip_save', { method: 'share' });
+        analytics.trackConversion('clip_shared', 'results');
       } else {
         // Fallback to download
         this._downloadClip();
@@ -1565,10 +1569,12 @@ export class GameRecorder {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    analytics.trackEvent('clip_save', { method: 'download' });
   }
 
   _discardClip() {
     this._stopPreviewGamepadNav();
+    analytics.trackEvent('clip_discard', {});
     if (this._clipUrl) {
       URL.revokeObjectURL(this._clipUrl);
       this._clipUrl = null;

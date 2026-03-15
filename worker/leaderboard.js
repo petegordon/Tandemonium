@@ -46,6 +46,45 @@ export default {
         return handlePlayerProfile(request, env, url, corsOrigin);
       }
 
+      // ---- Analytics routes (fire-and-forget, no auth required) ----
+      if (path === '/api/analytics/session' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleAnalyticsSession(request, env, corsOrigin);
+      }
+      if (path === '/api/analytics/event/batch' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleAnalyticsEventBatch(request, env, corsOrigin);
+      }
+      if (path === '/api/analytics/ride' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.ANALYTICS_RIDE_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleAnalyticsRideCreate(request, env, corsOrigin);
+      }
+      if (path.match(/^\/api\/analytics\/ride\/[^/]+$/) && request.method === 'PUT') {
+        const limited = await checkRateLimit(env.ANALYTICS_RIDE_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        const rideId = path.split('/')[4];
+        return handleAnalyticsRideUpdate(request, env, corsOrigin, rideId);
+      }
+      if (path.match(/^\/api\/analytics\/ride\/[^/]+\/events$/) && request.method === 'POST') {
+        const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        const rideId = path.split('/')[4];
+        return handleAnalyticsRideEvents(request, env, corsOrigin, rideId);
+      }
+      if (path === '/api/analytics/room' && request.method === 'POST') {
+        return handleAnalyticsRoomCreate(request, env, corsOrigin);
+      }
+      if (path.match(/^\/api\/analytics\/room\/[^/]+$/) && request.method === 'PUT') {
+        const roomCode = path.split('/')[4];
+        return handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode);
+      }
+      if (path === '/api/analytics/conversion' && request.method === 'POST') {
+        return handleAnalyticsConversion(request, env, corsOrigin);
+      }
+
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
     } catch (e) {
       try { writeMetric(env, 'error', e.message); } catch (_) { /* don't mask original error */ }
@@ -586,13 +625,262 @@ async function submitScoreWithLimit(request, env, corsOrigin, userId) {
 }
 
 // ============================================================
+// ANALYTICS HANDLERS
+// ============================================================
+
+function isValidUUID(str) {
+  return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+async function handleAnalyticsSession(request, env, corsOrigin) {
+  const body = await request.json();
+  if (!body.id || !isValidUUID(body.id)) {
+    return jsonResponse({ error: 'Invalid session id' }, 400, corsOrigin);
+  }
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
+     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    body.id,
+    body.started_at || new Date().toISOString(),
+    body.device_type || null,
+    body.input_method || null,
+    body.referrer || null,
+    body.user_agent || null,
+    body.is_stoker ? 1 : 0,
+    body.joined_via_url ? 1 : 0,
+    body.room_code || null,
+    body.google_uid || null,
+    body.platform || 'browser',
+    body.screen_width || null,
+    body.screen_height || null
+  ).run();
+
+  writeMetric(env, 'analytics_session');
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsEventBatch(request, env, corsOrigin) {
+  const body = await request.json();
+  const events = body.events;
+  if (!Array.isArray(events) || events.length === 0) {
+    return jsonResponse({ error: 'No events' }, 400, corsOrigin);
+  }
+
+  const stmt = env.DB.prepare(
+    'INSERT INTO events (session_id, event_type, event_data, created_at, page, input_method) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+  const batch = events.map(e =>
+    stmt.bind(
+      e.session_id,
+      e.event_type,
+      e.event_data ? JSON.stringify(e.event_data) : null,
+      e.created_at || new Date().toISOString(),
+      e.page || null,
+      e.input_method || null
+    )
+  );
+  await env.DB.batch(batch);
+
+  writeMetric(env, 'analytics_events', String(events.length));
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRideCreate(request, env, corsOrigin) {
+  const body = await request.json();
+  if (!body.id || !isValidUUID(body.id)) {
+    return jsonResponse({ error: 'Invalid ride id' }, 400, corsOrigin);
+  }
+  if (!body.session_id || !isValidUUID(body.session_id)) {
+    return jsonResponse({ error: 'Invalid session_id' }, 400, corsOrigin);
+  }
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO rides (id, session_id, room_code, level, role, difficulty,
+     input_method, bike_preset, steering_feel, started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    body.id,
+    body.session_id,
+    body.room_code || null,
+    body.level || 'unknown',
+    body.role || 'solo',
+    body.difficulty || 'normal',
+    body.input_method || 'unknown',
+    body.bike_preset || null,
+    body.steering_feel ?? null,
+    body.started_at || new Date().toISOString()
+  ).run();
+
+  writeMetric(env, 'analytics_ride_start', body.level);
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
+  if (!isValidUUID(rideId)) {
+    return jsonResponse({ error: 'Invalid ride id' }, 400, corsOrigin);
+  }
+
+  const body = await request.json();
+
+  // Build dynamic UPDATE from provided fields
+  const allowedFields = [
+    'ended_at', 'completed', 'abandon_reason', 'duration_ms', 'distance',
+    'checkpoints_passed', 'checkpoints_total', 'collectibles', 'collectibles_total',
+    'crash_count', 'timeout_count', 'restarts',
+    'max_speed', 'avg_speed',
+    'balance_safe_pct', 'balance_danger_pct', 'on_road_pct', 'center_pct', 'avg_lateral_offset',
+    'lean_input_total', 'lean_correction_total',
+    'pedal_taps', 'pedal_correct', 'pedal_wrong', 'pedal_power',
+    'offset_quality', 'contribution_pct',
+    'dda_assists_offered', 'dda_assists_accepted', 'dda_skips_used', 'safety_used'
+  ];
+
+  const sets = [];
+  const values = [];
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) {
+      sets.push(`${field} = ?`);
+      values.push(body[field]);
+    }
+  }
+
+  if (sets.length === 0) {
+    return jsonResponse({ success: true }, 200, corsOrigin);
+  }
+
+  values.push(rideId);
+  await env.DB.prepare(
+    `UPDATE rides SET ${sets.join(', ')} WHERE id = ?`
+  ).bind(...values).run();
+
+  writeMetric(env, 'analytics_ride_end', body.completed ? 'complete' : 'abandon');
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
+  if (!isValidUUID(rideId)) {
+    return jsonResponse({ error: 'Invalid ride id' }, 400, corsOrigin);
+  }
+
+  const body = await request.json();
+  const events = body.events;
+  if (!Array.isArray(events) || events.length === 0) {
+    return jsonResponse({ error: 'No events' }, 400, corsOrigin);
+  }
+
+  const stmt = env.DB.prepare(
+    'INSERT INTO ride_events (ride_id, event_type, distance, event_data, created_at) VALUES (?, ?, ?, ?, ?)'
+  );
+  const batch = events.map(e =>
+    stmt.bind(
+      rideId,
+      e.event_type,
+      e.distance ?? null,
+      e.event_data ? JSON.stringify(e.event_data) : null,
+      e.created_at || new Date().toISOString()
+    )
+  );
+  await env.DB.batch(batch);
+
+  writeMetric(env, 'analytics_ride_events', String(events.length));
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRoomCreate(request, env, corsOrigin) {
+  const body = await request.json();
+  if (!body.code || !body.captain_session_id) {
+    return jsonResponse({ error: 'Missing code or captain_session_id' }, 400, corsOrigin);
+  }
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO rooms (code, captain_session_id, created_at)
+     VALUES (?, ?, ?)`
+  ).bind(
+    body.code,
+    body.captain_session_id,
+    body.created_at || new Date().toISOString()
+  ).run();
+
+  writeMetric(env, 'analytics_room_create');
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
+  const body = await request.json();
+
+  // Handle disconnect_count_increment specially
+  if (body.disconnect_count_increment) {
+    await env.DB.prepare(
+      'UPDATE rooms SET disconnect_count = disconnect_count + ? WHERE code = ?'
+    ).bind(body.disconnect_count_increment, roomCode).run();
+    delete body.disconnect_count_increment;
+  }
+
+  // Handle rides_played_increment
+  if (body.rides_played_increment) {
+    await env.DB.prepare(
+      'UPDATE rooms SET rides_played = rides_played + ? WHERE code = ?'
+    ).bind(body.rides_played_increment, roomCode).run();
+    delete body.rides_played_increment;
+  }
+
+  // Build dynamic UPDATE for remaining fields
+  const allowedFields = [
+    'stoker_joined_at', 'stoker_session_id', 'stoker_joined_via_url',
+    'webrtc_connected', 'webrtc_fail_reason', 'connection_type',
+    'p2p_upgrade_succeeded', 'video_enabled', 'audio_enabled'
+  ];
+
+  const sets = [];
+  const values = [];
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) {
+      sets.push(`${field} = ?`);
+      values.push(body[field]);
+    }
+  }
+
+  if (sets.length > 0) {
+    values.push(roomCode);
+    await env.DB.prepare(
+      `UPDATE rooms SET ${sets.join(', ')} WHERE code = ?`
+    ).bind(...values).run();
+  }
+
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsConversion(request, env, corsOrigin) {
+  const body = await request.json();
+  if (!body.session_id || !body.action) {
+    return jsonResponse({ error: 'Missing session_id or action' }, 400, corsOrigin);
+  }
+
+  await env.DB.prepare(
+    'INSERT INTO conversions (session_id, action, context, url, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).bind(
+    body.session_id,
+    body.action,
+    body.context || null,
+    body.url || null,
+    body.created_at || new Date().toISOString()
+  ).run();
+
+  writeMetric(env, 'analytics_conversion', body.action);
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+// ============================================================
 // HELPERS
 // ============================================================
 
 function corsHeaders(origin) {
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400'
   };
