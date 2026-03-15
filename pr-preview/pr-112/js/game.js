@@ -1218,6 +1218,12 @@ class Game {
   // ============================================================
 
   _resetGame(fromRemote = false, fromBeginning = false) {
+    // Analytics: track reset/restart
+    analytics.trackRideEvent('reset', this.bike ? this.bike.distanceTraveled : 0, {
+      from_beginning: fromBeginning,
+      checkpoint: this.raceManager ? this.raceManager.passedCheckpoints.size : 0,
+    });
+
     // Resume from last checkpoint if the race was in progress (not finished/victory)
     let checkpointD = 0;
     if (!fromBeginning && this.raceManager &&
@@ -1405,16 +1411,8 @@ class Game {
     if (this.raceManager) this.raceManager.crashCount++;
     hapticCrash();
 
-    // Analytics: track crash ride event
-    if (this.bike && this.raceManager) {
-      analytics.trackRideEvent('crash', this.bike.distanceTraveled, {
-        lean_angle: this.bike.lean,
-        speed: this.bike.speed,
-        cause: this._lastCrashCause || 'balance',
-      });
-      this._lastCrashCause = null;
-      analytics.flushRideEvents();
-    }
+    // Crash analytics already recorded at impact time in _recordCrash()
+    this._lastCrashCause = null;
 
     // DDA: record failure at current checkpoint
     let checkpointD = 0;
@@ -2503,6 +2501,19 @@ class Game {
   // TREE COLLISION
   // ============================================================
 
+  _recordCrash(cause) {
+    // Capture crash data at the moment of impact (speed/lean are still valid)
+    this._lastCrashCause = cause;
+    if (this.bike) {
+      analytics.trackRideEvent('crash', this.bike.distanceTraveled, {
+        lean_angle: this.bike.lean,
+        speed: this.bike.speed,
+        cause,
+      });
+      analytics.flushRideEvents();
+    }
+  }
+
   _checkTreeCollision() {
     if (this.bike.fallen || this.bike.speed < 0.5) return;
     // Skip tree collision when level config disables it — only pylons matter
@@ -2510,7 +2521,7 @@ class Game {
     if (level && level.treeCollision === false) {
       // Still check pylon collision
       if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
-        this._lastCrashCause = 'obstacle';
+        this._recordCrash('obstacle');
         this.bike._fall();
         this.chaseCamera.shakeAmount = 0.25;
         this._playBeep(150, 0.4);
@@ -2522,7 +2533,7 @@ class Game {
       this.bike.position, this.bike.roadD, this.bike.heading
     );
     if (result.hit) {
-      this._lastCrashCause = 'tree';
+      this._recordCrash('tree');
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.2;
       this._playBeep(200, 0.3);
@@ -2531,7 +2542,7 @@ class Game {
     }
     // Pylon obstacle collision
     if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
-      this._lastCrashCause = 'obstacle';
+      this._recordCrash('obstacle');
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.25;
       this._playBeep(150, 0.4);
@@ -2608,6 +2619,11 @@ class Game {
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
+
+    // Record balance crash (bike fell from lean, not from tree/obstacle)
+    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
+      this._recordCrash('balance');
+    }
 
     // Race progress + contribution tracking
     if (this.raceManager) {
@@ -2710,6 +2726,11 @@ class Game {
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
+
+    // Record balance crash (bike fell from lean, not from tree/obstacle)
+    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
+      this._recordCrash('balance');
+    }
 
     // Race progress + contribution tracking (captain is authoritative)
     // Freeze race timer while reconnecting
