@@ -1071,6 +1071,13 @@ class Game {
       this._playBeep(800, 0.4);
       if (this.raceManager) this.raceManager.start();
 
+      // Update analytics input method now that motion/gyro has had time to activate
+      const steerSrc = this.balanceCtrl.getSteerSource();
+      if (steerSrc && steerSrc !== 'none') {
+        const methodMap = { keyboard: 'keyboard', gamepad: 'gamepad_stick', motion: 'tilt', 'gamepad-gyro': 'gamepad_gyro' };
+        analytics.setInputMethod(methodMap[steerSrc] || steerSrc);
+      }
+
       // Captain sends EVT_START to stoker
       if (this.mode === 'captain' && this.net) {
         this.net.sendEvent(EVT_START);

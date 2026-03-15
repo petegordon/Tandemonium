@@ -980,6 +980,8 @@ export class Lobby {
       else if (this.input.gamepadConnected) method = 'gamepad_stick';
       else if (this.input.motionEnabled) method = 'gyro';
       else if (this.motionActive) method = 'tilt';
+      // On mobile, motion permission may be granted but events haven't fired yet
+      else if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) method = 'tilt';
     }
     analytics.setInputMethod(method);
     analytics.trackEvent('input_select', { method });
