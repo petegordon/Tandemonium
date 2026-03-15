@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TURN Server Test — Tandemonium</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    background: #1a1a2e;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 24px;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p.sub { font-size: 13px; color: rgba(255,255,255,0.5); margin-bottom: 24px; }
+  section { margin-bottom: 24px; }
+  h2 { font-size: 16px; margin-bottom: 8px; color: rgba(255,255,255,0.8); }
+  pre {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 12px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  button {
+    background: #4a6cf7;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-right: 8px;
+    margin-bottom: 8px;
+  }
+  button:hover { background: #3b5de7; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 8px;
+  }
+  .badge.ok { background: #2ecc71; color: #000; }
+  .badge.fail { background: #e74c3c; color: #fff; }
+  .badge.pending { background: #f39c12; color: #000; }
+  .candidate { margin: 2px 0; }
+  .candidate.host { color: #95a5a6; }
+  .candidate.srflx { color: #3498db; }
+  .candidate.relay { color: #2ecc71; font-weight: 700; }
+  a.back { color: rgba(255,255,255,0.5); font-size: 13px; text-decoration: none; }
+  a.back:hover { color: #fff; }
+</style>
+</head>
+<body>
+  <a class="back" href=".">&larr; Back to tests</a>
+  <h1>TURN Server Test</h1>
+  <p class="sub">Verify Cloudflare TURN credentials and ICE candidate gathering</p>
+
+  <section>
+    <h2>1. Fetch Credentials <span id="fetch-badge"></span></h2>
+    <button id="btn-fetch">Fetch TURN Credentials</button>
+    <pre id="cred-output">Click to fetch...</pre>
+  </section>
+
+  <section>
+    <h2>2. ICE Candidate Gathering <span id="ice-badge"></span></h2>
+    <button id="btn-gather" disabled>Gather ICE Candidates</button>
+    <pre id="ice-output">Fetch credentials first...</pre>
+  </section>
+
+  <section>
+    <h2>Candidate Summary</h2>
+    <pre id="summary">—</pre>
+  </section>
+
+<script type="module">
+  import { TURN_CREDENTIALS_URL } from '../js/config.js';
+
+  const credOutput = document.getElementById('cred-output');
+  const iceOutput = document.getElementById('ice-output');
+  const summary = document.getElementById('summary');
+  const fetchBadge = document.getElementById('fetch-badge');
+  const iceBadge = document.getElementById('ice-badge');
+  const btnFetch = document.getElementById('btn-fetch');
+  const btnGather = document.getElementById('btn-gather');
+
+  let iceServers = null;
+
+  function badge(el, type, text) {
+    el.innerHTML = `<span class="badge ${type}">${text}</span>`;
+  }
+
+  btnFetch.addEventListener('click', async () => {
+    btnFetch.disabled = true;
+    credOutput.textContent = 'Fetching...';
+    badge(fetchBadge, 'pending', 'FETCHING');
+
+    try {
+      const t0 = performance.now();
+      const resp = await fetch(TURN_CREDENTIALS_URL);
+      const data = await resp.json();
+      const ms = (performance.now() - t0).toFixed(0);
+
+      if (data.iceServers) {
+        iceServers = Array.isArray(data.iceServers) ? data.iceServers : [data.iceServers];
+        // Add STUN fallbacks
+        iceServers.unshift(
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        );
+        credOutput.textContent = JSON.stringify(data, null, 2);
+        badge(fetchBadge, 'ok', `OK (${ms}ms)`);
+        btnGather.disabled = false;
+        iceOutput.textContent = 'Ready — click Gather ICE Candidates';
+      } else {
+        credOutput.textContent = 'Unexpected response:\n' + JSON.stringify(data, null, 2);
+        badge(fetchBadge, 'fail', 'BAD RESPONSE');
+      }
+    } catch (e) {
+      credOutput.textContent = 'Error: ' + e.message;
+      badge(fetchBadge, 'fail', 'FAILED');
+    }
+    btnFetch.disabled = false;
+  });
+
+  btnGather.addEventListener('click', async () => {
+    if (!iceServers) return;
+    btnGather.disabled = true;
+    iceOutput.textContent = 'Gathering candidates...\n';
+    badge(iceBadge, 'pending', 'GATHERING');
+
+    const counts = { host: 0, srflx: 0, relay: 0, other: 0 };
+
+    try {
+      const pc = new RTCPeerConnection({ iceServers });
+      pc.createDataChannel('test');
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          const c = e.candidate;
+          const type = c.type || 'unknown';
+          if (counts[type] !== undefined) counts[type]++;
+          else counts.other++;
+          const line = `[${type}] ${c.protocol || ''} ${c.address || ''}:${c.port || ''} ${c.relatedAddress ? '(via ' + c.relatedAddress + ':' + c.relatedPort + ')' : ''}`;
+          iceOutput.textContent += `<span class="candidate ${type}">${line}</span>\n`;
+          iceOutput.innerHTML = iceOutput.textContent;
+        } else {
+          // Gathering complete
+          iceOutput.textContent += '\n--- Gathering complete ---\n';
+          summary.textContent =
+            `host:  ${counts.host}\n` +
+            `srflx: ${counts.srflx}  (STUN reflexive)\n` +
+            `relay: ${counts.relay}  (TURN relay)\n` +
+            `other: ${counts.other}`;
+
+          if (counts.relay > 0) {
+            badge(iceBadge, 'ok', `TURN OK (${counts.relay} relay)`);
+          } else {
+            badge(iceBadge, 'fail', 'NO RELAY CANDIDATES');
+          }
+
+          pc.close();
+          btnGather.disabled = false;
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      // Timeout safety
+      setTimeout(() => {
+        if (pc.iceGatheringState !== 'complete') {
+          iceOutput.textContent += '\n--- Timed out after 15s ---\n';
+          summary.textContent =
+            `host:  ${counts.host}\n` +
+            `srflx: ${counts.srflx}  (STUN reflexive)\n` +
+            `relay: ${counts.relay}  (TURN relay)\n` +
+            `other: ${counts.other}`;
+          if (counts.relay > 0) {
+            badge(iceBadge, 'ok', `TURN OK (${counts.relay} relay)`);
+          } else {
+            badge(iceBadge, 'fail', 'NO RELAY CANDIDATES');
+          }
+          pc.close();
+          btnGather.disabled = false;
+        }
+      }, 15000);
+    } catch (e) {
+      iceOutput.textContent += 'Error: ' + e.message;
+      badge(iceBadge, 'fail', 'ERROR');
+      btnGather.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
