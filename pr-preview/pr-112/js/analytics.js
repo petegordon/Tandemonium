@@ -173,19 +173,17 @@ function beacon(url, data, method = 'POST') {
   try {
     const body = JSON.stringify(data);
 
-    if (method === 'POST' && navigator.sendBeacon) {
-      // Use text/plain to avoid CORS preflight (sendBeacon can't handle preflights).
-      // The Worker parses the body as JSON regardless of Content-Type.
-      const blob = new Blob([body], { type: 'text/plain' });
-      navigator.sendBeacon(url, blob);
-    } else {
-      fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body,
-        keepalive: true,
-      }).catch(e => console.warn('Analytics beacon failed:', e));
-    }
+    // Always use fetch with explicit no-credentials to avoid CORS preflight issues.
+    // sendBeacon inherits cookies which forces credentials mode and requires
+    // Access-Control-Allow-Credentials, complicating CORS. fetch + keepalive
+    // is equally reliable for fire-and-forget.
+    fetch(url, {
+      method,
+      headers: { 'Content-Type': 'text/plain' },
+      body,
+      keepalive: true,
+      credentials: 'omit',
+    }).catch(e => console.warn('Analytics beacon failed:', e));
   } catch (e) {
     console.warn('Analytics error:', e);
   }
