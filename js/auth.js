@@ -130,6 +130,48 @@ export class AuthManager {
     return false;
   }
 
+  /** Check if the stored server JWT is expired (or will expire within marginSec). */
+  isTokenExpired(marginSec = 60) {
+    if (!this.token) return true;
+    try {
+      const payload = JSON.parse(atob(this.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return !payload.exp || payload.exp < Math.floor(Date.now() / 1000) + marginSec;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Ensure the server JWT is valid. If expired, attempt refresh via stored
+   * GSI credential first, then fall back to prompting a new Google sign-in.
+   * Returns true if a valid token is available afterward.
+   */
+  async ensureValidToken() {
+    if (!this.isTokenExpired()) return true;
+
+    // Try re-exchanging the stored GSI credential (may still be valid)
+    if (await this.retryTokenExchange()) return true;
+
+    // GSI credential also expired — need a fresh Google sign-in.
+    // Trigger the prompt and wait briefly for the callback.
+    return new Promise((resolve) => {
+      const prevCallback = this._onLoginCallback;
+      const timeout = setTimeout(() => {
+        this._onLoginCallback = prevCallback;
+        resolve(false);
+      }, 5000);
+
+      this._onLoginCallback = (user) => {
+        clearTimeout(timeout);
+        this._onLoginCallback = prevCallback;
+        if (prevCallback) prevCallback(user);
+        resolve(!!this.token && !this.isTokenExpired());
+      };
+
+      this.login();
+    });
+  }
+
   login() {
     if (typeof google === 'undefined' || !google.accounts) return;
     google.accounts.id.prompt();
