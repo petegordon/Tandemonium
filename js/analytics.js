@@ -174,7 +174,9 @@ function beacon(url, data, method = 'POST') {
     const body = JSON.stringify(data);
 
     if (method === 'POST' && navigator.sendBeacon) {
-      const blob = new Blob([body], { type: 'application/json' });
+      // Use text/plain to avoid CORS preflight (sendBeacon can't handle preflights).
+      // The Worker parses the body as JSON regardless of Content-Type.
+      const blob = new Blob([body], { type: 'text/plain' });
       navigator.sendBeacon(url, blob);
     } else {
       fetch(url, {
