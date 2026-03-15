@@ -85,6 +85,14 @@ export default {
         return handleAnalyticsConversion(request, env, corsOrigin);
       }
 
+      // ---- Dashboard query routes (read-only, rate limited) ----
+      if (path.startsWith('/api/analytics/dashboard/')) {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        const dashRoute = path.replace('/api/analytics/dashboard/', '');
+        return handleDashboard(dashRoute, url, env, corsOrigin);
+      }
+
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
     } catch (e) {
       try { writeMetric(env, 'error', e.message); } catch (_) { /* don't mask original error */ }
@@ -871,6 +879,328 @@ async function handleAnalyticsConversion(request, env, corsOrigin) {
 
   writeMetric(env, 'analytics_conversion', body.action);
   return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+// ============================================================
+// DASHBOARD QUERIES
+// ============================================================
+
+async function handleDashboard(route, url, env, corsOrigin) {
+  const days = parseInt(url.searchParams.get('days') || '30');
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+
+  const handlers = {
+    daily: () => dashDaily(env, since),
+    funnel: () => dashFunnel(env, since),
+    rides: () => dashRides(env, since),
+    crashes: () => dashCrashes(env, since),
+    conversions: () => dashConversions(env, since),
+    network: () => dashNetwork(env, since),
+    devices: () => dashDevices(env, since),
+    dda: () => dashDDA(env, since),
+    overview: () => dashOverview(env, since),
+  };
+
+  const handler = handlers[route];
+  if (!handler) return jsonResponse({ error: 'Unknown dashboard route' }, 404, corsOrigin);
+
+  const data = await handler();
+  return jsonResponse(data, 200, corsOrigin);
+}
+
+async function dashOverview(env, since) {
+  const sessions = await env.DB.prepare(
+    `SELECT COUNT(*) as total, COUNT(CASE WHEN is_stoker = 1 THEN 1 END) as stokers,
+     COUNT(CASE WHEN joined_via_url = 1 THEN 1 END) as url_joins
+     FROM sessions WHERE started_at >= ?`
+  ).bind(since).first();
+
+  const rides = await env.DB.prepare(
+    `SELECT COUNT(*) as total, SUM(completed) as completed,
+     COUNT(CASE WHEN level = 'tutorial' THEN 1 END) as tutorials
+     FROM rides WHERE started_at >= ?`
+  ).bind(since).first();
+
+  const conversions = await env.DB.prepare(
+    `SELECT COUNT(*) as total,
+     COUNT(CASE WHEN action = 'steam_wishlist_click' THEN 1 END) as steam_clicks,
+     COUNT(CASE WHEN action = 'replay_click' THEN 1 END) as replays,
+     COUNT(CASE WHEN action = 'room_code_generated' THEN 1 END) as rooms_created
+     FROM conversions WHERE created_at >= ?`
+  ).bind(since).first();
+
+  const rooms = await env.DB.prepare(
+    `SELECT COUNT(*) as total,
+     COUNT(stoker_joined_at) as stokers_joined,
+     COUNT(CASE WHEN webrtc_connected = 1 THEN 1 END) as connected
+     FROM rooms WHERE created_at >= ?`
+  ).bind(since).first();
+
+  return { sessions, rides, conversions, rooms };
+}
+
+async function dashDaily(env, since) {
+  const rows = await env.DB.prepare(
+    `SELECT DATE(s.started_at) AS day,
+     COUNT(DISTINCT s.id) AS sessions,
+     COUNT(DISTINCT CASE WHEN s.is_stoker = 1 THEN s.id END) AS stoker_sessions,
+     COUNT(DISTINCT r.id) AS total_rides,
+     COUNT(DISTINCT CASE WHEN r.completed = 1 THEN r.id END) AS completed_rides,
+     COUNT(DISTINCT CASE WHEN r.level = 'tutorial' THEN r.id END) AS tutorial_rides
+     FROM sessions s
+     LEFT JOIN rides r ON r.session_id = s.id
+     WHERE s.started_at >= ?
+     GROUP BY DATE(s.started_at)
+     ORDER BY day DESC
+     LIMIT 30`
+  ).bind(since).all();
+  return { daily: rows.results };
+}
+
+async function dashFunnel(env, since) {
+  // Tutorial starts by input method
+  const tutStarts = await env.DB.prepare(
+    `SELECT input_method, COUNT(*) AS started
+     FROM events WHERE event_type = 'tutorial_start' AND created_at >= ?
+     GROUP BY input_method`
+  ).bind(since).all();
+
+  // Tutorial completions by input method
+  const tutCompletes = await env.DB.prepare(
+    `SELECT input_method, COUNT(*) AS completed
+     FROM events WHERE event_type = 'tutorial_complete' AND created_at >= ?
+     GROUP BY input_method`
+  ).bind(since).all();
+
+  // Merge starts and completions
+  const completeMap = {};
+  (tutCompletes.results || []).forEach(r => { completeMap[r.input_method || 'unknown'] = r.completed; });
+  const tutorial = (tutStarts.results || []).map(r => ({
+    input_method: r.input_method || 'unknown',
+    started: r.started,
+    completed: completeMap[r.input_method || 'unknown'] || 0,
+  }));
+
+  const tutorialPhases = await env.DB.prepare(
+    `SELECT
+      JSON_EXTRACT(event_data, '$.phase') AS phase,
+      JSON_EXTRACT(event_data, '$.phase_name') AS phase_name,
+      COUNT(*) AS completions,
+      ROUND(AVG(CAST(JSON_EXTRACT(event_data, '$.attempts') AS REAL)), 1) AS avg_attempts,
+      ROUND(AVG(CAST(JSON_EXTRACT(event_data, '$.time_sec') AS REAL)), 1) AS avg_time_sec
+     FROM events
+     WHERE event_type = 'tutorial_phase' AND created_at >= ?
+     GROUP BY phase ORDER BY phase`
+  ).bind(since).all();
+
+  // Solo to MP: separate queries to avoid cross-table join issues
+  const soloRiders = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT session_id) AS cnt FROM rides
+     WHERE role IN ('captain', 'solo') AND started_at >= ?`
+  ).bind(since).first();
+
+  const roomsCreated = await env.DB.prepare(
+    `SELECT COUNT(*) AS cnt FROM rooms WHERE created_at >= ?`
+  ).bind(since).first();
+
+  const roomsJoined = await env.DB.prepare(
+    `SELECT COUNT(*) AS cnt FROM rooms WHERE stoker_joined_at IS NOT NULL AND created_at >= ?`
+  ).bind(since).first();
+
+  const soloToMp = {
+    solo_riders: soloRiders?.cnt || 0,
+    created_rooms: roomsCreated?.cnt || 0,
+    rooms_with_stoker: roomsJoined?.cnt || 0,
+  };
+
+  return { tutorial, tutorialPhases: tutorialPhases.results, soloToMp };
+}
+
+async function dashRides(env, since) {
+  const byLevel = await env.DB.prepare(
+    `SELECT level, difficulty, input_method,
+     COUNT(*) AS attempts, SUM(completed) AS completions,
+     ROUND(AVG(CASE WHEN completed = 1 THEN duration_ms END) / 1000.0, 1) AS avg_time_sec,
+     ROUND(AVG(crash_count), 1) AS avg_crashes,
+     ROUND(AVG(timeout_count), 1) AS avg_timeouts
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     GROUP BY level, difficulty, input_method
+     ORDER BY level, difficulty`
+  ).bind(since).all();
+
+  const abandons = await env.DB.prepare(
+    `SELECT level, abandon_reason,
+     COUNT(*) AS abandonments,
+     ROUND(AVG(distance), 0) AS avg_distance,
+     ROUND(AVG(crash_count), 1) AS avg_crashes
+     FROM rides
+     WHERE completed = 0 AND abandon_reason IS NOT NULL AND started_at >= ?
+     GROUP BY level, abandon_reason
+     ORDER BY level, abandonments DESC`
+  ).bind(since).all();
+
+  const steeringFeel = await env.DB.prepare(
+    `SELECT
+      CASE WHEN steering_feel < 0.33 THEN 'stable (0-0.33)'
+           WHEN steering_feel < 0.67 THEN 'balanced (0.33-0.67)'
+           ELSE 'responsive (0.67-1.0)' END AS feel_bucket,
+      COUNT(*) AS rides, SUM(completed) AS completed,
+      ROUND(AVG(crash_count), 1) AS avg_crashes
+     FROM rides WHERE level != 'tutorial' AND steering_feel IS NOT NULL AND started_at >= ?
+     GROUP BY feel_bucket`
+  ).bind(since).all();
+
+  const bikePresets = await env.DB.prepare(
+    `SELECT bike_preset, COUNT(*) AS rides,
+     COUNT(DISTINCT session_id) AS unique_players,
+     SUM(completed) AS completed
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     GROUP BY bike_preset ORDER BY rides DESC`
+  ).bind(since).all();
+
+  return {
+    byLevel: byLevel.results,
+    abandons: abandons.results,
+    steeringFeel: steeringFeel.results,
+    bikePresets: bikePresets.results,
+  };
+}
+
+async function dashCrashes(env, since) {
+  const heatmap = await env.DB.prepare(
+    `SELECT r.level,
+     CAST(ROUND(re.distance / 10) * 10 AS INTEGER) AS distance_bucket,
+     JSON_EXTRACT(re.event_data, '$.cause') AS cause,
+     COUNT(*) AS crashes
+     FROM ride_events re
+     JOIN rides r ON re.ride_id = r.id
+     WHERE re.event_type = 'crash' AND re.created_at >= ?
+     GROUP BY r.level, distance_bucket, cause
+     ORDER BY r.level, distance_bucket`
+  ).bind(since).all();
+
+  const timeouts = await env.DB.prepare(
+    `SELECT r.level, r.difficulty,
+     JSON_EXTRACT(re.event_data, '$.checkpoint_index') AS checkpoint,
+     COUNT(*) AS timeouts
+     FROM ride_events re
+     JOIN rides r ON re.ride_id = r.id
+     WHERE re.event_type = 'timeout' AND re.created_at >= ?
+     GROUP BY r.level, r.difficulty, checkpoint
+     ORDER BY r.level, checkpoint`
+  ).bind(since).all();
+
+  const pylons = await env.DB.prepare(
+    `SELECT r.level,
+     JSON_EXTRACT(re.event_data, '$.pylon_index') AS pylon,
+     ROUND(re.distance, 0) AS distance_m,
+     SUM(CASE WHEN re.event_type = 'pylon_pass' THEN 1 ELSE 0 END) AS passes,
+     SUM(CASE WHEN re.event_type = 'pylon_hit' THEN 1 ELSE 0 END) AS hits
+     FROM ride_events re
+     JOIN rides r ON re.ride_id = r.id
+     WHERE re.event_type IN ('pylon_pass', 'pylon_hit') AND re.created_at >= ?
+     GROUP BY r.level, pylon ORDER BY r.level, re.distance`
+  ).bind(since).all();
+
+  return { heatmap: heatmap.results, timeouts: timeouts.results, pylons: pylons.results };
+}
+
+async function dashConversions(env, since) {
+  const byAction = await env.DB.prepare(
+    `SELECT action, context, COUNT(*) AS clicks,
+     COUNT(DISTINCT session_id) AS unique_sessions
+     FROM conversions WHERE created_at >= ?
+     GROUP BY action, context ORDER BY clicks DESC`
+  ).bind(since).all();
+
+  const daily = await env.DB.prepare(
+    `SELECT DATE(created_at) AS day, action, COUNT(*) AS clicks
+     FROM conversions WHERE created_at >= ?
+     GROUP BY day, action ORDER BY day DESC`
+  ).bind(since).all();
+
+  const clips = await env.DB.prepare(
+    `SELECT DATE(created_at) AS day,
+     COUNT(CASE WHEN event_type = 'clip_save' THEN 1 END) AS saved,
+     COUNT(CASE WHEN event_type = 'clip_save' AND JSON_EXTRACT(event_data, '$.method') = 'share' THEN 1 END) AS shared,
+     COUNT(CASE WHEN event_type = 'clip_discard' THEN 1 END) AS discarded
+     FROM events WHERE event_type IN ('clip_save', 'clip_discard') AND created_at >= ?
+     GROUP BY day ORDER BY day DESC`
+  ).bind(since).all();
+
+  return { byAction: byAction.results, daily: daily.results, clips: clips.results };
+}
+
+async function dashNetwork(env, since) {
+  const roomHealth = await env.DB.prepare(
+    `SELECT COUNT(*) AS total_rooms,
+     COUNT(stoker_joined_at) AS stokers_joined,
+     COUNT(CASE WHEN stoker_joined_via_url = 1 THEN 1 END) AS joined_via_url,
+     COUNT(CASE WHEN webrtc_connected = 1 THEN 1 END) AS webrtc_success,
+     COUNT(CASE WHEN webrtc_connected = 0 AND stoker_joined_at IS NOT NULL THEN 1 END) AS webrtc_failed,
+     COUNT(CASE WHEN connection_type = 'relay' THEN 1 END) AS relay_connections,
+     COUNT(CASE WHEN connection_type = 'p2p' THEN 1 END) AS p2p_connections,
+     COUNT(CASE WHEN p2p_upgrade_succeeded = 1 THEN 1 END) AS p2p_upgrades,
+     SUM(disconnect_count) AS total_disconnects
+     FROM rooms WHERE created_at >= ?`
+  ).bind(since).first();
+
+  const disconnects = await env.DB.prepare(
+    `SELECT DATE(e.created_at) AS day,
+     COUNT(CASE WHEN e.event_type = 'room_disconnect' THEN 1 END) AS disconnects,
+     COUNT(CASE WHEN e.event_type = 'room_disconnect'
+       AND JSON_EXTRACT(e.event_data, '$.during_ride') = 1 THEN 1 END) AS during_ride,
+     COUNT(CASE WHEN e.event_type = 'room_reconnect' THEN 1 END) AS reconnects
+     FROM events e
+     WHERE e.event_type IN ('room_disconnect', 'room_reconnect') AND e.created_at >= ?
+     GROUP BY day ORDER BY day DESC`
+  ).bind(since).all();
+
+  return { roomHealth, disconnects: disconnects.results };
+}
+
+async function dashDevices(env, since) {
+  const devices = await env.DB.prepare(
+    `SELECT device_type, platform, COUNT(*) AS sessions
+     FROM sessions WHERE started_at >= ?
+     GROUP BY device_type, platform ORDER BY sessions DESC`
+  ).bind(since).all();
+
+  const inputMethods = await env.DB.prepare(
+    `SELECT input_method, COUNT(*) AS rides,
+     SUM(completed) AS completed
+     FROM rides WHERE started_at >= ? AND input_method IS NOT NULL
+     GROUP BY input_method ORDER BY rides DESC`
+  ).bind(since).all();
+
+  return { devices: devices.results, inputMethods: inputMethods.results };
+}
+
+async function dashDDA(env, since) {
+  const interventions = await env.DB.prepare(
+    `SELECT JSON_EXTRACT(re.event_data, '$.type') AS assist_type,
+     SUM(CASE WHEN re.event_type = 'dda_assist_offered' THEN 1 ELSE 0 END) AS offered,
+     SUM(CASE WHEN re.event_type = 'dda_assist_accepted' THEN 1 ELSE 0 END) AS accepted,
+     SUM(CASE WHEN re.event_type = 'dda_assist_declined' THEN 1 ELSE 0 END) AS declined
+     FROM ride_events re
+     WHERE re.event_type IN ('dda_assist_offered', 'dda_assist_accepted', 'dda_assist_declined')
+       AND re.created_at >= ?
+     GROUP BY assist_type`
+  ).bind(since).all();
+
+  const rideImpact = await env.DB.prepare(
+    `SELECT
+      CASE WHEN dda_skips_used > 0 THEN 'used_skip'
+           WHEN dda_assists_accepted > 0 THEN 'used_assist'
+           WHEN dda_assists_offered > 0 THEN 'declined_all'
+           ELSE 'no_dda' END AS dda_group,
+      COUNT(*) AS rides, SUM(completed) AS completed,
+      ROUND(AVG(crash_count), 1) AS avg_crashes
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     GROUP BY dda_group`
+  ).bind(since).all();
+
+  return { interventions: interventions.results, rideImpact: rideImpact.results };
 }
 
 // ============================================================
