@@ -22,6 +22,7 @@ export class RaceManager {
     this.finishTime = 0;
     this.collectiblesCount = 0;
     this.crashCount = 0;
+    this.timeoutCount = 0;
     this.restartCount = 0;
     this.inputSource = 'none';
 
@@ -115,6 +116,7 @@ export class RaceManager {
 
     // Check timeout
     if (this.segmentTimeRemaining <= 0 && this.startTime > 0) {
+      this.timeoutCount++;
       return { event: 'timeout' };
     }
 
@@ -163,10 +165,16 @@ export class RaceManager {
       checkpointsPassed: this.passedCheckpoints.size,
       checkpointsTotal: this.checkpoints.length,
       collectibles: this.collectiblesCount,
+      collectiblesTotal: this._collectiblesTotal || 0,
       crashes: this.crashCount,
+      timeoutCount: this.timeoutCount,
       restarts: this.restartCount,
       inputSource: this.inputSource,
       finished: this.finished
     };
+  }
+
+  setCollectiblesTotal(total) {
+    this._collectiblesTotal = total;
   }
 }

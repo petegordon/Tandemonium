@@ -25,6 +25,7 @@ import { GameRecorder } from './game-recorder.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
+import * as analytics from './analytics.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -226,6 +227,13 @@ class Game {
     // Lobby / Room button
     this._lobbyBtn = document.getElementById('lobby-btn');
     this._lobbyBtn.addEventListener('click', () => {
+      if (analytics.getCurrentRideId()) {
+        analytics.endRide({
+          completed: false,
+          abandon_reason: 'lobby_button',
+          distance: this.bike ? this.bike.distanceTraveled : 0,
+        });
+      }
       if (this.net) {
         this._returnToRoom();
       } else {
@@ -254,6 +262,13 @@ class Game {
 
     // Game Over: skip checkpoint (DDA)
     this._onTap('btn-skip-checkpoint', () => {
+      analytics.trackRideEvent('dda_assist_accepted', this.bike ? this.bike.distanceTraveled : 0, {
+        type: 'checkpoint_skip',
+      });
+      if (this.ddaManager) {
+        this.ddaManager.acceptedCount++;
+        this.ddaManager.skipsUsed++;
+      }
       this._hideGameOver();
       if (this.raceManager) {
         // Find next unpassed checkpoint
@@ -299,6 +314,13 @@ class Game {
     // Game Over: quit (full disconnect)
     this._onTap('btn-gameover-lobby', () => {
       this._hideGameOver();
+      if (analytics.getCurrentRideId()) {
+        analytics.endRide({
+          completed: false,
+          abandon_reason: 'end_ride',
+          distance: this.bike ? this.bike.distanceTraveled : 0,
+        });
+      }
       this._returnToLobby();
     });
 
@@ -319,6 +341,7 @@ class Game {
 
     // Victory overlay buttons
     this._onTap('btn-play-again', () => {
+      analytics.trackConversion('replay_click', this.mode !== 'solo' ? 'mp_results' : 'solo_results');
       if (this.mode === 'stoker' && this.net) {
         // Stoker requests restart — captain drives the reset
         this._hideVictory();
@@ -352,6 +375,7 @@ class Game {
     // Victory: quit (full disconnect)
     this._onTap('btn-victory-lobby', () => {
       this._hideVictory();
+      analytics.setPage('lobby');
       this._returnToLobby();
     });
 
@@ -461,6 +485,24 @@ class Game {
 
     // Resize
     window.addEventListener('resize', () => this._onResize());
+
+    // ---- Analytics session init ----
+    const params = new URLSearchParams(window.location.search);
+    const roomParam = params.get('room');
+    analytics.initSession({
+      device_type: isMobile ? 'mobile' : 'desktop',
+      input_method: null,
+      referrer: document.referrer || null,
+      is_stoker: !!roomParam,
+      joined_via_url: !!roomParam,
+      room_code: roomParam ? (roomParam.startsWith('TNDM-') ? roomParam : 'TNDM-' + roomParam) : null,
+      google_uid: (this.lobby.auth && this.lobby.auth.isLoggedIn() && this.lobby.auth.getUser())
+        ? this.lobby.auth.getUser().serverId || null : null,
+      platform: 'browser',
+      screen_width: window.screen.width,
+      screen_height: window.screen.height,
+    });
+    analytics.setPage('landing');
 
     // Start loop
     this.lastTime = performance.now();
@@ -596,12 +638,23 @@ class Game {
     this.net.onP2PUpgrade = () => {
       this._mediaRetryCount = 0;
       this._initiateMediaCall();
+      analytics.trackEvent('room_p2p_upgrade', { succeeded: true });
+      if (this.net.roomCode) {
+        analytics.trackRoomUpdate(this.net.roomCode, { p2p_upgrade_succeeded: 1 });
+      }
     };
 
     this.net.onDisconnected = (reason) => {
       this._hideReconnecting();
       this.recorder.clearPartnerStream();
       updateBadgeDisplay('partner-badges', []);
+      analytics.trackEvent('room_disconnect', {
+        disconnected_role: this.mode === 'captain' ? 'stoker' : 'captain',
+        during_ride: this.state === 'playing',
+      });
+      if (this.net.roomCode) {
+        analytics.trackRoomUpdate(this.net.roomCode, { disconnect_count_increment: 1 });
+      }
       if (this.state !== 'lobby') {
         this._showDisconnect(reason);
       }
@@ -897,6 +950,23 @@ class Game {
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera);
     if (this.obstacleManager) this.obstacleManager.destroy();
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera);
+
+    // Wire up collectibles total for analytics
+    this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
+
+    // Analytics: start ride tracking (only if no ride is already active —
+    // _startCountdown is also called on restart-from-beginning after early crashes)
+    if (!analytics.getCurrentRideId()) {
+      analytics.setPage('ride');
+      analytics.startRide({
+        level: level.id,
+        role: this.mode,
+        room_code: this.net ? this.net.roomCode : null,
+        difficulty: difficultyName,
+        bike_preset: this.lobby.selectedPresetKey,
+        steering_feel: TUNE.steeringFeel,
+      });
+    }
     this.hud.initProgress(level);
     this.hud.initTimer();
     // Show initial segment budget during countdown
@@ -1004,6 +1074,13 @@ class Game {
       this._playBeep(800, 0.4);
       if (this.raceManager) this.raceManager.start();
 
+      // Update analytics input method now that motion/gyro has had time to activate
+      const steerSrc = this.balanceCtrl.getSteerSource();
+      if (steerSrc && steerSrc !== 'none') {
+        const methodMap = { keyboard: 'keyboard', gamepad: 'gamepad_stick', motion: 'tilt', 'gamepad-gyro': 'gamepad_gyro' };
+        analytics.setInputMethod(methodMap[steerSrc] || steerSrc);
+      }
+
       // Captain sends EVT_START to stoker
       if (this.mode === 'captain' && this.net) {
         this.net.sendEvent(EVT_START);
@@ -1076,6 +1153,16 @@ class Game {
   }
 
   _onTimerExpired() {
+    // Analytics: timeout ride event
+    if (this.bike && this.raceManager) {
+      const cpIdx = this.raceManager.passedCheckpoints.size;
+      analytics.trackRideEvent('timeout', this.bike.distanceTraveled, {
+        checkpoint_index: cpIdx,
+        time_elapsed_ms: this.raceManager.getElapsedMs(),
+      });
+      analytics.flushRideEvents();
+    }
+
     // DDA: timeout counts as a failure
     if (this.ddaManager && this.mode !== 'stoker') {
       let checkpointD = 0;
@@ -1131,6 +1218,12 @@ class Game {
   // ============================================================
 
   _resetGame(fromRemote = false, fromBeginning = false) {
+    // Analytics: track reset/restart
+    analytics.trackRideEvent('reset', this.bike ? this.bike.distanceTraveled : 0, {
+      from_beginning: fromBeginning,
+      checkpoint: this.raceManager ? this.raceManager.passedCheckpoints.size : 0,
+    });
+
     // Resume from last checkpoint if the race was in progress (not finished/victory)
     let checkpointD = 0;
     if (!fromBeginning && this.raceManager &&
@@ -1318,6 +1411,9 @@ class Game {
     if (this.raceManager) this.raceManager.crashCount++;
     hapticCrash();
 
+    // Crash analytics already recorded at impact time in _recordCrash()
+    this._lastCrashCause = null;
+
     // DDA: record failure at current checkpoint
     let checkpointD = 0;
     if (this.raceManager && this.raceManager.passedCheckpoints.size > 0) {
@@ -1440,8 +1536,12 @@ class Game {
       this._showCheckpointFlash();
       hapticCheckpoint();
 
-
-
+      // Analytics: checkpoint ride event
+      analytics.trackRideEvent('checkpoint', raceEvent.distance, {
+        checkpoint_index: raceEvent.passed,
+        speed: this.bike ? this.bike.speed : 0,
+      });
+      analytics.flushRideEvents();
 
       // DDA: reset adjustments on checkpoint pass
       if (this.ddaManager) {
@@ -1477,6 +1577,11 @@ class Game {
     this.bike.boostTimer = 3; // 3-second speed boost
     this._playBeep(1200, 0.1);
     setTimeout(() => this._playBeep(1600, 0.08), 80);
+
+    // Analytics: collectible ride event
+    analytics.trackRideEvent('collectible', this.bike.distanceTraveled, {
+      collectible_type: this.lobby.selectedLevel?.collectibles || 'presents',
+    });
   }
 
   _checkAchievements(dt) {
@@ -1505,6 +1610,10 @@ class Game {
     newlyEarned.forEach(a => {
       showAchievementToast(a);
       this._updateBadges();
+      analytics.trackEvent('achievement_earned', {
+        achievement_id: a.id,
+        ride_id: analytics.getCurrentRideId(),
+      });
     });
   }
 
@@ -1697,6 +1806,46 @@ class Game {
           '</div>';
         statsEl.appendChild(contribDiv);
       }
+    }
+
+    // Analytics: end ride with full metrics
+    if (summary) {
+      const contribStats = contribData
+        ? (contribData.mode === 'solo' ? contribData.solo
+           : contribData[this.mode] || contribData.captain)
+        : {};
+      analytics.endRide({
+        completed: true,
+        duration_ms: summary.timeMs,
+        distance: summary.distance,
+        checkpoints_passed: summary.checkpointsPassed,
+        checkpoints_total: summary.checkpointsTotal,
+        collectibles: summary.collectibles,
+        collectibles_total: summary.collectiblesTotal || 0,
+        crash_count: summary.crashes,
+        timeout_count: summary.timeoutCount || 0,
+        restarts: summary.restarts,
+        max_speed: contribData ? contribData.maxSpeed : null,
+        avg_speed: contribData ? contribData.avgSpeed : null,
+        balance_safe_pct: contribStats.safePct,
+        balance_danger_pct: contribStats.dangerPct,
+        on_road_pct: contribStats.onRoadPct,
+        center_pct: contribStats.centerPct,
+        avg_lateral_offset: contribStats.avgLateral,
+        lean_input_total: contribStats.leanInputTotal,
+        lean_correction_total: contribStats.leanCorrectionTotal,
+        pedal_taps: contribStats.totalTaps,
+        pedal_correct: contribStats.correctTaps,
+        pedal_wrong: contribStats.wrongTaps,
+        pedal_power: contribStats.totalPower,
+        offset_quality: this.sharedPedal ? this.sharedPedal.offsetScore : null,
+        contribution_pct: contribStats.overallPct || null,
+        dda_assists_offered: this.ddaManager ? this.ddaManager.offeredCount : 0,
+        dda_assists_accepted: this.ddaManager ? this.ddaManager.acceptedCount : 0,
+        dda_skips_used: this.ddaManager ? this.ddaManager.skipsUsed : 0,
+        safety_used: this.safetyMode ? 1 : 0,
+      });
+      analytics.setPage(this.mode !== 'solo' ? 'mp_results' : 'solo_results');
     }
 
     // Check finish-specific achievements
@@ -1995,6 +2144,7 @@ class Game {
 
     this.state = 'lobby';
     this.lobby.show();
+    analytics.setPage('lobby');
   }
 
   _returnToRoom() {
@@ -2351,6 +2501,19 @@ class Game {
   // TREE COLLISION
   // ============================================================
 
+  _recordCrash(cause) {
+    // Capture crash data at the moment of impact (speed/lean are still valid)
+    this._lastCrashCause = cause;
+    if (this.bike) {
+      analytics.trackRideEvent('crash', this.bike.distanceTraveled, {
+        lean_angle: this.bike.lean,
+        speed: this.bike.speed,
+        cause,
+      });
+      analytics.flushRideEvents();
+    }
+  }
+
   _checkTreeCollision() {
     if (this.bike.fallen || this.bike.speed < 0.5) return;
     // Skip tree collision when level config disables it — only pylons matter
@@ -2358,6 +2521,7 @@ class Game {
     if (level && level.treeCollision === false) {
       // Still check pylon collision
       if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
+        this._recordCrash('obstacle');
         this.bike._fall();
         this.chaseCamera.shakeAmount = 0.25;
         this._playBeep(150, 0.4);
@@ -2369,6 +2533,7 @@ class Game {
       this.bike.position, this.bike.roadD, this.bike.heading
     );
     if (result.hit) {
+      this._recordCrash('tree');
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.2;
       this._playBeep(200, 0.3);
@@ -2377,6 +2542,7 @@ class Game {
     }
     // Pylon obstacle collision
     if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
+      this._recordCrash('obstacle');
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.25;
       this._playBeep(150, 0.4);
@@ -2453,6 +2619,11 @@ class Game {
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
+
+    // Record balance crash (bike fell from lean, not from tree/obstacle)
+    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
+      this._recordCrash('balance');
+    }
 
     // Race progress + contribution tracking
     if (this.raceManager) {
@@ -2555,6 +2726,11 @@ class Game {
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
+
+    // Record balance crash (bike fell from lean, not from tree/obstacle)
+    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
+      this._recordCrash('balance');
+    }
 
     // Race progress + contribution tracking (captain is authoritative)
     // Freeze race timer while reconnecting
@@ -2935,6 +3111,11 @@ class Game {
     document.getElementById('tutorial-skip').onclick = () => this._skipTutorial();
     document.getElementById('btn-tutorial-continue').onclick = () => this._finishTutorial();
 
+    // Analytics: tutorial start
+    analytics.setPage('tutorial');
+    analytics.trackEvent('tutorial_start', { input_method: analytics.getInputMethod() });
+    this._tutorialStartTime = performance.now();
+
     // Start the ride via normal countdown flow
     this._startCountdown();
 
@@ -3314,6 +3495,20 @@ class Game {
   _tutorialComplete() {
     this._tutorialAttempts++;
 
+    // Analytics: tutorial complete
+    const durationSec = this._tutorialStartTime ? (performance.now() - this._tutorialStartTime) / 1000 : 0;
+    analytics.trackEvent('tutorial_complete', {
+      duration_sec: Math.round(durationSec),
+      total_attempts: this._tutorialAttempts,
+    });
+    if (analytics.getCurrentRideId()) {
+      analytics.endRide({
+        completed: true,
+        duration_ms: Math.round(durationSec * 1000),
+        distance: this.bike ? this.bike.distanceTraveled : 0,
+      });
+    }
+
     // Compute tuning parameters from measurements
     const isGyro = this.input.gyroConnected;
     const params = this._computeTuningParams(isGyro);
@@ -3463,6 +3658,18 @@ class Game {
   }
 
   _skipTutorial() {
+    // Analytics: tutorial abandon
+    const lastPhase = this._tutTargetPhase || 0;
+    const elapsed = this._tutorialStartTime ? (performance.now() - this._tutorialStartTime) / 1000 : 0;
+    analytics.trackEvent('tutorial_abandon', { last_phase: lastPhase, time_in_phase_sec: Math.round(elapsed) });
+    if (analytics.getCurrentRideId()) {
+      analytics.endRide({
+        completed: false,
+        abandon_reason: 'lobby_button',
+        distance: this.bike ? this.bike.distanceTraveled : 0,
+      });
+    }
+
     // Apply defaults and save so tutorial doesn't re-run
     const isGyro = this.input.gyroConnected;
     const saveData = {
