@@ -13,6 +13,11 @@ export class DDAManager {
     this._adjustmentsActive = false;
     this._assistOffered = false;
     this._skipOffered = false;
+
+    // Analytics counters
+    this.offeredCount = 0;
+    this.acceptedCount = 0;
+    this.skipsUsed = 0;
   }
 
   recordFailure(checkpointD) {
@@ -76,10 +81,12 @@ export class DDAManager {
 
   markAssistOffered() {
     this._assistOffered = true;
+    this.offeredCount++;
   }
 
   markSkipOffered() {
     this._skipOffered = true;
+    this.offeredCount++;
   }
 
   reset() {

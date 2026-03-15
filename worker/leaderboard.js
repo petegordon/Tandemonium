@@ -46,6 +46,53 @@ export default {
         return handlePlayerProfile(request, env, url, corsOrigin);
       }
 
+      // ---- Analytics routes (fire-and-forget, no auth required) ----
+      if (path === '/api/analytics/session' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleAnalyticsSession(request, env, corsOrigin);
+      }
+      if (path === '/api/analytics/event/batch' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleAnalyticsEventBatch(request, env, corsOrigin);
+      }
+      if (path === '/api/analytics/ride' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.ANALYTICS_RIDE_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleAnalyticsRideCreate(request, env, corsOrigin);
+      }
+      if (path.match(/^\/api\/analytics\/ride\/[^/]+$/) && request.method === 'PUT') {
+        const limited = await checkRateLimit(env.ANALYTICS_RIDE_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        const rideId = path.split('/')[4];
+        return handleAnalyticsRideUpdate(request, env, corsOrigin, rideId);
+      }
+      if (path.match(/^\/api\/analytics\/ride\/[^/]+\/events$/) && request.method === 'POST') {
+        const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        const rideId = path.split('/')[4];
+        return handleAnalyticsRideEvents(request, env, corsOrigin, rideId);
+      }
+      if (path === '/api/analytics/room' && request.method === 'POST') {
+        return handleAnalyticsRoomCreate(request, env, corsOrigin);
+      }
+      if (path.match(/^\/api\/analytics\/room\/[^/]+$/) && request.method === 'PUT') {
+        const roomCode = path.split('/')[4];
+        return handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode);
+      }
+      if (path === '/api/analytics/conversion' && request.method === 'POST') {
+        return handleAnalyticsConversion(request, env, corsOrigin);
+      }
+
+      // ---- Dashboard query routes (read-only, rate limited) ----
+      if (path.startsWith('/api/analytics/dashboard/')) {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        const dashRoute = path.replace('/api/analytics/dashboard/', '');
+        return handleDashboard(dashRoute, url, env, corsOrigin);
+      }
+
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
     } catch (e) {
       try { writeMetric(env, 'error', e.message); } catch (_) { /* don't mask original error */ }
@@ -586,13 +633,584 @@ async function submitScoreWithLimit(request, env, corsOrigin, userId) {
 }
 
 // ============================================================
+// ANALYTICS HANDLERS
+// ============================================================
+
+function isValidUUID(str) {
+  return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+async function handleAnalyticsSession(request, env, corsOrigin) {
+  const body = await request.json();
+  if (!body.id || !isValidUUID(body.id)) {
+    return jsonResponse({ error: 'Invalid session id' }, 400, corsOrigin);
+  }
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
+     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    body.id,
+    body.started_at || new Date().toISOString(),
+    body.device_type || null,
+    body.input_method || null,
+    body.referrer || null,
+    body.user_agent || null,
+    body.is_stoker ? 1 : 0,
+    body.joined_via_url ? 1 : 0,
+    body.room_code || null,
+    body.google_uid || null,
+    body.platform || 'browser',
+    body.screen_width || null,
+    body.screen_height || null
+  ).run();
+
+  writeMetric(env, 'analytics_session');
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsEventBatch(request, env, corsOrigin) {
+  const body = await request.json();
+  const events = body.events;
+  if (!Array.isArray(events) || events.length === 0) {
+    return jsonResponse({ error: 'No events' }, 400, corsOrigin);
+  }
+
+  const stmt = env.DB.prepare(
+    'INSERT INTO events (session_id, event_type, event_data, created_at, page, input_method) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+  const batch = events.map(e =>
+    stmt.bind(
+      e.session_id,
+      e.event_type,
+      e.event_data ? JSON.stringify(e.event_data) : null,
+      e.created_at || new Date().toISOString(),
+      e.page || null,
+      e.input_method || null
+    )
+  );
+  await env.DB.batch(batch);
+
+  writeMetric(env, 'analytics_events', String(events.length));
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRideCreate(request, env, corsOrigin) {
+  const body = await request.json();
+  if (!body.id || !isValidUUID(body.id)) {
+    return jsonResponse({ error: 'Invalid ride id' }, 400, corsOrigin);
+  }
+  if (!body.session_id || !isValidUUID(body.session_id)) {
+    return jsonResponse({ error: 'Invalid session_id' }, 400, corsOrigin);
+  }
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO rides (id, session_id, room_code, level, role, difficulty,
+     input_method, bike_preset, steering_feel, started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    body.id,
+    body.session_id,
+    body.room_code || null,
+    body.level || 'unknown',
+    body.role || 'solo',
+    body.difficulty || 'normal',
+    body.input_method || 'unknown',
+    body.bike_preset || null,
+    body.steering_feel ?? null,
+    body.started_at || new Date().toISOString()
+  ).run();
+
+  writeMetric(env, 'analytics_ride_start', body.level);
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
+  if (!isValidUUID(rideId)) {
+    return jsonResponse({ error: 'Invalid ride id' }, 400, corsOrigin);
+  }
+
+  const body = await request.json();
+
+  // Build dynamic UPDATE from provided fields
+  const allowedFields = [
+    'ended_at', 'completed', 'abandon_reason', 'duration_ms', 'distance',
+    'checkpoints_passed', 'checkpoints_total', 'collectibles', 'collectibles_total',
+    'crash_count', 'timeout_count', 'restarts',
+    'max_speed', 'avg_speed',
+    'balance_safe_pct', 'balance_danger_pct', 'on_road_pct', 'center_pct', 'avg_lateral_offset',
+    'lean_input_total', 'lean_correction_total',
+    'pedal_taps', 'pedal_correct', 'pedal_wrong', 'pedal_power',
+    'offset_quality', 'contribution_pct',
+    'dda_assists_offered', 'dda_assists_accepted', 'dda_skips_used', 'safety_used'
+  ];
+
+  const sets = [];
+  const values = [];
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) {
+      sets.push(`${field} = ?`);
+      values.push(body[field]);
+    }
+  }
+
+  if (sets.length === 0) {
+    return jsonResponse({ success: true }, 200, corsOrigin);
+  }
+
+  values.push(rideId);
+  await env.DB.prepare(
+    `UPDATE rides SET ${sets.join(', ')} WHERE id = ?`
+  ).bind(...values).run();
+
+  writeMetric(env, 'analytics_ride_end', body.completed ? 'complete' : 'abandon');
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
+  if (!isValidUUID(rideId)) {
+    return jsonResponse({ error: 'Invalid ride id' }, 400, corsOrigin);
+  }
+
+  const body = await request.json();
+  const events = body.events;
+  if (!Array.isArray(events) || events.length === 0) {
+    return jsonResponse({ error: 'No events' }, 400, corsOrigin);
+  }
+
+  const stmt = env.DB.prepare(
+    'INSERT INTO ride_events (ride_id, event_type, distance, event_data, created_at) VALUES (?, ?, ?, ?, ?)'
+  );
+  const batch = events.map(e =>
+    stmt.bind(
+      rideId,
+      e.event_type,
+      e.distance ?? null,
+      e.event_data ? JSON.stringify(e.event_data) : null,
+      e.created_at || new Date().toISOString()
+    )
+  );
+  await env.DB.batch(batch);
+
+  writeMetric(env, 'analytics_ride_events', String(events.length));
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRoomCreate(request, env, corsOrigin) {
+  const body = await request.json();
+  if (!body.code || !body.captain_session_id) {
+    return jsonResponse({ error: 'Missing code or captain_session_id' }, 400, corsOrigin);
+  }
+
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO rooms (code, captain_session_id, created_at)
+     VALUES (?, ?, ?)`
+  ).bind(
+    body.code,
+    body.captain_session_id,
+    body.created_at || new Date().toISOString()
+  ).run();
+
+  writeMetric(env, 'analytics_room_create');
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
+  const body = await request.json();
+
+  // Handle disconnect_count_increment specially
+  if (body.disconnect_count_increment) {
+    await env.DB.prepare(
+      'UPDATE rooms SET disconnect_count = disconnect_count + ? WHERE code = ?'
+    ).bind(body.disconnect_count_increment, roomCode).run();
+    delete body.disconnect_count_increment;
+  }
+
+  // Handle rides_played_increment
+  if (body.rides_played_increment) {
+    await env.DB.prepare(
+      'UPDATE rooms SET rides_played = rides_played + ? WHERE code = ?'
+    ).bind(body.rides_played_increment, roomCode).run();
+    delete body.rides_played_increment;
+  }
+
+  // Build dynamic UPDATE for remaining fields
+  const allowedFields = [
+    'stoker_joined_at', 'stoker_session_id', 'stoker_joined_via_url',
+    'webrtc_connected', 'webrtc_fail_reason', 'connection_type',
+    'p2p_upgrade_succeeded', 'video_enabled', 'audio_enabled'
+  ];
+
+  const sets = [];
+  const values = [];
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) {
+      sets.push(`${field} = ?`);
+      values.push(body[field]);
+    }
+  }
+
+  if (sets.length > 0) {
+    values.push(roomCode);
+    await env.DB.prepare(
+      `UPDATE rooms SET ${sets.join(', ')} WHERE code = ?`
+    ).bind(...values).run();
+  }
+
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+async function handleAnalyticsConversion(request, env, corsOrigin) {
+  const body = await request.json();
+  if (!body.session_id || !body.action) {
+    return jsonResponse({ error: 'Missing session_id or action' }, 400, corsOrigin);
+  }
+
+  await env.DB.prepare(
+    'INSERT INTO conversions (session_id, action, context, url, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).bind(
+    body.session_id,
+    body.action,
+    body.context || null,
+    body.url || null,
+    body.created_at || new Date().toISOString()
+  ).run();
+
+  writeMetric(env, 'analytics_conversion', body.action);
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+// ============================================================
+// DASHBOARD QUERIES
+// ============================================================
+
+async function handleDashboard(route, url, env, corsOrigin) {
+  const days = parseInt(url.searchParams.get('days') || '30');
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+
+  const handlers = {
+    daily: () => dashDaily(env, since),
+    funnel: () => dashFunnel(env, since),
+    rides: () => dashRides(env, since),
+    crashes: () => dashCrashes(env, since),
+    conversions: () => dashConversions(env, since),
+    network: () => dashNetwork(env, since),
+    devices: () => dashDevices(env, since),
+    dda: () => dashDDA(env, since),
+    overview: () => dashOverview(env, since),
+  };
+
+  const handler = handlers[route];
+  if (!handler) return jsonResponse({ error: 'Unknown dashboard route' }, 404, corsOrigin);
+
+  const data = await handler();
+  return jsonResponse(data, 200, corsOrigin);
+}
+
+async function dashOverview(env, since) {
+  const sessions = await env.DB.prepare(
+    `SELECT COUNT(*) as total, COUNT(CASE WHEN is_stoker = 1 THEN 1 END) as stokers,
+     COUNT(CASE WHEN joined_via_url = 1 THEN 1 END) as url_joins
+     FROM sessions WHERE started_at >= ?`
+  ).bind(since).first();
+
+  const rides = await env.DB.prepare(
+    `SELECT COUNT(*) as total, SUM(completed) as completed,
+     COUNT(CASE WHEN level = 'tutorial' THEN 1 END) as tutorials
+     FROM rides WHERE started_at >= ?`
+  ).bind(since).first();
+
+  const conversions = await env.DB.prepare(
+    `SELECT COUNT(*) as total,
+     COUNT(CASE WHEN action = 'steam_wishlist_click' THEN 1 END) as steam_clicks,
+     COUNT(CASE WHEN action = 'replay_click' THEN 1 END) as replays,
+     COUNT(CASE WHEN action = 'room_code_generated' THEN 1 END) as rooms_created
+     FROM conversions WHERE created_at >= ?`
+  ).bind(since).first();
+
+  const rooms = await env.DB.prepare(
+    `SELECT COUNT(*) as total,
+     COUNT(stoker_joined_at) as stokers_joined,
+     COUNT(CASE WHEN webrtc_connected = 1 THEN 1 END) as connected
+     FROM rooms WHERE created_at >= ?`
+  ).bind(since).first();
+
+  return { sessions, rides, conversions, rooms };
+}
+
+async function dashDaily(env, since) {
+  const rows = await env.DB.prepare(
+    `SELECT DATE(s.started_at) AS day,
+     COUNT(DISTINCT s.id) AS sessions,
+     COUNT(DISTINCT CASE WHEN s.is_stoker = 1 THEN s.id END) AS stoker_sessions,
+     COUNT(DISTINCT r.id) AS total_rides,
+     COUNT(DISTINCT CASE WHEN r.completed = 1 THEN r.id END) AS completed_rides,
+     COUNT(DISTINCT CASE WHEN r.level = 'tutorial' THEN r.id END) AS tutorial_rides
+     FROM sessions s
+     LEFT JOIN rides r ON r.session_id = s.id
+     WHERE s.started_at >= ?
+     GROUP BY DATE(s.started_at)
+     ORDER BY day DESC
+     LIMIT 30`
+  ).bind(since).all();
+  return { daily: rows.results };
+}
+
+async function dashFunnel(env, since) {
+  // Tutorial starts by input method
+  const tutStarts = await env.DB.prepare(
+    `SELECT input_method, COUNT(*) AS started
+     FROM events WHERE event_type = 'tutorial_start' AND created_at >= ?
+     GROUP BY input_method`
+  ).bind(since).all();
+
+  // Tutorial completions by input method
+  const tutCompletes = await env.DB.prepare(
+    `SELECT input_method, COUNT(*) AS completed
+     FROM events WHERE event_type = 'tutorial_complete' AND created_at >= ?
+     GROUP BY input_method`
+  ).bind(since).all();
+
+  // Merge starts and completions
+  const completeMap = {};
+  (tutCompletes.results || []).forEach(r => { completeMap[r.input_method || 'unknown'] = r.completed; });
+  const tutorial = (tutStarts.results || []).map(r => ({
+    input_method: r.input_method || 'unknown',
+    started: r.started,
+    completed: completeMap[r.input_method || 'unknown'] || 0,
+  }));
+
+  const tutorialPhases = await env.DB.prepare(
+    `SELECT
+      JSON_EXTRACT(event_data, '$.phase') AS phase,
+      JSON_EXTRACT(event_data, '$.phase_name') AS phase_name,
+      COUNT(*) AS completions,
+      ROUND(AVG(CAST(JSON_EXTRACT(event_data, '$.attempts') AS REAL)), 1) AS avg_attempts,
+      ROUND(AVG(CAST(JSON_EXTRACT(event_data, '$.time_sec') AS REAL)), 1) AS avg_time_sec
+     FROM events
+     WHERE event_type = 'tutorial_phase' AND created_at >= ?
+     GROUP BY phase ORDER BY phase`
+  ).bind(since).all();
+
+  // Solo to MP: separate queries to avoid cross-table join issues
+  const soloRiders = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT session_id) AS cnt FROM rides
+     WHERE role IN ('captain', 'solo') AND started_at >= ?`
+  ).bind(since).first();
+
+  const roomsCreated = await env.DB.prepare(
+    `SELECT COUNT(*) AS cnt FROM rooms WHERE created_at >= ?`
+  ).bind(since).first();
+
+  const roomsJoined = await env.DB.prepare(
+    `SELECT COUNT(*) AS cnt FROM rooms WHERE stoker_joined_at IS NOT NULL AND created_at >= ?`
+  ).bind(since).first();
+
+  const soloToMp = {
+    solo_riders: soloRiders?.cnt || 0,
+    created_rooms: roomsCreated?.cnt || 0,
+    rooms_with_stoker: roomsJoined?.cnt || 0,
+  };
+
+  return { tutorial, tutorialPhases: tutorialPhases.results, soloToMp };
+}
+
+async function dashRides(env, since) {
+  const byLevel = await env.DB.prepare(
+    `SELECT level, difficulty, input_method,
+     COUNT(*) AS attempts, SUM(completed) AS completions,
+     ROUND(AVG(CASE WHEN completed = 1 THEN duration_ms END) / 1000.0, 1) AS avg_time_sec,
+     ROUND(AVG(crash_count), 1) AS avg_crashes,
+     ROUND(AVG(timeout_count), 1) AS avg_timeouts
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     GROUP BY level, difficulty, input_method
+     ORDER BY level, difficulty`
+  ).bind(since).all();
+
+  const abandons = await env.DB.prepare(
+    `SELECT level, abandon_reason,
+     COUNT(*) AS abandonments,
+     ROUND(AVG(distance), 0) AS avg_distance,
+     ROUND(AVG(crash_count), 1) AS avg_crashes
+     FROM rides
+     WHERE completed = 0 AND abandon_reason IS NOT NULL AND started_at >= ?
+     GROUP BY level, abandon_reason
+     ORDER BY level, abandonments DESC`
+  ).bind(since).all();
+
+  const steeringFeel = await env.DB.prepare(
+    `SELECT
+      CASE WHEN steering_feel < 0.33 THEN 'stable (0-0.33)'
+           WHEN steering_feel < 0.67 THEN 'balanced (0.33-0.67)'
+           ELSE 'responsive (0.67-1.0)' END AS feel_bucket,
+      COUNT(*) AS rides, SUM(completed) AS completed,
+      ROUND(AVG(crash_count), 1) AS avg_crashes
+     FROM rides WHERE level != 'tutorial' AND steering_feel IS NOT NULL AND started_at >= ?
+     GROUP BY feel_bucket`
+  ).bind(since).all();
+
+  const bikePresets = await env.DB.prepare(
+    `SELECT bike_preset, COUNT(*) AS rides,
+     COUNT(DISTINCT session_id) AS unique_players,
+     SUM(completed) AS completed
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     GROUP BY bike_preset ORDER BY rides DESC`
+  ).bind(since).all();
+
+  return {
+    byLevel: byLevel.results,
+    abandons: abandons.results,
+    steeringFeel: steeringFeel.results,
+    bikePresets: bikePresets.results,
+  };
+}
+
+async function dashCrashes(env, since) {
+  const heatmap = await env.DB.prepare(
+    `SELECT r.level,
+     CAST(ROUND(re.distance / 10) * 10 AS INTEGER) AS distance_bucket,
+     JSON_EXTRACT(re.event_data, '$.cause') AS cause,
+     COUNT(*) AS crashes
+     FROM ride_events re
+     JOIN rides r ON re.ride_id = r.id
+     WHERE re.event_type = 'crash' AND re.created_at >= ?
+     GROUP BY r.level, distance_bucket, cause
+     ORDER BY r.level, distance_bucket`
+  ).bind(since).all();
+
+  const timeouts = await env.DB.prepare(
+    `SELECT r.level, r.difficulty,
+     JSON_EXTRACT(re.event_data, '$.checkpoint_index') AS checkpoint,
+     COUNT(*) AS timeouts
+     FROM ride_events re
+     JOIN rides r ON re.ride_id = r.id
+     WHERE re.event_type = 'timeout' AND re.created_at >= ?
+     GROUP BY r.level, r.difficulty, checkpoint
+     ORDER BY r.level, checkpoint`
+  ).bind(since).all();
+
+  const pylons = await env.DB.prepare(
+    `SELECT r.level,
+     JSON_EXTRACT(re.event_data, '$.pylon_index') AS pylon,
+     ROUND(re.distance, 0) AS distance_m,
+     SUM(CASE WHEN re.event_type = 'pylon_pass' THEN 1 ELSE 0 END) AS passes,
+     SUM(CASE WHEN re.event_type = 'pylon_hit' THEN 1 ELSE 0 END) AS hits
+     FROM ride_events re
+     JOIN rides r ON re.ride_id = r.id
+     WHERE re.event_type IN ('pylon_pass', 'pylon_hit') AND re.created_at >= ?
+     GROUP BY r.level, pylon ORDER BY r.level, re.distance`
+  ).bind(since).all();
+
+  return { heatmap: heatmap.results, timeouts: timeouts.results, pylons: pylons.results };
+}
+
+async function dashConversions(env, since) {
+  const byAction = await env.DB.prepare(
+    `SELECT action, context, COUNT(*) AS clicks,
+     COUNT(DISTINCT session_id) AS unique_sessions
+     FROM conversions WHERE created_at >= ?
+     GROUP BY action, context ORDER BY clicks DESC`
+  ).bind(since).all();
+
+  const daily = await env.DB.prepare(
+    `SELECT DATE(created_at) AS day, action, COUNT(*) AS clicks
+     FROM conversions WHERE created_at >= ?
+     GROUP BY day, action ORDER BY day DESC`
+  ).bind(since).all();
+
+  const clips = await env.DB.prepare(
+    `SELECT DATE(created_at) AS day,
+     COUNT(CASE WHEN event_type = 'clip_save' THEN 1 END) AS saved,
+     COUNT(CASE WHEN event_type = 'clip_save' AND JSON_EXTRACT(event_data, '$.method') = 'share' THEN 1 END) AS shared,
+     COUNT(CASE WHEN event_type = 'clip_discard' THEN 1 END) AS discarded
+     FROM events WHERE event_type IN ('clip_save', 'clip_discard') AND created_at >= ?
+     GROUP BY day ORDER BY day DESC`
+  ).bind(since).all();
+
+  return { byAction: byAction.results, daily: daily.results, clips: clips.results };
+}
+
+async function dashNetwork(env, since) {
+  const roomHealth = await env.DB.prepare(
+    `SELECT COUNT(*) AS total_rooms,
+     COUNT(stoker_joined_at) AS stokers_joined,
+     COUNT(CASE WHEN stoker_joined_via_url = 1 THEN 1 END) AS joined_via_url,
+     COUNT(CASE WHEN webrtc_connected = 1 THEN 1 END) AS webrtc_success,
+     COUNT(CASE WHEN webrtc_connected = 0 AND stoker_joined_at IS NOT NULL THEN 1 END) AS webrtc_failed,
+     COUNT(CASE WHEN connection_type = 'relay' THEN 1 END) AS relay_connections,
+     COUNT(CASE WHEN connection_type = 'p2p' THEN 1 END) AS p2p_connections,
+     COUNT(CASE WHEN p2p_upgrade_succeeded = 1 THEN 1 END) AS p2p_upgrades,
+     SUM(disconnect_count) AS total_disconnects
+     FROM rooms WHERE created_at >= ?`
+  ).bind(since).first();
+
+  const disconnects = await env.DB.prepare(
+    `SELECT DATE(e.created_at) AS day,
+     COUNT(CASE WHEN e.event_type = 'room_disconnect' THEN 1 END) AS disconnects,
+     COUNT(CASE WHEN e.event_type = 'room_disconnect'
+       AND JSON_EXTRACT(e.event_data, '$.during_ride') = 1 THEN 1 END) AS during_ride,
+     COUNT(CASE WHEN e.event_type = 'room_reconnect' THEN 1 END) AS reconnects
+     FROM events e
+     WHERE e.event_type IN ('room_disconnect', 'room_reconnect') AND e.created_at >= ?
+     GROUP BY day ORDER BY day DESC`
+  ).bind(since).all();
+
+  return { roomHealth, disconnects: disconnects.results };
+}
+
+async function dashDevices(env, since) {
+  const devices = await env.DB.prepare(
+    `SELECT device_type, platform, COUNT(*) AS sessions
+     FROM sessions WHERE started_at >= ?
+     GROUP BY device_type, platform ORDER BY sessions DESC`
+  ).bind(since).all();
+
+  const inputMethods = await env.DB.prepare(
+    `SELECT input_method, COUNT(*) AS rides,
+     SUM(completed) AS completed
+     FROM rides WHERE started_at >= ? AND input_method IS NOT NULL
+     GROUP BY input_method ORDER BY rides DESC`
+  ).bind(since).all();
+
+  return { devices: devices.results, inputMethods: inputMethods.results };
+}
+
+async function dashDDA(env, since) {
+  const interventions = await env.DB.prepare(
+    `SELECT JSON_EXTRACT(re.event_data, '$.type') AS assist_type,
+     SUM(CASE WHEN re.event_type = 'dda_assist_offered' THEN 1 ELSE 0 END) AS offered,
+     SUM(CASE WHEN re.event_type = 'dda_assist_accepted' THEN 1 ELSE 0 END) AS accepted,
+     SUM(CASE WHEN re.event_type = 'dda_assist_declined' THEN 1 ELSE 0 END) AS declined
+     FROM ride_events re
+     WHERE re.event_type IN ('dda_assist_offered', 'dda_assist_accepted', 'dda_assist_declined')
+       AND re.created_at >= ?
+     GROUP BY assist_type`
+  ).bind(since).all();
+
+  const rideImpact = await env.DB.prepare(
+    `SELECT
+      CASE WHEN dda_skips_used > 0 THEN 'used_skip'
+           WHEN dda_assists_accepted > 0 THEN 'used_assist'
+           WHEN dda_assists_offered > 0 THEN 'declined_all'
+           ELSE 'no_dda' END AS dda_group,
+      COUNT(*) AS rides, SUM(completed) AS completed,
+      ROUND(AVG(crash_count), 1) AS avg_crashes
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     GROUP BY dda_group`
+  ).bind(since).all();
+
+  return { interventions: interventions.results, rideImpact: rideImpact.results };
+}
+
+// ============================================================
 // HELPERS
 // ============================================================
 
 function corsHeaders(origin) {
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400'
   };

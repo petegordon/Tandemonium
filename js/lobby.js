@@ -10,6 +10,7 @@ import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
+import * as analytics from './analytics.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -469,6 +470,7 @@ export class Lobby {
     document.getElementById('btn-solo').addEventListener('click', () => {
       this._requestMotion();
       this._pendingMode = 'solo';
+      this._detectAndSetInputMethod();
       if (!this.license.isLicensed) {
         // Demo: skip level select, go straight to tutorial
         this._forceWizard = true;
@@ -621,10 +623,16 @@ export class Lobby {
 
     // Permission toggles
     this.toggleAll.addEventListener('click', () => this._toggleAll());
-    this.toggleCamera.addEventListener('click', () => this._toggleCamera());
+    this.toggleCamera.addEventListener('click', () => {
+      this._toggleCamera();
+      analytics.trackEvent('video_toggle', { enabled: this.cameraActive });
+    });
     this.toggleMotion.addEventListener('click', () => this._toggleMotion());
     this.toggleJoystick.addEventListener('click', () => this._toggleJoystick());
-    this.toggleAudio.addEventListener('click', () => this._toggleAudio());
+    this.toggleAudio.addEventListener('click', () => {
+      this._toggleAudio();
+      analytics.trackEvent('audio_toggle', { enabled: this.audioActive });
+    });
     // Music toggle: tap = mute/unmute, long press (500ms) = show volume slider
     this._musicLongPressed = false;
     this.toggleMusic.addEventListener('pointerdown', (e) => {
@@ -732,6 +740,7 @@ export class Lobby {
           '<div class="level-card-desc">' + level.description + '</div>';
         card.addEventListener('click', () => {
           this.selectedLevel = level;
+          analytics.trackEvent('level_select', { level: level.id, difficulty: this.selectedDifficulty });
           if (this._pendingMode === 'solo') {
             this._hideLobby();
             this.onSolo();
@@ -849,6 +858,7 @@ export class Lobby {
     this.auth.onLogin(async (user) => {
       updateUI(user);
       this.profilePopup.classList.remove('visible');
+      analytics.trackEvent('auth_complete', {});
       // Check license and update mode buttons + level cards
       await this.license.check();
       this._updateModeButtons();
@@ -961,6 +971,20 @@ export class Lobby {
     if (this.input && this.input.needsMotionPermission) {
       this.input.requestMotionPermission();
     }
+  }
+
+  _detectAndSetInputMethod() {
+    let method = 'keyboard';
+    if (this.input) {
+      if (this.input.gyroConnected) method = 'gamepad_gyro';
+      else if (this.input.gamepadConnected) method = 'gamepad_stick';
+      else if (this.input.motionEnabled) method = 'gyro';
+      else if (this.motionActive) method = 'tilt';
+      // On mobile, motion permission may be granted but events haven't fired yet
+      else if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) method = 'tilt';
+    }
+    analytics.setInputMethod(method);
+    analytics.trackEvent('input_select', { method });
   }
 
   /**
@@ -1414,7 +1438,9 @@ export class Lobby {
     slider.value = Math.round(currentFeel * 100);
     slider.oninput = () => {
       const feel = slider.value / 100;
+      const oldFeel = TUNE.steeringFeel;
       applySteeringFeel(feel);
+      analytics.trackEvent('steering_feel_change', { value: feel, from_value: oldFeel });
       // Save immediately
       try {
         const tuningKey = this._tuningKey();
@@ -2191,6 +2217,10 @@ export class Lobby {
 
     const code = this.net.generateRoomCode();
 
+    // Analytics: room creation
+    analytics.trackRoomCreate(code);
+    analytics.trackEvent('room_create', { code });
+
     // Fetch relay auth token if logged in (optional — relay allows unauthenticated)
     const relayToken = await this.auth.getRelayToken(code, 'captain');
     if (relayToken) this.net._relayToken = relayToken;
@@ -2245,6 +2275,13 @@ export class Lobby {
     this.net.onConnected = () => {
       statusEl.textContent = 'Partner connected!';
       statusEl.className = 'conn-status connected';
+      analytics.trackEvent('room_connect', { type: this.net.connectionType || 'p2p' });
+      analytics.trackRoomUpdate(code, {
+        webrtc_connected: 1,
+        connection_type: this.net.connectionType || 'p2p',
+        video_enabled: this.cameraActive ? 1 : 0,
+        audio_enabled: this.audioActive ? 1 : 0,
+      });
       setTimeout(() => {
         this._showRoomStep('captain');
       }, 1000);
@@ -2277,6 +2314,17 @@ export class Lobby {
     statusEl.textContent = 'Connecting...';
     statusEl.className = 'conn-status';
 
+    // Analytics: room join
+    const joinedViaUrl = new URLSearchParams(window.location.search).has('room');
+    analytics.trackEvent('room_join', { code, joined_via_url: joinedViaUrl });
+    analytics.trackRoomUpdate(code, {
+      stoker_session_id: analytics.getSessionId(),
+      stoker_joined_at: new Date().toISOString(),
+      stoker_joined_via_url: joinedViaUrl ? 1 : 0,
+    });
+    analytics.trackConversion('stoker_joined', 'room_join');
+    if (joinedViaUrl) analytics.trackConversion('stoker_joined_via_url', 'room_join');
+
     // Fetch relay auth token if logged in (optional — relay allows unauthenticated)
     const relayToken = await this.auth.getRelayToken(code, 'stoker');
     if (relayToken) this.net._relayToken = relayToken;
@@ -2291,6 +2339,7 @@ export class Lobby {
       this._lastFailedCode = null;
       statusEl.textContent = 'Connected!';
       statusEl.className = 'conn-status connected';
+      analytics.trackEvent('room_connect', { type: this.net.connectionType || 'p2p' });
       setTimeout(() => {
         this._showRoomStep('stoker');
       }, 1000);
@@ -2888,6 +2937,8 @@ export class Lobby {
     if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
     // Remove lobby mode from PiP elements
     this._removePipLobbyMode();
+    // Detect input method before hiding lobby
+    this._detectAndSetInputMethod();
     // Hide lobby
     this._hideLobby();
     // Fire multiplayer ready
@@ -3777,6 +3828,7 @@ export class Lobby {
     }
 
     this.selectedPresetKey = locked ? 'default' : key;
+    if (!locked) analytics.trackEvent('bike_color_change', { preset_key: key });
 
     if (locked) {
       nameEl.textContent = '\uD83D\uDD12 ' + (BIKE_NAMES[key] || key);

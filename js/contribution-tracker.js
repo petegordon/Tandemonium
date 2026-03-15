@@ -16,6 +16,11 @@ export class ContributionTracker {
     this._totalTime = 0;
     this._captainLeanAccum = 0;
     this._stokerLeanAccum = 0;
+
+    // Speed tracking
+    this._maxSpeed = 0;
+    this._speedAccum = 0;
+    this._speedTime = 0;
   }
 
   _emptyStats() {
@@ -42,6 +47,11 @@ export class ContributionTracker {
 
   update(dt, bike, captainLeanInput, stokerLeanInput, pedalStats) {
     this._totalTime += dt;
+
+    // Speed accumulation
+    if (bike.speed > this._maxSpeed) this._maxSpeed = bike.speed;
+    this._speedAccum += bike.speed * dt;
+    this._speedTime += dt;
 
     const absLean = Math.abs(bike.lean);
     const lateralOffset = Math.abs(bike._lateralOffset || 0);
@@ -116,10 +126,16 @@ export class ContributionTracker {
   getSummary() {
     const t = this._totalTime || 1;
 
+    const speedSummary = {
+      maxSpeed: Math.round(this._maxSpeed * 100) / 100,
+      avgSpeed: this._speedTime > 0 ? Math.round((this._speedAccum / this._speedTime) * 100) / 100 : 0,
+    };
+
     if (this.mode === 'solo') {
       return {
         mode: 'solo',
         solo: this._playerSummary(this.solo, t),
+        ...speedSummary,
         totalTime: t
       };
     }
@@ -138,6 +154,7 @@ export class ContributionTracker {
       mode: 'multiplayer',
       captain: capSummary,
       stoker: stokeSummary,
+      ...speedSummary,
       totalTime: t
     };
   }
