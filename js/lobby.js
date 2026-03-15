@@ -2064,6 +2064,7 @@ export class Lobby {
           this._motionPermitted = true;
           this.motionActive = true;
           this._setToggleActive('motion', true);
+          this._updateTutorialButton();
         }
         window.removeEventListener('devicemotion', onFirstMotion);
       };
@@ -2079,6 +2080,7 @@ export class Lobby {
           this._motionPermitted = true;
           this.motionActive = true;
           this._setToggleActive('motion', true);
+          this._updateTutorialButton();
         }
       };
     }
