@@ -757,11 +757,10 @@ export class Lobby {
     // Tutorial button sits between level cards and difficulty
     const tutBtn = document.getElementById('btn-tutorial');
     if (tutBtn) {
-      // Show for demo users or motion/gyro users
-      const hasMotion = this.motionActive && (
-        (this.input && this.input.motionEnabled) ||
-        (this.input && this.input.gyroConnected)
-      );
+      // Show for demo users or motion/gyro users.
+      // Use motionActive (toggle on) rather than motionEnabled (events fired)
+      // so the button appears on the first visit before gyro events arrive.
+      const hasMotion = this.motionActive || (this.input && this.input.gyroConnected);
       if (isDemo || hasMotion) {
         tutBtn.style.display = '';
         const isGyro = this.input && this.input.gyroConnected;
