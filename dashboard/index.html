@@ -365,7 +365,7 @@ function renderRidesTable(rows) {
   let html = '<table><tr><th>Level</th><th>Diff</th><th>Input</th><th class="num">Att</th><th class="num">Done</th><th class="num">%</th><th class="num">Avg T</th><th class="num">Crashes</th></tr>';
   rows.forEach(r => {
     const p = pct(r.completions, r.attempts);
-    html += `<tr><td>${r.level}</td><td>${r.difficulty || ''}</td><td>${r.input_method || ''}</td><td class="num">${r.attempts}</td><td class="num">${r.completions || 0}</td><td class="num ${p >= 60 ? 'good' : p >= 30 ? 'warn' : 'bad'}">${p}%</td><td class="num">${r.avg_time_sec || '-'}s</td><td class="num">${r.avg_crashes || 0}</td></tr>`;
+    html += `<tr><td>${r.level}</td><td>${r.difficulty || ''}</td><td>${r.input_method || ''}</td><td class="num">${r.attempts}</td><td class="num">${r.completions || 0}</td><td class="num ${p >= 60 ? 'good' : p >= 30 ? 'warn' : 'bad'}">${p}%</td><td class="num">${r.avg_time_sec != null ? r.avg_time_sec + 's' : '-'}</td><td class="num">${r.avg_crashes || 0}</td></tr>`;
   });
   return html + '</table>';
 }
