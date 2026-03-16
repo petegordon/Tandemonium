@@ -467,8 +467,8 @@ export class Lobby {
 
   _setup() {
     // SOLO → demo users go straight to tutorial; licensed users see level select
-    document.getElementById('btn-solo').addEventListener('click', () => {
-      this._requestMotion();
+    document.getElementById('btn-solo').addEventListener('click', async () => {
+      await this._requestMotion();
       this._pendingMode = 'solo';
       this._detectAndSetInputMethod();
       if (!this.license.isLicensed) {
@@ -492,8 +492,9 @@ export class Lobby {
       const rejoined = await this._handleRejoinCheck();
       if (rejoined) return;
 
-      this._requestMotion();
+      await this._requestMotion();
       this._pendingMode = 'multiplayer';
+      this._detectAndSetInputMethod();
       this._updateRoleButtons();
       this._showStep(this.roleStep);
     });
@@ -974,9 +975,9 @@ export class Lobby {
     this._updateModeButtons();
   }
 
-  _requestMotion() {
+  async _requestMotion() {
     if (this.input && this.input.needsMotionPermission) {
-      this.input.requestMotionPermission();
+      await this.input.requestMotionPermission();
     }
   }
 
@@ -986,9 +987,9 @@ export class Lobby {
       if (this.input.gyroConnected) method = 'gamepad_gyro';
       else if (this.input.gamepadConnected) method = 'gamepad_stick';
       else if (this.input.motionEnabled) method = 'gyro';
-      else if (this.motionActive) method = 'tilt';
+      else if (this.motionActive) method = 'gyro';
       // On mobile, motion permission may be granted but events haven't fired yet
-      else if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) method = 'tilt';
+      else if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) method = 'gyro';
     }
     analytics.setInputMethod(method);
     analytics.trackEvent('input_select', { method });
@@ -2106,6 +2107,7 @@ export class Lobby {
     // else: no DeviceMotionEvent API at all — toggle stays hidden
 
     // When motion sensor data starts flowing, ensure toggle shows green
+    // and re-detect input method so analytics is accurate
     if (this.input) {
       this.input.onMotionEnabled = () => {
         if (!this.motionActive) {
@@ -2115,6 +2117,7 @@ export class Lobby {
           this._setToggleActive('motion', true);
           this._updateTutorialButton();
         }
+        this._detectAndSetInputMethod();
       };
     }
 
@@ -2182,7 +2185,7 @@ export class Lobby {
     });
   }
 
-  _checkAutoJoin() {
+  async _checkAutoJoin() {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     if (!roomParam) return;
@@ -2191,7 +2194,7 @@ export class Lobby {
     const code = roomParam.toUpperCase();
     const fullCode = code.startsWith('TNDM-') ? code : 'TNDM-' + code;
 
-    try { this._requestMotion(); } catch (_) {}
+    try { await this._requestMotion(); } catch (_) {}
     // Dismiss tap-to-start overlay — user already acted by navigating via URL
     if (this._tapOverlay) this._dismissTapOverlay();
 
@@ -2469,7 +2472,7 @@ export class Lobby {
     if (choice !== 'rejoin') return false;
 
     // Rejoin: skip role selection, go straight to connection
-    this._requestMotion();
+    await this._requestMotion();
     this._pendingMode = 'multiplayer';
 
     if (saved.role === 'captain') {
