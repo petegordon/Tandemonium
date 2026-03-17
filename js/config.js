@@ -4,6 +4,8 @@
 
 export const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1);
+export const isAndroid = /Android/i.test(navigator.userAgent);
+export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 export const BIKE_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
 
@@ -36,24 +38,15 @@ export const PEERJS_PORT = 443;
 export const PEERJS_PATH = '/';
 export const PEERJS_SECURE = true;
 
-// Balance physics defaults — single source of truth
-export const BALANCE_DEFAULTS = {
-  // Mobile tilt (DeviceOrientation / DeviceMotion)
-  sensitivity: 25,
-  deadzone: 4,
-  lowPassK: 0.1,
-  responseCurve: 2.0,
-  outputSmoothing: 0.4,
+// Shared defaults (platform-independent)
+const SHARED_PHYSICS = {
   calibSamples: 10,
-  // Controller gyro (WebHID) — integrated angular velocity accumulates
-  // faster than absolute orientation, so needs wider range + more smoothing
+  // Controller gyro (WebHID) — unchanged, hardware is consistent
   gyroSensitivity: 40,
   gyroDeadzone: 4,
   gyroOutputSmoothing: 0.5,
   gyroResponseCurve: 1.5,
-  // Steering feel: 0 = Stable (wide deadzone, heavy smoothing), 1 = Responsive (tight, snappy)
   steeringFeel: 0.5,
-  // Accelerometer-assisted gyro drift correction
   gyroAccelCorrection: 0.02,
   // Shared physics
   leanForce: 12,
@@ -62,11 +55,43 @@ export const BALANCE_DEFAULTS = {
   turnRate: 0.50,
 };
 
+// Platform-specific tilt defaults
+const PLATFORM_TILT_DEFAULTS = isAndroid ? {
+  // Android: wider range, higher noise floor, heavier filtering
+  sensitivity: 32,        // Android gamma reports ~30-50% higher
+  deadzone: 5,            // Android rest noise ±2–4° vs iOS ±1–2°
+  lowPassK: 0.08,         // more aggressive low-pass on raw accel
+  responseCurve: 2.2,     // gentler center zone hides micro-jitter
+  outputSmoothing: 0.50,  // heavier EMA compensates for noise
+} : {
+  // iOS (and desktop fallback): tighter, more responsive
+  sensitivity: 23,
+  deadzone: 4,
+  lowPassK: 0.1,
+  responseCurve: 2.0,
+  outputSmoothing: 0.38,
+};
+
+// Balance physics defaults — single source of truth
+export const BALANCE_DEFAULTS = { ...SHARED_PHYSICS, ...PLATFORM_TILT_DEFAULTS };
+
 // Mutable runtime tuning (initialized from defaults, adjustable by player)
 export const TUNE = { ...BALANCE_DEFAULTS };
 
 // Difficulty presets
 export const DIFFICULTY_PRESETS = {
+  tutorial: {
+    crashThreshold: 2.2,        // ~126° — nearly impossible to reach
+    gravityForce: 1.0,          // very weak topple force
+    wobbleMultiplier: 0.0,      // NO random wobble
+    dangerOnset: 0.85,          // danger shaking only very close to edge
+    timeMultiplier: 2.0,        // generous time (timer is hidden anyway)
+    maxSpeed: 12,               // lower top speed = easier to control
+    scoreMultiplier: 0,         // no scoring in tutorial
+    autoCorrection: true,       // gentle return-to-center force
+    autoCorrectionStrength: 6.0, // strong self-righting (ramped per phase)
+    pedalLeanKickScale: 0.0,    // no random lean impulse on pedal strokes
+  },
   chill: {
     crashThreshold: 1.8,
     gravityForce: 1.5,
@@ -76,6 +101,8 @@ export const DIFFICULTY_PRESETS = {
     maxSpeed: 14,
     scoreMultiplier: 0.75,
     autoCorrection: true,
+    autoCorrectionStrength: 3.0,
+    pedalLeanKickScale: 1.0,
   },
   normal: {
     crashThreshold: 1.35,
@@ -86,6 +113,8 @@ export const DIFFICULTY_PRESETS = {
     maxSpeed: 19,
     scoreMultiplier: 1.0,
     autoCorrection: false,
+    autoCorrectionStrength: 0,
+    pedalLeanKickScale: 1.0,
   },
   daredevil: {
     crashThreshold: 1.0,
@@ -96,6 +125,8 @@ export const DIFFICULTY_PRESETS = {
     maxSpeed: 20,
     scoreMultiplier: 1.5,
     autoCorrection: false,
+    autoCorrectionStrength: 0,
+    pedalLeanKickScale: 1.0,
   },
 };
 

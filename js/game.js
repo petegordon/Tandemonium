@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -32,33 +32,44 @@ const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 
 // Tutorial phase boundaries — sequential layout so all phases are visible ahead
 const TUTORIAL_PHASES = {
-  1: { runwayStart: 0,   contentStart: 30,  contentEnd: 70  },
-  2: { runwayStart: 70,  contentStart: 100, contentEnd: 142 },
-  3: { runwayStart: 142, contentStart: 172, contentEnd: 212 }
+  1: { runwayStart: 0,   contentStart: 30,  contentEnd: 80  },
+  2: { runwayStart: 80,  contentStart: 105, contentEnd: 158 },
+  3: { runwayStart: 158, contentStart: 180, contentEnd: 225 }
 };
 
 // Per-phase item layouts at absolute sequential distances
 const TUTORIAL_ITEMS = {
   1: {
+    // Same side first, shallow offsets, wide spacing
     collectibles: [
-      { d: 35, offset: -2.0 }, { d: 45, offset: 2.0 },
-      { d: 55, offset: -2.0 }, { d: 65, offset: 2.0 }
+      { d: 38, offset: 1.0 },   // right
+      { d: 53, offset: 1.0 },   // right (same side — just repeat the lean)
+      { d: 68, offset: -1.0 },  // left (now learn the other direction)
+      { d: 78, offset: -1.0 }   // left (same side — confirm you can do it)
     ],
     obstacles: []
   },
   2: {
+    // Pylon weaving — 12m spacing for more reaction time
     collectibles: [],
     obstacles: [
-      { d: 107, offset: -1.0 }, { d: 117, offset: 1.0 },
-      { d: 127, offset: -1.0 }, { d: 137, offset: 1.0 }
+      { d: 112, offset: -1.0 },
+      { d: 124, offset: 1.0 },
+      { d: 136, offset: -1.0 },
+      { d: 148, offset: 1.0 }
     ]
   },
   3: {
+    // Combines collecting + dodging — alternating sides, wider offsets
     collectibles: [
-      { d: 177, offset: 2.0 }, { d: 187, offset: -2.0 }, { d: 197, offset: 2.0 }
+      { d: 185, offset: 1.8 },
+      { d: 200, offset: -1.8 },
+      { d: 215, offset: 1.8 }
     ],
     obstacles: [
-      { d: 182, offset: -1.0 }, { d: 192, offset: 1.0 }, { d: 202, offset: -1.0 }
+      { d: 192, offset: -1.0 },
+      { d: 207, offset: 1.0 },
+      { d: 222, offset: -1.0 }
     ]
   }
 };
@@ -543,6 +554,9 @@ class Game {
     this._lobbyBtn.textContent = 'ROOM';
     this.bike.applyPreset(this.lobby.selectedPreset);
 
+    // Load saved tuning so multiplayer tilt players get tutorial calibration benefit
+    this._loadSavedTuning();
+
     // Setup shared pedal controller
     this.sharedPedal = new SharedPedalController();
 
@@ -922,7 +936,8 @@ class Game {
     this._adaptState = null;
 
     // Fresh tilt calibration for new ride (player may be holding phone differently)
-    if (this.input.motionEnabled) {
+    // Skip if tutorial calibration flow already ran (better data)
+    if (this.input.motionEnabled && !this._calibHoldSamples) {
       this.input.startTiltCalibration();
     }
 
@@ -2610,7 +2625,9 @@ class Game {
     this.input.bikeSpeed = this.bike.speed;
     this.input.bikeMaxSpeed = TUNE.maxSpeed || 19;
 
-    const pedalResult = this.pedalCtrl.update(dt);
+    const pedalResult = this._calibSuppressPedals
+      ? { acceleration: 0, braking: false, wobble: 0, crankAngle: this.pedalCtrl.crankAngle || 0 }
+      : this.pedalCtrl.update(dt);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
 
     // Sync balance assist to bike model
@@ -2992,6 +3009,7 @@ class Game {
       const existing = localStorage.getItem(this._tuningKey());
       const data = existing ? JSON.parse(existing) : { version: 1 };
       data.inputType = isGyro ? 'gyro' : 'phone';
+      data.platform = isAndroid ? 'android' : isIOS ? 'ios' : 'desktop';
       data.timestamp = Date.now();
       if (isGyro) {
         data.sensitivity = Math.round(TUNE.gyroSensitivity * 10) / 10;
@@ -3027,6 +3045,9 @@ class Game {
       const saved = localStorage.getItem(this._tuningKey());
       if (!saved) return true;
       const data = JSON.parse(saved);
+      // Re-run if platform changed (e.g., iPhone → Android)
+      const curPlatform = isAndroid ? 'android' : isIOS ? 'ios' : 'desktop';
+      if (data.platform && data.platform !== curPlatform) return true;
       // Re-run if input type changed
       const curType = this.input.gyroConnected ? 'gyro' : 'phone';
       return data.inputType !== curType;
@@ -3059,6 +3080,148 @@ class Game {
     } catch { return false; }
   }
 
+  /**
+   * Two-part interactive calibration:
+   * Phase A — "Hold Still": bike auto-rolls, collect noise floor samples.
+   * Phase B — "Tilt Preview": player leans left then right, confirms input works.
+   *
+   * The game loop is running throughout (autoSpeed on, pedaling suppressed).
+   * Returns a Promise that resolves when both phases complete.
+   */
+  async _runCalibrationFlow() {
+    // Enable auto-speed so bike rolls forward during calibration
+    const prevAutoSpeed = this.autoSpeed;
+    this.autoSpeed = true;
+    this._calibSuppressPedals = true;
+
+    const isGyro = this.input.gyroConnected;
+
+    // ── Phase A: Hold Still ──
+    await new Promise((resolve) => {
+      const overlay = document.getElementById('calib-flow-overlay');
+      const gauge = document.getElementById('calib-flow-gauge');
+      const label = document.getElementById('calib-flow-label');
+      const icon = document.getElementById('calib-flow-icon');
+      overlay.style.display = 'flex';
+      icon.textContent = '\uD83D\uDCF1';
+      label.textContent = 'Hold your phone steady...';
+      gauge.style.width = '0%';
+
+      const samples = [];
+      const TARGET = 40; // ~670ms at 60Hz
+
+      const tick = () => {
+        const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
+        // Wait for sensor to start reporting
+        if (raw === 0 && samples.length === 0) {
+          requestAnimationFrame(tick);
+          return;
+        }
+        samples.push(raw);
+        gauge.style.width = Math.min(100, (samples.length / TARGET) * 100) + '%';
+
+        if (samples.length < TARGET) {
+          requestAnimationFrame(tick);
+          return;
+        }
+
+        // Compute noise floor
+        const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+        const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / samples.length;
+        const stdDev = Math.sqrt(variance);
+
+        // Apply calibration
+        this.input.motionOffset = mean;
+        const measuredDeadzone = Math.min(8, Math.max(2, Math.ceil(stdDev * 3)));
+        if (isGyro) {
+          TUNE.gyroDeadzone = measuredDeadzone;
+        } else {
+          TUNE.deadzone = measuredDeadzone;
+        }
+
+        // Store for _computeTuningParams later
+        this._calibHoldSamples = samples;
+        this._calibHoldMean = mean;
+        this._calibHoldStdDev = stdDev;
+
+        label.textContent = '\u2713 Calibrated!';
+        gauge.style.width = '100%';
+        setTimeout(resolve, 400);
+      };
+
+      requestAnimationFrame(tick);
+    });
+
+    // ── Phase B: Tilt Preview ──
+    await new Promise((resolve) => {
+      const label = document.getElementById('calib-flow-label');
+      const icon = document.getElementById('calib-flow-icon');
+      const gauge = document.getElementById('calib-flow-gauge');
+      gauge.style.width = '0%';
+
+      const targets = [
+        { dir: 'left',  threshold: -0.25, text: '\u2190 Tilt left',  emoji: '\u2B05\uFE0F' },
+        { dir: 'right', threshold:  0.25, text: 'Tilt right \u2192', emoji: '\u27A1\uFE0F' },
+      ];
+      let phase = 0;
+
+      icon.textContent = targets[0].emoji;
+      label.textContent = targets[0].text;
+
+      // Collect range data during tilt preview
+      this._calibTiltSamples = [];
+
+      const check = () => {
+        const lean = this.input.getMotionLean();
+        const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
+        const offset = this.input.motionOffset || 0;
+        this._calibTiltSamples.push(raw - offset);
+
+        if (phase >= targets.length) return;
+
+        const t = targets[phase];
+        const hit = (t.dir === 'left' && lean < t.threshold) ||
+                    (t.dir === 'right' && lean > t.threshold);
+
+        if (hit) {
+          phase++;
+          gauge.style.width = (phase / targets.length * 100) + '%';
+
+          if (phase < targets.length) {
+            icon.textContent = targets[phase].emoji;
+            label.textContent = targets[phase].text;
+            // Brief pause before next target
+            setTimeout(() => requestAnimationFrame(check), 300);
+          } else {
+            icon.textContent = '\uD83C\uDF89';
+            label.textContent = 'You got it!';
+            gauge.style.width = '100%';
+            setTimeout(() => {
+              document.getElementById('calib-flow-overlay').style.display = 'none';
+              resolve();
+            }, 500);
+          }
+        } else {
+          requestAnimationFrame(check);
+        }
+      };
+
+      requestAnimationFrame(check);
+
+      // Safety timeout: skip after 8 seconds if player can't hit targets
+      setTimeout(() => {
+        if (phase < targets.length) {
+          document.getElementById('calib-flow-overlay').style.display = 'none';
+          resolve();
+        }
+      }, 8000);
+    });
+
+    // Restore state
+    this.autoSpeed = prevAutoSpeed;
+    this._calibSuppressPedals = false;
+  }
+
   async _startTutorialRide() {
     this.lobby._forceWizard = false;
     this._tutorialActive = true;
@@ -3084,10 +3247,17 @@ class Game {
     this._tutHoldStillShown = false;
     this._tutOffRoadTime = 0;
 
-    // Use tutorial level with Chill difficulty
+    // Per-phase auto-correction strength ramp
+    this._tutPhaseAutoCorrectionStrengths = {
+      1: 6.0,   // very strong self-righting
+      2: 4.5,   // moderate
+      3: 3.0    // standard Chill level
+    };
+
+    // Use tutorial level with dedicated tutorial difficulty
     const tutLevel = getLevelById('tutorial');
     this.lobby.selectedLevel = tutLevel;
-    this.lobby.selectedDifficulty = 'chill';
+    this.lobby.selectedDifficulty = 'tutorial';
 
     // Request iOS motion permission if needed
     if (this.input.needsMotionPermission) {
@@ -3116,8 +3286,21 @@ class Game {
     analytics.trackEvent('tutorial_start', { input_method: analytics.getInputMethod() });
     this._tutorialStartTime = performance.now();
 
+    // Widen collection hitbox during tutorial
+    // (set after _startCountdown creates the collectible manager — use a brief delay)
+    this._pendingTutorialRadius = true;
+
     // Start the ride via normal countdown flow
     this._startCountdown();
+
+    // Apply tutorial collection radius now that collectible manager exists
+    if (this._pendingTutorialRadius && this.collectibleManager) {
+      this.collectibleManager._tutorialRadius = 2.8;
+      this._pendingTutorialRadius = false;
+    }
+
+    // Run interactive calibration before the player starts riding
+    await this._runCalibrationFlow();
 
     // Hide timer (no time pressure in tutorial)
     this.hud.hideTimer();
@@ -3131,6 +3314,12 @@ class Game {
     const isGyro = this.input.gyroConnected;
     const tp = this._tutTargetPhase;
     const pi = TUTORIAL_PHASES[tp];
+
+    // Ramp auto-correction strength based on current target phase
+    const acStrength = this._tutPhaseAutoCorrectionStrengths
+      ? this._tutPhaseAutoCorrectionStrengths[tp] || 3.0
+      : 3.0;
+    TUNE.autoCorrectionStrength = acStrength;
 
     // Determine current phase: runway (before content) or active content
     const phase = dist < pi.contentStart ? 0 : tp;
@@ -3230,18 +3419,34 @@ class Game {
       }
     }
 
-    // Off-road check
-    const offDist = Math.abs(this.bike._lateralOffset) - 3.5;
+    // Off-road check — wide tolerance during tutorial with early warning
+    const tutOffRoadThreshold = 5.0;
+    const offDist = Math.abs(this.bike._lateralOffset) - tutOffRoadThreshold;
     if (offDist > 0 && this.bike.speed > 0.5) {
       const depthWeight = Math.min(offDist / 2.0, 2.0);
       this._tutOffRoadTime += dt * depthWeight;
+
+      // Show warning at 50% of timer (2.0s of 4.0s)
       if (this._tutOffRoadTime > 2.0) {
+        const warningEl = document.getElementById('coaching-offroad-warning');
+        if (warningEl && !warningEl.classList.contains('visible')) {
+          warningEl.classList.add('visible');
+        }
+      }
+
+      // Force retry at 4.0 seconds
+      if (this._tutOffRoadTime > 4.0) {
         this._tutOffRoadTime = 0;
+        const warningEl = document.getElementById('coaching-offroad-warning');
+        if (warningEl) warningEl.classList.remove('visible');
         this._tutorialPhaseRetry(tp, 'Stay on the road!');
         return;
       }
     } else {
       this._tutOffRoadTime = Math.max(0, this._tutOffRoadTime - dt * 2);
+      // Hide warning when back on road
+      const warningEl = document.getElementById('coaching-offroad-warning');
+      if (warningEl) warningEl.classList.remove('visible');
     }
 
     // Crash check
@@ -3280,6 +3485,12 @@ class Game {
       // Phase passed! Checkpoint flash + chime
       this._showCheckpointFlash();
       hapticCheckpoint();
+
+      // Reset DDA adjustments and assist for next phase
+      if (this.ddaManager) {
+        this.ddaManager.onCheckpointPassed(tp);
+      }
+      this._assistWeight = 0;
 
       // Accumulate collected presents
       if (this.collectibleManager) {
@@ -3410,6 +3621,16 @@ class Game {
     if (this._tutRetryPending) return;
     this._tutRetryPending = true;
 
+    // Feed failure to DDA manager
+    if (this.ddaManager) {
+      this.ddaManager.recordFailure(this._tutTargetPhase);
+      this.ddaManager.applyInvisibleAdjustments();
+    }
+
+    // Clear off-road warning
+    const warningEl = document.getElementById('coaching-offroad-warning');
+    if (warningEl) warningEl.classList.remove('visible');
+
     // Stop the bike immediately so player doesn't keep moving
     this.bike.speed = 0;
 
@@ -3449,6 +3670,26 @@ class Game {
 
   _tutorialCrash(phase) {
     this._tutorialAttempts++;
+
+    // Feed failure to DDA manager
+    if (this.ddaManager) {
+      this.ddaManager.recordFailure(this._tutTargetPhase);
+      this.ddaManager.applyInvisibleAdjustments();
+    }
+
+    // After 3+ crashes on the same phase, activate progressive assistance
+    const phaseCrashes = this.ddaManager ? this.ddaManager.getFailureCount(this._tutTargetPhase) : 0;
+    if (phaseCrashes >= 3) {
+      this._assistWeight = Math.min(0.3, (phaseCrashes - 2) * 0.1);
+      if (this._tutPhaseAutoCorrectionStrengths) {
+        this._tutPhaseAutoCorrectionStrengths[this._tutTargetPhase] = Math.min(8.0,
+          (this._tutPhaseAutoCorrectionStrengths[this._tutTargetPhase] || 3.0) + 0.5);
+      }
+    }
+
+    // Clear off-road warning
+    const warningEl = document.getElementById('coaching-offroad-warning');
+    if (warningEl) warningEl.classList.remove('visible');
 
     // Show crash hint
     const crashEl = document.getElementById('tutorial-crash');
@@ -3533,6 +3774,7 @@ class Game {
     const saveData = {
       version: 1,
       inputType: isGyro ? 'gyro' : 'phone',
+      platform: isAndroid ? 'android' : isIOS ? 'ios' : 'desktop',
       sensitivity: params.sensitivity,
       deadzone: params.deadzone,
       outputSmoothing: params.outputSmoothing,
@@ -3675,6 +3917,7 @@ class Game {
     const saveData = {
       version: 1,
       inputType: isGyro ? 'gyro' : 'phone',
+      platform: isAndroid ? 'android' : isIOS ? 'ios' : 'desktop',
       sensitivity: isGyro ? BALANCE_DEFAULTS.gyroSensitivity : BALANCE_DEFAULTS.sensitivity,
       deadzone: isGyro ? BALANCE_DEFAULTS.gyroDeadzone : BALANCE_DEFAULTS.deadzone,
       outputSmoothing: isGyro ? BALANCE_DEFAULTS.gyroOutputSmoothing : BALANCE_DEFAULTS.outputSmoothing,
@@ -3704,6 +3947,16 @@ class Game {
 
   _endTutorialRide() {
     this._tutorialActive = false;
+    this._calibHoldSamples = null;
+
+    // Reset tutorial collection radius
+    if (this.collectibleManager) {
+      this.collectibleManager._tutorialRadius = null;
+    }
+
+    // Hide off-road warning
+    const warningEl = document.getElementById('coaching-offroad-warning');
+    if (warningEl) warningEl.classList.remove('visible');
 
     // Hide all tutorial UI
     document.getElementById('tutorial-prompt').classList.remove('visible');

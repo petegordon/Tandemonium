@@ -305,7 +305,8 @@ export class CollectibleManager {
       //  when the player steers, eventually exceeding COLLECT_RADIUS)
       const dx = bikePosition.x - worldX;
       const dz = bikePosition.z - worldZ;
-      if (dx * dx + dz * dz < COLLECT_RADIUS * COLLECT_RADIUS) {
+      const radius = this._tutorialRadius || COLLECT_RADIUS;
+      if (dx * dx + dz * dz < radius * radius) {
         item.collected = true;
         this.collected++;
         collected.push(i);
