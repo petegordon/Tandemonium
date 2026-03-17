@@ -3103,8 +3103,8 @@ class Game {
       const label = document.getElementById('calib-flow-label');
       const icon = document.getElementById('calib-flow-icon');
       overlay.style.display = 'flex';
-      icon.textContent = '\uD83D\uDCF1';
-      label.textContent = 'Hold your phone steady...';
+      icon.textContent = isGyro ? '\uD83C\uDFAE' : '\uD83D\uDCF1'; // 🎮 or 📱
+      label.textContent = isGyro ? 'Hold your controller steady...' : 'Hold your phone steady...';
       gauge.style.width = '0%';
 
       const samples = [];
@@ -3159,9 +3159,10 @@ class Game {
       const gauge = document.getElementById('calib-flow-gauge');
       gauge.style.width = '0%';
 
+      const verb = isGyro ? 'Lean' : 'Tilt';
       const targets = [
-        { dir: 'left',  threshold: -0.25, text: '\u2190 Tilt left',  emoji: '\u2B05\uFE0F' },
-        { dir: 'right', threshold:  0.25, text: 'Tilt right \u2192', emoji: '\u27A1\uFE0F' },
+        { dir: 'left',  threshold: -0.25, text: '\u2190 ' + verb + ' left',  emoji: '\u2B05\uFE0F' },
+        { dir: 'right', threshold:  0.25, text: verb + ' right \u2192',      emoji: '\u27A1\uFE0F' },
       ];
       let phase = 0;
 
@@ -3514,9 +3515,10 @@ class Game {
     const text = document.getElementById('tutorial-prompt-text');
     const dots = document.querySelectorAll('.tutorial-dot');
 
+    const steerVerb = this.input.gyroConnected ? 'Lean' : 'Tilt';
     const prompts = {
       0: 'Pedal to build speed!',
-      1: 'Tilt to steer! Collect the presents!',
+      1: steerVerb + ' to steer! Collect the presents!',
       2: 'Dodge the pylons!',
       3: 'Put it all together! Collect and dodge!'
     };
@@ -3698,7 +3700,8 @@ class Game {
     // Determine crash cause
     const absLean = Math.abs(this.bike.lean);
     if (absLean > 1.0) {
-      hintEl.textContent = 'Try smaller tilts \u2014 gentle corrections!';
+      const action = this.input.gyroConnected ? 'leans' : 'tilts';
+      hintEl.textContent = 'Try smaller ' + action + ' \u2014 gentle corrections!';
     } else if (phase === 3) {
       hintEl.textContent = 'Watch ahead and steer early!';
     } else {
