@@ -469,6 +469,7 @@ export class Lobby {
     // SOLO → demo users go straight to tutorial; licensed users see level select
     document.getElementById('btn-solo').addEventListener('click', async () => {
       await this._requestMotion();
+      this._syncMotionState();
       this._pendingMode = 'solo';
       this._detectAndSetInputMethod();
       if (!this.license.isLicensed) {
@@ -493,6 +494,7 @@ export class Lobby {
       if (rejoined) return;
 
       await this._requestMotion();
+      this._syncMotionState();
       this._pendingMode = 'multiplayer';
       this._detectAndSetInputMethod();
       this._updateRoleButtons();
@@ -978,6 +980,19 @@ export class Lobby {
   async _requestMotion() {
     if (this.input && this.input.needsMotionPermission) {
       await this.input.requestMotionPermission();
+    }
+  }
+
+  /** Sync lobby motion flags after permission is granted. */
+  _syncMotionState() {
+    if (this.input && (this.input.motionEnabled || this.input.gyroConnected)) {
+      if (!this.motionActive) {
+        this._showMotionToggle();
+        this._motionPermitted = true;
+        this.motionActive = true;
+        this._setToggleActive('motion', true);
+        this._updateTutorialButton();
+      }
     }
   }
 
