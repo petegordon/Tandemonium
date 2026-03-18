@@ -1014,11 +1014,22 @@ class Game {
       this._contribBar.style.display = 'none';
     }
 
-    // Init audio before recording so beeps are captured
+    // Init audio before recording so beeps are captured.
+    // Eagerly resume + play silent buffer to warm up iOS audio pipeline
+    // (avoids 2-3s delay on first real sound).
     try {
       if (!this.audioCtx) {
         this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume();
+      }
+      // Silent warmup buffer — primes iOS audio session
+      const buf = this.audioCtx.createBuffer(1, 1, this.audioCtx.sampleRate);
+      const src = this.audioCtx.createBufferSource();
+      src.buffer = buf;
+      src.connect(this.audioCtx.destination);
+      src.start();
     } catch (e) {}
 
     // Start recording + selfie immediately so they're visible during countdown
