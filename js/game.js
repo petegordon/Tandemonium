@@ -3523,7 +3523,7 @@ class Game {
 
     // Off-road check — wide tolerance during tutorial with countdown warning
     const tutOffRoadThreshold = 5.0;
-    const tutOffRoadLimit = 4.0;
+    const tutOffRoadLimit = 6.0; // 1s grace + 5s countdown
     const offDist = Math.abs(this.bike._lateralOffset) - tutOffRoadThreshold;
     if (offDist > 0 && this.bike.speed > 0.5) {
       const depthWeight = Math.min(offDist / 2.0, 2.0);
