@@ -1515,7 +1515,7 @@ class Game {
   }
 
 
-  /** Show purchase CTA after riding together as unlicensed stoker. */
+  /** Show Steam Wishlist CTA after riding together as unlicensed stoker. */
   _showStokerCTA() {
     const overlay = document.getElementById('stoker-cta-overlay');
     if (!overlay) return;
@@ -1525,17 +1525,6 @@ class Game {
     const contBtn = document.getElementById('btn-stoker-cta-continue');
     const btns = [buyBtn, contBtn].filter(Boolean);
     this._setOverlayButtons(btns);
-
-    if (buyBtn) {
-      buyBtn.onclick = async () => {
-        try {
-          const url = await this.lobby.license.startCheckout('tandemonium-web-early');
-          window.location.href = url;
-        } catch (e) {
-          console.error('Checkout error', e);
-        }
-      };
-    }
     if (contBtn) {
       contBtn.onclick = () => {
         overlay.style.display = 'none';
@@ -3923,22 +3912,10 @@ class Game {
       applySteeringFeel(feel);
     };
 
-    // Show purchase CTA for demo users
+    // Show Steam Wishlist CTA for demo users
     const buyBtn = document.getElementById('btn-tutorial-buy');
     if (buyBtn) {
-      if (this._isDemo) {
-        buyBtn.style.display = '';
-        buyBtn.onclick = async () => {
-          try {
-            const url = await this.lobby.license.startCheckout('tandemonium-web-early');
-            window.location.href = url;
-          } catch (e) {
-            console.error('Checkout error', e);
-          }
-        };
-      } else {
-        buyBtn.style.display = 'none';
-      }
+      buyBtn.style.display = this._isDemo ? '' : 'none';
     }
 
     document.getElementById('tutorial-complete').classList.add('visible');
