@@ -3290,16 +3290,22 @@ class Game {
     analytics.trackEvent('tutorial_start', { input_method: analytics.getInputMethod() });
     this._tutorialStartTime = performance.now();
 
-    // Run interactive calibration before the countdown
-    await this._runCalibrationFlow();
-
-    // Start the ride via normal countdown flow
+    // Start the ride setup (creates scene, collectibles, etc.) but pause the countdown
     this._startCountdown();
 
     // Widen collection hitbox during tutorial (collectible manager exists after _startCountdown)
     if (this.collectibleManager) {
       this.collectibleManager._tutorialRadius = 2.8;
     }
+
+    // Pause countdown during calibration — set state to 'calibrating' so
+    // _updateCountdown doesn't tick, then run the interactive calibration flow
+    this.state = 'calibrating';
+    await this._runCalibrationFlow();
+
+    // Resume countdown from 3 seconds
+    this.state = 'countdown';
+    this.countdownTimer = 3.0;
 
     // Hide timer (no time pressure in tutorial)
     this.hud.hideTimer();
