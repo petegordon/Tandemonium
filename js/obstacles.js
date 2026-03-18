@@ -58,11 +58,12 @@ const chromakeyFragment = `
 `;
 
 export class ObstacleManager {
-  constructor(scene, roadPath, level, camera) {
+  constructor(scene, roadPath, level, camera, difficulty) {
     this.scene = scene;
     this.roadPath = roadPath;
     this.level = level;
     this.camera = camera;
+    this.difficulty = difficulty || 'chill';
     this._pool = [];
     this._items = []; // { absoluteD, roadD, lateralOffset, poolIdx }
     this._loopLen = roadPath.loopLength;
@@ -155,11 +156,14 @@ export class ObstacleManager {
     if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
     // Use a different seed than collectibles so they don't overlap
     const rng = makeRng(this.level.id.charCodeAt(0) * 2000 + 13);
-    const spacing = 55 + (this.level.distance > 2000 ? 25 : 0);
+    // Difficulty scales spacing: more obstacles on harder difficulties
+    const diffSpacing = { chill: 70, adventurous: 45, daredevil: 30 };
+    const baseSpacing = diffSpacing[this.difficulty] || 70;
+    const spacing = baseSpacing + (this.level.distance > 2000 ? 15 : 0);
 
     // Start obstacles after the first section so the player gets going
     const startD = spacing * 1.5;
-    for (let d = startD; d < this.level.distance - 50; d += spacing + rng() * 25) {
+    for (let d = startD; d < this.level.distance - 50; d += spacing + rng() * (spacing * 0.4)) {
       // Place on the road, biased toward center but still avoidable
       const lateralOffset = (rng() - 0.5) * 3; // ±1.5 units from center
       this._items.push({
