@@ -105,28 +105,28 @@ export const DIFFICULTY_PRESETS = {
     pedalLeanKickScale: 0.0,    // no random lean impulse
   },
   adventurous: {
-    crashThreshold: 1.8,        // forgiving but crashable
-    gravityForce: 1.5,          // moderate topple force
-    wobbleMultiplier: 0.3,      // light wobble — noticeable but not punishing
-    dangerOnset: 0.65,          // earlier warning than chill
+    crashThreshold: 2.0,        // forgiving but crashable
+    gravityForce: 1.2,          // slightly more topple than chill
+    wobbleMultiplier: 0.1,      // very light wobble
+    dangerOnset: 0.75,          // moderate warning
     timeMultiplier: 1.0,
-    maxSpeed: 16,               // moderate speed
+    maxSpeed: 14,               // moderate speed
     scoreMultiplier: 1.0,
     autoCorrection: true,       // still has auto-correction
-    autoCorrectionStrength: 3.0, // gentle — player steers, bike helps
-    pedalLeanKickScale: 0.3,    // light pedal kicks
+    autoCorrectionStrength: 5.0, // strong — bike helps a lot
+    pedalLeanKickScale: 0.1,    // barely noticeable pedal kicks
   },
   daredevil: {
-    crashThreshold: 1.35,       // tight — need real balance skill
-    gravityForce: 2.5,          // strong topple force
-    wobbleMultiplier: 1.0,      // full wobble
-    dangerOnset: 0.45,          // early danger warning
-    timeMultiplier: 0.8,
-    maxSpeed: 23,
+    crashThreshold: 1.8,        // tighter but still forgiving
+    gravityForce: 1.5,          // moderate topple force
+    wobbleMultiplier: 0.3,      // light wobble
+    dangerOnset: 0.60,          // earlier danger warning
+    timeMultiplier: 0.9,
+    maxSpeed: 19,
     scoreMultiplier: 1.5,
-    autoCorrection: false,      // no safety net
-    autoCorrectionStrength: 0,
-    pedalLeanKickScale: 1.0,    // full pedal kicks
+    autoCorrection: true,       // still has auto-correction
+    autoCorrectionStrength: 3.0, // gentle help
+    pedalLeanKickScale: 0.3,    // light pedal kicks
   },
 };
 
