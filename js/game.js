@@ -3374,18 +3374,21 @@ class Game {
       this.collectibleManager._tutorialRadius = 2.8;
     }
 
-    // Pause countdown during calibration — set state to 'calibrating' so
-    // _updateCountdown doesn't tick, then run the interactive calibration flow.
-    // Hide countdown number so it doesn't show through the calibration overlay.
-    this.state = 'calibrating';
-    const flavorNum = document.getElementById('countdown-flavor-num');
-    if (flavorNum) flavorNum.style.visibility = 'hidden';
-    await this._runCalibrationFlow();
+    // Only run calibration flow if player is using motion controls
+    if (this.input.motionEnabled || this.input.gyroConnected) {
+      // Pause countdown during calibration — set state to 'calibrating' so
+      // _updateCountdown doesn't tick, then run the interactive calibration flow.
+      // Hide countdown number so it doesn't show through the calibration overlay.
+      this.state = 'calibrating';
+      const flavorNum = document.getElementById('countdown-flavor-num');
+      if (flavorNum) flavorNum.style.visibility = 'hidden';
+      await this._runCalibrationFlow();
 
-    // Resume countdown from 3 seconds
-    if (flavorNum) flavorNum.style.visibility = '';
-    this.state = 'countdown';
-    this.countdownTimer = 3.0;
+      // Resume countdown from 3 seconds
+      if (flavorNum) flavorNum.style.visibility = '';
+      this.state = 'countdown';
+      this.countdownTimer = 3.0;
+    }
 
     // Hide timer (no time pressure in tutorial)
     this.hud.hideTimer();
