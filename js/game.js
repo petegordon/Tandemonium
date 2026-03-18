@@ -1521,10 +1521,8 @@ class Game {
     if (!overlay) return;
     overlay.style.display = 'flex';
 
-    const buyBtn = document.getElementById('btn-stoker-cta-buy');
     const contBtn = document.getElementById('btn-stoker-cta-continue');
-    const btns = [buyBtn, contBtn].filter(Boolean);
-    this._setOverlayButtons(btns);
+    if (contBtn) this._setOverlayButtons([contBtn]);
     if (contBtn) {
       contBtn.onclick = () => {
         overlay.style.display = 'none';
@@ -3912,19 +3910,17 @@ class Game {
       applySteeringFeel(feel);
     };
 
-    // Show Steam Wishlist CTA for demo users
-    const buyBtn = document.getElementById('btn-tutorial-buy');
-    if (buyBtn) {
-      buyBtn.style.display = this._isDemo ? '' : 'none';
+    // Show Steam Wishlist widget for demo users
+    const steamCta = document.getElementById('steam-cta');
+    if (steamCta) {
+      steamCta.style.display = this._isDemo ? '' : 'none';
     }
 
     document.getElementById('tutorial-complete').classList.add('visible');
 
-    // Register continue button (+ buy button for demo) for gamepad navigation
+    // Register continue button for gamepad navigation
     const continueBtn = document.getElementById('btn-tutorial-continue');
-    const overlayBtns = [continueBtn];
-    if (buyBtn && this._isDemo) overlayBtns.unshift(buyBtn);
-    this._setOverlayButtons(overlayBtns, this._isDemo ? 1 : 0);
+    this._setOverlayButtons([continueBtn]);
     this._overlaySlider = slider;
   }
 
