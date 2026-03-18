@@ -3,10 +3,10 @@
 // ============================================================
 
 const ACHIEVEMENTS = [
-  // Distance milestones
-  { id: 'first_500m',   name: 'First 500m',      icon: '\uD83D\uDC5F', condition: s => s.distance >= 500 },  // 👟
-  { id: 'first_km',     name: '1K Club',          icon: '\uD83C\uDFC5', condition: s => s.distance >= 1000 },   // 🏅
-  { id: 'five_k',       name: '5K Champion',      icon: '\uD83C\uDFC6', condition: s => s.distance >= 5000 },   // 🏆
+  // Distance milestones (cumulative across completed rides)
+  { id: 'first_500m',   name: 'First 500m',      icon: '\uD83D\uDC5F', condition: s => s.cumulativeDistance >= 500 },  // 👟
+  { id: 'first_km',     name: '1K Club',          icon: '\uD83C\uDFC5', condition: s => s.cumulativeDistance >= 1000 },   // 🏅
+  { id: 'five_k',       name: '5K Champion',      icon: '\uD83C\uDFC6', condition: s => s.cumulativeDistance >= 5000 },   // 🏆
 
   // Speed
   { id: 'speed_demon',  name: 'Speed Demon',      icon: '\u26A1',       condition: s => s.speed >= 13.9 },      // ⚡ (50 km/h)
@@ -40,13 +40,16 @@ const ACHIEVEMENTS = [
 ];
 
 const STORAGE_KEY = 'tandemonium_achievements';
+const STATS_KEY = 'tandemonium_achievement_stats';
 
 export class AchievementManager {
   constructor() {
     this._earned = new Map(); // id → { earnedAt, ... }
     this._newThisSession = []; // newly earned this session
     this._syncHighScore = 0; // consecutive seconds with offsetScore > 0.9
+    this._cumulativeDistance = 0;
     this._load();
+    this._loadStats();
   }
 
   _load() {
@@ -63,6 +66,34 @@ export class AchievementManager {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify([...this._earned.values()]));
     } catch (e) {}
+  }
+
+  _loadStats() {
+    try {
+      const raw = localStorage.getItem(STATS_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        this._cumulativeDistance = data.cumulativeDistance || 0;
+      }
+    } catch (e) {}
+  }
+
+  _saveStats() {
+    try {
+      localStorage.setItem(STATS_KEY, JSON.stringify({
+        cumulativeDistance: this._cumulativeDistance,
+      }));
+    } catch (e) {}
+  }
+
+  /** Record distance from a completed ride. */
+  addCompletedDistance(distance) {
+    this._cumulativeDistance += distance;
+    this._saveStats();
+  }
+
+  getCumulativeDistance() {
+    return this._cumulativeDistance;
   }
 
   check(state) {
