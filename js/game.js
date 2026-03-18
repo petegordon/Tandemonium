@@ -1718,10 +1718,8 @@ class Game {
     } else {
       victoryTitle.textContent = 'YOU MADE IT!';
     }
-    const diffNames = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil', tutorial: 'Tutorial' };
-    const diffName = diffNames[this.lobby.selectedDifficulty] || this.lobby.selectedDifficulty;
     document.getElementById('victory-destination').textContent =
-      level.icon + ' ' + level.name + ' \u2014 ' + diffName;
+      level.icon + ' ' + level.name;
 
     // Animated chromakey destination video at top of victory screen
     this._startVictoryVideo(level);
@@ -1751,6 +1749,9 @@ class Game {
         { icon: '\uD83D\uDEB4', value: distStr },                         // 🚴 Distance
       ];
       const inputSourceEmoji = { keyboard: '\uD83D\uDCBB', gamepad: '\uD83D\uDD79\uFE0F', motion: '\uD83D\uDCF1', 'gamepad-gyro': '\uD83C\uDFAE' };
+      const diffNames = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil', tutorial: 'Tutorial' };
+      const diffName = diffNames[this.lobby.selectedDifficulty] || this.lobby.selectedDifficulty;
+      left.push({ icon: '\u26A1', value: diffName }); // ⚡ Difficulty
       const right = [
         { icon: '\u2601\uFE0F', value: summary.checkpointsPassed + '/' + summary.checkpointsTotal }, // ☁️ Checkpoints
       ];
@@ -4067,6 +4068,9 @@ class Game {
     document.getElementById('tutorial-skip').style.display = 'none';
     document.getElementById('tutorial-crash').classList.remove('visible');
     document.getElementById('tutorial-complete').classList.remove('visible');
+
+    // Restore difficulty to lobby default (tutorial may have overridden it)
+    this.lobby.selectedDifficulty = 'chill';
 
     // Restore joystick steering to lobby toggle state
     this.input.suppressGamepadLean = !this.lobby.joystickActive;
