@@ -157,9 +157,9 @@ export class ObstacleManager {
     // Use a different seed than collectibles so they don't overlap
     const rng = makeRng(this.level.id.charCodeAt(0) * 2000 + 13);
     // Difficulty scales spacing: more obstacles on harder difficulties
-    const diffSpacing = { chill: 70, adventurous: 45, daredevil: 30 };
-    const baseSpacing = diffSpacing[this.difficulty] || 70;
-    const spacing = baseSpacing + (this.level.distance > 2000 ? 15 : 0);
+    const diffSpacing = { chill: 35, adventurous: 22, daredevil: 15 };
+    const baseSpacing = diffSpacing[this.difficulty] || 35;
+    const spacing = baseSpacing + (this.level.distance > 2000 ? 10 : 0);
 
     // Start obstacles after the first section so the player gets going
     const startD = spacing * 1.5;
