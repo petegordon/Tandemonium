@@ -94,7 +94,7 @@ export function startRide(opts) {
     room_code: opts.room_code || null,
     level: opts.level,
     role: opts.role || 'solo',
-    difficulty: opts.difficulty || 'normal',
+    difficulty: opts.difficulty || 'adventurous',
     input_method: currentInputMethod,
     bike_preset: opts.bike_preset || 'default',
     steering_feel: opts.steering_feel,

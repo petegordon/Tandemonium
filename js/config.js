@@ -4,6 +4,8 @@
 
 export const isMobile = /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1);
+export const isAndroid = /Android/i.test(navigator.userAgent);
+export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 export const BIKE_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
 
@@ -36,24 +38,15 @@ export const PEERJS_PORT = 443;
 export const PEERJS_PATH = '/';
 export const PEERJS_SECURE = true;
 
-// Balance physics defaults — single source of truth
-export const BALANCE_DEFAULTS = {
-  // Mobile tilt (DeviceOrientation / DeviceMotion)
-  sensitivity: 25,
-  deadzone: 4,
-  lowPassK: 0.1,
-  responseCurve: 2.0,
-  outputSmoothing: 0.4,
+// Shared defaults (platform-independent)
+const SHARED_PHYSICS = {
   calibSamples: 10,
-  // Controller gyro (WebHID) — integrated angular velocity accumulates
-  // faster than absolute orientation, so needs wider range + more smoothing
+  // Controller gyro (WebHID) — unchanged, hardware is consistent
   gyroSensitivity: 40,
   gyroDeadzone: 4,
   gyroOutputSmoothing: 0.5,
   gyroResponseCurve: 1.5,
-  // Steering feel: 0 = Stable (wide deadzone, heavy smoothing), 1 = Responsive (tight, snappy)
   steeringFeel: 0.5,
-  // Accelerometer-assisted gyro drift correction
   gyroAccelCorrection: 0.02,
   // Shared physics
   leanForce: 12,
@@ -62,45 +55,83 @@ export const BALANCE_DEFAULTS = {
   turnRate: 0.50,
 };
 
+// Platform-specific tilt defaults
+const PLATFORM_TILT_DEFAULTS = isAndroid ? {
+  // Android: wider range, higher noise floor, heavier filtering
+  sensitivity: 32,        // Android gamma reports ~30-50% higher
+  deadzone: 5,            // Android rest noise ±2–4° vs iOS ±1–2°
+  lowPassK: 0.08,         // more aggressive low-pass on raw accel
+  responseCurve: 2.2,     // gentler center zone hides micro-jitter
+  outputSmoothing: 0.50,  // heavier EMA compensates for noise
+} : {
+  // iOS (and desktop fallback): tighter, more responsive
+  sensitivity: 23,
+  deadzone: 4,
+  lowPassK: 0.1,
+  responseCurve: 2.0,
+  outputSmoothing: 0.38,
+};
+
+// Balance physics defaults — single source of truth
+export const BALANCE_DEFAULTS = { ...SHARED_PHYSICS, ...PLATFORM_TILT_DEFAULTS };
+
 // Mutable runtime tuning (initialized from defaults, adjustable by player)
 export const TUNE = { ...BALANCE_DEFAULTS };
 
 // Difficulty presets
 export const DIFFICULTY_PRESETS = {
+  tutorial: {
+    crashThreshold: 2.2,        // ~126° — nearly impossible to reach
+    gravityForce: 1.0,          // very weak topple force
+    wobbleMultiplier: 0.0,      // NO random wobble
+    dangerOnset: 0.85,          // danger shaking only very close to edge
+    timeMultiplier: 2.0,        // generous time (timer is hidden anyway)
+    maxSpeed: 12,               // lower top speed = easier to control
+    scoreMultiplier: 0,         // no scoring in tutorial
+    autoCorrection: true,       // gentle return-to-center force
+    autoCorrectionStrength: 6.0, // strong self-righting (ramped per phase)
+    pedalLeanKickScale: 0.0,    // no random lean impulse on pedal strokes
+  },
   chill: {
-    crashThreshold: 1.8,
-    gravityForce: 1.5,
-    wobbleMultiplier: 0.5,
-    dangerOnset: 0.75,
+    crashThreshold: 2.2,        // same as tutorial — nearly impossible to crash
+    gravityForce: 1.0,          // very weak topple force
+    wobbleMultiplier: 0.0,      // no random wobble
+    dangerOnset: 0.85,          // danger shaking only very close to edge
     timeMultiplier: 1.3,
-    maxSpeed: 14,
+    maxSpeed: 12,               // same as tutorial
     scoreMultiplier: 0.75,
     autoCorrection: true,
+    autoCorrectionStrength: 6.0, // strong self-righting
+    pedalLeanKickScale: 0.0,    // no random lean impulse
   },
-  normal: {
-    crashThreshold: 1.35,
-    gravityForce: 2.5,
-    wobbleMultiplier: 1.0,
-    dangerOnset: 0.55,
+  adventurous: {
+    crashThreshold: 1.8,        // forgiving but crashable
+    gravityForce: 1.5,          // moderate topple force
+    wobbleMultiplier: 0.3,      // light wobble — noticeable but not punishing
+    dangerOnset: 0.65,          // earlier warning than chill
     timeMultiplier: 1.0,
-    maxSpeed: 19,
+    maxSpeed: 16,               // moderate speed
     scoreMultiplier: 1.0,
-    autoCorrection: false,
+    autoCorrection: true,       // still has auto-correction
+    autoCorrectionStrength: 3.0, // gentle — player steers, bike helps
+    pedalLeanKickScale: 0.3,    // light pedal kicks
   },
   daredevil: {
-    crashThreshold: 1.0,
-    gravityForce: 3.5,
-    wobbleMultiplier: 1.3,
-    dangerOnset: 0.40,
+    crashThreshold: 1.35,       // tight — need real balance skill
+    gravityForce: 2.5,          // strong topple force
+    wobbleMultiplier: 1.0,      // full wobble
+    dangerOnset: 0.45,          // early danger warning
     timeMultiplier: 0.8,
-    maxSpeed: 20,
+    maxSpeed: 23,
     scoreMultiplier: 1.5,
-    autoCorrection: false,
+    autoCorrection: false,      // no safety net
+    autoCorrectionStrength: 0,
+    pedalLeanKickScale: 1.0,    // full pedal kicks
   },
 };
 
 export function applyDifficulty(presetName) {
-  const preset = DIFFICULTY_PRESETS[presetName] || DIFFICULTY_PRESETS.normal;
+  const preset = DIFFICULTY_PRESETS[presetName] || DIFFICULTY_PRESETS.adventurous;
   Object.assign(TUNE, preset);
 }
 

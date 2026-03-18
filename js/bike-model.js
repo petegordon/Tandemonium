@@ -275,7 +275,8 @@ export class BikeModel {
 
     let pedalLeanKick = 0;
     if (pedalResult.acceleration > 0 && !pedalResult.braking) {
-      pedalLeanKick = (Math.random() - 0.5) * 0.2;
+      const kickScale = TUNE.pedalLeanKickScale != null ? TUNE.pedalLeanKickScale : 1.0;
+      pedalLeanKick = (Math.random() - 0.5) * 0.2 * kickScale;
     }
 
     // Danger-zone wobble: progressive shake as lean approaches crash
@@ -306,9 +307,10 @@ export class BikeModel {
       this.leanVelocity -= this.lean * this._balanceAssist * 3.0 * dt;
     }
 
-    // Auto-correction (Chill mode): gentle return-to-center force
+    // Auto-correction (Chill/Tutorial mode): configurable return-to-center force
     if (TUNE.autoCorrection && Math.abs(this.lean) > 0.3) {
-      this.leanVelocity -= this.lean * 3.0 * dt;
+      const strength = TUNE.autoCorrectionStrength || 3.0;
+      this.leanVelocity -= this.lean * strength * dt;
     }
 
     // Gyro centering: when controller is centered but bike is leaned, pull upright

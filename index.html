@@ -330,6 +330,71 @@
     opacity: 1;
   }
 
+  /* ── Tutorial calibration flow ── */
+  #calib-flow-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 200;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    pointer-events: none;
+  }
+  #calib-flow-icon {
+    font-size: 52px;
+    line-height: 1;
+  }
+  #calib-flow-label {
+    font-size: 20px;
+    font-weight: 600;
+    color: #fff;
+    text-align: center;
+    padding: 0 24px;
+    min-height: 28px;
+  }
+  #calib-flow-gauge-track {
+    width: 180px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  #calib-flow-gauge {
+    width: 0%;
+    height: 100%;
+    background: #4af;
+    border-radius: 3px;
+    transition: width 0.08s ease-out;
+  }
+
+  /* ── Off-road warning ── */
+  #coaching-offroad-warning {
+    position: fixed;
+    top: 30%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 80, 40, 0.85);
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    padding: 10px 24px;
+    border-radius: 12px;
+    z-index: 150;
+    pointer-events: none;
+    display: none;
+    animation: pulse-warning 0.6s ease-in-out infinite alternate;
+  }
+  #coaching-offroad-warning.visible {
+    display: block;
+  }
+  @keyframes pulse-warning {
+    from { opacity: 0.7; transform: translateX(-50%) scale(0.97); }
+    to   { opacity: 1.0; transform: translateX(-50%) scale(1.03); }
+  }
+
   #tutorial-crash {
     position: fixed;
     top: 50%;
@@ -3420,6 +3485,15 @@ ON</button>
 <!-- Crash flash -->
 <div id="crash-overlay"></div>
 
+<!-- Tutorial calibration flow overlay -->
+<div id="calib-flow-overlay" style="display:none;">
+  <div id="calib-flow-icon"></div>
+  <div id="calib-flow-label">Hold your phone steady...</div>
+  <div id="calib-flow-gauge-track">
+    <div id="calib-flow-gauge"></div>
+  </div>
+</div>
+
 <!-- Calibrate flash -->
 <div id="calibrate-flash"></div>
 
@@ -3679,13 +3753,13 @@ ON</button>
     <!-- Difficulty selector (full-width row below lobby-layout) -->
     <div class="difficulty-selector" id="difficulty-selector" style="display:none;">
       <div class="difficulty-buttons">
-        <button class="difficulty-btn" data-difficulty="chill">
+        <button class="difficulty-btn selected" data-difficulty="chill">
           <span class="diff-name">Chill Ride</span>
           <span class="diff-desc">Relaxed, forgiving</span>
         </button>
-        <button class="difficulty-btn selected" data-difficulty="normal">
-          <span class="diff-name">Normal</span>
-          <span class="diff-desc">Balanced challenge</span>
+        <button class="difficulty-btn" data-difficulty="adventurous">
+          <span class="diff-name">Adventurous</span>
+          <span class="diff-desc">A bit more challenge</span>
         </button>
         <button class="difficulty-btn" data-difficulty="daredevil">
           <span class="diff-name">Daredevil</span>
@@ -3698,7 +3772,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.45bedd0 | 03-17-2026 19:35</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.c30620f | 03-17-2026 21:16</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -3857,6 +3931,7 @@ ON</button>
   <div class="collect-text">COLLECT</div>
 </div>
 <div id="coaching-pylon-success">✅</div>
+<div id="coaching-offroad-warning">← Stay on the road! →</div>
 <div id="tutorial-crash">
   <div id="tutorial-crash-text">Oops! Try again</div>
   <div id="tutorial-crash-hint"></div>
