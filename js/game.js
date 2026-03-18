@@ -3910,10 +3910,10 @@ class Game {
       applySteeringFeel(feel);
     };
 
-    // Show Steam Wishlist widget for demo users
+    // Show Steam Wishlist widget
     const steamCta = document.getElementById('steam-cta');
     if (steamCta) {
-      steamCta.style.display = this._isDemo ? '' : 'none';
+      steamCta.style.display = '';
     }
 
     document.getElementById('tutorial-complete').classList.add('visible');
