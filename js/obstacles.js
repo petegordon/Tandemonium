@@ -161,9 +161,22 @@ export class ObstacleManager {
     const baseSpacing = diffSpacing[this.difficulty] || 35;
     const spacing = baseSpacing + (this.level.distance > 2000 ? 10 : 0);
 
+    // Build checkpoint distance list to avoid placing pylons near them
+    const cpInterval = this.level.checkpointInterval || this.level.distance;
+    const checkpoints = [];
+    for (let cp = 0; cp <= this.level.distance; cp += cpInterval) {
+      checkpoints.push(cp);
+    }
+    checkpoints.push(this.level.distance); // finish line
+    const cpClearance = 15; // no pylons within 15m of a checkpoint/start/finish
+
     // Start obstacles after the first section so the player gets going
     const startD = spacing * 1.5;
     for (let d = startD; d < this.level.distance - 50; d += spacing + rng() * (spacing * 0.4)) {
+      // Skip if too close to any checkpoint
+      const nearCheckpoint = checkpoints.some(cp => Math.abs(d - cp) < cpClearance);
+      if (nearCheckpoint) continue;
+
       // Place on the road, biased toward center but still avoidable
       const lateralOffset = (rng() - 0.5) * 3; // ±1.5 units from center
       this._items.push({
