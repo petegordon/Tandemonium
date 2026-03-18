@@ -774,8 +774,10 @@ export class Lobby {
         } else {
           tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
         }
+        buttons.push(tutBtn);
+      } else {
+        tutBtn.style.display = 'none';
       }
-      buttons.push(tutBtn);
     }
 
     // Add individual difficulty buttons to gamepad navigation
@@ -1220,32 +1222,12 @@ export class Lobby {
   }
 
   _updateTutorialButton() {
-    // Rebuild level cards to update lock state based on motion tuning
-    // (only if the level step container exists and has content)
+    // Rebuild level cards + tutorial button + gamepad nav in one pass.
+    // This ensures the gamepad navigation list stays in sync when the
+    // tutorial button appears/disappears due to motion toggle changes.
     const container = document.getElementById('level-cards');
     if (container && container.children.length > 0) {
       this._rebuildLevelCards();
-    }
-    const tutBtn = document.getElementById('btn-tutorial');
-    if (!tutBtn) return;
-    const isDemo = !this.license.isLicensed;
-    const hasMotion = this.motionActive && (
-      (this.input && this.input.motionEnabled) ||
-      (this.input && this.input.gyroConnected)
-    );
-    // Show for demo users always, or for motion/gyro users
-    if (!hasMotion && !isDemo) {
-      tutBtn.style.display = 'none';
-      return;
-    }
-    tutBtn.style.display = '';
-    const isGyro = this.input && this.input.gyroConnected;
-    if (isDemo && !hasMotion) {
-      tutBtn.textContent = '\uD83D\uDEB4 Learn to Ride'; // 🚴 demo without motion
-    } else if (isGyro) {
-      tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
-    } else {
-      tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
     }
   }
 
