@@ -93,16 +93,16 @@ export const DIFFICULTY_PRESETS = {
     pedalLeanKickScale: 0.0,    // no random lean impulse on pedal strokes
   },
   chill: {
-    crashThreshold: 1.8,
-    gravityForce: 1.5,
-    wobbleMultiplier: 0.5,
-    dangerOnset: 0.75,
+    crashThreshold: 2.2,        // same as tutorial — nearly impossible to crash
+    gravityForce: 1.0,          // very weak topple force
+    wobbleMultiplier: 0.0,      // no random wobble
+    dangerOnset: 0.85,          // danger shaking only very close to edge
     timeMultiplier: 1.3,
-    maxSpeed: 14,
+    maxSpeed: 12,               // same as tutorial
     scoreMultiplier: 0.75,
     autoCorrection: true,
-    autoCorrectionStrength: 3.0,
-    pedalLeanKickScale: 1.0,
+    autoCorrectionStrength: 6.0, // strong self-righting
+    pedalLeanKickScale: 0.0,    // no random lean impulse
   },
   normal: {
     crashThreshold: 1.35,
