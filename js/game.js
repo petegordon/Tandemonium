@@ -3521,26 +3521,31 @@ class Game {
       }
     }
 
-    // Off-road check — wide tolerance during tutorial with early warning
+    // Off-road check — wide tolerance during tutorial with countdown warning
     const tutOffRoadThreshold = 5.0;
+    const tutOffRoadLimit = 4.0;
     const offDist = Math.abs(this.bike._lateralOffset) - tutOffRoadThreshold;
     if (offDist > 0 && this.bike.speed > 0.5) {
       const depthWeight = Math.min(offDist / 2.0, 2.0);
       this._tutOffRoadTime += dt * depthWeight;
 
-      // Show warning at 50% of timer (2.0s of 4.0s)
-      if (this._tutOffRoadTime > 2.0) {
-        const warningEl = document.getElementById('coaching-offroad-warning');
-        if (warningEl && !warningEl.classList.contains('visible')) {
+      // Show countdown warning after 1.0s off-road
+      const warningEl = document.getElementById('coaching-offroad-warning');
+      if (this._tutOffRoadTime > 1.0 && warningEl) {
+        const remaining = Math.ceil(tutOffRoadLimit - this._tutOffRoadTime);
+        warningEl.textContent = '\u2190 Stay on the road! ' + remaining + ' \u2192';
+        if (!warningEl.classList.contains('visible')) {
           warningEl.classList.add('visible');
         }
       }
 
-      // Force retry at 4.0 seconds
-      if (this._tutOffRoadTime > 4.0) {
+      // Force retry at limit
+      if (this._tutOffRoadTime > tutOffRoadLimit) {
         this._tutOffRoadTime = 0;
-        const warningEl = document.getElementById('coaching-offroad-warning');
-        if (warningEl) warningEl.classList.remove('visible');
+        if (warningEl) {
+          warningEl.classList.remove('visible');
+          warningEl.textContent = '\u2190 Stay on the road! \u2192';
+        }
         this._tutorialPhaseRetry(tp, 'Stay on the road!');
         return;
       }
@@ -3548,7 +3553,10 @@ class Game {
       this._tutOffRoadTime = Math.max(0, this._tutOffRoadTime - dt * 2);
       // Hide warning when back on road
       const warningEl = document.getElementById('coaching-offroad-warning');
-      if (warningEl) warningEl.classList.remove('visible');
+      if (warningEl && warningEl.classList.contains('visible')) {
+        warningEl.classList.remove('visible');
+        warningEl.textContent = '\u2190 Stay on the road! \u2192';
+      }
     }
 
     // Crash check
