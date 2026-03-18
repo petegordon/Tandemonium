@@ -3359,7 +3359,10 @@ class Game {
     }
 
     // Suppress joystick steering so player must use gyro/tilt
-    this.input.suppressGamepadLean = true;
+    // (only when motion/gyro is active — joystick-only players keep joystick)
+    if (this.input.motionEnabled || this.input.gyroConnected) {
+      this.input.suppressGamepadLean = true;
+    }
 
     // Show tutorial UI
     document.getElementById('tutorial-skip').style.display = 'block';
@@ -3625,10 +3628,11 @@ class Game {
     const text = document.getElementById('tutorial-prompt-text');
     const dots = document.querySelectorAll('.tutorial-dot');
 
-    const steerVerb = this.input.gyroConnected ? 'Lean' : 'Tilt';
+    const hasMotion = this.input.motionEnabled || this.input.gyroConnected;
+    const steerVerb = this.input.gyroConnected ? 'Lean' : hasMotion ? 'Tilt' : 'Steer';
     const prompts = {
       0: 'Pedal to build speed!',
-      1: steerVerb + ' to steer! Collect the presents!',
+      1: steerVerb + ' to collect the presents!',
       2: 'Dodge the pylons!',
       3: 'Put it all together! Collect and dodge!'
     };
@@ -3812,7 +3816,8 @@ class Game {
     // Determine crash cause
     const absLean = Math.abs(this.bike.lean);
     if (absLean > 1.0) {
-      const action = this.input.gyroConnected ? 'leans' : 'tilts';
+      const hasMotion = this.input.motionEnabled || this.input.gyroConnected;
+      const action = this.input.gyroConnected ? 'leans' : hasMotion ? 'tilts' : 'moves';
       hintEl.textContent = 'Try smaller ' + action + ' \u2014 gentle corrections!';
     } else if (phase === 3) {
       hintEl.textContent = 'Watch ahead and steer early!';

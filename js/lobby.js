@@ -757,27 +757,20 @@ export class Lobby {
       if (!locked) buttons.push(card);
     });
 
-    // Tutorial button sits between level cards and difficulty
+    // Tutorial button — always available as a practice ride
     const tutBtn = document.getElementById('btn-tutorial');
     if (tutBtn) {
-      // Show for demo users or motion/gyro users.
-      // Use motionActive (toggle on) rather than motionEnabled (events fired)
-      // so the button appears on the first visit before gyro events arrive.
-      const hasMotion = this.motionActive || (this.input && this.input.gyroConnected);
-      if (isDemo || hasMotion) {
-        tutBtn.style.display = '';
-        const isGyro = this.input && this.input.gyroConnected;
-        if (isDemo && !hasMotion) {
-          tutBtn.textContent = '\uD83D\uDEB4 Learn to Ride'; // 🚴
-        } else if (isGyro) {
-          tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
-        } else {
-          tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
-        }
-        buttons.push(tutBtn);
+      tutBtn.style.display = '';
+      const isGyro = this.input && this.input.gyroConnected;
+      const hasMotion = this.motionActive || isGyro;
+      if (isGyro) {
+        tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
+      } else if (hasMotion) {
+        tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
       } else {
-        tutBtn.style.display = 'none';
+        tutBtn.textContent = '\uD83D\uDEB4 Learn to Ride'; // 🚴
       }
+      buttons.push(tutBtn);
     }
 
     // Add individual difficulty buttons to gamepad navigation
