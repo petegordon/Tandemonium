@@ -3246,7 +3246,17 @@ class Game {
     await waitForLean('center', 0);
     await wait(400);
 
-    // ── Step 9: Done ──
+    // ── Step 9: Recalibrate tip ──
+    icon.textContent = '\uD83D\uDCA1'; // 💡
+    if (isGyro) {
+      label.textContent = 'Tip: Press L3 (joystick click) anytime to recalibrate!';
+    } else {
+      label.textContent = 'Tip: Tap the screen anytime to recalibrate!';
+    }
+    gauge.style.width = '95%';
+    await wait(3000);
+
+    // ── Step 10: Done ──
     icon.textContent = '\uD83C\uDF89';
     label.textContent = 'You\'re ready to ride!';
     gauge.style.width = '100%';
