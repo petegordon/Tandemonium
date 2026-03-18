@@ -1604,6 +1604,7 @@ class Game {
   _checkAchievements(dt) {
     const state = {
       distance: this.bike.distanceTraveled,
+      cumulativeDistance: this.achievements.getCumulativeDistance(),
       speed: this.bike.speed,
       dt,
       offsetScore: this.sharedPedal ? this.sharedPedal.offsetScore : 0,
@@ -1636,8 +1637,11 @@ class Game {
 
   _checkFinishAchievements() {
     const level = this.lobby.selectedLevel;
+    // Record this ride's distance for cumulative tracking
+    this.achievements.addCompletedDistance(this.bike.distanceTraveled);
     const state = {
       distance: this.bike.distanceTraveled,
+      cumulativeDistance: this.achievements.getCumulativeDistance(),
       speed: 0,
       dt: 0,
       offsetScore: 0,
