@@ -104,7 +104,7 @@ export const DIFFICULTY_PRESETS = {
     autoCorrectionStrength: 6.0, // strong self-righting
     pedalLeanKickScale: 0.0,    // no random lean impulse
   },
-  normal: {
+  adventurous: {
     crashThreshold: 1.8,        // forgiving but crashable
     gravityForce: 1.5,          // moderate topple force
     wobbleMultiplier: 0.3,      // light wobble — noticeable but not punishing
@@ -131,7 +131,7 @@ export const DIFFICULTY_PRESETS = {
 };
 
 export function applyDifficulty(presetName) {
-  const preset = DIFFICULTY_PRESETS[presetName] || DIFFICULTY_PRESETS.normal;
+  const preset = DIFFICULTY_PRESETS[presetName] || DIFFICULTY_PRESETS.adventurous;
   Object.assign(TUNE, preset);
 }
 
