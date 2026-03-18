@@ -1651,6 +1651,7 @@ class Game {
       bikeKey: this.lobby.selectedPresetKey,
       raceDistance: level.distance,
       crashes: this.raceManager ? this.raceManager.crashCount : 0,
+      restarts: this.raceManager ? this.raceManager.restartCount : 0,
       isMultiplayer: this.mode !== 'solo',
       safePct: this.contributionTracker ? (() => {
         const s = this.contributionTracker.getSummary();
