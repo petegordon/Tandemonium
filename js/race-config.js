@@ -29,9 +29,9 @@ export const LEVELS = [
   {
     id: 'castle',
     name: 'The Castle',
-    distance: 2000,
+    distance: 500,
     collectibles: 'gems',
-    checkpointInterval: 500,
+    checkpointInterval: 125,
     icon: '\uD83C\uDFF0',        // 🏰
     description: 'The King awaits! Collect gems on the road to glory!'
   }

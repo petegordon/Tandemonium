@@ -128,11 +128,12 @@ const THEMES = {
 };
 
 export class CollectibleManager {
-  constructor(scene, roadPath, level, camera) {
+  constructor(scene, roadPath, level, camera, difficulty) {
     this.scene = scene;
     this.roadPath = roadPath;
     this.level = level;
     this.camera = camera;
+    this.difficulty = difficulty || 'chill';
     this.collected = 0;
     this._pool = [];
     this._items = []; // { roadD, lateralOffset, collected, poolIdx, absoluteD }
@@ -160,9 +161,12 @@ export class CollectibleManager {
   _placeItems() {
     if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
     const rng = makeRng(this.level.id.charCodeAt(0) * 1000 + 7);
-    const spacing = 30 + (this.level.distance > 2000 ? 20 : 0); // wider spacing for longer races
+    // Difficulty scales spacing: more presents on harder difficulties
+    const diffSpacing = { chill: 25, adventurous: 20, daredevil: 15 };
+    const baseSpacing = diffSpacing[this.difficulty] || 25;
+    const spacing = baseSpacing + (this.level.distance > 2000 ? 10 : 0);
 
-    for (let d = spacing; d < this.level.distance - 20; d += spacing + rng() * 20) {
+    for (let d = spacing; d < this.level.distance - 20; d += spacing + rng() * (spacing * 0.5)) {
       const lateralOffset = (rng() - 0.5) * 4; // ±2 units from center
       this._items.push({
         absoluteD: d,
