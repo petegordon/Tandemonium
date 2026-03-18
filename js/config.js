@@ -122,7 +122,7 @@ export const DIFFICULTY_PRESETS = {
     wobbleMultiplier: 1.3,
     dangerOnset: 0.40,
     timeMultiplier: 0.8,
-    maxSpeed: 20,
+    maxSpeed: 23,
     scoreMultiplier: 1.5,
     autoCorrection: false,
     autoCorrectionStrength: 0,
