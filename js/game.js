@@ -1506,6 +1506,10 @@ class Game {
     if (tutArrow) tutArrow.classList.remove('visible');
     const tutCollect = document.getElementById('coaching-collect-indicator');
     if (tutCollect) tutCollect.classList.remove('visible');
+    const offRoadWarn = document.getElementById('coaching-offroad-warning');
+    if (offRoadWarn) offRoadWarn.classList.remove('visible');
+    const calibOverlay = document.getElementById('calib-flow-overlay');
+    if (calibOverlay) calibOverlay.style.display = 'none';
     if (this._stokerCTATimer) { clearTimeout(this._stokerCTATimer); this._stokerCTATimer = null; }
     this._clearOverlayButtons();
   }
@@ -3081,12 +3085,12 @@ class Game {
   }
 
   /**
-   * Two-part interactive calibration:
-   * Phase A — "Hold Still": bike auto-rolls, collect noise floor samples.
-   * Phase B — "Tilt Preview": player leans left then right, confirms input works.
+   * Interactive calibration flow run before the tutorial countdown.
+   * Phase A — "Hold Still": collect noise floor samples (two rounds for accuracy).
+   * Phase B — "Tilt Preview": player leans left, centers, then leans right.
    *
-   * The game loop is running throughout (autoSpeed on, pedaling suppressed).
-   * Returns a Promise that resolves when both phases complete.
+   * The game loop runs throughout (autoSpeed on, pedaling suppressed).
+   * Returns a Promise that resolves when all phases complete.
    */
   async _runCalibrationFlow() {
     // Enable auto-speed so bike rolls forward during calibration
@@ -3095,128 +3099,127 @@ class Game {
     this._calibSuppressPedals = true;
 
     const isGyro = this.input.gyroConnected;
+    const overlay = document.getElementById('calib-flow-overlay');
+    const gauge = document.getElementById('calib-flow-gauge');
+    const label = document.getElementById('calib-flow-label');
+    const icon = document.getElementById('calib-flow-icon');
 
-    // ── Phase A: Hold Still ──
-    await new Promise((resolve) => {
-      const overlay = document.getElementById('calib-flow-overlay');
-      const gauge = document.getElementById('calib-flow-gauge');
-      const label = document.getElementById('calib-flow-label');
-      const icon = document.getElementById('calib-flow-icon');
-      overlay.style.display = 'flex';
-      icon.textContent = isGyro ? '\uD83C\uDFAE' : '\uD83D\uDCF1'; // 🎮 or 📱
-      label.textContent = isGyro ? 'Hold your controller steady...' : 'Hold your phone steady...';
-      gauge.style.width = '0%';
-
+    // Helper: collect N noise floor samples, returns { mean, stdDev, samples }
+    const collectSamples = (target) => new Promise((resolve) => {
       const samples = [];
-      const TARGET = 40; // ~670ms at 60Hz
-
       const tick = () => {
         const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
-        // Wait for sensor to start reporting
         if (raw === 0 && samples.length === 0) {
           requestAnimationFrame(tick);
           return;
         }
         samples.push(raw);
-        gauge.style.width = Math.min(100, (samples.length / TARGET) * 100) + '%';
-
-        if (samples.length < TARGET) {
+        gauge.style.width = Math.min(100, (samples.length / target) * 100) + '%';
+        if (samples.length < target) {
           requestAnimationFrame(tick);
           return;
         }
-
-        // Compute noise floor
         const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
         const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / samples.length;
-        const stdDev = Math.sqrt(variance);
-
-        // Apply calibration
-        this.input.motionOffset = mean;
-        const measuredDeadzone = Math.min(8, Math.max(2, Math.ceil(stdDev * 3)));
-        if (isGyro) {
-          TUNE.gyroDeadzone = measuredDeadzone;
-        } else {
-          TUNE.deadzone = measuredDeadzone;
-        }
-
-        // Store for _computeTuningParams later
-        this._calibHoldSamples = samples;
-        this._calibHoldMean = mean;
-        this._calibHoldStdDev = stdDev;
-
-        label.textContent = '\u2713 Calibrated!';
-        gauge.style.width = '100%';
-        setTimeout(resolve, 400);
+        resolve({ mean, stdDev: Math.sqrt(variance), samples });
       };
-
       requestAnimationFrame(tick);
     });
 
+    overlay.style.display = 'flex';
+
+    // ── Phase A: Hold Still (round 1) ──
+    icon.textContent = isGyro ? '\uD83C\uDFAE' : '\uD83D\uDCF1'; // 🎮 or 📱
+    label.textContent = isGyro ? 'Hold your controller steady...' : 'Hold your phone steady...';
+    gauge.style.width = '0%';
+
+    const round1 = await collectSamples(60); // ~1s at 60Hz
+
+    // Apply initial calibration
+    this.input.motionOffset = round1.mean;
+    label.textContent = '\u2713 Got it!';
+    gauge.style.width = '100%';
+    await new Promise(r => setTimeout(r, 600));
+
+    // ── Phase A: Hold Still (round 2 — refine) ──
+    label.textContent = isGyro ? 'Hold steady one more moment...' : 'Hold steady one more moment...';
+    gauge.style.width = '0%';
+
+    const round2 = await collectSamples(60);
+
+    // Use the combined rounds for final calibration
+    const allSamples = round1.samples.concat(round2.samples);
+    const mean = allSamples.reduce((a, b) => a + b, 0) / allSamples.length;
+    const variance = allSamples.reduce((a, b) => a + (b - mean) ** 2, 0) / allSamples.length;
+    const stdDev = Math.sqrt(variance);
+
+    this.input.motionOffset = mean;
+    const measuredDeadzone = Math.min(8, Math.max(2, Math.ceil(stdDev * 3)));
+    if (isGyro) {
+      TUNE.gyroDeadzone = measuredDeadzone;
+    } else {
+      TUNE.deadzone = measuredDeadzone;
+    }
+
+    this._calibHoldSamples = allSamples;
+    this._calibHoldMean = mean;
+    this._calibHoldStdDev = stdDev;
+
+    label.textContent = '\u2713 Calibrated!';
+    gauge.style.width = '100%';
+    await new Promise(r => setTimeout(r, 600));
+
     // ── Phase B: Tilt Preview ──
-    await new Promise((resolve) => {
-      const label = document.getElementById('calib-flow-label');
-      const icon = document.getElementById('calib-flow-icon');
-      const gauge = document.getElementById('calib-flow-gauge');
-      gauge.style.width = '0%';
+    const verb = isGyro ? 'Lean' : 'Tilt';
+    this._calibTiltSamples = [];
 
-      const verb = isGyro ? 'Lean' : 'Tilt';
-      const targets = [
-        { dir: 'left',  threshold: -0.25, text: '\u2190 ' + verb + ' left',  emoji: '\u2B05\uFE0F' },
-        { dir: 'right', threshold:  0.25, text: verb + ' right \u2192',      emoji: '\u27A1\uFE0F' },
-      ];
-      let phase = 0;
+    const targets = [
+      { dir: 'left',  threshold: -0.25, text: '\u2190 ' + verb + ' left',  emoji: '\u2B05\uFE0F' },
+      { dir: 'center', threshold: 0,    text: 'Return to center',          emoji: '\u2195\uFE0F' },
+      { dir: 'right', threshold:  0.25, text: verb + ' right \u2192',      emoji: '\u27A1\uFE0F' },
+      { dir: 'center', threshold: 0,    text: 'Return to center',          emoji: '\u2195\uFE0F' },
+    ];
 
-      icon.textContent = targets[0].emoji;
-      label.textContent = targets[0].text;
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      icon.textContent = t.emoji;
+      label.textContent = t.text;
+      gauge.style.width = (i / targets.length * 100) + '%';
 
-      // Collect range data during tilt preview
-      this._calibTiltSamples = [];
+      await new Promise((resolve) => {
+        let resolved = false;
+        const check = () => {
+          if (resolved) return;
+          const lean = this.input.getMotionLean();
+          const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
+          const offset = this.input.motionOffset || 0;
+          this._calibTiltSamples.push(raw - offset);
 
-      const check = () => {
-        const lean = this.input.getMotionLean();
-        const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
-        const offset = this.input.motionOffset || 0;
-        this._calibTiltSamples.push(raw - offset);
+          let hit = false;
+          if (t.dir === 'left') hit = lean < t.threshold;
+          else if (t.dir === 'right') hit = lean > t.threshold;
+          else if (t.dir === 'center') hit = Math.abs(lean) < 0.1;
 
-        if (phase >= targets.length) return;
-
-        const t = targets[phase];
-        const hit = (t.dir === 'left' && lean < t.threshold) ||
-                    (t.dir === 'right' && lean > t.threshold);
-
-        if (hit) {
-          phase++;
-          gauge.style.width = (phase / targets.length * 100) + '%';
-
-          if (phase < targets.length) {
-            icon.textContent = targets[phase].emoji;
-            label.textContent = targets[phase].text;
-            // Brief pause before next target
-            setTimeout(() => requestAnimationFrame(check), 300);
+          if (hit) {
+            resolved = true;
+            setTimeout(resolve, 300);
           } else {
-            icon.textContent = '\uD83C\uDF89';
-            label.textContent = 'You got it!';
-            gauge.style.width = '100%';
-            setTimeout(() => {
-              document.getElementById('calib-flow-overlay').style.display = 'none';
-              resolve();
-            }, 500);
+            requestAnimationFrame(check);
           }
-        } else {
-          requestAnimationFrame(check);
-        }
-      };
+        };
+        requestAnimationFrame(check);
 
-      requestAnimationFrame(check);
+        // Safety timeout per target
+        setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 5000);
+      });
+    }
 
-      // Safety timeout: skip after 8 seconds if player can't hit targets
-      setTimeout(() => {
-        if (phase < targets.length) {
-          document.getElementById('calib-flow-overlay').style.display = 'none';
-          resolve();
-        }
-      }, 8000);
-    });
+    icon.textContent = '\uD83C\uDF89';
+    label.textContent = 'You got it!';
+    gauge.style.width = '100%';
+    await new Promise(r => setTimeout(r, 700));
+
+    overlay.style.display = 'none';
 
     // Restore state
     this.autoSpeed = prevAutoSpeed;
