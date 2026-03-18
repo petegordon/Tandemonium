@@ -526,7 +526,14 @@ export class InputManager {
   }
 
   recenterGyro() {
-    this._gyroRollAccum = 0;
+    // Set accumulator to current physical tilt so drift correction is aligned,
+    // and update motionOffset so the tilt pipeline sees zero lean.
+    if (this._accelVerified && this._accelRoll != null) {
+      this._gyroRollAccum = this._accelRoll;
+      this.motionOffset = -this._accelRoll;
+    } else {
+      this._gyroRollAccum = 0;
+    }
     // Don't reset _smoothedLean/motionLean — they're shared with mobile tilt.
     // The EMA filter (gyroOutputSmoothing: 0.3) converges within ~100ms.
   }
@@ -536,7 +543,15 @@ export class InputManager {
     this._smoothedLean = 0;
     this._prevLeanRaw = 0;
     this.motionLean = 0;
-    this._gyroRollAccum = 0;
+    if (this.gyroConnected && this._accelVerified && this._accelRoll != null) {
+      // Set accumulator to current physical tilt so drift correction
+      // won't fight the reset. Then set motionOffset so the tilt pipeline
+      // sees relative = 0 (i.e. -_gyroRollAccum - motionOffset = 0).
+      this._gyroRollAccum = this._accelRoll;
+      this.motionOffset = -this._accelRoll;
+    } else {
+      this._gyroRollAccum = 0;
+    }
     this._driftEma = null;
   }
 
