@@ -6,8 +6,8 @@ import { TUNE, DIFFICULTY_PRESETS } from './config.js';
 
 export class DDAManager {
   constructor(difficulty) {
-    this._baseDifficulty = difficulty || 'normal';
-    this._basePreset = { ...DIFFICULTY_PRESETS[this._baseDifficulty] || DIFFICULTY_PRESETS.normal };
+    this._baseDifficulty = difficulty || 'adventurous';
+    this._basePreset = { ...DIFFICULTY_PRESETS[this._baseDifficulty] || DIFFICULTY_PRESETS.adventurous };
     this._failureCounts = {}; // checkpoint distance → failure count
     this._currentCheckpoint = 0;
     this._adjustmentsActive = false;

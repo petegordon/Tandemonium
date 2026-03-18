@@ -211,7 +211,7 @@ async function submitScore(request, env, corsOrigin, userId) {
   const scoreRes = await env.DB.prepare(
     'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).bind(userId, levelId, distance, timeMs, mode || 'solo', collectiblesCount || 0, inputSource || 'none',
-         difficulty || 'normal', safetyUsed ? 1 : 0, scoreMultiplier || 1.0).run();
+         difficulty || 'adventurous', safetyUsed ? 1 : 0, scoreMultiplier || 1.0).run();
 
   const scoreId = scoreRes.meta.last_row_id;
 
@@ -269,7 +269,7 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   const levelId = url.searchParams.get('level') || 'grandma';
   const scope = url.searchParams.get('scope') || 'global';
   const mode = url.searchParams.get('mode');       // 'solo' | 'together'
-  const diffFilter = url.searchParams.get('difficulty'); // 'chill' | 'normal' | 'daredevil'
+  const diffFilter = url.searchParams.get('difficulty'); // 'chill' | 'adventurous' | 'daredevil'
   const userFilter = url.searchParams.get('user_id'); // 'me'
   let limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 200);
 
@@ -293,7 +293,7 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   }
 
   // Difficulty filter
-  if (diffFilter && ['chill', 'normal', 'daredevil'].includes(diffFilter)) {
+  if (diffFilter && ['chill', 'adventurous', 'daredevil'].includes(diffFilter)) {
     conditions.push('s.difficulty = ?');
     params.push(diffFilter);
   }
