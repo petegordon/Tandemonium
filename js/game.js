@@ -3290,21 +3290,16 @@ class Game {
     analytics.trackEvent('tutorial_start', { input_method: analytics.getInputMethod() });
     this._tutorialStartTime = performance.now();
 
-    // Widen collection hitbox during tutorial
-    // (set after _startCountdown creates the collectible manager — use a brief delay)
-    this._pendingTutorialRadius = true;
+    // Run interactive calibration before the countdown
+    await this._runCalibrationFlow();
 
     // Start the ride via normal countdown flow
     this._startCountdown();
 
-    // Apply tutorial collection radius now that collectible manager exists
-    if (this._pendingTutorialRadius && this.collectibleManager) {
+    // Widen collection hitbox during tutorial (collectible manager exists after _startCountdown)
+    if (this.collectibleManager) {
       this.collectibleManager._tutorialRadius = 2.8;
-      this._pendingTutorialRadius = false;
     }
-
-    // Run interactive calibration before the player starts riding
-    await this._runCalibrationFlow();
 
     // Hide timer (no time pressure in tutorial)
     this.hud.hideTimer();
