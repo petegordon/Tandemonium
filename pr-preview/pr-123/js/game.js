@@ -3099,12 +3099,15 @@ class Game {
     this._calibSuppressPedals = true;
 
     const isGyro = this.input.gyroConnected;
+    const device = isGyro ? 'controller' : 'phone';
+    const verb = isGyro ? 'Lean' : 'Tilt';
     const overlay = document.getElementById('calib-flow-overlay');
     const gauge = document.getElementById('calib-flow-gauge');
     const label = document.getElementById('calib-flow-label');
     const icon = document.getElementById('calib-flow-icon');
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
 
-    // Helper: collect N noise floor samples, returns { mean, stdDev, samples }
+    // Helper: collect N noise floor samples
     const collectSamples = (target) => new Promise((resolve) => {
       const samples = [];
       const tick = () => {
@@ -3126,28 +3129,53 @@ class Game {
       requestAnimationFrame(tick);
     });
 
+    // Helper: wait for player to hit a lean target
+    const waitForLean = (dir, threshold) => new Promise((resolve) => {
+      let resolved = false;
+      const check = () => {
+        if (resolved) return;
+        const lean = this.input.getMotionLean();
+        const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
+        const offset = this.input.motionOffset || 0;
+        this._calibTiltSamples.push(raw - offset);
+
+        let hit = false;
+        if (dir === 'left') hit = lean < threshold;
+        else if (dir === 'right') hit = lean > threshold;
+        else if (dir === 'center') hit = Math.abs(lean) < 0.1;
+
+        if (hit) { resolved = true; resolve(); }
+        else requestAnimationFrame(check);
+      };
+      requestAnimationFrame(check);
+      // Safety timeout
+      setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 8000);
+    });
+
     overlay.style.display = 'flex';
+    this._calibTiltSamples = [];
 
-    // ── Phase A: Hold Still (round 1) ──
-    icon.textContent = isGyro ? '\uD83C\uDFAE' : '\uD83D\uDCF1'; // 🎮 or 📱
-    label.textContent = isGyro ? 'Hold your controller steady...' : 'Hold your phone steady...';
+    // ── Step 1: Welcome ──
+    icon.textContent = isGyro ? '\uD83C\uDFAE' : '\uD83D\uDCF1';
+    label.textContent = 'Let\'s set up your ' + device + '!';
     gauge.style.width = '0%';
+    await wait(2000);
 
-    const round1 = await collectSamples(60); // ~1s at 60Hz
-
-    // Apply initial calibration
+    // ── Step 2: Hold Still (round 1) ──
+    label.textContent = 'Hold your ' + device + ' steady...';
+    gauge.style.width = '0%';
+    const round1 = await collectSamples(90); // ~1.5s at 60Hz
     this.input.motionOffset = round1.mean;
-    label.textContent = '\u2713 Got it!';
+    label.textContent = '\u2713 Good!';
     gauge.style.width = '100%';
-    await new Promise(r => setTimeout(r, 600));
+    await wait(1000);
 
-    // ── Phase A: Hold Still (round 2 — refine) ──
-    label.textContent = isGyro ? 'Hold steady one more moment...' : 'Hold steady one more moment...';
+    // ── Step 3: Hold Still (round 2 — refine) ──
+    label.textContent = 'Keep holding steady...';
     gauge.style.width = '0%';
+    const round2 = await collectSamples(90);
 
-    const round2 = await collectSamples(60);
-
-    // Use the combined rounds for final calibration
+    // Combine both rounds for final calibration
     const allSamples = round1.samples.concat(round2.samples);
     const mean = allSamples.reduce((a, b) => a + b, 0) / allSamples.length;
     const variance = allSamples.reduce((a, b) => a + (b - mean) ** 2, 0) / allSamples.length;
@@ -3160,64 +3188,69 @@ class Game {
     } else {
       TUNE.deadzone = measuredDeadzone;
     }
-
     this._calibHoldSamples = allSamples;
     this._calibHoldMean = mean;
     this._calibHoldStdDev = stdDev;
 
-    label.textContent = '\u2713 Calibrated!';
+    label.textContent = '\u2713 Center calibrated!';
     gauge.style.width = '100%';
-    await new Promise(r => setTimeout(r, 600));
+    await wait(1200);
 
-    // ── Phase B: Tilt Preview ──
-    const verb = isGyro ? 'Lean' : 'Tilt';
-    this._calibTiltSamples = [];
+    // ── Step 4: Tilt Left ──
+    icon.textContent = '\u2B05\uFE0F';
+    label.textContent = verb + ' left...';
+    gauge.style.width = '33%';
+    await waitForLean('left', -0.25);
+    label.textContent = '\u2713 Nice!';
+    await wait(800);
 
-    const targets = [
-      { dir: 'left',  threshold: -0.25, text: '\u2190 ' + verb + ' left',  emoji: '\u2B05\uFE0F' },
-      { dir: 'center', threshold: 0,    text: 'Return to center',          emoji: '\u2195\uFE0F' },
-      { dir: 'right', threshold:  0.25, text: verb + ' right \u2192',      emoji: '\u27A1\uFE0F' },
-      { dir: 'center', threshold: 0,    text: 'Return to center',          emoji: '\u2195\uFE0F' },
-    ];
+    // ── Step 5: Return to Center ──
+    icon.textContent = '\u2195\uFE0F';
+    label.textContent = 'Back to center...';
+    gauge.style.width = '44%';
+    await waitForLean('center', 0);
+    label.textContent = '\u2713 Centered!';
+    await wait(800);
 
-    for (let i = 0; i < targets.length; i++) {
-      const t = targets[i];
-      icon.textContent = t.emoji;
-      label.textContent = t.text;
-      gauge.style.width = (i / targets.length * 100) + '%';
+    // ── Step 6: Tilt Right ──
+    icon.textContent = '\u27A1\uFE0F';
+    label.textContent = verb + ' right...';
+    gauge.style.width = '55%';
+    await waitForLean('right', 0.25);
+    label.textContent = '\u2713 Great!';
+    await wait(800);
 
-      await new Promise((resolve) => {
-        let resolved = false;
-        const check = () => {
-          if (resolved) return;
-          const lean = this.input.getMotionLean();
-          const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
-          const offset = this.input.motionOffset || 0;
-          this._calibTiltSamples.push(raw - offset);
+    // ── Step 7: Return to Center ──
+    icon.textContent = '\u2195\uFE0F';
+    label.textContent = 'Back to center...';
+    gauge.style.width = '66%';
+    await waitForLean('center', 0);
+    await wait(600);
 
-          let hit = false;
-          if (t.dir === 'left') hit = lean < t.threshold;
-          else if (t.dir === 'right') hit = lean > t.threshold;
-          else if (t.dir === 'center') hit = Math.abs(lean) < 0.1;
+    // ── Step 8: Second round — faster ──
+    label.textContent = 'Once more! ' + verb + ' left...';
+    icon.textContent = '\u2B05\uFE0F';
+    gauge.style.width = '72%';
+    await waitForLean('left', -0.25);
+    await wait(400);
 
-          if (hit) {
-            resolved = true;
-            setTimeout(resolve, 300);
-          } else {
-            requestAnimationFrame(check);
-          }
-        };
-        requestAnimationFrame(check);
+    label.textContent = 'And right...';
+    icon.textContent = '\u27A1\uFE0F';
+    gauge.style.width = '83%';
+    await waitForLean('right', 0.25);
+    await wait(400);
 
-        // Safety timeout per target
-        setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 5000);
-      });
-    }
+    label.textContent = 'Back to center...';
+    icon.textContent = '\u2195\uFE0F';
+    gauge.style.width = '90%';
+    await waitForLean('center', 0);
+    await wait(400);
 
+    // ── Step 9: Done ──
     icon.textContent = '\uD83C\uDF89';
-    label.textContent = 'You got it!';
+    label.textContent = 'You\'re ready to ride!';
     gauge.style.width = '100%';
-    await new Promise(r => setTimeout(r, 700));
+    await wait(1500);
 
     overlay.style.display = 'none';
 
