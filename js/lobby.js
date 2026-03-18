@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { NetworkManager } from './network-manager.js';
-import { RELAY_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, RELAY_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -762,13 +762,16 @@ export class Lobby {
     if (tutBtn) {
       tutBtn.style.display = '';
       const isGyro = this.input && this.input.gyroConnected;
+      const hasGamepad = this.input && this.input.gamepadConnected;
       const hasMotion = this.motionActive || isGyro;
       if (isGyro) {
-        tutBtn.textContent = '\uD83C\uDFAE Learn to Ride with Gyro'; // 🎮
-      } else if (hasMotion) {
-        tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride'; // 📱
+        tutBtn.textContent = '\uD83C\uDFAE Learn to Ride \u2014 Controller Gyro'; // 🎮
+      } else if (hasMotion && isMobile) {
+        tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride \u2014 Phone Motion'; // 📱
+      } else if (hasGamepad) {
+        tutBtn.textContent = '\uD83D\uDD79\uFE0F Learn to Ride \u2014 Joystick'; // 🕹️
       } else {
-        tutBtn.textContent = '\uD83D\uDEB4 Learn to Ride'; // 🚴
+        tutBtn.textContent = '\u2328\uFE0F Learn to Ride \u2014 Keyboard'; // ⌨️
       }
       buttons.push(tutBtn);
     }
