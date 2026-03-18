@@ -266,10 +266,9 @@ export class BikeModel {
     const gyro = -this.lean * Math.min(this.speed * 0.8, 6.0);
     const damping = -this.leanVelocity * TUNE.damping;
 
-    const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2;
-
     const t = performance.now() / 1000;
-    const wobbleMul = TUNE.wobbleMultiplier || 1.0;
+    const wobbleMul = TUNE.wobbleMultiplier != null ? TUNE.wobbleMultiplier : 1.0;
+    const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2 * wobbleMul;
     const lowSpeedWobble = Math.max(0, 1 - this.speed * 0.3) *
       (Math.sin(t * 2.7) * 0.3 + Math.sin(t * 4.3) * 0.15) * wobbleMul;
 
@@ -289,12 +288,12 @@ export class BikeModel {
       dangerWobble = intensity * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
     }
 
-    // Grass wobble: rough terrain when off-road
+    // Grass wobble: rough terrain when off-road (scaled by wobbleMultiplier)
     let grassWobble = 0;
     const offRoad = Math.max(0, Math.abs(this._lateralOffset) - 2.5);
-    if (offRoad > 0 && this.speed > 0.1) {
+    if (offRoad > 0 && this.speed > 0.1 && wobbleMul > 0) {
       const grassIntensity = Math.min(offRoad / 3, 1); // ramps up over 3 units off-road
-      grassWobble = grassIntensity * this.speed * 0.15 *
+      grassWobble = grassIntensity * this.speed * 0.15 * wobbleMul *
         (Math.sin(t * 13.7) * 0.5 + Math.sin(t * 23.1) * 0.3 + (Math.random() - 0.5) * 0.4);
     }
 
