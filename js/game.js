@@ -3290,8 +3290,14 @@ class Game {
     analytics.trackEvent('tutorial_start', { input_method: analytics.getInputMethod() });
     this._tutorialStartTime = performance.now();
 
+    // Flag to prevent _startCountdown from running its own tilt calibration
+    // (the tutorial calibration flow will handle it)
+    this._calibHoldSamples = true;
+
     // Start the ride setup (creates scene, collectibles, etc.) but pause the countdown
     this._startCountdown();
+    // Reset flag so actual calibration data replaces it
+    this._calibHoldSamples = null;
 
     // Widen collection hitbox during tutorial (collectible manager exists after _startCountdown)
     if (this.collectibleManager) {
@@ -3299,11 +3305,15 @@ class Game {
     }
 
     // Pause countdown during calibration — set state to 'calibrating' so
-    // _updateCountdown doesn't tick, then run the interactive calibration flow
+    // _updateCountdown doesn't tick, then run the interactive calibration flow.
+    // Hide countdown number so it doesn't show through the calibration overlay.
     this.state = 'calibrating';
+    const flavorNum = document.getElementById('countdown-flavor-num');
+    if (flavorNum) flavorNum.style.visibility = 'hidden';
     await this._runCalibrationFlow();
 
     // Resume countdown from 3 seconds
+    if (flavorNum) flavorNum.style.visibility = '';
     this.state = 'countdown';
     this.countdownTimer = 3.0;
 
