@@ -3918,9 +3918,13 @@ class Game {
 
     document.getElementById('tutorial-complete').classList.add('visible');
 
-    // Register continue button for gamepad navigation
+    // Register buttons for gamepad navigation (Steam Store link + continue)
+    const steamStoreBtn = document.getElementById('btn-steam-store');
     const continueBtn = document.getElementById('btn-tutorial-continue');
-    this._setOverlayButtons([continueBtn]);
+    const overlayBtns = [];
+    if (steamStoreBtn) overlayBtns.push(steamStoreBtn);
+    overlayBtns.push(continueBtn);
+    this._setOverlayButtons(overlayBtns, overlayBtns.length - 1);
     this._overlaySlider = slider;
   }
 
