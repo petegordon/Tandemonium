@@ -962,9 +962,9 @@ class Game {
     this.balanceCtrl.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
-    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera);
+    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
-    this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera);
+    this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
 
     // Wire up collectibles total for analytics
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
