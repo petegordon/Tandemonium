@@ -3246,15 +3246,52 @@ class Game {
     await waitForLean('center', 0);
     await wait(400);
 
-    // ── Step 9: Recalibrate tip ──
+    // ── Step 9: Recalibrate practice ──
     icon.textContent = '\uD83D\uDCA1'; // 💡
     if (isGyro) {
-      label.textContent = 'Tip: Press L3 (joystick click) anytime to recalibrate!';
+      label.textContent = 'Press L3 (joystick click) to recalibrate \u2014 try it now!';
     } else {
-      label.textContent = 'Tip: Tap the screen anytime to recalibrate!';
+      label.textContent = 'Tap the screen to recalibrate \u2014 try it now!';
     }
     gauge.style.width = '95%';
-    await wait(3000);
+    // Wait for player to actually perform the recalibrate action
+    await new Promise((resolve) => {
+      let resolved = false;
+      if (isGyro) {
+        // Poll for L3 press (button 10)
+        const pollL3 = () => {
+          if (resolved) return;
+          const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+          const gp = gamepads[this.input.gamepadIndex];
+          if (gp && gp.buttons[10] && gp.buttons[10].pressed) {
+            resolved = true;
+            this._recalibrateTilt();
+            resolve();
+          } else {
+            requestAnimationFrame(pollL3);
+          }
+        };
+        requestAnimationFrame(pollL3);
+      } else {
+        // Listen for screen tap
+        const onTap = () => {
+          if (resolved) return;
+          resolved = true;
+          this._recalibrateTilt();
+          overlay.removeEventListener('pointerdown', onTap);
+          resolve();
+        };
+        // Temporarily enable pointer events on overlay for this step
+        overlay.style.pointerEvents = 'auto';
+        overlay.addEventListener('pointerdown', onTap);
+      }
+      // Safety timeout
+      setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 10000);
+    });
+    // Restore pointer-events
+    overlay.style.pointerEvents = 'none';
+    label.textContent = '\u2713 Recalibrated! You can do this anytime during a ride.';
+    await wait(2000);
 
     // ── Step 10: Done ──
     icon.textContent = '\uD83C\uDF89';
@@ -3445,17 +3482,21 @@ class Game {
     }
 
     // Pylon tracking + dodge arrow
-    if (this.obstacleManager && phase > 0) {
-      const passResult = this.obstacleManager.updatePassTracking(dist, this.bike._lateralOffset);
-      this._updateDodgeArrow(dist);
-      if (passResult) {
-        if (!passResult.correct) {
-          this._tutorialPhaseRetry(tp, 'Weave to the other side of the pylon!');
-          return;
-        } else {
-          this._showPylonSuccess();
+    // Show dodge arrow during Phase 2 runway too so player sees it early
+    const showDodgeArrow = phase > 0 || (tp === 2 && phase === 0);
+    if (this.obstacleManager && showDodgeArrow) {
+      if (phase > 0) {
+        const passResult = this.obstacleManager.updatePassTracking(dist, this.bike._lateralOffset);
+        if (passResult) {
+          if (!passResult.correct) {
+            this._tutorialPhaseRetry(tp, 'Weave to the other side of the pylon!');
+            return;
+          } else {
+            this._showPylonSuccess();
+          }
         }
       }
+      this._updateDodgeArrow(dist);
     } else {
       const arrow = document.getElementById('coaching-dodge-arrow');
       if (arrow) arrow.classList.remove('visible');
@@ -3653,8 +3694,10 @@ class Game {
       }
     }
 
-    // Show arrow when pylon is within 15m ahead, hide within 2m (already dodging)
-    if (next && aheadDist <= 15 && aheadDist > 2) {
+    // Show arrow when pylon is within range ahead, hide within 2m (already dodging)
+    // Use longer range (25m) during tutorial for more reaction time
+    const arrowRange = this._tutorialActive ? 25 : 15;
+    if (next && aheadDist <= arrowRange && aheadDist > 2) {
       arrow.classList.add('visible');
       // Pylon on left (offset < 0) → arrow points right; pylon on right → arrow points left
       if (next.lateralOffset < 0) {
