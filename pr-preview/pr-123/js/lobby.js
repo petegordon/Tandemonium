@@ -82,7 +82,7 @@ export class Lobby {
     this.selectedLevel = LEVELS.find(l => !l.isTutorial) || LEVELS[0]; // default to first non-tutorial level
     this._forceWizard = false;
     this.selectedPresetKey = 'default';
-    this.selectedDifficulty = 'chill'; // 'chill' | 'normal' | 'daredevil'
+    this.selectedDifficulty = 'chill'; // 'chill' | 'adventurous' | 'daredevil'
     this._pendingMode = null; // 'solo' or 'multiplayer', set during level selection
 
     this.lobbyEl = document.getElementById('lobby');

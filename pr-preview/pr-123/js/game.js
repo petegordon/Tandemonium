@@ -927,7 +927,7 @@ class Game {
     this._updateMusicBtnIcon();
 
     // Apply difficulty preset and create DDA manager
-    const difficultyName = this.lobby.selectedDifficulty || 'normal';
+    const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
     applyDifficulty(difficultyName);
     this.ddaManager = new DDAManager(difficultyName);
     this._assistWeight = 0;
@@ -1751,9 +1751,12 @@ class Game {
         { icon: '\uD83D\uDEB4', value: distStr },                         // 🚴 Distance
       ];
       const inputSourceEmoji = { keyboard: '\uD83D\uDCBB', gamepad: '\uD83D\uDD79\uFE0F', motion: '\uD83D\uDCF1', 'gamepad-gyro': '\uD83C\uDFAE' };
+      const diffNames = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil', tutorial: 'Tutorial' };
+      const diffName = diffNames[this.lobby.selectedDifficulty] || this.lobby.selectedDifficulty;
       const right = [
         { icon: '\u2601\uFE0F', value: summary.checkpointsPassed + '/' + summary.checkpointsTotal }, // ☁️ Checkpoints
       ];
+      left.push({ icon: '\u26A1', value: diffName }); // ⚡ Difficulty
       if (summary.collectibles > 0) {
         right.push({ icon: collectIcon, value: '' + summary.collectibles });
       }
@@ -1939,7 +1942,7 @@ class Game {
     const raceSummary = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
     if (!raceSummary) return;
 
-    const difficulty = this.lobby.selectedDifficulty || 'normal';
+    const difficulty = this.lobby.selectedDifficulty || 'adventurous';
     const data = {
       levelId: level.id,
       distance: raceSummary.distance,
