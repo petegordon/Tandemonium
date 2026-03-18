@@ -31,9 +31,9 @@ const ACHIEVEMENTS = [
   { id: 'grandma_green',    name: 'Jungle Express',        icon: '🌿', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'bike_green' },
   { id: 'grandma_yellow',   name: 'Banana Delivery',       icon: '🍌', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'bike_yellow' },
 
-  // Perfect rides (no crashes)
-  { id: 'perfect_1k',   name: 'Flawless 1K',       icon: '\uD83D\uDCAE', condition: s => s.finishedLevel && s.crashes === 0 && s.raceDistance >= 1000 },  // 💮
-  { id: 'perfect_5k',   name: 'Untouchable',       icon: '\uD83D\uDC8E', condition: s => s.finishedLevel && s.crashes === 0 && s.raceDistance >= 5000 },  // 💎
+  // Perfect rides (no crashes, no checkpoint restarts)
+  { id: 'perfect_1k',   name: 'Flawless',           icon: '\uD83D\uDCAE', condition: s => s.finishedLevel === 'grandma' && s.crashes === 0 && s.restarts === 0 },  // 💮
+  { id: 'perfect_5k',   name: 'Untouchable',        icon: '\uD83D\uDC8E', condition: s => s.finishedLevel === 'castle' && s.crashes === 0 && s.restarts === 0 },   // 💎
 
   // Contribution
   { id: 'team_player',  name: 'Team Player',       icon: '\uD83E\uDD1C', condition: s => s.isMultiplayer && s.safePct >= 80 }, // 🤜
