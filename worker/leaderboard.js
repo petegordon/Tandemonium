@@ -85,12 +85,14 @@ export default {
         return handleAnalyticsConversion(request, env, corsOrigin);
       }
 
-      // ---- Dashboard query routes (read-only, rate limited) ----
+      // ---- Dashboard query routes (authenticated, rate limited) ----
       if (path.startsWith('/api/analytics/dashboard/')) {
         const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         const dashRoute = path.replace('/api/analytics/dashboard/', '');
-        return handleDashboard(dashRoute, url, env, corsOrigin);
+        return withDashboardAuth(request, env, corsOrigin, () =>
+          handleDashboard(dashRoute, url, env, corsOrigin)
+        );
       }
 
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
@@ -136,6 +138,7 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const googleId = payload.sub;
   const name = payload.name || 'Player';
   const picture = payload.picture || null;
+  const email = payload.email || null;
 
   // Upsert user
   const existing = await env.DB.prepare(
@@ -155,8 +158,8 @@ async function handleGoogleAuth(request, env, corsOrigin) {
     userId = ins.meta.last_row_id;
   }
 
-  // Create server JWT
-  const jwt = await createJWT({ sub: userId, name, picture }, env.JWT_SECRET);
+  // Create server JWT (include email for dashboard access control)
+  const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET);
 
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture } }, 200, corsOrigin);
 }
@@ -1230,6 +1233,30 @@ async function withAuth(request, env, corsOrigin, handler) {
   const userId = await getUserFromRequest(request, env);
   if (!userId) return jsonResponse({ error: 'Unauthorized' }, 401, corsOrigin);
   return handler(request, env, corsOrigin, userId);
+}
+
+// Dashboard auth: verify JWT + check email against allow-list
+const DASHBOARD_EMAILS = [
+  'pete@usersfirst.com',
+  'pete@petegordon.com',
+];
+
+async function withDashboardAuth(request, env, corsOrigin, handler) {
+  const auth = request.headers.get('Authorization');
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return jsonResponse({ error: 'Unauthorized — sign in required' }, 401, corsOrigin);
+  }
+  const token = auth.slice(7);
+  let payload;
+  try {
+    payload = await verifyJWT(token, env.JWT_SECRET);
+  } catch {
+    return jsonResponse({ error: 'Invalid or expired token' }, 401, corsOrigin);
+  }
+  if (!payload.email || !DASHBOARD_EMAILS.includes(payload.email.toLowerCase())) {
+    return jsonResponse({ error: 'Access denied — not authorized for dashboard' }, 403, corsOrigin);
+  }
+  return handler(request, env, corsOrigin, payload.sub);
 }
 
 async function getUserFromRequest(request, env) {

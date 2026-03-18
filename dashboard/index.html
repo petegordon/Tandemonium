@@ -55,30 +55,91 @@
 <h1>Tandemonium Analytics</h1>
 <div class="subtitle">Steam Next Fest Dashboard</div>
 
-<div class="controls">
-  <select id="days">
-    <option value="1">Last 24 hours</option>
-    <option value="7" selected>Last 7 days</option>
-    <option value="14">Last 14 days</option>
-    <option value="30">Last 30 days</option>
-    <option value="90">Last 90 days</option>
-  </select>
-  <button id="refresh" onclick="loadAll()">Refresh</button>
-  <label style="font-size:0.82em;"><input type="checkbox" id="auto-refresh"> Auto-refresh 60s</label>
-  <span class="status" id="status">Loading...</span>
+<!-- Auth gate: shown when not signed in -->
+<div id="auth-gate" style="text-align:center;padding:60px 20px;">
+  <p style="color:#888;margin-bottom:20px;">Sign in with an authorized Google account to view the dashboard.</p>
+  <div id="g_id_onload"
+       data-client_id="640682648249-dp1dou0mmpkm6m697oakbe9odabt1dui.apps.googleusercontent.com"
+       data-callback="onGoogleSignIn"
+       data-auto_select="true">
+  </div>
+  <div class="g_id_signin" data-type="standard" data-size="large" data-theme="filled_black" data-text="sign_in_with"></div>
 </div>
 
-<div id="content"><div class="loading">Loading dashboard...</div></div>
+<!-- Dashboard controls: shown when signed in -->
+<div id="dashboard-ui" style="display:none;">
+  <div class="controls">
+    <select id="days">
+      <option value="1">Last 24 hours</option>
+      <option value="7" selected>Last 7 days</option>
+      <option value="14">Last 14 days</option>
+      <option value="30">Last 30 days</option>
+      <option value="90">Last 90 days</option>
+    </select>
+    <button id="refresh" onclick="loadAll()">Refresh</button>
+    <label style="font-size:0.82em;"><input type="checkbox" id="auto-refresh"> Auto-refresh 60s</label>
+    <span class="status" id="status">Loading...</span>
+    <button onclick="signOut()" style="background:#333;border-color:#555;margin-left:8px;">Sign out</button>
+  </div>
+  <div id="content"><div class="loading">Loading dashboard...</div></div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 <script>
-const API = 'https://tandemonium-api.pete-872.workers.dev/api/analytics/dashboard';
+const API_BASE = 'https://tandemonium-api.pete-872.workers.dev';
+const API = API_BASE + '/api/analytics/dashboard';
 let charts = {};
 let autoTimer = null;
+let dashToken = sessionStorage.getItem('dash_token');
+
+// ── Google Sign-In ──
+async function onGoogleSignIn(response) {
+  try {
+    // Exchange Google credential for server JWT
+    const r = await fetch(API_BASE + '/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential: response.credential }),
+    });
+    if (!r.ok) throw new Error('Auth failed: ' + r.status);
+    const data = await r.json();
+    dashToken = data.token;
+    sessionStorage.setItem('dash_token', dashToken);
+    showDashboard();
+  } catch (e) {
+    document.getElementById('auth-gate').innerHTML =
+      '<p style="color:#f87171;">Access denied. Use an authorized Google account.</p>' +
+      '<button onclick="location.reload()" style="margin-top:12px;padding:8px 16px;background:#333;color:#fff;border:1px solid #555;border-radius:6px;cursor:pointer;">Try again</button>';
+  }
+}
+
+function signOut() {
+  dashToken = null;
+  sessionStorage.removeItem('dash_token');
+  location.reload();
+}
+
+function showDashboard() {
+  document.getElementById('auth-gate').style.display = 'none';
+  document.getElementById('dashboard-ui').style.display = '';
+  loadAll();
+}
+
+// Auto-login if we have a stored token — verify it still works
+if (dashToken) {
+  fetch(API + '/overview?days=1', { headers: { 'Authorization': 'Bearer ' + dashToken } })
+    .then(r => { if (r.ok) showDashboard(); else signOut(); })
+    .catch(() => signOut());
+}
 
 function getDays() { return document.getElementById('days').value; }
 
 async function fetchJSON(route) {
-  const r = await fetch(`${API}/${route}?days=${getDays()}`);
+  const headers = {};
+  if (dashToken) headers['Authorization'] = 'Bearer ' + dashToken;
+  const r = await fetch(`${API}/${route}?days=${getDays()}`, { headers });
+  if (r.status === 401 || r.status === 403) { signOut(); throw new Error('Session expired'); }
   if (!r.ok) throw new Error(`${route}: ${r.status}`);
   return r.json();
 }
@@ -415,13 +476,11 @@ function renderSimpleTable(rows, cols) {
 }
 
 // -- Init --
-document.getElementById('days').addEventListener('change', loadAll);
+document.getElementById('days').addEventListener('change', () => { if (dashToken) loadAll(); });
 document.getElementById('auto-refresh').addEventListener('change', (e) => {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   if (e.target.checked) autoTimer = setInterval(loadAll, 60000);
 });
-
-loadAll();
 </script>
 </body>
 </html>
