@@ -30,6 +30,11 @@ export class InputManager {
     this._calibrating = false;
     this._warmupCount = 0;
 
+    // Time-based filtering for deviceorientation events
+    this._lastOrientTime = 0;
+    this._filteredRawTilt = null;
+    this._lastApplyTiltTime = 0;
+
     // Velocity-dependent sensitivity: set by game loop each frame
     this.bikeSpeed = 0;
     this.bikeMaxSpeed = 19;
@@ -237,7 +242,25 @@ export class InputManager {
         this._useOrientation = true;
         if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
         this.motionEnabled = true;
-        this._applyTilt(rawTilt);
+
+        // Time-based low-pass pre-filter on raw gamma.
+        // This makes TUNE.lowPassK functional on the deviceorientation path.
+        // Without this, lowPassK only applied to the devicemotion fallback,
+        // which Android never uses (since deviceorientation events fire).
+        // Uses the same frame-rate-independent formula as the devicemotion
+        // fallback (line ~254) so behavior is consistent at any event rate.
+        const now = performance.now();
+        if (this._filteredRawTilt === null) {
+          this._filteredRawTilt = rawTilt;
+          this._lastOrientTime = now;
+        } else {
+          const dtSec = Math.min((now - this._lastOrientTime) / 1000, 0.1);
+          const k = 1 - Math.pow(1 - TUNE.lowPassK, dtSec * 60);
+          this._filteredRawTilt += (rawTilt - this._filteredRawTilt) * k;
+          this._lastOrientTime = now;
+        }
+
+        this._applyTilt(this._filteredRawTilt);
       }
     });
 
@@ -279,6 +302,13 @@ export class InputManager {
 
   _applyTilt(rawTilt, isGyro = false) {
     this.rawGamma = rawTilt;
+
+    // Track time between calls for rate-independent output smoothing
+    const now = performance.now();
+    const dtSec = this._lastApplyTiltTime
+      ? Math.min((now - this._lastApplyTiltTime) / 1000, 0.1)
+      : 1 / 60; // assume 60Hz on first call
+    this._lastApplyTiltTime = now;
 
     if (this.motionOffset === null && !this._calibrating) {
       this._warmupCount++;
@@ -362,8 +392,15 @@ export class InputManager {
     // Asymmetric smoothing: less smoothing when initiating a turn (responsive),
     // more smoothing when returning to center (stable)
     const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > 0.05;
-    const smoothK = initiating ? Math.min(outputSmoothing * 1.6, 0.9) : outputSmoothing * 0.7;
+    const baseSmooth = initiating ? Math.min(outputSmoothing * 1.6, 0.9) : outputSmoothing * 0.7;
     this._prevLeanRaw = lean;
+
+    // Frame-rate-independent EMA: normalize so smoothing converges at the
+    // same wall-clock rate regardless of event frequency (60Hz vs 200Hz).
+    // At 60Hz, dtSec * 60 ≈ 1.0, so smoothK ≈ baseSmooth (unchanged).
+    // At 120Hz, dtSec * 60 ≈ 0.5, so smoothK is smaller per event but
+    // the per-second convergence rate is identical.
+    const smoothK = 1 - Math.pow(1 - baseSmooth, dtSec * 60);
 
     this._smoothedLean += (lean - this._smoothedLean) * smoothK;
     this.motionLean = this._smoothedLean;
