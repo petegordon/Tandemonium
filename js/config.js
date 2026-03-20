@@ -91,6 +91,7 @@ export const DIFFICULTY_PRESETS = {
     autoCorrection: true,       // gentle return-to-center force
     autoCorrectionStrength: 6.0, // strong self-righting (ramped per phase)
     pedalLeanKickScale: 0.0,    // no random lean impulse on pedal strokes
+    autoSpeed: true,            // bike rolls forward automatically
   },
   chill: {
     crashThreshold: 2.2,        // same as tutorial — nearly impossible to crash
@@ -103,6 +104,7 @@ export const DIFFICULTY_PRESETS = {
     autoCorrection: true,
     autoCorrectionStrength: 6.0, // strong self-righting
     pedalLeanKickScale: 0.0,    // no random lean impulse
+    autoSpeed: true,            // steady cruise speed for smooth, stable riding
   },
   adventurous: {
     crashThreshold: 2.0,        // forgiving but crashable

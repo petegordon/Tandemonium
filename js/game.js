@@ -932,6 +932,13 @@ class Game {
     this.ddaManager = new DDAManager(difficultyName);
     this._assistWeight = 0;
 
+    // Apply auto-speed from difficulty preset (Chill/Tutorial cruise automatically)
+    if (TUNE.autoSpeed != null) {
+      this.autoSpeed = TUNE.autoSpeed;
+      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+      this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
+    }
+
     // Reset background adaptation state for fresh ride
     this._adaptState = null;
 
@@ -1507,8 +1514,6 @@ class Game {
     // Tutorial overlays
     const tutPrompt = document.getElementById('tutorial-prompt');
     if (tutPrompt) tutPrompt.classList.remove('visible');
-    const tutSkip = document.getElementById('tutorial-skip');
-    if (tutSkip) tutSkip.style.display = 'none';
     const tutCrash = document.getElementById('tutorial-crash');
     if (tutCrash) tutCrash.classList.remove('visible');
     const tutComplete = document.getElementById('tutorial-complete');
@@ -3370,8 +3375,6 @@ class Game {
     }
 
     // Show tutorial UI
-    document.getElementById('tutorial-skip').style.display = 'block';
-    document.getElementById('tutorial-skip').onclick = () => this._skipTutorial();
     document.getElementById('btn-tutorial-continue').onclick = () => this._finishTutorial();
 
     // Analytics: tutorial start
@@ -3914,8 +3917,6 @@ class Game {
 
     // Hide tutorial prompt, show completion screen
     document.getElementById('tutorial-prompt').classList.remove('visible');
-    document.getElementById('tutorial-skip').style.display = 'none';
-
     const statsEl = document.getElementById('tutorial-complete-stats');
     let html = '';
     if (this._tutorialAttempts > 1) {
@@ -4014,35 +4015,6 @@ class Game {
     return { sensitivity, deadzone, outputSmoothing, responseCurve };
   }
 
-  _skipTutorial() {
-    // Analytics: tutorial abandon
-    const lastPhase = this._tutTargetPhase || 0;
-    const elapsed = this._tutorialStartTime ? (performance.now() - this._tutorialStartTime) / 1000 : 0;
-    analytics.trackEvent('tutorial_abandon', { last_phase: lastPhase, time_in_phase_sec: Math.round(elapsed) });
-    if (analytics.getCurrentRideId()) {
-      analytics.endRide({
-        completed: false,
-        abandon_reason: 'lobby_button',
-        distance: this.bike ? this.bike.distanceTraveled : 0,
-      });
-    }
-
-    // Apply defaults and save so tutorial doesn't re-run
-    const isGyro = this.input.gyroConnected;
-    const saveData = {
-      version: 1,
-      inputType: isGyro ? 'gyro' : 'phone',
-      platform: isAndroid ? 'android' : isIOS ? 'ios' : 'desktop',
-      sensitivity: isGyro ? BALANCE_DEFAULTS.gyroSensitivity : BALANCE_DEFAULTS.sensitivity,
-      deadzone: isGyro ? BALANCE_DEFAULTS.gyroDeadzone : BALANCE_DEFAULTS.deadzone,
-      outputSmoothing: isGyro ? BALANCE_DEFAULTS.gyroOutputSmoothing : BALANCE_DEFAULTS.outputSmoothing,
-      responseCurve: isGyro ? BALANCE_DEFAULTS.gyroResponseCurve : BALANCE_DEFAULTS.responseCurve,
-      timestamp: Date.now()
-    };
-    try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}
-    this._endTutorialRide();
-  }
-
   _finishTutorial() {
     // Save the final steering feel value
     const slider = document.getElementById('steering-feel-slider');
@@ -4075,7 +4047,6 @@ class Game {
 
     // Hide all tutorial UI
     document.getElementById('tutorial-prompt').classList.remove('visible');
-    document.getElementById('tutorial-skip').style.display = 'none';
     document.getElementById('tutorial-crash').classList.remove('visible');
     document.getElementById('tutorial-complete').classList.remove('visible');
 
