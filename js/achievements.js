@@ -119,7 +119,15 @@ export class AchievementManager {
       } catch (e) {}
     }
 
-    if (newlyEarned.length > 0) this._save();
+    if (newlyEarned.length > 0) {
+      this._save();
+      // Mirror newly earned achievements to Steam
+      if (window.steam) {
+        for (const a of newlyEarned) {
+          window.steam.activateAchievement(a.id.toUpperCase());
+        }
+      }
+    }
     return newlyEarned;
   }
 
@@ -147,6 +155,14 @@ export class AchievementManager {
       icon: a.icon,
       earned: this._earned.has(a.id)
     }));
+  }
+
+  /** Push all earned achievements to Steam profile (catches web/mobile unlocks). */
+  async syncToSteam() {
+    if (!window.steam) return;
+    for (const id of this._earned.keys()) {
+      await window.steam.activateAchievement(id.toUpperCase());
+    }
   }
 
   mergeFromServer(serverAchievements) {

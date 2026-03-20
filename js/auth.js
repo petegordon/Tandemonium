@@ -172,6 +172,47 @@ export class AuthManager {
     });
   }
 
+  async loginWithSteam() {
+    try {
+      const steamId = await window.steam.getSteamId();
+      const personaName = await window.steam.getPlayerName();
+      const ticket = await window.steam.getAuthTicket();
+      if (!steamId || !ticket) {
+        console.error('AUTH: Steam credentials unavailable');
+        return false;
+      }
+
+      const res = await fetch(`${API_BASE}/auth/steam`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ steamId, personaName, ticket }),
+      });
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        this.lastAuthError = 'Steam auth failed (' + res.status + ')';
+        console.error('AUTH: Steam auth failed:', res.status, errBody);
+        return false;
+      }
+
+      const data = await res.json();
+      this.user = {
+        id: steamId,
+        name: personaName,
+        avatar: data.user.avatar,
+        serverId: data.user.id,
+      };
+      this.token = data.token;
+      this._save();
+
+      if (this._onLoginCallback) this._onLoginCallback(this.user);
+      return true;
+    } catch (e) {
+      console.error('AUTH: Steam login error:', e);
+      this.lastAuthError = 'Steam auth error: ' + (e.message || 'unknown');
+      return false;
+    }
+  }
+
   login() {
     if (typeof google === 'undefined' || !google.accounts) return;
     google.accounts.id.prompt();

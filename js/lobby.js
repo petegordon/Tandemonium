@@ -217,8 +217,10 @@ export class Lobby {
 
     // Auth (after _avatarCache — _setupAuth triggers updateUI which reads the cache)
     this.auth = new AuthManager();
-    this.license = new LicenseManager(this.auth);
-    this._setupAuth();
+
+    // Steam: bypass LicenseManager when Steam ownership is confirmed
+    this._isSteam = false;
+    this._initSteamLicense().then(() => this._setupAuth());
     this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
     this._lbFocusCol = 0;   // index within the current row
 
@@ -813,6 +815,42 @@ export class Lobby {
     });
   }
 
+  async _initSteamLicense() {
+    if (!window.steam) {
+      this.license = new LicenseManager(this.auth);
+      return;
+    }
+    try {
+      const available = await window.steam.isAvailable();
+      if (!available) {
+        this.license = new LicenseManager(this.auth);
+        return;
+      }
+      const subscribed = await window.steam.isSubscribed();
+      if (subscribed) {
+        this._isSteam = true;
+        // Shim: Steam ownership = fully licensed, no network checks needed
+        this.license = {
+          isLicensed: true,
+          isFreePlay: false,
+          accessLevel: 'licensed',
+          _license: { licensed: true },
+          check: async () => {},
+          refresh: async () => {},
+          clear: () => {},
+        };
+        // Hide Google sign-in button and Stripe purchase CTAs on Steam
+        const gsiBtn = document.getElementById('gsi-button-container');
+        if (gsiBtn) gsiBtn.style.display = 'none';
+      } else {
+        this.license = new LicenseManager(this.auth);
+      }
+    } catch (e) {
+      console.warn('Steam license check failed, falling back to LicenseManager', e);
+      this.license = new LicenseManager(this.auth);
+    }
+  }
+
   _setupAuth() {
     this.profilePopup = document.getElementById('profile-popup');
     const popupAvatar = document.getElementById('profile-popup-avatar');
@@ -820,8 +858,13 @@ export class Lobby {
     const popupEmail = document.getElementById('profile-popup-email');
     const logoutBtn = document.getElementById('profile-popup-logout');
 
-    // Initialize GSI
-    this.auth.initGSI();
+    // Initialize auth: Steam auto-login or Google Sign-In
+    if (this._isSteam) {
+      // Steam users auto-authenticate — no Google sign-in needed
+      this.auth.loginWithSteam();
+    } else {
+      this.auth.initGSI();
+    }
 
     // Save original SVG to restore on logout
     const profileSvg = this.toggleProfile.innerHTML;
@@ -877,6 +920,10 @@ export class Lobby {
         }
       } catch (e) {
         console.warn('Failed to fetch server achievements on login', e);
+      }
+      // Sync all earned achievements to Steam profile (catches web/mobile unlocks)
+      if (this._isSteam) {
+        this._achievements.syncToSteam();
       }
 
       // Resume auto-join if user arrived via shared URL before logging in

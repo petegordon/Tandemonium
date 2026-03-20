@@ -26,6 +26,11 @@ export default {
         if (limited) return limited;
         return handleGoogleAuth(request, env, corsOrigin);
       }
+      if (path === '/auth/steam' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleSteamAuth(request, env, corsOrigin);
+      }
 
       // Authed routes
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
@@ -162,6 +167,59 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET);
 
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture } }, 200, corsOrigin);
+}
+
+async function handleSteamAuth(request, env, corsOrigin) {
+  const body = await request.json();
+  const { steamId, personaName, ticket } = body;
+  if (!steamId || !ticket) return jsonResponse({ error: 'Missing steamId or ticket' }, 400, corsOrigin);
+
+  // Verify the session ticket via Steam Web API
+  try {
+    const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=4482940&ticket=${ticket}`;
+    const steamRes = await fetch(verifyUrl);
+    if (!steamRes.ok) return jsonResponse({ error: 'Steam verification failed' }, 401, corsOrigin);
+    const steamData = await steamRes.json();
+    const params = steamData?.response?.params;
+    if (!params || params.result !== 'OK') {
+      return jsonResponse({ error: 'Steam ticket invalid' }, 401, corsOrigin);
+    }
+    // Verify the Steam ID matches the ticket
+    if (params.steamid !== steamId) {
+      return jsonResponse({ error: 'Steam ID mismatch' }, 401, corsOrigin);
+    }
+  } catch (e) {
+    return jsonResponse({ error: 'Steam verification error: ' + e.message }, 500, corsOrigin);
+  }
+
+  writeMetric(env, 'auth_steam');
+
+  const name = personaName || 'Steam Player';
+
+  // Build Steam avatar URL from Steam ID
+  const avatarUrl = `https://avatars.steamstatic.com/${steamId}_medium.jpg`;
+
+  // Upsert user
+  const existing = await env.DB.prepare(
+    'SELECT id FROM users WHERE provider = ? AND provider_id = ?'
+  ).bind('steam', steamId).first();
+
+  let userId;
+  if (existing) {
+    userId = existing.id;
+    await env.DB.prepare(
+      'UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?'
+    ).bind(name, avatarUrl, userId).run();
+  } else {
+    const ins = await env.DB.prepare(
+      'INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?)'
+    ).bind('steam', steamId, name, avatarUrl).run();
+    userId = ins.meta.last_row_id;
+  }
+
+  const jwt = await createJWT({ sub: userId, name, picture: avatarUrl }, env.JWT_SECRET);
+
+  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl } }, 200, corsOrigin);
 }
 
 // ============================================================
