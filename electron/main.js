@@ -92,7 +92,8 @@ function createWindow() {
   });
 
   mainWindow.setMenu(null);
-  mainWindow.loadFile(path.join(__dirname, '..', 'desktop', 'index.html'));
+  // Load root index.html directly (desktop/index.html had path rewriting issues)
+  mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
 
   mainWindow.on('closed', () => {
     mainWindow = null;
