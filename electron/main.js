@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, session } = require('electron');
 const path = require('path');
 
 // --- Steamworks initialization (before app.ready) ---
@@ -106,7 +106,23 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // WebHID permissions (required for PlayStation gyro via WebHID)
+  session.defaultSession.setPermissionCheckHandler(() => true);
+  session.defaultSession.setDevicePermissionHandler((details) => {
+    return details.deviceType === 'hid';
+  });
+
   createWindow();
+
+  // Auto-select first matching HID device (skip the browser picker dialog)
+  mainWindow.webContents.session.on('select-hid-device', (event, details, callback) => {
+    event.preventDefault();
+    if (details.deviceList && details.deviceList.length > 0) {
+      callback(details.deviceList[0].deviceId);
+    } else {
+      callback('');
+    }
+  });
 
   // F11 fullscreen toggle
   globalShortcut.register('F11', () => {
