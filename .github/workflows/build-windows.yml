@@ -56,12 +56,12 @@ jobs:
           name: tandemonium-win32-x64
           path: builds/windows/
 
-      - name: Upload to Steam
+      - name: Upload to Steam (Playtest)
         uses: game-ci/steam-deploy@v3
         with:
           username: ${{ secrets.STEAM_USERNAME }}
           configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
-          appId: 4482940
+          appId: 4510250
           buildDescription: 'Build ${{ github.sha }} from ${{ github.ref_name }}'
           rootPath: builds
           depot1Path: windows

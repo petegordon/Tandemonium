@@ -6,7 +6,15 @@ let steamworks = null;
 try {
   const { init, electronEnableSteamOverlay } = require('steamworks.js');
   electronEnableSteamOverlay();
-  steamworks = init(4482940);
+  // Read app ID from steam_appid.txt (playtest: 4510250, release: 4482940)
+  const fs = require('fs');
+  let appId = 4482940;
+  try {
+    const idPath = path.join(app.isPackaged ? process.resourcesPath : __dirname, '..', 'steam_appid.txt');
+    const raw = fs.readFileSync(idPath, 'utf-8').trim();
+    if (raw) appId = parseInt(raw, 10);
+  } catch (e) {}
+  steamworks = init(appId);
   console.log('Steamworks initialized');
 } catch (err) {
   console.log('Steamworks unavailable, running without Steam:', err.message);
@@ -24,7 +32,7 @@ ipcMain.handle('steam:getSteamId', () => {
 });
 ipcMain.handle('steam:isSubscribed', () => {
   if (!steamworks) return false;
-  return steamworks.apps.isSubscribedApp(4482940);
+  return steamworks.apps.isSubscribed();
 });
 ipcMain.handle('steam:activateAchievement', (_event, apiName) => {
   if (!steamworks) return false;

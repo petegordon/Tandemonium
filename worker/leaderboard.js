@@ -180,7 +180,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
   // Verify the session ticket via Steam Web API
   try {
-    const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=4482940&ticket=${ticket}`;
+    const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=4510250&ticket=${ticket}`;
     const steamRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
     if (!steamRes.ok) return jsonResponse({ error: 'Steam verification failed' }, 401, corsOrigin);
     const steamData = await steamRes.json();
