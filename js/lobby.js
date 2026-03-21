@@ -219,7 +219,10 @@ export class Lobby {
     this.auth = new AuthManager();
 
     // Steam: bypass LicenseManager when Steam ownership is confirmed
+    // Initialize with a default license so code that reads this.license.isLicensed
+    // before _initSteamLicense completes doesn't crash.
     this._isSteam = false;
+    this.license = new LicenseManager(this.auth);
     this._steamReady = this._initSteamLicense().then(() => this._setupAuth());
     this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
     this._lbFocusCol = 0;   // index within the current row
