@@ -245,7 +245,8 @@ export class Lobby {
     // Skip entirely on desktop/Electron — audio autoplay is allowed, no tap needed.
     this._tapOverlay = document.getElementById('tap-to-start');
     if (this._tapOverlay) {
-      if (window.steam || localStorage.getItem('tandemonium_started')) {
+      const isDesktop = window.steam || (navigator.userAgent.includes('Electron'));
+      if (isDesktop || localStorage.getItem('tandemonium_started')) {
         this._tapOverlay.remove();
         this._tapOverlay = null;
       } else {
@@ -1283,6 +1284,11 @@ export class Lobby {
     const gp = gamepads[this.input.gamepadIndex];
     if (gp && /playstation|dualsense|dualshock|054c/i.test(gp.id)) {
       this._showMotionToggle();
+      // Auto-connect gyro in Electron/Steam (no user gesture needed for WebHID)
+      const isDesktop = window.steam || navigator.userAgent.includes('Electron');
+      if (isDesktop && !this.motionActive && !this._motionPermitted) {
+        setTimeout(() => this._autoConnectGyro(), 500);
+      }
     }
   }
 
@@ -2232,11 +2238,6 @@ export class Lobby {
       if (this.toggleMotion.style.display !== 'none') return;
       if (this.input && this.input.gamepadConnected && navigator.hid) {
         this._checkGamepadGyro();
-        // Auto-connect gyro in Electron/Steam (no user gesture needed for WebHID)
-        // Delay slightly to ensure input manager has registered the gamepad
-        if (window.steam || (typeof process !== 'undefined' && process.versions && process.versions.electron)) {
-          setTimeout(() => this._autoConnectGyro(), 1500);
-        }
       }
     });
     window.addEventListener('gamepaddisconnected', () => {
