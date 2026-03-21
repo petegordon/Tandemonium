@@ -8,11 +8,11 @@ on:
       steam_branch:
         description: 'Steam branch to deploy to'
         required: true
-        default: 'beta'
+        default: 'default'
         type: choice
         options:
-          - beta
           - default
+          - beta
 
 jobs:
   build:
@@ -65,4 +65,4 @@ jobs:
           buildDescription: 'Build ${{ github.sha }} from ${{ github.ref_name }}'
           rootPath: builds
           depot1Path: windows
-          releaseBranch: ${{ inputs.steam_branch || 'beta' }}
+          releaseBranch: ${{ inputs.steam_branch || 'default' }}
