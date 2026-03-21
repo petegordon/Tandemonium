@@ -57,6 +57,7 @@ jobs:
           path: builds/windows/
 
       - name: Upload to Steam (Playtest)
+        continue-on-error: true
         uses: game-ci/steam-deploy@v3
         with:
           username: ${{ secrets.STEAM_USERNAME }}
