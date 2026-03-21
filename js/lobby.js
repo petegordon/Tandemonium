@@ -2233,8 +2233,9 @@ export class Lobby {
       if (this.input && this.input.gamepadConnected && navigator.hid) {
         this._checkGamepadGyro();
         // Auto-connect gyro in Electron/Steam (no user gesture needed for WebHID)
+        // Delay slightly to ensure input manager has registered the gamepad
         if (window.steam || (typeof process !== 'undefined' && process.versions && process.versions.electron)) {
-          this._autoConnectGyro();
+          setTimeout(() => this._autoConnectGyro(), 1500);
         }
       }
     });
