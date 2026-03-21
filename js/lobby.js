@@ -1286,6 +1286,29 @@ export class Lobby {
     }
   }
 
+  /** Auto-connect gyro in Electron/Steam — no user gesture needed since
+   *  WebHID permissions are granted via session handlers in main.js. */
+  _autoConnectGyro() {
+    if (this.motionActive || this._motionPermitted) return;
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[this.input.gamepadIndex];
+    if (!gp || !/playstation|dualsense|dualshock|054c/i.test(gp.id)) return;
+
+    console.log('Auto-connecting gyro for DualSense in desktop mode...');
+    this.input.connectControllerGyro().then(() => {
+      if (this.input.gyroConnected) {
+        this._motionPermitted = true;
+        this.motionActive = true;
+        this._setToggleActive('motion', true);
+        this._showMotionToggle();
+        this._updateTutorialButton();
+        console.log('Gyro auto-connected successfully');
+      }
+    }).catch((err) => {
+      console.warn('Gyro auto-connect failed:', err.message);
+    });
+  }
+
   _updateAllToggle() {
     const motionOk = !this._motionAvailable() || this.motionActive;
     if (this.cameraActive && this.audioActive && motionOk && this.musicActive) {
@@ -2209,6 +2232,10 @@ export class Lobby {
       if (this.toggleMotion.style.display !== 'none') return;
       if (this.input && this.input.gamepadConnected && navigator.hid) {
         this._checkGamepadGyro();
+        // Auto-connect gyro in Electron/Steam (no user gesture needed for WebHID)
+        if (window.steam || (typeof process !== 'undefined' && process.versions && process.versions.electron)) {
+          this._autoConnectGyro();
+        }
       }
     });
     window.addEventListener('gamepaddisconnected', () => {
