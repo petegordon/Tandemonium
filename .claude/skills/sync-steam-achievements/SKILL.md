@@ -14,8 +14,7 @@ When invoked, run the sync script via Bash. The script opens a headful browser, 
 node scripts/sync-steam-achievements.js [appId] [flags]
 ```
 
-**Arguments:**
-- `appId` — Steam app ID (default: `4510250` playtest, `4482940` main game)
+**App ID** is read automatically from `steam_appid.txt` if not provided on the command line.
 
 **Flags:**
 - `--dry-run` — Compare and report only, no changes
@@ -23,9 +22,10 @@ node scripts/sync-steam-achievements.js [appId] [flags]
 - `--no-delete` — Only add missing achievements, skip deletes
 
 **Examples:**
-- Full sync on playtest: `node scripts/sync-steam-achievements.js 4510250`
-- Dry run on main game: `node scripts/sync-steam-achievements.js 4482940 --dry-run`
-- Test one add/delete: `node scripts/sync-steam-achievements.js 4510250 --debug`
+- Full sync (uses steam_appid.txt): `node scripts/sync-steam-achievements.js`
+- Full sync with explicit app: `node scripts/sync-steam-achievements.js 4482940`
+- Dry run: `node scripts/sync-steam-achievements.js --dry-run`
+- Test one add/delete: `node scripts/sync-steam-achievements.js --debug`
 
 ## What the script does
 
@@ -54,5 +54,5 @@ Remind the user to:
 - `js/achievements.js` is the single source of truth — never modify it to match Steamworks
 - Steam API Names are ALWAYS `id.toUpperCase()` (e.g. `first_500m` → `FIRST_500M`)
 - Never create Stats with the same API Name as achievements (causes publish conflicts)
-- The playtest (4510250) and main game (4482940) have separate configurations
+- The playtest and main game have separate configurations — change `steam_appid.txt` or pass the app ID explicitly
 - The browser stays open on errors so the user can review and fix manually

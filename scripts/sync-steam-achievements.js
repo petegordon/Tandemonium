@@ -363,7 +363,18 @@ async function addAchievement(page, achievement) {
 
 // ── Main ─────────────────────────────────────────────────────────
 async function main() {
-  const appId = process.argv[2] || '4510250';
+  // App ID: from CLI arg, or read from steam_appid.txt, or prompt
+  let appId = process.argv.find(a => /^\d+$/.test(a));
+  if (!appId) {
+    try {
+      appId = fs.readFileSync(path.join(__dirname, '..', 'steam_appid.txt'), 'utf-8').trim();
+      console.log(`Read app ID ${appId} from steam_appid.txt`);
+    } catch (e) {
+      console.error('No app ID provided and steam_appid.txt not found.');
+      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--debug] [--no-delete]');
+      process.exit(1);
+    }
+  }
   const url = `https://partner.steamgames.com/apps/achievements/${appId}`;
   const dryRun = process.argv.includes('--dry-run');
   const skipDelete = process.argv.includes('--no-delete');
