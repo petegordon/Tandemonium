@@ -95,6 +95,11 @@ function createWindow() {
   // Load root index.html directly (desktop/index.html had path rewriting issues)
   mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
 
+  // Auto-open DevTools in dev mode for debugging
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
