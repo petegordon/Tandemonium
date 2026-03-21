@@ -170,6 +170,10 @@ async function handleGoogleAuth(request, env, corsOrigin) {
 }
 
 async function handleSteamAuth(request, env, corsOrigin) {
+  if (!env.STEAM_WEB_API_KEY) {
+    return jsonResponse({ error: 'Steam authentication not configured' }, 503, corsOrigin);
+  }
+
   const body = await request.json();
   const { steamId, personaName, ticket } = body;
   if (!steamId || !ticket) return jsonResponse({ error: 'Missing steamId or ticket' }, 400, corsOrigin);
@@ -177,7 +181,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
   // Verify the session ticket via Steam Web API
   try {
     const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=4482940&ticket=${ticket}`;
-    const steamRes = await fetch(verifyUrl);
+    const steamRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
     if (!steamRes.ok) return jsonResponse({ error: 'Steam verification failed' }, 401, corsOrigin);
     const steamData = await steamRes.json();
     const params = steamData?.response?.params;
@@ -196,8 +200,19 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
   const name = personaName || 'Steam Player';
 
-  // Build Steam avatar URL from Steam ID
-  const avatarUrl = `https://avatars.steamstatic.com/${steamId}_medium.jpg`;
+  // Fetch real avatar URL from Steam (avatars use content hashes, not Steam IDs)
+  let avatarUrl = 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg'; // default
+  try {
+    const summaryUrl = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${env.STEAM_WEB_API_KEY}&steamids=${steamId}`;
+    const summaryRes = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
+    if (summaryRes.ok) {
+      const summaryData = await summaryRes.json();
+      const player = summaryData?.response?.players?.[0];
+      if (player?.avatarmedium) avatarUrl = player.avatarmedium;
+    }
+  } catch (e) {
+    // Non-fatal — proceed with default avatar
+  }
 
   // Upsert user
   const existing = await env.DB.prepare(
