@@ -240,14 +240,13 @@ export class Lobby {
     this._checkAutoJoin();
     this._checkPermissionStates();
 
-    // "Tap to Start" overlay — unlocks audio autoplay + requests permissions.
+    // "Tap/Press to Start" overlay — unlocks audio autoplay + activates gamepad.
+    // On desktop: shows "Press any button to start" and polls for controller input.
+    // On mobile: shows "Tap to Start" for audio unlock.
     // Only shown once ever; after first dismissal, localStorage flag prevents it.
-    // Skip entirely on desktop/Electron — audio autoplay is allowed, no tap needed.
     this._tapOverlay = document.getElementById('tap-to-start');
     if (this._tapOverlay) {
-      const isDesktop = window.steam || navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
-      if (isDesktop) console.log('Desktop detected — skipping Tap to Start');
-      if (isDesktop || localStorage.getItem('tandemonium_started')) {
+      if (localStorage.getItem('tandemonium_started')) {
         this._tapOverlay.remove();
         this._tapOverlay = null;
       } else {
@@ -272,13 +271,49 @@ export class Lobby {
     const overlay = this._tapOverlay;
     this._tapOverlay = null;
     localStorage.setItem('tandemonium_started', '1');
-    // Request all permissions (reuse _toggleAll flow)
-    this._toggleAll();
-    // Ensure music actually starts playing — _toggleAll skips _toggleMusic
-    // when musicActive is already true, so fire the callback explicitly.
-    if (this.musicActive && this.onMusicChanged) {
-      this.onMusicChanged(true);
+
+    const isDesktop = window.steam || navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
+
+    if (isDesktop) {
+      // Desktop: the button press that dismissed the overlay also activated the gamepad.
+      // Poll briefly to let Chromium register it, then show toggles + auto-connect gyro.
+      console.log('Desktop: overlay dismissed, activating gamepad...');
+      let attempts = 0;
+      const detectGamepad = () => {
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (let i = 0; i < gamepads.length; i++) {
+          if (!gamepads[i]) continue;
+          // Register with input manager
+          if (this.input && !this.input.gamepadConnected) {
+            this.input.gamepadIndex = i;
+            this.input.gamepadConnected = true;
+            this.input._gpName = gamepads[i].id;
+            console.log('Desktop: gamepad activated:', gamepads[i].id);
+          }
+          // Show joystick toggle
+          this.toggleJoystick.style.display = '';
+          this._setToggleActive('joystick', this.joystickActive);
+          // Check for gyro-capable controller and auto-connect
+          if (navigator.hid) {
+            this._checkGamepadGyro();
+          }
+          // Start music
+          if (this.onMusicChanged) this.onMusicChanged(true);
+          return;
+        }
+        // Retry for up to 2 seconds
+        attempts++;
+        if (attempts < 20) setTimeout(detectGamepad, 100);
+      };
+      setTimeout(detectGamepad, 200);
+    } else {
+      // Mobile/browser: request all permissions (audio, camera, motion)
+      this._toggleAll();
+      if (this.musicActive && this.onMusicChanged) {
+        this.onMusicChanged(true);
+      }
     }
+
     // Fade out and remove
     overlay.classList.add('fade-out');
     setTimeout(() => overlay.remove(), 400);
