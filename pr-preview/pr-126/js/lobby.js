@@ -245,7 +245,8 @@ export class Lobby {
     // Skip entirely on desktop/Electron — audio autoplay is allowed, no tap needed.
     this._tapOverlay = document.getElementById('tap-to-start');
     if (this._tapOverlay) {
-      const isDesktop = window.steam || (navigator.userAgent.includes('Electron'));
+      const isDesktop = window.steam || navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
+      if (isDesktop) console.log('Desktop detected — skipping Tap to Start');
       if (isDesktop || localStorage.getItem('tandemonium_started')) {
         this._tapOverlay.remove();
         this._tapOverlay = null;
