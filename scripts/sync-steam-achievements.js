@@ -400,30 +400,15 @@ async function main() {
   });
 
   if (!isOnPage) {
-    // Try clicking the login button if it exists
-    console.log('Not logged in — looking for login button...');
+    // Click the "Sign in" button (button#login_btn_signin)
+    console.log('Not logged in — clicking Sign in...');
     try {
-      const loginClicked = await page.evaluate(() => {
-        const links = document.querySelectorAll('a, button, input[type="submit"]');
-        for (const el of links) {
-          const text = (el.textContent || el.value || '').trim().toLowerCase();
-          if (text.includes('sign in') || text.includes('log in') || text.includes('login')) {
-            el.click();
-            return true;
-          }
-        }
-        // Also try Steam login link
-        const steamLogin = document.querySelector('a[href*="login"], a[href*="signin"]');
-        if (steamLogin) {
-          steamLogin.click();
-          return true;
-        }
-        return false;
-      });
-      if (loginClicked) {
-        console.log('Clicked login button — please authenticate (QR code or credentials)...');
+      const loginBtn = await page.$('button#login_btn_signin');
+      if (loginBtn) {
+        await loginBtn.click();
+        console.log('Clicked Sign in — please authenticate (QR code or credentials)...');
       } else {
-        console.log('Could not find login button — please log in manually...');
+        console.log('Could not find Sign in button — please log in manually...');
       }
     } catch (e) {
       console.log('Please log in manually in the browser window...');
@@ -522,8 +507,8 @@ async function main() {
     return;
   }
 
-  console.log('Press ENTER to apply changes, or Ctrl+C to cancel...');
-  await waitForEnter();
+  console.log('Applying changes...');
+  console.log('');
 
   // In debug mode, limit to 1 delete and 1 add for testing
   const deleteList = DEBUG ? toDelete.slice(0, 1) : toDelete;
