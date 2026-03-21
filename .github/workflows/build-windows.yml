@@ -1,9 +1,18 @@
-name: Build Windows
+name: Build & Deploy Windows
 
 on:
   push:
-    branches: [main]
+    branches: [main, steam-publishing]
   workflow_dispatch:
+    inputs:
+      steam_branch:
+        description: 'Steam branch to deploy to'
+        required: true
+        default: 'beta'
+        type: choice
+        options:
+          - beta
+          - default
 
 jobs:
   build:
@@ -33,3 +42,27 @@ jobs:
         with:
           name: tandemonium-win32-x64
           path: out/make/**/*
+
+  upload-to-steam:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/steam-publishing'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tandemonium-win32-x64
+          path: builds/windows/
+
+      - name: Upload to Steam
+        uses: game-ci/steam-deploy@v3
+        with:
+          username: ${{ secrets.STEAM_USERNAME }}
+          configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
+          appId: 4482940
+          buildDescription: 'Build ${{ github.sha }} from ${{ github.ref_name }}'
+          rootPath: builds
+          depot1Path: windows
+          releaseBranch: ${{ inputs.steam_branch || 'beta' }}

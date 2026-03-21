@@ -220,7 +220,7 @@ export class Lobby {
 
     // Steam: bypass LicenseManager when Steam ownership is confirmed
     this._isSteam = false;
-    this._initSteamLicense().then(() => this._setupAuth());
+    this._steamReady = this._initSteamLicense().then(() => this._setupAuth());
     this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
     this._lbFocusCol = 0;   // index within the current row
 

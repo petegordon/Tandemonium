@@ -99,12 +99,14 @@ app.whenReady().then(() => {
     }
   });
 
-  // F12 DevTools toggle
-  globalShortcut.register('F12', () => {
-    if (mainWindow) {
-      mainWindow.webContents.toggleDevTools();
-    }
-  });
+  // F12 DevTools toggle (dev only — disabled in packaged builds)
+  if (!app.isPackaged) {
+    globalShortcut.register('F12', () => {
+      if (mainWindow) {
+        mainWindow.webContents.toggleDevTools();
+      }
+    });
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

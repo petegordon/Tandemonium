@@ -160,8 +160,13 @@ export class AchievementManager {
   /** Push all earned achievements to Steam profile (catches web/mobile unlocks). */
   async syncToSteam() {
     if (!window.steam) return;
-    for (const id of this._earned.keys()) {
-      await window.steam.activateAchievement(id.toUpperCase());
+    try {
+      for (const id of this._earned.keys()) {
+        await window.steam.activateAchievement(id.toUpperCase());
+      }
+      await window.steam.storeStats();
+    } catch (e) {
+      console.warn('Failed to sync achievements to Steam:', e);
     }
   }
 
