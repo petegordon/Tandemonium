@@ -2240,6 +2240,34 @@ export class Lobby {
         this._checkGamepadGyro();
       }
     });
+
+    // Desktop/Electron: actively poll for gamepad on startup instead of
+    // waiting for user input (browser requires button press to detect).
+    const isDesktop = window.steam || navigator.userAgent.includes('Electron');
+    if (isDesktop) {
+      this._desktopGamepadPoll = setInterval(() => {
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (let i = 0; i < gamepads.length; i++) {
+          if (!gamepads[i]) continue;
+          // Found a gamepad — set it up as if gamepadconnected fired
+          if (this.input && !this.input.gamepadConnected) {
+            this.input.gamepadIndex = i;
+            this.input.gamepadConnected = true;
+            this.input._gpName = gamepads[i].id;
+            console.log('Desktop: auto-detected gamepad:', gamepads[i].id);
+          }
+          // Show joystick toggle
+          this.toggleJoystick.style.display = '';
+          this._setToggleActive('joystick', this.joystickActive);
+          // Check for gyro
+          if (navigator.hid) {
+            this._checkGamepadGyro();
+          }
+          clearInterval(this._desktopGamepadPoll);
+          return;
+        }
+      }, 1000);
+    }
     window.addEventListener('gamepaddisconnected', () => {
       this._updateBackHint(this._currentStep);
       // Show fixed back button when gamepad disconnects
