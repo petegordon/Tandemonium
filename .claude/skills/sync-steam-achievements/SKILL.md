@@ -1,89 +1,56 @@
 ---
 name: sync-steam-achievements
-description: Sync Steam achievements between js/achievements.js and the Steamworks dashboard — reports mismatches and generates VDF import files
+description: Sync Steam achievements between js/achievements.js and the Steamworks dashboard using headful Puppeteer automation
 user-invocable: true
 ---
 
 Sync Steam achievements between the game codebase and the Steamworks dashboard.
 
-## Step 1: Parse the source of truth
+This skill uses a Puppeteer script that opens a real browser, lets the user log in to Steamworks, then automatically scrapes, compares, deletes, and adds achievements to match the codebase.
 
-Read `js/achievements.js` and extract all entries from the `ACHIEVEMENTS` array. For each, capture:
-- `id` (lowercase, e.g. `first_500m`)
-- `name` (display name, e.g. "First 500m")
-- `icon` (emoji)
-- A human-readable description derived from the `condition` function
+## How to run
 
-The Steam API Name is always `id.toUpperCase()` (e.g. `FIRST_500M`).
+Run the sync script via Bash:
 
-## Step 2: Get current Steamworks state
-
-The Steamworks partner site requires authentication and cannot be fetched directly. Ask the user to provide the current state by either:
-- Pasting a screenshot of the Achievements page
-- Listing which achievements are currently configured
-
-Relevant URLs:
-- Playtest: `https://partner.steamgames.com/apps/achievements/4510250`
-- Main game: `https://partner.steamgames.com/apps/achievements/4482940`
-
-If the user says "none" or "empty", treat Steamworks as having zero achievements configured.
-
-## Step 3: Compare and report
-
-- List achievements in code but NOT on Steamworks (need to be added)
-- List achievements on Steamworks but NOT in code (should be removed)
-- List any API Name or Display Name mismatches
-- Flag any Stats that share an API Name with an achievement (causes publish conflicts on Steamworks)
-
-## Step 4: Generate the VDF import file
-
-Always generate `steam/achievements.vdf` containing ALL achievements from the codebase. Use this exact format:
-
-```
-"achievements"
-{
-  "0"
-  {
-    "name" "FIRST_500M"
-    "displayName" "First 500m"
-    "description" "Ride 500 meters total"
-    "hidden" "0"
-    "icon" ""
-    "icon_gray" ""
-  }
-  "1"
-  {
-    ...
-  }
-}
+```bash
+node scripts/sync-steam-achievements.js [appId] [--dry-run] [--no-delete]
 ```
 
-Rules for the VDF:
-- Sequential numeric keys starting at "0"
-- `name` = uppercase API name
-- `displayName` = the `name` field from the ACHIEVEMENTS array
-- `description` = human-readable description derived from the condition
-- `hidden` = "0" for all (none are hidden)
-- `icon` and `icon_gray` = empty strings (icons are uploaded separately via the dashboard)
+Arguments:
+- `appId` — Steam app ID (default: `4510250` for playtest, use `4482940` for main game)
+- `--dry-run` — Compare and report only, don't make changes
+- `--no-delete` — Skip deleting achievements not in code
 
-## Step 5: Provide upload instructions
+The script will:
+1. Parse all achievements from `js/achievements.js` (source of truth)
+2. Launch a visible Chrome browser to the Steamworks achievements page
+3. Wait for the user to log in if needed (press ENTER when ready)
+4. Scrape all currently configured achievements
+5. Compare code vs Steamworks and show a sync plan
+6. Ask for confirmation, then delete/add achievements to match
+7. Verify the final state
 
-After generating the VDF, tell the user:
+## When to use this skill
 
-1. Go to Steamworks → App Admin → [app] → Stats & Achievements → Achievements
-2. Look for an **"Import"** or **"Import from VDF"** option
-3. If no import option exists, achievements must be entered manually using the table below
-4. After adding/changing achievements, go to the **Publish** tab and publish changes
-5. **Important**: Do NOT create Stats with the same API Name as achievements — this causes publish conflicts
+- After adding, removing, or renaming achievements in `js/achievements.js`
+- When setting up a new Steam app (playtest or main game)
+- To verify achievements are in sync between code and Steamworks
 
-Then output a formatted table of all achievements for easy manual entry:
+## After running
 
-| # | API Name | Display Name | Description |
-|---|----------|-------------|-------------|
+Remind the user to:
+1. Go to the **Publish** tab in Steamworks and publish the changes
+2. Achievement icons must be uploaded manually via the Steamworks UI
+
+## Troubleshooting
+
+If the script fails to find form fields or buttons:
+- The Steamworks UI may have changed — check the browser window
+- The user can make remaining changes manually in the open browser
+- The browser stays open on errors so the user can review and fix
 
 ## Important notes
-- `js/achievements.js` is the single source of truth — never modify it to match Steamworks
-- Steam API Names are ALWAYS the uppercase version of the `id` field
-- Achievement icons (64x64 or 256x256 jpg) must be uploaded manually through the Steamworks UI
-- The playtest (4510250) and main game (4482940) have separate achievement configurations
-- Changes to Steamworks are not live until published via the Publish tab
+- `js/achievements.js` is the single source of truth
+- Steam API Names are ALWAYS `id.toUpperCase()` (e.g. `first_500m` -> `FIRST_500M`)
+- Never create Stats with the same API Name as achievements (causes publish conflicts)
+- The playtest (4510250) and main game (4482940) have separate configurations
