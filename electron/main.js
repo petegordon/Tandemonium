@@ -13,7 +13,9 @@ try {
     const idPath = path.join(app.isPackaged ? process.resourcesPath : __dirname, '..', 'steam_appid.txt');
     const raw = fs.readFileSync(idPath, 'utf-8').trim();
     if (raw) appId = parseInt(raw, 10);
-  } catch (e) {}
+  } catch (e) {
+    console.warn('Could not read steam_appid.txt, using default app ID:', e.message);
+  }
   steamworks = init(appId);
   console.log('Steamworks initialized');
 } catch (err) {
