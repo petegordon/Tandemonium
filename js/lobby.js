@@ -239,9 +239,10 @@ export class Lobby {
 
     // "Tap to Start" overlay — unlocks audio autoplay + requests permissions.
     // Only shown once ever; after first dismissal, localStorage flag prevents it.
+    // Skip entirely on desktop/Electron — audio autoplay is allowed, no tap needed.
     this._tapOverlay = document.getElementById('tap-to-start');
     if (this._tapOverlay) {
-      if (localStorage.getItem('tandemonium_started')) {
+      if (window.steam || localStorage.getItem('tandemonium_started')) {
         this._tapOverlay.remove();
         this._tapOverlay = null;
       } else {
