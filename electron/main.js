@@ -128,12 +128,25 @@ app.whenReady().then(() => {
     }
   });
 
-  // F12 DevTools toggle (dev only — disabled in packaged builds)
+  // DevTools (dev only — disabled in packaged builds)
   if (!app.isPackaged) {
+    // F12 and Ctrl+Shift+I both toggle DevTools
     globalShortcut.register('F12', () => {
-      if (mainWindow) {
-        mainWindow.webContents.toggleDevTools();
-      }
+      if (mainWindow) mainWindow.webContents.toggleDevTools();
+    });
+    globalShortcut.register('CmdOrCtrl+Shift+I', () => {
+      if (mainWindow) mainWindow.webContents.toggleDevTools();
+    });
+
+    // Right-click context menu with DevTools option
+    const { Menu } = require('electron');
+    mainWindow.webContents.on('context-menu', () => {
+      Menu.buildFromTemplate([
+        { label: 'Open DevTools', click: () => mainWindow.webContents.openDevTools({ mode: 'detach' }) },
+        { type: 'separator' },
+        { label: 'Reload', click: () => mainWindow.webContents.reload() },
+        { label: 'Toggle Fullscreen', click: () => mainWindow.setFullScreen(!mainWindow.isFullScreen()) },
+      ]).popup();
     });
   }
 
