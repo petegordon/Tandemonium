@@ -35,13 +35,13 @@ jobs:
         run: npm run build-desktop
 
       - name: Package with Electron Forge
-        run: npx electron-forge make --platform win32 --arch x64
+        run: npx electron-forge package --platform win32 --arch x64
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: tandemonium-win32-x64
-          path: out/make/**/*
+          path: out/Tandemonium-win32-x64/
 
   upload-to-steam:
     needs: build
