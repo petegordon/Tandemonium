@@ -1282,13 +1282,14 @@ export class Lobby {
   _checkGamepadGyro() {
     const gamepads = navigator.getGamepads();
     const gp = gamepads[this.input.gamepadIndex];
-    if (gp && /playstation|dualsense|dualshock|054c/i.test(gp.id)) {
-      this._showMotionToggle();
-      // Auto-connect gyro in Electron/Steam (no user gesture needed for WebHID)
-      const isDesktop = window.steam || navigator.userAgent.includes('Electron');
-      if (isDesktop && !this.motionActive && !this._motionPermitted) {
-        setTimeout(() => this._autoConnectGyro(), 500);
-      }
+    if (!gp || !/playstation|dualsense|dualshock|054c/i.test(gp.id)) return;
+
+    this._showMotionToggle();
+
+    // Auto-connect gyro in Electron/Steam (no user gesture needed for WebHID)
+    const isDesktop = window.steam || navigator.userAgent.includes('Electron');
+    if (isDesktop && !this.motionActive) {
+      setTimeout(() => this._autoConnectGyro(), 1000);
     }
   }
 
@@ -2235,7 +2236,6 @@ export class Lobby {
         } catch {}
         this._setToggleActive('joystick', this.joystickActive);
       }
-      if (this.toggleMotion.style.display !== 'none') return;
       if (this.input && this.input.gamepadConnected && navigator.hid) {
         this._checkGamepadGyro();
       }
