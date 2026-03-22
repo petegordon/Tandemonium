@@ -133,27 +133,26 @@ app.whenReady().then(() => {
     if (mainWindow) mainWindow.webContents.openDevTools({ mode: 'detach' });
   });
 
-  // DevTools (dev only — disabled in packaged builds)
+  // DevTools shortcuts (dev only)
   if (!app.isPackaged) {
-    // F12 and Ctrl+Shift+I both toggle DevTools
     globalShortcut.register('F12', () => {
       if (mainWindow) mainWindow.webContents.toggleDevTools();
     });
     globalShortcut.register('CmdOrCtrl+Shift+I', () => {
       if (mainWindow) mainWindow.webContents.toggleDevTools();
     });
-
-    // Right-click context menu with DevTools option
-    const { Menu } = require('electron');
-    mainWindow.webContents.on('context-menu', () => {
-      Menu.buildFromTemplate([
-        { label: 'Open DevTools', click: () => mainWindow.webContents.openDevTools({ mode: 'detach' }) },
-        { type: 'separator' },
-        { label: 'Reload', click: () => mainWindow.webContents.reload() },
-        { label: 'Toggle Fullscreen', click: () => mainWindow.setFullScreen(!mainWindow.isFullScreen()) },
-      ]).popup();
-    });
   }
+
+  // Right-click context menu — enabled in all builds during playtest phase
+  const { Menu } = require('electron');
+  mainWindow.webContents.on('context-menu', () => {
+    Menu.buildFromTemplate([
+      { label: 'Open DevTools', click: () => mainWindow.webContents.openDevTools({ mode: 'detach' }) },
+      { type: 'separator' },
+      { label: 'Reload', click: () => mainWindow.webContents.reload() },
+      { label: 'Toggle Fullscreen', click: () => mainWindow.setFullScreen(!mainWindow.isFullScreen()) },
+    ]).popup();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
