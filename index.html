@@ -2911,13 +2911,14 @@
       max-height: 100vh;
       padding-left: 0;
       padding-right: 0;
-      padding-bottom: calc(20 * var(--ls));
+      padding-top: calc(4 * var(--ls));
+      padding-bottom: calc(24 * var(--ls));
       /* Switch to grid: toggles + center + toggles, with full-span rows below
          Credits are position:fixed so no row needed for them */
       display: grid;
       grid-template-columns: auto 1fr auto;
       grid-template-rows: 1fr auto auto;
-      gap: calc(4 * var(--ls));
+      gap: calc(6 * var(--ls));
       justify-items: stretch;
       align-items: center;
     }
@@ -2955,7 +2956,8 @@
       grid-column: 1 / -1;
       grid-row: 3;
       justify-self: center;
-      margin-top: calc(-4 * var(--ls));
+      margin-top: calc(2 * var(--ls));
+      margin-bottom: calc(4 * var(--ls));
     }
     .lobby-card.carousel-hidden .lobby-credits {
       grid-column: 1 / -1;
@@ -3842,7 +3844,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.a406b05 | 03-22-2026 12:08</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.3e2b1a6 | 03-22-2026 12:17</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
