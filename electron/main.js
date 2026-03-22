@@ -128,6 +128,11 @@ app.whenReady().then(() => {
     }
   });
 
+  // Ctrl+Shift+F12: DevTools in any build (hidden shortcut for debugging)
+  globalShortcut.register('CmdOrCtrl+Shift+F12', () => {
+    if (mainWindow) mainWindow.webContents.openDevTools({ mode: 'detach' });
+  });
+
   // DevTools (dev only — disabled in packaged builds)
   if (!app.isPackaged) {
     // F12 and Ctrl+Shift+I both toggle DevTools
