@@ -7,7 +7,7 @@ export default {
     const url = new URL(request.url);
     const requestOrigin = request.headers.get('Origin') || '';
     const allowed = env.CORS_ORIGIN || '*';
-    const corsOrigin = (allowed === '*' || requestOrigin === allowed || /^https?:\/\/localhost(:\d+)?$/.test(requestOrigin))
+    const corsOrigin = (allowed === '*' || requestOrigin === allowed || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(requestOrigin))
       ? requestOrigin || allowed
       : allowed;
 
