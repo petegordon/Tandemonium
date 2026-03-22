@@ -518,7 +518,7 @@ export class Lobby {
   _hideLobby() {
     this.lobbyEl.style.display = 'none';
     this._stopGamepadNav();
-    this._stopPreviewLoop();
+    this._disposePreview();
   }
 
   _setup() {
@@ -2135,7 +2135,7 @@ export class Lobby {
     };
     animate();
 
-    this._lbVideo = { video, renderer, videoTexture, mat, animId };
+    this._lbVideo = { video, renderer, videoTexture, mat, scene, animId };
   }
 
   _stopLeaderboardVideo() {
@@ -2145,6 +2145,11 @@ export class Lobby {
     v.video.pause();
     v.video.src = '';
     v.videoTexture.dispose();
+    if (v.scene) {
+      v.scene.traverse(child => {
+        if (child.geometry) child.geometry.dispose();
+      });
+    }
     v.mat.dispose();
     v.renderer.dispose();
     this._lbVideo = null;
@@ -4092,6 +4097,30 @@ export class Lobby {
       cancelAnimationFrame(this._previewRafId);
       this._previewRafId = null;
     }
+  }
+
+  /** Dispose preview renderer and scene to free GPU/CPU memory. */
+  _disposePreview() {
+    this._stopPreviewLoop();
+    if (this._previewScene) {
+      this._previewScene.traverse(child => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(m => m.dispose());
+          } else {
+            child.material.dispose();
+          }
+        }
+      });
+      this._previewScene = null;
+    }
+    if (this._previewRenderer) {
+      this._previewRenderer.dispose();
+      this._previewRenderer = null;
+    }
+    this._previewCamera = null;
+    this._previewOriginalMats = null;
   }
 
   _isHolidayUnlocked(bikeKey) {
