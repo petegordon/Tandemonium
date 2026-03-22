@@ -2357,7 +2357,11 @@ export class Lobby {
       // Generate QR code with join URL
       const qrEl = document.getElementById('room-qr');
       const urlEl = document.getElementById('room-url');
-      const url = window.location.origin + window.location.pathname + '?room=' + code;
+      // In Electron, location.origin is file:// — use the production web URL for QR codes
+      const baseUrl = window.location.protocol === 'file:'
+        ? 'https://tandemonium.jimandi.love'
+        : window.location.origin + window.location.pathname;
+      const url = baseUrl + '?room=' + code;
       try {
         const qr = qrcode(0, 'M');
         qr.addData(url);
