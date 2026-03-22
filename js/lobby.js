@@ -518,7 +518,7 @@ export class Lobby {
   _hideLobby() {
     this.lobbyEl.style.display = 'none';
     this._stopGamepadNav();
-    this._disposePreview();
+    this._stopPreviewLoop();
   }
 
   _setup() {
