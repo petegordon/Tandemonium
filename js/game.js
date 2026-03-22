@@ -1533,6 +1533,7 @@ class Game {
 
   /** Show Steam Wishlist CTA after riding together as unlicensed stoker. */
   _showStokerCTA() {
+    if (window.steam) return; // Steam users already own the game
     const overlay = document.getElementById('stoker-cta-overlay');
     if (!overlay) return;
     overlay.style.display = 'flex';
@@ -3935,9 +3936,9 @@ class Game {
       applySteeringFeel(feel);
     };
 
-    // Show Steam Wishlist widget
+    // Show Steam Wishlist widget (hide if user already owns via Steam)
     const steamCta = document.getElementById('steam-cta');
-    if (steamCta) {
+    if (steamCta && !window.steam) {
       steamCta.style.display = '';
     }
 

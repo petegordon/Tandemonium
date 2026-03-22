@@ -522,7 +522,23 @@ export class InputManager {
       usagePage: 0x0001, usage: 0x0005
     }));
 
-    const devices = await navigator.hid.requestDevice({ filters });
+    let devices;
+    // In Electron/Steam, try getDevices() first (no user gesture needed),
+    // then fall back to requestDevice() which triggers the auto-select handler.
+    const isDesktop = window.steam || navigator.userAgent.includes('Electron');
+    if (isDesktop) {
+      // getDevices() returns previously-permitted devices without a gesture
+      const allDevices = await navigator.hid.getDevices();
+      devices = allDevices.filter(d =>
+        SONY_PRODUCT_IDS.includes(d.productId) && d.vendorId === VENDOR_ID_SONY
+      );
+      if (devices.length === 0) {
+        // No previously-permitted device — try requestDevice (auto-selected by main.js handler)
+        devices = await navigator.hid.requestDevice({ filters });
+      }
+    } else {
+      devices = await navigator.hid.requestDevice({ filters });
+    }
     if (!devices || devices.length === 0) return;
 
     const device = devices[0];
