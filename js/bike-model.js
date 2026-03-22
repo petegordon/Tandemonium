@@ -157,11 +157,12 @@ export class BikeModel {
       });
     }
 
-    // Reset all materials to original
+    // Reset all materials to original (dispose old material to prevent leak)
     model.traverse(child => {
       if (child.isMesh) {
         const orig = this._originalMats.get(child.name);
         if (orig) {
+          if (child.material && child.material !== orig) child.material.dispose();
           child.material = orig.clone();
           if (this.spokeMeshes.includes(child)) {
             child.material.transparent = true;
