@@ -793,15 +793,20 @@ export class Lobby {
       const isGyro = this.input && this.input.gyroConnected;
       const hasGamepad = this.input && this.input.gamepadConnected;
       const hasMotion = this.motionActive || isGyro;
-      const recommended = needsTuning ? ' \u2B50 Recommended' : ''; // ⭐
+      let tutLabel;
       if (isGyro) {
-        tutBtn.textContent = '\uD83C\uDFAE Learn to Ride \u2014 Controller Gyro' + recommended;
+        tutLabel = '\uD83C\uDFAE Learn to Ride'; // 🎮
       } else if (hasMotion && isMobile) {
-        tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride \u2014 Phone Motion' + recommended;
+        tutLabel = '\uD83D\uDCF1 Learn to Ride'; // 📱
       } else if (hasGamepad) {
-        tutBtn.textContent = '\uD83D\uDD79\uFE0F Learn to Ride \u2014 Joystick';
+        tutLabel = '\uD83D\uDD79\uFE0F Learn to Ride'; // 🕹️
       } else {
-        tutBtn.textContent = '\u2328\uFE0F Learn to Ride \u2014 Keyboard';
+        tutLabel = '\u2328\uFE0F Learn to Ride'; // ⌨️
+      }
+      if (needsTuning) {
+        tutBtn.innerHTML = tutLabel + '<br><span style="font-size:0.75em;opacity:0.7;">\u2B50 Recommended for calibration</span>';
+      } else {
+        tutBtn.textContent = tutLabel;
       }
       buttons.push(tutBtn);
     }
@@ -3728,9 +3733,25 @@ export class Lobby {
   }
 
   _moveColumn(dir) {
-    // If focused on a difficulty button, move to sibling difficulty button instead of changing columns
+    // If focused on a level card, move to sibling level card (horizontal layout on desktop)
     const items = this._stepItems.get(this._currentStep);
     const focusedEl = items && items[this._focusIndex];
+    if (focusedEl && focusedEl.classList.contains('level-card')) {
+      const siblings = [...focusedEl.parentElement.querySelectorAll('.level-card:not(.level-locked)')];
+      const curIdx = siblings.indexOf(focusedEl);
+      const nextIdx = curIdx + dir;
+      if (nextIdx >= 0 && nextIdx < siblings.length) {
+        const target = siblings[nextIdx];
+        const targetFocusIdx = items.indexOf(target);
+        if (targetFocusIdx >= 0) {
+          this._clearFocusHighlight();
+          this._focusIndex = targetFocusIdx;
+          this._applyFocusHighlight();
+        }
+      }
+      return;
+    }
+    // If focused on a difficulty button, move to sibling difficulty button instead of changing columns
     if (focusedEl && focusedEl.classList.contains('difficulty-btn')) {
       const siblings = [...focusedEl.parentElement.querySelectorAll('.difficulty-btn')];
       const curIdx = siblings.indexOf(focusedEl);
