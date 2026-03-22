@@ -138,11 +138,17 @@ async function verifyJWT(token, secret) {
     return payload;
 }
 
-const CORS_HEADERS = {
-    'Access-Control-Allow-Origin': 'https://tandemonium.jimandi.love',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-};
+function getCorsHeaders(request) {
+    const origin = request.headers.get('Origin') || '';
+    const allowed = origin === 'https://tandemonium.jimandi.love'
+        || /^https?:\/\/localhost(:\d+)?$/.test(origin)
+        || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
+    return {
+        'Access-Control-Allow-Origin': allowed ? origin : 'https://tandemonium.jimandi.love',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+    };
+}
 
 function writeMetric(env, event, extra) {
     if (!env.ANALYTICS) return;
@@ -159,7 +165,7 @@ export default {
 
         // CORS preflight
         if (request.method === 'OPTIONS') {
-            return new Response(null, { status: 204, headers: CORS_HEADERS });
+            return new Response(null, { status: 204, headers: getCorsHeaders(request) });
         }
 
         // TURN credential endpoint
@@ -179,13 +185,13 @@ export default {
                 );
                 const data = await resp.json();
                 return new Response(JSON.stringify(data), {
-                    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+                    headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
                 });
             } catch (e) {
                 writeMetric(env, 'turn_error', e.message);
                 return new Response(JSON.stringify({ error: 'Failed to generate TURN credentials' }), {
                     status: 502,
-                    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+                    headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
                 });
             }
         }

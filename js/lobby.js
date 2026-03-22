@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { NetworkManager } from './network-manager.js';
-import { isMobile, RELAY_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, RELAY_URL, SITE_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -111,6 +111,19 @@ export class Lobby {
     this.joystickActive = true; // joystick steering on by default when gamepad connected
     this.audioActive = false;
     this._cameraPermitted = false;
+    this._hasCamera = true; // assume true, check async below
+
+    // Hide camera toggle if no camera hardware exists
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then(devices => {
+        this._hasCamera = devices.some(d => d.kind === 'videoinput');
+        if (!this._hasCamera) {
+          this.toggleCamera.style.display = 'none';
+          this.cameraActive = false;
+          this._setToggleActive('camera', false);
+        }
+      }).catch(() => {});
+    }
     this._motionPermitted = false;
     this._audioPermitted = false;
     this._permissionsChecked = false;
@@ -217,8 +230,13 @@ export class Lobby {
 
     // Auth (after _avatarCache — _setupAuth triggers updateUI which reads the cache)
     this.auth = new AuthManager();
+
+    // Steam: bypass LicenseManager when Steam ownership is confirmed
+    // Initialize with a default license so code that reads this.license.isLicensed
+    // before _initSteamLicense completes doesn't crash.
+    this._isSteam = false;
     this.license = new LicenseManager(this.auth);
-    this._setupAuth();
+    this._steamReady = this._initSteamLicense().then(() => this._setupAuth());
     this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
     this._lbFocusCol = 0;   // index within the current row
 
@@ -235,7 +253,9 @@ export class Lobby {
     this._checkAutoJoin();
     this._checkPermissionStates();
 
-    // "Tap to Start" overlay — unlocks audio autoplay + requests permissions.
+    // "Tap/Press to Start" overlay — unlocks audio autoplay + activates gamepad.
+    // On desktop: shows "Press any button to start" and polls for controller input.
+    // On mobile: shows "Tap to Start" for audio unlock.
     // Only shown once ever; after first dismissal, localStorage flag prevents it.
     this._tapOverlay = document.getElementById('tap-to-start');
     if (this._tapOverlay) {
@@ -264,13 +284,49 @@ export class Lobby {
     const overlay = this._tapOverlay;
     this._tapOverlay = null;
     localStorage.setItem('tandemonium_started', '1');
-    // Request all permissions (reuse _toggleAll flow)
-    this._toggleAll();
-    // Ensure music actually starts playing — _toggleAll skips _toggleMusic
-    // when musicActive is already true, so fire the callback explicitly.
-    if (this.musicActive && this.onMusicChanged) {
-      this.onMusicChanged(true);
+
+    const isDesktop = window.steam || navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
+
+    if (isDesktop) {
+      // Desktop: the button press that dismissed the overlay also activated the gamepad.
+      // Poll briefly to let Chromium register it, then show toggles + auto-connect gyro.
+      console.log('Desktop: overlay dismissed, activating gamepad...');
+      let attempts = 0;
+      const detectGamepad = () => {
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (let i = 0; i < gamepads.length; i++) {
+          if (!gamepads[i]) continue;
+          // Register with input manager
+          if (this.input && !this.input.gamepadConnected) {
+            this.input.gamepadIndex = i;
+            this.input.gamepadConnected = true;
+            this.input._gpName = gamepads[i].id;
+            console.log('Desktop: gamepad activated:', gamepads[i].id);
+          }
+          // Show joystick toggle
+          this.toggleJoystick.style.display = '';
+          this._setToggleActive('joystick', this.joystickActive);
+          // Check for gyro-capable controller and auto-connect
+          if (navigator.hid) {
+            this._checkGamepadGyro();
+          }
+          // Start music
+          if (this.onMusicChanged) this.onMusicChanged(true);
+          return;
+        }
+        // Retry for up to 2 seconds
+        attempts++;
+        if (attempts < 20) setTimeout(detectGamepad, 100);
+      };
+      setTimeout(detectGamepad, 200);
+    } else {
+      // Mobile/browser: request all permissions (audio, camera, motion)
+      this._toggleAll();
+      if (this.musicActive && this.onMusicChanged) {
+        this.onMusicChanged(true);
+      }
     }
+
     // Fade out and remove
     overlay.classList.add('fade-out');
     setTimeout(() => overlay.remove(), 400);
@@ -484,11 +540,6 @@ export class Lobby {
 
     // RIDE TOGETHER → check for rejoin, then role selection
     document.getElementById('btn-together').addEventListener('click', async () => {
-      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-      if (!isLocal && !this.auth.isLoggedIn()) {
-        this.auth.login();
-        return;
-      }
       // Check for saved room to rejoin
       const rejoined = await this._handleRejoinCheck();
       if (rejoined) return;
@@ -541,17 +592,8 @@ export class Lobby {
       if (stepBackBtn) stepBackBtn.click();
     });
 
-    // CAPTAIN (START A RIDE) — locked for unlicensed, acts as purchase CTA
+    // CAPTAIN (START A RIDE) — open to all players
     document.getElementById('btn-captain').addEventListener('click', async () => {
-      if (!this.license.isLicensed) {
-        try {
-          const url = await this.license.startCheckout('tandemonium-web-early');
-          window.location.href = url;
-        } catch (e) {
-          console.error('Checkout error', e);
-        }
-        return;
-      }
       this._showStep(this.hostStep);
       this._createRoom();
     });
@@ -813,6 +855,42 @@ export class Lobby {
     });
   }
 
+  async _initSteamLicense() {
+    if (!window.steam) {
+      this.license = new LicenseManager(this.auth);
+      return;
+    }
+    try {
+      const available = await window.steam.isAvailable();
+      if (!available) {
+        this.license = new LicenseManager(this.auth);
+        return;
+      }
+      const subscribed = await window.steam.isSubscribed();
+      if (subscribed) {
+        this._isSteam = true;
+        // Shim: Steam ownership = fully licensed, no network checks needed
+        this.license = {
+          isLicensed: true,
+          isFreePlay: false,
+          accessLevel: 'licensed',
+          _license: { licensed: true },
+          check: async () => {},
+          refresh: async () => {},
+          clear: () => {},
+        };
+        // Hide Google sign-in button and Stripe purchase CTAs on Steam
+        const gsiBtn = document.getElementById('gsi-button-container');
+        if (gsiBtn) gsiBtn.style.display = 'none';
+      } else {
+        this.license = new LicenseManager(this.auth);
+      }
+    } catch (e) {
+      console.warn('Steam license check failed, falling back to LicenseManager', e);
+      this.license = new LicenseManager(this.auth);
+    }
+  }
+
   _setupAuth() {
     this.profilePopup = document.getElementById('profile-popup');
     const popupAvatar = document.getElementById('profile-popup-avatar');
@@ -820,8 +898,13 @@ export class Lobby {
     const popupEmail = document.getElementById('profile-popup-email');
     const logoutBtn = document.getElementById('profile-popup-logout');
 
-    // Initialize GSI
-    this.auth.initGSI();
+    // Initialize auth: Steam auto-login or Google Sign-In
+    if (this._isSteam) {
+      // Steam users auto-authenticate — no Google sign-in needed
+      this.auth.loginWithSteam();
+    } else {
+      this.auth.initGSI();
+    }
 
     // Save original SVG to restore on logout
     const profileSvg = this.toggleProfile.innerHTML;
@@ -877,6 +960,10 @@ export class Lobby {
         }
       } catch (e) {
         console.warn('Failed to fetch server achievements on login', e);
+      }
+      // Sync all earned achievements to Steam profile (catches web/mobile unlocks)
+      if (this._isSteam) {
+        this._achievements.syncToSteam();
       }
 
       // Resume auto-join if user arrived via shared URL before logging in
@@ -1028,16 +1115,10 @@ export class Lobby {
       btnTogether.classList.remove('role-locked');
       btnTogether.innerHTML = 'RIDE TOGETHER';
     } else {
-      // anonymous — show but locked (unlocked on localhost for local testing)
-      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+      // anonymous — multiplayer open to all, no sign-in required
       btnSolo.textContent = 'SOLO DEMO';
-      if (isLocal) {
-        btnTogether.classList.remove('role-locked');
-        btnTogether.innerHTML = 'RIDE TOGETHER';
-      } else {
-        btnTogether.classList.add('role-locked');
-        btnTogether.innerHTML = '&#x1F512; RIDE TOGETHER<br><span class="lobby-role-desc">Sign in to ride together</span>';
-      }
+      btnTogether.classList.remove('role-locked');
+      btnTogether.innerHTML = 'RIDE TOGETHER';
     }
 
     // License status icon next to version: 🔒 not licensed, ✅ licensed, 🆓 free play
@@ -1060,15 +1141,9 @@ export class Lobby {
    */
   _updateRoleButtons() {
     const btnCaptain = document.getElementById('btn-captain');
-    if (!this.license.isLicensed) {
-      btnCaptain.classList.add('role-locked');
-      btnCaptain.classList.remove('lobby-btn-accent');
-      btnCaptain.innerHTML = '&#x1F512; START A RIDE<br><span class="lobby-role-desc">Get the full game to be Captain &middot; $5.99</span>';
-    } else {
-      btnCaptain.classList.remove('role-locked');
-      btnCaptain.classList.add('lobby-btn-accent');
-      btnCaptain.innerHTML = 'START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span>';
-    }
+    btnCaptain.classList.remove('role-locked');
+    btnCaptain.classList.add('lobby-btn-accent');
+    btnCaptain.innerHTML = 'START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span>';
   }
 
   // ── Permission toggles ──────────────────────────────────────
@@ -1230,9 +1305,38 @@ export class Lobby {
   _checkGamepadGyro() {
     const gamepads = navigator.getGamepads();
     const gp = gamepads[this.input.gamepadIndex];
-    if (gp && /playstation|dualsense|dualshock|054c/i.test(gp.id)) {
-      this._showMotionToggle();
+    if (!gp || !/playstation|dualsense|dualshock|054c/i.test(gp.id)) return;
+
+    this._showMotionToggle();
+
+    // Auto-connect gyro in Electron/Steam (no user gesture needed for WebHID)
+    const isDesktop = window.steam || navigator.userAgent.includes('Electron');
+    if (isDesktop && !this.motionActive) {
+      setTimeout(() => this._autoConnectGyro(), 1000);
     }
+  }
+
+  /** Auto-connect gyro in Electron/Steam — no user gesture needed since
+   *  WebHID permissions are granted via session handlers in main.js. */
+  _autoConnectGyro() {
+    if (this.motionActive || this._motionPermitted) return;
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[this.input.gamepadIndex];
+    if (!gp || !/playstation|dualsense|dualshock|054c/i.test(gp.id)) return;
+
+    console.log('Auto-connecting gyro for DualSense in desktop mode...');
+    this.input.connectControllerGyro().then(() => {
+      if (this.input.gyroConnected) {
+        this._motionPermitted = true;
+        this.motionActive = true;
+        this._setToggleActive('motion', true);
+        this._showMotionToggle();
+        this._updateTutorialButton();
+        console.log('Gyro auto-connected successfully');
+      }
+    }).catch((err) => {
+      console.warn('Gyro auto-connect failed:', err.message);
+    });
   }
 
   _updateAllToggle() {
@@ -1245,6 +1349,7 @@ export class Lobby {
   }
 
   _toggleCamera() {
+    if (!this._hasCamera) return; // no camera hardware
     if (this.cameraActive) {
       this.cameraActive = false;
       this._setToggleActive('camera', false);
@@ -2155,11 +2260,38 @@ export class Lobby {
         } catch {}
         this._setToggleActive('joystick', this.joystickActive);
       }
-      if (this.toggleMotion.style.display !== 'none') return;
       if (this.input && this.input.gamepadConnected && navigator.hid) {
         this._checkGamepadGyro();
       }
     });
+
+    // Desktop/Electron: actively poll for gamepad on startup instead of
+    // waiting for user input (browser requires button press to detect).
+    const isDesktop = window.steam || navigator.userAgent.includes('Electron');
+    if (isDesktop) {
+      this._desktopGamepadPoll = setInterval(() => {
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        for (let i = 0; i < gamepads.length; i++) {
+          if (!gamepads[i]) continue;
+          // Found a gamepad — set it up as if gamepadconnected fired
+          if (this.input && !this.input.gamepadConnected) {
+            this.input.gamepadIndex = i;
+            this.input.gamepadConnected = true;
+            this.input._gpName = gamepads[i].id;
+            console.log('Desktop: auto-detected gamepad:', gamepads[i].id);
+          }
+          // Show joystick toggle
+          this.toggleJoystick.style.display = '';
+          this._setToggleActive('joystick', this.joystickActive);
+          // Check for gyro
+          if (navigator.hid) {
+            this._checkGamepadGyro();
+          }
+          clearInterval(this._desktopGamepadPoll);
+          return;
+        }
+      }, 1000);
+    }
     window.addEventListener('gamepaddisconnected', () => {
       this._updateBackHint(this._currentStep);
       // Show fixed back button when gamepad disconnects
@@ -2239,7 +2371,12 @@ export class Lobby {
       // Generate QR code with join URL
       const qrEl = document.getElementById('room-qr');
       const urlEl = document.getElementById('room-url');
-      const url = window.location.origin + window.location.pathname + '?room=' + code;
+      // In Electron, use the production web URL for QR codes (localhost isn't reachable from mobile)
+      const isDesktop = navigator.userAgent.includes('Electron');
+      const baseUrl = isDesktop
+        ? SITE_URL
+        : window.location.origin + window.location.pathname;
+      const url = baseUrl + '?room=' + code;
       try {
         const qr = qrcode(0, 'M');
         qr.addData(url);

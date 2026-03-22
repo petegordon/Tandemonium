@@ -30,6 +30,10 @@ export const MSG_COLLECT     = 0x06;
 export const MSG_PROFILE     = 0x07;
 
 export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';
+
+// Production web URL — used for QR codes in Electron, share links, etc.
+// Update this when the domain changes.
+export const SITE_URL = 'https://tandemonium.jimandi.love';
 export const TURN_CREDENTIALS_URL = 'https://tandemonium-relay.pete-872.workers.dev/turn-credentials';
 
 // Self-hosted PeerJS signaling server (Cloud Run)

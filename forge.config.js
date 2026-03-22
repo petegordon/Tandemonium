@@ -13,13 +13,6 @@ module.exports = {
   },
   makers: [
     {
-      name: '@electron-forge/maker-squirrel',
-      config: {
-        name: 'Tandemonium',
-        setupIcon: path.join(__dirname, 'assets', 'icon.ico'),
-      },
-    },
-    {
       name: '@electron-forge/maker-zip',
       platforms: ['win32'],
     },
