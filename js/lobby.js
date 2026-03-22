@@ -527,11 +527,6 @@ export class Lobby {
 
     // RIDE TOGETHER → check for rejoin, then role selection
     document.getElementById('btn-together').addEventListener('click', async () => {
-      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-      if (!isLocal && !this.auth.isLoggedIn()) {
-        this.auth.login();
-        return;
-      }
       // Check for saved room to rejoin
       const rejoined = await this._handleRejoinCheck();
       if (rejoined) return;
@@ -584,17 +579,8 @@ export class Lobby {
       if (stepBackBtn) stepBackBtn.click();
     });
 
-    // CAPTAIN (START A RIDE) — locked for unlicensed, acts as purchase CTA
+    // CAPTAIN (START A RIDE) — open to all players
     document.getElementById('btn-captain').addEventListener('click', async () => {
-      if (!this.license.isLicensed) {
-        try {
-          const url = await this.license.startCheckout('tandemonium-web-early');
-          window.location.href = url;
-        } catch (e) {
-          console.error('Checkout error', e);
-        }
-        return;
-      }
       this._showStep(this.hostStep);
       this._createRoom();
     });
@@ -1116,16 +1102,10 @@ export class Lobby {
       btnTogether.classList.remove('role-locked');
       btnTogether.innerHTML = 'RIDE TOGETHER';
     } else {
-      // anonymous — show but locked (unlocked on localhost for local testing)
-      const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+      // anonymous — multiplayer open to all, no sign-in required
       btnSolo.textContent = 'SOLO DEMO';
-      if (isLocal) {
-        btnTogether.classList.remove('role-locked');
-        btnTogether.innerHTML = 'RIDE TOGETHER';
-      } else {
-        btnTogether.classList.add('role-locked');
-        btnTogether.innerHTML = '&#x1F512; RIDE TOGETHER<br><span class="lobby-role-desc">Sign in to ride together</span>';
-      }
+      btnTogether.classList.remove('role-locked');
+      btnTogether.innerHTML = 'RIDE TOGETHER';
     }
 
     // License status icon next to version: 🔒 not licensed, ✅ licensed, 🆓 free play
@@ -1148,15 +1128,9 @@ export class Lobby {
    */
   _updateRoleButtons() {
     const btnCaptain = document.getElementById('btn-captain');
-    if (!this.license.isLicensed) {
-      btnCaptain.classList.add('role-locked');
-      btnCaptain.classList.remove('lobby-btn-accent');
-      btnCaptain.innerHTML = '&#x1F512; START A RIDE<br><span class="lobby-role-desc">Get the full game to be Captain &middot; $5.99</span>';
-    } else {
-      btnCaptain.classList.remove('role-locked');
-      btnCaptain.classList.add('lobby-btn-accent');
-      btnCaptain.innerHTML = 'START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span>';
-    }
+    btnCaptain.classList.remove('role-locked');
+    btnCaptain.classList.add('lobby-btn-accent');
+    btnCaptain.innerHTML = 'START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span>';
   }
 
   // ── Permission toggles ──────────────────────────────────────
