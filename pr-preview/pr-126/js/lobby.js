@@ -2371,8 +2371,9 @@ export class Lobby {
       // Generate QR code with join URL
       const qrEl = document.getElementById('room-qr');
       const urlEl = document.getElementById('room-url');
-      // In Electron, location.origin is file:// — use the production web URL for QR codes
-      const baseUrl = window.location.protocol === 'file:'
+      // In Electron, use the production web URL for QR codes (localhost isn't reachable from mobile)
+      const isDesktop = navigator.userAgent.includes('Electron');
+      const baseUrl = isDesktop
         ? SITE_URL
         : window.location.origin + window.location.pathname;
       const url = baseUrl + '?room=' + code;
