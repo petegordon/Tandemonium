@@ -524,9 +524,9 @@ class Game {
   // LOBBY CALLBACKS
   // ============================================================
 
-  /** True when the player is in demo mode (unlicensed solo). */
+  /** True when the player is in demo mode — disabled during playtest. */
   get _isDemo() {
-    return this.mode === 'solo' && !this.lobby.license.isLicensed;
+    return false;
   }
 
   _onSolo() {
