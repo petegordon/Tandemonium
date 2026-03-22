@@ -522,20 +522,13 @@ export class Lobby {
   }
 
   _setup() {
-    // SOLO → demo users go straight to tutorial; licensed users see level select
+    // SOLO → always show level selection
     document.getElementById('btn-solo').addEventListener('click', async () => {
       await this._requestMotion();
       this._syncMotionState();
       this._pendingMode = 'solo';
       this._detectAndSetInputMethod();
-      if (!this.license.isLicensed) {
-        // Demo: skip level select, go straight to tutorial
-        this._forceWizard = true;
-        this._hideLobby();
-        this.onSolo();
-      } else {
-        this._showStep(this.levelStep);
-      }
+      this._showStep(this.levelStep);
     });
 
     // RIDE TOGETHER → check for rejoin, then role selection
@@ -559,6 +552,9 @@ export class Lobby {
     // "Learn to Ride" tutorial button
     document.getElementById('btn-tutorial').addEventListener('click', () => {
       this._forceWizard = true;
+      // Hide difficulty selector — not applicable to tutorial
+      const diffSel = document.getElementById('difficulty-selector');
+      if (diffSel) diffSel.style.display = 'none';
       this._hideLobby();
       this.onSolo();
     });
@@ -744,43 +740,34 @@ export class Lobby {
   _buildLevelCards() {
     const container = document.getElementById('level-cards');
     const buttons = [];
-    const isDemo = !this.license.isLicensed;
 
-    // Level unlock requirements: achievement ID needed to unlock each level
-    const LEVEL_UNLOCK = { castle: 'home_sweet' }; // Castle requires finishing Grandma's House
+    // Level unlock requirements: Castle requires finishing Grandma's House
+    const LEVEL_UNLOCK = { castle: 'home_sweet' };
 
-    // Check if motion/gyro player needs to complete tutorial first
+    // Check if gyro is active but uncalibrated (show recommendation, don't lock)
     const needsTuning = this._needsMotionTuning();
 
     LEVELS.filter(l => !l.isTutorial).forEach(level => {
       const requiredAch = LEVEL_UNLOCK[level.id];
-      const achievementLocked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
-      const tutorialLocked = needsTuning; // all levels locked until tutorial done
-      const locked = achievementLocked || tutorialLocked || isDemo;
+      const locked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
 
       const card = document.createElement('button');
       card.className = 'level-card' + (locked ? ' level-locked' : '');
       card.dataset.levelId = level.id;
 
       if (locked) {
-        const lockReason = isDemo
-          ? 'Get the full game to unlock'
-          : tutorialLocked && !achievementLocked
-          ? 'Complete Learn to Ride to unlock'
-          : 'Complete Grandma\'s House to unlock';
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">&#x1F512;</span>' +
             '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">' + lockReason + '</div>';
+          '<div class="level-card-desc">Complete Grandma\'s House to unlock</div>';
         card.disabled = true;
       } else {
-        const demoTag = '';
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">' + level.icon + '</span>' +
-            '<span class="level-card-name">' + level.name + demoTag + '</span>' +
+            '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
           '<div class="level-card-desc">' + level.description + '</div>';
         card.addEventListener('click', () => {
@@ -806,14 +793,15 @@ export class Lobby {
       const isGyro = this.input && this.input.gyroConnected;
       const hasGamepad = this.input && this.input.gamepadConnected;
       const hasMotion = this.motionActive || isGyro;
+      const recommended = needsTuning ? ' \u2B50 Recommended' : ''; // ⭐
       if (isGyro) {
-        tutBtn.textContent = '\uD83C\uDFAE Learn to Ride \u2014 Controller Gyro'; // 🎮
+        tutBtn.textContent = '\uD83C\uDFAE Learn to Ride \u2014 Controller Gyro' + recommended;
       } else if (hasMotion && isMobile) {
-        tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride \u2014 Phone Motion'; // 📱
+        tutBtn.textContent = '\uD83D\uDCF1 Learn to Ride \u2014 Phone Motion' + recommended;
       } else if (hasGamepad) {
-        tutBtn.textContent = '\uD83D\uDD79\uFE0F Learn to Ride \u2014 Joystick'; // 🕹️
+        tutBtn.textContent = '\uD83D\uDD79\uFE0F Learn to Ride \u2014 Joystick';
       } else {
-        tutBtn.textContent = '\u2328\uFE0F Learn to Ride \u2014 Keyboard'; // ⌨️
+        tutBtn.textContent = '\u2328\uFE0F Learn to Ride \u2014 Keyboard';
       }
       buttons.push(tutBtn);
     }
@@ -1097,29 +1085,17 @@ export class Lobby {
 
   /**
    * Update mode buttons based on auth + license state.
-   *   anonymous  → SOLO DEMO only
-   *   free       → RIDE TOGETHER (join only) + SOLO DEMO
-   *   licensed   → RIDE TOGETHER + SOLO RIDE
+   *   Playtest: all players get full access (SOLO RIDE + RIDE TOGETHER)
    */
   _updateModeButtons() {
     const btnSolo = document.getElementById('btn-solo');
     const btnTogether = document.getElementById('btn-together');
     const access = this.license.accessLevel;
 
-    if (access === 'licensed') {
-      btnSolo.textContent = 'SOLO RIDE';
-      btnTogether.classList.remove('role-locked');
-      btnTogether.innerHTML = 'RIDE TOGETHER';
-    } else if (access === 'free') {
-      btnSolo.textContent = 'SOLO DEMO';
-      btnTogether.classList.remove('role-locked');
-      btnTogether.innerHTML = 'RIDE TOGETHER';
-    } else {
-      // anonymous — multiplayer open to all, no sign-in required
-      btnSolo.textContent = 'SOLO DEMO';
-      btnTogether.classList.remove('role-locked');
-      btnTogether.innerHTML = 'RIDE TOGETHER';
-    }
+    // All players get full access during playtest
+    btnSolo.textContent = 'SOLO RIDE';
+    btnTogether.classList.remove('role-locked');
+    btnTogether.innerHTML = 'RIDE TOGETHER';
 
     // License status icon next to version: 🔒 not licensed, ✅ licensed, 🆓 free play
     const licIcon = document.getElementById('lobby-license-icon');
