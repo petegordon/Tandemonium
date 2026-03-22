@@ -111,6 +111,19 @@ export class Lobby {
     this.joystickActive = true; // joystick steering on by default when gamepad connected
     this.audioActive = false;
     this._cameraPermitted = false;
+    this._hasCamera = true; // assume true, check async below
+
+    // Hide camera toggle if no camera hardware exists
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then(devices => {
+        this._hasCamera = devices.some(d => d.kind === 'videoinput');
+        if (!this._hasCamera) {
+          this.toggleCamera.style.display = 'none';
+          this.cameraActive = false;
+          this._setToggleActive('camera', false);
+        }
+      }).catch(() => {});
+    }
     this._motionPermitted = false;
     this._audioPermitted = false;
     this._permissionsChecked = false;
@@ -1336,6 +1349,7 @@ export class Lobby {
   }
 
   _toggleCamera() {
+    if (!this._hasCamera) return; // no camera hardware
     if (this.cameraActive) {
       this.cameraActive = false;
       this._setToggleActive('camera', false);
