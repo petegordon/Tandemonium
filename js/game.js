@@ -788,6 +788,12 @@ class Game {
     const gpBadge = document.getElementById('gamepad-badge');
     if (gpBadge) gpBadge.style.display = 'none';
 
+    // Check for multiplayer tutorial (Learn to Ride together)
+    if (this.lobby._forceWizard) {
+      this._startTutorialRide();
+      return;
+    }
+
     // Show instructions
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
@@ -1067,8 +1073,8 @@ class Game {
 
     this._playBeep(400, 0.15);
 
-    // Captain notifies stoker
-    if (this.mode === 'captain' && this.net) {
+    // Captain notifies stoker (suppressed during tutorial calibration)
+    if (this.mode === 'captain' && this.net && !this._suppressCountdownEvent) {
       this.net.sendEvent(EVT_COUNTDOWN);
     }
 
@@ -2366,6 +2372,8 @@ class Game {
     if (!this.input.gamepadConnected) return;
     // Don't process gameplay D-pad while clip preview modal is open
     if (this.recorder._previewPollId) return;
+    // Don't process D-pad during calibration (tutorial)
+    if (this.state === 'calibrating') return;
     const gamepads = navigator.getGamepads();
     const gp = gamepads[this.input.gamepadIndex];
     if (!gp) return;
@@ -3387,10 +3395,18 @@ class Game {
     // (the tutorial calibration flow will handle it)
     this._calibHoldSamples = true;
 
+    // In multiplayer tutorial, defer EVT_COUNTDOWN to stoker until after
+    // captain's calibration — otherwise stoker's countdown runs while captain
+    // is still calibrating and the stoker starts riding too early.
+    const isMPCaptain = this.mode === 'captain' && this.net;
+    if (isMPCaptain) this._suppressCountdownEvent = true;
+
     // Start the ride setup (creates scene, collectibles, etc.) but pause the countdown
     this._startCountdown();
     // Reset flag so actual calibration data replaces it
     this._calibHoldSamples = null;
+
+    if (isMPCaptain) this._suppressCountdownEvent = false;
 
     // Widen collection hitbox during tutorial (collectible manager exists after _startCountdown)
     if (this.collectibleManager) {
@@ -3411,6 +3427,11 @@ class Game {
       if (flavorNum) flavorNum.style.visibility = '';
       this.state = 'countdown';
       this.countdownTimer = 3.0;
+    }
+
+    // Now notify stoker to start countdown (after calibration is done)
+    if (isMPCaptain) {
+      this.net.sendEvent(EVT_COUNTDOWN);
     }
 
     // Hide timer (no time pressure in tutorial)
@@ -3639,12 +3660,31 @@ class Game {
 
     const hasMotion = this.input.motionEnabled || this.input.gyroConnected;
     const steerVerb = this.input.gyroConnected ? 'Lean' : hasMotion ? 'Tilt' : 'Steer';
-    const prompts = {
-      0: 'Pedal to build speed!',
-      1: steerVerb + ' to collect the presents!',
-      2: 'Dodge the pylons!',
-      3: 'Put it all together! Collect and dodge!'
-    };
+    const isCaptain = this.mode === 'captain';
+    const isStoker = this.mode === 'stoker';
+    let prompts;
+    if (isCaptain) {
+      prompts = {
+        0: 'Pedal together to build speed!',
+        1: 'Captain, ' + steerVerb.toLowerCase() + ' to collect the presents!',
+        2: 'Captain, dodge the pylons!',
+        3: 'Put it all together! Collect and dodge!'
+      };
+    } else if (isStoker) {
+      prompts = {
+        0: 'Pedal together to build speed!',
+        1: 'Keep pedaling — captain is steering!',
+        2: 'Keep pedaling — captain is dodging!',
+        3: 'Great teamwork! Keep the rhythm going!'
+      };
+    } else {
+      prompts = {
+        0: 'Pedal to build speed!',
+        1: steerVerb + ' to collect the presents!',
+        2: 'Dodge the pylons!',
+        3: 'Put it all together! Collect and dodge!'
+      };
+    }
     text.textContent = prompts[phase] || '';
     prompt.classList.add('visible');
 

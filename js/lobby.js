@@ -1,6 +1,38 @@
 // ============================================================
 // LOBBY — UI controller for mode/role selection + connection
 // ============================================================
+//
+// ═══════════════════════════════════════════════════════════════
+// LOBBY COMPONENT CATALOG
+// ═══════════════════════════════════════════════════════════════
+//
+// SCREENS (lobby steps, shown/hidden by _showStep):
+//   #lobby-mode         — Mode selection (Solo / Ride Together)       back: none (root)
+//   #lobby-level        — Level + difficulty selection (solo path)    back: #lobby-mode
+//   #lobby-role         — Role selection (Captain / Stoker)           back: #lobby-mode
+//   #lobby-host         — Captain waiting room (room code + QR)      back: #lobby-role
+//   #lobby-join         — Stoker join room (code input / spinner)     back: #lobby-role
+//   #lobby-room         — Multiplayer social room (video + PLAY)     back: leave room
+//   (multiplayer reuses #lobby-level with START RIDE / wait text)
+//
+// SHARED COMPONENTS:
+//   Level Card           — .level-card button, built by _buildLevelCards() / _buildRoomLevelCards()
+//   Difficulty Selector  — #difficulty-selector, wired by _setupDifficultySelector()
+//   Tutorial Level Card   — .level-card-tutorial, built in the LEVELS loop (dashed border)
+//   Back Button          — .lobby-back per step, plus #lobby-fixed-back (non-gamepad)
+//   Toggle Columns       — .lobby-left-col (help/leaderboard/profile)
+//                          .lobby-right-col (camera/audio/joystick/motion/music)
+//   Waiting Text         — .conn-status elements ("Waiting for captain...")
+//
+// GAMEPAD NAVIGATION:
+//   _stepItems           — Map<step, focusableElements[]> — active nav items per step
+//   _stepCenterItems     — Map<step, elements[]> — immutable center column items
+//   _stepBack            — Map<step, backButton> — back button per step
+//   _modeColumns         — 4-column layout [leftToggles, center, rightToggles, farRight]
+//   _moveFocus(dir)      — vertical nav (up/down), skips difficulty siblings
+//   _moveColumn(dir)     — horizontal nav (left/right), difficulty sibling cycling
+//   _pollGamepadNav()    — RAF loop polling gamepad, dispatches to above
+// ═══════════════════════════════════════════════════════════════
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -92,7 +124,6 @@ export class Lobby {
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
     this.roomStep = document.getElementById('lobby-room');
-    this.roomLevelsStep = document.getElementById('lobby-room-levels');
     this._roomRole = null; // 'captain' | 'stoker'
 
     // Permission toggle buttons
@@ -243,6 +274,8 @@ export class Lobby {
     this._setup();
     this._buildLeaderboardTabs();
     this._initBikeCarousel();
+
+
 
     // Lobby is visible by default on page load (show() is only called on
     // re-entry from gameplay), so start gamepad nav now and set initial step.
@@ -450,6 +483,13 @@ export class Lobby {
     if (this._previewModel) this._startPreviewLoop();
   }
 
+  /**
+   * Transition to a lobby step. Handles: hiding all other steps, toggle column
+   * visibility (hidden on join), bike carousel visibility (hidden on level steps),
+   * difficulty selector visibility, fixed back button text, column nav reset,
+   * card header update, and initial gamepad focus.
+   * @param {HTMLElement} step — the step div to show (e.g. this.levelStep)
+   */
   _showStep(step) {
     // Restore toggle columns and clean up spinners if leaving join step
     if (this._currentStep === this.joinStep && step !== this.joinStep) {
@@ -463,7 +503,7 @@ export class Lobby {
       const backHint = document.getElementById('gamepad-back-hint');
       if (backHint) { backHint.style.display = ''; backHint.style.visibility = ''; }
     }
-    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep, this.roomLevelsStep]
+    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep]
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
@@ -482,16 +522,23 @@ export class Lobby {
     // Hide bike carousel on level step (use that space for level cards + difficulty)
     const carousel = document.getElementById('bike-carousel');
     const lobbyCard = document.querySelector('.lobby-card');
-    const hideCarousel = (step === this.levelStep) || (step === this.roomLevelsStep);
+    const hideCarousel = (step === this.levelStep);
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
     if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
     const lobbyEl = document.getElementById('lobby');
     if (lobbyEl) lobbyEl.classList.toggle('lobby-wide', hideCarousel);
 
-    // Show shared difficulty selector on level and room steps (captain only for room)
+    // Show shared difficulty selector on level step; reset hidden state
     const diffSel = document.getElementById('difficulty-selector');
-    const showDiff = (step === this.levelStep) || (step === this.roomLevelsStep);
-    if (diffSel) diffSel.style.display = showDiff ? '' : 'none';
+    const showDiff = (step === this.levelStep);
+    if (diffSel) {
+      diffSel.style.display = showDiff ? '' : 'none';
+      // Reset context-aware visibility (show by default, based on selected level)
+      if (showDiff) {
+        const selId = this.selectedLevel ? this.selectedLevel.id : null;
+        this._updateDifficultyVisibility(selId);
+      }
+    }
 
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
     const hasBack = this._stepBack.get(step);
@@ -513,6 +560,9 @@ export class Lobby {
     this._applyFocusHighlight();
     this._updateBackHint(step);
     this._updateCardHeader(step);
+    if (step === this.levelStep) {
+      requestAnimationFrame(() => this._adjustLevelCompact());
+    }
   }
 
   _hideLobby() {
@@ -549,18 +599,22 @@ export class Lobby {
     this._buildLevelCards();
     this._setupDifficultySelector();
 
-    // "Learn to Ride" tutorial button
-    document.getElementById('btn-tutorial').addEventListener('click', () => {
-      this._forceWizard = true;
-      // Hide difficulty selector — not applicable to tutorial
-      const diffSel = document.getElementById('difficulty-selector');
-      if (diffSel) diffSel.style.display = 'none';
-      this._hideLobby();
-      this.onSolo();
-    });
-
     document.getElementById('btn-back-level').addEventListener('click', () => {
-      this._showStep(this.modeStep);
+      if (this._pendingMode === 'multiplayer') {
+        // Reset multiplayer elements when leaving level step
+        const startBtn = document.getElementById('btn-start-ride');
+        const waitText = document.getElementById('level-wait-text');
+        const prompt = document.getElementById('level-prompt');
+        if (startBtn) startBtn.style.display = 'none';
+        if (waitText) waitText.style.display = 'none';
+        if (prompt) prompt.style.display = 'none';
+        // Reset difficulty selector interactivity
+        const diffSel = document.getElementById('difficulty-selector');
+        if (diffSel) { diffSel.style.opacity = ''; diffSel.style.pointerEvents = ''; }
+        this._showStep(this.roomStep);
+      } else {
+        this._showStep(this.modeStep);
+      }
     });
 
     // Back buttons
@@ -631,19 +685,20 @@ export class Lobby {
       this._showRoomLevelsStep();
     });
 
-    // Levels step: START RIDE button (captain only)
+    // Levels step: START RIDE button — works for both solo and multiplayer
     document.getElementById('btn-start-ride').addEventListener('click', () => {
-      if (this._roomRole !== 'captain') return;
-      // Send start ride to partner
-      if (this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'startRide' });
+      if (this._pendingMode === 'multiplayer') {
+        if (this._roomRole !== 'captain') return;
+        // Send start ride to partner
+        if (this.net && this.net.connected) {
+          this.net.sendProfile({ type: 'startRide' });
+        }
+        this._transitionToGame();
+      } else {
+        // Solo: start game directly
+        this._hideLobby();
+        this.onSolo();
       }
-      this._transitionToGame();
-    });
-
-    // Levels step: Back button → return to Room
-    document.getElementById('btn-back-room-levels').addEventListener('click', () => {
-      this._showStep(this.roomStep);
     });
 
     document.getElementById('btn-back-room').addEventListener('click', () => {
@@ -737,8 +792,21 @@ export class Lobby {
     this.toggleLeaderboard.addEventListener('click', () => this._openLeaderboard());
   }
 
-  _buildLevelCards() {
-    const container = document.getElementById('level-cards');
+  /**
+   * Shared level card builder used by both solo and multiplayer paths.
+   * Creates a button per non-tutorial level, handles unlock logic, click behavior,
+   * optional tutorial button, and gamepad nav registration.
+   * @param {Object} opts
+   * @param {HTMLElement} opts.container       — DOM element to append cards to
+   * @param {boolean}     opts.isClickable     — true for solo/captain, false for stoker
+   * @param {'solo'|'multiplayer'} opts.mode   — determines click behavior
+   * @param {boolean}     opts.showTutorial    — whether to include Learn to Ride button
+   * @param {HTMLElement|null} opts.startBtn   — START RIDE button (multiplayer only)
+   * @param {HTMLElement} opts.backBtn         — back button for this step
+   * @param {HTMLElement} opts.step            — step element for _stepItems registration
+   */
+  _buildLevelCardsShared({ container, isClickable, mode, showTutorial, startBtn, backBtn, step }) {
+    container.innerHTML = '';
     const buttons = [];
 
     // Level unlock requirements: Castle requires finishing Grandma's House
@@ -747,12 +815,15 @@ export class Lobby {
     // Check if gyro is active but uncalibrated (show recommendation, don't lock)
     const needsTuning = this._needsMotionTuning();
 
-    LEVELS.filter(l => !l.isTutorial).forEach(level => {
+    const levels = showTutorial ? LEVELS : LEVELS.filter(l => !l.isTutorial);
+
+    levels.forEach(level => {
+      const isTutorial = level.isTutorial;
       const requiredAch = LEVEL_UNLOCK[level.id];
-      const locked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
+      const locked = !isTutorial && requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
 
       const card = document.createElement('button');
-      card.className = 'level-card' + (locked ? ' level-locked' : '');
+      card.className = 'level-card' + (locked ? ' level-locked' : '') + (isTutorial ? ' level-card-tutorial' : '');
       card.dataset.levelId = level.id;
 
       if (locked) {
@@ -764,70 +835,155 @@ export class Lobby {
           '<div class="level-card-desc">Complete Grandma\'s House to unlock</div>';
         card.disabled = true;
       } else {
+        // Tutorial description adapts to calibration state
+        const desc = isTutorial && needsTuning
+          ? '\u2B50 Recommended for calibration'
+          : level.description;
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">' + level.icon + '</span>' +
             '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">' + level.description + '</div>';
-        card.addEventListener('click', () => {
-          this.selectedLevel = level;
-          analytics.trackEvent('level_select', { level: level.id, difficulty: this.selectedDifficulty });
-          if (this._pendingMode === 'solo') {
-            this._hideLobby();
-            this.onSolo();
-          } else {
-            this._showStep(this.roleStep);
-          }
-        });
+          '<div class="level-card-desc">' + desc + '</div>';
+
+        if (isClickable) {
+          card.addEventListener('click', () => {
+            this.selectedLevel = level;
+            this._forceWizard = isTutorial;
+            this._updateDifficultyVisibility(level.id);
+            container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
+            card.classList.add('selected');
+            if (startBtn) startBtn.disabled = false;
+            analytics.trackEvent('level_select', { level: level.id, difficulty: this.selectedDifficulty });
+            if (this.net && this.net.connected) {
+              this.net.sendProfile({ type: 'levelSync', levelId: level.id });
+            }
+          });
+        } else {
+          card.style.opacity = '0.7';
+          card.style.pointerEvents = 'none';
+        }
       }
 
       container.appendChild(card);
       if (!locked) buttons.push(card);
     });
 
-    // Tutorial button — always available as a practice ride
-    const tutBtn = document.getElementById('btn-tutorial');
-    if (tutBtn) {
-      tutBtn.style.display = '';
-      const isGyro = this.input && this.input.gyroConnected;
-      const hasGamepad = this.input && this.input.gamepadConnected;
-      const hasMotion = this.motionActive || isGyro;
-      let tutLabel;
-      if (isGyro) {
-        tutLabel = '\uD83C\uDFAE Learn to Ride'; // 🎮
-      } else if (hasMotion && isMobile) {
-        tutLabel = '\uD83D\uDCF1 Learn to Ride'; // 📱
-      } else if (hasGamepad) {
-        tutLabel = '\uD83D\uDD79\uFE0F Learn to Ride'; // 🕹️
-      } else {
-        tutLabel = '\u2328\uFE0F Learn to Ride'; // ⌨️
+    // Default selection: restore previous or pick first unlocked non-tutorial level
+    if (isClickable) {
+      let defaultCard = null;
+      if (this.selectedLevel) {
+        // Restore previous selection
+        defaultCard = container.querySelector('.level-card[data-level-id="' + this.selectedLevel.id + '"]:not(.level-locked)');
       }
-      if (needsTuning) {
-        tutBtn.innerHTML = tutLabel + '<br><span style="font-size:0.75em;opacity:0.7;">\u2B50 Recommended for calibration</span>';
-      } else {
-        tutBtn.textContent = tutLabel;
+      if (!defaultCard) {
+        // Pick first unlocked non-tutorial level (Grandma's)
+        defaultCard = container.querySelector('.level-card:not(.level-locked):not(.level-card-tutorial)');
       }
-      buttons.push(tutBtn);
+      if (defaultCard) {
+        defaultCard.classList.add('selected');
+        this.selectedLevel = LEVELS.find(l => l.id === defaultCard.dataset.levelId);
+        this._forceWizard = !!(this.selectedLevel && this.selectedLevel.isTutorial);
+        if (startBtn) startBtn.disabled = false;
+        this._updateDifficultyVisibility(defaultCard.dataset.levelId);
+        // Sync to partner on multiplayer re-entry
+        if (this.net && this.net.connected) {
+          this.net.sendProfile({ type: 'levelSync', levelId: this.selectedLevel.id });
+        }
+      }
     }
 
+    // Multiplayer: add START RIDE button to nav if captain
+    if (startBtn && isClickable) buttons.push(startBtn);
+
     // Add individual difficulty buttons to gamepad navigation
-    const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
-    diffBtns.forEach(b => buttons.push(b));
+    if (isClickable) {
+      const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
+      diffBtns.forEach(b => buttons.push(b));
+    }
 
     // Register for gamepad navigation
-    buttons.push(document.getElementById('btn-back-level'));
-    this._stepItems.set(this.levelStep, buttons);
-    this._stepCenterItems.set(this.levelStep, buttons);
-    this._stepBack.set(this.levelStep, document.getElementById('btn-back-level'));
+    const navItems = isClickable ? [...buttons, backBtn] : [backBtn];
+    this._stepItems.set(step, navItems);
+    this._stepCenterItems.set(step, navItems);
+    this._stepBack.set(step, backBtn);
+  }
+
+  /**
+   * Build solo-path level cards. Thin wrapper around _buildLevelCardsShared().
+   * Also hides multiplayer-only elements in the shared #lobby-level step.
+   */
+  _buildLevelCards() {
+    // Hide multiplayer elements in the shared level step
+    const startBtn = document.getElementById('btn-start-ride');
+    const waitText = document.getElementById('level-wait-text');
+    const prompt = document.getElementById('level-prompt');
+    // Show START RIDE button (disabled until a level is selected)
+    if (startBtn) { startBtn.style.display = ''; startBtn.disabled = true; }
+    if (waitText) waitText.style.display = 'none';
+    if (prompt) prompt.style.display = 'none';
+    // Reset difficulty selector interactivity
+    const diffSel = document.getElementById('difficulty-selector');
+    if (diffSel) { diffSel.style.opacity = ''; diffSel.style.pointerEvents = ''; }
+
+    this._buildLevelCardsShared({
+      container: document.getElementById('level-cards'),
+      isClickable: true,
+      mode: 'solo',
+      showTutorial: true,
+      startBtn: startBtn,
+      backBtn: document.getElementById('btn-back-level'),
+      step: this.levelStep
+    });
   }
 
   _rebuildLevelCards() {
     const container = document.getElementById('level-cards');
     container.innerHTML = '';
     this._buildLevelCards();
+    // Sync _modeColumns[1] only if we're currently on the level step
+    if (this._currentStep === this.levelStep) {
+      const centerItems = this._stepCenterItems.get(this.levelStep) || [];
+      this._modeColumns[1] = centerItems;
+      if (this._modeCol === 1) {
+        this._stepItems.set(this.levelStep, centerItems);
+      }
+    }
   }
 
+  /**
+   * Update difficulty selector based on selected level. Tutorial forces Chill
+   * and disables harder options; real levels re-enable all options.
+   * @param {string|null} levelId — level ID being selected, or null to enable all
+   */
+  _updateDifficultyVisibility(levelId) {
+    const isTutorial = levelId === 'tutorial';
+    const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
+    diffBtns.forEach(btn => {
+      const diff = btn.dataset.difficulty;
+      if (isTutorial && diff !== 'chill') {
+        btn.disabled = true;
+        btn.classList.add('diff-disabled');
+      } else {
+        btn.disabled = false;
+        btn.classList.remove('diff-disabled');
+      }
+    });
+    // Auto-select Chill when tutorial is chosen
+    if (isTutorial) {
+      diffBtns.forEach(b => b.classList.remove('selected'));
+      const chillBtn = document.querySelector('#difficulty-selector .difficulty-btn[data-difficulty="chill"]');
+      if (chillBtn) chillBtn.classList.add('selected');
+      this.selectedDifficulty = 'chill';
+    }
+  }
+
+  /**
+   * Wire click handlers on all .difficulty-btn elements. Keeps both selectors
+   * (solo and room) in sync — clicking one updates all matching buttons.
+   * Syncs selected difficulty to partner via net.sendProfile if connected.
+   * Stores selection in this.selectedDifficulty.
+   */
   _setupDifficultySelector() {
     // Wire up both difficulty selectors (solo level step + room step)
     document.querySelectorAll('.difficulty-selector').forEach(selector => {
@@ -1061,10 +1217,13 @@ export class Lobby {
     }
   }
 
-  /** Sync lobby motion flags after permission is granted. */
+  /** Sync lobby motion flags after permission is granted.
+   *  Only auto-enables on first grant — if the user previously had motion
+   *  and manually toggled it off, respect their choice.
+   */
   _syncMotionState() {
     if (this.input && (this.input.motionEnabled || this.input.gyroConnected)) {
-      if (!this.motionActive) {
+      if (!this.motionActive && !this._motionPermitted) {
         this._showMotionToggle();
         this._motionPermitted = true;
         this.motionActive = true;
@@ -2750,7 +2909,7 @@ export class Lobby {
     // Handle partner disconnect while in room or levels
     this.net.onDisconnected = (reason) => {
       const waitTextRoom = document.getElementById('room-wait-text-room');
-      const waitText = document.getElementById('room-wait-text');
+      const waitText = document.getElementById('level-wait-text');
       if (waitTextRoom) { waitTextRoom.textContent = 'Partner disconnected'; waitTextRoom.style.display = ''; }
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
       document.getElementById('btn-play-game').style.display = 'none';
@@ -2763,22 +2922,29 @@ export class Lobby {
     };
   }
 
+  /**
+   * Transition to the multiplayer level selection step. Configures the shared
+   * #lobby-level step for multiplayer mode: START RIDE button (captain) vs
+   * waiting text (stoker), builds level cards, sets difficulty interactivity.
+   */
   _showRoomLevelsStep() {
     const role = this._roomRole;
 
-    // Show/hide start button vs waiting text based on role
+    // Show multiplayer-specific elements, hide solo-only elements
     const startBtn = document.getElementById('btn-start-ride');
-    const waitText = document.getElementById('room-wait-text');
+    const waitText = document.getElementById('level-wait-text');
+    const prompt = document.getElementById('level-prompt');
+    if (prompt) prompt.style.display = 'none';
     if (role === 'captain') {
       startBtn.style.display = '';
       startBtn.disabled = true;
-      waitText.style.display = 'none';
+      if (waitText) waitText.style.display = 'none';
     } else {
       startBtn.style.display = 'none';
-      waitText.style.display = '';
+      if (waitText) waitText.style.display = '';
     }
 
-    // Build level cards BEFORE _showStep so _stepItems is populated
+    // Build level cards into the shared container BEFORE _showStep
     this._buildRoomLevelCards(role === 'captain');
 
     // Stoker can see difficulty but not interact
@@ -2788,83 +2954,23 @@ export class Lobby {
       diffSel.style.pointerEvents = (role === 'captain') ? '' : 'none';
     }
 
-    this._showStep(this.roomLevelsStep);
+    this._showStep(this.levelStep);
   }
 
+  /**
+   * Build multiplayer-path level cards. Thin wrapper around _buildLevelCardsShared().
+   * @param {boolean} isClickable — true for captain, false for stoker
+   */
   _buildRoomLevelCards(isClickable) {
-    const container = document.getElementById('room-level-cards');
-    container.innerHTML = '';
-    const buttons = [];
-    const LEVEL_UNLOCK = { castle: 'home_sweet' };
-
-    LEVELS.filter(l => !l.isTutorial).forEach(level => {
-      const requiredAch = LEVEL_UNLOCK[level.id];
-      const locked = requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
-
-      const card = document.createElement('button');
-      card.className = 'level-card' + (locked ? ' level-locked' : '');
-      card.dataset.levelId = level.id;
-
-      if (locked) {
-        card.innerHTML =
-          '<div class="level-card-top">' +
-            '<span class="level-card-icon">&#x1F512;</span>' +
-            '<span class="level-card-name">' + level.name + '</span>' +
-          '</div>' +
-          '<div class="level-card-desc">Complete Grandma\'s House to unlock</div>';
-        card.disabled = true;
-      } else {
-        card.innerHTML =
-          '<div class="level-card-top">' +
-            '<span class="level-card-icon">' + level.icon + '</span>' +
-            '<span class="level-card-name">' + level.name + '</span>' +
-          '</div>' +
-          '<div class="level-card-desc">' + level.description + '</div>';
-        if (isClickable) {
-          card.addEventListener('click', () => {
-            this.selectedLevel = level;
-            container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
-            card.classList.add('selected');
-            document.getElementById('btn-start-ride').disabled = false;
-            if (this.net && this.net.connected) {
-              this.net.sendProfile({ type: 'levelSync', levelId: level.id });
-            }
-          });
-        } else {
-          card.style.opacity = '0.7';
-          card.style.pointerEvents = 'none';
-        }
-      }
-
-      container.appendChild(card);
-      if (!locked) buttons.push(card);
+    this._buildLevelCardsShared({
+      container: document.getElementById('level-cards'),
+      isClickable,
+      mode: 'multiplayer',
+      showTutorial: true, // Both captain and stoker see tutorial card
+      startBtn: document.getElementById('btn-start-ride'),
+      backBtn: document.getElementById('btn-back-level'),
+      step: this.levelStep
     });
-
-    // Restore previously selected level
-    if (this.selectedLevel) {
-      container.querySelectorAll('.level-card').forEach(c => {
-        if (c.dataset.levelId === this.selectedLevel.id) c.classList.add('selected');
-      });
-      if (isClickable) document.getElementById('btn-start-ride').disabled = false;
-      // Re-sync level to partner (captain only)
-      if (isClickable && this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'levelSync', levelId: this.selectedLevel.id });
-      }
-    }
-
-    // Register for gamepad nav on levels step
-    // Order: level cards → START RIDE → difficulty → back
-    if (isClickable) {
-      buttons.push(document.getElementById('btn-start-ride'));
-      const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
-      diffBtns.forEach(b => buttons.push(b));
-    }
-    const levelsItems = isClickable
-      ? [...buttons, document.getElementById('btn-back-room-levels')]
-      : [document.getElementById('btn-back-room-levels')];
-    this._stepItems.set(this.roomLevelsStep, levelsItems);
-    this._stepCenterItems.set(this.roomLevelsStep, levelsItems);
-    this._stepBack.set(this.roomLevelsStep, document.getElementById('btn-back-room-levels'));
   }
 
   _updatePartnerPip() {
@@ -3029,10 +3135,14 @@ export class Lobby {
     } else if (profile.type === 'levelSync') {
       // Stoker: highlight captain's level selection
       this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
-      const container = document.getElementById('room-level-cards');
+      // Track if captain selected tutorial — stoker needs _forceWizard too
+      this._forceWizard = (profile.levelId === 'tutorial');
+      const container = document.getElementById('level-cards');
       container.querySelectorAll('.level-card').forEach(c => {
         c.classList.toggle('selected', c.dataset.levelId === profile.levelId);
       });
+      // Update difficulty selector (disable harder options for tutorial)
+      this._updateDifficultyVisibility(profile.levelId);
     } else if (profile.type === 'cameraToggle') {
       // Partner toggled their camera — update state and refresh PiP
       this._partnerCameraOn = !!profile.enabled;
@@ -3100,6 +3210,7 @@ export class Lobby {
     // Called by game.js _returnToRoom() to re-show the lobby at roomStep
     this.net = net;
     this._roomRole = role;
+    this._pendingMode = 'multiplayer';
 
     const roomCodeLabel = document.getElementById('room-code-label');
     if (roomCodeLabel && this.net && this.net.roomCode) {
@@ -3234,7 +3345,7 @@ export class Lobby {
     // Re-register disconnect handler for room
     this.net.onDisconnected = (reason) => {
       const waitTextRoom = document.getElementById('room-wait-text-room');
-      const waitText = document.getElementById('room-wait-text');
+      const waitText = document.getElementById('level-wait-text');
       if (waitTextRoom) { waitTextRoom.textContent = 'Partner disconnected'; waitTextRoom.style.display = ''; }
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
       document.getElementById('btn-play-game').style.display = 'none';
@@ -3429,10 +3540,42 @@ export class Lobby {
     if (!header) return;
     const codeEl = document.getElementById('room-code-display');
     const code = codeEl ? codeEl.textContent : '';
-    if ((step === this.hostStep || step === this.roomStep || step === this.roomLevelsStep) && code && code !== '----') {
+    if ((step === this.hostStep || step === this.roomStep || (step === this.levelStep && this._pendingMode === 'multiplayer')) && code && code !== '----') {
       header.textContent = code;
     } else {
       header.textContent = '';
+    }
+  }
+
+  /**
+   * Progressively hide secondary text on the level step when vertical space is tight.
+   * Measures the lobby card's available height vs its scroll height and applies
+   * compact classes: 1 = hide diff descriptions, 2 = also hide locked card desc,
+   * 3 = hide all descriptions.
+   */
+  /**
+   * Progressively hide secondary text on the level step based on viewport height.
+   * Compact 1: hide difficulty descriptions only.
+   * Compact 2: also hide locked level card descriptions.
+   * Compact 3: hide all level card descriptions.
+   */
+  _adjustLevelCompact() {
+    const card = document.querySelector('.lobby-card');
+    if (!card) return;
+    card.classList.remove('lobby-compact-1', 'lobby-compact-2', 'lobby-compact-3');
+
+    // Use viewport height ratio to decide compactness
+    // --ls ranges from 1.8px (1080px) to 4px (2400px+), card height is 150*ls
+    // At 1080px: card = 270px, at 2400px: card = 600px
+    // Content with descriptions needs roughly 180*ls, without ~120*ls
+    const vh = window.innerHeight;
+    if (vh >= 1200) return;         // large TV/monitor — show everything
+    if (vh >= 1000) {               // medium — hide difficulty descs
+      card.classList.add('lobby-compact-1');
+    } else if (vh >= 800) {         // smaller — also hide locked card desc
+      card.classList.add('lobby-compact-2');
+    } else {                        // tight — hide all descriptions
+      card.classList.add('lobby-compact-3');
     }
   }
 
@@ -3454,6 +3597,13 @@ export class Lobby {
     this._clearFocusHighlight();
   }
 
+  /**
+   * RAF-based gamepad polling loop. Reads navigator.getGamepads() every frame.
+   * Dispatches: D-pad/left-stick up/down → _moveFocus(), left/right → _moveColumn(),
+   * A button → _confirmFocus(), B button → _goBack(), LB/RB → bike color cycle.
+   * Special modes: spinner input on join step, modal navigation for profile/
+   * leaderboard/help overlays.
+   */
   _pollGamepadNav() {
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
 
@@ -3661,6 +3811,13 @@ export class Lobby {
     this._gpPrevB = b;
   }
 
+  /**
+   * Move gamepad focus vertically (up/down) through the current step's items.
+   * Special handling: difficulty buttons are horizontal siblings — up/down skips
+   * over them as a group. Down from a level card jumps to the selected difficulty
+   * button. Skips hidden items.
+   * @param {number} dir — +1 for down, -1 for up
+   */
   _moveFocus(dir) {
     const items = this._stepItems.get(this._currentStep);
     if (!items || items.length === 0) return;
@@ -3696,25 +3853,6 @@ export class Lobby {
       }
     }
 
-    // Down from a level card: jump to first difficulty button if next visible item is one
-    if (dir === 1 && focusedEl && focusedEl.classList.contains('level-card')) {
-      // Find the next visible item
-      let nextIdx = this._focusIndex + 1;
-      while (nextIdx < items.length && items[nextIdx] && (items[nextIdx].offsetParent === null || items[nextIdx].style.display === 'none')) nextIdx++;
-      const next = items[nextIdx];
-      if (next && next.classList.contains('difficulty-btn')) {
-        // Jump to the middle difficulty button (default selection)
-        const diffBtns = items.filter(el => el.classList.contains('difficulty-btn'));
-        const selected = diffBtns.find(el => el.classList.contains('selected')) || diffBtns[0];
-        if (selected) {
-          this._clearFocusHighlight();
-          this._focusIndex = items.indexOf(selected);
-          this._applyFocusHighlight();
-          return;
-        }
-      }
-    }
-
     this._clearFocusHighlight();
     // Skip hidden items
     let next = this._focusIndex + dir;
@@ -3732,6 +3870,13 @@ export class Lobby {
     this._applyFocusHighlight();
   }
 
+  /**
+   * Move gamepad focus horizontally (left/right). On difficulty buttons, cycles
+   * between sibling difficulty options. On mode step, switches between the 4
+   * columns (left toggles, center, right toggles, far-right toggles). Saves
+   * and restores focus position per column.
+   * @param {number} dir — +1 for right, -1 for left
+   */
   _moveColumn(dir) {
     const items = this._stepItems.get(this._currentStep);
     const focusedEl = items && items[this._focusIndex];
@@ -3753,6 +3898,7 @@ export class Lobby {
       return;
     }
 
+    // Level cards are vertical — left/right always switches to toggle columns
     const newCol = Math.max(0, Math.min(this._modeColumns.length - 1, this._modeCol + dir));
     if (newCol === this._modeCol) return;
 
@@ -4056,7 +4202,7 @@ export class Lobby {
   }
 
   _sendBikeSyncIfInRoom() {
-    if ((this._currentStep === this.roomStep || this._currentStep === this.roomLevelsStep) && this.net && this.net.connected) {
+    if ((this._currentStep === this.roomStep || (this._currentStep === this.levelStep && this._pendingMode === 'multiplayer')) && this.net && this.net.connected) {
       this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
     }
   }
