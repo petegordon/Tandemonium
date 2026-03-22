@@ -3209,10 +3209,21 @@
       border-radius: calc(8 * var(--ls));
     }
 
-    /* Level cards: prevent gamepad focus outline from being clipped */
+    /* Level cards: prevent gamepad focus outline from being clipped.
+       Outline is 3*ls wide + 3*ls offset = 6*ls total on each side.
+       Add padding to container and overflow:visible up the tree. */
     .level-card { overflow: visible; }
-    .level-cards { overflow: visible; }
-    #room-level-cards { overflow: visible; }
+    .level-cards {
+      overflow: visible;
+      padding: calc(8 * var(--ls));
+    }
+    #room-level-cards {
+      overflow: visible;
+      padding: calc(8 * var(--ls));
+    }
+    .lobby-step { overflow: visible; }
+    .lobby-steps-col { overflow: visible; }
+    .lobby-card { overflow: visible; }
     .lobby-card.carousel-hidden #lobby-level { overflow: visible; }
     .lobby-card.carousel-hidden #lobby-room-levels { overflow: visible; }
 
@@ -3809,7 +3820,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.3cd53cc | 03-22-2026 11:28</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.27ab107 | 03-22-2026 11:37</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
