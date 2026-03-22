@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { NetworkManager } from './network-manager.js';
-import { isMobile, RELAY_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, RELAY_URL, SITE_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -2359,7 +2359,7 @@ export class Lobby {
       const urlEl = document.getElementById('room-url');
       // In Electron, location.origin is file:// — use the production web URL for QR codes
       const baseUrl = window.location.protocol === 'file:'
-        ? 'https://tandemonium.jimandi.love'
+        ? SITE_URL
         : window.location.origin + window.location.pathname;
       const url = baseUrl + '?room=' + code;
       try {
