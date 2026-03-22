@@ -54,11 +54,11 @@ ipcMain.handle('steam:isAchievementActivated', (_event, apiName) => {
     return false;
   }
 });
-ipcMain.handle('steam:getAuthTicket', () => {
+ipcMain.handle('steam:getAuthTicket', async () => {
   if (!steamworks) return null;
   try {
-    const ticket = steamworks.auth.getSessionTicket();
-    // Convert ticket buffer to hex string for transmission
+    // steamworks.js 0.4.0: use getAuthTicketForWebApi for server-side verification
+    const ticket = await steamworks.auth.getAuthTicketForWebApi('tandemonium');
     return Buffer.from(ticket.getBytes()).toString('hex');
   } catch (e) {
     console.error('Steam auth ticket error:', e.message);
@@ -68,9 +68,10 @@ ipcMain.handle('steam:getAuthTicket', () => {
 ipcMain.handle('steam:storeStats', () => {
   if (!steamworks) return false;
   try {
-    steamworks.stats.storeStats();
+    steamworks.stats.store();
     return true;
   } catch (e) {
+    console.warn('Steam storeStats error:', e.message);
     return false;
   }
 });
