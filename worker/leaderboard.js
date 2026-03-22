@@ -178,22 +178,41 @@ async function handleSteamAuth(request, env, corsOrigin) {
   const { steamId, personaName, ticket } = body;
   if (!steamId || !ticket) return jsonResponse({ error: 'Missing steamId or ticket' }, 400, corsOrigin);
 
-  // Verify the session ticket via Steam Web API
-  try {
-    const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=4510250&ticket=${ticket}`;
-    const steamRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
-    if (!steamRes.ok) return jsonResponse({ error: 'Steam verification failed' }, 401, corsOrigin);
-    const steamData = await steamRes.json();
-    const params = steamData?.response?.params;
-    if (!params || params.result !== 'OK') {
-      return jsonResponse({ error: 'Steam ticket invalid' }, 401, corsOrigin);
+  // Verify the auth ticket via Steam Web API
+  // Try both the playtest app ID and the main game app ID
+  const appIds = [4510250, 4482940];
+  let verified = false;
+  let verifiedSteamId = null;
+  let lastError = null;
+
+  for (const appId of appIds) {
+    try {
+      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${ticket}`;
+      const steamRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
+      if (!steamRes.ok) {
+        lastError = `Steam API returned ${steamRes.status} for appId ${appId}`;
+        continue;
+      }
+      const steamData = await steamRes.json();
+      const params = steamData?.response?.params;
+      if (params && params.steamid) {
+        // Verify the Steam ID matches
+        if (params.steamid !== steamId) {
+          lastError = `Steam ID mismatch: expected ${steamId}, got ${params.steamid}`;
+          continue;
+        }
+        verified = true;
+        verifiedSteamId = params.steamid;
+        break;
+      }
+      lastError = `Steam response missing params for appId ${appId}: ${JSON.stringify(steamData)}`;
+    } catch (e) {
+      lastError = `Steam verification error for appId ${appId}: ${e.message}`;
     }
-    // Verify the Steam ID matches the ticket
-    if (params.steamid !== steamId) {
-      return jsonResponse({ error: 'Steam ID mismatch' }, 401, corsOrigin);
-    }
-  } catch (e) {
-    return jsonResponse({ error: 'Steam verification error: ' + e.message }, 500, corsOrigin);
+  }
+
+  if (!verified) {
+    return jsonResponse({ error: 'Steam ticket invalid', detail: lastError }, 401, corsOrigin);
   }
 
   writeMetric(env, 'auth_steam');
