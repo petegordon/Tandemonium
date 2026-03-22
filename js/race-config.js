@@ -5,7 +5,7 @@
 export const LEVELS = [
   {
     id: 'tutorial',
-    name: 'Learn to Ride',
+    name: 'Tutorial',
     distance: 225,
     collectibles: 'presents',
     checkpointInterval: 225,   // single checkpoint = entire ride
@@ -19,7 +19,7 @@ export const LEVELS = [
   },
   {
     id: 'grandma',
-    name: "Grandma's House",
+    name: "Grandma's",
     distance: 250,
     collectibles: 'presents',
     checkpointInterval: 62,
