@@ -1,0 +1,1380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bike Customizer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #1a1a2e; font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #ccc;
+  }
+
+  #app {
+    display: flex; width: 100%; height: 100%;
+  }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 280px; min-width: 280px;
+    background: #0f0f1a;
+    border-right: 1px solid #333;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    z-index: 10;
+  }
+  #sidebar.collapsed { display: none; }
+
+  #sidebar-header {
+    padding: 12px 16px;
+    background: #161625;
+    border-bottom: 1px solid #333;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 15px; font-weight: 600; color: #fff;
+  }
+
+  /* Scene tree */
+  #scene-tree-container {
+    flex: 1; overflow-y: auto; overflow-x: hidden;
+    border-bottom: 1px solid #333;
+    min-height: 120px;
+  }
+  #scene-tree-header {
+    padding: 8px 12px; font-size: 11px; text-transform: uppercase;
+    color: #888; letter-spacing: 1px;
+    background: #111122; position: sticky; top: 0; z-index: 1;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #selection-count {
+    color: #7ab8ff; font-family: monospace; text-transform: none;
+    letter-spacing: 0;
+  }
+  #scene-tree {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 12px; padding: 4px 0;
+  }
+  .tree-item {
+    padding: 3px 8px; cursor: pointer; white-space: nowrap;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .tree-item:hover { background: rgba(255,255,255,0.05); }
+  .tree-item.selected { background: rgba(60,120,255,0.2); color: #7ab8ff; }
+  .tree-toggle {
+    width: 14px; text-align: center; color: #666;
+    cursor: pointer; user-select: none; flex-shrink: 0;
+  }
+  .tree-toggle:hover { color: #aaa; }
+  .tree-icon { flex-shrink: 0; font-size: 11px; }
+  .tree-name { overflow: hidden; text-overflow: ellipsis; }
+  .tree-children { display: none; }
+  .tree-children.open { display: block; }
+
+  /* Material editor */
+  #material-editor {
+    overflow-y: auto; padding: 12px;
+    min-height: 200px;
+  }
+  #material-editor h3 {
+    font-size: 11px; text-transform: uppercase;
+    color: #888; letter-spacing: 1px; margin-bottom: 10px;
+  }
+  #material-editor .no-selection {
+    color: #555; font-size: 13px; font-style: italic;
+  }
+  .mat-group {
+    margin-bottom: 10px;
+  }
+  .mat-group label {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 3px; font-size: 12px; color: #999;
+  }
+  .mat-group label .val {
+    color: #7ab8ff; font-family: monospace; font-size: 11px;
+  }
+  .mat-group input[type="range"] {
+    width: 100%; accent-color: #5588ff;
+  }
+  .mat-group input[type="color"] {
+    width: 100%; height: 28px; border: 1px solid #444;
+    border-radius: 4px; background: #222; cursor: pointer;
+    padding: 2px;
+  }
+  .mat-group select {
+    width: 100%; padding: 4px; background: #222; color: #ccc;
+    border: 1px solid #444; border-radius: 4px; font-size: 12px;
+  }
+  .mat-group .checkbox-row {
+    display: flex; align-items: center; gap: 6px; font-size: 12px;
+  }
+
+  #reset-mesh-btn, #reset-all-btn {
+    width: 100%; padding: 6px; margin-top: 6px;
+    background: #331a1a; color: #f66; border: 1px solid #663333;
+    border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  #reset-mesh-btn:hover, #reset-all-btn:hover { background: #442222; }
+
+  /* Presets bar */
+  #presets-bar {
+    padding: 10px 12px;
+    border-top: 1px solid #333;
+    background: #111122;
+  }
+  #presets-bar h3 {
+    font-size: 11px; text-transform: uppercase;
+    color: #888; letter-spacing: 1px; margin-bottom: 8px;
+  }
+  .preset-row {
+    display: flex; gap: 4px; margin-bottom: 6px;
+  }
+  .preset-row select {
+    flex: 1; padding: 4px; background: #222; color: #ccc;
+    border: 1px solid #444; border-radius: 4px; font-size: 12px;
+  }
+  .preset-btn {
+    padding: 4px 10px; background: #1a3a1a; color: #6f6;
+    border: 1px solid #336633; border-radius: 4px;
+    cursor: pointer; font-size: 11px; white-space: nowrap;
+  }
+  .preset-btn:hover { background: #2a4a2a; }
+  .preset-btn.danger {
+    background: #3a1a1a; color: #f66; border-color: #663333;
+  }
+  .preset-btn.danger:hover { background: #4a2222; }
+  .preset-btn.neutral {
+    background: #1a2a3a; color: #6af; border-color: #334466;
+  }
+  .preset-btn.neutral:hover { background: #2a3a4a; }
+
+  /* Viewport */
+  #viewport {
+    flex: 1; position: relative; overflow: hidden;
+  }
+  #viewport canvas {
+    display: block; width: 100%; height: 100%;
+  }
+
+  /* Sidebar toggle */
+  #sidebar-toggle {
+    position: fixed; top: 12px; left: 12px; z-index: 20;
+    width: 36px; height: 36px; border-radius: 6px;
+    background: rgba(15,15,26,0.9); color: #ccc;
+    border: 1px solid #444; cursor: pointer;
+    font-size: 18px; display: none;
+    align-items: center; justify-content: center;
+  }
+  #sidebar-toggle:hover { background: rgba(30,30,50,0.95); }
+
+  /* Loading overlay */
+  #loading {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(15,15,26,0.9);
+    display: flex; align-items: center; justify-content: center;
+    color: #7ab8ff; font-size: 16px; z-index: 30;
+  }
+  #loading.hidden { display: none; }
+
+  /* ── Groups panel (upper-right) ── */
+  #groups-panel {
+    position: absolute; top: 12px; right: 12px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+    z-index: 10; pointer-events: none;
+  }
+  .group-chip {
+    pointer-events: auto;
+    padding: 6px 14px;
+    background: rgba(20, 20, 40, 0.88);
+    border: 1px solid #445;
+    border-radius: 6px;
+    color: #aac;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s, border-color 0.15s;
+    display: flex; align-items: center; gap: 8px;
+    max-width: 260px;
+  }
+  .group-chip:hover {
+    background: rgba(40, 50, 80, 0.92);
+    border-color: #668;
+  }
+  .group-chip.active {
+    background: rgba(40, 60, 120, 0.9);
+    border-color: #7ab8ff;
+    color: #7ab8ff;
+  }
+  .group-chip .group-count {
+    font-size: 10px; color: #668;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  .group-chip.active .group-count { color: #7ab8ff; }
+
+  /* ── Context menu ── */
+  #context-menu {
+    display: none;
+    position: fixed;
+    z-index: 100;
+    background: #1a1a2e;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 4px 0;
+    min-width: 180px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  #context-menu.visible { display: block; }
+  .ctx-item {
+    padding: 7px 16px;
+    font-size: 13px;
+    color: #ccc;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .ctx-item:hover { background: rgba(60,120,255,0.15); color: #fff; }
+  .ctx-item.danger { color: #f66; }
+  .ctx-item.danger:hover { background: rgba(255,60,60,0.15); }
+  .ctx-sep {
+    height: 1px; background: #333; margin: 4px 0;
+  }
+
+  /* Mobile */
+  @media (max-width: 768px) {
+    #sidebar {
+      position: fixed; top: 0; left: 0; bottom: 0;
+      z-index: 15;
+    }
+    #sidebar-toggle { display: flex; }
+    #sidebar.collapsed + #viewport #sidebar-toggle { left: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span>Bike Customizer</span>
+      <button id="sidebar-close" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">&times;</button>
+    </div>
+    <div id="scene-tree-container">
+      <div id="scene-tree-header">
+        <span>Scene Graph</span>
+        <span id="selection-count"></span>
+      </div>
+      <div id="scene-tree"></div>
+    </div>
+    <div id="material-editor">
+      <h3>Material Editor</h3>
+      <div id="mat-controls">
+        <div class="no-selection">Click a mesh to edit</div>
+      </div>
+    </div>
+    <div id="presets-bar">
+      <h3>Presets</h3>
+      <div class="preset-row">
+        <select id="preset-select"><option value="">-- select preset --</option></select>
+      </div>
+      <div class="preset-row">
+        <button class="preset-btn" id="save-preset-btn">Save</button>
+        <button class="preset-btn neutral" id="load-preset-btn">Load</button>
+        <button class="preset-btn neutral" id="export-preset-btn">Export</button>
+        <button class="preset-btn danger" id="delete-preset-btn">Delete</button>
+      </div>
+      <button id="reset-all-btn">Reset All Materials</button>
+      <button id="export-glb-btn" class="preset-btn neutral" style="width:100%;margin-top:6px;padding:6px;font-size:12px;">Export GLB</button>
+    </div>
+  </div>
+
+  <div id="viewport">
+    <button id="sidebar-toggle">&#9776;</button>
+    <div id="groups-panel"></div>
+    <div id="loading">Loading model...</div>
+  </div>
+</div>
+
+<div id="context-menu"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ── State ──
+const selectedObjects = new Set();           // Set of selected mesh objects
+const highlightMeshes = new Map();           // mesh uuid -> highlight overlay mesh
+const originalMaterials = new Map();         // mesh uuid -> cloned original material
+const originalTextures = new Map();          // mesh uuid -> { map, normalMap, ... }
+const STORAGE_KEY = 'bike-customizer-presets';
+const GROUPS_KEY = 'bike-customizer-groups';
+const TEXTURE_KEYS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'];
+
+// ── Three.js Scene Setup ──
+const viewport = document.getElementById('viewport');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+viewport.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
+camera.position.set(3, 2.5, 4);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.target.set(0, 0.8, 0);
+controls.update();
+
+// ── Lighting ──
+const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+scene.add(ambient);
+
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+dirLight.position.set(5, 10, 7);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 30;
+dirLight.shadow.camera.left = -5;
+dirLight.shadow.camera.right = 5;
+dirLight.shadow.camera.top = 5;
+dirLight.shadow.camera.bottom = -5;
+scene.add(dirLight);
+
+const fillLight = new THREE.DirectionalLight(0x8888ff, 0.4);
+fillLight.position.set(-4, 3, -5);
+scene.add(fillLight);
+
+const rimLight = new THREE.DirectionalLight(0xffeedd, 0.3);
+rimLight.position.set(0, 2, -6);
+scene.add(rimLight);
+
+// ── Ground plane ──
+const groundGeo = new THREE.PlaneGeometry(20, 20);
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x222233, roughness: 0.9, metalness: 0
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ── Load GLB Model ──
+const loadingEl = document.getElementById('loading');
+let bikeModel = null;
+const allMeshes = [];  // flat list for lookup by name
+
+const loader = new GLTFLoader();
+loader.load('../tandem-3d/tandem_bicycle.glb', (gltf) => {
+  const model = gltf.scene;
+
+  model.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.material = child.material.clone();
+      originalMaterials.set(child.uuid, child.material.clone());
+      const texEntry = {};
+      for (const key of TEXTURE_KEYS) {
+        texEntry[key] = child.material[key] || null;
+      }
+      originalTextures.set(child.uuid, texEntry);
+      allMeshes.push(child);
+    }
+  });
+
+  // Scale and center
+  const targetLength = 4.4;
+  const preBox = new THREE.Box3().setFromObject(model);
+  const preSize = preBox.getSize(new THREE.Vector3());
+  const maxDim = Math.max(preSize.x, preSize.y, preSize.z);
+  model.scale.setScalar(targetLength / maxDim);
+
+  scene.add(model);
+  model.updateMatrixWorld(true);
+
+  let minY = Infinity, maxY = -Infinity;
+  let minX = Infinity, maxX = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  const v = new THREE.Vector3();
+  model.traverse((child) => {
+    if (child.isMesh && child.geometry?.attributes?.position) {
+      const pos = child.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        child.localToWorld(v);
+        if (v.y < minY) minY = v.y;
+        if (v.y > maxY) maxY = v.y;
+        if (v.x < minX) minX = v.x;
+        if (v.x > maxX) maxX = v.x;
+        if (v.z < minZ) minZ = v.z;
+        if (v.z > maxZ) maxZ = v.z;
+      }
+    }
+  });
+
+  model.position.y -= minY;
+  model.position.x -= (minX + maxX) / 2;
+  model.position.z -= (minZ + maxZ) / 2;
+
+  controls.target.set(0, (maxY - minY) / 2, 0);
+  controls.update();
+
+  bikeModel = model;
+  buildSceneTree(model);
+  loadingEl.classList.add('hidden');
+  renderGroupsPanel();
+}, undefined, (err) => {
+  console.error('Failed to load model:', err);
+  loadingEl.textContent = 'Failed to load model';
+});
+
+// ── Helper: find mesh by name ──
+function findMeshByName(name) {
+  return allMeshes.find(m => m.name === name) || null;
+}
+
+// ── Scene Graph Tree ──
+const sceneTreeEl = document.getElementById('scene-tree');
+const selectionCountEl = document.getElementById('selection-count');
+
+function buildSceneTree(root) {
+  sceneTreeEl.innerHTML = '';
+  sceneTreeEl.appendChild(buildTreeNode(root, 0));
+}
+
+function buildTreeNode(obj, depth) {
+  const container = document.createElement('div');
+
+  const item = document.createElement('div');
+  item.className = 'tree-item';
+  item.style.paddingLeft = (8 + depth * 16) + 'px';
+  item.dataset.uuid = obj.uuid;
+
+  const toggle = document.createElement('span');
+  toggle.className = 'tree-toggle';
+  const hasChildren = obj.children.length > 0;
+  toggle.textContent = hasChildren ? '\u25B6' : ' ';
+  item.appendChild(toggle);
+
+  const icon = document.createElement('span');
+  icon.className = 'tree-icon';
+  if (obj.isMesh) icon.textContent = '\u25A0';
+  else if (obj.isGroup || obj.isScene) icon.textContent = '\u25CB';
+  else icon.textContent = '\u25C7';
+  item.appendChild(icon);
+
+  const name = document.createElement('span');
+  name.className = 'tree-name';
+  name.textContent = obj.name || `[${obj.type}]`;
+  item.appendChild(name);
+
+  container.appendChild(item);
+
+  let childrenEl = null;
+  if (hasChildren) {
+    childrenEl = document.createElement('div');
+    childrenEl.className = 'tree-children';
+    for (const child of obj.children) {
+      childrenEl.appendChild(buildTreeNode(child, depth + 1));
+    }
+    container.appendChild(childrenEl);
+  }
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!childrenEl) return;
+    const open = childrenEl.classList.toggle('open');
+    toggle.textContent = open ? '\u25BC' : '\u25B6';
+  });
+
+  // Click: select. Shift/Cmd+click: toggle in multi-select.
+  item.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    let targetMesh = null;
+    if (obj.isMesh) {
+      targetMesh = obj;
+    } else {
+      // For groups, collect all descendant meshes
+      const meshes = [];
+      obj.traverse(c => { if (c.isMesh) meshes.push(c); });
+      if (meshes.length > 0) {
+        if (additive) {
+          // Toggle all descendant meshes
+          const allSelected = meshes.every(m => selectedObjects.has(m));
+          if (allSelected) {
+            meshes.forEach(m => selectedObjects.delete(m));
+          } else {
+            meshes.forEach(m => selectedObjects.add(m));
+          }
+          syncSelectionUI();
+          return;
+        } else {
+          // Replace with all descendant meshes
+          setSelection(meshes);
+          return;
+        }
+      }
+      return;
+    }
+    if (additive) {
+      toggleInSelection(targetMesh);
+    } else {
+      setSelection([targetMesh]);
+    }
+  });
+
+  // Right-click on tree item
+  item.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // If the item isn't selected, select it first
+    let targetMesh = null;
+    if (obj.isMesh) targetMesh = obj;
+    else {
+      obj.traverse(c => { if (!targetMesh && c.isMesh) targetMesh = c; });
+    }
+    if (targetMesh && !selectedObjects.has(targetMesh)) {
+      if (!(e.shiftKey || e.metaKey || e.ctrlKey)) {
+        setSelection([targetMesh]);
+      } else {
+        toggleInSelection(targetMesh);
+      }
+    }
+    showContextMenu(e.clientX, e.clientY);
+  });
+
+  return container;
+}
+
+// ── Multi-Selection System ──
+function setSelection(meshes) {
+  selectedObjects.clear();
+  for (const m of meshes) {
+    if (m && m.isMesh) selectedObjects.add(m);
+  }
+  syncSelectionUI();
+}
+
+function toggleInSelection(mesh) {
+  if (!mesh || !mesh.isMesh) return;
+  if (selectedObjects.has(mesh)) {
+    selectedObjects.delete(mesh);
+  } else {
+    selectedObjects.add(mesh);
+  }
+  syncSelectionUI();
+}
+
+function clearSelection() {
+  selectedObjects.clear();
+  syncSelectionUI();
+}
+
+function syncSelectionUI() {
+  // Update highlights
+  syncHighlights();
+  // Update tree highlights
+  sceneTreeEl.querySelectorAll('.tree-item.selected').forEach(el => el.classList.remove('selected'));
+  for (const obj of selectedObjects) {
+    const treeItem = sceneTreeEl.querySelector(`[data-uuid="${obj.uuid}"]`);
+    if (treeItem) {
+      treeItem.classList.add('selected');
+      // Expand parents so it's visible
+      let parent = treeItem.parentElement;
+      while (parent && parent !== sceneTreeEl) {
+        if (parent.classList.contains('tree-children')) {
+          parent.classList.add('open');
+          const prev = parent.previousElementSibling;
+          if (prev) {
+            const tog = prev.querySelector('.tree-toggle');
+            if (tog) tog.textContent = '\u25BC';
+          }
+        }
+        parent = parent.parentElement;
+      }
+    }
+  }
+  // Selection count
+  const n = selectedObjects.size;
+  selectionCountEl.textContent = n > 0 ? `${n} selected` : '';
+  // Material editor
+  buildMaterialControls();
+  // Update group chip active states
+  renderGroupChipStates();
+}
+
+function syncHighlights() {
+  // Remove highlights for deselected objects
+  for (const [uuid, hm] of highlightMeshes) {
+    if (![...selectedObjects].some(o => o.uuid === uuid)) {
+      scene.remove(hm);
+      hm.geometry.dispose();
+      hm.material.dispose();
+      highlightMeshes.delete(uuid);
+    }
+  }
+  // Add highlights for newly selected objects
+  for (const obj of selectedObjects) {
+    if (highlightMeshes.has(obj.uuid)) continue;
+    const geo = obj.geometry.clone();
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x4488ff,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.5,
+      depthTest: false
+    });
+    const hm = new THREE.Mesh(geo, mat);
+    hm.raycast = () => {};
+    obj.updateWorldMatrix(true, false);
+    hm.matrixAutoUpdate = false;
+    hm.matrix.copy(obj.matrixWorld);
+    hm.matrixWorldNeedsUpdate = true;
+    scene.add(hm);
+    highlightMeshes.set(obj.uuid, hm);
+  }
+}
+
+// ── Viewport Click (Raycaster) ──
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let pointerDownPos = null;
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  pointerDownPos = { x: e.clientX, y: e.clientY };
+});
+
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!pointerDownPos) return;
+  const dx = e.clientX - pointerDownPos.x;
+  const dy = e.clientY - pointerDownPos.y;
+  if (Math.sqrt(dx * dx + dy * dy) > 5) {
+    pointerDownPos = null;
+    return;
+  }
+  pointerDownPos = null;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+
+  if (!bikeModel) return;
+  const meshes = [];
+  bikeModel.traverse(c => { if (c.isMesh) meshes.push(c); });
+  const hits = raycaster.intersectObjects(meshes, false);
+
+  const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+  if (hits.length > 0) {
+    if (additive) {
+      toggleInSelection(hits[0].object);
+    } else {
+      setSelection([hits[0].object]);
+    }
+  } else {
+    if (!additive) clearSelection();
+  }
+});
+
+// Viewport right-click
+renderer.domElement.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (selectedObjects.size === 0) return;
+  showContextMenu(e.clientX, e.clientY);
+});
+
+// ── Material Editor (multi-select aware) ──
+const matControlsEl = document.getElementById('mat-controls');
+
+function buildMaterialControls() {
+  matControlsEl.innerHTML = '';
+  const meshes = [...selectedObjects];
+
+  if (meshes.length === 0) {
+    matControlsEl.innerHTML = '<div class="no-selection">Click a mesh to edit<br><span style="font-size:11px;color:#444;">Shift+click for multi-select</span></div>';
+    return;
+  }
+
+  // Header showing selection
+  const header = document.createElement('div');
+  header.style.cssText = 'font-size:13px;font-weight:600;color:#fff;margin-bottom:10px;word-break:break-all;';
+  if (meshes.length === 1) {
+    header.textContent = meshes[0].name || '[unnamed]';
+  } else {
+    header.textContent = `${meshes.length} meshes selected`;
+  }
+  matControlsEl.appendChild(header);
+
+  // List selected names when multi
+  if (meshes.length > 1) {
+    const nameList = document.createElement('div');
+    nameList.style.cssText = 'font-size:11px;color:#666;margin-bottom:10px;max-height:60px;overflow-y:auto;line-height:1.5;';
+    nameList.textContent = meshes.map(m => m.name || '[unnamed]').join(', ');
+    matControlsEl.appendChild(nameList);
+  }
+
+  // Use the first mesh's material as reference for initial values
+  const refMat = meshes[0].material;
+
+  // Color
+  if (refMat.color) {
+    matControlsEl.appendChild(makeColorControl('Color', refMat.color, (c) => {
+      for (const m of meshes) { if (m.material.color) m.material.color.set(c); }
+    }));
+  }
+
+  // Emissive
+  if (refMat.emissive) {
+    matControlsEl.appendChild(makeColorControl('Emissive', refMat.emissive, (c) => {
+      for (const m of meshes) { if (m.material.emissive) m.material.emissive.set(c); }
+    }));
+  }
+
+  // Texture map toggles
+  // In multi-select, show union of all textures across selected meshes
+  const allTexKeys = new Set();
+  for (const m of meshes) {
+    const texOrig = originalTextures.get(m.uuid);
+    if (texOrig) {
+      for (const key of TEXTURE_KEYS) {
+        if (texOrig[key]) allTexKeys.add(key);
+      }
+    }
+  }
+  if (allTexKeys.size > 0) {
+    const texNames = { map: 'Color Map', normalMap: 'Normal Map', roughnessMap: 'Roughness Map',
+      metalnessMap: 'Metalness Map', aoMap: 'AO Map', emissiveMap: 'Emissive Map' };
+    const texHeader = document.createElement('div');
+    texHeader.style.cssText = 'font-size:11px;text-transform:uppercase;color:#888;letter-spacing:1px;margin:10px 0 6px;border-top:1px solid #333;padding-top:8px;';
+    texHeader.textContent = 'Texture Maps';
+    matControlsEl.appendChild(texHeader);
+
+    for (const key of TEXTURE_KEYS) {
+      if (!allTexKeys.has(key)) continue;
+      // Check current state across all selected: all enabled, all disabled, or mixed
+      let enabledCount = 0, totalWithTex = 0;
+      for (const m of meshes) {
+        const texOrig = originalTextures.get(m.uuid);
+        if (texOrig && texOrig[key]) {
+          totalWithTex++;
+          if (m.material[key] !== null) enabledCount++;
+        }
+      }
+      const texGroup = document.createElement('div');
+      texGroup.className = 'mat-group';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = enabledCount > 0;
+      cb.indeterminate = enabledCount > 0 && enabledCount < totalWithTex;
+      const row = document.createElement('div');
+      row.className = 'checkbox-row';
+      row.appendChild(cb);
+      const lbl = document.createElement('label');
+      lbl.textContent = texNames[key] || key;
+      row.appendChild(lbl);
+      texGroup.appendChild(row);
+      cb.addEventListener('change', () => {
+        for (const m of meshes) {
+          const texOrig = originalTextures.get(m.uuid);
+          if (texOrig && texOrig[key]) {
+            m.material[key] = cb.checked ? texOrig[key] : null;
+            m.material.needsUpdate = true;
+          }
+        }
+      });
+      matControlsEl.appendChild(texGroup);
+    }
+  }
+
+  // Metalness
+  if (refMat.metalness !== undefined) {
+    matControlsEl.appendChild(makeSliderControl('Metalness', refMat.metalness, 0, 1, 0.01, (v) => {
+      for (const m of meshes) { if (m.material.metalness !== undefined) m.material.metalness = v; }
+    }));
+  }
+
+  // Roughness
+  if (refMat.roughness !== undefined) {
+    matControlsEl.appendChild(makeSliderControl('Roughness', refMat.roughness, 0, 1, 0.01, (v) => {
+      for (const m of meshes) { if (m.material.roughness !== undefined) m.material.roughness = v; }
+    }));
+  }
+
+  // Opacity
+  matControlsEl.appendChild(makeSliderControl('Opacity', refMat.opacity, 0, 1, 0.01, (v) => {
+    for (const m of meshes) {
+      m.material.opacity = v;
+      m.material.transparent = v < 1;
+    }
+  }));
+
+  // Wireframe
+  const wireGroup = document.createElement('div');
+  wireGroup.className = 'mat-group';
+  const wireCb = document.createElement('input');
+  wireCb.type = 'checkbox';
+  wireCb.checked = refMat.wireframe;
+  const wireRow = document.createElement('div');
+  wireRow.className = 'checkbox-row';
+  wireRow.appendChild(wireCb);
+  const wireLbl = document.createElement('label');
+  wireLbl.textContent = 'Wireframe';
+  wireRow.appendChild(wireLbl);
+  wireGroup.appendChild(wireRow);
+  wireCb.addEventListener('change', () => {
+    for (const m of meshes) m.material.wireframe = wireCb.checked;
+  });
+  matControlsEl.appendChild(wireGroup);
+
+  // Side
+  const sideGroup = document.createElement('div');
+  sideGroup.className = 'mat-group';
+  const sideSelect = document.createElement('select');
+  [['Front', THREE.FrontSide], ['Back', THREE.BackSide], ['Double', THREE.DoubleSide]].forEach(([label, val]) => {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = label;
+    if (refMat.side === val) opt.selected = true;
+    sideSelect.appendChild(opt);
+  });
+  sideSelect.addEventListener('change', () => {
+    const val = parseInt(sideSelect.value);
+    for (const m of meshes) m.material.side = val;
+  });
+  const sideLabel = document.createElement('label');
+  sideLabel.textContent = 'Side';
+  sideGroup.appendChild(sideLabel);
+  sideGroup.appendChild(sideSelect);
+  matControlsEl.appendChild(sideGroup);
+
+  // Reset selected
+  const resetBtn = document.createElement('button');
+  resetBtn.id = 'reset-mesh-btn';
+  resetBtn.textContent = meshes.length === 1 ? 'Reset to Original' : `Reset ${meshes.length} Meshes`;
+  resetBtn.addEventListener('click', () => {
+    for (const m of meshes) resetMeshMaterial(m);
+    buildMaterialControls();
+  });
+  matControlsEl.appendChild(resetBtn);
+}
+
+function makeColorControl(label, color, onChange) {
+  const group = document.createElement('div');
+  group.className = 'mat-group';
+  const lbl = document.createElement('label');
+  lbl.innerHTML = `${label} <span class="val">${'#' + color.getHexString()}</span>`;
+  group.appendChild(lbl);
+
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = '#' + color.getHexString();
+  input.addEventListener('input', () => {
+    onChange(input.value);
+    lbl.querySelector('.val').textContent = input.value;
+  });
+  group.appendChild(input);
+  return group;
+}
+
+function makeSliderControl(label, value, min, max, step, onChange) {
+  const group = document.createElement('div');
+  group.className = 'mat-group';
+  const lbl = document.createElement('label');
+  lbl.innerHTML = `${label} <span class="val">${value.toFixed(2)}</span>`;
+  group.appendChild(lbl);
+
+  const input = document.createElement('input');
+  input.type = 'range';
+  input.min = min;
+  input.max = max;
+  input.step = step;
+  input.value = value;
+  input.addEventListener('input', () => {
+    const v = parseFloat(input.value);
+    onChange(v);
+    lbl.querySelector('.val').textContent = v.toFixed(2);
+  });
+  group.appendChild(input);
+  return group;
+}
+
+function resetMeshMaterial(mesh) {
+  const orig = originalMaterials.get(mesh.uuid);
+  if (!orig) return;
+  mesh.material.dispose();
+  mesh.material = orig.clone();
+  const texOrig = originalTextures.get(mesh.uuid);
+  if (texOrig) {
+    for (const key of TEXTURE_KEYS) {
+      mesh.material[key] = texOrig[key];
+    }
+    mesh.material.needsUpdate = true;
+  }
+  originalMaterials.set(mesh.uuid, orig.clone());
+}
+
+// ── Reset All ──
+document.getElementById('reset-all-btn').addEventListener('click', () => {
+  if (!bikeModel) return;
+  bikeModel.traverse((child) => {
+    if (child.isMesh) resetMeshMaterial(child);
+  });
+  buildMaterialControls();
+});
+
+// ── Context Menu ──
+const contextMenuEl = document.getElementById('context-menu');
+
+function showContextMenu(x, y) {
+  contextMenuEl.innerHTML = '';
+  const n = selectedObjects.size;
+  if (n === 0) { hideContextMenu(); return; }
+
+  // "Save Selection as Group..."
+  const saveItem = document.createElement('div');
+  saveItem.className = 'ctx-item';
+  saveItem.textContent = `Save ${n} mesh${n > 1 ? 'es' : ''} as Group...`;
+  saveItem.addEventListener('click', () => {
+    hideContextMenu();
+    const name = prompt('Group name:');
+    if (!name || !name.trim()) return;
+    const meshNames = [...selectedObjects].map(m => m.name).filter(Boolean);
+    if (meshNames.length === 0) return;
+    saveGroup(name.trim(), meshNames);
+  });
+  contextMenuEl.appendChild(saveItem);
+
+  // "Select All" if a group is active
+  // "Deselect All"
+  const sep = document.createElement('div');
+  sep.className = 'ctx-sep';
+  contextMenuEl.appendChild(sep);
+
+  const deselectItem = document.createElement('div');
+  deselectItem.className = 'ctx-item';
+  deselectItem.textContent = 'Deselect All';
+  deselectItem.addEventListener('click', () => {
+    hideContextMenu();
+    clearSelection();
+  });
+  contextMenuEl.appendChild(deselectItem);
+
+  // Position
+  contextMenuEl.style.left = x + 'px';
+  contextMenuEl.style.top = y + 'px';
+  contextMenuEl.classList.add('visible');
+
+  // Clamp to viewport
+  requestAnimationFrame(() => {
+    const r = contextMenuEl.getBoundingClientRect();
+    if (r.right > window.innerWidth) contextMenuEl.style.left = (x - r.width) + 'px';
+    if (r.bottom > window.innerHeight) contextMenuEl.style.top = (y - r.height) + 'px';
+  });
+}
+
+function showGroupContextMenu(x, y, groupName) {
+  contextMenuEl.innerHTML = '';
+
+  const selectItem = document.createElement('div');
+  selectItem.className = 'ctx-item';
+  selectItem.textContent = `Select "${groupName}"`;
+  selectItem.addEventListener('click', () => {
+    hideContextMenu();
+    selectGroup(groupName);
+  });
+  contextMenuEl.appendChild(selectItem);
+
+  const renameItem = document.createElement('div');
+  renameItem.className = 'ctx-item';
+  renameItem.textContent = 'Rename...';
+  renameItem.addEventListener('click', () => {
+    hideContextMenu();
+    const newName = prompt('New name:', groupName);
+    if (!newName || !newName.trim() || newName.trim() === groupName) return;
+    renameGroup(groupName, newName.trim());
+  });
+  contextMenuEl.appendChild(renameItem);
+
+  const sep = document.createElement('div');
+  sep.className = 'ctx-sep';
+  contextMenuEl.appendChild(sep);
+
+  const deleteItem = document.createElement('div');
+  deleteItem.className = 'ctx-item danger';
+  deleteItem.textContent = 'Delete Group';
+  deleteItem.addEventListener('click', () => {
+    hideContextMenu();
+    deleteGroup(groupName);
+  });
+  contextMenuEl.appendChild(deleteItem);
+
+  contextMenuEl.style.left = x + 'px';
+  contextMenuEl.style.top = y + 'px';
+  contextMenuEl.classList.add('visible');
+
+  requestAnimationFrame(() => {
+    const r = contextMenuEl.getBoundingClientRect();
+    if (r.right > window.innerWidth) contextMenuEl.style.left = (x - r.width) + 'px';
+    if (r.bottom > window.innerHeight) contextMenuEl.style.top = (y - r.height) + 'px';
+  });
+}
+
+function hideContextMenu() {
+  contextMenuEl.classList.remove('visible');
+}
+
+// Close context menu on any click elsewhere
+document.addEventListener('click', (e) => {
+  if (!contextMenuEl.contains(e.target)) hideContextMenu();
+});
+document.addEventListener('pointerdown', (e) => {
+  if (!contextMenuEl.contains(e.target)) hideContextMenu();
+});
+
+// ── Saved Groups System ──
+function getGroups() {
+  try { return JSON.parse(localStorage.getItem(GROUPS_KEY)) || {}; } catch { return {}; }
+}
+
+function saveGroupsToStorage(groups) {
+  localStorage.setItem(GROUPS_KEY, JSON.stringify(groups));
+}
+
+function saveGroup(name, meshNames) {
+  const groups = getGroups();
+  groups[name] = meshNames;
+  saveGroupsToStorage(groups);
+  renderGroupsPanel();
+}
+
+function deleteGroup(name) {
+  const groups = getGroups();
+  delete groups[name];
+  saveGroupsToStorage(groups);
+  renderGroupsPanel();
+}
+
+function renameGroup(oldName, newName) {
+  const groups = getGroups();
+  if (!groups[oldName]) return;
+  groups[newName] = groups[oldName];
+  delete groups[oldName];
+  saveGroupsToStorage(groups);
+  renderGroupsPanel();
+}
+
+function selectGroup(name) {
+  const groups = getGroups();
+  const meshNames = groups[name];
+  if (!meshNames) return;
+  const meshes = meshNames.map(n => findMeshByName(n)).filter(Boolean);
+  setSelection(meshes);
+}
+
+// ── Groups Panel (upper-right) ──
+const groupsPanelEl = document.getElementById('groups-panel');
+
+function renderGroupsPanel() {
+  groupsPanelEl.innerHTML = '';
+  const groups = getGroups();
+  const names = Object.keys(groups).sort();
+  for (const name of names) {
+    const chip = document.createElement('div');
+    chip.className = 'group-chip';
+    chip.dataset.groupName = name;
+
+    const label = document.createElement('span');
+    label.textContent = name;
+    chip.appendChild(label);
+
+    const count = document.createElement('span');
+    count.className = 'group-count';
+    count.textContent = groups[name].length;
+    chip.appendChild(count);
+
+    // Left-click to select group
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+      const meshNames = groups[name];
+      const meshes = meshNames.map(n => findMeshByName(n)).filter(Boolean);
+      if (additive) {
+        // Add group meshes to current selection
+        for (const m of meshes) selectedObjects.add(m);
+        syncSelectionUI();
+      } else {
+        setSelection(meshes);
+      }
+    });
+
+    // Right-click for group context menu
+    chip.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showGroupContextMenu(e.clientX, e.clientY, name);
+    });
+
+    groupsPanelEl.appendChild(chip);
+  }
+  renderGroupChipStates();
+}
+
+function renderGroupChipStates() {
+  const groups = getGroups();
+  const chips = groupsPanelEl.querySelectorAll('.group-chip');
+  for (const chip of chips) {
+    const name = chip.dataset.groupName;
+    const meshNames = groups[name];
+    if (!meshNames) continue;
+    // Active if all group members are in current selection
+    const meshes = meshNames.map(n => findMeshByName(n)).filter(Boolean);
+    const allSelected = meshes.length > 0 && meshes.every(m => selectedObjects.has(m));
+    chip.classList.toggle('active', allSelected);
+  }
+}
+
+// ── Preset System ──
+const presetSelect = document.getElementById('preset-select');
+
+function getPresets() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; }
+}
+
+function savePresets(presets) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
+}
+
+function refreshPresetList() {
+  const presets = getPresets();
+  presetSelect.innerHTML = '<option value="">-- select preset --</option>';
+  for (const name of Object.keys(presets).sort()) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    presetSelect.appendChild(opt);
+  }
+}
+
+// Diff-only: compare current material to original, return only changed properties
+function captureMeshDiff(mesh) {
+  const orig = originalMaterials.get(mesh.uuid);
+  if (!orig) return null;
+  const mat = mesh.material;
+  const diff = {};
+
+  if (mat.color && orig.color && mat.color.getHex() !== orig.color.getHex()) {
+    diff.color = '#' + mat.color.getHexString();
+  }
+  if (mat.emissive && orig.emissive && mat.emissive.getHex() !== orig.emissive.getHex()) {
+    diff.emissive = '#' + mat.emissive.getHexString();
+  }
+  if (mat.metalness !== undefined && mat.metalness !== orig.metalness) {
+    diff.metalness = mat.metalness;
+  }
+  if (mat.roughness !== undefined && mat.roughness !== orig.roughness) {
+    diff.roughness = mat.roughness;
+  }
+  if (mat.opacity !== orig.opacity) diff.opacity = mat.opacity;
+  if (mat.wireframe !== orig.wireframe) diff.wireframe = mat.wireframe;
+  if (mat.side !== orig.side) diff.side = mat.side;
+
+  // Check for disabled textures
+  const texOrig = originalTextures.get(mesh.uuid);
+  if (texOrig) {
+    const disabled = [];
+    for (const tk of TEXTURE_KEYS) {
+      if (texOrig[tk] && !mat[tk]) disabled.push(tk);
+    }
+    if (disabled.length > 0) diff.disabledTextures = disabled;
+  }
+
+  return Object.keys(diff).length > 0 ? diff : null;
+}
+
+function captureCurrentState() {
+  const state = {};
+  if (!bikeModel) return state;
+  bikeModel.traverse((child) => {
+    if (!child.isMesh) return;
+    const key = child.name || child.uuid;
+    const diff = captureMeshDiff(child);
+    if (diff) state[key] = diff;
+  });
+  return state;
+}
+
+function applyState(state) {
+  if (!bikeModel || !state) return;
+  // First reset all meshes to original
+  bikeModel.traverse((child) => {
+    if (child.isMesh) resetMeshMaterial(child);
+  });
+  // Then apply only the diffs
+  bikeModel.traverse((child) => {
+    if (!child.isMesh) return;
+    const key = child.name || child.uuid;
+    const entry = state[key];
+    if (!entry) return;
+    const mat = child.material;
+    if (entry.color && mat.color) mat.color.set(entry.color);
+    if (entry.emissive && mat.emissive) mat.emissive.set(entry.emissive);
+    if (entry.metalness !== undefined && mat.metalness !== undefined) mat.metalness = entry.metalness;
+    if (entry.roughness !== undefined && mat.roughness !== undefined) mat.roughness = entry.roughness;
+    if (entry.opacity !== undefined) {
+      mat.opacity = entry.opacity;
+      mat.transparent = entry.opacity < 1;
+    }
+    if (entry.wireframe !== undefined) mat.wireframe = entry.wireframe;
+    if (entry.side !== undefined) mat.side = entry.side;
+    const texOrig = originalTextures.get(child.uuid);
+    if (texOrig && entry.disabledTextures) {
+      for (const tk of TEXTURE_KEYS) {
+        if (entry.disabledTextures.includes(tk)) {
+          mat[tk] = null;
+        } else if (texOrig[tk]) {
+          mat[tk] = texOrig[tk];
+        }
+      }
+      mat.needsUpdate = true;
+    }
+  });
+  buildMaterialControls();
+}
+
+document.getElementById('save-preset-btn').addEventListener('click', () => {
+  const name = prompt('Preset name:');
+  if (!name || !name.trim()) return;
+  const presets = getPresets();
+  presets[name.trim()] = captureCurrentState();
+  savePresets(presets);
+  refreshPresetList();
+  presetSelect.value = name.trim();
+});
+
+document.getElementById('load-preset-btn').addEventListener('click', () => {
+  const name = presetSelect.value;
+  if (!name) return;
+  const presets = getPresets();
+  if (presets[name]) applyState(presets[name]);
+});
+
+document.getElementById('delete-preset-btn').addEventListener('click', () => {
+  const name = presetSelect.value;
+  if (!name) return;
+  if (!confirm(`Delete preset "${name}"?`)) return;
+  const presets = getPresets();
+  delete presets[name];
+  savePresets(presets);
+  refreshPresetList();
+});
+
+document.getElementById('export-preset-btn').addEventListener('click', () => {
+  const data = JSON.stringify(getPresets(), null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'bike-presets.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+refreshPresetList();
+
+// ── Export GLB ──
+document.getElementById('export-glb-btn').addEventListener('click', () => {
+  if (!bikeModel) return;
+  const exporter = new GLTFExporter();
+  exporter.parse(bikeModel, (result) => {
+    const blob = new Blob([result], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tandem_bicycle_custom.glb';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, (err) => {
+    console.error('GLB export failed:', err);
+    alert('GLB export failed: ' + err.message);
+  }, { binary: true });
+});
+
+// ── Sidebar Toggle ──
+const sidebar = document.getElementById('sidebar');
+const sidebarToggle = document.getElementById('sidebar-toggle');
+const sidebarClose = document.getElementById('sidebar-close');
+
+sidebarToggle.addEventListener('click', () => {
+  sidebar.classList.remove('collapsed');
+  sidebarToggle.style.display = 'none';
+});
+sidebarClose.addEventListener('click', () => {
+  sidebar.classList.add('collapsed');
+  sidebarToggle.style.display = 'flex';
+});
+
+if (window.innerWidth <= 768) {
+  sidebar.classList.add('collapsed');
+  sidebarToggle.style.display = 'flex';
+}
+
+// ── Resize ──
+function onResize() {
+  const rect = viewport.getBoundingClientRect();
+  renderer.setSize(rect.width, rect.height);
+  camera.aspect = rect.width / rect.height;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', onResize);
+new ResizeObserver(onResize).observe(viewport);
+onResize();
+
+// ── Animation Loop ──
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  controls.update();
+
+  // Pulse highlight opacity and sync transforms
+  const t = performance.now() / 1000;
+  const pulseOpacity = 0.3 + 0.2 * Math.sin(t * 3);
+  for (const [uuid, hm] of highlightMeshes) {
+    hm.material.opacity = pulseOpacity;
+    const obj = [...selectedObjects].find(o => o.uuid === uuid);
+    if (obj) {
+      obj.updateWorldMatrix(true, false);
+      hm.matrix.copy(obj.matrixWorld);
+      hm.matrixWorldNeedsUpdate = true;
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+animate();
+</script>
+</body>
+</html>
