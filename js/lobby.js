@@ -3733,6 +3733,8 @@ export class Lobby {
   }
 
   _moveColumn(dir) {
+    const items = this._stepItems.get(this._currentStep);
+    const focusedEl = items && items[this._focusIndex];
     // If focused on a difficulty button, move to sibling difficulty button instead of changing columns
     if (focusedEl && focusedEl.classList.contains('difficulty-btn')) {
       const siblings = [...focusedEl.parentElement.querySelectorAll('.difficulty-btn')];
