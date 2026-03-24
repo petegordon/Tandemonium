@@ -2381,6 +2381,8 @@ export class Lobby {
 
     // Show motion toggle if a gyro-capable gamepad connects later
     window.addEventListener('gamepadconnected', () => {
+      // Cancel pending disconnect handler (rapid reconnect debounce)
+      clearTimeout(this._gamepadDisconnectTimer);
       // Hide fixed back button when gamepad takes over
       this._fixedBackBtn.style.visibility = 'hidden';
       // Re-prime edge-detect flags so a held button from connection
@@ -2453,20 +2455,31 @@ export class Lobby {
       }, 1000);
     }
     window.addEventListener('gamepaddisconnected', () => {
-      this._updateBackHint(this._currentStep);
-      // Show fixed back button when gamepad disconnects
-      const hasBack = this._stepBack.get(this._currentStep);
-      if (hasBack) {
-        this._fixedBackBtn.textContent = (this._currentStep === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
-        this._fixedBackBtn.style.visibility = 'visible';
-      }
-      // Switch back to text input if on join step
-      if (this._currentStep === this.joinStep) {
-        this._showSpinners(false);
-        this._spinnerStopRepeat();
-      }
-      // Hide joystick toggle when gamepad disconnects
-      this.toggleJoystick.style.display = 'none';
+      // Debounce rapid disconnect/reconnect (e.g. brief USB glitch)
+      clearTimeout(this._gamepadDisconnectTimer);
+      this._gamepadDisconnectTimer = setTimeout(() => {
+        // If a gamepad reconnected during the debounce window, bail out
+        if (this.input && this.input.gamepadConnected) return;
+
+        this._updateBackHint(this._currentStep);
+        // Show fixed back button when gamepad disconnects
+        const hasBack = this._stepBack.get(this._currentStep);
+        if (hasBack) {
+          this._fixedBackBtn.textContent = (this._currentStep === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
+          this._fixedBackBtn.style.visibility = 'visible';
+        }
+        // Switch back to text input if on join step
+        if (this._currentStep === this.joinStep) {
+          this._showSpinners(false);
+          this._spinnerStopRepeat();
+        }
+        // Hide joystick toggle when gamepad disconnects
+        this.toggleJoystick.style.display = 'none';
+        // Hide motion/gyro toggle too (unless phone tilt is active)
+        if (!(this.input && this.input.motionEnabled)) {
+          this.toggleMotion.style.display = 'none';
+        }
+      }, 300);
     });
   }
 
