@@ -157,6 +157,7 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { ControllerRegistry } from '../js/controllers/controller-registry.js';
 
 // ── Renderer ──
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -363,7 +364,8 @@ window.addEventListener('gamepadconnected', (e) => {
   gamepadIndex = e.gamepad.index;
   document.getElementById('gp-name').textContent = e.gamepad.id;
   overlay.classList.add('hidden');
-  if (navigator.hid && /playstation|dualsense|dualshock|054c/i.test(e.gamepad.id)) {
+  const info = ControllerRegistry.identifyFromGamepadId(e.gamepad.id);
+  if (navigator.hid && info && info.hasGyro) {
     gyroBtn.classList.remove('hidden');
     showHints();
   }
@@ -384,7 +386,8 @@ function pollForGamepad() {
       gamepadIndex = i;
       document.getElementById('gp-name').textContent = gamepads[i].id;
       overlay.classList.add('hidden');
-      if (navigator.hid && /playstation|dualsense|dualshock|054c/i.test(gamepads[i].id)) {
+      const info = ControllerRegistry.identifyFromGamepadId(gamepads[i].id);
+      if (navigator.hid && info && info.hasGyro) {
         gyroBtn.classList.remove('hidden');
         showHints();
       }
@@ -409,39 +412,18 @@ function readGamepad() {
 // ══════════════════════════════════════════════
 //  WEBHID GYROSCOPE
 // ══════════════════════════════════════════════
-const VENDOR_ID_SONY = 0x054c;
-const PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
-
 let hidDevice = null;
-let connectionType = null;
+let controllerDriver = null;
 const gyroData = { gx: 0, gy: 0, gz: 0, ax: 0, ay: 0, az: 0 };
 const orientation = new THREE.Quaternion();
 let lastGyroTime = 0;
+let gyroScale = (2000.0 / 32768.0) * (Math.PI / 180.0); // updated per driver
 
 // Calibration — gyro bias compensation
 const gyroBias = { x: 0, y: 0, z: 0 };
 let calibrating = false;
 let calibSamples = [];
 const CALIB_COUNT = 150; // ~1.5s at 100Hz
-
-const GYRO_SCALE = (2000.0 / 32768.0) * (Math.PI / 180.0);
-
-function readSigned16(data, offset) {
-  let val = data.getUint8(offset) | (data.getUint8(offset + 1) << 8);
-  if (val > 0x7FFF) val -= 0x10000;
-  return val;
-}
-
-function detectConnectionType(device) {
-  for (const col of device.collections) {
-    if (col.outputReports && col.outputReports.length > 0) {
-      for (const report of col.outputReports) {
-        if (report.reportId === 0x31) return 'bluetooth';
-      }
-    }
-  }
-  return 'usb';
-}
 
 function startCalibration() {
   calibrating = true;
@@ -469,26 +451,23 @@ function finishCalibration() {
 }
 
 function handleInputReport(event) {
-  const report = event.data;
-  const reportId = event.reportId;
+  if (!controllerDriver) return;
+  const parsed = controllerDriver.parseReport(event.reportId, event.data);
+  if (!parsed || !parsed.gyro) return;
+
+  // Update gyro scale from driver (convert dps to radians for Three.js)
+  gyroScale = parsed.gyroScale * (Math.PI / 180.0);
+
   const now = performance.now();
+  const rawGx = parsed.gyro.x;
+  const rawGy = parsed.gyro.y;
+  const rawGz = parsed.gyro.z;
 
-  let gyroOffset, accelOffset;
-  if (connectionType === 'usb' && reportId === 0x01) {
-    gyroOffset = 15; accelOffset = 21;
-  } else if (connectionType === 'bluetooth' && reportId === 0x31) {
-    gyroOffset = 16; accelOffset = 22;
-  } else {
-    return;
+  if (parsed.accel) {
+    gyroData.ax = parsed.accel.x;
+    gyroData.ay = parsed.accel.y;
+    gyroData.az = parsed.accel.z;
   }
-
-  const rawGx = readSigned16(report, gyroOffset);
-  const rawGy = readSigned16(report, gyroOffset + 2);
-  const rawGz = readSigned16(report, gyroOffset + 4);
-
-  gyroData.ax = readSigned16(report, accelOffset);
-  gyroData.ay = readSigned16(report, accelOffset + 2);
-  gyroData.az = readSigned16(report, accelOffset + 4);
 
   // Calibration sampling
   if (calibrating) {
@@ -508,9 +487,9 @@ function handleInputReport(event) {
   if (lastGyroTime > 0) {
     const dt = (now - lastGyroTime) / 1000.0;
     if (dt < 0.1) {
-      const wx = gyroData.gx * GYRO_SCALE * dt;
-      const wy = gyroData.gy * GYRO_SCALE * dt;
-      const wz = gyroData.gz * GYRO_SCALE * dt;
+      const wx = gyroData.gx * gyroScale * dt;
+      const wy = gyroData.gy * gyroScale * dt;
+      const wz = gyroData.gz * gyroScale * dt;
       const dq = new THREE.Quaternion();
       dq.setFromEuler(new THREE.Euler(wx, wy, wz, 'XYZ'));
       orientation.multiply(dq);
@@ -537,19 +516,12 @@ async function connectGyro() {
   if (hidDevice) return;
 
   try {
-    const filters = PRODUCT_IDS.map(productId => ({
-      vendorId: VENDOR_ID_SONY, productId,
-      usagePage: 0x0001, usage: 0x0005
-    }));
-
+    const filters = ControllerRegistry.getHIDFilters();
     const devices = await navigator.hid.requestDevice({ filters });
     if (!devices || devices.length === 0) return;
 
-    hidDevice = devices[0];
-    if (!hidDevice.opened) await hidDevice.open();
-
-    connectionType = detectConnectionType(hidDevice);
-    console.log('WebHID connected:', hidDevice.productName, '(' + connectionType + ')');
+    controllerDriver = await ControllerRegistry.connect(devices[0]);
+    hidDevice = controllerDriver.device;
 
     hidDevice.addEventListener('inputreport', handleInputReport);
 
