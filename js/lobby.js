@@ -162,6 +162,11 @@ export class Lobby {
 
     // Music toggle (not a permission — just on/off, persisted in localStorage)
     this.musicActive = localStorage.getItem('tandemonium_music') !== 'off';
+    // Sync: if volume was set to Mute, treat music as inactive
+    const initSavedVol = localStorage.getItem('tandemonium_music_volume');
+    if (initSavedVol !== null && parseFloat(initSavedVol) === 0) {
+      this.musicActive = false;
+    }
     if (this.musicActive) this.toggleMusic.classList.add('active');
     this.onMusicChanged = null; // callback set by Game
 
@@ -1794,6 +1799,13 @@ export class Lobby {
 
   _toggleMusic() {
     this.musicActive = !this.musicActive;
+    // When toggling on from muted volume, bump to Low so audio is audible
+    if (this.musicActive && this.musicVolume === 0) {
+      this.musicVolume = 0.10;
+      localStorage.setItem('tandemonium_music_volume', 0.10);
+      if (this.onVolumeChanged) this.onVolumeChanged(0.10);
+      this._updateVolumeUI();
+    }
     this._setToggleActive('music', this.musicActive);
     if (this.musicActive) {
       localStorage.removeItem('tandemonium_music');
@@ -2369,6 +2381,8 @@ export class Lobby {
 
     // Show motion toggle if a gyro-capable gamepad connects later
     window.addEventListener('gamepadconnected', () => {
+      // Cancel pending disconnect handler (rapid reconnect debounce)
+      clearTimeout(this._gamepadDisconnectTimer);
       // Hide fixed back button when gamepad takes over
       this._fixedBackBtn.style.visibility = 'hidden';
       // Re-prime edge-detect flags so a held button from connection
@@ -2441,20 +2455,31 @@ export class Lobby {
       }, 1000);
     }
     window.addEventListener('gamepaddisconnected', () => {
-      this._updateBackHint(this._currentStep);
-      // Show fixed back button when gamepad disconnects
-      const hasBack = this._stepBack.get(this._currentStep);
-      if (hasBack) {
-        this._fixedBackBtn.textContent = (this._currentStep === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
-        this._fixedBackBtn.style.visibility = 'visible';
-      }
-      // Switch back to text input if on join step
-      if (this._currentStep === this.joinStep) {
-        this._showSpinners(false);
-        this._spinnerStopRepeat();
-      }
-      // Hide joystick toggle when gamepad disconnects
-      this.toggleJoystick.style.display = 'none';
+      // Debounce rapid disconnect/reconnect (e.g. brief USB glitch)
+      clearTimeout(this._gamepadDisconnectTimer);
+      this._gamepadDisconnectTimer = setTimeout(() => {
+        // If a gamepad reconnected during the debounce window, bail out
+        if (this.input && this.input.gamepadConnected) return;
+
+        this._updateBackHint(this._currentStep);
+        // Show fixed back button when gamepad disconnects
+        const hasBack = this._stepBack.get(this._currentStep);
+        if (hasBack) {
+          this._fixedBackBtn.textContent = (this._currentStep === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
+          this._fixedBackBtn.style.visibility = 'visible';
+        }
+        // Switch back to text input if on join step
+        if (this._currentStep === this.joinStep) {
+          this._showSpinners(false);
+          this._spinnerStopRepeat();
+        }
+        // Hide joystick toggle when gamepad disconnects
+        this.toggleJoystick.style.display = 'none';
+        // Hide motion/gyro toggle too (unless phone tilt is active)
+        if (!(this.input && this.input.motionEnabled)) {
+          this.toggleMotion.style.display = 'none';
+        }
+      }, 300);
     });
   }
 
