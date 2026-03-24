@@ -623,7 +623,7 @@ class Game {
         }
         this._resetGame(true);
       } else if (eventType === EVT_GAMEOVER) {
-        this._showGameOver(true);
+        if (this.state === 'playing') this._showGameOver(true);
       } else if (eventType === EVT_CHECKPOINT) {
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
@@ -2874,7 +2874,7 @@ class Game {
     // Detect crash recovery (backup for EVT_GAMEOVER)
     if (this._stokerWasFallen && !this.bike.fallen) {
       this._stokerWasFallen = false;
-      this._showGameOver(true); // captain already sent EVT_GAMEOVER
+      if (this.state === 'playing') this._showGameOver(true); // captain already sent EVT_GAMEOVER
       return;
     }
     this._stokerWasFallen = this.bike.fallen;
