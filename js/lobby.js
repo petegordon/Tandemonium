@@ -162,6 +162,11 @@ export class Lobby {
 
     // Music toggle (not a permission — just on/off, persisted in localStorage)
     this.musicActive = localStorage.getItem('tandemonium_music') !== 'off';
+    // Sync: if volume was set to Mute, treat music as inactive
+    const initSavedVol = localStorage.getItem('tandemonium_music_volume');
+    if (initSavedVol !== null && parseFloat(initSavedVol) === 0) {
+      this.musicActive = false;
+    }
     if (this.musicActive) this.toggleMusic.classList.add('active');
     this.onMusicChanged = null; // callback set by Game
 
@@ -1794,6 +1799,13 @@ export class Lobby {
 
   _toggleMusic() {
     this.musicActive = !this.musicActive;
+    // When toggling on from muted volume, bump to Low so audio is audible
+    if (this.musicActive && this.musicVolume === 0) {
+      this.musicVolume = 0.10;
+      localStorage.setItem('tandemonium_music_volume', 0.10);
+      if (this.onVolumeChanged) this.onVolumeChanged(0.10);
+      this._updateVolumeUI();
+    }
     this._setToggleActive('music', this.musicActive);
     if (this.musicActive) {
       localStorage.removeItem('tandemonium_music');
