@@ -3,11 +3,8 @@
 // ============================================================
 
 import { isMobile, TUNE } from './config.js';
+import { ControllerRegistry } from './controllers/controller-registry.js';
 
-// WebHID gyro constants (PlayStation DualSense / DualShock 4)
-const VENDOR_ID_SONY = 0x054c;
-const SONY_PRODUCT_IDS = [0x0ce6, 0x0df2, 0x05c4, 0x09cc];
-const GYRO_SCALE = 2000.0 / 32768.0; // raw → degrees/sec
 const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
 
 export class InputManager {
@@ -517,36 +514,28 @@ export class InputManager {
   async connectControllerGyro() {
     if (this.gyroConnected || !navigator.hid) return;
 
-    const filters = SONY_PRODUCT_IDS.map(productId => ({
-      vendorId: VENDOR_ID_SONY, productId,
-      usagePage: 0x0001, usage: 0x0005
-    }));
+    const filters = ControllerRegistry.getHIDFilters();
+    let device;
 
-    let devices;
     // In Electron/Steam, try getDevices() first (no user gesture needed),
     // then fall back to requestDevice() which triggers the auto-select handler.
     const isDesktop = window.steam || navigator.userAgent.includes('Electron');
     if (isDesktop) {
-      // getDevices() returns previously-permitted devices without a gesture
-      const allDevices = await navigator.hid.getDevices();
-      devices = allDevices.filter(d =>
-        SONY_PRODUCT_IDS.includes(d.productId) && d.vendorId === VENDOR_ID_SONY
-      );
-      if (devices.length === 0) {
-        // No previously-permitted device — try requestDevice (auto-selected by main.js handler)
-        devices = await navigator.hid.requestDevice({ filters });
+      device = await ControllerRegistry.findApprovedDevice('gyro');
+      if (!device) {
+        const devices = await navigator.hid.requestDevice({ filters });
+        device = devices && devices[0];
       }
     } else {
-      devices = await navigator.hid.requestDevice({ filters });
+      const devices = await navigator.hid.requestDevice({ filters });
+      device = devices && devices[0];
     }
-    if (!devices || devices.length === 0) return;
+    if (!device) return;
 
-    const device = devices[0];
-    if (!device.opened) await device.open();
-
+    // Use the registry to connect with the correct driver
+    this._controllerDriver = await ControllerRegistry.connect(device);
     this.gyroDevice = device;
-    this._gyroConnType = this._detectGyroConnType(device);
-    console.log('WebHID gyro connected:', device.productName, '(' + this._gyroConnType + ')');
+    this._gyroConnType = this._controllerDriver.connectionType;
 
     this._gyroReportHandler = (e) => this._handleGyroReport(e);
     device.addEventListener('inputreport', this._gyroReportHandler);
@@ -560,6 +549,10 @@ export class InputManager {
       if (this._gyroReportHandler) {
         this.gyroDevice.removeEventListener('inputreport', this._gyroReportHandler);
         this._gyroReportHandler = null;
+      }
+      if (this._controllerDriver) {
+        this._controllerDriver.destroy();
+        this._controllerDriver = null;
       }
       this.gyroDevice.close().catch(() => {});
     }
@@ -608,16 +601,7 @@ export class InputManager {
     this._driftEma = null;
   }
 
-  _detectGyroConnType(device) {
-    for (const col of device.collections) {
-      if (col.outputReports && col.outputReports.length > 0) {
-        for (const report of col.outputReports) {
-          if (report.reportId === 0x31) return 'bluetooth';
-        }
-      }
-    }
-    return 'usb';
-  }
+  // Connection type detection delegated to controller driver
 
   _startGyroCalibration() {
     this._gyroCalibrating = true;
@@ -644,27 +628,20 @@ export class InputManager {
   }
 
   _handleGyroReport(event) {
-    const report = event.data;
-    const reportId = event.reportId;
+    if (!this._controllerDriver) return;
+
+    const parsed = this._controllerDriver.parseReport(event.reportId, event.data);
+    if (!parsed || !parsed.gyro) return;
+
     const now = performance.now();
+    const gyroScale = parsed.gyroScale;
+    const rawGx = parsed.gyro.x;
+    const rawGy = parsed.gyro.y;
+    const rawGz = parsed.gyro.z;
 
-    let gyroOffset;
-    if (this._gyroConnType === 'usb' && reportId === 0x01) {
-      gyroOffset = 15;
-    } else if (this._gyroConnType === 'bluetooth' && reportId === 0x31) {
-      gyroOffset = 16;
-    } else {
-      return;
-    }
-
-    const rawGx = this._readSigned16(report, gyroOffset);
-    const rawGy = this._readSigned16(report, gyroOffset + 2);
-    const rawGz = this._readSigned16(report, gyroOffset + 4);
-
-    // Accelerometer data sits immediately after gyro (6 bytes later)
-    const rawAx = this._readSigned16(report, gyroOffset + 6);
-    const rawAy = this._readSigned16(report, gyroOffset + 8);
-    const rawAz = this._readSigned16(report, gyroOffset + 10);
+    const rawAx = parsed.accel ? parsed.accel.x : 0;
+    const rawAy = parsed.accel ? parsed.accel.y : 0;
+    const rawAz = parsed.accel ? parsed.accel.z : 0;
 
     // Store raw values for diagnostics
     this._gyroRawZ = rawGz;
@@ -681,33 +658,39 @@ export class InputManager {
     }
 
     // Apply bias correction
-    const gx = rawGx - this._gyroBias.x;
-    const gy = rawGy - this._gyroBias.y;
     const gz = rawGz - this._gyroBias.z;
 
     // Integrate Z axis for steering (negated to match tilt direction)
     if (this._lastGyroTime > 0) {
       const dt = (now - this._lastGyroTime) / 1000.0;
       if (dt < 0.1) {
-        this._gyroRollAccum -= gz * GYRO_SCALE * dt;
+        this._gyroRollAccum -= gz * gyroScale * dt;
 
         // Accelerometer-assisted drift correction
-        if (!this._accelVerified) {
-          // Verify accel byte offsets: gravity magnitude should be ~8192 (DualSense ±2g, 16-bit)
-          const mag = Math.sqrt(rawAx * rawAx + rawAy * rawAy + rawAz * rawAz);
-          if (mag > 4000 && mag < 16000) {
-            this._accelVerified = true;
-            console.log('Accel verified, magnitude:', mag.toFixed(0));
-          } else {
-            // Bad data — fall back to blanket decay instead of accel correction
-            this._gyroRollAccum *= (1 - 0.5 * dt);
+        if (parsed.accel) {
+          if (!this._accelVerified) {
+            const mag = Math.sqrt(rawAx * rawAx + rawAy * rawAy + rawAz * rawAz);
+            // Expected gravity magnitude varies by controller:
+            // DualSense ±2g: ~8192, Switch Pro ±8g: ~4096
+            const expectedG = parsed.accelScale ? (1.0 / parsed.accelScale) : 8192;
+            const magLow = expectedG * 0.4;
+            const magHigh = expectedG * 2.0;
+            if (mag > magLow && mag < magHigh) {
+              this._accelVerified = true;
+              console.log('Accel verified, magnitude:', mag.toFixed(0), 'expected ~' + expectedG.toFixed(0));
+            } else {
+              this._gyroRollAccum *= (1 - 0.5 * dt);
+            }
           }
-        }
-        if (this._accelVerified) {
-          const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
-          this._accelRoll = accelRoll;
-          const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
-          this._gyroRollAccum += correction;
+          if (this._accelVerified) {
+            const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
+            this._accelRoll = accelRoll;
+            const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
+            this._gyroRollAccum += correction;
+          }
+        } else {
+          // No accel data — use blanket decay for drift correction
+          this._gyroRollAccum *= (1 - 0.5 * dt);
         }
       }
     }
@@ -717,15 +700,8 @@ export class InputManager {
     this._gyroRollAccum = Math.max(-90, Math.min(90, this._gyroRollAccum));
 
     // Feed into tilt pipeline with gyro-specific tuning
-    // Only update if motion is enabled (lobby toggle can disable it)
     if (!this.motionEnabled) return;
     this._applyTilt(-this._gyroRollAccum, true);
-  }
-
-  _readSigned16(data, offset) {
-    let val = data.getUint8(offset) | (data.getUint8(offset + 1) << 8);
-    if (val > 0x7FFF) val -= 0x10000;
-    return val;
   }
 
   getMotionLean() {

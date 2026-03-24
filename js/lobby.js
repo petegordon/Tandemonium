@@ -43,6 +43,7 @@ import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 import * as analytics from './analytics.js';
+import { ControllerRegistry } from './controllers/controller-registry.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -1445,7 +1446,8 @@ export class Lobby {
   _checkGamepadGyro() {
     const gamepads = navigator.getGamepads();
     const gp = gamepads[this.input.gamepadIndex];
-    if (!gp || !/playstation|dualsense|dualshock|054c/i.test(gp.id)) return;
+    const controllerInfo = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
+    if (!controllerInfo || !controllerInfo.hasGyro) return;
 
     this._showMotionToggle();
 
@@ -1462,9 +1464,10 @@ export class Lobby {
     if (this.motionActive || this._motionPermitted) return;
     const gamepads = navigator.getGamepads();
     const gp = gamepads[this.input.gamepadIndex];
-    if (!gp || !/playstation|dualsense|dualshock|054c/i.test(gp.id)) return;
+    const controllerInfo = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
+    if (!controllerInfo || !controllerInfo.hasGyro) return;
 
-    console.log('Auto-connecting gyro for DualSense in desktop mode...');
+    console.log('Auto-connecting gyro for', controllerInfo.driverName, 'in desktop mode...');
     this.input.connectControllerGyro().then(() => {
       if (this.input.gyroConnected) {
         this._motionPermitted = true;
@@ -3384,8 +3387,9 @@ export class Lobby {
       const submitIcon = document.getElementById('spinner-submit-icon');
       const backIcon = document.getElementById('spinner-back-icon');
       if (submitIcon && backIcon && this.input) {
-        const gpId = (this.input._gpName || '').toLowerCase();
-        const isPS = /playstation|dualsense|dualshock|054c/.test(gpId);
+        const gpId = this.input._gpName || '';
+        const info = ControllerRegistry.identifyFromGamepadId(gpId);
+        const isPS = info && info.driverName === 'DualSense';
         submitIcon.textContent = isPS ? '\u2715' : 'A';
         backIcon.textContent = isPS ? '\u25EF' : 'B';
         if (isPS) {
@@ -3512,9 +3516,10 @@ export class Lobby {
     const hasGamepad = this.input && this.input.gamepadConnected;
     if (hasBack && hasGamepad) {
       const icon = document.getElementById('gamepad-back-icon');
-      const gpId = (this.input._gpName || '').toLowerCase();
-      const isPS = /playstation|dualsense|dualshock|054c/.test(gpId);
-      const isXbox = /xbox|microsoft|045e/.test(gpId);
+      const gpId = this.input._gpName || '';
+      const info = ControllerRegistry.identifyFromGamepadId(gpId);
+      const isPS = info && info.driverName === 'DualSense';
+      const isXbox = info && info.driverName === 'Xbox';
       if (isPS) {
         icon.textContent = '\u25EF';
         icon.style.color = '#ff6b81';
