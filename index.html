@@ -4166,6 +4166,7 @@ ON</button>
 
 <!-- Prevent pinch-to-zoom on iOS Safari (ignores viewport meta since iOS 10) -->
 <script>
+document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
 document.addEventListener('gesturestart', function(e) { e.preventDefault(); }, { passive: false });
 document.addEventListener('gesturechange', function(e) { e.preventDefault(); }, { passive: false });
 document.addEventListener('gestureend', function(e) { e.preventDefault(); }, { passive: false });

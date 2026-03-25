@@ -5,9 +5,8 @@
 import { DualSenseDriver } from './dualsense-driver.js';
 import { SwitchProDriver } from './switch-pro-driver.js';
 import { XboxDriver } from './xbox-driver.js';
-import { GameSirDriver } from './gamesir-driver.js';
 
-const DRIVERS = [DualSenseDriver, SwitchProDriver, GameSirDriver, XboxDriver];
+const DRIVERS = [DualSenseDriver, SwitchProDriver, XboxDriver];
 
 export class ControllerRegistry {
 
