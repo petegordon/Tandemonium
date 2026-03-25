@@ -324,6 +324,10 @@ function renderDashboard(overview, daily, funnel, rides, crashes, conversions, n
           <h3>Daily Disconnects</h3>
           ${renderSimpleTable(network.disconnects, ['day', 'disconnects', 'during_ride', 'reconnects'])}
         </div>
+        <div class="card">
+          <h3>Connection Quality</h3>
+          ${renderQualityTable(network.quality)}
+        </div>
       </div>
     </div>
 
@@ -557,6 +561,17 @@ function renderSessionDurationTable(rows) {
   rows.forEach(r => {
     const dur = r.avg_duration_min != null ? r.avg_duration_min + ' min' : '-';
     html += `<tr><td>${r.device_type || 'unknown'}</td><td class="num">${r.sessions}</td><td class="num">${dur}</td></tr>`;
+  });
+  return html + '</table>';
+}
+
+function renderQualityTable(rows) {
+  if (!rows || rows.length === 0) return '<div class="empty">No quality data yet</div>';
+  let html = '<table><tr><th>Transport</th><th class="num">Rooms</th><th class="num">Avg RTT</th><th class="num">Avg Max RTT</th><th class="num">Packet Loss</th></tr>';
+  rows.forEach(r => {
+    const rttClass = r.avg_rtt_ms <= 50 ? 'good' : r.avg_rtt_ms <= 150 ? 'warn' : 'bad';
+    const lossClass = r.avg_packet_loss_pct <= 1 ? 'good' : r.avg_packet_loss_pct <= 5 ? 'warn' : 'bad';
+    html += `<tr><td>${r.connection_type || '?'}</td><td class="num">${r.rooms}</td><td class="num ${rttClass}">${r.avg_rtt_ms != null ? r.avg_rtt_ms + 'ms' : '-'}</td><td class="num">${r.avg_max_rtt_ms != null ? r.avg_max_rtt_ms + 'ms' : '-'}</td><td class="num ${lossClass}">${r.avg_packet_loss_pct != null ? r.avg_packet_loss_pct + '%' : '-'}</td></tr>`;
   });
   return html + '</table>';
 }

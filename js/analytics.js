@@ -243,4 +243,32 @@ if (typeof window !== 'undefined') {
       flushRideEvents();
     }
   });
+
+  // ---- Error/Exception Tracking ----
+  let errorCount = 0;
+  const MAX_ERRORS = 10; // cap per session to avoid flooding
+
+  window.addEventListener('error', (e) => {
+    if (DISABLED || errorCount >= MAX_ERRORS) return;
+    errorCount++;
+    trackEvent('js_error', {
+      message: e.message,
+      source: e.filename ? e.filename.split('/').pop() : null,
+      line: e.lineno,
+      col: e.colno,
+    });
+    flushUIEvents();
+  });
+
+  window.addEventListener('unhandledrejection', (e) => {
+    if (DISABLED || errorCount >= MAX_ERRORS) return;
+    errorCount++;
+    const reason = e.reason;
+    trackEvent('js_error', {
+      message: reason ? (reason.message || String(reason)).slice(0, 200) : 'unhandled promise rejection',
+      source: reason && reason.stack ? reason.stack.split('\n')[1]?.trim().slice(0, 100) : null,
+      type: 'unhandledrejection',
+    });
+    flushUIEvents();
+  });
 }
