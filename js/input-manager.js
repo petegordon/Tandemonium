@@ -4,6 +4,7 @@
 
 import { isMobile, TUNE } from './config.js';
 import { ControllerRegistry } from './controllers/controller-registry.js';
+import * as analytics from './analytics.js';
 
 const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
 
@@ -422,6 +423,8 @@ export class InputManager {
       this.gamepadConnected = true;
       this._gpName = e.gamepad.id;
       console.log('Gamepad connected:', e.gamepad.id);
+      const info = ControllerRegistry.identifyFromGamepadId(e.gamepad.id);
+      analytics.setController(info ? info.driverName : e.gamepad.id, 'standard');
       if (!this.suppressGamepadBadge) {
         const badge = document.getElementById('gamepad-badge');
         if (badge) badge.style.display = 'block';
@@ -460,6 +463,8 @@ export class InputManager {
           this.gamepadIndex = i;
           this.gamepadConnected = true;
           this._gpName = gamepads[i].id;
+          const pollInfo = ControllerRegistry.identifyFromGamepadId(gamepads[i].id);
+          analytics.setController(pollInfo ? pollInfo.driverName : gamepads[i].id, 'standard');
           if (!this.suppressGamepadBadge) {
             const badge = document.getElementById('gamepad-badge');
             if (badge) badge.style.display = 'block';
@@ -536,6 +541,7 @@ export class InputManager {
     this._controllerDriver = await ControllerRegistry.connect(device);
     this.gyroDevice = device;
     this._gyroConnType = this._controllerDriver.connectionType;
+    analytics.setController(this._controllerDriver.constructor.driverName, this._controllerDriver.connectionType);
 
     this._gyroReportHandler = (e) => this._handleGyroReport(e);
     device.addEventListener('inputreport', this._gyroReportHandler);

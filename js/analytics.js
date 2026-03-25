@@ -3,13 +3,16 @@
 // ============================================================
 
 const API_BASE = 'https://tandemonium-api.pete-872.workers.dev/api/analytics';
-const DISABLED = typeof location !== 'undefined' &&
+const IS_ELECTRON = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron');
+const DISABLED = !IS_ELECTRON && typeof location !== 'undefined' &&
   (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
 let sessionId = null;
 let currentInputMethod = null;
 let currentPage = null;
 let currentRideId = null;
+let currentControllerName = null;
+let currentControllerConnection = null;
 
 // Separate buffers for UI events vs ride events
 let eventBuffer = [];
@@ -83,6 +86,20 @@ export function getInputMethod() {
   return currentInputMethod;
 }
 
+export function setController(name, connection) {
+  currentControllerName = name || null;
+  currentControllerConnection = connection || null;
+  trackEvent('controller_connect', { name, connection });
+
+  // Update session with controller info
+  if (sessionId) {
+    beacon(`${API_BASE}/session/${sessionId}`, {
+      controller_name: currentControllerName,
+      controller_connection: currentControllerConnection,
+    }, 'PUT');
+  }
+}
+
 // ---- Ride Tracking ----
 
 export function startRide(opts) {
@@ -96,6 +113,8 @@ export function startRide(opts) {
     role: opts.role || 'solo',
     difficulty: opts.difficulty || 'adventurous',
     input_method: currentInputMethod,
+    controller_name: currentControllerName,
+    controller_connection: currentControllerConnection,
     bike_preset: opts.bike_preset || 'default',
     steering_feel: opts.steering_feel,
     started_at: new Date().toISOString(),
@@ -200,6 +219,12 @@ if (typeof window !== 'undefined') {
       endRide({ completed: false, abandon_reason: 'page_close' });
     }
     flushUIEvents();
+    // End session for duration tracking
+    if (sessionId) {
+      beacon(`${API_BASE}/session/${sessionId}`, {
+        ended_at: new Date().toISOString(),
+      }, 'PUT');
+    }
   });
   window.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
