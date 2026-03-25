@@ -13,6 +13,8 @@ let currentPage = null;
 let currentRideId = null;
 let currentControllerName = null;
 let currentControllerConnection = null;
+let sessionStartTime = null;
+let firstInputTracked = false;
 
 // Separate buffers for UI events vs ride events
 let eventBuffer = [];
@@ -26,6 +28,8 @@ export function initSession(opts) {
   sessionId = crypto.randomUUID();
   sessionStorage.setItem('tandemonium_session_id', sessionId);
   currentInputMethod = opts.input_method || null;
+
+  sessionStartTime = performance.now();
 
   beacon(`${API_BASE}/session`, {
     id: sessionId,
@@ -84,6 +88,13 @@ export function setInputMethod(method) {
 
 export function getInputMethod() {
   return currentInputMethod;
+}
+
+export function trackFirstInput(action) {
+  if (firstInputTracked || !sessionStartTime) return;
+  firstInputTracked = true;
+  const ms = Math.round(performance.now() - sessionStartTime);
+  trackEvent('first_input', { action, time_to_first_input_ms: ms });
 }
 
 export function setController(name, connection) {

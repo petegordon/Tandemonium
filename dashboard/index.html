@@ -271,6 +271,10 @@ function renderDashboard(overview, daily, funnel, rides, crashes, conversions, n
           <h3>Bike Preset Popularity</h3>
           ${renderSimpleTable(rides.bikePresets, ['bike_preset', 'rides', 'unique_players', 'completed'])}
         </div>
+        <div class="card">
+          <h3>FPS by Device / Platform</h3>
+          ${renderPerformanceTable(rides.performance)}
+        </div>
       </div>
     </div>
 
@@ -285,6 +289,10 @@ function renderDashboard(overview, daily, funnel, rides, crashes, conversions, n
         <div class="card">
           <h3>Timeout Locations</h3>
           ${renderSimpleTable(crashes.timeouts, ['level', 'difficulty', 'checkpoint', 'timeouts'])}
+        </div>
+        <div class="card">
+          <h3>Crashes by Input Method</h3>
+          ${renderSimpleTable(crashes.crashesByInput, ['input_method', 'cause', 'crashes'])}
         </div>
       </div>
     </div>
@@ -519,11 +527,22 @@ function parseUABrowser(ua) {
 }
 
 function parseUAOS(ua) {
-  if (ua.includes('iPhone')) return 'iOS (iPhone)';
-  if (ua.includes('iPad')) return 'iOS (iPad)';
+  if (ua.includes('iPhone')) {
+    // Extract iOS version: "iPhone OS 17_4" → "iOS 17.4"
+    const ver = ua.match(/iPhone OS (\d+[_\.]\d+)/);
+    return ver ? 'iOS ' + ver[1].replace('_', '.') : 'iOS (iPhone)';
+  }
+  if (ua.includes('iPad')) {
+    const ver = ua.match(/CPU OS (\d+[_\.]\d+)/);
+    return ver ? 'iPadOS ' + ver[1].replace('_', '.') : 'iPadOS';
+  }
   if (ua.includes('Android')) {
-    const match = ua.match(/Android [^;)]*/);
-    return match ? match[0] : 'Android';
+    // Extract model: "Android 14; SM-S918B" → "Android 14 (SM-S918B)"
+    const ver = ua.match(/Android ([\d.]+)/);
+    const model = ua.match(/;\s*([^;)]+)\s*(?:Build|[)])/);
+    let result = ver ? 'Android ' + ver[1] : 'Android';
+    if (model && model[1].trim()) result += ' (' + model[1].trim() + ')';
+    return result;
   }
   if (ua.includes('Mac OS X')) return 'macOS';
   if (ua.includes('Windows')) return 'Windows';
@@ -538,6 +557,17 @@ function renderSessionDurationTable(rows) {
   rows.forEach(r => {
     const dur = r.avg_duration_min != null ? r.avg_duration_min + ' min' : '-';
     html += `<tr><td>${r.device_type || 'unknown'}</td><td class="num">${r.sessions}</td><td class="num">${dur}</td></tr>`;
+  });
+  return html + '</table>';
+}
+
+function renderPerformanceTable(rows) {
+  if (!rows || rows.length === 0) return '<div class="empty">No FPS data yet</div>';
+  let html = '<table><tr><th>Device</th><th>Platform</th><th class="num">Avg FPS</th><th class="num">Avg Min FPS</th><th class="num">Rides</th><th class="num">Completed</th></tr>';
+  rows.forEach(r => {
+    const fpsClass = r.avg_fps >= 55 ? 'good' : r.avg_fps >= 30 ? 'warn' : 'bad';
+    const minClass = r.avg_min_fps >= 30 ? 'good' : r.avg_min_fps >= 15 ? 'warn' : 'bad';
+    html += `<tr><td>${r.device_type || 'unknown'}</td><td>${r.platform || '?'}</td><td class="num ${fpsClass}">${r.avg_fps || '-'}</td><td class="num ${minClass}">${r.avg_min_fps || '-'}</td><td class="num">${r.rides}</td><td class="num">${r.completed || 0}</td></tr>`;
   });
   return html + '</table>';
 }
