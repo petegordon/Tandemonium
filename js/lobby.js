@@ -580,6 +580,7 @@ export class Lobby {
   _setup() {
     // SOLO → always show level selection
     document.getElementById('btn-solo').addEventListener('click', async () => {
+      analytics.trackFirstInput('solo');
       await this._requestMotion();
       this._syncMotionState();
       this._pendingMode = 'solo';
@@ -589,6 +590,7 @@ export class Lobby {
 
     // RIDE TOGETHER → check for rejoin, then role selection
     document.getElementById('btn-together').addEventListener('click', async () => {
+      analytics.trackFirstInput('together');
       // Check for saved room to rejoin
       const rejoined = await this._handleRejoinCheck();
       if (rejoined) return;

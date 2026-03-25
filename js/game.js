@@ -187,6 +187,11 @@ class Game {
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     });
 
+    // FPS tracking for analytics
+    this._fpsFrameTimes = [];  // rolling buffer of frame durations (seconds)
+    this._fpsMinDt = Infinity; // shortest frame time seen during ride
+    this._fpsMaxDt = 0;        // longest frame time seen during ride
+
     // DDA (Dynamic Difficulty Adjustment)
     this.ddaManager = null;
     this._assistWeight = 0;
@@ -1198,6 +1203,7 @@ class Game {
       analytics.trackRideEvent('timeout', this.bike.distanceTraveled, {
         checkpoint_index: cpIdx,
         time_elapsed_ms: this.raceManager.getElapsedMs(),
+        input_method: analytics.getInputMethod(),
       });
       analytics.flushRideEvents();
     }
@@ -1851,6 +1857,7 @@ class Game {
         ? (contribData.mode === 'solo' ? contribData.solo
            : contribData[this.mode] || contribData.captain)
         : {};
+      const fpsStats = this._getFpsStats();
       analytics.endRide({
         completed: true,
         duration_ms: summary.timeMs,
@@ -1881,7 +1888,10 @@ class Game {
         dda_assists_accepted: this.ddaManager ? this.ddaManager.acceptedCount : 0,
         dda_skips_used: this.ddaManager ? this.ddaManager.skipsUsed : 0,
         safety_used: this.safetyMode ? 1 : 0,
+        avg_fps: fpsStats.avg_fps,
+        min_fps: fpsStats.min_fps,
       });
+      this._resetFpsStats();
       analytics.setPage(this.mode !== 'solo' ? 'mp_results' : 'solo_results');
     }
 
@@ -2540,6 +2550,22 @@ class Game {
   // TREE COLLISION
   // ============================================================
 
+  _getFpsStats() {
+    const frames = this._fpsFrameTimes;
+    if (frames.length === 0) return { avg_fps: null, min_fps: null };
+    const avgDt = frames.reduce((s, d) => s + d, 0) / frames.length;
+    return {
+      avg_fps: Math.round(1 / avgDt),
+      min_fps: this._fpsMaxDt > 0 ? Math.round(1 / this._fpsMaxDt) : null,
+    };
+  }
+
+  _resetFpsStats() {
+    this._fpsFrameTimes = [];
+    this._fpsMinDt = Infinity;
+    this._fpsMaxDt = 0;
+  }
+
   _recordCrash(cause) {
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
@@ -2548,6 +2574,7 @@ class Game {
         lean_angle: this.bike.lean,
         speed: this.bike.speed,
         cause,
+        input_method: analytics.getInputMethod(),
       });
       analytics.flushRideEvents();
     }
@@ -2613,6 +2640,13 @@ class Game {
     const roadPath = this.world.roadPath;
 
     if (this.state === 'playing') {
+      // FPS sampling — track frame times during gameplay only
+      if (dt > 0) {
+        this._fpsFrameTimes.push(dt);
+        if (dt < this._fpsMinDt) this._fpsMinDt = dt;
+        if (dt > this._fpsMaxDt) this._fpsMaxDt = dt;
+      }
+
       // D-pad actions (safety/speed/reset/lobby)
       this._pollDpad();
 

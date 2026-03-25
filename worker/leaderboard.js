@@ -874,7 +874,8 @@ async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
     'lean_input_total', 'lean_correction_total',
     'pedal_taps', 'pedal_correct', 'pedal_wrong', 'pedal_power',
     'offset_quality', 'contribution_pct',
-    'dda_assists_offered', 'dda_assists_accepted', 'dda_skips_used', 'safety_used'
+    'dda_assists_offered', 'dda_assists_accepted', 'dda_skips_used', 'safety_used',
+    'avg_fps', 'min_fps'
   ];
 
   const sets = [];
@@ -1189,11 +1190,23 @@ async function dashRides(env, since) {
      GROUP BY bike_preset ORDER BY rides DESC`
   ).bind(since).all();
 
+  const performance = await env.DB.prepare(
+    `SELECT device_type, platform,
+     ROUND(AVG(avg_fps)) AS avg_fps,
+     ROUND(AVG(min_fps)) AS avg_min_fps,
+     COUNT(*) AS rides,
+     SUM(completed) AS completed
+     FROM rides r JOIN sessions s ON r.session_id = s.id
+     WHERE r.started_at >= ? AND r.avg_fps IS NOT NULL
+     GROUP BY device_type, platform ORDER BY rides DESC`
+  ).bind(since).all();
+
   return {
     byLevel: byLevel.results,
     abandons: abandons.results,
     steeringFeel: steeringFeel.results,
     bikePresets: bikePresets.results,
+    performance: performance.results,
   };
 }
 
@@ -1208,6 +1221,16 @@ async function dashCrashes(env, since) {
      WHERE re.event_type = 'crash' AND re.created_at >= ?
      GROUP BY r.level, distance_bucket, cause
      ORDER BY r.level, distance_bucket`
+  ).bind(since).all();
+
+  const crashesByInput = await env.DB.prepare(
+    `SELECT JSON_EXTRACT(re.event_data, '$.input_method') AS input_method,
+     JSON_EXTRACT(re.event_data, '$.cause') AS cause,
+     COUNT(*) AS crashes
+     FROM ride_events re
+     WHERE re.event_type = 'crash' AND re.created_at >= ?
+       AND JSON_EXTRACT(re.event_data, '$.input_method') IS NOT NULL
+     GROUP BY input_method, cause ORDER BY crashes DESC`
   ).bind(since).all();
 
   const timeouts = await env.DB.prepare(
@@ -1233,7 +1256,7 @@ async function dashCrashes(env, since) {
      GROUP BY r.level, pylon ORDER BY r.level, re.distance`
   ).bind(since).all();
 
-  return { heatmap: heatmap.results, timeouts: timeouts.results, pylons: pylons.results };
+  return { heatmap: heatmap.results, timeouts: timeouts.results, pylons: pylons.results, crashesByInput: crashesByInput.results };
 }
 
 async function dashConversions(env, since) {
