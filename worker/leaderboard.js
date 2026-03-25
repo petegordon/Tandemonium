@@ -971,7 +971,8 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   const allowedFields = [
     'stoker_joined_at', 'stoker_session_id', 'stoker_joined_via_url',
     'webrtc_connected', 'webrtc_fail_reason', 'connection_type',
-    'p2p_upgrade_succeeded', 'video_enabled', 'audio_enabled'
+    'p2p_upgrade_succeeded', 'video_enabled', 'audio_enabled',
+    'avg_rtt_ms', 'max_rtt_ms', 'packet_loss_pct'
   ];
 
   const sets = [];
@@ -1310,7 +1311,17 @@ async function dashNetwork(env, since) {
      GROUP BY day ORDER BY day DESC`
   ).bind(since).all();
 
-  return { roomHealth, disconnects: disconnects.results };
+  const quality = await env.DB.prepare(
+    `SELECT connection_type,
+     COUNT(*) AS rooms,
+     ROUND(AVG(avg_rtt_ms)) AS avg_rtt_ms,
+     ROUND(AVG(max_rtt_ms)) AS avg_max_rtt_ms,
+     ROUND(AVG(packet_loss_pct), 2) AS avg_packet_loss_pct
+     FROM rooms WHERE created_at >= ? AND avg_rtt_ms IS NOT NULL
+     GROUP BY connection_type ORDER BY rooms DESC`
+  ).bind(since).all();
+
+  return { roomHealth, disconnects: disconnects.results, quality: quality.results };
 }
 
 async function dashDevices(env, since) {

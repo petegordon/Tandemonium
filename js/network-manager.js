@@ -58,6 +58,10 @@ export class NetworkManager {
     this._p2pUpgradeTimeout = null;
     this._p2pUpgradeRetryTimeout = null;
 
+    // WebRTC quality stats
+    this._statsInterval = null;
+    this._statsSamples = []; // { rtt, packetsLost, packetsSent, bytesReceived, bytesSent, timestamp }
+
     // Pre-allocated send buffers (avoid per-send allocations)
     this._stateBuf = new ArrayBuffer(46);
     this._stateView = new DataView(this._stateBuf);
@@ -591,6 +595,8 @@ export class NetworkManager {
       this.transport = 'p2p';
       this._activeConn = conn;
       console.log('NET: Upgraded to P2P transport');
+      // Start WebRTC quality stats polling
+      this._startStatsPolling();
       // Start relay keepalive to keep it as hot standby
       this._startRelayKeepalive();
       // Notify listeners (game.js uses this to start media calls)
@@ -604,6 +610,7 @@ export class NetworkManager {
     conn.on('close', () => {
       if (conn !== this._activeConn) return;
       // P2P dropped — fall back to relay silently if relay is alive
+      this._stopStatsPolling();
       if (this._relayWs && this._relayWs.readyState === WebSocket.OPEN) {
         console.log('NET: P2P dropped, falling back to relay');
         this.transport = 'relay';
@@ -676,6 +683,7 @@ export class NetworkManager {
 
   destroy() {
     this._stopHeartbeat();
+    this._stopStatsPolling();
     clearTimeout(this._reconnectTimeout);
     clearTimeout(this._p2pUpgradeTimeout);
     clearTimeout(this._p2pUpgradeRetryTimeout);
@@ -700,5 +708,74 @@ export class NetworkManager {
     this.conn = null;
     this.peer = null;
     this._relayWs = null;
+  }
+
+  // ---- WebRTC Quality Stats ----
+
+  _startStatsPolling() {
+    this._stopStatsPolling();
+    this._statsSamples = [];
+    this._statsInterval = setInterval(() => this._sampleStats(), 5000);
+  }
+
+  _stopStatsPolling() {
+    if (this._statsInterval) {
+      clearInterval(this._statsInterval);
+      this._statsInterval = null;
+    }
+  }
+
+  async _sampleStats() {
+    if (this.transport !== 'p2p' || !this.conn) return;
+    // PeerJS exposes the underlying RTCPeerConnection via conn.peerConnection
+    const pc = this.conn.peerConnection;
+    if (!pc || !pc.getStats) return;
+
+    try {
+      const stats = await pc.getStats();
+      let rtt = null, packetsLost = 0, packetsSent = 0, bytesReceived = 0, bytesSent = 0;
+
+      stats.forEach(report => {
+        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+          rtt = report.currentRoundTripTime != null ? Math.round(report.currentRoundTripTime * 1000) : null;
+        }
+        if (report.type === 'inbound-rtp') {
+          packetsLost += report.packetsLost || 0;
+          bytesReceived += report.bytesReceived || 0;
+        }
+        if (report.type === 'outbound-rtp') {
+          packetsSent += report.packetsSent || 0;
+          bytesSent += report.bytesSent || 0;
+        }
+      });
+
+      this._statsSamples.push({ rtt, packetsLost, packetsSent, bytesReceived, bytesSent, timestamp: Date.now() });
+    } catch (e) {
+      console.warn('NET: Stats sampling failed:', e);
+    }
+  }
+
+  getQualityStats() {
+    const samples = this._statsSamples;
+    if (samples.length === 0) return null;
+
+    const rtts = samples.map(s => s.rtt).filter(r => r != null);
+    const avgRtt = rtts.length > 0 ? Math.round(rtts.reduce((a, b) => a + b, 0) / rtts.length) : null;
+    const maxRtt = rtts.length > 0 ? Math.max(...rtts) : null;
+
+    // Packet loss: compare last and first samples for cumulative diff
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    const totalLost = last.packetsLost - first.packetsLost;
+    const totalSent = last.packetsSent - first.packetsSent;
+    const lossRate = totalSent > 0 ? Math.round((totalLost / totalSent) * 10000) / 100 : 0;
+
+    return {
+      avg_rtt_ms: avgRtt,
+      max_rtt_ms: maxRtt,
+      packet_loss_pct: lossRate,
+      samples: samples.length,
+      duration_sec: Math.round((last.timestamp - first.timestamp) / 1000),
+    };
   }
 }

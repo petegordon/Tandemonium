@@ -1893,6 +1893,14 @@ class Game {
       });
       this._resetFpsStats();
       analytics.setPage(this.mode !== 'solo' ? 'mp_results' : 'solo_results');
+
+      // Send WebRTC quality stats for multiplayer rides
+      if (this.net && this.net.roomCode) {
+        const quality = this.net.getQualityStats();
+        if (quality) {
+          analytics.trackRoomUpdate(this.net.roomCode, quality);
+        }
+      }
     }
 
     // Check finish-specific achievements
