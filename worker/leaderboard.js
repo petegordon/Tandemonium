@@ -57,6 +57,12 @@ export default {
         if (limited) return limited;
         return handleAnalyticsSession(request, env, corsOrigin);
       }
+      if (path.match(/^\/api\/analytics\/session\/[^/]+$/) && request.method === 'PUT') {
+        const limited = await checkRateLimit(env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        const sessId = path.split('/')[4];
+        return handleAnalyticsSessionUpdate(request, env, corsOrigin, sessId);
+      }
       if (path === '/api/analytics/event/batch' && request.method === 'POST') {
         const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
@@ -765,6 +771,34 @@ async function handleAnalyticsSession(request, env, corsOrigin) {
   return jsonResponse({ success: true }, 200, corsOrigin);
 }
 
+async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId) {
+  if (!isValidUUID(sessionId)) {
+    return jsonResponse({ error: 'Invalid session id' }, 400, corsOrigin);
+  }
+
+  const body = await request.json();
+  const allowedFields = ['ended_at', 'controller_name', 'controller_connection'];
+  const sets = [];
+  const values = [];
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) {
+      sets.push(`${field} = ?`);
+      values.push(body[field]);
+    }
+  }
+
+  if (sets.length === 0) {
+    return jsonResponse({ success: true }, 200, corsOrigin);
+  }
+
+  values.push(sessionId);
+  await env.DB.prepare(
+    `UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`
+  ).bind(...values).run();
+
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
 async function handleAnalyticsEventBatch(request, env, corsOrigin) {
   const body = await request.json();
   const events = body.events;
@@ -802,8 +836,8 @@ async function handleAnalyticsRideCreate(request, env, corsOrigin) {
 
   await env.DB.prepare(
     `INSERT OR IGNORE INTO rides (id, session_id, room_code, level, role, difficulty,
-     input_method, bike_preset, steering_feel, started_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     input_method, controller_name, controller_connection, bike_preset, steering_feel, started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     body.id,
     body.session_id,
@@ -812,6 +846,8 @@ async function handleAnalyticsRideCreate(request, env, corsOrigin) {
     body.role || 'solo',
     body.difficulty || 'normal',
     body.input_method || 'unknown',
+    body.controller_name || null,
+    body.controller_connection || null,
     body.bike_preset || null,
     body.steering_feel ?? null,
     body.started_at || new Date().toISOString()
@@ -1268,7 +1304,37 @@ async function dashDevices(env, since) {
      GROUP BY input_method ORDER BY rides DESC`
   ).bind(since).all();
 
-  return { devices: devices.results, inputMethods: inputMethods.results };
+  const controllers = await env.DB.prepare(
+    `SELECT controller_name, controller_connection, COUNT(*) AS rides,
+     SUM(completed) AS completed
+     FROM rides WHERE started_at >= ? AND controller_name IS NOT NULL
+     GROUP BY controller_name, controller_connection ORDER BY rides DESC`
+  ).bind(since).all();
+
+  const browsers = await env.DB.prepare(
+    `SELECT user_agent, COUNT(*) AS sessions
+     FROM sessions WHERE started_at >= ? AND user_agent IS NOT NULL
+     GROUP BY user_agent ORDER BY sessions DESC`
+  ).bind(since).all();
+
+  const sessionDuration = await env.DB.prepare(
+    `SELECT device_type,
+     COUNT(*) AS sessions,
+     ROUND(AVG(CASE WHEN ended_at IS NOT NULL
+       THEN (julianday(ended_at) - julianday(started_at)) * 86400 END)) AS avg_duration_sec,
+     ROUND(AVG(CASE WHEN ended_at IS NOT NULL
+       THEN (julianday(ended_at) - julianday(started_at)) * 86400 END) / 60.0, 1) AS avg_duration_min
+     FROM sessions WHERE started_at >= ?
+     GROUP BY device_type ORDER BY sessions DESC`
+  ).bind(since).all();
+
+  return {
+    devices: devices.results,
+    inputMethods: inputMethods.results,
+    controllers: controllers.results,
+    browsers: browsers.results,
+    sessionDuration: sessionDuration.results,
+  };
 }
 
 async function dashDDA(env, since) {

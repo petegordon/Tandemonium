@@ -331,6 +331,18 @@ function renderDashboard(overview, daily, funnel, rides, crashes, conversions, n
           <h3>Input Methods (Rides)</h3>
           ${renderInputTable(devices.inputMethods)}
         </div>
+        <div class="card">
+          <h3>Controllers</h3>
+          ${renderControllerTable(devices.controllers)}
+        </div>
+        <div class="card">
+          <h3>Browsers &amp; OS</h3>
+          ${renderBrowserTable(devices.browsers)}
+        </div>
+        <div class="card">
+          <h3>Session Duration</h3>
+          ${renderSessionDurationTable(devices.sessionDuration)}
+        </div>
       </div>
     </div>
 
@@ -462,6 +474,70 @@ function renderInputTable(rows) {
   let html = '<table><tr><th>Method</th><th class="num">Rides</th><th class="num">%</th><th class="num">Completed</th></tr>';
   rows.forEach(r => {
     html += `<tr><td>${r.input_method}</td><td class="num">${r.rides}</td><td class="num pct">${pct(r.rides, total)}%</td><td class="num">${r.completed || 0}</td></tr>`;
+  });
+  return html + '</table>';
+}
+
+function renderControllerTable(rows) {
+  if (!rows || rows.length === 0) return '<div class="empty">No controller data yet</div>';
+  const total = rows.reduce((s, r) => s + r.rides, 0);
+  let html = '<table><tr><th>Controller</th><th>Connection</th><th class="num">Rides</th><th class="num">%</th><th class="num">Completed</th></tr>';
+  rows.forEach(r => {
+    html += `<tr><td>${r.controller_name}</td><td>${r.controller_connection || '-'}</td><td class="num">${r.rides}</td><td class="num pct">${pct(r.rides, total)}%</td><td class="num">${r.completed || 0}</td></tr>`;
+  });
+  return html + '</table>';
+}
+
+function renderBrowserTable(rows) {
+  if (!rows || rows.length === 0) return '<div class="empty">No browser data yet</div>';
+  // Parse user_agent strings into browser/OS buckets
+  const buckets = {};
+  rows.forEach(r => {
+    const ua = r.user_agent || '';
+    const browser = parseUABrowser(ua);
+    const os = parseUAOS(ua);
+    const key = browser + ' / ' + os;
+    buckets[key] = (buckets[key] || 0) + r.sessions;
+  });
+  const sorted = Object.entries(buckets).sort((a, b) => b[1] - a[1]);
+  const total = sorted.reduce((s, e) => s + e[1], 0);
+  let html = '<table><tr><th>Browser / OS</th><th class="num">Sessions</th><th class="num">%</th></tr>';
+  sorted.forEach(([key, count]) => {
+    html += `<tr><td>${key}</td><td class="num">${count}</td><td class="num pct">${pct(count, total)}%</td></tr>`;
+  });
+  return html + '</table>';
+}
+
+function parseUABrowser(ua) {
+  if (ua.includes('Electron')) return 'Steam/Electron';
+  if (ua.includes('Edg/')) return 'Edge';
+  if (ua.includes('OPR/') || ua.includes('Opera')) return 'Opera';
+  if (ua.includes('Chrome/') && !ua.includes('Edg/')) return 'Chrome';
+  if (ua.includes('Safari/') && !ua.includes('Chrome')) return 'Safari';
+  if (ua.includes('Firefox/')) return 'Firefox';
+  return 'Other';
+}
+
+function parseUAOS(ua) {
+  if (ua.includes('iPhone')) return 'iOS (iPhone)';
+  if (ua.includes('iPad')) return 'iOS (iPad)';
+  if (ua.includes('Android')) {
+    const match = ua.match(/Android [^;)]*/);
+    return match ? match[0] : 'Android';
+  }
+  if (ua.includes('Mac OS X')) return 'macOS';
+  if (ua.includes('Windows')) return 'Windows';
+  if (ua.includes('Linux')) return 'Linux';
+  if (ua.includes('CrOS')) return 'ChromeOS';
+  return 'Other';
+}
+
+function renderSessionDurationTable(rows) {
+  if (!rows || rows.length === 0) return '<div class="empty">No duration data yet</div>';
+  let html = '<table><tr><th>Device</th><th class="num">Sessions</th><th class="num">Avg Duration</th></tr>';
+  rows.forEach(r => {
+    const dur = r.avg_duration_min != null ? r.avg_duration_min + ' min' : '-';
+    html += `<tr><td>${r.device_type || 'unknown'}</td><td class="num">${r.sessions}</td><td class="num">${dur}</td></tr>`;
   });
   return html + '</table>';
 }

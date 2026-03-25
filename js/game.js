@@ -509,7 +509,7 @@ class Game {
       room_code: roomParam ? (roomParam.startsWith('TNDM-') ? roomParam : 'TNDM-' + roomParam) : null,
       google_uid: (this.lobby.auth && this.lobby.auth.isLoggedIn() && this.lobby.auth.getUser())
         ? this.lobby.auth.getUser().serverId || null : null,
-      platform: 'browser',
+      platform: window.steam ? 'steam' : (navigator.userAgent.includes('Electron') ? 'electron' : 'browser'),
       screen_width: window.screen.width,
       screen_height: window.screen.height,
     });
