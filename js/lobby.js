@@ -3417,8 +3417,9 @@ export class Lobby {
         const gpId = this.input._gpName || '';
         const info = ControllerRegistry.identifyFromGamepadId(gpId);
         const isPS = info && info.driverName === 'DualSense';
-        submitIcon.textContent = isPS ? '\u2715' : 'A';
-        backIcon.textContent = isPS ? '\u25EF' : 'B';
+        const isSwitchPro = info && info.driverName === 'Switch Pro';
+        submitIcon.textContent = isPS ? '\u2715' : isSwitchPro ? 'B' : 'A';
+        backIcon.textContent = isPS ? '\u25EF' : isSwitchPro ? 'A' : 'B';
         if (isPS) {
           submitIcon.style.color = '#4a9df8';
           submitIcon.style.borderColor = '#4a9df8';
@@ -3547,10 +3548,15 @@ export class Lobby {
       const info = ControllerRegistry.identifyFromGamepadId(gpId);
       const isPS = info && info.driverName === 'DualSense';
       const isXbox = info && info.driverName === 'Xbox';
+      const isSwitchPro = info && info.driverName === 'Switch Pro';
       if (isPS) {
         icon.textContent = '\u25EF';
         icon.style.color = '#ff6b81';
         icon.style.borderColor = '#ff6b81';
+      } else if (isSwitchPro) {
+        icon.textContent = 'A';
+        icon.style.color = '#ff4444';
+        icon.style.borderColor = '#ff4444';
       } else if (isXbox) {
         icon.textContent = 'B';
         icon.style.color = '#ff4444';

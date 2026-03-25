@@ -119,6 +119,12 @@
 
 <div id="overlay">
   <p><strong>Press a button</strong> on your gamepad<br>to connect</p>
+  <p style="margin-top: 20px; font-size: 14px; color: #666">Controller not detected?</p>
+  <button id="hid-connect-btn" style="
+    background: #2a2a3a; color: #4af; border: 1px solid #4af;
+    padding: 10px 20px; border-radius: 6px;
+    font-size: 14px; cursor: pointer; font-family: inherit;
+  ">Connect via WebHID</button>
 </div>
 
 <button id="gyro-btn" class="hidden">Connect Gyro (WebHID)</button>
@@ -539,6 +545,33 @@ async function connectGyro() {
 }
 
 gyroBtn.addEventListener('click', connectGyro);
+
+// ── Direct WebHID connect (for controllers the Gamepad API doesn't see) ──
+document.getElementById('hid-connect-btn').addEventListener('click', async () => {
+  try {
+    const filters = ControllerRegistry.getHIDFilters();
+    const devices = await navigator.hid.requestDevice({ filters });
+    if (!devices || devices.length === 0) return;
+
+    controllerDriver = await ControllerRegistry.connect(devices[0]);
+    hidDevice = controllerDriver.device;
+
+    hidDevice.addEventListener('inputreport', handleInputReport);
+
+    // Dismiss overlay and show device name
+    overlay.classList.add('hidden');
+    document.getElementById('gp-name').textContent =
+      controllerDriver.constructor.driverName + ' (WebHID)';
+
+    gyroBtn.classList.add('connected');
+    activateSplit();
+    startCalibration();
+
+  } catch (err) {
+    console.error('WebHID direct connect failed:', err);
+    debugEl.textContent = 'WebHID error: ' + err.message;
+  }
+});
 
 // ══════════════════════════════════════════════
 //  ANIMATION LOOP
