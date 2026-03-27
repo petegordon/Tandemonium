@@ -422,7 +422,10 @@ export class InputManager {
       this.gamepadIndex = e.gamepad.index;
       this.gamepadConnected = true;
       this._gpName = e.gamepad.id;
-      console.log('Gamepad connected:', e.gamepad.id);
+      // GameSir Cyclone reports as "Gamepad" with Switch Pro vendor/product (057e:2009)
+      // but has rotated face button mapping — swap A/B to fix confirm/back
+      this._gpSwapAB = /^Gamepad/i.test(e.gamepad.id) && /057e/i.test(e.gamepad.id);
+      console.log('Gamepad connected:', e.gamepad.id, this._gpSwapAB ? '(A/B swapped)' : '');
       const info = ControllerRegistry.identifyFromGamepadId(e.gamepad.id);
       analytics.setController(info ? info.driverName : e.gamepad.id, 'standard');
       if (!this.suppressGamepadBadge) {
