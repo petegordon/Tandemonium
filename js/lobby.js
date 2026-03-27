@@ -3443,7 +3443,8 @@ export class Lobby {
         const gpId = this.input._gpName || '';
         const info = ControllerRegistry.identifyFromGamepadId(gpId);
         const isPS = info && info.driverName === 'DualSense';
-        const isSwitchPro = info && info.driverName === 'Switch Pro';
+        // True Switch Pro says "Pro Controller"; GameSir clones use Xbox A/B labels
+        const isSwitchPro = info && info.driverName === 'Switch Pro' && /pro controller/i.test(gpId);
         submitIcon.textContent = isPS ? '\u2715' : isSwitchPro ? 'B' : 'A';
         backIcon.textContent = isPS ? '\u25EF' : isSwitchPro ? 'A' : 'B';
         if (isPS) {
@@ -3574,7 +3575,9 @@ export class Lobby {
       const info = ControllerRegistry.identifyFromGamepadId(gpId);
       const isPS = info && info.driverName === 'DualSense';
       const isXbox = info && info.driverName === 'Xbox';
-      const isSwitchPro = info && info.driverName === 'Switch Pro';
+      // True Switch Pro says "Pro Controller" in name; GameSir clones report
+      // same vendor/product but use Xbox-style A/B labels on the physical buttons
+      const isSwitchPro = info && info.driverName === 'Switch Pro' && /pro controller/i.test(gpId);
       if (isPS) {
         icon.textContent = '\u25EF';
         icon.style.color = '#ff6b81';
