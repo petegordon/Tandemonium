@@ -138,9 +138,11 @@ app.whenReady().then(async () => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (API_MATCH.test(details.url)) {
       const headers = details.responseHeaders || {};
-      // Remove all existing ACAO headers (may have different casings) then set ours
+      // Remove any existing ACAO header (case-insensitive) before setting ours,
+      // otherwise Electron keeps both and the browser rejects "multiple values".
       for (const key of Object.keys(headers)) {
         if (key.toLowerCase() === 'access-control-allow-origin') delete headers[key];
+        if (key.toLowerCase() === 'access-control-allow-credentials') delete headers[key];
       }
       headers['Access-Control-Allow-Origin'] = ['tandemonium://app'];
       headers['Access-Control-Allow-Credentials'] = ['true'];
@@ -199,8 +201,12 @@ app.whenReady().then(async () => {
 
   // Right-click context menu — enabled in all builds during playtest phase
   const { Menu } = require('electron');
-  mainWindow.webContents.on('context-menu', () => {
+  mainWindow.webContents.on('context-menu', (_event, params) => {
     Menu.buildFromTemplate([
+      { label: 'Inspect Element', click: () => {
+        mainWindow.webContents.openDevTools({ mode: 'detach' });
+        mainWindow.webContents.inspectElement(params.x, params.y);
+      }},
       { label: 'Open DevTools', click: () => mainWindow.webContents.openDevTools({ mode: 'detach' }) },
       { type: 'separator' },
       { label: 'Reload', click: () => mainWindow.webContents.reload() },
