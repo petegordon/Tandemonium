@@ -124,6 +124,16 @@ app.whenReady().then(async () => {
     return details.deviceType === 'hid';
   });
 
+  // Rewrite Origin header on outgoing API requests so CORS whitelists accept them.
+  // The tandemonium:// custom protocol sends "tandemonium://app" as Origin, which
+  // workers don't whitelist. Map it to the production origin instead.
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    if (details.url.includes('workers.dev') || details.url.includes('jimandi.love')) {
+      details.requestHeaders['Origin'] = 'https://tandemonium.jimandi.love';
+    }
+    callback({ requestHeaders: details.requestHeaders });
+  });
+
   // Register custom protocol handler to serve game files without a network socket
   const rootDir = path.join(__dirname, '..');
   protocol.handle('tandemonium', (request) => {
