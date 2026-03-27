@@ -3443,17 +3443,25 @@ export class Lobby {
         const gpId = this.input._gpName || '';
         const info = ControllerRegistry.identifyFromGamepadId(gpId);
         const isPS = info && info.driverName === 'DualSense';
-        // True Switch Pro says "Pro Controller"; GameSir clones use Xbox A/B labels
-        const isSwitchPro = info && info.driverName === 'Switch Pro' && /pro controller/i.test(gpId);
-        submitIcon.textContent = isPS ? '\u2715' : isSwitchPro ? 'B' : 'A';
-        backIcon.textContent = isPS ? '\u25EF' : isSwitchPro ? 'A' : 'B';
+        const isXbox = info && info.driverName === 'Xbox';
         if (isPS) {
+          submitIcon.innerHTML = '\u2715';
           submitIcon.style.color = '#4a9df8';
           submitIcon.style.borderColor = '#4a9df8';
           submitIcon.style.borderRadius = '50%';
+          backIcon.innerHTML = '\u25EF';
           backIcon.style.color = '#ff6b81';
           backIcon.style.borderColor = '#ff6b81';
           backIcon.style.borderRadius = '50%';
+        } else if (isXbox) {
+          submitIcon.innerHTML = 'A';
+          backIcon.innerHTML = 'B';
+        } else {
+          // Diamond indicator: submit = bottom dot, back = right dot
+          submitIcon.innerHTML = this._makeDiamondHTML('bottom');
+          submitIcon.style.border = 'none';
+          backIcon.innerHTML = this._makeDiamondHTML('right');
+          backIcon.style.border = 'none';
         }
       }
       // Copy status from main join-status into spinner status area
@@ -3575,26 +3583,17 @@ export class Lobby {
       const info = ControllerRegistry.identifyFromGamepadId(gpId);
       const isPS = info && info.driverName === 'DualSense';
       const isXbox = info && info.driverName === 'Xbox';
-      // True Switch Pro says "Pro Controller" in name; GameSir clones report
-      // same vendor/product but use Xbox-style A/B labels on the physical buttons
-      const isSwitchPro = info && info.driverName === 'Switch Pro' && /pro controller/i.test(gpId);
       if (isPS) {
-        icon.textContent = '\u25EF';
+        icon.innerHTML = '\u25EF';
         icon.style.color = '#ff6b81';
-        icon.style.borderColor = '#ff6b81';
-      } else if (isSwitchPro) {
-        icon.textContent = 'A';
-        icon.style.color = '#ff4444';
-        icon.style.borderColor = '#ff4444';
       } else if (isXbox) {
-        icon.textContent = 'B';
+        icon.innerHTML = 'B';
         icon.style.color = '#ff4444';
-        icon.style.borderColor = '#ff4444';
       } else {
-        // Steam / generic
-        icon.textContent = 'B';
-        icon.style.color = 'rgba(255,255,255,0.5)';
-        icon.style.borderColor = 'rgba(255,255,255,0.3)';
+        // Universal 4-dot diamond for Switch Pro, GameSir, and generic controllers
+        // Avoids A/B confusion across Nintendo vs Xbox label conventions
+        // Back = right dot (button[1] = right face button position)
+        icon.innerHTML = this._makeDiamondHTML('right');
       }
       hint.style.visibility = 'visible';
     } else {
@@ -3612,6 +3611,15 @@ export class Lobby {
     } else {
       header.textContent = '';
     }
+  }
+
+  /**
+   * Generate HTML for a 4-dot diamond face button indicator.
+   * @param {'top'|'bottom'|'left'|'right'} active — which dot is filled
+   */
+  _makeDiamondHTML(active) {
+    const dot = (pos) => `<span class="dot dot-${pos}${pos === active ? ' active' : ''}"></span>`;
+    return `<span class="btn-diamond">${dot('top')}${dot('right')}${dot('bottom')}${dot('left')}</span>`;
   }
 
   /**
