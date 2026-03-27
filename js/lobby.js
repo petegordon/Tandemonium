@@ -4263,13 +4263,8 @@ export class Lobby {
 
     const hintEl = document.getElementById('bike-hint');
     if (HOLIDAY_BIKES[key]) {
-      // Unlocked holiday bike — show how it was earned
       nameEl.textContent = '🏆 ' + (BIKE_NAMES[key] || key);
-      if (hintEl) {
-        const wonWith = HOLIDAY_BIKES[key].requires.map(k => BIKE_NAMES[k] || k).join(', ');
-        hintEl.innerHTML = `<span style="color:rgba(100,255,100,0.7)">Won with ${wonWith}</span>`;
-        hintEl.style.display = '';
-      }
+      if (hintEl) hintEl.style.display = 'none';
     } else {
       if (hintEl) hintEl.style.display = 'none';
       nameEl.textContent = BIKE_NAMES[key] || key;
