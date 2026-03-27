@@ -3499,20 +3499,31 @@ export class Lobby {
       this.net.sendProfile(camMsg);
     }
 
-    // Re-initiate media call once to refresh video stream after returning from game
+    // Re-initiate media call to refresh video stream after returning from game
+    // Retry up to 3 times (not 10) since connection is already alive
+    this._mediaCallRetries = 0;
     if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
 
-    const doCall = () => {
+    const retryCall = () => {
       if (!this.net || !this.net.peer || !this.net.conn) return;
       this.net.initiateCall();
+      this._mediaCallRetries++;
+      if (this._mediaCallRetries < 3) {
+        this._mediaCallTimer = setTimeout(() => {
+          const pv = document.getElementById('partner-pip');
+          const hasLive = pv && pv.srcObject &&
+            pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+          if (!hasLive) retryCall();
+        }, 3000);
+      }
     };
 
     if (this.net.transport === 'p2p') {
-      doCall();
+      retryCall();
     } else {
       const prevOnP2P = this.net.onP2PUpgrade;
       this.net.onP2PUpgrade = () => {
-        doCall();
+        retryCall();
         if (prevOnP2P) prevOnP2P();
       };
     }
