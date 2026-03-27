@@ -3194,6 +3194,12 @@ export class Lobby {
         const avatarUrl = profile.avatar || this._partnerAvatarUrl;
         if (avatarUrl) this._partnerAvatarUrl = avatarUrl;
       }
+      // When partner enables camera, the new media stream may not have arrived yet.
+      // Re-evaluate PiP after a delay to catch the stream/track becoming live.
+      if (profile.enabled) {
+        setTimeout(() => this._updatePartnerPip(), 1500);
+        setTimeout(() => this._updatePartnerPip(), 4000);
+      }
       this._updatePartnerPip();
     } else if (profile.type === 'difficultySync') {
       // Stoker: update difficulty selection to match captain's choice
