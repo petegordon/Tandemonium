@@ -2,6 +2,11 @@ const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net } = 
 const path = require('path');
 const fs = require('fs');
 
+// Prevent Chromium from opening listening sockets that trigger Windows Firewall prompt.
+// The game only uses outbound connections (WebRTC, HTTPS) — no inbound listening needed.
+app.commandLine.appendSwitch('remote-debugging-port', '-1');
+app.commandLine.appendSwitch('disable-background-networking');
+
 // --- Steamworks initialization (before app.ready) ---
 let steamworks = null;
 try {
