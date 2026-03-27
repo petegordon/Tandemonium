@@ -3336,7 +3336,10 @@ export class Lobby {
     }
 
     // Evaluate existing partner stream — show avatar if tracks are stale/ended
+    // Also re-evaluate after delays to catch stream refresh from re-initiated media call
     this._updatePartnerPip();
+    setTimeout(() => this._updatePartnerPip(), 2000);
+    setTimeout(() => this._updatePartnerPip(), 5000);
 
     // Re-register remote stream handler so partner video shows in room
     // (game.js replaces this with its own handler during gameplay)
