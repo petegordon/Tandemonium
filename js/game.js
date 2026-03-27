@@ -1506,6 +1506,11 @@ class Game {
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
 
+    // 3-second input cooldown to prevent accidental taps while pedaling
+    this._overlayCooldownUntil = performance.now() + 3000;
+    btns.forEach(b => b.style.pointerEvents = 'none');
+    setTimeout(() => btns.forEach(b => b.style.pointerEvents = ''), 3000);
+
     if (!fromRemote && this.net) {
       this.net.sendEvent(EVT_GAMEOVER);
     }
@@ -2853,8 +2858,13 @@ class Game {
     // Achievements
     this._checkAchievements(dt);
 
-    // Show game over after crash recovery
-    if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
+    // Tutorial: handle crash/completion internally instead of game-over screen
+    if (this._tutorialActive) {
+      this._updateTutorial(dt);
+    } else {
+      // Show game over after crash recovery
+      if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
+    }
 
     this.grassParticles.update(this.bike, dt);
     this._hapticOffRoadCheck();
@@ -2958,6 +2968,11 @@ class Game {
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
       this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+    }
+
+    // Tutorial coaching UI for stoker (phase prompts, dodge arrows, collect indicators)
+    if (this._tutorialActive) {
+      this._updateStokerTutorialUI(dt);
     }
 
     // Collectibles (visual only — captain handles collection)
@@ -3695,6 +3710,46 @@ class Game {
     }
   }
 
+  // Lightweight tutorial UI for stoker — shows prompts, dodge arrows, collect indicators
+  // without running calibration, physics checks, or phase completion logic (captain handles those).
+  _updateStokerTutorialUI(dt) {
+    if (!this._tutorialActive) return;
+
+    const dist = this.bike.distanceTraveled;
+    const tp = this._tutTargetPhase;
+    const pi = TUTORIAL_PHASES[tp];
+
+    // Determine current phase based on distance
+    const phase = dist < pi.contentStart ? 0 : tp;
+
+    // Show phase prompt on transitions
+    if (phase > 0 && phase !== this._tutorialPhase) {
+      this._tutorialPhase = phase;
+      this._showTutorialPhase(phase);
+    }
+    if (phase === 0 && this._tutorialPhase !== 0) {
+      this._tutorialPhase = 0;
+      this._showTutorialPhase(0);
+    }
+
+    // Dodge arrow (visual feedback only — captain checks pass results)
+    const showDodgeArrow = phase > 0 || (tp === 2 && phase === 0);
+    if (this.obstacleManager && showDodgeArrow) {
+      this._updateDodgeArrow(dist);
+    } else {
+      const arrow = document.getElementById('coaching-dodge-arrow');
+      if (arrow) arrow.classList.remove('visible');
+    }
+
+    // Collect indicator
+    if (this.collectibleManager && phase > 0) {
+      this._updateCollectIndicator(dist);
+    } else {
+      const indicator = document.getElementById('coaching-collect-indicator');
+      if (indicator) indicator.classList.remove('visible');
+    }
+  }
+
   _showTutorialPhase(phase) {
     const prompt = document.getElementById('tutorial-prompt');
     const text = document.getElementById('tutorial-prompt-text');
@@ -3995,6 +4050,11 @@ class Game {
     };
     try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}
 
+    // Notify stoker that tutorial is complete (multiplayer)
+    if (this.mode === 'captain' && this.net && this.net.connected) {
+      this.net.sendEvent(EVT_FINISH);
+    }
+
     // Stop the game loop for this ride
     this.state = 'gameover'; // pause updates
 
@@ -4034,6 +4094,11 @@ class Game {
     overlayBtns.push(continueBtn);
     this._setOverlayButtons(overlayBtns, overlayBtns.length - 1);
     this._overlaySlider = slider;
+
+    // 3-second input cooldown to prevent accidental taps while pedaling
+    this._overlayCooldownUntil = performance.now() + 3000;
+    overlayBtns.forEach(b => b.style.pointerEvents = 'none');
+    setTimeout(() => overlayBtns.forEach(b => b.style.pointerEvents = ''), 3000);
   }
 
   _computeTuningParams(isGyro) {

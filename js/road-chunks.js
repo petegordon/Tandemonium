@@ -337,5 +337,10 @@ export class RoadChunkManager {
       this.scene.remove(chunk.group);
       chunk.roadMesh.geometry.dispose();
     }
+    // Dispose shared road material and texture
+    if (this._roadMat) {
+      if (this._roadMat.map) this._roadMat.map.dispose();
+      this._roadMat.dispose();
+    }
   }
 }
