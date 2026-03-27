@@ -340,7 +340,10 @@ export class Lobby {
             this.input.gamepadIndex = i;
             this.input.gamepadConnected = true;
             this.input._gpName = gamepads[i].id;
-            console.log('Desktop: gamepad activated:', gamepads[i].id);
+            // GameSir Cyclone reports as "Gamepad" with Switch Pro IDs but has
+            // swapped A/B buttons (Nintendo layout). Detect and store swap flag.
+            this.input._gpSwapAB = /^Gamepad/i.test(gamepads[i].id) && /057e/i.test(gamepads[i].id);
+            console.log('Desktop: gamepad activated:', gamepads[i].id, this.input._gpSwapAB ? '(A/B swapped)' : '');
           }
           // Show joystick toggle
           this.toggleJoystick.style.display = '';
@@ -2403,8 +2406,9 @@ export class Lobby {
         const gamepads = navigator.getGamepads();
         const gp = gamepads[this.input.gamepadIndex];
         if (gp) {
-          this._gpPrevA = gp.buttons[0] && gp.buttons[0].pressed;
-          this._gpPrevB = gp.buttons[1] && gp.buttons[1].pressed;
+          const btns = this._gpButtons(gp);
+          this._gpPrevA = btns.a;
+          this._gpPrevB = btns.b;
           this._gpPrevUp = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
           this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
           this._gpPrevLeft = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
@@ -2452,6 +2456,7 @@ export class Lobby {
             this.input.gamepadIndex = i;
             this.input.gamepadConnected = true;
             this.input._gpName = gamepads[i].id;
+            this.input._gpSwapAB = /^Gamepad/i.test(gamepads[i].id) && /057e/i.test(gamepads[i].id);
             console.log('Desktop: auto-detected gamepad:', gamepads[i].id);
           }
           // Show joystick toggle
@@ -3457,10 +3462,12 @@ export class Lobby {
           submitIcon.innerHTML = 'A';
           backIcon.innerHTML = 'B';
         } else {
-          // Diamond indicator: submit = bottom dot, back = right dot
-          submitIcon.innerHTML = this._makeDiamondHTML('bottom');
+          // Diamond indicator: confirm/back dot positions (swapped for Cyclone)
+          const confirmDot = this.input._gpSwapAB ? 'right' : 'bottom';
+          const backDot = this.input._gpSwapAB ? 'bottom' : 'right';
+          submitIcon.innerHTML = this._makeDiamondHTML(confirmDot);
           submitIcon.style.border = 'none';
-          backIcon.innerHTML = this._makeDiamondHTML('right');
+          backIcon.innerHTML = this._makeDiamondHTML(backDot);
           backIcon.style.border = 'none';
         }
       }
@@ -3563,8 +3570,9 @@ export class Lobby {
         this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
         this._gpPrevLB = gp.buttons[4] && gp.buttons[4].pressed;
         this._gpPrevRB = gp.buttons[5] && gp.buttons[5].pressed;
-        this._gpPrevA = gp.buttons[0] && gp.buttons[0].pressed;
-        this._gpPrevB = gp.buttons[1] && gp.buttons[1].pressed;
+        const btns = this._gpButtons(gp);
+        this._gpPrevA = btns.a;
+        this._gpPrevB = btns.b;
         this._gpPrevLeft = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
         this._gpPrevRight = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
       }
@@ -3591,9 +3599,9 @@ export class Lobby {
         icon.style.color = '#ff4444';
       } else {
         // Universal 4-dot diamond for Switch Pro, GameSir, and generic controllers
-        // Avoids A/B confusion across Nintendo vs Xbox label conventions
-        // Back = right dot (button[1] = right face button position)
-        icon.innerHTML = this._makeDiamondHTML('right');
+        // Back = right face button (standard) or bottom (Cyclone swapped)
+        const backDot = this.input._gpSwapAB ? 'bottom' : 'right';
+        icon.innerHTML = this._makeDiamondHTML(backDot);
       }
       hint.style.visibility = 'visible';
     } else {
@@ -3620,6 +3628,24 @@ export class Lobby {
   _makeDiamondHTML(active) {
     const dot = (pos) => `<span class="dot dot-${pos}${pos === active ? ' active' : ''}"></span>`;
     return `<span class="btn-diamond">${dot('top')}${dot('right')}${dot('bottom')}${dot('left')}</span>`;
+  }
+
+  /**
+   * Detect if the connected gamepad has swapped A/B buttons.
+   * The GameSir Cyclone reports as "Gamepad" with Switch Pro vendor/product
+   * (057e:2009) but uses Nintendo-style button layout where the right face
+   * button is confirm and bottom is cancel — opposite of the standard mapping.
+   * @returns {boolean} true if buttons[0] and buttons[1] should be swapped
+   */
+  /** Get the confirm (A) and cancel (B) button indices, accounting for swap */
+  _gpButtons(gp) {
+    const swap = this.input._gpSwapAB;
+    const aIdx = swap ? 1 : 0;
+    const bIdx = swap ? 0 : 1;
+    return {
+      a: gp.buttons[aIdx] && gp.buttons[aIdx].pressed,
+      b: gp.buttons[bIdx] && gp.buttons[bIdx].pressed,
+    };
   }
 
   /**
@@ -3699,10 +3725,10 @@ export class Lobby {
     const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
     // D-pad down (button 13) or left stick down (axis 1 > 0.5)
     const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
-    // A button (button 0)
-    const a = gp.buttons[0] && gp.buttons[0].pressed;
-    // B button (button 1)
-    const b = gp.buttons[1] && gp.buttons[1].pressed;
+    // A/B buttons (swapped for GameSir Cyclone)
+    const btns = this._gpButtons(gp);
+    const a = btns.a;
+    const b = btns.b;
 
     // D-pad left/right (buttons 14/15 or left stick axis 0)
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;

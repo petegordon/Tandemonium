@@ -2421,8 +2421,9 @@ class Game {
 
     // Y button (button 3) — save clip
     const y = gp.buttons[3] && gp.buttons[3].pressed;
-    // A button (button 0) — recalibrate tilt
-    const a = gp.buttons[0] && gp.buttons[0].pressed;
+    // A button — recalibrate tilt (swapped for GameSir Cyclone)
+    const aIdx = this.input._gpSwapAB ? 1 : 0;
+    const a = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
     // L3 (button 10) — quick gyro recenter
     const l3 = gp.buttons[10] && gp.buttons[10].pressed;
 
@@ -2507,7 +2508,8 @@ class Game {
     const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
     const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
-    const a = gp.buttons[0] && gp.buttons[0].pressed;
+    const aIdx = this.input._gpSwapAB ? 1 : 0;
+    const a = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
 
     if (up && !this._olPrevUp) {
       this._overlayButtons[this._overlayFocusIdx].classList.remove('gamepad-focus');
