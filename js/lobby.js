@@ -3420,9 +3420,9 @@ export class Lobby {
       if (this._mediaCallRetries < 10) {
         this._mediaCallTimer = setTimeout(() => {
           const partnerVideo = document.getElementById('partner-pip');
-          const hasLiveStream = partnerVideo && partnerVideo.srcObject &&
-            partnerVideo.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-          if (!hasLiveStream) retryCall();
+          const hasStream = partnerVideo && partnerVideo.srcObject &&
+            partnerVideo.srcObject.getVideoTracks().length > 0;
+          if (!hasStream) retryCall();
         }, 3000);
       }
     };
