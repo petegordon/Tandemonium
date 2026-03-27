@@ -1048,9 +1048,11 @@ export class Lobby {
           refresh: async () => {},
           clear: () => {},
         };
-        // Hide Google sign-in button and Stripe purchase CTAs on Steam
+        // Hide all Google sign-in UI on Steam — Steam users auth via Steam identity
         const gsiBtn = document.getElementById('gsi-button-container');
         if (gsiBtn) gsiBtn.style.display = 'none';
+        const signInBtn = document.getElementById('btn-sign-in');
+        if (signInBtn) signInBtn.style.display = 'none';
       } else {
         this.license = new LicenseManager(this.auth);
       }
@@ -1068,9 +1070,14 @@ export class Lobby {
     const logoutBtn = document.getElementById('profile-popup-logout');
 
     // Initialize auth: Steam auto-login or Google Sign-In
+    const isElectron = navigator.userAgent.includes('Electron');
     if (this._isSteam) {
       // Steam users auto-authenticate — no Google sign-in needed
       this.auth.loginWithSteam();
+    } else if (isElectron) {
+      // Electron without Steam (shouldn't happen) — don't init Google OAuth
+      // Google OAuth won't work from custom protocol origin
+      console.warn('AUTH: Electron without Steam — skipping Google sign-in');
     } else {
       this.auth.initGSI();
     }
