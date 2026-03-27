@@ -3106,11 +3106,15 @@ export class Lobby {
     // Check if the stream has a live (non-ended) video track
     const stream = partnerVideo && partnerVideo.srcObject;
     const liveVideoTrack = stream && stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled);
+    const hasAnyTrack = stream && stream.getVideoTracks().length > 0;
 
     if (this._partnerCameraOn && liveVideoTrack) {
       partnerVideo.style.display = 'block';
       partnerVideo.play().catch(() => {});
       if (partnerAvatar) partnerAvatar.style.display = 'none';
+    } else if (this._partnerCameraOn && hasAnyTrack) {
+      // Track exists but not yet live — keep current display state, don't flash to avatar
+      partnerVideo.play().catch(() => {});
     } else {
       if (partnerVideo) partnerVideo.style.display = 'none';
       if (partnerAvatar && this._partnerAvatarUrl) {
@@ -3495,30 +3499,20 @@ export class Lobby {
       this.net.sendProfile(camMsg);
     }
 
-    // Re-initiate media call to refresh video stream after returning from game
-    this._mediaCallRetries = 0;
+    // Re-initiate media call once to refresh video stream after returning from game
     if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
 
-    const retryCall = () => {
+    const doCall = () => {
       if (!this.net || !this.net.peer || !this.net.conn) return;
       this.net.initiateCall();
-      this._mediaCallRetries++;
-      if (this._mediaCallRetries < 10) {
-        this._mediaCallTimer = setTimeout(() => {
-          const partnerVideo = document.getElementById('partner-pip');
-          const hasStream = partnerVideo && partnerVideo.srcObject &&
-            partnerVideo.srcObject.getVideoTracks().length > 0;
-          if (!hasStream) retryCall();
-        }, 3000);
-      }
     };
 
     if (this.net.transport === 'p2p') {
-      retryCall();
+      doCall();
     } else {
       const prevOnP2P = this.net.onP2PUpgrade;
       this.net.onP2PUpgrade = () => {
-        retryCall();
+        doCall();
         if (prevOnP2P) prevOnP2P();
       };
     }
