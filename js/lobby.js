@@ -3614,12 +3614,12 @@ export class Lobby {
     // At 1080px: card = 270px, at 2400px: card = 600px
     // Content with descriptions needs roughly 180*ls, without ~120*ls
     const vh = window.innerHeight;
-    if (vh >= 1200) return;         // large TV/monitor — show everything
-    if (vh >= 1000) {               // medium — hide difficulty descs
+    if (vh >= 800) return;          // desktop/TV/laptop — show everything
+    if (vh >= 700) {                // compact — hide difficulty descs
       card.classList.add('lobby-compact-1');
-    } else if (vh >= 800) {         // smaller — also hide locked card desc
+    } else if (vh >= 600) {         // smaller — also hide locked card desc
       card.classList.add('lobby-compact-2');
-    } else {                        // tight — hide all descriptions
+    } else {                        // tight (small mobile) — hide all descriptions
       card.classList.add('lobby-compact-3');
     }
   }
