@@ -546,19 +546,11 @@ export class Lobby {
       }
     }
 
-    // Show/hide START RIDE + wait text with the level step
-    // (these live outside #lobby-level so they render below the difficulty selector)
-    // For multiplayer, _showRoomLevelsStep sets visibility before calling _showStep,
-    // so we only need to handle: hiding on non-level steps, and showing for solo.
-    const startBtn = document.getElementById('btn-start-ride');
-    const waitText = document.getElementById('level-wait-text');
-    if (!showDiff) {
-      if (startBtn) startBtn.style.display = 'none';
-      if (waitText) waitText.style.display = 'none';
-    } else if (this._pendingMode === 'solo') {
-      if (startBtn) startBtn.style.display = '';
-      if (waitText) waitText.style.display = 'none';
-    }
+    // Show/hide #level-extras wrapper (START RIDE + wait text)
+    // Wrapper scopes these to the level step; child visibility is set by
+    // _buildLevelCards (solo) or _showRoomLevelsStep (multiplayer role).
+    const levelExtras = document.getElementById('level-extras');
+    if (levelExtras) levelExtras.style.display = showDiff ? '' : 'none';
 
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
     const hasBack = this._stepBack.get(step);
