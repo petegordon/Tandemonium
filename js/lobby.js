@@ -3514,16 +3514,21 @@ export class Lobby {
           const hasLive = pv && pv.srcObject &&
             pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
           if (!hasLive) retryCall();
-        }, 3000);
+        }, 5000);
       }
     };
 
+    // Delay first call by 2s to let both sides set up handlers after room transition
+    const startRetry = () => {
+      this._mediaCallTimer = setTimeout(() => retryCall(), 2000);
+    };
+
     if (this.net.transport === 'p2p') {
-      retryCall();
+      startRetry();
     } else {
       const prevOnP2P = this.net.onP2PUpgrade;
       this.net.onP2PUpgrade = () => {
-        retryCall();
+        startRetry();
         if (prevOnP2P) prevOnP2P();
       };
     }
