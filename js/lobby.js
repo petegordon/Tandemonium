@@ -3016,7 +3016,11 @@ export class Lobby {
     const partnerWrap = document.getElementById('partner-pip-wrap');
     if (!partnerWrap) return;
 
-    if (this._partnerCameraOn && partnerVideo && partnerVideo.srcObject) {
+    // Check if the stream has a live (non-ended) video track
+    const stream = partnerVideo && partnerVideo.srcObject;
+    const liveVideoTrack = stream && stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled);
+
+    if (this._partnerCameraOn && liveVideoTrack) {
       partnerVideo.style.display = 'block';
       partnerVideo.play().catch(() => {});
       if (partnerAvatar) partnerAvatar.style.display = 'none';
@@ -3321,6 +3325,9 @@ export class Lobby {
       }
       if (selfieWrap) selfieWrap.style.display = 'block';
     }
+
+    // Evaluate existing partner stream — show avatar if tracks are stale/ended
+    this._updatePartnerPip();
 
     // Re-register remote stream handler so partner video shows in room
     // (game.js replaces this with its own handler during gameplay)
