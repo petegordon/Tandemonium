@@ -697,6 +697,9 @@
     text-align: center;
     overflow-y: auto;
   }
+  #victory-overlay.visible {
+    display: flex;
+  }
   #victory-video {
     width: 90px;
     height: 90px;
@@ -3278,30 +3281,34 @@
     .disconnect-box p { font-size: calc(20 * var(--ls)); }
 
     /* ── Victory screen — two-column layout for TV/monitor ── */
-    #victory-overlay {
-      display: none; /* overridden to flex by JS */
-      flex-direction: row;
-      flex-wrap: wrap;
+    #victory-overlay.visible {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr auto;
       align-items: center;
-      justify-content: center;
-      gap: calc(8 * var(--ls)) calc(40 * var(--ls));
+      justify-items: center;
+      gap: 0 calc(20 * var(--ls));
       padding: calc(20 * var(--ls)) calc(40 * var(--ls));
     }
     #victory-left {
-      flex: 0 0 auto;
+      grid-column: 1;
+      grid-row: 1;
+      justify-self: center;
       align-items: center;
     }
     #victory-right {
-      flex: 0 1 auto;
+      grid-column: 2;
+      grid-row: 1;
+      justify-self: center;
       align-items: flex-start;
     }
     #victory-buttons {
-      flex-basis: 100%;
-      flex-direction: row;
-      justify-content: center;
-      gap: calc(8 * var(--ls));
+      grid-column: 1 / -1;
+      grid-row: 2;
+      flex-direction: column;
+      gap: calc(6 * var(--ls));
+      margin-top: calc(10 * var(--ls));
     }
-    #victory-buttons .lobby-btn { margin-top: 0 !important; }
     #victory-video { width: calc(120 * var(--ls)); height: calc(120 * var(--ls)); border-radius: calc(8 * var(--ls)); }
     #victory-overlay h2 { font-size: calc(28 * var(--ls)); margin-bottom: 0; }
     #victory-destination { font-size: calc(18 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
@@ -3938,7 +3945,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.658d5d8 | 03-27-2026 18:07</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.30a3a1d | 03-27-2026 18:12</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -4161,7 +4168,7 @@ ON</button>
 </div>
 
 <!-- Victory overlay -->
-<div id="victory-overlay" style="display:none;">
+<div id="victory-overlay">
   <div id="victory-left">
     <canvas id="victory-video" width="360" height="360"></canvas>
     <h2 id="victory-title">YOU MADE IT!</h2>

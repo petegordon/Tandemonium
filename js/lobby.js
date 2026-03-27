@@ -3327,10 +3327,10 @@ export class Lobby {
     this._applyPresetToPreview();
 
     // Ensure game overlays don't block room UI on mobile
-    for (const id of ['victory-overlay', 'game-over-overlay']) {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    }
+    const victoryEl = document.getElementById('victory-overlay');
+    if (victoryEl) victoryEl.classList.remove('visible');
+    const gameoverEl = document.getElementById('game-over-overlay');
+    if (gameoverEl) gameoverEl.style.display = 'none';
     // Re-sync toggle button states after returning from ride
     this._checkPermissionStates();
 
