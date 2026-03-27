@@ -1274,8 +1274,10 @@ export class GameRecorder {
         this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
         this._gpPrevLeft = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
         this._gpPrevRight = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
-        this._gpPrevA = gp.buttons[0] && gp.buttons[0].pressed;
-        this._gpPrevB = gp.buttons[1] && gp.buttons[1].pressed;
+        const aIdx = this.input._gpSwapAB ? 1 : 0;
+        const bIdx = this.input._gpSwapAB ? 0 : 1;
+        this._gpPrevA = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
+        this._gpPrevB = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
       }
     }
 
@@ -1302,8 +1304,10 @@ export class GameRecorder {
     const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
     const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
-    const a = gp.buttons[0] && gp.buttons[0].pressed;
-    const b = gp.buttons[1] && gp.buttons[1].pressed;
+    const aIdx = this.input._gpSwapAB ? 1 : 0;
+    const bIdx = this.input._gpSwapAB ? 0 : 1;
+    const a = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
+    const b = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
 
     // Both axes navigate the button list (buttons wrap vertically on narrow screens)
     if ((up && !this._gpPrevUp) || (left && !this._gpPrevLeft)) this._movePreviewFocus(-1);
