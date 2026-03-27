@@ -546,12 +546,17 @@ export class Lobby {
       }
     }
 
-    // Hide START RIDE / wait text when leaving the level step
+    // Show/hide START RIDE + wait text with the level step
     // (these live outside #lobby-level so they render below the difficulty selector)
+    // For multiplayer, _showRoomLevelsStep sets visibility before calling _showStep,
+    // so we only need to handle: hiding on non-level steps, and showing for solo.
+    const startBtn = document.getElementById('btn-start-ride');
+    const waitText = document.getElementById('level-wait-text');
     if (!showDiff) {
-      const startBtn = document.getElementById('btn-start-ride');
-      const waitText = document.getElementById('level-wait-text');
       if (startBtn) startBtn.style.display = 'none';
+      if (waitText) waitText.style.display = 'none';
+    } else if (this._pendingMode === 'solo') {
+      if (startBtn) startBtn.style.display = '';
       if (waitText) waitText.style.display = 'none';
     }
 
@@ -935,8 +940,8 @@ export class Lobby {
     const startBtn = document.getElementById('btn-start-ride');
     const waitText = document.getElementById('level-wait-text');
     const prompt = document.getElementById('level-prompt');
-    // Show START RIDE button (disabled until a level is selected)
-    if (startBtn) { startBtn.style.display = ''; startBtn.disabled = true; }
+    // Reset START RIDE button state (visibility handled by _showStep)
+    if (startBtn) { startBtn.disabled = true; }
     if (waitText) waitText.style.display = 'none';
     if (prompt) prompt.style.display = 'none';
     // Reset difficulty selector interactivity
