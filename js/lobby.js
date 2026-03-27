@@ -901,14 +901,14 @@ export class Lobby {
       }
     }
 
-    // Multiplayer: add START RIDE button to nav if captain
-    if (startBtn && isClickable) buttons.push(startBtn);
-
     // Add individual difficulty buttons to gamepad navigation
     if (isClickable) {
       const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
       diffBtns.forEach(b => buttons.push(b));
     }
+
+    // Multiplayer: add START RIDE button to nav after difficulty (natural flow)
+    if (startBtn && isClickable) buttons.push(startBtn);
 
     // Register for gamepad navigation
     const navItems = isClickable ? [...buttons, backBtn] : [backBtn];
@@ -1302,7 +1302,8 @@ export class Lobby {
   _toggleAll() {
     // If ALL is active, turn everything off
     const motionOk = !this._motionAvailable() || this.motionActive;
-    if (this.cameraActive && this.audioActive && motionOk && this.musicActive) {
+    const cameraOk = !this._hasCamera || this.cameraActive;
+    if (cameraOk && this.audioActive && motionOk && this.musicActive) {
       if (this.cameraActive) this._toggleCamera();
       if (this.audioActive)  this._toggleAudio();
       if (this._motionAvailable() && this.motionActive) this._toggleMotion();
@@ -1311,7 +1312,7 @@ export class Lobby {
     }
 
     // Batch camera + mic into one getUserMedia prompt when both are needed
-    const needCam = !this.cameraActive && !this._cameraPermitted;
+    const needCam = !this.cameraActive && !this._cameraPermitted && this._hasCamera;
     const needMic = !this.audioActive  && !this._audioPermitted;
 
     if (needCam || needMic) {

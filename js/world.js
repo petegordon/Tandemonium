@@ -715,7 +715,25 @@ export class World {
   setRaceMarkers(level, camera) {
     // Remove old markers + clean up video if any
     this._cleanupDestVideo();
-    this._raceMarkers.forEach(m => this.scene.remove(m.mesh));
+    this._raceMarkers.forEach(m => {
+      this.scene.remove(m.mesh);
+      // Dispose materials and textures to prevent GPU memory leaks
+      if (m.mesh.traverse) {
+        m.mesh.traverse(child => {
+          if (child.material) {
+            if (child.material.map) child.material.map.dispose();
+            child.material.dispose();
+          }
+          if (child.geometry) child.geometry.dispose();
+        });
+      } else {
+        if (m.mesh.material) {
+          if (m.mesh.material.map) m.mesh.material.map.dispose();
+          m.mesh.material.dispose();
+        }
+        if (m.mesh.geometry) m.mesh.geometry.dispose();
+      }
+    });
     this._raceMarkers = [];
     this._camera = camera || null;
 
@@ -993,6 +1011,8 @@ export class World {
   }
 
   _makeCloudSprite() {
+    // Cache the cloud sprite texture — reuse across races instead of creating new canvases
+    if (this._cachedCloudSpriteTex) return this._cachedCloudSpriteTex;
     const size = 64;
     const canvas = document.createElement('canvas');
     canvas.width = size;
@@ -1005,6 +1025,7 @@ export class World {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
     const tex = new THREE.CanvasTexture(canvas);
+    this._cachedCloudSpriteTex = tex;
     return tex;
   }
 
