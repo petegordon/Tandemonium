@@ -398,7 +398,7 @@ CALIBRATION          WAITING
 
 | Function | Called By | Keeps Connection | Destination | Re-registers Handlers |
 |----------|----------|-----------------|-------------|----------------------|
-| `_returnToRoom()` | Captain: RETURN TO ROOM button; Stoker: receives EVT_RETURN_ROOM; Both: `_endTutorialRide()` in multiplayer | Yes | `showRoom()` → roomStep | Yes — onProfileReceived, onRemoteStream, onDisconnected |
+| `_returnToRoom()` | Either player: RETURN TO ROOM button (sends EVT_RETURN_ROOM to partner); Either player: receives EVT_RETURN_ROOM; Both: `_endTutorialRide()` in multiplayer | Yes | `showRoom()` → roomStep | Yes — onProfileReceived, onRemoteStream, onDisconnected |
 | `_returnToLobby()` | END RIDE button (any role, any mode) | No (destroys net) | `show()` → modeStep | N/A (no connection) |
 | `_endTutorialRide()` | Captain: Let's RIDE! button; Stoker: Continue button | Multiplayer: Yes (delegates to `_returnToRoom`); Solo: No | Multiplayer: roomStep; Solo: levelStep/modeStep | Multiplayer: Yes (via `_returnToRoom`) |
 

@@ -2228,8 +2228,8 @@ class Game {
       return;
     }
 
-    // Captain tells stoker to return to room too
-    if (this.mode === 'captain') {
+    // Notify partner to return to room too
+    if (this.net.connected) {
       this.net.sendEvent(EVT_RETURN_ROOM);
     }
 
