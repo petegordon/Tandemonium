@@ -3406,12 +3406,13 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    // Refresh selfie video from existing stream
+    // Refresh selfie video from existing stream (re-assign srcObject after DOM reparent to unfreeze on iOS)
     const selfieVideo = document.getElementById('selfie-pip');
     const selfieAvatar = document.getElementById('selfie-pip-avatar');
     if (selfieVideo && this.net && this.net._localMediaStream) {
+      selfieVideo.srcObject = null;
+      selfieVideo.srcObject = this.net._localMediaStream;
       const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-      if (videoTrack) selfieVideo.srcObject = this.net._localMediaStream;
       if (videoTrack && this.cameraActive) {
         selfieVideo.style.display = 'block';
         selfieVideo.play().catch(() => {});
@@ -3427,6 +3428,14 @@ export class Lobby {
         }
       }
       if (selfieWrap) selfieWrap.style.display = 'block';
+    }
+
+    // Re-assign partner video srcObject after DOM reparent to unfreeze on iOS
+    const partnerVideo = document.getElementById('partner-pip');
+    if (partnerVideo && partnerVideo.srcObject) {
+      const stream = partnerVideo.srcObject;
+      partnerVideo.srcObject = null;
+      partnerVideo.srcObject = stream;
     }
 
     // Evaluate existing partner stream — show avatar if tracks are stale/ended
