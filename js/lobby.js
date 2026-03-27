@@ -703,10 +703,13 @@ export class Lobby {
     document.getElementById('btn-start-ride').addEventListener('click', () => {
       if (this._pendingMode === 'multiplayer') {
         if (this._roomRole !== 'captain') return;
-        // Send start ride to partner
-        if (this.net && this.net.connected) {
-          this.net.sendProfile({ type: 'startRide' });
+        // Send start ride to partner — block if not connected
+        if (!this.net || !this.net.connected) {
+          const statusEl = document.getElementById('status');
+          if (statusEl) statusEl.textContent = 'Reconnecting to partner...';
+          return;
         }
+        this.net.sendProfile({ type: 'startRide' });
         this._transitionToGame();
       } else {
         // Solo: start game directly
