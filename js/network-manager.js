@@ -544,6 +544,8 @@ export class NetworkManager {
 
     // Destroy stale peer from previous session to free the ID on the signaling server
     if (this.peer) {
+      this._activeConn = null; // prevent close handler from triggering disconnect
+      this.conn = null;
       try { this.peer.destroy(); } catch (e) {}
       this.peer = null;
     }
