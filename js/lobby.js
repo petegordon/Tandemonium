@@ -2739,75 +2739,121 @@ export class Lobby {
 
   // ── Room Persistence (localStorage) ──────────────────────────
 
-  _saveRoom(roomCode, role) {
+  _saveRoom(roomCode, role, partnerName) {
     try {
-      localStorage.setItem('tandemonium-room', JSON.stringify({
-        roomCode, role, timestamp: Date.now()
-      }));
+      const rooms = this._getRecentRooms();
+      const entry = { roomCode, role, timestamp: Date.now(), partnerName: partnerName || null };
+      const existing = rooms.findIndex(r => r.roomCode === roomCode);
+      if (existing >= 0) {
+        // Preserve partner name if not provided
+        if (!entry.partnerName && rooms[existing].partnerName) entry.partnerName = rooms[existing].partnerName;
+        rooms[existing] = entry;
+      } else {
+        rooms.push(entry);
+      }
+      localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
     } catch (e) {}
   }
 
-  _clearRoom() {
-    try { localStorage.removeItem('tandemonium-room'); } catch (e) {}
-  }
-
-  _getSavedRoom() {
+  _clearRoom(roomCode) {
     try {
-      const raw = localStorage.getItem('tandemonium-room');
-      if (!raw) return null;
-      const data = JSON.parse(raw);
-      // Expire after 1 hour
-      if (Date.now() - data.timestamp > 3600000) {
-        localStorage.removeItem('tandemonium-room');
-        return null;
+      if (roomCode) {
+        const rooms = this._getRecentRooms().filter(r => r.roomCode !== roomCode);
+        localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
+      } else {
+        localStorage.removeItem('tandemonium-rooms');
       }
-      return data;
-    } catch (e) { return null; }
+    } catch (e) {}
   }
 
-  _showRejoinPrompt(saved) {
-    const roleName = saved.role === 'captain' ? 'Captain' : 'Stoker';
-    // Create a simple modal overlay for rejoin prompt
+  _getRecentRooms() {
+    try {
+      // Migrate old single-room format
+      const oldRaw = localStorage.getItem('tandemonium-room');
+      if (oldRaw) {
+        localStorage.removeItem('tandemonium-room');
+        const old = JSON.parse(oldRaw);
+        if (old.roomCode) {
+          const existing = localStorage.getItem('tandemonium-rooms');
+          const rooms = existing ? JSON.parse(existing) : [];
+          if (!rooms.some(r => r.roomCode === old.roomCode)) rooms.push(old);
+          localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
+        }
+      }
+      const raw = localStorage.getItem('tandemonium-rooms');
+      if (!raw) return [];
+      const rooms = JSON.parse(raw);
+      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+      const recent = rooms.filter(r => r.timestamp > fiveMinAgo);
+      if (recent.length !== rooms.length) {
+        localStorage.setItem('tandemonium-rooms', JSON.stringify(recent));
+      }
+      return recent;
+    } catch (e) { return []; }
+  }
+
+  _showRecentRoomsPrompt(rooms) {
     const overlay = document.createElement('div');
     overlay.id = 'rejoin-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-    overlay.innerHTML =
-      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:320px;text-align:center;color:#fff;font-family:inherit;">' +
-        '<div style="font-size:1.1em;margin-bottom:12px;">Rejoin room <b>' + saved.roomCode + '</b> as ' + roleName + '?</div>' +
-        '<div style="display:flex;gap:12px;justify-content:center;">' +
-          '<button id="btn-rejoin-yes" style="padding:10px 20px;border-radius:8px;border:none;background:#44ff66;color:#000;font-weight:bold;font-size:1em;cursor:pointer;">Rejoin</button>' +
-          '<button id="btn-rejoin-no" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;">New Room</button>' +
+
+    const now = Date.now();
+    const cardsHtml = rooms.map((r, i) => {
+      const roleName = r.role === 'captain' ? 'Captain' : 'Stoker';
+      const agoSec = Math.floor((now - r.timestamp) / 1000);
+      const agoText = agoSec < 60 ? 'just now' : Math.floor(agoSec / 60) + 'm ago';
+      const partnerText = r.partnerName ? 'with ' + this._escapeHtml(r.partnerName) + ' · ' : '';
+      const dimStyle = agoSec > 180 ? 'opacity:0.6;' : '';
+      return '<button class="rejoin-room-card" data-idx="' + i + '" style="' +
+        'display:block;width:100%;padding:12px 16px;border-radius:10px;border:1.5px solid rgba(255,255,255,0.15);' +
+        'background:rgba(255,255,255,0.06);color:#fff;cursor:pointer;text-align:left;font-family:inherit;' +
+        'transition:border-color 0.2s,background 0.2s;' + dimStyle + '">' +
+        '<div style="font-size:1em;font-weight:700;margin-bottom:2px;">' +
+          this._escapeHtml(r.roomCode) + '  ·  ' + roleName +
         '</div>' +
+        '<div style="font-size:0.8em;color:rgba(255,255,255,0.5);">' + partnerText + agoText + '</div>' +
+      '</button>';
+    }).join('');
+
+    overlay.innerHTML =
+      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:340px;width:90%;text-align:center;color:#fff;font-family:inherit;">' +
+        '<div style="font-size:1.1em;font-weight:700;margin-bottom:14px;">Recent Rooms</div>' +
+        '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">' + cardsHtml + '</div>' +
+        '<button id="btn-rejoin-new" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;width:100%;">New Room</button>' +
       '</div>';
     document.body.appendChild(overlay);
 
-    // Default-focus "Rejoin" for gamepad navigation
+    // Default gamepad focus on first card
     this._rejoinFocus = 0;
-    document.getElementById('btn-rejoin-yes').classList.add('gamepad-focus');
+    const cards = overlay.querySelectorAll('.rejoin-room-card');
+    if (cards.length > 0) cards[0].classList.add('gamepad-focus');
 
     return new Promise((resolve) => {
-      document.getElementById('btn-rejoin-yes').addEventListener('click', () => {
-        overlay.remove();
-        resolve('rejoin');
+      cards.forEach((card) => {
+        card.addEventListener('click', () => {
+          const idx = parseInt(card.dataset.idx, 10);
+          overlay.remove();
+          resolve(rooms[idx]);
+        });
       });
-      document.getElementById('btn-rejoin-no').addEventListener('click', () => {
+      document.getElementById('btn-rejoin-new').addEventListener('click', () => {
         overlay.remove();
-        this._clearRoom();
-        resolve('new');
+        resolve(null);
       });
     });
   }
 
   async _handleRejoinCheck() {
-    const saved = this._getSavedRoom();
-    if (!saved) return false;
+    const rooms = this._getRecentRooms();
+    if (rooms.length === 0) return false;
 
-    const choice = await this._showRejoinPrompt(saved);
-    if (choice !== 'rejoin') return false;
+    const selected = await this._showRecentRoomsPrompt(rooms);
+    if (!selected) return false; // User chose "New Room"
 
     // Rejoin: skip role selection, go straight to connection
     await this._requestMotion();
     this._pendingMode = 'multiplayer';
+    const saved = selected;
 
     if (saved.role === 'captain') {
       this._showStep(this.hostStep);
@@ -2823,6 +2869,9 @@ export class Lobby {
 
       const relayToken = await this.auth.getRelayToken(saved.roomCode, 'captain');
       if (relayToken) this.net._relayToken = relayToken;
+
+      // Acquire local media early so it's ready when P2P connects
+      await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
 
       this.net.onRoomJoined = () => {
         codeEl.textContent = saved.roomCode;
@@ -2860,6 +2909,9 @@ export class Lobby {
       const relayToken = await this.auth.getRelayToken(saved.roomCode, 'stoker');
       if (relayToken) this.net._relayToken = relayToken;
 
+      // Acquire local media early so it's ready when P2P connects
+      await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
+
       this.net.onRoomJoined = () => {
         statusEl.textContent = 'Waiting for captain...';
         this._saveRoom(saved.roomCode, 'stoker');
@@ -2893,7 +2945,8 @@ export class Lobby {
         const newBtn = document.getElementById('btn-stale-new-room');
         if (newBtn) {
           newBtn.addEventListener('click', () => {
-            this._clearRoom();
+            if (this.net && this.net.roomCode) this._clearRoom(this.net.roomCode);
+            else this._clearRoom();
             if (this.net) { this.net.destroy(); this.net = null; }
             this._showStep(this.roleStep);
           });
@@ -3182,7 +3235,13 @@ export class Lobby {
     if (!profile || !profile.type) {
       // Profile message (avatar, name, achievements)
       const partnerNameEl = document.getElementById('room-partner-name');
-      if (partnerNameEl && profile && profile.name) partnerNameEl.textContent = profile.name;
+      if (partnerNameEl && profile && profile.name) {
+        partnerNameEl.textContent = profile.name;
+        // Save partner name for recent rooms display
+        if (this.net && this.net.roomCode && this._roomRole) {
+          this._saveRoom(this.net.roomCode, this._roomRole, profile.name);
+        }
+      }
       // Cache partner avatar URL for camera toggle
       if (profile && profile.avatar) {
         this._partnerAvatarUrl = this._avatarCache.get(profile.avatar) || profile.avatar;

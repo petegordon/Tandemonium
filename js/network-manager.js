@@ -343,13 +343,14 @@ export class NetworkManager {
 
   _refreshRoomTimestamp() {
     try {
-      const raw = localStorage.getItem('tandemonium-room');
+      const raw = localStorage.getItem('tandemonium-rooms');
       if (raw) {
-        const data = JSON.parse(raw);
-        // Only refresh if the stored room matches this connection's room
-        if (data.roomCode !== this.roomCode) return;
-        data.timestamp = Date.now();
-        localStorage.setItem('tandemonium-room', JSON.stringify(data));
+        const rooms = JSON.parse(raw);
+        const entry = rooms.find(r => r.roomCode === this.roomCode);
+        if (entry) {
+          entry.timestamp = Date.now();
+          localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
+        }
       }
     } catch (e) {}
   }
