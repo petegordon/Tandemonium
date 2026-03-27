@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoadPath } from './road-path.js';
 import { RoadChunkManager } from './road-chunks.js';
+import { isMobile } from './config.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS = 120;         // ~4.2-unit vertex spacing — covers visible road/tree range
@@ -398,25 +399,29 @@ export class World {
 
     for (let i = 0; i < CLOUD_COUNT; i++) {
       const group = new THREE.Group();
-      // Build a cluster of 10-18 overlapping spheres for big fluffy shapes
+      // Build a cluster of overlapping spheres for big fluffy shapes
+      // On mobile, cap at 6 puffs to reduce draw calls (~60% fewer cloud meshes)
       const puffCount = 10 + Math.floor(this._cloudSeededRandom() * 9);
+      const maxPuffs = isMobile ? Math.min(puffCount, 6) : puffCount;
       const cloudWidth = 25 + this._cloudSeededRandom() * 40; // 25-65 units wide
       const cloudHeight = 6 + this._cloudSeededRandom() * 8;  // 6-14 units tall
 
       for (let p = 0; p < puffCount; p++) {
-        const geo = puffGeos[p % puffGeos.length];
-        const puff = new THREE.Mesh(geo, cloudMat);
         const t = puffCount > 1 ? p / (puffCount - 1) : 0.5;
         const sx = 5 + this._cloudSeededRandom() * 10;  // puff X scale
         const sy = 4 + this._cloudSeededRandom() * 6;   // puff Y scale
         const sz = 4.5 + this._cloudSeededRandom() * 7;
-        puff.scale.set(sx, sy, sz);
-        puff.position.set(
-          (t - 0.5) * cloudWidth + (this._cloudSeededRandom() - 0.5) * 8,
-          (this._cloudSeededRandom() - 0.3) * cloudHeight * 0.5,
-          (this._cloudSeededRandom() - 0.5) * 10
-        );
-        group.add(puff);
+        const px = (t - 0.5) * cloudWidth + (this._cloudSeededRandom() - 0.5) * 8;
+        const py = (this._cloudSeededRandom() - 0.3) * cloudHeight * 0.5;
+        const pz = (this._cloudSeededRandom() - 0.5) * 10;
+        // Always consume PRNG values for deterministic sync, but skip meshes on mobile
+        if (p < maxPuffs) {
+          const geo = puffGeos[p % puffGeos.length];
+          const puff = new THREE.Mesh(geo, cloudMat);
+          puff.scale.set(sx, sy, sz);
+          puff.position.set(px, py, pz);
+          group.add(puff);
+        }
       }
 
       group.visible = false;

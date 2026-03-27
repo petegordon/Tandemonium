@@ -3,8 +3,9 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { isMobile } from './config.js';
 
-const POOL_SIZE = 300;
+const POOL_SIZE = isMobile ? 150 : 300;
 
 // Two particle types: dirt clods (short life, low arc) and grass flecks (longer, flutter)
 const TYPE_DIRT = 0;

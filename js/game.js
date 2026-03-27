@@ -80,8 +80,8 @@ class Game {
     this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.enabled = !isMobile;
+    if (!isMobile) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.prepend(this.renderer.domElement);
 
     // Scene
