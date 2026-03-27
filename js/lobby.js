@@ -3462,12 +3462,11 @@ export class Lobby {
           submitIcon.innerHTML = 'A';
           backIcon.innerHTML = 'B';
         } else {
-          // Diamond indicator: confirm/back dot positions (swapped for Cyclone)
-          const confirmDot = this.input._gpSwapAB ? 'right' : 'bottom';
-          const backDot = this.input._gpSwapAB ? 'bottom' : 'right';
-          submitIcon.innerHTML = this._makeDiamondHTML(confirmDot);
+          // Diamond indicator: always bottom=confirm, right=back
+          // The button swap already remaps indices so bottom press = confirm on all controllers
+          submitIcon.innerHTML = this._makeDiamondHTML('bottom');
           submitIcon.style.border = 'none';
-          backIcon.innerHTML = this._makeDiamondHTML(backDot);
+          backIcon.innerHTML = this._makeDiamondHTML('right');
           backIcon.style.border = 'none';
         }
       }
@@ -3599,9 +3598,8 @@ export class Lobby {
         icon.style.color = '#ff4444';
       } else {
         // Universal 4-dot diamond for Switch Pro, GameSir, and generic controllers
-        // Back = right face button (standard) or bottom (Cyclone swapped)
-        const backDot = this.input._gpSwapAB ? 'bottom' : 'right';
-        icon.innerHTML = this._makeDiamondHTML(backDot);
+        // Always right=back — the button swap remaps indices so this is correct for all
+        icon.innerHTML = this._makeDiamondHTML('right');
       }
       hint.style.visibility = 'visible';
     } else {
