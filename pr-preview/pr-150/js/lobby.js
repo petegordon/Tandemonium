@@ -546,6 +546,15 @@ export class Lobby {
       }
     }
 
+    // Hide START RIDE / wait text when leaving the level step
+    // (these live outside #lobby-level so they render below the difficulty selector)
+    if (!showDiff) {
+      const startBtn = document.getElementById('btn-start-ride');
+      const waitText = document.getElementById('level-wait-text');
+      if (startBtn) startBtn.style.display = 'none';
+      if (waitText) waitText.style.display = 'none';
+    }
+
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
     const hasBack = this._stepBack.get(step);
     if (hasBack && !(this.input && this.input.gamepadConnected)) {
