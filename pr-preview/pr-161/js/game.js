@@ -1749,7 +1749,7 @@ class Game {
     this.state = 'victory';
     this.hud.hideTimer();
     const overlay = document.getElementById('victory-overlay');
-    overlay.style.display = 'flex';
+    overlay.classList.add('visible');
 
     const level = this.lobby.selectedLevel;
     // Victory title includes role in multiplayer
@@ -2034,7 +2034,7 @@ class Game {
   }
 
   _hideVictory() {
-    document.getElementById('victory-overlay').style.display = 'none';
+    document.getElementById('victory-overlay').classList.remove('visible');
     // Clear stale pointer-events cooldown on victory buttons
     for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby']) {
       const el = document.getElementById(id);
