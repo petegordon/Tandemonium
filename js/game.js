@@ -4275,7 +4275,13 @@ class Game {
     // Restore joystick steering to lobby toggle state
     this.input.suppressGamepadLean = !this.lobby.joystickActive;
 
-    // Clean up (subset of _returnToLobby)
+    // Multiplayer: return to room (keep connection alive for second ride)
+    if (this.net) {
+      this._returnToRoom();
+      return;
+    }
+
+    // Solo: full cleanup and return to lobby
     this._musicBtn.style.display = 'none';
     this._hideGameOver();
     this._hideVictory();
@@ -4298,10 +4304,8 @@ class Game {
     this.state = 'lobby';
     this.lobby.show();
     if (this._isDemo) {
-      // Demo users go back to the first lobby screen
       this.lobby._showStep(this.lobby.modeStep);
     } else {
-      // Licensed users go to level/difficulty select
       this.lobby._pendingMode = 'solo';
       this.lobby._showStep(this.lobby.levelStep);
     }
