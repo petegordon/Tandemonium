@@ -86,6 +86,12 @@ export class AchievementManager {
     } catch (e) {}
   }
 
+  /** Re-read earned achievements from localStorage (e.g. after a ride). */
+  reload() {
+    this._earned = new Map();
+    this._load();
+  }
+
   /** Record distance from a completed ride. */
   addCompletedDistance(distance) {
     this._cumulativeDistance += distance;

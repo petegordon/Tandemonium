@@ -484,6 +484,10 @@ export class Lobby {
 
   show() {
     this.lobbyEl.style.display = '';
+    // Refresh achievements and bike unlock state earned during the ride
+    if (this._achievements) this._achievements.reload();
+    this._renderAchievements();
+    this._applyPresetToPreview();
     // Rebuild level cards to reflect newly unlocked levels
     this._rebuildLevelCards();
     this._showStep(this.modeStep);
@@ -3313,6 +3317,11 @@ export class Lobby {
 
     // Show room step directly (not levels)
     this._showStep(this.roomStep);
+
+    // Refresh achievements and bike unlock state earned during the ride
+    if (this._achievements) this._achievements.reload();
+    this._renderAchievements();
+    this._applyPresetToPreview();
 
     // Re-add PiP lobby mode
     const selfieWrap = document.getElementById('selfie-pip-wrap');
