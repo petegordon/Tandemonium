@@ -597,7 +597,15 @@ class Game {
 
     this.net.onEventReceived = (eventType) => {
       if (eventType === EVT_COUNTDOWN) {
-        this._startCountdown();
+        // Tutorial stoker: scene already set up in _startTutorialRide —
+        // just resume the countdown from captain's calibration finish
+        if (this._tutorialActive && (this.state === 'waiting' || this.state === 'countdown')) {
+          this.state = 'countdown';
+          this.countdownTimer = 3.0;
+          document.getElementById('status').textContent = '';
+        } else {
+          this._startCountdown();
+        }
       } else if (eventType === EVT_START) {
         // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
@@ -3456,22 +3464,33 @@ class Game {
     // captain's calibration — otherwise stoker's countdown runs while captain
     // is still calibrating and the stoker starts riding too early.
     const isMPCaptain = this.mode === 'captain' && this.net;
+    const isMPStoker = this.mode === 'stoker' && this.net;
     if (isMPCaptain) this._suppressCountdownEvent = true;
 
-    // Start the ride setup (creates scene, collectibles, etc.) but pause the countdown
+    // Start the ride setup (creates scene, collectibles, etc.)
     this._startCountdown();
     // Reset flag so actual calibration data replaces it
     this._calibHoldSamples = null;
 
     if (isMPCaptain) this._suppressCountdownEvent = false;
 
+    // Stoker: pause countdown and show waiting message until captain
+    // finishes calibration and sends EVT_COUNTDOWN
+    if (isMPStoker) {
+      this.state = 'waiting';
+      const statusEl = document.getElementById('status');
+      if (statusEl) statusEl.textContent = 'Waiting for captain to calibrate...';
+    }
+
     // Widen collection hitbox during tutorial (collectible manager exists after _startCountdown)
     if (this.collectibleManager) {
       this.collectibleManager._tutorialRadius = 2.8;
     }
 
-    // Only run calibration flow if player is using motion controls
-    if (this.input.motionEnabled || this.input.gyroConnected) {
+    // Only run calibration flow for captain/solo with motion controls
+    // Stoker doesn't steer, so calibration is not needed — skip straight to countdown
+    const shouldCalibrate = this.mode !== 'stoker' && (this.input.motionEnabled || this.input.gyroConnected);
+    if (shouldCalibrate) {
       // Pause countdown during calibration — set state to 'calibrating' so
       // _updateCountdown doesn't tick, then run the interactive calibration flow.
       // Hide countdown number so it doesn't show through the calibration overlay.
