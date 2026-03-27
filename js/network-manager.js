@@ -426,6 +426,10 @@ export class NetworkManager {
   }
 
   _handleIncomingCall(call) {
+    // Close previous media call to prevent duplicate streams
+    if (this._mediaCall) {
+      try { this._mediaCall.close(); } catch (e) {}
+    }
     this._mediaCall = call;
     // Answer immediately with pre-acquired stream (from game.js _acquireLocalMedia)
     // to avoid async getUserMedia delay that causes call timeouts on mobile
@@ -683,8 +687,13 @@ export class NetworkManager {
     const localStream = this._localMediaStream || new MediaStream();
     const remotePeerId = this.conn.peer;
     if (!remotePeerId) return;
+    // Close previous outgoing call to prevent duplicate streams
+    if (this._mediaCall) {
+      try { this._mediaCall.close(); } catch (e) {}
+    }
     const call = this.peer.call(remotePeerId, localStream);
     if (call) {
+      this._mediaCall = call;
       call.on('stream', (remoteStream) => {
         this._playRemoteAudio(remoteStream);
         if (this.onRemoteStream) this.onRemoteStream(remoteStream);

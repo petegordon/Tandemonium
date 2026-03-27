@@ -3130,7 +3130,10 @@ export class Lobby {
     this.net.onRemoteStream = (remoteStream) => {
       const partnerVideo = document.getElementById('partner-pip');
       if (partnerVideo && remoteStream) {
-        partnerVideo.srcObject = remoteStream;
+        // Skip reassignment if same stream already playing (avoids black flash)
+        if (partnerVideo.srcObject !== remoteStream) {
+          partnerVideo.srcObject = remoteStream;
+        }
         this._updatePartnerPip();
 
         // Track may start muted; re-evaluate when it unmutes
@@ -3461,7 +3464,10 @@ export class Lobby {
     this.net.onRemoteStream = (remoteStream) => {
       const pVideo = document.getElementById('partner-pip');
       if (pVideo && remoteStream) {
-        pVideo.srcObject = remoteStream;
+        // Skip reassignment if same stream already playing (avoids black flash)
+        if (pVideo.srcObject !== remoteStream) {
+          pVideo.srcObject = remoteStream;
+        }
         this._updatePartnerPip();
 
         const remoteVideoTrack = remoteStream.getVideoTracks()[0];
