@@ -640,7 +640,12 @@ class Game {
       } else if (eventType === EVT_CHECKPOINT) {
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
-        this._showVictory(true);
+        // Tutorial: show completion screen instead of normal victory
+        if (this._tutorialActive) {
+          this._showStokerTutorialComplete();
+        } else {
+          this._showVictory(true);
+        }
       } else if (eventType === EVT_RETURN_ROOM) {
         this._returnToRoom();
       }
@@ -3479,7 +3484,7 @@ class Game {
     if (isMPStoker) {
       this.state = 'waiting';
       const statusEl = document.getElementById('status');
-      if (statusEl) statusEl.textContent = 'Waiting for captain to calibrate...';
+      if (statusEl) statusEl.textContent = 'Waiting for captain...';
     }
 
     // Widen collection hitbox during tutorial (collectible manager exists after _startCountdown)
@@ -3487,10 +3492,9 @@ class Game {
       this.collectibleManager._tutorialRadius = 2.8;
     }
 
-    // Only run calibration flow for captain/solo with motion controls
-    // Stoker doesn't steer, so calibration is not needed — skip straight to countdown
-    const shouldCalibrate = this.mode !== 'stoker' && (this.input.motionEnabled || this.input.gyroConnected);
-    if (shouldCalibrate) {
+    // Run calibration flow if player is using motion controls
+    // Both captain and stoker calibrate — stoker's lean affects steering too
+    if (this.input.motionEnabled || this.input.gyroConnected) {
       // Pause countdown during calibration — set state to 'calibrating' so
       // _updateCountdown doesn't tick, then run the interactive calibration flow.
       // Hide countdown number so it doesn't show through the calibration overlay.
@@ -3499,10 +3503,17 @@ class Game {
       if (flavorNum) flavorNum.style.visibility = 'hidden';
       await this._runCalibrationFlow();
 
-      // Resume countdown from 3 seconds
+      // Resume countdown from 3 seconds (captain starts immediately, stoker waits for EVT_COUNTDOWN)
       if (flavorNum) flavorNum.style.visibility = '';
-      this.state = 'countdown';
-      this.countdownTimer = 3.0;
+      if (!isMPStoker) {
+        this.state = 'countdown';
+        this.countdownTimer = 3.0;
+      } else {
+        // Stoker done calibrating — wait for captain's EVT_COUNTDOWN
+        this.state = 'waiting';
+        const statusEl = document.getElementById('status');
+        if (statusEl) statusEl.textContent = 'Waiting for captain...';
+      }
     }
 
     // Now notify stoker to start countdown (after calibration is done)
@@ -4115,6 +4126,47 @@ class Game {
     this._overlaySlider = slider;
 
     // 3-second input cooldown to prevent accidental taps while pedaling
+    this._overlayCooldownUntil = performance.now() + 3000;
+    overlayBtns.forEach(b => b.style.pointerEvents = 'none');
+    setTimeout(() => overlayBtns.forEach(b => b.style.pointerEvents = ''), 3000);
+  }
+
+  _showStokerTutorialComplete() {
+    this._tutorialActive = false;
+    this.state = 'gameover'; // pause updates
+
+    // Reuse tutorial-complete overlay with stoker-appropriate content
+    document.getElementById('tutorial-prompt').classList.remove('visible');
+    const statsEl = document.getElementById('tutorial-complete-stats');
+    statsEl.innerHTML = '<span class="calibrated">Great teamwork! Steering calibrated.</span>';
+
+    // Show steering feel slider for stoker too (their lean input matters)
+    const slider = document.getElementById('steering-feel-slider');
+    slider.value = 50;
+    slider.oninput = () => {
+      const feel = slider.value / 100;
+      applySteeringFeel(feel);
+    };
+
+    // Hide Steam CTA (captain handles that)
+    const steamCta = document.getElementById('steam-cta');
+    if (steamCta) steamCta.style.display = 'none';
+
+    // Change button to return to room (captain controls next action)
+    const continueBtn = document.getElementById('btn-tutorial-continue');
+    continueBtn.textContent = 'Continue';
+    continueBtn.onclick = () => {
+      document.getElementById('tutorial-complete').classList.remove('visible');
+      continueBtn.textContent = "Let's RIDE!"; // restore for next time
+      this._endTutorialRide();
+    };
+
+    document.getElementById('tutorial-complete').classList.add('visible');
+
+    const overlayBtns = [continueBtn];
+    this._setOverlayButtons(overlayBtns, 0);
+    this._overlaySlider = slider;
+
     this._overlayCooldownUntil = performance.now() + 3000;
     overlayBtns.forEach(b => b.style.pointerEvents = 'none');
     setTimeout(() => overlayBtns.forEach(b => b.style.pointerEvents = ''), 3000);
