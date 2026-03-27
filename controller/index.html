@@ -81,6 +81,16 @@
   }
   #calibrate-toast.visible { opacity: 1; }
 
+  #button-debug {
+    position: fixed; bottom: 60px; left: 16px;
+    color: #fff; font-size: 16px; z-index: 15;
+    font-family: monospace;
+    pointer-events: none;
+    line-height: 1.6;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+  }
+  #button-debug .pressed { color: #44ff66; font-weight: 700; }
+  #button-debug .idle { color: rgba(255,255,255,0.25); }
   #btn-hints {
     position: fixed; bottom: 16px; left: 50%;
     transform: translateX(-50%);
@@ -149,6 +159,9 @@
   <div>X: <span id="ax" class="accel-value">0</span> &nbsp; Y: <span id="ay" class="accel-value">0</span> &nbsp; Z: <span id="az" class="accel-value">0</span></div>
   <div class="hint" id="gyro-hint"></div>
 </div>
+
+<!-- Button index debug display -->
+<div id="button-debug"></div>
 
 <!-- Controller button hints -->
 <div id="btn-hints" class="hidden"></div>
@@ -616,6 +629,18 @@ function animate() {
   document.getElementById('ly').textContent = ly.toFixed(2);
   document.getElementById('lt').textContent = lt.toFixed(2);
   document.getElementById('rt').textContent = rt.toFixed(2);
+
+  // Button debug — show face buttons with indices and pressed state
+  const dbg = document.getElementById('button-debug');
+  if (gp && dbg) {
+    const faceNames = ['[0] Bottom', '[1] Right', '[2] Left', '[3] Top'];
+    const lines = faceNames.map((name, i) => {
+      const pressed = gp.buttons[i] && gp.buttons[i].pressed;
+      const cls = pressed ? 'pressed' : 'idle';
+      return `<span class="${cls}">${name}${pressed ? ' ◄ PRESSED' : ''}</span>`;
+    });
+    dbg.innerHTML = lines.join('<br>');
+  }
 
   if (hidDevice) {
     document.getElementById('gx').textContent = Math.round(gyroData.gx);
