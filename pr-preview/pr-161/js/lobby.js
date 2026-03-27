@@ -3212,30 +3212,29 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    // Initiate media call — both sides try, with retries until stream arrives.
+    // Only captain initiates media call to avoid cross-call interference.
+    // Stoker answers via _handleIncomingCall which is always listening.
     // PeerJS media calls require P2P, so we wait for the upgrade first.
+    if (this._roomRole !== 'captain') return;
+
     this._mediaCallRetries = 0;
     this._mediaCallTimer = null;
 
     const tryInitiateCall = () => {
       if (!this.net || !this.net.peer || !this.net.conn) return;
       this.net.initiateCall();
-      // Retry every 3s until partner video arrives (up to 10 attempts)
       this._mediaCallRetries++;
-      if (this._mediaCallRetries < 10) {
+      if (this._mediaCallRetries < 3) {
         this._mediaCallTimer = setTimeout(() => {
           const partnerVideo = document.getElementById('partner-pip');
-          const hasStream = partnerVideo && partnerVideo.srcObject &&
-            partnerVideo.srcObject.getVideoTracks().length > 0;
-          if (!hasStream) {
-            tryInitiateCall();
-          }
-        }, 3000);
+          const hasLive = partnerVideo && partnerVideo.srcObject &&
+            partnerVideo.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+          if (!hasLive) tryInitiateCall();
+        }, 5000);
       }
     };
 
     const onP2PReady = () => {
-      // Both sides initiate — first successful call wins
       tryInitiateCall();
     };
 
@@ -3499,38 +3498,40 @@ export class Lobby {
       this.net.sendProfile(camMsg);
     }
 
-    // Re-initiate media call to refresh video stream after returning from game
-    // Retry up to 3 times (not 10) since connection is already alive
-    this._mediaCallRetries = 0;
-    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
+    // Only captain re-initiates media call to avoid cross-call interference.
+    // Stoker answers via _handleIncomingCall which is always listening.
+    if (this._roomRole === 'captain') {
+      this._mediaCallRetries = 0;
+      if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
 
-    const retryCall = () => {
-      if (!this.net || !this.net.peer || !this.net.conn) return;
-      this.net.initiateCall();
-      this._mediaCallRetries++;
-      if (this._mediaCallRetries < 3) {
-        this._mediaCallTimer = setTimeout(() => {
-          const pv = document.getElementById('partner-pip');
-          const hasLive = pv && pv.srcObject &&
-            pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-          if (!hasLive) retryCall();
-        }, 5000);
-      }
-    };
-
-    // Delay first call by 2s to let both sides set up handlers after room transition
-    const startRetry = () => {
-      this._mediaCallTimer = setTimeout(() => retryCall(), 2000);
-    };
-
-    if (this.net.transport === 'p2p') {
-      startRetry();
-    } else {
-      const prevOnP2P = this.net.onP2PUpgrade;
-      this.net.onP2PUpgrade = () => {
-        startRetry();
-        if (prevOnP2P) prevOnP2P();
+      const retryCall = () => {
+        if (!this.net || !this.net.peer || !this.net.conn) return;
+        this.net.initiateCall();
+        this._mediaCallRetries++;
+        if (this._mediaCallRetries < 3) {
+          this._mediaCallTimer = setTimeout(() => {
+            const pv = document.getElementById('partner-pip');
+            const hasLive = pv && pv.srcObject &&
+              pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+            if (!hasLive) retryCall();
+          }, 5000);
+        }
       };
+
+      // Delay first call by 2s to let both sides set up handlers after room transition
+      const startRetry = () => {
+        this._mediaCallTimer = setTimeout(() => retryCall(), 2000);
+      };
+
+      if (this.net.transport === 'p2p') {
+        startRetry();
+      } else {
+        const prevOnP2P = this.net.onP2PUpgrade;
+        this.net.onP2PUpgrade = () => {
+          startRetry();
+          if (prevOnP2P) prevOnP2P();
+        };
+      }
     }
 
     // Re-register disconnect handler for room
