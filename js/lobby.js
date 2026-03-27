@@ -546,6 +546,12 @@ export class Lobby {
       }
     }
 
+    // Show/hide #level-extras wrapper (START RIDE + wait text)
+    // Wrapper scopes these to the level step; child visibility is set by
+    // _buildLevelCards (solo) or _showRoomLevelsStep (multiplayer role).
+    const levelExtras = document.getElementById('level-extras');
+    if (levelExtras) levelExtras.style.display = showDiff ? '' : 'none';
+
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
     const hasBack = this._stepBack.get(step);
     if (hasBack && !(this.input && this.input.gamepadConnected)) {
@@ -901,14 +907,14 @@ export class Lobby {
       }
     }
 
-    // Multiplayer: add START RIDE button to nav if captain
-    if (startBtn && isClickable) buttons.push(startBtn);
-
     // Add individual difficulty buttons to gamepad navigation
     if (isClickable) {
       const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
       diffBtns.forEach(b => buttons.push(b));
     }
+
+    // Multiplayer: add START RIDE button to nav after difficulty (natural flow)
+    if (startBtn && isClickable) buttons.push(startBtn);
 
     // Register for gamepad navigation
     const navItems = isClickable ? [...buttons, backBtn] : [backBtn];
@@ -926,8 +932,8 @@ export class Lobby {
     const startBtn = document.getElementById('btn-start-ride');
     const waitText = document.getElementById('level-wait-text');
     const prompt = document.getElementById('level-prompt');
-    // Show START RIDE button (disabled until a level is selected)
-    if (startBtn) { startBtn.style.display = ''; startBtn.disabled = true; }
+    // Reset START RIDE button state (visibility handled by _showStep)
+    if (startBtn) { startBtn.disabled = true; }
     if (waitText) waitText.style.display = 'none';
     if (prompt) prompt.style.display = 'none';
     // Reset difficulty selector interactivity
@@ -1302,7 +1308,8 @@ export class Lobby {
   _toggleAll() {
     // If ALL is active, turn everything off
     const motionOk = !this._motionAvailable() || this.motionActive;
-    if (this.cameraActive && this.audioActive && motionOk && this.musicActive) {
+    const cameraOk = !this._hasCamera || this.cameraActive;
+    if (cameraOk && this.audioActive && motionOk && this.musicActive) {
       if (this.cameraActive) this._toggleCamera();
       if (this.audioActive)  this._toggleAudio();
       if (this._motionAvailable() && this.motionActive) this._toggleMotion();
@@ -1311,7 +1318,7 @@ export class Lobby {
     }
 
     // Batch camera + mic into one getUserMedia prompt when both are needed
-    const needCam = !this.cameraActive && !this._cameraPermitted;
+    const needCam = !this.cameraActive && !this._cameraPermitted && this._hasCamera;
     const needMic = !this.audioActive  && !this._audioPermitted;
 
     if (needCam || needMic) {
@@ -3607,12 +3614,12 @@ export class Lobby {
     // At 1080px: card = 270px, at 2400px: card = 600px
     // Content with descriptions needs roughly 180*ls, without ~120*ls
     const vh = window.innerHeight;
-    if (vh >= 1200) return;         // large TV/monitor — show everything
-    if (vh >= 1000) {               // medium — hide difficulty descs
+    if (vh >= 800) return;          // desktop/TV/laptop — show everything
+    if (vh >= 700) {                // compact — hide difficulty descs
       card.classList.add('lobby-compact-1');
-    } else if (vh >= 800) {         // smaller — also hide locked card desc
+    } else if (vh >= 600) {         // smaller — also hide locked card desc
       card.classList.add('lobby-compact-2');
-    } else {                        // tight — hide all descriptions
+    } else {                        // tight (small mobile) — hide all descriptions
       card.classList.add('lobby-compact-3');
     }
   }

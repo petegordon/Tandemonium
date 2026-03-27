@@ -1,6 +1,5 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, session } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net } = require('electron');
 const path = require('path');
-const http = require('http');
 const fs = require('fs');
 
 // --- Steamworks initialization (before app.ready) ---
@@ -78,78 +77,18 @@ ipcMain.handle('steam:storeStats', () => {
 });
 
 let mainWindow;
-let localServer;
-let localPort;
 
-// ── Local HTTP server ────────────────────────────────────────────
-// Serve the game over http://localhost:PORT instead of file:// so that
-// WebRTC, PeerJS, TURN credentials, and CORS all work identically to
-// the browser version.
-const MIME_TYPES = {
-  '.html': 'text/html',
-  '.js': 'application/javascript',
-  '.mjs': 'application/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.mp3': 'audio/mpeg',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.glb': 'model/gltf-binary',
-  '.gltf': 'model/gltf+json',
-  '.wasm': 'application/wasm',
-  '.map': 'application/json',
-};
+// ── Custom protocol (replaces local HTTP server) ─────────────────
+// Serve game files via a custom 'tandemonium://' protocol instead of
+// http://localhost. This avoids opening a listening socket, which
+// triggers the Windows Firewall prompt on first launch. The scheme is
+// registered as privileged so WebRTC, fetch(), and CORS work normally.
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'tandemonium',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+}]);
 
-function startLocalServer(rootDir) {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
-      // Strip query string and decode URI
-      let urlPath = decodeURIComponent(req.url.split('?')[0]);
-      if (urlPath === '/') urlPath = '/index.html';
-
-      const filePath = path.join(rootDir, urlPath);
-
-      // Security: prevent path traversal
-      if (!filePath.startsWith(rootDir)) {
-        res.writeHead(403);
-        res.end('Forbidden');
-        return;
-      }
-
-      fs.readFile(filePath, (err, data) => {
-        if (err) {
-          res.writeHead(404);
-          res.end('Not found');
-          return;
-        }
-        const ext = path.extname(filePath).toLowerCase();
-        const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-        res.writeHead(200, { 'Content-Type': contentType });
-        res.end(data);
-      });
-    });
-
-    // Listen on a random available port
-    server.listen(0, '127.0.0.1', () => {
-      const port = server.address().port;
-      console.log(`Local server running at http://127.0.0.1:${port}`);
-      resolve({ server, port });
-    });
-
-    server.on('error', reject);
-  });
-}
-
-function createWindow(port) {
+function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
@@ -165,8 +104,8 @@ function createWindow(port) {
   });
 
   mainWindow.setMenu(null);
-  // Load via local HTTP server (not file://) for proper WebRTC/CORS behavior
-  mainWindow.loadURL(`http://127.0.0.1:${port}/index.html`);
+  // Load via custom protocol (no network socket → no Windows Firewall prompt)
+  mainWindow.loadURL('tandemonium://app/index.html');
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -180,14 +119,22 @@ app.whenReady().then(async () => {
     return details.deviceType === 'hid';
   });
 
-  // Start local HTTP server to serve game files
-  // Resolves WebRTC/PeerJS/CORS issues that occur with file:// protocol
+  // Register custom protocol handler to serve game files without a network socket
   const rootDir = path.join(__dirname, '..');
-  const { server, port } = await startLocalServer(rootDir);
-  localServer = server;
-  localPort = port;
+  protocol.handle('tandemonium', (request) => {
+    const url = new URL(request.url);
+    let filePath = decodeURIComponent(url.pathname);
+    if (filePath === '/' || filePath === '') filePath = '/index.html';
+    const fullPath = path.join(rootDir, filePath);
+    // Security: prevent path traversal
+    if (!fullPath.startsWith(rootDir)) {
+      return new Response('Forbidden', { status: 403 });
+    }
+    // Serve via net.fetch for proper streaming and MIME handling
+    return net.fetch('file://' + fullPath);
+  });
 
-  createWindow(port);
+  createWindow();
 
   // Auto-select first matching HID device (skip the browser picker dialog)
   mainWindow.webContents.session.on('select-hid-device', (event, details, callback) => {
@@ -234,7 +181,7 @@ app.whenReady().then(async () => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      createWindow();  // no port needed — custom protocol handles serving
     }
   });
 });
@@ -247,5 +194,4 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  if (localServer) localServer.close();
 });

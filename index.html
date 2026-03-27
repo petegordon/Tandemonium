@@ -2949,10 +2949,16 @@
       grid-row: 2;
       justify-self: center;
     }
+    .lobby-card.carousel-hidden #level-extras {
+      grid-column: 1 / -1;
+      grid-row: 3;
+      justify-self: center;
+      text-align: center;
+    }
     .lobby-card.carousel-hidden #lobby-fixed-back,
     .lobby-card.carousel-hidden .gamepad-back-hint {
       grid-column: 1 / -1;
-      grid-row: 3;
+      grid-row: 4;
       justify-self: center;
       margin-top: 0;
       margin-bottom: calc(2 * var(--ls));
@@ -3661,14 +3667,12 @@ ON</button>
              Cards built by _buildLevelCardsShared() via wrappers.
              Shared #difficulty-selector shown via _showStep().
              Multiplayer elements (START RIDE, wait text) hidden by default.
-             Gamepad nav: level cards → tutorial → [START RIDE] → difficulty → back
+             Gamepad nav: level cards → tutorial → difficulty → [START RIDE] → back
              Back: #lobby-mode (solo) or #lobby-room (multiplayer)
              ════════════════════════════════════════════════════ -->
         <div id="lobby-level" class="lobby-step" style="display:none;">
           <p class="lobby-prompt" id="level-prompt" style="display:none;">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
-          <button class="lobby-btn lobby-btn-accent btn-start-ride" id="btn-start-ride" style="display:none;" disabled>START RIDE</button>
-          <p id="level-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
           <button class="lobby-back" id="btn-back-level">&larr; Back</button>
         </div>
 
@@ -3866,12 +3870,17 @@ ON</button>
         </button>
       </div>
     </div>
+    <!-- Level-step extras — scoped by wrapper visibility, toggled atomically in _showStep -->
+    <div id="level-extras" style="display:none;">
+      <button class="lobby-btn lobby-btn-accent btn-start-ride" id="btn-start-ride" disabled>START RIDE</button>
+      <p id="level-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
+    </div>
     <!-- Fixed back button row (non-gamepad, always at bottom of card) -->
     <button class="lobby-back" id="lobby-fixed-back" style="visibility:hidden;">&larr; Back</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.5865dc1 | 03-25-2026 17:53</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.6bca6c9 | 03-26-2026 22:08</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">

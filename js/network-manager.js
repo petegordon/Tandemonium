@@ -346,6 +346,8 @@ export class NetworkManager {
       const raw = localStorage.getItem('tandemonium-room');
       if (raw) {
         const data = JSON.parse(raw);
+        // Only refresh if the stored room matches this connection's room
+        if (data.roomCode !== this.roomCode) return;
         data.timestamp = Date.now();
         localStorage.setItem('tandemonium-room', JSON.stringify(data));
       }
