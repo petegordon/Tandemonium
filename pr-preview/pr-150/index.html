@@ -3667,6 +3667,8 @@ ON</button>
         <div id="lobby-level" class="lobby-step" style="display:none;">
           <p class="lobby-prompt" id="level-prompt" style="display:none;">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
+          <button class="lobby-btn lobby-btn-accent btn-start-ride" id="btn-start-ride" style="display:none;" disabled>START RIDE</button>
+          <p id="level-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
           <button class="lobby-back" id="btn-back-level">&larr; Back</button>
         </div>
 
@@ -3864,15 +3866,12 @@ ON</button>
         </button>
       </div>
     </div>
-    <!-- START RIDE / wait text — below difficulty selector for natural flow -->
-    <button class="lobby-btn lobby-btn-accent btn-start-ride" id="btn-start-ride" style="display:none;" disabled>START RIDE</button>
-    <p id="level-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
     <!-- Fixed back button row (non-gamepad, always at bottom of card) -->
     <button class="lobby-back" id="lobby-fixed-back" style="visibility:hidden;">&larr; Back</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.cfd8e14 | 03-26-2026 21:13</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.7370998 | 03-26-2026 21:22</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
