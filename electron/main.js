@@ -138,7 +138,10 @@ app.whenReady().then(async () => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (API_MATCH.test(details.url)) {
       const headers = details.responseHeaders || {};
-      // Replace the allowed origin with the actual page origin so CORS passes
+      // Remove all existing ACAO headers (may have different casings) then set ours
+      for (const key of Object.keys(headers)) {
+        if (key.toLowerCase() === 'access-control-allow-origin') delete headers[key];
+      }
       headers['Access-Control-Allow-Origin'] = ['tandemonium://app'];
       headers['Access-Control-Allow-Credentials'] = ['true'];
     }
