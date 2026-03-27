@@ -15,7 +15,10 @@ try {
   // Read app ID from steam_appid.txt (playtest: 4510250, release: 4482940)
   let appId = 4482940;
   try {
-    const idPath = path.join(app.isPackaged ? process.resourcesPath : __dirname, '..', 'steam_appid.txt');
+    // extraResource copies steam_appid.txt into resources/ when packaged
+    const idPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'steam_appid.txt')
+      : path.join(__dirname, '..', 'steam_appid.txt');
     const raw = fs.readFileSync(idPath, 'utf-8').trim();
     if (raw) appId = parseInt(raw, 10);
   } catch (e) {
