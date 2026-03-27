@@ -2886,6 +2886,9 @@ export class Lobby {
         this._clearStaleRoomTimer();
         statusEl.textContent = 'Partner connected!';
         statusEl.className = 'conn-status connected';
+        // Buffer profile messages during the 1s delay so none are lost
+        this._rejoinMessageQueue = [];
+        this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
         setTimeout(() => this._showRoomStep('captain'), 1000);
       };
 
@@ -2922,6 +2925,9 @@ export class Lobby {
         this._clearStaleRoomTimer();
         statusEl.textContent = 'Connected!';
         statusEl.className = 'conn-status connected';
+        // Buffer profile messages during the 1s delay so none are lost
+        this._rejoinMessageQueue = [];
+        this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
         setTimeout(() => this._showRoomStep('stoker'), 1000);
       };
 
@@ -3005,6 +3011,12 @@ export class Lobby {
 
     // Register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
+
+    // Replay any messages buffered during the rejoin delay
+    if (this._rejoinMessageQueue && this._rejoinMessageQueue.length > 0) {
+      for (const msg of this._rejoinMessageQueue) this._handleRoomMessage(msg);
+    }
+    this._rejoinMessageQueue = null;
 
     // Send current bike preset to partner
     this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });

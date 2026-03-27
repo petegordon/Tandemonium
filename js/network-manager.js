@@ -542,6 +542,12 @@ export class NetworkManager {
     if (!this.roomCode || !this.role) return;
     if (this.transport === 'p2p') return; // already on P2P
 
+    // Destroy stale peer from previous session to free the ID on the signaling server
+    if (this.peer) {
+      try { this.peer.destroy(); } catch (e) {}
+      this.peer = null;
+    }
+
     const peerId = this.roomCode + '-' + this.role;
     const partnerPeerId = this.roomCode + '-' + (this.role === 'captain' ? 'stoker' : 'captain');
 

@@ -2245,6 +2245,7 @@ class Game {
     this._hideAllOverlays();
 
     // Partial cleanup: game state only (keep connection + media alive)
+    this.countdownTimer = 0;
     this.raceManager = null;
     this.hud.raceManager = null;
     this.contributionTracker = null;
