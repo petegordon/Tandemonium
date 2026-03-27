@@ -3070,8 +3070,11 @@ export class Lobby {
 
         // Track may start muted; re-evaluate when it unmutes
         const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        if (remoteVideoTrack && remoteVideoTrack.muted) {
-          remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
+        if (remoteVideoTrack) {
+          if (remoteVideoTrack.muted) {
+            remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
+          }
+          remoteVideoTrack.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
         }
       }
     };
@@ -3323,6 +3326,14 @@ export class Lobby {
     this._renderAchievements();
     this._applyPresetToPreview();
 
+    // Ensure game overlays don't block room UI on mobile
+    for (const id of ['victory-overlay', 'game-over-overlay']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    }
+    // Re-sync toggle button states after returning from ride
+    this._checkPermissionStates();
+
     // Re-add PiP lobby mode
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
@@ -3374,8 +3385,12 @@ export class Lobby {
         this._updatePartnerPip();
 
         const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        if (remoteVideoTrack && remoteVideoTrack.muted) {
-          remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
+        if (remoteVideoTrack) {
+          if (remoteVideoTrack.muted) {
+            remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
+          }
+          // Fall back to avatar if the track ends (e.g. partner's stream dies)
+          remoteVideoTrack.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
         }
       }
     };
@@ -3405,9 +3420,9 @@ export class Lobby {
       if (this._mediaCallRetries < 10) {
         this._mediaCallTimer = setTimeout(() => {
           const partnerVideo = document.getElementById('partner-pip');
-          const hasStream = partnerVideo && partnerVideo.srcObject &&
-            partnerVideo.srcObject.getVideoTracks().length > 0;
-          if (!hasStream) retryCall();
+          const hasLiveStream = partnerVideo && partnerVideo.srcObject &&
+            partnerVideo.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+          if (!hasLiveStream) retryCall();
         }, 3000);
       }
     };
