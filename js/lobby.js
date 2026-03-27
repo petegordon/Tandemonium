@@ -1053,6 +1053,9 @@ export class Lobby {
         if (gsiBtn) gsiBtn.style.display = 'none';
         const signInBtn = document.getElementById('btn-sign-in');
         if (signInBtn) signInBtn.style.display = 'none';
+        // Hide logout button — Steam auth is tied to Steam identity
+        const logoutBtn = document.getElementById('profile-popup-logout');
+        if (logoutBtn) logoutBtn.style.display = 'none';
       } else {
         this.license = new LicenseManager(this.auth);
       }
