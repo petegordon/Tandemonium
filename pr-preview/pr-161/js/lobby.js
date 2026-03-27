@@ -3928,22 +3928,27 @@ export class Lobby {
       return;
     }
 
-    // Rejoin prompt: navigate between Rejoin / New Room buttons
+    // Recent rooms popup: navigate room cards + New Room button
     const rejoinOverlay = document.getElementById('rejoin-overlay');
     if (rejoinOverlay) {
-      const btns = [document.getElementById('btn-rejoin-yes'), document.getElementById('btn-rejoin-no')];
+      const items = [...rejoinOverlay.querySelectorAll('.rejoin-room-card'), document.getElementById('btn-rejoin-new')].filter(Boolean);
+      if (items.length === 0) { this._rejoinFocus = undefined; return; }
       if (this._rejoinFocus === undefined) this._rejoinFocus = 0;
-      if ((left && !this._gpPrevLeft) || (up && !this._gpPrevUp)) {
-        btns[this._rejoinFocus].classList.remove('gamepad-focus');
+      if (up && !this._gpPrevUp) {
+        items[this._rejoinFocus].classList.remove('gamepad-focus');
         this._rejoinFocus = Math.max(0, this._rejoinFocus - 1);
-        btns[this._rejoinFocus].classList.add('gamepad-focus');
+        items[this._rejoinFocus].classList.add('gamepad-focus');
       }
-      if ((right && !this._gpPrevRight) || (down && !this._gpPrevDown)) {
-        btns[this._rejoinFocus].classList.remove('gamepad-focus');
-        this._rejoinFocus = Math.min(btns.length - 1, this._rejoinFocus + 1);
-        btns[this._rejoinFocus].classList.add('gamepad-focus');
+      if (down && !this._gpPrevDown) {
+        items[this._rejoinFocus].classList.remove('gamepad-focus');
+        this._rejoinFocus = Math.min(items.length - 1, this._rejoinFocus + 1);
+        items[this._rejoinFocus].classList.add('gamepad-focus');
       }
-      if (a && !this._gpPrevA) btns[this._rejoinFocus].click();
+      if (a && !this._gpPrevA) items[this._rejoinFocus].click();
+      if (b && !this._gpPrevB) {
+        const newBtn = document.getElementById('btn-rejoin-new');
+        if (newBtn) newBtn.click();
+      }
       this._gpPrevUp = up; this._gpPrevDown = down;
       this._gpPrevLeft = left; this._gpPrevRight = right;
       this._gpPrevA = a; this._gpPrevB = b;
