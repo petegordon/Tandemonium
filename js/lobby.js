@@ -54,6 +54,8 @@ function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
   ]);
 }
 
+const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Ccircle cx='40' cy='30' r='14' fill='%23666'/%3E%3Cellipse cx='40' cy='72' rx='24' ry='18' fill='%23666'/%3E%3C/svg%3E";
+
 const BIKE_NAMES = {
   default: "Grandma's Classic",
   bike_orange: 'Marmalade Express',
@@ -3103,25 +3105,19 @@ export class Lobby {
     const partnerWrap = document.getElementById('partner-pip-wrap');
     if (!partnerWrap) return;
 
-    // Check if the stream has a live (non-ended) video track
     const stream = partnerVideo && partnerVideo.srcObject;
-    const liveVideoTrack = stream && stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled);
-    const hasAnyTrack = stream && stream.getVideoTracks().length > 0;
+    const hasVideo = stream && stream.getVideoTracks().length > 0;
 
-    if (this._partnerCameraOn && liveVideoTrack) {
+    if (this._partnerCameraOn && hasVideo) {
       partnerVideo.style.display = 'block';
       partnerVideo.play().catch(() => {});
       if (partnerAvatar) partnerAvatar.style.display = 'none';
-    } else if (this._partnerCameraOn && hasAnyTrack) {
-      // Track exists but not yet live — keep current display state, don't flash to avatar
-      partnerVideo.play().catch(() => {});
     } else {
       if (partnerVideo) partnerVideo.style.display = 'none';
       if (partnerAvatar) {
-        const avatarUrl = this._partnerAvatarUrl
+        partnerAvatar.src = this._partnerAvatarUrl
           ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
-          : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Ccircle cx='40' cy='30' r='14' fill='%23666'/%3E%3Cellipse cx='40' cy='72' rx='24' ry='18' fill='%23666'/%3E%3C/svg%3E";
-        partnerAvatar.src = avatarUrl;
+          : DEFAULT_AVATAR_SVG;
         partnerAvatar.style.display = 'block';
       }
     }
@@ -3136,21 +3132,25 @@ export class Lobby {
     // gets its stream rendered in the partner PiP.
     this.net.onRemoteStream = (remoteStream) => {
       const partnerVideo = document.getElementById('partner-pip');
-      if (partnerVideo && remoteStream) {
-        // Skip reassignment if same stream already playing (avoids black flash)
-        if (partnerVideo.srcObject !== remoteStream) {
-          partnerVideo.srcObject = remoteStream;
-        }
-        this._updatePartnerPip();
+      if (!partnerVideo || !remoteStream) return;
 
-        // Track may start muted; re-evaluate when it unmutes
-        const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        if (remoteVideoTrack) {
-          if (remoteVideoTrack.muted) {
-            remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
-          }
-          remoteVideoTrack.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
-        }
+      // Authoritative: always set srcObject, show video, call play.
+      // Don't delegate initial display to _updatePartnerPip — just show it.
+      partnerVideo.srcObject = remoteStream;
+      partnerVideo.style.display = 'block';
+      partnerVideo.play().catch(() => {});
+      const partnerAvatar = document.getElementById('partner-pip-avatar');
+      if (partnerAvatar) partnerAvatar.style.display = 'none';
+
+      // If partner camera is known to be off, switch to avatar
+      if (!this._partnerCameraOn) {
+        this._updatePartnerPip();
+      }
+
+      // Fall back to avatar if track ends
+      const vt = remoteStream.getVideoTracks()[0];
+      if (vt) {
+        vt.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
       }
     };
 
@@ -3186,21 +3186,23 @@ export class Lobby {
         if (selfieAvatar) selfieAvatar.style.display = 'none';
       } else {
         selfieVideo.style.display = 'none';
-        // Show avatar fallback when camera is off
-        if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
-          const user = this.auth.getUser();
-          if (user && user.avatar) {
-            selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
-            selfieAvatar.style.display = 'block';
-          }
+        // Show avatar fallback when camera is off (or default icon if not logged in)
+        if (selfieAvatar) {
+          const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+          selfieAvatar.src = (user && user.avatar)
+            ? (this._avatarCache.get(user.avatar) || user.avatar)
+            : DEFAULT_AVATAR_SVG;
+          selfieAvatar.style.display = 'block';
         }
       }
       if (selfieWrap) selfieWrap.style.display = 'block';
-    } else if (this.auth && this.auth.isLoggedIn()) {
-      // No stream at all — fallback to avatar
-      const user = this.auth.getUser();
-      if (user && user.avatar && selfieAvatar && selfieWrap) {
-        selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+    } else {
+      // No stream at all — fallback to avatar or default icon
+      if (selfieAvatar && selfieWrap) {
+        const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+        selfieAvatar.src = (user && user.avatar)
+          ? (this._avatarCache.get(user.avatar) || user.avatar)
+          : DEFAULT_AVATAR_SVG;
         selfieAvatar.style.display = 'block';
         if (selfieVideo) selfieVideo.style.display = 'none';
         selfieWrap.style.display = 'block';
@@ -3414,6 +3416,11 @@ export class Lobby {
     if (gameoverEl) gameoverEl.style.display = 'none';
     // Re-sync toggle button states after returning from ride
     this._checkPermissionStates();
+
+    // Clear stale partner stream from game session — the old tracks may be
+    // ended and will be replaced by a fresh media call in _startRoomMedia.
+    const partnerVideo = document.getElementById('partner-pip');
+    if (partnerVideo) partnerVideo.srcObject = null;
 
     // Re-use the same media setup as initial room entry.
     // This handles: onRemoteStream registration, local media acquisition,
