@@ -597,7 +597,20 @@ export class Lobby {
       selfieWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
       partnerWrap.classList.toggle('pip-lobby-mode', isRoom);
       partnerWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
+      // Position PiPs to align with room-video-area in the center column
+      if (isRoom) requestAnimationFrame(() => this._positionPipToVideoArea());
     }
+  }
+
+  /** Position pip-lobby-mode circles to match #room-video-area's center column location */
+  _positionPipToVideoArea() {
+    const area = document.getElementById('room-video-area');
+    if (!area) return;
+    const rect = area.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    document.documentElement.style.setProperty('--pip-left', centerX + 'px');
+    document.documentElement.style.setProperty('--pip-top', centerY + 'px');
   }
 
   _hideLobby() {
