@@ -3428,13 +3428,12 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    // Refresh selfie video from existing stream (re-assign srcObject after DOM reparent to unfreeze on iOS)
+    // Resume video playback after DOM reparent — don't reassign srcObject
+    // (reassigning kills the stream and causes flickering/black frames)
     const selfieVideo = document.getElementById('selfie-pip');
     const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    if (selfieVideo && this.net && this.net._localMediaStream) {
-      selfieVideo.srcObject = null;
-      selfieVideo.srcObject = this.net._localMediaStream;
-      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
+    if (selfieVideo && selfieVideo.srcObject) {
+      const videoTrack = selfieVideo.srcObject.getVideoTracks().find(t => t.readyState === 'live');
       if (videoTrack && this.cameraActive) {
         selfieVideo.style.display = 'block';
         selfieVideo.play().catch(() => {});
@@ -3452,71 +3451,52 @@ export class Lobby {
       if (selfieWrap) selfieWrap.style.display = 'block';
     }
 
-    // Re-assign partner video srcObject after DOM reparent to unfreeze on iOS
+    // Check if partner video stream is still live from the game session
     const partnerVideo = document.getElementById('partner-pip');
-    if (partnerVideo && partnerVideo.srcObject) {
-      const stream = partnerVideo.srcObject;
-      partnerVideo.srcObject = null;
-      partnerVideo.srcObject = stream;
+    const partnerHasLive = partnerVideo && partnerVideo.srcObject &&
+      partnerVideo.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+
+    if (partnerHasLive) {
+      // Stream is still working — just resume playback (no srcObject change!)
+      partnerVideo.play().catch(() => {});
     }
-
-    // Evaluate existing partner stream — show avatar if tracks are stale/ended
-    // Also re-evaluate after delays to catch stream refresh from re-initiated media call
     this._updatePartnerPip();
-    setTimeout(() => this._updatePartnerPip(), 2000);
-    setTimeout(() => this._updatePartnerPip(), 5000);
 
-    // Re-register remote stream handler so partner video shows in room
-    // (game.js replaces this with its own handler during gameplay)
+    // Re-register remote stream handler (game.js replaces it during gameplay).
+    // Keep it simple: assign srcObject and play.
     this.net.onRemoteStream = (remoteStream) => {
       const pVideo = document.getElementById('partner-pip');
-      if (pVideo && remoteStream) {
-        // Skip reassignment if same stream already playing (avoids black flash)
-        if (pVideo.srcObject !== remoteStream) {
-          pVideo.srcObject = remoteStream;
-        }
+      if (pVideo && remoteStream && pVideo.srcObject !== remoteStream) {
+        pVideo.srcObject = remoteStream;
+        pVideo.play().catch(() => {});
         this._updatePartnerPip();
-
-        const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        if (remoteVideoTrack) {
-          if (remoteVideoTrack.muted) {
-            remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
-          }
-          // Fall back to avatar if the track ends (e.g. partner's stream dies)
-          remoteVideoTrack.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
-        }
       }
     };
 
     // Re-register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
 
+    // Replay any messages buffered during the rejoin delay
+    if (this._rejoinMessageQueue && this._rejoinMessageQueue.length > 0) {
+      for (const msg of this._rejoinMessageQueue) this._handleRoomMessage(msg);
+    }
+    this._rejoinMessageQueue = null;
+
     // Send current bike preset and profile to partner on re-entry
     if (this.net.connected) {
       this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
       this._sendRoomProfile();
-      // Notify partner of current camera state
       const camMsg = { type: 'cameraToggle', enabled: this.cameraActive };
       const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
       if (user && user.avatar) camMsg.avatar = user.avatar;
       this.net.sendProfile(camMsg);
     }
 
-    // Check if the existing media call from the game session is still working.
-    // If partner video already has a live stream, just re-evaluate the PiP display
-    // (onRemoteStream handler was already re-registered above) — no new call needed.
-    const existingPV = document.getElementById('partner-pip');
-    const existingLive = existingPV && existingPV.srcObject &&
-      existingPV.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-
-    if (existingLive) {
-      // Stream is still working from the game — just refresh display
-      this._updatePartnerPip();
-    } else {
-      // No working stream — initiate a new media call.
-      // Captain first, stoker as delayed fallback.
+    // Only initiate a new media call if there's no working stream.
+    if (!partnerHasLive) {
       this._mediaCallRetries = 0;
       if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
+      // Captain calls first (2s delay), stoker as fallback (6s delay)
       const initialDelay = this._roomRole === 'captain' ? 2000 : 6000;
 
       const retryCall = () => {
