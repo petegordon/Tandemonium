@@ -631,18 +631,18 @@ export class Lobby {
     }
   }
 
-  /** Position pip-lobby-mode videos over their room slot containers */
+  /** Position each PiP over its slot container in the room grid */
   _positionPipToVideoArea() {
     const captainSlot = document.getElementById('room-video-slot-captain');
     const stokerSlot = document.getElementById('room-video-slot-stoker');
     if (!captainSlot || !stokerSlot) return;
     const cRect = captainSlot.getBoundingClientRect();
     const sRect = stokerSlot.getBoundingClientRect();
-    // Center of both slots combined
-    const centerX = (cRect.left + cRect.right + sRect.left + sRect.right) / 4;
-    const centerY = (cRect.top + cRect.bottom) / 2;
-    document.documentElement.style.setProperty('--pip-left', centerX + 'px');
-    document.documentElement.style.setProperty('--pip-top', centerY + 'px');
+    const root = document.documentElement.style;
+    root.setProperty('--pip-captain-left', (cRect.left + cRect.width / 2) + 'px');
+    root.setProperty('--pip-captain-top', (cRect.top + cRect.height / 2) + 'px');
+    root.setProperty('--pip-stoker-left', (sRect.left + sRect.width / 2) + 'px');
+    root.setProperty('--pip-stoker-top', (sRect.top + sRect.height / 2) + 'px');
   }
 
   _hideLobby() {
