@@ -3117,8 +3117,11 @@ export class Lobby {
       partnerVideo.play().catch(() => {});
     } else {
       if (partnerVideo) partnerVideo.style.display = 'none';
-      if (partnerAvatar && this._partnerAvatarUrl) {
-        partnerAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
+      if (partnerAvatar) {
+        const avatarUrl = this._partnerAvatarUrl
+          ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
+          : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Ccircle cx='40' cy='30' r='14' fill='%23666'/%3E%3Cellipse cx='40' cy='72' rx='24' ry='18' fill='%23666'/%3E%3C/svg%3E";
+        partnerAvatar.src = avatarUrl;
         partnerAvatar.style.display = 'block';
       }
     }
@@ -3212,30 +3215,31 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    // Only captain initiates media call to avoid cross-call interference.
-    // Stoker answers via _handleIncomingCall which is always listening.
+    // Captain initiates media call first; stoker follows after a delay as fallback.
+    // Staggered to avoid cross-call interference that causes flickering.
     // PeerJS media calls require P2P, so we wait for the upgrade first.
-    if (this._roomRole !== 'captain') return;
-
     this._mediaCallRetries = 0;
     this._mediaCallTimer = null;
+    const initialDelay = this._roomRole === 'captain' ? 0 : 4000;
 
     const tryInitiateCall = () => {
       if (!this.net || !this.net.peer || !this.net.conn) return;
+      // Skip if we already have a live partner stream
+      const pv = document.getElementById('partner-pip');
+      const hasLive = pv && pv.srcObject &&
+        pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+      if (hasLive) return;
       this.net.initiateCall();
       this._mediaCallRetries++;
       if (this._mediaCallRetries < 3) {
         this._mediaCallTimer = setTimeout(() => {
-          const partnerVideo = document.getElementById('partner-pip');
-          const hasLive = partnerVideo && partnerVideo.srcObject &&
-            partnerVideo.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-          if (!hasLive) tryInitiateCall();
+          tryInitiateCall();
         }, 5000);
       }
     };
 
     const onP2PReady = () => {
-      tryInitiateCall();
+      this._mediaCallTimer = setTimeout(() => tryInitiateCall(), initialDelay);
     };
 
     if (this.net.transport === 'p2p') {
@@ -3498,40 +3502,37 @@ export class Lobby {
       this.net.sendProfile(camMsg);
     }
 
-    // Only captain re-initiates media call to avoid cross-call interference.
-    // Stoker answers via _handleIncomingCall which is always listening.
-    if (this._roomRole === 'captain') {
-      this._mediaCallRetries = 0;
-      if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
+    // Captain initiates media call first; stoker follows after a delay as fallback.
+    // Staggered to avoid cross-call interference that causes flickering.
+    this._mediaCallRetries = 0;
+    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
+    const initialDelay = this._roomRole === 'captain' ? 2000 : 6000;
 
-      const retryCall = () => {
-        if (!this.net || !this.net.peer || !this.net.conn) return;
-        this.net.initiateCall();
-        this._mediaCallRetries++;
-        if (this._mediaCallRetries < 3) {
-          this._mediaCallTimer = setTimeout(() => {
-            const pv = document.getElementById('partner-pip');
-            const hasLive = pv && pv.srcObject &&
-              pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-            if (!hasLive) retryCall();
-          }, 5000);
-        }
-      };
-
-      // Delay first call by 2s to let both sides set up handlers after room transition
-      const startRetry = () => {
-        this._mediaCallTimer = setTimeout(() => retryCall(), 2000);
-      };
-
-      if (this.net.transport === 'p2p') {
-        startRetry();
-      } else {
-        const prevOnP2P = this.net.onP2PUpgrade;
-        this.net.onP2PUpgrade = () => {
-          startRetry();
-          if (prevOnP2P) prevOnP2P();
-        };
+    const retryCall = () => {
+      if (!this.net || !this.net.peer || !this.net.conn) return;
+      const pv = document.getElementById('partner-pip');
+      const hasLive = pv && pv.srcObject &&
+        pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+      if (hasLive) return;
+      this.net.initiateCall();
+      this._mediaCallRetries++;
+      if (this._mediaCallRetries < 3) {
+        this._mediaCallTimer = setTimeout(() => retryCall(), 5000);
       }
+    };
+
+    const startRetry = () => {
+      this._mediaCallTimer = setTimeout(() => retryCall(), initialDelay);
+    };
+
+    if (this.net.transport === 'p2p') {
+      startRetry();
+    } else {
+      const prevOnP2P = this.net.onP2PUpgrade;
+      this.net.onP2PUpgrade = () => {
+        startRetry();
+        if (prevOnP2P) prevOnP2P();
+      };
     }
 
     // Re-register disconnect handler for room
