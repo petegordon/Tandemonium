@@ -2230,7 +2230,8 @@
   }
 
   /* Mobile ROOM step: collapse center column so toggles are close together.
-     Room code is repositioned fixed between the PiP circles. */
+     Room code is repositioned fixed between the PiP circles.
+     These are mobile-only — desktop shows them normally via media query override. */
   #lobby-room #room-partner-info { display: none; }
   #lobby-room #room-video-area { display: none; }
   #lobby-room #btn-play-game { width: 100%; }
@@ -3268,11 +3269,14 @@
       width: 100%;
     }
     #lobby-room #room-partner-info {
+      display: flex !important;  /* Override mobile display:none */
       width: 100%;
       text-align: center;
-      display: flex;
       flex-direction: column;
       align-items: center;
+    }
+    #lobby-room #room-video-area {
+      display: block !important;  /* Override mobile display:none */
     }
     /* Room buttons: break out of center steps-col to span full card width */
     #lobby-room #btn-play-game,
@@ -3284,7 +3288,7 @@
       transform: translateX(-50%);
       margin-top: calc(4 * var(--ls));
     }
-    #room-video-area { gap: calc(16 * var(--ls)); margin: calc(2 * var(--ls)) 0; }
+    #room-video-area { min-height: calc(100 * var(--ls)); margin: calc(2 * var(--ls)) 0; }
     #level-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
     /* ROOM step — JS positions via --pip-left/--pip-top on desktop */
@@ -4044,7 +4048,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.f92d4b5 | 03-27-2026 23:55</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.887e1aa | 03-27-2026 23:57</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
