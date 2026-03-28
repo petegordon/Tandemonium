@@ -601,7 +601,7 @@ export class Lobby {
       if (isRoom) {
         requestAnimationFrame(() => this._positionPipToVideoArea());
         // Re-render selfie badges with rect shape on desktop TV/Monitor
-        const shape = !isMobile && window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
+        const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
         updateBadgeDisplay('selfie-badges', this._achievements.getEarned(), shape);
       }
       // Mobile: show room code between PiP circles using a body-level element
@@ -629,7 +629,7 @@ export class Lobby {
     if (!area) return;
     const rect = area.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height * 0.35;
+    const centerY = rect.top + rect.height * 0.2;
     document.documentElement.style.setProperty('--pip-left', centerX + 'px');
     document.documentElement.style.setProperty('--pip-top', centerY + 'px');
   }
@@ -3317,7 +3317,7 @@ export class Lobby {
       this._updatePartnerPip();
       // Render partner achievement badges
       if (profile && profile.achievements) {
-        const shape = !isMobile && window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
+        const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
         updateBadgeDisplay('partner-badges', profile.achievements, shape);
       }
       return;
