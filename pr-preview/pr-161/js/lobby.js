@@ -3415,69 +3415,10 @@ export class Lobby {
     // Re-sync toggle button states after returning from ride
     this._checkPermissionStates();
 
-    // Re-add PiP lobby mode
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    const videoArea = document.getElementById('room-video-area');
-    if (selfieWrap) {
-      selfieWrap.classList.add('pip-lobby-mode');
-      videoArea.appendChild(selfieWrap);
-    }
-    if (partnerWrap) {
-      partnerWrap.classList.add('pip-lobby-mode');
-      videoArea.appendChild(partnerWrap);
-    }
-
-    // Resume video after DOM reparent.
-    // On mobile, re-apply srcObject because appendChild pauses/kills playback.
-    // On desktop, just call play() to avoid flickering from stream replacement.
-    const selfieVideo = document.getElementById('selfie-pip');
-    const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    if (selfieVideo && selfieVideo.srcObject) {
-      if (isMobile) {
-        const s = selfieVideo.srcObject;
-        selfieVideo.srcObject = null;
-        selfieVideo.srcObject = s;
-      }
-      const videoTrack = selfieVideo.srcObject.getVideoTracks().find(t => t.readyState === 'live');
-      if (videoTrack && this.cameraActive) {
-        selfieVideo.style.display = 'block';
-        selfieVideo.play().catch(() => {});
-        if (selfieAvatar) selfieAvatar.style.display = 'none';
-      } else {
-        selfieVideo.style.display = 'none';
-        if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
-          const user = this.auth.getUser();
-          if (user && user.avatar) {
-            selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
-            selfieAvatar.style.display = 'block';
-          }
-        }
-      }
-      if (selfieWrap) selfieWrap.style.display = 'block';
-    }
-
-    const partnerVideo = document.getElementById('partner-pip');
-    if (partnerVideo && partnerVideo.srcObject) {
-      if (isMobile) {
-        const s = partnerVideo.srcObject;
-        partnerVideo.srcObject = null;
-        partnerVideo.srcObject = s;
-      }
-      partnerVideo.play().catch(() => {});
-    }
-    this._updatePartnerPip();
-
-    // Re-register remote stream handler (game.js replaces it during gameplay).
-    // Keep it simple: assign srcObject and play.
-    this.net.onRemoteStream = (remoteStream) => {
-      const pVideo = document.getElementById('partner-pip');
-      if (pVideo && remoteStream && pVideo.srcObject !== remoteStream) {
-        pVideo.srcObject = remoteStream;
-        pVideo.play().catch(() => {});
-        this._updatePartnerPip();
-      }
-    };
+    // Re-use the same media setup as initial room entry.
+    // This handles: onRemoteStream registration, local media acquisition,
+    // selfie/partner PiP display, and media call initiation (captain-first).
+    this._startRoomMedia();
 
     // Re-register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
@@ -3496,43 +3437,6 @@ export class Lobby {
       const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
       if (user && user.avatar) camMsg.avatar = user.avatar;
       this.net.sendProfile(camMsg);
-    }
-
-    // Always re-initiate media call on return to room.
-    // Even if our own partner stream looks live, the OTHER side may have lost
-    // their stream and needs us to call to re-establish it.
-    {
-      this._mediaCallRetries = 0;
-      if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
-      // Captain calls first (2s delay), stoker as fallback (6s delay)
-      const initialDelay = this._roomRole === 'captain' ? 2000 : 6000;
-
-      const retryCall = () => {
-        if (!this.net || !this.net.peer || !this.net.conn) return;
-        const pv = document.getElementById('partner-pip');
-        const hasLive = pv && pv.srcObject &&
-          pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-        if (hasLive) return;
-        this.net.initiateCall();
-        this._mediaCallRetries++;
-        if (this._mediaCallRetries < 3) {
-          this._mediaCallTimer = setTimeout(() => retryCall(), 5000);
-        }
-      };
-
-      const startRetry = () => {
-        this._mediaCallTimer = setTimeout(() => retryCall(), initialDelay);
-      };
-
-      if (this.net.transport === 'p2p') {
-        startRetry();
-      } else {
-        const prevOnP2P = this.net.onP2PUpgrade;
-        this.net.onP2PUpgrade = () => {
-          startRetry();
-          if (prevOnP2P) prevOnP2P();
-        };
-      }
     }
 
     // Re-register disconnect handler for room
