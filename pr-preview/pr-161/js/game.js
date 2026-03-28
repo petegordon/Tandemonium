@@ -2213,25 +2213,6 @@ class Game {
     analytics.setPage('lobby');
   }
 
-  _showReturnToRoomPrompt() {
-    // Show a brief overlay requiring a tap — provides the user gesture
-    // iOS needs for video.play() after returning to room.
-    this._hideVictory();
-    this._hideGameOver();
-    const overlay = document.createElement('div');
-    overlay.id = 'return-room-prompt';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-    overlay.innerHTML =
-      '<div style="text-align:center;color:#fff;font-family:inherit;">' +
-        '<p style="font-size:1.2em;margin-bottom:12px;">Captain returned to room</p>' +
-        '<button id="btn-return-room-tap" style="padding:14px 28px;border-radius:10px;border:none;background:#44ff66;color:#000;font-weight:bold;font-size:1.1em;cursor:pointer;">TAP TO CONTINUE</button>' +
-      '</div>';
-    document.body.appendChild(overlay);
-    document.getElementById('btn-return-room-tap').addEventListener('click', () => {
-      overlay.remove();
-      this._returnToRoom();
-    });
-  }
 
   _returnToRoom() {
     this._musicBtn.style.display = 'none';

@@ -3081,6 +3081,11 @@ export class Lobby {
     }
 
     this._showStep(this.levelStep);
+
+    // Reset gamepad edge flags so held A/B from room step don't immediately
+    // fire on the level step (A = confirm, B = back to room)
+    this._gpPrevA = true;
+    this._gpPrevB = true;
   }
 
   /**
@@ -3346,10 +3351,17 @@ export class Lobby {
   _removePipLobbyMode() {
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
-    // Just remove lobby-mode class — elements stay in body permanently.
-    // No appendChild needed since we no longer move elements between containers.
-    if (selfieWrap) selfieWrap.classList.remove('pip-lobby-mode');
-    if (partnerWrap) partnerWrap.classList.remove('pip-lobby-mode');
+    // Remove lobby-mode class and set inline display:block to prevent
+    // base CSS display:none from flashing the PiPs invisible before
+    // game-recorder shows them.
+    if (selfieWrap) {
+      selfieWrap.classList.remove('pip-lobby-mode');
+      selfieWrap.style.display = 'block';
+    }
+    if (partnerWrap) {
+      partnerWrap.classList.remove('pip-lobby-mode');
+      partnerWrap.style.display = 'block';
+    }
   }
 
   showRoom(net, role) {
@@ -3364,7 +3376,6 @@ export class Lobby {
     }
 
     this.lobbyEl.style.display = '';
-    this._startGamepadNav();
     if (this._previewModel) this._startPreviewLoop();
 
     // Show/hide play game button vs waiting text
@@ -3394,6 +3405,9 @@ export class Lobby {
 
     // Show room step directly (not levels)
     this._showStep(this.roomStep);
+
+    // Delay gamepad init to let held buttons from game controls release
+    setTimeout(() => this._startGamepadNav(), 500);
 
     // Refresh achievements and bike unlock state earned during the ride
     if (this._achievements) this._achievements.reload();
