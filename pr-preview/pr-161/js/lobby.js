@@ -574,8 +574,13 @@ export class Lobby {
       this._fixedBackBtn.style.visibility = 'hidden';
     }
     // On desktop room step, hide fixed-back (grid layout shows #btn-back-room instead)
+    // Also hide #btn-back-room when gamepad is connected (B button handles it)
     if (step === this.roomStep && window.matchMedia('(min-width: 1024px)').matches) {
       this._fixedBackBtn.style.visibility = 'hidden';
+      const backRoom = document.getElementById('btn-back-room');
+      if (backRoom) {
+        backRoom.style.display = (this.input && this.input.gamepadConnected) ? 'none' : '';
+      }
     }
 
     // Always reset to center column and update its items
