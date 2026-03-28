@@ -1067,7 +1067,7 @@ class Game {
     this.recorder.setLabels(this.mode);
     this.recorder.startBuffer(this.audioCtx, this.lobby.audioActive);
     if (this.lobby.cameraActive) {
-      this.recorder.startSelfie();
+      this.recorder.startSelfie(this.net && this.net._localMediaStream);
     } else if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
       const user = this.lobby.auth.getUser();
       if (user && user.avatar) this.recorder.showAvatarPip(this.lobby._avatarCache.get(user.avatar) || user.avatar);
