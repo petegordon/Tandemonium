@@ -521,7 +521,7 @@ Accent style (green) goes to NEXT LEVEL if visible, otherwise PLAY AGAIN.
 | `{levelSync}` | Profile | Captain selects a level | Highlight level, set `_forceWizard` if tutorial |
 | `{difficultySync}` | Profile | Captain changes difficulty | Update difficulty selection |
 | `{startRide}` | Profile | Captain clicks START RIDE | `_transitionToGame()` → enter game |
-| `{bikeSync}` | Profile | Captain changes bike | Update partner bike display |
+| `{bikeSync}` | Profile | Player changes bike | Notify partner of bike selection (display only — each player picks independently) |
 | `{cameraToggle}` | Profile | Captain toggles camera | Show/hide partner video PiP |
 | `EVT_COUNTDOWN` | Event | Captain countdown starts | `_startCountdown()` |
 | `EVT_START` | Event | Captain countdown reaches 0 | Set state to `playing` |
@@ -541,7 +541,7 @@ Accent style (green) goes to NEXT LEVEL if visible, otherwise PLAY AGAIN.
 | Lean value | Binary (MSG_LEAN) | 20Hz | Average with captain's lean for steering |
 | `{cameraToggle}` | Profile | On toggle | Show/hide partner video PiP |
 | `{tiltStatus}` | Profile | On motion detect | Track partner's tilt capability |
-| `{bikeSync}` | Profile | On bike change | Update partner bike display |
+| `{bikeSync}` | Profile | Player changes bike | Notify partner of bike selection (display only — each player picks independently) |
 
 ## State Sync — Captain → Stoker (during gameplay)
 
