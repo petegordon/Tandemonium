@@ -631,13 +631,16 @@ export class Lobby {
     }
   }
 
-  /** Position pip-lobby-mode videos centered in the room-video-area grid cell */
+  /** Position pip-lobby-mode videos over their room slot containers */
   _positionPipToVideoArea() {
-    const area = document.getElementById('room-video-area');
-    if (!area) return;
-    const rect = area.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
+    const captainSlot = document.getElementById('room-video-slot-captain');
+    const stokerSlot = document.getElementById('room-video-slot-stoker');
+    if (!captainSlot || !stokerSlot) return;
+    const cRect = captainSlot.getBoundingClientRect();
+    const sRect = stokerSlot.getBoundingClientRect();
+    // Center of both slots combined
+    const centerX = (cRect.left + cRect.right + sRect.left + sRect.right) / 4;
+    const centerY = (cRect.top + cRect.bottom) / 2;
     document.documentElement.style.setProperty('--pip-left', centerX + 'px');
     document.documentElement.style.setProperty('--pip-top', centerY + 'px');
   }

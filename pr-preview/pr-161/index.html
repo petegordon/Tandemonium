@@ -3297,10 +3297,23 @@
     }
     .lobby-card.room-active #room-video-area {
       grid-column: 2; grid-row: 2;
-      display: block !important;
-      min-height: calc(60 * var(--ls));
+      display: flex !important;
+      align-items: flex-start;
+      justify-content: center;
+      gap: calc(8 * var(--ls));
       width: 100%;
       justify-self: stretch;
+    }
+    .lobby-card.room-active .room-video-slot {
+      width: calc(55 * var(--ls));
+      min-height: calc(70 * var(--ls));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .lobby-card.room-active .room-video-slot .pip-label {
+      font-size: calc(10 * var(--ls));
+      margin-top: calc(2 * var(--ls));
     }
     .lobby-card.room-active #btn-play-game {
       grid-column: 1 / -1; grid-row: 3;
@@ -3353,7 +3366,7 @@
       left: calc(var(--pip-left, 50%) + 8 * var(--ls)) !important;
       transform: none;
     }
-    .pip-wrap.pip-lobby-mode .pip-label { font-size: calc(10 * var(--ls)); }
+    .pip-wrap.pip-lobby-mode .pip-label { display: none; }
     /* LEVEL step — scaled down circles above cards */
     #selfie-pip-wrap.pip-level-mode {
       top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
@@ -3979,15 +3992,27 @@ ON</button>
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
         <div id="lobby-room" class="lobby-step" style="display:none;">
+          <!-- Row 1: Room code -->
           <div id="room-partner-info">
             <div id="room-code-label" class="room-code-label"></div>
             <div id="room-partner-name"></div>
           </div>
+          <!-- Row 2 center: Video slot containers
+               Actual <video> elements live at <body> level (iOS constraint:
+               appendChild kills video playback). These slots define layout
+               positions; body-level PiPs overlay them via position:fixed. -->
           <div id="room-video-area">
-            <!-- PiP elements repositioned here via CSS class -->
+            <div id="room-video-slot-captain" class="room-video-slot">
+              <span class="pip-label">CAPTAIN</span>
+            </div>
+            <div id="room-video-slot-stoker" class="room-video-slot">
+              <span class="pip-label">STOKER</span>
+            </div>
           </div>
+          <!-- Row 3: Actions -->
           <button class="lobby-btn lobby-btn-accent" id="btn-play-game">PLAY GAME</button>
           <p id="room-wait-text-room" class="conn-status" style="display:none;">Waiting for captain...</p>
+          <!-- Row 4: Back -->
           <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
         </div>
 
@@ -4097,7 +4122,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b29bf04 | 03-28-2026 11:24</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.886e6a7 | 03-28-2026 11:35</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
