@@ -524,10 +524,6 @@ export class Lobby {
     this._clearFocusHighlight();
     this._currentStep = step;
 
-    // Room step: toggle class for fixed-position bottom buttons
-    const playBtn = document.getElementById('btn-play-game');
-    if (playBtn) playBtn.classList.toggle('room-bottom-btn', step === this.roomStep);
-    if (this._fixedBackBtn) this._fixedBackBtn.classList.toggle('room-bottom-btn', step === this.roomStep);
 
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
@@ -540,15 +536,13 @@ export class Lobby {
     }
 
     // Hide bike carousel on level step (use that space for level cards + difficulty)
-    // Room step also uses the grid layout (carousel-hidden) but keeps carousel visible
     const carousel = document.getElementById('bike-carousel');
     const lobbyCard = document.querySelector('.lobby-card');
     const hideCarousel = (step === this.levelStep);
-    const useGridLayout = (step === this.levelStep || step === this.roomStep);
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
-    if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', useGridLayout);
+    if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
     const lobbyEl = document.getElementById('lobby');
-    if (lobbyEl) lobbyEl.classList.toggle('lobby-wide', useGridLayout);
+    if (lobbyEl) lobbyEl.classList.toggle('lobby-wide', hideCarousel);
 
     // Show shared difficulty selector on level step; reset hidden state
     const diffSel = document.getElementById('difficulty-selector');
@@ -570,7 +564,10 @@ export class Lobby {
 
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
     const hasBack = this._stepBack.get(step);
-    if (hasBack && !(this.input && this.input.gamepadConnected)) {
+    // On desktop room step, use the in-flow #btn-back-room instead of fixed back
+    const useFixedBack = hasBack && !(this.input && this.input.gamepadConnected)
+      && !(step === this.roomStep && window.matchMedia('(min-width: 1024px)').matches);
+    if (useFixedBack) {
       this._fixedBackBtn.textContent = (step === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
       this._fixedBackBtn.style.visibility = 'visible';
     } else {
@@ -3167,12 +3164,14 @@ export class Lobby {
 
     const stream = partnerVideo && partnerVideo.srcObject;
     const hasVideo = stream && stream.getVideoTracks().length > 0;
+    const hasLiveTrack = hasVideo && stream.getVideoTracks().some(t => t.readyState === 'live');
 
     if (this._partnerCameraOn && hasVideo) {
       partnerVideo.style.display = 'block';
       partnerVideo.play().catch(() => {});
       if (partnerAvatar) partnerAvatar.style.display = 'none';
-    } else {
+    } else if (!this._partnerCameraOn) {
+      // Partner explicitly turned off camera — show avatar
       if (partnerVideo) partnerVideo.style.display = 'none';
       if (partnerAvatar) {
         partnerAvatar.src = this._partnerAvatarUrl
@@ -3180,6 +3179,18 @@ export class Lobby {
           : DEFAULT_AVATAR_SVG;
         partnerAvatar.style.display = 'block';
       }
+    } else if (!hasVideo && this._partnerCameraOn) {
+      // Camera on but stream not yet available — show avatar temporarily,
+      // then retry in case stream arrives shortly
+      if (partnerAvatar) {
+        partnerAvatar.src = this._partnerAvatarUrl
+          ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
+          : DEFAULT_AVATAR_SVG;
+        partnerAvatar.style.display = 'block';
+      }
+      if (partnerVideo) partnerVideo.style.display = 'none';
+      // Retry to catch stream arriving after a delay
+      setTimeout(() => this._updatePartnerPip(), 2000);
     }
     partnerWrap.style.display = 'block';
   }
