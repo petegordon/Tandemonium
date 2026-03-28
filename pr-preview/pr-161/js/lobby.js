@@ -584,6 +584,20 @@ export class Lobby {
     if (step === this.levelStep) {
       requestAnimationFrame(() => this._adjustLevelCompact());
     }
+
+    // ── PiP class management ──
+    // Show PiP circles on room (hero size) and multiplayer level (scaled down).
+    // Hidden on all other steps (base CSS display:none).
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    if (selfieWrap && partnerWrap) {
+      const isRoom = (step === this.roomStep);
+      const isMultiplayerLevel = (step === this.levelStep && this._pendingMode === 'multiplayer');
+      selfieWrap.classList.toggle('pip-lobby-mode', isRoom);
+      selfieWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
+      partnerWrap.classList.toggle('pip-lobby-mode', isRoom);
+      partnerWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
+    }
   }
 
   _hideLobby() {
@@ -3170,11 +3184,8 @@ export class Lobby {
       if (audioTrack) audioTrack.enabled = this.audioActive;
     }
 
-    // Show selfie PiP in lobby mode (no appendChild — CSS handles positioning)
+    // PiP class is managed by _showStep() — just get the element reference
     const selfieWrap = document.getElementById('selfie-pip-wrap');
-    if (selfieWrap) {
-      selfieWrap.classList.add('pip-lobby-mode');
-    }
 
     // Start selfie video from the acquired stream
     const selfieVideo = document.getElementById('selfie-pip');
@@ -3213,10 +3224,7 @@ export class Lobby {
     }
 
     // Show partner PiP in lobby mode (no appendChild — CSS handles positioning)
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    if (partnerWrap) {
-      partnerWrap.classList.add('pip-lobby-mode');
-    }
+    // PiP class is managed by _showStep() — no manual toggle needed here
 
     // Captain initiates media call first; stoker follows after a delay as fallback.
     // Staggered to avoid cross-call interference that causes flickering.
@@ -3351,15 +3359,15 @@ export class Lobby {
   _removePipLobbyMode() {
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
-    // Remove lobby-mode class and set inline display:block to prevent
+    // Remove lobby/level classes and set inline display:block to prevent
     // base CSS display:none from flashing the PiPs invisible before
     // game-recorder shows them.
     if (selfieWrap) {
-      selfieWrap.classList.remove('pip-lobby-mode');
+      selfieWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
       selfieWrap.style.display = 'block';
     }
     if (partnerWrap) {
-      partnerWrap.classList.remove('pip-lobby-mode');
+      partnerWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
       partnerWrap.style.display = 'block';
     }
   }
@@ -3428,10 +3436,7 @@ export class Lobby {
     // Return to room: video streams are already playing from room → game.
     // Don't touch srcObject, don't initiate new calls, don't call play().
     // Just switch the CSS class for lobby positioning.
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    if (selfieWrap) selfieWrap.classList.add('pip-lobby-mode');
-    if (partnerWrap) partnerWrap.classList.add('pip-lobby-mode');
+    // PiP class is managed by _showStep(roomStep) above — no manual toggle needed
 
     // Re-register handlers (game.js replaced these during gameplay)
     this.net.onRemoteStream = (remoteStream) => {

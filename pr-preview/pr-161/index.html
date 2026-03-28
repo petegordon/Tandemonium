@@ -821,7 +821,7 @@
   /* ── Level selector ── */
   #lobby-level {
     display: none;
-    padding: 8px 0 6px;  /* room for gamepad focus outline at top and bottom */
+    padding: 70px 0 6px;  /* top: space for pip-level-mode circles; bottom: gamepad outline */
   }
 
   /* ── COMPONENT: Level Cards ── */
@@ -2157,9 +2157,11 @@
     font-weight: 700;
   }
 
-  /* ── Lobby Room (multiplayer shared lobby) ── */
-  /* pip-lobby-mode: keep elements in body (no appendChild!) to avoid iOS
-     video playback death. Use fixed positioning to center them on screen. */
+  /* ── PiP lobby/level modes ──
+     Elements stay in <body> permanently (no appendChild) to avoid iOS
+     video playback death. Positioned via CSS classes toggled by _showStep(). */
+
+  /* ── pip-lobby-mode: ROOM step — hero circles, centered ── */
   .pip-wrap.pip-lobby-mode {
     position: fixed !important;
     z-index: 56;
@@ -2170,22 +2172,57 @@
     bottom: auto !important;
     left: 50% !important;
     right: auto !important;
-    top: 50%;
+    top: 42%;
     transform: translate(calc(-100% - 12px), -50%);
   }
   #partner-pip-wrap.pip-lobby-mode {
     bottom: auto !important;
     right: auto !important;
     left: 50% !important;
-    top: 50%;
+    top: 42%;
     transform: translate(12px, -50%);
   }
   .pip-wrap.pip-lobby-mode .pip-label {
     font-size: 10px;
     white-space: nowrap;
   }
+
+  /* ── pip-level-mode: LEVEL step — scaled down, top-center ── */
+  .pip-wrap.pip-level-mode {
+    position: fixed !important;
+    z-index: 56;
+    display: block !important;
+    pointer-events: auto;
+  }
+  #selfie-pip-wrap.pip-level-mode {
+    bottom: auto !important;
+    right: auto !important;
+    left: 50% !important;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    transform: translate(calc(-100% - 6px), 0) scale(0.75);
+    transform-origin: top right;
+  }
+  #partner-pip-wrap.pip-level-mode {
+    bottom: auto !important;
+    right: auto !important;
+    left: 50% !important;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    transform: translate(6px, 0) scale(0.75);
+    transform-origin: top left;
+  }
+  .pip-wrap.pip-level-mode .pip-label {
+    font-size: 8px;
+    white-space: nowrap;
+  }
+
+  /* Smooth transition between ROOM ↔ LEVEL positions */
+  .pip-wrap.pip-lobby-mode,
+  .pip-wrap.pip-level-mode {
+    transition: top 0.3s ease, transform 0.3s ease;
+  }
+
   #room-video-area {
-    /* Spacer — PiP elements are now fixed-positioned, not children */
+    /* Spacer — PiP elements are fixed-positioned, not children */
     min-height: 100px;
     margin: 12px 0;
   }
@@ -3221,9 +3258,20 @@
     #room-video-area { gap: calc(16 * var(--ls)); margin: calc(2 * var(--ls)) 0; }
     #level-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
+    /* ROOM step — scaled gap */
     #selfie-pip-wrap.pip-lobby-mode { transform: translate(calc(-100% - 12 * var(--ls)), -50%); }
     #partner-pip-wrap.pip-lobby-mode { transform: translate(calc(12 * var(--ls)), -50%); }
     .pip-wrap.pip-lobby-mode .pip-label { font-size: calc(10 * var(--ls)); }
+    /* LEVEL step — scaled down circles above cards */
+    #selfie-pip-wrap.pip-level-mode {
+      top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
+      transform: translate(calc(-100% - 6 * var(--ls)), 0) scale(0.7);
+    }
+    #partner-pip-wrap.pip-level-mode {
+      top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
+      transform: translate(calc(6 * var(--ls)), 0) scale(0.7);
+    }
+    .pip-wrap.pip-level-mode .pip-label { font-size: calc(8 * var(--ls)); }
 
     /* Auth / user info */
     .lobby-auth-btn {
@@ -3957,7 +4005,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.4410598 | 03-27-2026 22:27</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.a5b2a64 | 03-27-2026 22:49</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
