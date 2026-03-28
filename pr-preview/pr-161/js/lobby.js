@@ -524,16 +524,10 @@ export class Lobby {
     this._clearFocusHighlight();
     this._currentStep = step;
 
-    // Room step: move PLAY GAME to lobby-card so it can span full width as a grid row
+    // Room step: toggle class for fixed-position bottom buttons
     const playBtn = document.getElementById('btn-play-game');
-    const lobbyCardEl = document.querySelector('.lobby-card');
-    if (playBtn && lobbyCardEl) {
-      if (step === this.roomStep) {
-        lobbyCardEl.appendChild(playBtn);
-      } else if (playBtn.parentElement === lobbyCardEl) {
-        document.getElementById('lobby-room').insertBefore(playBtn, document.getElementById('room-wait-text-room'));
-      }
-    }
+    if (playBtn) playBtn.classList.toggle('room-bottom-btn', step === this.roomStep);
+    if (this._fixedBackBtn) this._fixedBackBtn.classList.toggle('room-bottom-btn', step === this.roomStep);
 
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
@@ -554,7 +548,7 @@ export class Lobby {
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
     if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', useGridLayout);
     const lobbyEl = document.getElementById('lobby');
-    if (lobbyEl) lobbyEl.classList.toggle('lobby-wide', hideCarousel);
+    if (lobbyEl) lobbyEl.classList.toggle('lobby-wide', useGridLayout);
 
     // Show shared difficulty selector on level step; reset hidden state
     const diffSel = document.getElementById('difficulty-selector');
