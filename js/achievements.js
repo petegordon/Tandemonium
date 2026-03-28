@@ -224,7 +224,8 @@ export function showAchievementToast(achievement) {
 }
 
 // Badge rendering around a PiP
-export function updateBadgeDisplay(containerId, achievements) {
+// shape: 'rect' to trace rectangle perimeter (TV/Monitor room), default circular
+export function updateBadgeDisplay(containerId, achievements, shape) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
@@ -235,32 +236,27 @@ export function updateBadgeDisplay(containerId, achievements) {
   const count = earned.length;
   if (count === 0) return;
 
-  // Check if parent pip-wrap is in lobby mode on desktop (rectangular video)
-  const pipWrap = container.closest('.pip-wrap');
-  const isRect = pipWrap && pipWrap.classList.contains('pip-lobby-mode')
-    && window.matchMedia('(min-width: 1024px)').matches;
+  const spacing = Math.max(count, 6);
 
-  if (isRect) {
+  if (shape === 'rect') {
     // Arrange badges along the rectangle perimeter
-    const w = container.offsetWidth;
-    const h = container.offsetHeight;
+    const w = container.offsetWidth || 220;
+    const h = container.offsetHeight || 280;
     const perimeter = 2 * (w + h);
-    const spacing = Math.max(count, 6);
     earned.forEach((ach, i) => {
       const badge = document.createElement('div');
       badge.className = 'pip-badge';
       badge.textContent = ach.icon;
       badge.title = ach.name;
-      // Walk along the rectangle perimeter
       const dist = (i / spacing) * perimeter;
       let x, y;
-      if (dist < w) {              // top edge
+      if (dist < w) {
         x = dist; y = 0;
-      } else if (dist < w + h) {   // right edge
+      } else if (dist < w + h) {
         x = w; y = dist - w;
-      } else if (dist < 2 * w + h) { // bottom edge
+      } else if (dist < 2 * w + h) {
         x = w - (dist - w - h); y = h;
-      } else {                      // left edge
+      } else {
         x = 0; y = h - (dist - 2 * w - h);
       }
       badge.style.transform = 'translate(' + (x - w / 2) + 'px, ' + (y - h / 2) + 'px)';
@@ -268,7 +264,7 @@ export function updateBadgeDisplay(containerId, achievements) {
     });
   } else {
     // Circular arrangement (mobile / non-lobby)
-    const angleStep = 360 / Math.max(count, 6);
+    const angleStep = 360 / spacing;
     earned.forEach((ach, i) => {
       const badge = document.createElement('div');
       badge.className = 'pip-badge';
