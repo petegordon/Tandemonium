@@ -599,9 +599,22 @@ export class Lobby {
       partnerWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
       // Position PiPs to align with room-video-area in the center column (desktop)
       if (isRoom) requestAnimationFrame(() => this._positionPipToVideoArea());
-      // Mobile: position room code fixed between PiP circles
-      const roomCodeLabel = document.getElementById('room-code-label');
-      if (roomCodeLabel) roomCodeLabel.classList.toggle('pip-room-code', isRoom && isMobile);
+      // Mobile: show room code between PiP circles using a body-level element
+      // (can't use the original label — it's inside a display:none parent on mobile)
+      if (isMobile) {
+        let mobileCode = document.getElementById('mobile-room-code');
+        if (isRoom && this.net && this.net.roomCode) {
+          if (!mobileCode) {
+            mobileCode = document.createElement('div');
+            mobileCode.id = 'mobile-room-code';
+            document.body.appendChild(mobileCode);
+          }
+          mobileCode.textContent = this.net.roomCode;
+          mobileCode.style.display = 'block';
+        } else if (mobileCode) {
+          mobileCode.style.display = 'none';
+        }
+      }
     }
   }
 
