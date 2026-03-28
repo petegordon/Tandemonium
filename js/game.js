@@ -2222,8 +2222,9 @@ class Game {
       return;
     }
 
-    // Notify partner to return to room too
-    if (this.net.connected) {
+    // Notify partner to return to room too (only if we're initiating,
+    // not if we received EVT_RETURN_ROOM — prevents infinite loop)
+    if (this.state !== 'lobby' && this.net.connected) {
       this.net.sendEvent(EVT_RETURN_ROOM);
     }
 
