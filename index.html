@@ -1878,13 +1878,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
+    gap: 4px;
     width: 100%;
   }
   .lobby-steps-col {
     display: flex;
     flex-direction: column;
     align-items: center;
+    flex-shrink: 1;
+    min-width: 0;
   }
   .lobby-toggles {
     display: flex;
@@ -3249,9 +3251,15 @@
       flex-direction: column;
       align-items: center;
     }
+    /* PLAY GAME spans full width of lobby-layout (across all toggle columns) */
+    .lobby-layout { position: relative; }
     #lobby-room #btn-play-game {
-      width: calc(280 * var(--ls));
-      margin-top: calc(8 * var(--ls));
+      position: absolute;
+      bottom: calc(-40 * var(--ls));
+      left: 0;
+      right: 0;
+      width: auto;
+      z-index: 2;
     }
     #lobby-room #btn-back-room {
       display: none;  /* Use the fixed Back/Leave Room at bottom instead */
@@ -3263,13 +3271,13 @@
     #selfie-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
       top: var(--pip-top, 68%) !important;
-      left: calc(var(--pip-left, 50%) - 30 * var(--ls)) !important;
+      left: calc(var(--pip-left, 50%) - 16 * var(--ls)) !important;
       transform: translateX(-100%);
     }
     #partner-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
       top: var(--pip-top, 68%) !important;
-      left: calc(var(--pip-left, 50%) + 30 * var(--ls)) !important;
+      left: calc(var(--pip-left, 50%) + 16 * var(--ls)) !important;
       transform: none;
     }
     .pip-wrap.pip-lobby-mode .pip-label { font-size: calc(10 * var(--ls)); }
@@ -4016,7 +4024,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.9355e71 | 03-27-2026 23:36</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.ff62622 | 03-27-2026 23:43</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
