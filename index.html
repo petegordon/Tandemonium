@@ -3125,7 +3125,7 @@
     #lobby-host .lobby-back,
     #lobby-join .lobby-back,
     #lobby-level .lobby-back { display: none; }
-    /* #lobby-room .lobby-back shown via override below */
+    /* Room step: back button handled by grid layout (.room-active) */
     #lobby-fixed-back { font-size: calc(10 * var(--ls)); padding: calc(4 * var(--ls)) calc(8 * var(--ls)); order: 99; }
 
     #lobby-role .lobby-prompt,
@@ -3260,38 +3260,60 @@
     #lobby-host { gap: calc(3 * var(--ls)); }
     #lobby-join { gap: calc(4 * var(--ls)); padding-top: calc(8 * var(--ls)); }
 
-    /* Room (multiplayer lobby): use flex-wrap so elements flow into rows.
-       lobby-layout becomes a wrapping flex container for the room step. */
-    #lobby-room {
+    /* ── Room step: CSS Grid layout ──
+       .room-active on lobby-card switches to a 4-row grid:
+       Row 1: room code (full span)
+       Row 2: left toggles | video area | right toggles
+       Row 3: PLAY GAME (full span)
+       Row 4: Leave Room (full span) */
+    .lobby-card.room-active {
+      display: grid !important;
+      grid-template-columns: auto 1fr auto;
+      grid-template-rows: auto 1fr auto auto;
+      gap: calc(4 * var(--ls));
+      align-items: center;
+      justify-items: center;
+      padding: calc(6 * var(--ls)) calc(10 * var(--ls));
+      height: auto;
+    }
+    .lobby-card.room-active .lobby-layout { display: contents; }
+    .lobby-card.room-active .lobby-steps-col { display: contents; }
+    .lobby-card.room-active #lobby-room { display: contents !important; }
+    .lobby-card.room-active .lobby-left-col {
+      grid-column: 1; grid-row: 2; align-self: center;
+    }
+    .lobby-card.room-active .lobby-right-col {
+      grid-column: 3; grid-row: 2; align-self: center;
+    }
+    .lobby-card.room-active #room-partner-info {
+      grid-column: 1 / -1; grid-row: 1;
+      display: flex !important;
       flex-direction: column;
       align-items: center;
-      width: 100%;
-    }
-    #lobby-room #room-partner-info,
-    .lobby-card > #room-partner-info {
-      display: flex !important;  /* Override mobile display:none */
-      width: 100%;
       text-align: center;
-      flex-direction: column;
-      align-items: center;
+      width: 100%;
     }
-    #lobby-room #room-video-area {
-      display: block !important;  /* Override mobile display:none */
+    .lobby-card.room-active #room-video-area {
+      grid-column: 2; grid-row: 2;
+      display: block !important;
       min-height: calc(60 * var(--ls));
     }
-    /* PLAY GAME + Leave Room: flow inside center column */
-    #lobby-room #btn-play-game {
-      margin-top: calc(4 * var(--ls));
-      min-width: calc(100 * var(--ls));
-      width: auto;
-      order: 9;
+    .lobby-card.room-active #btn-play-game {
+      grid-column: 1 / -1; grid-row: 3;
+      justify-self: center;
+      min-width: calc(120 * var(--ls));
     }
-    #lobby-room #btn-back-room {
+    .lobby-card.room-active #room-wait-text-room {
+      grid-column: 1 / -1; grid-row: 3;
+    }
+    .lobby-card.room-active #btn-back-room {
+      grid-column: 1 / -1; grid-row: 4;
       display: inline-block !important;
-      margin-top: calc(3 * var(--ls));
       font-size: calc(10 * var(--ls));
-      order: 10 !important;
+      justify-self: center;
     }
+    /* Hide other steps' elements that leak through display:contents */
+    .lobby-card.room-active .lobby-card-header { display: none; }
 
     /* Desktop ROOM: video as rectangles with small rounded corners */
     .pip-wrap.pip-lobby-mode .pip-video {
@@ -4071,7 +4093,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.3a1eea6 | 03-28-2026 11:10</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.a3008d9 | 03-28-2026 11:19</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
