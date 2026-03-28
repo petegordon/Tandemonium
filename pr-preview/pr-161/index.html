@@ -3353,18 +3353,18 @@
     }
     #level-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
-    /* ROOM step — JS positions via --pip-left/--pip-top on desktop */
+    /* ROOM step — each PiP positioned over its slot container via per-slot CSS vars */
     #selfie-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
-      top: var(--pip-top, 50%) !important;
-      left: calc(var(--pip-left, 50%) - 8 * var(--ls)) !important;
-      transform: translateX(-100%);
+      top: var(--pip-captain-top, 50%) !important;
+      left: var(--pip-captain-left, 50%) !important;
+      transform: translate(-50%, -50%);
     }
     #partner-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
-      top: var(--pip-top, 50%) !important;
-      left: calc(var(--pip-left, 50%) + 8 * var(--ls)) !important;
-      transform: none;
+      top: var(--pip-stoker-top, 50%) !important;
+      left: var(--pip-stoker-left, 50%) !important;
+      transform: translate(-50%, -50%);
     }
     .pip-wrap.pip-lobby-mode .pip-label { display: none; }
     /* LEVEL step — scaled down circles above cards */
@@ -4122,7 +4122,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.886e6a7 | 03-28-2026 11:35</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.fa2f211 | 03-28-2026 11:59</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
