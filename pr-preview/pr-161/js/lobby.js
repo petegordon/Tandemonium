@@ -524,6 +524,10 @@ export class Lobby {
     this._clearFocusHighlight();
     this._currentStep = step;
 
+    // Toggle room-active class on steps-col so CSS can stretch it for bottom-aligned buttons
+    const stepsCol = document.querySelector('.lobby-steps-col');
+    if (stepsCol) stepsCol.classList.toggle('room-active', step === this.roomStep);
+
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
       const leftCol = document.querySelector('.lobby-left-col');
@@ -629,7 +633,7 @@ export class Lobby {
     if (!area) return;
     const rect = area.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height * 0.2;
+    const centerY = rect.top + rect.height * 0.1;
     document.documentElement.style.setProperty('--pip-left', centerX + 'px');
     document.documentElement.style.setProperty('--pip-top', centerY + 'px');
   }
