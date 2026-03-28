@@ -2298,27 +2298,16 @@ class Game {
 
   _initiateMediaCall() {
     if (!this.net || !this.net.peer) return;
-    const localStream = this.net._localMediaStream || new MediaStream();
-    const remotePeerId = this.net.conn && this.net.conn.peer;
-    if (!remotePeerId) return;
     clearTimeout(this._mediaRetryTimeout);
     if (!this._mediaRetryCount) this._mediaRetryCount = 0;
-    const call = this.net.peer.call(remotePeerId, localStream);
-    if (call) {
-      call.on('stream', (remoteStream) => {
-        clearTimeout(this._mediaRetryTimeout);
-        this._mediaRetryCount = 0;
-        this.recorder.setPartnerStream(remoteStream);
-        this.net._playRemoteAudio(remoteStream);
-        this.recorder.addAudioStreams(this.net._localMediaStream || null, remoteStream);
-      });
-      // Retry up to 10 times if partner stream doesn't arrive
-      this._mediaRetryCount++;
-      if (this._mediaRetryCount < 10) {
-        this._mediaRetryTimeout = setTimeout(() => {
-          if (!this.recorder.partnerActive) this._initiateMediaCall();
-        }, 3000);
-      }
+    // Use network manager's initiateCall to properly track _mediaCall
+    this.net.initiateCall();
+    // Retry up to 3 times if partner stream doesn't arrive
+    this._mediaRetryCount++;
+    if (this._mediaRetryCount < 3) {
+      this._mediaRetryTimeout = setTimeout(() => {
+        if (!this.recorder.partnerActive) this._initiateMediaCall();
+      }, 5000);
     }
   }
 
