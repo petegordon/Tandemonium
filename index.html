@@ -2173,16 +2173,15 @@
   #selfie-pip-wrap.pip-lobby-mode {
     top: auto !important;
     right: auto !important;
-    /* Similar to in-game position but slightly higher to avoid covering toggles */
     bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
-    left: calc(50% - 30px) !important;
+    left: calc(50% - 20vw) !important;
     transform: translateX(-100%);
   }
   #partner-pip-wrap.pip-lobby-mode {
     top: auto !important;
     right: auto !important;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
-    left: calc(50% + 30px) !important;
+    left: calc(50% + 20vw) !important;
     transform: none;
   }
   .pip-wrap.pip-lobby-mode .pip-label {
@@ -2241,15 +2240,17 @@
   #room-code-label.pip-room-code {
     position: fixed !important;
     z-index: 57;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px);
+    /* Same bottom as PiP circles + half circle height (40px) to vertically center */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px);
     left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 11px;
+    transform: translateX(-50%);
+    font-size: 10px;
     color: #44ff66;
     font-weight: 700;
     letter-spacing: 1px;
     text-shadow: 0 0 8px rgba(68,255,102,0.4);
     pointer-events: none;
+    white-space: nowrap;
   }
   .level-card.selected {
     border-color: rgba(60,200,80,0.7);
@@ -3273,18 +3274,8 @@
       flex-direction: column;
       align-items: center;
     }
-    /* PLAY GAME spans full width of lobby-layout (across all toggle columns) */
-    .lobby-layout { position: relative; }
     #lobby-room #btn-play-game {
-      position: absolute;
-      bottom: calc(-40 * var(--ls));
-      left: 0;
-      right: 0;
-      width: auto;
-      z-index: 2;
-    }
-    #lobby-room #btn-back-room {
-      display: none;  /* Use the fixed Back/Leave Room at bottom instead */
+      margin-top: calc(4 * var(--ls));
     }
     #room-video-area { gap: calc(16 * var(--ls)); margin: calc(2 * var(--ls)) 0; }
     #level-wait-text,
@@ -4046,7 +4037,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.edf9bf1 | 03-27-2026 23:49</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.9751fe3 | 03-27-2026 23:55</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
