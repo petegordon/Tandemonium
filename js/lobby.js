@@ -597,8 +597,11 @@ export class Lobby {
       selfieWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
       partnerWrap.classList.toggle('pip-lobby-mode', isRoom);
       partnerWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
-      // Position PiPs to align with room-video-area in the center column
+      // Position PiPs to align with room-video-area in the center column (desktop)
       if (isRoom) requestAnimationFrame(() => this._positionPipToVideoArea());
+      // Mobile: position room code fixed between PiP circles
+      const roomCodeLabel = document.getElementById('room-code-label');
+      if (roomCodeLabel) roomCodeLabel.classList.toggle('pip-room-code', isRoom && isMobile);
     }
   }
 

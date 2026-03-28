@@ -2226,8 +2226,30 @@
 
   #room-video-area {
     /* Spacer — PiP elements are fixed-positioned, not children */
-    min-height: 100px;
-    margin: 12px 0;
+    min-height: 0;
+    margin: 0;
+  }
+
+  /* Mobile ROOM step: collapse center column so toggles are close together.
+     Room code is repositioned fixed between the PiP circles. */
+  #lobby-room #room-partner-info { display: none; }
+  #lobby-room #room-video-area { display: none; }
+  #lobby-room #btn-play-game { width: 100%; }
+  #lobby-room #btn-back-room { width: 100%; }
+
+  /* Fixed room code between PiP circles on mobile */
+  #room-code-label.pip-room-code {
+    position: fixed !important;
+    z-index: 57;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px);
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 11px;
+    color: #44ff66;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-shadow: 0 0 8px rgba(68,255,102,0.4);
+    pointer-events: none;
   }
   .level-card.selected {
     border-color: rgba(60,200,80,0.7);
@@ -4024,7 +4046,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.ff62622 | 03-27-2026 23:43</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.edf9bf1 | 03-27-2026 23:49</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
