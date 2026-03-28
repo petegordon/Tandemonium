@@ -3428,11 +3428,17 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    // Resume video playback after DOM reparent — don't reassign srcObject
-    // (reassigning kills the stream and causes flickering/black frames)
+    // Resume video after DOM reparent.
+    // On mobile, re-apply srcObject because appendChild pauses/kills playback.
+    // On desktop, just call play() to avoid flickering from stream replacement.
     const selfieVideo = document.getElementById('selfie-pip');
     const selfieAvatar = document.getElementById('selfie-pip-avatar');
     if (selfieVideo && selfieVideo.srcObject) {
+      if (isMobile) {
+        const s = selfieVideo.srcObject;
+        selfieVideo.srcObject = null;
+        selfieVideo.srcObject = s;
+      }
       const videoTrack = selfieVideo.srcObject.getVideoTracks().find(t => t.readyState === 'live');
       if (videoTrack && this.cameraActive) {
         selfieVideo.style.display = 'block';
@@ -3451,13 +3457,13 @@ export class Lobby {
       if (selfieWrap) selfieWrap.style.display = 'block';
     }
 
-    // Check if partner video stream is still live from the game session
     const partnerVideo = document.getElementById('partner-pip');
-    const partnerHasLive = partnerVideo && partnerVideo.srcObject &&
-      partnerVideo.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-
-    if (partnerHasLive) {
-      // Stream is still working — just resume playback (no srcObject change!)
+    if (partnerVideo && partnerVideo.srcObject) {
+      if (isMobile) {
+        const s = partnerVideo.srcObject;
+        partnerVideo.srcObject = null;
+        partnerVideo.srcObject = s;
+      }
       partnerVideo.play().catch(() => {});
     }
     this._updatePartnerPip();
@@ -3492,8 +3498,10 @@ export class Lobby {
       this.net.sendProfile(camMsg);
     }
 
-    // Only initiate a new media call if there's no working stream.
-    if (!partnerHasLive) {
+    // Always re-initiate media call on return to room.
+    // Even if our own partner stream looks live, the OTHER side may have lost
+    // their stream and needs us to call to re-establish it.
+    {
       this._mediaCallRetries = 0;
       if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
       // Captain calls first (2s delay), stoker as fallback (6s delay)
