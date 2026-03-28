@@ -364,7 +364,10 @@ export class GameRecorder {
         });
       }
       if (this.selfieVideo) {
-        this.selfieVideo.srcObject = this.selfieStream;
+        // Only reassign if different stream — avoids killing iOS playback
+        if (this.selfieVideo.srcObject !== this.selfieStream) {
+          this.selfieVideo.srcObject = this.selfieStream;
+        }
         this.selfieVideo.play().catch(() => {});
         if (this.selfieWrap) this.selfieWrap.style.display = 'block';
       }
@@ -405,7 +408,10 @@ export class GameRecorder {
   setPartnerStream(stream) {
     this.partnerStream = stream;
     if (this.partnerVideo && stream) {
-      this.partnerVideo.srcObject = stream;
+      // Only reassign if different stream — avoids killing iOS playback
+      if (this.partnerVideo.srcObject !== stream) {
+        this.partnerVideo.srcObject = stream;
+      }
       this.partnerVideo.style.display = 'block';
       this.partnerVideo.play().catch(() => {});
       if (this.partnerAvatar) this.partnerAvatar.style.display = 'none';

@@ -3411,7 +3411,9 @@ export class Lobby {
     // Return-to-room: the connection and media streams are still alive from the
     // game session. Do NOT call _startRoomMedia() — that re-acquires media,
     // Return to room: add lobby-mode class for CSS positioning.
-    // No appendChild — elements stay in body to avoid killing iOS video playback.
+    // Return to room: video streams are already playing from room → game.
+    // Don't touch srcObject, don't initiate new calls, don't call play().
+    // Just switch the CSS class for lobby positioning.
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
     if (selfieWrap) selfieWrap.classList.add('pip-lobby-mode');
@@ -3426,49 +3428,8 @@ export class Lobby {
       pv.play().catch(() => {});
       const pa = document.getElementById('partner-pip-avatar');
       if (pa) pa.style.display = 'none';
-      if (!this._partnerCameraOn) this._updatePartnerPip();
-      const vt = remoteStream.getVideoTracks()[0];
-      if (vt) vt.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
     };
-
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
-
-    // Resume selfie video (local stream — always alive)
-    const selfieVideo = document.getElementById('selfie-pip');
-    if (selfieVideo && this.net._localMediaStream) {
-      selfieVideo.srcObject = this.net._localMediaStream;
-      selfieVideo.play().catch(() => {});
-    }
-
-    // Initiate a fresh media call to get new stream objects.
-    // On iOS, the game's WebRTC video decoder may be in a bad state after
-    // heavy GPU usage — fresh streams from a new call are more reliable
-    // than trying to resume old ones. No DOM reparenting means the
-    // srcObject assignment won't kill playback on iOS.
-    this._mediaCallRetries = 0;
-    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
-    const initialDelay = this._roomRole === 'captain' ? 500 : 4000;
-    const retryCall = () => {
-      if (!this.net || !this.net.peer || !this.net.conn) return;
-      const pv = document.getElementById('partner-pip');
-      const hasLive = pv && pv.srcObject &&
-        pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-      if (hasLive) return;
-      this.net.initiateCall();
-      this._mediaCallRetries++;
-      if (this._mediaCallRetries < 3) {
-        this._mediaCallTimer = setTimeout(() => retryCall(), 5000);
-      }
-    };
-    if (this.net.transport === 'p2p') {
-      this._mediaCallTimer = setTimeout(() => retryCall(), initialDelay);
-    } else {
-      const prevOnP2P = this.net.onP2PUpgrade;
-      this.net.onP2PUpgrade = () => {
-        this._mediaCallTimer = setTimeout(() => retryCall(), initialDelay);
-        if (prevOnP2P) prevOnP2P();
-      };
-    }
 
     // Replay any messages buffered during the rejoin delay
     if (this._rejoinMessageQueue && this._rejoinMessageQueue.length > 0) {
