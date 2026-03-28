@@ -524,6 +524,17 @@ export class Lobby {
     this._clearFocusHighlight();
     this._currentStep = step;
 
+    // Room step: move room code above lobby-layout so it spans full width
+    const roomInfo = document.getElementById('room-partner-info');
+    const lobbyLayout = document.querySelector('.lobby-layout');
+    const lobbyCardEl = document.querySelector('.lobby-card');
+    if (roomInfo && lobbyLayout && lobbyCardEl) {
+      if (step === this.roomStep) {
+        lobbyCardEl.insertBefore(roomInfo, lobbyLayout);
+      } else if (roomInfo.parentElement === lobbyCardEl) {
+        document.getElementById('lobby-room').prepend(roomInfo);
+      }
+    }
 
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
@@ -627,13 +638,14 @@ export class Lobby {
     }
   }
 
-  /** Position pip-lobby-mode videos to match #room-video-area's center column location */
+  /** Position pip-lobby-mode videos centered in the three-column layout area */
   _positionPipToVideoArea() {
-    const area = document.getElementById('room-video-area');
-    if (!area) return;
-    const rect = area.getBoundingClientRect();
+    // Use the lobby-layout (toggles + center + toggles) to center PiPs
+    const layout = document.querySelector('.lobby-layout');
+    if (!layout) return;
+    const rect = layout.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top;
+    const centerY = rect.top + rect.height * 0.4;
     document.documentElement.style.setProperty('--pip-left', centerX + 'px');
     document.documentElement.style.setProperty('--pip-top', centerY + 'px');
   }
