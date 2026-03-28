@@ -598,7 +598,12 @@ export class Lobby {
       partnerWrap.classList.toggle('pip-lobby-mode', isRoom);
       partnerWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
       // Position PiPs to align with room-video-area in the center column (desktop)
-      if (isRoom) requestAnimationFrame(() => this._positionPipToVideoArea());
+      if (isRoom) {
+        requestAnimationFrame(() => this._positionPipToVideoArea());
+        // Re-render selfie badges with rect shape on desktop TV/Monitor
+        const shape = !isMobile && window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
+        updateBadgeDisplay('selfie-badges', this._achievements.getEarned(), shape);
+      }
       // Mobile: show room code between PiP circles using a body-level element
       // (can't use the original label — it's inside a display:none parent on mobile)
       if (isMobile) {
@@ -618,13 +623,13 @@ export class Lobby {
     }
   }
 
-  /** Position pip-lobby-mode circles to match #room-video-area's center column location */
+  /** Position pip-lobby-mode videos to match #room-video-area's center column location */
   _positionPipToVideoArea() {
     const area = document.getElementById('room-video-area');
     if (!area) return;
     const rect = area.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
+    const centerY = rect.top + rect.height * 0.35;
     document.documentElement.style.setProperty('--pip-left', centerX + 'px');
     document.documentElement.style.setProperty('--pip-top', centerY + 'px');
   }
@@ -3312,7 +3317,8 @@ export class Lobby {
       this._updatePartnerPip();
       // Render partner achievement badges
       if (profile && profile.achievements) {
-        updateBadgeDisplay('partner-badges', profile.achievements);
+        const shape = !isMobile && window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
+        updateBadgeDisplay('partner-badges', profile.achievements, shape);
       }
       return;
     }
