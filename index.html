@@ -3261,19 +3261,18 @@
     #lobby-join { gap: calc(4 * var(--ls)); padding-top: calc(8 * var(--ls)); }
 
     /* ── Room step: CSS Grid layout ──
-       .room-active on lobby-card switches to a 4-row grid:
-       Row 1: room code (full span)
-       Row 2: left toggles | video area | right toggles
-       Row 3: PLAY GAME (full span)
-       Row 4: Leave Room (full span) */
+       .room-active on lobby-card switches to a 3-row grid:
+       Row 1: left toggles | room-center-wrap (code + videos) | right toggles
+       Row 2: PLAY GAME (full span)
+       Row 3: Leave Room (full span) */
     .lobby-card.room-active {
       display: grid !important;
       grid-template-columns: 1fr auto 1fr;
-      grid-template-rows: auto 1fr auto auto;
-      gap: calc(4 * var(--ls));
+      grid-template-rows: 1fr auto auto;
+      gap: calc(2 * var(--ls));
       align-items: center;
       justify-items: center;
-      padding: calc(6 * var(--ls)) calc(10 * var(--ls));
+      padding: calc(4 * var(--ls)) calc(10 * var(--ls)) calc(6 * var(--ls));
       height: auto;
       max-width: none;
       justify-self: stretch;
@@ -3282,30 +3281,35 @@
     .lobby-card.room-active .lobby-steps-col { display: contents; }
     .lobby-card.room-active #lobby-room { display: contents !important; }
     .lobby-card.room-active .lobby-left-col {
-      grid-column: 1; grid-row: 2; align-self: center;
+      grid-column: 1; grid-row: 1; align-self: center;
       justify-self: end;
     }
     .lobby-card.room-active .lobby-right-col {
-      grid-column: 3; grid-row: 2; align-self: center;
+      grid-column: 3; grid-row: 1; align-self: center;
       justify-self: start;
     }
+    /* Center wrapper: room code above video rects, all in one grid cell */
+    .lobby-card.room-active #room-center-wrap {
+      grid-column: 2; grid-row: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+    }
     .lobby-card.room-active #room-partner-info {
-      grid-column: 1 / -1; grid-row: 1;
       display: flex !important;
       flex-direction: column;
       align-items: center;
       text-align: center;
-      width: 100%;
+      margin-bottom: calc(2 * var(--ls));
     }
     .lobby-card.room-active #room-video-area {
-      grid-column: 2; grid-row: 2;
       display: flex !important;
       align-items: flex-start;
       justify-content: center;
-      gap: calc(16 * var(--ls));
-      padding: 0 calc(12 * var(--ls));
+      gap: calc(24 * var(--ls));
+      padding: calc(2 * var(--ls)) calc(8 * var(--ls));
       width: 100%;
-      justify-self: stretch;
     }
     .lobby-card.room-active .room-video-slot {
       width: calc(55 * var(--ls));
@@ -3319,18 +3323,25 @@
       margin-top: calc(2 * var(--ls));
     }
     .lobby-card.room-active #btn-play-game {
-      grid-column: 1 / -1; grid-row: 3;
+      grid-column: 1 / -1; grid-row: 2;
       justify-self: center;
-      min-width: calc(120 * var(--ls));
+      min-width: calc(140 * var(--ls));
+      max-width: calc(140 * var(--ls));
+      /* Override mobile compact style — match other lobby buttons */
+      font-size: calc(13 * var(--ls));
+      padding: calc(10 * var(--ls)) calc(13 * var(--ls));
+      border-radius: calc(11 * var(--ls));
+      width: auto;
     }
     .lobby-card.room-active #room-wait-text-room {
-      grid-column: 1 / -1; grid-row: 3;
+      grid-column: 1 / -1; grid-row: 2;
     }
     .lobby-card.room-active #btn-back-room {
-      grid-column: 1 / -1; grid-row: 4;
-      display: inline-block !important;
+      grid-column: 1 / -1; grid-row: 3;
+      display: inline-block;
       font-size: calc(10 * var(--ls));
       justify-self: center;
+      min-height: calc(16 * var(--ls));
     }
     /* Hide other steps' elements that leak through display:contents */
     .lobby-card.room-active .lobby-card-header { display: none; }
@@ -3351,8 +3362,8 @@
       height: calc(10 * var(--ls));
       font-size: calc(6 * var(--ls));
       line-height: calc(9 * var(--ls));
-      top: calc(27 * var(--ls));
-      left: calc(20 * var(--ls));
+      top: calc(30 * var(--ls));
+      left: calc(22.5 * var(--ls));
     }
     #level-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
@@ -3997,27 +4008,28 @@ ON</button>
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
         <div id="lobby-room" class="lobby-step" style="display:none;">
-          <!-- Row 1: Room code -->
-          <div id="room-partner-info">
-            <div id="room-code-label" class="room-code-label"></div>
-            <div id="room-partner-name"></div>
-          </div>
-          <!-- Row 2 center: Video slot containers
-               Actual <video> elements live at <body> level (iOS constraint:
-               appendChild kills video playback). These slots define layout
-               positions; body-level PiPs overlay them via position:fixed. -->
-          <div id="room-video-area">
-            <div id="room-video-slot-captain" class="room-video-slot">
-              <span class="pip-label">CAPTAIN</span>
+          <!-- Center cell: room code + video slots -->
+          <div id="room-center-wrap">
+            <div id="room-partner-info">
+              <div id="room-code-label" class="room-code-label"></div>
+              <div id="room-partner-name"></div>
             </div>
-            <div id="room-video-slot-stoker" class="room-video-slot">
-              <span class="pip-label">STOKER</span>
+            <!-- Video slot containers
+                 Actual <video> elements live at <body> level (iOS constraint:
+                 appendChild kills video playback). These slots define layout
+                 positions; body-level PiPs overlay them via position:fixed. -->
+            <div id="room-video-area">
+              <div id="room-video-slot-captain" class="room-video-slot">
+                <span class="pip-label">CAPTAIN</span>
+              </div>
+              <div id="room-video-slot-stoker" class="room-video-slot">
+                <span class="pip-label">STOKER</span>
+              </div>
             </div>
           </div>
-          <!-- Row 3: Actions -->
+          <!-- Full-span rows below center -->
           <button class="lobby-btn lobby-btn-accent" id="btn-play-game">PLAY GAME</button>
           <p id="room-wait-text-room" class="conn-status" style="display:none;">Waiting for captain...</p>
-          <!-- Row 4: Back -->
           <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
         </div>
 
@@ -4127,7 +4139,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b7d2c6c | 03-28-2026 12:14</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.1d89f9f | 03-28-2026 18:42</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
