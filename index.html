@@ -2237,11 +2237,9 @@
   #lobby-room #btn-play-game { width: 100%; }
   #lobby-room #btn-back-room { width: 100%; }
 
-  /* Fixed room code between PiP circles on mobile.
-     Must override parent's display:none with !important. */
-  #room-code-label.pip-room-code {
-    display: block !important;
-    position: fixed !important;
+  /* Mobile room code — body-level element positioned between PiP circles */
+  #mobile-room-code {
+    position: fixed;
     z-index: 57;
     /* Same bottom as PiP circles + half circle height (40px) to vertically center */
     bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px);
@@ -3262,12 +3260,12 @@
     #lobby-host { gap: calc(3 * var(--ls)); }
     #lobby-join { gap: calc(4 * var(--ls)); padding-top: calc(8 * var(--ls)); }
 
-    /* Room (multiplayer lobby): room code top, video area middle, buttons bottom */
+    /* Room (multiplayer lobby): use flex-wrap so elements flow into rows.
+       lobby-layout becomes a wrapping flex container for the room step. */
     #lobby-room {
-      display: flex;
+      display: flex !important;
       flex-direction: column;
       align-items: center;
-      gap: calc(4 * var(--ls));
       width: 100%;
     }
     #lobby-room #room-partner-info {
@@ -3276,45 +3274,53 @@
       text-align: center;
       flex-direction: column;
       align-items: center;
+      order: -1;  /* Room code at top */
     }
     #lobby-room #room-video-area {
       display: block !important;  /* Override mobile display:none */
+      min-height: calc(80 * var(--ls));
     }
-    /* Room buttons: centered, smaller than full width, stacked below toggles */
-    #lobby-room #btn-play-game,
-    #lobby-room #btn-back-room,
-    #lobby-room #room-wait-text-room {
-      position: relative;
-      width: calc(180 * var(--ls));
-      left: 50%;
-      transform: translateX(-50%);
+    /* Buttons span full center column, centered text */
+    #lobby-room #btn-play-game {
+      margin-top: calc(4 * var(--ls));
+    }
+    #lobby-room #btn-back-room {
       margin-top: calc(2 * var(--ls));
+      font-size: calc(10 * var(--ls));
     }
 
-    /* Desktop ROOM: video circles as rounded squares that fill the middle column */
+    /* Desktop ROOM: video as rounded squares sized to the center column */
     .pip-wrap.pip-lobby-mode .pip-video {
-      width: calc(60 * var(--ls));
-      height: calc(60 * var(--ls));
-      border-radius: calc(12 * var(--ls));
+      width: calc(55 * var(--ls));
+      height: calc(55 * var(--ls));
+      border-radius: calc(10 * var(--ls));
     }
     .pip-wrap.pip-lobby-mode .pip-badges {
-      width: calc(60 * var(--ls));
-      height: calc(60 * var(--ls));
+      width: calc(55 * var(--ls));
+      height: calc(55 * var(--ls));
     }
-    #room-video-area { min-height: calc(100 * var(--ls)); margin: calc(2 * var(--ls)) 0; }
+    .pip-wrap.pip-lobby-mode .pip-badge {
+      /* Recalculate badge positions for square layout (55*--ls instead of 80px circle) */
+      width: calc(16 * var(--ls));
+      height: calc(16 * var(--ls));
+      font-size: calc(9 * var(--ls));
+      line-height: calc(14 * var(--ls));
+      top: calc(20 * var(--ls));
+      left: calc(20 * var(--ls));
+    }
     #level-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
     /* ROOM step — JS positions via --pip-left/--pip-top on desktop */
     #selfie-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
-      top: var(--pip-top, 68%) !important;
-      left: calc(var(--pip-left, 50%) - 16 * var(--ls)) !important;
+      top: var(--pip-top, 65%) !important;
+      left: calc(var(--pip-left, 50%) - 8 * var(--ls)) !important;
       transform: translateX(-100%);
     }
     #partner-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
-      top: var(--pip-top, 68%) !important;
-      left: calc(var(--pip-left, 50%) + 16 * var(--ls)) !important;
+      top: var(--pip-top, 65%) !important;
+      left: calc(var(--pip-left, 50%) + 8 * var(--ls)) !important;
       transform: none;
     }
     .pip-wrap.pip-lobby-mode .pip-label { font-size: calc(10 * var(--ls)); }
@@ -4061,7 +4067,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.1020db2 | 03-28-2026 00:10</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.41af622 | 03-28-2026 00:20</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
