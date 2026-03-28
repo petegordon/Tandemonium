@@ -54,6 +54,8 @@ function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
   ]);
 }
 
+const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Ccircle cx='40' cy='30' r='14' fill='%23666'/%3E%3Cellipse cx='40' cy='72' rx='24' ry='18' fill='%23666'/%3E%3C/svg%3E";
+
 const BIKE_NAMES = {
   default: "Grandma's Classic",
   bike_orange: 'Marmalade Express',
@@ -484,6 +486,10 @@ export class Lobby {
 
   show() {
     this.lobbyEl.style.display = '';
+    // Refresh achievements and bike unlock state earned during the ride
+    if (this._achievements) this._achievements.reload();
+    this._renderAchievements();
+    this._applyPresetToPreview();
     // Rebuild level cards to reflect newly unlocked levels
     this._rebuildLevelCards();
     this._showStep(this.modeStep);
@@ -517,6 +523,10 @@ export class Lobby {
     step.style.display = 'flex';
     this._clearFocusHighlight();
     this._currentStep = step;
+
+    // Room step: toggle grid layout on lobby-card
+    const lobbyCardEl = document.querySelector('.lobby-card');
+    if (lobbyCardEl) lobbyCardEl.classList.toggle('room-active', step === this.roomStep);
 
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
@@ -563,6 +573,12 @@ export class Lobby {
     } else {
       this._fixedBackBtn.style.visibility = 'hidden';
     }
+    // On desktop room step, hide fixed-back (grid layout shows #btn-back-room instead)
+    // Also hide #btn-back-room when gamepad is connected (B button handles it)
+    if (step === this.roomStep && window.matchMedia('(min-width: 1024px)').matches) {
+      this._fixedBackBtn.style.visibility = 'hidden';
+    }
+    this._updateBackHint(step);
 
     // Always reset to center column and update its items
     this._modeCol = 1;
@@ -578,6 +594,60 @@ export class Lobby {
     if (step === this.levelStep) {
       requestAnimationFrame(() => this._adjustLevelCompact());
     }
+
+    // ── PiP class management ──
+    // Show PiP circles on room (hero size) and multiplayer level (scaled down).
+    // Hidden on all other steps (base CSS display:none).
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    if (selfieWrap && partnerWrap) {
+      const isRoom = (step === this.roomStep);
+      const isMultiplayerLevel = (step === this.levelStep && this._pendingMode === 'multiplayer');
+      selfieWrap.classList.toggle('pip-lobby-mode', isRoom);
+      selfieWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
+      partnerWrap.classList.toggle('pip-lobby-mode', isRoom);
+      partnerWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
+      // Position PiPs to align with room-video-area in the center column (desktop)
+      if (isRoom) {
+        requestAnimationFrame(() => this._positionPipToVideoArea());
+        // Re-render badges with rect shape on desktop TV/Monitor
+        const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
+        updateBadgeDisplay('selfie-badges', this._achievements.getEarned(), shape);
+        if (this._partnerAchievements) {
+          updateBadgeDisplay('partner-badges', this._partnerAchievements, shape);
+        }
+      }
+      // Mobile: show room code between PiP circles using a body-level element
+      // (can't use the original label — it's inside a display:none parent on mobile)
+      if (isMobile) {
+        let mobileCode = document.getElementById('mobile-room-code');
+        if (isRoom && this.net && this.net.roomCode) {
+          if (!mobileCode) {
+            mobileCode = document.createElement('div');
+            mobileCode.id = 'mobile-room-code';
+            document.body.appendChild(mobileCode);
+          }
+          mobileCode.textContent = this.net.roomCode;
+          mobileCode.style.display = 'block';
+        } else if (mobileCode) {
+          mobileCode.style.display = 'none';
+        }
+      }
+    }
+  }
+
+  /** Position each PiP over its slot container in the room grid */
+  _positionPipToVideoArea() {
+    const captainSlot = document.getElementById('room-video-slot-captain');
+    const stokerSlot = document.getElementById('room-video-slot-stoker');
+    if (!captainSlot || !stokerSlot) return;
+    const cRect = captainSlot.getBoundingClientRect();
+    const sRect = stokerSlot.getBoundingClientRect();
+    const root = document.documentElement.style;
+    root.setProperty('--pip-captain-left', (cRect.left + cRect.width / 2) + 'px');
+    root.setProperty('--pip-captain-top', (cRect.top + cRect.height / 2) + 'px');
+    root.setProperty('--pip-stoker-left', (sRect.left + sRect.width / 2) + 'px');
+    root.setProperty('--pip-stoker-top', (sRect.top + sRect.height / 2) + 'px');
   }
 
   _hideLobby() {
@@ -927,6 +997,10 @@ export class Lobby {
     this._stepItems.set(step, navItems);
     this._stepCenterItems.set(step, navItems);
     this._stepBack.set(step, backBtn);
+    // Default focus to START RIDE button
+    if (startBtn && isClickable) {
+      this._stepDefaultFocus.set(step, navItems.indexOf(startBtn));
+    }
   }
 
   /**
@@ -1053,6 +1127,9 @@ export class Lobby {
         if (gsiBtn) gsiBtn.style.display = 'none';
         const signInBtn = document.getElementById('btn-sign-in');
         if (signInBtn) signInBtn.style.display = 'none';
+        // Hide logout button — Steam auth is tied to Steam identity
+        const logoutBtn = document.getElementById('profile-popup-logout');
+        if (logoutBtn) logoutBtn.style.display = 'none';
       } else {
         this.license = new LicenseManager(this.auth);
       }
@@ -2424,7 +2501,8 @@ export class Lobby {
           this._gpPrevRB = gp.buttons[5] && gp.buttons[5].pressed;
         }
       }
-      this._updateBackHint(this._currentStep);
+      // Defer so input-manager's gamepadconnected handler has set gamepadConnected
+      setTimeout(() => this._updateBackHint(this._currentStep), 0);
       // Switch to spinners if currently on join step
       if (this._currentStep === this.joinStep) {
         if (this._lastFailedCode) {
@@ -2469,6 +2547,9 @@ export class Lobby {
           // Show joystick toggle
           this.toggleJoystick.style.display = '';
           this._setToggleActive('joystick', this.joystickActive);
+          // Hide fixed back; update grid btn-back-room with gamepad hint
+          this._fixedBackBtn.style.visibility = 'hidden';
+          this._updateBackHint(this._currentStep);
           // Check for gyro
           if (navigator.hid) {
             this._checkGamepadGyro();
@@ -2485,12 +2566,16 @@ export class Lobby {
         // If a gamepad reconnected during the debounce window, bail out
         if (this.input && this.input.gamepadConnected) return;
 
+        // Restore grid Leave Room button on desktop room step
         this._updateBackHint(this._currentStep);
         // Show fixed back button when gamepad disconnects
         const hasBack = this._stepBack.get(this._currentStep);
         if (hasBack) {
           this._fixedBackBtn.textContent = (this._currentStep === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
           this._fixedBackBtn.style.visibility = 'visible';
+        }
+        if (this._currentStep === this.roomStep && window.matchMedia('(min-width: 1024px)').matches) {
+          this._fixedBackBtn.style.visibility = 'hidden'; // desktop uses grid button, not fixed
         }
         // Switch back to text input if on join step
         if (this._currentStep === this.joinStep) {
@@ -2732,75 +2817,121 @@ export class Lobby {
 
   // ── Room Persistence (localStorage) ──────────────────────────
 
-  _saveRoom(roomCode, role) {
+  _saveRoom(roomCode, role, partnerName) {
     try {
-      localStorage.setItem('tandemonium-room', JSON.stringify({
-        roomCode, role, timestamp: Date.now()
-      }));
+      const rooms = this._getRecentRooms();
+      const entry = { roomCode, role, timestamp: Date.now(), partnerName: partnerName || null };
+      const existing = rooms.findIndex(r => r.roomCode === roomCode);
+      if (existing >= 0) {
+        // Preserve partner name if not provided
+        if (!entry.partnerName && rooms[existing].partnerName) entry.partnerName = rooms[existing].partnerName;
+        rooms[existing] = entry;
+      } else {
+        rooms.push(entry);
+      }
+      localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
     } catch (e) {}
   }
 
-  _clearRoom() {
-    try { localStorage.removeItem('tandemonium-room'); } catch (e) {}
-  }
-
-  _getSavedRoom() {
+  _clearRoom(roomCode) {
     try {
-      const raw = localStorage.getItem('tandemonium-room');
-      if (!raw) return null;
-      const data = JSON.parse(raw);
-      // Expire after 1 hour
-      if (Date.now() - data.timestamp > 3600000) {
-        localStorage.removeItem('tandemonium-room');
-        return null;
+      if (roomCode) {
+        const rooms = this._getRecentRooms().filter(r => r.roomCode !== roomCode);
+        localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
+      } else {
+        localStorage.removeItem('tandemonium-rooms');
       }
-      return data;
-    } catch (e) { return null; }
+    } catch (e) {}
   }
 
-  _showRejoinPrompt(saved) {
-    const roleName = saved.role === 'captain' ? 'Captain' : 'Stoker';
-    // Create a simple modal overlay for rejoin prompt
+  _getRecentRooms() {
+    try {
+      // Migrate old single-room format
+      const oldRaw = localStorage.getItem('tandemonium-room');
+      if (oldRaw) {
+        localStorage.removeItem('tandemonium-room');
+        const old = JSON.parse(oldRaw);
+        if (old.roomCode) {
+          const existing = localStorage.getItem('tandemonium-rooms');
+          const rooms = existing ? JSON.parse(existing) : [];
+          if (!rooms.some(r => r.roomCode === old.roomCode)) rooms.push(old);
+          localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
+        }
+      }
+      const raw = localStorage.getItem('tandemonium-rooms');
+      if (!raw) return [];
+      const rooms = JSON.parse(raw);
+      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+      const recent = rooms.filter(r => r.timestamp > fiveMinAgo);
+      if (recent.length !== rooms.length) {
+        localStorage.setItem('tandemonium-rooms', JSON.stringify(recent));
+      }
+      return recent;
+    } catch (e) { return []; }
+  }
+
+  _showRecentRoomsPrompt(rooms) {
     const overlay = document.createElement('div');
     overlay.id = 'rejoin-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-    overlay.innerHTML =
-      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:320px;text-align:center;color:#fff;font-family:inherit;">' +
-        '<div style="font-size:1.1em;margin-bottom:12px;">Rejoin room <b>' + saved.roomCode + '</b> as ' + roleName + '?</div>' +
-        '<div style="display:flex;gap:12px;justify-content:center;">' +
-          '<button id="btn-rejoin-yes" style="padding:10px 20px;border-radius:8px;border:none;background:#44ff66;color:#000;font-weight:bold;font-size:1em;cursor:pointer;">Rejoin</button>' +
-          '<button id="btn-rejoin-no" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;">New Room</button>' +
+
+    const now = Date.now();
+    const cardsHtml = rooms.map((r, i) => {
+      const roleName = r.role === 'captain' ? 'Captain' : 'Stoker';
+      const agoSec = Math.floor((now - r.timestamp) / 1000);
+      const agoText = agoSec < 60 ? 'just now' : Math.floor(agoSec / 60) + 'm ago';
+      const partnerText = r.partnerName ? 'with ' + this._escapeHtml(r.partnerName) + ' · ' : '';
+      const dimStyle = agoSec > 180 ? 'opacity:0.6;' : '';
+      return '<button class="rejoin-room-card" data-idx="' + i + '" style="' +
+        'display:block;width:100%;padding:12px 16px;border-radius:10px;border:1.5px solid rgba(255,255,255,0.15);' +
+        'background:rgba(255,255,255,0.06);color:#fff;cursor:pointer;text-align:left;font-family:inherit;' +
+        'transition:border-color 0.2s,background 0.2s;' + dimStyle + '">' +
+        '<div style="font-size:1em;font-weight:700;margin-bottom:2px;">' +
+          this._escapeHtml(r.roomCode) + '  ·  ' + roleName +
         '</div>' +
+        '<div style="font-size:0.8em;color:rgba(255,255,255,0.5);">' + partnerText + agoText + '</div>' +
+      '</button>';
+    }).join('');
+
+    overlay.innerHTML =
+      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:340px;width:90%;text-align:center;color:#fff;font-family:inherit;">' +
+        '<div style="font-size:1.1em;font-weight:700;margin-bottom:14px;">Recent Rooms</div>' +
+        '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">' + cardsHtml + '</div>' +
+        '<button id="btn-rejoin-new" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;width:100%;">New Room</button>' +
       '</div>';
     document.body.appendChild(overlay);
 
-    // Default-focus "Rejoin" for gamepad navigation
+    // Default gamepad focus on first card
     this._rejoinFocus = 0;
-    document.getElementById('btn-rejoin-yes').classList.add('gamepad-focus');
+    const cards = overlay.querySelectorAll('.rejoin-room-card');
+    if (cards.length > 0) cards[0].classList.add('gamepad-focus');
 
     return new Promise((resolve) => {
-      document.getElementById('btn-rejoin-yes').addEventListener('click', () => {
-        overlay.remove();
-        resolve('rejoin');
+      cards.forEach((card) => {
+        card.addEventListener('click', () => {
+          const idx = parseInt(card.dataset.idx, 10);
+          overlay.remove();
+          resolve(rooms[idx]);
+        });
       });
-      document.getElementById('btn-rejoin-no').addEventListener('click', () => {
+      document.getElementById('btn-rejoin-new').addEventListener('click', () => {
         overlay.remove();
-        this._clearRoom();
-        resolve('new');
+        resolve(null);
       });
     });
   }
 
   async _handleRejoinCheck() {
-    const saved = this._getSavedRoom();
-    if (!saved) return false;
+    const rooms = this._getRecentRooms();
+    if (rooms.length === 0) return false;
 
-    const choice = await this._showRejoinPrompt(saved);
-    if (choice !== 'rejoin') return false;
+    const selected = await this._showRecentRoomsPrompt(rooms);
+    if (!selected) return false; // User chose "New Room"
 
     // Rejoin: skip role selection, go straight to connection
     await this._requestMotion();
     this._pendingMode = 'multiplayer';
+    const saved = selected;
 
     if (saved.role === 'captain') {
       this._showStep(this.hostStep);
@@ -2817,6 +2948,9 @@ export class Lobby {
       const relayToken = await this.auth.getRelayToken(saved.roomCode, 'captain');
       if (relayToken) this.net._relayToken = relayToken;
 
+      // Acquire local media early so it's ready when P2P connects
+      await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
+
       this.net.onRoomJoined = () => {
         codeEl.textContent = saved.roomCode;
         this._updateCardHeader(this._currentStep);
@@ -2830,6 +2964,9 @@ export class Lobby {
         this._clearStaleRoomTimer();
         statusEl.textContent = 'Partner connected!';
         statusEl.className = 'conn-status connected';
+        // Buffer profile messages during the 1s delay so none are lost
+        this._rejoinMessageQueue = [];
+        this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
         setTimeout(() => this._showRoomStep('captain'), 1000);
       };
 
@@ -2853,6 +2990,9 @@ export class Lobby {
       const relayToken = await this.auth.getRelayToken(saved.roomCode, 'stoker');
       if (relayToken) this.net._relayToken = relayToken;
 
+      // Acquire local media early so it's ready when P2P connects
+      await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
+
       this.net.onRoomJoined = () => {
         statusEl.textContent = 'Waiting for captain...';
         this._saveRoom(saved.roomCode, 'stoker');
@@ -2863,6 +3003,9 @@ export class Lobby {
         this._clearStaleRoomTimer();
         statusEl.textContent = 'Connected!';
         statusEl.className = 'conn-status connected';
+        // Buffer profile messages during the 1s delay so none are lost
+        this._rejoinMessageQueue = [];
+        this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
         setTimeout(() => this._showRoomStep('stoker'), 1000);
       };
 
@@ -2886,7 +3029,8 @@ export class Lobby {
         const newBtn = document.getElementById('btn-stale-new-room');
         if (newBtn) {
           newBtn.addEventListener('click', () => {
-            this._clearRoom();
+            if (this.net && this.net.roomCode) this._clearRoom(this.net.roomCode);
+            else this._clearRoom();
             if (this.net) { this.net.destroy(); this.net = null; }
             this._showStep(this.roleStep);
           });
@@ -2945,6 +3089,12 @@ export class Lobby {
 
     // Register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
+
+    // Replay any messages buffered during the rejoin delay
+    if (this._rejoinMessageQueue && this._rejoinMessageQueue.length > 0) {
+      for (const msg of this._rejoinMessageQueue) this._handleRoomMessage(msg);
+    }
+    this._rejoinMessageQueue = null;
 
     // Send current bike preset to partner
     this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
@@ -3007,6 +3157,11 @@ export class Lobby {
     }
 
     this._showStep(this.levelStep);
+
+    // Reset gamepad edge flags so held A/B from room step don't immediately
+    // fire on the level step (A = confirm, B = back to room)
+    this._gpPrevA = true;
+    this._gpPrevB = true;
   }
 
   /**
@@ -3031,20 +3186,35 @@ export class Lobby {
     const partnerWrap = document.getElementById('partner-pip-wrap');
     if (!partnerWrap) return;
 
-    // Check if the stream has a live (non-ended) video track
     const stream = partnerVideo && partnerVideo.srcObject;
-    const liveVideoTrack = stream && stream.getVideoTracks().find(t => t.readyState === 'live' && t.enabled);
+    const hasVideo = stream && stream.getVideoTracks().length > 0;
+    const hasLiveTrack = hasVideo && stream.getVideoTracks().some(t => t.readyState === 'live');
 
-    if (this._partnerCameraOn && liveVideoTrack) {
+    if (this._partnerCameraOn && hasVideo) {
       partnerVideo.style.display = 'block';
       partnerVideo.play().catch(() => {});
       if (partnerAvatar) partnerAvatar.style.display = 'none';
-    } else {
+    } else if (!this._partnerCameraOn) {
+      // Partner explicitly turned off camera — show avatar
       if (partnerVideo) partnerVideo.style.display = 'none';
-      if (partnerAvatar && this._partnerAvatarUrl) {
-        partnerAvatar.src = this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl;
+      if (partnerAvatar) {
+        partnerAvatar.src = this._partnerAvatarUrl
+          ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
+          : DEFAULT_AVATAR_SVG;
         partnerAvatar.style.display = 'block';
       }
+    } else if (!hasVideo && this._partnerCameraOn) {
+      // Camera on but stream not yet available — show avatar temporarily,
+      // then retry in case stream arrives shortly
+      if (partnerAvatar) {
+        partnerAvatar.src = this._partnerAvatarUrl
+          ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
+          : DEFAULT_AVATAR_SVG;
+        partnerAvatar.style.display = 'block';
+      }
+      if (partnerVideo) partnerVideo.style.display = 'none';
+      // Retry to catch stream arriving after a delay
+      setTimeout(() => this._updatePartnerPip(), 2000);
     }
     partnerWrap.style.display = 'block';
   }
@@ -3057,15 +3227,25 @@ export class Lobby {
     // gets its stream rendered in the partner PiP.
     this.net.onRemoteStream = (remoteStream) => {
       const partnerVideo = document.getElementById('partner-pip');
-      if (partnerVideo && remoteStream) {
-        partnerVideo.srcObject = remoteStream;
-        this._updatePartnerPip();
+      if (!partnerVideo || !remoteStream) return;
 
-        // Track may start muted; re-evaluate when it unmutes
-        const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        if (remoteVideoTrack && remoteVideoTrack.muted) {
-          remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
-        }
+      // Authoritative: always set srcObject, show video, call play.
+      // Don't delegate initial display to _updatePartnerPip — just show it.
+      partnerVideo.srcObject = remoteStream;
+      partnerVideo.style.display = 'block';
+      partnerVideo.play().catch(() => {});
+      const partnerAvatar = document.getElementById('partner-pip-avatar');
+      if (partnerAvatar) partnerAvatar.style.display = 'none';
+
+      // If partner camera is known to be off, switch to avatar
+      if (!this._partnerCameraOn) {
+        this._updatePartnerPip();
+      }
+
+      // Fall back to avatar if track ends
+      const vt = remoteStream.getVideoTracks()[0];
+      if (vt) {
+        vt.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
       }
     };
 
@@ -3080,13 +3260,8 @@ export class Lobby {
       if (audioTrack) audioTrack.enabled = this.audioActive;
     }
 
-    // Show selfie PiP in lobby mode
+    // PiP class is managed by _showStep() — just get the element reference
     const selfieWrap = document.getElementById('selfie-pip-wrap');
-    if (selfieWrap) {
-      selfieWrap.classList.add('pip-lobby-mode');
-      const videoArea = document.getElementById('room-video-area');
-      videoArea.appendChild(selfieWrap);
-    }
 
     // Start selfie video from the acquired stream
     const selfieVideo = document.getElementById('selfie-pip');
@@ -3101,60 +3276,57 @@ export class Lobby {
         if (selfieAvatar) selfieAvatar.style.display = 'none';
       } else {
         selfieVideo.style.display = 'none';
-        // Show avatar fallback when camera is off
-        if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
-          const user = this.auth.getUser();
-          if (user && user.avatar) {
-            selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
-            selfieAvatar.style.display = 'block';
-          }
+        // Show avatar fallback when camera is off (or default icon if not logged in)
+        if (selfieAvatar) {
+          const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+          selfieAvatar.src = (user && user.avatar)
+            ? (this._avatarCache.get(user.avatar) || user.avatar)
+            : DEFAULT_AVATAR_SVG;
+          selfieAvatar.style.display = 'block';
         }
       }
       if (selfieWrap) selfieWrap.style.display = 'block';
-    } else if (this.auth && this.auth.isLoggedIn()) {
-      // No stream at all — fallback to avatar
-      const user = this.auth.getUser();
-      if (user && user.avatar && selfieAvatar && selfieWrap) {
-        selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
+    } else {
+      // No stream at all — fallback to avatar or default icon
+      if (selfieAvatar && selfieWrap) {
+        const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+        selfieAvatar.src = (user && user.avatar)
+          ? (this._avatarCache.get(user.avatar) || user.avatar)
+          : DEFAULT_AVATAR_SVG;
         selfieAvatar.style.display = 'block';
         if (selfieVideo) selfieVideo.style.display = 'none';
         selfieWrap.style.display = 'block';
       }
     }
 
-    // Show partner PiP area
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    if (partnerWrap) {
-      partnerWrap.classList.add('pip-lobby-mode');
-      const videoArea = document.getElementById('room-video-area');
-      videoArea.appendChild(partnerWrap);
-    }
+    // Show partner PiP in lobby mode (no appendChild — CSS handles positioning)
+    // PiP class is managed by _showStep() — no manual toggle needed here
 
-    // Initiate media call — both sides try, with retries until stream arrives.
+    // Captain initiates media call first; stoker follows after a delay as fallback.
+    // Staggered to avoid cross-call interference that causes flickering.
     // PeerJS media calls require P2P, so we wait for the upgrade first.
     this._mediaCallRetries = 0;
     this._mediaCallTimer = null;
+    const initialDelay = this._roomRole === 'captain' ? 0 : 4000;
 
     const tryInitiateCall = () => {
       if (!this.net || !this.net.peer || !this.net.conn) return;
+      // Skip if we already have a live partner stream
+      const pv = document.getElementById('partner-pip');
+      const hasLive = pv && pv.srcObject &&
+        pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+      if (hasLive) return;
       this.net.initiateCall();
-      // Retry every 3s until partner video arrives (up to 10 attempts)
       this._mediaCallRetries++;
-      if (this._mediaCallRetries < 10) {
+      if (this._mediaCallRetries < 3) {
         this._mediaCallTimer = setTimeout(() => {
-          const partnerVideo = document.getElementById('partner-pip');
-          const hasStream = partnerVideo && partnerVideo.srcObject &&
-            partnerVideo.srcObject.getVideoTracks().length > 0;
-          if (!hasStream) {
-            tryInitiateCall();
-          }
-        }, 3000);
+          tryInitiateCall();
+        }, 5000);
       }
     };
 
     const onP2PReady = () => {
-      // Both sides initiate — first successful call wins
-      tryInitiateCall();
+      this._mediaCallTimer = setTimeout(() => tryInitiateCall(), initialDelay);
     };
 
     if (this.net.transport === 'p2p') {
@@ -3172,7 +3344,13 @@ export class Lobby {
     if (!profile || !profile.type) {
       // Profile message (avatar, name, achievements)
       const partnerNameEl = document.getElementById('room-partner-name');
-      if (partnerNameEl && profile && profile.name) partnerNameEl.textContent = profile.name;
+      if (partnerNameEl && profile && profile.name) {
+        partnerNameEl.textContent = profile.name;
+        // Save partner name for recent rooms display
+        if (this.net && this.net.roomCode && this._roomRole) {
+          this._saveRoom(this.net.roomCode, this._roomRole, profile.name);
+        }
+      }
       // Cache partner avatar URL for camera toggle
       if (profile && profile.avatar) {
         this._partnerAvatarUrl = this._avatarCache.get(profile.avatar) || profile.avatar;
@@ -3181,7 +3359,9 @@ export class Lobby {
       this._updatePartnerPip();
       // Render partner achievement badges
       if (profile && profile.achievements) {
-        updateBadgeDisplay('partner-badges', profile.achievements);
+        this._partnerAchievements = profile.achievements;
+        const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
+        updateBadgeDisplay('partner-badges', profile.achievements, shape);
       }
       return;
     }
@@ -3257,14 +3437,16 @@ export class Lobby {
   _removePipLobbyMode() {
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
+    // Remove lobby/level classes and set inline display:block to prevent
+    // base CSS display:none from flashing the PiPs invisible before
+    // game-recorder shows them.
     if (selfieWrap) {
-      selfieWrap.classList.remove('pip-lobby-mode');
-      // Move back to body so fixed positioning works in-game
-      document.body.appendChild(selfieWrap);
+      selfieWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
+      selfieWrap.style.display = 'block';
     }
     if (partnerWrap) {
-      partnerWrap.classList.remove('pip-lobby-mode');
-      document.body.appendChild(partnerWrap);
+      partnerWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
+      partnerWrap.style.display = 'block';
     }
   }
 
@@ -3280,7 +3462,6 @@ export class Lobby {
     }
 
     this.lobbyEl.style.display = '';
-    this._startGamepadNav();
     if (this._previewModel) this._startPreviewLoop();
 
     // Show/hide play game button vs waiting text
@@ -3311,103 +3492,56 @@ export class Lobby {
     // Show room step directly (not levels)
     this._showStep(this.roomStep);
 
-    // Re-add PiP lobby mode
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    const videoArea = document.getElementById('room-video-area');
-    if (selfieWrap) {
-      selfieWrap.classList.add('pip-lobby-mode');
-      videoArea.appendChild(selfieWrap);
-    }
-    if (partnerWrap) {
-      partnerWrap.classList.add('pip-lobby-mode');
-      videoArea.appendChild(partnerWrap);
-    }
+    // Delay gamepad init to let held buttons from game controls release
+    setTimeout(() => this._startGamepadNav(), 500);
 
-    // Refresh selfie video from existing stream
-    const selfieVideo = document.getElementById('selfie-pip');
-    const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    if (selfieVideo && this.net && this.net._localMediaStream) {
-      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-      if (videoTrack) selfieVideo.srcObject = this.net._localMediaStream;
-      if (videoTrack && this.cameraActive) {
-        selfieVideo.style.display = 'block';
-        selfieVideo.play().catch(() => {});
-        if (selfieAvatar) selfieAvatar.style.display = 'none';
-      } else {
-        selfieVideo.style.display = 'none';
-        if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
-          const user = this.auth.getUser();
-          if (user && user.avatar) {
-            selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
-            selfieAvatar.style.display = 'block';
-          }
-        }
-      }
-      if (selfieWrap) selfieWrap.style.display = 'block';
-    }
+    // Refresh achievements and bike unlock state earned during the ride
+    if (this._achievements) this._achievements.reload();
+    this._renderAchievements();
+    this._applyPresetToPreview();
 
-    // Evaluate existing partner stream — show avatar if tracks are stale/ended
-    // Also re-evaluate after delays to catch stream refresh from re-initiated media call
-    this._updatePartnerPip();
-    setTimeout(() => this._updatePartnerPip(), 2000);
-    setTimeout(() => this._updatePartnerPip(), 5000);
+    // Ensure game overlays don't block room UI on mobile
+    const victoryEl = document.getElementById('victory-overlay');
+    if (victoryEl) victoryEl.classList.remove('visible');
+    const gameoverEl = document.getElementById('game-over-overlay');
+    if (gameoverEl) gameoverEl.style.display = 'none';
+    // Re-sync toggle button states after returning from ride
+    this._checkPermissionStates();
 
-    // Re-register remote stream handler so partner video shows in room
-    // (game.js replaces this with its own handler during gameplay)
+    // Return-to-room: the connection and media streams are still alive from the
+    // game session. Do NOT call _startRoomMedia() — that re-acquires media,
+    // Return to room: add lobby-mode class for CSS positioning.
+    // Return to room: video streams are already playing from room → game.
+    // Don't touch srcObject, don't initiate new calls, don't call play().
+    // Just switch the CSS class for lobby positioning.
+    // PiP class is managed by _showStep(roomStep) above — no manual toggle needed
+
+    // Re-register handlers (game.js replaced these during gameplay)
     this.net.onRemoteStream = (remoteStream) => {
-      const pVideo = document.getElementById('partner-pip');
-      if (pVideo && remoteStream) {
-        pVideo.srcObject = remoteStream;
-        this._updatePartnerPip();
-
-        const remoteVideoTrack = remoteStream.getVideoTracks()[0];
-        if (remoteVideoTrack && remoteVideoTrack.muted) {
-          remoteVideoTrack.addEventListener('unmute', () => this._updatePartnerPip(), { once: true });
-        }
-      }
+      const pv = document.getElementById('partner-pip');
+      if (!pv || !remoteStream) return;
+      pv.srcObject = remoteStream;
+      pv.style.display = 'block';
+      pv.play().catch(() => {});
+      const pa = document.getElementById('partner-pip-avatar');
+      if (pa) pa.style.display = 'none';
     };
-
-    // Re-register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
+
+    // Replay any messages buffered during the rejoin delay
+    if (this._rejoinMessageQueue && this._rejoinMessageQueue.length > 0) {
+      for (const msg of this._rejoinMessageQueue) this._handleRoomMessage(msg);
+    }
+    this._rejoinMessageQueue = null;
 
     // Send current bike preset and profile to partner on re-entry
     if (this.net.connected) {
       this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
       this._sendRoomProfile();
-      // Notify partner of current camera state
       const camMsg = { type: 'cameraToggle', enabled: this.cameraActive };
       const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
       if (user && user.avatar) camMsg.avatar = user.avatar;
       this.net.sendProfile(camMsg);
-    }
-
-    // Re-initiate media call to refresh video stream after returning from game
-    this._mediaCallRetries = 0;
-    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
-
-    const retryCall = () => {
-      if (!this.net || !this.net.peer || !this.net.conn) return;
-      this.net.initiateCall();
-      this._mediaCallRetries++;
-      if (this._mediaCallRetries < 10) {
-        this._mediaCallTimer = setTimeout(() => {
-          const partnerVideo = document.getElementById('partner-pip');
-          const hasStream = partnerVideo && partnerVideo.srcObject &&
-            partnerVideo.srcObject.getVideoTracks().length > 0;
-          if (!hasStream) retryCall();
-        }, 3000);
-      }
-    };
-
-    if (this.net.transport === 'p2p') {
-      retryCall();
-    } else {
-      const prevOnP2P = this.net.onP2PUpgrade;
-      this.net.onP2PUpgrade = () => {
-        retryCall();
-        if (prevOnP2P) prevOnP2P();
-      };
     }
 
     // Re-register disconnect handler for room
@@ -3591,6 +3725,8 @@ export class Lobby {
     if (!hint) return;
     const hasBack = this._stepBack.get(step);
     const hasGamepad = this.input && this.input.gamepadConnected;
+    const isDesktopRoom = step === this.roomStep && window.matchMedia('(min-width: 1024px)').matches;
+
     if (hasBack && hasGamepad) {
       const icon = document.getElementById('gamepad-back-icon');
       const gpId = this.input._gpName || '';
@@ -3608,9 +3744,32 @@ export class Lobby {
         // Always right=back — the button swap remaps indices so this is correct for all
         icon.innerHTML = this._makeDiamondHTML('right');
       }
-      hint.style.visibility = 'visible';
+
+      // On desktop room step, show gamepad back hint inside the grid btn-back-room
+      if (isDesktopRoom) {
+        hint.style.visibility = 'hidden';
+        const backRoom = document.getElementById('btn-back-room');
+        if (backRoom) {
+          backRoom.innerHTML = icon.outerHTML + ' Back';
+          backRoom.style.pointerEvents = 'none';
+          backRoom.style.visibility = '';
+          backRoom.style.border = 'none';
+        }
+      } else {
+        hint.style.visibility = 'visible';
+      }
     } else {
       hint.style.visibility = 'hidden';
+      // Restore btn-back-room on desktop room step
+      if (isDesktopRoom) {
+        const backRoom = document.getElementById('btn-back-room');
+        if (backRoom) {
+          backRoom.innerHTML = '\u2190 Leave Room';
+          backRoom.style.pointerEvents = '';
+          backRoom.style.visibility = '';
+          backRoom.style.border = '';
+        }
+      }
     }
   }
 
@@ -3842,22 +4001,27 @@ export class Lobby {
       return;
     }
 
-    // Rejoin prompt: navigate between Rejoin / New Room buttons
+    // Recent rooms popup: navigate room cards + New Room button
     const rejoinOverlay = document.getElementById('rejoin-overlay');
     if (rejoinOverlay) {
-      const btns = [document.getElementById('btn-rejoin-yes'), document.getElementById('btn-rejoin-no')];
+      const items = [...rejoinOverlay.querySelectorAll('.rejoin-room-card'), document.getElementById('btn-rejoin-new')].filter(Boolean);
+      if (items.length === 0) { this._rejoinFocus = undefined; return; }
       if (this._rejoinFocus === undefined) this._rejoinFocus = 0;
-      if ((left && !this._gpPrevLeft) || (up && !this._gpPrevUp)) {
-        btns[this._rejoinFocus].classList.remove('gamepad-focus');
+      if (up && !this._gpPrevUp) {
+        items[this._rejoinFocus].classList.remove('gamepad-focus');
         this._rejoinFocus = Math.max(0, this._rejoinFocus - 1);
-        btns[this._rejoinFocus].classList.add('gamepad-focus');
+        items[this._rejoinFocus].classList.add('gamepad-focus');
       }
-      if ((right && !this._gpPrevRight) || (down && !this._gpPrevDown)) {
-        btns[this._rejoinFocus].classList.remove('gamepad-focus');
-        this._rejoinFocus = Math.min(btns.length - 1, this._rejoinFocus + 1);
-        btns[this._rejoinFocus].classList.add('gamepad-focus');
+      if (down && !this._gpPrevDown) {
+        items[this._rejoinFocus].classList.remove('gamepad-focus');
+        this._rejoinFocus = Math.min(items.length - 1, this._rejoinFocus + 1);
+        items[this._rejoinFocus].classList.add('gamepad-focus');
       }
-      if (a && !this._gpPrevA) btns[this._rejoinFocus].click();
+      if (a && !this._gpPrevA) items[this._rejoinFocus].click();
+      if (b && !this._gpPrevB) {
+        const newBtn = document.getElementById('btn-rejoin-new');
+        if (newBtn) newBtn.click();
+      }
       this._gpPrevUp = up; this._gpPrevDown = down;
       this._gpPrevLeft = left; this._gpPrevRight = right;
       this._gpPrevA = a; this._gpPrevB = b;
@@ -4263,13 +4427,8 @@ export class Lobby {
 
     const hintEl = document.getElementById('bike-hint');
     if (HOLIDAY_BIKES[key]) {
-      // Unlocked holiday bike — show how it was earned
       nameEl.textContent = '🏆 ' + (BIKE_NAMES[key] || key);
-      if (hintEl) {
-        const wonWith = HOLIDAY_BIKES[key].requires.map(k => BIKE_NAMES[k] || k).join(', ');
-        hintEl.innerHTML = `<span style="color:rgba(100,255,100,0.7)">Won with ${wonWith}</span>`;
-        hintEl.style.display = '';
-      }
+      if (hintEl) hintEl.style.display = 'none';
     } else {
       if (hintEl) hintEl.style.display = 'none';
       nameEl.textContent = BIKE_NAMES[key] || key;

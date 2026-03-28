@@ -80,8 +80,8 @@ class Game {
     this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.enabled = !isMobile;
+    if (!isMobile) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.prepend(this.renderer.domElement);
 
     // Scene
@@ -761,18 +761,11 @@ class Game {
       }
     };
 
-    // Pre-acquire local media stream so calls connect instantly on both sides.
-    // If lobby already acquired media (room step), reuse it.
-    // Captain then initiates the media call; stoker holds the stream ready for
-    // _handleIncomingCall to answer without an async getUserMedia delay.
-    if (this.lobby.cameraActive || this.lobby.audioActive) {
-      this._acquireLocalMedia().then(() => {
-        if (mode === 'captain') this._initiateMediaCall();
-      });
-    } else if (mode === 'captain') {
-      // Even without local media, initiate call so we can receive partner's stream
-      this._initiateMediaCall();
-    }
+    // Media call is already established from the room — don't re-initiate.
+    // Re-initiating closes the existing call, which kills the working streams
+    // and breaks video playback on iOS.
+    // The onRemoteStream handler above will handle any new streams if the
+    // call is renegotiated.
 
     // Show partner avatar immediately if their camera is known to be off
     if (!this.lobby._partnerCameraOn && this.lobby._partnerAvatarUrl) {
@@ -1067,7 +1060,7 @@ class Game {
     this.recorder.setLabels(this.mode);
     this.recorder.startBuffer(this.audioCtx, this.lobby.audioActive);
     if (this.lobby.cameraActive) {
-      this.recorder.startSelfie();
+      this.recorder.startSelfie(this.net && this.net._localMediaStream);
     } else if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
       const user = this.lobby.auth.getUser();
       if (user && user.avatar) this.recorder.showAvatarPip(this.lobby._avatarCache.get(user.avatar) || user.avatar);
@@ -1749,7 +1742,7 @@ class Game {
     this.state = 'victory';
     this.hud.hideTimer();
     const overlay = document.getElementById('victory-overlay');
-    overlay.style.display = 'flex';
+    overlay.classList.add('visible');
 
     const level = this.lobby.selectedLevel;
     // Victory title includes role in multiplayer
@@ -2034,7 +2027,7 @@ class Game {
   }
 
   _hideVictory() {
-    document.getElementById('victory-overlay').style.display = 'none';
+    document.getElementById('victory-overlay').classList.remove('visible');
     // Clear stale pointer-events cooldown on victory buttons
     for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby']) {
       const el = document.getElementById(id);
@@ -2186,7 +2179,7 @@ class Game {
     this.recorder.clearPartnerStream();
     updateBadgeDisplay('partner-badges', []);
     if (this.net) { this.net.destroy(); this.net = null; }
-    try { localStorage.removeItem('tandemonium-room'); } catch (e) {}
+    // Room stays in recent rooms list for 5 min so players can rejoin
     this.mode = 'solo';
     this._lobbyBtn.textContent = 'LOBBY';
     this.sharedPedal = null;
@@ -2220,6 +2213,7 @@ class Game {
     analytics.setPage('lobby');
   }
 
+
   _returnToRoom() {
     this._musicBtn.style.display = 'none';
     if (!this.net) {
@@ -2228,8 +2222,9 @@ class Game {
       return;
     }
 
-    // Notify partner to return to room too
-    if (this.net.connected) {
+    // Notify partner to return to room too (only if we're initiating,
+    // not if we received EVT_RETURN_ROOM — prevents infinite loop)
+    if (this.state !== 'lobby' && this.net.connected) {
       this.net.sendEvent(EVT_RETURN_ROOM);
     }
 
@@ -2245,6 +2240,7 @@ class Game {
     this._hideAllOverlays();
 
     // Partial cleanup: game state only (keep connection + media alive)
+    this.countdownTimer = 0;
     this.raceManager = null;
     this.hud.raceManager = null;
     this.contributionTracker = null;
@@ -2297,27 +2293,16 @@ class Game {
 
   _initiateMediaCall() {
     if (!this.net || !this.net.peer) return;
-    const localStream = this.net._localMediaStream || new MediaStream();
-    const remotePeerId = this.net.conn && this.net.conn.peer;
-    if (!remotePeerId) return;
     clearTimeout(this._mediaRetryTimeout);
     if (!this._mediaRetryCount) this._mediaRetryCount = 0;
-    const call = this.net.peer.call(remotePeerId, localStream);
-    if (call) {
-      call.on('stream', (remoteStream) => {
-        clearTimeout(this._mediaRetryTimeout);
-        this._mediaRetryCount = 0;
-        this.recorder.setPartnerStream(remoteStream);
-        this.net._playRemoteAudio(remoteStream);
-        this.recorder.addAudioStreams(this.net._localMediaStream || null, remoteStream);
-      });
-      // Retry up to 10 times if partner stream doesn't arrive
-      this._mediaRetryCount++;
-      if (this._mediaRetryCount < 10) {
-        this._mediaRetryTimeout = setTimeout(() => {
-          if (!this.recorder.partnerActive) this._initiateMediaCall();
-        }, 3000);
-      }
+    // Use network manager's initiateCall to properly track _mediaCall
+    this.net.initiateCall();
+    // Retry up to 3 times if partner stream doesn't arrive
+    this._mediaRetryCount++;
+    if (this._mediaRetryCount < 3) {
+      this._mediaRetryTimeout = setTimeout(() => {
+        if (!this.recorder.partnerActive) this._initiateMediaCall();
+      }, 5000);
     }
   }
 
