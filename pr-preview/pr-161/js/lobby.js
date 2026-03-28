@@ -506,6 +506,9 @@ export class Lobby {
    * @param {HTMLElement} step — the step div to show (e.g. this.levelStep)
    */
   _showStep(step) {
+    // DEBUG: trace what's calling _showStep and with which step
+    console.log('_showStep:', step.id, 'from:', this._currentStep && this._currentStep.id);
+    console.trace('_showStep trace');
     // Restore toggle columns and clean up spinners if leaving join step
     if (this._currentStep === this.joinStep && step !== this.joinStep) {
       this._lastFailedCode = null;
