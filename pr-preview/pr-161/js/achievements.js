@@ -223,7 +223,7 @@ export function showAchievementToast(achievement) {
   }, 3000);
 }
 
-// Badge rendering around a PiP circle
+// Badge rendering around a PiP
 export function updateBadgeDisplay(containerId, achievements) {
   const container = document.getElementById(containerId);
   if (!container) return;
@@ -235,13 +235,47 @@ export function updateBadgeDisplay(containerId, achievements) {
   const count = earned.length;
   if (count === 0) return;
 
-  const angleStep = 360 / Math.max(count, 6); // at least 60° spacing
-  earned.forEach((ach, i) => {
-    const badge = document.createElement('div');
-    badge.className = 'pip-badge';
-    badge.textContent = ach.icon;
-    badge.title = ach.name;
-    badge.style.transform = 'rotate(' + (i * angleStep) + 'deg) translateX(48px) rotate(-' + (i * angleStep) + 'deg)';
-    container.appendChild(badge);
-  });
+  // Check if parent pip-wrap is in lobby mode on desktop (rectangular video)
+  const pipWrap = container.closest('.pip-wrap');
+  const isRect = pipWrap && pipWrap.classList.contains('pip-lobby-mode')
+    && window.matchMedia('(min-width: 1024px)').matches;
+
+  if (isRect) {
+    // Arrange badges along the rectangle perimeter
+    const w = container.offsetWidth;
+    const h = container.offsetHeight;
+    const perimeter = 2 * (w + h);
+    const spacing = Math.max(count, 6);
+    earned.forEach((ach, i) => {
+      const badge = document.createElement('div');
+      badge.className = 'pip-badge';
+      badge.textContent = ach.icon;
+      badge.title = ach.name;
+      // Walk along the rectangle perimeter
+      const dist = (i / spacing) * perimeter;
+      let x, y;
+      if (dist < w) {              // top edge
+        x = dist; y = 0;
+      } else if (dist < w + h) {   // right edge
+        x = w; y = dist - w;
+      } else if (dist < 2 * w + h) { // bottom edge
+        x = w - (dist - w - h); y = h;
+      } else {                      // left edge
+        x = 0; y = h - (dist - 2 * w - h);
+      }
+      badge.style.transform = 'translate(' + (x - w / 2) + 'px, ' + (y - h / 2) + 'px)';
+      container.appendChild(badge);
+    });
+  } else {
+    // Circular arrangement (mobile / non-lobby)
+    const angleStep = 360 / Math.max(count, 6);
+    earned.forEach((ach, i) => {
+      const badge = document.createElement('div');
+      badge.className = 'pip-badge';
+      badge.textContent = ach.icon;
+      badge.title = ach.name;
+      badge.style.transform = 'rotate(' + (i * angleStep) + 'deg) translateX(48px) rotate(-' + (i * angleStep) + 'deg)';
+      container.appendChild(badge);
+    });
+  }
 }
