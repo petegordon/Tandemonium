@@ -3417,12 +3417,6 @@ export class Lobby {
     if (selfieWrap) selfieWrap.classList.add('pip-lobby-mode');
     if (partnerWrap) partnerWrap.classList.add('pip-lobby-mode');
 
-    // Resume playback (no srcObject changes needed — streams are alive)
-    const selfieVideo = document.getElementById('selfie-pip');
-    if (selfieVideo && selfieVideo.srcObject) selfieVideo.play().catch(() => {});
-    const partnerVideo = document.getElementById('partner-pip');
-    if (partnerVideo && partnerVideo.srcObject) partnerVideo.play().catch(() => {});
-
     // Re-register handlers (game.js replaced these during gameplay)
     this.net.onRemoteStream = (remoteStream) => {
       const pv = document.getElementById('partner-pip');
@@ -3438,6 +3432,43 @@ export class Lobby {
     };
 
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
+
+    // Resume selfie video (local stream — always alive)
+    const selfieVideo = document.getElementById('selfie-pip');
+    if (selfieVideo && this.net._localMediaStream) {
+      selfieVideo.srcObject = this.net._localMediaStream;
+      selfieVideo.play().catch(() => {});
+    }
+
+    // Initiate a fresh media call to get new stream objects.
+    // On iOS, the game's WebRTC video decoder may be in a bad state after
+    // heavy GPU usage — fresh streams from a new call are more reliable
+    // than trying to resume old ones. No DOM reparenting means the
+    // srcObject assignment won't kill playback on iOS.
+    this._mediaCallRetries = 0;
+    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
+    const initialDelay = this._roomRole === 'captain' ? 500 : 4000;
+    const retryCall = () => {
+      if (!this.net || !this.net.peer || !this.net.conn) return;
+      const pv = document.getElementById('partner-pip');
+      const hasLive = pv && pv.srcObject &&
+        pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
+      if (hasLive) return;
+      this.net.initiateCall();
+      this._mediaCallRetries++;
+      if (this._mediaCallRetries < 3) {
+        this._mediaCallTimer = setTimeout(() => retryCall(), 5000);
+      }
+    };
+    if (this.net.transport === 'p2p') {
+      this._mediaCallTimer = setTimeout(() => retryCall(), initialDelay);
+    } else {
+      const prevOnP2P = this.net.onP2PUpgrade;
+      this.net.onP2PUpgrade = () => {
+        this._mediaCallTimer = setTimeout(() => retryCall(), initialDelay);
+        if (prevOnP2P) prevOnP2P();
+      };
+    }
 
     // Replay any messages buffered during the rejoin delay
     if (this._rejoinMessageQueue && this._rejoinMessageQueue.length > 0) {
