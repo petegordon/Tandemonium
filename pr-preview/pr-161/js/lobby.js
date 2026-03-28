@@ -577,11 +577,8 @@ export class Lobby {
     // Also hide #btn-back-room when gamepad is connected (B button handles it)
     if (step === this.roomStep && window.matchMedia('(min-width: 1024px)').matches) {
       this._fixedBackBtn.style.visibility = 'hidden';
-      const backRoom = document.getElementById('btn-back-room');
-      if (backRoom) {
-        backRoom.style.display = (this.input && this.input.gamepadConnected) ? 'none' : '';
-      }
     }
+    this._updateBackHint(step);
 
     // Always reset to center column and update its items
     this._modeCol = 1;
@@ -613,9 +610,12 @@ export class Lobby {
       // Position PiPs to align with room-video-area in the center column (desktop)
       if (isRoom) {
         requestAnimationFrame(() => this._positionPipToVideoArea());
-        // Re-render selfie badges with rect shape on desktop TV/Monitor
+        // Re-render badges with rect shape on desktop TV/Monitor
         const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
         updateBadgeDisplay('selfie-badges', this._achievements.getEarned(), shape);
+        if (this._partnerAchievements) {
+          updateBadgeDisplay('partner-badges', this._partnerAchievements, shape);
+        }
       }
       // Mobile: show room code between PiP circles using a body-level element
       // (can't use the original label — it's inside a display:none parent on mobile)
@@ -997,6 +997,10 @@ export class Lobby {
     this._stepItems.set(step, navItems);
     this._stepCenterItems.set(step, navItems);
     this._stepBack.set(step, backBtn);
+    // Default focus to START RIDE button
+    if (startBtn && isClickable) {
+      this._stepDefaultFocus.set(step, navItems.indexOf(startBtn));
+    }
   }
 
   /**
@@ -2497,7 +2501,8 @@ export class Lobby {
           this._gpPrevRB = gp.buttons[5] && gp.buttons[5].pressed;
         }
       }
-      this._updateBackHint(this._currentStep);
+      // Defer so input-manager's gamepadconnected handler has set gamepadConnected
+      setTimeout(() => this._updateBackHint(this._currentStep), 0);
       // Switch to spinners if currently on join step
       if (this._currentStep === this.joinStep) {
         if (this._lastFailedCode) {
@@ -2542,6 +2547,9 @@ export class Lobby {
           // Show joystick toggle
           this.toggleJoystick.style.display = '';
           this._setToggleActive('joystick', this.joystickActive);
+          // Hide fixed back; update grid btn-back-room with gamepad hint
+          this._fixedBackBtn.style.visibility = 'hidden';
+          this._updateBackHint(this._currentStep);
           // Check for gyro
           if (navigator.hid) {
             this._checkGamepadGyro();
@@ -2558,12 +2566,16 @@ export class Lobby {
         // If a gamepad reconnected during the debounce window, bail out
         if (this.input && this.input.gamepadConnected) return;
 
+        // Restore grid Leave Room button on desktop room step
         this._updateBackHint(this._currentStep);
         // Show fixed back button when gamepad disconnects
         const hasBack = this._stepBack.get(this._currentStep);
         if (hasBack) {
           this._fixedBackBtn.textContent = (this._currentStep === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
           this._fixedBackBtn.style.visibility = 'visible';
+        }
+        if (this._currentStep === this.roomStep && window.matchMedia('(min-width: 1024px)').matches) {
+          this._fixedBackBtn.style.visibility = 'hidden'; // desktop uses grid button, not fixed
         }
         // Switch back to text input if on join step
         if (this._currentStep === this.joinStep) {
@@ -3347,6 +3359,7 @@ export class Lobby {
       this._updatePartnerPip();
       // Render partner achievement badges
       if (profile && profile.achievements) {
+        this._partnerAchievements = profile.achievements;
         const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
         updateBadgeDisplay('partner-badges', profile.achievements, shape);
       }
@@ -3712,6 +3725,8 @@ export class Lobby {
     if (!hint) return;
     const hasBack = this._stepBack.get(step);
     const hasGamepad = this.input && this.input.gamepadConnected;
+    const isDesktopRoom = step === this.roomStep && window.matchMedia('(min-width: 1024px)').matches;
+
     if (hasBack && hasGamepad) {
       const icon = document.getElementById('gamepad-back-icon');
       const gpId = this.input._gpName || '';
@@ -3729,9 +3744,32 @@ export class Lobby {
         // Always right=back — the button swap remaps indices so this is correct for all
         icon.innerHTML = this._makeDiamondHTML('right');
       }
-      hint.style.visibility = 'visible';
+
+      // On desktop room step, show gamepad back hint inside the grid btn-back-room
+      if (isDesktopRoom) {
+        hint.style.visibility = 'hidden';
+        const backRoom = document.getElementById('btn-back-room');
+        if (backRoom) {
+          backRoom.innerHTML = icon.outerHTML + ' Back';
+          backRoom.style.pointerEvents = 'none';
+          backRoom.style.visibility = '';
+          backRoom.style.border = 'none';
+        }
+      } else {
+        hint.style.visibility = 'visible';
+      }
     } else {
       hint.style.visibility = 'hidden';
+      // Restore btn-back-room on desktop room step
+      if (isDesktopRoom) {
+        const backRoom = document.getElementById('btn-back-room');
+        if (backRoom) {
+          backRoom.innerHTML = '\u2190 Leave Room';
+          backRoom.style.pointerEvents = '';
+          backRoom.style.visibility = '';
+          backRoom.style.border = '';
+        }
+      }
     }
   }
 
