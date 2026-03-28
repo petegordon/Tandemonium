@@ -3434,13 +3434,25 @@ export class Lobby {
       videoArea.appendChild(partnerWrap);
     }
 
-    // Resume playback on both videos (DOM reparent can pause them)
+    // Resume playback on both videos after DOM reparent.
+    // On mobile, appendChild kills playback — must re-apply srcObject.
+    // On desktop, just play() is enough (re-applying srcObject causes flicker).
     const selfieVideo = document.getElementById('selfie-pip');
     if (selfieVideo && selfieVideo.srcObject) {
+      if (isMobile) {
+        const s = selfieVideo.srcObject;
+        selfieVideo.srcObject = null;
+        selfieVideo.srcObject = s;
+      }
       selfieVideo.play().catch(() => {});
     }
     const partnerVideo = document.getElementById('partner-pip');
     if (partnerVideo && partnerVideo.srcObject) {
+      if (isMobile) {
+        const s = partnerVideo.srcObject;
+        partnerVideo.srcObject = null;
+        partnerVideo.srcObject = s;
+      }
       partnerVideo.play().catch(() => {});
     }
 
