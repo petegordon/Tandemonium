@@ -524,9 +524,16 @@ export class Lobby {
     this._clearFocusHighlight();
     this._currentStep = step;
 
-    // Toggle room-active class on steps-col so CSS can stretch it for bottom-aligned buttons
-    const stepsCol = document.querySelector('.lobby-steps-col');
-    if (stepsCol) stepsCol.classList.toggle('room-active', step === this.roomStep);
+    // Room step: move PLAY GAME to lobby-card so it can span full width as a grid row
+    const playBtn = document.getElementById('btn-play-game');
+    const lobbyCardEl = document.querySelector('.lobby-card');
+    if (playBtn && lobbyCardEl) {
+      if (step === this.roomStep) {
+        lobbyCardEl.appendChild(playBtn);
+      } else if (playBtn.parentElement === lobbyCardEl) {
+        document.getElementById('lobby-room').insertBefore(playBtn, document.getElementById('room-wait-text-room'));
+      }
+    }
 
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
@@ -539,11 +546,13 @@ export class Lobby {
     }
 
     // Hide bike carousel on level step (use that space for level cards + difficulty)
+    // Room step also uses the grid layout (carousel-hidden) but keeps carousel visible
     const carousel = document.getElementById('bike-carousel');
     const lobbyCard = document.querySelector('.lobby-card');
     const hideCarousel = (step === this.levelStep);
+    const useGridLayout = (step === this.levelStep || step === this.roomStep);
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
-    if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
+    if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', useGridLayout);
     const lobbyEl = document.getElementById('lobby');
     if (lobbyEl) lobbyEl.classList.toggle('lobby-wide', hideCarousel);
 
@@ -633,7 +642,7 @@ export class Lobby {
     if (!area) return;
     const rect = area.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height * 0.1;
+    const centerY = rect.top;
     document.documentElement.style.setProperty('--pip-left', centerX + 'px');
     document.documentElement.style.setProperty('--pip-top', centerY + 'px');
   }
