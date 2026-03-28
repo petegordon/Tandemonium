@@ -1,14 +1,24 @@
 # Tandemonium Screen Flow
 
-## Lobby Screens
+## Lobby Screens (Steps)
 
 ```
 #lobby-mode    — Solo / Ride Together
 #lobby-role    — Captain / Stoker (multiplayer only)
 #lobby-host    — Captain waiting room (room code, QR)
 #lobby-join    — Stoker join room (code input)
-#lobby-room    — Social room (video, PLAY GAME)
+#lobby-room    — Social room (video circles, PLAY GAME)
 #lobby-level   — Level + difficulty selection (shared by solo + multiplayer)
+```
+
+## Game Overlays
+
+```
+#victory-overlay       — Finish screen (YOU MADE IT! + stats)
+#gameover-overlay       — Crash screen (RESTART + options)
+#stoker-cta-overlay     — Steam wishlist prompt (stoker only, unlicensed)
+#demo-end-overlay       — Demo limit (currently disabled)
+#tutorial-complete      — Tutorial finish (calibration results + steering feel)
 ```
 
 ## Game States
@@ -22,6 +32,25 @@ countdown    — 3-2-1 countdown
 playing      — active gameplay
 gameover     — crash overlay or tutorial complete
 victory      — finish overlay
+```
+
+## Video PiP Architecture
+
+```
+PiP elements (#selfie-pip-wrap, #partner-pip-wrap) live in <body> PERMANENTLY.
+They are NEVER moved via appendChild. Layout is CSS-only:
+
+  pip-lobby-mode class:  position: fixed, centered on screen, z-index: 56
+  No class (in-game):    position: fixed, bottom corners, z-index: 11
+  Base CSS:              display: none (hidden until explicitly shown)
+
+Streams are set up ONCE in _startRoomMedia() on initial room entry.
+They flow continuously through game → room → game without disruption.
+Streams are only torn down on disconnect or END RIDE (_returnToLobby).
+
+  DO NOT: re-assign srcObject during room↔game transitions
+  DO NOT: call initiateCall() during game start
+  DO NOT: use appendChild to move PiP elements
 ```
 
 ---
@@ -107,10 +136,45 @@ MODE ──[SOLO RIDE]──> LEVEL ──[select Tutorial]──[START RIDE]
 
 ---
 
+## Multiplayer Rejoin Flow
+
+```
+MODE ──[RIDE TOGETHER click]──> _handleRejoinCheck()
+                                    │
+                           [any recent rooms? (5 min)]
+                                    │
+                    ┌───────────────┴───────────────┐
+                    │ yes                           │ no
+                    v                               v
+            RECENT ROOMS POPUP                  ROLE STEP
+            (room cards + New Room)             (normal flow)
+                    │
+         ┌──────────┴──────────┐
+         │ select room         │ New Room
+         │                     │
+         v                     v
+   REJOIN FLOW              ROLE STEP
+   (skip role selection)    (normal flow)
+         │
+    ┌────┴────┐
+    │ captain │ stoker
+    v         v
+   HOST      JOIN
+   step      step
+    │         │
+    v         v
+  enterRoom(code, role)
+    │
+  [partner connects]
+    │
+    v
+   ROOM
+```
+
 ## Multiplayer Captain Flow
 
 ```
-MODE ──[RIDE TOGETHER]──> ROLE
+MODE ──[RIDE TOGETHER]──> ROLE (or REJOIN if recent rooms)
                             │
                      [START A RIDE]
                             │
@@ -124,7 +188,7 @@ MODE ──[RIDE TOGETHER]──> ROLE
                             │
                             v
                           ROOM
-                   [video exchange]
+                   [video circles]
                    [PLAY GAME button]       ◄───────────────────────┐
                             │                                       │
                       [PLAY GAME]                                   │
@@ -177,11 +241,14 @@ GAME OVER    VICTORY                                                │
    │            │                                                   │
    ├─[RESTART]──┴──> sends EVT_RESET ──> COUNTDOWN                 │
    │                                                                │
-   ├─[RETURN TO ROOM]──> sends EVT_RETURN_ROOM                     │
+   ├─[RETURN TO ROOM]──> sends EVT_RETURN_ROOM ¹                   │
    │         │                                                      │
    │         └──> _returnToRoom() ──> showRoom() ──────────────────>┘
    │
    └─[END RIDE]──> _returnToLobby() ──> MODE (destroys connection)
+
+   ¹ EVT_RETURN_ROOM guard: only sent if state !== 'lobby'
+     (prevents infinite echo loop between captain and stoker)
 ```
 
 ## Multiplayer Captain Tutorial Flow
@@ -242,7 +309,7 @@ ROOM ──[PLAY GAME]──> LEVEL ──[select Tutorial]──[START RIDE]
                    │
                    v
           _returnToRoom()
-          sends EVT_RETURN_ROOM
+          sends EVT_RETURN_ROOM ¹
                    │
                    v
                  ROOM
@@ -254,7 +321,7 @@ ROOM ──[PLAY GAME]──> LEVEL ──[select Tutorial]──[START RIDE]
 ## Multiplayer Stoker Flow
 
 ```
-MODE ──[RIDE TOGETHER]──> ROLE
+MODE ──[RIDE TOGETHER]──> ROLE (or REJOIN if recent rooms)
                             │
                       [JOIN A RIDE]
                             │
@@ -267,7 +334,7 @@ MODE ──[RIDE TOGETHER]──> ROLE
                             │
                             v
                           ROOM
-                   [video exchange]
+                   [video circles]
                    "Waiting for captain..."    ◄────────────────────┐
                             │                                       │
                    receives {playGame}                              │
@@ -311,18 +378,31 @@ MODE ──[RIDE TOGETHER]──> ROLE
           GAME OVER                      VICTORY                    │
           (crash)                        (finish)                   │
               │                             │                       │
+              │                        [6s delay if unlicensed      │
+              │                         + not Steam]                │
+              │                             │                       │
+              │                        STOKER CTA ²                 │
+              │                        "Great ride!"                │
+              │                        [Steam wishlist]             │
+              │                        [CONTINUE]                   │
+              │                             │                       │
               │ receives EVT_RESET ──> COUNTDOWN                    │
               │                             │                       │
               │ receives EVT_RETURN_ROOM    │ receives              │
               │         │                   │ EVT_RETURN_ROOM       │
+              │         v                   │ (or CONTINUE click)   │
+              │  _returnToRoom()            │         │             │
+              │         │                   │  _returnToRoom()      │
               │         v                   │         │             │
-              │  _returnToRoom()            │  _returnToRoom()      │
-              │         │                   │         │             │
-              │         v                   │         v             │
               │      showRoom() ────────────┘──> showRoom() ───────>┘
               │
               └─[END RIDE]──> _returnToLobby() ──> MODE
                               (destroys connection)
+
+   ² Stoker CTA: only shows for unlicensed stokers (not Steam).
+     CONTINUE button calls _returnToRoom() if connected, else _returnToLobby().
+     Does NOT block EVT_RETURN_ROOM from captain — if captain returns first,
+     stoker auto-returns (CTA is dismissed).
 ```
 
 ## Multiplayer Stoker Tutorial Flow
@@ -394,21 +474,44 @@ CALIBRATION          WAITING
 
 ---
 
+## Victory Screen Buttons
+
+| Button | ID | Shown When | Action |
+|--------|----|-----------|--------|
+| PLAY AGAIN | `btn-play-again` | Always | Captain/solo: `_resetGame()` → COUNTDOWN. Stoker: send EVT_RESET, show "Waiting..." |
+| NEXT LEVEL | `btn-next-level` | Next level exists | Load next level, `_resetGame()` → COUNTDOWN |
+| RETURN TO ROOM | `btn-victory-room` | Multiplayer (`this.net`) | `_returnToRoom()` → ROOM |
+| END RIDE | `btn-victory-lobby` | Always | `_returnToLobby()` → MODE (destroys connection) |
+
+Accent style (green) goes to NEXT LEVEL if visible, otherwise PLAY AGAIN.
+
+## Game Over Screen Buttons
+
+| Button | ID | Shown When | Action |
+|--------|----|-----------|--------|
+| SAVE CLIP | `btn-gameover-clip` | Recording buffer active | `recorder.saveClip()` |
+| RESTART | `btn-restart` | Always (accent) | Captain/solo: `_resetGame()`. Stoker: send EVT_RESET |
+| SKIP CHECKPOINT | `btn-skip-checkpoint` | DDA recommends + solo only | Skip to next checkpoint |
+| RETURN TO ROOM | `btn-gameover-room` | Multiplayer (`this.net`) | `_returnToRoom()` → ROOM |
+| END RIDE | `btn-gameover-lobby` | Always | `_returnToLobby()` → MODE |
+
+---
+
 ## Return Flow Summary
 
-| Function | Called By | Keeps Connection | Destination | Re-registers Handlers |
-|----------|----------|-----------------|-------------|----------------------|
-| `_returnToRoom()` | Either player: RETURN TO ROOM button (sends EVT_RETURN_ROOM to partner); Either player: receives EVT_RETURN_ROOM; Both: `_endTutorialRide()` in multiplayer | Yes | `showRoom()` → roomStep | Yes — onProfileReceived, onRemoteStream, onDisconnected |
-| `_returnToLobby()` | END RIDE button (any role, any mode) | No (destroys net) | `show()` → modeStep | N/A (no connection) |
-| `_endTutorialRide()` | Captain: Let's RIDE! button; Stoker: Continue button | Multiplayer: Yes (delegates to `_returnToRoom`); Solo: No | Multiplayer: roomStep; Solo: levelStep/modeStep | Multiplayer: Yes (via `_returnToRoom`) |
+| Function | Called By | Keeps Connection | Destination |
+|----------|----------|-----------------|-------------|
+| `_returnToRoom()` | RETURN TO ROOM button; receives EVT_RETURN_ROOM; `_endTutorialRide()` in MP; Stoker CTA CONTINUE | Yes | `showRoom()` → ROOM |
+| `_returnToLobby()` | END RIDE button (any role/mode) | No (destroys net) | `show()` → MODE |
+| `_endTutorialRide()` | Let's RIDE! / Continue button | MP: Yes (via `_returnToRoom`); Solo: No | MP: ROOM; Solo: LEVEL/MODE |
 
 ## Handler Registration Table
 
-| Phase | `onProfileReceived` | `onEventReceived` | Set By |
-|-------|--------------------|--------------------|--------|
-| Initial room entry | `_handleRoomMessage` | N/A (not in game) | `_startRoomMedia()` lobby.js:2932 |
-| During game | Game handler (game.js:716) | Game handler (game.js:598) | `startMultiplayer()` game.js:716 |
-| Return to room | `_handleRoomMessage` | Game handler persists | `showRoom()` lobby.js:3348 |
+| Phase | `onRemoteStream` | `onProfileReceived` | `onEventReceived` |
+|-------|-----------------|--------------------|--------------------|
+| Initial room entry | Lobby: set srcObject + play | `_handleRoomMessage` | N/A |
+| During game | Game: `recorder.setPartnerStream` | Game handler (game.js) | Game handler (game.js) |
+| Return to room | Lobby: set srcObject + play | `_handleRoomMessage` | Game handler persists |
 
 ## Message Protocol — Captain → Stoker
 
@@ -418,13 +521,17 @@ CALIBRATION          WAITING
 | `{levelSync}` | Profile | Captain selects a level | Highlight level, set `_forceWizard` if tutorial |
 | `{difficultySync}` | Profile | Captain changes difficulty | Update difficulty selection |
 | `{startRide}` | Profile | Captain clicks START RIDE | `_transitionToGame()` → enter game |
-| `EVT_COUNTDOWN` | Event | Captain countdown starts (or after calibration) | `_startCountdown()` or resume countdown |
+| `{bikeSync}` | Profile | Captain changes bike | Update partner bike display |
+| `{cameraToggle}` | Profile | Captain toggles camera | Show/hide partner video PiP |
+| `EVT_COUNTDOWN` | Event | Captain countdown starts | `_startCountdown()` |
 | `EVT_START` | Event | Captain countdown reaches 0 | Set state to `playing` |
 | `EVT_CHECKPOINT` | Event | Captain passes checkpoint | Show checkpoint flash |
 | `EVT_GAMEOVER` | Event | Captain crashes | Show game-over screen |
-| `EVT_FINISH` | Event | Captain finishes race/tutorial | Show victory or stoker tutorial complete |
+| `EVT_FINISH` | Event | Captain finishes race/tutorial | Show victory or tutorial complete |
 | `EVT_RESET` | Event | Captain restarts after crash | Reset game, new countdown |
-| `EVT_RETURN_ROOM` | Event | Captain clicks RETURN TO ROOM | `_returnToRoom()` → room step |
+| `EVT_RETURN_ROOM` | Event | Captain clicks RETURN TO ROOM ¹ | `_returnToRoom()` → ROOM |
+
+¹ Guard: only sent if `state !== 'lobby'` (prevents infinite echo loop)
 
 ## Message Protocol — Stoker → Captain
 
@@ -434,6 +541,7 @@ CALIBRATION          WAITING
 | Lean value | Binary (MSG_LEAN) | 20Hz | Average with captain's lean for steering |
 | `{cameraToggle}` | Profile | On toggle | Show/hide partner video PiP |
 | `{tiltStatus}` | Profile | On motion detect | Track partner's tilt capability |
+| `{bikeSync}` | Profile | On bike change | Update partner bike display |
 
 ## State Sync — Captain → Stoker (during gameplay)
 
