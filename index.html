@@ -3038,6 +3038,9 @@
       align-self: center;
       overflow: hidden;
     }
+    .lobby-card.carousel-hidden .lobby-steps-col.room-active {
+      align-self: stretch;
+    }
     .lobby-card.carousel-hidden .lobby-right-col {
       grid-column: 3;
       grid-row: 1;
@@ -3126,10 +3129,7 @@
     #lobby-join .lobby-back,
     #lobby-level .lobby-back { display: none; }
     #lobby-room .lobby-back {
-      display: inline-block !important;
-      margin-top: calc(4 * var(--ls));
-      font-size: calc(10 * var(--ls));
-      order: 10 !important;
+      display: none;
     }
     #lobby-fixed-back { font-size: calc(10 * var(--ls)); padding: calc(4 * var(--ls)) calc(8 * var(--ls)); order: 99; }
 
@@ -3271,8 +3271,7 @@
       flex-direction: column;
       align-items: center;
       width: 100%;
-      height: 100%;
-      justify-content: flex-start;
+      flex: 1;
     }
     #lobby-room #room-partner-info {
       display: flex !important;  /* Override mobile display:none */
@@ -3285,22 +3284,22 @@
     #lobby-room #room-video-area {
       display: block !important;  /* Override mobile display:none */
       min-height: calc(60 * var(--ls));
-      flex: 1;
     }
-    /* Buttons at the bottom of the center column */
+    /* PLAY GAME pushed to bottom of column */
     #lobby-room #btn-play-game {
       margin-top: auto;
+      margin-bottom: calc(4 * var(--ls));
     }
     #lobby-room #btn-back-room {
-      margin-top: calc(4 * var(--ls));
-      font-size: calc(10 * var(--ls));
+      display: none;
     }
 
-    /* Desktop ROOM: video as rounded rectangles sized to the center column */
+    /* Desktop ROOM: video as rectangles with small rounded corners */
     .pip-wrap.pip-lobby-mode .pip-video {
       width: calc(55 * var(--ls));
       height: calc(70 * var(--ls));
-      border-radius: calc(10 * var(--ls));
+      border-radius: calc(4 * var(--ls));
+      border-width: calc(1.5 * var(--ls));
     }
     .pip-wrap.pip-lobby-mode .pip-badges {
       width: calc(55 * var(--ls));
@@ -4073,7 +4072,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.bdd70aa | 03-28-2026 00:52</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b13b269 | 03-28-2026 00:58</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
