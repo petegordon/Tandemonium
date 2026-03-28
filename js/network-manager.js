@@ -343,13 +343,14 @@ export class NetworkManager {
 
   _refreshRoomTimestamp() {
     try {
-      const raw = localStorage.getItem('tandemonium-room');
+      const raw = localStorage.getItem('tandemonium-rooms');
       if (raw) {
-        const data = JSON.parse(raw);
-        // Only refresh if the stored room matches this connection's room
-        if (data.roomCode !== this.roomCode) return;
-        data.timestamp = Date.now();
-        localStorage.setItem('tandemonium-room', JSON.stringify(data));
+        const rooms = JSON.parse(raw);
+        const entry = rooms.find(r => r.roomCode === this.roomCode);
+        if (entry) {
+          entry.timestamp = Date.now();
+          localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
+        }
       }
     } catch (e) {}
   }
@@ -425,6 +426,10 @@ export class NetworkManager {
   }
 
   _handleIncomingCall(call) {
+    // Close previous media call to prevent duplicate streams
+    if (this._mediaCall) {
+      try { this._mediaCall.close(); } catch (e) {}
+    }
     this._mediaCall = call;
     // Answer immediately with pre-acquired stream (from game.js _acquireLocalMedia)
     // to avoid async getUserMedia delay that causes call timeouts on mobile
@@ -540,6 +545,14 @@ export class NetworkManager {
   _attemptP2PUpgrade() {
     if (!this.roomCode || !this.role) return;
     if (this.transport === 'p2p') return; // already on P2P
+
+    // Destroy stale peer from previous session to free the ID on the signaling server
+    if (this.peer) {
+      this._activeConn = null; // prevent close handler from triggering disconnect
+      this.conn = null;
+      try { this.peer.destroy(); } catch (e) {}
+      this.peer = null;
+    }
 
     const peerId = this.roomCode + '-' + this.role;
     const partnerPeerId = this.roomCode + '-' + (this.role === 'captain' ? 'stoker' : 'captain');
@@ -674,8 +687,13 @@ export class NetworkManager {
     const localStream = this._localMediaStream || new MediaStream();
     const remotePeerId = this.conn.peer;
     if (!remotePeerId) return;
+    // Close previous outgoing call to prevent duplicate streams
+    if (this._mediaCall) {
+      try { this._mediaCall.close(); } catch (e) {}
+    }
     const call = this.peer.call(remotePeerId, localStream);
     if (call) {
+      this._mediaCall = call;
       call.on('stream', (remoteStream) => {
         this._playRemoteAudio(remoteStream);
         if (this.onRemoteStream) this.onRemoteStream(remoteStream);

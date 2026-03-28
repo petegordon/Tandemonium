@@ -697,6 +697,9 @@
     text-align: center;
     overflow-y: auto;
   }
+  #victory-overlay.visible {
+    display: flex;
+  }
   #victory-video {
     width: 90px;
     height: 90px;
@@ -807,11 +810,18 @@
   .victory-contrib-solo {
     margin-top: 8px;
   }
+  /* Victory layout wrappers — mobile: flow vertically, inherit parent alignment */
+  #victory-left, #victory-right, #victory-buttons {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+  }
 
   /* ── Level selector ── */
   #lobby-level {
     display: none;
-    padding: 8px 0 6px;  /* room for gamepad focus outline at top and bottom */
+    padding: 70px 0 6px;  /* top: space for pip-level-mode circles; bottom: gamepad outline */
   }
 
   /* ── COMPONENT: Level Cards ── */
@@ -1868,13 +1878,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
+    gap: 4px;
     width: 100%;
   }
   .lobby-steps-col {
     display: flex;
     flex-direction: column;
     align-items: center;
+    flex-shrink: 1;
+    min-width: 0;
   }
   .lobby-toggles {
     display: flex;
@@ -2147,26 +2159,99 @@
     font-weight: 700;
   }
 
-  /* ── Lobby Room (multiplayer shared lobby) ── */
+  /* ── PiP lobby/level modes ──
+     Elements stay in <body> permanently (no appendChild) to avoid iOS
+     video playback death. Positioned via CSS classes toggled by _showStep(). */
+
+  /* ── pip-lobby-mode: ROOM step — hero circles, centered ── */
   .pip-wrap.pip-lobby-mode {
-    position: relative !important;
-    bottom: auto !important;
-    left: auto !important;
-    right: auto !important;
+    position: fixed !important;
     z-index: 56;
-    display: inline-block !important;
-    margin: 0 8px;
+    display: block !important;
     pointer-events: auto;
+  }
+  #selfie-pip-wrap.pip-lobby-mode {
+    top: auto !important;
+    right: auto !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
+    left: calc(50% - 20vw) !important;
+    transform: translateX(-100%);
+  }
+  #partner-pip-wrap.pip-lobby-mode {
+    top: auto !important;
+    right: auto !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
+    left: calc(50% + 20vw) !important;
+    transform: none;
   }
   .pip-wrap.pip-lobby-mode .pip-label {
     font-size: 10px;
     white-space: nowrap;
   }
+
+  /* ── pip-level-mode: LEVEL step — scaled down, top-center ── */
+  .pip-wrap.pip-level-mode {
+    position: fixed !important;
+    z-index: 56;
+    display: block !important;
+    pointer-events: auto;
+  }
+  #selfie-pip-wrap.pip-level-mode {
+    bottom: auto !important;
+    right: auto !important;
+    left: 50% !important;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    transform: translate(calc(-100% - 6px), 0) scale(0.75);
+    transform-origin: top right;
+  }
+  #partner-pip-wrap.pip-level-mode {
+    bottom: auto !important;
+    right: auto !important;
+    left: 50% !important;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    transform: translate(6px, 0) scale(0.75);
+    transform-origin: top left;
+  }
+  .pip-wrap.pip-level-mode .pip-label {
+    font-size: 8px;
+    white-space: nowrap;
+  }
+
+  /* Smooth transition between ROOM ↔ LEVEL positions */
+  .pip-wrap.pip-lobby-mode,
+  .pip-wrap.pip-level-mode {
+    transition: top 0.3s ease, transform 0.3s ease;
+  }
+
   #room-video-area {
-    display: flex;
-    justify-content: center;
-    gap: 16px;
-    margin: 12px 0;
+    /* Spacer — PiP elements are fixed-positioned, not children */
+    min-height: 0;
+    margin: 0;
+  }
+
+  /* Mobile ROOM step: collapse center column so toggles are close together.
+     Room code is repositioned fixed between the PiP circles.
+     These are mobile-only — desktop shows them normally via media query override. */
+  #lobby-room #room-partner-info { display: none; }
+  #lobby-room #room-video-area { display: none; }
+  #lobby-room #btn-play-game { width: 100%; }
+  #lobby-room #btn-back-room { width: 100%; }
+
+  /* Mobile room code — body-level element positioned between PiP circles */
+  #mobile-room-code {
+    position: fixed;
+    z-index: 57;
+    /* Same bottom as PiP circles + half circle height (40px) to vertically center */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px);
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: #44ff66;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-shadow: 0 0 8px rgba(68,255,102,0.4);
+    pointer-events: none;
+    white-space: nowrap;
   }
   .level-card.selected {
     border-color: rgba(60,200,80,0.7);
@@ -3039,8 +3124,8 @@
     #lobby-role .lobby-back,
     #lobby-host .lobby-back,
     #lobby-join .lobby-back,
-    #lobby-level .lobby-back,
-    #lobby-room .lobby-back { display: none; }
+    #lobby-level .lobby-back { display: none; }
+    /* Room step: back button handled by grid layout (.room-active) */
     #lobby-fixed-back { font-size: calc(10 * var(--ls)); padding: calc(4 * var(--ls)) calc(8 * var(--ls)); order: 99; }
 
     #lobby-role .lobby-prompt,
@@ -3175,33 +3260,139 @@
     #lobby-host { gap: calc(3 * var(--ls)); }
     #lobby-join { gap: calc(4 * var(--ls)); padding-top: calc(8 * var(--ls)); }
 
-    /* Room (multiplayer lobby): full-width room code row above toggle columns */
-    #lobby-room {
-      display: grid;
-      grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr auto auto;
-      gap: calc(4 * var(--ls));
+    /* ── Room step: CSS Grid layout ──
+       .room-active on lobby-card switches to a 3-row grid:
+       Row 1: left toggles | room-center-wrap (code + videos) | right toggles
+       Row 2: PLAY GAME (full span)
+       Row 3: Leave Room (full span) */
+    .lobby-card.room-active {
+      display: grid !important;
+      grid-template-columns: 1fr auto 1fr;
+      grid-template-rows: 1fr auto auto;
+      gap: calc(2 * var(--ls));
       align-items: center;
       justify-items: center;
+      padding: calc(4 * var(--ls)) calc(10 * var(--ls)) calc(6 * var(--ls));
+      height: auto;
+      max-width: none;
+      justify-self: stretch;
+    }
+    .lobby-card.room-active .lobby-layout { display: contents; }
+    .lobby-card.room-active .lobby-steps-col { display: contents; }
+    .lobby-card.room-active #lobby-room { display: contents !important; }
+    .lobby-card.room-active .lobby-left-col {
+      grid-column: 1; grid-row: 1; align-self: center;
+      justify-self: end;
+    }
+    .lobby-card.room-active .lobby-right-col {
+      grid-column: 3; grid-row: 1; align-self: center;
+      justify-self: start;
+    }
+    /* Center wrapper: room code above video rects, all in one grid cell */
+    .lobby-card.room-active #room-center-wrap {
+      grid-column: 2; grid-row: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
       width: 100%;
     }
-    #lobby-room #room-partner-info {
-      grid-column: 1;
-      grid-row: 1;
-      width: 100%;
+    .lobby-card.room-active #room-partner-info {
+      display: flex !important;
+      flex-direction: column;
+      align-items: center;
       text-align: center;
+      margin-bottom: calc(2 * var(--ls));
+    }
+    .lobby-card.room-active #room-video-area {
+      display: flex !important;
+      align-items: flex-start;
+      justify-content: center;
+      gap: calc(24 * var(--ls));
+      padding: calc(2 * var(--ls)) calc(8 * var(--ls));
+      width: 100%;
+    }
+    .lobby-card.room-active .room-video-slot {
+      width: calc(55 * var(--ls));
+      min-height: calc(70 * var(--ls));
       display: flex;
       flex-direction: column;
       align-items: center;
     }
-    #lobby-room #btn-play-game {
-      margin-top: calc(4 * var(--ls));
+    .lobby-card.room-active .room-video-slot .pip-label {
+      font-size: calc(10 * var(--ls));
+      margin-top: calc(2 * var(--ls));
     }
-    #room-video-area { gap: calc(16 * var(--ls)); margin: calc(2 * var(--ls)) 0; }
+    .lobby-card.room-active #btn-play-game {
+      grid-column: 1 / -1; grid-row: 2;
+      justify-self: center;
+      min-width: calc(140 * var(--ls));
+      max-width: calc(140 * var(--ls));
+      /* Override mobile compact style — match other lobby buttons */
+      font-size: calc(13 * var(--ls));
+      padding: calc(10 * var(--ls)) calc(13 * var(--ls));
+      border-radius: calc(11 * var(--ls));
+      width: auto;
+    }
+    .lobby-card.room-active #room-wait-text-room {
+      grid-column: 1 / -1; grid-row: 2;
+    }
+    .lobby-card.room-active #btn-back-room {
+      grid-column: 1 / -1; grid-row: 3;
+      display: inline-block;
+      font-size: calc(10 * var(--ls));
+      justify-self: center;
+      min-height: calc(16 * var(--ls));
+    }
+    /* Hide other steps' elements that leak through display:contents */
+    .lobby-card.room-active .lobby-card-header { display: none; }
+
+    /* Desktop ROOM: video as rectangles with small rounded corners */
+    .pip-wrap.pip-lobby-mode .pip-video {
+      width: calc(55 * var(--ls));
+      height: calc(70 * var(--ls));
+      border-radius: calc(4 * var(--ls));
+      border-width: calc(1.5 * var(--ls));
+    }
+    .pip-wrap.pip-lobby-mode .pip-badges {
+      width: calc(55 * var(--ls));
+      height: calc(70 * var(--ls));
+    }
+    .pip-wrap.pip-lobby-mode .pip-badge {
+      width: calc(10 * var(--ls));
+      height: calc(10 * var(--ls));
+      font-size: calc(6 * var(--ls));
+      line-height: calc(9 * var(--ls));
+      top: calc(30 * var(--ls));
+      left: calc(22.5 * var(--ls));
+    }
     #level-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
-    .pip-wrap.pip-lobby-mode { margin: 0 calc(8 * var(--ls)); }
-    .pip-wrap.pip-lobby-mode .pip-label { font-size: calc(10 * var(--ls)); }
+    /* Hide mobile room code overlay on desktop (created by JS when isMobile is true on Mac trackpad) */
+    #mobile-room-code { display: none !important; }
+    /* ROOM step — each PiP positioned over its slot container via per-slot CSS vars */
+    #selfie-pip-wrap.pip-lobby-mode {
+      bottom: auto !important;
+      top: var(--pip-captain-top, 50%) !important;
+      left: var(--pip-captain-left, 50%) !important;
+      transform: translate(-50%, -50%);
+    }
+    #partner-pip-wrap.pip-lobby-mode {
+      bottom: auto !important;
+      top: var(--pip-stoker-top, 50%) !important;
+      left: var(--pip-stoker-left, 50%) !important;
+      transform: translate(-50%, -50%);
+    }
+    .pip-wrap.pip-lobby-mode .pip-label { display: none; }
+    /* LEVEL step — scaled down circles above cards */
+    #selfie-pip-wrap.pip-level-mode {
+      top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
+      transform: translate(calc(-100% - 6 * var(--ls)), 0) scale(0.7);
+    }
+    #partner-pip-wrap.pip-level-mode {
+      top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
+      transform: translate(calc(6 * var(--ls)), 0) scale(0.7);
+    }
+    .pip-wrap.pip-level-mode .pip-label { font-size: calc(8 * var(--ls)); }
 
     /* Auth / user info */
     .lobby-auth-btn {
@@ -3269,6 +3460,46 @@
     /* Game over / disconnect */
     #gameover-overlay, #disconnect-overlay { padding: calc(30 * var(--ls)); }
     .disconnect-box p { font-size: calc(20 * var(--ls)); }
+
+    /* ── Victory screen — two-column layout for TV/monitor ── */
+    #victory-overlay.visible {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr auto;
+      align-items: center;
+      justify-items: center;
+      gap: 0 calc(20 * var(--ls));
+      padding: calc(20 * var(--ls)) calc(40 * var(--ls));
+    }
+    #victory-left {
+      grid-column: 1;
+      grid-row: 1;
+      justify-self: center;
+      align-items: center;
+    }
+    #victory-right {
+      grid-column: 2;
+      grid-row: 1;
+      justify-self: center;
+      align-items: flex-start;
+    }
+    #victory-buttons {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      flex-direction: column;
+      gap: calc(6 * var(--ls));
+      margin-top: calc(10 * var(--ls));
+    }
+    #victory-video { width: calc(120 * var(--ls)); height: calc(120 * var(--ls)); border-radius: calc(8 * var(--ls)); }
+    #victory-overlay h2 { font-size: calc(28 * var(--ls)); margin-bottom: 0; }
+    #victory-destination { font-size: calc(18 * var(--ls)); margin-bottom: calc(8 * var(--ls)); align-self: center; }
+    #victory-stats { max-width: none; gap: calc(4 * var(--ls)); margin-bottom: calc(10 * var(--ls)); }
+    .victory-stats-grid { gap: calc(4 * var(--ls)) calc(16 * var(--ls)); }
+    .vs-cell { font-size: calc(14 * var(--ls)); padding: calc(2 * var(--ls)) 0; }
+    .victory-stat { font-size: calc(14 * var(--ls)); }
+    .victory-contrib { margin-top: calc(12 * var(--ls)); max-width: calc(280 * var(--ls)); }
+    .victory-contrib-header { font-size: calc(11 * var(--ls)); }
+    .victory-contrib-detail { font-size: calc(12 * var(--ls)); }
 
     /* ── Scaled modals ── */
     .leaderboard-box {
@@ -3777,13 +4008,26 @@ ON</button>
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
         <div id="lobby-room" class="lobby-step" style="display:none;">
-          <div id="room-partner-info">
-            <div id="room-code-label" class="room-code-label"></div>
-            <div id="room-partner-name"></div>
+          <!-- Center cell: room code + video slots -->
+          <div id="room-center-wrap">
+            <div id="room-partner-info">
+              <div id="room-code-label" class="room-code-label"></div>
+              <div id="room-partner-name"></div>
+            </div>
+            <!-- Video slot containers
+                 Actual <video> elements live at <body> level (iOS constraint:
+                 appendChild kills video playback). These slots define layout
+                 positions; body-level PiPs overlay them via position:fixed. -->
+            <div id="room-video-area">
+              <div id="room-video-slot-captain" class="room-video-slot">
+                <span class="pip-label">CAPTAIN</span>
+              </div>
+              <div id="room-video-slot-stoker" class="room-video-slot">
+                <span class="pip-label">STOKER</span>
+              </div>
+            </div>
           </div>
-          <div id="room-video-area">
-            <!-- PiP elements repositioned here via CSS class -->
-          </div>
+          <!-- Full-span rows below center -->
           <button class="lobby-btn lobby-btn-accent" id="btn-play-game">PLAY GAME</button>
           <p id="room-wait-text-room" class="conn-status" style="display:none;">Waiting for captain...</p>
           <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
@@ -3895,7 +4139,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.5c17521 | 03-27-2026 13:34</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.1d89f9f | 03-28-2026 18:42</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -4118,15 +4362,21 @@ ON</button>
 </div>
 
 <!-- Victory overlay -->
-<div id="victory-overlay" style="display:none;">
-  <canvas id="victory-video" width="360" height="360"></canvas>
-  <h2 id="victory-title">YOU MADE IT!</h2>
-  <p id="victory-destination"></p>
-  <div id="victory-stats"></div>
-  <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
-  <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
-  <button class="lobby-btn" id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</button>
-  <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">END RIDE TOGETHER</button>
+<div id="victory-overlay">
+  <div id="victory-left">
+    <canvas id="victory-video" width="360" height="360"></canvas>
+    <h2 id="victory-title">YOU MADE IT!</h2>
+  </div>
+  <div id="victory-right">
+    <p id="victory-destination"></p>
+    <div id="victory-stats"></div>
+  </div>
+  <div id="victory-buttons">
+    <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
+    <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
+    <button class="lobby-btn" id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</button>
+    <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">END RIDE TOGETHER</button>
+  </div>
 </div>
 
 <!-- Demo end overlay (solo demo checkpoint limit reached) -->

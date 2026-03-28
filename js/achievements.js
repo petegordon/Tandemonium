@@ -86,6 +86,12 @@ export class AchievementManager {
     } catch (e) {}
   }
 
+  /** Re-read earned achievements from localStorage (e.g. after a ride). */
+  reload() {
+    this._earned = new Map();
+    this._load();
+  }
+
   /** Record distance from a completed ride. */
   addCompletedDistance(distance) {
     this._cumulativeDistance += distance;
@@ -217,8 +223,9 @@ export function showAchievementToast(achievement) {
   }, 3000);
 }
 
-// Badge rendering around a PiP circle
-export function updateBadgeDisplay(containerId, achievements) {
+// Badge rendering around a PiP
+// shape: 'rect' to trace rectangle perimeter (TV/Monitor room), default circular
+export function updateBadgeDisplay(containerId, achievements, shape) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
@@ -229,13 +236,42 @@ export function updateBadgeDisplay(containerId, achievements) {
   const count = earned.length;
   if (count === 0) return;
 
-  const angleStep = 360 / Math.max(count, 6); // at least 60° spacing
-  earned.forEach((ach, i) => {
-    const badge = document.createElement('div');
-    badge.className = 'pip-badge';
-    badge.textContent = ach.icon;
-    badge.title = ach.name;
-    badge.style.transform = 'rotate(' + (i * angleStep) + 'deg) translateX(48px) rotate(-' + (i * angleStep) + 'deg)';
-    container.appendChild(badge);
-  });
+  const spacing = Math.max(count, 6);
+
+  if (shape === 'rect') {
+    // Arrange badges along the rectangle perimeter
+    const w = container.offsetWidth || 220;
+    const h = container.offsetHeight || 280;
+    const perimeter = 2 * (w + h);
+    earned.forEach((ach, i) => {
+      const badge = document.createElement('div');
+      badge.className = 'pip-badge';
+      badge.textContent = ach.icon;
+      badge.title = ach.name;
+      const dist = (i / spacing) * perimeter;
+      let x, y;
+      if (dist < w) {
+        x = dist; y = 0;
+      } else if (dist < w + h) {
+        x = w; y = dist - w;
+      } else if (dist < 2 * w + h) {
+        x = w - (dist - w - h); y = h;
+      } else {
+        x = 0; y = h - (dist - 2 * w - h);
+      }
+      badge.style.transform = 'translate(' + (x - w / 2) + 'px, ' + (y - h / 2) + 'px)';
+      container.appendChild(badge);
+    });
+  } else {
+    // Circular arrangement (mobile / non-lobby)
+    const angleStep = 360 / spacing;
+    earned.forEach((ach, i) => {
+      const badge = document.createElement('div');
+      badge.className = 'pip-badge';
+      badge.textContent = ach.icon;
+      badge.title = ach.name;
+      badge.style.transform = 'rotate(' + (i * angleStep) + 'deg) translateX(48px) rotate(-' + (i * angleStep) + 'deg)';
+      container.appendChild(badge);
+    });
+  }
 }

@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 
 const POOL_SIZE = 30;
-const HIT_RADIUS = 1.2;
+const HIT_RADIUS = 0.75;
 const VISIBLE_AHEAD = 200;
 const VISIBLE_BEHIND = 40;
 

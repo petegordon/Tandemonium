@@ -345,18 +345,29 @@ export class GameRecorder {
 
   // ── Selfie camera (Phase 2) ──
 
-  async startSelfie() {
+  async startSelfie(existingStream) {
     if (this.selfieActive) return;
     // Hide avatar fallback when real camera starts
     if (this.selfieAvatar) this.selfieAvatar.style.display = 'none';
     if (this.selfieVideo) this.selfieVideo.style.display = 'block';
     try {
-      this.selfieStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: 240, height: 240 },
-        audio: false
-      });
+      // Reuse existing stream from network manager instead of creating a
+      // duplicate getUserMedia. On iOS, two camera streams simultaneously
+      // doubles memory pressure and can crash the tab.
+      if (existingStream) {
+        this.selfieStream = existingStream;
+        this._sharedSelfieStream = true;
+      } else {
+        this.selfieStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: 240, height: 240 },
+          audio: false
+        });
+      }
       if (this.selfieVideo) {
-        this.selfieVideo.srcObject = this.selfieStream;
+        // Only reassign if different stream — avoids killing iOS playback
+        if (this.selfieVideo.srcObject !== this.selfieStream) {
+          this.selfieVideo.srcObject = this.selfieStream;
+        }
         this.selfieVideo.play().catch(() => {});
         if (this.selfieWrap) this.selfieWrap.style.display = 'block';
       }
@@ -377,8 +388,12 @@ export class GameRecorder {
 
   stopSelfie() {
     if (this.selfieStream) {
-      this.selfieStream.getTracks().forEach(t => t.stop());
+      // Only stop tracks if this is a recorder-owned stream (not shared with network manager)
+      if (!this._sharedSelfieStream) {
+        this.selfieStream.getTracks().forEach(t => t.stop());
+      }
       this.selfieStream = null;
+      this._sharedSelfieStream = false;
     }
     if (this.selfieVideo) {
       this.selfieVideo.srcObject = null;
@@ -393,7 +408,10 @@ export class GameRecorder {
   setPartnerStream(stream) {
     this.partnerStream = stream;
     if (this.partnerVideo && stream) {
-      this.partnerVideo.srcObject = stream;
+      // Only reassign if different stream — avoids killing iOS playback
+      if (this.partnerVideo.srcObject !== stream) {
+        this.partnerVideo.srcObject = stream;
+      }
       this.partnerVideo.style.display = 'block';
       this.partnerVideo.play().catch(() => {});
       if (this.partnerAvatar) this.partnerAvatar.style.display = 'none';
