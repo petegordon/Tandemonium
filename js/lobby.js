@@ -3417,17 +3417,47 @@ export class Lobby {
     // Re-sync toggle button states after returning from ride
     this._checkPermissionStates();
 
-    // Clear stale partner stream from game session — the old tracks may be
-    // ended and will be replaced by a fresh media call in _startRoomMedia.
+    // Return-to-room: the connection and media streams are still alive from the
+    // game session. Do NOT call _startRoomMedia() — that re-acquires media,
+    // re-assigns srcObject, and re-initiates calls, all of which disrupt the
+    // working streams. Instead, just move the PiP elements back to lobby layout
+    // and resume playback.
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    const videoArea = document.getElementById('room-video-area');
+    if (selfieWrap) {
+      selfieWrap.classList.add('pip-lobby-mode');
+      videoArea.appendChild(selfieWrap);
+    }
+    if (partnerWrap) {
+      partnerWrap.classList.add('pip-lobby-mode');
+      videoArea.appendChild(partnerWrap);
+    }
+
+    // Resume playback on both videos (DOM reparent can pause them)
+    const selfieVideo = document.getElementById('selfie-pip');
+    if (selfieVideo && selfieVideo.srcObject) {
+      selfieVideo.play().catch(() => {});
+    }
     const partnerVideo = document.getElementById('partner-pip');
-    if (partnerVideo) partnerVideo.srcObject = null;
+    if (partnerVideo && partnerVideo.srcObject) {
+      partnerVideo.play().catch(() => {});
+    }
 
-    // Re-use the same media setup as initial room entry.
-    // This handles: onRemoteStream registration, local media acquisition,
-    // selfie/partner PiP display, and media call initiation (captain-first).
-    this._startRoomMedia();
+    // Re-register handlers (game.js replaced these during gameplay)
+    this.net.onRemoteStream = (remoteStream) => {
+      const pv = document.getElementById('partner-pip');
+      if (!pv || !remoteStream) return;
+      pv.srcObject = remoteStream;
+      pv.style.display = 'block';
+      pv.play().catch(() => {});
+      const pa = document.getElementById('partner-pip-avatar');
+      if (pa) pa.style.display = 'none';
+      if (!this._partnerCameraOn) this._updatePartnerPip();
+      const vt = remoteStream.getVideoTracks()[0];
+      if (vt) vt.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
+    };
 
-    // Re-register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
 
     // Replay any messages buffered during the rejoin delay
