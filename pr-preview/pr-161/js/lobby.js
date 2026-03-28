@@ -3165,12 +3165,10 @@ export class Lobby {
       if (audioTrack) audioTrack.enabled = this.audioActive;
     }
 
-    // Show selfie PiP in lobby mode
+    // Show selfie PiP in lobby mode (no appendChild — CSS handles positioning)
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     if (selfieWrap) {
       selfieWrap.classList.add('pip-lobby-mode');
-      const videoArea = document.getElementById('room-video-area');
-      videoArea.appendChild(selfieWrap);
     }
 
     // Start selfie video from the acquired stream
@@ -3209,12 +3207,10 @@ export class Lobby {
       }
     }
 
-    // Show partner PiP area
+    // Show partner PiP in lobby mode (no appendChild — CSS handles positioning)
     const partnerWrap = document.getElementById('partner-pip-wrap');
     if (partnerWrap) {
       partnerWrap.classList.add('pip-lobby-mode');
-      const videoArea = document.getElementById('room-video-area');
-      videoArea.appendChild(partnerWrap);
     }
 
     // Captain initiates media call first; stoker follows after a delay as fallback.
@@ -3350,15 +3346,10 @@ export class Lobby {
   _removePipLobbyMode() {
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
-    if (selfieWrap) {
-      selfieWrap.classList.remove('pip-lobby-mode');
-      // Move back to body so fixed positioning works in-game
-      document.body.appendChild(selfieWrap);
-    }
-    if (partnerWrap) {
-      partnerWrap.classList.remove('pip-lobby-mode');
-      document.body.appendChild(partnerWrap);
-    }
+    // Just remove lobby-mode class — elements stay in body permanently.
+    // No appendChild needed since we no longer move elements between containers.
+    if (selfieWrap) selfieWrap.classList.remove('pip-lobby-mode');
+    if (partnerWrap) partnerWrap.classList.remove('pip-lobby-mode');
   }
 
   showRoom(net, role) {
@@ -3419,41 +3410,18 @@ export class Lobby {
 
     // Return-to-room: the connection and media streams are still alive from the
     // game session. Do NOT call _startRoomMedia() — that re-acquires media,
-    // re-assigns srcObject, and re-initiates calls, all of which disrupt the
-    // working streams. Instead, just move the PiP elements back to lobby layout
-    // and resume playback.
+    // Return to room: add lobby-mode class for CSS positioning.
+    // No appendChild — elements stay in body to avoid killing iOS video playback.
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
-    const videoArea = document.getElementById('room-video-area');
-    if (selfieWrap) {
-      selfieWrap.classList.add('pip-lobby-mode');
-      videoArea.appendChild(selfieWrap);
-    }
-    if (partnerWrap) {
-      partnerWrap.classList.add('pip-lobby-mode');
-      videoArea.appendChild(partnerWrap);
-    }
+    if (selfieWrap) selfieWrap.classList.add('pip-lobby-mode');
+    if (partnerWrap) partnerWrap.classList.add('pip-lobby-mode');
 
-    // Resume playback on both videos after DOM reparent.
-    // On mobile, appendChild kills playback. Wrapping tracks in a new
-    // MediaStream forces the browser to reinitialize the video element.
-    // On desktop, just play() is enough.
+    // Resume playback (no srcObject changes needed — streams are alive)
     const selfieVideo = document.getElementById('selfie-pip');
-    if (selfieVideo && selfieVideo.srcObject) {
-      if (isMobile) {
-        const tracks = selfieVideo.srcObject.getTracks();
-        if (tracks.length > 0) selfieVideo.srcObject = new MediaStream(tracks);
-      }
-      selfieVideo.play().catch(() => {});
-    }
+    if (selfieVideo && selfieVideo.srcObject) selfieVideo.play().catch(() => {});
     const partnerVideo = document.getElementById('partner-pip');
-    if (partnerVideo && partnerVideo.srcObject) {
-      if (isMobile) {
-        const tracks = partnerVideo.srcObject.getTracks();
-        if (tracks.length > 0) partnerVideo.srcObject = new MediaStream(tracks);
-      }
-      partnerVideo.play().catch(() => {});
-    }
+    if (partnerVideo && partnerVideo.srcObject) partnerVideo.play().catch(() => {});
 
     // Re-register handlers (game.js replaced these during gameplay)
     this.net.onRemoteStream = (remoteStream) => {

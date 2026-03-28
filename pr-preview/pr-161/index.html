@@ -2158,24 +2158,35 @@
   }
 
   /* ── Lobby Room (multiplayer shared lobby) ── */
+  /* pip-lobby-mode: keep elements in body (no appendChild!) to avoid iOS
+     video playback death. Use fixed positioning to center them on screen. */
   .pip-wrap.pip-lobby-mode {
-    position: relative !important;
-    bottom: auto !important;
-    left: auto !important;
-    right: auto !important;
+    position: fixed !important;
     z-index: 56;
-    display: inline-block !important;
-    margin: 0 8px;
+    display: block !important;
     pointer-events: auto;
+  }
+  #selfie-pip-wrap.pip-lobby-mode {
+    bottom: auto !important;
+    left: 50% !important;
+    right: auto !important;
+    top: 50%;
+    transform: translate(calc(-100% - 12px), -50%);
+  }
+  #partner-pip-wrap.pip-lobby-mode {
+    bottom: auto !important;
+    right: auto !important;
+    left: 50% !important;
+    top: 50%;
+    transform: translate(12px, -50%);
   }
   .pip-wrap.pip-lobby-mode .pip-label {
     font-size: 10px;
     white-space: nowrap;
   }
   #room-video-area {
-    display: flex;
-    justify-content: center;
-    gap: 16px;
+    /* Spacer — PiP elements are now fixed-positioned, not children */
+    min-height: 100px;
     margin: 12px 0;
   }
   .level-card.selected {
@@ -3210,7 +3221,8 @@
     #room-video-area { gap: calc(16 * var(--ls)); margin: calc(2 * var(--ls)) 0; }
     #level-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
-    .pip-wrap.pip-lobby-mode { margin: 0 calc(8 * var(--ls)); }
+    #selfie-pip-wrap.pip-lobby-mode { transform: translate(calc(-100% - 12 * var(--ls)), -50%); }
+    #partner-pip-wrap.pip-lobby-mode { transform: translate(calc(12 * var(--ls)), -50%); }
     .pip-wrap.pip-lobby-mode .pip-label { font-size: calc(10 * var(--ls)); }
 
     /* Auth / user info */
@@ -3945,7 +3957,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d75344b | 03-27-2026 21:16</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.353724d | 03-27-2026 21:20</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
