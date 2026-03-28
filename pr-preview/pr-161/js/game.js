@@ -647,14 +647,7 @@ class Game {
           this._showVictory(true);
         }
       } else if (eventType === EVT_RETURN_ROOM) {
-        // On mobile, auto-returning without a user gesture breaks iOS video
-        // playback (play() requires user interaction context). Show a brief
-        // prompt so the user taps — providing the gesture iOS needs.
-        if (isMobile) {
-          this._showReturnToRoomPrompt();
-        } else {
-          this._returnToRoom();
-        }
+        this._returnToRoom();
       }
     };
 
@@ -768,18 +761,11 @@ class Game {
       }
     };
 
-    // Pre-acquire local media stream so calls connect instantly on both sides.
-    // If lobby already acquired media (room step), reuse it.
-    // Captain then initiates the media call; stoker holds the stream ready for
-    // _handleIncomingCall to answer without an async getUserMedia delay.
-    if (this.lobby.cameraActive || this.lobby.audioActive) {
-      this._acquireLocalMedia().then(() => {
-        if (mode === 'captain') this._initiateMediaCall();
-      });
-    } else if (mode === 'captain') {
-      // Even without local media, initiate call so we can receive partner's stream
-      this._initiateMediaCall();
-    }
+    // Media call is already established from the room — don't re-initiate.
+    // Re-initiating closes the existing call, which kills the working streams
+    // and breaks video playback on iOS.
+    // The onRemoteStream handler above will handle any new streams if the
+    // call is renegotiated.
 
     // Show partner avatar immediately if their camera is known to be off
     if (!this.lobby._partnerCameraOn && this.lobby._partnerAvatarUrl) {
