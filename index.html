@@ -3283,9 +3283,11 @@
     .lobby-card.room-active #lobby-room { display: contents !important; }
     .lobby-card.room-active .lobby-left-col {
       grid-column: 1; grid-row: 2; align-self: center;
+      min-width: calc(40 * var(--ls));
     }
     .lobby-card.room-active .lobby-right-col {
       grid-column: 3; grid-row: 2; align-self: center;
+      min-width: calc(40 * var(--ls));
     }
     .lobby-card.room-active #room-partner-info {
       grid-column: 1 / -1; grid-row: 1;
@@ -3353,6 +3355,8 @@
     }
     #level-wait-text,
     #room-wait-text-room { font-size: calc(14 * var(--ls)); }
+    /* Hide mobile room code overlay on desktop (created by JS when isMobile is true on Mac trackpad) */
+    #mobile-room-code { display: none !important; }
     /* ROOM step — each PiP positioned over its slot container via per-slot CSS vars */
     #selfie-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
@@ -4122,7 +4126,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.fa2f211 | 03-28-2026 11:59</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d5eabc0 | 03-28-2026 12:04</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
