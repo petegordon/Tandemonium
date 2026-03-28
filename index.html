@@ -3124,8 +3124,12 @@
     #lobby-role .lobby-back,
     #lobby-host .lobby-back,
     #lobby-join .lobby-back,
-    #lobby-level .lobby-back,
-    #lobby-room .lobby-back { display: none; }
+    #lobby-level .lobby-back { display: none; }
+    #lobby-room .lobby-back {
+      display: inline-block !important;
+      margin-top: calc(4 * var(--ls));
+      font-size: calc(10 * var(--ls));
+    }
     #lobby-fixed-back { font-size: calc(10 * var(--ls)); padding: calc(4 * var(--ls)) calc(8 * var(--ls)); order: 99; }
 
     #lobby-role .lobby-prompt,
@@ -3276,34 +3280,33 @@
     }
     #lobby-room #room-video-area {
       display: block !important;  /* Override mobile display:none */
-      min-height: calc(80 * var(--ls));
+      min-height: calc(95 * var(--ls));
     }
     /* Buttons span full center column, centered text */
     #lobby-room #btn-play-game {
       margin-top: calc(4 * var(--ls));
     }
     #lobby-room #btn-back-room {
-      margin-top: calc(2 * var(--ls));
+      margin-top: calc(4 * var(--ls));
       font-size: calc(10 * var(--ls));
     }
 
-    /* Desktop ROOM: video as rounded squares sized to the center column */
+    /* Desktop ROOM: video as rounded rectangles sized to the center column */
     .pip-wrap.pip-lobby-mode .pip-video {
       width: calc(55 * var(--ls));
-      height: calc(55 * var(--ls));
+      height: calc(70 * var(--ls));
       border-radius: calc(10 * var(--ls));
     }
     .pip-wrap.pip-lobby-mode .pip-badges {
       width: calc(55 * var(--ls));
-      height: calc(55 * var(--ls));
+      height: calc(70 * var(--ls));
     }
     .pip-wrap.pip-lobby-mode .pip-badge {
-      /* Recalculate badge positions for square layout (55*--ls instead of 80px circle) */
       width: calc(16 * var(--ls));
       height: calc(16 * var(--ls));
       font-size: calc(9 * var(--ls));
       line-height: calc(14 * var(--ls));
-      top: calc(20 * var(--ls));
+      top: calc(27 * var(--ls));
       left: calc(20 * var(--ls));
     }
     #level-wait-text,
@@ -3311,13 +3314,13 @@
     /* ROOM step — JS positions via --pip-left/--pip-top on desktop */
     #selfie-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
-      top: var(--pip-top, 65%) !important;
+      top: var(--pip-top, 52%) !important;
       left: calc(var(--pip-left, 50%) - 8 * var(--ls)) !important;
       transform: translateX(-100%);
     }
     #partner-pip-wrap.pip-lobby-mode {
       bottom: auto !important;
-      top: var(--pip-top, 65%) !important;
+      top: var(--pip-top, 52%) !important;
       left: calc(var(--pip-left, 50%) + 8 * var(--ls)) !important;
       transform: none;
     }
@@ -4065,7 +4068,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.929a1f5 | 03-28-2026 00:24</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.72f6dbf | 03-28-2026 00:34</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
