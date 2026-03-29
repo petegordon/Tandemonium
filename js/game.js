@@ -77,11 +77,13 @@ const TUTORIAL_ITEMS = {
 class Game {
   constructor() {
     // Renderer
-    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile, preserveDrawingBuffer: true });
+    const _qualityParam = new URLSearchParams(window.location.search).get('quality');
+    this._lowQuality = _qualityParam === 'low';
+    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile && !this._lowQuality, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = !isMobile;
-    if (!isMobile) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
+    if (!isMobile && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.prepend(this.renderer.domElement);
 
     // Scene
@@ -184,7 +186,7 @@ class Game {
     this.renderer.domElement.addEventListener('webglcontextrestored', () => {
       console.log('WebGL context restored');
       this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
     });
 
     // FPS tracking for analytics
