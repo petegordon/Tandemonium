@@ -104,9 +104,10 @@ export class World {
       return this._balloonRngState / 233280;
     };
 
+    this._noTrees = new URLSearchParams(window.location.search).has('notrees');
     this._buildGround();
-    this._buildTreePool();
-    this._buildClouds();
+    if (!this._noTrees) this._buildTreePool();
+    if (!this._noTrees) this._buildClouds();
     this._buildLighting();
 
     // Race markers (checkpoints + destination)
@@ -687,6 +688,7 @@ export class World {
   }
 
   checkTreeCollision(bikePos, bikeD, bikeHeading) {
+    if (!this._treePool || this._treePool.length === 0) return { hit: false };
     const L = this.roadPath.loopLength;
     const headX = bikePos.x + Math.sin(bikeHeading) * 2;
     const headZ = bikePos.z + Math.cos(bikeHeading) * 2;
@@ -1121,13 +1123,17 @@ export class World {
     this.roadChunks.update(bikeD);
 
     // Trees
-    this._updateTreeVisibility(bikeD);
-    this._updateTreeHeights(bikeD);
+    if (!this._noTrees) {
+      this._updateTreeVisibility(bikeD);
+      this._updateTreeHeights(bikeD);
+    }
 
     // Clouds & balloons
-    this._updateCloudVisibility(bikeD);
-    if (dt) this._driftClouds(dt);
-    this._updateBalloons(bikeD);
+    if (!this._noTrees) {
+      this._updateCloudVisibility(bikeD);
+      if (dt) this._driftClouds(dt);
+      this._updateBalloons(bikeD);
+    }
 
     // Race markers
     if (this._raceMarkers.length > 0) {
