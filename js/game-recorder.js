@@ -172,10 +172,13 @@ export class GameRecorder {
     this.gameCanvas = gameCanvas;
     this.input = input || null;
 
+    // ?noclip URL flag — force-disable clip recording for A/B testing
+    this._noClip = new URLSearchParams(window.location.search).has('noclip');
+
     // Determine recording strategy
     this._useWebCodecs = _isIOS && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
-    this.supported = this._useWebCodecs ? true : this._checkSupport();
-    _dbg(`v7 iOS=${_isIOS} VE=${typeof VideoEncoder} VF=${typeof VideoFrame} useWC=${this._useWebCodecs} sup=${this.supported}`);
+    this.supported = this._noClip ? false : (this._useWebCodecs ? true : this._checkSupport());
+    _dbg(`v7 iOS=${_isIOS} VE=${typeof VideoEncoder} VF=${typeof VideoFrame} useWC=${this._useWebCodecs} noClip=${this._noClip} sup=${this.supported}`);
 
     // Run GPU readback probe — if device is too slow, disable recording.
     // startBuffer() awaits this before proceeding.
