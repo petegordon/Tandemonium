@@ -1013,7 +1013,7 @@ export class Lobby {
     const waitText = document.getElementById('level-wait-text');
     const prompt = document.getElementById('level-prompt');
     // Reset START RIDE button state (visibility handled by _showStep)
-    if (startBtn) { startBtn.disabled = true; }
+    if (startBtn) { startBtn.disabled = true; startBtn.style.display = ''; }
     if (waitText) waitText.style.display = 'none';
     if (prompt) prompt.style.display = 'none';
     // Reset difficulty selector interactivity
