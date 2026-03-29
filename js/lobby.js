@@ -3874,6 +3874,10 @@ export class Lobby {
 
     if (!this.input || !this.input.gamepadConnected) return;
 
+    // Don't process lobby navigation while options overlay is open
+    const optOverlay = document.getElementById('options-overlay');
+    if (optOverlay && optOverlay.classList.contains('visible')) return;
+
     // Auto-switch to spinners on join step when gamepad is active and join failed
     if (this._currentStep === this.joinStep && !this._spinnerActive && this._lastFailedCode) {
       this._setSpinnerValuesFromCode(this._lastFailedCode);

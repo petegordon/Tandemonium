@@ -9,7 +9,8 @@ import { RoadChunkManager } from './road-chunks.js';
 import { isMobile } from './config.js';
 
 const GROUND_SIZE = 500;
-const GROUND_SEGS = 120;         // ~4.2-unit vertex spacing — covers visible road/tree range
+const GROUND_SEGS_FULL = 120;    // ~4.2-unit vertex spacing — covers visible road/tree range
+const GROUND_SEGS_LOW = 60;      // reduced for low-end devices
 const TREE_POOL_SIZE = 400;
 const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
@@ -57,8 +58,9 @@ const chromakeyFragment = `
 `;
 
 export class World {
-  constructor(scene) {
+  constructor(scene, options = {}) {
     this.scene = scene;
+    this._lowEnd = !!options.lowEnd;
     this.tileSize = 4;
 
     // Road path (deterministic)
@@ -104,7 +106,7 @@ export class World {
       return this._balloonRngState / 233280;
     };
 
-    this._noTrees = new URLSearchParams(window.location.search).has('notrees');
+    this._noTrees = new URLSearchParams(window.location.search).has('notrees') || !!options.noTrees;
     this._buildGround();
     if (!this._noTrees) this._buildTreePool();
     if (!this._noTrees) this._buildClouds();
@@ -115,7 +117,8 @@ export class World {
   }
 
   _buildGround() {
-    const geom = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE, GROUND_SEGS, GROUND_SEGS);
+    const segs = this._lowEnd ? GROUND_SEGS_LOW : GROUND_SEGS_FULL;
+    const geom = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE, segs, segs);
     const size = 512;
     const canvas2d = document.createElement('canvas');
     canvas2d.width = size;

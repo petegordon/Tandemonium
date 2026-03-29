@@ -2780,6 +2780,101 @@
   }
   .toast-icon { font-size: 22px; }
   .toast-text small { color: #ffcc00; font-size: 10px; }
+  .info-toast {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: rgba(0,0,0,0.85);
+    border: 1.5px solid #4ca8ff;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 13px;
+    backdrop-filter: blur(8px);
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.3s, transform 0.3s;
+  }
+  .info-toast.show { opacity: 1; transform: translateY(0); }
+  .info-toast small { color: #4ca8ff; font-size: 10px; }
+
+  /* ── Options overlay ── */
+  #options-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.80);
+    display: none; align-items: center; justify-content: center;
+    z-index: 90;
+  }
+  #options-overlay.visible { display: flex; }
+  .options-card {
+    background: #1a1a2e;
+    border: 1.5px solid rgba(255,255,255,0.15);
+    border-radius: 16px;
+    padding: 28px 32px;
+    min-width: 300px;
+    max-width: 400px;
+    text-align: center;
+  }
+  .options-card h2 { font-size: 20px; margin-bottom: 20px; }
+  .options-card .label { font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .options-row {
+    display: flex; flex-direction: column; gap: 8px; align-items: center; margin-bottom: 16px;
+  }
+  .opt-btn {
+    padding: 10px 20px;
+    font-size: 14px; font-weight: 600;
+    background: rgba(255,255,255,0.08);
+    border: 1.5px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    min-width: 200px;
+    width: 100%;
+  }
+  .opt-btn:hover { background: rgba(255,255,255,0.15); }
+  .opt-btn.active { background: rgba(60,200,80,0.2); border-color: rgba(60,200,80,0.6); color: #44ff66; }
+  .opt-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
+  #options-perf-btn, #options-devtools-btn, #options-browserdev-btn {
+    padding: 10px 20px;
+    font-size: 13px; font-weight: 600;
+    background: rgba(255,255,255,0.06);
+    border: 1.5px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    color: rgba(255,255,255,0.7);
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 8px;
+    min-width: 200px;
+  }
+  .opt-btn:disabled, #options-perf-btn:disabled { opacity: 0.5; cursor: default; }
+  #options-perf-btn.gamepad-focus, #options-devtools-btn.gamepad-focus, #options-browserdev-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
+  #options-browserdev-hint {
+    font-size: 11px; color: rgba(255,255,255,0.4);
+    min-height: 16px; margin-bottom: 8px;
+  }
+  #options-perf-result {
+    font: 12px 'SF Mono', 'Fira Code', 'Menlo', monospace;
+    color: rgba(255,255,255,0.6);
+    min-height: 16px;
+    margin-bottom: 12px;
+  }
+  #options-perf-result.low { color: #f66; }
+  #options-perf-result.ok  { color: #6f6; }
+  .options-note {
+    font-size: 11px; color: rgba(255,255,255,0.3); margin-bottom: 16px;
+  }
+  #options-close-btn {
+    padding: 10px 20px;
+    font-size: 14px; font-weight: 600;
+    background: rgba(255,255,255,0.08);
+    border: 1.5px solid rgba(255,255,255,0.2);
+    border-radius: 10px;
+    color: #fff;
+    cursor: pointer;
+    min-width: 200px;
+  }
+  #options-close-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
   .pip-video {
     width: 80px;
     height: 80px;
@@ -4422,6 +4517,26 @@ ON</button>
 <!-- Surface indicator -->
 <!-- Gamepad badge (solo/lobby only) -->
 <div id="gamepad-badge">🎮</div>
+
+<!-- Options overlay (Start button) -->
+<div id="options-overlay">
+  <div class="options-card">
+    <h2>Options</h2>
+    <div class="label">Graphics Quality</div>
+    <div class="options-row">
+      <button class="opt-btn" id="opt-high">High</button>
+      <button class="opt-btn" id="opt-low">Low</button>
+      <button class="opt-btn" id="opt-auto">Auto</button>
+    </div>
+    <div class="options-note">Some changes take effect on next restart</div>
+    <button id="options-perf-btn">Run Perf Test</button>
+    <div id="options-perf-result"></div>
+    <button id="options-devtools-btn">Tools</button>
+    <button id="options-browserdev-btn">Open Dev Tools</button>
+    <div id="options-browserdev-hint"></div>
+    <button id="options-close-btn">Close</button>
+  </div>
+</div>
 
 <!-- QR code generator (sets window.qrcode) -->
 <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>

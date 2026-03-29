@@ -1,5 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+contextBridge.exposeInMainWorld('electronApp', {
+  toggleDevTools: () => ipcRenderer.invoke('app:toggleDevTools'),
+});
+
 contextBridge.exposeInMainWorld('steam', {
   isAvailable: () => ipcRenderer.invoke('steam:isAvailable'),
   getPlayerName: () => ipcRenderer.invoke('steam:getPlayerName'),
