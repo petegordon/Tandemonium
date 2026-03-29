@@ -31,6 +31,14 @@ jobs:
       - name: Download vendor assets
         run: npm run download-vendors
 
+      - name: Stamp version in index.html
+        shell: pwsh
+        run: |
+          $hash = git rev-parse --short HEAD
+          $date = Get-Date -Format "MM-dd-yyyy HH:mm"
+          $version = "v.$hash | $date"
+          (Get-Content index.html) -replace 'id="lobby-version">[^<]+', "id=`"lobby-version`">$version" | Set-Content index.html
+
       - name: Build desktop HTML
         run: npm run build-desktop
 
