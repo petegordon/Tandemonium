@@ -223,6 +223,31 @@ export function showAchievementToast(achievement) {
   }, 3000);
 }
 
+// Info toast (blue styling, for system messages like performance mode)
+export function showInfoToast(icon, title, subtitle) {
+  if (!_toastContainer) {
+    _toastContainer = document.getElementById('achievement-toast-container');
+    if (!_toastContainer) {
+      _toastContainer = document.createElement('div');
+      _toastContainer.id = 'achievement-toast-container';
+      document.body.appendChild(_toastContainer);
+    }
+  }
+
+  const toast = document.createElement('div');
+  toast.className = 'info-toast';
+  toast.innerHTML = '<span class="toast-icon">' + icon + '</span>' +
+    '<div class="toast-text"><strong>' + title + '</strong><br><small>' + subtitle + '</small></div>';
+
+  _toastContainer.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 400);
+  }, 4000);
+}
+
 // Badge rendering around a PiP
 // shape: 'rect' to trace rectangle perimeter (TV/Monitor room), default circular
 export function updateBadgeDisplay(containerId, achievements, shape) {

@@ -93,6 +93,67 @@
       <div class="name">Bike Customizer</div>
       <div class="desc">Customize bike colors and appearance in 3D.</div>
     </a>
+    <a class="card" href="perf-probe.html">
+      <div class="icon">&#9201;</div>
+      <div class="name">Perf Probe</div>
+      <div class="desc">Escalating GPU + subsystem stress test for low-end detection.</div>
+    </a>
   </div>
+<style>
+  a.card.gp-focus {
+    outline: 2px solid #fff;
+    outline-offset: 3px;
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.3);
+  }
+</style>
+<script>
+(function() {
+  const cards = Array.from(document.querySelectorAll('a.card'));
+  if (!cards.length) return;
+
+  // Grid layout: cards are 170px + 16px gap in a 600px max container
+  const COLS = 3;
+  let focusIdx = 0;
+  let prevUp = false, prevDown = false, prevLeft = false, prevRight = false, prevA = false, prevB = false;
+
+  cards[0].classList.add('gp-focus');
+
+  function poll() {
+    requestAnimationFrame(poll);
+    const gp = navigator.getGamepads && navigator.getGamepads()[0];
+    if (!gp) return;
+
+    const DZ = 0.5;
+    const up    = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -DZ;
+    const down  = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > DZ;
+    const left  = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -DZ;
+    const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > DZ;
+    const a     = gp.buttons[0] && gp.buttons[0].pressed;
+
+    let newIdx = focusIdx;
+
+    if (up && !prevUp)    newIdx = Math.max(0, focusIdx - COLS);
+    if (down && !prevDown) newIdx = Math.min(cards.length - 1, focusIdx + COLS);
+    if (left && !prevLeft)  newIdx = Math.max(0, focusIdx - 1);
+    if (right && !prevRight) newIdx = Math.min(cards.length - 1, focusIdx + 1);
+
+    if (newIdx !== focusIdx) {
+      cards[focusIdx].classList.remove('gp-focus');
+      focusIdx = newIdx;
+      cards[focusIdx].classList.add('gp-focus');
+      cards[focusIdx].scrollIntoView({ block: 'nearest' });
+    }
+
+    if (a && !prevA) window.location.href = cards[focusIdx].href;
+
+    const b = gp.buttons[1] && gp.buttons[1].pressed;
+    if (b && !prevB) window.location.href = '../index.html';
+
+    prevUp = up; prevDown = down; prevLeft = left; prevRight = right; prevA = a; prevB = b;
+  }
+  requestAnimationFrame(poll);
+})();
+</script>
 </body>
 </html>
