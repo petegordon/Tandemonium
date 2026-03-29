@@ -55,13 +55,13 @@ export default {
       if (path === '/api/analytics/session' && request.method === 'POST') {
         const limited = await checkRateLimit(env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
-        return handleAnalyticsSession(request, env, corsOrigin);
+        return handleAnalyticsSession(request, env, corsOrigin, clientIP);
       }
       if (path.match(/^\/api\/analytics\/session\/[^/]+$/) && request.method === 'PUT') {
         const limited = await checkRateLimit(env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         const sessId = path.split('/')[4];
-        return handleAnalyticsSessionUpdate(request, env, corsOrigin, sessId);
+        return handleAnalyticsSessionUpdate(request, env, corsOrigin, sessId, clientIP);
       }
       if (path === '/api/analytics/event/batch' && request.method === 'POST') {
         const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
@@ -741,7 +741,7 @@ function isValidUUID(str) {
   return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
-async function handleAnalyticsSession(request, env, corsOrigin) {
+async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
   const body = await request.json();
   if (!body.id || !isValidUUID(body.id)) {
     return jsonResponse({ error: 'Invalid session id' }, 400, corsOrigin);
@@ -749,8 +749,8 @@ async function handleAnalyticsSession(request, env, corsOrigin) {
 
   await env.DB.prepare(
     `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
-     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     body.id,
     body.started_at || new Date().toISOString(),
@@ -764,14 +764,15 @@ async function handleAnalyticsSession(request, env, corsOrigin) {
     body.google_uid || null,
     body.platform || 'browser',
     body.screen_width || null,
-    body.screen_height || null
+    body.screen_height || null,
+    clientIP || null
   ).run();
 
   writeMetric(env, 'analytics_session');
   return jsonResponse({ success: true }, 200, corsOrigin);
 }
 
-async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId) {
+async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId, clientIP) {
   if (!isValidUUID(sessionId)) {
     return jsonResponse({ error: 'Invalid session id' }, 400, corsOrigin);
   }
@@ -785,6 +786,12 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId)
       sets.push(`${field} = ?`);
       values.push(body[field]);
     }
+  }
+
+  // Always update IP address (captures it even for sessions created before migration)
+  if (clientIP) {
+    sets.push('ip_address = ?');
+    values.push(clientIP);
   }
 
   if (sets.length === 0) {
@@ -1022,17 +1029,32 @@ async function handleDashboard(route, url, env, corsOrigin) {
   const days = parseInt(url.searchParams.get('days') || '30');
   const since = new Date(Date.now() - days * 86400000).toISOString();
 
+  // Developer exclusion: comma-separated IPs and/or google_uids
+  const excludeIPs = (url.searchParams.get('exclude_ips') || '').split(',').map(s => s.trim()).filter(Boolean);
+  const excludeUIDs = (url.searchParams.get('exclude_uids') || '').split(',').map(s => s.trim()).filter(Boolean);
+  const ex = { ips: excludeIPs, uids: excludeUIDs };
+
   const handlers = {
-    daily: () => dashDaily(env, since),
-    funnel: () => dashFunnel(env, since),
-    rides: () => dashRides(env, since),
-    crashes: () => dashCrashes(env, since),
-    conversions: () => dashConversions(env, since),
-    network: () => dashNetwork(env, since),
-    devices: () => dashDevices(env, since),
-    dda: () => dashDDA(env, since),
-    overview: () => dashOverview(env, since),
+    daily: () => dashDaily(env, since, ex),
+    funnel: () => dashFunnel(env, since, ex),
+    rides: () => dashRides(env, since, ex),
+    crashes: () => dashCrashes(env, since, ex),
+    conversions: () => dashConversions(env, since, ex),
+    network: () => dashNetwork(env, since, ex),
+    devices: () => dashDevices(env, since, ex),
+    dda: () => dashDDA(env, since, ex),
+    overview: () => dashOverview(env, since, ex),
   };
+
+  // Also expose a 'dev_ips' route so the dashboard can show known developer IPs
+  if (route === 'dev_ips') {
+    const rows = await env.DB.prepare(
+      `SELECT DISTINCT ip_address FROM sessions
+       WHERE google_uid IN ('pete@usersfirst.com', 'pete@petegordon.com')
+       AND ip_address IS NOT NULL`
+    ).all();
+    return jsonResponse({ ips: (rows.results || []).map(r => r.ip_address) }, 200, corsOrigin);
+  }
 
   const handler = handlers[route];
   if (!handler) return jsonResponse({ error: 'Unknown dashboard route' }, 404, corsOrigin);
@@ -1041,26 +1063,73 @@ async function handleDashboard(route, url, env, corsOrigin) {
   return jsonResponse(data, 200, corsOrigin);
 }
 
-async function dashOverview(env, since) {
+// Build SQL exclusion for filtering out developer sessions.
+// Two forms depending on whether the query already joins the sessions table:
+//
+// sessionFilter(ex, 's')  → " AND s.ip_address NOT IN (?) AND s.google_uid NOT IN (?)"
+//   Use when query already has sessions aliased as 's'.
+//
+// sessionFilter(ex)       → same, default alias 's'
+//
+// For queries on tables that have session_id but no sessions join, use:
+//   excludedSessionSubquery(ex) → "session_id NOT IN (SELECT id FROM sessions WHERE ip_address IN (?) OR google_uid IN (?))"
+//   This returns { clause, binds } where clause is empty when no exclusions.
+
+function sessionFilter(ex, alias = 's') {
+  if (!ex || (ex.ips.length === 0 && ex.uids.length === 0)) return { clause: '', binds: [] };
+  const parts = [];
+  const binds = [];
+  if (ex.ips.length > 0) {
+    parts.push(`${alias}.ip_address NOT IN (${ex.ips.map(() => '?').join(',')})`);
+    binds.push(...ex.ips);
+  }
+  if (ex.uids.length > 0) {
+    parts.push(`${alias}.google_uid NOT IN (${ex.uids.map(() => '?').join(',')})`);
+    binds.push(...ex.uids);
+  }
+  return { clause: ' AND ' + parts.join(' AND '), binds };
+}
+
+function excludedSessionSubquery(ex) {
+  if (!ex || (ex.ips.length === 0 && ex.uids.length === 0)) return { clause: '', binds: [] };
+  const conds = [];
+  const binds = [];
+  if (ex.ips.length > 0) {
+    conds.push(`ip_address IN (${ex.ips.map(() => '?').join(',')})`);
+    binds.push(...ex.ips);
+  }
+  if (ex.uids.length > 0) {
+    conds.push(`google_uid IN (${ex.uids.map(() => '?').join(',')})`);
+    binds.push(...ex.uids);
+  }
+  return {
+    clause: ` AND session_id NOT IN (SELECT id FROM sessions WHERE ${conds.join(' OR ')})`,
+    binds,
+  };
+}
+
+async function dashOverview(env, since, ex) {
+  const sf = sessionFilter(ex, 's');
   const sessions = await env.DB.prepare(
     `SELECT COUNT(*) as total, COUNT(CASE WHEN is_stoker = 1 THEN 1 END) as stokers,
      COUNT(CASE WHEN joined_via_url = 1 THEN 1 END) as url_joins
-     FROM sessions WHERE started_at >= ?`
-  ).bind(since).first();
+     FROM sessions s WHERE started_at >= ?${sf.clause}`
+  ).bind(since, ...sf.binds).first();
 
+  const esq = excludedSessionSubquery(ex);
   const rides = await env.DB.prepare(
     `SELECT COUNT(*) as total, SUM(completed) as completed,
      COUNT(CASE WHEN level = 'tutorial' THEN 1 END) as tutorials
-     FROM rides WHERE started_at >= ?`
-  ).bind(since).first();
+     FROM rides WHERE started_at >= ?${esq.clause}`
+  ).bind(since, ...esq.binds).first();
 
   const conversions = await env.DB.prepare(
     `SELECT COUNT(*) as total,
      COUNT(CASE WHEN action = 'steam_wishlist_click' THEN 1 END) as steam_clicks,
      COUNT(CASE WHEN action = 'replay_click' THEN 1 END) as replays,
      COUNT(CASE WHEN action = 'room_code_generated' THEN 1 END) as rooms_created
-     FROM conversions WHERE created_at >= ?`
-  ).bind(since).first();
+     FROM conversions WHERE created_at >= ?${esq.clause}`
+  ).bind(since, ...esq.binds).first();
 
   const rooms = await env.DB.prepare(
     `SELECT COUNT(*) as total,
@@ -1072,7 +1141,8 @@ async function dashOverview(env, since) {
   return { sessions, rides, conversions, rooms };
 }
 
-async function dashDaily(env, since) {
+async function dashDaily(env, since, ex) {
+  const sf = sessionFilter(ex, 's');
   const rows = await env.DB.prepare(
     `SELECT DATE(s.started_at) AS day,
      COUNT(DISTINCT s.id) AS sessions,
@@ -1082,28 +1152,30 @@ async function dashDaily(env, since) {
      COUNT(DISTINCT CASE WHEN r.level = 'tutorial' THEN r.id END) AS tutorial_rides
      FROM sessions s
      LEFT JOIN rides r ON r.session_id = s.id
-     WHERE s.started_at >= ?
+     WHERE s.started_at >= ?${sf.clause}
      GROUP BY DATE(s.started_at)
      ORDER BY day DESC
      LIMIT 30`
-  ).bind(since).all();
+  ).bind(since, ...sf.binds).all();
   return { daily: rows.results };
 }
 
-async function dashFunnel(env, since) {
+async function dashFunnel(env, since, ex) {
+  const esq = excludedSessionSubquery(ex);
+
   // Tutorial starts by input method
   const tutStarts = await env.DB.prepare(
     `SELECT input_method, COUNT(*) AS started
-     FROM events WHERE event_type = 'tutorial_start' AND created_at >= ?
+     FROM events WHERE event_type = 'tutorial_start' AND created_at >= ?${esq.clause}
      GROUP BY input_method`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   // Tutorial completions by input method
   const tutCompletes = await env.DB.prepare(
     `SELECT input_method, COUNT(*) AS completed
-     FROM events WHERE event_type = 'tutorial_complete' AND created_at >= ?
+     FROM events WHERE event_type = 'tutorial_complete' AND created_at >= ?${esq.clause}
      GROUP BY input_method`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   // Merge starts and completions
   const completeMap = {};
@@ -1122,15 +1194,15 @@ async function dashFunnel(env, since) {
       ROUND(AVG(CAST(JSON_EXTRACT(event_data, '$.attempts') AS REAL)), 1) AS avg_attempts,
       ROUND(AVG(CAST(JSON_EXTRACT(event_data, '$.time_sec') AS REAL)), 1) AS avg_time_sec
      FROM events
-     WHERE event_type = 'tutorial_phase' AND created_at >= ?
+     WHERE event_type = 'tutorial_phase' AND created_at >= ?${esq.clause}
      GROUP BY phase ORDER BY phase`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   // Solo to MP: separate queries to avoid cross-table join issues
   const soloRiders = await env.DB.prepare(
     `SELECT COUNT(DISTINCT session_id) AS cnt FROM rides
-     WHERE role IN ('captain', 'solo') AND started_at >= ?`
-  ).bind(since).first();
+     WHERE role IN ('captain', 'solo') AND started_at >= ?${esq.clause}`
+  ).bind(since, ...esq.binds).first();
 
   const roomsCreated = await env.DB.prepare(
     `SELECT COUNT(*) AS cnt FROM rooms WHERE created_at >= ?`
@@ -1149,17 +1221,20 @@ async function dashFunnel(env, since) {
   return { tutorial, tutorialPhases: tutorialPhases.results, soloToMp };
 }
 
-async function dashRides(env, since) {
+async function dashRides(env, since, ex) {
+  const esq = excludedSessionSubquery(ex);
+  const sf = sessionFilter(ex, 's');
+
   const byLevel = await env.DB.prepare(
     `SELECT level, difficulty, input_method,
      COUNT(*) AS attempts, SUM(completed) AS completions,
      ROUND(AVG(CASE WHEN completed = 1 THEN duration_ms END) / 1000.0, 1) AS avg_time_sec,
      ROUND(AVG(crash_count), 1) AS avg_crashes,
      ROUND(AVG(timeout_count), 1) AS avg_timeouts
-     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?${esq.clause}
      GROUP BY level, difficulty, input_method
      ORDER BY level, difficulty`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const abandons = await env.DB.prepare(
     `SELECT level, abandon_reason,
@@ -1167,10 +1242,10 @@ async function dashRides(env, since) {
      ROUND(AVG(distance), 0) AS avg_distance,
      ROUND(AVG(crash_count), 1) AS avg_crashes
      FROM rides
-     WHERE completed = 0 AND abandon_reason IS NOT NULL AND started_at >= ?
+     WHERE completed = 0 AND abandon_reason IS NOT NULL AND started_at >= ?${esq.clause}
      GROUP BY level, abandon_reason
      ORDER BY level, abandonments DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const steeringFeel = await env.DB.prepare(
     `SELECT
@@ -1179,17 +1254,17 @@ async function dashRides(env, since) {
            ELSE 'responsive (0.67-1.0)' END AS feel_bucket,
       COUNT(*) AS rides, SUM(completed) AS completed,
       ROUND(AVG(crash_count), 1) AS avg_crashes
-     FROM rides WHERE level != 'tutorial' AND steering_feel IS NOT NULL AND started_at >= ?
+     FROM rides WHERE level != 'tutorial' AND steering_feel IS NOT NULL AND started_at >= ?${esq.clause}
      GROUP BY feel_bucket`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const bikePresets = await env.DB.prepare(
     `SELECT bike_preset, COUNT(*) AS rides,
      COUNT(DISTINCT session_id) AS unique_players,
      SUM(completed) AS completed
-     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?${esq.clause}
      GROUP BY bike_preset ORDER BY rides DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const performance = await env.DB.prepare(
     `SELECT device_type, platform,
@@ -1198,9 +1273,9 @@ async function dashRides(env, since) {
      COUNT(*) AS rides,
      SUM(completed) AS completed
      FROM rides r JOIN sessions s ON r.session_id = s.id
-     WHERE r.started_at >= ? AND r.avg_fps IS NOT NULL
+     WHERE r.started_at >= ? AND r.avg_fps IS NOT NULL${sf.clause}
      GROUP BY device_type, platform ORDER BY rides DESC`
-  ).bind(since).all();
+  ).bind(since, ...sf.binds).all();
 
   return {
     byLevel: byLevel.results,
@@ -1211,7 +1286,9 @@ async function dashRides(env, since) {
   };
 }
 
-async function dashCrashes(env, since) {
+async function dashCrashes(env, since, ex) {
+  const esq = excludedSessionSubquery(ex);
+
   const heatmap = await env.DB.prepare(
     `SELECT r.level,
      CAST(ROUND(re.distance / 10) * 10 AS INTEGER) AS distance_bucket,
@@ -1219,20 +1296,21 @@ async function dashCrashes(env, since) {
      COUNT(*) AS crashes
      FROM ride_events re
      JOIN rides r ON re.ride_id = r.id
-     WHERE re.event_type = 'crash' AND re.created_at >= ?
+     WHERE re.event_type = 'crash' AND re.created_at >= ?${esq.clause.replace(/session_id/g, 'r.session_id')}
      GROUP BY r.level, distance_bucket, cause
      ORDER BY r.level, distance_bucket`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const crashesByInput = await env.DB.prepare(
     `SELECT JSON_EXTRACT(re.event_data, '$.input_method') AS input_method,
      JSON_EXTRACT(re.event_data, '$.cause') AS cause,
      COUNT(*) AS crashes
      FROM ride_events re
+     JOIN rides r ON re.ride_id = r.id
      WHERE re.event_type = 'crash' AND re.created_at >= ?
-       AND JSON_EXTRACT(re.event_data, '$.input_method') IS NOT NULL
+       AND JSON_EXTRACT(re.event_data, '$.input_method') IS NOT NULL${esq.clause.replace(/session_id/g, 'r.session_id')}
      GROUP BY input_method, cause ORDER BY crashes DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const timeouts = await env.DB.prepare(
     `SELECT r.level, r.difficulty,
@@ -1240,10 +1318,10 @@ async function dashCrashes(env, since) {
      COUNT(*) AS timeouts
      FROM ride_events re
      JOIN rides r ON re.ride_id = r.id
-     WHERE re.event_type = 'timeout' AND re.created_at >= ?
+     WHERE re.event_type = 'timeout' AND re.created_at >= ?${esq.clause.replace(/session_id/g, 'r.session_id')}
      GROUP BY r.level, r.difficulty, checkpoint
      ORDER BY r.level, checkpoint`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const pylons = await env.DB.prepare(
     `SELECT r.level,
@@ -1253,40 +1331,46 @@ async function dashCrashes(env, since) {
      SUM(CASE WHEN re.event_type = 'pylon_hit' THEN 1 ELSE 0 END) AS hits
      FROM ride_events re
      JOIN rides r ON re.ride_id = r.id
-     WHERE re.event_type IN ('pylon_pass', 'pylon_hit') AND re.created_at >= ?
+     WHERE re.event_type IN ('pylon_pass', 'pylon_hit') AND re.created_at >= ?${esq.clause.replace(/session_id/g, 'r.session_id')}
      GROUP BY r.level, pylon ORDER BY r.level, re.distance`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   return { heatmap: heatmap.results, timeouts: timeouts.results, pylons: pylons.results, crashesByInput: crashesByInput.results };
 }
 
-async function dashConversions(env, since) {
+async function dashConversions(env, since, ex) {
+  const esq = excludedSessionSubquery(ex);
+
   const byAction = await env.DB.prepare(
     `SELECT action, context, COUNT(*) AS clicks,
      COUNT(DISTINCT session_id) AS unique_sessions
-     FROM conversions WHERE created_at >= ?
+     FROM conversions WHERE created_at >= ?${esq.clause}
      GROUP BY action, context ORDER BY clicks DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const daily = await env.DB.prepare(
     `SELECT DATE(created_at) AS day, action, COUNT(*) AS clicks
-     FROM conversions WHERE created_at >= ?
+     FROM conversions WHERE created_at >= ?${esq.clause}
      GROUP BY day, action ORDER BY day DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const clips = await env.DB.prepare(
     `SELECT DATE(created_at) AS day,
      COUNT(CASE WHEN event_type = 'clip_save' THEN 1 END) AS saved,
      COUNT(CASE WHEN event_type = 'clip_save' AND JSON_EXTRACT(event_data, '$.method') = 'share' THEN 1 END) AS shared,
      COUNT(CASE WHEN event_type = 'clip_discard' THEN 1 END) AS discarded
-     FROM events WHERE event_type IN ('clip_save', 'clip_discard') AND created_at >= ?
+     FROM events WHERE event_type IN ('clip_save', 'clip_discard') AND created_at >= ?${esq.clause}
      GROUP BY day ORDER BY day DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   return { byAction: byAction.results, daily: daily.results, clips: clips.results };
 }
 
-async function dashNetwork(env, since) {
+async function dashNetwork(env, since, ex) {
+  const esq = excludedSessionSubquery(ex);
+
+  // Rooms: filter by captain_session_id
+  const roomExcl = esq.clause.replace(/session_id/g, 'captain_session_id');
   const roomHealth = await env.DB.prepare(
     `SELECT COUNT(*) AS total_rooms,
      COUNT(stoker_joined_at) AS stokers_joined,
@@ -1297,8 +1381,8 @@ async function dashNetwork(env, since) {
      COUNT(CASE WHEN connection_type = 'p2p' THEN 1 END) AS p2p_connections,
      COUNT(CASE WHEN p2p_upgrade_succeeded = 1 THEN 1 END) AS p2p_upgrades,
      SUM(disconnect_count) AS total_disconnects
-     FROM rooms WHERE created_at >= ?`
-  ).bind(since).first();
+     FROM rooms WHERE created_at >= ?${roomExcl}`
+  ).bind(since, ...esq.binds).first();
 
   const disconnects = await env.DB.prepare(
     `SELECT DATE(e.created_at) AS day,
@@ -1307,9 +1391,9 @@ async function dashNetwork(env, since) {
        AND JSON_EXTRACT(e.event_data, '$.during_ride') = 1 THEN 1 END) AS during_ride,
      COUNT(CASE WHEN e.event_type = 'room_reconnect' THEN 1 END) AS reconnects
      FROM events e
-     WHERE e.event_type IN ('room_disconnect', 'room_reconnect') AND e.created_at >= ?
+     WHERE e.event_type IN ('room_disconnect', 'room_reconnect') AND e.created_at >= ?${esq.clause.replace(/session_id/g, 'e.session_id')}
      GROUP BY day ORDER BY day DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const quality = await env.DB.prepare(
     `SELECT connection_type,
@@ -1317,39 +1401,41 @@ async function dashNetwork(env, since) {
      ROUND(AVG(avg_rtt_ms)) AS avg_rtt_ms,
      ROUND(AVG(max_rtt_ms)) AS avg_max_rtt_ms,
      ROUND(AVG(packet_loss_pct), 2) AS avg_packet_loss_pct
-     FROM rooms WHERE created_at >= ? AND avg_rtt_ms IS NOT NULL
-     GROUP BY connection_type ORDER BY rooms DESC`
-  ).bind(since).all();
+     FROM rooms WHERE created_at >= ? AND avg_rtt_ms IS NOT NULL${roomExcl}`
+  ).bind(since, ...esq.binds).all();
 
   return { roomHealth, disconnects: disconnects.results, quality: quality.results };
 }
 
-async function dashDevices(env, since) {
+async function dashDevices(env, since, ex) {
+  const sf = sessionFilter(ex, 's');
+  const esq = excludedSessionSubquery(ex);
+
   const devices = await env.DB.prepare(
     `SELECT device_type, platform, COUNT(*) AS sessions
-     FROM sessions WHERE started_at >= ?
+     FROM sessions s WHERE started_at >= ?${sf.clause}
      GROUP BY device_type, platform ORDER BY sessions DESC`
-  ).bind(since).all();
+  ).bind(since, ...sf.binds).all();
 
   const inputMethods = await env.DB.prepare(
     `SELECT input_method, COUNT(*) AS rides,
      SUM(completed) AS completed
-     FROM rides WHERE started_at >= ? AND input_method IS NOT NULL
+     FROM rides WHERE started_at >= ? AND input_method IS NOT NULL${esq.clause}
      GROUP BY input_method ORDER BY rides DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const controllers = await env.DB.prepare(
     `SELECT controller_name, controller_connection, COUNT(*) AS rides,
      SUM(completed) AS completed
-     FROM rides WHERE started_at >= ? AND controller_name IS NOT NULL
+     FROM rides WHERE started_at >= ? AND controller_name IS NOT NULL${esq.clause}
      GROUP BY controller_name, controller_connection ORDER BY rides DESC`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const browsers = await env.DB.prepare(
     `SELECT user_agent, COUNT(*) AS sessions
-     FROM sessions WHERE started_at >= ? AND user_agent IS NOT NULL
+     FROM sessions s WHERE started_at >= ? AND user_agent IS NOT NULL${sf.clause}
      GROUP BY user_agent ORDER BY sessions DESC`
-  ).bind(since).all();
+  ).bind(since, ...sf.binds).all();
 
   const sessionDuration = await env.DB.prepare(
     `SELECT device_type,
@@ -1358,9 +1444,9 @@ async function dashDevices(env, since) {
        THEN (julianday(ended_at) - julianday(started_at)) * 86400 END)) AS avg_duration_sec,
      ROUND(AVG(CASE WHEN ended_at IS NOT NULL
        THEN (julianday(ended_at) - julianday(started_at)) * 86400 END) / 60.0, 1) AS avg_duration_min
-     FROM sessions WHERE started_at >= ?
+     FROM sessions s WHERE started_at >= ?${sf.clause}
      GROUP BY device_type ORDER BY sessions DESC`
-  ).bind(since).all();
+  ).bind(since, ...sf.binds).all();
 
   return {
     devices: devices.results,
@@ -1371,17 +1457,20 @@ async function dashDevices(env, since) {
   };
 }
 
-async function dashDDA(env, since) {
+async function dashDDA(env, since, ex) {
+  const esq = excludedSessionSubquery(ex);
+
   const interventions = await env.DB.prepare(
     `SELECT JSON_EXTRACT(re.event_data, '$.type') AS assist_type,
      SUM(CASE WHEN re.event_type = 'dda_assist_offered' THEN 1 ELSE 0 END) AS offered,
      SUM(CASE WHEN re.event_type = 'dda_assist_accepted' THEN 1 ELSE 0 END) AS accepted,
      SUM(CASE WHEN re.event_type = 'dda_assist_declined' THEN 1 ELSE 0 END) AS declined
      FROM ride_events re
+     JOIN rides r ON re.ride_id = r.id
      WHERE re.event_type IN ('dda_assist_offered', 'dda_assist_accepted', 'dda_assist_declined')
-       AND re.created_at >= ?
+       AND re.created_at >= ?${esq.clause.replace(/session_id/g, 'r.session_id')}
      GROUP BY assist_type`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   const rideImpact = await env.DB.prepare(
     `SELECT
@@ -1391,9 +1480,9 @@ async function dashDDA(env, since) {
            ELSE 'no_dda' END AS dda_group,
       COUNT(*) AS rides, SUM(completed) AS completed,
       ROUND(AVG(crash_count), 1) AS avg_crashes
-     FROM rides WHERE level != 'tutorial' AND started_at >= ?
+     FROM rides WHERE level != 'tutorial' AND started_at >= ?${esq.clause}
      GROUP BY dda_group`
-  ).bind(since).all();
+  ).bind(since, ...esq.binds).all();
 
   return { interventions: interventions.results, rideImpact: rideImpact.results };
 }

@@ -78,8 +78,30 @@
     </select>
     <button id="refresh" onclick="loadAll()">Refresh</button>
     <label style="font-size:0.82em;"><input type="checkbox" id="auto-refresh"> Auto-refresh 60s</label>
+    <label style="font-size:0.82em;"><input type="checkbox" id="exclude-dev" onchange="onExcludeToggle()"> Exclude developer</label>
+    <button id="exclude-edit-btn" onclick="toggleExcludePanel()" style="background:#333;border-color:#555;font-size:0.78em;">Edit exclusions</button>
     <span class="status" id="status">Loading...</span>
     <button onclick="signOut()" style="background:#333;border-color:#555;margin-left:8px;">Sign out</button>
+  </div>
+
+  <!-- Exclusion editor panel -->
+  <div id="exclude-panel" style="display:none;background:#1a1d27;border:1px solid #333;border-radius:8px;padding:16px;margin-bottom:16px;">
+    <h3 style="font-size:0.9em;color:#aaa;margin-bottom:10px;">Developer Session Exclusions</h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div>
+        <label style="font-size:0.8em;color:#888;">Excluded IPs (one per line)</label>
+        <textarea id="exclude-ips" rows="4" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
+        <button onclick="autoDetectIPs()" style="background:#333;border-color:#555;font-size:0.75em;margin-top:4px;">Auto-detect my IPs</button>
+      </div>
+      <div>
+        <label style="font-size:0.8em;color:#888;">Excluded Google UIDs (one per line)</label>
+        <textarea id="exclude-uids" rows="4" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
+      </div>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px;">
+      <button onclick="saveExclusions()" style="font-size:0.82em;">Save & Refresh</button>
+      <button onclick="toggleExcludePanel()" style="background:#333;border-color:#555;font-size:0.82em;">Cancel</button>
+    </div>
   </div>
   <div id="content"><div class="loading">Loading dashboard...</div></div>
 </div>
@@ -123,6 +145,10 @@ function signOut() {
 function showDashboard() {
   document.getElementById('auth-gate').style.display = 'none';
   document.getElementById('dashboard-ui').style.display = '';
+  // Seed default exclusion UIDs on first use
+  if (!localStorage.getItem('dash_exclusions')) {
+    setExclusions({ ips: [], uids: ['pete@usersfirst.com', 'pete@petegordon.com'] });
+  }
   loadAll();
 }
 
@@ -135,10 +161,32 @@ if (dashToken) {
 
 function getDays() { return document.getElementById('days').value; }
 
+// ── Exclusion state (persisted in localStorage) ──
+function getExclusions() {
+  try {
+    return JSON.parse(localStorage.getItem('dash_exclusions') || '{}');
+  } catch { return {}; }
+}
+function setExclusions(obj) {
+  localStorage.setItem('dash_exclusions', JSON.stringify(obj));
+}
+function isExcludeEnabled() {
+  return document.getElementById('exclude-dev')?.checked || false;
+}
+
 async function fetchJSON(route) {
   const headers = {};
   if (dashToken) headers['Authorization'] = 'Bearer ' + dashToken;
-  const r = await fetch(`${API}/${route}?days=${getDays()}`, { headers });
+  let url = `${API}/${route}?days=${getDays()}`;
+
+  // Append exclusion params if toggle is on
+  if (isExcludeEnabled()) {
+    const ex = getExclusions();
+    if (ex.ips && ex.ips.length) url += '&exclude_ips=' + encodeURIComponent(ex.ips.join(','));
+    if (ex.uids && ex.uids.length) url += '&exclude_uids=' + encodeURIComponent(ex.uids.join(','));
+  }
+
+  const r = await fetch(url, { headers });
   if (r.status === 401 || r.status === 403) { signOut(); throw new Error('Session expired'); }
   if (!r.ok) throw new Error(`${route}: ${r.status}`);
   return r.json();
@@ -596,12 +644,62 @@ function renderSimpleTable(rows, cols) {
   return html + '</table>';
 }
 
+// ── Exclusion UI ──
+function onExcludeToggle() {
+  localStorage.setItem('dash_exclude_on', isExcludeEnabled() ? '1' : '0');
+  if (dashToken) loadAll();
+}
+
+function toggleExcludePanel() {
+  const panel = document.getElementById('exclude-panel');
+  const visible = panel.style.display !== 'none';
+  if (!visible) {
+    // Populate textareas from stored exclusions
+    const ex = getExclusions();
+    document.getElementById('exclude-ips').value = (ex.ips || []).join('\n');
+    document.getElementById('exclude-uids').value = (ex.uids || []).join('\n');
+  }
+  panel.style.display = visible ? 'none' : 'block';
+}
+
+function saveExclusions() {
+  const ips = document.getElementById('exclude-ips').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const uids = document.getElementById('exclude-uids').value.split('\n').map(s => s.trim()).filter(Boolean);
+  setExclusions({ ips, uids });
+  document.getElementById('exclude-panel').style.display = 'none';
+  // Auto-enable the toggle
+  document.getElementById('exclude-dev').checked = true;
+  localStorage.setItem('dash_exclude_on', '1');
+  if (dashToken) loadAll();
+}
+
+async function autoDetectIPs() {
+  try {
+    const headers = {};
+    if (dashToken) headers['Authorization'] = 'Bearer ' + dashToken;
+    const r = await fetch(`${API}/dev_ips`, { headers });
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    const textarea = document.getElementById('exclude-ips');
+    const existing = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const merged = [...new Set([...existing, ...(data.ips || [])])];
+    textarea.value = merged.join('\n');
+  } catch (e) {
+    alert('Failed to detect IPs: ' + e.message);
+  }
+}
+
 // -- Init --
 document.getElementById('days').addEventListener('change', () => { if (dashToken) loadAll(); });
 document.getElementById('auto-refresh').addEventListener('change', (e) => {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   if (e.target.checked) autoTimer = setInterval(loadAll, 60000);
 });
+
+// Restore exclusion toggle state
+if (localStorage.getItem('dash_exclude_on') === '1') {
+  document.getElementById('exclude-dev').checked = true;
+}
 </script>
 </body>
 </html>
