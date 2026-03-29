@@ -17,12 +17,13 @@ function _detectLowEndDevice() {
   if (_lowEndResult !== null) return Promise.resolve(_lowEndResult);
   return new Promise(resolve => {
     try {
-      // Use a moderately sized canvas — large enough to stress the readback
-      // path but not so large that the probe itself causes a visible hitch.
-      const SIZE = 512;
+      // Use the actual screen resolution — a small canvas won't expose the
+      // readback bottleneck that kills full-screen gameplay.
+      const W = window.innerWidth;
+      const H = window.innerHeight;
       const glCanvas = document.createElement('canvas');
-      glCanvas.width = SIZE;
-      glCanvas.height = SIZE;
+      glCanvas.width = W;
+      glCanvas.height = H;
       const gl = glCanvas.getContext('webgl');
       if (!gl) { _lowEndResult = false; return resolve(false); }
 
@@ -31,8 +32,8 @@ function _detectLowEndDevice() {
       gl.clear(gl.COLOR_BUFFER_BIT);
 
       const canvas2d = document.createElement('canvas');
-      canvas2d.width = SIZE;
-      canvas2d.height = SIZE;
+      canvas2d.width = W;
+      canvas2d.height = H;
       const ctx = canvas2d.getContext('2d');
 
       // Warm up — first call is often slower due to pipeline setup
@@ -47,11 +48,11 @@ function _detectLowEndDevice() {
       }
       const avg = (performance.now() - t0) / ITERATIONS;
 
-      // At 60 FPS each frame has ~16.6ms budget.  If a single 512×512
-      // readback takes >4ms the full-screen version (often 4–8× the pixels)
-      // will blow the frame budget.  4ms threshold is conservative.
+      // At 60 FPS each frame has ~16.6ms budget.  If a single readback at
+      // the actual screen resolution takes >4ms, the compositing pipeline
+      // will eat too much of the frame budget.
       _lowEndResult = avg > 4;
-      _dbg(`GPU probe: ${avg.toFixed(2)}ms avg readback (512×512) → lowEnd=${_lowEndResult}`);
+      _dbg(`GPU probe: ${avg.toFixed(2)}ms avg readback (${W}×${H}) → lowEnd=${_lowEndResult}`);
       resolve(_lowEndResult);
     } catch (e) {
       _lowEndResult = false;
