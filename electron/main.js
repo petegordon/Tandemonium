@@ -84,6 +84,14 @@ ipcMain.handle('steam:storeStats', () => {
   }
 });
 
+ipcMain.handle('app:toggleDevTools', () => {
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.toggleDevTools();
+    return mainWindow.webContents.isDevToolsOpened();
+  }
+  return false;
+});
+
 let mainWindow;
 
 // ── Custom protocol (replaces local HTTP server) ─────────────────

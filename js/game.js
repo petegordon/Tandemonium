@@ -26,6 +26,8 @@ import { ArchIndicator } from './arch-indicator.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
+import { perfProbe } from './perf-probe.js';
+import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -76,12 +78,28 @@ const TUTORIAL_ITEMS = {
 
 class Game {
   constructor() {
-    // Renderer
-    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile, preserveDrawingBuffer: true });
+    // Renderer — quality resolution: user override > URL param > hardware detect > default
+    const _qualityParam = new URLSearchParams(window.location.search).get('quality');
+    const _qualityPref = (() => { try { return localStorage.getItem('tandemonium_quality'); } catch(e) { return null; } })();
+    const _hwCached = getCachedProfile();
+    this._autoLowEnd = false;
+
+    if (_qualityParam === 'low' || _qualityPref === 'low') {
+      this._lowQuality = true;
+    } else if (_qualityParam === 'high' || _qualityPref === 'high') {
+      this._lowQuality = false;
+    } else if (_hwCached && _hwCached.tier === 'low') {
+      this._lowQuality = true;
+      this._autoLowEnd = true;
+    } else {
+      this._lowQuality = false;
+    }
+
+    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile && !this._lowQuality, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = !isMobile;
-    if (!isMobile) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
+    if (!isMobile && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.prepend(this.renderer.domElement);
 
     // Scene
@@ -116,7 +134,7 @@ class Game {
     this.input = new InputManager();
     this.pedalCtrl = new PedalController(this.input);
     this.balanceCtrl = new BalanceController(this.input);
-    this.world = new World(this.scene);
+    this.world = new World(this.scene, { lowEnd: this._lowQuality });
     this.bike = new BikeModel(this.scene);
     this.bike.roadPath = this.world.roadPath;
     this.chaseCamera = new ChaseCamera(this.camera);
@@ -125,6 +143,10 @@ class Game {
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
     this.recorder = new GameRecorder(this.renderer.domElement, this.input);
+    if (this._lowQuality) {
+      this.recorder.supported = false;
+      if (this.recorder.shareBtn) this.recorder.shareBtn.style.display = 'none';
+    }
 
     // Mode
     this.mode = 'solo'; // 'solo' | 'captain' | 'stoker'
@@ -159,6 +181,27 @@ class Game {
     // Recording checkpoint flash tracking
     this._checkpointFlashTime = 0;
 
+    // Options overlay state
+    this._optionsOpen = false;
+    this._gpPrevStart = false;
+    this._gpPrevB = false;
+    this._initOptionsOverlay();
+
+    // Async hardware detection (first visit, no cache, no manual override)
+    if (!_hwCached && _qualityPref !== 'high' && _qualityPref !== 'low' && _qualityParam !== 'high' && _qualityParam !== 'low') {
+      detectHardware().then(result => {
+        if (result.tier === 'low' && !this._lowQuality) {
+          this._autoLowEnd = true;
+          this._lowQuality = true;
+          this.renderer.setPixelRatio(0.5);
+          this.renderer.shadowMap.enabled = false;
+          this.recorder.supported = false;
+          if (this.recorder.shareBtn) this.recorder.shareBtn.style.display = 'none';
+          this._updateOptionsQualityUI();
+        }
+      });
+    }
+
     // D-pad + face button edge detection for gameplay buttons
     this._dpadPrevUp = false;
     this._dpadPrevDown = false;
@@ -184,7 +227,7 @@ class Game {
     this.renderer.domElement.addEventListener('webglcontextrestored', () => {
       console.log('WebGL context restored');
       this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
     });
 
     // FPS tracking for analytics
@@ -2389,6 +2432,153 @@ class Game {
     };
   }
 
+  // ============================================================
+  // OPTIONS OVERLAY
+  // ============================================================
+
+  _initOptionsOverlay() {
+    const overlay = document.getElementById('options-overlay');
+    const closeBtn = document.getElementById('options-close-btn');
+    const highBtn = document.getElementById('opt-high');
+    const lowBtn = document.getElementById('opt-low');
+    const autoBtn = document.getElementById('opt-auto');
+    const perfBtn = document.getElementById('options-perf-btn');
+    const perfResult = document.getElementById('options-perf-result');
+
+    if (!overlay) return;
+
+    const devToolsBtn = document.getElementById('options-devtools-btn');
+    const browserDevBtn = document.getElementById('options-browserdev-btn');
+    const browserDevHint = document.getElementById('options-browserdev-hint');
+    const isElectron = !!window.electronApp;
+
+    closeBtn.addEventListener('click', () => this._closeOptions());
+    highBtn.addEventListener('click', () => this._setQuality('high'));
+    lowBtn.addEventListener('click', () => this._setQuality('low'));
+    autoBtn.addEventListener('click', () => this._setQuality('auto'));
+    devToolsBtn.addEventListener('click', () => { window.location.href = 'test/index.html'; });
+
+    if (isElectron) {
+      browserDevBtn.addEventListener('click', async () => {
+        const opened = await window.electronApp.toggleDevTools();
+        browserDevBtn.textContent = opened ? 'Close Dev Tools' : 'Open Dev Tools';
+      });
+    } else {
+      browserDevBtn.addEventListener('click', () => {
+        browserDevHint.textContent = 'Press F12 to open Dev Tools';
+      });
+    }
+
+    perfBtn.addEventListener('click', async () => {
+      perfBtn.disabled = true;
+      perfBtn.textContent = 'Testing...';
+      perfResult.textContent = '';
+      perfResult.className = '';
+      try {
+        const result = await perfProbe();
+        const gpu = result.gpuRenderer.length > 50 ? result.gpuRenderer.slice(0, 50) + '...' : result.gpuRenderer;
+        perfResult.textContent = `GPU: ${gpu} | ${result.finalFps} fps — ${result.lowEnd ? 'LOW-END' : 'OK'}`;
+        perfResult.className = result.lowEnd ? 'low' : 'ok';
+      } catch (e) {
+        perfResult.textContent = 'Error: ' + e.message;
+      }
+      perfBtn.disabled = false;
+      perfBtn.textContent = 'Run Perf Test';
+    });
+
+    this._updateOptionsQualityUI();
+  }
+
+  _updateOptionsQualityUI() {
+    const pref = (() => { try { return localStorage.getItem('tandemonium_quality'); } catch(e) { return null; } })();
+    const highBtn = document.getElementById('opt-high');
+    const lowBtn = document.getElementById('opt-low');
+    const autoBtn = document.getElementById('opt-auto');
+    if (!highBtn) return;
+
+    highBtn.classList.toggle('active', pref === 'high');
+    lowBtn.classList.toggle('active', pref === 'low');
+    autoBtn.classList.toggle('active', pref !== 'high' && pref !== 'low');
+  }
+
+  _setQuality(level) {
+    try {
+      if (level === 'auto') {
+        localStorage.setItem('tandemonium_quality', 'auto');
+        clearHardwareCache(); // re-detect on next load
+      } else {
+        localStorage.setItem('tandemonium_quality', level);
+      }
+    } catch(e) {}
+
+    // Apply what we can live
+    if (level === 'low') {
+      this._lowQuality = true;
+      this.renderer.setPixelRatio(0.5);
+      this.renderer.shadowMap.enabled = false;
+      this.recorder.supported = false;
+      if (this.recorder.shareBtn) this.recorder.shareBtn.style.display = 'none';
+    } else if (level === 'high') {
+      this._lowQuality = false;
+      this._autoLowEnd = false;
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      if (!isMobile) this.renderer.shadowMap.enabled = true;
+    }
+    // Auto: changes apply on next reload after hardware detect runs
+
+    this._updateOptionsQualityUI();
+  }
+
+  _openOptions() {
+    const overlay = document.getElementById('options-overlay');
+    if (!overlay) return;
+    overlay.classList.add('visible');
+    this._optionsOpen = true;
+    this._updateOptionsQualityUI();
+
+    // Set up gamepad navigation for overlay buttons
+    const btns = [
+      document.getElementById('opt-high'),
+      document.getElementById('opt-low'),
+      document.getElementById('opt-auto'),
+      document.getElementById('options-perf-btn'),
+      document.getElementById('options-devtools-btn'),
+      document.getElementById('options-browserdev-btn'),
+      document.getElementById('options-close-btn'),
+    ].filter(Boolean);
+    this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
+  }
+
+  _closeOptions() {
+    const overlay = document.getElementById('options-overlay');
+    if (!overlay) return;
+    overlay.classList.remove('visible');
+    this._optionsOpen = false;
+    this._clearOverlayButtons();
+  }
+
+  _pollStartButton() {
+    if (!this.input.gamepadConnected) return;
+    const gamepads = navigator.getGamepads();
+    const gp = gamepads[this.input.gamepadIndex];
+    if (!gp) return;
+
+    const start = gp.buttons[9] && gp.buttons[9].pressed;
+    const bIdx = this.input._gpSwapAB ? 0 : 1;
+    const b = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
+
+    if (start && !this._gpPrevStart) {
+      if (this._optionsOpen) this._closeOptions();
+      else this._openOptions();
+    }
+    if (b && !this._gpPrevB && this._optionsOpen) {
+      this._closeOptions();
+    }
+
+    this._gpPrevStart = start;
+    this._gpPrevB = b;
+  }
+
   _pollDpad() {
     if (!this.input.gamepadConnected) return;
     // Don't process gameplay D-pad while clip preview modal is open
@@ -2646,6 +2836,16 @@ class Game {
 
     // Poll gamepad every frame before reading any input
     this.input.pollGamepad();
+
+    // Start button → options overlay (available in all states)
+    this._pollStartButton();
+    // If options overlay is open, only poll overlay navigation — skip game updates
+    if (this._optionsOpen) {
+      this._pollOverlayGamepad();
+      this.input.consumeTaps(); // drain buffered input so it doesn't fire when overlay closes
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
 
     const dt = Math.min((timestamp - this.lastTime) / 1000, 0.05);
     this.lastTime = timestamp;
@@ -4314,3 +4514,5 @@ class Game {
 // ============================================================
 const game = new Game();
 window._game = game;
+window.perfProbe = perfProbe;
+

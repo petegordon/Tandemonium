@@ -518,5 +518,20 @@
   log(`Relay: ${RELAY_URL}`, 'msg-sys');
   log(`PeerJS: ${PEERJS_HOST}:${PEERJS_PORT}`, 'msg-sys');
 </script>
+<script>
+// Gamepad B-button → back to test index
+(function() {
+  let prevB = false;
+  function poll() {
+    requestAnimationFrame(poll);
+    const gp = navigator.getGamepads && navigator.getGamepads()[0];
+    if (!gp) return;
+    const b = gp.buttons[1] && gp.buttons[1].pressed;
+    if (b && !prevB) window.location.href = 'index.html';
+    prevB = b;
+  }
+  requestAnimationFrame(poll);
+})();
+</script>
 </body>
 </html>

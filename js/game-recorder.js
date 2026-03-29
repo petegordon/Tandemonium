@@ -9,6 +9,144 @@ import * as analytics from './analytics.js';
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+// Detect low-end devices by benchmarking the exact operation that's expensive:
+// drawing a busy WebGL canvas into a 2D canvas (forces GPU pipeline flush +
+// GPU→CPU readback).  A trivial gl.clear() doesn't stress the pipeline — we
+// need real shader work so the readback must wait for the GPU to finish.
+// Returns a Promise<boolean>.  Result is cached after first run.
+let _lowEndResult = null;
+function _detectLowEndDevice() {
+  if (_lowEndResult !== null) return Promise.resolve(_lowEndResult);
+
+  // Load the test frame image, then run the GPU probe once it's ready.
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => _runGpuProbe(img, resolve);
+    img.onerror = () => { _lowEndResult = false; resolve(false); };
+    img.src = 'images/grandma_house_action.png';
+  });
+}
+
+function _runGpuProbe(testImg, resolve) {
+  try {
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const glCanvas = document.createElement('canvas');
+    glCanvas.width = W;
+    glCanvas.height = H;
+    const gl = glCanvas.getContext('webgl');
+    if (!gl) { _lowEndResult = false; return resolve(false); }
+
+    // ── Build a shader that does real per-fragment work ──
+    const vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, `
+      attribute vec2 a_pos;
+      varying vec2 v_uv;
+      void main() {
+        v_uv = a_pos * 0.5 + 0.5;
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+      }`);
+    gl.compileShader(vs);
+
+    // Fragment shader: texture lookups + procedural noise + lighting math.
+    // This simulates the per-pixel cost of a textured 3D scene.
+    const fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, `
+      precision mediump float;
+      varying vec2 v_uv;
+      uniform sampler2D u_tex;
+      uniform float u_pass;
+
+      void main() {
+        // Multiple offset texture lookups (simulates normal/shadow mapping)
+        vec4 c0 = texture2D(u_tex, v_uv);
+        vec4 c1 = texture2D(u_tex, v_uv + vec2(0.002, 0.001));
+        vec4 c2 = texture2D(u_tex, v_uv - vec2(0.001, 0.002));
+        vec4 c3 = texture2D(u_tex, v_uv + vec2(sin(u_pass) * 0.003, cos(u_pass) * 0.003));
+
+        // Fake lighting: dot product, specular highlight, gamma
+        vec3 n = normalize(c1.rgb - c2.rgb + 0.5);
+        vec3 l = normalize(vec3(0.5, 0.7, 1.0));
+        float diff = max(dot(n, l), 0.2);
+        float spec = pow(max(dot(reflect(-l, n), vec3(0.0, 0.0, 1.0)), 0.0), 32.0);
+
+        vec3 color = c0.rgb * diff + vec3(spec * 0.4);
+        // Blend passes for accumulation
+        color = mix(color, c3.rgb, 0.15 + u_pass * 0.01);
+        // Gamma correction
+        color = pow(color, vec3(1.0 / 2.2));
+        gl_FragColor = vec4(color, 1.0);
+      }`);
+    gl.compileShader(fs);
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+
+    // Full-screen quad
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    // Upload test frame as texture
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, testImg);
+
+    const uPass = gl.getUniformLocation(prog, 'u_pass');
+
+    // 2D readback target
+    const canvas2d = document.createElement('canvas');
+    canvas2d.width = W;
+    canvas2d.height = H;
+    const ctx = canvas2d.getContext('2d');
+
+    // Render a busy frame: multiple blended passes (simulates multi-pass 3D)
+    function renderFrame(passOffset) {
+      gl.viewport(0, 0, W, H);
+      for (let p = 0; p < 4; p++) {
+        gl.uniform1f(uPass, p + passOffset);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+    }
+
+    // Warm up
+    renderFrame(0);
+    ctx.drawImage(glCanvas, 0, 0);
+
+    // Benchmark: render + readback (the real-world sequence)
+    const ITERATIONS = 10;
+    const t0 = performance.now();
+    for (let i = 0; i < ITERATIONS; i++) {
+      renderFrame(i);
+      ctx.drawImage(glCanvas, 0, 0);     // GPU flush + readback
+    }
+    const avg = (performance.now() - t0) / ITERATIONS;
+
+    // Clean up probe GL context
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+
+    // At 60 FPS each frame has ~16.6ms.  If render + readback together
+    // take >4ms, the compositing pipeline will steal too much budget.
+    _lowEndResult = avg > 4;
+    _dbg(`GPU probe: ${avg.toFixed(2)}ms avg render+readback (${W}×${H}) → lowEnd=${_lowEndResult}`);
+    resolve(_lowEndResult);
+  } catch (e) {
+    _lowEndResult = false;
+    resolve(false);
+  }
+}
+
 // Debug overlay for recording diagnostics — enabled with ?debug in URL
 const _recDebug = new URLSearchParams(window.location.search).has('debug');
 function _dbg(msg) {
@@ -34,10 +172,25 @@ export class GameRecorder {
     this.gameCanvas = gameCanvas;
     this.input = input || null;
 
+    // ?noclip URL flag — force-disable clip recording for A/B testing
+    this._noClip = new URLSearchParams(window.location.search).has('noclip');
+
     // Determine recording strategy
     this._useWebCodecs = _isIOS && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
-    this.supported = this._useWebCodecs ? true : this._checkSupport();
-    _dbg(`v7 iOS=${_isIOS} VE=${typeof VideoEncoder} VF=${typeof VideoFrame} useWC=${this._useWebCodecs} sup=${this.supported}`);
+    this.supported = this._noClip ? false : (this._useWebCodecs ? true : this._checkSupport());
+    _dbg(`v7 iOS=${_isIOS} VE=${typeof VideoEncoder} VF=${typeof VideoFrame} useWC=${this._useWebCodecs} noClip=${this._noClip} sup=${this.supported}`);
+
+    // Run GPU readback probe — if device is too slow, disable recording.
+    // startBuffer() awaits this before proceeding.
+    this._gpuProbe = this.supported
+      ? _detectLowEndDevice().then(isLowEnd => {
+          if (isLowEnd) {
+            this.supported = false;
+            if (this.shareBtn) this.shareBtn.style.display = 'none';
+            _dbg('Recording disabled — GPU readback too slow');
+          }
+        })
+      : Promise.resolve();
 
     // Compositing canvas (offscreen, same size as game canvas)
     this.compCanvas = document.createElement('canvas');
@@ -476,7 +629,9 @@ export class GameRecorder {
   // Chunks accumulate in _chunks[]; we keep only the last bufferDuration
   // seconds worth. On save: stop recorder, assemble kept chunks into one blob.
 
-  startBuffer(audioCtx, micEnabled = false) {
+  async startBuffer(audioCtx, micEnabled = false) {
+    // Wait for GPU readback probe to finish before deciding whether to buffer
+    await this._gpuProbe;
     if (!this.supported || this.buffering) return;
 
     this._syncCanvasSize();
