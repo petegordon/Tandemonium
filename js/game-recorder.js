@@ -9,6 +9,57 @@ import * as analytics from './analytics.js';
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+// Detect low-end devices by benchmarking the exact operation that's expensive:
+// drawing a WebGL canvas into a 2D canvas (forces GPU→CPU readback).
+// Returns a Promise<boolean>.  Result is cached after first run.
+let _lowEndResult = null;
+function _detectLowEndDevice() {
+  if (_lowEndResult !== null) return Promise.resolve(_lowEndResult);
+  return new Promise(resolve => {
+    try {
+      // Use a moderately sized canvas — large enough to stress the readback
+      // path but not so large that the probe itself causes a visible hitch.
+      const SIZE = 512;
+      const glCanvas = document.createElement('canvas');
+      glCanvas.width = SIZE;
+      glCanvas.height = SIZE;
+      const gl = glCanvas.getContext('webgl');
+      if (!gl) { _lowEndResult = false; return resolve(false); }
+
+      // Draw something so the readback isn't trivially empty
+      gl.clearColor(0.2, 0.4, 0.6, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      const canvas2d = document.createElement('canvas');
+      canvas2d.width = SIZE;
+      canvas2d.height = SIZE;
+      const ctx = canvas2d.getContext('2d');
+
+      // Warm up — first call is often slower due to pipeline setup
+      ctx.drawImage(glCanvas, 0, 0);
+
+      // Benchmark: multiple readbacks to get a stable average
+      const ITERATIONS = 10;
+      const t0 = performance.now();
+      for (let i = 0; i < ITERATIONS; i++) {
+        gl.clear(gl.COLOR_BUFFER_BIT);     // force new content
+        ctx.drawImage(glCanvas, 0, 0);     // GPU→CPU readback
+      }
+      const avg = (performance.now() - t0) / ITERATIONS;
+
+      // At 60 FPS each frame has ~16.6ms budget.  If a single 512×512
+      // readback takes >4ms the full-screen version (often 4–8× the pixels)
+      // will blow the frame budget.  4ms threshold is conservative.
+      _lowEndResult = avg > 4;
+      _dbg(`GPU probe: ${avg.toFixed(2)}ms avg readback (512×512) → lowEnd=${_lowEndResult}`);
+      resolve(_lowEndResult);
+    } catch (e) {
+      _lowEndResult = false;
+      resolve(false);
+    }
+  });
+}
+
 // Debug overlay for recording diagnostics — enabled with ?debug in URL
 const _recDebug = new URLSearchParams(window.location.search).has('debug');
 function _dbg(msg) {
@@ -38,6 +89,18 @@ export class GameRecorder {
     this._useWebCodecs = _isIOS && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
     this.supported = this._useWebCodecs ? true : this._checkSupport();
     _dbg(`v7 iOS=${_isIOS} VE=${typeof VideoEncoder} VF=${typeof VideoFrame} useWC=${this._useWebCodecs} sup=${this.supported}`);
+
+    // Run GPU readback probe — if device is too slow, disable recording.
+    // startBuffer() awaits this before proceeding.
+    this._gpuProbe = this.supported
+      ? _detectLowEndDevice().then(isLowEnd => {
+          if (isLowEnd) {
+            this.supported = false;
+            if (this.shareBtn) this.shareBtn.style.display = 'none';
+            _dbg('Recording disabled — GPU readback too slow');
+          }
+        })
+      : Promise.resolve();
 
     // Compositing canvas (offscreen, same size as game canvas)
     this.compCanvas = document.createElement('canvas');
@@ -476,7 +539,9 @@ export class GameRecorder {
   // Chunks accumulate in _chunks[]; we keep only the last bufferDuration
   // seconds worth. On save: stop recorder, assemble kept chunks into one blob.
 
-  startBuffer(audioCtx, micEnabled = false) {
+  async startBuffer(audioCtx, micEnabled = false) {
+    // Wait for GPU readback probe to finish before deciding whether to buffer
+    await this._gpuProbe;
     if (!this.supported || this.buffering) return;
 
     this._syncCanvasSize();
