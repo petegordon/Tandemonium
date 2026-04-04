@@ -232,6 +232,11 @@ function hideCalibHint() {
 initGyroHud();
 applyHudPosition();
 
+// In browser (not Electron), set a light background since transparency isn't available
+if (!isDesktop) {
+  document.body.style.background = '#e8e8ec';
+}
+
 // ── Initialize ──
 async function init() {
   // Detect what's connected — if nothing, don't load a model yet
