@@ -1,0 +1,133 @@
+name: Build Controller Overlay
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'controller-overlay/**'
+      - '.github/workflows/build-controller-overlay.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: controller-overlay
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: controller-overlay/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package app
+        run: npx electron-forge package --arch universal
+
+      - name: Create DMG
+        run: bash scripts/make-dmg.sh
+
+      - name: Create ZIP
+        run: npx electron-forge make --targets @electron-forge/maker-zip
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-overlay-macos-dmg
+          path: controller-overlay/out/3D-Controller-Overlay.dmg
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-overlay-macos-zip
+          path: controller-overlay/out/make/zip/darwin/**/*.zip
+
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: controller-overlay
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: controller-overlay/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build installers
+        run: npx electron-forge make --targets @electron-forge/maker-squirrel,@electron-forge/maker-zip
+
+      - name: Upload Squirrel installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-overlay-windows-exe
+          path: controller-overlay/out/make/squirrel.windows/**/*.exe
+
+      - name: Upload Windows ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: controller-overlay-windows-zip
+          path: controller-overlay/out/make/zip/win32/**/*.zip
+
+  release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Gather release files
+        run: |
+          mkdir -p release-assets
+          find artifacts/ -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) \
+            -exec cp {} release-assets/ \;
+          echo "Release assets:"
+          ls -lh release-assets/
+
+      - name: Get version info
+        id: version
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          VERSION="overlay-v1.0.0-${SHORT_SHA}"
+          echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "date=${DATE}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "3D Controller Overlay — ${{ steps.version.outputs.date }}"
+          body: |
+            Automated build of the 3D Controller Overlay from commit ${{ github.sha }}.
+
+            ### Downloads
+            - **macOS**: `.dmg` (drag to Applications) or `.zip` (portable)
+            - **Windows**: `.exe` (Squirrel installer) or `.zip` (portable)
+
+            ### What's included
+            - Real-time 3D controller visualization (DualSense, Switch Pro, Xbox)
+            - Gyro, touchpad, button/trigger/stick input display
+            - Transparent click-through overlay for OBS/streaming
+            - Body/accent color customization, camera presets
+          files: release-assets/*
+          draft: false
+          prerelease: false
+          make_latest: true
