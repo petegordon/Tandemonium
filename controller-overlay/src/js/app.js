@@ -234,7 +234,7 @@ applyHudPosition();
 
 // In browser (not Electron), set a light background since transparency isn't available
 if (!isDesktop) {
-  document.body.style.background = '#e8e8ec';
+  document.body.style.background = '#1a1a2e';
 }
 
 // ── Initialize ──
