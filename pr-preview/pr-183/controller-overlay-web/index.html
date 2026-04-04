@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Controller Overlay — Test &amp; Download</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #0d0d14;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #eee;
+  }
+
+  /* ── Top bar ── */
+  .top-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    background: rgba(13,13,20,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    z-index: 200;
+  }
+  .top-bar .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+    text-decoration: none;
+  }
+  .top-bar .brand img {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+  }
+  .download-buttons {
+    display: flex;
+    gap: 8px;
+  }
+  .dl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.12);
+    transition: all 0.2s;
+  }
+  .dl-btn.mac {
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+  }
+  .dl-btn.win {
+    background: rgba(51,136,255,0.15);
+    color: #5af;
+    border-color: rgba(51,136,255,0.3);
+  }
+  .dl-btn:hover {
+    background: rgba(255,255,255,0.15);
+    border-color: rgba(255,255,255,0.25);
+  }
+  .dl-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+  /* ── Overlay container ── */
+  #overlay-frame {
+    position: fixed;
+    top: 52px; left: 0; right: 0; bottom: 0;
+  }
+  #overlay-frame iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: transparent;
+  }
+
+  /* ── Fallback / no-gamepad banner ── */
+  .connect-hint {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(30,30,40,0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 12px 24px;
+    font-size: 13px;
+    color: #999;
+    z-index: 100;
+    text-align: center;
+    line-height: 1.5;
+    max-width: 500px;
+    pointer-events: none;
+    animation: fadeIn 1s ease 2s both;
+  }
+  .connect-hint strong { color: #ccc; }
+  .connect-hint .hint-key {
+    display: inline-block;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-family: monospace;
+    color: #aaa;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  /* ── Info panel (toggled) ── */
+  .info-toggle {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #aaa;
+    font-size: 18px;
+    cursor: pointer;
+    z-index: 150;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .info-toggle:hover { background: rgba(255,255,255,0.15); color: #fff; }
+
+  .info-panel {
+    position: fixed;
+    bottom: 66px;
+    right: 20px;
+    width: 320px;
+    background: rgba(20,20,28,0.95);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 20px;
+    z-index: 150;
+    display: none;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #bbb;
+  }
+  .info-panel.visible { display: block; }
+  .info-panel h3 {
+    font-size: 14px;
+    color: #fff;
+    margin-bottom: 10px;
+  }
+  .info-panel ul {
+    list-style: none;
+    padding: 0;
+  }
+  .info-panel li {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .info-panel li:last-child { border: none; }
+  .info-panel .tag {
+    display: inline-block;
+    background: rgba(51,136,255,0.15);
+    color: #5af;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    margin-right: 4px;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 600px) {
+    .top-bar { padding: 0 12px; }
+    .dl-btn span { display: none; }
+    .dl-btn { padding: 7px 10px; }
+    .connect-hint { left: 12px; right: 12px; transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Top bar with branding + download links -->
+<div class="top-bar">
+  <a class="brand" href="../">
+    <img src="../controller-overlay/src/assets/icon.png" alt="icon">
+    3D Controller Overlay
+  </a>
+  <div class="download-buttons">
+    <a class="dl-btn mac" href="#" id="dl-mac" title="Download for macOS">
+      <svg viewBox="0 0 24 24"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+      <span>macOS</span>
+    </a>
+    <a class="dl-btn win" href="#" id="dl-win" title="Download for Windows">
+      <svg viewBox="0 0 24 24"><path d="M3 12V6.75l6-1.32v6.48L3 12zm6.73-.07l8.27-.9V3.31l-8.27 1.82v6.8zM18 12.08l-8.27.9v6.81l8.27 1.82V12.08zM9 12.09l-6 .09v5.16l6 1.32v-6.57z"/></svg>
+      <span>Windows</span>
+    </a>
+  </div>
+</div>
+
+<!-- Embedded overlay (reuses the same source) -->
+<div id="overlay-frame">
+  <iframe src="overlay.html" allow="gamepad; hid" id="overlay-iframe"></iframe>
+</div>
+
+<!-- Connection hint -->
+<div class="connect-hint" id="connect-hint">
+  <strong>Connect a controller</strong> to see it live.<br>
+  Use the <span class="hint-key">gear icon</span> (top-right) for settings, colors, and gyro.
+  <br>WebHID gyro requires <strong>HTTPS</strong> or <strong>localhost</strong>.
+</div>
+
+<!-- Info button -->
+<button class="info-toggle" id="info-toggle" title="About">i</button>
+
+<!-- Info panel -->
+<div class="info-panel" id="info-panel">
+  <h3>3D Controller Overlay</h3>
+  <p>Real-time 3D visualization for streamers — shows button presses, trigger pulls, stick deflection, touchpad, and gyro orientation.</p>
+  <ul>
+    <li><span class="tag">DualSense</span> Full support — gyro, touchpad, all buttons</li>
+    <li><span class="tag">Switch Pro</span> Detected — basic support</li>
+    <li><span class="tag">Xbox</span> Detected — basic support</li>
+  </ul>
+  <h3 style="margin-top:14px;">Desktop App Features</h3>
+  <ul>
+    <li>Transparent click-through overlay</li>
+    <li>System tray with quick settings</li>
+    <li>Always-on-top window</li>
+    <li>Works with OBS, Streamlabs, etc.</li>
+  </ul>
+</div>
+
+<script>
+  // Toggle info panel
+  const infoToggle = document.getElementById('info-toggle');
+  const infoPanel = document.getElementById('info-panel');
+  infoToggle.addEventListener('click', () => {
+    infoPanel.classList.toggle('visible');
+  });
+
+  // Hide connection hint once iframe reports a gamepad
+  const iframe = document.getElementById('overlay-iframe');
+  const hint = document.getElementById('connect-hint');
+  // Listen for gamepad events in the parent window too
+  window.addEventListener('gamepadconnected', () => {
+    hint.style.display = 'none';
+  });
+
+  // Download links — point to latest GitHub Release artifacts
+  const repo = 'petegordon/Tandemonium';
+  const dlMac = document.getElementById('dl-mac');
+  const dlWin = document.getElementById('dl-win');
+  dlMac.href = `https://github.com/${repo}/releases/latest/download/3D-Controller-Overlay.dmg`;
+  dlWin.href = `https://github.com/${repo}/releases/latest/download/3D-Controller-Overlay-Setup.exe`;
+</script>
+</body>
+</html>

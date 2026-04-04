@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Base URL so relative paths (model, assets) resolve against the overlay src dir -->
+<base href="../controller-overlay/src/">
+<title>3D Controller Overlay</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #eee;
+    user-select: none;
+  }
+
+  #canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ── Drag region (top bar) — no-op in browser ── */
+  #drag-bar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 28px;
+    z-index: 100;
+  }
+
+  /* ── Settings gear ── */
+  #settings-toggle {
+    position: fixed;
+    top: 6px; right: 8px;
+    width: 28px; height: 28px;
+    background: rgba(255,255,255,0.12);
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 110;
+    transition: background 0.2s;
+  }
+  #settings-toggle:hover { background: rgba(255,255,255,0.25); }
+  #settings-toggle svg { fill: #ccc; width: 16px; height: 16px; }
+
+  /* ── Settings panel ── */
+  #settings-panel {
+    position: fixed;
+    top: 38px; right: 8px;
+    width: 240px;
+    background: rgba(30,30,35,0.92);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 14px;
+    z-index: 120;
+    display: none;
+    backdrop-filter: blur(10px);
+  }
+  #settings-panel.visible { display: block; }
+
+  #settings-panel h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+  .setting-row label { color: #bbb; }
+
+  .setting-row select,
+  .setting-row button {
+    background: rgba(255,255,255,0.08);
+    color: #eee;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 5px;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .setting-row select:hover,
+  .setting-row button:hover {
+    background: rgba(255,255,255,0.15);
+  }
+
+  .setting-row input[type="color"] {
+    width: 32px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    -webkit-appearance: none;
+  }
+  .setting-row input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+  .setting-row input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+  .camera-presets {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+  }
+  .camera-presets button {
+    flex: 1;
+    min-width: 48px;
+    text-align: center;
+    padding: 4px 2px;
+    font-size: 10px;
+  }
+
+  /* ── Status badges ── */
+  #status-bar {
+    position: fixed;
+    top: 8px; right: 42px;
+    display: flex;
+    gap: 6px;
+    z-index: 110;
+    align-items: center;
+  }
+  .status-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(0,0,0,0.5);
+    color: #888;
+    white-space: nowrap;
+  }
+  .status-badge.connected { color: #4f4; background: rgba(0,80,0,0.5); }
+
+  /* ── Click-through indicator — hidden in browser ── */
+  #click-through-indicator { display: none; }
+</style>
+</head>
+<body>
+
+<div id="drag-bar"></div>
+
+<button id="settings-toggle" title="Settings">
+  <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84a.48.48 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87a.48.48 0 0 0 .12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+</button>
+
+<div id="settings-panel">
+  <h3>Controller Overlay</h3>
+
+  <div class="setting-row">
+    <label>Controller</label>
+    <select id="controller-type">
+      <option value="auto">Auto-detect</option>
+      <option value="dualsense">DualSense</option>
+      <option value="switch-pro">Switch Pro</option>
+      <option value="xbox">Xbox</option>
+    </select>
+  </div>
+
+  <div class="setting-row">
+    <label>Gyro (WebHID)</label>
+    <button id="connect-gyro-btn">Connect</button>
+  </div>
+
+  <div class="setting-row">
+    <label>Drift Correction</label>
+    <select id="drift-mode">
+      <option value="off">Off</option>
+      <option value="gentle" selected>Gentle</option>
+      <option value="strong">Strong</option>
+    </select>
+  </div>
+
+  <div class="setting-row">
+    <label>Opacity</label>
+    <input type="range" id="opacity-slider" min="10" max="100" value="100" style="width:90px;accent-color:#3388ff;">
+    <span id="opacity-value" style="min-width:28px;text-align:right;font-size:11px;">100%</span>
+  </div>
+
+  <div class="setting-row">
+    <label>Body Color</label>
+    <input type="color" id="body-color" value="#e8e8ec">
+  </div>
+
+  <div class="setting-row">
+    <label>Accent Color</label>
+    <input type="color" id="accent-color" value="#1a1a1e">
+  </div>
+
+  <div class="setting-row">
+    <label>Camera</label>
+  </div>
+  <div class="camera-presets">
+    <button data-preset="front">Front</button>
+    <button data-preset="back">Back</button>
+    <button data-preset="top">Top</button>
+    <button data-preset="left">Left</button>
+    <button data-preset="right">Right</button>
+    <button data-preset="player">Player</button>
+  </div>
+</div>
+
+<div id="status-bar">
+  <span class="status-badge" id="gamepad-status">No gamepad</span>
+  <span class="status-badge" id="gyro-status">Gyro: off</span>
+</div>
+
+<div id="click-through-indicator"></div>
+
+<canvas id="canvas"></canvas>
+
+<!-- CDN import map — no local Three.js build required -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+<!-- Reuse the exact same JS from the Electron overlay -->
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
