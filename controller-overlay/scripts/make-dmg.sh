@@ -10,7 +10,7 @@ APP_NAME="3D Controller Overlay"
 DMG_NAME="3D-Controller-Overlay"
 VOLUME_NAME="$APP_NAME"
 ICON_PATH="src/assets/icon.icns"
-SIZE="300m"
+SIZE="500m"
 
 cd "$(dirname "$0")/.."
 

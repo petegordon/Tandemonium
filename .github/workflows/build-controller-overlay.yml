@@ -22,21 +22,18 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: controller-overlay/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Package app
-        run: npx electron-forge package --arch universal
+      - name: Package and create ZIP
+        run: npx electron-forge make --arch universal --targets @electron-forge/maker-zip
 
       - name: Create DMG
         run: bash scripts/make-dmg.sh
-
-      - name: Create ZIP
-        run: npx electron-forge make --targets @electron-forge/maker-zip
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
@@ -60,7 +57,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: controller-overlay/package-lock.json
 
@@ -123,8 +120,9 @@ jobs:
             - **Windows**: `.exe` (Squirrel installer) or `.zip` (portable)
 
             ### What's included
-            - Real-time 3D controller visualization (DualSense, Switch Pro, Xbox)
+            - Real-time 3D controller visualization (DualSense, Switch Pro)
             - Gyro, touchpad, button/trigger/stick input display
+            - Gyro HUD with arc sweep indicator and lean arrows
             - Transparent click-through overlay for OBS/streaming
             - Body/accent color customization, camera presets
           files: release-assets/*
