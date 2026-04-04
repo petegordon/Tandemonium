@@ -106,6 +106,132 @@ const _identityQuat = new THREE.Quaternion();
 const isDesktop = typeof window !== 'undefined' &&
   (window.electronAPI || navigator.userAgent.includes('Electron'));
 
+// ── Gyro HUD ──
+const gyroHud = document.getElementById('gyro-hud');
+const arcNeedle = document.getElementById('arc-needle');
+const arcBand = document.getElementById('arc-band');
+const arcTicks = document.getElementById('arc-ticks');
+const leanArrowLeft = document.getElementById('lean-arrow-left');
+const leanArrowRight = document.getElementById('lean-arrow-right');
+const calibHint = document.getElementById('calib-hint');
+const GYRO_HUD_MAX_DEG = 40; // ±40° matches game's gyro sensitivity
+let calibHintTimer = null;
+let driftCheckAccum = 0;
+let driftCheckLastLean = 0;
+const _hudEuler = new THREE.Euler();
+
+// Build the static arc band and tick marks
+function initGyroHud() {
+  const R = 100; // arc radius in SVG units
+  const bandW = 10;
+  const maxRad = GYRO_HUD_MAX_DEG * Math.PI / 180;
+
+  // Arc band path (circular arc from -maxDeg to +maxDeg, opening downward)
+  const steps = 40;
+  let d = '';
+  for (let i = 0; i <= steps; i++) {
+    const a = -maxRad + (2 * maxRad * i / steps);
+    const x = Math.sin(a) * (R - bandW / 2);
+    const y = -Math.cos(a) * (R - bandW / 2);
+    d += (i === 0 ? 'M' : 'L') + x.toFixed(2) + ',' + y.toFixed(2);
+  }
+  for (let i = steps; i >= 0; i--) {
+    const a = -maxRad + (2 * maxRad * i / steps);
+    const x = Math.sin(a) * (R + bandW / 2);
+    const y = -Math.cos(a) * (R + bandW / 2);
+    d += 'L' + x.toFixed(2) + ',' + y.toFixed(2);
+  }
+  d += 'Z';
+  arcBand.setAttribute('d', d);
+
+  // Tick marks at 0%, ±25%, ±50%, ±75%, ±100%
+  let ticksHtml = '';
+  for (const pct of [0, 0.25, 0.5, 0.75, 1.0]) {
+    for (const sign of (pct === 0 ? [1] : [-1, 1])) {
+      const a = sign * pct * maxRad;
+      const isMajor = pct === 0 || pct === 1.0;
+      const inner = R - (isMajor ? 14 : 10);
+      const outer = R + (isMajor ? 14 : 10);
+      const x1 = Math.sin(a) * inner, y1 = -Math.cos(a) * inner;
+      const x2 = Math.sin(a) * outer, y2 = -Math.cos(a) * outer;
+      const sw = isMajor ? 1.2 : 0.6;
+      const op = isMajor ? 0.5 : 0.25;
+      ticksHtml += `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke-width="${sw}" opacity="${op}"/>`;
+    }
+  }
+  arcTicks.innerHTML = ticksHtml;
+}
+
+function leanColor(t) {
+  // t: 0 (center) to 1 (max lean)
+  const abs = Math.min(1, Math.abs(t));
+  if (abs < 0.5) return '#ffffff';
+  if (abs < 0.75) return '#ffaa22';
+  return '#ff4444';
+}
+
+function updateGyroHud(leanDeg) {
+  if (!gyroHud.classList.contains('visible')) return;
+
+  const t = Math.max(-1, Math.min(1, leanDeg / GYRO_HUD_MAX_DEG)); // -1 to 1
+  const absT = Math.abs(t);
+  const R = 100;
+  const maxRad = GYRO_HUD_MAX_DEG * Math.PI / 180;
+
+  // Needle rotation
+  const needleAngle = t * maxRad;
+  const nx1 = Math.sin(needleAngle) * 4, ny1 = -Math.cos(needleAngle) * 4;
+  const nx2 = Math.sin(needleAngle) * 22, ny2 = -Math.cos(needleAngle) * 22;
+  // Use line from near-center to arc
+  const nx2f = Math.sin(needleAngle) * (R - 2);
+  const ny2f = -Math.cos(needleAngle) * (R - 2);
+  arcNeedle.setAttribute('x1', nx1.toFixed(2));
+  arcNeedle.setAttribute('y1', ny1.toFixed(2));
+  arcNeedle.setAttribute('x2', nx2f.toFixed(2));
+  arcNeedle.setAttribute('y2', ny2f.toFixed(2));
+  const color = leanColor(t);
+  arcNeedle.setAttribute('stroke', color);
+
+  // Arrows + calibration text match needle color
+  calibHint.style.color = color;
+  leanArrowLeft.style.opacity = t < -0.05 ? Math.min(1, absT * 1.5) : 0.1;
+  leanArrowLeft.style.color = t < -0.05 ? color : '#888';
+  leanArrowRight.style.opacity = t > 0.05 ? Math.min(1, absT * 1.5) : 0.1;
+  leanArrowRight.style.color = t > 0.05 ? color : '#888';
+}
+
+function showGyroHud() {
+  gyroHud.classList.add('visible');
+  applyHudPosition();
+}
+function hideGyroHud() { gyroHud.classList.remove('visible'); }
+
+function applyHudPosition() {
+  const pos = document.getElementById('hud-position')?.value || 'above';
+  gyroHud.classList.remove('pos-above', 'pos-below');
+  gyroHud.classList.add('pos-' + pos);
+}
+
+function showCalibHint(text, duration) {
+  calibHint.textContent = text;
+  calibHint.classList.remove('hidden');
+  if (calibHintTimer) clearTimeout(calibHintTimer);
+  if (duration) {
+    calibHintTimer = setTimeout(() => {
+      calibHint.classList.add('hidden');
+      calibHintTimer = null;
+    }, duration);
+  }
+}
+
+function hideCalibHint() {
+  calibHint.classList.add('hidden');
+  if (calibHintTimer) { clearTimeout(calibHintTimer); calibHintTimer = null; }
+}
+
+initGyroHud();
+applyHudPosition();
+
 // ── Initialize ──
 async function init() {
   // Detect what's connected — if nothing, don't load a model yet
@@ -392,6 +518,7 @@ async function connectControllerGyro() {
   gyroPermitted = true;
   connectGyroBtn.textContent = 'Connected';
   updateGyroToggle();
+  showGyroHud();
   console.log('Gyro connected:', device.productName);
 
   startCalibration();
@@ -420,6 +547,8 @@ async function disconnectGyro() {
   gyroBias.x = gyroBias.y = gyroBias.z = 0;
   connectGyroBtn.textContent = 'Connect';
   updateGyroToggle();
+  hideGyroHud();
+  hideCalibHint();
 }
 
 // ── Main loop ──
@@ -453,6 +582,28 @@ function loop() {
   }
 
   overlay.update(gamepad, gyroActive ? gyroOrientation : null);
+
+  // Update gyro HUD
+  if (gyroActive) {
+    _hudEuler.setFromQuaternion(gyroOrientation, 'XYZ');
+    const leanDeg = -_hudEuler.z * (180 / Math.PI);
+    updateGyroHud(leanDeg);
+
+    // Drift detection: lean angle changing while controller is stationary
+    if (!calibrating) {
+      const leanDelta = Math.abs(leanDeg - driftCheckLastLean);
+      driftCheckLastLean = leanDeg;
+      if (leanDelta > 0.02 && leanDelta < 0.5) {
+        driftCheckAccum += leanDelta;
+      } else {
+        driftCheckAccum = Math.max(0, driftCheckAccum - 0.1);
+      }
+      if (driftCheckAccum > 15) {
+        showCalibHint(comboName(combos.calibrate) + ' to recalibrate', 5000);
+        driftCheckAccum = 0;
+      }
+    }
+  }
 }
 
 function toggleSettings() {
@@ -469,10 +620,12 @@ async function toggleGyro() {
     gyroOrientation.identity();
     lastGyroTime = 0;
     updateGyroToggle();
+    hideGyroHud();
   } else if (gyroPermitted && hidDevice) {
     gyroActive = true;
     startCalibration();
     updateGyroToggle();
+    showGyroHud();
   } else {
     try { await connectControllerGyro(); } catch (e) { /* */ }
   }
@@ -483,7 +636,7 @@ let settingsFocusIndex = 0;
 const navPrevState = { up: false, down: false, left: false, right: false, a: false, b: false };
 
 function getSettingRows() {
-  return Array.from(settingsPanel.querySelectorAll('.setting-row'));
+  return Array.from(settingsPanel.querySelectorAll('.setting-row, .camera-presets'));
 }
 
 function navigateSettings(gamepad) {
@@ -509,23 +662,43 @@ function navigateSettings(gamepad) {
 
   const row = rows[settingsFocusIndex];
   if (row) {
-    const select = row.querySelector('select');
-    const checkbox = row.querySelector('input[type="checkbox"]');
-    const slider = row.querySelector('input[type="range"]');
-    const button = row.querySelector('button');
-    const colorInput = row.querySelector('input[type="color"]');
+    // Camera presets row — left/right highlights, A confirms selection
+    if (row.classList.contains('camera-presets')) {
+      const btns = Array.from(row.querySelectorAll('button'));
+      // Track a hover/focus index within this row
+      let hoverIdx = btns.findIndex(b => b.classList.contains('nav-hover'));
+      if (hoverIdx === -1) hoverIdx = btns.findIndex(b => b.classList.contains('selected'));
 
-    if (left && !navPrevState.left) {
-      if (select) { select.selectedIndex = Math.max(0, select.selectedIndex - 1); select.dispatchEvent(new Event('change')); }
-      if (slider) { slider.value = Math.max(+slider.min, +slider.value - 5); slider.dispatchEvent(new Event('input')); }
-    }
-    if (right && !navPrevState.right) {
-      if (select) { select.selectedIndex = Math.min(select.options.length - 1, select.selectedIndex + 1); select.dispatchEvent(new Event('change')); }
-      if (slider) { slider.value = Math.min(+slider.max, +slider.value + 5); slider.dispatchEvent(new Event('input')); }
-    }
-    if (a && !navPrevState.a) {
-      if (checkbox) { checkbox.checked = !checkbox.checked; checkbox.dispatchEvent(new Event('change')); }
-      if (button) button.click();
+      if (left && !navPrevState.left) {
+        hoverIdx = Math.max(0, (hoverIdx === -1 ? btns.length : hoverIdx) - 1);
+        highlightPresetBtn(btns, hoverIdx);
+      }
+      if (right && !navPrevState.right) {
+        hoverIdx = Math.min(btns.length - 1, (hoverIdx === -1 ? -1 : hoverIdx) + 1);
+        highlightPresetBtn(btns, hoverIdx);
+      }
+      if (a && !navPrevState.a && hoverIdx >= 0 && hoverIdx < btns.length) {
+        selectCameraPreset(btns[hoverIdx].dataset.preset);
+        clearPresetHover();
+      }
+    } else {
+      const select = row.querySelector('select');
+      const checkbox = row.querySelector('input[type="checkbox"]');
+      const slider = row.querySelector('input[type="range"]');
+      const button = row.querySelector('button');
+
+      if (left && !navPrevState.left) {
+        if (select) { select.selectedIndex = Math.max(0, select.selectedIndex - 1); select.dispatchEvent(new Event('change')); }
+        if (slider) { slider.value = Math.max(+slider.min, +slider.value - 5); slider.dispatchEvent(new Event('input')); }
+      }
+      if (right && !navPrevState.right) {
+        if (select) { select.selectedIndex = Math.min(select.options.length - 1, select.selectedIndex + 1); select.dispatchEvent(new Event('change')); }
+        if (slider) { slider.value = Math.min(+slider.max, +slider.value + 5); slider.dispatchEvent(new Event('input')); }
+      }
+      if (a && !navPrevState.a) {
+        if (checkbox) { checkbox.checked = !checkbox.checked; checkbox.dispatchEvent(new Event('change')); }
+        if (button) button.click();
+      }
     }
   }
 
@@ -538,7 +711,16 @@ function navigateSettings(gamepad) {
   navPrevState.a = a; navPrevState.b = b;
 }
 
+function highlightPresetBtn(btns, idx) {
+  btns.forEach((b, i) => b.classList.toggle('nav-hover', i === idx));
+}
+
+function clearPresetHover() {
+  document.querySelectorAll('.camera-presets button.nav-hover').forEach(b => b.classList.remove('nav-hover'));
+}
+
 function updateSettingsFocus() {
+  clearPresetHover();
   const rows = getSettingRows();
   rows.forEach((r, i) => {
     r.style.background = i === settingsFocusIndex ? 'rgba(51,136,255,0.15)' : '';
@@ -674,6 +856,9 @@ function startCalibration() {
   calibRetries = 0;
   gyroOrientation.identity();
   lastGyroTime = 0;
+  // Reset camera to selected preset on calibration
+  overlay.setCameraPreset(selectedCameraPreset);
+  showCalibHint('Calibrating...', null);
 }
 
 function finishCalibration() {
@@ -711,6 +896,9 @@ function finishCalibration() {
   calibSamples = [];
   gyroOrientation.identity();
   lastGyroTime = 0;
+  driftCheckAccum = 0;
+  driftCheckLastLean = 0;
+  showCalibHint(comboName(combos.calibrate) + ' to recalibrate', 3000);
   console.log('Gyro calibrated, bias:', gyroBias, 'stddev:', maxStd.toFixed(1));
 }
 
@@ -784,6 +972,8 @@ connectGyroBtn.addEventListener('click', async () => {
   }
 });
 
+document.getElementById('hud-position').addEventListener('change', () => applyHudPosition());
+
 driftModeSelect.addEventListener('change', (e) => {
   driftMode = e.target.value;
 });
@@ -801,9 +991,24 @@ const accentColorInput = document.getElementById('accent-color');
 bodyColorInput.addEventListener('input', (e) => overlay.setBodyColor(e.target.value));
 accentColorInput.addEventListener('input', (e) => overlay.setAccentColor(e.target.value));
 
-document.querySelectorAll('.camera-presets button').forEach((btn) => {
-  btn.addEventListener('click', () => overlay.setCameraPreset(btn.dataset.preset));
+// Camera presets — one selected at a time, used as calibration view
+let selectedCameraPreset = 'player';
+const cameraPresetBtns = document.querySelectorAll('.camera-presets button');
+
+function selectCameraPreset(preset) {
+  selectedCameraPreset = preset;
+  if (overlay) overlay.setCameraPreset(preset);
+  cameraPresetBtns.forEach(b => {
+    b.classList.toggle('selected', b.dataset.preset === preset);
+  });
+}
+
+cameraPresetBtns.forEach((btn) => {
+  btn.addEventListener('click', () => selectCameraPreset(btn.dataset.preset));
 });
+
+// Set default selection (overlay not ready yet, just highlights the button)
+selectCameraPreset('player');
 
 // ── Window display toggles (cosmetic only — never affects functionality) ──
 const showTitleCheck = document.getElementById('show-title');

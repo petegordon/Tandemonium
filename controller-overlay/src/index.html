@@ -226,6 +226,16 @@
     text-align: center;
     padding: 4px 2px;
     font-size: 10px;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .camera-presets button.selected {
+    background: rgba(51,136,255,0.3);
+    border-color: rgba(51,136,255,0.6);
+    color: #fff;
+  }
+  .camera-presets button.nav-hover {
+    outline: 2px solid rgba(255,255,255,0.6);
+    outline-offset: 1px;
   }
 
   /* ── Status badges (top-right, left of gear) ── */
@@ -305,6 +315,54 @@
     opacity: 0.85;
   }
 
+  /* ── Gyro HUD (arc, arrows, calibration text) ── */
+  #gyro-hud {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 40;
+  }
+  #gyro-hud.visible { display: block; position: fixed; }
+
+  #gyro-hud.pos-below { bottom: 4%; }
+  #gyro-hud.pos-above { top: 4%; }
+
+  #arc-svg {
+    display: block;
+    width: min(55vw, 240px);
+    height: auto;
+  }
+
+  .gyro-hud-footer {
+    position: absolute;
+    left: 0; right: 0;
+    top: 48%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  #lean-arrow-left, #lean-arrow-right {
+    font-size: 18px;
+    opacity: 0.1;
+    transition: opacity 0.05s;
+    user-select: none;
+  }
+
+  #calib-hint {
+    font-size: 9px;
+    color: rgba(255,255,255,0.5);
+    text-align: center;
+    transition: opacity 0.5s;
+    min-width: 100px;
+  }
+  #calib-hint.hidden { opacity: 0; }
+
   /* ── Click-through indicator ── */
   #click-through-indicator {
     position: fixed;
@@ -378,13 +436,23 @@
   <div class="setting-row">
     <label>Camera</label>
   </div>
-  <div class="camera-presets">
+  <div class="camera-presets" data-row="0">
     <button data-preset="front">Front</button>
     <button data-preset="back">Back</button>
-    <button data-preset="top">Top</button>
     <button data-preset="left">Left</button>
     <button data-preset="right">Right</button>
+  </div>
+  <div class="camera-presets" data-row="1">
     <button data-preset="player">Player</button>
+    <button data-preset="top">Top</button>
+  </div>
+
+  <div class="setting-row">
+    <label>HUD Position</label>
+    <select id="hud-position">
+      <option value="above" selected>Above</option>
+      <option value="below">Below</option>
+    </select>
   </div>
 
   <hr class="settings-divider">
@@ -439,6 +507,25 @@
 <!-- Status indicator -->
 <div id="status-bar">
   <span class="status-badge" id="gamepad-status">No gamepad</span>
+</div>
+
+<!-- Gyro HUD -->
+<div id="gyro-hud">
+  <svg id="arc-svg" viewBox="-120 -105 240 115">
+    <!-- Arc band background -->
+    <path id="arc-band" d="" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.15)" stroke-width="0.5"/>
+    <!-- Tick marks -->
+    <g id="arc-ticks" stroke="rgba(255,255,255,0.3)" stroke-width="0.8"></g>
+    <!-- Needle -->
+    <line id="arc-needle" x1="0" y1="-4" x2="0" y2="-22" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+    <!-- Center dot -->
+    <circle cx="0" cy="0" r="2" fill="rgba(255,255,255,0.4)"/>
+  </svg>
+  <div class="gyro-hud-footer">
+    <span id="lean-arrow-left">&#x25C0;</span>
+    <span id="calib-hint" class="hidden"></span>
+    <span id="lean-arrow-right">&#x25B6;</span>
+  </div>
 </div>
 
 <!-- No-controller splash (shown until a gamepad connects) -->
