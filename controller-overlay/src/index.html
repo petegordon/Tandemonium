@@ -549,13 +549,18 @@
 <!-- WebGL canvas -->
 <canvas id="canvas"></canvas>
 
-<script type="importmap">
-{
-  "imports": {
-    "three": "./lib/three.module.js",
-    "three/addons/": "./lib/addons/"
-  }
-}
+<script>
+// Dynamic importmap: use local vendor files in Electron, CDN on the web
+(function() {
+  const isElectron = navigator.userAgent.includes('Electron');
+  const map = isElectron
+    ? { "three": "./lib/three.module.js", "three/addons/": "./lib/addons/" }
+    : { "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/" };
+  const el = document.createElement('script');
+  el.type = 'importmap';
+  el.textContent = JSON.stringify({ imports: map });
+  document.currentScript.after(el);
+})();
 </script>
 <script type="module" src="js/app.js"></script>
 </body>
