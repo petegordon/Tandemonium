@@ -560,13 +560,13 @@ function loop() {
   const gamepad = readGamepad();
 
   if (gamepad) {
-    // Remap capture mode — capture pressed buttons instead of normal combos
-    if (remapTarget) {
+    // Exit confirmation dialog takes priority
+    if (exitConfirm.classList.contains('visible')) {
+      navigateExitDialog(gamepad);
+    } else if (remapTarget) {
       captureRemap(gamepad);
     } else if (settingsPanel.classList.contains('visible')) {
-      // Gamepad navigation inside settings
       navigateSettings(gamepad);
-      // Settings combo still works to close
       checkCombo(gamepad, 'settings', toggleSettings);
     } else {
       // Normal combo detection
@@ -729,6 +729,33 @@ function updateSettingsFocus() {
   if (rows[settingsFocusIndex]) {
     rows[settingsFocusIndex].scrollIntoView({ block: 'nearest' });
   }
+}
+
+// ── Exit dialog navigation ──
+let exitFocusIdx = 0;
+const exitDialogPrev = { left: false, right: false, a: false, b: false };
+
+function navigateExitDialog(gamepad) {
+  const btns = [document.getElementById('exit-cancel'), document.getElementById('exit-yes')];
+
+  const left = gamepad.buttons[14]?.pressed || (gamepad.axes[0] < -0.5);
+  const right = gamepad.buttons[15]?.pressed || (gamepad.axes[0] > 0.5);
+  const a = gamepad.buttons[0]?.pressed;
+  const b = gamepad.buttons[1]?.pressed;
+
+  if (left && !exitDialogPrev.left) exitFocusIdx = 0;
+  if (right && !exitDialogPrev.right) exitFocusIdx = 1;
+
+  btns.forEach((btn, i) => {
+    btn.style.outline = i === exitFocusIdx ? '2px solid #fff' : '';
+    btn.style.outlineOffset = i === exitFocusIdx ? '2px' : '';
+  });
+
+  if (a && !exitDialogPrev.a) btns[exitFocusIdx].click();
+  if (b && !exitDialogPrev.b) document.getElementById('exit-cancel').click();
+
+  exitDialogPrev.left = left; exitDialogPrev.right = right;
+  exitDialogPrev.a = a; exitDialogPrev.b = b;
 }
 
 // ── Remap capture ──
@@ -918,6 +945,7 @@ document.getElementById('btn-close-settings').addEventListener('click', () => {
 const exitConfirm = document.getElementById('exit-confirm');
 
 document.getElementById('btn-exit-app').addEventListener('click', () => {
+  exitFocusIdx = 0; // default to Cancel
   exitConfirm.classList.add('visible');
 });
 
