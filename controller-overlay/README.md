@@ -73,7 +73,7 @@ By default, the overlay shows only the 3D controller and gyro HUD — no title b
 
 ## Credits
 
-3D controller models (OBJ) sourced from [larfingshnew/3d-controller-overlay](https://github.com/larfingshnew/3d-controller-overlay) and converted to GLB format using the included conversion scripts.
+Inspired by [larfingshnew/3d-controller-overlay](https://github.com/larfingshnew/3d-controller-overlay), a C++/OpenGL desktop application for Windows. This project reimplements the concept using Three.js and Electron to provide a cross-platform, web-compatible version for macOS and Windows. 3D controller models (OBJ) sourced from that repository and converted to GLB format using the included conversion scripts.
 
 ## License
 
