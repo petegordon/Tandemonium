@@ -100,15 +100,19 @@ export class ControllerOverlay {
     this.controls.minDistance = 0.1;
     this.controls.maxDistance = 2;
 
-    // Lighting — studio setup
-    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+    // Lighting — studio setup with strong front light
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     this.scene.add(ambient);
 
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
     keyLight.position.set(2, 3, 2);
     this.scene.add(keyLight);
 
-    const fillLight = new THREE.DirectionalLight(0xb0c4de, 0.4);
+    const frontLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    frontLight.position.set(0, 1, 3);
+    this.scene.add(frontLight);
+
+    const fillLight = new THREE.DirectionalLight(0xb0c4de, 0.5);
     fillLight.position.set(-2, 1, -1);
     this.scene.add(fillLight);
 
