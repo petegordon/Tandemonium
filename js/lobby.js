@@ -3608,6 +3608,11 @@ export class Lobby {
   _onLocalJoinClick(sourceType, gamepadSlot) {
     // Guard: if the monitor hasn't seen a P2 path, bail.
     if (sourceType !== 'gamepad' && sourceType !== 'keyboard') return;
+    // Record that local JOIN RIDE won the race vs. any pending online stoker.
+    analytics.trackEvent('room_local_claimed', {
+      p2_source: sourceType,
+      had_net: !!this.net,
+    });
     // Tear down the online MP attempt so the TNDM-XXXX room stops accepting
     // remote stokers. Any in-flight online connection gets rejected.
     if (this.net) {

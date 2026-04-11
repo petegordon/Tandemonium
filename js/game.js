@@ -907,6 +907,10 @@ class Game {
     const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
     if (partnerTitle) partnerTitle.textContent = 'PLAYER 2';
 
+    // Tag the body so local-mode-specific CSS (contribution bar recolor, etc.)
+    // can take effect. Cleared in _returnToLobby.
+    document.body.classList.add('mode-local');
+
     // Show instructions (tap to start)
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
@@ -2291,6 +2295,7 @@ class Game {
       // Re-enable P1 keyboard in case local MP had parked it (P2-keyboard case)
       this.input.keyboardActive = true;
     }
+    document.body.classList.remove('mode-local');
     // Room stays in recent rooms list for 5 min so players can rejoin
     this.mode = 'solo';
     this._lobbyBtn.textContent = 'LOBBY';
