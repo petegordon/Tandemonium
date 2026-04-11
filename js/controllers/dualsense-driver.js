@@ -17,7 +17,6 @@ export class DualSenseDriver extends ControllerDriver {
 
   constructor(device, connectionType) {
     super(device, connectionType);
-    this._btSeq = 0;              // 4-bit BT output sequence counter
     this._rumbleStopTimer = null;
   }
 
@@ -177,8 +176,10 @@ export class DualSenseDriver extends ControllerDriver {
         await this._sendRumbleUSB(strongByte, weakByte);
       }
     } catch (err) {
-      // Swallow: rumble is best-effort. Log once at debug level.
-      console.debug('DualSense setRumble failed:', err.message);
+      // Rumble is best-effort, but surface the failure at warn level so
+      // misconfigured packet layouts or permission errors are visible
+      // instead of silently disabled.
+      console.warn('DualSense setRumble failed:', err.message);
       return;
     }
 
@@ -197,71 +198,93 @@ export class DualSenseDriver extends ControllerDriver {
   }
 
   /**
-   * USB output report 0x02: first byte is a feature mask (0x01 = rumble on),
-   * second byte is a secondary flag mask (0x00 for rumble-only), then right
-   * (weak) and left (strong) motor amplitudes. Everything else stays zero —
-   * the report is 47 bytes of feature payload.
+   * USB output report 0x02. WebHID strips the report ID, so the payload
+   * is the 47-byte feature-map body:
+   *   [0] valid_flag0 = 0x03 (ENABLE_RUMBLE_EMU | HAPTICS_SELECT)
+   *   [1] valid_flag1 = 0x00
+   *   [2] motor_right (weak rumble)
+   *   [3] motor_left  (strong rumble)
+   *   rest untouched (0)
+   * Using 0x03 instead of just 0x01 hits both the legacy rumble-emulation
+   * bit AND the haptic select bit, which is what most known-working
+   * DualSense drivers (Linux hid-playstation, pydualsense, DS4Windows) do
+   * to cover variations across firmware revisions.
    */
   async _sendRumbleUSB(strongByte, weakByte) {
     const payload = new Uint8Array(47);
-    payload[0] = 0x01;          // feature flags 1: enable compatible rumble
-    payload[1] = 0x00;          // feature flags 2
-    payload[2] = weakByte;      // right motor (weak)
-    payload[3] = strongByte;    // left  motor (strong)
+    payload[0] = 0x03;          // valid_flag0: enable rumble emu + haptics select
+    payload[1] = 0x00;          // valid_flag1
+    payload[2] = weakByte;      // motor_right (weak)
+    payload[3] = strongByte;    // motor_left  (strong)
     await this.device.sendReport(0x02, payload);
   }
 
   /**
-   * BT output report 0x31 wraps the same feature payload with a flags/seq
-   * byte pair at the front and a CRC-32/MPEG-2 trailer at the end. The CRC
-   * is computed over a synthetic packet that includes the HID "output"
-   * transfer-type byte (0xA2) and the report ID itself — a DualSense
-   * firmware-level integrity check that doesn't go on the wire.
+   * BT output report 0x31. The full on-wire packet is 78 bytes including
+   * the report ID; WebHID's sendReport() strips the report ID so the
+   * payload handed to the API is 77 bytes.
+   *
+   * Layout (payload offsets, matching pydualsense which is known-working):
+   *   [0]    = 0x02 (data tag — this is NOT the feature byte; required
+   *                  by DualSense firmware to identify the packet type)
+   *   [1]    = valid_flag0 = 0x03 (rumble emu + haptic select)
+   *   [2]    = valid_flag1 = 0x00
+   *   [3]    = motor_right (weak rumble)
+   *   [4]    = motor_left  (strong rumble)
+   *   [5..72] = 0 (LEDs, trigger effects, etc. — untouched)
+   *   [73..76] = CRC-32 (little-endian) computed over [0xA2, 0x31, [0..72]]
+   *
+   * The CRC-32 variant is the STANDARD reflected CRC-32 (same as zlib /
+   * IEEE 802.3 — polynomial 0xEDB88320 in reflected form, init 0xFFFFFFFF,
+   * xorout 0xFFFFFFFF). This matches what Linux's hid-playstation driver
+   * computes with crc32_le() and what pydualsense uses via binascii.crc32.
+   * An earlier attempt used CRC-32/MPEG-2 (non-reflected); that's wrong
+   * for DualSense and made every packet get rejected silently.
+   *
+   * The 0xA2 seed byte prepended to the CRC input is the HID SET_REPORT
+   * OUTPUT transfer-type byte — a protocol-level value that the device
+   * folds into its integrity check but never appears on the wire.
    */
   async _sendRumbleBT(strongByte, weakByte) {
-    // 78 bytes of wire payload: 1 flags, 1 seq/flags, 1+1 feature mask,
-    // rumble bytes, rest zero, then 4 bytes CRC at the end.
-    const WIRE_LEN = 78;
-    const buf = new Uint8Array(WIRE_LEN);
+    const PAYLOAD_LEN = 77;  // 78-byte wire packet minus the report ID
+    const buf = new Uint8Array(PAYLOAD_LEN);
 
-    this._btSeq = (this._btSeq + 1) & 0x0F;
-    buf[0] = 0x02;              // tag: "DATA" — required for output reports
-    buf[1] = (this._btSeq << 4) | 0x00;
-    buf[2] = 0x01;              // feature flags 1: enable compatible rumble
-    buf[3] = 0x00;              // feature flags 2
-    buf[4] = weakByte;          // right motor (weak)
-    buf[5] = strongByte;        // left  motor (strong)
-    // buf[6..73] = 0 (LED color, trigger effects, etc. — all untouched)
+    buf[0] = 0x02;              // data tag
+    buf[1] = 0x03;              // valid_flag0: rumble emu + haptic select
+    buf[2] = 0x00;              // valid_flag1
+    buf[3] = weakByte;          // motor_right (weak)
+    buf[4] = strongByte;        // motor_left  (strong)
+    // buf[5..72] = 0 (reserved / LED / trigger effects — leave alone)
 
-    // CRC input = 0xA2 || reportId || buf[0..73]
-    const crcInput = new Uint8Array(1 + 1 + (WIRE_LEN - 4));
+    // CRC input: seed (0xA2) + report ID (0x31) + buf[0..72] = 75 bytes
+    const crcInput = new Uint8Array(1 + 1 + (PAYLOAD_LEN - 4));
     crcInput[0] = 0xA2;
     crcInput[1] = 0x31;
-    crcInput.set(buf.subarray(0, WIRE_LEN - 4), 2);
-    const crc = DualSenseDriver._crc32Mpeg2(crcInput);
-    // Little-endian CRC trailer
-    buf[WIRE_LEN - 4] = crc & 0xFF;
-    buf[WIRE_LEN - 3] = (crc >>> 8) & 0xFF;
-    buf[WIRE_LEN - 2] = (crc >>> 16) & 0xFF;
-    buf[WIRE_LEN - 1] = (crc >>> 24) & 0xFF;
+    crcInput.set(buf.subarray(0, PAYLOAD_LEN - 4), 2);
+    const crc = DualSenseDriver._crc32(crcInput);
+    buf[PAYLOAD_LEN - 4] = crc & 0xFF;
+    buf[PAYLOAD_LEN - 3] = (crc >>> 8) & 0xFF;
+    buf[PAYLOAD_LEN - 2] = (crc >>> 16) & 0xFF;
+    buf[PAYLOAD_LEN - 1] = (crc >>> 24) & 0xFF;
 
     await this.device.sendReport(0x31, buf);
   }
 
-  static _crc32Mpeg2(bytes) {
-    // CRC-32/MPEG-2: poly 0x04C11DB7, init 0xFFFFFFFF, refin=false, refout=false, xorout=0
+  /**
+   * Standard reflected CRC-32 (same as zlib / PKZIP / Ethernet).
+   * Polynomial 0xEDB88320 (reversed form of 0x04C11DB7), initial value
+   * 0xFFFFFFFF, final XOR 0xFFFFFFFF, input and output reflected. This is
+   * what DualSense BT output reports expect.
+   */
+  static _crc32(bytes) {
     let crc = 0xFFFFFFFF;
     for (let i = 0; i < bytes.length; i++) {
-      crc ^= bytes[i] << 24;
+      crc ^= bytes[i];
       for (let b = 0; b < 8; b++) {
-        if (crc & 0x80000000) {
-          crc = ((crc << 1) ^ 0x04C11DB7) >>> 0;
-        } else {
-          crc = (crc << 1) >>> 0;
-        }
+        crc = (crc & 1) ? ((crc >>> 1) ^ 0xEDB88320) : (crc >>> 1);
       }
     }
-    return crc >>> 0;
+    return (crc ^ 0xFFFFFFFF) >>> 0;
   }
 
   static detectConnectionType(device) {
