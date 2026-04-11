@@ -817,17 +817,23 @@ export class Lobby {
       }
     });
 
-    // JOIN RIDE button on the host page: local same-screen co-op entry point.
-    // Clicking it transitions the in-flight online session into a local ride.
-    const btnLocalJoin = document.getElementById('btn-local-join-ride');
-    if (btnLocalJoin) {
-      btnLocalJoin.addEventListener('click', () => {
+    // JOIN RIDE buttons on the host page: one per P2 path. Each button
+    // unambiguously commits to a specific device — no auto-picking when
+    // multiple options are present.
+    const btnJoinGp = document.getElementById('btn-local-join-gp');
+    if (btnJoinGp) {
+      btnJoinGp.addEventListener('click', () => {
         const state = this._detectLocalP2State();
-        if (!state.available) return;
-        // Prefer gamepad when both paths are available; the explicit 🎮/⌨️
-        // chooser is a Stage 4 polish item.
-        const sourceType = state.hasGamepad ? 'gamepad' : 'keyboard';
-        this._onLocalJoinClick(sourceType, state.gpIndex);
+        if (!state.hasGamepad || state.gpIndex === null) return;
+        this._onLocalJoinClick('gamepad', state.gpIndex);
+      });
+    }
+    const btnJoinKb = document.getElementById('btn-local-join-kb');
+    if (btnJoinKb) {
+      btnJoinKb.addEventListener('click', () => {
+        const state = this._detectLocalP2State();
+        if (!state.hasKeyboard) return;
+        this._onLocalJoinClick('keyboard', null);
       });
     }
 
@@ -3480,17 +3486,20 @@ export class Lobby {
 
   /**
    * Start the RAF loop that watches for a second input source while the
-   * captain is on the host room-code page. Each frame we detect whether a
-   * P2 path exists (second gamepad, or keyboard when P1 is on a gamepad)
-   * and update the JOIN RIDE button visual state. Also polls the unclaimed
-   * gamepad's A button so P2 can "click" JOIN RIDE with their own controller.
+   * captain is on the host room-code page. Each frame we detect whether
+   * a P2 path exists (second gamepad, or keyboard when P1 is on a gamepad)
+   * and show/hide the two JOIN RIDE buttons independently — one per P2
+   * device option, with the gamepad button labeled with the pad's name.
+   * Also polls the unclaimed gamepad's A button so P2 can fire JOIN RIDE
+   * with their own controller.
    */
   _startLocalJoinMonitor() {
     if (isMobile) return; // Local MP is desktop-only.
-    const btn = document.getElementById('btn-local-join-ride');
-    const icons = document.getElementById('btn-local-join-icons');
+    const btnGp = document.getElementById('btn-local-join-gp');
+    const btnKb = document.getElementById('btn-local-join-kb');
+    const gpNameEl = document.getElementById('btn-local-join-gp-name');
     const hint = document.getElementById('host-local-hint');
-    if (!btn) return;
+    if (!btnGp || !btnKb) return;
     this._localP2APrev = false;
 
     const tick = () => {
@@ -3500,27 +3509,27 @@ export class Lobby {
       }
       const state = this._detectLocalP2State();
 
-      // Update button visuals only when state changes (avoids layout churn).
-      const stateKey = `${state.available}|${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}`;
+      // Dirty-check the visible state before touching the DOM (avoids layout
+      // churn every frame when nothing has changed).
+      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${state.gpName}|${!!state.hintVisible}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
-        if (state.available) {
-          btn.style.display = '';
-          if (hint) hint.style.display = 'none';
-          if (icons) {
-            let html = '';
-            if (state.hasGamepad) html += '<span class="join-icon-gp">🎮</span>';
-            if (state.hasKeyboard) html += '<span class="join-icon-kb">⌨️</span>';
-            icons.innerHTML = html;
-          }
-        } else {
-          btn.style.display = 'none';
-          if (hint) hint.style.display = state.hintVisible ? '' : 'none';
+        btnGp.style.display = state.hasGamepad ? '' : 'none';
+        btnKb.style.display = state.hasKeyboard ? '' : 'none';
+        if (state.hasGamepad && gpNameEl) {
+          gpNameEl.textContent = state.gpName || 'CONTROLLER';
+        }
+        if (hint) {
+          // Hint only appears when neither button is visible AND local MP
+          // is blocked (e.g. captain on keyboard, no gamepad attached).
+          hint.style.display = (!state.hasGamepad && !state.hasKeyboard && state.hintVisible) ? '' : 'none';
         }
       }
 
-      // Poll the unclaimed gamepad's A button so P2 can fire JOIN RIDE with
-      // their own controller (not P1's — which is still driving menu nav).
+      // Poll the unclaimed gamepad's A button so P2 can fire the 🎮 button
+      // with their own controller (not P1's — which is still driving menu
+      // navigation). No analogous poll for the ⌨️ button: browsers already
+      // fire click on Enter/Space when it's focused.
       if (state.hasGamepad && state.gpIndex !== null) {
         const pads = navigator.getGamepads ? navigator.getGamepads() : [];
         const gp = pads[state.gpIndex];
@@ -3548,8 +3557,9 @@ export class Lobby {
   }
 
   /**
-   * Determine whether a P2 input path exists right now.
-   * @returns {{available: boolean, hasGamepad: boolean, hasKeyboard: boolean, gpIndex: number|null, hintVisible?: boolean}}
+   * Determine whether a P2 input path exists right now, and what to label the
+   * gamepad button with when one is available.
+   * @returns {{available: boolean, hasGamepad: boolean, hasKeyboard: boolean, gpIndex: number|null, gpName: string|null, hintVisible?: boolean}}
    */
   _detectLocalP2State() {
     const p1GpIndex = this.input.gamepadIndex;
@@ -3557,9 +3567,11 @@ export class Lobby {
     // Find the first attached gamepad that isn't P1's (note: the array can be
     // sparse with holes at un-activated slots, so filter for truthy entries).
     let unclaimedGpIndex = null;
+    let unclaimedGpName = null;
     for (let i = 0; i < gamepads.length; i++) {
       if (gamepads[i] && i !== p1GpIndex) {
         unclaimedGpIndex = i;
+        unclaimedGpName = this._prettyGamepadName(gamepads[i].id);
         break;
       }
     }
@@ -3575,6 +3587,7 @@ export class Lobby {
         hasGamepad: true,
         hasKeyboard: keyboardAvailable,
         gpIndex: unclaimedGpIndex,
+        gpName: unclaimedGpName,
       };
     }
     if (keyboardAvailable) {
@@ -3583,6 +3596,7 @@ export class Lobby {
         hasGamepad: false,
         hasKeyboard: true,
         gpIndex: null,
+        gpName: null,
       };
     }
     // P1 is on keyboard with no second gamepad → local MP blocked.
@@ -3592,8 +3606,27 @@ export class Lobby {
       hasGamepad: false,
       hasKeyboard: false,
       gpIndex: null,
+      gpName: null,
       hintVisible: true,
     };
+  }
+
+  /**
+   * Resolve a raw `navigator.getGamepads()[i].id` string to a short display
+   * name for the JOIN RIDE button. Prefers the known-driver name from
+   * ControllerRegistry (e.g. "DualSense", "Switch Pro", "Xbox") and falls
+   * back to stripping the "(STANDARD GAMEPAD Vendor: xxxx Product: yyyy)"
+   * suffix browsers add to generic ids.
+   */
+  _prettyGamepadName(rawId) {
+    if (!rawId) return 'CONTROLLER';
+    const info = ControllerRegistry.identifyFromGamepadId(rawId);
+    if (info && info.driverName) return info.driverName.toUpperCase();
+    // Unknown device — strip the parenthetical suffix and uppercase.
+    let name = String(rawId).replace(/\s*\(.*\)\s*$/, '').trim();
+    if (!name) name = 'CONTROLLER';
+    if (name.length > 20) name = name.slice(0, 20) + '…';
+    return name.toUpperCase();
   }
 
   /**

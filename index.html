@@ -1881,7 +1881,8 @@
   :root {
     --tandem-player2: #ff4560;
   }
-  .lobby-btn-p2 {
+  /* Gamepad-P2 JOIN RIDE button: coral-red, flex layout for label + icon + pad name */
+  .lobby-btn-p2-gp {
     background: rgba(255, 69, 96, 0.22);
     border-color: rgba(255, 69, 96, 0.7);
     color: var(--tandem-player2);
@@ -1890,15 +1891,22 @@
     justify-content: center;
     gap: calc(1 * var(--ls));
   }
-  .lobby-btn-p2:hover { background: rgba(255, 69, 96, 0.35); border-color: rgba(255, 69, 96, 0.9); }
-  .lobby-btn-p2:active { background: rgba(255, 69, 96, 0.5); }
-  .btn-local-join-icons {
-    display: inline-flex;
-    gap: calc(0.6 * var(--ls));
-    font-size: 0.9em;
+  .lobby-btn-p2-gp:hover { background: rgba(255, 69, 96, 0.35); border-color: rgba(255, 69, 96, 0.9); }
+  .lobby-btn-p2-gp:active { background: rgba(255, 69, 96, 0.5); }
+  /* Keyboard-P2 JOIN RIDE button: neutral white/grey so it reads as "the other option" */
+  .lobby-btn-p2-kb {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: calc(1 * var(--ls));
   }
-  .btn-local-join-icons .join-icon-gp { color: var(--tandem-player2); }
-  .btn-local-join-icons .join-icon-kb { color: #ffffff; opacity: 0.9; }
+  .lobby-btn-p2-kb:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.7); }
+  .lobby-btn-p2-kb:active { background: rgba(255, 255, 255, 0.3); }
+  .btn-local-join-icon { font-size: 1.1em; }
+  .btn-local-join-padname { font-size: 0.85em; opacity: 0.9; }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -4066,12 +4074,19 @@ ON</button>
           <div id="room-url" class="room-url"></div>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
-          <!-- Local multiplayer: JOIN RIDE offers same-screen co-op as an
-               alternative to waiting for a remote stoker. Visibility is
-               driven by _startLocalJoinMonitor in lobby.js. -->
-          <button class="lobby-btn lobby-btn-p2" id="btn-local-join-ride" style="display:none;">
-            <span class="btn-local-join-label">JOIN RIDE</span>
-            <span class="btn-local-join-icons" id="btn-local-join-icons"></span>
+          <!-- Local multiplayer: one JOIN RIDE button per available P2 path.
+               The monitor (lobby._startLocalJoinMonitor) shows/hides each
+               button based on connected devices. Each button commits to a
+               specific P2 device — no auto-picking. -->
+          <button class="lobby-btn lobby-btn-p2-gp" id="btn-local-join-gp" style="display:none;">
+            <span>JOIN RIDE</span>
+            <span class="btn-local-join-icon">&#127918;</span>
+            <span class="btn-local-join-padname" id="btn-local-join-gp-name">CONTROLLER</span>
+          </button>
+          <button class="lobby-btn lobby-btn-p2-kb" id="btn-local-join-kb" style="display:none;">
+            <span>JOIN RIDE</span>
+            <span class="btn-local-join-icon">&#9000;&#65039;</span>
+            <span>KEYBOARD</span>
           </button>
           <p id="host-local-hint" class="lobby-hint" style="display:none;">Plug in a 2nd controller for local co-op</p>
           <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
