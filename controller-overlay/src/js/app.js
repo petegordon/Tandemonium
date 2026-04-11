@@ -40,6 +40,13 @@ let hidDevice = null;
 let controllerDriver = null;
 let gyroActive = false;          // true when gyro is connected and feeding data
 let gyroPermitted = false;       // true once gyro has been connected at least once
+
+// Synthetic gamepad built from HID input reports. Needed because DualSense
+// over Bluetooth, once switched into 0x31 full-report mode, disappears from
+// Chromium's Gamepad API entirely. When that happens we parse sticks, buttons,
+// and triggers directly from the HID report and expose them in a Gamepad-
+// shaped object that the rest of the app consumes via readGamepad().
+let syntheticGamepad = null;
 const gyroOrientation = new THREE.Quaternion();
 let lastGyroTime = 0;
 let gyroScale = (2000.0 / 32768.0) * (Math.PI / 180.0);
@@ -279,7 +286,15 @@ async function init() {
   // Check for already-connected gamepad (may have connected before
   // our event listeners were attached). Same approach as the game's
   // pollGamepad() fallback in input-manager.js.
-  checkForExistingGamepad();
+  const foundViaGamepadAPI = checkForExistingGamepad();
+
+  // If the Gamepad API has nothing, fall back to probing WebHID directly.
+  // This recovers the cold-start case where a DualSense is still in 0x31
+  // full-report mode from a previous session — Gamepad API is blind to it,
+  // but navigator.hid.getDevices() still lists the granted device.
+  if (!foundViaGamepadAPI) {
+    bootstrapFromHID();
+  }
 }
 
 /**
@@ -300,6 +315,7 @@ function detectInitialController() {
 /**
  * Check for a gamepad that was connected before event listeners were set up.
  * Triggers the full switchController flow including gyro auto-connect.
+ * @returns {boolean} true if a gamepad was found and claimed
  */
 function checkForExistingGamepad() {
   const gamepads = navigator.getGamepads();
@@ -307,9 +323,48 @@ function checkForExistingGamepad() {
     if (gamepads[i]) {
       console.log('Found existing gamepad at startup:', gamepads[i].id);
       switchController(gamepads[i]);
-      return;
+      return true;
     }
   }
+  return false;
+}
+
+/**
+ * Cold-start fallback when the Gamepad API shows nothing: probe WebHID for
+ * any previously-granted gyro-capable device and drive the overlay from its
+ * HID reports. Synthesizes a Gamepad-shaped stub so switchController() can
+ * run unchanged.
+ */
+async function bootstrapFromHID() {
+  if (!navigator.hid) return;
+  let devices;
+  try {
+    devices = await navigator.hid.getDevices();
+  } catch (err) {
+    console.log('bootstrapFromHID: getDevices failed:', err.message);
+    return;
+  }
+  for (const d of devices) {
+    const drv = ControllerRegistry.getDriver(d.vendorId, d.productId);
+    if (!drv || !drv.capabilities.gyro) continue;
+    console.log('bootstrapFromHID: found', d.productName,
+      'vid:' + d.vendorId.toString(16), 'pid:' + d.productId.toString(16));
+    const stub = {
+      id: d.productName || drv.driverName,
+      index: -1,
+      axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
+    };
+    await switchController(stub);
+    // switchController() calls disconnectGyro() which nulls syntheticGamepad,
+    // so seed it *after* — this gives readGamepad() neutral state to return
+    // during the 2s window before HID reports start flowing.
+    if (!syntheticGamepad) {
+      syntheticGamepad = createSyntheticGamepad(d.productName);
+    }
+    return;
+  }
+  console.log('bootstrapFromHID: no granted gyro-capable device found');
 }
 
 // =====================================================================
@@ -544,6 +599,8 @@ async function disconnectGyro() {
   }
   gyroActive = false;
   gyroPermitted = false;
+  syntheticGamepad = null;
+  _firstReportLogged = false;
   gyroOrientation.identity();
   lastGyroTime = 0;
   calibrating = false;
@@ -805,6 +862,21 @@ document.querySelectorAll('[data-remap]').forEach(btn => {
 });
 
 function readGamepad() {
+  // Preferred source: the real Gamepad API, if it still owns this slot.
+  if (gamepadIndex !== null) {
+    const gp = navigator.getGamepads()[gamepadIndex];
+    if (gp) return gp;
+  }
+
+  // Fallback: HID-derived synthetic gamepad. Required for DualSense BT in
+  // 0x31 full-report mode, which is invisible to Chromium's Gamepad API.
+  // Presence of syntheticGamepad implies an active HID-synthetic session —
+  // disconnectGyro() clears it so stale state can't leak.
+  if (syntheticGamepad) {
+    return syntheticGamepad;
+  }
+
+  // No slot yet and no HID → probe the Gamepad API for a fresh connection.
   if (gamepadIndex === null) {
     const gamepads = navigator.getGamepads();
     for (let i = 0; i < gamepads.length; i++) {
@@ -816,28 +888,91 @@ function readGamepad() {
     return null;
   }
 
-  const gp = navigator.getGamepads()[gamepadIndex];
-  if (!gp) {
-    onGamepadDisconnected(gamepadIndex);
-    return null;
-  }
-  return gp;
+  // Had a slot, the Gamepad API dropped it, and we have no HID fallback.
+  onGamepadDisconnected(gamepadIndex);
+  return null;
 }
 
 // =====================================================================
 // GYRO INPUT
 // =====================================================================
 
+function createSyntheticGamepad(id) {
+  return {
+    id: id || 'HID Controller',
+    index: -1,
+    axes: [0, 0, 0, 0],
+    buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
+    _synthetic: true,
+  };
+}
+
+// Map parsed HID fields into the Standard Gamepad layout used by controller-profiles.js.
+function updateSyntheticFromParsed(parsed) {
+  if (!syntheticGamepad) {
+    syntheticGamepad = createSyntheticGamepad(hidDevice?.productName);
+  }
+  const g = syntheticGamepad;
+
+  if (parsed.sticks) {
+    g.axes[0] = parsed.sticks.lx;
+    g.axes[1] = parsed.sticks.ly;
+    g.axes[2] = parsed.sticks.rx;
+    g.axes[3] = parsed.sticks.ry;
+  }
+
+  if (parsed.buttons) {
+    const b = parsed.buttons;
+    const set = (i, pressed, value) => {
+      const slot = g.buttons[i];
+      slot.pressed = !!pressed;
+      slot.value = value === undefined ? (pressed ? 1 : 0) : value;
+    };
+    set(0, b.cross);
+    set(1, b.circle);
+    set(2, b.square);
+    set(3, b.triangle);
+    set(4, b.l1);
+    set(5, b.r1);
+    const l2v = parsed.triggers?.l2 ?? 0;
+    const r2v = parsed.triggers?.r2 ?? 0;
+    set(6, b.l2 || l2v > 0.05, l2v);
+    set(7, b.r2 || r2v > 0.05, r2v);
+    set(8, b.create);
+    set(9, b.options);
+    set(10, b.l3);
+    set(11, b.r3);
+    set(12, b.dpadUp);
+    set(13, b.dpadDown);
+    set(14, b.dpadLeft);
+    set(15, b.dpadRight);
+    set(16, b.ps);
+  }
+}
+
+let _firstReportLogged = false;
 function handleInputReport(event) {
-  if (!controllerDriver || !gyroActive) return;
+  if (!controllerDriver) return;
+  if (!_firstReportLogged) {
+    _firstReportLogged = true;
+    console.log('First HID inputreport: reportId=0x' + event.reportId.toString(16),
+      'byteLength=' + event.data.byteLength);
+  }
   const parsed = controllerDriver.parseReport(event.reportId, event.data);
   if (!parsed) return;
+
+  // Keep sticks/buttons flowing even when gyro is toggled off — otherwise
+  // turning gyro off on a BT DualSense (stuck in 0x31) would silently lose
+  // all stick/button input since the Gamepad API can't see it either.
+  if (parsed.sticks || parsed.buttons || parsed.triggers) {
+    updateSyntheticFromParsed(parsed);
+  }
 
   if (parsed.touchpad) {
     overlay.updateTouchpad(parsed.touchpad, parsed.touchpadButton);
   }
 
-  if (!parsed.gyro) return;
+  if (!gyroActive || !parsed.gyro) return;
 
   gyroScale = parsed.gyroScale * (Math.PI / 180.0);
   const now = performance.now();
