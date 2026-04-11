@@ -1921,6 +1921,16 @@ class Game {
     if (fromRemote && this._remoteFinishStats) {
       summary = this._remoteFinishStats.raceSummary;
       contribData = this._remoteFinishStats.contribSummary;
+      // Per-side fix: the captain's raceSummary carries the captain's own
+      // inputSource, which the stoker would otherwise display as if it were
+      // theirs (#196). Steering source is strictly local — it's never sent
+      // over the wire because BalanceController.getSteerSource() only sees
+      // the frames accumulated on this side. Overwrite with the stoker's
+      // own value here so the victory screen's input-source row matches
+      // what this player actually used.
+      if (this.mode === 'stoker' && this.balanceCtrl) {
+        summary = { ...summary, inputSource: this.balanceCtrl.getSteerSource() };
+      }
     } else if (this.raceManager) {
       this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
       summary = this.raceManager.getSummary(this.bike.distanceTraveled);

@@ -59,6 +59,31 @@ const MAX_CALIB_RETRIES = 5;
 const CALIB_VARIANCE_THRESHOLD = 150;
 let gyroConnectTimer = null;
 
+// ── Sensor fusion state ──
+// Gravity vector tracked in sensor/local space (points "up" = -Y in world)
+const gravityVec = new THREE.Vector3(0, -1, 0);
+const smoothAccel = new THREE.Vector3(0, -1, 0);
+let shakiness = 0;
+
+// Sensor fusion constants (from JibbSmart/GamepadMotionHelpers)
+const GRAVITY_STILL_SPEED = 1.0;
+const GRAVITY_SHAKY_SPEED = 0.1;
+const SHAKINESS_MIN_THRESHOLD = 0.01;
+const SHAKINESS_MAX_THRESHOLD = 0.4;
+const GRAVITY_GYRO_FACTOR = 0.1;       // cap correction at 10% of gyro speed
+const GRAVITY_MIN_SPEED = 0.01;
+const GRAVITY_GYRO_MIN_THRESHOLD = 0.05;
+const GRAVITY_GYRO_MAX_THRESHOLD = 0.25;
+const STEADINESS_HALF_TIME = 0.25;     // shakiness smoothing half-life in seconds
+
+// Continuous stillness calibration
+const STILLNESS_WINDOW_TIME = 0.5;     // min collection time (seconds)
+const STILLNESS_CORRECTION_TIME = 2.0; // must be still this long to recalibrate
+const STILLNESS_CAL_HALF_TIME = 0.1;   // exponential lerp half-time
+const STILLNESS_CAL_EASE_IN = 3.0;     // ramp-up time
+const STILLNESS_DETERIORATION = 0.2;   // how fast min deltas grow per second
+let stillnessWindow = { samples: [], startTime: 0, stillSince: 0, minDeltaGyro: 1.0, minDeltaAccel: 0.25, easeIn: 0 };
+
 // ── Button combo system ──
 const BUTTON_NAMES = [
   'A/Cross', 'B/Circle', 'X/Square', 'Y/Triangle',
@@ -105,10 +130,9 @@ function checkCombo(gamepad, key, action) {
 // Remap capture state
 let remapTarget = null;  // which combo key is being remapped
 
-// Drift correction
-const DRIFT_RATES = { off: 0, gentle: 0.0003, strong: 0.002 };
-let driftMode = 'gentle';
-const _identityQuat = new THREE.Quaternion();
+// Gravity correction mode (replaces old drift correction)
+const GRAVITY_MODES = { off: 0, gentle: 0.5, strong: 1.0 };
+let gravityMode = 'gentle';
 
 const isDesktop = typeof window !== 'undefined' &&
   (window.electronAPI || navigator.userAgent.includes('Electron'));
@@ -601,8 +625,10 @@ async function disconnectGyro() {
   gyroPermitted = false;
   syntheticGamepad = null;
   _firstReportLogged = false;
-  gyroOrientation.identity();
-  lastGyroTime = 0;
+  // resetGyroState() owns gyroOrientation.identity() / lastGyroTime = 0
+  // plus the sensor fusion state added in this branch — no need to do
+  // those individually here anymore.
+  resetGyroState();
   calibrating = false;
   calibSamples = [];
   calibRetries = 0;
@@ -862,6 +888,22 @@ document.querySelectorAll('[data-remap]').forEach(btn => {
 });
 
 function readGamepad() {
+  // Force-prefer the HID-synthesized gamepad whenever we have a live
+  // Bluetooth driver. On Electron 33 (Chromium 130) the Gamepad API
+  // keeps returning a stale Gamepad object for the slot even after
+  // DualSense has switched to 0x31 full-report mode — frozen axes and
+  // buttons that never update. On Chrome/Mac the slot comes back null
+  // and the legacy "real-first, synthetic-fallback" path below handles
+  // it, but inside Electron we have to override the preference or the
+  // stale slot wins and sticks/buttons silently stop working. Same
+  // issue and same fix as the main game's InputManager.getGamepadState
+  // (petegordon/tandemonium#199).
+  if (controllerDriver &&
+      controllerDriver.connectionType === 'bluetooth' &&
+      syntheticGamepad) {
+    return syntheticGamepad;
+  }
+
   // Preferred source: the real Gamepad API, if it still owns this slot.
   if (gamepadIndex !== null) {
     const gp = navigator.getGamepads()[gamepadIndex];
@@ -896,6 +938,16 @@ function readGamepad() {
 // =====================================================================
 // GYRO INPUT
 // =====================================================================
+
+/** Reset all gyro + sensor fusion state to identity. */
+function resetGyroState() {
+  gyroOrientation.identity();
+  gravityVec.set(0, -1, 0);
+  smoothAccel.set(0, -1, 0);
+  shakiness = 0;
+  lastGyroTime = 0;
+  stillnessWindow = { samples: [], startTime: 0, stillSince: 0, minDeltaGyro: 1.0, minDeltaAccel: 0.25, easeIn: 0 };
+}
 
 function createSyntheticGamepad(id) {
   return {
@@ -980,6 +1032,7 @@ function handleInputReport(event) {
   const rawGy = parsed.gyro.y;
   const rawGz = parsed.gyro.z;
 
+  // Initial calibration sampling
   if (calibrating) {
     calibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
     if (calibSamples.length >= CALIB_COUNT) finishCalibration();
@@ -995,24 +1048,206 @@ function handleInputReport(event) {
       const profile = PROFILES[currentControllerType];
       const transform = profile?.gyroTransform || ((x, y, z) => [x, y, z]);
       const [tx, ty, tz] = transform(gx, gy, gz);
-      const wx = tx * gyroScale * dt;
-      const wy = ty * gyroScale * dt;
-      const wz = tz * gyroScale * dt;
-      const dq = new THREE.Quaternion();
-      dq.setFromEuler(new THREE.Euler(wx, wy, wz, 'XYZ'));
-      gyroOrientation.multiply(dq);
+
+      // ── 1. Axis-angle quaternion integration (replaces Euler-based) ──
+      const angX = tx * gyroScale * dt;
+      const angY = ty * gyroScale * dt;
+      const angZ = tz * gyroScale * dt;
+      const angle = Math.sqrt(angX * angX + angY * angY + angZ * angZ);
+      if (angle > 1e-10) {
+        const ha = angle * 0.5;
+        const s = Math.sin(ha) / angle;
+        const dq = new THREE.Quaternion(angX * s, angY * s, angZ * s, Math.cos(ha));
+        gyroOrientation.multiply(dq);
+      }
+
+      // ── 2. Gravity tracking + accelerometer correction ──
+      const gravMode = GRAVITY_MODES[gravityMode] || 0;
+      if (gravMode > 0 && parsed.accel) {
+        const accelScale = parsed.accelScale || (1.0 / 8192.0);
+        const ax = parsed.accel.x * accelScale;
+        const ay = parsed.accel.y * accelScale;
+        const az = parsed.accel.z * accelScale;
+        const accelVec = new THREE.Vector3(ax, ay, az);
+        const accelLen = accelVec.length();
+
+        // Rotate gravity vector by inverse of this frame's gyro rotation
+        if (angle > 1e-10) {
+          const ha2 = angle * 0.5;
+          const s2 = Math.sin(ha2) / angle;
+          const invDq = new THREE.Quaternion(-angX * s2, -angY * s2, -angZ * s2, Math.cos(ha2));
+          gravityVec.applyQuaternion(invDq);
+        }
+
+        // Shakiness tracking (exponential smoothing of accel variation)
+        const smoothFactor = Math.pow(2, -dt / STEADINESS_HALF_TIME);
+        smoothAccel.lerp(accelVec, 1 - smoothFactor);
+        const accelDiff = _tmpVec.copy(accelVec).sub(smoothAccel).length();
+        shakiness = Math.max(shakiness * smoothFactor, accelDiff);
+
+        // Adaptive correction speed based on shakiness
+        const shakyT = Math.max(0, Math.min(1,
+          (shakiness - SHAKINESS_MIN_THRESHOLD) / (SHAKINESS_MAX_THRESHOLD - SHAKINESS_MIN_THRESHOLD)));
+        let correctionSpeed = (1 - shakyT) * GRAVITY_STILL_SPEED + shakyT * GRAVITY_SHAKY_SPEED;
+        correctionSpeed *= gravMode; // scale by user's gravity mode setting
+
+        // Gyro rate limiting — taper correction toward a gyro-proportional
+        // ceiling so gravity corrections stay visually imperceptible
+        // relative to how fast the controller is actually turning. When
+        // the gap between tracked gravity and measured accel is small,
+        // fully respect the ceiling; when the gap is large, skip the
+        // ceiling and let correction happen fast. Matches
+        // GamepadMotionHelpers / Motion::Update exactly.
+        //
+        // Previous implementation had two bugs:
+        //   1. gravError was computed as length((accelVec * 0) - gravityVec)
+        //      because `-accelLen > 0.001` is always false — so the gap
+        //      value was always ~gravityVec.length() regardless of real
+        //      alignment, and the closeEnoughFactor never adapted.
+        //   2. The ceiling was applied as a hard `Math.min(speed, limit)`
+        //      instead of the reference's weighted blend, which collapses
+        //      gravity correction to the gyro rate even when the gap is
+        //      large and correction should be fast.
+        const angularSpeed = angle / dt;
+
+        // gap = length of (accelNorm * -gravLen - gravityVec) — the
+        // distance between where the accelerometer says gravity should
+        // point and where we're currently tracking it. Degenerate accel
+        // (magnitude 0) → gap 0 → fully clamp (no correction anyway).
+        let gravGapLen = 0;
+        if (accelLen > 0.001) {
+          const gravLen = gravityVec.length();
+          gravGapLen = _tmpVec.copy(accelVec)
+            .multiplyScalar(-gravLen / accelLen)
+            .sub(gravityVec)
+            .length();
+        }
+
+        const gyroLimit = Math.max(angularSpeed * GRAVITY_GYRO_FACTOR, GRAVITY_MIN_SPEED);
+        if (correctionSpeed > gyroLimit) {
+          // closeEnoughFactor: 0 when gap is below the min threshold
+          // (fully clamp to ceiling), 1 when above max (no clamp).
+          const closeEnoughT = Math.max(0, Math.min(1,
+            (gravGapLen - GRAVITY_GYRO_MIN_THRESHOLD) /
+            (GRAVITY_GYRO_MAX_THRESHOLD - GRAVITY_GYRO_MIN_THRESHOLD)));
+          correctionSpeed = gyroLimit + (correctionSpeed - gyroLimit) * closeEnoughT;
+        }
+
+        // Correct gravity toward accelerometer
+        if (accelLen > 0.4 && accelLen < 1.6) {
+          // Only correct when accel is roughly 1g (not in free-fall or heavy impact)
+          const accelNorm = _tmpVec.copy(accelVec).multiplyScalar(-1).normalize().multiplyScalar(gravityVec.length());
+          const corrAmount = Math.min(correctionSpeed * dt, 1.0);
+          gravityVec.lerp(accelNorm, corrAmount);
+        }
+
+        // ── 3. Apply tilt correction to orientation quaternion ──
+        // Convert gravityVec (tracked in the sensor-local frame) into the
+        // world frame by applying gyroOrientation directly. NOT its
+        // inverse — the inverse would transform world → local, the
+        // opposite of what we want.
+        //
+        // The reference (GamepadMotionHelpers) writes
+        // `Grav * Quaternion.Inverse()` but that library's `Vec * Quat`
+        // operator multiplies with the right-hand quaternion on the
+        // right side of the sandwich product, which evaluates to the
+        // SAME thing as Three.js's `v.applyQuaternion(q)` without any
+        // inverse. The earlier port translated the reference literally
+        // and ended up rotating 180° in the wrong direction on every
+        // frame, flipping the 3D model upside down.
+        const gravWorld = _tmpVec.copy(gravityVec).applyQuaternion(gyroOrientation).normalize();
+        const worldDown = _tmpVec2.set(0, -1, 0);
+
+        // Rotation from current gravity-in-world to actual world-down
+        const errorAngle = Math.acos(Math.max(-1, Math.min(1, worldDown.dot(gravWorld))));
+        if (errorAngle > 1e-6) {
+          const corrAxis = _tmpVec3.crossVectors(gravWorld, worldDown).normalize();
+          const corrAngle = errorAngle; // full snap — smoothness comes from gravity lerp
+          const cha = corrAngle * 0.5;
+          const cs = Math.sin(cha);
+          const corrQuat = _tmpQuat.set(
+            corrAxis.x * cs, corrAxis.y * cs, corrAxis.z * cs, Math.cos(cha)
+          );
+          gyroOrientation.premultiply(corrQuat);
+        }
+      }
+
       gyroOrientation.normalize();
 
-      const rate = DRIFT_RATES[driftMode] || 0;
-      if (rate > 0) {
-        const angularSpeed = Math.sqrt(gx * gx + gy * gy + gz * gz);
-        if (angularSpeed < 300) {
-          gyroOrientation.slerp(_identityQuat, rate * (1 - angularSpeed / 300));
-        }
+      // ── 4. Continuous stillness calibration ──
+      if (!calibrating) {
+        updateStillnessCalibration(rawGx, rawGy, rawGz, parsed.accel, parsed.accelScale, dt, now);
       }
     }
   }
   lastGyroTime = now;
+}
+
+// Reusable temp vectors to avoid GC pressure in the hot path
+const _tmpVec = new THREE.Vector3();
+const _tmpVec2 = new THREE.Vector3();
+const _tmpVec3 = new THREE.Vector3();
+const _tmpQuat = new THREE.Quaternion();
+
+function updateStillnessCalibration(gx, gy, gz, accel, accelScale, dt, now) {
+  const sw = stillnessWindow;
+  const s = accelScale || (1.0 / 8192.0);
+  const ax = accel ? accel.x * s : 0;
+  const ay = accel ? accel.y * s : 0;
+  const az = accel ? accel.z * s : 0;
+
+  sw.samples.push({ gx, gy, gz, ax, ay, az, t: now });
+
+  // Trim samples older than the window
+  const windowStart = now - STILLNESS_WINDOW_TIME * 1000;
+  while (sw.samples.length > 0 && sw.samples[0].t < windowStart) sw.samples.shift();
+  if (sw.samples.length < 10) { sw.stillSince = 0; return; }
+
+  // Compute min/max delta across the window
+  let gxMin = Infinity, gxMax = -Infinity, gyMin = Infinity, gyMax = -Infinity, gzMin = Infinity, gzMax = -Infinity;
+  let axMin = Infinity, axMax = -Infinity, ayMin = Infinity, ayMax = -Infinity, azMin = Infinity, azMax = -Infinity;
+  let sgx = 0, sgy = 0, sgz = 0;
+  for (const sample of sw.samples) {
+    gxMin = Math.min(gxMin, sample.gx); gxMax = Math.max(gxMax, sample.gx);
+    gyMin = Math.min(gyMin, sample.gy); gyMax = Math.max(gyMax, sample.gy);
+    gzMin = Math.min(gzMin, sample.gz); gzMax = Math.max(gzMax, sample.gz);
+    axMin = Math.min(axMin, sample.ax); axMax = Math.max(axMax, sample.ax);
+    ayMin = Math.min(ayMin, sample.ay); ayMax = Math.max(ayMax, sample.ay);
+    azMin = Math.min(azMin, sample.az); azMax = Math.max(azMax, sample.az);
+    sgx += sample.gx; sgy += sample.gy; sgz += sample.gz;
+  }
+  const dGyro = Math.max(gxMax - gxMin, gyMax - gyMin, gzMax - gzMin);
+  const dAccel = Math.max(axMax - axMin, ayMax - ayMin, azMax - azMin);
+
+  // Adaptive thresholds — deteriorate over time so we don't get stuck
+  sw.minDeltaGyro = Math.min(sw.minDeltaGyro, dGyro);
+  sw.minDeltaAccel = Math.min(sw.minDeltaAccel, dAccel);
+  sw.minDeltaGyro += STILLNESS_DETERIORATION * dt;
+  sw.minDeltaAccel += STILLNESS_DETERIORATION * 0.01 * dt;
+
+  const isStill = dGyro < sw.minDeltaGyro * 2.0 && dAccel < sw.minDeltaAccel * 2.0;
+
+  if (isStill) {
+    if (sw.stillSince === 0) sw.stillSince = now;
+    const stillDuration = (now - sw.stillSince) / 1000;
+
+    if (stillDuration >= STILLNESS_CORRECTION_TIME) {
+      // Ease in over time
+      sw.easeIn = Math.min(sw.easeIn + dt / STILLNESS_CAL_EASE_IN, 1.0);
+      const lerpFactor = Math.pow(2, -sw.easeIn * dt / STILLNESS_CAL_HALF_TIME);
+
+      const meanGx = sgx / sw.samples.length;
+      const meanGy = sgy / sw.samples.length;
+      const meanGz = sgz / sw.samples.length;
+
+      gyroBias.x = gyroBias.x * lerpFactor + meanGx * (1 - lerpFactor);
+      gyroBias.y = gyroBias.y * lerpFactor + meanGy * (1 - lerpFactor);
+      gyroBias.z = gyroBias.z * lerpFactor + meanGz * (1 - lerpFactor);
+    }
+  } else {
+    sw.stillSince = 0;
+    sw.easeIn = 0;
+  }
 }
 
 // ── Calibration ──
@@ -1021,8 +1256,7 @@ function startCalibration() {
   calibrating = true;
   calibSamples = [];
   calibRetries = 0;
-  gyroOrientation.identity();
-  lastGyroTime = 0;
+  resetGyroState();
   // Reset camera to selected preset on calibration
   overlay.setCameraPreset(selectedCameraPreset);
   showCalibHint('Calibrating...', null);
@@ -1061,8 +1295,7 @@ function finishCalibration() {
   gyroBias.z = meanZ;
   calibrating = false;
   calibSamples = [];
-  gyroOrientation.identity();
-  lastGyroTime = 0;
+  resetGyroState();
   driftCheckAccum = 0;
   driftCheckLastLean = 0;
   showCalibHint(comboName(combos.calibrate) + ' to recalibrate', 3000);
@@ -1143,7 +1376,7 @@ connectGyroBtn.addEventListener('click', async () => {
 document.getElementById('hud-position').addEventListener('change', () => applyHudPosition());
 
 driftModeSelect.addEventListener('change', (e) => {
-  driftMode = e.target.value;
+  gravityMode = e.target.value;
 });
 
 const opacitySlider = document.getElementById('opacity-slider');
