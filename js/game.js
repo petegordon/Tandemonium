@@ -1068,8 +1068,7 @@ class Game {
     const pollGamepadStart = () => {
       if (this.state !== 'instructions' || started) return;
       if (this.input.gamepadConnected) {
-        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        const gp = gamepads[this.input.gamepadIndex];
+        const gp = this.input.getGamepadState();
         if (gp) {
           for (let i = 0; i < gp.buttons.length; i++) {
             if (gp.buttons[i].pressed) {
@@ -2708,8 +2707,7 @@ class Game {
 
   _pollStartButton() {
     if (!this.input.gamepadConnected) return;
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
+    const gp = this.input.getGamepadState();
     if (!gp) return;
 
     const start = gp.buttons[9] && gp.buttons[9].pressed;
@@ -2734,8 +2732,7 @@ class Game {
     if (this.recorder._previewPollId) return;
     // Don't process D-pad during calibration (tutorial)
     if (this.state === 'calibrating') return;
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
+    const gp = this.input.getGamepadState();
     if (!gp) return;
 
     const up = (gp.buttons[12] && gp.buttons[12].pressed) || false;
@@ -2824,8 +2821,7 @@ class Game {
   _pollOverlayGamepad() {
     if (this._overlayButtons.length === 0) return;
     if (!this.input.gamepadConnected) return;
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
+    const gp = this.input.getGamepadState();
     if (!gp) return;
 
     const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
@@ -3757,8 +3753,7 @@ class Game {
         // Poll for L3 press (button 10)
         const pollL3 = () => {
           if (resolved) return;
-          const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-          const gp = gamepads[this.input.gamepadIndex];
+          const gp = this.input.getGamepadState();
           if (gp && gp.buttons[10] && gp.buttons[10].pressed) {
             resolved = true;
             this._recalibrateTilt();
