@@ -1874,6 +1874,28 @@
   .lobby-btn-accent:active {
     background: rgba(60,200,80,0.4);
   }
+  /* Player 2 color token for local multiplayer (JOIN RIDE, contribution bar, etc.) */
+  :root {
+    --tandem-player2: #ff4560;
+  }
+  .lobby-btn-p2 {
+    background: rgba(255, 69, 96, 0.22);
+    border-color: rgba(255, 69, 96, 0.7);
+    color: var(--tandem-player2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: calc(1 * var(--ls));
+  }
+  .lobby-btn-p2:hover { background: rgba(255, 69, 96, 0.35); border-color: rgba(255, 69, 96, 0.9); }
+  .lobby-btn-p2:active { background: rgba(255, 69, 96, 0.5); }
+  .btn-local-join-icons {
+    display: inline-flex;
+    gap: calc(0.6 * var(--ls));
+    font-size: 0.9em;
+  }
+  .btn-local-join-icons .join-icon-gp { color: var(--tandem-player2); }
+  .btn-local-join-icons .join-icon-kb { color: #ffffff; opacity: 0.9; }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -4041,6 +4063,14 @@ ON</button>
           <div id="room-url" class="room-url"></div>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
+          <!-- Local multiplayer: JOIN RIDE offers same-screen co-op as an
+               alternative to waiting for a remote stoker. Visibility is
+               driven by _startLocalJoinMonitor in lobby.js. -->
+          <button class="lobby-btn lobby-btn-p2" id="btn-local-join-ride" style="display:none;">
+            <span class="btn-local-join-label">JOIN RIDE</span>
+            <span class="btn-local-join-icons" id="btn-local-join-icons"></span>
+          </button>
+          <p id="host-local-hint" class="lobby-hint" style="display:none;">Plug in a 2nd controller for local co-op</p>
           <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
         </div>
 

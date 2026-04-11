@@ -37,6 +37,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { NetworkManager } from './network-manager.js';
+import { InputManager } from './input-manager.js';
 import { isMobile, RELAY_URL, SITE_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
@@ -109,16 +110,25 @@ const HOLIDAY_BIKES = {
 };
 
 export class Lobby {
-  constructor({ onSolo, onMultiplayerReady, input }) {
+  constructor({ onSolo, onMultiplayerReady, onLocalReady, input }) {
     this.onSolo = onSolo;
     this.onMultiplayerReady = onMultiplayerReady;
+    this.onLocalReady = onLocalReady;
     this.input = input; // InputManager — needed for iOS motion permission
     this.net = null;
     this.selectedLevel = LEVELS.find(l => !l.isTutorial) || LEVELS[0]; // default to first non-tutorial level
     this._forceWizard = false;
     this.selectedPresetKey = 'default';
     this.selectedDifficulty = 'chill'; // 'chill' | 'adventurous' | 'daredevil'
-    this._pendingMode = null; // 'solo' or 'multiplayer', set during level selection
+    this._pendingMode = null; // 'solo' | 'multiplayer' | 'local', set during level selection
+
+    // Local multiplayer (JOIN RIDE on host page): second InputManager is created
+    // here when P2 presses JOIN RIDE, then handed off to the game via onLocalReady.
+    this._localP2InputManager = null;
+    this._localP2Type = null; // 'gamepad' | 'keyboard'
+    this._localJoinMonitorRAF = null;
+    this._localLastUnclaimedGp = null;  // last detected unclaimed gamepad index
+    this._localLastJoinState = null;    // cached state string for dirty-checking
 
     this.lobbyEl = document.getElementById('lobby');
     this.modeStep = document.getElementById('lobby-mode');
@@ -522,7 +532,15 @@ export class Lobby {
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
+    const prevStep = this._currentStep;
     this._currentStep = step;
+
+    // Local-MP JOIN RIDE monitor: run only while the captain host page is visible.
+    if (step === this.hostStep) {
+      this._startLocalJoinMonitor();
+    } else if (prevStep === this.hostStep) {
+      this._stopLocalJoinMonitor();
+    }
 
     // Room step: toggle grid layout on lobby-card
     const lobbyCardEl = document.querySelector('.lobby-card');
@@ -772,7 +790,7 @@ export class Lobby {
       this._showRoomLevelsStep();
     });
 
-    // Levels step: START RIDE button — works for both solo and multiplayer
+    // Levels step: START RIDE button — works for solo, multiplayer, and local co-op
     document.getElementById('btn-start-ride').addEventListener('click', () => {
       if (this._pendingMode === 'multiplayer') {
         if (this._roomRole !== 'captain') return;
@@ -784,12 +802,34 @@ export class Lobby {
         }
         this.net.sendProfile({ type: 'startRide' });
         this._transitionToGame();
+      } else if (this._pendingMode === 'local') {
+        // Local same-screen co-op: hand off the pre-constructed P2 InputManager
+        // to the game. onLocalReady handles mode setup + instructions screen.
+        this._hideLobby();
+        this.onLocalReady({
+          inputP2: this._localP2InputManager,
+          sourceType: this._localP2Type,
+        });
       } else {
         // Solo: start game directly
         this._hideLobby();
         this.onSolo();
       }
     });
+
+    // JOIN RIDE button on the host page: local same-screen co-op entry point.
+    // Clicking it transitions the in-flight online session into a local ride.
+    const btnLocalJoin = document.getElementById('btn-local-join-ride');
+    if (btnLocalJoin) {
+      btnLocalJoin.addEventListener('click', () => {
+        const state = this._detectLocalP2State();
+        if (!state.available) return;
+        // Prefer gamepad when both paths are available; the explicit 🎮/⌨️
+        // chooser is a Stage 4 polish item.
+        const sourceType = state.hasGamepad ? 'gamepad' : 'keyboard';
+        this._onLocalJoinClick(sourceType, state.gpIndex);
+      });
+    }
 
     document.getElementById('btn-back-room').addEventListener('click', () => {
       // Leave room — destroy connection, return to role step
@@ -3432,6 +3472,169 @@ export class Lobby {
     this._hideLobby();
     // Fire multiplayer ready
     this.onMultiplayerReady(this.net, this._roomRole);
+  }
+
+  // ============================================================
+  // LOCAL MULTIPLAYER — JOIN RIDE on host page (same-screen co-op)
+  // ============================================================
+
+  /**
+   * Start the RAF loop that watches for a second input source while the
+   * captain is on the host room-code page. Each frame we detect whether a
+   * P2 path exists (second gamepad, or keyboard when P1 is on a gamepad)
+   * and update the JOIN RIDE button visual state. Also polls the unclaimed
+   * gamepad's A button so P2 can "click" JOIN RIDE with their own controller.
+   */
+  _startLocalJoinMonitor() {
+    if (isMobile) return; // Local MP is desktop-only.
+    const btn = document.getElementById('btn-local-join-ride');
+    const icons = document.getElementById('btn-local-join-icons');
+    const hint = document.getElementById('host-local-hint');
+    if (!btn) return;
+    this._localP2APrev = false;
+
+    const tick = () => {
+      if (this._currentStep !== this.hostStep) {
+        this._localJoinMonitorRAF = null;
+        return;
+      }
+      const state = this._detectLocalP2State();
+
+      // Update button visuals only when state changes (avoids layout churn).
+      const stateKey = `${state.available}|${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}`;
+      if (stateKey !== this._localLastJoinState) {
+        this._localLastJoinState = stateKey;
+        if (state.available) {
+          btn.style.display = '';
+          if (hint) hint.style.display = 'none';
+          if (icons) {
+            let html = '';
+            if (state.hasGamepad) html += '<span class="join-icon-gp">🎮</span>';
+            if (state.hasKeyboard) html += '<span class="join-icon-kb">⌨️</span>';
+            icons.innerHTML = html;
+          }
+        } else {
+          btn.style.display = 'none';
+          if (hint) hint.style.display = state.hintVisible ? '' : 'none';
+        }
+      }
+
+      // Poll the unclaimed gamepad's A button so P2 can fire JOIN RIDE with
+      // their own controller (not P1's — which is still driving menu nav).
+      if (state.hasGamepad && state.gpIndex !== null) {
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const gp = pads[state.gpIndex];
+        const aPressed = !!(gp && gp.buttons[0] && gp.buttons[0].pressed);
+        if (aPressed && !this._localP2APrev) {
+          this._localP2APrev = true;
+          this._onLocalJoinClick('gamepad', state.gpIndex);
+          return;
+        }
+        if (!aPressed) this._localP2APrev = false;
+      }
+
+      this._localJoinMonitorRAF = requestAnimationFrame(tick);
+    };
+    this._localJoinMonitorRAF = requestAnimationFrame(tick);
+  }
+
+  _stopLocalJoinMonitor() {
+    if (this._localJoinMonitorRAF !== null) {
+      cancelAnimationFrame(this._localJoinMonitorRAF);
+      this._localJoinMonitorRAF = null;
+    }
+    this._localLastJoinState = null;
+    this._localP2APrev = false;
+  }
+
+  /**
+   * Determine whether a P2 input path exists right now.
+   * @returns {{available: boolean, hasGamepad: boolean, hasKeyboard: boolean, gpIndex: number|null, hintVisible?: boolean}}
+   */
+  _detectLocalP2State() {
+    const p1GpIndex = this.input.gamepadIndex;
+    const gamepads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+    // Find the first attached gamepad that isn't P1's (note: the array can be
+    // sparse with holes at un-activated slots, so filter for truthy entries).
+    let unclaimedGpIndex = null;
+    for (let i = 0; i < gamepads.length; i++) {
+      if (gamepads[i] && i !== p1GpIndex) {
+        unclaimedGpIndex = i;
+        break;
+      }
+    }
+    const p1IsGamepad = p1GpIndex !== null;
+    // Keyboard is only a valid P2 input if P1 isn't using it (we block kb+kb
+    // because a single physical keyboard can't serve two players without key
+    // collisions on arrows / A / D).
+    const keyboardAvailable = p1IsGamepad;
+
+    if (unclaimedGpIndex !== null) {
+      return {
+        available: true,
+        hasGamepad: true,
+        hasKeyboard: keyboardAvailable,
+        gpIndex: unclaimedGpIndex,
+      };
+    }
+    if (keyboardAvailable) {
+      return {
+        available: true,
+        hasGamepad: false,
+        hasKeyboard: true,
+        gpIndex: null,
+      };
+    }
+    // P1 is on keyboard with no second gamepad → local MP blocked.
+    // Show a hint encouraging the captain to plug a controller in.
+    return {
+      available: false,
+      hasGamepad: false,
+      hasKeyboard: false,
+      gpIndex: null,
+      hintVisible: true,
+    };
+  }
+
+  /**
+   * Handle a JOIN RIDE click. Tears down any in-flight online MP session,
+   * constructs the P2 InputManager, and routes the captain directly to the
+   * level-select screen with _pendingMode='local'. The actual game-side
+   * setup happens on START RIDE via onLocalReady.
+   *
+   * @param {'gamepad'|'keyboard'} sourceType
+   * @param {number|null} gamepadSlot — gamepad index when sourceType is 'gamepad'
+   */
+  _onLocalJoinClick(sourceType, gamepadSlot) {
+    // Guard: if the monitor hasn't seen a P2 path, bail.
+    if (sourceType !== 'gamepad' && sourceType !== 'keyboard') return;
+    // Tear down the online MP attempt so the TNDM-XXXX room stops accepting
+    // remote stokers. Any in-flight online connection gets rejected.
+    if (this.net) {
+      try { this.net.destroy(); } catch (e) {}
+      this.net = null;
+    }
+    if (sourceType === 'gamepad') {
+      this._localP2InputManager = new InputManager({
+        gamepadSlot: gamepadSlot,
+        enableKeyboard: false,
+        enableMotion: false,
+        enableTouch: false,
+      });
+      this._localP2Type = 'gamepad';
+    } else {
+      // Keyboard P2: use a slot value that can never match a real gamepad.
+      this._localP2InputManager = new InputManager({
+        gamepadSlot: -1,
+        enableKeyboard: true,
+        enableMotion: false,
+        enableTouch: false,
+      });
+      this._localP2Type = 'keyboard';
+    }
+    this._pendingMode = 'local';
+    // Skip the room step; local co-op doesn't need social video prep.
+    this._showStep(this.levelStep);
   }
 
   _removePipLobbyMode() {
