@@ -1075,13 +1075,47 @@ function handleInputReport(event) {
         let correctionSpeed = (1 - shakyT) * GRAVITY_STILL_SPEED + shakyT * GRAVITY_SHAKY_SPEED;
         correctionSpeed *= gravMode; // scale by user's gravity mode setting
 
-        // Gyro rate limiting: cap correction at a fraction of gyro speed
+        // Gyro rate limiting — taper correction toward a gyro-proportional
+        // ceiling so gravity corrections stay visually imperceptible
+        // relative to how fast the controller is actually turning. When
+        // the gap between tracked gravity and measured accel is small,
+        // fully respect the ceiling; when the gap is large, skip the
+        // ceiling and let correction happen fast. Matches
+        // GamepadMotionHelpers / Motion::Update exactly.
+        //
+        // Previous implementation had two bugs:
+        //   1. gravError was computed as length((accelVec * 0) - gravityVec)
+        //      because `-accelLen > 0.001` is always false — so the gap
+        //      value was always ~gravityVec.length() regardless of real
+        //      alignment, and the closeEnoughFactor never adapted.
+        //   2. The ceiling was applied as a hard `Math.min(speed, limit)`
+        //      instead of the reference's weighted blend, which collapses
+        //      gravity correction to the gyro rate even when the gap is
+        //      large and correction should be fast.
         const angularSpeed = angle / dt;
-        const gravError = _tmpVec.copy(accelVec).multiplyScalar(-accelLen > 0.001 ? 1 : 0).sub(gravityVec).length();
-        const errorT = Math.max(0, Math.min(1,
-          (gravError - GRAVITY_GYRO_MIN_THRESHOLD) / (GRAVITY_GYRO_MAX_THRESHOLD - GRAVITY_GYRO_MIN_THRESHOLD)));
-        const gyroLimit = Math.max(angularSpeed * GRAVITY_GYRO_FACTOR * errorT, GRAVITY_MIN_SPEED);
-        correctionSpeed = Math.min(correctionSpeed, gyroLimit + GRAVITY_MIN_SPEED);
+
+        // gap = length of (accelNorm * -gravLen - gravityVec) — the
+        // distance between where the accelerometer says gravity should
+        // point and where we're currently tracking it. Degenerate accel
+        // (magnitude 0) → gap 0 → fully clamp (no correction anyway).
+        let gravGapLen = 0;
+        if (accelLen > 0.001) {
+          const gravLen = gravityVec.length();
+          gravGapLen = _tmpVec.copy(accelVec)
+            .multiplyScalar(-gravLen / accelLen)
+            .sub(gravityVec)
+            .length();
+        }
+
+        const gyroLimit = Math.max(angularSpeed * GRAVITY_GYRO_FACTOR, GRAVITY_MIN_SPEED);
+        if (correctionSpeed > gyroLimit) {
+          // closeEnoughFactor: 0 when gap is below the min threshold
+          // (fully clamp to ceiling), 1 when above max (no clamp).
+          const closeEnoughT = Math.max(0, Math.min(1,
+            (gravGapLen - GRAVITY_GYRO_MIN_THRESHOLD) /
+            (GRAVITY_GYRO_MAX_THRESHOLD - GRAVITY_GYRO_MIN_THRESHOLD)));
+          correctionSpeed = gyroLimit + (correctionSpeed - gyroLimit) * closeEnoughT;
+        }
 
         // Correct gravity toward accelerometer
         if (accelLen > 0.4 && accelLen < 1.6) {
