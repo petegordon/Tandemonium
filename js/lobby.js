@@ -371,7 +371,31 @@ export class Lobby {
         }
         // Retry for up to 2 seconds
         attempts++;
-        if (attempts < 20) setTimeout(detectGamepad, 100);
+        if (attempts < 20) {
+          setTimeout(detectGamepad, 100);
+        } else if (navigator.hid && this.input && !this.input.gamepadConnected) {
+          // Cold-start fallback: Gamepad API never saw a pad, but a
+          // previously-paired DualSense may be stuck in 0x31 full-report
+          // mode from a prior session and invisible to Chromium. Probe
+          // WebHID directly and bring it online via the synthetic-gamepad
+          // path in InputManager.
+          console.log('Desktop: Gamepad API empty after 2s, probing WebHID...');
+          this.input.bootstrapFromHID().then((ok) => {
+            if (!ok) return;
+            console.log('Desktop: HID bootstrap claimed', this.input._gpName);
+            this.toggleJoystick.style.display = '';
+            this._setToggleActive('joystick', this.joystickActive);
+            // connectControllerGyro was already called by bootstrapFromHID,
+            // so gyroConnected should be true — just flip the UI flags.
+            if (this.input.gyroConnected) {
+              this._motionPermitted = true;
+              this.motionActive = true;
+              this._showMotionToggle();
+              this._setToggleActive('motion', true);
+            }
+            if (this.onMusicChanged) this.onMusicChanged(true);
+          });
+        }
       };
       setTimeout(detectGamepad, 200);
     } else {
@@ -1638,6 +1662,21 @@ export class Lobby {
 
     window.addEventListener('gamepadconnected', () => {
       if (!this.input || !navigator.hid) return;
+      // Self-heal: when a BT DualSense disconnects, teardown arrives via the
+      // WebHID 'disconnect' event (not Gamepad API) because the controller
+      // is invisible to Chromium's gamepad mapper once it's in 0x31 mode.
+      // That means the lobby's gamepaddisconnected listener below ran while
+      // gyroConnected was still true and never cleared the motion flags. If
+      // the InputManager is now idle (gyroConnected false) but our flags
+      // still say motion is active, they're pointing at a dead pipeline —
+      // clear them so the newly-connected controller can wire up its own
+      // gyro via _checkGamepadGyro.
+      if (!this.input.gyroConnected && (this._motionPermitted || this.motionActive)) {
+        console.log('Lobby: clearing stale motion state from previous BT disconnect');
+        this._motionPermitted = false;
+        this.motionActive = false;
+        this._setToggleActive('motion', false);
+      }
       // Only re-auto-connect if we aren't already wired to gyro. If we are,
       // the existing claim is fine — leave it alone.
       if (this._motionPermitted || this.motionActive) return;
@@ -1659,6 +1698,12 @@ export class Lobby {
    *  controller is also attached for local co-op). */
   _autoConnectGyro() {
     if (this.motionActive || this._motionPermitted) return;
+    // Concurrent-call guard: the main + hot-swap gamepadconnected listeners
+    // schedule this at slightly different delays, so both can fire while
+    // the first connectControllerGyro() is still in-flight. Bail silently
+    // if a connect is already in progress so we don't double-log or
+    // double-schedule work.
+    if (this.input._hidConnecting) return;
     const gamepads = navigator.getGamepads();
     const gp = gamepads[this.input.gamepadIndex];
     const controllerInfo = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
@@ -2584,8 +2629,7 @@ export class Lobby {
       // Re-prime edge-detect flags so a held button from connection
       // doesn't immediately fire a click in _pollGamepadNav.
       if (this.input && this.input.gamepadConnected) {
-        const gamepads = navigator.getGamepads();
-        const gp = gamepads[this.input.gamepadIndex];
+        const gp = this.input.getGamepadState();
         if (gp) {
           const btns = this._gpButtons(gp);
           this._gpPrevA = btns.a;
@@ -3995,8 +4039,7 @@ export class Lobby {
     this._gpPrevLB = false;
     this._gpPrevRB = false;
     if (this.input && this.input.gamepadConnected) {
-      const gamepads = navigator.getGamepads();
-      const gp = gamepads[this.input.gamepadIndex];
+      const gp = this.input.getGamepadState();
       if (gp) {
         this._gpPrevUp = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
         this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
@@ -4177,8 +4220,7 @@ export class Lobby {
       this._showSpinners(true);
     }
 
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
+    const gp = this.input.getGamepadState();
     if (!gp) return;
 
     // D-pad up (button 12) or left stick up (axis 1 < -0.5)

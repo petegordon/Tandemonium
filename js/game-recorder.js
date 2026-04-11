@@ -1441,7 +1441,7 @@ export class GameRecorder {
 
     // Prime edge-detect from current gamepad state
     if (this.input && this.input.gamepadConnected) {
-      const gp = (navigator.getGamepads())[this.input.gamepadIndex];
+      const gp = this.input.getGamepadState();
       if (gp) {
         this._gpPrevUp = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
         this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
@@ -1470,7 +1470,7 @@ export class GameRecorder {
     this._previewPollId = requestAnimationFrame(() => this._pollPreviewGamepad());
 
     if (!this.input || !this.input.gamepadConnected) return;
-    const gp = (navigator.getGamepads())[this.input.gamepadIndex];
+    const gp = this.input.getGamepadState();
     if (!gp) return;
 
     const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;

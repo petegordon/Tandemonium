@@ -51,6 +51,20 @@ function _gamepadRumble(strong, weak, duration) {
         if (!src) continue;
         const idx = src.gamepadIndex;
         if (idx == null) continue;
+
+        // Prefer the driver-level rumble path when the source has a
+        // controller driver that implements setRumble — e.g. DualSense on
+        // macOS, where Chromium's Gamepad API vibrationActuator sometimes
+        // resolves without actually writing the HID output report. The
+        // driver bypass uses the same open WebHID handle already held for
+        // gyro reads and is authoritative. Drivers without setRumble
+        // (Switch Pro, Xbox) fall through to the Gamepad API path below.
+        const driver = src._controllerDriver;
+        if (driver && typeof driver.setRumble === 'function') {
+          driver.setRumble(strong, weak, duration).catch(() => {});
+          continue;
+        }
+
         const gp = gamepads[idx];
         if (!gp || !gp.vibrationActuator) continue;
         gp.vibrationActuator.playEffect('dual-rumble', {
