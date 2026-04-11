@@ -18,9 +18,52 @@ if (typeof document !== 'undefined') {
 
 let _offRoadThrottleUntil = 0;
 
+// Targeted haptic sources: a list of objects (typically InputManager
+// instances) whose `.gamepadIndex` property identifies which gamepads
+// should rumble. In solo / online MP this is just [P1's InputManager];
+// in local multiplayer it's [P1 InputManager, P2 InputManager] so both
+// players feel shared events like crashes and checkpoints. Resolving
+// indices fresh on each call handles hot-swap automatically — when a
+// controller is unplugged the source's gamepadIndex goes null and we
+// skip it, and when a new pad is plugged in the updated index is read
+// on the next rumble. When null, fall back to the legacy "first pad
+// with a vibration actuator" behavior so this module stays usable
+// standalone.
+let _hapticSources = null;
+
+/**
+ * Set the list of input sources whose gamepads should receive haptic
+ * feedback. Each entry is an object with a numeric `gamepadIndex`
+ * property (null when no gamepad is claimed). Pass null to clear.
+ * @param {Array<{gamepadIndex: number|null}>|null} sources
+ */
+export function setHapticSources(sources) {
+  _hapticSources = sources && sources.length > 0 ? sources : null;
+}
+
 function _gamepadRumble(strong, weak, duration) {
   try {
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    if (_hapticSources) {
+      // Targeted: rumble the specific gamepad index of each source.
+      // Multiple sources in local MP means both players feel the event.
+      for (const src of _hapticSources) {
+        if (!src) continue;
+        const idx = src.gamepadIndex;
+        if (idx == null) continue;
+        const gp = gamepads[idx];
+        if (!gp || !gp.vibrationActuator) continue;
+        gp.vibrationActuator.playEffect('dual-rumble', {
+          startDelay: 0,
+          duration,
+          weakMagnitude: weak,
+          strongMagnitude: strong,
+        });
+      }
+      return;
+    }
+    // Fallback: first-found pad (legacy behavior for modules that
+    // haven't registered targets yet).
     for (const gp of gamepads) {
       if (!gp || !gp.vibrationActuator) continue;
       gp.vibrationActuator.playEffect('dual-rumble', {

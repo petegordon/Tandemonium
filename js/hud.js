@@ -234,12 +234,18 @@ export class HUD {
       this.touchLeftEl.classList.toggle('idle-pulse', isIdle);
       this.touchRightEl.classList.toggle('idle-pulse', isIdle);
 
-      // Stoker self-flash: instant visual confirmation of own pedal taps
+      // Stoker self-flash: instant visual confirmation of own pedal taps.
+      // SharedPedalController.wasCorrect/wasWrong fire on ANY tap (captain OR
+      // stoker), so we only attribute a flash to the local pedal button when
+      // the local player is actually holding a pedal this frame. Without this
+      // gate, a stoker tap (online partner, or P2 keyboard in local MP) would
+      // phantom-flash the captain's own big pedal button — which is the bug
+      // seen in local MP where pressing P2's arrow key lit up P1's pedal.
       const newCorrect = pedalCtrl.wasCorrect && !this._prevOwnCorrect;
       const newWrong = pedalCtrl.wasWrong && !this._prevOwnWrong;
       this._prevOwnCorrect = !!pedalCtrl.wasCorrect;
       this._prevOwnWrong = !!pedalCtrl.wasWrong;
-      if (newCorrect || newWrong) {
+      if ((newCorrect || newWrong) && (leftHeld || rightHeld)) {
         this._ownFlashTimer = 0.2;
         this._ownFlashFoot = leftHeld ? 'left' : 'right';
         this._ownFlashWrong = newWrong;

@@ -682,6 +682,9 @@
     background: #a6f;
     transition: width 0.5s;
   }
+  /* Local co-op: P1 green + P2 coral, replacing the online blue/purple. */
+  body.mode-local #contrib-captain { background: #00ff7a; }
+  body.mode-local #contrib-stoker { background: var(--tandem-player2); }
 
   /* ── Victory overlay ── */
   #victory-overlay {
@@ -1873,6 +1876,50 @@
   }
   .lobby-btn-accent:active {
     background: rgba(60,200,80,0.4);
+  }
+  /* Player 2 color token for local multiplayer (JOIN RIDE, contribution bar, etc.) */
+  :root {
+    --tandem-player2: #ff4560;
+  }
+  /* Gamepad-P2 JOIN RIDE button: coral-red, two-line stacked layout (label + icon on top, device name below in smaller type) */
+  .lobby-btn-p2-gp {
+    background: rgba(255, 69, 96, 0.22);
+    border-color: rgba(255, 69, 96, 0.7);
+    color: var(--tandem-player2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: calc(0.5 * var(--ls));
+    line-height: 1.1;
+  }
+  .lobby-btn-p2-gp:hover { background: rgba(255, 69, 96, 0.35); border-color: rgba(255, 69, 96, 0.9); }
+  .lobby-btn-p2-gp:active { background: rgba(255, 69, 96, 0.5); }
+  /* Keyboard-P2 JOIN RIDE button: neutral white/grey so it reads as "the other option" */
+  .lobby-btn-p2-kb {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: #ffffff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: calc(0.5 * var(--ls));
+    line-height: 1.1;
+  }
+  .lobby-btn-p2-kb:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.7); }
+  .lobby-btn-p2-kb:active { background: rgba(255, 255, 255, 0.3); }
+  .btn-local-join-main {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(0.8 * var(--ls));
+  }
+  .btn-local-join-icon { font-size: 1em; }
+  .btn-local-join-padname {
+    font-size: 0.6em;
+    opacity: 0.85;
+    letter-spacing: 0.12em;
+    font-weight: 600;
   }
   .lobby-layout {
     display: flex;
@@ -4041,6 +4088,19 @@ ON</button>
           <div id="room-url" class="room-url"></div>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
+          <!-- Local multiplayer: one JOIN RIDE button per available P2 path.
+               The monitor (lobby._startLocalJoinMonitor) shows/hides each
+               button based on connected devices. Each button commits to a
+               specific P2 device — no auto-picking. -->
+          <button class="lobby-btn lobby-btn-p2-gp" id="btn-local-join-gp" style="display:none;">
+            <span class="btn-local-join-main">JOIN RIDE <span class="btn-local-join-icon">&#127918;</span></span>
+            <span class="btn-local-join-padname" id="btn-local-join-gp-name">CONTROLLER</span>
+          </button>
+          <button class="lobby-btn lobby-btn-p2-kb" id="btn-local-join-kb" style="display:none;">
+            <span class="btn-local-join-main">JOIN RIDE <span class="btn-local-join-icon">&#9000;&#65039;</span></span>
+            <span class="btn-local-join-padname">KEYBOARD</span>
+          </button>
+          <p id="host-local-hint" class="lobby-hint" style="display:none;">Plug in a 2nd controller for local co-op</p>
           <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
         </div>
 
