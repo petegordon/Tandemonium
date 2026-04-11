@@ -28,6 +28,7 @@ import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
+import { ControllerRegistry } from './controllers/controller-registry.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -912,10 +913,47 @@ class Game {
     // can take effect. Cleared in _returnToLobby.
     document.body.classList.add('mode-local');
 
+    // Auto-connect P2's WebHID gyro if P2 is on a gyro-capable gamepad.
+    // Pinned to P2's specific vendor/product so P2's gyro pipeline lands
+    // on P2's physical device — not whichever gyro-capable HID device
+    // findApprovedDevice happens to return first.
+    if (sourceType === 'gamepad') {
+      this._autoConnectP2Gyro();
+    }
+
     // Show instructions (tap to start)
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
+  }
+
+  /**
+   * Try to wire P2's WebHID gyro to its physical gamepad in local MP.
+   * Parallels the lobby's _autoConnectGyro for P1 but targets this.inputP2,
+   * and pins the claim by vendor/product so it can't grab P1's device.
+   * Best-effort: if P2's controller hasn't been WebHID-approved before,
+   * silently skip. P2 still plays with joystick lean.
+   */
+  _autoConnectP2Gyro() {
+    if (!this.inputP2) return;
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const gp = gamepads[this.inputP2._gamepadSlot];
+    if (!gp) return;
+    const info = ControllerRegistry.identifyFromGamepadId(gp.id);
+    if (!info || !info.hasGyro) return;
+    const filter = ControllerRegistry.parseGamepadVendorProduct(gp.id);
+    if (!filter) return;
+    console.log('Auto-connecting P2 gyro for', info.driverName, filter);
+    this.inputP2.connectControllerGyro(filter).then(() => {
+      if (this.inputP2 && this.inputP2.gyroConnected) {
+        // Ensure P2's motion pipeline is armed so balanceCtrlP2 reads lean.
+        this.inputP2.motionEnabled = true;
+        this.inputP2.startTiltCalibration();
+        console.log('P2 gyro auto-connected');
+      }
+    }).catch((err) => {
+      console.warn('P2 gyro auto-connect failed:', err && err.message);
+    });
   }
 
   // ============================================================

@@ -1609,7 +1609,11 @@ export class Lobby {
   }
 
   /** Auto-connect gyro in Electron/Steam — no user gesture needed since
-   *  WebHID permissions are granted via session handlers in main.js. */
+   *  WebHID permissions are granted via session handlers in main.js.
+   *  Passes a vendor/product filter so P1's gyro channel is pinned to
+   *  P1's actual physical controller instead of whichever gyro-capable
+   *  HID device happens to be approved first (critical when a second
+   *  controller is also attached for local co-op). */
   _autoConnectGyro() {
     if (this.motionActive || this._motionPermitted) return;
     const gamepads = navigator.getGamepads();
@@ -1617,8 +1621,9 @@ export class Lobby {
     const controllerInfo = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
     if (!controllerInfo || !controllerInfo.hasGyro) return;
 
-    console.log('Auto-connecting gyro for', controllerInfo.driverName, 'in desktop mode...');
-    this.input.connectControllerGyro().then(() => {
+    const filter = gp ? ControllerRegistry.parseGamepadVendorProduct(gp.id) : null;
+    console.log('Auto-connecting gyro for', controllerInfo.driverName, 'in desktop mode...', filter);
+    this.input.connectControllerGyro(filter).then(() => {
       if (this.input.gyroConnected) {
         this._motionPermitted = true;
         this.motionActive = true;
@@ -1747,8 +1752,11 @@ export class Lobby {
         this._updateTutorialButton();
         return;
       }
-      // First time — request WebHID access
-      this.input.connectControllerGyro().then(() => {
+      // First time — request WebHID access, pinned to P1's physical gamepad
+      // so we don't grab a different controller that happens to be approved.
+      const gpForGyro = navigator.getGamepads()[this.input.gamepadIndex];
+      const filterForGyro = gpForGyro ? ControllerRegistry.parseGamepadVendorProduct(gpForGyro.id) : null;
+      this.input.connectControllerGyro(filterForGyro).then(() => {
         if (this.input.gyroConnected) {
           this._motionPermitted = true;
           this.motionActive = true;

@@ -550,23 +550,39 @@ export class InputManager {
 
   // ── WebHID gyro (PlayStation controllers) ──────────────────
 
-  async connectControllerGyro() {
+  /**
+   * Request WebHID access to a controller's gyro and wire up the report
+   * handler. In local multiplayer two InputManager instances call this
+   * independently (one per player) and MUST land on their own physical
+   * device — pass a vendor/product filter to prevent cross-wiring.
+   *
+   * @param {{vendorId?: number, productId?: number}} [filter] — when
+   *   provided, both findApprovedDevice and the requestDevice fallback
+   *   are scoped to this specific physical controller. Without a filter
+   *   the first approved gyro device wins, which in a two-controller
+   *   session is non-deterministic.
+   */
+  async connectControllerGyro(filter = null) {
     if (this.gyroConnected || !navigator.hid) return;
 
-    const filters = ControllerRegistry.getHIDFilters();
+    // If a filter is supplied, narrow the WebHID request to just that
+    // physical device. Otherwise ask for all known gyro-capable drivers.
+    const hidFilters = filter
+      ? [{ vendorId: filter.vendorId, productId: filter.productId }]
+      : ControllerRegistry.getHIDFilters();
     let device;
 
     // In Electron/Steam, try getDevices() first (no user gesture needed),
     // then fall back to requestDevice() which triggers the auto-select handler.
     const isDesktop = window.steam || navigator.userAgent.includes('Electron');
     if (isDesktop) {
-      device = await ControllerRegistry.findApprovedDevice('gyro');
+      device = await ControllerRegistry.findApprovedDevice('gyro', filter);
       if (!device) {
-        const devices = await navigator.hid.requestDevice({ filters });
+        const devices = await navigator.hid.requestDevice({ filters: hidFilters });
         device = devices && devices[0];
       }
     } else {
-      const devices = await navigator.hid.requestDevice({ filters });
+      const devices = await navigator.hid.requestDevice({ filters: hidFilters });
       device = devices && devices[0];
     }
     if (!device) return;
