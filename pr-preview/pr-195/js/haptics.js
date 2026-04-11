@@ -1,0 +1,110 @@
+// ============================================================
+// HAPTICS — vibration feedback (mobile + gamepad)
+// ============================================================
+
+const canVibrate = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+
+// Prime vibration API on first user tap (Android Chrome requires user activation)
+let _primed = false;
+function _prime() {
+  if (_primed) return;
+  _primed = true;
+  if (canVibrate) navigator.vibrate(1); // silent 1ms vibration to unlock API
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('touchstart', _prime, { once: true });
+  document.addEventListener('click', _prime, { once: true });
+}
+
+let _offRoadThrottleUntil = 0;
+
+// Targeted haptic sources: a list of objects (typically InputManager
+// instances) whose `.gamepadIndex` property identifies which gamepads
+// should rumble. In solo / online MP this is just [P1's InputManager];
+// in local multiplayer it's [P1 InputManager, P2 InputManager] so both
+// players feel shared events like crashes and checkpoints. Resolving
+// indices fresh on each call handles hot-swap automatically — when a
+// controller is unplugged the source's gamepadIndex goes null and we
+// skip it, and when a new pad is plugged in the updated index is read
+// on the next rumble. When null, fall back to the legacy "first pad
+// with a vibration actuator" behavior so this module stays usable
+// standalone.
+let _hapticSources = null;
+
+/**
+ * Set the list of input sources whose gamepads should receive haptic
+ * feedback. Each entry is an object with a numeric `gamepadIndex`
+ * property (null when no gamepad is claimed). Pass null to clear.
+ * @param {Array<{gamepadIndex: number|null}>|null} sources
+ */
+export function setHapticSources(sources) {
+  _hapticSources = sources && sources.length > 0 ? sources : null;
+}
+
+function _gamepadRumble(strong, weak, duration) {
+  try {
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    if (_hapticSources) {
+      // Targeted: rumble the specific gamepad index of each source.
+      // Multiple sources in local MP means both players feel the event.
+      for (const src of _hapticSources) {
+        if (!src) continue;
+        const idx = src.gamepadIndex;
+        if (idx == null) continue;
+        const gp = gamepads[idx];
+        if (!gp || !gp.vibrationActuator) continue;
+        gp.vibrationActuator.playEffect('dual-rumble', {
+          startDelay: 0,
+          duration,
+          weakMagnitude: weak,
+          strongMagnitude: strong,
+        });
+      }
+      return;
+    }
+    // Fallback: first-found pad (legacy behavior for modules that
+    // haven't registered targets yet).
+    for (const gp of gamepads) {
+      if (!gp || !gp.vibrationActuator) continue;
+      gp.vibrationActuator.playEffect('dual-rumble', {
+        startDelay: 0,
+        duration,
+        weakMagnitude: weak,
+        strongMagnitude: strong,
+      });
+      return;
+    }
+  } catch { /* unsupported */ }
+}
+
+export function hapticCrash() {
+  if (canVibrate) navigator.vibrate([100, 30, 200]);
+  _gamepadRumble(0.8, 0.4, 300);
+}
+
+export function hapticTreeHit() {
+  if (canVibrate) navigator.vibrate(150);
+  _gamepadRumble(1.0, 0.5, 150);
+}
+
+export function hapticCheckpoint() {
+  if (canVibrate) navigator.vibrate(50);
+  _gamepadRumble(0.2, 0.3, 50);
+}
+
+export function hapticFinish() {
+  if (canVibrate) navigator.vibrate([50, 50, 50, 50, 200]);
+  _gamepadRumble(0.4, 0.6, 400);
+}
+
+export function hapticOffRoad(intensity) {
+  const now = performance.now();
+  if (now < _offRoadThrottleUntil) return;
+  if (intensity < 0.1) return;
+
+  const duration = Math.round(20 + intensity * 30);
+  _offRoadThrottleUntil = now + duration + 40;
+
+  if (canVibrate) navigator.vibrate(duration);
+  _gamepadRumble(intensity * 0.3, intensity * 0.2, duration);
+}
