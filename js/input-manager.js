@@ -9,6 +9,11 @@ import { setHapticSources } from './haptics.js';
 
 const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
 
+// Stuck-IMU self-heal thresholds (see #198 — BT Switch Pro hot-swap race
+// with macOS Game Controller framework).
+const IMU_ZERO_TIMEOUT_MS = 500;      // how long zero IMU has to persist before we act
+const MAX_IMU_REINIT = 2;             // cap on driver.init() re-runs per connect session
+
 export class InputManager {
   /**
    * @param {Object} [options]
@@ -81,6 +86,17 @@ export class InputManager {
     this._lastGyroTime = 0;
     this._gyroReportHandler = null;
     this._accelVerified = false;     // accel byte offsets validated
+
+    // Stuck-IMU self-heal (see #198). When hot-swapping from a BT DualSense
+    // to a BT Switch Pro on macOS, the Switch Pro's IMU-enable sub-command
+    // races with macOS Game Controller framework's parallel SPI probes and
+    // the IMU ends up disabled — 0x30 reports keep arriving but their IMU
+    // byte range is all zeros. Detect that state post-calibration and
+    // re-run driver.init() to re-send the enable-IMU sub-command. Capped
+    // so a genuinely-broken controller can't loop forever.
+    this._imuZeroSince = 0;          // ms timestamp when we first saw zero IMU, 0 = not currently zero
+    this._imuReinitAttempts = 0;     // bounded by MAX_IMU_REINIT
+    this._imuReinitInFlight = false; // guard against re-entering during the init await
 
     // Synthetic gamepad built from HID input reports. Required because
     // DualSense over Bluetooth, once switched into 0x31 full-report mode,
@@ -838,6 +854,12 @@ export class InputManager {
     this._lastGyroTime = 0;
     this._accelVerified = false;
     this._syntheticGamepad = null;
+    // Reset the stuck-IMU self-heal budget so the next controller gets
+    // a fresh set of retries. Without this, two successive hot-swaps
+    // that both need self-heal would exhaust the cap on the second one.
+    this._imuZeroSince = 0;
+    this._imuReinitAttempts = 0;
+    this._imuReinitInFlight = false;
     setHapticSources(null);
   }
 
@@ -883,6 +905,27 @@ export class InputManager {
     this._gyroRollAccum = 0;
     this._lastGyroTime = 0;
     this.motionOffset = null;
+  }
+
+  /**
+   * Stuck-IMU recovery path (#198). Re-run the current driver's init()
+   * to re-send its enable-IMU sub-command, then restart the bias
+   * calibration so the new (hopefully non-zero) samples aren't averaged
+   * against the stale (0,0,0) readings from before the reset.
+   */
+  async _reinitDriverAndCalibrate() {
+    if (!this._controllerDriver) {
+      this._imuReinitInFlight = false;
+      return;
+    }
+    try {
+      await this._controllerDriver.init();
+      this._startGyroCalibration();
+    } catch (err) {
+      console.warn('Driver re-init failed:', err.message);
+    } finally {
+      this._imuReinitInFlight = false;
+    }
   }
 
   _finishGyroCalibration() {
@@ -998,6 +1041,33 @@ export class InputManager {
       if (this._gyroCalibSamples.length >= GYRO_CALIB_COUNT) this._finishGyroCalibration();
       this._lastGyroTime = now;
       return;
+    }
+
+    // Stuck-IMU self-heal: detect the BT Switch Pro hot-swap race (#198)
+    // where macOS's Game Controller framework disables the IMU shortly
+    // after our init() completes. Real IMU data is never all-zero across
+    // six axes — noise alone produces small non-zero values — so all six
+    // reading as exactly 0 for 500ms+ is unambiguously a stuck-IMU signal.
+    // When we detect it, re-run driver.init() to re-send the enable-IMU
+    // sub-command and restart calibration. Capped to avoid looping on a
+    // genuinely broken controller.
+    const imuIsZero = rawGx === 0 && rawGy === 0 && rawGz === 0 &&
+                      rawAx === 0 && rawAy === 0 && rawAz === 0;
+    if (imuIsZero) {
+      if (this._imuZeroSince === 0) this._imuZeroSince = now;
+      if (!this._imuReinitInFlight &&
+          (now - this._imuZeroSince) >= IMU_ZERO_TIMEOUT_MS &&
+          this._imuReinitAttempts < MAX_IMU_REINIT) {
+        this._imuReinitAttempts++;
+        this._imuZeroSince = 0;
+        this._imuReinitInFlight = true;
+        console.warn('IMU stuck at zero for ' + IMU_ZERO_TIMEOUT_MS +
+          'ms — re-running driver init (' + this._imuReinitAttempts +
+          '/' + MAX_IMU_REINIT + ')');
+        this._reinitDriverAndCalibrate();
+      }
+    } else if (this._imuZeroSince !== 0) {
+      this._imuZeroSince = 0;
     }
 
     // Apply bias correction
