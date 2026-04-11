@@ -1129,6 +1129,7 @@ class Game {
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this.balanceCtrl.resetSteerFrames();
+    if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
@@ -1892,7 +1893,9 @@ class Game {
     const level = this.lobby.selectedLevel;
     // Victory title includes role in multiplayer
     const victoryTitle = document.getElementById('victory-title');
-    if (this.mode === 'captain' || this.mode === 'stoker') {
+    if (this.mode === 'local') {
+      victoryTitle.textContent = 'YOU BOTH MADE IT!';
+    } else if (this.mode === 'captain' || this.mode === 'stoker') {
       victoryTitle.textContent = 'YOU MADE IT ' + this.mode.toUpperCase() + '!';
     } else {
       victoryTitle.textContent = 'YOU MADE IT!';
@@ -1937,7 +1940,10 @@ class Game {
       if (summary.collectibles > 0) {
         right.push({ icon: collectIcon, value: '' + summary.collectibles });
       }
-      if (summary.inputSource && summary.inputSource !== 'none') {
+      // Top grid shows a single input source for solo / online MP. In local
+      // mode we skip it here because the contribution breakdown below shows
+      // BOTH players' input sources per-column (no need to duplicate P1's).
+      if (this.mode !== 'local' && summary.inputSource && summary.inputSource !== 'none') {
         right.push({ icon: inputSourceEmoji[summary.inputSource] || '', value: summary.inputSource });
       }
 
@@ -1977,15 +1983,33 @@ class Game {
 
       statsEl.innerHTML = html;
 
-      // Multiplayer contribution breakdown
+      // Multiplayer contribution breakdown (online captain/stoker OR local co-op)
       if (soloStats && soloStats.mode === 'multiplayer') {
         const contrib = soloStats;
+        const isLocal = this.mode === 'local';
+        // In local mode we know both players' input sources because both
+        // InputManagers live on this machine; in online mode we only know
+        // our own side's, so the partner column is left without an icon.
+        const p1SteerSource = this.balanceCtrl ? this.balanceCtrl.getSteerSource() : 'none';
+        const p2SteerSource = (isLocal && this.balanceCtrlP2) ? this.balanceCtrlP2.getSteerSource() : 'none';
+        const sourceIcon = (src) => {
+          if (!src || src === 'none') return '';
+          return inputSourceEmoji[src] || '';
+        };
+        const captainLabel = isLocal ? 'P1 CAPTAIN' : 'CAPTAIN';
+        const stokerLabel = isLocal ? 'P2 STOKER' : 'STOKER';
+        const p1SourceRow = isLocal && p1SteerSource !== 'none'
+          ? '<div>' + sourceIcon(p1SteerSource) + ' <strong>' + p1SteerSource + '</strong></div>'
+          : '';
+        const p2SourceRow = isLocal && p2SteerSource !== 'none'
+          ? '<div>' + sourceIcon(p2SteerSource) + ' <strong>' + p2SteerSource + '</strong></div>'
+          : '';
         const contribDiv = document.createElement('div');
         contribDiv.className = 'victory-contrib';
         contribDiv.innerHTML =
           '<div class="victory-contrib-header">' +
-            '<span class="contrib-label captain-label">CAPTAIN ' + contrib.captain.overallPct + '%</span>' +
-            '<span class="contrib-label stoker-label">STOKER ' + contrib.stoker.overallPct + '%</span>' +
+            '<span class="contrib-label captain-label">' + captainLabel + ' ' + contrib.captain.overallPct + '%</span>' +
+            '<span class="contrib-label stoker-label">' + stokerLabel + ' ' + contrib.stoker.overallPct + '%</span>' +
           '</div>' +
           '<div class="victory-contrib-bar">' +
             '<div class="contrib-fill-captain" style="width:' + contrib.captain.overallPct + '%"></div>' +
@@ -1993,11 +2017,13 @@ class Game {
           '</div>' +
           '<div class="victory-contrib-detail">' +
             '<div class="contrib-col">' +
+              p1SourceRow +
               '<div>\uD83E\uDDB6 <strong>' + contrib.captain.totalTaps + '</strong></div>' +
               '<div>\u2696\uFE0F <strong>' + contrib.captain.safePct + '%</strong></div>' +
               '<div>\uD83D\uDEE3\uFE0F <strong>' + contrib.captain.onRoadPct + '%</strong></div>' +
             '</div>' +
             '<div class="contrib-col">' +
+              p2SourceRow +
               '<div>\uD83E\uDDB6 <strong>' + contrib.stoker.totalTaps + '</strong></div>' +
               '<div>\u2696\uFE0F <strong>' + contrib.stoker.safePct + '%</strong></div>' +
               '<div>\uD83D\uDEE3\uFE0F <strong>' + contrib.stoker.onRoadPct + '%</strong></div>' +
