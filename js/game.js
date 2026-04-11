@@ -161,6 +161,7 @@ class Game {
     this._localP2Type = null; // 'gamepad' | 'keyboard'
     this._mpPrevUpP2 = false;
     this._mpPrevDownP2 = false;
+    this._localP2Disconnected = false;
     this._partnerHasTilt = undefined; // undefined = unknown, true/false = received
     this._onPartnerTiltStatus = null;
     this._partnerServerId = null;
@@ -2292,6 +2293,7 @@ class Game {
       this._localP2Type = null;
       this._mpPrevUpP2 = false;
       this._mpPrevDownP2 = false;
+      this._localP2Disconnected = false;
       // Re-enable P1 keyboard in case local MP had parked it (P2-keyboard case)
       this.input.keyboardActive = true;
     }
@@ -3146,6 +3148,28 @@ class Game {
   // ============================================================
 
   _updateLocal(dt) {
+    // Mid-ride disconnect: if P2 is on a gamepad that just dropped, pause the
+    // ride and show a reconnect overlay. Physics + race timer freeze until the
+    // gamepad comes back (or the player quits via the overlay's Return button).
+    if (this._localP2Type === 'gamepad' && !this.inputP2.gamepadConnected) {
+      if (!this._localP2Disconnected) {
+        this._localP2Disconnected = true;
+        this._reconnecting = true; // shared flag with online MP freezes raceManager
+        this._showDisconnect('Player 2 controller disconnected');
+      }
+      // Render a still frame so the world doesn't look crashed, but skip
+      // physics, race progress, input reads, and P2 polling entirely.
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    if (this._localP2Disconnected) {
+      // Gamepad came back — hide overlay and resume.
+      this._localP2Disconnected = false;
+      this._reconnecting = false;
+      document.getElementById('disconnect-overlay').style.display = 'none';
+      if (this._clearOverlayButtons) this._clearOverlayButtons();
+    }
+
     // Feed bike speed to P2 input for velocity-dependent sensitivity
     this.inputP2.bikeSpeed = this.bike.speed;
     this.inputP2.bikeMaxSpeed = TUNE.maxSpeed || 19;
