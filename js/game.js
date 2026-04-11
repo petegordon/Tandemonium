@@ -23,7 +23,7 @@ import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { ArchIndicator } from './arch-indicator.js';
-import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad } from './haptics.js';
+import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
@@ -133,6 +133,9 @@ class Game {
 
     // Components
     this.input = new InputManager();
+    // Default haptic target: P1's InputManager. Updated in _onLocalReady
+    // to include P2's InputManager so both players rumble on shared events.
+    setHapticSources([this.input]);
     this.pedalCtrl = new PedalController(this.input);
     this.balanceCtrl = new BalanceController(this.input);
     this.world = new World(this.scene, { lowEnd: this._lowQuality });
@@ -912,6 +915,10 @@ class Game {
     // Tag the body so local-mode-specific CSS (contribution bar recolor, etc.)
     // can take effect. Cleared in _returnToLobby.
     document.body.classList.add('mode-local');
+
+    // Route haptics to BOTH players in local MP so shared events (crash,
+    // checkpoint, off-road, finish) rumble each controller independently.
+    setHapticSources([this.input, this.inputP2]);
 
     // Auto-connect P2's WebHID gyro if P2 is on a gyro-capable gamepad.
     // Pinned to P2's specific vendor/product so P2's gyro pipeline lands
@@ -2362,6 +2369,8 @@ class Game {
       this.input.keyboardActive = true;
     }
     document.body.classList.remove('mode-local');
+    // Route haptics back to P1 only now that we're out of local MP.
+    setHapticSources([this.input]);
     // Room stays in recent rooms list for 5 min so players can rejoin
     this.mode = 'solo';
     this._lobbyBtn.textContent = 'LOBBY';
