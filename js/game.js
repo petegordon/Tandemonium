@@ -23,11 +23,12 @@ import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { ArchIndicator } from './arch-indicator.js';
-import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad } from './haptics.js';
+import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
+import { ControllerRegistry } from './controllers/controller-registry.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -132,6 +133,9 @@ class Game {
 
     // Components
     this.input = new InputManager();
+    // Default haptic target: P1's InputManager. Updated in _onLocalReady
+    // to include P2's InputManager so both players rumble on shared events.
+    setHapticSources([this.input]);
     this.pedalCtrl = new PedalController(this.input);
     this.balanceCtrl = new BalanceController(this.input);
     this.world = new World(this.scene, { lowEnd: this._lowQuality });
@@ -149,11 +153,19 @@ class Game {
     }
 
     // Mode
-    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker'
+    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker' | 'local'
     this.net = null;
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
+    // Local multiplayer (same-screen): second InputManager + balance controller for P2.
+    // Created in _onLocalReady when P2 clicks JOIN RIDE on the host page; null otherwise.
+    this.inputP2 = null;
+    this.balanceCtrlP2 = null;
+    this._localP2Type = null; // 'gamepad' | 'keyboard'
+    this._mpPrevUpP2 = false;
+    this._mpPrevDownP2 = false;
+    this._localP2Disconnected = false;
     this._partnerHasTilt = undefined; // undefined = unknown, true/false = received
     this._onPartnerTiltStatus = null;
     this._partnerServerId = null;
@@ -456,6 +468,7 @@ class Game {
     this.lobby = new Lobby({
       onSolo: () => this._onSolo(),
       onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
+      onLocalReady: (opts) => this._onLocalReady(opts),
       input: this.input
     });
 
@@ -854,6 +867,102 @@ class Game {
     this._setupStartHandler();
   }
 
+  /**
+   * Enter local multiplayer mode. Called from the lobby when P2 clicks JOIN RIDE
+   * on the host room page. Sets up a second InputManager / BalanceController for P2
+   * and transitions to the pre-ride instructions screen.
+   *
+   * @param {Object} opts
+   * @param {InputManager} opts.inputP2 — pre-constructed P2 input manager
+   * @param {'gamepad'|'keyboard'} opts.sourceType — how P2 is driving input
+   */
+  _onLocalReady({ inputP2, sourceType }) {
+    this.mode = 'local';
+    this.net = null;
+    this.inputP2 = inputP2;
+    this._localP2Type = sourceType;
+    this.balanceCtrlP2 = new BalanceController(inputP2);
+    this._lobbyBtn.textContent = 'LOBBY';
+    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._loadSavedTuning();
+
+    // Shared pedal controller: P1 taps as 'captain', P2 taps as 'stoker'.
+    this.sharedPedal = new SharedPedalController();
+
+    // If P2 is keyboard, P1 must release its keyboard subscription so random
+    // typing doesn't double-fire into both players.
+    if (sourceType === 'keyboard') {
+      this.input.keyboardActive = false;
+      this.input.keys = {};
+    }
+
+    // Reset edge-detect + remote-tap state for both players
+    this._mpPrevUp = false;
+    this._mpPrevDown = false;
+    this._mpPrevUpP2 = false;
+    this._mpPrevDownP2 = false;
+    this._remoteLastFoot = null;
+    this._remoteLastTapTime = 0;
+    this.remoteLean = 0;
+
+    // Partner gauge: show P2 lean + pedal indicators (reuses the online MP HUD)
+    document.getElementById('partner-gauge').style.display = '';
+    document.getElementById('partner-pedal-up').style.display = 'flex';
+    document.getElementById('partner-pedal-down').style.display = 'flex';
+    const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
+    if (partnerTitle) partnerTitle.textContent = 'PLAYER 2';
+
+    // Tag the body so local-mode-specific CSS (contribution bar recolor, etc.)
+    // can take effect. Cleared in _returnToLobby.
+    document.body.classList.add('mode-local');
+
+    // Route haptics to BOTH players in local MP so shared events (crash,
+    // checkpoint, off-road, finish) rumble each controller independently.
+    setHapticSources([this.input, this.inputP2]);
+
+    // Auto-connect P2's WebHID gyro if P2 is on a gyro-capable gamepad.
+    // Pinned to P2's specific vendor/product so P2's gyro pipeline lands
+    // on P2's physical device — not whichever gyro-capable HID device
+    // findApprovedDevice happens to return first.
+    if (sourceType === 'gamepad') {
+      this._autoConnectP2Gyro();
+    }
+
+    // Show instructions (tap to start)
+    this.state = 'instructions';
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  /**
+   * Try to wire P2's WebHID gyro to its physical gamepad in local MP.
+   * Parallels the lobby's _autoConnectGyro for P1 but targets this.inputP2,
+   * and pins the claim by vendor/product so it can't grab P1's device.
+   * Best-effort: if P2's controller hasn't been WebHID-approved before,
+   * silently skip. P2 still plays with joystick lean.
+   */
+  _autoConnectP2Gyro() {
+    if (!this.inputP2) return;
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const gp = gamepads[this.inputP2._gamepadSlot];
+    if (!gp) return;
+    const info = ControllerRegistry.identifyFromGamepadId(gp.id);
+    if (!info || !info.hasGyro) return;
+    const filter = ControllerRegistry.parseGamepadVendorProduct(gp.id);
+    if (!filter) return;
+    console.log('Auto-connecting P2 gyro for', info.driverName, filter);
+    this.inputP2.connectControllerGyro(filter).then(() => {
+      if (this.inputP2 && this.inputP2.gyroConnected) {
+        // Ensure P2's motion pipeline is armed so balanceCtrlP2 reads lean.
+        this.inputP2.motionEnabled = true;
+        this.inputP2.startTiltCalibration();
+        console.log('P2 gyro auto-connected');
+      }
+    }).catch((err) => {
+      console.warn('P2 gyro auto-connect failed:', err && err.message);
+    });
+  }
+
   // ============================================================
   // START / COUNTDOWN
   // ============================================================
@@ -959,8 +1068,7 @@ class Game {
     const pollGamepadStart = () => {
       if (this.state !== 'instructions' || started) return;
       if (this.input.gamepadConnected) {
-        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        const gp = gamepads[this.input.gamepadIndex];
+        const gp = this.input.getGamepadState();
         if (gp) {
           for (let i = 0; i < gp.buttons.length; i++) {
             if (gp.buttons[i].pressed) {
@@ -1027,6 +1135,7 @@ class Game {
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this.balanceCtrl.resetSteerFrames();
+    if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
@@ -1790,7 +1899,9 @@ class Game {
     const level = this.lobby.selectedLevel;
     // Victory title includes role in multiplayer
     const victoryTitle = document.getElementById('victory-title');
-    if (this.mode === 'captain' || this.mode === 'stoker') {
+    if (this.mode === 'local') {
+      victoryTitle.textContent = 'YOU BOTH MADE IT!';
+    } else if (this.mode === 'captain' || this.mode === 'stoker') {
       victoryTitle.textContent = 'YOU MADE IT ' + this.mode.toUpperCase() + '!';
     } else {
       victoryTitle.textContent = 'YOU MADE IT!';
@@ -1810,6 +1921,16 @@ class Game {
     if (fromRemote && this._remoteFinishStats) {
       summary = this._remoteFinishStats.raceSummary;
       contribData = this._remoteFinishStats.contribSummary;
+      // Per-side fix: the captain's raceSummary carries the captain's own
+      // inputSource, which the stoker would otherwise display as if it were
+      // theirs (#196). Steering source is strictly local — it's never sent
+      // over the wire because BalanceController.getSteerSource() only sees
+      // the frames accumulated on this side. Overwrite with the stoker's
+      // own value here so the victory screen's input-source row matches
+      // what this player actually used.
+      if (this.mode === 'stoker' && this.balanceCtrl) {
+        summary = { ...summary, inputSource: this.balanceCtrl.getSteerSource() };
+      }
     } else if (this.raceManager) {
       this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
       summary = this.raceManager.getSummary(this.bike.distanceTraveled);
@@ -1835,7 +1956,10 @@ class Game {
       if (summary.collectibles > 0) {
         right.push({ icon: collectIcon, value: '' + summary.collectibles });
       }
-      if (summary.inputSource && summary.inputSource !== 'none') {
+      // Top grid shows a single input source for solo / online MP. In local
+      // mode we skip it here because the contribution breakdown below shows
+      // BOTH players' input sources per-column (no need to duplicate P1's).
+      if (this.mode !== 'local' && summary.inputSource && summary.inputSource !== 'none') {
         right.push({ icon: inputSourceEmoji[summary.inputSource] || '', value: summary.inputSource });
       }
 
@@ -1875,15 +1999,33 @@ class Game {
 
       statsEl.innerHTML = html;
 
-      // Multiplayer contribution breakdown
+      // Multiplayer contribution breakdown (online captain/stoker OR local co-op)
       if (soloStats && soloStats.mode === 'multiplayer') {
         const contrib = soloStats;
+        const isLocal = this.mode === 'local';
+        // In local mode we know both players' input sources because both
+        // InputManagers live on this machine; in online mode we only know
+        // our own side's, so the partner column is left without an icon.
+        const p1SteerSource = this.balanceCtrl ? this.balanceCtrl.getSteerSource() : 'none';
+        const p2SteerSource = (isLocal && this.balanceCtrlP2) ? this.balanceCtrlP2.getSteerSource() : 'none';
+        const sourceIcon = (src) => {
+          if (!src || src === 'none') return '';
+          return inputSourceEmoji[src] || '';
+        };
+        const captainLabel = isLocal ? 'P1 CAPTAIN' : 'CAPTAIN';
+        const stokerLabel = isLocal ? 'P2 STOKER' : 'STOKER';
+        const p1SourceRow = isLocal && p1SteerSource !== 'none'
+          ? '<div>' + sourceIcon(p1SteerSource) + ' <strong>' + p1SteerSource + '</strong></div>'
+          : '';
+        const p2SourceRow = isLocal && p2SteerSource !== 'none'
+          ? '<div>' + sourceIcon(p2SteerSource) + ' <strong>' + p2SteerSource + '</strong></div>'
+          : '';
         const contribDiv = document.createElement('div');
         contribDiv.className = 'victory-contrib';
         contribDiv.innerHTML =
           '<div class="victory-contrib-header">' +
-            '<span class="contrib-label captain-label">CAPTAIN ' + contrib.captain.overallPct + '%</span>' +
-            '<span class="contrib-label stoker-label">STOKER ' + contrib.stoker.overallPct + '%</span>' +
+            '<span class="contrib-label captain-label">' + captainLabel + ' ' + contrib.captain.overallPct + '%</span>' +
+            '<span class="contrib-label stoker-label">' + stokerLabel + ' ' + contrib.stoker.overallPct + '%</span>' +
           '</div>' +
           '<div class="victory-contrib-bar">' +
             '<div class="contrib-fill-captain" style="width:' + contrib.captain.overallPct + '%"></div>' +
@@ -1891,11 +2033,13 @@ class Game {
           '</div>' +
           '<div class="victory-contrib-detail">' +
             '<div class="contrib-col">' +
+              p1SourceRow +
               '<div>\uD83E\uDDB6 <strong>' + contrib.captain.totalTaps + '</strong></div>' +
               '<div>\u2696\uFE0F <strong>' + contrib.captain.safePct + '%</strong></div>' +
               '<div>\uD83D\uDEE3\uFE0F <strong>' + contrib.captain.onRoadPct + '%</strong></div>' +
             '</div>' +
             '<div class="contrib-col">' +
+              p2SourceRow +
               '<div>\uD83E\uDDB6 <strong>' + contrib.stoker.totalTaps + '</strong></div>' +
               '<div>\u2696\uFE0F <strong>' + contrib.stoker.safePct + '%</strong></div>' +
               '<div>\uD83D\uDEE3\uFE0F <strong>' + contrib.stoker.onRoadPct + '%</strong></div>' +
@@ -2222,6 +2366,20 @@ class Game {
     this.recorder.clearPartnerStream();
     updateBadgeDisplay('partner-badges', []);
     if (this.net) { this.net.destroy(); this.net = null; }
+    // Local multiplayer teardown: release P2 InputManager + restore P1 keyboard
+    if (this.inputP2) {
+      this.inputP2 = null;
+      this.balanceCtrlP2 = null;
+      this._localP2Type = null;
+      this._mpPrevUpP2 = false;
+      this._mpPrevDownP2 = false;
+      this._localP2Disconnected = false;
+      // Re-enable P1 keyboard in case local MP had parked it (P2-keyboard case)
+      this.input.keyboardActive = true;
+    }
+    document.body.classList.remove('mode-local');
+    // Route haptics back to P1 only now that we're out of local MP.
+    setHapticSources([this.input]);
     // Room stays in recent rooms list for 5 min so players can rejoin
     this.mode = 'solo';
     this._lobbyBtn.textContent = 'LOBBY';
@@ -2559,8 +2717,7 @@ class Game {
 
   _pollStartButton() {
     if (!this.input.gamepadConnected) return;
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
+    const gp = this.input.getGamepadState();
     if (!gp) return;
 
     const start = gp.buttons[9] && gp.buttons[9].pressed;
@@ -2585,8 +2742,7 @@ class Game {
     if (this.recorder._previewPollId) return;
     // Don't process D-pad during calibration (tutorial)
     if (this.state === 'calibrating') return;
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
+    const gp = this.input.getGamepadState();
     if (!gp) return;
 
     const up = (gp.buttons[12] && gp.buttons[12].pressed) || false;
@@ -2675,8 +2831,7 @@ class Game {
   _pollOverlayGamepad() {
     if (this._overlayButtons.length === 0) return;
     if (!this.input.gamepadConnected) return;
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
+    const gp = this.input.getGamepadState();
     if (!gp) return;
 
     const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
@@ -2836,6 +2991,7 @@ class Game {
 
     // Poll gamepad every frame before reading any input
     this.input.pollGamepad();
+    if (this.inputP2) this.inputP2.pollGamepad();
 
     // Start button → options overlay (available in all states)
     this._pollStartButton();
@@ -2870,6 +3026,8 @@ class Game {
         this._updateCaptain(dt);
       } else if (this.mode === 'stoker') {
         this._updateStoker(dt);
+      } else if (this.mode === 'local') {
+        this._updateLocal(dt);
       }
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
@@ -2885,6 +3043,7 @@ class Game {
 
     // Clear buffered tap flags after all input has been read this frame
     this.input.consumeTaps();
+    if (this.inputP2) this.inputP2.consumeTaps();
   }
 
   // ============================================================
@@ -2908,10 +3067,7 @@ class Game {
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
 
-    // Record balance crash (bike fell from lean, not from tree/obstacle)
-    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
-      this._recordCrash('balance');
-    }
+    this._recordBalanceCrashIfNew(wasFallen);
 
     // Race progress + contribution tracking
     if (this.raceManager) {
@@ -2928,18 +3084,7 @@ class Game {
       this.contributionTracker.update(dt, this.bike, balanceResult.leanInput, 0, this.pedalCtrl.stats);
     }
 
-    // Collectibles
-    if (this.collectibleManager) {
-      const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
-      if (collected.length > 0) {
-        this._onCollect(collected.length);
-      }
-    }
-
-    // Obstacles
-    if (this.obstacleManager) {
-      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
-    }
+    this._updateItems(dt);
 
     // Achievements
     this._checkAchievements(dt);
@@ -2961,13 +3106,7 @@ class Game {
 
     this.grassParticles.update(this.bike, dt);
     this._hapticOffRoadCheck();
-    this.world.update(this.bike.position, this.bike.roadD, dt);
-    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
-
-    // Camera shake on crash
-    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
-      this.chaseCamera.shakeAmount = 0.15;
-    }
+    this._updateWorldAndCamera(dt);
 
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
     this.archIndicator.update(this.bike, balanceResult.leanInput);
@@ -3015,10 +3154,7 @@ class Game {
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
 
-    // Record balance crash (bike fell from lean, not from tree/obstacle)
-    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
-      this._recordCrash('balance');
-    }
+    this._recordBalanceCrashIfNew(wasFallen);
 
     // Race progress + contribution tracking (captain is authoritative)
     // Freeze race timer while reconnecting
@@ -3042,18 +3178,7 @@ class Game {
       }
     }
 
-    // Collectibles (captain is authoritative)
-    if (this.collectibleManager) {
-      const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
-      if (collected.length > 0) {
-        this._onCollect(collected.length);
-      }
-    }
-
-    // Obstacles
-    if (this.obstacleManager) {
-      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
-    }
+    this._updateItems(dt);
 
     // Achievements
     this._checkAchievements(dt);
@@ -3078,12 +3203,7 @@ class Game {
       this.net.sendLean(captainLean);
     }
 
-    this.world.update(this.bike.position, this.bike.roadD, dt);
-    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
-
-    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
-      this.chaseCamera.shakeAmount = 0.15;
-    }
+    this._updateWorldAndCamera(dt);
 
     this._updateConnBadge();
     const remoteData = this._remoteData;
@@ -3094,6 +3214,111 @@ class Game {
     this.archIndicator.update(this.bike, captainLean, this.remoteLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.sharedPedal, remoteData));
+  }
+
+  // ============================================================
+  // LOCAL UPDATE — same-screen co-op, no network
+  // P1 drives `this.input`; P2 drives `this.inputP2`.
+  // Reuses _updateCaptain for all physics/race/HUD logic by
+  // pre-populating `this.remoteLean` and the _remoteLastFoot/Time
+  // fields from P2's local inputs, so the captain path (which
+  // already averages captain + remote lean and feeds stoker taps
+  // into the shared pedal controller) works unchanged.
+  // ============================================================
+
+  _updateLocal(dt) {
+    // Mid-ride disconnect: if P2 is on a gamepad that just dropped, pause the
+    // ride and show a reconnect overlay. Physics + race timer freeze until the
+    // gamepad comes back (or the player quits via the overlay's Return button).
+    if (this._localP2Type === 'gamepad' && !this.inputP2.gamepadConnected) {
+      if (!this._localP2Disconnected) {
+        this._localP2Disconnected = true;
+        this._reconnecting = true; // shared flag with online MP freezes raceManager
+        this._showDisconnect('Player 2 controller disconnected');
+      }
+      // Render a still frame so the world doesn't look crashed, but skip
+      // physics, race progress, input reads, and P2 polling entirely.
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    if (this._localP2Disconnected) {
+      // Gamepad came back — hide overlay and resume.
+      this._localP2Disconnected = false;
+      this._reconnecting = false;
+      document.getElementById('disconnect-overlay').style.display = 'none';
+      if (this._clearOverlayButtons) this._clearOverlayButtons();
+    }
+
+    // Feed bike speed to P2 input for velocity-dependent sensitivity
+    this.inputP2.bikeSpeed = this.bike.speed;
+    this.inputP2.bikeMaxSpeed = TUNE.maxSpeed || 19;
+
+    // Compute P2's lean via their own balance controller. The captain path
+    // will average (captainLean + this.remoteLean) * 0.5, so stashing P2's
+    // lean into this.remoteLean makes the existing math Just Work.
+    const balanceResultP2 = this.balanceCtrlP2.update(this.bike, 0, null, null);
+    this.remoteLean = balanceResultP2.leanInput;
+
+    // Edge-detect P2 pedals → feed as the 'stoker' source into the shared
+    // pedal controller. The captain path does the same for its own ('captain')
+    // inputs, so offset pedaling emerges naturally.
+    const upHeld2 = this.inputP2.isPressed('ArrowLeft');
+    const downHeld2 = this.inputP2.isPressed('ArrowRight');
+    const now = performance.now();
+    if (upHeld2 && !this._mpPrevUpP2) {
+      this.sharedPedal.receiveTap('stoker', 'up');
+      this._remoteLastFoot = 'up';
+      this._remoteLastTapTime = now;
+    }
+    if (downHeld2 && !this._mpPrevDownP2) {
+      this.sharedPedal.receiveTap('stoker', 'down');
+      this._remoteLastFoot = 'down';
+      this._remoteLastTapTime = now;
+    }
+    this._mpPrevUpP2 = upHeld2;
+    this._mpPrevDownP2 = downHeld2;
+
+    // Delegate to the captain update path. It reads `this.input` for P1 pedals
+    // + own lean, and `this.remoteLean` / `this._remoteLastFoot` / `this._remoteLastTapTime`
+    // for P2's contribution (already populated above). All network sends in
+    // _updateCaptain are guarded by `if (this.net)` which is null in local mode,
+    // so they no-op safely.
+    this._updateCaptain(dt);
+  }
+
+  // ============================================================
+  // SHARED RIDE HELPERS
+  // Extracted from _updateSolo / _updateCaptain to keep a single
+  // source of truth for logic that both paths run identically.
+  // ============================================================
+
+  /** Record a balance-caused crash (fell from lean, not from collision). */
+  _recordBalanceCrashIfNew(wasFallen) {
+    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
+      this._recordCrash('balance');
+    }
+  }
+
+  /** Advance collectibles + obstacles; trigger _onCollect for any picked up this frame. */
+  _updateItems(dt) {
+    if (this.collectibleManager) {
+      const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+      if (collected.length > 0) {
+        this._onCollect(collected.length);
+      }
+    }
+    if (this.obstacleManager) {
+      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    }
+  }
+
+  /** Advance the world streaming, chase camera, and apply crash-recovery camera shake. */
+  _updateWorldAndCamera(dt) {
+    this.world.update(this.bike.position, this.bike.roadD, dt);
+    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
+    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
+      this.chaseCamera.shakeAmount = 0.15;
+    }
   }
 
   // ============================================================
@@ -3538,8 +3763,7 @@ class Game {
         // Poll for L3 press (button 10)
         const pollL3 = () => {
           if (resolved) return;
-          const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-          const gp = gamepads[this.input.gamepadIndex];
+          const gp = this.input.getGamepadState();
           if (gp && gp.buttons[10] && gp.buttons[10].pressed) {
             resolved = true;
             this._recalibrateTilt();
