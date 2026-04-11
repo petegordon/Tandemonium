@@ -149,11 +149,18 @@ class Game {
     }
 
     // Mode
-    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker'
+    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker' | 'local'
     this.net = null;
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
+    // Local multiplayer (same-screen): second InputManager + balance controller for P2.
+    // Created in _onLocalReady when P2 clicks JOIN RIDE on the host page; null otherwise.
+    this.inputP2 = null;
+    this.balanceCtrlP2 = null;
+    this._localP2Type = null; // 'gamepad' | 'keyboard'
+    this._mpPrevUpP2 = false;
+    this._mpPrevDownP2 = false;
     this._partnerHasTilt = undefined; // undefined = unknown, true/false = received
     this._onPartnerTiltStatus = null;
     this._partnerServerId = null;
@@ -456,6 +463,7 @@ class Game {
     this.lobby = new Lobby({
       onSolo: () => this._onSolo(),
       onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
+      onLocalReady: (opts) => this._onLocalReady(opts),
       input: this.input
     });
 
@@ -849,6 +857,57 @@ class Game {
     }
 
     // Show instructions
+    this.state = 'instructions';
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  /**
+   * Enter local multiplayer mode. Called from the lobby when P2 clicks JOIN RIDE
+   * on the host room page. Sets up a second InputManager / BalanceController for P2
+   * and transitions to the pre-ride instructions screen.
+   *
+   * @param {Object} opts
+   * @param {InputManager} opts.inputP2 — pre-constructed P2 input manager
+   * @param {'gamepad'|'keyboard'} opts.sourceType — how P2 is driving input
+   */
+  _onLocalReady({ inputP2, sourceType }) {
+    this.mode = 'local';
+    this.net = null;
+    this.inputP2 = inputP2;
+    this._localP2Type = sourceType;
+    this.balanceCtrlP2 = new BalanceController(inputP2);
+    this._lobbyBtn.textContent = 'LOBBY';
+    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._loadSavedTuning();
+
+    // Shared pedal controller: P1 taps as 'captain', P2 taps as 'stoker'.
+    this.sharedPedal = new SharedPedalController();
+
+    // If P2 is keyboard, P1 must release its keyboard subscription so random
+    // typing doesn't double-fire into both players.
+    if (sourceType === 'keyboard') {
+      this.input.keyboardActive = false;
+      this.input.keys = {};
+    }
+
+    // Reset edge-detect + remote-tap state for both players
+    this._mpPrevUp = false;
+    this._mpPrevDown = false;
+    this._mpPrevUpP2 = false;
+    this._mpPrevDownP2 = false;
+    this._remoteLastFoot = null;
+    this._remoteLastTapTime = 0;
+    this.remoteLean = 0;
+
+    // Partner gauge: show P2 lean + pedal indicators (reuses the online MP HUD)
+    document.getElementById('partner-gauge').style.display = '';
+    document.getElementById('partner-pedal-up').style.display = 'flex';
+    document.getElementById('partner-pedal-down').style.display = 'flex';
+    const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
+    if (partnerTitle) partnerTitle.textContent = 'PLAYER 2';
+
+    // Show instructions (tap to start)
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
@@ -2222,6 +2281,16 @@ class Game {
     this.recorder.clearPartnerStream();
     updateBadgeDisplay('partner-badges', []);
     if (this.net) { this.net.destroy(); this.net = null; }
+    // Local multiplayer teardown: release P2 InputManager + restore P1 keyboard
+    if (this.inputP2) {
+      this.inputP2 = null;
+      this.balanceCtrlP2 = null;
+      this._localP2Type = null;
+      this._mpPrevUpP2 = false;
+      this._mpPrevDownP2 = false;
+      // Re-enable P1 keyboard in case local MP had parked it (P2-keyboard case)
+      this.input.keyboardActive = true;
+    }
     // Room stays in recent rooms list for 5 min so players can rejoin
     this.mode = 'solo';
     this._lobbyBtn.textContent = 'LOBBY';
@@ -2836,6 +2905,7 @@ class Game {
 
     // Poll gamepad every frame before reading any input
     this.input.pollGamepad();
+    if (this.inputP2) this.inputP2.pollGamepad();
 
     // Start button → options overlay (available in all states)
     this._pollStartButton();
@@ -2870,6 +2940,8 @@ class Game {
         this._updateCaptain(dt);
       } else if (this.mode === 'stoker') {
         this._updateStoker(dt);
+      } else if (this.mode === 'local') {
+        this._updateLocal(dt);
       }
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
@@ -2885,6 +2957,7 @@ class Game {
 
     // Clear buffered tap flags after all input has been read this frame
     this.input.consumeTaps();
+    if (this.inputP2) this.inputP2.consumeTaps();
   }
 
   // ============================================================
@@ -3055,6 +3128,54 @@ class Game {
     this.archIndicator.update(this.bike, captainLean, this.remoteLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.sharedPedal, remoteData));
+  }
+
+  // ============================================================
+  // LOCAL UPDATE — same-screen co-op, no network
+  // P1 drives `this.input`; P2 drives `this.inputP2`.
+  // Reuses _updateCaptain for all physics/race/HUD logic by
+  // pre-populating `this.remoteLean` and the _remoteLastFoot/Time
+  // fields from P2's local inputs, so the captain path (which
+  // already averages captain + remote lean and feeds stoker taps
+  // into the shared pedal controller) works unchanged.
+  // ============================================================
+
+  _updateLocal(dt) {
+    // Feed bike speed to P2 input for velocity-dependent sensitivity
+    this.inputP2.bikeSpeed = this.bike.speed;
+    this.inputP2.bikeMaxSpeed = TUNE.maxSpeed || 19;
+
+    // Compute P2's lean via their own balance controller. The captain path
+    // will average (captainLean + this.remoteLean) * 0.5, so stashing P2's
+    // lean into this.remoteLean makes the existing math Just Work.
+    const balanceResultP2 = this.balanceCtrlP2.update(this.bike, 0, null, null);
+    this.remoteLean = balanceResultP2.leanInput;
+
+    // Edge-detect P2 pedals → feed as the 'stoker' source into the shared
+    // pedal controller. The captain path does the same for its own ('captain')
+    // inputs, so offset pedaling emerges naturally.
+    const upHeld2 = this.inputP2.isPressed('ArrowLeft');
+    const downHeld2 = this.inputP2.isPressed('ArrowRight');
+    const now = performance.now();
+    if (upHeld2 && !this._mpPrevUpP2) {
+      this.sharedPedal.receiveTap('stoker', 'up');
+      this._remoteLastFoot = 'up';
+      this._remoteLastTapTime = now;
+    }
+    if (downHeld2 && !this._mpPrevDownP2) {
+      this.sharedPedal.receiveTap('stoker', 'down');
+      this._remoteLastFoot = 'down';
+      this._remoteLastTapTime = now;
+    }
+    this._mpPrevUpP2 = upHeld2;
+    this._mpPrevDownP2 = downHeld2;
+
+    // Delegate to the captain update path. It reads `this.input` for P1 pedals
+    // + own lean, and `this.remoteLean` / `this._remoteLastFoot` / `this._remoteLastTapTime`
+    // for P2's contribution (already populated above). All network sends in
+    // _updateCaptain are guarded by `if (this.net)` which is null in local mode,
+    // so they no-op safely.
+    this._updateCaptain(dt);
   }
 
   // ============================================================
