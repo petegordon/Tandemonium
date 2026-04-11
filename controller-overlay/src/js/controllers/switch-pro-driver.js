@@ -31,15 +31,52 @@ export class SwitchProDriver extends ControllerDriver {
     this._debugCount = 0;
     this._reportIds = new Set();
     this._initSuccess = false;
+    // Declared byte count for output report 0x01. USB Switch Pro declares
+    // 48+ bytes, BT declares a much smaller count (typically ~10). Computed
+    // from device.collections at init() time. Null means "unknown — use
+    // the USB default size of 49."
+    this._output01Size = null;
+  }
+
+  /**
+   * Inspect device.collections and find the declared byte size for an
+   * output report. Returns null if the report isn't declared anywhere —
+   * sendReport() will then fall back to a sensible default.
+   */
+  _declaredOutputSize(reportId) {
+    if (!this.device || !this.device.collections) return null;
+    for (const col of this.device.collections) {
+      const reports = col.outputReports || [];
+      for (const r of reports) {
+        if (r.reportId !== reportId) continue;
+        let bits = 0;
+        for (const item of r.items || []) {
+          bits += (item.reportSize || 0) * (item.reportCount || 0);
+        }
+        if (bits > 0) return Math.ceil(bits / 8);
+      }
+    }
+    return null;
   }
 
   /**
    * Switch Pro requires sub-commands to enable IMU and full report mode.
-   * Retries up to 3 times with increasing delays since the device may
-   * not be ready for commands immediately after USB enumeration.
+   * Over BT, the output report 0x01 is declared with a smaller byte count
+   * than USB, so we size the sub-command buffer from device.collections
+   * instead of hard-coding 49. Retries in case the device isn't ready
+   * immediately after open().
    */
   async init() {
     const MAX_ATTEMPTS = 3;
+
+    // Snapshot the declared output-report size so _sendSubCommand can match
+    // what the HID descriptor actually accepts. Both USB and BT Switch Pro
+    // declare output 0x01 at 48 bytes; the previous hard-coded 49-byte
+    // buffer over-ran BT's declared size and made sendReport() fail with
+    // "Failed to write the report."
+    this._output01Size = this._declaredOutputSize(0x01);
+    console.log('Switch Pro: declared size for output 0x01 =',
+      this._output01Size == null ? 'unknown (using default 49)' : this._output01Size);
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -93,24 +130,19 @@ export class SwitchProDriver extends ControllerDriver {
     if (reportId !== 0x30) return null;
 
     // Report 0x30 layout (DataView excludes report ID):
-    // Byte 0: timer
-    // Byte 1: battery + connection info
-    // Bytes 2-4: button status (3 bytes)
-    // Bytes 5-7: left stick (3 bytes packed)
-    // Bytes 8-10: right stick (3 bytes packed)
-    // Byte 11: vibrator input report
-    // Byte 12: padding
-    // Bytes 13-48: 3 IMU frames × 12 bytes each
+    //   Byte 0:     timer
+    //   Byte 1:     battery + connection info
+    //   Bytes 2-4:  button status (3 bytes)
+    //   Bytes 5-7:  left stick (3 bytes packed)
+    //   Bytes 8-10: right stick (3 bytes packed)
+    //   Byte 11:    vibrator input report
+    //   Bytes 12-47: 3 IMU frames × 12 bytes each
+    //     Each frame: [accelX(2), accelY(2), accelZ(2), gyroX(2), gyroY(2), gyroZ(2)]
     //
-    // Each IMU frame (12 bytes):
-    //   [accelX(2), accelY(2), accelZ(2), gyroX(2), gyroY(2), gyroZ(2)]
+    // Wire size: BT sends exactly 48 bytes; USB pads further. We only read the
+    // first IMU frame, so the true minimum is 24 bytes (header + frame 0).
 
-    if (data.byteLength < 49) {
-      if (this._debugCount <= 20) {
-        console.warn('Switch Pro: report too short:', data.byteLength);
-      }
-      return null;
-    }
+    if (data.byteLength < 24) return null;
 
     // IMU data starts at offset 12 (no padding byte after vibrator report)
     // Frame 0: offset 12, Frame 1: offset 24, Frame 2: offset 36
@@ -148,9 +180,24 @@ export class SwitchProDriver extends ControllerDriver {
   // ── Sub-command protocol ──
 
   async _sendSubCommand(subCmd, args = []) {
-    // Output report 0x01: rumble + sub-command
-    // Padded to 49 bytes (some firmware requires fixed report size)
-    const buf = new Uint8Array(49);
+    // Output report 0x01 layout (shared by USB and BT):
+    //   byte 0:    packet counter (nibble)
+    //   bytes 1-8: rumble data (8 bytes, neutral here)
+    //   byte 9:    sub-command ID
+    //   byte 10+:  sub-command args
+    //
+    // The total buffer size has to match what the HID descriptor declares
+    // for report 0x01 on this device — USB declares 48+ bytes, BT declares
+    // ~10. Over-sizing on BT causes sendReport to reject with
+    // "Failed to write the report." Under-sizing on USB truncates the
+    // rumble payload.
+    const minSize = 10 + args.length;
+    const declared = this._output01Size;
+    const bufSize = declared != null
+      ? Math.max(declared, minSize)
+      : Math.max(49, minSize);           // USB default when descriptor is silent
+
+    const buf = new Uint8Array(bufSize);
     buf[0] = this._packetNumber & 0x0F;
     this._packetNumber = (this._packetNumber + 1) & 0x0F;
 
