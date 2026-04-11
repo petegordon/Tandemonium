@@ -1881,15 +1881,17 @@
   :root {
     --tandem-player2: #ff4560;
   }
-  /* Gamepad-P2 JOIN RIDE button: coral-red, flex layout for label + icon + pad name */
+  /* Gamepad-P2 JOIN RIDE button: coral-red, two-line stacked layout (label + icon on top, device name below in smaller type) */
   .lobby-btn-p2-gp {
     background: rgba(255, 69, 96, 0.22);
     border-color: rgba(255, 69, 96, 0.7);
     color: var(--tandem-player2);
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: calc(1 * var(--ls));
+    gap: calc(0.5 * var(--ls));
+    line-height: 1.1;
   }
   .lobby-btn-p2-gp:hover { background: rgba(255, 69, 96, 0.35); border-color: rgba(255, 69, 96, 0.9); }
   .lobby-btn-p2-gp:active { background: rgba(255, 69, 96, 0.5); }
@@ -1899,14 +1901,26 @@
     border-color: rgba(255, 255, 255, 0.5);
     color: #ffffff;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: calc(1 * var(--ls));
+    gap: calc(0.5 * var(--ls));
+    line-height: 1.1;
   }
   .lobby-btn-p2-kb:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.7); }
   .lobby-btn-p2-kb:active { background: rgba(255, 255, 255, 0.3); }
-  .btn-local-join-icon { font-size: 1.1em; }
-  .btn-local-join-padname { font-size: 0.85em; opacity: 0.9; }
+  .btn-local-join-main {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(0.8 * var(--ls));
+  }
+  .btn-local-join-icon { font-size: 1em; }
+  .btn-local-join-padname {
+    font-size: 0.6em;
+    opacity: 0.85;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+  }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -4079,14 +4093,12 @@ ON</button>
                button based on connected devices. Each button commits to a
                specific P2 device — no auto-picking. -->
           <button class="lobby-btn lobby-btn-p2-gp" id="btn-local-join-gp" style="display:none;">
-            <span>JOIN RIDE</span>
-            <span class="btn-local-join-icon">&#127918;</span>
+            <span class="btn-local-join-main">JOIN RIDE <span class="btn-local-join-icon">&#127918;</span></span>
             <span class="btn-local-join-padname" id="btn-local-join-gp-name">CONTROLLER</span>
           </button>
           <button class="lobby-btn lobby-btn-p2-kb" id="btn-local-join-kb" style="display:none;">
-            <span>JOIN RIDE</span>
-            <span class="btn-local-join-icon">&#9000;&#65039;</span>
-            <span>KEYBOARD</span>
+            <span class="btn-local-join-main">JOIN RIDE <span class="btn-local-join-icon">&#9000;&#65039;</span></span>
+            <span class="btn-local-join-padname">KEYBOARD</span>
           </button>
           <p id="host-local-hint" class="lobby-hint" style="display:none;">Plug in a 2nd controller for local co-op</p>
           <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
