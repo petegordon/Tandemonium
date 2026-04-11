@@ -1126,10 +1126,20 @@ function handleInputReport(event) {
         }
 
         // ── 3. Apply tilt correction to orientation quaternion ──
-        // Compute where gravity points in world space
-        const gravWorld = _tmpVec.copy(gravityVec).applyQuaternion(
-          _tmpQuat.copy(gyroOrientation).invert()
-        ).normalize();
+        // Convert gravityVec (tracked in the sensor-local frame) into the
+        // world frame by applying gyroOrientation directly. NOT its
+        // inverse — the inverse would transform world → local, the
+        // opposite of what we want.
+        //
+        // The reference (GamepadMotionHelpers) writes
+        // `Grav * Quaternion.Inverse()` but that library's `Vec * Quat`
+        // operator multiplies with the right-hand quaternion on the
+        // right side of the sandwich product, which evaluates to the
+        // SAME thing as Three.js's `v.applyQuaternion(q)` without any
+        // inverse. The earlier port translated the reference literally
+        // and ended up rotating 180° in the wrong direction on every
+        // frame, flipping the 3D model upside down.
+        const gravWorld = _tmpVec.copy(gravityVec).applyQuaternion(gyroOrientation).normalize();
         const worldDown = _tmpVec2.set(0, -1, 0);
 
         // Rotation from current gravity-in-world to actual world-down
