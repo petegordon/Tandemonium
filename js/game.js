@@ -2908,10 +2908,7 @@ class Game {
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
 
-    // Record balance crash (bike fell from lean, not from tree/obstacle)
-    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
-      this._recordCrash('balance');
-    }
+    this._recordBalanceCrashIfNew(wasFallen);
 
     // Race progress + contribution tracking
     if (this.raceManager) {
@@ -2928,18 +2925,7 @@ class Game {
       this.contributionTracker.update(dt, this.bike, balanceResult.leanInput, 0, this.pedalCtrl.stats);
     }
 
-    // Collectibles
-    if (this.collectibleManager) {
-      const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
-      if (collected.length > 0) {
-        this._onCollect(collected.length);
-      }
-    }
-
-    // Obstacles
-    if (this.obstacleManager) {
-      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
-    }
+    this._updateItems(dt);
 
     // Achievements
     this._checkAchievements(dt);
@@ -2961,13 +2947,7 @@ class Game {
 
     this.grassParticles.update(this.bike, dt);
     this._hapticOffRoadCheck();
-    this.world.update(this.bike.position, this.bike.roadD, dt);
-    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
-
-    // Camera shake on crash
-    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
-      this.chaseCamera.shakeAmount = 0.15;
-    }
+    this._updateWorldAndCamera(dt);
 
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt);
     this.archIndicator.update(this.bike, balanceResult.leanInput);
@@ -3015,10 +2995,7 @@ class Game {
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
 
-    // Record balance crash (bike fell from lean, not from tree/obstacle)
-    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
-      this._recordCrash('balance');
-    }
+    this._recordBalanceCrashIfNew(wasFallen);
 
     // Race progress + contribution tracking (captain is authoritative)
     // Freeze race timer while reconnecting
@@ -3042,18 +3019,7 @@ class Game {
       }
     }
 
-    // Collectibles (captain is authoritative)
-    if (this.collectibleManager) {
-      const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
-      if (collected.length > 0) {
-        this._onCollect(collected.length);
-      }
-    }
-
-    // Obstacles
-    if (this.obstacleManager) {
-      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
-    }
+    this._updateItems(dt);
 
     // Achievements
     this._checkAchievements(dt);
@@ -3078,12 +3044,7 @@ class Game {
       this.net.sendLean(captainLean);
     }
 
-    this.world.update(this.bike.position, this.bike.roadD, dt);
-    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
-
-    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
-      this.chaseCamera.shakeAmount = 0.15;
-    }
+    this._updateWorldAndCamera(dt);
 
     this._updateConnBadge();
     const remoteData = this._remoteData;
@@ -3094,6 +3055,41 @@ class Game {
     this.archIndicator.update(this.bike, captainLean, this.remoteLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.sharedPedal, remoteData));
+  }
+
+  // ============================================================
+  // SHARED RIDE HELPERS
+  // Extracted from _updateSolo / _updateCaptain to keep a single
+  // source of truth for logic that both paths run identically.
+  // ============================================================
+
+  /** Record a balance-caused crash (fell from lean, not from collision). */
+  _recordBalanceCrashIfNew(wasFallen) {
+    if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
+      this._recordCrash('balance');
+    }
+  }
+
+  /** Advance collectibles + obstacles; trigger _onCollect for any picked up this frame. */
+  _updateItems(dt) {
+    if (this.collectibleManager) {
+      const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+      if (collected.length > 0) {
+        this._onCollect(collected.length);
+      }
+    }
+    if (this.obstacleManager) {
+      this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    }
+  }
+
+  /** Advance the world streaming, chase camera, and apply crash-recovery camera shake. */
+  _updateWorldAndCamera(dt) {
+    this.world.update(this.bike.position, this.bike.roadD, dt);
+    this.chaseCamera.update(this.bike, dt, this.world.roadPath);
+    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
+      this.chaseCamera.shakeAmount = 0.15;
+    }
   }
 
   // ============================================================
