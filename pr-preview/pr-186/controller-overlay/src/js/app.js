@@ -888,6 +888,22 @@ document.querySelectorAll('[data-remap]').forEach(btn => {
 });
 
 function readGamepad() {
+  // Force-prefer the HID-synthesized gamepad whenever we have a live
+  // Bluetooth driver. On Electron 33 (Chromium 130) the Gamepad API
+  // keeps returning a stale Gamepad object for the slot even after
+  // DualSense has switched to 0x31 full-report mode — frozen axes and
+  // buttons that never update. On Chrome/Mac the slot comes back null
+  // and the legacy "real-first, synthetic-fallback" path below handles
+  // it, but inside Electron we have to override the preference or the
+  // stale slot wins and sticks/buttons silently stop working. Same
+  // issue and same fix as the main game's InputManager.getGamepadState
+  // (petegordon/tandemonium#199).
+  if (controllerDriver &&
+      controllerDriver.connectionType === 'bluetooth' &&
+      syntheticGamepad) {
+    return syntheticGamepad;
+  }
+
   // Preferred source: the real Gamepad API, if it still owns this slot.
   if (gamepadIndex !== null) {
     const gp = navigator.getGamepads()[gamepadIndex];
