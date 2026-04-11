@@ -5,7 +5,7 @@
 
 export class ContributionTracker {
   constructor(mode) {
-    this.mode = mode; // 'solo' | 'captain' | 'stoker'
+    this.mode = mode; // 'solo' | 'captain' | 'stoker' | 'local'
 
     // Per-player stats
     this.captain = this._emptyStats();

@@ -70,16 +70,45 @@ export class ControllerRegistry {
    * Find a previously-approved device from navigator.hid.getDevices()
    * that matches any registered driver with the requested capability.
    * @param {string} capability — 'gyro', 'accel', or 'touchpad'
+   * @param {{vendorId?: number, productId?: number}} [filter] — optional
+   *   vendor/product filter so a caller can demand a SPECIFIC physical
+   *   device rather than "any approved gyro device" (critical for local
+   *   multiplayer where two controllers are attached and each player
+   *   needs their own gyro pipeline wired to the correct physical pad).
    * @returns {Promise<HIDDevice|null>}
    */
-  static async findApprovedDevice(capability) {
+  static async findApprovedDevice(capability, filter = null) {
     if (!navigator.hid) return null;
     const devices = await navigator.hid.getDevices();
     for (const device of devices) {
       const D = ControllerRegistry.getDriver(device.vendorId, device.productId);
-      if (D && D.capabilities[capability]) return device;
+      if (!D || !D.capabilities[capability]) continue;
+      if (filter) {
+        if (filter.vendorId !== undefined && device.vendorId !== filter.vendorId) continue;
+        if (filter.productId !== undefined && device.productId !== filter.productId) continue;
+      }
+      return device;
     }
     return null;
+  }
+
+  /**
+   * Parse the vendor and product IDs out of a Gamepad API `gamepad.id`
+   * string. Browsers format these as e.g.
+   *   "DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)"
+   * This helper extracts the hex values so callers can pass them as a
+   * filter to findApprovedDevice() or navigator.hid.requestDevice().
+   * @param {string} idString
+   * @returns {{vendorId: number, productId: number}|null}
+   */
+  static parseGamepadVendorProduct(idString) {
+    if (!idString) return null;
+    const m = String(idString).match(/Vendor:\s*([0-9a-fA-F]+)\s+Product:\s*([0-9a-fA-F]+)/);
+    if (!m) return null;
+    const vendorId = parseInt(m[1], 16);
+    const productId = parseInt(m[2], 16);
+    if (Number.isNaN(vendorId) || Number.isNaN(productId)) return null;
+    return { vendorId, productId };
   }
 
   /**

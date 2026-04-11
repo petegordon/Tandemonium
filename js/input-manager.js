@@ -9,7 +9,23 @@ import * as analytics from './analytics.js';
 const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
 
 export class InputManager {
-  constructor() {
+  /**
+   * @param {Object} [options]
+   * @param {number|null} [options.gamepadSlot=null] — if set, only claim the gamepad at this index (for local-MP P2). null = claim first available (legacy behavior).
+   * @param {boolean} [options.enableKeyboard=true] — subscribe to window keydown/keyup.
+   * @param {boolean} [options.enableTouch=true] — subscribe to mobile touch events (still guarded by isMobile).
+   * @param {boolean} [options.enableMotion=true] — subscribe to device motion/orientation (still guarded by isMobile).
+   */
+  constructor(options = {}) {
+    const {
+      gamepadSlot = null,
+      enableKeyboard = true,
+      enableTouch = true,
+      enableMotion = true,
+    } = options;
+    this._gamepadSlot = gamepadSlot;
+    this.keyboardActive = enableKeyboard;
+
     this.keys = {};
     this.touchLeft = false;
     this.touchRight = false;
@@ -76,12 +92,12 @@ export class InputManager {
     this._accelRawZ = 0;
     this._accelRoll = 0;
 
-    this._setupKeyboard();
+    if (enableKeyboard) this._setupKeyboard();
     this._setupGamepad();
     if (isMobile) {
-      this._setupTouch();
-      this._setupMotion();
-      this._setupCalibration();
+      if (enableTouch) this._setupTouch();
+      if (enableMotion) this._setupMotion();
+      if (enableTouch || enableMotion) this._setupCalibration();
     }
   }
 
@@ -419,6 +435,10 @@ export class InputManager {
 
   _setupGamepad() {
     window.addEventListener('gamepadconnected', (e) => {
+      // Slot filter: if this instance is scoped to a specific gamepad index, ignore others.
+      if (this._gamepadSlot !== null && e.gamepad.index !== this._gamepadSlot) return;
+      // Sticky claim: once we've bound a gamepad, don't silently switch to a newly-connected one.
+      if (this.gamepadIndex !== null) return;
       this.gamepadIndex = e.gamepad.index;
       this.gamepadConnected = true;
       this._gpName = e.gamepad.id;
@@ -453,6 +473,13 @@ export class InputManager {
         if (badge) badge.style.display = 'none';
         const pedalBar = document.getElementById('pedal-bar');
         if (pedalBar) pedalBar.classList.remove('gamepad-active');
+        // Tear down the WebHID gyro pipeline too — the controller that was
+        // feeding it is gone, so its inputreport handler is dead. Without
+        // this, gyroConnected stays true pointing at a stale device and
+        // subsequent connect events can't re-claim gyro for a new pad.
+        if (this.gyroConnected) {
+          this.disconnectControllerGyro();
+        }
       }
     });
   }
@@ -461,20 +488,27 @@ export class InputManager {
     // Polling fallback: detect gamepads even without events
     if (this.gamepadIndex === null) {
       const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-      for (let i = 0; i < gamepads.length; i++) {
-        if (gamepads[i]) {
-          this.gamepadIndex = i;
-          this.gamepadConnected = true;
-          this._gpName = gamepads[i].id;
-          const pollInfo = ControllerRegistry.identifyFromGamepadId(gamepads[i].id);
-          analytics.setController(pollInfo ? pollInfo.driverName : gamepads[i].id, 'standard');
-          if (!this.suppressGamepadBadge) {
-            const badge = document.getElementById('gamepad-badge');
-            if (badge) badge.style.display = 'block';
-          }
-          const pedalBar = document.getElementById('pedal-bar');
-          if (pedalBar) pedalBar.classList.add('gamepad-active');
-          break;
+      // Slot filter: if scoped to a specific index, only try that one; otherwise take the first non-null.
+      const tryClaim = (i) => {
+        if (!gamepads[i]) return false;
+        this.gamepadIndex = i;
+        this.gamepadConnected = true;
+        this._gpName = gamepads[i].id;
+        const pollInfo = ControllerRegistry.identifyFromGamepadId(gamepads[i].id);
+        analytics.setController(pollInfo ? pollInfo.driverName : gamepads[i].id, 'standard');
+        if (!this.suppressGamepadBadge) {
+          const badge = document.getElementById('gamepad-badge');
+          if (badge) badge.style.display = 'block';
+        }
+        const pedalBar = document.getElementById('pedal-bar');
+        if (pedalBar) pedalBar.classList.add('gamepad-active');
+        return true;
+      };
+      if (this._gamepadSlot !== null) {
+        tryClaim(this._gamepadSlot);
+      } else {
+        for (let i = 0; i < gamepads.length; i++) {
+          if (tryClaim(i)) break;
         }
       }
     }
@@ -506,9 +540,13 @@ export class InputManager {
   }
 
   isPressed(code) {
-    if (code === 'ArrowLeft') return !!this.keys[code] || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
-    if (code === 'ArrowRight') return !!this.keys[code] || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
-    return !!this.keys[code];
+    // keyboardActive gates the raw key state so an InputManager instance can
+    // "release" the keyboard to another instance (local MP: P1 on gamepad
+    // stops reading keys when P2 is on keyboard).
+    const keyDown = this.keyboardActive && !!this.keys[code];
+    if (code === 'ArrowLeft') return keyDown || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
+    if (code === 'ArrowRight') return keyDown || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
+    return keyDown;
   }
 
   /** Clear buffered tap flags — call once per frame after all input reading. */
@@ -519,23 +557,39 @@ export class InputManager {
 
   // ── WebHID gyro (PlayStation controllers) ──────────────────
 
-  async connectControllerGyro() {
+  /**
+   * Request WebHID access to a controller's gyro and wire up the report
+   * handler. In local multiplayer two InputManager instances call this
+   * independently (one per player) and MUST land on their own physical
+   * device — pass a vendor/product filter to prevent cross-wiring.
+   *
+   * @param {{vendorId?: number, productId?: number}} [filter] — when
+   *   provided, both findApprovedDevice and the requestDevice fallback
+   *   are scoped to this specific physical controller. Without a filter
+   *   the first approved gyro device wins, which in a two-controller
+   *   session is non-deterministic.
+   */
+  async connectControllerGyro(filter = null) {
     if (this.gyroConnected || !navigator.hid) return;
 
-    const filters = ControllerRegistry.getHIDFilters();
+    // If a filter is supplied, narrow the WebHID request to just that
+    // physical device. Otherwise ask for all known gyro-capable drivers.
+    const hidFilters = filter
+      ? [{ vendorId: filter.vendorId, productId: filter.productId }]
+      : ControllerRegistry.getHIDFilters();
     let device;
 
     // In Electron/Steam, try getDevices() first (no user gesture needed),
     // then fall back to requestDevice() which triggers the auto-select handler.
     const isDesktop = window.steam || navigator.userAgent.includes('Electron');
     if (isDesktop) {
-      device = await ControllerRegistry.findApprovedDevice('gyro');
+      device = await ControllerRegistry.findApprovedDevice('gyro', filter);
       if (!device) {
-        const devices = await navigator.hid.requestDevice({ filters });
+        const devices = await navigator.hid.requestDevice({ filters: hidFilters });
         device = devices && devices[0];
       }
     } else {
-      const devices = await navigator.hid.requestDevice({ filters });
+      const devices = await navigator.hid.requestDevice({ filters: hidFilters });
       device = devices && devices[0];
     }
     if (!device) return;
