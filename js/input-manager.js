@@ -9,7 +9,23 @@ import * as analytics from './analytics.js';
 const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
 
 export class InputManager {
-  constructor() {
+  /**
+   * @param {Object} [options]
+   * @param {number|null} [options.gamepadSlot=null] — if set, only claim the gamepad at this index (for local-MP P2). null = claim first available (legacy behavior).
+   * @param {boolean} [options.enableKeyboard=true] — subscribe to window keydown/keyup.
+   * @param {boolean} [options.enableTouch=true] — subscribe to mobile touch events (still guarded by isMobile).
+   * @param {boolean} [options.enableMotion=true] — subscribe to device motion/orientation (still guarded by isMobile).
+   */
+  constructor(options = {}) {
+    const {
+      gamepadSlot = null,
+      enableKeyboard = true,
+      enableTouch = true,
+      enableMotion = true,
+    } = options;
+    this._gamepadSlot = gamepadSlot;
+    this.keyboardActive = enableKeyboard;
+
     this.keys = {};
     this.touchLeft = false;
     this.touchRight = false;
@@ -76,12 +92,12 @@ export class InputManager {
     this._accelRawZ = 0;
     this._accelRoll = 0;
 
-    this._setupKeyboard();
+    if (enableKeyboard) this._setupKeyboard();
     this._setupGamepad();
     if (isMobile) {
-      this._setupTouch();
-      this._setupMotion();
-      this._setupCalibration();
+      if (enableTouch) this._setupTouch();
+      if (enableMotion) this._setupMotion();
+      if (enableTouch || enableMotion) this._setupCalibration();
     }
   }
 
@@ -419,6 +435,10 @@ export class InputManager {
 
   _setupGamepad() {
     window.addEventListener('gamepadconnected', (e) => {
+      // Slot filter: if this instance is scoped to a specific gamepad index, ignore others.
+      if (this._gamepadSlot !== null && e.gamepad.index !== this._gamepadSlot) return;
+      // Sticky claim: once we've bound a gamepad, don't silently switch to a newly-connected one.
+      if (this.gamepadIndex !== null) return;
       this.gamepadIndex = e.gamepad.index;
       this.gamepadConnected = true;
       this._gpName = e.gamepad.id;
@@ -461,20 +481,27 @@ export class InputManager {
     // Polling fallback: detect gamepads even without events
     if (this.gamepadIndex === null) {
       const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-      for (let i = 0; i < gamepads.length; i++) {
-        if (gamepads[i]) {
-          this.gamepadIndex = i;
-          this.gamepadConnected = true;
-          this._gpName = gamepads[i].id;
-          const pollInfo = ControllerRegistry.identifyFromGamepadId(gamepads[i].id);
-          analytics.setController(pollInfo ? pollInfo.driverName : gamepads[i].id, 'standard');
-          if (!this.suppressGamepadBadge) {
-            const badge = document.getElementById('gamepad-badge');
-            if (badge) badge.style.display = 'block';
-          }
-          const pedalBar = document.getElementById('pedal-bar');
-          if (pedalBar) pedalBar.classList.add('gamepad-active');
-          break;
+      // Slot filter: if scoped to a specific index, only try that one; otherwise take the first non-null.
+      const tryClaim = (i) => {
+        if (!gamepads[i]) return false;
+        this.gamepadIndex = i;
+        this.gamepadConnected = true;
+        this._gpName = gamepads[i].id;
+        const pollInfo = ControllerRegistry.identifyFromGamepadId(gamepads[i].id);
+        analytics.setController(pollInfo ? pollInfo.driverName : gamepads[i].id, 'standard');
+        if (!this.suppressGamepadBadge) {
+          const badge = document.getElementById('gamepad-badge');
+          if (badge) badge.style.display = 'block';
+        }
+        const pedalBar = document.getElementById('pedal-bar');
+        if (pedalBar) pedalBar.classList.add('gamepad-active');
+        return true;
+      };
+      if (this._gamepadSlot !== null) {
+        tryClaim(this._gamepadSlot);
+      } else {
+        for (let i = 0; i < gamepads.length; i++) {
+          if (tryClaim(i)) break;
         }
       }
     }
@@ -506,9 +533,13 @@ export class InputManager {
   }
 
   isPressed(code) {
-    if (code === 'ArrowLeft') return !!this.keys[code] || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
-    if (code === 'ArrowRight') return !!this.keys[code] || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
-    return !!this.keys[code];
+    // keyboardActive gates the raw key state so an InputManager instance can
+    // "release" the keyboard to another instance (local MP: P1 on gamepad
+    // stops reading keys when P2 is on keyboard).
+    const keyDown = this.keyboardActive && !!this.keys[code];
+    if (code === 'ArrowLeft') return keyDown || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
+    if (code === 'ArrowRight') return keyDown || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
+    return keyDown;
   }
 
   /** Clear buffered tap flags — call once per frame after all input reading. */
