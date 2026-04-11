@@ -473,6 +473,13 @@ export class InputManager {
         if (badge) badge.style.display = 'none';
         const pedalBar = document.getElementById('pedal-bar');
         if (pedalBar) pedalBar.classList.remove('gamepad-active');
+        // Tear down the WebHID gyro pipeline too — the controller that was
+        // feeding it is gone, so its inputreport handler is dead. Without
+        // this, gyroConnected stays true pointing at a stale device and
+        // subsequent connect events can't re-claim gyro for a new pad.
+        if (this.gyroConnected) {
+          this.disconnectControllerGyro();
+        }
       }
     });
   }

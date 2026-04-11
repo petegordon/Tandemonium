@@ -292,6 +292,7 @@ export class Lobby {
     this._setup();
     this._buildLeaderboardTabs();
     this._initBikeCarousel();
+    this._setupGamepadHotSwap();
 
 
 
@@ -1606,6 +1607,48 @@ export class Lobby {
     if (isDesktop && !this.motionActive) {
       setTimeout(() => this._autoConnectGyro(), 1000);
     }
+  }
+
+  /**
+   * Hot-swap support: when the user unplugs their active controller mid-lobby
+   * and plugs in a different one, clear the stale gyro-permission flags and
+   * retry auto-connect so the new device's gyro pipeline comes online. Without
+   * this, _motionPermitted stays true pointing at a dead HID device and
+   * _autoConnectGyro early-returns on subsequent controller plug-ins.
+   *
+   * InputManager's own gamepaddisconnected handler has already torn down
+   * gyroConnected + gyroDevice by the time our listeners fire (registration
+   * order: InputManager first from Game ctor, Lobby second).
+   */
+  _setupGamepadHotSwap() {
+    window.addEventListener('gamepaddisconnected', () => {
+      if (!this.input) return;
+      // If the unplugged controller was our active one AND we had motion
+      // wired to it, clear the motion state so the UI reflects reality and
+      // so a subsequent plug-in can re-auto-connect on the new device.
+      if (!this.input.gyroConnected && !this.input.gamepadConnected) {
+        if (this._motionPermitted || this.motionActive) {
+          console.log('Lobby: active gamepad disconnected, clearing motion state');
+          this._motionPermitted = false;
+          this.motionActive = false;
+          this._setToggleActive('motion', false);
+        }
+      }
+    });
+
+    window.addEventListener('gamepadconnected', () => {
+      if (!this.input || !navigator.hid) return;
+      // Only re-auto-connect if we aren't already wired to gyro. If we are,
+      // the existing claim is fine — leave it alone.
+      if (this._motionPermitted || this.motionActive) return;
+      // Defer a tick so Chromium has time to populate navigator.getGamepads()
+      // for the freshly-connected pad before _checkGamepadGyro reads it.
+      setTimeout(() => {
+        if (this.input && this.input.gamepadConnected) {
+          this._checkGamepadGyro();
+        }
+      }, 300);
+    });
   }
 
   /** Auto-connect gyro in Electron/Steam — no user gesture needed since
