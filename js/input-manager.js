@@ -1279,16 +1279,16 @@ export class InputManager {
     // continue to point the bike in the correct direction.
     //
     // Pre-fusion: `_gyroRollAccum -= gz * scale * dt`, then
-    // `_applyTilt(-_gyroRollAccum)`. For positive gz (right roll),
-    // _gyroRollAccum went negative and _applyTilt received positive.
+    // `_applyTilt(-_gyroRollAccum)` — the double negation combined with
+    // the driver-internal coordinate remap meant positive physical
+    // right-roll ended up passing a NEGATIVE value to _applyTilt.
     //
-    // Post-fusion: extract Euler Z from the orientation quaternion
-    // directly (no negation). For positive Z rotation, euler.z is
-    // positive, `_gyroRollAccum = -euler.z_deg` matches the old
-    // negative convention, and `_applyTilt(+euler.z_deg)` matches the
-    // old positive convention. Both readers see the same sign as before.
+    // Post-fusion: extract Euler Z from the orientation quaternion,
+    // negate to match the old effective sign. The old convention was
+    // empirically verified on real hardware across the board; matching
+    // it keeps the bike leaning in the direction the user tilts.
     this._tmpEuler.setFromQuaternion(this._gyroOrientation, 'XYZ');
-    const leanDeg = this._tmpEuler.z * (180 / Math.PI);
+    const leanDeg = -this._tmpEuler.z * (180 / Math.PI);
     const clampedLean = Math.max(-90, Math.min(90, leanDeg));
     this._gyroRollAccum = -clampedLean;
     // Expose the current roll as _accelRoll so recenterGyro / resetLeanState
