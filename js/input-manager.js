@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { isMobile, TUNE } from './config.js';
 import { ControllerRegistry } from './controllers/controller-registry.js';
 import * as analytics from './analytics.js';
-import { setHapticSources } from './haptics.js';
+import { setHapticSources, addHapticSource, removeHapticSource } from './haptics.js';
 
 const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
 
@@ -737,7 +737,7 @@ export class InputManager {
    *   the first approved gyro device wins, which in a two-controller
    *   session is non-deterministic.
    */
-  async connectControllerGyro(filter = null) {
+  async connectControllerGyro(filter = null, excludeDevices = []) {
     if (this.gyroConnected || !navigator.hid) return;
     // Concurrent-call guard: the lobby has two gamepadconnected listeners
     // (main + hot-swap) that both schedule _autoConnectGyro with different
@@ -769,7 +769,7 @@ export class InputManager {
       // then fall back to requestDevice() which triggers the auto-select handler.
       const isDesktop = window.steam || navigator.userAgent.includes('Electron');
       if (isDesktop) {
-        device = await ControllerRegistry.findApprovedDevice('gyro', filter);
+        device = await ControllerRegistry.findApprovedDevice('gyro', filter, excludeDevices);
         if (!device) {
           const devices = await navigator.hid.requestDevice({ filters: hidFilters });
           device = devices && devices[0];
@@ -821,8 +821,11 @@ export class InputManager {
     // Register this InputManager as a haptic target so js/haptics.js can
     // route rumble to our claimed gamepad (and, for DualSense, our driver's
     // WebHID rumble path as a fallback around Chromium's broken macOS
-    // vibrationActuator).
-    setHapticSources([this]);
+    // vibrationActuator). Use addHapticSource (not setHapticSources) so we
+    // don't clobber another player's registration in local MP — the old
+    // setHapticSources([this]) call replaced the whole array, dropping P1
+    // when P2 connected and vice versa.
+    addHapticSource(this);
 
     this.gyroConnected = true;
     this._startGyroCalibration();
@@ -930,7 +933,7 @@ export class InputManager {
     // Clear sensor fusion state too so the next controller starts with
     // a clean quaternion/gravity vector instead of the last one's pose.
     this._resetSensorFusionState();
-    setHapticSources(null);
+    removeHapticSource(this);
   }
 
   calibrateGyro() {

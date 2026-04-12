@@ -75,12 +75,18 @@ export class ControllerRegistry {
    *   device rather than "any approved gyro device" (critical for local
    *   multiplayer where two controllers are attached and each player
    *   needs their own gyro pipeline wired to the correct physical pad).
+   * @param {HIDDevice[]} [excludeDevices] — HID devices to skip (already
+   *   claimed by another player). When two identical controllers are
+   *   connected, vendorId/productId can't distinguish them; this
+   *   exclude list is the only way to ensure P2 lands on a different
+   *   physical device than P1.
    * @returns {Promise<HIDDevice|null>}
    */
-  static async findApprovedDevice(capability, filter = null) {
+  static async findApprovedDevice(capability, filter = null, excludeDevices = []) {
     if (!navigator.hid) return null;
     const devices = await navigator.hid.getDevices();
     for (const device of devices) {
+      if (excludeDevices.length > 0 && excludeDevices.includes(device)) continue;
       const D = ControllerRegistry.getDriver(device.vendorId, device.productId);
       if (!D || !D.capabilities[capability]) continue;
       if (filter) {

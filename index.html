@@ -1921,6 +1921,33 @@
     letter-spacing: 0.12em;
     font-weight: 600;
   }
+  /* Captain controller label — shows which physical controller is
+     currently assigned to P1 so the user can confirm before starting
+     local MP. Rendered above the JOIN RIDE buttons. */
+  .local-join-captain-label {
+    margin: calc(0.4 * var(--ls)) 0;
+    font-size: 0.75em;
+    color: var(--tandem-player1, #ffffff);
+    opacity: 0.85;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .local-join-captain-label span {
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+  /* Brief flash applied to btn-local-join-gp when P2 presses any button
+     on the unclaimed gamepad — gives the second player visible
+     confirmation that their controller is recognized as P2 without
+     having to commit to starting the ride. */
+  @keyframes btn-local-join-flash {
+    0%   { box-shadow: 0 0 0 0 rgba(255, 69, 96, 0.7); }
+    60%  { box-shadow: 0 0 0 calc(0.8 * var(--ls)) rgba(255, 69, 96, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 69, 96, 0); }
+  }
+  .lobby-btn-p2-gp.p2-flash {
+    animation: btn-local-join-flash 450ms ease-out;
+  }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -4092,6 +4119,9 @@ ON</button>
                The monitor (lobby._startLocalJoinMonitor) shows/hides each
                button based on connected devices. Each button commits to a
                specific P2 device — no auto-picking. -->
+          <p id="local-join-captain-label" class="local-join-captain-label" style="display:none;">
+            Captain: <span id="local-join-captain-name">—</span>
+          </p>
           <button class="lobby-btn lobby-btn-p2-gp" id="btn-local-join-gp" style="display:none;">
             <span class="btn-local-join-main">JOIN RIDE <span class="btn-local-join-icon">&#127918;</span></span>
             <span class="btn-local-join-padname" id="btn-local-join-gp-name">CONTROLLER</span>
@@ -4294,7 +4324,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.91bff3f | 04-11-2026 21:48</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.616e5c8 | 04-11-2026 22:39</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">

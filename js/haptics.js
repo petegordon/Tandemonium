@@ -41,6 +41,31 @@ export function setHapticSources(sources) {
   _hapticSources = sources && sources.length > 0 ? sources : null;
 }
 
+/**
+ * Add a single input source to the haptic target list without
+ * replacing existing sources. Used by connectControllerGyro so each
+ * InputManager independently registers itself — the previous
+ * setHapticSources([this]) call was replacing the whole array and
+ * dropping other players' sources in local MP.
+ * @param {{gamepadIndex: number|null}} src
+ */
+export function addHapticSource(src) {
+  if (!src) return;
+  if (!_hapticSources) _hapticSources = [];
+  if (!_hapticSources.includes(src)) _hapticSources.push(src);
+}
+
+/**
+ * Remove a single input source from the haptic target list.
+ * @param {{gamepadIndex: number|null}} src
+ */
+export function removeHapticSource(src) {
+  if (!_hapticSources || !src) return;
+  const idx = _hapticSources.indexOf(src);
+  if (idx >= 0) _hapticSources.splice(idx, 1);
+  if (_hapticSources.length === 0) _hapticSources = null;
+}
+
 function _gamepadRumble(strong, weak, duration) {
   try {
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
