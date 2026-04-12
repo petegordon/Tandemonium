@@ -1483,8 +1483,20 @@ class Game {
 
     this.chaseCamera.initialized = false;
 
-    // Only tilt calibration (10 samples, ~167ms) — NOT gyro calibration
-    // (150 samples, ~1.5s) which would conflict with the 3s countdown.
+    // Recenter gyro to absorb any orientation drift from the previous game.
+    // Without this, quaternion integration errors (especially over BT where
+    // report timing is jittery) accumulate across games and cause a persistent
+    // pull to one side. Full re-calibration (150 samples, ~1.5s) would
+    // conflict with the 3s countdown — recenter is instant and the continuous
+    // stillness calibration keeps the bias fresh in the background.
+    if (this.input.gyroConnected) {
+      this.input.recenterGyro();
+    }
+    // Local multiplayer: recenter P2's gyro too
+    if (this.inputP2 && this.inputP2.gyroConnected) {
+      this.inputP2.recenterGyro();
+    }
+    // Mobile tilt calibration (10 samples, ~167ms)
     if (this.input.motionEnabled) {
       this.input.startTiltCalibration();
     }

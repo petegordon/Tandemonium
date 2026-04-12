@@ -950,6 +950,10 @@ export class InputManager {
     if (this._accelVerified && this._accelRoll != null) {
       this.motionOffset = -this._accelRoll;
     }
+    console.log('Gyro recentered: rollAccum=' + this._gyroRollAccum.toFixed(1) +
+      ' accelRoll=' + (this._accelRoll != null ? this._accelRoll.toFixed(1) : 'null') +
+      ' offset=' + (this.motionOffset != null ? this.motionOffset.toFixed(1) : 'null') +
+      ' conn=' + (this._gyroConnType || 'unknown'));
     this._gyroRollAccum = 0;
     this._resetSensorFusionState();
     // Don't reset _smoothedLean/motionLean — they're shared with mobile
