@@ -84,6 +84,19 @@ const STILLNESS_CAL_EASE_IN = 3.0;     // ramp-up time
 const STILLNESS_DETERIORATION = 0.2;   // how fast min deltas grow per second
 let stillnessWindow = { samples: [], startTime: 0, stillSince: 0, minDeltaGyro: 1.0, minDeltaAccel: 0.25, easeIn: 0 };
 
+// Sensor-fusion calibration (Phase C #3 — runs during active motion,
+// complements stillness calibration). Ported from the main game's
+// InputManager._updateSensorFusionCalibration (PR #203).
+const SENSOR_FUSION_SMOOTHING_STRENGTH = 2.0;
+const SENSOR_FUSION_ANGULAR_ACCEL_THRESHOLD = 20.0;  // deg/s²
+const SENSOR_FUSION_EASE_IN_TIME = 3.0;
+const SENSOR_FUSION_HALF_TIME = 0.1;
+const sfSmoothedGyro = new THREE.Vector3();
+const sfSmoothedPreviousAccel = new THREE.Vector3();
+const sfPreviousAccel = new THREE.Vector3();
+let sfTimeSteady = 0;
+let sfSkippedTime = 0;
+
 // ── Button combo system ──
 const BUTTON_NAMES = [
   'A/Cross', 'B/Circle', 'X/Square', 'Y/Triangle',
@@ -947,6 +960,11 @@ function resetGyroState() {
   shakiness = 0;
   lastGyroTime = 0;
   stillnessWindow = { samples: [], startTime: 0, stillSince: 0, minDeltaGyro: 1.0, minDeltaAccel: 0.25, easeIn: 0 };
+  sfSmoothedGyro.set(0, 0, 0);
+  sfSmoothedPreviousAccel.set(0, 0, 0);
+  sfPreviousAccel.set(0, 0, 0);
+  sfTimeSteady = 0;
+  sfSkippedTime = 0;
 }
 
 function createSyntheticGamepad(id) {
@@ -1177,6 +1195,8 @@ function handleInputReport(event) {
       // ── 4. Continuous stillness calibration ──
       if (!calibrating) {
         updateStillnessCalibration(rawGx, rawGy, rawGz, parsed.accel, parsed.accelScale, dt, now);
+        // ── 5. Sensor-fusion calibration (Phase C #3) ──
+        updateSensorFusionCalibration(rawGx, rawGy, rawGz, parsed.gyroScale, parsed.accel, dt);
       }
     }
   }
@@ -1248,6 +1268,132 @@ function updateStillnessCalibration(gx, gy, gz, accel, accelScale, dt, now) {
     sw.stillSince = 0;
     sw.easeIn = 0;
   }
+}
+
+/**
+ * Sensor-fusion calibration — refines gyroBias during active motion by
+ * cross-checking gyro rates against accel-derived angular velocity.
+ * Ported from js/input-manager.js _updateSensorFusionCalibration (PR #203).
+ * See that implementation for the full algorithm description.
+ */
+function updateSensorFusionCalibration(rawGx, rawGy, rawGz, gyroScale, accel, dt) {
+  if (dt <= 0 || calibrating || !accel || !gyroScale) return;
+
+  const inAx = accel.x;
+  const inAy = accel.y;
+  const inAz = accel.z;
+
+  // Convert to deg/sec (must match the accel-derived angular velocity units)
+  const inGxDps = rawGx * gyroScale;
+  const inGyDps = rawGy * gyroScale;
+  const inGzDps = rawGz * gyroScale;
+
+  // Zero-input rejection
+  if (rawGx === 0 && rawGy === 0 && rawGz === 0 &&
+      inAx === 0 && inAy === 0 && inAz === 0) {
+    sfTimeSteady = 0;
+    sfSkippedTime = 0;
+    sfPreviousAccel.set(0, 0, 0);
+    sfSmoothedPreviousAccel.set(0, 0, 0);
+    sfSmoothedGyro.set(0, 0, 0);
+    return;
+  }
+
+  // Initial state
+  if (sfPreviousAccel.x === 0 && sfPreviousAccel.y === 0 && sfPreviousAccel.z === 0) {
+    sfTimeSteady = 0;
+    sfSkippedTime = 0;
+    sfPreviousAccel.set(inAx, inAy, inAz);
+    sfSmoothedPreviousAccel.set(inAx, inAy, inAz);
+    sfSmoothedGyro.set(0, 0, 0);
+    return;
+  }
+
+  // Accel unchanged — accumulate skipped time
+  if (inAx === sfPreviousAccel.x && inAy === sfPreviousAccel.y && inAz === sfPreviousAccel.z) {
+    sfSkippedTime += dt;
+    return;
+  }
+
+  const effDt = dt + sfSkippedTime;
+  sfSkippedTime = 0;
+
+  const smoothingLerp = Math.pow(2, -SENSOR_FUSION_SMOOTHING_STRENGTH * effDt);
+
+  // Smooth gyro (deg/sec)
+  const prevSmGx = sfSmoothedGyro.x;
+  const prevSmGy = sfSmoothedGyro.y;
+  const prevSmGz = sfSmoothedGyro.z;
+  sfSmoothedGyro.set(
+    inGxDps * (1 - smoothingLerp) + prevSmGx * smoothingLerp,
+    inGyDps * (1 - smoothingLerp) + prevSmGy * smoothingLerp,
+    inGzDps * (1 - smoothingLerp) + prevSmGz * smoothingLerp,
+  );
+
+  // Angular acceleration magnitude
+  const dGx = sfSmoothedGyro.x - prevSmGx;
+  const dGy = sfSmoothedGyro.y - prevSmGy;
+  const dGz = sfSmoothedGyro.z - prevSmGz;
+  const gyroAccelMag = Math.sqrt(dGx * dGx + dGy * dGy + dGz * dGz) / effDt;
+
+  // Previous accel normal
+  const prevNormal = _tmpVec.copy(sfSmoothedPreviousAccel).normalize();
+
+  // Smooth this frame's accel
+  const smoothAx = inAx * (1 - smoothingLerp) + sfSmoothedPreviousAccel.x * smoothingLerp;
+  const smoothAy = inAy * (1 - smoothingLerp) + sfSmoothedPreviousAccel.y * smoothingLerp;
+  const smoothAz = inAz * (1 - smoothingLerp) + sfSmoothedPreviousAccel.z * smoothingLerp;
+  const thisNormal = _tmpVec2.set(smoothAx, smoothAy, smoothAz).normalize();
+
+  // Angular velocity from accel direction change
+  const angVel = _tmpVec3.crossVectors(thisNormal, prevNormal);
+  const crossLen = angVel.length();
+  if (crossLen > 0) {
+    const dot = Math.max(-1, Math.min(1, thisNormal.dot(prevNormal)));
+    const angleChangeDeg = Math.acos(dot) * (180 / Math.PI);
+    const anglePerSec = angleChangeDeg / effDt;
+    angVel.multiplyScalar(anglePerSec / crossLen);
+  }
+
+  // Angular acceleration gate
+  if (gyroAccelMag > SENSOR_FUSION_ANGULAR_ACCEL_THRESHOLD) {
+    sfTimeSteady = 0;
+  } else {
+    sfTimeSteady = Math.min(sfTimeSteady + effDt, SENSOR_FUSION_EASE_IN_TIME);
+    const easeIn = SENSOR_FUSION_EASE_IN_TIME <= 0 ? 1 : sfTimeSteady / SENSOR_FUSION_EASE_IN_TIME;
+    const lerpFactor = SENSOR_FUSION_HALF_TIME <= 0 ? 0 : Math.pow(2, -easeIn * effDt / SENSOR_FUSION_HALF_TIME);
+
+    // Bias candidate in deg/sec — convert old bias to deg/sec for the math
+    const oldBiasXDps = gyroBias.x * gyroScale;
+    const oldBiasYDps = gyroBias.y * gyroScale;
+    const oldBiasZDps = gyroBias.z * gyroScale;
+    let newBiasX = (sfSmoothedGyro.x - angVel.x) * (1 - lerpFactor) + oldBiasXDps * lerpFactor;
+    let newBiasY = (sfSmoothedGyro.y - angVel.y) * (1 - lerpFactor) + oldBiasYDps * lerpFactor;
+    let newBiasZ = (sfSmoothedGyro.z - angVel.z) * (1 - lerpFactor) + oldBiasZDps * lerpFactor;
+
+    // Axis-selective: skip axes aligned with gravity
+    let strengthX = Math.abs(thisNormal.x);
+    let strengthY = Math.abs(thisNormal.y);
+    let strengthZ = Math.abs(thisNormal.z);
+    if (strengthX > 0.7) strengthX = 1.0;
+    if (strengthY > 0.7) strengthY = 1.0;
+    if (strengthZ > 0.7) strengthZ = 1.0;
+    strengthX = Math.min(strengthX, 1.0);
+    strengthY = Math.min(strengthY, 1.0);
+    strengthZ = Math.min(strengthZ, 1.0);
+
+    newBiasX = newBiasX * (1 - strengthX) + oldBiasXDps * strengthX;
+    newBiasY = newBiasY * (1 - strengthY) + oldBiasYDps * strengthY;
+    newBiasZ = newBiasZ * (1 - strengthZ) + oldBiasZDps * strengthZ;
+
+    // Convert back to raw units
+    gyroBias.x = newBiasX / gyroScale;
+    gyroBias.y = newBiasY / gyroScale;
+    gyroBias.z = newBiasZ / gyroScale;
+  }
+
+  sfSmoothedPreviousAccel.set(smoothAx, smoothAy, smoothAz);
+  sfPreviousAccel.set(inAx, inAy, inAz);
 }
 
 // ── Calibration ──
