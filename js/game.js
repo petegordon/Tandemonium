@@ -3587,9 +3587,21 @@ class Game {
   }
 
   /**
-   * Interactive calibration flow run before the tutorial countdown.
-   * Phase A — "Hold Still": collect noise floor samples (two rounds for accuracy).
-   * Phase B — "Tilt Preview": player leans left, centers, then leans right.
+   * Interactive tutorial teaching flow run before the tutorial countdown.
+   * Walks the player through tilt-left / center / tilt-right so they get
+   * a feel for steering before the actual ride begins.
+   *
+   * NOTE: This flow used to start with two explicit "hold still" rounds
+   * that collected ~180 samples to set motionOffset + measure a deadzone.
+   * Those were removed once PR #202 shipped sensor fusion and continuous
+   * stillness calibration in InputManager — the welcome screen now just
+   * kicks off the tilt pipeline's own warmup auto-calibration, which
+   * completes invisibly within ~0.25 seconds (5 warmup frames + 10
+   * TUNE.calibSamples frames at 60Hz) during the 2-second welcome pause.
+   * Final tuning values (deadzone, sensitivity, response curve) are
+   * computed later by _computeTuningParams from _tutPhase1/2/3 samples
+   * collected during the actual tutorial ride, so the hold-still phase's
+   * ephemeral TUNE.gyroDeadzone assignment wasn't serving any purpose.
    *
    * The game loop runs throughout (autoSpeed on, pedaling suppressed).
    * Returns a Promise that resolves when all phases complete.
@@ -3608,28 +3620,6 @@ class Game {
     const label = document.getElementById('calib-flow-label');
     const icon = document.getElementById('calib-flow-icon');
     const wait = (ms) => new Promise(r => setTimeout(r, ms));
-
-    // Helper: collect N noise floor samples
-    const collectSamples = (target) => new Promise((resolve) => {
-      const samples = [];
-      const tick = () => {
-        const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
-        if (raw === 0 && samples.length === 0) {
-          requestAnimationFrame(tick);
-          return;
-        }
-        samples.push(raw);
-        gauge.style.width = Math.min(100, (samples.length / target) * 100) + '%';
-        if (samples.length < target) {
-          requestAnimationFrame(tick);
-          return;
-        }
-        const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
-        const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / samples.length;
-        resolve({ mean, stdDev: Math.sqrt(variance), samples });
-      };
-      requestAnimationFrame(tick);
-    });
 
     // Helper: wait for player to hit a lean target
     const waitForLean = (dir, threshold) => new Promise((resolve) => {
@@ -3657,48 +3647,24 @@ class Game {
     overlay.style.display = 'flex';
     this._calibTiltSamples = [];
 
+    // Kick off the tilt pipeline's auto-calibration explicitly so it
+    // completes during the welcome pause rather than when the user
+    // starts the first lean. startTiltCalibration() flips _calibrating
+    // and skips the 5-frame warmup counter, so _applyTilt will start
+    // accumulating samples into _calibBuf on the very next report.
+    // TUNE.calibSamples (10) at 60Hz → ~0.17s to complete; 2s welcome
+    // gives a huge margin.
+    if (this.input.motionEnabled || this.input.gyroConnected) {
+      this.input.startTiltCalibration();
+    }
+
     // ── Step 1: Welcome ──
     icon.textContent = isGyro ? '\uD83C\uDFAE' : '\uD83D\uDCF1';
     label.textContent = 'Let\'s set up your ' + device + '!';
     gauge.style.width = '0%';
     await wait(2000);
 
-    // ── Step 2: Hold Still (round 1) ──
-    label.textContent = 'Hold your ' + device + ' steady...';
-    gauge.style.width = '0%';
-    const round1 = await collectSamples(90); // ~1.5s at 60Hz
-    this.input.motionOffset = round1.mean;
-    label.textContent = '\u2713 Good!';
-    gauge.style.width = '100%';
-    await wait(1000);
-
-    // ── Step 3: Hold Still (round 2 — refine) ──
-    label.textContent = 'Keep holding steady...';
-    gauge.style.width = '0%';
-    const round2 = await collectSamples(90);
-
-    // Combine both rounds for final calibration
-    const allSamples = round1.samples.concat(round2.samples);
-    const mean = allSamples.reduce((a, b) => a + b, 0) / allSamples.length;
-    const variance = allSamples.reduce((a, b) => a + (b - mean) ** 2, 0) / allSamples.length;
-    const stdDev = Math.sqrt(variance);
-
-    this.input.motionOffset = mean;
-    const measuredDeadzone = Math.min(8, Math.max(2, Math.ceil(stdDev * 3)));
-    if (isGyro) {
-      TUNE.gyroDeadzone = measuredDeadzone;
-    } else {
-      TUNE.deadzone = measuredDeadzone;
-    }
-    this._calibHoldSamples = allSamples;
-    this._calibHoldMean = mean;
-    this._calibHoldStdDev = stdDev;
-
-    label.textContent = '\u2713 Center calibrated!';
-    gauge.style.width = '100%';
-    await wait(1200);
-
-    // ── Step 4: Tilt Left ──
+    // ── Step 2: Tilt Left ──
     icon.textContent = '\u2B05\uFE0F';
     label.textContent = verb + ' left...';
     gauge.style.width = '33%';
@@ -3706,7 +3672,7 @@ class Game {
     label.textContent = '\u2713 Nice!';
     await wait(800);
 
-    // ── Step 5: Return to Center ──
+    // ── Step 3: Return to Center ──
     icon.textContent = '\u2195\uFE0F';
     label.textContent = 'Back to center...';
     gauge.style.width = '44%';
@@ -3714,7 +3680,7 @@ class Game {
     label.textContent = '\u2713 Centered!';
     await wait(800);
 
-    // ── Step 6: Tilt Right ──
+    // ── Step 4: Tilt Right ──
     icon.textContent = '\u27A1\uFE0F';
     label.textContent = verb + ' right...';
     gauge.style.width = '55%';
@@ -3722,14 +3688,14 @@ class Game {
     label.textContent = '\u2713 Great!';
     await wait(800);
 
-    // ── Step 7: Return to Center ──
+    // ── Step 5: Return to Center ──
     icon.textContent = '\u2195\uFE0F';
     label.textContent = 'Back to center...';
     gauge.style.width = '66%';
     await waitForLean('center', 0);
     await wait(600);
 
-    // ── Step 8: Second round — faster ──
+    // ── Step 6: Second round — faster ──
     label.textContent = 'Once more! ' + verb + ' left...';
     icon.textContent = '\u2B05\uFE0F';
     gauge.style.width = '72%';
@@ -3748,7 +3714,7 @@ class Game {
     await waitForLean('center', 0);
     await wait(400);
 
-    // ── Step 9: Recalibrate practice ──
+    // ── Step 7: Recalibrate practice ──
     icon.textContent = '\uD83D\uDCA1'; // 💡
     if (isGyro) {
       label.textContent = 'Press L3 (joystick click) to recalibrate \u2014 try it now!';
@@ -3794,7 +3760,7 @@ class Game {
     label.textContent = '\u2713 Recalibrated! You can do this anytime during a ride.';
     await wait(2000);
 
-    // ── Step 10: Done ──
+    // ── Step 8: Done ──
     icon.textContent = '\uD83C\uDF89';
     label.textContent = 'You\'re ready to ride!';
     gauge.style.width = '100%';
