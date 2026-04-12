@@ -3625,9 +3625,28 @@ export class Lobby {
     const btnGp = document.getElementById('btn-local-join-gp');
     const btnKb = document.getElementById('btn-local-join-kb');
     const gpNameEl = document.getElementById('btn-local-join-gp-name');
+    const capLabel = document.getElementById('local-join-captain-label');
+    const capNameEl = document.getElementById('local-join-captain-name');
     const hint = document.getElementById('host-local-hint');
     if (!btnGp || !btnKb) return;
     this._localP2APrev = false;
+    this._localP2AnyPrev = false;
+    this._localP2FlashTimer = null;
+
+    // Briefly flash btnGp's border so the second player gets visual
+    // confirmation that the system sees their button press. Covers the
+    // "which controller is P2?" UX ask from #204.
+    const flashP2Button = () => {
+      btnGp.classList.remove('p2-flash');
+      // Force a reflow so the animation re-runs if it was already playing.
+      void btnGp.offsetWidth;
+      btnGp.classList.add('p2-flash');
+      if (this._localP2FlashTimer) clearTimeout(this._localP2FlashTimer);
+      this._localP2FlashTimer = setTimeout(() => {
+        btnGp.classList.remove('p2-flash');
+        this._localP2FlashTimer = null;
+      }, 500);
+    };
 
     const tick = () => {
       if (this._currentStep !== this.hostStep) {
@@ -3638,13 +3657,24 @@ export class Lobby {
 
       // Dirty-check the visible state before touching the DOM (avoids layout
       // churn every frame when nothing has changed).
-      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${state.gpName}|${!!state.hintVisible}`;
+      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
         btnGp.style.display = state.hasGamepad ? '' : 'none';
         btnKb.style.display = state.hasKeyboard ? '' : 'none';
         if (state.hasGamepad && gpNameEl) {
           gpNameEl.textContent = state.gpName || 'CONTROLLER';
+        }
+        // Captain label: show whenever at least one P2 path is available,
+        // so the user can verify which physical controller is captain vs
+        // which one will be P2.
+        if (capLabel && capNameEl) {
+          if (state.available && (state.p1GpName || state.hasKeyboard)) {
+            capNameEl.textContent = state.p1GpName || 'KEYBOARD';
+            capLabel.style.display = '';
+          } else {
+            capLabel.style.display = 'none';
+          }
         }
         if (hint) {
           // Hint only appears when neither button is visible AND local MP
@@ -3653,20 +3683,42 @@ export class Lobby {
         }
       }
 
-      // Poll the unclaimed gamepad's A button so P2 can fire the 🎮 button
+      // Poll the unclaimed gamepad's buttons so P2 can fire the 🎮 button
       // with their own controller (not P1's — which is still driving menu
       // navigation). No analogous poll for the ⌨️ button: browsers already
       // fire click on Enter/Space when it's focused.
+      //
+      // Two separate checks on the unclaimed pad:
+      //   1. A button (index 0) → commits to JOIN RIDE
+      //   2. Any button at all → triggers a brief visual flash on btnGp
+      //      so the second player gets confirmation their controller is
+      //      seen as P2 before they commit
       if (state.hasGamepad && state.gpIndex !== null) {
         const pads = navigator.getGamepads ? navigator.getGamepads() : [];
         const gp = pads[state.gpIndex];
-        const aPressed = !!(gp && gp.buttons[0] && gp.buttons[0].pressed);
-        if (aPressed && !this._localP2APrev) {
-          this._localP2APrev = true;
-          this._onLocalJoinClick('gamepad', state.gpIndex);
-          return;
+        if (gp) {
+          // Any-button flash (includes A, so flashing fires before the
+          // commit action but that's fine — commit still happens).
+          let anyPressed = false;
+          if (gp.buttons) {
+            for (let i = 0; i < gp.buttons.length; i++) {
+              if (gp.buttons[i] && gp.buttons[i].pressed) { anyPressed = true; break; }
+            }
+          }
+          if (anyPressed && !this._localP2AnyPrev) {
+            flashP2Button();
+          }
+          this._localP2AnyPrev = anyPressed;
+
+          // A-button commit
+          const aPressed = !!(gp.buttons[0] && gp.buttons[0].pressed);
+          if (aPressed && !this._localP2APrev) {
+            this._localP2APrev = true;
+            this._onLocalJoinClick('gamepad', state.gpIndex);
+            return;
+          }
+          if (!aPressed) this._localP2APrev = false;
         }
-        if (!aPressed) this._localP2APrev = false;
       }
 
       this._localJoinMonitorRAF = requestAnimationFrame(tick);
@@ -3679,16 +3731,37 @@ export class Lobby {
       cancelAnimationFrame(this._localJoinMonitorRAF);
       this._localJoinMonitorRAF = null;
     }
+    if (this._localP2FlashTimer) {
+      clearTimeout(this._localP2FlashTimer);
+      this._localP2FlashTimer = null;
+    }
+    const btnGp = document.getElementById('btn-local-join-gp');
+    if (btnGp) btnGp.classList.remove('p2-flash');
     this._localLastJoinState = null;
     this._localP2APrev = false;
+    this._localP2AnyPrev = false;
   }
 
   /**
    * Determine whether a P2 input path exists right now, and what to label the
    * gamepad button with when one is available.
-   * @returns {{available: boolean, hasGamepad: boolean, hasKeyboard: boolean, gpIndex: number|null, gpName: string|null, hintVisible?: boolean}}
+   * @returns {{available: boolean, hasGamepad: boolean, hasKeyboard: boolean, gpIndex: number|null, gpName: string|null, p1GpName?: string|null, hintVisible?: boolean}}
    */
   _detectLocalP2State() {
+    // Force P1 to claim a gamepad slot if it hasn't already, before we
+    // compute what's "unclaimed" for P2. Without this, if two gamepads
+    // were plugged in before launch (so neither triggered a
+    // gamepadconnected event) and the user clicks JOIN RIDE inside the
+    // ~1 second desktop gamepad poll window, this.input.gamepadIndex is
+    // still null — and the "first unclaimed" loop below picks slot 0 as
+    // P2. Then P1's pollGamepad later claims slot 0 too, and both
+    // InputManagers read the same physical controller while the second
+    // gamepad is completely ignored. Calling pollGamepad() synchronously
+    // runs P1's "first available" fallback so p1GpIndex is populated
+    // before the comparison. See #204 for the full repro.
+    if (this.input && this.input.gamepadIndex === null) {
+      this.input.pollGamepad();
+    }
     const p1GpIndex = this.input.gamepadIndex;
     const gamepads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
     // Find the first attached gamepad that isn't P1's (note: the array can be
@@ -3708,6 +3781,14 @@ export class Lobby {
     // collisions on arrows / A / D).
     const keyboardAvailable = p1IsGamepad;
 
+    // Captain's controller name for the UI label. If P1 is on a real
+    // gamepad, read the pretty name from this.input._gpName; otherwise
+    // it'll render as "Keyboard" (or just stay hidden if neither side
+    // has any input at all).
+    const p1GpName = (p1IsGamepad && this.input && this.input._gpName)
+      ? this._prettyGamepadName(this.input._gpName)
+      : null;
+
     if (unclaimedGpIndex !== null) {
       return {
         available: true,
@@ -3715,6 +3796,7 @@ export class Lobby {
         hasKeyboard: keyboardAvailable,
         gpIndex: unclaimedGpIndex,
         gpName: unclaimedGpName,
+        p1GpName,
       };
     }
     if (keyboardAvailable) {
@@ -3724,6 +3806,7 @@ export class Lobby {
         hasKeyboard: true,
         gpIndex: null,
         gpName: null,
+        p1GpName,
       };
     }
     // P1 is on keyboard with no second gamepad → local MP blocked.
@@ -3734,6 +3817,7 @@ export class Lobby {
       hasKeyboard: false,
       gpIndex: null,
       gpName: null,
+      p1GpName,
       hintVisible: true,
     };
   }
