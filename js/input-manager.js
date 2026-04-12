@@ -1294,8 +1294,11 @@ export class InputManager {
         // stillness path above — stillness requires accel to be stable,
         // sensor fusion requires accel to be changing, so they're
         // mutually exclusive per frame and both can safely target
-        // _gyroBias.
-        this._updateSensorFusionCalibration(rawGx, rawGy, rawGz, parsed.accel, dt);
+        // _gyroBias. Pass parsed.gyroScale so the calibration can
+        // convert raw gyro values into deg/sec — the accel-derived
+        // angular velocity inside is in deg/sec and the two sides must
+        // match before the subtraction that yields the bias estimate.
+        this._updateSensorFusionCalibration(rawGx, rawGy, rawGz, parsed.gyroScale, parsed.accel, dt);
       }
     }
     this._lastGyroTime = now;
@@ -1464,17 +1467,34 @@ export class InputManager {
    * @param {number} rawGx raw gyro X from parseReport
    * @param {number} rawGy raw gyro Y
    * @param {number} rawGz raw gyro Z
+   * @param {number} gyroScale deg/sec per raw unit (from parsed.gyroScale)
    * @param {object|null} accel parsed.accel ({x, y, z}) or null
    * @param {number} dt seconds since last gyro report
    */
-  _updateSensorFusionCalibration(rawGx, rawGy, rawGz, accel, dt) {
-    if (dt <= 0 || this._gyroCalibrating || !accel) return;
+  _updateSensorFusionCalibration(rawGx, rawGy, rawGz, gyroScale, accel, dt) {
+    if (dt <= 0 || this._gyroCalibrating || !accel || !gyroScale) return;
 
     // Accel scale cancels out in normalize() — we can use raw values
     // directly. The cross-product angle computation is unit-independent.
     const inAx = accel.x;
     const inAy = accel.y;
     const inAz = accel.z;
+
+    // Convert gyro to deg/sec. The reference (GamepadMotion.hpp) works
+    // in deg/sec throughout, and the accel-derived angular velocity
+    // computed below is also in deg/sec — both sides of the bias
+    // subtraction must be in the SAME units or the newBias estimate
+    // is meaningless and slowly pulls _gyroBias toward garbage.
+    //
+    // A previous version of this method smoothed raw gyro values and
+    // compared them against deg/sec, which (on DualSense) produced a
+    // ~16.4× unit-scale mismatch and made _gyroBias drift toward
+    // artificially small values. The symptom was "gyro feels more
+    // sensitive after Phase C lands" because `rawGx - _gyroBias.x`
+    // grew larger than it should.
+    const inGxDps = rawGx * gyroScale;
+    const inGyDps = rawGy * gyroScale;
+    const inGzDps = rawGz * gyroScale;
 
     // Zero-input rejection
     if (rawGx === 0 && rawGy === 0 && rawGz === 0 &&
@@ -1515,16 +1535,17 @@ export class InputManager {
     // Framerate-independent exponential smoothing factor
     const smoothingLerp = Math.pow(2, -SENSOR_FUSION_SMOOTHING_STRENGTH * effDt);
 
-    // Smooth gyro — capture previous value for angular acceleration calc
+    // Smooth gyro (in deg/sec) — capture previous value for angular
+    // acceleration calc. _sfSmoothedGyro stores deg/sec throughout.
     const prevSmGx = this._sfSmoothedGyro.x;
     const prevSmGy = this._sfSmoothedGyro.y;
     const prevSmGz = this._sfSmoothedGyro.z;
     // Reference: Smoothed = inGyro.Lerp(Smoothed, factor)
     //          = inGyro * (1-factor) + Smoothed * factor
     this._sfSmoothedGyro.set(
-      rawGx * (1 - smoothingLerp) + prevSmGx * smoothingLerp,
-      rawGy * (1 - smoothingLerp) + prevSmGy * smoothingLerp,
-      rawGz * (1 - smoothingLerp) + prevSmGz * smoothingLerp,
+      inGxDps * (1 - smoothingLerp) + prevSmGx * smoothingLerp,
+      inGyDps * (1 - smoothingLerp) + prevSmGy * smoothingLerp,
+      inGzDps * (1 - smoothingLerp) + prevSmGz * smoothingLerp,
     );
 
     // Angular acceleration magnitude of the smoothed gyro
@@ -1579,9 +1600,16 @@ export class InputManager {
       // difference is the gyro bias (what the gyro sees when it shouldn't
       // see anything). Lerp toward this candidate with the ease-in-scaled
       // half-time.
-      let newBiasX = (this._sfSmoothedGyro.x - angVel.x) * (1 - lerpFactor) + this._gyroBias.x * lerpFactor;
-      let newBiasY = (this._sfSmoothedGyro.y - angVel.y) * (1 - lerpFactor) + this._gyroBias.y * lerpFactor;
-      let newBiasZ = (this._sfSmoothedGyro.z - angVel.z) * (1 - lerpFactor) + this._gyroBias.z * lerpFactor;
+      //
+      // Everything in this block is in DEG/SEC. The stored _gyroBias is
+      // in RAW sensor units, so we convert it into deg/sec for the math
+      // and back to raw units on the way out.
+      const oldBiasXDps = this._gyroBias.x * gyroScale;
+      const oldBiasYDps = this._gyroBias.y * gyroScale;
+      const oldBiasZDps = this._gyroBias.z * gyroScale;
+      let newBiasX = (this._sfSmoothedGyro.x - angVel.x) * (1 - lerpFactor) + oldBiasXDps * lerpFactor;
+      let newBiasY = (this._sfSmoothedGyro.y - angVel.y) * (1 - lerpFactor) + oldBiasYDps * lerpFactor;
+      let newBiasZ = (this._sfSmoothedGyro.z - angVel.z) * (1 - lerpFactor) + oldBiasZDps * lerpFactor;
 
       // Axis-selective update: accel can't measure rotation around the
       // gravity axis, so axes strongly aligned with gravity don't get
@@ -1600,13 +1628,15 @@ export class InputManager {
       strengthZ = Math.min(strengthZ, 1.0);
 
       // lerp(newBias, oldBias, strength) = newBias*(1-strength) + oldBias*strength
-      newBiasX = newBiasX * (1 - strengthX) + this._gyroBias.x * strengthX;
-      newBiasY = newBiasY * (1 - strengthY) + this._gyroBias.y * strengthY;
-      newBiasZ = newBiasZ * (1 - strengthZ) + this._gyroBias.z * strengthZ;
+      newBiasX = newBiasX * (1 - strengthX) + oldBiasXDps * strengthX;
+      newBiasY = newBiasY * (1 - strengthY) + oldBiasYDps * strengthY;
+      newBiasZ = newBiasZ * (1 - strengthZ) + oldBiasZDps * strengthZ;
 
-      this._gyroBias.x = newBiasX;
-      this._gyroBias.y = newBiasY;
-      this._gyroBias.z = newBiasZ;
+      // Convert back to raw units for storage — the rest of the pipeline
+      // subtracts `this._gyroBias.x` from raw gyro values.
+      this._gyroBias.x = newBiasX / gyroScale;
+      this._gyroBias.y = newBiasY / gyroScale;
+      this._gyroBias.z = newBiasZ / gyroScale;
     }
 
     // Store for next frame
