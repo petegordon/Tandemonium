@@ -37,6 +37,14 @@ const STILLNESS_CAL_HALF_TIME = 0.1;   // exponential lerp half-life
 const STILLNESS_CAL_EASE_IN = 3.0;     // ramp-up time
 const STILLNESS_DETERIORATION = 0.2;   // how fast min deltas grow per second
 
+// Sensor-fusion calibration (runs during active motion, complements
+// stillness calibration). Matches GamepadMotionHelpers
+// AutoCalibration::AddSampleSensorFusion parameters exactly.
+const SENSOR_FUSION_SMOOTHING_STRENGTH = 2.0;           // exponential smoothing factor for gyro/accel
+const SENSOR_FUSION_ANGULAR_ACCEL_THRESHOLD = 20.0;     // deg/s² gate — above this we're being shaken too hard to trust
+const SENSOR_FUSION_EASE_IN_TIME = 3.0;                 // ramp-up seconds before calibration blends in
+const SENSOR_FUSION_HALF_TIME = 0.1;                    // exponential lerp half-life toward new bias
+
 export class InputManager {
   /**
    * @param {Object} [options]
@@ -127,6 +135,16 @@ export class InputManager {
       minDeltaAccel: 0.25,
       easeIn: 0,
     };
+    // Sensor-fusion calibration state (Phase C #3). Ported from
+    // GamepadMotion.hpp AutoCalibration::AddSampleSensorFusion. Runs
+    // alongside stillness calibration — stillness handles "at rest",
+    // sensor fusion handles "in motion" by cross-checking gyro rates
+    // against accel-direction-change-derived angular velocity.
+    this._sfSmoothedGyro = new THREE.Vector3();
+    this._sfSmoothedPreviousAccel = new THREE.Vector3();
+    this._sfPreviousAccel = new THREE.Vector3();
+    this._sfTimeSteady = 0;
+    this._sfSkippedTime = 0;
     // Reusable scratch vectors to avoid per-frame allocations in the hot
     // path. Instance-scoped so two InputManager instances can't clobber
     // each other mid-frame.
@@ -1269,6 +1287,15 @@ export class InputManager {
         // calibration (that still happens for the first GYRO_CALIB_COUNT
         // samples up-front).
         this._updateStillnessCalibration(rawGx, rawGy, rawGz, parsed.accel, parsed.accelScale, dt, now);
+
+        // ── 5. Sensor-fusion calibration (Phase C #3) ──
+        // Refines gyroBias during ACTIVE motion by cross-checking gyro
+        // rates against accel-derived angular velocity. Complements the
+        // stillness path above — stillness requires accel to be stable,
+        // sensor fusion requires accel to be changing, so they're
+        // mutually exclusive per frame and both can safely target
+        // _gyroBias.
+        this._updateSensorFusionCalibration(rawGx, rawGy, rawGz, parsed.accel, dt);
       }
     }
     this._lastGyroTime = now;
@@ -1395,6 +1422,196 @@ export class InputManager {
     this._stillnessWindow.minDeltaGyro = 1.0;
     this._stillnessWindow.minDeltaAccel = 0.25;
     this._stillnessWindow.easeIn = 0;
+    this._sfSmoothedGyro.set(0, 0, 0);
+    this._sfSmoothedPreviousAccel.set(0, 0, 0);
+    this._sfPreviousAccel.set(0, 0, 0);
+    this._sfTimeSteady = 0;
+    this._sfSkippedTime = 0;
+  }
+
+  /**
+   * Sensor-fusion calibration path (Phase C #3). Ported from
+   * GamepadMotion.hpp AutoCalibration::AddSampleSensorFusion.
+   *
+   * Complements _updateStillnessCalibration by refining _gyroBias
+   * during ACTIVE MOTION instead of only during stillness. The
+   * algorithm cross-checks gyro rates against angular velocity
+   * derived from accelerometer direction changes: if the controller
+   * is rotating, the accel direction should change in a way that's
+   * consistent with the gyro reading minus the bias. Subtract the
+   * accel-derived rotation from the smoothed gyro and you have a
+   * running estimate of bias — lerp toward that estimate.
+   *
+   * Gating:
+   *   - Rejects all-zero sensor input (stuck IMU, uninit state)
+   *   - Rejects when the accel hasn't changed frame-to-frame (no
+   *     rotation to cross-check against — skips and accumulates dt)
+   *   - Rejects when gyro angular acceleration exceeds 20 deg/s²
+   *     (controller is being shaken too erratically to trust)
+   *
+   * Axis-selective update:
+   *   - Gravity can't measure rotation AROUND the gravity axis
+   *   - When abs(accelNormal.axis) > 0.7 (axis is aligned with
+   *     gravity), that axis's bias update is skipped
+   *   - Other axes get partial update proportional to how orthogonal
+   *     they are to gravity
+   *
+   * Runs in parallel with _updateStillnessCalibration — they have
+   * mutually-exclusive gating (stillness requires accel stable,
+   * sensor fusion requires accel changing), so both contributing
+   * to _gyroBias is safe.
+   *
+   * @param {number} rawGx raw gyro X from parseReport
+   * @param {number} rawGy raw gyro Y
+   * @param {number} rawGz raw gyro Z
+   * @param {object|null} accel parsed.accel ({x, y, z}) or null
+   * @param {number} dt seconds since last gyro report
+   */
+  _updateSensorFusionCalibration(rawGx, rawGy, rawGz, accel, dt) {
+    if (dt <= 0 || this._gyroCalibrating || !accel) return;
+
+    // Accel scale cancels out in normalize() — we can use raw values
+    // directly. The cross-product angle computation is unit-independent.
+    const inAx = accel.x;
+    const inAy = accel.y;
+    const inAz = accel.z;
+
+    // Zero-input rejection
+    if (rawGx === 0 && rawGy === 0 && rawGz === 0 &&
+        inAx === 0 && inAy === 0 && inAz === 0) {
+      this._sfTimeSteady = 0;
+      this._sfSkippedTime = 0;
+      this._sfPreviousAccel.set(0, 0, 0);
+      this._sfSmoothedPreviousAccel.set(0, 0, 0);
+      this._sfSmoothedGyro.set(0, 0, 0);
+      return;
+    }
+
+    // Initial state: no previous accel captured yet
+    if (this._sfPreviousAccel.x === 0 && this._sfPreviousAccel.y === 0 && this._sfPreviousAccel.z === 0) {
+      this._sfTimeSteady = 0;
+      this._sfSkippedTime = 0;
+      this._sfPreviousAccel.set(inAx, inAy, inAz);
+      this._sfSmoothedPreviousAccel.set(inAx, inAy, inAz);
+      this._sfSmoothedGyro.set(0, 0, 0);
+      return;
+    }
+
+    // Controller state hasn't updated (some firmware batches reports) —
+    // accumulate the skipped time so the next non-duplicate frame gets
+    // the full dt. Without this, rapid duplicate reports would produce
+    // false "no rotation" readings and wreck the bias estimate.
+    if (inAx === this._sfPreviousAccel.x &&
+        inAy === this._sfPreviousAccel.y &&
+        inAz === this._sfPreviousAccel.z) {
+      this._sfSkippedTime += dt;
+      return;
+    }
+
+    // Absorb any accumulated skipped time
+    const effDt = dt + this._sfSkippedTime;
+    this._sfSkippedTime = 0;
+
+    // Framerate-independent exponential smoothing factor
+    const smoothingLerp = Math.pow(2, -SENSOR_FUSION_SMOOTHING_STRENGTH * effDt);
+
+    // Smooth gyro — capture previous value for angular acceleration calc
+    const prevSmGx = this._sfSmoothedGyro.x;
+    const prevSmGy = this._sfSmoothedGyro.y;
+    const prevSmGz = this._sfSmoothedGyro.z;
+    // Reference: Smoothed = inGyro.Lerp(Smoothed, factor)
+    //          = inGyro * (1-factor) + Smoothed * factor
+    this._sfSmoothedGyro.set(
+      rawGx * (1 - smoothingLerp) + prevSmGx * smoothingLerp,
+      rawGy * (1 - smoothingLerp) + prevSmGy * smoothingLerp,
+      rawGz * (1 - smoothingLerp) + prevSmGz * smoothingLerp,
+    );
+
+    // Angular acceleration magnitude of the smoothed gyro
+    const dGx = this._sfSmoothedGyro.x - prevSmGx;
+    const dGy = this._sfSmoothedGyro.y - prevSmGy;
+    const dGz = this._sfSmoothedGyro.z - prevSmGz;
+    const gyroAccelMag = Math.sqrt(dGx * dGx + dGy * dGy + dGz * dGz) / effDt;
+
+    // Previous accel normal (from the smoothed state we captured last frame)
+    const prevNormal = this._tmpVec.copy(this._sfSmoothedPreviousAccel).normalize();
+
+    // Smooth this frame's accel
+    const smoothAx = inAx * (1 - smoothingLerp) + this._sfSmoothedPreviousAccel.x * smoothingLerp;
+    const smoothAy = inAy * (1 - smoothingLerp) + this._sfSmoothedPreviousAccel.y * smoothingLerp;
+    const smoothAz = inAz * (1 - smoothingLerp) + this._sfSmoothedPreviousAccel.z * smoothingLerp;
+    const thisNormal = this._tmpVec2.set(smoothAx, smoothAy, smoothAz).normalize();
+
+    // Angular velocity from accel direction change: cross(thisNormal, prevNormal)
+    // scaled by the angle between them divided by effDt
+    const angVel = this._tmpVec3.crossVectors(thisNormal, prevNormal);
+    const crossLen = angVel.length();
+    if (crossLen > 0) {
+      const dot = Math.max(-1, Math.min(1, thisNormal.dot(prevNormal)));
+      const angleChangeDeg = Math.acos(dot) * (180 / Math.PI);
+      const anglePerSec = angleChangeDeg / effDt;
+      angVel.multiplyScalar(anglePerSec / crossLen);
+    }
+    // angVel now holds the accel-derived angular velocity (in deg/s, matching
+    // the smoothed gyro units since parsed.gyro came through in raw units
+    // scaled by parsed.gyroScale in deg/s/raw — both sides are in deg/s).
+
+    // Angular acceleration gate: if the controller is being shaken too
+    // hard, the smoothed gyro estimate is unreliable — reset steady time
+    // and skip calibration this frame.
+    if (gyroAccelMag > SENSOR_FUSION_ANGULAR_ACCEL_THRESHOLD) {
+      this._sfTimeSteady = 0;
+    } else {
+      // Accumulate steady time up to the ease-in cap
+      this._sfTimeSteady = Math.min(
+        this._sfTimeSteady + effDt,
+        SENSOR_FUSION_EASE_IN_TIME,
+      );
+      const easeIn = SENSOR_FUSION_EASE_IN_TIME <= 0
+        ? 1
+        : this._sfTimeSteady / SENSOR_FUSION_EASE_IN_TIME;
+      const lerpFactor = SENSOR_FUSION_HALF_TIME <= 0
+        ? 0
+        : Math.pow(2, -easeIn * effDt / SENSOR_FUSION_HALF_TIME);
+
+      // Candidate new bias = smoothedGyro - accel-derived angular velocity
+      // If gyro reports `rate` and real rotation is `accelDerived`, the
+      // difference is the gyro bias (what the gyro sees when it shouldn't
+      // see anything). Lerp toward this candidate with the ease-in-scaled
+      // half-time.
+      let newBiasX = (this._sfSmoothedGyro.x - angVel.x) * (1 - lerpFactor) + this._gyroBias.x * lerpFactor;
+      let newBiasY = (this._sfSmoothedGyro.y - angVel.y) * (1 - lerpFactor) + this._gyroBias.y * lerpFactor;
+      let newBiasZ = (this._sfSmoothedGyro.z - angVel.z) * (1 - lerpFactor) + this._gyroBias.z * lerpFactor;
+
+      // Axis-selective update: accel can't measure rotation around the
+      // gravity axis, so axes strongly aligned with gravity don't get
+      // their bias updated from this sample. The reference clamps any
+      // |normal.axis| > 0.7 to 1.0, which is the lerp strength toward
+      // oldBias — so those axes end up keeping the old bias.
+      let strengthX = Math.abs(thisNormal.x);
+      let strengthY = Math.abs(thisNormal.y);
+      let strengthZ = Math.abs(thisNormal.z);
+      if (strengthX > 0.7) strengthX = 1.0;
+      if (strengthY > 0.7) strengthY = 1.0;
+      if (strengthZ > 0.7) strengthZ = 1.0;
+      // Clamp to [0, 1]
+      strengthX = Math.min(strengthX, 1.0);
+      strengthY = Math.min(strengthY, 1.0);
+      strengthZ = Math.min(strengthZ, 1.0);
+
+      // lerp(newBias, oldBias, strength) = newBias*(1-strength) + oldBias*strength
+      newBiasX = newBiasX * (1 - strengthX) + this._gyroBias.x * strengthX;
+      newBiasY = newBiasY * (1 - strengthY) + this._gyroBias.y * strengthY;
+      newBiasZ = newBiasZ * (1 - strengthZ) + this._gyroBias.z * strengthZ;
+
+      this._gyroBias.x = newBiasX;
+      this._gyroBias.y = newBiasY;
+      this._gyroBias.z = newBiasZ;
+    }
+
+    // Store for next frame
+    this._sfSmoothedPreviousAccel.set(smoothAx, smoothAy, smoothAz);
+    this._sfPreviousAccel.set(inAx, inAy, inAz);
   }
 
   getMotionLean() {
