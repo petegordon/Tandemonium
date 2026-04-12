@@ -950,8 +950,14 @@ class Game {
     if (!info || !info.hasGyro) return;
     const filter = ControllerRegistry.parseGamepadVendorProduct(gp.id);
     if (!filter) return;
+    // Exclude P1's already-claimed HID device so P2 lands on a DIFFERENT
+    // physical device. When both players are on the same controller model
+    // (e.g., two DualSenses), vendorId/productId alone can't disambiguate
+    // — the exclude list is the only way to prevent both InputManagers
+    // from opening the same HID device and cross-wiring gyro/sticks.
+    const excludeDevices = this.input.gyroDevice ? [this.input.gyroDevice] : [];
     console.log('Auto-connecting P2 gyro for', info.driverName, filter);
-    this.inputP2.connectControllerGyro(filter).then(() => {
+    this.inputP2.connectControllerGyro(filter, excludeDevices).then(() => {
       if (this.inputP2 && this.inputP2.gyroConnected) {
         // Ensure P2's motion pipeline is armed so balanceCtrlP2 reads lean.
         this.inputP2.motionEnabled = true;

@@ -737,7 +737,7 @@ export class InputManager {
    *   the first approved gyro device wins, which in a two-controller
    *   session is non-deterministic.
    */
-  async connectControllerGyro(filter = null) {
+  async connectControllerGyro(filter = null, excludeDevices = []) {
     if (this.gyroConnected || !navigator.hid) return;
     // Concurrent-call guard: the lobby has two gamepadconnected listeners
     // (main + hot-swap) that both schedule _autoConnectGyro with different
@@ -769,7 +769,7 @@ export class InputManager {
       // then fall back to requestDevice() which triggers the auto-select handler.
       const isDesktop = window.steam || navigator.userAgent.includes('Electron');
       if (isDesktop) {
-        device = await ControllerRegistry.findApprovedDevice('gyro', filter);
+        device = await ControllerRegistry.findApprovedDevice('gyro', filter, excludeDevices);
         if (!device) {
           const devices = await navigator.hid.requestDevice({ filters: hidFilters });
           device = devices && devices[0];
