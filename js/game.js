@@ -2234,6 +2234,9 @@ class Game {
   }
 
   _startVictoryVideo(level) {
+    // Clean up any existing victory video loop before starting a new one
+    this._stopVictoryVideo();
+
     // Video config per level
     const videoConfigs = {
       grandma: {
@@ -2286,9 +2289,12 @@ class Game {
     // which can cause context loss (grey screen crash) on iOS
     const threshold = cfg.threshold;
     const smooth = cfg.smoothness;
-    let animId = 0;
+    // Store state on this._victoryVideo so _stopVictoryVideo can cancel
+    // the current pending frame (animId changes every frame).
+    const state = { video, animId: 0 };
+    this._victoryVideo = state;
     const animate = () => {
-      animId = requestAnimationFrame(animate);
+      state.animId = requestAnimationFrame(animate);
       if (video.readyState < 2) return;
 
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -2317,8 +2323,6 @@ class Game {
       ctx.putImageData(imageData, 0, 0);
     };
     animate();
-
-    this._victoryVideo = { video, animId };
   }
 
   _stopVictoryVideo() {
