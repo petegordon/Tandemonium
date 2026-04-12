@@ -2,6 +2,11 @@ const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net } = 
 const path = require('path');
 const fs = require('fs');
 
+// Group all Electron processes under one taskbar/alt-tab entry on Windows.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.jimandi.tandemonium');
+}
+
 // Prevent Chromium from opening listening sockets that trigger Windows Firewall prompt.
 // The game only uses outbound connections (WebRTC, HTTPS) — no inbound listening needed.
 app.commandLine.appendSwitch('remote-debugging-port', '-1');
