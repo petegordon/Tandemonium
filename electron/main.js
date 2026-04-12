@@ -7,6 +7,21 @@ const fs = require('fs');
 app.commandLine.appendSwitch('remote-debugging-port', '-1');
 app.commandLine.appendSwitch('disable-background-networking');
 
+// --- Single instance lock ---
+// Prevent multiple app instances (common with Steam launching or double-clicks).
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // Focus existing window when a second instance tries to launch
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 // --- Steamworks initialization (before app.ready) ---
 let steamworks = null;
 try {
