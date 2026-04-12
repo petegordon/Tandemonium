@@ -1682,10 +1682,13 @@ class Game {
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
 
-    // 3-second input cooldown to prevent accidental taps while pedaling
-    this._overlayCooldownUntil = performance.now() + 3000;
-    btns.forEach(b => b.style.pointerEvents = 'none');
-    setTimeout(() => btns.forEach(b => b.style.pointerEvents = ''), 3000);
+    // Input cooldown: on mobile, pedal taps and button taps share the same
+    // touch area. On desktop/TV, pedal inputs are separate from selection.
+    if (isMobile) {
+      this._overlayCooldownUntil = performance.now() + 3000;
+      btns.forEach(b => b.style.pointerEvents = 'none');
+      setTimeout(() => btns.forEach(b => b.style.pointerEvents = ''), 3000);
+    }
 
     if (!fromRemote && this.net) {
       this.net.sendEvent(EVT_GAMEOVER);
@@ -2166,10 +2169,15 @@ class Game {
     setTimeout(() => this._playBeep(1000, 0.3), 200);
     setTimeout(() => this._playBeep(1200, 0.5), 400);
 
-    // 5-second input cooldown to prevent accidental taps
-    this._overlayCooldownUntil = performance.now() + 5000;
-    victoryBtns.forEach(b => b.style.pointerEvents = 'none');
-    setTimeout(() => victoryBtns.forEach(b => b.style.pointerEvents = ''), 5000);
+    // Input cooldown to prevent accidental taps while pedaling. On mobile,
+    // the same touch area is used for pedaling and button taps, so a cooldown
+    // prevents misfires. On desktop/TV, pedal inputs (triggers/keys) are
+    // separate from selection inputs (A button/mouse), so no cooldown needed.
+    if (isMobile) {
+      this._overlayCooldownUntil = performance.now() + 5000;
+      victoryBtns.forEach(b => b.style.pointerEvents = 'none');
+      setTimeout(() => victoryBtns.forEach(b => b.style.pointerEvents = ''), 5000);
+    }
 
     // Show purchase CTA for unlicensed stokers after victory
     if (this.mode === 'stoker' && !this.lobby.license.isLicensed) {
@@ -4524,10 +4532,11 @@ class Game {
     this._setOverlayButtons(overlayBtns, overlayBtns.length - 1);
     this._overlaySlider = slider;
 
-    // 3-second input cooldown to prevent accidental taps while pedaling
-    this._overlayCooldownUntil = performance.now() + 3000;
-    overlayBtns.forEach(b => b.style.pointerEvents = 'none');
-    setTimeout(() => overlayBtns.forEach(b => b.style.pointerEvents = ''), 3000);
+    if (isMobile) {
+      this._overlayCooldownUntil = performance.now() + 3000;
+      overlayBtns.forEach(b => b.style.pointerEvents = 'none');
+      setTimeout(() => overlayBtns.forEach(b => b.style.pointerEvents = ''), 3000);
+    }
   }
 
   _showStokerTutorialComplete() {
@@ -4566,9 +4575,11 @@ class Game {
     this._setOverlayButtons(overlayBtns, 0);
     this._overlaySlider = slider;
 
-    this._overlayCooldownUntil = performance.now() + 3000;
-    overlayBtns.forEach(b => b.style.pointerEvents = 'none');
-    setTimeout(() => overlayBtns.forEach(b => b.style.pointerEvents = ''), 3000);
+    if (isMobile) {
+      this._overlayCooldownUntil = performance.now() + 3000;
+      overlayBtns.forEach(b => b.style.pointerEvents = 'none');
+      setTimeout(() => overlayBtns.forEach(b => b.style.pointerEvents = ''), 3000);
+    }
   }
 
   _computeTuningParams(isGyro) {
