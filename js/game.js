@@ -1492,6 +1492,10 @@ class Game {
     if (this.input.gyroConnected) {
       this.input.recenterGyro();
     }
+    // Local multiplayer: recenter P2's gyro too
+    if (this.inputP2 && this.inputP2.gyroConnected) {
+      this.inputP2.recenterGyro();
+    }
     // Mobile tilt calibration (10 samples, ~167ms)
     if (this.input.motionEnabled) {
       this.input.startTiltCalibration();
