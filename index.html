@@ -3971,7 +3971,7 @@ ON</button>
 (function() {
   var isDesktop = navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
   if (isDesktop) {
-    document.getElementById('tap-to-start-text').textContent = 'Press any button to start';
+    document.getElementById('tap-to-start-text').textContent = 'Loading...';
     // Poll for gamepad input to dismiss the overlay
     var overlay = document.getElementById('tap-to-start');
     function pollForButton() {
@@ -4324,7 +4324,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.616e5c8 | 04-11-2026 22:39</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b3f8efc | 04-11-2026 22:45</span></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
