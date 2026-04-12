@@ -156,13 +156,28 @@ export class SwitchProDriver extends ControllerDriver {
     const rawGyroY = r(data, imuOffset + 8);
     const rawGyroZ = r(data, imuOffset + 10);
 
-    // Remap axes to match DualSense convention so the game's steering (gz)
-    // and drift correction (atan2(accelX, accelY)) work unchanged.
-    // Switch Pro: gyro Y = roll, DualSense: gyro Z = roll
-    // Switch Pro: accel Y = lateral, accel Z = gravity
-    // DualSense:  accel X = lateral, accel Y = gravity
+    // Remap axes to the common DualSense-aligned frame expected by
+    // InputManager's sensor fusion pipeline. This is the same transform
+    // the controller-overlay applies via controller-profiles.js's
+    // Switch Pro gyroTransform: (gx, gy, gz) => [-gz, gy, -gx] chained
+    // after an initial (x: rawX, y: rawZ, z: rawY) swap — collapsing to
+    // a single transform that takes the Switch Pro's raw IMU axes
+    // directly to the final common frame:
+    //
+    //   gyro.x = -rawGyroY   (roll-axis mapped to final -X)
+    //   gyro.y =  rawGyroZ   (yaw-axis mapped to final Y)
+    //   gyro.z = -rawGyroX   (sign-flipped mapping to final -X... wait see below)
+    //
+    // The pre-sensor-fusion scalar integration only used gyro.z for
+    // steering, so the partial remap `{rawX, rawZ, rawY}` was good
+    // enough for that; it put "something roll-like" at index z. With
+    // full 3D sensor fusion, all three axes need to be in the final
+    // common frame, otherwise pitch/yaw contaminate the Z integration.
+    // The previous partial remap also had the wrong sign for gyro.z
+    // relative to DualSense, which surfaced as "Switch Pro lean is
+    // inverted" once sensor fusion landed.
     return {
-      gyro: { x: rawGyroX, y: rawGyroZ, z: rawGyroY },
+      gyro: { x: -rawGyroY, y: rawGyroZ, z: -rawGyroX },
       accel: { x: -rawAccelY, y: rawAccelZ, z: rawAccelX },
       touchpad: null,
       touchpadButton: false,

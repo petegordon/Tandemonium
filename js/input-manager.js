@@ -2,6 +2,7 @@
 // INPUT MANAGER — keyboard + touch + device motion + gamepad
 // ============================================================
 
+import * as THREE from 'three';
 import { isMobile, TUNE } from './config.js';
 import { ControllerRegistry } from './controllers/controller-registry.js';
 import * as analytics from './analytics.js';
@@ -13,6 +14,28 @@ const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
 // with macOS Game Controller framework).
 const IMU_ZERO_TIMEOUT_MS = 500;      // how long zero IMU has to persist before we act
 const MAX_IMU_REINIT = 2;             // cap on driver.init() re-runs per connect session
+
+// Sensor fusion constants (from JibbSmart/GamepadMotionHelpers, ported via
+// the controller-overlay sensor fusion implementation in PR #186). These
+// govern how gravity tracking, shakiness detection, gyro rate limiting,
+// and continuous stillness calibration all interact. See the GyroWiki
+// "Finding Gravity with Sensor Fusion" article for the derivation.
+const GRAVITY_STILL_SPEED = 1.0;
+const GRAVITY_SHAKY_SPEED = 0.1;
+const SHAKINESS_MIN_THRESHOLD = 0.01;
+const SHAKINESS_MAX_THRESHOLD = 0.4;
+const GRAVITY_GYRO_FACTOR = 0.1;       // cap correction at 10% of gyro speed
+const GRAVITY_MIN_SPEED = 0.01;
+const GRAVITY_GYRO_MIN_THRESHOLD = 0.05;
+const GRAVITY_GYRO_MAX_THRESHOLD = 0.25;
+const STEADINESS_HALF_TIME = 0.25;     // shakiness smoothing half-life (seconds)
+
+// Continuous stillness calibration
+const STILLNESS_WINDOW_TIME = 0.5;     // min collection time (seconds)
+const STILLNESS_CORRECTION_TIME = 2.0; // must be still this long to recalibrate
+const STILLNESS_CAL_HALF_TIME = 0.1;   // exponential lerp half-life
+const STILLNESS_CAL_EASE_IN = 3.0;     // ramp-up time
+const STILLNESS_DETERIORATION = 0.2;   // how fast min deltas grow per second
 
 export class InputManager {
   /**
@@ -82,10 +105,36 @@ export class InputManager {
     this._gyroBias = { x: 0, y: 0, z: 0 };
     this._gyroCalibrating = false;
     this._gyroCalibSamples = [];
-    this._gyroRollAccum = 0;         // cumulative roll angle in degrees
+    this._gyroRollAccum = 0;         // cumulative roll angle in degrees (derived from _gyroOrientation)
     this._lastGyroTime = 0;
     this._gyroReportHandler = null;
     this._accelVerified = false;     // accel byte offsets validated
+
+    // Sensor fusion state (ported from controller-overlay — see PR #186
+    // and the follow-up sensor fusion polish in feature/gyro-sensor-fusion).
+    // Replaces the old scalar Euler integration + atan2 drift correction
+    // with a full 3D quaternion integration and accelerometer-tracked
+    // gravity vector. Per-instance so local MP (#195) sees clean state
+    // on both P1 and P2.
+    this._gyroOrientation = new THREE.Quaternion();
+    this._gravityVec = new THREE.Vector3(0, -1, 0);
+    this._smoothAccel = new THREE.Vector3(0, -1, 0);
+    this._shakiness = 0;
+    this._stillnessWindow = {
+      samples: [],
+      stillSince: 0,
+      minDeltaGyro: 1.0,
+      minDeltaAccel: 0.25,
+      easeIn: 0,
+    };
+    // Reusable scratch vectors to avoid per-frame allocations in the hot
+    // path. Instance-scoped so two InputManager instances can't clobber
+    // each other mid-frame.
+    this._tmpVec = new THREE.Vector3();
+    this._tmpVec2 = new THREE.Vector3();
+    this._tmpVec3 = new THREE.Vector3();
+    this._tmpQuat = new THREE.Quaternion();
+    this._tmpEuler = new THREE.Euler();
 
     // Stuck-IMU self-heal (see #198). When hot-swapping from a BT DualSense
     // to a BT Switch Pro on macOS, the Switch Pro's IMU-enable sub-command
@@ -860,6 +909,9 @@ export class InputManager {
     this._imuZeroSince = 0;
     this._imuReinitAttempts = 0;
     this._imuReinitInFlight = false;
+    // Clear sensor fusion state too so the next controller starts with
+    // a clean quaternion/gravity vector instead of the last one's pose.
+    this._resetSensorFusionState();
     setHapticSources(null);
   }
 
@@ -868,16 +920,20 @@ export class InputManager {
   }
 
   recenterGyro() {
-    // Set accumulator to current physical tilt so drift correction is aligned,
-    // and update motionOffset so the tilt pipeline sees zero lean.
+    // Recenter semantic: "whatever I'm holding right now = zero lean."
+    // With sensor fusion, the cleanest way to achieve that is to capture
+    // the current accel-derived roll, absorb it into motionOffset so the
+    // tilt pipeline sees zero relative lean, and reset the orientation
+    // quaternion to identity so sensor fusion re-converges from the
+    // current pose.
     if (this._accelVerified && this._accelRoll != null) {
-      this._gyroRollAccum = this._accelRoll;
       this.motionOffset = -this._accelRoll;
-    } else {
-      this._gyroRollAccum = 0;
     }
-    // Don't reset _smoothedLean/motionLean — they're shared with mobile tilt.
-    // The EMA filter (gyroOutputSmoothing: 0.3) converges within ~100ms.
+    this._gyroRollAccum = 0;
+    this._resetSensorFusionState();
+    // Don't reset _smoothedLean/motionLean — they're shared with mobile
+    // tilt. The EMA filter (gyroOutputSmoothing: 0.3) converges within
+    // ~100ms.
   }
 
   /** Full lean-input reset for tutorial/demo restarts. */
@@ -886,14 +942,14 @@ export class InputManager {
     this._prevLeanRaw = 0;
     this.motionLean = 0;
     if (this.gyroConnected && this._accelVerified && this._accelRoll != null) {
-      // Set accumulator to current physical tilt so drift correction
-      // won't fight the reset. Then set motionOffset so the tilt pipeline
-      // sees relative = 0 (i.e. -_gyroRollAccum - motionOffset = 0).
-      this._gyroRollAccum = this._accelRoll;
+      // Absorb current physical tilt into motionOffset so the tilt
+      // pipeline sees relative = 0 immediately after the reset. The
+      // orientation quaternion is also reset so sensor fusion
+      // re-converges from identity in the next ~1 second.
       this.motionOffset = -this._accelRoll;
-    } else {
-      this._gyroRollAccum = 0;
     }
+    this._gyroRollAccum = 0;
+    this._resetSensorFusionState();
     this._driftEma = null;
   }
 
@@ -905,6 +961,9 @@ export class InputManager {
     this._gyroRollAccum = 0;
     this._lastGyroTime = 0;
     this.motionOffset = null;
+    // Throw away any accumulated sensor fusion state so the post-
+    // calibration orientation starts from identity.
+    this._resetSensorFusionState();
   }
 
   /**
@@ -941,6 +1000,9 @@ export class InputManager {
     this._lastGyroTime = 0;
     this.motionOffset = null;
     this.motionEnabled = true;
+    // Re-reset sensor fusion state after bias is established so the
+    // orientation starts clean from a known-good bias.
+    this._resetSensorFusionState();
     console.log('Gyro bias:', this._gyroBias);
   }
 
@@ -1071,50 +1133,268 @@ export class InputManager {
     }
 
     // Apply bias correction
+    const gx = rawGx - this._gyroBias.x;
+    const gy = rawGy - this._gyroBias.y;
     const gz = rawGz - this._gyroBias.z;
 
-    // Integrate Z axis for steering (negated to match tilt direction)
     if (this._lastGyroTime > 0) {
       const dt = (now - this._lastGyroTime) / 1000.0;
       if (dt < 0.1) {
-        this._gyroRollAccum -= gz * gyroScale * dt;
+        // Raw gyro rates are in sensor-frame degrees per second (via the
+        // per-driver parsed.gyroScale). Convert to radians and scale by
+        // dt to get a per-frame angular displacement vector.
+        const scale = parsed.gyroScale * (Math.PI / 180.0);
+        const angX = gx * scale * dt;
+        const angY = gy * scale * dt;
+        const angZ = gz * scale * dt;
+        const angle = Math.sqrt(angX * angX + angY * angY + angZ * angZ);
 
-        // Accelerometer-assisted drift correction
+        // ── 1. Axis-angle quaternion integration ──
+        // Proper axis-angle construction, eliminating gimbal coupling
+        // from the old Euler-based integration.
+        if (angle > 1e-10) {
+          const ha = angle * 0.5;
+          const s = Math.sin(ha) / angle;
+          this._tmpQuat.set(angX * s, angY * s, angZ * s, Math.cos(ha));
+          this._gyroOrientation.multiply(this._tmpQuat);
+        }
+
+        // ── 2. Gravity tracking + accelerometer correction ──
         if (parsed.accel) {
+          const accelScale = parsed.accelScale || (1.0 / 8192.0);
+          const ax = rawAx * accelScale;
+          const ay = rawAy * accelScale;
+          const az = rawAz * accelScale;
+          this._tmpVec.set(ax, ay, az);
+          const accelVec = this._tmpVec;  // alias (don't mutate below — use _tmpVec2/3 for scratch)
+          const accelLen = accelVec.length();
+
+          // Verify accel magnitude is reasonable (gravity ~1g, allowing for
+          // controller-specific scale). Same check as the pre-sensor-fusion
+          // implementation — we still log this once for diagnostics.
           if (!this._accelVerified) {
             const mag = Math.sqrt(rawAx * rawAx + rawAy * rawAy + rawAz * rawAz);
-            // Expected gravity magnitude varies by controller:
-            // DualSense ±2g: ~8192, Switch Pro ±8g: ~4096
             const expectedG = parsed.accelScale ? (1.0 / parsed.accelScale) : 8192;
             const magLow = expectedG * 0.4;
             const magHigh = expectedG * 2.0;
             if (mag > magLow && mag < magHigh) {
               this._accelVerified = true;
-              console.log('Accel verified, magnitude:', mag.toFixed(0), 'expected ~' + expectedG.toFixed(0));
-            } else {
-              this._gyroRollAccum *= (1 - 0.5 * dt);
+              console.log('Accel verified, magnitude:', mag.toFixed(0),
+                'expected ~' + expectedG.toFixed(0));
             }
           }
-          if (this._accelVerified) {
-            const accelRoll = Math.atan2(rawAx, rawAy) * (180 / Math.PI);
-            this._accelRoll = accelRoll;
-            const correction = (accelRoll - this._gyroRollAccum) * TUNE.gyroAccelCorrection;
-            this._gyroRollAccum += correction;
+
+          // Rotate gravity vector by the inverse of this frame's gyro
+          // rotation — keeps it pointing at world-down in the rotating
+          // sensor-local frame.
+          if (angle > 1e-10) {
+            const ha2 = angle * 0.5;
+            const s2 = Math.sin(ha2) / angle;
+            this._tmpQuat.set(-angX * s2, -angY * s2, -angZ * s2, Math.cos(ha2));
+            this._gravityVec.applyQuaternion(this._tmpQuat);
           }
-        } else {
-          // No accel data — use blanket decay for drift correction
-          this._gyroRollAccum *= (1 - 0.5 * dt);
+
+          // Shakiness tracking — exponential-moving-average of accel,
+          // peak-detected difference gives "how much the controller is
+          // bouncing around right now."
+          const smoothFactor = Math.pow(2, -dt / STEADINESS_HALF_TIME);
+          this._smoothAccel.lerp(accelVec, 1 - smoothFactor);
+          const accelDiff = this._tmpVec2.copy(accelVec).sub(this._smoothAccel).length();
+          this._shakiness = Math.max(this._shakiness * smoothFactor, accelDiff);
+
+          // Adaptive correction speed: fast when still, slow when shaking.
+          const shakyT = Math.max(0, Math.min(1,
+            (this._shakiness - SHAKINESS_MIN_THRESHOLD) /
+            (SHAKINESS_MAX_THRESHOLD - SHAKINESS_MIN_THRESHOLD)));
+          let correctionSpeed = (1 - shakyT) * GRAVITY_STILL_SPEED + shakyT * GRAVITY_SHAKY_SPEED;
+
+          // Gyro rate limiting: taper correction toward a gyro-proportional
+          // ceiling so gravity corrections stay visually imperceptible
+          // relative to how fast the controller is turning. Small gap →
+          // fully clamp. Large gap → skip the clamp. See the overlay
+          // implementation in PR #186 for the math bug history.
+          const angularSpeed = angle / dt;
+          let gravGapLen = 0;
+          if (accelLen > 0.001) {
+            const gravLen = this._gravityVec.length();
+            gravGapLen = this._tmpVec2.copy(accelVec)
+              .multiplyScalar(-gravLen / accelLen)
+              .sub(this._gravityVec)
+              .length();
+          }
+          const gyroLimit = Math.max(angularSpeed * GRAVITY_GYRO_FACTOR, GRAVITY_MIN_SPEED);
+          if (correctionSpeed > gyroLimit) {
+            const closeEnoughT = Math.max(0, Math.min(1,
+              (gravGapLen - GRAVITY_GYRO_MIN_THRESHOLD) /
+              (GRAVITY_GYRO_MAX_THRESHOLD - GRAVITY_GYRO_MIN_THRESHOLD)));
+            correctionSpeed = gyroLimit + (correctionSpeed - gyroLimit) * closeEnoughT;
+          }
+
+          // Correct gravity toward the accelerometer reading, but only
+          // when the accel magnitude is near 1g (not free-fall or impact).
+          if (accelLen > 0.4 && accelLen < 1.6) {
+            const gravLen = this._gravityVec.length();
+            this._tmpVec2.copy(accelVec).multiplyScalar(-gravLen / accelLen);
+            const corrAmount = Math.min(correctionSpeed * dt, 1.0);
+            this._gravityVec.lerp(this._tmpVec2, corrAmount);
+          }
+
+          // ── 3. Apply tilt correction to orientation quaternion ──
+          // Transform gravityVec (sensor-local) into the world frame by
+          // applying gyroOrientation directly. NOT its inverse — see
+          // PR #186's follow-up fix. Compare with worldDown = (0,-1,0)
+          // and nudge the orientation to close any gap.
+          const gravWorld = this._tmpVec2.copy(this._gravityVec)
+            .applyQuaternion(this._gyroOrientation)
+            .normalize();
+          const worldDown = this._tmpVec3.set(0, -1, 0);
+          const errorAngle = Math.acos(Math.max(-1, Math.min(1, worldDown.dot(gravWorld))));
+          if (errorAngle > 1e-6) {
+            // corrAxis is in world space (cross of two world-space vectors)
+            // so we premultiply (world-frame rotation applied before the
+            // existing orientation).
+            const corrAxis = this._tmpVec.crossVectors(gravWorld, worldDown).normalize();
+            const cha = errorAngle * 0.5;
+            const cs = Math.sin(cha);
+            this._tmpQuat.set(corrAxis.x * cs, corrAxis.y * cs, corrAxis.z * cs, Math.cos(cha));
+            this._gyroOrientation.premultiply(this._tmpQuat);
+          }
         }
+
+        this._gyroOrientation.normalize();
+
+        // ── 4. Continuous stillness calibration ──
+        // Refines gyroBias in the background when the controller is
+        // still for 2+ seconds. Doesn't run during the initial one-shot
+        // calibration (that still happens for the first GYRO_CALIB_COUNT
+        // samples up-front).
+        this._updateStillnessCalibration(rawGx, rawGy, rawGz, parsed.accel, parsed.accelScale, dt, now);
       }
     }
     this._lastGyroTime = now;
 
-    // Clamp to sane range
-    this._gyroRollAccum = Math.max(-90, Math.min(90, this._gyroRollAccum));
+    // ── Output: derive a scalar lean angle from the orientation ──
+    // Sign convention matches the pre-fusion implementation so game.js
+    // diagnostic reads (`-input._gyroRollAccum`) and `_applyTilt`
+    // continue to point the bike in the correct direction.
+    //
+    // Pre-fusion: `_gyroRollAccum -= gz * scale * dt`, then
+    // `_applyTilt(-_gyroRollAccum)` — the double negation combined with
+    // the driver-internal coordinate remap meant positive physical
+    // right-roll ended up passing a NEGATIVE value to _applyTilt.
+    //
+    // Post-fusion: extract Euler Z from the orientation quaternion,
+    // negate to match the old effective sign. The old convention was
+    // empirically verified on real hardware across the board; matching
+    // it keeps the bike leaning in the direction the user tilts.
+    this._tmpEuler.setFromQuaternion(this._gyroOrientation, 'XYZ');
+    const leanDeg = -this._tmpEuler.z * (180 / Math.PI);
+    const clampedLean = Math.max(-90, Math.min(90, leanDeg));
+    this._gyroRollAccum = -clampedLean;
+    // Expose the current roll as _accelRoll so recenterGyro / resetLeanState
+    // can absorb it into motionOffset. (Name is legacy — the old code
+    // computed it via atan2(accelX, accelY); now it's the sensor-fusion-
+    // derived roll, which is more accurate but semantically equivalent.)
+    this._accelRoll = clampedLean;
 
-    // Feed into tilt pipeline with gyro-specific tuning
+    // Feed into the tilt pipeline
     if (!this.motionEnabled) return;
-    this._applyTilt(-this._gyroRollAccum, true);
+    this._applyTilt(clampedLean, true);
+  }
+
+  /**
+   * Continuous stillness calibration (ported from the controller-overlay).
+   * Maintains a sliding window of recent samples; when gyro/accel variance
+   * stays below adaptive minimum thresholds for STILLNESS_CORRECTION_TIME
+   * seconds, gradually refines _gyroBias toward the window mean with an
+   * exponential lerp that eases in over STILLNESS_CAL_EASE_IN seconds.
+   *
+   * Doesn't replace the initial one-shot calibration — that still runs
+   * at connect time to quickly establish a reasonable bias. This runs
+   * on top of it to keep the bias fresh as temperature drift accumulates.
+   */
+  _updateStillnessCalibration(gx, gy, gz, accel, accelScale, dt, now) {
+    // Don't run during the initial one-shot calibration — that's still
+    // averaging its own samples and setting _gyroBias at the end.
+    if (this._gyroCalibrating) return;
+
+    const sw = this._stillnessWindow;
+    const s = accelScale || (1.0 / 8192.0);
+    const ax = accel ? accel.x * s : 0;
+    const ay = accel ? accel.y * s : 0;
+    const az = accel ? accel.z * s : 0;
+
+    sw.samples.push({ gx, gy, gz, ax, ay, az, t: now });
+
+    // Trim samples older than the window
+    const windowStart = now - STILLNESS_WINDOW_TIME * 1000;
+    while (sw.samples.length > 0 && sw.samples[0].t < windowStart) sw.samples.shift();
+    if (sw.samples.length < 10) { sw.stillSince = 0; return; }
+
+    // Compute min/max delta across the window
+    let gxMin = Infinity, gxMax = -Infinity, gyMin = Infinity, gyMax = -Infinity, gzMin = Infinity, gzMax = -Infinity;
+    let axMin = Infinity, axMax = -Infinity, ayMin = Infinity, ayMax = -Infinity, azMin = Infinity, azMax = -Infinity;
+    let sgx = 0, sgy = 0, sgz = 0;
+    for (const sample of sw.samples) {
+      gxMin = Math.min(gxMin, sample.gx); gxMax = Math.max(gxMax, sample.gx);
+      gyMin = Math.min(gyMin, sample.gy); gyMax = Math.max(gyMax, sample.gy);
+      gzMin = Math.min(gzMin, sample.gz); gzMax = Math.max(gzMax, sample.gz);
+      axMin = Math.min(axMin, sample.ax); axMax = Math.max(axMax, sample.ax);
+      ayMin = Math.min(ayMin, sample.ay); ayMax = Math.max(ayMax, sample.ay);
+      azMin = Math.min(azMin, sample.az); azMax = Math.max(azMax, sample.az);
+      sgx += sample.gx; sgy += sample.gy; sgz += sample.gz;
+    }
+    const dGyro = Math.max(gxMax - gxMin, gyMax - gyMin, gzMax - gzMin);
+    const dAccel = Math.max(axMax - axMin, ayMax - ayMin, azMax - azMin);
+
+    // Adaptive thresholds — deteriorate over time so we don't get stuck
+    // with unreachable strictness after a long stationary period.
+    sw.minDeltaGyro = Math.min(sw.minDeltaGyro, dGyro);
+    sw.minDeltaAccel = Math.min(sw.minDeltaAccel, dAccel);
+    sw.minDeltaGyro += STILLNESS_DETERIORATION * dt;
+    sw.minDeltaAccel += STILLNESS_DETERIORATION * 0.01 * dt;
+
+    const isStill = dGyro < sw.minDeltaGyro * 2.0 && dAccel < sw.minDeltaAccel * 2.0;
+
+    if (isStill) {
+      if (sw.stillSince === 0) sw.stillSince = now;
+      const stillDuration = (now - sw.stillSince) / 1000;
+
+      if (stillDuration >= STILLNESS_CORRECTION_TIME) {
+        // Ease in over time, then exponentially lerp toward the window mean.
+        sw.easeIn = Math.min(sw.easeIn + dt / STILLNESS_CAL_EASE_IN, 1.0);
+        const lerpFactor = Math.pow(2, -sw.easeIn * dt / STILLNESS_CAL_HALF_TIME);
+
+        const meanGx = sgx / sw.samples.length;
+        const meanGy = sgy / sw.samples.length;
+        const meanGz = sgz / sw.samples.length;
+
+        this._gyroBias.x = this._gyroBias.x * lerpFactor + meanGx * (1 - lerpFactor);
+        this._gyroBias.y = this._gyroBias.y * lerpFactor + meanGy * (1 - lerpFactor);
+        this._gyroBias.z = this._gyroBias.z * lerpFactor + meanGz * (1 - lerpFactor);
+      }
+    } else {
+      sw.stillSince = 0;
+      sw.easeIn = 0;
+    }
+  }
+
+  /**
+   * Reset all sensor fusion state to its initial values. Called on
+   * disconnect, on calibration start/finish, and by recenterGyro —
+   * anywhere we want to throw away the accumulated orientation and
+   * let the fusion re-converge from scratch.
+   */
+  _resetSensorFusionState() {
+    this._gyroOrientation.identity();
+    this._gravityVec.set(0, -1, 0);
+    this._smoothAccel.set(0, -1, 0);
+    this._shakiness = 0;
+    this._stillnessWindow.samples.length = 0;
+    this._stillnessWindow.stillSince = 0;
+    this._stillnessWindow.minDeltaGyro = 1.0;
+    this._stillnessWindow.minDeltaAccel = 0.25;
+    this._stillnessWindow.easeIn = 0;
   }
 
   getMotionLean() {
