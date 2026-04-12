@@ -314,6 +314,20 @@ export class Lobby {
       if (localStorage.getItem('tandemonium_started')) {
         this._tapOverlay.remove();
         this._tapOverlay = null;
+        // Subsequent-launch case: the tap overlay was dismissed in a
+        // previous session, so _dismissTapOverlay will never fire again.
+        // Run the desktop gamepad detection flow directly so the HID
+        // bootstrap still has a chance to claim a DualSense that's
+        // stuck in 0x31 full-report mode from the previous session —
+        // otherwise the user has to power-cycle the controller on
+        // every app restart to force it back into Chromium-visible
+        // compat mode.
+        const isDesktopRelaunch = window.steam ||
+          navigator.userAgent.includes('Electron') ||
+          navigator.userAgent.includes('electron');
+        if (isDesktopRelaunch) {
+          this._runDesktopGamepadDetection();
+        }
       } else {
         this._tapOverlay.addEventListener('click', () => this._dismissTapOverlay(), { once: true });
       }
@@ -343,61 +357,7 @@ export class Lobby {
       // Desktop: the button press that dismissed the overlay also activated the gamepad.
       // Poll briefly to let Chromium register it, then show toggles + auto-connect gyro.
       console.log('Desktop: overlay dismissed, activating gamepad...');
-      let attempts = 0;
-      const detectGamepad = () => {
-        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        for (let i = 0; i < gamepads.length; i++) {
-          if (!gamepads[i]) continue;
-          // Register with input manager
-          if (this.input && !this.input.gamepadConnected) {
-            this.input.gamepadIndex = i;
-            this.input.gamepadConnected = true;
-            this.input._gpName = gamepads[i].id;
-            // GameSir Cyclone reports as "Gamepad" with Switch Pro IDs but has
-            // swapped A/B buttons (Nintendo layout). Detect and store swap flag.
-            this.input._gpSwapAB = /^Gamepad/i.test(gamepads[i].id) && /057e/i.test(gamepads[i].id);
-            console.log('Desktop: gamepad activated:', gamepads[i].id, this.input._gpSwapAB ? '(A/B swapped)' : '');
-          }
-          // Show joystick toggle
-          this.toggleJoystick.style.display = '';
-          this._setToggleActive('joystick', this.joystickActive);
-          // Check for gyro-capable controller and auto-connect
-          if (navigator.hid) {
-            this._checkGamepadGyro();
-          }
-          // Start music
-          if (this.onMusicChanged) this.onMusicChanged(true);
-          return;
-        }
-        // Retry for up to 2 seconds
-        attempts++;
-        if (attempts < 20) {
-          setTimeout(detectGamepad, 100);
-        } else if (navigator.hid && this.input && !this.input.gamepadConnected) {
-          // Cold-start fallback: Gamepad API never saw a pad, but a
-          // previously-paired DualSense may be stuck in 0x31 full-report
-          // mode from a prior session and invisible to Chromium. Probe
-          // WebHID directly and bring it online via the synthetic-gamepad
-          // path in InputManager.
-          console.log('Desktop: Gamepad API empty after 2s, probing WebHID...');
-          this.input.bootstrapFromHID().then((ok) => {
-            if (!ok) return;
-            console.log('Desktop: HID bootstrap claimed', this.input._gpName);
-            this.toggleJoystick.style.display = '';
-            this._setToggleActive('joystick', this.joystickActive);
-            // connectControllerGyro was already called by bootstrapFromHID,
-            // so gyroConnected should be true — just flip the UI flags.
-            if (this.input.gyroConnected) {
-              this._motionPermitted = true;
-              this.motionActive = true;
-              this._showMotionToggle();
-              this._setToggleActive('motion', true);
-            }
-            if (this.onMusicChanged) this.onMusicChanged(true);
-          });
-        }
-      };
-      setTimeout(detectGamepad, 200);
+      this._runDesktopGamepadDetection();
     } else {
       // Mobile/browser: request all permissions (audio, camera, motion)
       this._toggleAll();
@@ -409,6 +369,78 @@ export class Lobby {
     // Fade out and remove
     overlay.classList.add('fade-out');
     setTimeout(() => overlay.remove(), 400);
+  }
+
+  /**
+   * Desktop gamepad detection loop. Polls navigator.getGamepads() for up
+   * to 2 seconds, and if nothing shows up, falls back to a WebHID probe
+   * via input.bootstrapFromHID() to recover from the "previously-paired
+   * DualSense stuck in 0x31 full-report mode" case (see PR #199 and the
+   * DualSense BT write-up).
+   *
+   * Extracted from _dismissTapOverlay so it can be called on subsequent
+   * launches too. Previously this only ran when the user clicked the
+   * tap-to-start overlay, which only happens ONCE ever (localStorage
+   * guards it). On every subsequent launch the bootstrap fallback was
+   * never reached, and users had to power-cycle their DualSense to force
+   * it back into compat mode so Chromium's Gamepad API could see it.
+   */
+  _runDesktopGamepadDetection() {
+    let attempts = 0;
+    const detectGamepad = () => {
+      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      for (let i = 0; i < gamepads.length; i++) {
+        if (!gamepads[i]) continue;
+        // Register with input manager
+        if (this.input && !this.input.gamepadConnected) {
+          this.input.gamepadIndex = i;
+          this.input.gamepadConnected = true;
+          this.input._gpName = gamepads[i].id;
+          // GameSir Cyclone reports as "Gamepad" with Switch Pro IDs but has
+          // swapped A/B buttons (Nintendo layout). Detect and store swap flag.
+          this.input._gpSwapAB = /^Gamepad/i.test(gamepads[i].id) && /057e/i.test(gamepads[i].id);
+          console.log('Desktop: gamepad activated:', gamepads[i].id, this.input._gpSwapAB ? '(A/B swapped)' : '');
+        }
+        // Show joystick toggle
+        this.toggleJoystick.style.display = '';
+        this._setToggleActive('joystick', this.joystickActive);
+        // Check for gyro-capable controller and auto-connect
+        if (navigator.hid) {
+          this._checkGamepadGyro();
+        }
+        // Start music
+        if (this.onMusicChanged) this.onMusicChanged(true);
+        return;
+      }
+      // Retry for up to 2 seconds
+      attempts++;
+      if (attempts < 20) {
+        setTimeout(detectGamepad, 100);
+      } else if (navigator.hid && this.input && !this.input.gamepadConnected) {
+        // Cold-start fallback: Gamepad API never saw a pad, but a
+        // previously-paired DualSense may be stuck in 0x31 full-report
+        // mode from a prior session and invisible to Chromium. Probe
+        // WebHID directly and bring it online via the synthetic-gamepad
+        // path in InputManager.
+        console.log('Desktop: Gamepad API empty after 2s, probing WebHID...');
+        this.input.bootstrapFromHID().then((ok) => {
+          if (!ok) return;
+          console.log('Desktop: HID bootstrap claimed', this.input._gpName);
+          this.toggleJoystick.style.display = '';
+          this._setToggleActive('joystick', this.joystickActive);
+          // connectControllerGyro was already called by bootstrapFromHID,
+          // so gyroConnected should be true — just flip the UI flags.
+          if (this.input.gyroConnected) {
+            this._motionPermitted = true;
+            this.motionActive = true;
+            this._showMotionToggle();
+            this._setToggleActive('motion', true);
+          }
+          if (this.onMusicChanged) this.onMusicChanged(true);
+        });
+      }
+    };
+    setTimeout(detectGamepad, 200);
   }
 
   // ── iOS stale-tab recovery ──────────────────────────────────
