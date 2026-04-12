@@ -275,9 +275,9 @@ export class ArchIndicator {
     this._clearNeedles();
     this._mode = mode;
 
-    const isMultiplayer = (mode === 'captain' || mode === 'stoker');
-    const playerRole = mode === 'captain' ? 'YOU CAPTAIN' : mode === 'stoker' ? 'YOU STOKER' : 'YOU';
-    const partnerRole = mode === 'captain' ? 'STOKER' : 'CAPTAIN';
+    const isMultiplayer = (mode === 'captain' || mode === 'stoker' || mode === 'local');
+    const playerRole = mode === 'captain' ? 'YOU CAPTAIN' : mode === 'stoker' ? 'YOU STOKER' : mode === 'local' ? 'CAPTAIN' : 'YOU';
+    const partnerRole = mode === 'captain' ? 'STOKER' : mode === 'local' ? 'STOKER' : 'CAPTAIN';
 
     // Player needle — label on inner (bottom) edge of arch
     this._playerNeedle = this._buildNeedle(playerColor, 0.75, playerRole, ARCH_INNER - 0.35);
