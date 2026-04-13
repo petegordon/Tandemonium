@@ -3720,12 +3720,14 @@ export class Lobby {
           }
           if (anyPressed && !this._localP2AnyPrev) {
             flashP2Button();
+            console.log('P2 button press detected on slot', state.gpIndex);
           }
           this._localP2AnyPrev = anyPressed;
 
-          // A-button commit
+          // A-button (cross/B/A — standard gamepad index 0) commit
           const aPressed = !!(gp.buttons[0] && gp.buttons[0].pressed);
           if (aPressed && !this._localP2APrev) {
+            console.log('P2 action button pressed — joining as gamepad slot', state.gpIndex);
             this._localP2APrev = true;
             this._onLocalJoinClick('gamepad', state.gpIndex);
             return;
@@ -3787,6 +3789,16 @@ export class Lobby {
         unclaimedGpName = this._prettyGamepadName(gamepads[i].id);
         break;
       }
+    }
+    // Debug: log gamepad state once when it changes (avoids per-frame spam)
+    const debugKey = `p1=${p1GpIndex} unclaimed=${unclaimedGpIndex} slots=${gamepads.length}`;
+    if (debugKey !== this._lastGpDebugKey) {
+      this._lastGpDebugKey = debugKey;
+      const slotInfo = [];
+      for (let i = 0; i < gamepads.length; i++) {
+        if (gamepads[i]) slotInfo.push(`[${i}] ${gamepads[i].id}`);
+      }
+      console.log('Local MP gamepad detection:', debugKey, slotInfo.join(' | '));
     }
     const p1IsGamepad = p1GpIndex !== null;
     // Keyboard is only a valid P2 input if P1 isn't using it (we block kb+kb
