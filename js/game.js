@@ -943,6 +943,7 @@ class Game {
    */
   _autoConnectP2Gyro() {
     if (!this.inputP2) return;
+    if (this.inputP2.gyroConnected) return; // Already pre-connected in lobby
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
     const gp = gamepads[this.inputP2._gamepadSlot];
     if (!gp) return;

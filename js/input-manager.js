@@ -544,8 +544,11 @@ export class InputManager {
     window.addEventListener('gamepadconnected', (e) => {
       // Slot filter: if this instance is scoped to a specific gamepad index, ignore others.
       if (this._gamepadSlot !== null && e.gamepad.index !== this._gamepadSlot) return;
-      // Sticky claim: once we've bound a gamepad, don't silently switch to a newly-connected one.
-      if (this.gamepadIndex !== null) return;
+      // Sticky claim: once we've bound a real gamepad slot, don't switch.
+      // Exception: -1 is a sentinel from bootstrapFromHID (WebHID-only
+      // controller invisible to the Gamepad API). Upgrade it to a real
+      // slot so local-MP P2 detection can tell P1's slot apart from P2's.
+      if (this.gamepadIndex !== null && this.gamepadIndex !== -1) return;
       this.gamepadIndex = e.gamepad.index;
       this.gamepadConnected = true;
       this._gpName = e.gamepad.id;
@@ -949,12 +952,20 @@ export class InputManager {
     // current pose.
     if (this._accelVerified && this._accelRoll != null) {
       this.motionOffset = -this._accelRoll;
+    } else {
+      // Accel not verified yet (e.g. WebHID-bootstrapped P2 between games).
+      // Reset offset to 0 so the tilt pipeline starts clean — sensor fusion
+      // will re-converge from identity within ~1 second.
+      this.motionOffset = 0;
     }
     console.log('Gyro recentered: rollAccum=' + this._gyroRollAccum.toFixed(1) +
       ' accelRoll=' + (this._accelRoll != null ? this._accelRoll.toFixed(1) : 'null') +
       ' offset=' + (this.motionOffset != null ? this.motionOffset.toFixed(1) : 'null') +
+      ' accelVerified=' + this._accelVerified +
       ' conn=' + (this._gyroConnType || 'unknown'));
     this._gyroRollAccum = 0;
+    this._smoothedLean = 0;
+    this.motionLean = 0;
     this._resetSensorFusionState();
     // Don't reset _smoothedLean/motionLean — they're shared with mobile
     // tilt. The EMA filter (gyroOutputSmoothing: 0.3) converges within

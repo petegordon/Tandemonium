@@ -1921,14 +1921,29 @@
     letter-spacing: 0.12em;
     font-weight: 600;
   }
+  .btn-local-join-hint {
+    font-size: 0.55em;
+    opacity: 0.6;
+    font-weight: 400;
+    margin-top: calc(0.2 * var(--ls));
+  }
+  /* "2nd controller detected!" label */
+  .local-join-detected {
+    margin: calc(0.6 * var(--ls)) 0 calc(0.3 * var(--ls));
+    font-size: 0.8em;
+    color: #4cff88;
+    opacity: 0.9;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
   /* Captain controller label — shows which physical controller is
      currently assigned to P1 so the user can confirm before starting
      local MP. Rendered above the JOIN RIDE buttons. */
   .local-join-captain-label {
-    margin: calc(0.4 * var(--ls)) 0;
-    font-size: 0.75em;
+    margin: calc(0.6 * var(--ls)) 0 0;
+    font-size: 0.7em;
     color: var(--tandem-player1, #ffffff);
-    opacity: 0.85;
+    opacity: 0.7;
     letter-spacing: 0.08em;
     font-weight: 600;
   }
@@ -4115,21 +4130,26 @@ ON</button>
           <div id="room-url" class="room-url"></div>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
-          <!-- Local multiplayer: one JOIN RIDE button per available P2 path.
+          <!-- Local multiplayer: join section shown when P2 input is available.
                The monitor (lobby._startLocalJoinMonitor) shows/hides each
                button based on connected devices. Each button commits to a
                specific P2 device — no auto-picking. -->
-          <p id="local-join-captain-label" class="local-join-captain-label" style="display:none;">
-            Captain: <span id="local-join-captain-name">—</span>
-          </p>
-          <button class="lobby-btn lobby-btn-p2-gp" id="btn-local-join-gp" style="display:none;">
-            <span class="btn-local-join-main">JOIN RIDE <span class="btn-local-join-icon">&#127918;</span></span>
-            <span class="btn-local-join-padname" id="btn-local-join-gp-name">CONTROLLER</span>
-          </button>
-          <button class="lobby-btn lobby-btn-p2-kb" id="btn-local-join-kb" style="display:none;">
-            <span class="btn-local-join-main">JOIN RIDE <span class="btn-local-join-icon">&#9000;&#65039;</span></span>
-            <span class="btn-local-join-padname">KEYBOARD</span>
-          </button>
+          <div id="local-join-section" style="display:none;">
+            <p id="local-join-captain-label" class="local-join-captain-label">
+              Player 1: <span id="local-join-captain-name">—</span>
+            </p>
+            <p id="local-join-detected" class="local-join-detected">2nd controller detected!</p>
+            <button class="lobby-btn lobby-btn-p2-gp" id="btn-local-join-gp" style="display:none;">
+              <span class="btn-local-join-main">JOIN AS PLAYER 2</span>
+              <span class="btn-local-join-padname" id="btn-local-join-gp-name">CONTROLLER</span>
+              <span class="btn-local-join-hint" id="btn-local-join-gp-hint">Press <strong>&#10005;</strong> to join</span>
+            </button>
+            <button class="lobby-btn lobby-btn-p2-kb" id="btn-local-join-kb" style="display:none;">
+              <span class="btn-local-join-main">JOIN AS PLAYER 2</span>
+              <span class="btn-local-join-padname">KEYBOARD</span>
+              <span class="btn-local-join-hint">Click or press Enter</span>
+            </button>
+          </div>
           <p id="host-local-hint" class="lobby-hint" style="display:none;">Plug in a 2nd controller for local co-op</p>
           <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
         </div>
