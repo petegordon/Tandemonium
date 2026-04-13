@@ -3777,8 +3777,28 @@ export class Lobby {
     if (this.input && this.input.gamepadIndex === null) {
       this.input.pollGamepad();
     }
-    const p1GpIndex = this.input.gamepadIndex;
     const gamepads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+
+    // Stale-slot recovery: if P1's claimed Gamepad API slot is dead (BT
+    // DualSense slot shifts when entering 0x31 mode), re-claim the first
+    // live slot. Without this, p1GpIndex points at a ghost and the
+    // "unclaimed" search picks up P1's real controller as P2.
+    let p1GpIndex = this.input.gamepadIndex;
+    if (p1GpIndex !== null && p1GpIndex >= 0 && !gamepads[p1GpIndex]) {
+      // P1's slot is dead — find a live replacement. If P1 has a WebHID
+      // driver (synthetic gamepad), the real Gamepad API slot for that
+      // controller may have shifted. Claim the first live slot.
+      for (let i = 0; i < gamepads.length; i++) {
+        if (gamepads[i]) {
+          console.log('P1 stale slot', p1GpIndex, '→ reclaimed live slot', i);
+          this.input.gamepadIndex = i;
+          this.input._gpName = gamepads[i].id;
+          p1GpIndex = i;
+          break;
+        }
+      }
+    }
+
     // Find the first attached gamepad that isn't P1's (note: the array can be
     // sparse with holes at un-activated slots, so filter for truthy entries).
     let unclaimedGpIndex = null;
