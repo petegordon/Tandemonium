@@ -3625,6 +3625,9 @@ export class Lobby {
     const btnGp = document.getElementById('btn-local-join-gp');
     const btnKb = document.getElementById('btn-local-join-kb');
     const gpNameEl = document.getElementById('btn-local-join-gp-name');
+    const gpHintEl = document.getElementById('btn-local-join-gp-hint');
+    const joinSection = document.getElementById('local-join-section');
+    const detectedEl = document.getElementById('local-join-detected');
     const capLabel = document.getElementById('local-join-captain-label');
     const capNameEl = document.getElementById('local-join-captain-name');
     const hint = document.getElementById('host-local-hint');
@@ -3660,10 +3663,23 @@ export class Lobby {
       const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
+        // Show/hide the entire join section based on whether any P2 path exists
+        if (joinSection) {
+          joinSection.style.display = state.available ? '' : 'none';
+        }
         btnGp.style.display = state.hasGamepad ? '' : 'none';
         btnKb.style.display = state.hasKeyboard ? '' : 'none';
         if (state.hasGamepad && gpNameEl) {
           gpNameEl.textContent = state.gpName || 'CONTROLLER';
+        }
+        // Controller-specific action button hint (✕ for PlayStation, B for Switch, A for Xbox)
+        if (state.hasGamepad && gpHintEl) {
+          const actionBtn = this._getActionButtonLabel(state.gpRawId);
+          gpHintEl.innerHTML = 'Press <strong>' + actionBtn + '</strong> to join';
+        }
+        // "2nd controller detected!" label
+        if (detectedEl) {
+          detectedEl.style.display = state.hasGamepad ? '' : 'none';
         }
         // Captain label: show whenever at least one P2 path is available,
         // so the user can verify which physical controller is captain vs
@@ -3671,9 +3687,6 @@ export class Lobby {
         if (capLabel && capNameEl) {
           if (state.available && (state.p1GpName || state.hasKeyboard)) {
             capNameEl.textContent = state.p1GpName || 'KEYBOARD';
-            capLabel.style.display = '';
-          } else {
-            capLabel.style.display = 'none';
           }
         }
         if (hint) {
@@ -3790,12 +3803,14 @@ export class Lobby {
       : null;
 
     if (unclaimedGpIndex !== null) {
+      const rawGp = gamepads[unclaimedGpIndex];
       return {
         available: true,
         hasGamepad: true,
         hasKeyboard: keyboardAvailable,
         gpIndex: unclaimedGpIndex,
         gpName: unclaimedGpName,
+        gpRawId: rawGp ? rawGp.id : null,
         p1GpName,
       };
     }
@@ -3841,6 +3856,21 @@ export class Lobby {
   }
 
   /**
+   * Return the platform-appropriate label for the "confirm" face button
+   * so the join hint reads "Press ✕ to join" / "Press A to join" etc.
+   */
+  _getActionButtonLabel(rawGamepadId) {
+    if (!rawGamepadId) return 'A';
+    const info = ControllerRegistry.identifyFromGamepadId(rawGamepadId);
+    if (info) {
+      const name = info.driverName.toLowerCase();
+      if (name.includes('dualsense') || name.includes('dualshock')) return '\u2715'; // ✕
+      if (name.includes('switch')) return 'B'; // Bottom face button on Nintendo layout
+    }
+    return 'A'; // Xbox / generic
+  }
+
+  /**
    * Handle a JOIN RIDE click. Tears down any in-flight online MP session,
    * constructs the P2 InputManager, and routes the captain directly to the
    * level-select screen with _pendingMode='local'. The actual game-side
@@ -3871,6 +3901,20 @@ export class Lobby {
         enableTouch: false,
       });
       this._localP2Type = 'gamepad';
+      // Pre-connect P2's gyro while player browses levels/difficulty.
+      // By START RIDE, calibration (~1.5s) is already done.
+      const gp = navigator.getGamepads()[gamepadSlot];
+      const info = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
+      if (info && info.hasGyro) {
+        const filter = ControllerRegistry.parseGamepadVendorProduct(gp.id);
+        const excludeDevices = this.input.gyroDevice ? [this.input.gyroDevice] : [];
+        this._localP2InputManager.connectControllerGyro(filter, excludeDevices).then(() => {
+          if (this._localP2InputManager && this._localP2InputManager.gyroConnected) {
+            this._localP2InputManager.motionEnabled = true;
+            console.log('P2 gyro pre-connected in lobby');
+          }
+        }).catch(() => {});
+      }
     } else {
       // Keyboard P2: use a slot value that can never match a real gamepad.
       this._localP2InputManager = new InputManager({
