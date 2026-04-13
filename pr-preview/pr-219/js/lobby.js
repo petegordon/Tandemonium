@@ -129,6 +129,9 @@ export class Lobby {
     this._localJoinMonitorRAF = null;
     this._localLastUnclaimedGp = null;  // last detected unclaimed gamepad index
     this._localLastJoinState = null;    // cached state string for dirty-checking
+    // WebHID device cache for P2 detection (async getDevices() can't run per-frame)
+    this._cachedHIDDevices = null;
+    this._hidCacheTime = 0;
 
     this.lobbyEl = document.getElementById('lobby');
     this.modeStep = document.getElementById('lobby-mode');
@@ -881,8 +884,10 @@ export class Lobby {
     if (btnJoinGp) {
       btnJoinGp.addEventListener('click', () => {
         const state = this._detectLocalP2State();
-        if (!state.hasGamepad || state.gpIndex === null) return;
-        this._onLocalJoinClick('gamepad', state.gpIndex);
+        if (!state.hasGamepad) return;
+        // P2 may have a Gamepad API slot OR a WebHID device (when API is blind)
+        if (state.gpIndex === null && !state.hidDevice) return;
+        this._onLocalJoinClick('gamepad', state.gpIndex, state.hidDevice || null);
       });
     }
     const btnJoinKb = document.getElementById('btn-local-join-kb');
@@ -3651,16 +3656,31 @@ export class Lobby {
       }, 500);
     };
 
+    // Seed HID cache immediately on monitor start
+    if (navigator.hid) {
+      navigator.hid.getDevices().then(devices => {
+        this._cachedHIDDevices = devices;
+        this._hidCacheTime = performance.now();
+      }).catch(() => {});
+    }
+
     const tick = () => {
       if (this._currentStep !== this.hostStep) {
         this._localJoinMonitorRAF = null;
         return;
       }
+      // Refresh HID device cache every 2 seconds
+      if (navigator.hid && performance.now() - this._hidCacheTime > 2000) {
+        this._hidCacheTime = performance.now();
+        navigator.hid.getDevices().then(devices => {
+          this._cachedHIDDevices = devices;
+        }).catch(() => {});
+      }
       const state = this._detectLocalP2State();
 
       // Dirty-check the visible state before touching the DOM (avoids layout
       // churn every frame when nothing has changed).
-      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}`;
+      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
         // Show/hide the entire join section based on whether any P2 path exists
@@ -3672,10 +3692,16 @@ export class Lobby {
         if (state.hasGamepad && gpNameEl) {
           gpNameEl.textContent = state.gpName || 'CONTROLLER';
         }
-        // Controller-specific action button hint (✕ for PlayStation, B for Switch, A for Xbox)
+        // Controller-specific action button hint
         if (state.hasGamepad && gpHintEl) {
-          const actionBtn = this._getActionButtonLabel(state.gpRawId);
-          gpHintEl.innerHTML = 'Press <strong>' + actionBtn + '</strong> to join';
+          if (state.gpIndex !== null) {
+            // Gamepad API visible — P2 can press their own action button
+            const actionBtn = this._getActionButtonLabel(state.gpRawId);
+            gpHintEl.innerHTML = 'Press <strong>' + actionBtn + '</strong> to join';
+          } else {
+            // WebHID-only — P1 navigates and selects the button
+            gpHintEl.innerHTML = 'Select to join as Player 2';
+          }
         }
         // "2nd controller detected!" label
         if (detectedEl) {
@@ -3846,6 +3872,28 @@ export class Lobby {
         p1GpName,
       };
     }
+    // WebHID fallback: when Gamepad API is blind (BT DualSense + Steam on
+    // Windows), check approved HID devices for a second controller.
+    // Uses a cached device list refreshed every 2 seconds to avoid async
+    // calls in the per-frame monitor loop.
+    if (this.input && this.input.gyroDevice && this._cachedHIDDevices) {
+      for (const d of this._cachedHIDDevices) {
+        if (d === this.input.gyroDevice) continue; // skip P1
+        const drv = ControllerRegistry.getDriver(d.vendorId, d.productId);
+        if (!drv) continue;
+        const name = this._prettyGamepadName(d.productName || drv.driverName);
+        return {
+          available: true,
+          hasGamepad: true,
+          hasKeyboard: keyboardAvailable,
+          gpIndex: null,
+          hidDevice: d,
+          gpName: name,
+          gpRawId: d.productName || '',
+          p1GpName,
+        };
+      }
+    }
     if (keyboardAvailable) {
       return {
         available: true,
@@ -3910,8 +3958,9 @@ export class Lobby {
    *
    * @param {'gamepad'|'keyboard'} sourceType
    * @param {number|null} gamepadSlot — gamepad index when sourceType is 'gamepad'
+   * @param {HIDDevice|null} [hidDevice] — WebHID device when Gamepad API is blind
    */
-  _onLocalJoinClick(sourceType, gamepadSlot) {
+  _onLocalJoinClick(sourceType, gamepadSlot, hidDevice = null) {
     // Guard: if the monitor hasn't seen a P2 path, bail.
     if (sourceType !== 'gamepad' && sourceType !== 'keyboard') return;
     // Record that local JOIN RIDE won the race vs. any pending online stoker.
@@ -3927,25 +3976,54 @@ export class Lobby {
     }
     if (sourceType === 'gamepad') {
       this._localP2InputManager = new InputManager({
-        gamepadSlot: gamepadSlot,
+        gamepadSlot: gamepadSlot ?? -1,  // -1 sentinel when Gamepad API is blind
         enableKeyboard: false,
         enableMotion: false,
         enableTouch: false,
       });
       this._localP2Type = 'gamepad';
+
+      // Mirror P1's input toggles
+      this._localP2InputManager.suppressGamepadLean = !this.joystickActive;
+
       // Pre-connect P2's gyro while player browses levels/difficulty.
       // By START RIDE, calibration (~1.5s) is already done.
-      const gp = navigator.getGamepads()[gamepadSlot];
-      const info = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
-      if (info && info.hasGyro) {
-        const filter = ControllerRegistry.parseGamepadVendorProduct(gp.id);
-        const excludeDevices = this.input.gyroDevice ? [this.input.gyroDevice] : [];
-        this._localP2InputManager.connectControllerGyro(filter, excludeDevices).then(() => {
-          if (this._localP2InputManager && this._localP2InputManager.gyroConnected) {
-            this._localP2InputManager.motionEnabled = true;
-            console.log('P2 gyro pre-connected in lobby');
+      // Skip gyro if P1 has motion toggled off — P2 mirrors P1's settings.
+      const excludeDevices = this.input.gyroDevice ? [this.input.gyroDevice] : [];
+      if (this.motionActive || hidDevice) {
+        if (hidDevice) {
+          // WebHID-only path: Gamepad API is blind, connect via known HID device
+          console.log('P2 joining via WebHID device:', hidDevice.productName);
+          // Seed synthetic gamepad so P2 has stick/button input even without Gamepad API
+          this._localP2InputManager.gamepadIndex = -1;
+          this._localP2InputManager.gamepadConnected = true;
+          this._localP2InputManager._gpName = hidDevice.productName || 'Controller';
+          this._localP2InputManager._syntheticGamepad = this._localP2InputManager._createSyntheticGamepad(hidDevice.productName);
+          this._localP2InputManager.connectControllerGyro(
+            { vendorId: hidDevice.vendorId, productId: hidDevice.productId },
+            excludeDevices
+          ).then(() => {
+            if (this._localP2InputManager && this._localP2InputManager.gyroConnected) {
+              this._localP2InputManager.motionEnabled = true;
+              console.log('P2 gyro pre-connected in lobby (WebHID)');
+            }
+          }).catch((err) => {
+            console.warn('P2 WebHID gyro connect failed:', err && err.message);
+          });
+        } else if (gamepadSlot !== null) {
+          // Gamepad API path: identify controller and connect gyro
+          const gp = navigator.getGamepads()[gamepadSlot];
+          const info = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
+          if (info && info.hasGyro) {
+            const filter = ControllerRegistry.parseGamepadVendorProduct(gp.id);
+            this._localP2InputManager.connectControllerGyro(filter, excludeDevices).then(() => {
+              if (this._localP2InputManager && this._localP2InputManager.gyroConnected) {
+                this._localP2InputManager.motionEnabled = true;
+                console.log('P2 gyro pre-connected in lobby');
+              }
+            }).catch(() => {});
           }
-        }).catch(() => {});
+        }
       }
     } else {
       // Keyboard P2: use a slot value that can never match a real gamepad.
