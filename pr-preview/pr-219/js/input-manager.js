@@ -544,8 +544,11 @@ export class InputManager {
     window.addEventListener('gamepadconnected', (e) => {
       // Slot filter: if this instance is scoped to a specific gamepad index, ignore others.
       if (this._gamepadSlot !== null && e.gamepad.index !== this._gamepadSlot) return;
-      // Sticky claim: once we've bound a gamepad, don't silently switch to a newly-connected one.
-      if (this.gamepadIndex !== null) return;
+      // Sticky claim: once we've bound a real gamepad slot, don't switch.
+      // Exception: -1 is a sentinel from bootstrapFromHID (WebHID-only
+      // controller invisible to the Gamepad API). Upgrade it to a real
+      // slot so local-MP P2 detection can tell P1's slot apart from P2's.
+      if (this.gamepadIndex !== null && this.gamepadIndex !== -1) return;
       this.gamepadIndex = e.gamepad.index;
       this.gamepadConnected = true;
       this._gpName = e.gamepad.id;
