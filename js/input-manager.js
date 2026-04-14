@@ -96,6 +96,9 @@ export class InputManager {
     // DOM badge updates and haptic source registration.
     this._lastGamepadConnected = false;
     this._lastHidBound = false;
+    // Edge-detect flag for "calibration just finished" auto-arm of
+    // motionEnabled. Set while fusion.calibrating, cleared after arm.
+    this._wasFusionCalibrating = false;
 
     if (enableKeyboard) this._setupKeyboard();
     if (isMobile) {
@@ -558,14 +561,19 @@ export class InputManager {
     // quaternion once per frame at raf rate. `_applyTilt` uses
     // rate-independent EMA smoothing so cadence doesn't affect feel.
     const fusion = this._slot?.fusion;
-    if (!fusion || fusion.calibrating) return;
-    // Auto-arm motion pipeline the first time a live fusion is present
-    // past its initial bias calibration. Matches the old semantic of
-    // `_finishGyroCalibration` setting motionEnabled=true at the end.
-    if (!this.motionEnabled) {
+    if (!fusion) { this._wasFusionCalibrating = false; return; }
+    if (fusion.calibrating) { this._wasFusionCalibrating = true; return; }
+    // Auto-arm motion pipeline ONCE when calibration transitions from
+    // active → done (matching the old `_finishGyroCalibration` edge).
+    // Arming on every frame while !motionEnabled would fight the user's
+    // "turn motion off" toggle — lobby sets input.motionEnabled=false,
+    // next frame pollGamepad would clobber it back to true.
+    if (this._wasFusionCalibrating) {
+      this._wasFusionCalibrating = false;
       this.motionEnabled = true;
       if (this.onMotionEnabled) this.onMotionEnabled();
     }
+    if (!this.motionEnabled) return;
     this._tmpEuler.setFromQuaternion(fusion.orientation, 'XYZ');
     const leanDeg = -this._tmpEuler.z * (180 / Math.PI);
     const clampedLean = Math.max(-90, Math.min(90, leanDeg));
