@@ -1103,7 +1103,19 @@ class Game {
     // Fresh tilt calibration for new ride (player may be holding phone differently)
     // Skip if tutorial calibration flow already ran (better data)
     if (this.input.motionEnabled && !this._calibHoldSamples) {
+      // Recenter first to absorb any orientation drift accumulated during
+      // lobby browsing (controller turned while motion was armed but before
+      // race began). Then take a short tilt-calibration sample to lock in
+      // motionOffset against the now-zeroed pose.
+      if (this.input.gyroConnected) this.input.recenterGyro();
       this.input.startTiltCalibration();
+    }
+    // Same treatment for P2 in local MP — _onLocalReady armed motion and
+    // ran an initial calibration at JOIN, but the captain may have started
+    // the countdown after P2 also moved their controller around.
+    if (this.inputP2 && this.inputP2.motionEnabled) {
+      if (this.inputP2.gyroConnected) this.inputP2.recenterGyro();
+      this.inputP2.startTiltCalibration();
     }
 
     const statusEl = document.getElementById('status');
