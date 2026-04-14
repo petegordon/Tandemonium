@@ -44,7 +44,7 @@ import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 import * as analytics from './analytics.js';
-import { ControllerRegistry } from './controllers/controller-registry.js';
+import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
