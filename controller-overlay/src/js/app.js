@@ -13,8 +13,8 @@
 import * as THREE from 'three';
 import { ControllerOverlay } from './controller-overlay.js';
 import { detectControllerType, PROFILES } from './controller-profiles.js';
-import { ControllerRegistry } from '../../../shared/controllers/controller-registry.js';
-import { SensorFusion } from '../../../shared/sensor-fusion.js';
+import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
+import { SensorFusion } from '../shared/sensor-fusion.js';
 
 // ── DOM refs ──
 const canvas = document.getElementById('canvas');
