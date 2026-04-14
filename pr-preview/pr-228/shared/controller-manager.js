@@ -108,6 +108,16 @@ export function gamepadHasActivity(gp, axisThreshold = DEFAULTS.axisActivityThre
 // the entry is attached to a slot, it also calls slot._emit('hid-report',
 // parsed) so views can forward touchpad / other report-level data.
 
+// Stuck-IMU self-heal thresholds (#198 — BT controller transient where
+// IMU goes silent without dropping the inputreport stream). Real IMU
+// data is never all-zero across six axes — noise alone produces small
+// non-zero values — so all six reading exactly 0 for IMU_ZERO_TIMEOUT_MS+
+// is unambiguously a stuck-IMU signal. Without this self-heal, a stuck
+// IMU freezes orientation at its last value and the bike pulls hard to
+// whatever direction was being held.
+const IMU_ZERO_TIMEOUT_MS = 500;
+const MAX_IMU_REINIT = 2;
+
 class HidEntry {
   constructor(device, driver) {
     this.device = device;
@@ -120,6 +130,10 @@ class HidEntry {
     this.slot = null; // set by ControllerManager when claimed
     this._handler = (ev) => this._onReport(ev);
     device.addEventListener('inputreport', this._handler);
+    // Stuck-IMU self-heal state.
+    this._imuZeroSince = 0;
+    this._imuReinitAttempts = 0;
+    this._imuReinitInFlight = false;
   }
 
   _onReport(ev) {
@@ -131,15 +145,52 @@ class HidEntry {
     this.hidActiveSince = performance.now();
     if (parsed.gyro) {
       const a = parsed.accel;
+      const rawGx = parsed.gyro.x, rawGy = parsed.gyro.y, rawGz = parsed.gyro.z;
+      const rawAx = a ? a.x : 0, rawAy = a ? a.y : 0, rawAz = a ? a.z : 0;
+      this._checkStuckImu(rawGx, rawGy, rawGz, rawAx, rawAy, rawAz);
       this.fusion.ingest(
-        parsed.gyro.x, parsed.gyro.y, parsed.gyro.z,
-        a ? a.x : null, a ? a.y : null, a ? a.z : null,
+        rawGx, rawGy, rawGz,
+        a ? rawAx : null, a ? rawAy : null, a ? rawAz : null,
         parsed.gyroScale || (2000 / 32768),
         parsed.accelScale || (1 / 8192),
         performance.now(),
       );
     }
     if (this.slot) this.slot._emit('hid-report', parsed);
+  }
+
+  _checkStuckImu(gx, gy, gz, ax, ay, az) {
+    const now = performance.now();
+    const allZero = gx === 0 && gy === 0 && gz === 0 && ax === 0 && ay === 0 && az === 0;
+    if (allZero) {
+      if (this._imuZeroSince === 0) this._imuZeroSince = now;
+      if (!this._imuReinitInFlight &&
+          (now - this._imuZeroSince) >= IMU_ZERO_TIMEOUT_MS &&
+          this._imuReinitAttempts < MAX_IMU_REINIT) {
+        this._imuReinitAttempts++;
+        this._imuZeroSince = 0;
+        this._imuReinitInFlight = true;
+        console.warn(`IMU stuck at zero for ${IMU_ZERO_TIMEOUT_MS}ms — re-running driver init (${this._imuReinitAttempts}/${MAX_IMU_REINIT})`);
+        this._reinitDriver();
+      }
+    } else if (this._imuZeroSince !== 0) {
+      this._imuZeroSince = 0;
+    }
+  }
+
+  async _reinitDriver() {
+    if (!this.driver || typeof this.driver.init !== 'function') {
+      this._imuReinitInFlight = false;
+      return;
+    }
+    try {
+      await this.driver.init();
+      this.fusion.startCalibration();
+    } catch (err) {
+      console.warn('Driver re-init failed:', err.message);
+    } finally {
+      this._imuReinitInFlight = false;
+    }
   }
 
   destroy() {
