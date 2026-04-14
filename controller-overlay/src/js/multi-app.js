@@ -22,6 +22,8 @@ import { ControllerManager, gamepadHasActivity } from '../shared/controller-mana
 const SLOT_IDS = ['P1', 'P2'];
 
 const manager = new ControllerManager({ slotIds: SLOT_IDS });
+// Expose for DevTools debugging.
+window.__manager = manager;
 
 // ── View: per-slot DOM wiring ──
 

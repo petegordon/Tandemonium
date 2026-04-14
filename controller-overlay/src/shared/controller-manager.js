@@ -532,21 +532,34 @@ export class ControllerManager {
     if (!driver) return;
     const playerNum = this.slots.indexOf(slot) + 1;
     const color = this.opts.playerColors?.[playerNum] || null;
-    // Player LEDs — delegate to driver's LED pattern table if it has one.
-    if (typeof driver.setPlayerLEDs === 'function') {
-      const pattern = driver.constructor.PLAYER_LED_PATTERNS?.[playerNum];
-      if (pattern != null) driver.setPlayerLEDs(pattern).catch(() => {});
-    }
-    if (color && typeof driver.setLightbar === 'function') {
-      driver.setLightbar(color.r, color.g, color.b).catch(() => {});
+    const pattern = driver.constructor.PLAYER_LED_PATTERNS?.[playerNum];
+    // Prefer combined setPlayerFeedback (single output report = more
+    // reliable over BT). Fall back to individual setters if the driver
+    // only has those.
+    if (typeof driver.setPlayerFeedback === 'function') {
+      driver.setPlayerFeedback({
+        playerLEDs: pattern != null ? pattern : undefined,
+        lightbar: color || undefined,
+      }).catch(() => {});
+    } else {
+      if (typeof driver.setPlayerLEDs === 'function' && pattern != null) {
+        driver.setPlayerLEDs(pattern).catch(() => {});
+      }
+      if (color && typeof driver.setLightbar === 'function') {
+        driver.setLightbar(color.r, color.g, color.b).catch(() => {});
+      }
     }
   }
 
   _clearPlayerFeedback(entry) {
     const driver = entry.driver;
     if (!driver) return;
-    if (typeof driver.setPlayerLEDs === 'function') driver.setPlayerLEDs(0).catch(() => {});
-    if (typeof driver.setLightbar === 'function') driver.setLightbar(0, 0, 0).catch(() => {});
+    if (typeof driver.setPlayerFeedback === 'function') {
+      driver.setPlayerFeedback({ playerLEDs: 0, lightbar: { r: 0, g: 0, b: 0 } }).catch(() => {});
+    } else {
+      if (typeof driver.setPlayerLEDs === 'function') driver.setPlayerLEDs(0).catch(() => {});
+      if (typeof driver.setLightbar === 'function') driver.setLightbar(0, 0, 0).catch(() => {});
+    }
   }
 
   /**

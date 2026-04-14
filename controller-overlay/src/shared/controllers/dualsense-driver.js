@@ -213,9 +213,6 @@ export class DualSenseDriver extends ControllerDriver {
 
   /**
    * Set the lightbar color. Pass (0,0,0) to turn it off.
-   * @param {number} r  0..255
-   * @param {number} g  0..255
-   * @param {number} b  0..255
    */
   async setLightbar(r, g, b) {
     if (!this._supportsOutputReports()) return;
@@ -229,6 +226,30 @@ export class DualSenseDriver extends ControllerDriver {
       });
     } catch (err) {
       console.warn('DualSense setLightbar failed:', err.message);
+    }
+  }
+
+  /**
+   * Combined player feedback — LEDs + lightbar in a single output report.
+   * Preferred by ControllerManager on slot claim/release because sequential
+   * sendReport calls for LED then lightbar can interleave oddly over BT;
+   * a single packet with both valid_flags set is more reliable.
+   */
+  async setPlayerFeedback({ playerLEDs, lightbar } = {}) {
+    if (!this._supportsOutputReports()) return;
+    try {
+      const payload = {};
+      if (playerLEDs != null) payload.playerLEDs = playerLEDs & 0x1F;
+      if (lightbar) {
+        payload.lightbar = {
+          r: Math.max(0, Math.min(255, lightbar.r | 0)),
+          g: Math.max(0, Math.min(255, lightbar.g | 0)),
+          b: Math.max(0, Math.min(255, lightbar.b | 0)),
+        };
+      }
+      await this._sendOutputReport(payload);
+    } catch (err) {
+      console.warn('DualSense setPlayerFeedback failed:', err.message);
     }
   }
 
@@ -283,6 +304,37 @@ export class DualSenseDriver extends ControllerDriver {
       await this._sendOutputReportUSB({ rumble, lightbar, playerLEDs });
     }
   }
+
+  // Byte offsets referenced from pydualsense wire layout (report_id at [0]).
+  // WebHID's sendReport strips the report_id so our payload indices are
+  // wire_index - 1. USB output report 0x02 has no leading data-tag byte,
+  // so USB offsets are another -1 relative to BT (which DOES prepend a
+  // 0x02 data tag at [0]).
+  //
+  //          wire  USB  BT
+  //   flag0   [2]   [0]  [1]
+  //   flag1   [3]   [1]  [2]
+  //   motor_right/weak  [4]  [2]  [3]
+  //   motor_left/strong [5]  [3]  [4]
+  //   lightbar_setup  [44] [42] [43]
+  //   led_brightness  [45] [43] [44]
+  //   player_leds     [46] [44] [45]
+  //   lightbar_red    [47] [45] [46]
+  //   lightbar_green  [48] [46] [47]
+  //   lightbar_blue   [49] [47] [48]
+
+  // Empirically determined byte offsets via setLightbar probe tests
+  // (see #222 phase 4 debugging thread). Two rounds of tests pinned R/G/B
+  // to buf[45]/[46]/[47] on BT (buf[44]/[45]/[46] on USB — one lower
+  // because BT payload has a leading 0x02 data tag). Struct layout
+  // upstream of the RGB bytes: led_brightness, player_leds.
+  //
+  //          BT    USB
+  //   led_brightness  [43]  [42]
+  //   player_leds     [44]  [43]
+  //   lightbar_red    [45]  [44]
+  //   lightbar_green  [46]  [45]
+  //   lightbar_blue   [47]  [46]
 
   async _sendOutputReportUSB({ rumble, lightbar, playerLEDs }) {
     const buf = new Uint8Array(47);
