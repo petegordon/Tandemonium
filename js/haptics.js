@@ -43,10 +43,11 @@ export function setHapticSources(sources) {
 
 /**
  * Add a single input source to the haptic target list without
- * replacing existing sources. Used by connectControllerGyro so each
- * InputManager independently registers itself — the previous
- * setHapticSources([this]) call was replacing the whole array and
- * dropping other players' sources in local MP.
+ * replacing existing sources. Used by InputManager._onSlotChange so
+ * each player's InputManager independently registers itself when its
+ * slot binds HID — the previous setHapticSources([this]) call was
+ * replacing the whole array and dropping other players' sources in
+ * local MP.
  * @param {{gamepadIndex: number|null}} src
  */
 export function addHapticSource(src) {

@@ -377,17 +377,13 @@ export class Lobby {
 
   /**
    * Desktop gamepad detection loop. Polls navigator.getGamepads() for up
-   * to 2 seconds, and if nothing shows up, falls back to a WebHID probe
-   * via input.bootstrapFromHID() to recover from the "previously-paired
-   * DualSense stuck in 0x31 full-report mode" case (see PR #199 and the
-   * DualSense BT write-up).
-   *
-   * Extracted from _dismissTapOverlay so it can be called on subsequent
-   * launches too. Previously this only ran when the user clicked the
-   * tap-to-start overlay, which only happens ONCE ever (localStorage
-   * guards it). On every subsequent launch the bootstrap fallback was
-   * never reached, and users had to power-cycle their DualSense to force
-   * it back into compat mode so Chromium's Gamepad API could see it.
+   * to 2 seconds, nudging ControllerManager to claim P1 to the first live
+   * pad as soon as one is visible. The ControllerManager's HID pool
+   * (populated at boot via autoPoolApprovedHid) also handles the
+   * "previously-paired DualSense stuck in 0x31 mode and invisible to
+   * Chromium's Gamepad API" recovery case automatically — its entry is
+   * already in the pool, so claim via synthetic-activity detection works
+   * from the very first frame.
    */
   _runDesktopGamepadDetection() {
     // Poll every 100ms for up to 2s, nudging ControllerManager to claim
@@ -1649,110 +1645,23 @@ export class Lobby {
     }
   }
 
-  _checkGamepadGyro() {
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
-    const controllerInfo = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
-    if (!controllerInfo || !controllerInfo.hasGyro) return;
-
-    this._showMotionToggle();
-
-    // Auto-connect gyro in Electron/Steam (no user gesture needed for WebHID)
-    const isDesktop = window.steam || navigator.userAgent.includes('Electron');
-    if (isDesktop && !this.motionActive) {
-      setTimeout(() => this._autoConnectGyro(), 1000);
-    }
-  }
-
   /**
-   * Hot-swap support: when the user unplugs their active controller mid-lobby
-   * and plugs in a different one, clear the stale gyro-permission flags and
-   * retry auto-connect so the new device's gyro pipeline comes online. Without
-   * this, _motionPermitted stays true pointing at a dead HID device and
-   * _autoConnectGyro early-returns on subsequent controller plug-ins.
-   *
-   * InputManager's own gamepaddisconnected handler has already torn down
-   * gyroConnected + gyroDevice by the time our listeners fire (registration
-   * order: InputManager first from Game ctor, Lobby second).
+   * Hot-swap support: when the user unplugs their active controller mid-
+   * lobby, clear the motion UI state so a fresh controller triggers the
+   * toggle to re-appear. Listens for slot P1's 'hid-unbound' event
+   * (ControllerManager fires this when the physical device disconnects
+   * or the slot detaches).
    */
   _setupGamepadHotSwap() {
-    window.addEventListener('gamepaddisconnected', () => {
-      if (!this.input) return;
-      // If the unplugged controller was our active one AND we had motion
-      // wired to it, clear the motion state so the UI reflects reality and
-      // so a subsequent plug-in can re-auto-connect on the new device.
-      if (!this.input.gyroConnected && !this.input.gamepadConnected) {
-        if (this._motionPermitted || this.motionActive) {
-          console.log('Lobby: active gamepad disconnected, clearing motion state');
-          this._motionPermitted = false;
-          this.motionActive = false;
-          this._setToggleActive('motion', false);
-        }
-      }
-    });
-
-    window.addEventListener('gamepadconnected', () => {
-      if (!this.input || !navigator.hid) return;
-      // Self-heal: when a BT DualSense disconnects, teardown arrives via the
-      // WebHID 'disconnect' event (not Gamepad API) because the controller
-      // is invisible to Chromium's gamepad mapper once it's in 0x31 mode.
-      // That means the lobby's gamepaddisconnected listener below ran while
-      // gyroConnected was still true and never cleared the motion flags. If
-      // the InputManager is now idle (gyroConnected false) but our flags
-      // still say motion is active, they're pointing at a dead pipeline —
-      // clear them so the newly-connected controller can wire up its own
-      // gyro via _checkGamepadGyro.
-      if (!this.input.gyroConnected && (this._motionPermitted || this.motionActive)) {
-        console.log('Lobby: clearing stale motion state from previous BT disconnect');
+    if (!this.controllerManager) return;
+    this.controllerManager.getSlot('P1').on((slot, reason) => {
+      if (reason !== 'hid-unbound') return;
+      if (this._motionPermitted || this.motionActive) {
+        console.log('Lobby: P1 HID detached, clearing motion state');
         this._motionPermitted = false;
         this.motionActive = false;
         this._setToggleActive('motion', false);
       }
-      // Only re-auto-connect if we aren't already wired to gyro. If we are,
-      // the existing claim is fine — leave it alone.
-      if (this._motionPermitted || this.motionActive) return;
-      // Defer a tick so Chromium has time to populate navigator.getGamepads()
-      // for the freshly-connected pad before _checkGamepadGyro reads it.
-      setTimeout(() => {
-        if (this.input && this.input.gamepadConnected) {
-          this._checkGamepadGyro();
-        }
-      }, 300);
-    });
-  }
-
-  /** Auto-connect gyro in Electron/Steam — no user gesture needed since
-   *  WebHID permissions are granted via session handlers in main.js.
-   *  Passes a vendor/product filter so P1's gyro channel is pinned to
-   *  P1's actual physical controller instead of whichever gyro-capable
-   *  HID device happens to be approved first (critical when a second
-   *  controller is also attached for local co-op). */
-  _autoConnectGyro() {
-    if (this.motionActive || this._motionPermitted) return;
-    // Concurrent-call guard: the main + hot-swap gamepadconnected listeners
-    // schedule this at slightly different delays, so both can fire while
-    // the first connectControllerGyro() is still in-flight. Bail silently
-    // if a connect is already in progress so we don't double-log or
-    // double-schedule work.
-    if (this.input._hidConnecting) return;
-    const gamepads = navigator.getGamepads();
-    const gp = gamepads[this.input.gamepadIndex];
-    const controllerInfo = gp ? ControllerRegistry.identifyFromGamepadId(gp.id) : null;
-    if (!controllerInfo || !controllerInfo.hasGyro) return;
-
-    const filter = gp ? ControllerRegistry.parseGamepadVendorProduct(gp.id) : null;
-    console.log('Auto-connecting gyro for', controllerInfo.driverName, 'in desktop mode...', filter);
-    this.input.connectControllerGyro(filter).then(() => {
-      if (this.input.gyroConnected) {
-        this._motionPermitted = true;
-        this.motionActive = true;
-        this._setToggleActive('motion', true);
-        this._showMotionToggle();
-        this._updateTutorialButton();
-        console.log('Gyro auto-connected successfully');
-      }
-    }).catch((err) => {
-      console.warn('Gyro auto-connect failed:', err.message);
     });
   }
 
@@ -1871,20 +1780,17 @@ export class Lobby {
         this._updateTutorialButton();
         return;
       }
-      // First time — request WebHID access, pinned to P1's physical gamepad
-      // so we don't grab a different controller that happens to be approved.
-      const gpForGyro = navigator.getGamepads()[this.input.gamepadIndex];
-      const filterForGyro = gpForGyro ? ControllerRegistry.parseGamepadVendorProduct(gpForGyro.id) : null;
-      this.input.connectControllerGyro(filterForGyro).then(() => {
-        if (this.input.gyroConnected) {
-          this._motionPermitted = true;
-          this.motionActive = true;
-          this._setToggleActive('motion', true);
-          this._updateTutorialButton();
-        }
-      }).catch((err) => {
-        console.warn('Gyro connect failed:', err);
-      });
+      // First time — request WebHID access via the manager. This is a
+      // user-gesture path (triggered by a toggle click), so
+      // navigator.hid.requestDevice is allowed. The manager pairs the
+      // device into its pool and attaches it to P1's slot; slot events
+      // (hid-bound) will flip motion UI state via the subscriber in
+      // _runDesktopGamepadDetection.
+      if (this.controllerManager) {
+        this.controllerManager.connectHidForSlot('P1').catch((err) => {
+          console.warn('Gyro connect failed:', err);
+        });
+      }
       return;
     }
 
@@ -2617,8 +2523,6 @@ export class Lobby {
     } else if (this.input && this.input.needsMotionPermission) {
       // iOS: permission needed — show button, leave tappable but inactive
       this._showMotionToggle();
-    } else if (this.input && this.input.gamepadConnected && navigator.hid) {
-      this._checkGamepadGyro();
     } else if (typeof DeviceMotionEvent !== 'undefined') {
       // Desktop/Android: API exists but no data yet.
       // Listen for first real motion event to reveal + auto-enable.
@@ -2695,42 +2599,10 @@ export class Lobby {
         } catch {}
         this._setToggleActive('joystick', this.joystickActive);
       }
-      if (this.input && this.input.gamepadConnected && navigator.hid) {
-        this._checkGamepadGyro();
-      }
     });
 
-    // Desktop/Electron: actively poll for gamepad on startup instead of
-    // waiting for user input (browser requires button press to detect).
-    const isDesktop = window.steam || navigator.userAgent.includes('Electron');
-    if (isDesktop) {
-      this._desktopGamepadPoll = setInterval(() => {
-        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-        for (let i = 0; i < gamepads.length; i++) {
-          if (!gamepads[i]) continue;
-          // Found a gamepad — set it up as if gamepadconnected fired
-          if (this.input && !this.input.gamepadConnected) {
-            this.input.gamepadIndex = i;
-            this.input.gamepadConnected = true;
-            this.input._gpName = gamepads[i].id;
-            this.input._gpSwapAB = !!ControllerRegistry.getGamepadQuirks(gamepads[i].id).swapAB;
-            console.log('Desktop: auto-detected gamepad:', gamepads[i].id);
-          }
-          // Show joystick toggle
-          this.toggleJoystick.style.display = '';
-          this._setToggleActive('joystick', this.joystickActive);
-          // Hide fixed back; update grid btn-back-room with gamepad hint
-          this._fixedBackBtn.style.visibility = 'hidden';
-          this._updateBackHint(this._currentStep);
-          // Check for gyro
-          if (navigator.hid) {
-            this._checkGamepadGyro();
-          }
-          clearInterval(this._desktopGamepadPoll);
-          return;
-        }
-      }, 1000);
-    }
+    // Desktop/Electron startup claim-on-pad-presence is handled by
+    // _runDesktopGamepadDetection (uses ControllerManager.claimFirstAvailable).
     window.addEventListener('gamepaddisconnected', () => {
       // Debounce rapid disconnect/reconnect (e.g. brief USB glitch)
       clearTimeout(this._gamepadDisconnectTimer);
@@ -3823,25 +3695,11 @@ export class Lobby {
       this.controllerManager.claimFirstAvailable('P1', gamepads);
     }
 
-    // Stale-slot recovery: if P1's claimed Gamepad API slot is dead (BT
-    // DualSense slot shifts when entering 0x31 mode), re-claim the first
-    // live slot. Without this, p1GpIndex points at a ghost and the
-    // "unclaimed" search picks up P1's real controller as P2.
-    let p1GpIndex = this.input.gamepadIndex;
-    if (p1GpIndex !== null && p1GpIndex >= 0 && !gamepads[p1GpIndex]) {
-      // P1's slot is dead — find a live replacement. If P1 has a WebHID
-      // driver (synthetic gamepad), the real Gamepad API slot for that
-      // controller may have shifted. Claim the first live slot.
-      for (let i = 0; i < gamepads.length; i++) {
-        if (gamepads[i]) {
-          console.log('P1 stale slot', p1GpIndex, '→ reclaimed live slot', i);
-          this.input.gamepadIndex = i;
-          this.input._gpName = gamepads[i].id;
-          p1GpIndex = i;
-          break;
-        }
-      }
-    }
+    // ControllerManager owns orphan recovery + HID pool reattach, so the
+    // stale-Gamepad-API-slot recovery that used to live here is no longer
+    // needed — the P1 slot's state tracks the physical controller via
+    // stable ID, not via a potentially-shifting navigator.getGamepads index.
+    const p1GpIndex = this.input.gamepadIndex;
 
     // Find the first attached gamepad that isn't P1's (note: the array can be
     // sparse with holes at un-activated slots, so filter for truthy entries).

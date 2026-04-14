@@ -577,6 +577,7 @@ SLIDER_CONFIG.forEach(s => { TUNE[s.key] = s.default; });
 import * as THREE from 'three';
 import { TUNE as CONFIG_TUNE } from '../js/config.js';
 import { InputManager } from '../js/input-manager.js';
+import { ControllerManager } from '../shared/controller-manager.js';
 import { ArchIndicator } from '../js/arch-indicator.js';
 import { BikeModel } from '../js/bike-model.js';
 import { ChaseCamera } from '../js/chase-camera.js';
@@ -590,11 +591,16 @@ const GYRO_SCALE = 2000.0 / 32768.0;
 const GYRO_CALIB_COUNT = 150;
 
 // ============================================================
-// INPUT MANAGER (shared with game — no duplication)
+// CONTROLLER MANAGER + INPUT MANAGER (shared with game — no duplication)
 // ============================================================
-const im = new InputManager();
+const controllerManager = new ControllerManager({ slotIds: ['P1'] });
+controllerManager.autoPoolApprovedHid()
+  .then(() => controllerManager.wireHidHotplug())
+  .catch((err) => console.warn('controller manager init failed', err));
+const im = new InputManager({ slot: controllerManager.getSlot('P1') });
 im.suppressGamepadBadge = true;
 window.input = im; // expose for debugging
+window.controllerManager = controllerManager;
 
 // ============================================================
 // SOURCE SELECTOR
@@ -637,8 +643,8 @@ gyroToggle.addEventListener('change', () => {
   gyroEnabled = gyroToggle.checked;
   if (gyroToggle.checked && !im.gyroConnected) {
     gyroStatus.textContent = 'connecting\u2026';
-    im.connectControllerGyro().then(() => {
-      if (im.gyroConnected) {
+    controllerManager.connectHidForSlot('P1').then((device) => {
+      if (device && im.gyroConnected) {
         gyroStatus.textContent = 'calibrating\u2026';
         gyroRecal.classList.add('visible');
         gyroToast.classList.add('visible');
@@ -657,24 +663,23 @@ gyroToggle.addEventListener('change', () => {
 });
 
 gyroRecal.addEventListener('click', () => {
-  if (im.gyroConnected && !im._gyroCalibrating) {
+  const fusion = controllerManager.getSlot('P1')?.fusion;
+  if (fusion && !fusion.calibrating) {
     im.calibrateGyro();
     gyroStatus.textContent = 'calibrating\u2026';
     gyroToast.classList.add('visible');
   }
 });
 
-// Disconnect gyro when gamepad disconnects
-window.addEventListener('gamepaddisconnected', () => {
-  if (!im.gamepadConnected) {
-    im.disconnectControllerGyro();
-    gyroEnabled = false;
-    gyroToggle.checked = false;
-    gyroRecal.classList.remove('visible');
-    gyroStatus.textContent = '';
-    gyroToast.classList.remove('visible');
-    updateGyroBarVisibility();
-  }
+// Clean up UI state when P1 HID unbinds (hot-plug disconnect)
+controllerManager.getSlot('P1').on((slot, reason) => {
+  if (reason !== 'hid-unbound') return;
+  gyroEnabled = false;
+  gyroToggle.checked = false;
+  gyroRecal.classList.remove('visible');
+  gyroStatus.textContent = '';
+  gyroToast.classList.remove('visible');
+  updateGyroBarVisibility();
 });
 
 window.addEventListener('gamepadconnected', () => updateGyroBarVisibility());
@@ -853,6 +858,8 @@ function gameLoop(now) {
   // Sync slider TUNE into config.js TUNE each frame
   if (TUNE) Object.assign(CONFIG_TUNE, TUNE);
 
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  controllerManager.ingestFrame(pads, now);
   im.pollGamepad();
 
   const bike = window.bike;
@@ -1023,13 +1030,15 @@ function updateUI(dt, activeLeanSource) {
   // Gyro diagnostics
   const diagGyro = document.getElementById('diag-gyro');
   if (im.gyroConnected) {
-    const corrZ = ((im._gyroRawZ - im._gyroBias.z) * GYRO_SCALE).toFixed(1);
+    const fusion = controllerManager.getSlot('P1')?.fusion;
+    const biasZ = fusion ? fusion.bias.z : 0;
+    const corrZ = (((fusion?._lastRawGz || 0) - biasZ) * GYRO_SCALE).toFixed(1);
     const calibProg = im._gyroCalibrating
       ? ` <span class="val-warn">calib ${im._gyroCalibSamples.length}/${GYRO_CALIB_COUNT}</span>` : '';
     diagGyro.innerHTML =
       `<div class="row"><span class="label">gyro</span>` +
-      ` <span class="label">rawZ</span> <span class="val">${im._gyroRawZ}</span>` +
-      ` <span class="label">bias</span> <span class="val">${im._gyroBias.z.toFixed(1)}</span>` +
+      ` <span class="label">rawZ</span> <span class="val">${fusion?._lastRawGz ?? '?'}</span>` +
+      ` <span class="label">bias</span> <span class="val">${biasZ.toFixed(1)}</span>` +
       ` <span class="label">corrZ</span> <span class="val">${corrZ}\u00B0/s</span></div>` +
       `<div class="row"><span class="label">angle</span> <span class="val">${im._gyroRollAccum.toFixed(1)}\u00B0</span>` +
       ` <span class="label">lean</span> <span class="val">${im.motionLean.toFixed(3)}</span>` +
