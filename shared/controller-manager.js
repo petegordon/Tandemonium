@@ -105,6 +105,36 @@ export function gamepadHasActivity(gp, axisThreshold = DEFAULTS.axisActivityThre
   return false;
 }
 
+/**
+ * Stricter activity check for claim-time only: button presses count
+ * unconditionally, but axes have to *move* between frames (not just be
+ * pinned at a non-center value). Chrome persists BT-reconnect ghost
+ * pads with stuck stick axes that gamepadHasActivity would falsely
+ * treat as active input; this check needs prevAxes from the last frame
+ * to distinguish. Call with the output of `prevAxesByIndex.get(gp.index)`.
+ */
+export function gamepadHasFreshActivity(gp, prevAxes, axisThreshold = DEFAULTS.axisActivityThreshold) {
+  if (!gp) return false;
+  // Buttons: any press is fresh activity.
+  for (const b of gp.buttons) {
+    if (b && (b.pressed || (typeof b.value === 'number' && b.value > 0.5))) return true;
+  }
+  // Axes: require motion (delta > 0.1) vs last-frame values. If we have
+  // no prev data yet, axes must be near center (<= threshold) to count —
+  // otherwise they're probably a stuck ghost we've never seen move.
+  if (!prevAxes) {
+    for (const a of gp.axes) {
+      if (Math.abs(a) > axisThreshold) return false; // suspect ghost
+    }
+    return false; // no motion, no buttons, nothing fresh
+  }
+  for (let i = 0; i < gp.axes.length; i++) {
+    const prev = prevAxes[i] != null ? prevAxes[i] : 0;
+    if (Math.abs(gp.axes[i] - prev) > 0.1) return true;
+  }
+  return false;
+}
+
 // ── HidEntry ──
 //
 // One per paired WebHID device. Lives in ControllerManager._hidPool
@@ -366,6 +396,10 @@ export class ControllerManager {
     this._hidPool = new Map(); // HIDDevice -> HidEntry
     this._recentlyReleasedByIndex = new Map();
     this._recentlyReleasedBySlot = new Map();
+    // Prev-frame axes per gamepad index — lets ingestFrame's claim path
+    // require axis motion (not just pinned position) to treat a pad as
+    // active. Counters Chrome BT-reconnect ghost pads with stuck axes.
+    this._prevAxesByIndex = new Map();
     this._hidConnectHandler = null;
     this._hidDisconnectHandler = null;
   }
@@ -387,19 +421,45 @@ export class ControllerManager {
     const claimedIndices = new Set(
       this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex)
     );
+    // Boot-claim is a convenience for "controller plugged in before page
+    // loaded" — we don't want the user forced to press a button to start
+    // nav. BUT Chrome persists ghost slots from past BT reconnects that
+    // are indistinguishable from live pads with centered sticks. Without
+    // a button press or stick motion we can't tell them apart.
+    //
+    // Heuristics:
+    //  - Skip pads with stuck stick axes (>0.5 at rest — definitely ghost)
+    //  - If exactly one clean candidate remains, claim it. That's the
+    //    single-controller-plugged-in case.
+    //  - If multiple clean candidates remain, DEFER. Activity-based claim
+    //    in ingestFrame handles the multi-pad case via button press.
+    const candidates = [];
     for (const gp of pads) {
       if (!gp) continue;
       if (claimedIndices.has(gp.index)) continue;
-      const info = ControllerRegistry.identifyFromGamepadId(gp.id);
-      slot.claim(gp, {
-        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
-        silent: true,
-      });
-      this._attachMatchingPoolEntry(slot);
-      slot._emit('claimed');
-      return gp;
+      const stickMag = Math.max(
+        Math.abs(gp.axes[0] || 0),
+        Math.abs(gp.axes[1] || 0),
+        Math.abs(gp.axes[2] || 0),
+        Math.abs(gp.axes[3] || 0),
+      );
+      if (stickMag > 0.5) continue; // definitely ghost
+      candidates.push(gp);
     }
-    return null;
+    if (candidates.length === 0) return null;
+    if (candidates.length > 1) {
+      console.log(`[manager] deferring boot-claim: ${candidates.length} candidate pads — waiting for user input to disambiguate`);
+      return null;
+    }
+    const gp = candidates[0];
+    const info = ControllerRegistry.identifyFromGamepadId(gp.id);
+    slot.claim(gp, {
+      controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+      silent: true,
+    });
+    this._attachMatchingPoolEntry(slot);
+    slot._emit('claimed');
+    return gp;
   }
 
   _isDeviceInPoolOrSlot(device) {
@@ -504,6 +564,8 @@ export class ControllerManager {
     const releasedThisFrame = [];
 
     // Orphan check (Gamepad-API-backed claims only)
+    // Note: _prevAxesByIndex is updated at the END of the frame so the
+    // claim path sees "previous frame" axes vs this-frame's.
     for (const s of this.slots) {
       if (s.state !== 'claimed') continue;
       if (s.gamepadIndex == null) continue;
@@ -520,7 +582,9 @@ export class ControllerManager {
       if (!gpActive && !synthActive) s._awaitingSilence = false;
     }
 
-    // Claim via Gamepad API activity.
+    // Claim via Gamepad API activity. Uses gamepadHasFreshActivity
+    // (not gamepadHasActivity) so pinned-stick ghost pads don't get
+    // claimed — only real button presses or stick motion count.
     const claimedIndices = new Set(
       this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex)
     );
@@ -529,7 +593,8 @@ export class ControllerManager {
       if (claimedIndices.has(gp.index)) continue;
       const releasedAt = this._recentlyReleasedByIndex.get(gp.index);
       if (releasedAt != null && (now - releasedAt) < this.opts.reclaimCooldownMs) continue;
-      if (!gamepadHasActivity(gp)) continue;
+      const prevAxes = this._prevAxesByIndex.get(gp.index);
+      if (!gamepadHasFreshActivity(gp, prevAxes)) continue;
       const empty = this.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
       if (!empty) break;
       const info = ControllerRegistry.identifyFromGamepadId(gp.id);
@@ -585,6 +650,12 @@ export class ControllerManager {
         this._recentlyReleasedBySlot.set(s.id, now);
         releasedThisFrame.push(s.id);
       }
+    }
+
+    // Snapshot axes for next frame's fresh-activity check.
+    for (const gp of pads) {
+      if (!gp) continue;
+      this._prevAxesByIndex.set(gp.index, [...gp.axes]);
     }
 
     return { claimed: claimedThisFrame, released: releasedThisFrame };

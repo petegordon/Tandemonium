@@ -326,10 +326,7 @@ export class Lobby {
         // otherwise the user has to power-cycle the controller on
         // every app restart to force it back into Chromium-visible
         // compat mode.
-        const isDesktopRelaunch = window.steam ||
-          navigator.userAgent.includes('Electron') ||
-          navigator.userAgent.includes('electron');
-        if (isDesktopRelaunch) {
+        if (!isMobile) {
           this._runDesktopGamepadDetection();
         }
       } else {
@@ -355,11 +352,11 @@ export class Lobby {
     this._tapOverlay = null;
     localStorage.setItem('tandemonium_started', '1');
 
-    const isDesktop = window.steam || navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
-
-    if (isDesktop) {
-      // Desktop: the button press that dismissed the overlay also activated the gamepad.
-      // Poll briefly to let Chromium register it, then show toggles + auto-connect gyro.
+    // Any non-mobile platform (Electron, Chrome desktop, Edge desktop) uses
+    // the gamepad-detection poll. The old isDesktop check excluded regular
+    // browsers, which meant the web-deployed game never auto-claimed P1 —
+    // menu-nav stayed keyboard-only and the gyro toggle never appeared.
+    if (!isMobile) {
       console.log('Desktop: overlay dismissed, activating gamepad...');
       this._runDesktopGamepadDetection();
     } else {
@@ -418,12 +415,26 @@ export class Lobby {
           this._setToggleActive('joystick', this.joystickActive);
           if (this.onMusicChanged) this.onMusicChanged(true);
         }
+        // Motion-toggle visibility: the claimed pad's id tells us whether
+        // the controller has gyro, BEFORE HID is attached. Show the toggle
+        // (in OFF state) so the user has a clickable affordance to grant
+        // WebHID permission; _toggleMotion's first-click path calls
+        // manager.connectHidForSlot('P1') which in Electron auto-approves
+        // invisibly and in a browser shows the HID picker.
+        const info = slot.controllerLabel
+          ? ControllerRegistry.identifyFromGamepadId(slot.controllerLabel)
+          : null;
+        if (info?.hasGyro) {
+          this._showMotionToggle();
+          // Reflect HID state in the active class: green when bound, off
+          // (greyed) otherwise so the user knows it needs a click.
+          this._setToggleActive('motion', !!slot._hidEntry);
+        }
         // If HID was attached synchronously (pool hit), arm motion now.
         if (slot._hidEntry && !this._motionPermitted) {
           this._motionPermitted = true;
           this.motionActive = true;
           if (this.input) this.input.motionEnabled = true;
-          this._showMotionToggle();
           this._setToggleActive('motion', true);
         }
       } else if (reason === 'hid-bound' && !this._motionPermitted) {
