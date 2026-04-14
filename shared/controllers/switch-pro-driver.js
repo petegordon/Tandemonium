@@ -11,6 +11,22 @@ export class SwitchProDriver extends ControllerDriver {
   static get driverName() { return 'Switch Pro'; }
   static get gamepadIdPattern() { return /pro controller|057e.*2009|nintendo/i; }
 
+  /**
+   * GameSir Cyclone enumerates with Switch Pro vid:pid (057e:2009) but its
+   * gamepad.id starts with "Gamepad" (rather than "Pro Controller") and it
+   * uses Nintendo-style physical face-button ordering — the positions of A
+   * and B are swapped relative to the Xbox-standard Gamepad API mapping.
+   * Callers that show on-screen prompts or apply confirm/back actions
+   * should swap buttons 0 and 1 when this quirk is set.
+   */
+  static getGamepadQuirks(idString) {
+    if (!idString) return {};
+    if (this.gamepadIdPattern.test(idString) && /^Gamepad/i.test(idString)) {
+      return { swapAB: true };
+    }
+    return {};
+  }
+
   static get capabilities() {
     return { gyro: true, accel: true, touchpad: false };
   }
