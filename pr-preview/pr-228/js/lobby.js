@@ -390,7 +390,6 @@ export class Lobby {
    * it back into compat mode so Chromium's Gamepad API could see it.
    */
   _runDesktopGamepadDetection() {
-    let attempts = 0;
     // Poll every 100ms for up to 2s, nudging ControllerManager to claim
     // P1 to the first live pad as soon as one is present. Matches the
     // old detectGamepad behavior of "P1 auto-claims on pad plug-in".
