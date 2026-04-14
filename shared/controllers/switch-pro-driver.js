@@ -92,6 +92,21 @@ export class SwitchProDriver extends ControllerDriver {
     console.log('Switch Pro: declared size for output 0x01 =',
       this._output01Size == null ? 'unknown (using default 49)' : this._output01Size);
 
+    // USB-specific Nintendo handshake (#225). Over BT, macOS / Linux /
+    // Windows all host the transport and the sub-commands on output 0x01
+    // Just Work. Over USB on Windows + Linux, the Nintendo Pro Controller
+    // needs its handshake on output report 0x80 BEFORE the 0x01
+    // sub-commands take full effect — otherwise 0x30 reports stream but
+    // the IMU byte range stays all-zero. macOS's IOKit HID transport does
+    // this handshake in-kernel, which is why macOS "just worked" before.
+    if (this.connectionType === 'usb') {
+      try {
+        await this._nintendoUsbHandshake();
+      } catch (err) {
+        console.warn('Switch Pro USB handshake failed (continuing anyway):', err.message);
+      }
+    }
+
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         // Wait before sending commands — device needs time after open()
@@ -212,6 +227,55 @@ export class SwitchProDriver extends ControllerDriver {
 
   static detectConnectionType(device) {
     return 'usb';
+  }
+
+  // ── Nintendo USB handshake (output report 0x80) ──
+  //
+  // On USB, the Nintendo Pro Controller expects a small handshake sequence
+  // on output report 0x80 before the normal sub-commands on 0x01 fully
+  // take effect. macOS's IOKit HID transport runs this in-kernel, which is
+  // why the overlay + game historically "just worked" on macOS but the
+  // IMU byte range stayed all-zero on Windows / Linux.
+  //
+  // Command bytes (single-byte payload after the 0x80 report ID):
+  //   0x02 — request handshake / device info
+  //   0x03 — switch to 3 Mbps baud
+  //   0x04 — disable USB timeout (keeps link alive)
+  //
+  // Sequence follows hid-nintendo / joycond:
+  //   handshake → baud-up → handshake → disable-timeout
+  //
+  // If any write is rejected (some clones don't accept output 0x80 at all)
+  // we log and move on — the caller's existing sub-command path will try
+  // its best and the retry loop handles the rest.
+  async _nintendoUsbHandshake() {
+    const steps = [
+      { cmd: 0x02, desc: 'handshake', delayMs: 100 },
+      { cmd: 0x03, desc: 'baud 3Mbps', delayMs: 100 },
+      { cmd: 0x02, desc: 'handshake (post-baud)', delayMs: 100 },
+      { cmd: 0x04, desc: 'disable USB timeout', delayMs: 100 },
+    ];
+    for (const step of steps) {
+      try {
+        await this._sendUsbCommand(step.cmd);
+        console.log(`Switch Pro USB: sent ${step.desc} (0x80 0x${step.cmd.toString(16).padStart(2, '0')})`);
+      } catch (err) {
+        console.warn(`Switch Pro USB: ${step.desc} (0x80 0x${step.cmd.toString(16).padStart(2, '0')}) failed: ${err.message}`);
+        // Clone controllers may not accept 0x80 at all. Bail out — the
+        // downstream sub-commands on 0x01 will still run and may work
+        // for devices that don't need the handshake.
+        return;
+      }
+      await SwitchProDriver._delay(step.delayMs);
+    }
+    console.log('Switch Pro USB: Nintendo handshake complete');
+  }
+
+  /** Send a single-byte command on output report 0x80. */
+  async _sendUsbCommand(cmd) {
+    const buf = new Uint8Array(1);
+    buf[0] = cmd;
+    await this.device.sendReport(0x80, buf);
   }
 
   // ── Sub-command protocol ──
