@@ -134,6 +134,11 @@ class HidEntry {
     this._imuZeroSince = 0;
     this._imuReinitAttempts = 0;
     this._imuReinitInFlight = false;
+    // One-time accel magnitude sanity check (diagnostic log only). Confirms
+    // the driver is parsing accel bytes at the expected scale (~1g at rest)
+    // — if a new driver's parseReport is wrong, mag would be off by 10×+
+    // and gravity correction would be garbage. Logged once per entry.
+    this._accelVerified = false;
   }
 
   _onReport(ev) {
@@ -148,6 +153,14 @@ class HidEntry {
       const rawGx = parsed.gyro.x, rawGy = parsed.gyro.y, rawGz = parsed.gyro.z;
       const rawAx = a ? a.x : 0, rawAy = a ? a.y : 0, rawAz = a ? a.z : 0;
       this._checkStuckImu(rawGx, rawGy, rawGz, rawAx, rawAy, rawAz);
+      if (!this._accelVerified && a) {
+        const mag = Math.sqrt(rawAx * rawAx + rawAy * rawAy + rawAz * rawAz);
+        const expectedG = parsed.accelScale ? (1.0 / parsed.accelScale) : 8192;
+        if (mag > expectedG * 0.4 && mag < expectedG * 2.0) {
+          this._accelVerified = true;
+          console.log(`Accel verified (${this.driver.constructor.driverName}): mag=${mag.toFixed(0)} expected ~${expectedG.toFixed(0)}`);
+        }
+      }
       this.fusion.ingest(
         rawGx, rawGy, rawGz,
         a ? rawAx : null, a ? rawAy : null, a ? rawAz : null,
