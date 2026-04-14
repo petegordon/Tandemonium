@@ -1100,21 +1100,21 @@ class Game {
     // Reset background adaptation state for fresh ride
     this._adaptState = null;
 
-    // Fresh tilt calibration for new ride (player may be holding phone differently)
-    // Skip if tutorial calibration flow already ran (better data)
+    // Fresh bias + tilt calibration for new ride. Timing takes advantage
+    // of the 3s countdown: fusion bias calibration runs ~1.5s and ideally
+    // captures the user's stationary hold-at-rest pose, so integrated
+    // orientation starts from a clean bias when the race begins.
+    //
+    // Without the bias recalibration, a bias captured during a shaky boot
+    // (user picking controller up while HidEntry was auto-pooling) can
+    // cause rapid orientation drift → bike oscillates extreme L/R.
+    // Skip if tutorial calibration flow already ran (better data).
     if (this.input.motionEnabled && !this._calibHoldSamples) {
-      // Recenter first to absorb any orientation drift accumulated during
-      // lobby browsing (controller turned while motion was armed but before
-      // race began). Then take a short tilt-calibration sample to lock in
-      // motionOffset against the now-zeroed pose.
-      if (this.input.gyroConnected) this.input.recenterGyro();
+      if (this.input.gyroConnected) this.input.calibrateGyro();
       this.input.startTiltCalibration();
     }
-    // Same treatment for P2 in local MP — _onLocalReady armed motion and
-    // ran an initial calibration at JOIN, but the captain may have started
-    // the countdown after P2 also moved their controller around.
     if (this.inputP2 && this.inputP2.motionEnabled) {
-      if (this.inputP2.gyroConnected) this.inputP2.recenterGyro();
+      if (this.inputP2.gyroConnected) this.inputP2.calibrateGyro();
       this.inputP2.startTiltCalibration();
     }
 
