@@ -200,13 +200,16 @@ export class Slot {
     }
   }
 
-  claim(gamepad, { controllerTypeHint } = {}) {
+  claim(gamepad, { controllerTypeHint, silent = false } = {}) {
     this.state = 'claimed';
     this.gamepadIndex = gamepad.index >= 0 ? gamepad.index : null;
     this.controllerId = stableIdFor(gamepad);
     this.controllerLabel = gamepad.id;
     if (controllerTypeHint) this.controllerType = controllerTypeHint;
-    this._emit('claimed');
+    // Manager uses silent=true so it can attach a matching pool entry
+    // before the 'claimed' event fires — listeners then see a slot that
+    // already has its HID binding, fusion, and synthetic ready.
+    if (!silent) this._emit('claimed');
   }
 
   release() {
@@ -399,11 +402,19 @@ export class ControllerManager {
       const empty = this.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
       if (!empty) break;
       const info = ControllerRegistry.identifyFromGamepadId(gp.id);
-      empty.claim(gp, { controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null });
+      empty.claim(gp, {
+        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+        silent: true,
+      });
       claimedThisFrame.push(empty.id);
       claimedIndices.add(gp.index);
-      // Attach matching pool entry (if any) to this slot.
+      // Attach matching pool entry BEFORE emitting 'claimed' so listeners
+      // see a slot with its HID binding, fusion, and synthetic already
+      // hooked up. Without this defer, a lobby subscriber asking "does
+      // this slot have gyro?" at claim time would always see false and
+      // skip arming the motion toggle.
       this._attachMatchingPoolEntry(empty);
+      empty._emit('claimed');
     }
 
     // Claim via WebHID synthetic activity (covers BT-silent DualSense):
@@ -422,8 +433,12 @@ export class ControllerManager {
         mapping: 'standard',
       };
       const info = ControllerRegistry.identifyFromGamepadId(pseudoPad.id);
-      empty.claim(pseudoPad, { controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null });
+      empty.claim(pseudoPad, {
+        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+        silent: true,
+      });
       this._attachEntryToSlot(empty, entry);
+      empty._emit('claimed');
       claimedThisFrame.push(empty.id);
     }
 
