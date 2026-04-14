@@ -392,21 +392,37 @@ export class Lobby {
   _runDesktopGamepadDetection() {
     let attempts = 0;
     // ControllerManager owns claim detection + HID pool + gyro fusion —
-    // we just watch P1's slot here for UI side-effects (show the joystick
-    // toggle, flip music, arm motion).
-    const unsubscribe = this.controllerManager.getSlot('P1').on((slot, reason) => {
-      if (reason !== 'claimed') return;
-      this.toggleJoystick.style.display = '';
-      this._setToggleActive('joystick', this.joystickActive);
-      // Arm motion if HID is bound (gyro-capable controller).
-      if (slot._hidEntry) {
+    // we just watch P1's slot here for UI side-effects.
+    //  - 'claimed' event: show the joystick toggle + flip music once
+    //    (first claim only; further claims re-fire this event for
+    //    re-attach scenarios but the UI is already in the right state)
+    //  - 'hid-bound' event: HID attaches either synchronously with claim
+    //    (pool had a matching entry) or later (user grants HID via
+    //    requestDevice, hot-plug, Electron auto-attach); arm the motion
+    //    toggle whenever it fires.
+    const slotP1 = this.controllerManager.getSlot('P1');
+    let joystickShown = false;
+    slotP1.on((slot, reason) => {
+      if (reason === 'claimed') {
+        if (!joystickShown) {
+          joystickShown = true;
+          this.toggleJoystick.style.display = '';
+          this._setToggleActive('joystick', this.joystickActive);
+          if (this.onMusicChanged) this.onMusicChanged(true);
+        }
+        // If HID was attached synchronously (pool hit), arm motion now.
+        if (slot._hidEntry && !this._motionPermitted) {
+          this._motionPermitted = true;
+          this.motionActive = true;
+          this._showMotionToggle();
+          this._setToggleActive('motion', true);
+        }
+      } else if (reason === 'hid-bound' && !this._motionPermitted) {
         this._motionPermitted = true;
         this.motionActive = true;
         this._showMotionToggle();
         this._setToggleActive('motion', true);
       }
-      if (this.onMusicChanged) this.onMusicChanged(true);
-      if (unsubscribe) unsubscribe();
     });
   }
 

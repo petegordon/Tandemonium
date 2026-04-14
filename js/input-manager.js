@@ -559,12 +559,19 @@ export class InputManager {
     // rate-independent EMA smoothing so cadence doesn't affect feel.
     const fusion = this._slot?.fusion;
     if (!fusion || fusion.calibrating) return;
+    // Auto-arm motion pipeline the first time a live fusion is present
+    // past its initial bias calibration. Matches the old semantic of
+    // `_finishGyroCalibration` setting motionEnabled=true at the end.
+    if (!this.motionEnabled) {
+      this.motionEnabled = true;
+      if (this.onMotionEnabled) this.onMotionEnabled();
+    }
     this._tmpEuler.setFromQuaternion(fusion.orientation, 'XYZ');
     const leanDeg = -this._tmpEuler.z * (180 / Math.PI);
     const clampedLean = Math.max(-90, Math.min(90, leanDeg));
     this._gyroRollAccum = -clampedLean;
     this._accelRoll = clampedLean;
-    if (this.motionEnabled) this._applyTilt(clampedLean, true);
+    this._applyTilt(clampedLean, true);
   }
 
   /**
