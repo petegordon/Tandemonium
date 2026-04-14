@@ -3771,7 +3771,6 @@ export class Lobby {
             return;
           }
           if (!aPressed) this._localP2APrev = false;
-        }
       }
 
       this._localJoinMonitorRAF = requestAnimationFrame(tick);
