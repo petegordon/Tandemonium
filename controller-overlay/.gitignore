@@ -1,5 +1,6 @@
 node_modules/
 src/lib/
+src/shared/
 out/
 .webpack/
 *.dmg

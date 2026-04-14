@@ -16,8 +16,8 @@
 
 import { ControllerOverlay } from './controller-overlay.js';
 import { detectControllerType } from './controller-profiles.js';
-import { ControllerRegistry } from '../../../shared/controllers/controller-registry.js';
-import { ControllerManager, gamepadHasActivity } from '../../../shared/controller-manager.js';
+import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
+import { ControllerManager, gamepadHasActivity } from '../shared/controller-manager.js';
 
 const SLOT_IDS = ['P1', 'P2'];
 

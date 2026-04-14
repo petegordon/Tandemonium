@@ -4,8 +4,11 @@
   "description": "3D controller overlay for streamers — real-time button, stick, trigger, and gyro visualization",
   "main": "electron/main.js",
   "scripts": {
-    "postinstall": "node scripts/copy-three.js",
-    "prestart": "node scripts/copy-three.js",
+    "postinstall": "node scripts/copy-three.js && node scripts/copy-shared.js",
+    "prestart": "node scripts/copy-three.js && node scripts/copy-shared.js",
+    "prestart:multi": "node scripts/copy-three.js && node scripts/copy-shared.js",
+    "prepackage": "node scripts/copy-three.js && node scripts/copy-shared.js",
+    "premake": "node scripts/copy-three.js && node scripts/copy-shared.js",
     "start": "electron .",
     "start:multi": "electron . --multi",
     "make": "electron-forge make",
