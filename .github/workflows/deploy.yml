@@ -34,6 +34,12 @@ jobs:
           # deploy.yml iteration.
           mkdir -p _site/controller-overlay/src/shared
           cp -r shared/* _site/controller-overlay/src/shared/
+          # Strip dev-only .gitignore entries that would make git (inside
+          # peaceiris/actions-gh-pages) refuse to stage src/shared/. Without
+          # this, the files get cp'd into _site but never committed to
+          # gh-pages (silent skip — no visible error), leaving the
+          # web-deployed overlay's imports 404'd at runtime.
+          rm -f _site/controller-overlay/.gitignore
           echo "Overlay shared/ contents in _site:"
           ls -R _site/controller-overlay/src/shared
 
