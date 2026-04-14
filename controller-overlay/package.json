@@ -7,6 +7,7 @@
     "postinstall": "node scripts/copy-three.js",
     "prestart": "node scripts/copy-three.js",
     "start": "electron .",
+    "start:multi": "electron . --multi",
     "make": "electron-forge make",
     "make:dmg": "npm run package && bash scripts/make-dmg.sh",
     "package": "electron-forge package"
