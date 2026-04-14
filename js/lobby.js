@@ -426,12 +426,14 @@ export class Lobby {
         if (slot._hidEntry && !this._motionPermitted) {
           this._motionPermitted = true;
           this.motionActive = true;
+          if (this.input) this.input.motionEnabled = true;
           this._showMotionToggle();
           this._setToggleActive('motion', true);
         }
       } else if (reason === 'hid-bound' && !this._motionPermitted) {
         this._motionPermitted = true;
         this.motionActive = true;
+        if (this.input) this.input.motionEnabled = true;
         this._showMotionToggle();
         this._setToggleActive('motion', true);
       }
