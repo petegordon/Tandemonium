@@ -2212,15 +2212,27 @@ class Game {
     if (this.contributionTracker) {
       const contrib = this.contributionTracker.getSummary();
       const myServerId = auth.user ? auth.user.serverId : null;
-      if (contrib.mode === 'multiplayer') {
-        const myRole = this.mode; // 'captain' or 'stoker'
+      // Online MP: per-role server-ID split. Only applies when this.mode is
+      // 'captain' or 'stoker' (online roles). Local MP runs with
+      // this.mode === 'local' and has no server-side role distinction —
+      // attribute the contribution as if it were solo.
+      const isOnlineMp = contrib.mode === 'multiplayer'
+        && (this.mode === 'captain' || this.mode === 'stoker')
+        && contrib.captain && contrib.stoker;
+      if (isOnlineMp) {
+        const myRole = this.mode;
         const partnerRole = myRole === 'captain' ? 'stoker' : 'captain';
         contrib[myRole].userId = myServerId;
         contrib[partnerRole].userId = this._partnerServerId;
         data.contributions = { captain: contrib.captain, stoker: contrib.stoker };
       } else {
-        contrib.solo.userId = myServerId;
-        data.contributions = { solo: contrib.solo };
+        // Solo OR local MP — attribute to the local user. contribution-tracker
+        // returns a captain shape in local MP; treat it as solo for submission.
+        const contribToSubmit = contrib.solo || contrib.captain || contrib.stoker;
+        if (contribToSubmit) {
+          contribToSubmit.userId = myServerId;
+          data.contributions = { solo: contribToSubmit };
+        }
       }
     }
 
