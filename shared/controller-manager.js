@@ -108,6 +108,16 @@ export function gamepadHasActivity(gp, axisThreshold = DEFAULTS.axisActivityThre
 // the entry is attached to a slot, it also calls slot._emit('hid-report',
 // parsed) so views can forward touchpad / other report-level data.
 
+// Stuck-IMU self-heal thresholds (#198 — BT controller transient where
+// IMU goes silent without dropping the inputreport stream). Real IMU
+// data is never all-zero across six axes — noise alone produces small
+// non-zero values — so all six reading exactly 0 for IMU_ZERO_TIMEOUT_MS+
+// is unambiguously a stuck-IMU signal. Without this self-heal, a stuck
+// IMU freezes orientation at its last value and the bike pulls hard to
+// whatever direction was being held.
+const IMU_ZERO_TIMEOUT_MS = 500;
+const MAX_IMU_REINIT = 2;
+
 class HidEntry {
   constructor(device, driver) {
     this.device = device;
@@ -120,6 +130,15 @@ class HidEntry {
     this.slot = null; // set by ControllerManager when claimed
     this._handler = (ev) => this._onReport(ev);
     device.addEventListener('inputreport', this._handler);
+    // Stuck-IMU self-heal state.
+    this._imuZeroSince = 0;
+    this._imuReinitAttempts = 0;
+    this._imuReinitInFlight = false;
+    // One-time accel magnitude sanity check (diagnostic log only). Confirms
+    // the driver is parsing accel bytes at the expected scale (~1g at rest)
+    // — if a new driver's parseReport is wrong, mag would be off by 10×+
+    // and gravity correction would be garbage. Logged once per entry.
+    this._accelVerified = false;
   }
 
   _onReport(ev) {
@@ -131,15 +150,60 @@ class HidEntry {
     this.hidActiveSince = performance.now();
     if (parsed.gyro) {
       const a = parsed.accel;
+      const rawGx = parsed.gyro.x, rawGy = parsed.gyro.y, rawGz = parsed.gyro.z;
+      const rawAx = a ? a.x : 0, rawAy = a ? a.y : 0, rawAz = a ? a.z : 0;
+      this._checkStuckImu(rawGx, rawGy, rawGz, rawAx, rawAy, rawAz);
+      if (!this._accelVerified && a) {
+        const mag = Math.sqrt(rawAx * rawAx + rawAy * rawAy + rawAz * rawAz);
+        const expectedG = parsed.accelScale ? (1.0 / parsed.accelScale) : 8192;
+        if (mag > expectedG * 0.4 && mag < expectedG * 2.0) {
+          this._accelVerified = true;
+          console.log(`Accel verified (${this.driver.constructor.driverName}): mag=${mag.toFixed(0)} expected ~${expectedG.toFixed(0)}`);
+        }
+      }
       this.fusion.ingest(
-        parsed.gyro.x, parsed.gyro.y, parsed.gyro.z,
-        a ? a.x : null, a ? a.y : null, a ? a.z : null,
+        rawGx, rawGy, rawGz,
+        a ? rawAx : null, a ? rawAy : null, a ? rawAz : null,
         parsed.gyroScale || (2000 / 32768),
         parsed.accelScale || (1 / 8192),
         performance.now(),
       );
     }
     if (this.slot) this.slot._emit('hid-report', parsed);
+  }
+
+  _checkStuckImu(gx, gy, gz, ax, ay, az) {
+    const now = performance.now();
+    const allZero = gx === 0 && gy === 0 && gz === 0 && ax === 0 && ay === 0 && az === 0;
+    if (allZero) {
+      if (this._imuZeroSince === 0) this._imuZeroSince = now;
+      if (!this._imuReinitInFlight &&
+          (now - this._imuZeroSince) >= IMU_ZERO_TIMEOUT_MS &&
+          this._imuReinitAttempts < MAX_IMU_REINIT) {
+        this._imuReinitAttempts++;
+        this._imuZeroSince = 0;
+        this._imuReinitInFlight = true;
+        console.warn(`IMU stuck at zero for ${IMU_ZERO_TIMEOUT_MS}ms — re-running driver init (${this._imuReinitAttempts}/${MAX_IMU_REINIT})`);
+        this._reinitDriver();
+      }
+    } else if (this._imuZeroSince !== 0) {
+      this._imuZeroSince = 0;
+    }
+  }
+
+  async _reinitDriver() {
+    if (!this.driver || typeof this.driver.init !== 'function') {
+      this._imuReinitInFlight = false;
+      return;
+    }
+    try {
+      await this.driver.init();
+      this.fusion.startCalibration();
+    } catch (err) {
+      console.warn('Driver re-init failed:', err.message);
+    } finally {
+      this._imuReinitInFlight = false;
+    }
   }
 
   destroy() {
@@ -200,13 +264,16 @@ export class Slot {
     }
   }
 
-  claim(gamepad, { controllerTypeHint } = {}) {
+  claim(gamepad, { controllerTypeHint, silent = false } = {}) {
     this.state = 'claimed';
     this.gamepadIndex = gamepad.index >= 0 ? gamepad.index : null;
     this.controllerId = stableIdFor(gamepad);
     this.controllerLabel = gamepad.id;
     if (controllerTypeHint) this.controllerType = controllerTypeHint;
-    this._emit('claimed');
+    // Manager uses silent=true so it can attach a matching pool entry
+    // before the 'claimed' event fires — listeners then see a slot that
+    // already has its HID binding, fusion, and synthetic ready.
+    if (!silent) this._emit('claimed');
   }
 
   release() {
@@ -296,6 +363,36 @@ export class ControllerManager {
   }
 
   getSlot(id) { return this._slotById[id] || null; }
+
+  /**
+   * Claim a specific slot to the first live Gamepad API pad that isn't
+   * already claimed by another slot. Used by callers that need P1 to be
+   * bound to "whatever pad is plugged in" *before* the user presses any
+   * button — e.g. the lobby's local-MP detection, which needs to know
+   * which pad is P1's so it can label the other one as P2.
+   *
+   * Returns the claimed pad or null if nothing changed.
+   */
+  claimFirstAvailable(slotId, pads) {
+    const slot = this.getSlot(slotId);
+    if (!slot || slot.state !== 'empty' || slot._awaitingSilence) return null;
+    const claimedIndices = new Set(
+      this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex)
+    );
+    for (const gp of pads) {
+      if (!gp) continue;
+      if (claimedIndices.has(gp.index)) continue;
+      const info = ControllerRegistry.identifyFromGamepadId(gp.id);
+      slot.claim(gp, {
+        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+        silent: true,
+      });
+      this._attachMatchingPoolEntry(slot);
+      slot._emit('claimed');
+      return gp;
+    }
+    return null;
+  }
 
   _isDeviceInPoolOrSlot(device) {
     if (this._hidPool.has(device)) return true;
@@ -399,11 +496,19 @@ export class ControllerManager {
       const empty = this.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
       if (!empty) break;
       const info = ControllerRegistry.identifyFromGamepadId(gp.id);
-      empty.claim(gp, { controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null });
+      empty.claim(gp, {
+        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+        silent: true,
+      });
       claimedThisFrame.push(empty.id);
       claimedIndices.add(gp.index);
-      // Attach matching pool entry (if any) to this slot.
+      // Attach matching pool entry BEFORE emitting 'claimed' so listeners
+      // see a slot with its HID binding, fusion, and synthetic already
+      // hooked up. Without this defer, a lobby subscriber asking "does
+      // this slot have gyro?" at claim time would always see false and
+      // skip arming the motion toggle.
       this._attachMatchingPoolEntry(empty);
+      empty._emit('claimed');
     }
 
     // Claim via WebHID synthetic activity (covers BT-silent DualSense):
@@ -422,8 +527,12 @@ export class ControllerManager {
         mapping: 'standard',
       };
       const info = ControllerRegistry.identifyFromGamepadId(pseudoPad.id);
-      empty.claim(pseudoPad, { controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null });
+      empty.claim(pseudoPad, {
+        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+        silent: true,
+      });
       this._attachEntryToSlot(empty, entry);
+      empty._emit('claimed');
       claimedThisFrame.push(empty.id);
     }
 

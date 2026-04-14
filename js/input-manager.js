@@ -4,38 +4,37 @@
 
 import * as THREE from 'three';
 import { isMobile, TUNE } from './config.js';
-import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
-import { SensorFusion } from '../shared/sensor-fusion.js';
 import * as analytics from './analytics.js';
-import { setHapticSources, addHapticSource, removeHapticSource } from './haptics.js';
+import { addHapticSource, removeHapticSource } from './haptics.js';
+import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
 
-const GYRO_CALIB_COUNT = 150;         // ~1.5s at 100Hz
-
-// Stuck-IMU self-heal thresholds (see #198 — BT Switch Pro hot-swap race
-// with macOS Game Controller framework).
-const IMU_ZERO_TIMEOUT_MS = 500;      // how long zero IMU has to persist before we act
-const MAX_IMU_REINIT = 2;             // cap on driver.init() re-runs per connect session
-
-// Sensor fusion lives in shared/sensor-fusion.js — the constants and all
-// intermediate state (gravity, shakiness, stillness + sensor-fusion bias
-// calibration) are encapsulated inside the SensorFusion class. See #224.
+// Controller state (gamepad binding, WebHID, sensor fusion, synthetic
+// gamepad for BT-silent DualSense) now lives on a ControllerManager slot.
+// See shared/controller-manager.js. InputManager is a thin consumer that
+// reads the slot's effective gamepad + fusion orientation each frame and
+// turns them into tilt/lean/trigger state for the game loop.
 
 export class InputManager {
   /**
    * @param {Object} [options]
-   * @param {number|null} [options.gamepadSlot=null] — if set, only claim the gamepad at this index (for local-MP P2). null = claim first available (legacy behavior).
-   * @param {boolean} [options.enableKeyboard=true] — subscribe to window keydown/keyup.
-   * @param {boolean} [options.enableTouch=true] — subscribe to mobile touch events (still guarded by isMobile).
-   * @param {boolean} [options.enableMotion=true] — subscribe to device motion/orientation (still guarded by isMobile).
+   * @param {import('../shared/controller-manager.js').Slot|null} [options.slot=null]
+   *   — ControllerManager slot this InputManager consumes for gamepad +
+   *   gyro state. Null means no controller bound yet; the InputManager
+   *   still serves keyboard/touch/motion. Call `attachSlot(slot)` later
+   *   to bind after construction.
+   * @param {boolean} [options.enableKeyboard=true]
+   * @param {boolean} [options.enableTouch=true]
+   * @param {boolean} [options.enableMotion=true]
    */
   constructor(options = {}) {
     const {
-      gamepadSlot = null,
+      slot = null,
       enableKeyboard = true,
       enableTouch = true,
       enableMotion = true,
     } = options;
-    this._gamepadSlot = gamepadSlot;
+    this._slot = slot;
+    this._slotUnsubscribe = null;
     this.keyboardActive = enableKeyboard;
 
     this.keys = {};
@@ -70,9 +69,7 @@ export class InputManager {
     this._driftRate = 0.015;
     this._driftWindowK = 0.005;
 
-    // Gamepad state
-    this.gamepadIndex = null;
-    this.gamepadConnected = false;
+    // Derived gamepad state (updated by pollGamepad each frame from slot)
     this.gamepadLean = 0;
     this._gpTriggerLeftVal = 0;
     this._gpTriggerRightVal = 0;
@@ -81,81 +78,103 @@ export class InputManager {
     this.suppressGamepadBadge = false;
     this.suppressGamepadLean = false;
 
-    // WebHID gyro state
-    this.gyroDevice = null;
-    this.gyroConnected = false;
-    this._gyroConnType = null;       // 'usb' | 'bluetooth'
-    // Sensor fusion encapsulates bias, orientation, gravity tracking, and
-    // both stillness + in-motion bias calibration passes. Per-instance so
-    // local MP (#195) sees clean state on both P1 and P2.
-    this._gyroFusion = new SensorFusion();
-    // Backwards-compatible alias: the rest of this file and some legacy
-    // logging still reads `this._gyroBias`. Keep it pointing at the fusion
-    // bias object so both writes and reads stay in sync.
-    this._gyroBias = this._gyroFusion.bias;
-    // App-level calibration wrapper — captures GYRO_CALIB_COUNT samples,
-    // averages, and writes to _gyroFusion.bias. Matches the pattern used
-    // in controller-overlay/src/js/app.js.
-    this._gyroCalibrating = false;
-    this._gyroCalibSamples = [];
-    this._gyroRollAccum = 0;         // cumulative roll angle in degrees (derived from orientation)
-    this._lastGyroTime = 0;
-    this._gyroReportHandler = null;
-    this._accelVerified = false;     // accel byte offsets validated
-    // Scratch for extracting lean from the fusion quaternion each frame.
+    // Quirk flag: Cyclone A/B swap. Set by attachSlot() / _onSlotChange.
+    this._gpSwapAB = false;
+
+    // Scratch for extracting lean from slot.fusion.orientation each frame.
     this._tmpEuler = new THREE.Euler();
 
-    // Stuck-IMU self-heal (see #198). When hot-swapping from a BT DualSense
-    // to a BT Switch Pro on macOS, the Switch Pro's IMU-enable sub-command
-    // races with macOS Game Controller framework's parallel SPI probes and
-    // the IMU ends up disabled — 0x30 reports keep arriving but their IMU
-    // byte range is all zeros. Detect that state post-calibration and
-    // re-run driver.init() to re-send the enable-IMU sub-command. Capped
-    // so a genuinely-broken controller can't loop forever.
-    this._imuZeroSince = 0;          // ms timestamp when we first saw zero IMU, 0 = not currently zero
-    this._imuReinitAttempts = 0;     // bounded by MAX_IMU_REINIT
-    this._imuReinitInFlight = false; // guard against re-entering during the init await
-
-    // Synthetic gamepad built from HID input reports. Required because
-    // DualSense over Bluetooth, once switched into 0x31 full-report mode,
-    // disappears from Chromium's Gamepad API entirely — sticks, buttons,
-    // and triggers have to be parsed from the raw HID report and fed into
-    // the same state pollGamepad() would otherwise read from a real
-    // Gamepad. Null whenever we're not HID-driven; pollGamepad prefers
-    // navigator.getGamepads() and only falls through here when that slot
-    // comes back empty.
-    this._syntheticGamepad = null;
-
-    // Listener for the WebHID-level disconnect event. Needed because a
-    // BT DualSense that's in 0x31 mode is invisible to the Gamepad API,
-    // so the 'gamepaddisconnected' event never fires on unplug — only
-    // the navigator.hid 'disconnect' event does.
-    this._hidDisconnectListener = null;
-
-    // Set while connectControllerGyro() is in flight. Protects the sticky
-    // gamepad claim from being torn down by a silent Gamepad API drop
-    // that fires DURING DualSenseDriver.init() — where the feature-0x05
-    // write kicks the controller out of Chromium's gamepad mapper before
-    // this.gyroDevice / this._controllerDriver have been assigned.
-    this._hidConnecting = false;
-
-    // Diagnostic properties (exposed for test pages)
-    this._gpName = '';
+    // Diagnostic properties (read by test/input.html + in-game HUD)
     this._gpRawStickX = 0;
     this._gpLB = false;
     this._gpRB = false;
-    this._gyroRawZ = 0;
-    this._accelRawX = 0;
-    this._accelRawY = 0;
-    this._accelRawZ = 0;
+    this._gyroRollAccum = 0;
     this._accelRoll = 0;
+    this._lastApplyGyroTime = 0;
+
+    // Track last-seen connection state for the 'connected'/'disconnected'
+    // DOM badge updates and haptic source registration.
+    this._lastGamepadConnected = false;
+    this._lastHidBound = false;
+    // Edge-detect flag for "calibration just finished" auto-arm of
+    // motionEnabled. Set while fusion.calibrating, cleared after arm.
+    this._wasFusionCalibrating = false;
 
     if (enableKeyboard) this._setupKeyboard();
-    this._setupGamepad();
     if (isMobile) {
       if (enableTouch) this._setupTouch();
       if (enableMotion) this._setupMotion();
       if (enableTouch || enableMotion) this._setupCalibration();
+    }
+
+    if (this._slot) this.attachSlot(this._slot);
+  }
+
+  // ── Slot accessors ──
+  // Read-only getters that delegate to the attached slot. ControllerManager
+  // owns the lifecycle; InputManager is a pure consumer.
+  get gamepadConnected() { return this._slot?.state === 'claimed'; }
+  get gamepadIndex() { return this._slot?.gamepadIndex ?? null; }
+  get gyroConnected() { return !!(this._slot?.fusion); }
+  get gyroDevice() { return this._slot?.hidDevice ?? null; }
+  get _gpName() { return this._slot?.controllerLabel ?? ''; }
+  get _syntheticGamepad() { return this._slot?.synthetic ?? null; }
+  get _controllerDriver() { return this._slot?.driver ?? null; }
+  get _gyroConnType() { return this._slot?.driver?.connectionType ?? null; }
+
+  /**
+   * Bind (or rebind) a ControllerManager slot. Updates DOM badge + haptic
+   * registration + quirk flag to match the slot's current state. Safe to
+   * call with `null` to unbind.
+   */
+  attachSlot(slot) {
+    if (this._slotUnsubscribe) { this._slotUnsubscribe(); this._slotUnsubscribe = null; }
+    this._slot = slot || null;
+    if (!slot) {
+      this._onSlotChange(null, 'detached');
+      return;
+    }
+    this._slotUnsubscribe = slot.on((s, reason) => this._onSlotChange(s, reason));
+    // Prime from current state.
+    if (slot.state === 'claimed') this._onSlotChange(slot, 'claimed');
+  }
+
+  _onSlotChange(slot, reason) {
+    const connected = !!slot && slot.state === 'claimed';
+    const hidBound = !!slot && !!slot._hidEntry;
+
+    // Update Cyclone A/B quirk from the claimed controller label.
+    if (connected && slot.controllerLabel) {
+      this._gpSwapAB = !!ControllerRegistry.getGamepadQuirks(slot.controllerLabel).swapAB;
+    } else if (!connected) {
+      this._gpSwapAB = false;
+    }
+
+    // Badge / pedal-bar visibility — only for the primary input (!suppressGamepadBadge).
+    if (connected !== this._lastGamepadConnected) {
+      this._lastGamepadConnected = connected;
+      if (!this.suppressGamepadBadge) {
+        const badge = document.getElementById('gamepad-badge');
+        if (badge) badge.style.display = connected ? 'block' : 'none';
+        const pedalBar = document.getElementById('pedal-bar');
+        if (pedalBar) pedalBar.classList.toggle('gamepad-active', connected);
+      }
+      if (connected) {
+        const info = slot.controllerLabel ? ControllerRegistry.identifyFromGamepadId(slot.controllerLabel) : null;
+        analytics.setController(info ? info.driverName : (slot.controllerLabel || 'Gamepad'), 'standard');
+      } else {
+        this.gamepadLean = 0;
+        this._gpTriggerLeftPressed = false;
+        this._gpTriggerRightPressed = false;
+      }
+    }
+
+    // Haptic source registration follows HID binding (DualSense WebHID
+    // rumble path) — register whenever HID attaches, unregister on detach.
+    if (hidBound !== this._lastHidBound) {
+      this._lastHidBound = hidBound;
+      if (hidBound) addHapticSource(this);
+      else removeHapticSource(this);
     }
   }
 
@@ -491,169 +510,71 @@ export class InputManager {
     gauge.addEventListener('click', doCalibrate);
   }
 
-  _setupGamepad() {
-    window.addEventListener('gamepadconnected', (e) => {
-      // Slot filter: if this instance is scoped to a specific gamepad index, ignore others.
-      if (this._gamepadSlot !== null && e.gamepad.index !== this._gamepadSlot) return;
-      // Sticky claim: once we've bound a real gamepad slot, don't switch.
-      // Exception: -1 is a sentinel from bootstrapFromHID (WebHID-only
-      // controller invisible to the Gamepad API). Upgrade it to a real
-      // slot so local-MP P2 detection can tell P1's slot apart from P2's.
-      if (this.gamepadIndex !== null && this.gamepadIndex !== -1) return;
-      this.gamepadIndex = e.gamepad.index;
-      this.gamepadConnected = true;
-      this._gpName = e.gamepad.id;
-      // Per-device quirks (e.g. GameSir Cyclone's swapped A/B) live on the
-      // driver — registry dispatches by gamepad.id.
-      this._gpSwapAB = !!ControllerRegistry.getGamepadQuirks(e.gamepad.id).swapAB;
-      console.log('Gamepad connected:', e.gamepad.id, this._gpSwapAB ? '(A/B swapped)' : '');
-      const info = ControllerRegistry.identifyFromGamepadId(e.gamepad.id);
-      analytics.setController(info ? info.driverName : e.gamepad.id, 'standard');
-      if (!this.suppressGamepadBadge) {
-        const badge = document.getElementById('gamepad-badge');
-        if (badge) badge.style.display = 'block';
-      }
-      const pedalBar = document.getElementById('pedal-bar');
-      if (pedalBar) pedalBar.classList.add('gamepad-active');
-    });
-    window.addEventListener('gamepaddisconnected', (e) => {
-      if (this.gamepadIndex !== e.gamepad.index) return;
-
-      // DualSense BT edge case: when the driver sends feature report 0x05,
-      // the controller drops out of Chromium's Gamepad API. Chromium *may*
-      // fire gamepaddisconnected for this transition even though the
-      // physical device is fine. Two cases to cover:
-      //
-      // - _hidConnecting is set while connectControllerGyro() is in flight.
-      //   This catches the race window where feature 0x05 has already been
-      //   written but this.gyroDevice / this._controllerDriver haven't been
-      //   assigned yet — without this, the sticky claim gets torn down
-      //   before HID comes fully online and pollGamepad returns nothing.
-      //
-      // - Post-connect: gyroDevice is live. pollGamepad() will serve state
-      //   from the synthetic gamepad. Real physical unplugs arrive via the
-      //   navigator.hid 'disconnect' listener, which is the source of
-      //   truth for this path.
-      if (this._hidConnecting ||
-          (this.gyroDevice && this.gyroDevice.opened && this._controllerDriver)) {
-        console.log('Ignoring Gamepad API disconnect — HID is coming online or live');
-        return;
-      }
-
-      this.gamepadIndex = null;
-      this.gamepadConnected = false;
-      this.gamepadLean = 0;
-      this._gpName = '';
-      this._gpRawStickX = 0;
-      this._gpLB = false;
-      this._gpRB = false;
-      this._gpTriggerLeftVal = 0;
-      this._gpTriggerRightVal = 0;
-      this._gpTriggerLeftPressed = false;
-      this._gpTriggerRightPressed = false;
-      console.log('Gamepad disconnected');
-      const badge = document.getElementById('gamepad-badge');
-      if (badge) badge.style.display = 'none';
-      const pedalBar = document.getElementById('pedal-bar');
-      if (pedalBar) pedalBar.classList.remove('gamepad-active');
-      // Tear down the WebHID gyro pipeline too — the controller that was
-      // feeding it is gone, so its inputreport handler is dead. Without
-      // this, gyroConnected stays true pointing at a stale device and
-      // subsequent connect events can't re-claim gyro for a new pad.
-      if (this.gyroConnected) {
-        this.disconnectControllerGyro();
-      }
-    });
-  }
-
+  /**
+   * Called once per frame by the game/lobby raf loop. Reads the current
+   * effective gamepad from the attached slot, derives stick + trigger
+   * state, and (when the slot has an active sensor fusion) runs the
+   * orientation → lean projection that used to live in _handleGyroReport.
+   *
+   * Assumes the caller has already run manager.ingestFrame() for the
+   * current frame so the slot's state reflects the latest pads.
+   */
   pollGamepad() {
-    // Polling fallback: detect gamepads even without events
-    if (this.gamepadIndex === null) {
-      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-      // Slot filter: if scoped to a specific index, only try that one; otherwise take the first non-null.
-      const tryClaim = (i) => {
-        if (!gamepads[i]) return false;
-        this.gamepadIndex = i;
-        this.gamepadConnected = true;
-        this._gpName = gamepads[i].id;
-        const pollInfo = ControllerRegistry.identifyFromGamepadId(gamepads[i].id);
-        analytics.setController(pollInfo ? pollInfo.driverName : gamepads[i].id, 'standard');
-        if (!this.suppressGamepadBadge) {
-          const badge = document.getElementById('gamepad-badge');
-          if (badge) badge.style.display = 'block';
-        }
-        const pedalBar = document.getElementById('pedal-bar');
-        if (pedalBar) pedalBar.classList.add('gamepad-active');
-        return true;
-      };
-      if (this._gamepadSlot !== null) {
-        tryClaim(this._gamepadSlot);
-      } else {
-        for (let i = 0; i < gamepads.length; i++) {
-          if (tryClaim(i)) break;
-        }
-      }
+    const gp = this.getGamepadState();
+    if (gp) {
+      // Left stick X — deadzone 0.08
+      const rawX = gp.axes[0] || 0;
+      this._gpRawStickX = rawX;
+      this.gamepadLean = this.suppressGamepadLean ? 0 : (Math.abs(rawX) < 0.08 ? 0 : rawX);
+
+      // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
+      const THRESHOLD = 0.5;
+      this._gpLB = !!(gp.buttons[4] && gp.buttons[4].pressed);
+      this._gpRB = !!(gp.buttons[5] && gp.buttons[5].pressed);
+      this._gpTriggerLeftVal = gp.buttons[6] ? gp.buttons[6].value : 0;
+      this._gpTriggerRightVal = gp.buttons[7] ? gp.buttons[7].value : 0;
+      this._gpTriggerLeftPressed = this._gpLB || this._gpTriggerLeftVal >= THRESHOLD;
+      this._gpTriggerRightPressed = this._gpRB || this._gpTriggerRightVal >= THRESHOLD;
     }
 
-    if (this.gamepadIndex === null) return;
-
-    // Single source of truth for "what is the gamepad right now" — handles
-    // real → synthetic fallback AND the BT-DualSense stale-slot case where
-    // Chromium's Gamepad API mapper returns frozen axes/buttons after the
-    // controller has switched to 0x31 full-report mode.
-    const gp = this.getGamepadState();
-    if (!gp) return;
-
-    // Left stick X — deadzone 0.08
-    const rawX = gp.axes[0] || 0;
-    this._gpRawStickX = rawX;
-    this.gamepadLean = this.suppressGamepadLean ? 0 : (Math.abs(rawX) < 0.08 ? 0 : rawX);
-
-    // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
-    const THRESHOLD = 0.5;
-    this._gpLB = !!(gp.buttons[4] && gp.buttons[4].pressed);
-    this._gpRB = !!(gp.buttons[5] && gp.buttons[5].pressed);
-    this._gpTriggerLeftVal = gp.buttons[6] ? gp.buttons[6].value : 0;
-    this._gpTriggerRightVal = gp.buttons[7] ? gp.buttons[7].value : 0;
-    this._gpTriggerLeftPressed = this._gpLB || this._gpTriggerLeftVal >= THRESHOLD;
-    this._gpTriggerRightPressed = this._gpRB || this._gpTriggerRightVal >= THRESHOLD;
+    // Orientation → tilt projection. The slot's HidEntry ingests gyro at
+    // HID-report frequency (100–250Hz) independently; we read the output
+    // quaternion once per frame at raf rate. `_applyTilt` uses
+    // rate-independent EMA smoothing so cadence doesn't affect feel.
+    const fusion = this._slot?.fusion;
+    if (!fusion) { this._wasFusionCalibrating = false; return; }
+    if (fusion.calibrating) { this._wasFusionCalibrating = true; return; }
+    // Auto-arm motion pipeline ONCE when calibration transitions from
+    // active → done (matching the old `_finishGyroCalibration` edge).
+    // Arming on every frame while !motionEnabled would fight the user's
+    // "turn motion off" toggle — lobby sets input.motionEnabled=false,
+    // next frame pollGamepad would clobber it back to true.
+    if (this._wasFusionCalibrating) {
+      this._wasFusionCalibrating = false;
+      this.motionEnabled = true;
+      if (this.onMotionEnabled) this.onMotionEnabled();
+    }
+    if (!this.motionEnabled) return;
+    this._tmpEuler.setFromQuaternion(fusion.orientation, 'XYZ');
+    const leanDeg = -this._tmpEuler.z * (180 / Math.PI);
+    const clampedLean = Math.max(-90, Math.min(90, leanDeg));
+    this._gyroRollAccum = -clampedLean;
+    this._accelRoll = clampedLean;
+    this._applyTilt(clampedLean, true);
   }
 
   /**
-   * Return the current gamepad state — real Gamepad API object when one
-   * exists for our claimed slot, otherwise the HID-synthesized fallback
-   * (populated from parsed DualSense reports when the Gamepad API is
-   * blind to a controller in 0x31 full-report mode). Callers that used
-   * to read `navigator.getGamepads()[inputManager.gamepadIndex]` directly
-   * should call this instead so menu navigation, trigger polling, and
-   * any other gamepad-backed UI keep working during BT-synthesized
-   * sessions.
+   * Return the current gamepad state — HID-synthetic when the slot's
+   * driver emits buttons (BT DualSense case), else the Gamepad API pad.
+   * Stale-synthetic protection and button-mode detection live on the
+   * slot itself, in `Slot.effectiveGamepad(pads)`.
    *
-   * DualSense over Bluetooth specifically: once `init()` sends feature
-   * report 0x05 the controller streams 0x31 reports that Chromium's
-   * Gamepad API mapper can't decode. On Chrome/Mac the slot comes back
-   * null; on Electron 33 (Chromium 130) the slot continues to return a
-   * *stale* Gamepad object with frozen axes/buttons from the moment the
-   * mode switch occurred. The stale object would win a "real-or-null"
-   * check and silently freeze menu nav, so we force-prefer the synthetic
-   * gamepad whenever the HID driver is live AND connected over Bluetooth.
-   * USB DualSense, Switch Pro, Xbox, and anything without a matching
-   * driver keep using the Gamepad API exactly as before.
-   *
-   * @returns {Gamepad|null} null when no pad is claimed.
+   * @returns {Gamepad|null}
    */
   getGamepadState() {
-    if (this.gamepadIndex === null) return null;
-    if (this._controllerDriver &&
-        this._syntheticGamepad &&
-        this._gyroConnType === 'bluetooth') {
-      return this._syntheticGamepad;
-    }
-    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = gamepads[this.gamepadIndex];
-    if (gp) return gp;
-    if (this._syntheticGamepad) return this._syntheticGamepad;
-    return null;
+    if (!this._slot) return null;
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    return this._slot.effectiveGamepad(pads);
   }
 
   getGamepadLean() {
@@ -677,253 +598,31 @@ export class InputManager {
     this._rightTapped = false;
   }
 
-  // ── WebHID gyro (PlayStation controllers) ──────────────────
-
-  /**
-   * Request WebHID access to a controller's gyro and wire up the report
-   * handler. In local multiplayer two InputManager instances call this
-   * independently (one per player) and MUST land on their own physical
-   * device — pass a vendor/product filter to prevent cross-wiring.
-   *
-   * @param {{vendorId?: number, productId?: number}} [filter] — when
-   *   provided, both findApprovedDevice and the requestDevice fallback
-   *   are scoped to this specific physical controller. Without a filter
-   *   the first approved gyro device wins, which in a two-controller
-   *   session is non-deterministic.
-   */
-  async connectControllerGyro(filter = null, excludeDevices = []) {
-    if (this.gyroConnected || !navigator.hid) return;
-    // Concurrent-call guard: the lobby has two gamepadconnected listeners
-    // (main + hot-swap) that both schedule _autoConnectGyro with different
-    // delays. For drivers whose init() is slow (Switch Pro sub-commands
-    // take 500ms+), the first call's .then hasn't yet flipped
-    // motionActive=true when the second call fires, so both calls race
-    // through the lobby-side guard. Without this flag they'd both proceed
-    // into ControllerRegistry.connect — opening the same device twice,
-    // attaching two inputreport listeners, running init() twice, and
-    // resetting calibration after the first completed.
-    //
-    // The flag also serves a second purpose: it tells the
-    // gamepaddisconnected handler to preserve the sticky claim while
-    // init() is mid-flight, since BT DualSense's feature 0x05 write
-    // synchronously flips the controller out of the Gamepad API before
-    // gyroDevice / _controllerDriver get assigned.
-    if (this._hidConnecting) return;
-    this._hidConnecting = true;
-
-    try {
-      // If a filter is supplied, narrow the WebHID request to just that
-      // physical device. Otherwise ask for all known gyro-capable drivers.
-      const hidFilters = filter
-        ? [{ vendorId: filter.vendorId, productId: filter.productId }]
-        : ControllerRegistry.getHIDFilters();
-      let device;
-
-      // In Electron/Steam, try getDevices() first (no user gesture needed),
-      // then fall back to requestDevice() which triggers the auto-select handler.
-      const isDesktop = window.steam || navigator.userAgent.includes('Electron');
-      if (isDesktop) {
-        device = await ControllerRegistry.findApprovedDevice('gyro', filter, excludeDevices);
-        if (!device) {
-          const devices = await navigator.hid.requestDevice({ filters: hidFilters });
-          device = devices && devices[0];
-        }
-      } else {
-        const devices = await navigator.hid.requestDevice({ filters: hidFilters });
-        device = devices && devices[0];
-      }
-      if (!device) return;
-
-      // Use the registry to connect with the correct driver
-      this._controllerDriver = await ControllerRegistry.connect(device);
-      this.gyroDevice = device;
-      this._gyroConnType = this._controllerDriver.connectionType;
-    } finally {
-      this._hidConnecting = false;
-    }
-
-    // From this point on, the rest of the setup happens synchronously — no
-    // awaits — so we're out of the race window and it's safe for
-    // subsequent concurrent calls to see gyroConnected=true below.
-    if (!this._controllerDriver || !this.gyroDevice) return;
-    analytics.setController(this._controllerDriver.constructor.driverName, this._controllerDriver.connectionType);
-
-    this._gyroReportHandler = (e) => this._handleGyroReport(e);
-    this.gyroDevice.addEventListener('inputreport', this._gyroReportHandler);
-
-    // WebHID-level disconnect is our source of truth for physical unplug
-    // when a DualSense is in 0x31 mode (invisible to the Gamepad API).
-    if (!this._hidDisconnectListener) {
-      this._hidDisconnectListener = (e) => {
-        if (this.gyroDevice && e.device === this.gyroDevice) {
-          console.log('HID device disconnected');
-          this.disconnectControllerGyro();
-          // Also clear gamepad-level state, since Gamepad API may not
-          // have seen the drop.
-          this.gamepadIndex = null;
-          this.gamepadConnected = false;
-          this.gamepadLean = 0;
-          this._gpTriggerLeftPressed = false;
-          this._gpTriggerRightPressed = false;
-        }
-      };
-      if (navigator.hid && navigator.hid.addEventListener) {
-        navigator.hid.addEventListener('disconnect', this._hidDisconnectListener);
-      }
-    }
-
-    // Register this InputManager as a haptic target so js/haptics.js can
-    // route rumble to our claimed gamepad (and, for DualSense, our driver's
-    // WebHID rumble path as a fallback around Chromium's broken macOS
-    // vibrationActuator). Use addHapticSource (not setHapticSources) so we
-    // don't clobber another player's registration in local MP — the old
-    // setHapticSources([this]) call replaced the whole array, dropping P1
-    // when P2 connected and vice versa.
-    addHapticSource(this);
-
-    this.gyroConnected = true;
-    this._startGyroCalibration();
-  }
-
-  /**
-   * Cold-start probe: when the app launches and navigator.getGamepads() is
-   * empty, a previously-paired DualSense may still be in 0x31 full-report
-   * mode from a prior session, in which case it's invisible to the Gamepad
-   * API and no 'gamepadconnected' event will ever fire. Call this at boot
-   * (via the lobby) to walk navigator.hid.getDevices() for an already-
-   * approved gyro-capable controller and bring it online via the normal
-   * WebHID path. The synthetic-gamepad fallback in pollGamepad() then
-   * serves sticks/buttons straight from the HID report stream.
-   *
-   * @returns {Promise<boolean>} true if a device was claimed via HID
-   */
-  async bootstrapFromHID() {
-    if (!navigator.hid || this.gyroConnected) return false;
-    // Only probe when the Gamepad API actually has nothing — if a pad is
-    // already claimed, the normal event-driven path will handle gyro.
-    if (this.gamepadIndex !== null) return false;
-    // If scoped to a specific gamepad slot (local MP P2), the bootstrap
-    // path has no way to bind to that slot deterministically — skip it.
-    if (this._gamepadSlot !== null) return false;
-
-    let devices;
-    try {
-      devices = await navigator.hid.getDevices();
-    } catch (err) {
-      console.log('bootstrapFromHID: getDevices failed:', err.message);
-      return false;
-    }
-    for (const d of devices) {
-      const drv = ControllerRegistry.getDriver(d.vendorId, d.productId);
-      if (!drv || !drv.capabilities.gyro) continue;
-      console.log('bootstrapFromHID: found', d.productName,
-        'vid:' + d.vendorId.toString(16), 'pid:' + d.productId.toString(16));
-
-      // Seed our sticky claim with a sentinel index so pollGamepad() is
-      // willing to fall through to the synthetic gamepad while we wait
-      // for the first HID inputreport.
-      this.gamepadIndex = -1;
-      this.gamepadConnected = true;
-      this._gpName = d.productName || drv.driverName;
-      this._syntheticGamepad = this._createSyntheticGamepad(d.productName);
-
-      const badge = document.getElementById('gamepad-badge');
-      if (badge && !this.suppressGamepadBadge) badge.style.display = 'block';
-      const pedalBar = document.getElementById('pedal-bar');
-      if (pedalBar) pedalBar.classList.add('gamepad-active');
-
-      try {
-        await this.connectControllerGyro({ vendorId: d.vendorId, productId: d.productId });
-      } catch (err) {
-        console.warn('bootstrapFromHID: connectControllerGyro failed:', err.message);
-        // Roll back the sticky claim so the normal event-driven path can
-        // still try later when the user wakes the controller.
-        this.gamepadIndex = null;
-        this.gamepadConnected = false;
-        this._gpName = '';
-        this._syntheticGamepad = null;
-        if (badge) badge.style.display = 'none';
-        if (pedalBar) pedalBar.classList.remove('gamepad-active');
-        return false;
-      }
-      return true;
-    }
-    console.log('bootstrapFromHID: no granted gyro-capable device found');
-    return false;
-  }
-
-  disconnectControllerGyro() {
-    if (this.gyroDevice) {
-      if (this._gyroReportHandler) {
-        this.gyroDevice.removeEventListener('inputreport', this._gyroReportHandler);
-        this._gyroReportHandler = null;
-      }
-      if (this._controllerDriver) {
-        this._controllerDriver.destroy();
-        this._controllerDriver = null;
-      }
-      this.gyroDevice.close().catch(() => {});
-    }
-    if (this._hidDisconnectListener && navigator.hid && navigator.hid.removeEventListener) {
-      navigator.hid.removeEventListener('disconnect', this._hidDisconnectListener);
-      this._hidDisconnectListener = null;
-    }
-    this.gyroDevice = null;
-    this.gyroConnected = false;
-    this._gyroConnType = null;
-    // Zero the fusion bias in place so the `this._gyroBias` alias stays
-    // bound to _gyroFusion.bias (we don't want to swap it for a detached
-    // object — writes to _gyroBias elsewhere must reach the fusion).
-    this._gyroFusion.resetBias();
-    this._gyroCalibrating = false;
-    this._gyroCalibSamples = [];
-    this._gyroRollAccum = 0;
-    this._lastGyroTime = 0;
-    this._accelVerified = false;
-    this._syntheticGamepad = null;
-    // Reset the stuck-IMU self-heal budget so the next controller gets
-    // a fresh set of retries. Without this, two successive hot-swaps
-    // that both need self-heal would exhaust the cap on the second one.
-    this._imuZeroSince = 0;
-    this._imuReinitAttempts = 0;
-    this._imuReinitInFlight = false;
-    // Clear sensor fusion state too so the next controller starts with
-    // a clean quaternion/gravity vector instead of the last one's pose.
-    this._gyroFusion.reset();
-    removeHapticSource(this);
-  }
-
+  /** Restart the attached slot's initial bias-capture calibration. */
   calibrateGyro() {
-    this._startGyroCalibration();
+    this._slot?.startGyroCalibration();
   }
 
+  /**
+   * Recenter semantic: "whatever I'm holding right now = zero lean."
+   * Captures the current accel-derived roll as motionOffset so the tilt
+   * pipeline sees zero relative lean, then resets the slot's fusion so
+   * orientation re-converges from identity.
+   */
   recenterGyro() {
-    // Recenter semantic: "whatever I'm holding right now = zero lean."
-    // With sensor fusion, the cleanest way to achieve that is to capture
-    // the current accel-derived roll, absorb it into motionOffset so the
-    // tilt pipeline sees zero relative lean, and reset the orientation
-    // quaternion to identity so sensor fusion re-converges from the
-    // current pose.
-    if (this._accelVerified && this._accelRoll != null) {
+    if (this._accelRoll != null) {
       this.motionOffset = -this._accelRoll;
     } else {
-      // Accel not verified yet (e.g. WebHID-bootstrapped P2 between games).
-      // Reset offset to 0 so the tilt pipeline starts clean — sensor fusion
-      // will re-converge from identity within ~1 second.
       this.motionOffset = 0;
     }
     console.log('Gyro recentered: rollAccum=' + this._gyroRollAccum.toFixed(1) +
       ' accelRoll=' + (this._accelRoll != null ? this._accelRoll.toFixed(1) : 'null') +
       ' offset=' + (this.motionOffset != null ? this.motionOffset.toFixed(1) : 'null') +
-      ' accelVerified=' + this._accelVerified +
       ' conn=' + (this._gyroConnType || 'unknown'));
     this._gyroRollAccum = 0;
     this._smoothedLean = 0;
     this.motionLean = 0;
-    this._gyroFusion.reset();
-    // Don't reset _smoothedLean/motionLean — they're shared with mobile
-    // tilt. The EMA filter (gyroOutputSmoothing: 0.3) converges within
-    // ~100ms.
+    this._slot?.fusion?.reset();
   }
 
   /** Full lean-input reset for tutorial/demo restarts. */
@@ -931,249 +630,14 @@ export class InputManager {
     this._smoothedLean = 0;
     this._prevLeanRaw = 0;
     this.motionLean = 0;
-    if (this.gyroConnected && this._accelVerified && this._accelRoll != null) {
-      // Absorb current physical tilt into motionOffset so the tilt
-      // pipeline sees relative = 0 immediately after the reset. The
-      // orientation quaternion is also reset so sensor fusion
-      // re-converges from identity in the next ~1 second.
+    if (this.gyroConnected && this._accelRoll != null) {
       this.motionOffset = -this._accelRoll;
     }
     this._gyroRollAccum = 0;
-    this._gyroFusion.reset();
+    this._slot?.fusion?.reset();
     this._driftEma = null;
   }
 
-  // Connection type detection delegated to controller driver
-
-  _startGyroCalibration() {
-    this._gyroCalibrating = true;
-    this._gyroCalibSamples = [];
-    this._gyroRollAccum = 0;
-    this._lastGyroTime = 0;
-    this.motionOffset = null;
-    // Throw away any accumulated sensor fusion state so the post-
-    // calibration orientation starts from identity.
-    this._gyroFusion.reset();
-  }
-
-  /**
-   * Stuck-IMU recovery path (#198). Re-run the current driver's init()
-   * to re-send its enable-IMU sub-command, then restart the bias
-   * calibration so the new (hopefully non-zero) samples aren't averaged
-   * against the stale (0,0,0) readings from before the reset.
-   */
-  async _reinitDriverAndCalibrate() {
-    if (!this._controllerDriver) {
-      this._imuReinitInFlight = false;
-      return;
-    }
-    try {
-      await this._controllerDriver.init();
-      this._startGyroCalibration();
-    } catch (err) {
-      console.warn('Driver re-init failed:', err.message);
-    } finally {
-      this._imuReinitInFlight = false;
-    }
-  }
-
-  _finishGyroCalibration() {
-    if (this._gyroCalibSamples.length === 0) return;
-    let sx = 0, sy = 0, sz = 0;
-    for (const s of this._gyroCalibSamples) { sx += s.x; sy += s.y; sz += s.z; }
-    this._gyroBias.x = sx / this._gyroCalibSamples.length;
-    this._gyroBias.y = sy / this._gyroCalibSamples.length;
-    this._gyroBias.z = sz / this._gyroCalibSamples.length;
-    this._gyroCalibrating = false;
-    this._gyroCalibSamples = [];
-    this._gyroRollAccum = 0;
-    this._lastGyroTime = 0;
-    this.motionOffset = null;
-    this.motionEnabled = true;
-    // Re-reset sensor fusion state after bias is established so the
-    // orientation starts clean from a known-good bias.
-    this._gyroFusion.reset();
-    console.log('Gyro bias:', this._gyroBias);
-  }
-
-  _createSyntheticGamepad(id) {
-    return {
-      id: id || 'HID Controller',
-      index: this.gamepadIndex != null ? this.gamepadIndex : -1,
-      axes: [0, 0, 0, 0],
-      buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
-      _synthetic: true,
-    };
-  }
-
-  /**
-   * Map parsed HID report fields into the Chrome Standard Gamepad layout
-   * so pollGamepad() can read stick/button state uniformly. Only the
-   * indices that the game actually consumes are wired — buttons 4/5 (LB/RB),
-   * 6/7 (triggers), and axes[0] (steering). Other slots stay neutral.
-   */
-  _updateSyntheticFromParsed(parsed) {
-    if (!this._syntheticGamepad) {
-      this._syntheticGamepad = this._createSyntheticGamepad(
-        this.gyroDevice && this.gyroDevice.productName
-      );
-    }
-    const g = this._syntheticGamepad;
-
-    if (parsed.sticks) {
-      g.axes[0] = parsed.sticks.lx;
-      g.axes[1] = parsed.sticks.ly;
-      g.axes[2] = parsed.sticks.rx;
-      g.axes[3] = parsed.sticks.ry;
-    }
-
-    if (parsed.buttons) {
-      const b = parsed.buttons;
-      const set = (i, pressed, value) => {
-        const slot = g.buttons[i];
-        slot.pressed = !!pressed;
-        slot.value = value === undefined ? (pressed ? 1 : 0) : value;
-      };
-      set(0, b.cross);
-      set(1, b.circle);
-      set(2, b.square);
-      set(3, b.triangle);
-      set(4, b.l1);
-      set(5, b.r1);
-      const l2v = parsed.triggers?.l2 ?? 0;
-      const r2v = parsed.triggers?.r2 ?? 0;
-      set(6, b.l2 || l2v > 0.05, l2v);
-      set(7, b.r2 || r2v > 0.05, r2v);
-      set(8, b.create);
-      set(9, b.options);
-      set(10, b.l3);
-      set(11, b.r3);
-      set(12, b.dpadUp);
-      set(13, b.dpadDown);
-      set(14, b.dpadLeft);
-      set(15, b.dpadRight);
-      set(16, b.ps);
-    }
-  }
-
-  _handleGyroReport(event) {
-    if (!this._controllerDriver) return;
-
-    const parsed = this._controllerDriver.parseReport(event.reportId, event.data);
-    if (!parsed) return;
-
-    // Feed sticks/buttons/triggers into the synthetic gamepad regardless
-    // of whether gyro is usable — when BT DualSense is in 0x31 mode the
-    // Gamepad API is blind and this is our only source for pedal input.
-    if (parsed.sticks || parsed.buttons || parsed.triggers) {
-      this._updateSyntheticFromParsed(parsed);
-    }
-
-    if (!parsed.gyro) return;
-
-    const now = performance.now();
-    const gyroScale = parsed.gyroScale;
-    const rawGx = parsed.gyro.x;
-    const rawGy = parsed.gyro.y;
-    const rawGz = parsed.gyro.z;
-
-    const rawAx = parsed.accel ? parsed.accel.x : 0;
-    const rawAy = parsed.accel ? parsed.accel.y : 0;
-    const rawAz = parsed.accel ? parsed.accel.z : 0;
-
-    // Store raw values for diagnostics
-    this._gyroRawZ = rawGz;
-    this._accelRawX = rawAx;
-    this._accelRawY = rawAy;
-    this._accelRawZ = rawAz;
-
-    // Calibration sampling
-    if (this._gyroCalibrating) {
-      this._gyroCalibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
-      if (this._gyroCalibSamples.length >= GYRO_CALIB_COUNT) this._finishGyroCalibration();
-      this._lastGyroTime = now;
-      return;
-    }
-
-    // Stuck-IMU self-heal: detect the BT Switch Pro hot-swap race (#198)
-    // where macOS's Game Controller framework disables the IMU shortly
-    // after our init() completes. Real IMU data is never all-zero across
-    // six axes — noise alone produces small non-zero values — so all six
-    // reading as exactly 0 for 500ms+ is unambiguously a stuck-IMU signal.
-    // When we detect it, re-run driver.init() to re-send the enable-IMU
-    // sub-command and restart calibration. Capped to avoid looping on a
-    // genuinely broken controller.
-    const imuIsZero = rawGx === 0 && rawGy === 0 && rawGz === 0 &&
-                      rawAx === 0 && rawAy === 0 && rawAz === 0;
-    if (imuIsZero) {
-      if (this._imuZeroSince === 0) this._imuZeroSince = now;
-      if (!this._imuReinitInFlight &&
-          (now - this._imuZeroSince) >= IMU_ZERO_TIMEOUT_MS &&
-          this._imuReinitAttempts < MAX_IMU_REINIT) {
-        this._imuReinitAttempts++;
-        this._imuZeroSince = 0;
-        this._imuReinitInFlight = true;
-        console.warn('IMU stuck at zero for ' + IMU_ZERO_TIMEOUT_MS +
-          'ms — re-running driver init (' + this._imuReinitAttempts +
-          '/' + MAX_IMU_REINIT + ')');
-        this._reinitDriverAndCalibrate();
-      }
-    } else if (this._imuZeroSince !== 0) {
-      this._imuZeroSince = 0;
-    }
-
-    // One-time accel magnitude sanity check (diagnostic log only).
-    if (!this._accelVerified && parsed.accel) {
-      const mag = Math.sqrt(rawAx * rawAx + rawAy * rawAy + rawAz * rawAz);
-      const expectedG = parsed.accelScale ? (1.0 / parsed.accelScale) : 8192;
-      if (mag > expectedG * 0.4 && mag < expectedG * 2.0) {
-        this._accelVerified = true;
-        console.log('Accel verified, magnitude:', mag.toFixed(0),
-          'expected ~' + expectedG.toFixed(0));
-      }
-    }
-
-    // Full fusion pipeline (quaternion integration + gravity tracking +
-    // stillness/in-motion bias calibration) lives in shared/sensor-fusion.js.
-    this._gyroFusion.ingest(
-      rawGx, rawGy, rawGz,
-      parsed.accel ? rawAx : null,
-      parsed.accel ? rawAy : null,
-      parsed.accel ? rawAz : null,
-      parsed.gyroScale,
-      parsed.accelScale || (1.0 / 8192.0),
-      now,
-    );
-    this._lastGyroTime = now;
-
-    // ── Output: derive a scalar lean angle from the orientation ──
-    // Sign convention matches the pre-fusion implementation so game.js
-    // diagnostic reads (`-input._gyroRollAccum`) and `_applyTilt`
-    // continue to point the bike in the correct direction.
-    //
-    // Pre-fusion: `_gyroRollAccum -= gz * scale * dt`, then
-    // `_applyTilt(-_gyroRollAccum)` — the double negation combined with
-    // the driver-internal coordinate remap meant positive physical
-    // right-roll ended up passing a NEGATIVE value to _applyTilt.
-    //
-    // Post-fusion: extract Euler Z from the orientation quaternion,
-    // negate to match the old effective sign. The old convention was
-    // empirically verified on real hardware across the board; matching
-    // it keeps the bike leaning in the direction the user tilts.
-    this._tmpEuler.setFromQuaternion(this._gyroFusion.orientation, 'XYZ');
-    const leanDeg = -this._tmpEuler.z * (180 / Math.PI);
-    const clampedLean = Math.max(-90, Math.min(90, leanDeg));
-    this._gyroRollAccum = -clampedLean;
-    // Expose the current roll as _accelRoll so recenterGyro / resetLeanState
-    // can absorb it into motionOffset. (Name is legacy — the old code
-    // computed it via atan2(accelX, accelY); now it's the sensor-fusion-
-    // derived roll, which is more accurate but semantically equivalent.)
-    this._accelRoll = clampedLean;
-
-    // Feed into the tilt pipeline
-    if (!this.motionEnabled) return;
-    this._applyTilt(clampedLean, true);
-  }
 
 
   getMotionLean() {
