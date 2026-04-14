@@ -58,6 +58,25 @@ export class ControllerRegistry {
   }
 
   /**
+   * Return per-id quirk flags by dispatching to each registered driver's
+   * `getGamepadQuirks(idString)`. Used so callers that care about
+   * device variants (GameSir Cyclone's swapped A/B, future quirks)
+   * don't have to re-implement the id pattern checks themselves.
+   *
+   * @param {string} idString — gamepad.id from the Gamepad API
+   * @returns {{ swapAB?: boolean }} merged quirks — `{}` when none apply
+   */
+  static getGamepadQuirks(idString) {
+    if (!idString) return {};
+    const out = {};
+    for (const D of DRIVERS) {
+      const q = D.getGamepadQuirks(idString);
+      if (q) Object.assign(out, q);
+    }
+    return out;
+  }
+
+  /**
    * Check if a given HID device matches any registered driver with WebHID capabilities.
    * @param {HIDDevice} device
    * @returns {boolean}

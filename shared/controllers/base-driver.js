@@ -26,6 +26,17 @@ export class ControllerDriver {
   /** @returns {RegExp} Pattern to match Gamepad API id string */
   static get gamepadIdPattern() { return /^$/; }
 
+  /**
+   * Per-id quirk flags. Override in subclasses that need to flag device
+   * variants enumerating with the same vid:pid as the base controller but
+   * with different runtime behavior (e.g. GameSir Cyclone enumerates as
+   * Switch Pro but uses Nintendo A/B button ordering).
+   *
+   * @param {string} idString — gamepad.id from the Gamepad API
+   * @returns {{ swapAB?: boolean }} quirks — empty object when none apply
+   */
+  static getGamepadQuirks(_idString) { return {}; }
+
   // ── Capabilities (override in subclass) ──
 
   static get capabilities() {

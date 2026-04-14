@@ -399,9 +399,7 @@ export class Lobby {
           this.input.gamepadIndex = i;
           this.input.gamepadConnected = true;
           this.input._gpName = gamepads[i].id;
-          // GameSir Cyclone reports as "Gamepad" with Switch Pro IDs but has
-          // swapped A/B buttons (Nintendo layout). Detect and store swap flag.
-          this.input._gpSwapAB = /^Gamepad/i.test(gamepads[i].id) && /057e/i.test(gamepads[i].id);
+          this.input._gpSwapAB = !!ControllerRegistry.getGamepadQuirks(gamepads[i].id).swapAB;
           console.log('Desktop: gamepad activated:', gamepads[i].id, this.input._gpSwapAB ? '(A/B swapped)' : '');
         }
         // Show joystick toggle
@@ -2719,7 +2717,7 @@ export class Lobby {
             this.input.gamepadIndex = i;
             this.input.gamepadConnected = true;
             this.input._gpName = gamepads[i].id;
-            this.input._gpSwapAB = /^Gamepad/i.test(gamepads[i].id) && /057e/i.test(gamepads[i].id);
+            this.input._gpSwapAB = !!ControllerRegistry.getGamepadQuirks(gamepads[i].id).swapAB;
             console.log('Desktop: auto-detected gamepad:', gamepads[i].id);
           }
           // Show joystick toggle
