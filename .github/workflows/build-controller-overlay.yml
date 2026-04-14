@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'controller-overlay/**'
+      - 'shared/**'
       - '.github/workflows/build-controller-overlay.yml'
   workflow_dispatch:
 
