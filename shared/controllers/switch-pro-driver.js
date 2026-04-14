@@ -32,16 +32,15 @@ export class SwitchProDriver extends ControllerDriver {
     this._reportIds = new Set();
     this._initSuccess = false;
     // Declared byte count for output report 0x01. USB Switch Pro declares
-    // 48+ bytes, BT declares a much smaller count (typically ~10). Computed
-    // from device.collections at init() time. Null means "unknown — use
-    // the USB default size of 49."
+    // 48+ bytes, BT declares a smaller count. Computed from device.collections
+    // at init() time. Null means "unknown — use the USB default size of 49."
     this._output01Size = null;
   }
 
   /**
    * Inspect device.collections and find the declared byte size for an
    * output report. Returns null if the report isn't declared anywhere —
-   * sendReport() will then fall back to a sensible default.
+   * _sendSubCommand will then fall back to a sensible default.
    */
   _declaredOutputSize(reportId) {
     if (!this.device || !this.device.collections) return null;
@@ -70,10 +69,9 @@ export class SwitchProDriver extends ControllerDriver {
     const MAX_ATTEMPTS = 3;
 
     // Snapshot the declared output-report size so _sendSubCommand can match
-    // what the HID descriptor actually accepts. Both USB and BT Switch Pro
-    // declare output 0x01 at 48 bytes; the previous hard-coded 49-byte
-    // buffer over-ran BT's declared size and made sendReport() fail with
-    // "Failed to write the report."
+    // what the HID descriptor actually accepts. The previous hard-coded
+    // 49-byte buffer over-ran BT's declared size and made sendReport() fail
+    // with "Failed to write the report."
     this._output01Size = this._declaredOutputSize(0x01);
     console.log('Switch Pro: declared size for output 0x01 =',
       this._output01Size == null ? 'unknown (using default 49)' : this._output01Size);
@@ -83,16 +81,24 @@ export class SwitchProDriver extends ControllerDriver {
         // Wait before sending commands — device needs time after open()
         await SwitchProDriver._delay(attempt === 1 ? 200 : 500);
 
-        // Enable IMU (sub-command 0x40, arg 0x01)
+        // Order matters for some USB Switch Pro clones (GameSir Super Nova,
+        // Cyclone): setting full-report mode before enabling IMU avoids the
+        // case where IMU enable is silently dropped by a controller still in
+        // "standard" input mode. We also re-send IMU enable after the mode
+        // switch as belt-and-suspenders — some clones reset IMU state when
+        // the input report mode changes.
+        await this._sendSubCommand(0x03, [0x30]);
+        await SwitchProDriver._delay(200);
+
+        await this._sendSubCommand(0x40, [0x01]);
+        await SwitchProDriver._delay(200);
+
+        // Second IMU enable after mode settle
         await this._sendSubCommand(0x40, [0x01]);
         await SwitchProDriver._delay(150);
 
-        // Set input report mode to 0x30 (full report with IMU)
-        await this._sendSubCommand(0x03, [0x30]);
-        await SwitchProDriver._delay(150);
-
         this._initSuccess = true;
-        console.log('Switch Pro Controller: IMU enabled, full report mode set (attempt ' + attempt + ')');
+        console.log('Switch Pro Controller: full report mode set, IMU enabled (attempt ' + attempt + ')');
         return;
       } catch (err) {
         console.warn('Switch Pro init attempt ' + attempt + '/' + MAX_ATTEMPTS + ' failed:', err.message);
@@ -158,13 +164,28 @@ export class SwitchProDriver extends ControllerDriver {
     const rawGyroY = r(data, imuOffset + 8);
     const rawGyroZ = r(data, imuOffset + 10);
 
-    // Remap axes to match DualSense convention so the game's steering (gz)
-    // and drift correction (atan2(accelX, accelY)) work unchanged.
-    // Switch Pro: gyro Y = roll, DualSense: gyro Z = roll
-    // Switch Pro: accel Y = lateral, accel Z = gravity
-    // DualSense:  accel X = lateral, accel Y = gravity
+    // Remap axes to the common DualSense-aligned frame expected by
+    // InputManager's sensor fusion pipeline. This is the same transform
+    // the controller-overlay applies via controller-profiles.js's
+    // Switch Pro gyroTransform: (gx, gy, gz) => [-gz, gy, -gx] chained
+    // after an initial (x: rawX, y: rawZ, z: rawY) swap — collapsing to
+    // a single transform that takes the Switch Pro's raw IMU axes
+    // directly to the final common frame:
+    //
+    //   gyro.x = -rawGyroY   (roll-axis mapped to final -X)
+    //   gyro.y =  rawGyroZ   (yaw-axis mapped to final Y)
+    //   gyro.z = -rawGyroX   (sign-flipped mapping to final -X... wait see below)
+    //
+    // The pre-sensor-fusion scalar integration only used gyro.z for
+    // steering, so the partial remap `{rawX, rawZ, rawY}` was good
+    // enough for that; it put "something roll-like" at index z. With
+    // full 3D sensor fusion, all three axes need to be in the final
+    // common frame, otherwise pitch/yaw contaminate the Z integration.
+    // The previous partial remap also had the wrong sign for gyro.z
+    // relative to DualSense, which surfaced as "Switch Pro lean is
+    // inverted" once sensor fusion landed.
     return {
-      gyro: { x: rawGyroX, y: rawGyroZ, z: rawGyroY },
+      gyro: { x: -rawGyroY, y: rawGyroZ, z: -rawGyroX },
       accel: { x: -rawAccelY, y: rawAccelZ, z: rawAccelX },
       touchpad: null,
       touchpadButton: false,
@@ -188,7 +209,7 @@ export class SwitchProDriver extends ControllerDriver {
     //
     // The total buffer size has to match what the HID descriptor declares
     // for report 0x01 on this device — USB declares 48+ bytes, BT declares
-    // ~10. Over-sizing on BT causes sendReport to reject with
+    // a smaller count. Over-sizing on BT causes sendReport to reject with
     // "Failed to write the report." Under-sizing on USB truncates the
     // rumble payload.
     const minSize = 10 + args.length;

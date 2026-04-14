@@ -28,7 +28,7 @@ import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
-import { ControllerRegistry } from './controllers/controller-registry.js';
+import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';

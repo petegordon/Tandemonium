@@ -6,9 +6,10 @@ let tray = null;
 let clickThrough = false;
 
 function createWindow() {
+  const useMulti = process.env.OVERLAY_MULTI === '1' || process.argv.includes('--multi');
   mainWindow = new BrowserWindow({
-    width: 600,
-    height: 400,
+    width: useMulti ? 1100 : 600,
+    height: useMulti ? 520 : 400,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -22,7 +23,8 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'src', 'index.html'));
+  const entry = useMulti ? 'multi.html' : 'index.html';
+  mainWindow.loadFile(path.join(__dirname, '..', 'src', entry));
 
   // DevTools: Cmd+Shift+I to open manually (auto-open triggers Autofill errors)
 
@@ -125,14 +127,19 @@ app.on('web-contents-created', (_, contents) => {
   // Also listen for hid-device-added to grant persistent permission so
   // getDevices() returns them on subsequent connections.
   let selectTimeout = null;
+  const alreadyPicked = new Set(); // deviceIds handed out in this session
 
   contents.session.on('select-hid-device', (event, details, callback) => {
     event.preventDefault();
     console.log('select-hid-device: deviceList length =', details.deviceList?.length || 0);
     if (details.deviceList && details.deviceList.length > 0) {
       if (selectTimeout) { clearTimeout(selectTimeout); selectTimeout = null; }
-      const d = details.deviceList[0];
-      console.log('select-hid-device: selecting', d.name || d.productId);
+      // Prefer a device we haven't picked yet in this session. Falls back to
+      // the first device when all have been handed out (single-controller case).
+      const d = details.deviceList.find((x) => !alreadyPicked.has(x.deviceId))
+                || details.deviceList[0];
+      alreadyPicked.add(d.deviceId);
+      console.log('select-hid-device: selecting', d.name || d.productId, '(alreadyPicked:', alreadyPicked.size, ')');
       try {
         callback(d.deviceId);
       } catch (e) {
