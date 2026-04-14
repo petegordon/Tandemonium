@@ -28,6 +28,14 @@ const DEFAULTS = {
   psButtonIndex: 16,
   hidStaleMs: 800,
   axisActivityThreshold: 0.6,
+  // Per-player DualSense lightbar colors (1-indexed by slot ordinal).
+  // Override via `new ControllerManager({ playerColors: { 1: {...}, ... } })`.
+  playerColors: {
+    1: { r: 0,   g: 64,  b: 255 },  // P1 blue
+    2: { r: 255, g: 32,  b: 0 },    // P2 red
+    3: { r: 0,   g: 200, b: 0 },    // P3 green
+    4: { r: 160, g: 0,   b: 255 },  // P4 purple
+  },
 };
 
 // ── Synthetic gamepad helpers ──
@@ -435,6 +443,7 @@ export class ControllerManager {
     this._hidPool.delete(entry.device);
     slot._hidEntry = entry;
     entry.slot = slot;
+    this._applyPlayerFeedback(slot, entry);
     slot._emit('hid-bound');
   }
 
@@ -442,6 +451,7 @@ export class ControllerManager {
   _detachEntryFromSlot(slot) {
     const entry = slot._hidEntry;
     if (!entry) return;
+    this._clearPlayerFeedback(entry);
     entry.slot = null;
     slot._hidEntry = null;
     // Reset synthetic so a stale "PS pressed" doesn't bleed into the
@@ -450,6 +460,33 @@ export class ControllerManager {
     entry.hidActiveSince = 0;
     this._hidPool.set(entry.device, entry);
     slot._emit('hid-unbound');
+  }
+
+  /**
+   * Light up the DualSense player-LED row + lightbar to reflect the slot
+   * ordinal. P1 = blue, P2 = red (per #222 design). Silently no-ops for
+   * drivers that don't implement setPlayerLEDs / setLightbar.
+   */
+  _applyPlayerFeedback(slot, entry) {
+    const driver = entry.driver;
+    if (!driver) return;
+    const playerNum = this.slots.indexOf(slot) + 1;
+    const color = this.opts.playerColors?.[playerNum] || null;
+    // Player LEDs — delegate to driver's LED pattern table if it has one.
+    if (typeof driver.setPlayerLEDs === 'function') {
+      const pattern = driver.constructor.PLAYER_LED_PATTERNS?.[playerNum];
+      if (pattern != null) driver.setPlayerLEDs(pattern).catch(() => {});
+    }
+    if (color && typeof driver.setLightbar === 'function') {
+      driver.setLightbar(color.r, color.g, color.b).catch(() => {});
+    }
+  }
+
+  _clearPlayerFeedback(entry) {
+    const driver = entry.driver;
+    if (!driver) return;
+    if (typeof driver.setPlayerLEDs === 'function') driver.setPlayerLEDs(0).catch(() => {});
+    if (typeof driver.setLightbar === 'function') driver.setLightbar(0, 0, 0).catch(() => {});
   }
 
   /**
