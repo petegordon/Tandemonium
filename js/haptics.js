@@ -43,10 +43,11 @@ export function setHapticSources(sources) {
 
 /**
  * Add a single input source to the haptic target list without
- * replacing existing sources. Used by connectControllerGyro so each
- * InputManager independently registers itself — the previous
- * setHapticSources([this]) call was replacing the whole array and
- * dropping other players' sources in local MP.
+ * replacing existing sources. Used by InputManager._onSlotChange so
+ * each player's InputManager independently registers itself when its
+ * slot binds HID — the previous setHapticSources([this]) call was
+ * replacing the whole array and dropping other players' sources in
+ * local MP.
  * @param {{gamepadIndex: number|null}} src
  */
 export function addHapticSource(src) {
@@ -74,22 +75,24 @@ function _gamepadRumble(strong, weak, duration) {
       // Multiple sources in local MP means both players feel the event.
       for (const src of _hapticSources) {
         if (!src) continue;
-        const idx = src.gamepadIndex;
-        if (idx == null) continue;
 
         // Prefer the driver-level rumble path when the source has a
         // controller driver that implements setRumble — e.g. DualSense on
         // macOS, where Chromium's Gamepad API vibrationActuator sometimes
         // resolves without actually writing the HID output report. The
         // driver bypass uses the same open WebHID handle already held for
-        // gyro reads and is authoritative. Drivers without setRumble
-        // (Switch Pro, Xbox) fall through to the Gamepad API path below.
+        // gyro reads and is authoritative, AND works when gamepadIndex is
+        // null (BT DualSense in 0x31 mode, invisible to the Gamepad API).
+        // Drivers without setRumble (Switch Pro, Xbox) fall through to the
+        // Gamepad API path below.
         const driver = src._controllerDriver;
         if (driver && typeof driver.setRumble === 'function') {
           driver.setRumble(strong, weak, duration).catch(() => {});
           continue;
         }
 
+        const idx = src.gamepadIndex;
+        if (idx == null) continue;
         const gp = gamepads[idx];
         if (!gp || !gp.vibrationActuator) continue;
         gp.vibrationActuator.playEffect('dual-rumble', {

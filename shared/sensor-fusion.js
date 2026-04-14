@@ -23,6 +23,17 @@ import * as THREE from 'three';
 
 // ── Initial one-shot bias calibration ──
 export const FUSION_CALIB_COUNT = 150; // ~1.5s at 100Hz
+// Variance thresholds for bias calibration.
+//  - IDEAL: commit immediately when any axis's per-sample stddev is under
+//    this. A still DualSense typically produces stddev 5–15 raw units.
+//  - ABORT: if after all retries the best window is still above this, the
+//    controller was being moved throughout the entire calibration period
+//    and committing would produce orientation drift. Leave bias unchanged
+//    (previous value, zero on first pass) and let the continuous stillness
+//    calibration refine it in the background once the user settles.
+const FUSION_CALIB_IDEAL_STDDEV = 150;
+const FUSION_CALIB_ABORT_STDDEV = 1500;
+const FUSION_CALIB_MAX_RETRIES = 5;
 
 // ── Gravity tracking ──
 const GRAVITY_STILL_SPEED = 1.0;
@@ -61,9 +72,15 @@ export class SensorFusion {
     this.gravityMode = 1.0;
 
     // Initial one-shot calibration: collects FUSION_CALIB_COUNT samples,
-    // then sets bias to their mean.
+    // runs a variance check, then sets bias to the mean. On high-variance
+    // captures (user moving the controller), retries up to
+    // FUSION_CALIB_MAX_RETRIES times. Tracks the best attempt across
+    // retries and commits that one (or aborts if even the best is too
+    // noisy to trust).
     this._calibrating = false;
     this._calibSamples = [];
+    this._calibRetries = 0;
+    this._calibBest = null; // { meanX, meanY, meanZ, stddev }
 
     // Fusion state
     this.orientation = new THREE.Quaternion();
@@ -105,6 +122,8 @@ export class SensorFusion {
   startCalibration() {
     this._calibrating = true;
     this._calibSamples = [];
+    this._calibRetries = 0;
+    this._calibBest = null;
   }
 
   /** Abort calibration without touching bias. */
@@ -165,18 +184,61 @@ export class SensorFusion {
    * @param {number} nowMs performance.now() from the caller
    */
   ingest(rawGx, rawGy, rawGz, rawAx, rawAy, rawAz, gyroScale, accelScale, nowMs) {
-    // Initial one-shot bias capture
+    // Initial one-shot bias capture with best-of-N retry selection.
     if (this._calibrating) {
       this._calibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
       if (this._calibSamples.length >= FUSION_CALIB_COUNT) {
+        const n = this._calibSamples.length;
         let sx = 0, sy = 0, sz = 0;
         for (const s of this._calibSamples) { sx += s.x; sy += s.y; sz += s.z; }
-        const n = this._calibSamples.length;
-        this.bias.x = sx / n;
-        this.bias.y = sy / n;
-        this.bias.z = sz / n;
-        this._calibSamples = [];
-        this._calibrating = false;
+        const meanX = sx / n, meanY = sy / n, meanZ = sz / n;
+        let varX = 0, varY = 0, varZ = 0;
+        for (const s of this._calibSamples) {
+          varX += (s.x - meanX) ** 2;
+          varY += (s.y - meanY) ** 2;
+          varZ += (s.z - meanZ) ** 2;
+        }
+        const maxStd = Math.max(
+          Math.sqrt(varX / n),
+          Math.sqrt(varY / n),
+          Math.sqrt(varZ / n),
+        );
+        // Track the best attempt seen so far so even a later retry that's
+        // dirtier doesn't overwrite an earlier clean one.
+        if (!this._calibBest || maxStd < this._calibBest.stddev) {
+          this._calibBest = { meanX, meanY, meanZ, stddev: maxStd };
+        }
+        if (maxStd <= FUSION_CALIB_IDEAL_STDDEV) {
+          // Great sample — commit immediately.
+          this.bias.x = meanX;
+          this.bias.y = meanY;
+          this.bias.z = meanZ;
+          this._calibSamples = [];
+          this._calibrating = false;
+          this._calibBest = null;
+        } else if (this._calibRetries < FUSION_CALIB_MAX_RETRIES) {
+          // Noisy window — try again.
+          this._calibRetries++;
+          this._calibSamples = [];
+          console.log(`Fusion calib retry ${this._calibRetries}/${FUSION_CALIB_MAX_RETRIES} (stddev ${maxStd.toFixed(0)})`);
+        } else {
+          // All retries exhausted. Commit the best window we saw IF it's
+          // trustworthy; otherwise abort and leave bias unchanged so the
+          // continuous stillness calibration can refine it in the
+          // background once the user settles.
+          const best = this._calibBest;
+          if (best.stddev <= FUSION_CALIB_ABORT_STDDEV) {
+            this.bias.x = best.meanX;
+            this.bias.y = best.meanY;
+            this.bias.z = best.meanZ;
+            console.warn(`Fusion calib committed best-of-${FUSION_CALIB_MAX_RETRIES + 1} (stddev ${best.stddev.toFixed(0)})`);
+          } else {
+            console.warn(`Fusion calib aborted — all ${FUSION_CALIB_MAX_RETRIES + 1} captures too noisy (best stddev ${best.stddev.toFixed(0)}); keeping previous bias, letting continuous calibration refine`);
+          }
+          this._calibSamples = [];
+          this._calibrating = false;
+          this._calibBest = null;
+        }
       }
     }
 
