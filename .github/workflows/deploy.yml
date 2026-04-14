@@ -19,6 +19,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Populate controller-overlay/src/shared/
+        # The overlay imports `../shared/...` relative to its src/js/ dir.
+        # The web-deployed overlay (served via iframe from
+        # /controller-overlay-web/) needs src/shared/ populated for those
+        # imports to resolve. copy-shared.js is pure node (no deps) so we
+        # can run it here without npm install.
+        run: node controller-overlay/scripts/copy-shared.js
+
       - name: Stage deploy files
         run: |
           mkdir -p _site
