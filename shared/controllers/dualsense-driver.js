@@ -144,117 +144,193 @@ export class DualSenseDriver extends ControllerDriver {
     };
   }
 
-  // ── Rumble output (DualSense only, not DualShock 4) ───────────
+  // ── Rumble + LED + lightbar output (DualSense only) ──────────
   //
   // Chromium's Gamepad API vibrationActuator.playEffect() is flaky on macOS
-  // for DualSense — sometimes returns null, sometimes resolves without
-  // writing an output report. This is a direct WebHID path that bypasses
-  // the Gamepad API entirely, using the same open HID handle we already
-  // have for gyro reads. See issue #193.
+  // for DualSense. The generic _sendOutputReport() path below writes the
+  // HID output report directly using the same open WebHID handle we already
+  // have for gyro reads — works reliably across USB and BT, and lets us
+  // combine rumble + player-LED + lightbar-color into a single packet.
+  // See issue #193 (rumble) and #222 (lights).
   //
-  // @param {number} strong  — strong (left) rumble 0..1
-  // @param {number} weak    — weak (right) rumble 0..1
-  // @param {number} durationMs — auto-stop after this many ms
+  // Player LED bitmask layout (byte 43 USB / byte 44 BT, 5 LEDs):
+  //   bit 0 = leftmost, bit 4 = rightmost
+  //   Symmetric "dot count" patterns we use:
+  //     P1: 0b00100 (0x04) — single center dot
+  //     P2: 0b01010 (0x0A) — two dots flanking center
+  //     P3: 0b10101 (0x15) — three dots (odd positions)
+  //     P4: 0b11011 (0x1B) — four dots (all but center)
+  //
+  // Lightbar RGB: three bytes, 0..255 each.
 
+  /** Symmetric dot-count LED patterns for up to 4 players. */
+  static PLAYER_LED_PATTERNS = {
+    1: 0b00100,
+    2: 0b01010,
+    3: 0b10101,
+    4: 0b11011,
+  };
+
+  /**
+   * Rumble both motors, auto-stop after durationMs.
+   * @param {number} strong — strong (left) rumble 0..1
+   * @param {number} weak   — weak  (right) rumble 0..1
+   * @param {number} durationMs
+   */
   async setRumble(strong, weak, durationMs) {
-    if (!this.device || !this.device.opened) return;
-    // Only DualSense (not DualShock 4) uses the 0x02 / 0x31 output formats
-    // implemented here. DS4 has a different output layout and is out of scope
-    // for issue #193.
-    const pid = this.device.productId;
-    if (pid !== 0x0ce6 && pid !== 0x0df2) return;
-
+    if (!this._supportsOutputReports()) return;
     const s = Math.max(0, Math.min(1, strong));
     const w = Math.max(0, Math.min(1, weak));
     const strongByte = Math.round(s * 255);
     const weakByte = Math.round(w * 255);
 
     try {
-      if (this.connectionType === 'bluetooth') {
-        await this._sendRumbleBT(strongByte, weakByte);
-      } else {
-        await this._sendRumbleUSB(strongByte, weakByte);
-      }
+      await this._sendOutputReport({ rumble: { weak: weakByte, strong: strongByte } });
     } catch (err) {
-      // Rumble is best-effort, but surface the failure at warn level so
-      // misconfigured packet layouts or permission errors are visible
-      // instead of silently disabled.
       console.warn('DualSense setRumble failed:', err.message);
       return;
     }
 
-    // Auto-stop after the effect duration. Clear any pending stop first so
-    // overlapping rumble calls don't leave a zero-write racing behind a
-    // subsequent non-zero write.
     if (this._rumbleStopTimer) clearTimeout(this._rumbleStopTimer);
     this._rumbleStopTimer = setTimeout(() => {
       this._rumbleStopTimer = null;
-      if (this.connectionType === 'bluetooth') {
-        this._sendRumbleBT(0, 0).catch(() => {});
-      } else {
-        this._sendRumbleUSB(0, 0).catch(() => {});
-      }
+      this._sendOutputReport({ rumble: { weak: 0, strong: 0 } }).catch(() => {});
     }, Math.max(10, durationMs));
   }
 
   /**
-   * USB output report 0x02. WebHID strips the report ID, so the payload
-   * is the 47-byte feature-map body:
-   *   [0] valid_flag0 = 0x03 (ENABLE_RUMBLE_EMU | HAPTICS_SELECT)
-   *   [1] valid_flag1 = 0x00
-   *   [2] motor_right (weak rumble)
-   *   [3] motor_left  (strong rumble)
-   *   rest untouched (0)
-   * Using 0x03 instead of just 0x01 hits both the legacy rumble-emulation
-   * bit AND the haptic select bit, which is what most known-working
-   * DualSense drivers (Linux hid-playstation, pydualsense, DS4Windows) do
-   * to cover variations across firmware revisions.
+   * Set the 5-LED player indicator row under the touchpad.
+   * @param {number} bitmask — 5-bit mask (bit 0 = leftmost, bit 4 = rightmost)
    */
-  async _sendRumbleUSB(strongByte, weakByte) {
-    const payload = new Uint8Array(47);
-    payload[0] = 0x03;          // valid_flag0: enable rumble emu + haptics select
-    payload[1] = 0x00;          // valid_flag1
-    payload[2] = weakByte;      // motor_right (weak)
-    payload[3] = strongByte;    // motor_left  (strong)
-    await this.device.sendReport(0x02, payload);
+  async setPlayerLEDs(bitmask) {
+    if (!this._supportsOutputReports()) return;
+    try {
+      await this._sendOutputReport({ playerLEDs: bitmask & 0x1F });
+    } catch (err) {
+      console.warn('DualSense setPlayerLEDs failed:', err.message);
+    }
   }
 
   /**
-   * BT output report 0x31. The full on-wire packet is 78 bytes including
-   * the report ID; WebHID's sendReport() strips the report ID so the
-   * payload handed to the API is 77 bytes.
-   *
-   * Layout (payload offsets, matching pydualsense which is known-working):
-   *   [0]    = 0x02 (data tag — this is NOT the feature byte; required
-   *                  by DualSense firmware to identify the packet type)
-   *   [1]    = valid_flag0 = 0x03 (rumble emu + haptic select)
-   *   [2]    = valid_flag1 = 0x00
-   *   [3]    = motor_right (weak rumble)
-   *   [4]    = motor_left  (strong rumble)
-   *   [5..72] = 0 (LEDs, trigger effects, etc. — untouched)
-   *   [73..76] = CRC-32 (little-endian) computed over [0xA2, 0x31, [0..72]]
-   *
-   * The CRC-32 variant is the STANDARD reflected CRC-32 (same as zlib /
-   * IEEE 802.3 — polynomial 0xEDB88320 in reflected form, init 0xFFFFFFFF,
-   * xorout 0xFFFFFFFF). This matches what Linux's hid-playstation driver
-   * computes with crc32_le() and what pydualsense uses via binascii.crc32.
-   * An earlier attempt used CRC-32/MPEG-2 (non-reflected); that's wrong
-   * for DualSense and made every packet get rejected silently.
-   *
-   * The 0xA2 seed byte prepended to the CRC input is the HID SET_REPORT
-   * OUTPUT transfer-type byte — a protocol-level value that the device
-   * folds into its integrity check but never appears on the wire.
+   * Set the lightbar color. Pass (0,0,0) to turn it off.
+   * @param {number} r  0..255
+   * @param {number} g  0..255
+   * @param {number} b  0..255
    */
-  async _sendRumbleBT(strongByte, weakByte) {
-    const PAYLOAD_LEN = 77;  // 78-byte wire packet minus the report ID
-    const buf = new Uint8Array(PAYLOAD_LEN);
+  async setLightbar(r, g, b) {
+    if (!this._supportsOutputReports()) return;
+    try {
+      await this._sendOutputReport({
+        lightbar: {
+          r: Math.max(0, Math.min(255, r | 0)),
+          g: Math.max(0, Math.min(255, g | 0)),
+          b: Math.max(0, Math.min(255, b | 0)),
+        },
+      });
+    } catch (err) {
+      console.warn('DualSense setLightbar failed:', err.message);
+    }
+  }
 
-    buf[0] = 0x02;              // data tag
-    buf[1] = 0x03;              // valid_flag0: rumble emu + haptic select
-    buf[2] = 0x00;              // valid_flag1
-    buf[3] = weakByte;          // motor_right (weak)
-    buf[4] = strongByte;        // motor_left  (strong)
-    // buf[5..72] = 0 (reserved / LED / trigger effects — leave alone)
+  _supportsOutputReports() {
+    if (!this.device || !this.device.opened) return false;
+    // Only DualSense (not DualShock 4) uses the 0x02 / 0x31 output formats
+    // implemented here.
+    const pid = this.device.productId;
+    return pid === 0x0ce6 || pid === 0x0df2;
+  }
+
+  /**
+   * Generic output-report writer. Fields:
+   *   rumble:     { weak, strong }  0..255 each — sets valid_flag0 bits 0+1
+   *   lightbar:   { r, g, b }                   — sets valid_flag1 bit 2
+   *   playerLEDs: bitmask 0..0x1F               — sets valid_flag1 bit 4
+   *
+   * Any field omitted leaves its valid-flag bit clear, so the controller
+   * keeps its current value for that feature.
+   *
+   * Byte offsets (payload after the report ID is stripped by WebHID):
+   *   USB report 0x02 (47-byte payload):
+   *     [0]      valid_flag0
+   *     [1]      valid_flag1
+   *     [2]      motor_right (weak)
+   *     [3]      motor_left  (strong)
+   *     [42]     led_brightness (0 = high)
+   *     [43]     player_leds bitmask
+   *     [44..46] lightbar R, G, B
+   *
+   *   BT report 0x31 (77-byte payload, +1 for the data tag):
+   *     [0]      0x02 (DualSense BT data tag)
+   *     [1]      valid_flag0
+   *     [2]      valid_flag1
+   *     [3]      motor_right
+   *     [4]      motor_left
+   *     [43]     led_brightness
+   *     [44]     player_leds
+   *     [45..47] lightbar R, G, B
+   *     [73..76] CRC-32 little-endian over [0xA2, 0x31, buf[0..72]]
+   *
+   * Flag bits (match Linux hid-playstation + pydualsense conventions):
+   *   valid_flag0 bit 0 (0x01): compatible vibration (rumble emulation)
+   *   valid_flag0 bit 1 (0x02): haptics select
+   *   valid_flag1 bit 2 (0x04): lightbar control enable
+   *   valid_flag1 bit 4 (0x10): player indicator control enable
+   */
+  async _sendOutputReport({ rumble, lightbar, playerLEDs } = {}) {
+    if (this.connectionType === 'bluetooth') {
+      await this._sendOutputReportBT({ rumble, lightbar, playerLEDs });
+    } else {
+      await this._sendOutputReportUSB({ rumble, lightbar, playerLEDs });
+    }
+  }
+
+  async _sendOutputReportUSB({ rumble, lightbar, playerLEDs }) {
+    const buf = new Uint8Array(47);
+    let flag0 = 0, flag1 = 0;
+    if (rumble) {
+      flag0 |= 0x03;          // rumble emu + haptics select
+      buf[2] = rumble.weak & 0xFF;
+      buf[3] = rumble.strong & 0xFF;
+    }
+    if (playerLEDs != null) {
+      flag1 |= 0x10;          // player indicator enable
+      buf[42] = 0x00;         // led_brightness: high
+      buf[43] = playerLEDs & 0x1F;
+    }
+    if (lightbar) {
+      flag1 |= 0x04;          // lightbar control enable
+      buf[44] = lightbar.r;
+      buf[45] = lightbar.g;
+      buf[46] = lightbar.b;
+    }
+    buf[0] = flag0;
+    buf[1] = flag1;
+    await this.device.sendReport(0x02, buf);
+  }
+
+  async _sendOutputReportBT({ rumble, lightbar, playerLEDs }) {
+    const PAYLOAD_LEN = 77;
+    const buf = new Uint8Array(PAYLOAD_LEN);
+    buf[0] = 0x02;             // BT data tag
+    let flag0 = 0, flag1 = 0;
+    if (rumble) {
+      flag0 |= 0x03;
+      buf[3] = rumble.weak & 0xFF;
+      buf[4] = rumble.strong & 0xFF;
+    }
+    if (playerLEDs != null) {
+      flag1 |= 0x10;
+      buf[43] = 0x00;          // led_brightness: high
+      buf[44] = playerLEDs & 0x1F;
+    }
+    if (lightbar) {
+      flag1 |= 0x04;
+      buf[45] = lightbar.r;
+      buf[46] = lightbar.g;
+      buf[47] = lightbar.b;
+    }
+    buf[1] = flag0;
+    buf[2] = flag1;
 
     // CRC input: seed (0xA2) + report ID (0x31) + buf[0..72] = 75 bytes
     const crcInput = new Uint8Array(1 + 1 + (PAYLOAD_LEN - 4));
