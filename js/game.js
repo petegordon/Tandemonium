@@ -29,6 +29,7 @@ import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
+import { ControllerManager } from '../shared/controller-manager.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -131,8 +132,24 @@ class Game {
       70, window.innerWidth / window.innerHeight, 0.1, 500
     );
 
+    // Controller manager — owns slot/claim state, HID pool, sensor fusion.
+    // P1 = slot[0], P2 = slot[1]. Shared with the Lobby so join detection
+    // in the lobby and in-race input read from the same source of truth.
+    this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2'] });
+    // Fire-and-forget: pair approved HID devices, auto-request any
+    // remaining via Electron (gated by env detection inside the manager),
+    // and listen for hot-plug events.
+    this.controllerManager.autoPoolApprovedHid()
+      .then(() => {
+        if (navigator.userAgent.includes('Electron')) {
+          return this.controllerManager.electronAutoRequestDevice();
+        }
+      })
+      .then(() => this.controllerManager.wireHidHotplug())
+      .catch((err) => console.warn('controller manager init failed', err));
+
     // Components
-    this.input = new InputManager();
+    this.input = new InputManager({ slot: this.controllerManager.getSlot('P1') });
     // Default haptic target: P1's InputManager. Updated in _onLocalReady
     // to include P2's InputManager so both players rumble on shared events.
     setHapticSources([this.input]);
@@ -469,7 +486,8 @@ class Game {
       onSolo: () => this._onSolo(),
       onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
       onLocalReady: (opts) => this._onLocalReady(opts),
-      input: this.input
+      input: this.input,
+      controllerManager: this.controllerManager,
     });
 
     // Background music
@@ -920,54 +938,19 @@ class Game {
     // checkpoint, off-road, finish) rumble each controller independently.
     setHapticSources([this.input, this.inputP2]);
 
-    // Auto-connect P2's WebHID gyro if P2 is on a gyro-capable gamepad.
-    // Pinned to P2's specific vendor/product so P2's gyro pipeline lands
-    // on P2's physical device — not whichever gyro-capable HID device
-    // findApprovedDevice happens to return first.
-    if (sourceType === 'gamepad') {
-      this._autoConnectP2Gyro();
+    // P2's gyro comes in via the ControllerManager's HID pool — the
+    // matching entry is already attached to the P2 slot at claim time,
+    // and its SensorFusion has been calibrating since the device was
+    // paired at boot. Nothing to do here.
+    if (sourceType === 'gamepad' && this.inputP2) {
+      this.inputP2.motionEnabled = true;
+      this.inputP2.startTiltCalibration();
     }
 
     // Show instructions (tap to start)
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
-  }
-
-  /**
-   * Try to wire P2's WebHID gyro to its physical gamepad in local MP.
-   * Parallels the lobby's _autoConnectGyro for P1 but targets this.inputP2,
-   * and pins the claim by vendor/product so it can't grab P1's device.
-   * Best-effort: if P2's controller hasn't been WebHID-approved before,
-   * silently skip. P2 still plays with joystick lean.
-   */
-  _autoConnectP2Gyro() {
-    if (!this.inputP2) return;
-    if (this.inputP2.gyroConnected) return; // Already pre-connected in lobby
-    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = gamepads[this.inputP2._gamepadSlot];
-    if (!gp) return;
-    const info = ControllerRegistry.identifyFromGamepadId(gp.id);
-    if (!info || !info.hasGyro) return;
-    const filter = ControllerRegistry.parseGamepadVendorProduct(gp.id);
-    if (!filter) return;
-    // Exclude P1's already-claimed HID device so P2 lands on a DIFFERENT
-    // physical device. When both players are on the same controller model
-    // (e.g., two DualSenses), vendorId/productId alone can't disambiguate
-    // — the exclude list is the only way to prevent both InputManagers
-    // from opening the same HID device and cross-wiring gyro/sticks.
-    const excludeDevices = this.input.gyroDevice ? [this.input.gyroDevice] : [];
-    console.log('Auto-connecting P2 gyro for', info.driverName, filter);
-    this.inputP2.connectControllerGyro(filter, excludeDevices).then(() => {
-      if (this.inputP2 && this.inputP2.gyroConnected) {
-        // Ensure P2's motion pipeline is armed so balanceCtrlP2 reads lean.
-        this.inputP2.motionEnabled = true;
-        this.inputP2.startTiltCalibration();
-        console.log('P2 gyro auto-connected');
-      }
-    }).catch((err) => {
-      console.warn('P2 gyro auto-connect failed:', err && err.message);
-    });
   }
 
   // ============================================================
@@ -3019,6 +3002,12 @@ class Game {
 
   _loop(timestamp) {
     requestAnimationFrame((t) => this._loop(t));
+
+    // Advance controller slot state machine once per frame — handles
+    // Gamepad-API claim, HID-pool claim, release-ring, and orphan
+    // transitions in one place. Must run before any input reads.
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    this.controllerManager.ingestFrame(pads, performance.now());
 
     // Poll gamepad every frame before reading any input
     this.input.pollGamepad();
