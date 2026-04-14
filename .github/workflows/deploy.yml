@@ -19,14 +19,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Populate controller-overlay/src/shared/
-        # The overlay imports `../shared/...` relative to its src/js/ dir.
-        # The web-deployed overlay (served via iframe from
-        # /controller-overlay-web/) needs src/shared/ populated for those
-        # imports to resolve. copy-shared.js is pure node (no deps) so we
-        # can run it here without npm install.
-        run: node controller-overlay/scripts/copy-shared.js
-
       - name: Stage deploy files
         run: |
           mkdir -p _site
@@ -34,6 +26,16 @@ jobs:
                    --exclude='out' --exclude='desktop' --exclude='electron' \
                    --exclude='scripts' --exclude='.env' \
                    ./ _site/
+          # The overlay imports `../shared/...` relative to its src/js/ dir.
+          # The web-deployed overlay (served via iframe from
+          # /controller-overlay-web/) needs src/shared/ populated for those
+          # imports to resolve. Copy shared/ directly into the staged _site
+          # tree — pre-rsync population was unreliable in the previous
+          # deploy.yml iteration.
+          mkdir -p _site/controller-overlay/src/shared
+          cp -r shared/* _site/controller-overlay/src/shared/
+          echo "Overlay shared/ contents in _site:"
+          ls -R _site/controller-overlay/src/shared
 
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
