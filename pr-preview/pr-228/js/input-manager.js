@@ -111,35 +111,16 @@ export class InputManager {
   }
 
   // ── Slot accessors ──
-  // Legacy callers read these as fields. They now delegate to the slot so
-  // a single source of truth (the ControllerManager) owns the lifecycle.
-  // Setters are no-ops so transitional lobby.js code paths that still
-  // write to them (manual sticky-claim patterns slated for removal in the
-  // Step 5b follow-up) don't throw. Safe to remove once lobby migrates.
+  // Read-only getters that delegate to the attached slot. ControllerManager
+  // owns the lifecycle; InputManager is a pure consumer.
   get gamepadConnected() { return this._slot?.state === 'claimed'; }
-  set gamepadConnected(_) { /* noop — owned by slot */ }
   get gamepadIndex() { return this._slot?.gamepadIndex ?? null; }
-  set gamepadIndex(_) { /* noop */ }
   get gyroConnected() { return !!(this._slot?.fusion); }
-  set gyroConnected(_) { /* noop */ }
   get gyroDevice() { return this._slot?.hidDevice ?? null; }
-  set gyroDevice(_) { /* noop */ }
   get _gpName() { return this._slot?.controllerLabel ?? ''; }
-  set _gpName(_) { /* noop */ }
   get _syntheticGamepad() { return this._slot?.synthetic ?? null; }
-  set _syntheticGamepad(_) { /* noop */ }
   get _controllerDriver() { return this._slot?.driver ?? null; }
   get _gyroConnType() { return this._slot?.driver?.connectionType ?? null; }
-
-  // ── Deprecated shims ──
-  // These methods are called from lobby.js paths not yet migrated. They
-  // return no-op promises so the legacy code runs without errors; the real
-  // work (HID pairing, gyro wiring) is done by ControllerManager. Remove
-  // once the Step 5b lobby rewrite lands.
-  bootstrapFromHID() { return Promise.resolve(false); }
-  connectControllerGyro() { return Promise.resolve(); }
-  disconnectControllerGyro() { /* noop */ }
-  _createSyntheticGamepad() { return null; }
 
   /**
    * Bind (or rebind) a ControllerManager slot. Updates DOM badge + haptic
