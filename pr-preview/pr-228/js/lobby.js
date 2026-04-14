@@ -3724,10 +3724,30 @@ export class Lobby {
       //   2. Any button at all → triggers a brief visual flash on btnGp
       //      so the second player gets confirmation their controller is
       //      seen as P2 before they commit
-      if (state.hasGamepad && state.gpIndex !== null) {
-        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-        const gp = pads[state.gpIndex];
-        if (gp) {
+      // Source the pad to poll: real Gamepad API entry when the browser
+      // sees one, else the ControllerManager's P2 slot synthetic
+      // (populated from HID reports for BT-silent DualSense).
+      let gp = null;
+      if (state.hasGamepad) {
+        if (state.gpIndex !== null) {
+          const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+          gp = pads[state.gpIndex] || null;
+        }
+        if (!gp && this.controllerManager) {
+          // Either the Gamepad API path didn't resolve, or state.hidDevice
+          // is the only signal. Try the P2 slot's synthetic — populated by
+          // the HID pool's parsed reports even before slot claim.
+          const slotP2 = this.controllerManager.getSlot('P2');
+          gp = slotP2?.synthetic || null;
+          // Pool entries (unclaimed) also carry a synthetic we can read.
+          if (!gp && state.hidDevice) {
+            for (const entry of this.controllerManager._hidPool.values()) {
+              if (entry.device === state.hidDevice) { gp = entry.synthetic; break; }
+            }
+          }
+        }
+      }
+      if (gp) {
           // Any-button flash (includes A, so flashing fires before the
           // commit action but that's fine — commit still happens).
           let anyPressed = false;
