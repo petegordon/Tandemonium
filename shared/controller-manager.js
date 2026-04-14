@@ -300,6 +300,36 @@ export class ControllerManager {
 
   getSlot(id) { return this._slotById[id] || null; }
 
+  /**
+   * Claim a specific slot to the first live Gamepad API pad that isn't
+   * already claimed by another slot. Used by callers that need P1 to be
+   * bound to "whatever pad is plugged in" *before* the user presses any
+   * button — e.g. the lobby's local-MP detection, which needs to know
+   * which pad is P1's so it can label the other one as P2.
+   *
+   * Returns the claimed pad or null if nothing changed.
+   */
+  claimFirstAvailable(slotId, pads) {
+    const slot = this.getSlot(slotId);
+    if (!slot || slot.state !== 'empty' || slot._awaitingSilence) return null;
+    const claimedIndices = new Set(
+      this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex)
+    );
+    for (const gp of pads) {
+      if (!gp) continue;
+      if (claimedIndices.has(gp.index)) continue;
+      const info = ControllerRegistry.identifyFromGamepadId(gp.id);
+      slot.claim(gp, {
+        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+        silent: true,
+      });
+      this._attachMatchingPoolEntry(slot);
+      slot._emit('claimed');
+      return gp;
+    }
+    return null;
+  }
+
   _isDeviceInPoolOrSlot(device) {
     if (this._hidPool.has(device)) return true;
     return this.slots.some((s) => s.hidDevice === device);

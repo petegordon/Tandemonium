@@ -391,6 +391,19 @@ export class Lobby {
    */
   _runDesktopGamepadDetection() {
     let attempts = 0;
+    // Poll every 100ms for up to 2s, nudging ControllerManager to claim
+    // P1 to the first live pad as soon as one is present. Matches the
+    // old detectGamepad behavior of "P1 auto-claims on pad plug-in".
+    let attempts = 0;
+    const pollForPad = () => {
+      if (this.controllerManager.getSlot('P1').state === 'claimed') return;
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      const claimed = this.controllerManager.claimFirstAvailable('P1', pads);
+      if (claimed) return;
+      if (++attempts < 20) setTimeout(pollForPad, 100);
+    };
+    setTimeout(pollForPad, 200);
+
     // ControllerManager owns claim detection + HID pool + gyro fusion —
     // we just watch P1's slot here for UI side-effects.
     //  - 'claimed' event: show the joystick toggle + flip music once
@@ -3780,10 +3793,15 @@ export class Lobby {
     // gamepad is completely ignored. Calling pollGamepad() synchronously
     // runs P1's "first available" fallback so p1GpIndex is populated
     // before the comparison. See #204 for the full repro.
-    if (this.input && this.input.gamepadIndex === null) {
-      this.input.pollGamepad();
-    }
     const gamepads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+    // Force P1 to claim a gamepad slot if it hasn't already. Without this,
+    // the "first unclaimed" loop below would pick slot 0 as P2 on the
+    // frame the user arrives at the host page (ControllerManager only
+    // auto-claims on user input), and pressing A on what the UI labels
+    // "P2" would end up claiming P1 instead. See #204 repro.
+    if (this.input && this.input.gamepadIndex === null && this.controllerManager) {
+      this.controllerManager.claimFirstAvailable('P1', gamepads);
+    }
 
     // Stale-slot recovery: if P1's claimed Gamepad API slot is dead (BT
     // DualSense slot shifts when entering 0x31 mode), re-claim the first
