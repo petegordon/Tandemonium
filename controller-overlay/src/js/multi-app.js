@@ -19,7 +19,7 @@ import { detectControllerType } from './controller-profiles.js';
 import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
 import { ControllerManager, gamepadHasActivity } from '../shared/controller-manager.js';
 
-const SLOT_IDS = ['P1', 'P2'];
+const SLOT_IDS = ['P1', 'P2', 'P3', 'P4'];
 
 const manager = new ControllerManager({ slotIds: SLOT_IDS });
 // Expose for DevTools debugging.
@@ -47,6 +47,11 @@ class SlotView {
 
     root.classList.toggle('p1', slot.id === 'P1');
     root.classList.toggle('p2', slot.id === 'P2');
+    root.classList.toggle('p3', slot.id === 'P3');
+    root.classList.toggle('p4', slot.id === 'P4');
+    root.setAttribute('data-slot', slot.id);
+    const titleEl = root.querySelector('.slot-title');
+    if (titleEl) titleEl.textContent = `Player ${slot.id.slice(1)}`;
 
     if (this.connectBtn) {
       this.connectBtn.addEventListener('click', () => {
@@ -305,8 +310,13 @@ function renderDebugStrip(pads, views) {
 
 // ── Wiring ──
 
+const slotsContainer = document.getElementById('slots');
+const slotTemplate = document.getElementById('slot-template');
+
 const views = manager.slots.map((slot) => {
-  const root = document.querySelector(`.slot[data-slot="${slot.id}"]`);
+  const fragment = slotTemplate.content.cloneNode(true);
+  const root = fragment.querySelector('.slot');
+  slotsContainer.appendChild(fragment);
   return new SlotView(slot, root);
 });
 
