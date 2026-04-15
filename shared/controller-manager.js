@@ -177,6 +177,35 @@ class HidEntry {
     // — if a new driver's parseReport is wrong, mag would be off by 10×+
     // and gravity correction would be garbage. Logged once per entry.
     this._accelVerified = false;
+    // Snapshot of buttons reported as pressed on the first report. Used
+    // to gate pool-to-slot auto-claim: a "fresh press" is a button that
+    // wasn't stuck-pressed from the start. Some drivers mis-parse foreign
+    // HID layouts (e.g. DualSense driver reading a GameSir-as-DS4 report)
+    // and report phantom stuck buttons that would otherwise auto-claim a
+    // slot with no user input.
+    this._initialPressedMask = null;
+  }
+
+  /** True if any button not in the initial-stuck set is currently pressed. */
+  hasFreshButtonPress() {
+    if (!this.synthetic) return false;
+    const buttons = this.synthetic.buttons;
+    if (this._initialPressedMask == null) {
+      // Snapshot on first query — by now the first HID report has landed.
+      if (!this.hasButtons) return false;
+      this._initialPressedMask = new Set();
+      for (let i = 0; i < buttons.length; i++) {
+        if (buttons[i] && buttons[i].pressed) this._initialPressedMask.add(i);
+      }
+      return false; // first frame never counts as fresh
+    }
+    for (let i = 0; i < buttons.length; i++) {
+      const b = buttons[i];
+      if (!b) continue;
+      const pressed = b.pressed || (typeof b.value === 'number' && b.value > 0.5);
+      if (pressed && !this._initialPressedMask.has(i)) return true;
+    }
+    return false;
   }
 
   _onReport(ev) {
@@ -630,7 +659,42 @@ export class ControllerManager {
     // iterate the HID pool, not slots. Any pool entry showing activity
     // promotes into an empty slot.
     for (const entry of this._hidPool.values()) {
-      if (!gamepadHasActivity(entry.synthetic)) continue;
+      // Require a *fresh* button press to claim via HID pool (ignoring
+      // buttons that were stuck-pressed from the first HID report).
+      // GameSir-as-DS4 gets mis-parsed by the DualSense driver, producing
+      // phantom stuck buttons (e.g. button 12) that would otherwise
+      // auto-claim a slot with no user input. BT-silent DualSense still
+      // claims normally because the user's PS press is a fresh transition.
+      if (!entry.hasFreshButtonPress()) continue;
+      // Dedupe: if this physical controller is already claimed via the
+      // Gamepad API path (same vid:pid), attach the HID entry to that slot
+      // for gyro/touchpad rather than spawning a second slot. Fixes pads
+      // that expose both Gamepad API and WebHID interfaces (e.g. GameSir
+      // Super Nova presenting as DS4 + raw HID).
+      const existing = this.slots.find((s) => {
+        if (s.state !== 'claimed' || s._hidEntry) return false;
+        const vp = ControllerRegistry.parseGamepadVendorProduct(s.controllerLabel);
+        if (vp && vp.vendorId === entry.device.vendorId && vp.productId === entry.device.productId) return true;
+        const name = (entry.device.productName || '').trim().toLowerCase();
+        if (name && s.controllerLabel && s.controllerLabel.toLowerCase().includes(name)) return true;
+        return false;
+      });
+      if (existing) {
+        this._attachEntryToSlot(existing, entry);
+        continue;
+      }
+      // Also skip spawning a new slot if any unclaimed live Gamepad API pad
+      // shares this HID device's productName — the Gamepad API claim path
+      // will pick it up on its own button press, and we don't want to beat
+      // it to a second slot. Covers multi-interface pads like GameSir Super
+      // Nova where Gamepad API and WebHID report different vid:pid for the
+      // same physical device.
+      const claimedIdx = new Set(this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex));
+      const hidName = (entry.device.productName || '').trim().toLowerCase();
+      if (hidName) {
+        const dupeUnclaimed = pads.some((gp) => gp && !claimedIdx.has(gp.index) && gp.id.toLowerCase().includes(hidName));
+        if (dupeUnclaimed) continue;
+      }
       const empty = this.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
       if (!empty) break;
       const releasedAt = this._recentlyReleasedBySlot.get(empty.id);
