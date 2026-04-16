@@ -85,6 +85,25 @@ export const BALANCE_DEFAULTS = { ...SHARED_PHYSICS, ...PLATFORM_TILT_DEFAULTS }
 export const TUNE = { ...BALANCE_DEFAULTS };
 
 // Difficulty presets
+//
+// Design intent (see issue #261):
+//   Chill        — Cruise + laugh. Sync failure is flavor, not danger.
+//                  Near-impossible to crash. Sells the ritual co-op ICP.
+//   Adventurous  — Default. Crashable but forgiving. Sync failure costs
+//                  speed and produces light wobble you can recover from.
+//   Daredevil    — Sync or crash. Tight lean threshold, weak auto-help,
+//                  and sync failure wobble that BIASES toward current
+//                  lean so desync compounds instead of cancelling out.
+//                  This is the mode that earns the "sync or crash" pitch
+//                  and produces the dramatic wipeouts for clip culture.
+//
+// Sync tuning keys:
+//   syncPenaltyScale  — multiplier on pedal-wobble coming from wrong-foot,
+//                       in-phase, or crank-fight taps. 0 mutes it entirely.
+//   syncLeanBias      — 0..1. At 0, wobble direction is pure random (cancels
+//                       over time). At 1, wobble is fully biased toward the
+//                       bike's current lean direction (compounds toward a
+//                       fall). Daredevil uses ~0.6 for the compounding feel.
 export const DIFFICULTY_PRESETS = {
   tutorial: {
     crashThreshold: 2.2,        // ~126° — nearly impossible to reach
@@ -98,6 +117,8 @@ export const DIFFICULTY_PRESETS = {
     autoCorrectionStrength: 6.0, // strong self-righting (ramped per phase)
     pedalLeanKickScale: 0.0,    // no random lean impulse on pedal strokes
     autoSpeed: true,            // bike rolls forward automatically
+    syncPenaltyScale: 0.0,      // no sync penalty — pedal however
+    syncLeanBias: 0.0,
   },
   chill: {
     crashThreshold: 2.2,        // same as tutorial — nearly impossible to crash
@@ -111,11 +132,13 @@ export const DIFFICULTY_PRESETS = {
     autoCorrectionStrength: 6.0, // strong self-righting
     pedalLeanKickScale: 0.0,    // no random lean impulse
     autoSpeed: true,            // steady cruise speed for smooth, stable riding
+    syncPenaltyScale: 0.0,      // sync failure is flavor, not danger
+    syncLeanBias: 0.0,
   },
   adventurous: {
     crashThreshold: 2.0,        // forgiving but crashable
     gravityForce: 1.2,          // slightly more topple than chill
-    wobbleMultiplier: 0.1,      // very light wobble
+    wobbleMultiplier: 0.15,     // light wobble
     dangerOnset: 0.75,          // moderate warning
     timeMultiplier: 1.0,
     maxSpeed: 14,               // moderate speed
@@ -123,18 +146,22 @@ export const DIFFICULTY_PRESETS = {
     autoCorrection: true,       // still has auto-correction
     autoCorrectionStrength: 5.0, // strong — bike helps a lot
     pedalLeanKickScale: 0.1,    // barely noticeable pedal kicks
+    syncPenaltyScale: 1.0,      // baseline: sync has consequences, survivable
+    syncLeanBias: 0.2,          // mild bias toward current lean
   },
   daredevil: {
-    crashThreshold: 1.8,        // tighter but still forgiving
-    gravityForce: 1.5,          // moderate topple force
-    wobbleMultiplier: 0.3,      // light wobble
-    dangerOnset: 0.60,          // earlier danger warning
+    crashThreshold: 1.4,        // ~80° — tight. Sync or crash.
+    gravityForce: 2.0,          // strong topple — gravity matters
+    wobbleMultiplier: 0.6,      // real wobble
+    dangerOnset: 0.55,          // early warning because falling is real
     timeMultiplier: 0.9,
     maxSpeed: 19,
     scoreMultiplier: 1.5,
-    autoCorrection: true,       // still has auto-correction
-    autoCorrectionStrength: 3.0, // gentle help
+    autoCorrection: true,       // token help only
+    autoCorrectionStrength: 0.5, // bike barely rescues you — you must ride it
     pedalLeanKickScale: 0.3,    // light pedal kicks
+    syncPenaltyScale: 2.5,      // wrong-foot / crank-fight punished hard
+    syncLeanBias: 0.6,          // wobble compounds toward current lean
   },
 };
 

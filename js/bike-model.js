@@ -269,7 +269,19 @@ export class BikeModel {
 
     const t = performance.now() / 1000;
     const wobbleMul = TUNE.wobbleMultiplier != null ? TUNE.wobbleMultiplier : 1.0;
-    const pedalWobble = pedalResult.wobble * (Math.random() - 0.5) * 2 * wobbleMul;
+
+    // Sync-failure wobble — from wrong-foot / in-phase / crank-fight taps.
+    //   syncPenaltyScale amplifies the consequence of bad pedaling.
+    //   syncLeanBias biases wobble direction toward the bike's current lean,
+    //   so desync on Daredevil compounds an existing tip instead of cancelling
+    //   out like pure random noise. At syncLeanBias=0, behavior matches the
+    //   previous random-sign wobble exactly (backward-compatible default).
+    const syncScale = TUNE.syncPenaltyScale != null ? TUNE.syncPenaltyScale : 1.0;
+    const syncBias  = TUNE.syncLeanBias     != null ? TUNE.syncLeanBias     : 0.0;
+    const randomDir = (Math.random() - 0.5) * 2;
+    const leanDir   = this.lean !== 0 ? Math.sign(this.lean) : randomDir;
+    const pedalWobbleDir = leanDir * syncBias + randomDir * (1 - syncBias);
+    const pedalWobble = pedalResult.wobble * pedalWobbleDir * wobbleMul * syncScale;
     const lowSpeedWobble = Math.max(0, 1 - this.speed * 0.3) *
       (Math.sin(t * 2.7) * 0.3 + Math.sin(t * 4.3) * 0.15) * wobbleMul;
 
