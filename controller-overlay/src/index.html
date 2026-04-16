@@ -213,6 +213,7 @@
   body:not(.show-title) #status-bar { opacity: 0; pointer-events: none; }
   body:not(.show-gyro) #gyro-toggle { opacity: 0; pointer-events: none; }
   body:not(.show-gear) #settings-toggle { opacity: 0; pointer-events: none; }
+  body.hide-roll-hud #gyro-hud { display: none !important; }
 
   .camera-presets {
     display: flex;
@@ -256,6 +257,25 @@
     white-space: nowrap;
   }
   .status-badge.connected { color: #4f4; background: rgba(0,80,0,0.5); }
+
+  #axis-readout {
+    position: fixed;
+    top: 40px; right: 42px;
+    display: none;
+    gap: 14px;
+    font-family: monospace;
+    font-size: 30px;
+    font-weight: 600;
+    z-index: 110;
+    background: rgba(0,0,0,0.35);
+    padding: 4px 12px;
+    border-radius: 14px;
+    pointer-events: none;
+  }
+  body.show-axis-readout #axis-readout { display: flex; }
+  #axis-readout .ax-pitch { color: #44dd66; }
+  #axis-readout .ax-roll { color: #ee4455; }
+  #axis-readout .ax-yaw { color: #4488ff; }
 
   /* ── Gyro toggle button (emoji) ── */
   #gyro-toggle {
@@ -363,6 +383,20 @@
   }
   #calib-hint.hidden { opacity: 0; }
 
+  /* ── 3D gyro gimbal widget (above controller) ── */
+  #gimbal-canvas {
+    position: fixed;
+    top: 4%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(36vw, 220px);
+    height: min(36vw, 220px);
+    pointer-events: none;
+    z-index: 45;
+    display: none;
+  }
+  body.show-gimbal #gimbal-canvas { display: block; }
+
   /* ── Click-through indicator ── */
   #click-through-indicator {
     position: fixed;
@@ -469,6 +503,22 @@
     <label>Show Gear Icon</label>
     <input type="checkbox" id="show-gear">
   </div>
+  <div class="setting-row">
+    <label>Show Roll HUD</label>
+    <input type="checkbox" id="show-roll-hud" checked>
+  </div>
+  <div class="setting-row">
+    <label>Show Axis Values</label>
+    <input type="checkbox" id="show-axis-readout">
+  </div>
+  <div class="setting-row">
+    <label>Show 3D Gyro</label>
+    <input type="checkbox" id="show-gimbal">
+  </div>
+  <div class="setting-row">
+    <label>Gimbal: full orientation</label>
+    <input type="checkbox" id="gimbal-full-mode">
+  </div>
 
   <hr class="settings-divider">
   <h3>Shortcuts</h3>
@@ -513,6 +563,13 @@
   <span class="status-badge" id="gamepad-status">No gamepad</span>
 </div>
 
+<!-- Live axis readout (pitch/yaw/roll in degrees) -->
+<div id="axis-readout">
+  <span class="ax-pitch">P <span id="ax-pitch-val">0°</span></span>
+  <span class="ax-roll">R <span id="ax-roll-val">0°</span></span>
+  <span class="ax-yaw">Y <span id="ax-yaw-val">0°</span></span>
+</div>
+
 <!-- Gyro HUD -->
 <div id="gyro-hud">
   <svg id="arc-svg" viewBox="-120 -105 240 115">
@@ -542,6 +599,9 @@
     </svg>
   </div>
 </div>
+
+<!-- 3D gyro gimbal widget canvas -->
+<canvas id="gimbal-canvas"></canvas>
 
 <!-- Click-through mode indicator -->
 <div id="click-through-indicator"></div>
