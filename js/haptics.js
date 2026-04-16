@@ -76,6 +76,18 @@ function _gamepadRumble(strong, weak, duration) {
       for (const src of _hapticSources) {
         if (!src) continue;
 
+        // Skip controllers sitting idle on the desk during one-human local
+        // MP — rumbling a resting controller shakes its gyro and pollutes
+        // the steering merge. `isActive()` returns true by default on
+        // sources that haven't opted into held-detection.
+        if (typeof src.isActive === 'function' && !src.isActive()) continue;
+
+        // Let the source suppress its in-motion bias calibration during
+        // the rumble window so vibration doesn't corrupt gyro bias.
+        if (typeof src.onRumbleWillFire === 'function') {
+          src.onRumbleWillFire(duration);
+        }
+
         // Prefer the driver-level rumble path when the source has a
         // controller driver that implements setRumble — e.g. DualSense on
         // macOS, where Chromium's Gamepad API vibrationActuator sometimes

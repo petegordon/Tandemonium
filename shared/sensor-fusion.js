@@ -110,6 +110,13 @@ export class SensorFusion {
     this._sfTimeSteady = 0;
     this._sfSkippedTime = 0;
 
+    // performance.now() until which the in-motion bias-refinement
+    // pipeline is suppressed. Set by suppressCalibrationFor() when
+    // rumble fires so vibration-induced accel noise can't pollute the
+    // gyro/accel cross-check. The stillness calibration auto-gates on
+    // its own thresholds and is not affected.
+    this._suppressCalibUntilMs = 0;
+
     // Timekeeping: set to performance.now() on first ingest().
     this._lastGyroTime = 0;
 
@@ -144,6 +151,18 @@ export class SensorFusion {
   cancelCalibration() {
     this._calibrating = false;
     this._calibSamples = [];
+  }
+
+  /**
+   * Suppress the in-motion sensor-fusion calibration pipeline for the
+   * next `ms` milliseconds. Called by the haptics module when rumble
+   * fires — rumble vibration produces high-frequency accel noise that
+   * aliases below the normal threshold gate and would otherwise pollute
+   * the gyro-vs-accel bias cross-check.
+   */
+  suppressCalibrationFor(ms) {
+    const until = performance.now() + ms;
+    if (until > this._suppressCalibUntilMs) this._suppressCalibUntilMs = until;
   }
 
   /**
@@ -366,8 +385,10 @@ export class SensorFusion {
       this._updateStillnessCalibration(rawGx, rawGy, rawGz, hasAccel ? rawAx : 0, hasAccel ? rawAy : 0, hasAccel ? rawAz : 0, accelScale, dt, nowMs);
     }
 
-    // 5. Sensor-fusion calibration (runs when accel is changing)
-    if (!this._calibrating && hasAccel) {
+    // 5. Sensor-fusion calibration (runs when accel is changing). Skipped
+    // while rumble is suppressing calibration — vibration noise would
+    // otherwise contaminate the gyro-vs-accel bias cross-check.
+    if (!this._calibrating && hasAccel && nowMs >= this._suppressCalibUntilMs) {
       this._updateSensorFusionCalibration(rawGx, rawGy, rawGz, gyroScale, rawAx, rawAy, rawAz, dt);
     }
   }

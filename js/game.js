@@ -3299,9 +3299,17 @@ class Game {
 
     // Compute P2's lean via their own balance controller. The captain path
     // will average (captainLean + this.remoteLean) * 0.5, so stashing P2's
-    // lean into this.remoteLean makes the existing math Just Work.
-    const balanceResultP2 = this.balanceCtrlP2.update(this.bike, 0, null, null);
-    this.remoteLean = balanceResultP2.leanInput;
+    // lean into this.remoteLean makes the existing math Just Work. Pass the
+    // same assist + item managers as the captain path so stoker gets
+    // identical auto-steer when assist is engaged — without this, the back
+    // seat felt "looser" than the front seat because DDA assist only
+    // corrected captain's half of the merge.
+    const balanceResultP2 = this.balanceCtrlP2.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
+    // One-human local MP: if P2's controller is idle on the desk, its gyro
+    // drifts (and gets rumble-shaken) and dragging that into the 50/50 lean
+    // merge makes steering feel loose. Zero the contribution until the
+    // player actually picks P2 up.
+    this.remoteLean = this.inputP2.isActive() ? balanceResultP2.leanInput : 0;
 
     // Edge-detect P2 pedals → feed as the 'stoker' source into the shared
     // pedal controller. The captain path does the same for its own ('captain')
