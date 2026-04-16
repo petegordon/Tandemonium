@@ -557,10 +557,13 @@ export class InputManager {
     if (!this.motionEnabled) return;
     this._tmpEuler.setFromQuaternion(fusion.orientation, 'XYZ');
     const leanDeg = -this._tmpEuler.z * (180 / Math.PI);
-    const clampedLean = Math.max(-90, Math.min(90, leanDeg));
-    this._gyroRollAccum = -clampedLean;
-    this._accelRoll = clampedLean;
-    this._applyTilt(clampedLean, true);
+    // Do NOT clamp before passing to _applyTilt — clamping the fusion input
+    // prevents gravity correction from tracking through extreme angles,
+    // causing the "gyro goes wild" feedback loop on noisy BT connections.
+    // _applyTilt's sensitivity/response-curve naturally bounds steering output.
+    this._gyroRollAccum = -leanDeg;
+    this._accelRoll = leanDeg;
+    this._applyTilt(leanDeg, true);
   }
 
   /**
