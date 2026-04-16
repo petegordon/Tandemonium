@@ -1,6 +1,15 @@
 const { app, BrowserWindow, globalShortcut, Tray, Menu, ipcMain } = require('electron');
 const path = require('path');
 
+// Handle Squirrel.Windows install/update/uninstall events. When the Squirrel
+// installer launches the app with --squirrel-install / --squirrel-updated /
+// --squirrel-uninstall / --squirrel-obsolete, this quits immediately so the
+// user doesn't see a flash of the UI followed by a relaunch on first run.
+if (require('electron-squirrel-startup')) {
+  app.quit();
+  return;
+}
+
 let mainWindow = null;
 let tray = null;
 let clickThrough = false;
@@ -16,6 +25,11 @@ function createWindow() {
     resizable: true,
     hasShadow: false,
     skipTaskbar: false,
+    // Don't show the window until the renderer has painted — otherwise the
+    // transparent window flashes the default chrome color (green/white on
+    // Windows) for a few hundred ms before the HTML appears.
+    show: false,
+    backgroundColor: '#00000000',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -25,6 +39,10 @@ function createWindow() {
 
   const entry = useMulti ? 'multi.html' : 'index.html';
   mainWindow.loadFile(path.join(__dirname, '..', 'src', entry));
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
 
   // DevTools: Cmd+Shift+I to open manually (auto-open triggers Autofill errors)
 
