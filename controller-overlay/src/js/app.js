@@ -357,7 +357,7 @@ async function bootstrapFromHID() {
       id: d.productName || drv.driverName,
       index: -1,
       axes: [0, 0, 0, 0],
-      buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
+      buttons: Array.from({ length: 18 }, () => ({ pressed: false, value: 0 })),
     };
     await switchController(stub);
     // switchController() calls disconnectGyro() which nulls syntheticGamepad,
@@ -967,7 +967,7 @@ function createSyntheticGamepad(id) {
     id: id || 'HID Controller',
     index: -1,
     axes: [0, 0, 0, 0],
-    buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
+    buttons: Array.from({ length: 18 }, () => ({ pressed: false, value: 0 })),
     _synthetic: true,
   };
 }
@@ -1012,6 +1012,7 @@ function updateSyntheticFromParsed(parsed) {
     set(14, b.dpadLeft);
     set(15, b.dpadRight);
     set(16, b.ps);
+    set(17, b.mic);
   }
 }
 

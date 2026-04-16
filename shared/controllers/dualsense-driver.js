@@ -104,6 +104,7 @@ export class DualSenseDriver extends ControllerDriver {
       l3:       !!(optByte & 0x40),
       r3:       !!(optByte & 0x80),
       ps:       !!(psByte  & 0x01),
+      mic:      !!(psByte  & 0x04),
       dpadUp:    dpadDir === 7 || dpadDir === 0 || dpadDir === 1,
       dpadRight: dpadDir === 1 || dpadDir === 2 || dpadDir === 3,
       dpadDown:  dpadDir === 3 || dpadDir === 4 || dpadDir === 5,

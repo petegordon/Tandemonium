@@ -291,6 +291,50 @@ export class ControllerOverlay {
       }
     }
 
+    // DualSense: procedurally add the mic/mute button (not in the GLB).
+    // Small capsule/pill below the PS button, between the sticks.
+    if (this.controllerType === 'dualsense' && meshByName['button_ps']) {
+      const psMesh = meshByName['button_ps'];
+      psMesh.geometry.computeBoundingBox();
+      const psBB = psMesh.geometry.boundingBox;
+      const psSize = new THREE.Vector3();
+      psBB.getSize(psSize);
+      const psCenter = new THREE.Vector3();
+      psBB.getCenter(psCenter);
+
+      // Pill shape — slightly wider than PS button, very shallow
+      const micW = psSize.x * 1.8;
+      const micH = psSize.y * 0.9;
+      const micD = psSize.z * 0.9;
+      const micGeo = new THREE.CapsuleGeometry(micH * 0.5, Math.max(0.001, micW - micH), 6, 12);
+      // CapsuleGeometry's length is along Y by default — rotate to lie flat (X-long)
+      micGeo.rotateZ(Math.PI / 2);
+
+      const micMat = new THREE.MeshStandardMaterial({
+        color: 0x1a1a1e, metalness: 0.3, roughness: 0.55,
+      });
+      const micMesh = new THREE.Mesh(micGeo, micMat);
+      micMesh.name = 'button_mic';
+
+      // Position in the same local space as PS button:
+      // same X (centered), same Y (top face), offset +Z (toward front/bottom
+      // of controller face) by ~1.6x the PS button's Z size.
+      const micLocalX = psMesh.position.x + psCenter.x;
+      const micLocalY = psMesh.position.y + psBB.max.y; // sit on the face
+      const micLocalZ = psMesh.position.z + psCenter.z + psSize.z * 1.6;
+      micMesh.position.set(micLocalX, micLocalY, micLocalZ);
+
+      psMesh.parent.add(micMesh);
+      this.meshes['button_mic'] = micMesh;
+      this.originals['button_mic'] = {
+        posX: micMesh.position.x,
+        posY: micMesh.position.y,
+        posZ: micMesh.position.z,
+        rotX: micMesh.rotation.x,
+        rotZ: micMesh.rotation.z,
+      };
+    }
+
     // Fix meshes that should be body-colored but are dark in the GLB
     for (const name of ['touchpad', 'button_create', 'button_options']) {
       const m = meshByName[name];
