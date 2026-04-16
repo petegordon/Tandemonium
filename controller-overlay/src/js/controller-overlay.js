@@ -465,7 +465,7 @@ export class ControllerOverlay {
         const orig = this.originals[meshName];
         if (!mesh || !orig) continue;
 
-        const targetAngle = orig.rotX + btn.value * profile.triggerMaxAngle;
+        const targetAngle = orig.rotX - btn.value * profile.triggerMaxAngle;
         mesh.rotation.x = THREE.MathUtils.lerp(mesh.rotation.x, targetAngle, LERP_SPEED);
 
         // Yellow emissive glow scaling with trigger pull depth
