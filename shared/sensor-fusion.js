@@ -22,7 +22,12 @@
 import * as THREE from 'three';
 
 // ── Initial one-shot bias calibration ──
-export const FUSION_CALIB_COUNT = 150; // ~1.5s at 100Hz
+// Bluetooth captures are noisier (lower effective sample rate + packet
+// jitter) than USB, so BT gets a longer window and a slightly relaxed
+// ideal-stddev bar to avoid repeated retries on a connection that simply
+// cannot produce a tighter window. USB stays at the original tuning.
+export const FUSION_CALIB_COUNT = 150;    // ~1.5s at 100Hz — USB default
+export const FUSION_CALIB_COUNT_BT = 250; // ~2.5s — BT needs more samples
 // Variance thresholds for bias calibration.
 //  - IDEAL: commit immediately when any axis's per-sample stddev is under
 //    this. A still DualSense typically produces stddev 5–15 raw units.
@@ -32,6 +37,7 @@ export const FUSION_CALIB_COUNT = 150; // ~1.5s at 100Hz
 //    (previous value, zero on first pass) and let the continuous stillness
 //    calibration refine it in the background once the user settles.
 const FUSION_CALIB_IDEAL_STDDEV = 150;
+const FUSION_CALIB_IDEAL_STDDEV_BT = 200; // BT packet jitter raises the floor
 const FUSION_CALIB_ABORT_STDDEV = 1500;
 const FUSION_CALIB_MAX_RETRIES = 5;
 
@@ -118,12 +124,20 @@ export class SensorFusion {
   /** Whether the initial one-shot bias calibration is still collecting. */
   get calibrating() { return this._calibrating; }
 
-  /** Begin initial bias calibration. Clears any prior samples. */
-  startCalibration() {
+  /**
+   * Begin initial one-shot bias calibration. Clears any prior samples.
+   * @param {string} [connectionType] — 'bluetooth' or 'usb'. BT gets a
+   *   longer capture window and relaxed ideal-stddev threshold to match
+   *   the noisier transport. Defaults to USB tuning when unspecified.
+   */
+  startCalibration(connectionType) {
     this._calibrating = true;
     this._calibSamples = [];
     this._calibRetries = 0;
     this._calibBest = null;
+    const isBT = connectionType === 'bluetooth';
+    this._calibCount = isBT ? FUSION_CALIB_COUNT_BT : FUSION_CALIB_COUNT;
+    this._calibIdealStddev = isBT ? FUSION_CALIB_IDEAL_STDDEV_BT : FUSION_CALIB_IDEAL_STDDEV;
   }
 
   /** Abort calibration without touching bias. */
@@ -187,7 +201,8 @@ export class SensorFusion {
     // Initial one-shot bias capture with best-of-N retry selection.
     if (this._calibrating) {
       this._calibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
-      if (this._calibSamples.length >= FUSION_CALIB_COUNT) {
+      const calibCount = this._calibCount || FUSION_CALIB_COUNT;
+      if (this._calibSamples.length >= calibCount) {
         const n = this._calibSamples.length;
         let sx = 0, sy = 0, sz = 0;
         for (const s of this._calibSamples) { sx += s.x; sy += s.y; sz += s.z; }
@@ -208,7 +223,8 @@ export class SensorFusion {
         if (!this._calibBest || maxStd < this._calibBest.stddev) {
           this._calibBest = { meanX, meanY, meanZ, stddev: maxStd };
         }
-        if (maxStd <= FUSION_CALIB_IDEAL_STDDEV) {
+        const idealStddev = this._calibIdealStddev || FUSION_CALIB_IDEAL_STDDEV;
+        if (maxStd <= idealStddev) {
           // Great sample — commit immediately.
           this.bias.x = meanX;
           this.bias.y = meanY;

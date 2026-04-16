@@ -161,7 +161,7 @@ class HidEntry {
     this.device = device;
     this.driver = driver;
     this.fusion = new SensorFusion();
-    this.fusion.startCalibration();
+    this.fusion.startCalibration(driver?.connectionType);
     this.synthetic = makeSyntheticGamepad(device);
     this.hasButtons = false;
     this.hidActiveSince = 0;
@@ -265,7 +265,7 @@ class HidEntry {
     }
     try {
       await this.driver.init();
-      this.fusion.startCalibration();
+      this.fusion.startCalibration(this.driver?.connectionType);
     } catch (err) {
       console.warn('Driver re-init failed:', err.message);
     } finally {
@@ -367,7 +367,7 @@ export class Slot {
 
   startGyroCalibration() {
     if (!this.fusion) return;
-    this.fusion.startCalibration();
+    this.fusion.startCalibration(this.driver?.connectionType);
     this._wasCalibrating = true;
     this._emit('calibration-start');
   }
