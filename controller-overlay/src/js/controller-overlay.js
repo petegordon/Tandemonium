@@ -303,7 +303,7 @@ export class ControllerOverlay {
       psBB.getCenter(psCenter);
 
       // Pill shape — slightly wider than PS button, very shallow
-      const micW = psSize.x * 1.8;
+      const micW = psSize.x * 0.9;
       const micH = psSize.y * 0.9;
       const micD = psSize.z * 0.9;
       const micGeo = new THREE.CapsuleGeometry(micH * 0.5, Math.max(0.001, micW - micH), 6, 12);
