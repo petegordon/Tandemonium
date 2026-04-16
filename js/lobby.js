@@ -183,7 +183,7 @@ export class Lobby {
     if (initSavedVol !== null && parseFloat(initSavedVol) === 0) {
       this.musicActive = false;
     }
-    if (this.musicActive) this.toggleMusic.classList.add('active');
+    this._setToggleActive('music', this.musicActive);
     this.onMusicChanged = null; // callback set by Game
 
     // Volume control (discrete levels, persisted in localStorage, default 0.18)
