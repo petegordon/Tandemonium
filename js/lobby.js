@@ -183,7 +183,7 @@ export class Lobby {
     if (initSavedVol !== null && parseFloat(initSavedVol) === 0) {
       this.musicActive = false;
     }
-    if (this.musicActive) this.toggleMusic.classList.add('active');
+    this._setToggleActive('music', this.musicActive);
     this.onMusicChanged = null; // callback set by Game
 
     // Volume control (discrete levels, persisted in localStorage, default 0.18)
@@ -413,7 +413,12 @@ export class Lobby {
           joystickShown = true;
           this.toggleJoystick.style.display = '';
           this._setToggleActive('joystick', this.joystickActive);
-          if (this.onMusicChanged) this.onMusicChanged(true);
+          // Only start music if the user actually has it toggled on.
+          // Previously this fired unconditionally, which both forced music
+          // to play when the toggle was off and made playback depend on
+          // controller recognition. Music is now controlled by musicActive
+          // + the standard gesture handlers in game.js.
+          if (this.musicActive && this.onMusicChanged) this.onMusicChanged(true);
         }
         // Motion-toggle visibility: the claimed pad's id tells us whether
         // the controller has gyro, BEFORE HID is attached. Show the toggle
