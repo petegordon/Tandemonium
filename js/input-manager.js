@@ -96,6 +96,13 @@ export class InputManager {
     // DOM badge updates and haptic source registration.
     this._lastGamepadConnected = false;
     this._lastHidBound = false;
+
+    // Held-detection: timestamp of the last user action on this controller
+    // (button press, trigger, stick past deadzone, or keyboard). Used by
+    // haptics + local-MP lean merge to identify a controller sitting idle
+    // on the desk during one-human local multiplayer. Seeded to "now" so
+    // controllers default to active before any input arrives.
+    this._lastActivityMs = performance.now();
     // Edge-detect flag for "calibration just finished" auto-arm of
     // motionEnabled. Set while fusion.calibrating, cleared after arm.
     this._wasFusionCalibrating = false;
@@ -184,6 +191,11 @@ export class InputManager {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code)) e.preventDefault();
       this.keys[e.code] = true;
+      // Only count keyboard activity when this InputManager actually owns
+      // the keyboard (in local MP, P1's keyboard is released to P2 by
+      // setting keyboardActive=false — without this gate, P2's typing
+      // would falsely mark P1 as held).
+      if (this.keyboardActive) this._markActive();
     });
     window.addEventListener('keyup', (e) => {
       const tag = document.activeElement && document.activeElement.tagName;
@@ -214,6 +226,7 @@ export class InputManager {
         this.touchRight = true;
         this._rightTapped = true;
       }
+      this._markActive();
     };
 
     pedalBar.addEventListener('touchstart', (e) => {
@@ -535,6 +548,14 @@ export class InputManager {
       this._gpTriggerRightVal = gp.buttons[7] ? gp.buttons[7].value : 0;
       this._gpTriggerLeftPressed = this._gpLB || this._gpTriggerLeftVal >= THRESHOLD;
       this._gpTriggerRightPressed = this._gpRB || this._gpTriggerRightVal >= THRESHOLD;
+
+      // Held-detection: stick/trigger/shoulder activity = human is touching
+      // this controller. Gyro motion is intentionally NOT used here — rumble
+      // shakes a resting controller's gyro and would falsely mark it held.
+      if (Math.abs(rawX) >= 0.08 ||
+          this._gpTriggerLeftPressed || this._gpTriggerRightPressed) {
+        this._markActive();
+      }
     }
 
     // Orientation → tilt projection. The slot's HidEntry ingests gyro at
@@ -645,5 +666,34 @@ export class InputManager {
 
   getMotionLean() {
     return this.motionEnabled ? this.motionLean : 0;
+  }
+
+  /** Stamp this controller as "in use right now". */
+  _markActive() {
+    this._lastActivityMs = performance.now();
+  }
+
+  /**
+   * True if this controller has had user input within the last `timeoutMs`.
+   * Sources: keyboard, touch, gamepad stick (past deadzone), triggers,
+   * shoulder buttons. Gyro motion is deliberately excluded so rumble
+   * vibrations on a resting controller don't keep it falsely flagged as
+   * held. The default 10s window easily spans normal pedaling cadence
+   * (tandem MP requires constant pedal taps).
+   */
+  isActive(timeoutMs = 10000) {
+    return (performance.now() - this._lastActivityMs) < timeoutMs;
+  }
+
+  /**
+   * Called by the haptics module just before rumble fires on this
+   * controller. Suppresses the in-motion sensor-fusion bias-refinement
+   * calibration for the rumble duration plus a short settle margin, so
+   * rumble-induced accel noise can't corrupt the bias estimate. The
+   * initial one-shot and continuous stillness calibrations are
+   * naturally gated by their own thresholds.
+   */
+  onRumbleWillFire(durationMs) {
+    this._slot?.fusion?.suppressCalibrationFor(durationMs + 200);
   }
 }
