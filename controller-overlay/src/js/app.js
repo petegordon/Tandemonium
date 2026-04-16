@@ -15,6 +15,7 @@ import { ControllerOverlay } from './controller-overlay.js';
 import { detectControllerType, PROFILES } from './controller-profiles.js';
 import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
 import { SensorFusion } from '../shared/sensor-fusion.js';
+import { GyroGimbal } from './gyro-gimbal.js';
 
 // ── DOM refs ──
 const canvas = document.getElementById('canvas');
@@ -648,6 +649,25 @@ function loop() {
 
   overlay.update(gamepad, gyroActive ? gyroFusion.orientation : null);
 
+  // Drive the 3D gimbal widget when visible
+  if (gimbal && document.body.classList.contains('show-gimbal')) {
+    gimbal.update(gyroActive ? gyroFusion.orientation : null);
+  }
+
+  // Live axis readout (pitch/yaw/roll in degrees, swing-twist per axis)
+  if (document.body.classList.contains('show-axis-readout')) {
+    const q = gyroActive ? gyroFusion.orientation : null;
+    const toDeg = 180 / Math.PI;
+    const twist = (ax, ay, az) => {
+      if (!q) return 0;
+      const d = q.x * ax + q.y * ay + q.z * az;
+      return 2 * Math.atan2(d, q.w) * toDeg;
+    };
+    axPitchVal.textContent = Math.round(twist(1, 0, 0)) + '\u00B0';
+    axRollVal.textContent = Math.round(twist(0, 0, 1)) + '\u00B0';
+    axYawVal.textContent = Math.round(twist(0, 1, 0)) + '\u00B0';
+  }
+
   // Update gyro HUD
   if (gyroActive) {
     _hudEuler.setFromQuaternion(gyroFusion.orientation, 'XYZ');
@@ -699,6 +719,24 @@ async function toggleGyro() {
 let settingsFocusIndex = 0;
 const navPrevState = { up: false, down: false, left: false, right: false, a: false, b: false };
 
+// Auto-repeat for held directions: fire on press, then wait INITIAL_DELAY,
+// then repeat every REPEAT_INTERVAL while held.
+const NAV_INITIAL_DELAY = 400;
+const NAV_REPEAT_INTERVAL = 90;
+const navRepeatNext = { up: 0, down: 0, left: 0, right: 0 };
+function navTrigger(dir, pressed) {
+  const now = performance.now();
+  if (pressed && !navPrevState[dir]) {
+    navRepeatNext[dir] = now + NAV_INITIAL_DELAY;
+    return true;
+  }
+  if (pressed && now >= navRepeatNext[dir]) {
+    navRepeatNext[dir] = now + NAV_REPEAT_INTERVAL;
+    return true;
+  }
+  return false;
+}
+
 function getSettingRows() {
   return Array.from(settingsPanel.querySelectorAll('.setting-row, .camera-presets'));
 }
@@ -714,12 +752,16 @@ function navigateSettings(gamepad) {
   const a = gamepad.buttons[0]?.pressed;
   const b = gamepad.buttons[1]?.pressed;
 
-  // Edge-triggered navigation
-  if (up && !navPrevState.up) {
+  const upFire = navTrigger('up', up);
+  const downFire = navTrigger('down', down);
+  const leftFire = navTrigger('left', left);
+  const rightFire = navTrigger('right', right);
+
+  if (upFire) {
     settingsFocusIndex = Math.max(0, settingsFocusIndex - 1);
     updateSettingsFocus();
   }
-  if (down && !navPrevState.down) {
+  if (downFire) {
     settingsFocusIndex = Math.min(rows.length - 1, settingsFocusIndex + 1);
     updateSettingsFocus();
   }
@@ -733,11 +775,11 @@ function navigateSettings(gamepad) {
       let hoverIdx = btns.findIndex(b => b.classList.contains('nav-hover'));
       if (hoverIdx === -1) hoverIdx = btns.findIndex(b => b.classList.contains('selected'));
 
-      if (left && !navPrevState.left) {
+      if (leftFire) {
         hoverIdx = Math.max(0, (hoverIdx === -1 ? btns.length : hoverIdx) - 1);
         highlightPresetBtn(btns, hoverIdx);
       }
-      if (right && !navPrevState.right) {
+      if (rightFire) {
         hoverIdx = Math.min(btns.length - 1, (hoverIdx === -1 ? -1 : hoverIdx) + 1);
         highlightPresetBtn(btns, hoverIdx);
       }
@@ -751,11 +793,11 @@ function navigateSettings(gamepad) {
       const slider = row.querySelector('input[type="range"]');
       const button = row.querySelector('button');
 
-      if (left && !navPrevState.left) {
+      if (leftFire) {
         if (select) { select.selectedIndex = Math.max(0, select.selectedIndex - 1); select.dispatchEvent(new Event('change')); }
         if (slider) { slider.value = Math.max(+slider.min, +slider.value - 5); slider.dispatchEvent(new Event('input')); }
       }
-      if (right && !navPrevState.right) {
+      if (rightFire) {
         if (select) { select.selectedIndex = Math.min(select.options.length - 1, select.selectedIndex + 1); select.dispatchEvent(new Event('change')); }
         if (slider) { slider.value = Math.min(+slider.max, +slider.value + 5); slider.dispatchEvent(new Event('input')); }
       }
@@ -1188,16 +1230,58 @@ selectCameraPreset('player');
 const showTitleCheck = document.getElementById('show-title');
 const showGyroCheck = document.getElementById('show-gyro');
 const showGearCheck = document.getElementById('show-gear');
+const showGimbalCheck = document.getElementById('show-gimbal');
+const gimbalFullCheck = document.getElementById('gimbal-full-mode');
+const showRollHudCheck = document.getElementById('show-roll-hud');
+const showAxisReadoutCheck = document.getElementById('show-axis-readout');
+const axPitchVal = document.getElementById('ax-pitch-val');
+const axRollVal = document.getElementById('ax-roll-val');
+const axYawVal = document.getElementById('ax-yaw-val');
+
+const DISPLAY_PREFS_KEY = 'overlay-display-prefs';
+try {
+  const saved = JSON.parse(localStorage.getItem(DISPLAY_PREFS_KEY) || '{}');
+  if (typeof saved.gimbal === 'boolean') showGimbalCheck.checked = saved.gimbal;
+  if (typeof saved.gimbalFull === 'boolean') gimbalFullCheck.checked = saved.gimbalFull;
+  if (typeof saved.rollHud === 'boolean') showRollHudCheck.checked = saved.rollHud;
+  if (typeof saved.axisReadout === 'boolean') showAxisReadoutCheck.checked = saved.axisReadout;
+} catch (e) { /* ignore */ }
 
 function applyDisplayToggles() {
   document.body.classList.toggle('show-title', showTitleCheck.checked);
   document.body.classList.toggle('show-gyro', showGyroCheck.checked);
   document.body.classList.toggle('show-gear', showGearCheck.checked);
+  document.body.classList.toggle('show-gimbal', showGimbalCheck.checked);
+  document.body.classList.toggle('hide-roll-hud', !showRollHudCheck.checked);
+  document.body.classList.toggle('show-axis-readout', showAxisReadoutCheck.checked);
+  if (showGimbalCheck.checked) ensureGimbal();
+  if (gimbal) gimbal.fullMode = gimbalFullCheck.checked;
+  try {
+    localStorage.setItem(DISPLAY_PREFS_KEY, JSON.stringify({
+      gimbal: showGimbalCheck.checked,
+      gimbalFull: gimbalFullCheck.checked,
+      rollHud: showRollHudCheck.checked,
+      axisReadout: showAxisReadoutCheck.checked,
+    }));
+  } catch (e) { /* ignore */ }
+}
+
+let gimbal = null;
+function ensureGimbal() {
+  if (gimbal) return;
+  const gimbalCanvas = document.getElementById('gimbal-canvas');
+  if (!gimbalCanvas) return;
+  gimbal = new GyroGimbal(gimbalCanvas);
+  new ResizeObserver(() => gimbal.resize()).observe(gimbalCanvas);
 }
 
 showTitleCheck.addEventListener('change', applyDisplayToggles);
 showGyroCheck.addEventListener('change', applyDisplayToggles);
 showGearCheck.addEventListener('change', applyDisplayToggles);
+showGimbalCheck.addEventListener('change', applyDisplayToggles);
+gimbalFullCheck.addEventListener('change', applyDisplayToggles);
+showRollHudCheck.addEventListener('change', applyDisplayToggles);
+showAxisReadoutCheck.addEventListener('change', applyDisplayToggles);
 applyDisplayToggles(); // apply defaults (all unchecked = all hidden)
 
 // Right-click opens settings (needed when gear icon is hidden)
