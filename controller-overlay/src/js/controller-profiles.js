@@ -36,6 +36,7 @@ export const PROFILES = {
       14: 'dpad_left',
       15: 'dpad_right',
       16: 'button_ps',        // PS button
+      17: 'button_mic',       // Mic / mute (procedurally added — not in GLB)
     },
 
     // Analog triggers (button index → mesh, animated by value 0-1)
@@ -73,7 +74,7 @@ export const PROFILES = {
     ],
     accentColorMeshes: [
       'body_bottom', 'body_extra', 'bumper_l1', 'bumper_r1',
-      'trigger_l2', 'trigger_r2', 'button_ps',
+      'trigger_l2', 'trigger_r2', 'button_ps', 'button_mic',
     ],
     defaultBodyColor: '#e8e8ec',
     defaultAccentColor: '#1a1a1e',
