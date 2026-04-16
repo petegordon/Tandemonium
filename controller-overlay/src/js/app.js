@@ -635,8 +635,11 @@ function loop() {
       navigateSettings(gamepad);
       checkCombo(gamepad, 'settings', toggleSettings);
     } else {
-      // Normal combo detection
       checkCombo(gamepad, 'settings', toggleSettings);
+    }
+
+    // Gyro shortcuts work regardless of settings panel state
+    if (!remapTarget && !exitConfirm.classList.contains('visible')) {
       checkCombo(gamepad, 'gyroToggle', toggleGyro);
       checkCombo(gamepad, 'calibrate', () => {
         if (gyroActive) {
