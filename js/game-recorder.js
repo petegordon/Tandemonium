@@ -629,7 +629,7 @@ export class GameRecorder {
   // Chunks accumulate in _chunks[]; we keep only the last bufferDuration
   // seconds worth. On save: stop recorder, assemble kept chunks into one blob.
 
-  async startBuffer(audioCtx, micEnabled = false) {
+  async startBuffer(audioCtx, micEnabled = false, audioEngine = null) {
     // Wait for GPU readback probe to finish before deciding whether to buffer
     await this._gpuProbe;
     if (!this.supported || this.buffering) return;
@@ -671,10 +671,15 @@ export class GameRecorder {
     this._mimeType = this._getMimeType();
     if (!this._mimeType) return;
 
-    // Set up audio mixing destination using the game's AudioContext
+    // Set up audio mixing destination using the game's AudioContext. If an
+    // AudioEngine was provided, tap its master bus so music + SFX + bike audio
+    // all land in the recording without per-node wiring.
     if (audioCtx) {
       this._audioCtx = audioCtx;
       this._audioDestination = audioCtx.createMediaStreamDestination();
+      if (audioEngine && typeof audioEngine.attachRecorderDestination === 'function') {
+        audioEngine.attachRecorderDestination(this._audioDestination);
+      }
       // Add the mixed audio track to the recording stream
       for (const track of this._audioDestination.stream.getAudioTracks()) {
         this._stream.addTrack(track);

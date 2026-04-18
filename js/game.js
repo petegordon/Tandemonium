@@ -23,6 +23,7 @@ import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { ArchIndicator } from './arch-indicator.js';
+import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
@@ -479,7 +480,8 @@ class Game {
     this.countdownTimer = 0;
     this._lastCountNum = 3;
     this.instructionsEl = document.getElementById('instructions');
-    this.audioCtx = null;
+    this.audioEngine = new AudioEngine();
+    this.audioCtx = null; // mirrors audioEngine.ctx once created (recorder API)
 
     // Lobby
     this.lobby = new Lobby({
@@ -494,8 +496,6 @@ class Game {
     this._musicEl = new Audio('assets/Krampus Workshop.mp3');
     this._musicEl.loop = true;
     this._musicEl.volume = this.lobby.musicVolume;
-    this._musicSourceNode = null; // created once via createMediaElementSource
-
     // In-game music mute button
     this._musicBtn = document.getElementById('music-btn');
     this._updateMusicBtnIcon();
@@ -511,20 +511,16 @@ class Game {
 
     this.lobby.onMusicChanged = (on) => {
       if (on) {
-        // Reconnect source node to AudioContext destination before playing
-        if (this._musicSourceNode && this.audioCtx) {
-          try { this._musicSourceNode.connect(this.audioCtx.destination); } catch (e) {}
-          // Also reconnect to recording destination if actively recording
-          if (this.recorder && this.recorder._audioDestination) {
-            try { this._musicSourceNode.connect(this.recorder._audioDestination); } catch (e) {}
-          }
-        }
+        this.audioEngine.crossfade(this.audioEngine.musicBus, 1.0, 0.3);
         this._musicEl.play().catch(() => {});
       } else {
-        this._musicEl.pause();
-        // Disconnect source node so iOS doesn't produce glitchy looping artifacts
-        if (this._musicSourceNode) {
-          try { this._musicSourceNode.disconnect(); } catch (e) {}
+        // Ramp to silence first, then pause; avoids the old iOS looping
+        // artifact without needing to disconnect the source node.
+        if (this.audioEngine.musicBus) {
+          this.audioEngine.crossfade(this.audioEngine.musicBus, 0, 0.25);
+          setTimeout(() => { try { this._musicEl.pause(); } catch (e) {} }, 280);
+        } else {
+          this._musicEl.pause();
         }
       }
       this._updateMusicBtnIcon();
@@ -1205,24 +1201,15 @@ class Game {
     // Init audio before recording so beeps are captured.
     // Eagerly resume + play silent buffer to warm up iOS audio pipeline
     // (avoids 2-3s delay on first real sound).
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-      // Silent warmup buffer — primes iOS audio session
-      const buf = this.audioCtx.createBuffer(1, 1, this.audioCtx.sampleRate);
-      const src = this.audioCtx.createBufferSource();
-      src.buffer = buf;
-      src.connect(this.audioCtx.destination);
-      src.start();
-    } catch (e) {}
+    this.audioEngine.ensureContext();
+    this.audioEngine.resume();
+    this.audioEngine.warmup();
+    this.audioCtx = this.audioEngine.ctx; // kept as an alias for the recorder
 
-    // Start recording + selfie immediately so they're visible during countdown
+    // Start recording + selfie immediately so they're visible during countdown.
+    // Passing the engine lets startBuffer attach its mix destination directly.
     this.recorder.setLabels(this.mode);
-    this.recorder.startBuffer(this.audioCtx, this.lobby.audioActive);
+    this.recorder.startBuffer(this.audioCtx, this.lobby.audioActive, this.audioEngine);
     if (this.lobby.cameraActive) {
       this.recorder.startSelfie(this.net && this.net._localMediaStream);
     } else if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
@@ -1230,21 +1217,17 @@ class Game {
       if (user && user.avatar) this.recorder.showAvatarPip(this.lobby._avatarCache.get(user.avatar) || user.avatar);
     }
 
-    // Route background music through AudioContext so it's captured in recordings
-    if (this.audioCtx && !this._musicSourceNode) {
-      try {
-        this._musicSourceNode = this.audioCtx.createMediaElementSource(this._musicEl);
-        this._musicSourceNode.connect(this.audioCtx.destination);
-      } catch (e) {}
-    }
-    // Also route music to recording destination
-    if (this._musicSourceNode && this.recorder && this.recorder._audioDestination) {
-      try { this._musicSourceNode.connect(this.recorder._audioDestination); } catch (e) {}
-    }
+    // Route background music through the shared audio engine so it lands on
+    // the music bus (duckable + captured by the recorder automatically).
+    this.audioEngine.connectMusicElement(this._musicEl);
     // Play music if enabled
     if (this.lobby.musicActive) {
       this._musicEl.play().catch(() => {});
     }
+    // St2 — duck music during gameplay vs the lobby.
+    this.audioEngine.duckMusic(0.55, 0.8);
+    // Sp3 — start procedural bike motion loop (silent until speed rises).
+    this.audioEngine.startBike();
 
     this._playBeep(400, 0.15);
 
@@ -1323,47 +1306,19 @@ class Game {
     }
   }
 
+  // Thin wrappers over audioEngine so existing call sites keep working. The
+  // engine routes everything through the sfx bus and the recorder tap.
   _playBeep(freq, duration) {
-    try {
-      if (!this.audioCtx) return;
-      const ctx = this.audioCtx;
-      if (ctx.state === 'suspended') ctx.resume();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      // Also route to recording audio destination (captures beeps in clips)
-      if (this.recorder && this.recorder._audioDestination) {
-        gain.connect(this.recorder._audioDestination);
-      }
-      osc.frequency.value = freq;
-      osc.type = 'square';
-      gain.gain.setValueAtTime(0.12, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + duration);
-    } catch (e) {}
+    this.audioEngine.tone(freq, duration, { type: 'triangle', gain: 0.14 });
   }
 
   _playChime(freq, duration) {
-    try {
-      if (!this.audioCtx) return;
-      const ctx = this.audioCtx;
-      if (ctx.state === 'suspended') ctx.resume();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      if (this.recorder && this.recorder._audioDestination) {
-        gain.connect(this.recorder._audioDestination);
-      }
-      osc.frequency.value = freq;
-      osc.type = 'sine';
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + duration);
-    } catch (e) {}
+    this.audioEngine.chime(freq, duration);
+  }
+
+  // Ti1 — noise-based crash impact used for crashes and tree hits.
+  _playCrash(intensity = 1) {
+    this.audioEngine.crash(intensity);
   }
 
   _onTimerExpired() {
@@ -1395,8 +1350,7 @@ class Game {
     flash.classList.remove('visible');
     void flash.offsetWidth; // force reflow to restart animations
     flash.classList.add('visible');
-    this._playBeep(200, 0.3);
-    setTimeout(() => this._playBeep(150, 0.2), 300);
+    this._playCrash(0.9);
 
     // Freeze gameplay during the pause
     this.state = 'gameover';
@@ -1422,10 +1376,10 @@ class Game {
     }
     // Track for recording compositor
     this._checkpointFlashTime = performance.now();
-    // Rising chime: three ascending sine tones
-    this._playChime(523, 0.25);  // C5
-    setTimeout(() => this._playChime(659, 0.25), 100);  // E5
-    setTimeout(() => this._playChime(784, 0.35), 200);  // G5
+    // Rising chime using the shared Tandemonium motif (Re4)
+    this._playChime(MOTIF.C5, 0.25);
+    setTimeout(() => this._playChime(MOTIF.E5, 0.25), 100);
+    setTimeout(() => this._playChime(MOTIF.G5, 0.35), 200);
   }
 
   // ============================================================
@@ -2171,9 +2125,12 @@ class Game {
     }
     this._setOverlayButtons(victoryBtns, hasNext ? 1 : 0);
 
-    this._playBeep(800, 0.3);
-    setTimeout(() => this._playBeep(1000, 0.3), 200);
-    setTimeout(() => this._playBeep(1200, 0.5), 400);
+    // Re4 — victory uses the same C-E-G motif as the checkpoint chime,
+    // giving Tandemonium a recognizable audio signature across cues.
+    this._playChime(MOTIF.C5, 0.3);
+    setTimeout(() => this._playChime(MOTIF.E5, 0.3), 140);
+    setTimeout(() => this._playChime(MOTIF.G5, 0.55), 280);
+    setTimeout(() => this._playChime(MOTIF.G5 * 2, 0.6), 420);
 
     // Input cooldown to prevent accidental taps while pedaling. On mobile,
     // the same touch area is used for pedaling and button taps, so a cooldown
@@ -2393,10 +2350,11 @@ class Game {
     if (!this.lobby.musicActive) {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
-      if (this._musicSourceNode) {
-        try { this._musicSourceNode.disconnect(); } catch (e) {}
-      }
     }
+    // Stop bike motion loop + restore music from its gameplay duck (St2/Sp3).
+    this.audioEngine.stopBike();
+    this.audioEngine.duckMusic(1.0, 0.8);
+    this.audioEngine.detachRecorderDestination();
     this._hideGameOver();
     this._hideVictory();
     this._hideAllOverlays();
@@ -2480,10 +2438,11 @@ class Game {
     if (!this.lobby.musicActive) {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
-      if (this._musicSourceNode) {
-        try { this._musicSourceNode.disconnect(); } catch (e) {}
-      }
     }
+    // Stop bike motion loop + restore music from its gameplay duck (St2/Sp3).
+    this.audioEngine.stopBike();
+    this.audioEngine.duckMusic(1.0, 0.8);
+    this.audioEngine.detachRecorderDestination();
     this._hideGameOver();
     this._hideVictory();
     this._hideAllOverlays();
@@ -2996,7 +2955,7 @@ class Game {
         this._recordCrash('obstacle');
         this.bike._fall();
         this.chaseCamera.shakeAmount = 0.25;
-        this._playBeep(150, 0.4);
+        this._playCrash(1.0);
         hapticTreeHit();
       }
       return;
@@ -3008,7 +2967,7 @@ class Game {
       this._recordCrash('tree');
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.2;
-      this._playBeep(200, 0.3);
+      this._playCrash(0.85);
       hapticTreeHit();
       return;
     }
@@ -3017,7 +2976,7 @@ class Game {
       this._recordCrash('obstacle');
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.25;
-      this._playBeep(150, 0.4);
+      this._playCrash(1.0);
       hapticTreeHit();
     }
   }
@@ -3082,6 +3041,18 @@ class Game {
         this._updateStoker(dt);
       } else if (this.mode === 'local') {
         this._updateLocal(dt);
+      }
+      // Sp3 — feed bike velocity to the procedural motion loop every frame.
+      if (this.bike) {
+        const frontOff = Math.abs(this.bike._frontWheelOffset || 0);
+        const rearOff = Math.abs(this.bike._rearWheelOffset || 0);
+        const offRoad = Math.min(1, Math.max(0, Math.max(frontOff, rearOff) - 2.5) / 3);
+        this.audioEngine.updateBike(
+          this.bike.speed,
+          TUNE.maxSpeed || 19,
+          offRoad,
+          this.bike.fallen
+        );
       }
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
