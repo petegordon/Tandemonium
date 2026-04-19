@@ -3042,18 +3042,6 @@ class Game {
       } else if (this.mode === 'local') {
         this._updateLocal(dt);
       }
-      // Sp3 — feed bike velocity to the procedural motion loop every frame.
-      if (this.bike) {
-        const frontOff = Math.abs(this.bike._frontWheelOffset || 0);
-        const rearOff = Math.abs(this.bike._rearWheelOffset || 0);
-        const offRoad = Math.min(1, Math.max(0, Math.max(frontOff, rearOff) - 2.5) / 3);
-        this.audioEngine.updateBike(
-          this.bike.speed,
-          TUNE.maxSpeed || 19,
-          offRoad,
-          this.bike.fallen
-        );
-      }
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
@@ -3064,6 +3052,25 @@ class Game {
       if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
 
       this.renderer.render(this.scene, this.camera);
+    }
+
+    // Sp3 — feed bike velocity to the procedural motion loop every frame.
+    // When not actively playing (victory / gameover / lobby / countdown),
+    // feed speed=0 so the loop fades to silence via the engine's internal
+    // ramp instead of holding the last gain value indefinitely.
+    if (this.bike) {
+      const playing = this.state === 'playing';
+      const frontOff = Math.abs(this.bike._frontWheelOffset || 0);
+      const rearOff = Math.abs(this.bike._rearWheelOffset || 0);
+      const offRoad = playing
+        ? Math.min(1, Math.max(0, Math.max(frontOff, rearOff) - 2.5) / 3)
+        : 0;
+      this.audioEngine.updateBike(
+        playing ? this.bike.speed : 0,
+        TUNE.maxSpeed || 19,
+        offRoad,
+        !playing || this.bike.fallen
+      );
     }
 
     // Clear buffered tap flags after all input has been read this frame
