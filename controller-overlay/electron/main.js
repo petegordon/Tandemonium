@@ -130,11 +130,20 @@ app.on('will-quit', () => {
   if (tray) tray.destroy();
 });
 
-// Handle WebHID permission requests from renderer
+// Handle WebHID + media permission requests from renderer.
+// `media` covers microphone + camera via getUserMedia. Speaker output via
+// HTMLAudioElement.setSinkId() doesn't need a permission prompt — it only
+// needs device labels, which require a one-time mic permission grant.
 app.on('web-contents-created', (_, contents) => {
   contents.session.setPermissionCheckHandler((webContents, permission) => {
     if (permission === 'hid') return true;
+    if (permission === 'media') return true;
     return true;
+  });
+  contents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media') return callback(true);
+    if (permission === 'hid') return callback(true);
+    callback(true);
   });
   contents.session.setDevicePermissionHandler((details) => {
     if (details.deviceType === 'hid') return true;

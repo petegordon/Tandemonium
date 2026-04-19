@@ -16,6 +16,9 @@ import { detectControllerType, PROFILES } from './controller-profiles.js';
 import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
 import { SensorFusion } from '../shared/sensor-fusion.js';
 import { GyroGimbal } from './gyro-gimbal.js';
+import { AudioDeviceManager } from './audio-device-manager.js';
+import { DualSenseMic } from './dualsense-mic.js';
+import { DualSenseSpeaker } from './dualsense-speaker.js';
 
 // ── DOM refs ──
 const canvas = document.getElementById('canvas');
@@ -62,6 +65,19 @@ let calibRetries = 0;
 const MAX_CALIB_RETRIES = 5;
 const CALIB_VARIANCE_THRESHOLD = 150;
 let gyroConnectTimer = null;
+
+// ── DualSense audio (mic + speaker) ──
+// These are only active for DualSense controllers. Over Bluetooth the
+// audio streams travel the OS audio stack (A2DP sink + HFP gateway);
+// over USB they come through USB Audio Class. Either way we discover
+// them by enumerateDevices() label match via AudioDeviceManager.
+const audioDevices = new AudioDeviceManager();
+const dualsenseMic = new DualSenseMic();
+const dualsenseSpeaker = new DualSenseSpeaker();
+let audioInitStarted = false;
+let lastHwMuteState = null;     // tracks hardware mute-button edge
+const AUDIO_LEVEL_POLL_MS = 50; // animation loop samples mic at ~20 Hz
+let lastLevelSampleAt = 0;
 
 // ── Button combo system ──
 const BUTTON_NAMES = [
@@ -586,6 +602,80 @@ async function connectControllerGyro() {
   console.log('Gyro connected:', device.productName);
 
   startCalibration();
+
+  // Kick off audio discovery for DualSense. Fire-and-forget — the audio
+  // endpoint often lags the HID connect by 1–3 s over Bluetooth, and the
+  // manager has its own debounced rescan to pick it up when it appears.
+  if (controllerDriver?.driverName === 'DualSense' ||
+      ControllerRegistry.getDriver(device.vendorId, device.productId)?.driverName === 'DualSense') {
+    initDualSenseAudio().catch((err) =>
+      console.warn('initDualSenseAudio failed:', err.message));
+  }
+}
+
+/**
+ * One-shot DualSense audio bring-up. Subsequent reconnects reuse the
+ * already-initialized manager and just trigger rescans + reopen.
+ */
+async function initDualSenseAudio() {
+  if (!audioInitStarted) {
+    audioInitStarted = true;
+    audioDevices.addEventListener('change', (e) => {
+      onAudioDevicesChanged(e.detail).catch((err) =>
+        console.warn('onAudioDevicesChanged failed:', err.message));
+    });
+    await audioDevices.init();
+  } else {
+    audioDevices.scheduleRescan(0);
+  }
+  // Trigger an immediate rescan + a couple of delayed ones — over BT the
+  // audio endpoint can appear anywhere from ~200 ms to ~3 s after HID.
+  audioDevices.scheduleRescan(800);
+  audioDevices.scheduleRescan(2500);
+  updateAudioUi();
+}
+
+async function onAudioDevicesChanged({ input, output }) {
+  // Microphone: open when a matching device appears, close when it leaves.
+  if (input && dualsenseMic.deviceId !== input.deviceId) {
+    try {
+      await dualsenseMic.open(input.deviceId);
+    } catch (err) {
+      console.warn('DualSenseMic open failed:', err.message);
+    }
+  } else if (!input && dualsenseMic.isOpen) {
+    await dualsenseMic.close();
+  }
+
+  // Speaker: bind sinkId; actual playback is on-demand via test button,
+  // notifications, etc. No stream to open yet.
+  await dualsenseSpeaker.setSink(output ? output.deviceId : null);
+
+  updateAudioUi();
+}
+
+const micDot = document.getElementById('mic-dot');
+const spkDot = document.getElementById('spk-dot');
+const micLevelFill = document.querySelector('#mic-level-bar > .fill');
+const audioMicStatus = document.getElementById('audio-mic-status');
+const audioSpkStatus = document.getElementById('audio-spk-status');
+
+function updateAudioUi() {
+  if (micDot) {
+    micDot.classList.toggle('ok', dualsenseMic.isOpen && dualsenseMic.enabled);
+    micDot.classList.toggle('muted', dualsenseMic.isOpen && !dualsenseMic.enabled);
+  }
+  if (spkDot) {
+    spkDot.classList.toggle('ok', dualsenseSpeaker.ready);
+  }
+  if (audioMicStatus) {
+    audioMicStatus.textContent = dualsenseMic.isOpen
+      ? (dualsenseMic.enabled ? 'Live' : 'Muted')
+      : (audioDevices.hasInput ? 'Found' : 'Not found');
+  }
+  if (audioSpkStatus) {
+    audioSpkStatus.textContent = dualsenseSpeaker.ready ? 'Ready' : 'Not found';
+  }
 }
 
 /**
@@ -601,6 +691,15 @@ async function disconnectGyro() {
     if (controllerDriver.destroy) controllerDriver.destroy();
     controllerDriver = null;
   }
+  // Close mic stream; release the A2DP sink binding. AudioDeviceManager
+  // stays alive so reconnects are cheap — it just rescans and reopens.
+  if (dualsenseMic.isOpen) {
+    try { await dualsenseMic.close(); } catch (e) { /* ok */ }
+  }
+  dualsenseSpeaker.closeStream();
+  await dualsenseSpeaker.setSink(null);
+  lastHwMuteState = null;
+  updateAudioUi();
   gyroActive = false;
   gyroPermitted = false;
   syntheticGamepad = null;
@@ -669,6 +768,19 @@ function loop() {
     axPitchVal.textContent = Math.round(twist(1, 0, 0)) + '\u00B0';
     axRollVal.textContent = Math.round(twist(0, 0, 1)) + '\u00B0';
     axYawVal.textContent = Math.round(twist(0, 1, 0)) + '\u00B0';
+  }
+
+  // Sample mic level at ~20 Hz (cheap but visible). Skip when mic is
+  // not open or panel isn't showing — saves an unnecessary RMS pass.
+  if (dualsenseMic.isOpen) {
+    const now = performance.now();
+    if (now - lastLevelSampleAt >= AUDIO_LEVEL_POLL_MS) {
+      lastLevelSampleAt = now;
+      const lvl = dualsenseMic.sampleLevel();
+      if (micLevelFill) {
+        micLevelFill.style.width = Math.round(lvl * 100) + '%';
+      }
+    }
   }
 
   // Update gyro HUD
@@ -981,6 +1093,26 @@ function updateSyntheticFromParsed(parsed) {
     syntheticGamepad = createSyntheticGamepad(hidDevice?.productName);
   }
   const g = syntheticGamepad;
+
+  // Hardware mute-button edge detection. The DualSense's mic button
+  // latches a state that parsed.buttons.mic reflects (psByte bit 2).
+  // We treat each *rising edge* of the button as a toggle — track the
+  // muted state locally, then flip the MediaStreamTrack + the mute LED
+  // so HW / OS / UI agree. First parse seeds the state without toggling.
+  if (parsed.buttons && controllerDriver?.driverName === 'DualSense') {
+    const hwDown = !!parsed.buttons.mic;
+    if (lastHwMuteState === null) {
+      lastHwMuteState = hwDown;
+    } else if (hwDown && !lastHwMuteState) {
+      // Rising edge → toggle
+      const nextEnabled = !dualsenseMic.enabled;
+      dualsenseMic.setEnabled(nextEnabled);
+      // LED: solid when muted, off when live. Fire-and-forget.
+      controllerDriver.setMicMuteLed(nextEnabled ? 'off' : 'on').catch(() => {});
+      updateAudioUi();
+    }
+    lastHwMuteState = hwDown;
+  }
 
   if (parsed.sticks) {
     g.axes[0] = parsed.sticks.lx;
@@ -1303,6 +1435,59 @@ if (window.electronAPI) {
   window.electronAPI.onToggleSettings(() => {
     settingsPanel.classList.toggle('visible');
   });
+}
+
+// ── DualSense audio UI ──
+const micPassthroughCheck = document.getElementById('mic-passthrough');
+const testSpeakerBtn = document.getElementById('test-speaker-btn');
+const rescanAudioBtn = document.getElementById('rescan-audio-btn');
+const speakerVolumeSlider = document.getElementById('speaker-volume');
+const speakerVolumeValue = document.getElementById('speaker-volume-value');
+
+if (micPassthroughCheck) {
+  micPassthroughCheck.addEventListener('change', (e) => {
+    dualsenseMic.setPassthrough(e.target.checked);
+  });
+}
+if (testSpeakerBtn) {
+  testSpeakerBtn.addEventListener('click', async () => {
+    if (!dualsenseSpeaker.ready) {
+      // Try a rescan first — user may have just paired the device.
+      audioDevices.scheduleRescan(0);
+      return;
+    }
+    try {
+      await dualsenseSpeaker.playTone(880, 250);
+    } catch (err) {
+      console.warn('Test tone failed:', err.message);
+    }
+  });
+}
+if (rescanAudioBtn) {
+  rescanAudioBtn.addEventListener('click', () => {
+    // If we've never initialized (no DualSense connected yet), bring the
+    // manager up now so the user can confirm the device list manually.
+    if (!audioInitStarted) {
+      initDualSenseAudio().catch((err) =>
+        console.warn('initDualSenseAudio failed:', err.message));
+    } else {
+      audioDevices.scheduleRescan(0);
+    }
+  });
+}
+if (speakerVolumeSlider && speakerVolumeValue) {
+  speakerVolumeSlider.addEventListener('input', (e) => {
+    const pct = parseInt(e.target.value);
+    speakerVolumeValue.textContent = pct + '%';
+    dualsenseSpeaker.setVolume(pct / 100);
+    // Also mirror to HID output-report byte — effective on wired, ignored
+    // on BT (where A2DP handles volume) but harmless to send.
+    if (controllerDriver?.driverName === 'DualSense') {
+      controllerDriver.setSpeakerVolume(Math.round(pct * 2.55)).catch(() => {});
+    }
+  });
+  // Seed volume from slider default
+  dualsenseSpeaker.setVolume(parseInt(speakerVolumeSlider.value) / 100);
 }
 
 // ── Start ──

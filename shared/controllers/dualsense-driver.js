@@ -254,6 +254,112 @@ export class DualSenseDriver extends ControllerDriver {
     }
   }
 
+  // ── Audio controls ──────────────────────────────────────────
+  //
+  // These drive the DualSense's internal audio-related bytes of the same
+  // output report used for rumble/LEDs. They are the *control* surface for
+  // audio features; the audio stream itself goes through the OS audio stack
+  // (USB Audio Class on wired, A2DP+HFP on Bluetooth). The overlay uses
+  // these to keep the hardware LED / volume state in sync with what the
+  // user sees and hears in the app.
+  //
+  // Byte offsets in the WebHID payload (report_id stripped). Indices match
+  // pydualsense's data[] layout; USB and BT differ because BT prepends a
+  // 0x02 data-tag byte at buf[0].
+  //
+  //                        USB  BT
+  //   headphone_volume      [4]  [5]   0..0x7F
+  //   speaker_volume        [5]  [6]   0..0xFF (internal speaker volume;
+  //                                            may be ineffective under BT
+  //                                            where A2DP handles levels)
+  //   microphone_volume     [6]  [7]   0..0xFF (headset mic gain;
+  //                                            internal-mic gain is fixed)
+  //   audio_control         [7]  [8]   bitfield (see below)
+  //   mute_button_led       [8]  [9]   0=off, 1=solid, 2=pulse
+  //   power_save_control    [9]  [10]  bit 4 = mic HW mute
+  //
+  // audio_control byte (documented from pydualsense / community RE):
+  //   bits 0..3 = output_path_select (controls where audio is routed —
+  //               stereo, mono, mix, speaker-only, etc.)
+  //   bit 4     = force internal mic
+  //   bit 5     = disable jack mic
+  //   bit 6     = echo cancellation enable
+  //   bit 7     = noise cancellation enable
+
+  /**
+   * Set the mic-mute button LED on the face of the controller.
+   * @param {'off'|'on'|'pulse'|number} state
+   */
+  async setMicMuteLed(state) {
+    if (!this._supportsOutputReports()) return;
+    let code;
+    if (typeof state === 'number') code = state & 0xFF;
+    else if (state === 'on') code = 1;
+    else if (state === 'pulse') code = 2;
+    else code = 0; // 'off' / anything unknown
+    try {
+      await this._sendOutputReport({ micMuteLed: code });
+    } catch (err) {
+      console.warn('DualSense setMicMuteLed failed:', err.message);
+    }
+  }
+
+  /**
+   * Set the hardware mic mute state (bit 4 of power_save_control).
+   * When true, the controller mutes its own audio capture regardless of
+   * what the OS is doing. Useful to keep HW + OS state in sync.
+   */
+  async setMicHardwareMuted(muted) {
+    if (!this._supportsOutputReports()) return;
+    try {
+      await this._sendOutputReport({ powerSave: muted ? 0x10 : 0x00 });
+    } catch (err) {
+      console.warn('DualSense setMicHardwareMuted failed:', err.message);
+    }
+  }
+
+  /**
+   * Set internal-speaker volume (0..255). Takes effect over USB reliably;
+   * over Bluetooth, A2DP volume is controlled by the OS and this byte is
+   * generally ignored — we still send it for parity / wired-headset users.
+   */
+  async setSpeakerVolume(vol) {
+    if (!this._supportsOutputReports()) return;
+    const v = Math.max(0, Math.min(255, vol | 0));
+    try {
+      await this._sendOutputReport({ speakerVolume: v });
+    } catch (err) {
+      console.warn('DualSense setSpeakerVolume failed:', err.message);
+    }
+  }
+
+  /**
+   * Set headset-jack mic gain (0..255). Affects only a 3.5mm headset mic
+   * plugged into the controller — the internal mic has fixed analog gain.
+   */
+  async setMicGain(gain) {
+    if (!this._supportsOutputReports()) return;
+    const g = Math.max(0, Math.min(255, gain | 0));
+    try {
+      await this._sendOutputReport({ micVolume: g });
+    } catch (err) {
+      console.warn('DualSense setMicGain failed:', err.message);
+    }
+  }
+
+  /**
+   * Set headphone-jack output volume (0..127).
+   */
+  async setHeadphoneVolume(vol) {
+    if (!this._supportsOutputReports()) return;
+    const v = Math.max(0, Math.min(0x7F, vol | 0));
+    try {
+      await this._sendOutputReport({ headphoneVolume: v });
+    } catch (err) {
+      console.warn('DualSense setHeadphoneVolume failed:', err.message);
+    }
+  }
+
   _supportsOutputReports() {
     if (!this.device || !this.device.opened) return false;
     // Only DualSense (not DualShock 4) uses the 0x02 / 0x31 output formats
@@ -298,13 +404,22 @@ export class DualSenseDriver extends ControllerDriver {
    *   valid_flag1 bit 2 (0x04): lightbar control enable
    *   valid_flag1 bit 4 (0x10): player indicator control enable
    */
-  async _sendOutputReport({ rumble, lightbar, playerLEDs } = {}) {
+  async _sendOutputReport(fields = {}) {
     if (this.connectionType === 'bluetooth') {
-      await this._sendOutputReportBT({ rumble, lightbar, playerLEDs });
+      await this._sendOutputReportBT(fields);
     } else {
-      await this._sendOutputReportUSB({ rumble, lightbar, playerLEDs });
+      await this._sendOutputReportUSB(fields);
     }
   }
+
+  // valid_flag0 bits for audio — match pydualsense / Linux hid-playstation.
+  // (flag0 bits 0..1 are already used by rumble above.)
+  static FLAG0_HEADPHONE_VOLUME = 0x04;
+  static FLAG0_SPEAKER_VOLUME   = 0x08;
+  static FLAG0_MIC_VOLUME       = 0x10;
+  static FLAG0_AUDIO_CONTROL    = 0x20;
+  static FLAG0_MIC_MUTE_LED     = 0x40;
+  static FLAG0_POWER_SAVE       = 0x80;
 
   // Byte offsets referenced from pydualsense wire layout (report_id at [0]).
   // WebHID's sendReport strips the report_id so our payload indices are
@@ -337,13 +452,39 @@ export class DualSenseDriver extends ControllerDriver {
   //   lightbar_green  [46]  [45]
   //   lightbar_blue   [47]  [46]
 
-  async _sendOutputReportUSB({ rumble, lightbar, playerLEDs }) {
+  async _sendOutputReportUSB({ rumble, lightbar, playerLEDs,
+                                headphoneVolume, speakerVolume, micVolume,
+                                audioControl, micMuteLed, powerSave }) {
     const buf = new Uint8Array(47);
     let flag0 = 0, flag1 = 0;
     if (rumble) {
       flag0 |= 0x03;          // rumble emu + haptics select
       buf[2] = rumble.weak & 0xFF;
       buf[3] = rumble.strong & 0xFF;
+    }
+    if (headphoneVolume != null) {
+      flag0 |= DualSenseDriver.FLAG0_HEADPHONE_VOLUME;
+      buf[4] = headphoneVolume & 0x7F;
+    }
+    if (speakerVolume != null) {
+      flag0 |= DualSenseDriver.FLAG0_SPEAKER_VOLUME;
+      buf[5] = speakerVolume & 0xFF;
+    }
+    if (micVolume != null) {
+      flag0 |= DualSenseDriver.FLAG0_MIC_VOLUME;
+      buf[6] = micVolume & 0xFF;
+    }
+    if (audioControl != null) {
+      flag0 |= DualSenseDriver.FLAG0_AUDIO_CONTROL;
+      buf[7] = audioControl & 0xFF;
+    }
+    if (micMuteLed != null) {
+      flag0 |= DualSenseDriver.FLAG0_MIC_MUTE_LED;
+      buf[8] = micMuteLed & 0xFF;
+    }
+    if (powerSave != null) {
+      flag0 |= DualSenseDriver.FLAG0_POWER_SAVE;
+      buf[9] = powerSave & 0xFF;
     }
     if (playerLEDs != null) {
       flag1 |= 0x10;          // player indicator enable
@@ -361,7 +502,9 @@ export class DualSenseDriver extends ControllerDriver {
     await this.device.sendReport(0x02, buf);
   }
 
-  async _sendOutputReportBT({ rumble, lightbar, playerLEDs }) {
+  async _sendOutputReportBT({ rumble, lightbar, playerLEDs,
+                               headphoneVolume, speakerVolume, micVolume,
+                               audioControl, micMuteLed, powerSave }) {
     const PAYLOAD_LEN = 77;
     const buf = new Uint8Array(PAYLOAD_LEN);
     buf[0] = 0x02;             // BT data tag
@@ -370,6 +513,30 @@ export class DualSenseDriver extends ControllerDriver {
       flag0 |= 0x03;
       buf[3] = rumble.weak & 0xFF;
       buf[4] = rumble.strong & 0xFF;
+    }
+    if (headphoneVolume != null) {
+      flag0 |= DualSenseDriver.FLAG0_HEADPHONE_VOLUME;
+      buf[5] = headphoneVolume & 0x7F;
+    }
+    if (speakerVolume != null) {
+      flag0 |= DualSenseDriver.FLAG0_SPEAKER_VOLUME;
+      buf[6] = speakerVolume & 0xFF;
+    }
+    if (micVolume != null) {
+      flag0 |= DualSenseDriver.FLAG0_MIC_VOLUME;
+      buf[7] = micVolume & 0xFF;
+    }
+    if (audioControl != null) {
+      flag0 |= DualSenseDriver.FLAG0_AUDIO_CONTROL;
+      buf[8] = audioControl & 0xFF;
+    }
+    if (micMuteLed != null) {
+      flag0 |= DualSenseDriver.FLAG0_MIC_MUTE_LED;
+      buf[9] = micMuteLed & 0xFF;
+    }
+    if (powerSave != null) {
+      flag0 |= DualSenseDriver.FLAG0_POWER_SAVE;
+      buf[10] = powerSave & 0xFF;
     }
     if (playerLEDs != null) {
       flag1 |= 0x10;
