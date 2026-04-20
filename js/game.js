@@ -1117,6 +1117,16 @@ class Game {
       if (this.inputP2.gyroConnected) this.inputP2.calibrateGyro();
       this.inputP2.startTiltCalibration();
     }
+    // Prime P2's held-detection stamp so the _updateLocal isActive() gate
+    // doesn't zero out their gyro lean on frame 1. The stamp was last set
+    // at InputManager construction (JOIN RIDE in the lobby); if >10s of
+    // level browsing + instructions elapsed before countdown starts, P2
+    // would already be "inactive" and their contribution would hard-gate
+    // to 0 until their first trigger press, then snap in and jerk the
+    // bike. Re-priming here covers the two-human case without weakening
+    // the one-human desk-controller protection — that still self-corrects
+    // after 10s of trigger silence.
+    if (this.inputP2) this.inputP2._markActive();
 
     const statusEl = document.getElementById('status');
     statusEl.textContent = '';
