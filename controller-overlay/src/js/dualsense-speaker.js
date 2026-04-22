@@ -56,18 +56,17 @@ export class DualSenseSpeaker {
    * after the tone has finished.
    */
   async playTone(freq = 880, durationMs = 200) {
-    if (!this._deviceId) return;
-    // Build the tone offline, pack into a WAV, send through an <audio>
-    // element so we can route via setSinkId. Using an AudioContext +
-    // destination + MediaStreamDestination would also work, but <audio>
-    // + setSinkId is the shortest path that respects the chosen sink.
+    console.log('  [speaker.playTone] entered', { freq, durationMs, deviceId: this._deviceId, volume: this._volume });
+    if (!this._deviceId) {
+      console.warn('  [speaker.playTone] no deviceId bound — returning early');
+      return;
+    }
     const sampleRate = 48000;
     const samples = Math.floor((durationMs / 1000) * sampleRate);
     const ctx = new OfflineAudioContext(1, samples, sampleRate);
     const osc = ctx.createOscillator();
     osc.frequency.value = freq;
     const gain = ctx.createGain();
-    // Short fade in/out to avoid clicks at tone boundaries.
     const fade = Math.min(0.02, (durationMs / 1000) / 4);
     gain.gain.setValueAtTime(0, 0);
     gain.gain.linearRampToValueAtTime(this._volume, fade);
@@ -77,10 +76,18 @@ export class DualSenseSpeaker {
     gain.connect(ctx.destination);
     osc.start(0);
     osc.stop(durationMs / 1000);
+    console.log('  [speaker.playTone] rendering offline buffer…');
     const rendered = await ctx.startRendering();
+    console.log('  [speaker.playTone] rendered', {
+      length: rendered.length,
+      duration: rendered.duration,
+      channels: rendered.numberOfChannels,
+      sampleRate: rendered.sampleRate,
+    });
 
     const blob = _bufferToWav(rendered);
     const url = URL.createObjectURL(blob);
+    console.log('  [speaker.playTone] WAV blob created', { size: blob.size });
     try {
       await this._playUrl(url);
     } finally {
@@ -100,13 +107,26 @@ export class DualSenseSpeaker {
   async _playUrl(url) {
     const audio = new Audio(url);
     audio.volume = this._volume;
+    console.log('  [speaker._playUrl] Audio element created', { volume: audio.volume, src: url.slice(0, 40) + '…' });
     await this._applySink(audio);
-    // Wait for metadata so duration is known; await play() to surface
-    // autoplay errors immediately rather than swallowing them.
-    await audio.play();
+    console.log('  [speaker._playUrl] sinkId after setSinkId:', audio.sinkId);
+    const playStart = performance.now();
+    try {
+      await audio.play();
+      console.log(`  [speaker._playUrl] play() resolved in ${Math.round(performance.now() - playStart)}ms — paused=${audio.paused} readyState=${audio.readyState} duration=${audio.duration}`);
+    } catch (err) {
+      console.error('  [speaker._playUrl] play() rejected:', err);
+      throw err;
+    }
     await new Promise((resolve, reject) => {
-      audio.addEventListener('ended', resolve, { once: true });
-      audio.addEventListener('error', () => reject(audio.error || new Error('audio error')), { once: true });
+      audio.addEventListener('ended', () => {
+        console.log(`  [speaker._playUrl] 'ended' fired after ${Math.round(performance.now() - playStart)}ms — currentTime=${audio.currentTime}`);
+        resolve();
+      }, { once: true });
+      audio.addEventListener('error', () => {
+        console.error('  [speaker._playUrl] error event:', audio.error);
+        reject(audio.error || new Error('audio error'));
+      }, { once: true });
     });
   }
 
@@ -139,16 +159,15 @@ export class DualSenseSpeaker {
 
   async _applySink(audioEl) {
     if (typeof audioEl.setSinkId !== 'function') {
-      console.warn('DualSenseSpeaker: setSinkId unsupported in this runtime');
+      console.warn('  [speaker._applySink] setSinkId unsupported in this runtime');
       return;
     }
     try {
+      console.log('  [speaker._applySink] calling setSinkId →', this._deviceId);
       await audioEl.setSinkId(this._deviceId);
+      console.log('  [speaker._applySink] setSinkId OK — audioEl.sinkId =', audioEl.sinkId);
     } catch (err) {
-      // Common cause: deviceId stale after a disconnect/reconnect. Caller
-      // should rescan via AudioDeviceManager; log and fall through so the
-      // element still plays through the default sink.
-      console.warn('DualSenseSpeaker setSinkId failed:', err.message);
+      console.warn('  [speaker._applySink] setSinkId failed:', err.name, err.message);
     }
   }
 }

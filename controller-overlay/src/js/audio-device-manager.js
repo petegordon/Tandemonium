@@ -110,10 +110,13 @@ export class AudioDeviceManager extends EventTarget {
     const inputs  = devices.filter((d) => d.kind === 'audioinput'  && matchesDualSense(d.label));
     const outputs = devices.filter((d) => d.kind === 'audiooutput' && matchesDualSense(d.label));
 
-    // Prefer a device whose label mentions "wireless controller" outright;
-    // fall back to the first match otherwise.
-    this._input  = inputs.find((d) => normalize(d.label).includes('wireless controller'))  || inputs[0]  || null;
-    this._output = outputs.find((d) => normalize(d.label).includes('wireless controller')) || outputs[0] || null;
+    // Prefer a concrete hardware deviceId over Chromium's 'default' /
+    // 'communications' aliases. The aliases route to whatever the current
+    // system default is — binding to them means Play Tone lands on the OS
+    // default output instead of the DualSense hardware sink specifically.
+    const isConcrete = (d) => d.deviceId !== 'default' && d.deviceId !== 'communications';
+    this._input  = inputs.find(isConcrete)  || inputs[0]  || null;
+    this._output = outputs.find(isConcrete) || outputs[0] || null;
 
     if (this._input?.deviceId !== prevIn || this._output?.deviceId !== prevOut) {
       this.dispatchEvent(new CustomEvent('change', {

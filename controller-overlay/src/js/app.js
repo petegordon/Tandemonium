@@ -75,6 +75,12 @@ const audioDevices = new AudioDeviceManager();
 const dualsenseMic = new DualSenseMic();
 const dualsenseSpeaker = new DualSenseSpeaker();
 let audioInitStarted = false;
+
+if (typeof window !== 'undefined') {
+  window.audioDevices = audioDevices;
+  window.dualsenseMic = dualsenseMic;
+  window.dualsenseSpeaker = dualsenseSpeaker;
+}
 let lastHwMuteState = null;     // tracks hardware mute-button edge
 const AUDIO_LEVEL_POLL_MS = 50; // animation loop samples mic at ~20 Hz
 let lastLevelSampleAt = 0;
@@ -594,6 +600,10 @@ async function connectControllerGyro() {
   hidDevice = controllerDriver.device;
   hidDevice.addEventListener('inputreport', handleInputReport);
 
+  if (typeof window !== 'undefined') {
+    window.controllerDriver = controllerDriver;
+  }
+
   gyroActive = true;
   gyroPermitted = true;
   connectGyroBtn.textContent = 'Connected';
@@ -627,6 +637,16 @@ async function initDualSenseAudio() {
     await audioDevices.init();
   } else {
     audioDevices.scheduleRescan(0);
+    // On reconnect the underlying deviceIds typically haven't changed, so
+    // rescan() won't fire 'change' — but teardown cleared mic + sink, so
+    // re-apply the current match explicitly to re-open them.
+    if (audioDevices.hasInput || audioDevices.hasOutput) {
+      onAudioDevicesChanged({
+        input: audioDevices.input,
+        output: audioDevices.output,
+      }).catch((err) =>
+        console.warn('onAudioDevicesChanged failed:', err.message));
+    }
   }
   // Trigger an immediate rescan + a couple of delayed ones — over BT the
   // audio endpoint can appear anywhere from ~200 ms to ~3 s after HID.
@@ -1451,16 +1471,29 @@ if (micPassthroughCheck) {
 }
 if (testSpeakerBtn) {
   testSpeakerBtn.addEventListener('click', async () => {
+    const style = 'background:#024;color:#9cf;padding:2px 6px;font-weight:bold';
+    console.group('%c[PlayTone] click', style);
+    console.log('speaker.ready:', dualsenseSpeaker.ready);
+    console.log('speaker.deviceId:', dualsenseSpeaker.deviceId);
+    console.log('speaker.volume:', dualsenseSpeaker.volume);
+    console.log('audioDevices.output:', audioDevices.output);
+    console.log('audioDevices.hasOutput:', audioDevices.hasOutput);
+
     if (!dualsenseSpeaker.ready) {
-      // Try a rescan first — user may have just paired the device.
+      console.warn('speaker not ready — scheduling rescan, aborting tone');
       audioDevices.scheduleRescan(0);
+      console.groupEnd();
       return;
     }
+    const t0 = performance.now();
     try {
+      console.log('calling playTone(880, 250) …');
       await dualsenseSpeaker.playTone(880, 250);
+      console.log(`playTone resolved in ${Math.round(performance.now() - t0)}ms`);
     } catch (err) {
-      console.warn('Test tone failed:', err.message);
+      console.error(`playTone rejected after ${Math.round(performance.now() - t0)}ms:`, err);
     }
+    console.groupEnd();
   });
 }
 if (rescanAudioBtn) {

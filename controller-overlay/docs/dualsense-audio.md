@@ -103,13 +103,50 @@ from a few hundred ms to a few seconds after the HID device.
 ```bash
 cd controller-overlay
 npm start
-# Open DevTools (Cmd+Shift+I). In Console:
-> audioDevices                  # should show MediaDevices info
-> await audioDevices.listAllAudioDevices()
-> dualsenseMic.isOpen           # true once discovery completes
-> dualsenseSpeaker.ready        # true once discovery completes
-> await dualsenseSpeaker.playTone(440, 300)
+# Open DevTools (Ctrl/Cmd+Shift+I). In Console:
+> window.audioDevices                  # module-scoped refs exposed on window for debug
+> await window.audioDevices.listAllAudioDevices()
+> window.dualsenseMic.isOpen           # true once discovery completes
+> window.dualsenseSpeaker.ready        # true once discovery completes
+> await window.dualsenseSpeaker.playTone(440, 300)
 ```
+
+## Known limitation: Windows + USB DualSense internal speaker
+
+On Windows, Chromium-driven audio routed via `setSinkId()` to the DualSense's
+USB Audio Class speaker endpoint is silent even though the routing succeeds
+end-to-end. Concretely:
+
+- `setSinkId` resolves without error against the concrete DualSense `deviceId`.
+- `audio.play()` resolves and `'ended'` fires on time with `currentTime`
+  reaching the full clip duration.
+- Windows-native playback (Settings → Sound → Test) to the same endpoint is
+  audible, proving the hardware and USB Audio Class driver work.
+- Sweeping every plausible `audio_control` / `speaker_volume` / `headphone_volume`
+  HID output-report combination while playback is live changes nothing.
+
+The audio leaves Chromium, reaches the Windows audio engine, appears to reach
+the USB Audio Class endpoint, but the DualSense firmware does not produce
+physical sound in response. This is below the layer we can fix from
+JavaScript or WebHID — it would need a native Windows Core Audio module
+(WASAPI exclusive mode is a plausible workaround) or an upstream Chromium /
+Electron fix to the shared-mode output path for this device class.
+
+**Currently working on Windows:**
+
+- Mic capture and level meter (USB and BT)
+- Mic passthrough to system default output
+- Hardware mute-button sync + mute LED
+- All `setMicMuteLed`, `setSpeakerVolume`, `setMicGain`, `setHeadphoneVolume`
+  HID control bytes (they are accepted by the controller; the speaker_volume
+  byte's audible effect on the internal speaker is gated by the limitation
+  above)
+
+**Currently non-working on Windows:**
+
+- Internal-speaker playback via Play Tone / `playClip` / `routeStream`.
+  Expected to work on macOS (per original implementation) and plausibly on
+  Bluetooth A2DP (different code path — untested).
 
 ## Risks and mitigations
 
@@ -125,6 +162,7 @@ npm start
 | OS-level mute behavior varies | User's expectation of "muted" may diverge from what downstream consumers hear | Mirror three states: HW LED, `MediaStreamTrack.enabled`, UI dot color |
 | A2DP latency (~150–250 ms) | Unsuitable for music/game audio mixing | Use only for notifications in the overlay; documented |
 | `OfflineAudioContext` + `setSinkId` round-trip | Small delay before first tone plays | Acceptable for a test-tone button; preload clips if ever used for UI sounds |
+| Chromium-driven output silent on Windows USB DualSense speaker | Play Tone / notification playback produces no sound despite clean `setSinkId` + `play()` + `'ended'` lifecycle | Documented limitation — see "Known limitation" section above. Needs native WASAPI module or Chromium upstream fix |
 
 ## Files touched
 
