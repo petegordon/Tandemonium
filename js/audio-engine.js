@@ -38,6 +38,7 @@ export class AudioEngine {
     this._noiseBuf = null;
     this._bike = null;
     this._duckTarget = 1.0;
+    this._lastBikeUpdate = 0;
   }
 
   // Create the AudioContext and bus graph. Safe to call multiple times.
@@ -310,27 +311,28 @@ export class AudioEngine {
 
   // Called each frame while playing. `speed` in the bike's units,
   // `maxSpeed` the configured cap, `offRoad` 0-1 surface roughness.
+  //
+  // Perf: throttled to ~20Hz and uses setTargetAtTime rather than
+  // cancel+setValue+linearRamp every frame. The old pattern tore down the
+  // automation timeline and forced an audio-thread sync on every call,
+  // which caused main-thread stalls on high-refresh displays (#277).
   updateBike(speed, maxSpeed, offRoad = 0, fallen = false) {
     if (!this.ctx || !this._bike) return;
-    const ctx = this.ctx;
-    const norm = Math.max(0, Math.min(1, speed / (maxSpeed || 19)));
-    const ramp = 0.12;
-    const now = ctx.currentTime;
+    const now = this.ctx.currentTime;
+    if (now - this._lastBikeUpdate < 0.05) return;
+    this._lastBikeUpdate = now;
 
+    const norm = Math.max(0, Math.min(1, speed / (maxSpeed || 19)));
     const wind  = fallen ? 0 : norm * norm * 0.22;
     const tire  = fallen ? 0 : norm * 0.16 + offRoad * 0.28;
     const chain = fallen ? 0 : norm * 0.09;
     const chainHz = 58 + norm * 112;
 
-    const { windGain, tireGain, chainGain, chainOsc } = this._bike;
-    [windGain.gain, tireGain.gain, chainGain.gain].forEach((g, i) => {
-      const t = [wind, tire, chain][i];
-      g.cancelScheduledValues(now);
-      g.setValueAtTime(g.value, now);
-      g.linearRampToValueAtTime(t, now + ramp);
-    });
-    chainOsc.frequency.cancelScheduledValues(now);
-    chainOsc.frequency.setValueAtTime(chainOsc.frequency.value, now);
-    chainOsc.frequency.linearRampToValueAtTime(chainHz, now + ramp);
+    const tc = 0.08;
+    const b = this._bike;
+    b.windGain.gain.setTargetAtTime(wind, now, tc);
+    b.tireGain.gain.setTargetAtTime(tire, now, tc);
+    b.chainGain.gain.setTargetAtTime(chain, now, tc);
+    b.chainOsc.frequency.setTargetAtTime(chainHz, now, tc);
   }
 }
