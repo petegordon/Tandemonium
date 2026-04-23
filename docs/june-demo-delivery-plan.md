@@ -22,6 +22,12 @@
    - Press release + press kit + trailer + open-source repo spotlight published simultaneously.
    - Outreach email blast hits inboxes at the agreed send time.
 
+## Messaging posture (locked)
+
+- **Jun 4 press drop — lead with BOTH.** Tandemonium and Users First Games are co-headline. The press release opens with "A couch co-op tandem bike game, and the Open Company studio that built it in public." Every piece of Jun 4 collateral — release, social, HN, email — gives the game and the company equal top billing. Neither plays second fiddle.
+- **Steam Next Fest (Jun 15–22) — lead with the game, pull the company in.** Fest traffic is browsing for games, not studios. Store-page hero, trailer thumbnail, social posts, and announcements during the fest are game-first. Users First Games + Open Company show up as a supporting beat ("…built in public by Users First Games — repo in the description") rather than the lede.
+- Anyone drafting Jun 4–22 copy should check it against this posture before it ships.
+
 ## Prerequisites to confirm this week
 
 Flag any "no" immediately — they change the shape of the plan.
@@ -78,7 +84,7 @@ Flag any "no" immediately — they change the shape of the plan.
 - **Mon May 11** — Fix playtest blockers. **No new features.** Suggestions go in a "post-demo" bucket and are ignored until July.
 - **Tue May 12** — Trailer v2 cut using real playtest reactions. Reactions sell couch co-op; staged b-roll doesn't.
 - **Wed May 13** — Cut **Build C (Code and Coffee candidate)**.
-- **Thu May 14** — **Submit demo to Steam for review.** Target go-live = June 4. Steam review is typically 1–5 business days but can drift; submitting 3 weeks early gives buffer for rejection + resubmit. Complete the age rating / content survey, not just the build.
+- **Thu May 14** — Build C bug-bash day. Fix only Columbus-blocking issues. Prep the Steamworks pipeline offline — complete the age-rating / content survey, confirm depot config, dry-run upload — so Monday May 25's submit-to-review is a one-click step.
 - **Fri May 15** — Columbus logistics: hardware load-out (2 laptops, 4 DualSense + 2 Xbox, HDMI splitters, monitor or TV, gaffer tape, power strips, chargers, USB hub). Printed handouts (if any) with QR to repo + wishlist.
 - **Sat May 16** — Full dress rehearsal on Code and Coffee hardware. Time a start-to-crash-to-retry loop. Practice the 2-minute Users First Games pitch out loud.
 - **Sun May 17** — **COLUMBUS CODE AND COFFEE.** Two-track agenda:
@@ -90,25 +96,25 @@ Flag any "no" immediately — they change the shape of the plan.
 
 **Goal:** June 4 assets are all drafted, reviewed, and scheduled. Steam demo is approved and staged for a June 4 go-live.
 
-- **Mon May 18** — Columbus retro. Convert any issues uncovered during the event into tickets. Fix must-fix, defer the rest.
-- **Tue May 19** — Press release v1 for Jun 4. Three headlines, pick one:
-  - "Tandemonium demo launches free with Steam Next Fest — an Open Company couch co-op experiment."
-  - "Users First Games open-sources a physics party game and drops the free demo."
-  - "Build a bike with a stranger: Tandemonium's free demo is live, and so is the repo."
-- **Wed May 20** — Outreach batch #1 goes out: top 10 press + creators. Personalized. Pitch = June 4 drop, offer the Code and Coffee clips as colour, note that demo is free + open-source so coverage has no gate.
-- **Thu May 21** — Check Steam review status. If rejected, fix + resubmit same day. If approved, configure the depot to publish on June 4 at the coordinated time (suggest 9am ET to catch both US morning press and EU afternoon).
-- **Fri May 22** — Social content calendar May 28 → Jun 22. ~15 posts: trailer, GIFs, Users First Games explainer thread, Open Company explainer, Columbus recap, countdown posts, Jun 4 drop, Jun 4 repo spotlight, Next Fest opener (Jun 15), mid-fest wishlist push, leaderboard bragging posts, fest closer.
-- **Sat May 23** — Invite-only playtest #4 on the exact build we intend to publish. One bug-bash pass, tight scope.
+- **Mon May 18** — Columbus retro. Convert any issues uncovered during the event into tickets. Fix must-fix, defer the rest. **Submission-date decision point:** if Build C at Columbus felt shaky (crashes, bad player confusion, controller regressions), bring the Steam submission forward from May 25 to today or tomorrow to buy review buffer. Otherwise hold the May 25 slot.
+- **Tue May 19** — Press release v1 for Jun 4. **Dual-lead headline** — both the game and the studio named in the opening line. Draft three variants, all co-headlined:
+  - "Tandemonium and Users First Games: a free couch co-op tandem bike game, built in public as an Open Company."
+  - "Users First Games drops Tandemonium — a free, open-source physics party game built by an Open Company."
+  - "Tandemonium's free demo is live and so is the repo: meet Users First Games' first Open Company release."
+- **Wed May 20** — Outreach batch #1 goes out: top 10 press + creators. Personalized. Pitch = June 4 drop, offer the Code and Coffee clips as colour, note that demo is free + open-source so coverage has no gate. Keep the dual-lead framing (game + company) in every pitch.
+- **Thu May 21** — Final demo polish on the candidate build. This is the last real dev day before the May 25 Steam submission — anything not merged today isn't in the Jun 4 demo. Verify the Steamworks dry run from May 14 still applies to the current build (depot paths, launch options, install script).
+- **Fri May 22** — Social content calendar May 28 → Jun 22. ~15 posts split by posture: **Jun 4 window = dual-lead** (trailer, Users First Games explainer thread, Open Company explainer, Columbus recap, drop post, repo spotlight); **Jun 15–22 window = game-first** (gameplay GIFs, player clips, leaderboard brags, mid-fest push, fest closer — company/repo as supporting line, not headline).
+- **Sat May 23** — Invite-only playtest #4 on the exact build we intend to submit Monday. One bug-bash pass, tight scope.
 - **Sun May 24** — Wishlist warm-up #1: post in r/couchcoopgaming, r/IndieDev, r/IndieGaming, r/gamedev (follow rules), Discord, Bluesky, LinkedIn (Open Company angle plays well there). Goal: bank wishlists *before* Jun 4. Wishlist velocity on launch day is what Steam's algorithm rewards.
-- **Mon May 25** — Outreach batch #2 (next 20 contacts). Send chase emails to batch #1 non-responders.
-- **Tue May 26** — Contingency day. Unfixed bugs are now post-demo.
-- **Wed May 27** — **Draft every Jun 4 artifact in final form:** press release, tweet thread, LinkedIn post, Hacker News "Show HN" title + body, blog post, email to mailing list, Discord announcement, repo README banner, Steam announcement post. Schedule everything that can be scheduled.
+- **Mon May 25** — **Submit demo to Steam for review.** Target go-live = June 4 (10-day buffer; Steam review is typically 1–5 business days). If May 18's retro flagged Build C as shaky, this submission already happened earlier and today is a soak-test day instead. Configure the depot to publish June 4 at 09:00 ET (catches US morning press + EU afternoon).
+- **Tue May 26** — Outreach batch #2 (next 20 contacts). Send chase emails to batch #1 non-responders. First business day after Steam submission: poll review status end-of-day.
+- **Wed May 27** — **Draft every Jun 4 artifact in final form:** press release (dual-lead), tweet thread, LinkedIn post, Hacker News "Show HN" title + body, blog post, email to mailing list, Discord announcement, repo README banner, Steam announcement post. Schedule everything that can be scheduled.
 
 ## WEEK 5 — May 28–Jun 3: Lockdown
 
 **Goal:** no code changes except demo-blocker fixes. All content queued.
 
-- **Thu May 28** — **Public demo build golden master (Build D).** Tag the commit. Upload to Steam depot for Jun 4 release. Confirm Steamworks schedule.
+- **Thu May 28** — **Public demo build golden master (Build D).** Tag the commit. If the May 25 submission is still in review and a code fix is unavoidable, this is the last day to submit a replacement build and still reasonably expect Jun 4 approval — past today, any fix is post-launch.
 - **Fri May 29** — Outreach batch #3 (long tail — Twitch streamers in the 1–10k concurrent range, they convert best for niche co-op). "Demo is free on June 4, no key needed."
 - **Sat May 30** — Final repo polish: contribution guide skim, issue templates, `good-first-issue` labels seeded, license + code of conduct in place. Somebody star-clicking on June 4 should land on a tidy house.
 - **Sun May 31** — Rest.
@@ -118,12 +124,12 @@ Flag any "no" immediately — they change the shape of the plan.
 
 ## DROP DAY — Thu Jun 4
 
-Coordinated launch windows, all in one day. Suggested Eastern Time schedule:
+Coordinated launch windows, all in one day. **Messaging posture: dual-lead** — every artifact today names both the game and the studio up front. Suggested Eastern Time schedule:
 
 - **09:00 ET** — Steam demo goes live.
-- **09:05 ET** — Press release out, email blast, trailer public on YouTube.
-- **09:15 ET** — Tweet/Bluesky thread. LinkedIn post with Users First Games / Open Company framing.
-- **09:30 ET** — Hacker News "Show HN: Tandemonium — an open-source couch co-op tandem bike game" submission.
+- **09:05 ET** — Press release out (dual-lead headline), email blast, trailer public on YouTube.
+- **09:15 ET** — Tweet/Bluesky thread opening with both the game hook and the Open Company beat. LinkedIn post same.
+- **09:30 ET** — Hacker News "Show HN: Tandemonium — an open-source couch co-op tandem bike game from Users First Games" submission.
 - **10:00 ET** — Discord + mailing list.
 - **All day** — Monitor Steam discussions, GitHub issues, HN/Reddit comments. Respond quickly and warmly. Every first-day bug report gets a reply, even if it's "thanks, logged."
 - **Evening** — Recap post: GIFs from real Day-1 players, thanks to Columbus crew, link to the repo contributor graph.
@@ -139,25 +145,28 @@ Coordinated launch windows, all in one day. Suggested Eastern Time schedule:
 
 Demo already live since June 4, so this is a *visibility* event, not a *launch* event. Focus shifts to funneling the Next Fest traffic bump into wishlists and repo stars.
 
-- **Mon Jun 15** — Fest opens. Update store page capsule / header to reflect Next Fest badge. Refresh announcement post. Monitor traffic, reviews, and repo traffic graph.
-- **Tue Jun 16** — Optional livestream (no longer algorithmically weighted — only do it if we have an authentic pair ready to play on camera). If we stream, it's 2 devs playing couch co-op, not a scripted demo.
-- **Wed Jun 17–Fri Jun 19** — Community highlight post (best player clips), dev-diary post (what's next after demo), Open Company "what we learned in public" post.
-- **Sat Jun 20** — Mid-fest wishlist push. Post milestone numbers if they're flattering.
-- **Sun Jun 21** — "Last 36 hours" push.
-- **Mon Jun 22** — Fest closes. Leave demo live. Write the public Next Fest retrospective (wishlists, repo stars, contributors, bugs reported, bugs fixed) — this is evergreen Open Company content.
+**Messaging posture: game-first.** Fest browsers scan for games, not studios. Lead every post with gameplay (the hook, the crash, the coordination moment). Pull Users First Games / Open Company in as the second sentence or a link in the bio, never the headline.
+
+- **Mon Jun 15** — Fest opens. Update store page capsule / header to reflect Next Fest badge. Refresh the pinned announcement — game hook first, "built in public by Users First Games, repo linked" as supporting line. Monitor traffic, reviews, and repo traffic graph.
+- **Tue Jun 16** — Optional livestream (no longer algorithmically weighted — only do it if we have an authentic pair ready to play on camera). If we stream, it's 2 devs playing couch co-op, not a scripted demo. Stream title names the game first.
+- **Wed Jun 17–Fri Jun 19** — Community highlight post (best player clips — game-first), dev-diary post (what's next after demo — gameplay roadmap leads), Open Company "what we learned in public" post (this one is the single exception where the studio can headline — publish it mid-fest, not on Day 1).
+- **Sat Jun 20** — Mid-fest wishlist push. Post milestone numbers if they're flattering. Game-first copy.
+- **Sun Jun 21** — "Last 36 hours" push. Game-first.
+- **Mon Jun 22** — Fest closes. Leave demo live. Write the public Next Fest retrospective (wishlists, repo stars, contributors, bugs reported, bugs fixed) — this is evergreen Open Company content and the natural place to re-elevate the studio story after a week of game-first fest messaging.
 
 ## Hot risks
 
-1. **Steam review delay.** Submit by May 14 to have 3 weeks of buffer before Jun 4. If rejected, the window to fix and resubmit closes fast.
+1. **Steam review delay.** Plan A submits May 25 (10-day buffer). Plan B (submit May 18) activates at the May 18 Columbus retro if Build C looked shaky. If rejected after submission, the window to fix + resubmit closes fast — May 28 is the last day to resubmit and still reasonably expect Jun 4 approval.
 2. **No full game, no keys to give.** Creators who expect key access for "full review" will pass — that's okay. Lean into the "free demo, open repo" pitch; it removes the gating question entirely.
-3. **Users First Games launch confusion.** Three announcements on one day (company, open-source repo, demo) can muddy each other. The press release should tell it as a single story in this order: company → philosophy → game, with the demo as the first proof.
+3. **Dual-lead on Jun 4 can read as muddled if copy isn't disciplined.** Three announcements on one day (company, open-source repo, demo) must feel like one story, not three press releases. Discipline: every headline names both the game and the studio; every body copy opens with the game hook, then immediately introduces Users First Games and the Open Company policy. Never two separate releases.
 4. **Local MP controller edge cases.** Recent issues (#271, #266, #256) cluster here. Budget a bluetooth-hostile environment soak in Week 4 (lots of other devices nearby — simulate Columbus + Next Fest conditions).
-5. **Columbus Code and Coffee doubles as a soft-launch.** If Build C there is embarrassing, that story follows us to June 4. Treat May 16's rehearsal seriously.
+5. **Columbus Code and Coffee doubles as a soft-launch.** If Build C there is embarrassing, that story follows us to June 4. Treat May 16's rehearsal seriously, and be ready to pull Steam submission forward to May 18 at the retro.
 6. **Open repo + free demo = zero friction for negative coverage too.** Plan for at least one public critique. Respond calmly, in public, with a fix or a reasoned disagreement. That response is itself Open Company content.
+7. **Messaging posture drift during Next Fest.** It's tempting to keep hammering the Open Company angle because it's novel — but fest browsers want games. Anyone drafting Jun 15–22 copy checks it against the "game-first, company supporting" rule before it ships.
 
 ## Suggested next actions
 
 - Confirm or correct the Week 1 scope doc bullet list.
-- Lock the Users First Games one-pager (Mon Apr 27 deliverable).
-- Decide whether the Jun 4 announcement leads with the company or the game.
-- Pick the Steam submission date (recommended May 14) and back-plan any code freezes from there.
+- Lock the Users First Games one-pager (Mon Apr 27 deliverable) — it has to carry the dual-lead weight on Jun 4, so it needs to stand alone as a company intro as well as a game intro.
+- Draft the three Jun 4 dual-lead headline variants now (not May 19) — they influence every asset produced between now and then.
+- Hold the May 25 Steam submission date unless May 18's Columbus retro flags Build C as shaky. No earlier than May 18.
