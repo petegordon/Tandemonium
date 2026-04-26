@@ -706,10 +706,13 @@ class Game {
         }
         this._resetGame(true);
       } else if (eventType === EVT_GAMEOVER) {
+        // Idempotent: captain may retry-send GAMEOVER for reliability.
         if (this.state === 'playing') this._showGameOver(true);
       } else if (eventType === EVT_CHECKPOINT) {
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
+        // Idempotent: captain may retry-send FINISH for reliability.
+        if (this.state === 'victory') return;
         // Tutorial: show completion screen instead of normal victory
         if (this._tutorialActive) {
           this._showStokerTutorialComplete();
@@ -1650,8 +1653,10 @@ class Game {
       setTimeout(() => btns.forEach(b => b.style.pointerEvents = ''), 3000);
     }
 
-    if (!fromRemote && this.net) {
-      this.net.sendEvent(EVT_GAMEOVER);
+    if (!fromRemote && this.net && this.net.connected) {
+      // Terminal event — retry a few times so a transient drop doesn't
+      // leave the stoker stuck on a "playing" screen.
+      this.net.sendEventReliable(EVT_GAMEOVER);
     }
   }
 
@@ -1737,15 +1742,18 @@ class Game {
       this._showVictory();
       hapticFinish();
 
-      // Send authoritative finish stats to stoker before the finish event
-      if (this.mode === 'captain' && this.net) {
+      // Send authoritative finish stats to stoker before the finish event.
+      // FINISH is one-shot and terminal — use the reliable variant so a
+      // single dropped packet at the relay/WebRTC boundary doesn't strand
+      // the stoker waiting at a frozen race screen.
+      if (this.mode === 'captain' && this.net && this.net.connected) {
         this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
         this.net.sendProfile({
           type: 'finishStats',
           raceSummary: this.raceManager.getSummary(this.bike.distanceTraveled),
           contribSummary: this.contributionTracker ? this.contributionTracker.getSummary() : null,
         });
-        this.net.sendEvent(EVT_FINISH);
+        this.net.sendEventReliable(EVT_FINISH);
       }
     }
   }
@@ -4499,7 +4507,7 @@ class Game {
 
     // Notify stoker that tutorial is complete (multiplayer)
     if (this.mode === 'captain' && this.net && this.net.connected) {
-      this.net.sendEvent(EVT_FINISH);
+      this.net.sendEventReliable(EVT_FINISH);
     }
 
     // Stop the game loop for this ride
