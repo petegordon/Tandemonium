@@ -69,6 +69,23 @@ export class NetworkManager {
     this._leanBuf = new ArrayBuffer(5);
     this._leanView = new DataView(this._leanBuf);
     this._leanBytes = new Uint8Array(this._leanBuf);
+
+    // Pending retries for sendEventReliable (eventByte → setTimeout id list)
+    this._reliableEventTimers = [];
+
+    // Tab/network resume → force a fresh reconnect when the partner could
+    // have silently dropped while we were backgrounded or offline. Stored so
+    // destroy() can detach.
+    this._onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') this._maybeRecoverFromIdle('visible');
+    };
+    this._onOnline = () => this._maybeRecoverFromIdle('online');
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this._onVisibilityChange);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', this._onOnline);
+    }
   }
 
   generateRoomCode() {
@@ -262,6 +279,39 @@ export class NetworkManager {
 
   sendEvent(eventType) {
     this._send(new Uint8Array([MSG_EVENT, eventType]));
+  }
+
+  // Send a one-shot terminal event (FINISH, GAMEOVER) with retries so a
+  // single dropped packet at the relay/WebRTC boundary doesn't strand the
+  // partner waiting forever. Receiver-side handlers must be idempotent
+  // (state-guarded) — they already are for FINISH and GAMEOVER.
+  sendEventReliable(eventType, attempts = 3, intervalMs = 200) {
+    const msg = new Uint8Array([MSG_EVENT, eventType]);
+    this._send(msg);
+    for (let i = 1; i < attempts; i++) {
+      const t = setTimeout(() => {
+        this._send(msg);
+        // Drop the timer id from the list once it fires
+        const idx = this._reliableEventTimers.indexOf(t);
+        if (idx >= 0) this._reliableEventTimers.splice(idx, 1);
+      }, intervalMs * i);
+      this._reliableEventTimers.push(t);
+    }
+  }
+
+  // If we've been silent (tab hidden / network offline) the partner's
+  // WebSocket may have been killed by a carrier/proxy or NAT. When the tab
+  // resumes or we come back online, force a reconnect cycle if the last
+  // heartbeat is stale — `_relayWs.readyState` can lie OPEN locally even
+  // after the server-side socket is gone.
+  _maybeRecoverFromIdle(reason) {
+    if (!this.roomCode) return; // not in a room
+    const since = this._lastRemoteHeartbeat
+      ? performance.now() - this._lastRemoteHeartbeat
+      : Infinity;
+    if (since < 3000 && this.connected) return; // healthy
+    console.log('NET: idle recovery (' + reason + '), heartbeat age=' + Math.round(since) + 'ms');
+    try { this.retryConnection(); } catch (e) { console.warn('NET: retry on resume failed:', e); }
   }
 
   sendProfile(data) {
@@ -708,6 +758,16 @@ export class NetworkManager {
     clearTimeout(this._p2pUpgradeTimeout);
     clearTimeout(this._p2pUpgradeRetryTimeout);
     this._stopRelayKeepalive();
+    // Cancel any pending reliable-event retries
+    for (const t of this._reliableEventTimers) clearTimeout(t);
+    this._reliableEventTimers.length = 0;
+    // Detach resume listeners
+    if (typeof document !== 'undefined' && this._onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this._onVisibilityChange);
+    }
+    if (typeof window !== 'undefined' && this._onOnline) {
+      window.removeEventListener('online', this._onOnline);
+    }
     // Stop local media tracks
     if (this._localMediaStream) {
       this._localMediaStream.getTracks().forEach(t => t.stop());
