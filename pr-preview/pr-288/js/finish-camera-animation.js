@@ -143,44 +143,43 @@ export class FinishCameraAnimation {
     this.camera.updateProjectionMatrix();
   }
 
-  // Phase 2: dolly in close to the front of the bike with a gentle FOV
-  // pull (vertigo-lite) for the artistic zoom.
+  // Phase 2: settle on the frontal three-quarter pose the swing landed
+  // on — no further dolly-in. FOV eases back from the swing's wide
+  // bias to the camera's normal value so the held frame doesn't read
+  // as distorted.
   _updateZoom(t) {
     const e = this._easeOutQuint(t);
     const bikePos = this.bike.position;
 
-    const theta = this._lerp(-0.35, -0.2, e);
-    const radius = this._lerp(4.2, 3.6, e);
-    const height = this._lerp(1.7, 1.4, e);
-
-    this._orbitOffset(theta, radius, height, this._orbitPos);
+    this._orbitOffset(-0.35, 4.2, 1.7, this._orbitPos);
     this._desiredPos.copy(bikePos).add(this._orbitPos);
     this.camera.position.copy(this._desiredPos);
 
     this._desiredLook.copy(bikePos);
-    this._desiredLook.x += this._fwd.x * 1.6;
-    this._desiredLook.z += this._fwd.z * 1.6;
-    this._desiredLook.y += this._lerp(0.65, 0.85, e);
+    this._desiredLook.x += this._fwd.x * 1.4;
+    this._desiredLook.z += this._fwd.z * 1.4;
+    this._desiredLook.y += 0.65;
     this.camera.lookAt(this._desiredLook);
 
-    this.camera.fov = this._lerp(this.startFov + 6, this.startFov - 4, e);
+    this.camera.fov = this._lerp(this.startFov + 6, this.startFov, e);
     this.camera.updateProjectionMatrix();
   }
 
-  // Phase 3: hold the close-up steady for a beat before overlay reveal.
+  // Phase 3: hold the same frontal three-quarter pose for a beat
+  // before the victory overlay reveals — no zoom past the swing.
   _updateHold() {
     const bikePos = this.bike.position;
-    this._orbitOffset(-0.2, 3.6, 1.4, this._orbitPos);
+    this._orbitOffset(-0.35, 4.2, 1.7, this._orbitPos);
     this._desiredPos.copy(bikePos).add(this._orbitPos);
     this.camera.position.copy(this._desiredPos);
 
     this._desiredLook.copy(bikePos);
-    this._desiredLook.x += this._fwd.x * 1.6;
-    this._desiredLook.z += this._fwd.z * 1.6;
-    this._desiredLook.y += 0.85;
+    this._desiredLook.x += this._fwd.x * 1.4;
+    this._desiredLook.z += this._fwd.z * 1.4;
+    this._desiredLook.y += 0.65;
     this.camera.lookAt(this._desiredLook);
 
-    this.camera.fov = this.startFov - 4;
+    this.camera.fov = this.startFov;
     this.camera.updateProjectionMatrix();
   }
 
