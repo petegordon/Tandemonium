@@ -17,6 +17,7 @@ import { BalanceController } from './balance-controller.js';
 import { BikeModel } from './bike-model.js';
 import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
+import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
@@ -476,7 +477,8 @@ class Game {
     this._olPrevA = false;
 
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'gameover' | 'victory'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory'
+    this._finishCinematic = null;
     this.countdownTimer = 0;
     this._lastCountNum = 3;
     this.instructionsEl = document.getElementById('instructions');
@@ -712,12 +714,12 @@ class Game {
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
         // Idempotent: captain may retry-send FINISH for reliability.
-        if (this.state === 'victory') return;
+        if (this.state === 'victory' || this.state === 'finishCinematic') return;
         // Tutorial: show completion screen instead of normal victory
         if (this._tutorialActive) {
           this._showStokerTutorialComplete();
         } else {
-          this._showVictory(true);
+          this._startFinishCinematic(true);
         }
       } else if (eventType === EVT_RETURN_ROOM) {
         this._returnToRoom();
@@ -1757,13 +1759,17 @@ class Game {
     } else if (raceEvent.event === 'finish') {
       // Tutorial completion is handled by _updateTutorial, not the normal victory flow
       if (this._tutorialActive) return;
-      this._showVictory();
       hapticFinish();
 
-      // Send authoritative finish stats to stoker before the finish event.
-      // FINISH is one-shot and terminal — use the reliable variant so a
-      // single dropped packet at the relay/WebRTC boundary doesn't strand
-      // the stoker waiting at a frozen race screen.
+      // Kick off the cinematic finish camera; victory overlay reveals
+      // when the swing-and-zoom sequence completes.
+      this._startFinishCinematic();
+
+      // Send authoritative finish stats to stoker so their side can run
+      // its own cinematic in lockstep. FINISH is one-shot and terminal —
+      // use the reliable variant so a single dropped packet at the
+      // relay/WebRTC boundary doesn't strand the stoker on a frozen
+      // race screen.
       if (this.mode === 'captain' && this.net && this.net.connected) {
         this.raceManager.inputSource = this.balanceCtrl.getSteerSource();
         this.net.sendProfile({
@@ -1895,6 +1901,68 @@ class Game {
     }
     profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
     this.net.sendProfile(profile);
+  }
+
+  /**
+   * Begin the cinematic finish: a stylized slow-motion swing around the
+   * bike that ends on a tight artistic close-up of the front of the
+   * frame. The victory overlay is held back until the camera move
+   * completes.
+   */
+  _startFinishCinematic(fromRemote = false) {
+    this.state = 'finishCinematic';
+    this._finishFromRemote = fromRemote;
+    this.hud.hideTimer();
+    // Briefly damp the chase cam's residual shake so the cinematic
+    // starts from a clean pose.
+    if (this.chaseCamera) this.chaseCamera.shakeAmount = 0;
+    this._finishCinematic = new FinishCameraAnimation(this.camera, this.bike);
+  }
+
+  /**
+   * Drive the finish-line cinematic: slow-mo bike physics, full-rate
+   * camera move, then hand off to _showVictory when the sequence ends.
+   */
+  _updateFinishCinematic(dt) {
+    const cinematic = this._finishCinematic;
+    if (!cinematic) {
+      this._showVictory(this._finishFromRemote);
+      return;
+    }
+
+    const slowDt = dt * cinematic.getTimeScale();
+
+    // Let the bike roll out under its own friction with neutral input
+    // so wheels and pedals keep turning briefly into the slow-motion.
+    if (this.bike) {
+      const neutralPedal = { crankAngle: this.bike.crankAngle, braking: false, acceleration: 0, wobble: 0 };
+      const neutralBalance = { leanInput: 0, gyroActive: false };
+      this.bike.update(neutralPedal, neutralBalance, slowDt, true, false);
+    }
+
+    // Keep the world streaming so terrain/scenery don't pop while the
+    // bike rolls forward, but at slow-motion pace.
+    if (this.world) {
+      this.world.update(this.bike.position, this.bike.roadD, slowDt);
+    }
+    if (this.grassParticles) {
+      this.grassParticles.update(this.bike, slowDt);
+    }
+
+    // Camera moves at real time so the cinematic timing is consistent
+    // regardless of the bike's slow-mo wind-down.
+    const done = cinematic.update(dt);
+
+    this.renderer.render(this.scene, this.camera);
+
+    if (done) {
+      cinematic.cleanup();
+      this._finishCinematic = null;
+      // Reset chase cam so a future race doesn't snap from the
+      // close-up pose.
+      if (this.chaseCamera) this.chaseCamera.initialized = false;
+      this._showVictory(this._finishFromRemote);
+    }
   }
 
   _showVictory(fromRemote = false) {
@@ -3068,6 +3136,10 @@ class Game {
       } else if (this.mode === 'local') {
         this._updateLocal(dt);
       }
+    } else if (this.state === 'finishCinematic') {
+      // Cinematic finish camera owns its own world/bike updates and
+      // render — bypass the chase cam so it doesn't fight the swing.
+      this._updateFinishCinematic(dt);
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
