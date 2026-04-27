@@ -149,9 +149,9 @@ export class FinishCameraAnimation {
     const e = this._easeOutQuint(t);
     const bikePos = this.bike.position;
 
-    const theta = this._lerp(-0.35, -0.15, e);
-    const radius = this._lerp(4.2, 2.2, e);
-    const height = this._lerp(1.7, 1.15, e);
+    const theta = this._lerp(-0.35, -0.2, e);
+    const radius = this._lerp(4.2, 3.6, e);
+    const height = this._lerp(1.7, 1.4, e);
 
     this._orbitOffset(theta, radius, height, this._orbitPos);
     this._desiredPos.copy(bikePos).add(this._orbitPos);
@@ -163,14 +163,14 @@ export class FinishCameraAnimation {
     this._desiredLook.y += this._lerp(0.65, 0.85, e);
     this.camera.lookAt(this._desiredLook);
 
-    this.camera.fov = this._lerp(this.startFov + 6, this.startFov - 8, e);
+    this.camera.fov = this._lerp(this.startFov + 6, this.startFov - 4, e);
     this.camera.updateProjectionMatrix();
   }
 
   // Phase 3: hold the close-up steady for a beat before overlay reveal.
   _updateHold() {
     const bikePos = this.bike.position;
-    this._orbitOffset(-0.15, 2.2, 1.15, this._orbitPos);
+    this._orbitOffset(-0.2, 3.6, 1.4, this._orbitPos);
     this._desiredPos.copy(bikePos).add(this._orbitPos);
     this.camera.position.copy(this._desiredPos);
 
@@ -180,7 +180,7 @@ export class FinishCameraAnimation {
     this._desiredLook.y += 0.85;
     this.camera.lookAt(this._desiredLook);
 
-    this.camera.fov = this.startFov - 8;
+    this.camera.fov = this.startFov - 4;
     this.camera.updateProjectionMatrix();
   }
 
