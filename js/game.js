@@ -1099,21 +1099,39 @@ class Game {
     // Reset background adaptation state for fresh ride
     this._adaptState = null;
 
-    // Fresh bias + tilt calibration for new ride. Timing takes advantage
-    // of the 3s countdown: fusion bias calibration runs ~1.5s and ideally
-    // captures the user's stationary hold-at-rest pose, so integrated
-    // orientation starts from a clean bias when the race begins.
+    // Recenter THEN recapture bias for a new ride. Two layered protections:
     //
-    // Without the bias recalibration, a bias captured during a shaky boot
-    // (user picking controller up while HidEntry was auto-pooling) can
-    // cause rapid orientation drift → bike oscillates extreme L/R.
-    // Skip if tutorial calibration flow already ran (better data).
+    // 1. recenterGyro() clears motionOffset, _gyroRollAccum, _smoothedLean,
+    //    motionLean, and calls fusion.reset() (orientation → identity).
+    //    Without it, orientation drift accumulated during lobby browsing
+    //    can leave motionLean saturated at ±1.0 — joystick input then sums
+    //    with the saturated value, clamps to 0, and the player can only
+    //    neutralize the pull, not flip past center (#285).
+    // 2. calibrateGyro() restarts the slot's gyro-rate bias capture
+    //    (~1.5s). The 3s countdown overlaps the window, so the user's
+    //    stationary hold gives a clean bias for orientation integration.
+    //    Without it, a bias baked during a shaky boot pickup causes rapid
+    //    drift → bike oscillates extreme L/R.
+    //
+    // Note: fusion.startCalibration() does NOT reset orientation — only
+    // fusion.reset() does. So step 1 is required to clear saturated state;
+    // step 2 alone is not sufficient. _resetGame already runs this same
+    // pair (recenter then enter countdown which calibrates); duplicating
+    // here is harmless because recenterGyro is idempotent.
+    //
+    // Skip both if tutorial calibration flow already ran (better data).
     if (this.input.motionEnabled && !this._calibHoldSamples) {
-      if (this.input.gyroConnected) this.input.calibrateGyro();
+      if (this.input.gyroConnected) {
+        this.input.recenterGyro();
+        this.input.calibrateGyro();
+      }
       this.input.startTiltCalibration();
     }
     if (this.inputP2 && this.inputP2.motionEnabled) {
-      if (this.inputP2.gyroConnected) this.inputP2.calibrateGyro();
+      if (this.inputP2.gyroConnected) {
+        this.inputP2.recenterGyro();
+        this.inputP2.calibrateGyro();
+      }
       this.inputP2.startTiltCalibration();
     }
     // Prime P2's held-detection stamp so the _updateLocal isActive() gate
