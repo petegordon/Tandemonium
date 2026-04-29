@@ -284,7 +284,15 @@ export class AudioEngine {
     tireSrc.start();
     chainOsc.start();
 
-    this._bike = { windSrc, tireSrc, chainOsc, windGain, tireGain, chainGain };
+    // Track every node so stopBike() can fully tear down the graph.
+    // Without holding refs to the filters, they were leaked-connected to
+    // bikeBus across races and accumulated on iOS WebKit (browser freeze
+    // while audio kept playing — main thread starved by node graph).
+    this._bike = {
+      windSrc, tireSrc, chainOsc,
+      windFilt, tireFilt, chainFilt,
+      windGain, tireGain, chainGain,
+    };
 
     // Fade the bus in; individual sources stay at 0 until speed rises.
     const now = ctx.currentTime;
@@ -303,9 +311,22 @@ export class AudioEngine {
     const b = this._bike;
     this._bike = null;
     setTimeout(() => {
-      try { b.windSrc.stop(); } catch (e) {}
-      try { b.tireSrc.stop(); } catch (e) {}
+      // Stop sources first so they're eligible for auto-release.
+      try { b.windSrc.stop();  } catch (e) {}
+      try { b.tireSrc.stop();  } catch (e) {}
       try { b.chainOsc.stop(); } catch (e) {}
+      // Explicitly disconnect every node from the graph. Sources auto-GC
+      // after stop(), but BiquadFilter / GainNode are kept alive by their
+      // outgoing connection to bikeBus until disconnect() is called.
+      try { b.windSrc.disconnect();  } catch (e) {}
+      try { b.tireSrc.disconnect();  } catch (e) {}
+      try { b.chainOsc.disconnect(); } catch (e) {}
+      try { b.windFilt.disconnect();  } catch (e) {}
+      try { b.tireFilt.disconnect();  } catch (e) {}
+      try { b.chainFilt.disconnect(); } catch (e) {}
+      try { b.windGain.disconnect();  } catch (e) {}
+      try { b.tireGain.disconnect();  } catch (e) {}
+      try { b.chainGain.disconnect(); } catch (e) {}
     }, 400);
   }
 
