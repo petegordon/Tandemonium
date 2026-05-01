@@ -577,6 +577,7 @@ class Game {
     // ---- Analytics session init ----
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
+    const vjBoot = window.__vibeJamDeepLink || null;
     analytics.initSession({
       device_type: isMobile ? 'mobile' : 'desktop',
       input_method: null,
@@ -589,6 +590,14 @@ class Game {
       platform: window.steam ? 'steam' : (navigator.userAgent.includes('Electron') ? 'electron' : 'browser'),
       screen_width: window.screen.width,
       screen_height: window.screen.height,
+      // Vibe Jam 2026 source attribution (extra fields land in the JSON
+      // payload; server can backfill columns later without a client deploy)
+      source: vjBoot ? 'vibejam' : null,
+      vibejam_entry: vjBoot ? (vjBoot.portal ? 'portal' : (vjBoot.solo ? 'solo' : null)) : null,
+      vibejam_ref: vjBoot ? vjBoot.ref || null : null,
+      vibejam_username: vjBoot ? vjBoot.username || null : null,
+      vibejam_color: vjBoot ? vjBoot.color || null : null,
+      vibejam_speed: vjBoot ? vjBoot.speed || null : null,
     });
     analytics.setPage('landing');
 
@@ -596,6 +605,16 @@ class Game {
     // and goes straight to Solo Ride. Read by index.html bootstrap script.
     this._vibeJam = window.__vibeJamDeepLink || null;
     if (this._vibeJam && (this._vibeJam.solo || this._vibeJam.portal)) {
+      analytics.trackEvent('vibejam_arrival', {
+        entry: this._vibeJam.portal ? 'portal' : 'solo',
+        ref: this._vibeJam.ref || null,
+        username: this._vibeJam.username || null,
+        color: this._vibeJam.color || null,
+        speed: this._vibeJam.speed || null,
+        url: window.location.href,
+        referrer: document.referrer || null,
+        query: window.location.search || null,
+      });
       // Defer one frame so the lobby's async init (_setup, gamepad nav) settles.
       requestAnimationFrame(() => this._enterVibeJamSolo());
     }
@@ -669,6 +688,10 @@ class Game {
       if (ev) { ev.stopPropagation(); ev.preventDefault(); }
       btn.removeEventListener('click', onStart);
       btn.disabled = true;
+      analytics.trackEvent('vibejam_start_tap', {
+        ref: this._vibeJam ? this._vibeJam.ref || null : null,
+        had_motion_perm_prompt: !!(this.input && this.input.needsMotionPermission),
+      });
       // Request iOS motion permission from this real user gesture
       if (this.input && this.input.needsMotionPermission) {
         try { await this.input.requestMotionPermission(); } catch (e) {}
@@ -692,10 +715,20 @@ class Game {
     const target = this.world.checkVibeJamPortalCollision(this.bike.position);
     if (!target) return;
     this._vjPortalRedirecting = true;
-    // Redirect on the next tick so the current frame finishes cleanly
+    const isVibeJamExit = /^https?:\/\/vibej\.am\//i.test(target);
+    analytics.trackEvent(isVibeJamExit ? 'vibejam_portal_exit' : 'vibejam_portal_return', {
+      target,
+      distance: this.bike ? this.bike.distanceTraveled : 0,
+      speed: this.bike ? this.bike.speed : 0,
+      ride_id: analytics.getCurrentRideId(),
+      entry_ref: this._vibeJam ? this._vibeJam.ref || null : null,
+    });
+    // Best-effort flush of buffered events before navigating away.
+    try { analytics.flushRideEvents && analytics.flushRideEvents(); } catch (e) {}
+    // Redirect on the next tick so the current frame + analytics flush finish cleanly
     setTimeout(() => {
       try { window.location.href = target; } catch (e) { /* ignore */ }
-    }, 50);
+    }, 80);
   }
 
   // ============================================================
@@ -1281,6 +1314,7 @@ class Game {
     // _startCountdown is also called on restart-from-beginning after early crashes)
     if (!analytics.getCurrentRideId()) {
       analytics.setPage('ride');
+      const dl = this._vibeJam || null;
       analytics.startRide({
         level: level.id,
         role: this.mode,
@@ -1288,7 +1322,24 @@ class Game {
         difficulty: difficultyName,
         bike_preset: this.lobby.selectedPresetKey,
         steering_feel: TUNE.steeringFeel,
+        // Vibe Jam attribution on the ride record (extra fields ride along
+        // in the JSON payload — the worker can backfill columns later).
+        source: dl ? 'vibejam' : null,
+        vibejam_entry: dl ? (dl.portal ? 'portal' : (dl.solo ? 'solo' : null)) : null,
+        vibejam_ref: dl ? dl.ref || null : null,
+        vibejam_username: dl ? dl.username || null : null,
+        vibejam_color: dl ? dl.color || null : null,
+        vibejam_speed: dl ? dl.speed || null : null,
       });
+      if (dl) {
+        analytics.trackEvent('vibejam_ride_start', {
+          level: level.id,
+          difficulty: difficultyName,
+          bike_preset: this.lobby.selectedPresetKey,
+          entry: dl.portal ? 'portal' : 'solo',
+          ref: dl.ref || null,
+        });
+      }
     }
     this.hud.initProgress(level);
     this.hud.initTimer();
