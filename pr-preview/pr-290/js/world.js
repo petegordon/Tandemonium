@@ -1112,18 +1112,23 @@ export class World {
   }
 
   /**
-   * Build Vibe Jam 2026 portals at the start area, off-track in the dirt.
-   * Called once per ride from Game._startCountdown.
+   * Build Vibe Jam 2026 portals just past the first checkpoint, off-track
+   * in the dirt. Called once per ride from Game._startCountdown.
    * - exit portal: redirects to https://vibej.am/portal/2026 (always added)
    * - return portal: only when arriving via ?portal=true&ref=<other-game>
    */
-  setupVibeJamPortals({ exitUrl, returnRef }) {
+  setupVibeJamPortals({ exitUrl, returnRef, firstCheckpointD }) {
     this._cleanupVibeJamPortals();
     this._vjPortals = [];
 
-    // Exit portal — right side off the road in the dirt, near start
+    // Place a few meters past the first checkpoint so players ride through
+    // the checkpoint arch first, then notice the portals. Falls back to a
+    // sensible default if the level has no checkpoint.
+    const portalD = (firstCheckpointD || 60) + 8;
+
+    // Exit portal — right side off the road in the dirt
     this._vjPortals.push(this._buildPortal({
-      roadD: 12,
+      roadD: portalD,
       lateralOffset: 9,
       ringColor: 0xff66cc,
       label: 'VIBE JAM',
@@ -1134,7 +1139,7 @@ export class World {
     if (returnRef) {
       const refUrl = /^https?:\/\//i.test(returnRef) ? returnRef : ('https://' + returnRef);
       this._vjPortals.push(this._buildPortal({
-        roadD: 12,
+        roadD: portalD,
         lateralOffset: -9,
         ringColor: 0x66ddff,
         label: 'BACK',
@@ -1232,8 +1237,13 @@ export class World {
       pt.y,
       pt.z + rightZ * lateralOffset
     );
-    // Face the road
-    group.rotation.y = pt.heading + (lateralOffset > 0 ? -Math.PI / 2 : Math.PI / 2);
+    // Face the bike: rotate from "perpendicular to road" by an extra 45° back
+    // toward the approaching bike, so it presents itself at a 45° angle
+    // instead of edge-on as the rider passes.
+    const FACE_BIKE = Math.PI / 4;
+    group.rotation.y = pt.heading +
+      (lateralOffset > 0 ? -Math.PI / 2 - FACE_BIKE
+                         :  Math.PI / 2 + FACE_BIKE);
     this.scene.add(group);
 
     return {
