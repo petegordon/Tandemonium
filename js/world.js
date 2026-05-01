@@ -1121,10 +1121,10 @@ export class World {
     this._cleanupVibeJamPortals();
     this._vjPortals = [];
 
-    // Place a few meters past the first checkpoint so players ride through
-    // the checkpoint arch first, then notice the portals. Falls back to a
+    // Place 16m past the first checkpoint so players ride through the
+    // checkpoint arch first, then notice the portals. Falls back to a
     // sensible default if the level has no checkpoint.
-    const portalD = (firstCheckpointD || 60) + 8;
+    const portalD = (firstCheckpointD || 60) + 16;
 
     // Exit portal — right side off the road in the dirt
     this._vjPortals.push(this._buildPortal({
