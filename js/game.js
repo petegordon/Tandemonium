@@ -731,6 +731,11 @@ class Game {
           try { this.lobby._toggleJoystick(); } catch (e) {}
         }
       }
+      // Now that gamepad/motion state is settled, populate the analytics
+      // input_method column so portal rides don't all log as "unknown".
+      if (this.lobby && typeof this.lobby._detectAndSetInputMethod === 'function') {
+        try { this.lobby._detectAndSetInputMethod(); } catch (e) {}
+      }
       el.classList.remove('visible');
       setTimeout(() => { el.style.display = 'none'; }, 350);
       if (this.state === 'instructions') this._startCountdown();
