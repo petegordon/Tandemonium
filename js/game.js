@@ -694,11 +694,19 @@ class Game {
       // user-gesture token across awaits). Prime audio so iOS doesn't play
       // the procedural bike loop in a degraded "running but buzzing" state,
       // and apply the deferred bike color now that _presetData has had time
-      // to load via Lobby._initBikeCarousel.
+      // to load via Lobby._initBikeCarousel. Force-enable + start music here
+      // too so iOS allows playback before the gesture expires.
       try {
         this.audioEngine.ensureContext();
         this.audioEngine.resume();
         this.audioEngine.warmup();
+        if (!this.lobby.musicActive && typeof this.lobby._toggleMusic === 'function') {
+          this.lobby._toggleMusic();
+        }
+        this.audioEngine.connectMusicElement(this._musicEl);
+        if (this.lobby.musicActive) {
+          this._musicEl.play().catch(() => {});
+        }
       } catch (e) {}
       if (this._vjPendingColorKey && this.lobby._presetData &&
           this.lobby._presetData[this._vjPendingColorKey]) {
