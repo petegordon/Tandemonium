@@ -1111,6 +1111,190 @@ export class World {
     }
   }
 
+  /**
+   * Build Vibe Jam 2026 portals at the start area, off-track in the dirt.
+   * Called once per ride from Game._startCountdown.
+   * - exit portal: redirects to https://vibej.am/portal/2026 (always added)
+   * - return portal: only when arriving via ?portal=true&ref=<other-game>
+   */
+  setupVibeJamPortals({ exitUrl, returnRef }) {
+    this._cleanupVibeJamPortals();
+    this._vjPortals = [];
+
+    // Exit portal — right side off the road in the dirt, near start
+    this._vjPortals.push(this._buildPortal({
+      roadD: 12,
+      lateralOffset: 9,
+      ringColor: 0xff66cc,
+      label: 'VIBE JAM',
+      target: exitUrl,
+    }));
+
+    // Return portal — left side, only when arriving via ?portal=true
+    if (returnRef) {
+      const refUrl = /^https?:\/\//i.test(returnRef) ? returnRef : ('https://' + returnRef);
+      this._vjPortals.push(this._buildPortal({
+        roadD: 12,
+        lateralOffset: -9,
+        ringColor: 0x66ddff,
+        label: 'BACK',
+        target: refUrl,
+      }));
+    }
+  }
+
+  _cleanupVibeJamPortals() {
+    if (!this._vjPortals) return;
+    for (const p of this._vjPortals) {
+      this.scene.remove(p.group);
+      p.group.traverse(child => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (child.material.map) child.material.map.dispose();
+          child.material.dispose();
+        }
+      });
+    }
+    this._vjPortals = null;
+  }
+
+  _buildPortal({ roadD, lateralOffset, ringColor, label, target }) {
+    const L = this.roadPath.loopLength;
+    const pt = this.roadPath.getPointAtDistance(roadD % L);
+
+    const group = new THREE.Group();
+    const radius = 2.0;
+
+    // Ring torus
+    const ringGeo = new THREE.TorusGeometry(radius, 0.18, 12, 48);
+    const ringMat = new THREE.MeshStandardMaterial({
+      color: ringColor,
+      emissive: ringColor,
+      emissiveIntensity: 1.4,
+      metalness: 0.6,
+      roughness: 0.25,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.y = radius + 0.4;
+    group.add(ring);
+
+    // Inner glowing disc (additive, faces upright)
+    const discGeo = new THREE.CircleGeometry(radius * 0.9, 32);
+    const discMat = new THREE.MeshBasicMaterial({
+      color: ringColor,
+      transparent: true,
+      opacity: 0.45,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const disc = new THREE.Mesh(discGeo, discMat);
+    disc.position.y = radius + 0.4;
+    group.add(disc);
+
+    // Floating particles around the ring
+    const particleCount = 24;
+    const particleGeo = new THREE.BufferGeometry();
+    const positions = new Float32Array(particleCount * 3);
+    for (let i = 0; i < particleCount; i++) {
+      const a = (i / particleCount) * Math.PI * 2;
+      positions[i * 3] = Math.cos(a) * (radius + 0.3);
+      positions[i * 3 + 1] = (radius + 0.4) + Math.sin(a) * (radius + 0.3);
+      positions[i * 3 + 2] = 0;
+    }
+    particleGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMat = new THREE.PointsMaterial({
+      color: ringColor,
+      size: 0.18,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const particles = new THREE.Points(particleGeo, particleMat);
+    group.add(particles);
+
+    // Label sprite
+    const labelTex = this._makePortalLabelTexture(label, ringColor);
+    const labelMat = new THREE.SpriteMaterial({ map: labelTex, transparent: true, depthTest: false });
+    const labelSprite = new THREE.Sprite(labelMat);
+    labelSprite.scale.set(3.2, 0.8, 1);
+    labelSprite.position.y = radius * 2 + 1.0;
+    group.add(labelSprite);
+
+    // Position group: lateral offset from road centerline (negative = left, positive = right)
+    const fwdX = Math.sin(pt.heading);
+    const fwdZ = Math.cos(pt.heading);
+    const rightX = fwdZ;
+    const rightZ = -fwdX;
+    group.position.set(
+      pt.x + rightX * lateralOffset,
+      pt.y,
+      pt.z + rightZ * lateralOffset
+    );
+    // Face the road
+    group.rotation.y = pt.heading + (lateralOffset > 0 ? -Math.PI / 2 : Math.PI / 2);
+    this.scene.add(group);
+
+    return {
+      group,
+      ring,
+      disc,
+      particles,
+      worldX: group.position.x,
+      worldZ: group.position.z,
+      target,
+      collisionRadius: 1.6,
+    };
+  }
+
+  _makePortalLabelTexture(text, ringColor) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(0,0,0,0)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.font = 'bold 72px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const hex = '#' + ringColor.toString(16).padStart(6, '0');
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
+    ctx.fillStyle = hex;
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    return tex;
+  }
+
+  /** Animate portals (called from update). */
+  _updateVibeJamPortals(dt) {
+    if (!this._vjPortals) return;
+    const t = performance.now() * 0.001;
+    for (const p of this._vjPortals) {
+      p.ring.rotation.z += dt * 0.6;
+      p.disc.material.opacity = 0.35 + Math.sin(t * 2.4) * 0.12;
+      p.particles.rotation.z -= dt * 1.2;
+    }
+  }
+
+  /**
+   * Returns the URL to redirect to if the bike is touching a Vibe Jam portal,
+   * or null. Called from Game's update loop.
+   */
+  checkVibeJamPortalCollision(bikePos) {
+    if (!this._vjPortals) return null;
+    for (const p of this._vjPortals) {
+      const dx = bikePos.x - p.worldX;
+      const dz = bikePos.z - p.worldZ;
+      if (dx * dx + dz * dz < p.collisionRadius * p.collisionRadius) {
+        return p.target;
+      }
+    }
+    return null;
+  }
+
   update(bikePos, bikeD, dt) {
     // Default bikeD from position if not provided (backward compat)
     if (bikeD === undefined) {
@@ -1143,6 +1327,9 @@ export class World {
       this._updateRaceMarkerVisibility(bikeD);
       this._updateRaceMarkerHeights(bikeD);
     }
+
+    // Vibe Jam portals
+    if (dt) this._updateVibeJamPortals(dt);
 
     // Floor snap-follow + deform (snap at tileSize to reduce visual pop)
     const snapSize = this.tileSize;

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<!-- Vibe Jam 2026 entrant widget (required) -->
+<script async src="https://vibej.am/2026/widget.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -1433,6 +1435,49 @@
   /* Desktop: always show pedal buttons */
   @media (hover: hover) and (pointer: fine) {
     #pedal-bar { display: flex !important; }
+  }
+
+  /* ── Vibe Jam deep-link controls hint ── */
+  #vj-controls-hint {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.78);
+    color: #fff;
+    padding: 18px 24px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.18);
+    font-size: 15px;
+    line-height: 1.55;
+    text-align: center;
+    z-index: 70;
+    max-width: 88vw;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  #vj-controls-hint.visible { opacity: 1; }
+  #vj-controls-hint h3 {
+    font-size: 17px;
+    margin-bottom: 8px;
+    color: #ffd966;
+    letter-spacing: 0.5px;
+  }
+  #vj-controls-hint .vj-row { margin: 2px 0; }
+  #vj-controls-hint .vj-key {
+    display: inline-block;
+    padding: 1px 8px;
+    margin: 0 2px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+  }
+  #vj-controls-hint .vj-pref {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #9ad6ff;
   }
 
   /* ── Tap to Start overlay ── */
@@ -3976,6 +4021,20 @@ ON</button>
   <p class="tap-hint">Tap anywhere to start</p>
 </div>
 
+<!-- Vibe Jam controls hint (shown briefly when deep-linked via ?solo=1 / ?portal=true) -->
+<div id="vj-controls-hint" style="display:none;">
+  <h3>CONTROLS</h3>
+  <div class="vj-row vj-keyboard">
+    Steer: <span class="vj-key">A</span> <span class="vj-key">D</span> &nbsp;or&nbsp; <span class="vj-key">←</span> <span class="vj-key">→</span>
+  </div>
+  <div class="vj-row vj-keyboard">
+    Pedal: <span class="vj-key">↑</span> <span class="vj-key">↓</span> &nbsp;(alternate)
+  </div>
+  <div class="vj-row vj-gamepad">Gamepad: left stick to steer, A/B to pedal</div>
+  <div class="vj-row vj-mobile">Tilt phone to steer • tap left/right pedals</div>
+  <div class="vj-pref">Gamepad with gyro preferred</div>
+</div>
+
 <!-- Tap/Press to Start overlay -->
 <div id="tap-to-start">
   <div class="tap-to-start-content">
@@ -4681,6 +4740,30 @@ document.addEventListener('gestureend', function(e) { e.preventDefault(); }, { p
 document.addEventListener('touchmove', function(e) {
   if (e.touches.length > 1) e.preventDefault();
 }, { passive: false });
+</script>
+
+<!-- Vibe Jam 2026 deep-link: ?solo=1 or ?portal=true skips lobby tap-overlay before game.js boots -->
+<script>
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var isPortal = params.get('portal') === 'true';
+  var isSolo = params.get('solo') === '1' || params.get('solo') === 'true';
+  if (!isPortal && !isSolo) return;
+  // Mark localStorage so the tap-to-start overlay self-removes on construct
+  try { localStorage.setItem('tandemonium_started', '1'); } catch (e) {}
+  // Belt-and-suspenders: also remove the overlay element if it's already in the DOM
+  var ov = document.getElementById('tap-to-start');
+  if (ov) ov.remove();
+  // Expose intent for game.js boot
+  window.__vibeJamDeepLink = {
+    portal: isPortal,
+    solo: isSolo,
+    ref: params.get('ref') || null,
+    username: params.get('username') || null,
+    color: params.get('color') || null,
+    speed: params.get('speed') || null,
+  };
+})();
 </script>
 
 <script type="module" src="js/game.js"></script>

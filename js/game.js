@@ -592,9 +592,96 @@ class Game {
     });
     analytics.setPage('landing');
 
+    // Vibe Jam 2026 deep-link: ?solo=1 or ?portal=true skips the lobby
+    // and goes straight to Solo Ride. Read by index.html bootstrap script.
+    this._vibeJam = window.__vibeJamDeepLink || null;
+    if (this._vibeJam && (this._vibeJam.solo || this._vibeJam.portal)) {
+      // Defer one frame so the lobby's async init (_setup, gamepad nav) settles.
+      requestAnimationFrame(() => this._enterVibeJamSolo());
+    }
+
     // Start loop
     this.lastTime = performance.now();
     requestAnimationFrame((t) => this._loop(t));
+  }
+
+  /**
+   * Vibe Jam 2026 deep-link entry. Skips lobby, lands directly on the
+   * Solo Ride instructions screen (or auto-starts if arriving via portal).
+   */
+  _enterVibeJamSolo() {
+    const dl = this._vibeJam;
+    if (!dl) return;
+
+    // Apply portal color hint (best-effort: map common names to existing bike presets)
+    if (dl.color) {
+      const map = {
+        red: 'bike_red', blue: 'bike_blue', green: 'bike_green',
+        yellow: 'bike_yellow', orange: 'bike_orange', magenta: 'bike_magenta',
+        pink: 'bike_magenta', purple: 'bike_magenta',
+      };
+      const key = map[dl.color.toLowerCase()];
+      if (key && this.lobby._presetData && this.lobby._presetData[key]) {
+        this.lobby.selectedPresetKey = key;
+        this.lobby.selectedPreset = this.lobby._presetData[key];
+      }
+    }
+
+    // Tear down the lobby UI + tap-to-start overlay (already pre-emptied in HTML)
+    if (this.lobby._tapOverlay) {
+      this.lobby._tapOverlay.remove();
+      this.lobby._tapOverlay = null;
+    }
+    this.lobby._hideLobby();
+
+    // Show controls hint (auto-fades after 4s)
+    this._showVibeJamControlsHint();
+
+    // Enter solo flow — sets state='instructions' and wires the start handler
+    this._onSolo();
+
+    // Portal entry: skip the instructions screen + motion-permission gate
+    // entirely (rules: "no start screens"). On iOS this means no gyro
+    // without a user gesture — touch joystick is the fallback.
+    if (dl.portal) {
+      requestAnimationFrame(() => {
+        if (this.state !== 'instructions') return;
+        this.instructionsEl.classList.add('hidden');
+        // Force-enable joystick on mobile so portal arrivals can steer
+        // without granting motion permission.
+        if (this.lobby && !this.lobby.joystickActive && typeof this.lobby._toggleJoystick === 'function') {
+          try { this.lobby._toggleJoystick(); } catch (e) {}
+        }
+        this._startCountdown();
+      });
+    }
+  }
+
+  _checkVibeJamPortal() {
+    if (this._vjPortalRedirecting) return;
+    if (!this.world || !this.world.checkVibeJamPortalCollision) return;
+    const target = this.world.checkVibeJamPortalCollision(this.bike.position);
+    if (!target) return;
+    this._vjPortalRedirecting = true;
+    // Redirect on the next tick so the current frame finishes cleanly
+    setTimeout(() => {
+      try { window.location.href = target; } catch (e) { /* ignore */ }
+    }, 50);
+  }
+
+  _showVibeJamControlsHint() {
+    const el = document.getElementById('vj-controls-hint');
+    if (!el) return;
+    // Hide platform-specific rows that don't apply
+    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    el.querySelectorAll('.vj-keyboard').forEach(r => r.style.display = isMobile ? 'none' : '');
+    el.querySelectorAll('.vj-mobile').forEach(r => r.style.display = isMobile ? '' : 'none');
+    el.style.display = '';
+    requestAnimationFrame(() => el.classList.add('visible'));
+    setTimeout(() => {
+      el.classList.remove('visible');
+      setTimeout(() => { el.style.display = 'none'; }, 450);
+    }, 4500);
   }
 
   // ============================================================
@@ -1197,6 +1284,22 @@ class Game {
     this.hud.updateTimer(initialBudget, initialBudget);
     this.hud.showCollectibles(level);
     this.world.setRaceMarkers(level, this.camera);
+
+    // Vibe Jam 2026 portals — exit portal always; return portal only when
+    // arriving via ?portal=true&ref=<other-game>. Forwards optional username/
+    // color/speed to the next game so it can spawn the player with continuity.
+    {
+      const dl = this._vibeJam || {};
+      const exitParams = new URLSearchParams();
+      exitParams.set('ref', window.location.host || 'tandemonium.com');
+      if (dl.username) exitParams.set('username', dl.username);
+      if (dl.color) exitParams.set('color', dl.color);
+      if (dl.speed) exitParams.set('speed', dl.speed);
+      this.world.setupVibeJamPortals({
+        exitUrl: 'https://vibej.am/portal/2026?' + exitParams.toString(),
+        returnRef: dl.portal && dl.ref ? dl.ref : null,
+      });
+    }
 
     // Tutorial: place all items from all phases so they're visible ahead
     if (level.isTutorial && this._tutorialActive) {
@@ -3136,6 +3239,9 @@ class Game {
       } else if (this.mode === 'local') {
         this._updateLocal(dt);
       }
+
+      // Vibe Jam portal collision — redirect to the next jam game when entered
+      this._checkVibeJamPortal();
     } else if (this.state === 'finishCinematic') {
       // Cinematic finish camera owns its own world/bike updates and
       // render — bypass the chase cam so it doesn't fight the swing.
