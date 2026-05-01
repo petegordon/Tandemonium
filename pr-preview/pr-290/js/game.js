@@ -634,27 +634,49 @@ class Game {
     }
     this.lobby._hideLobby();
 
-    // Show controls hint (auto-fades after 4s)
-    this._showVibeJamControlsHint();
-
     // Enter solo flow — sets state='instructions' and wires the start handler
     this._onSolo();
 
-    // Portal entry: skip the instructions screen + motion-permission gate
-    // entirely (rules: "no start screens"). On iOS this means no gyro
-    // without a user gesture — touch joystick is the fallback.
+    // Portal entry: replace the instructions screen with a TAP TO RIDE
+    // dialog. The button click is a real user gesture so iOS will accept
+    // DeviceMotionEvent.requestPermission(), giving portal arrivals gyro
+    // controls without a hidden flow.
     if (dl.portal) {
-      requestAnimationFrame(() => {
-        if (this.state !== 'instructions') return;
-        this.instructionsEl.classList.add('hidden');
-        // Force-enable joystick on mobile so portal arrivals can steer
-        // without granting motion permission.
+      this.instructionsEl.classList.add('hidden');
+      this._showVibeJamPortalGate();
+    }
+  }
+
+  _showVibeJamPortalGate() {
+    const el = document.getElementById('vj-controls-hint');
+    if (!el) return;
+    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    el.querySelectorAll('.vj-keyboard').forEach(r => r.style.display = isMobile ? 'none' : '');
+    el.querySelectorAll('.vj-mobile').forEach(r => r.style.display = isMobile ? '' : 'none');
+    el.querySelectorAll('.vj-gamepad').forEach(r => r.style.display = isMobile ? 'none' : '');
+    el.style.display = '';
+    requestAnimationFrame(() => el.classList.add('visible'));
+
+    const btn = document.getElementById('vj-start-btn');
+    if (!btn) return;
+    const onStart = async () => {
+      btn.removeEventListener('click', onStart);
+      btn.disabled = true;
+      // Request iOS motion permission from this real user gesture
+      if (this.input && this.input.needsMotionPermission) {
+        try { await this.input.requestMotionPermission(); } catch (e) {}
+      }
+      // If still no motion (denied or unsupported), force-enable touch joystick
+      if (isMobile && !this.input.motionEnabled && !this.input.gyroConnected) {
         if (this.lobby && !this.lobby.joystickActive && typeof this.lobby._toggleJoystick === 'function') {
           try { this.lobby._toggleJoystick(); } catch (e) {}
         }
-        this._startCountdown();
-      });
-    }
+      }
+      el.classList.remove('visible');
+      setTimeout(() => { el.style.display = 'none'; }, 350);
+      if (this.state === 'instructions') this._startCountdown();
+    };
+    btn.addEventListener('click', onStart);
   }
 
   _checkVibeJamPortal() {
@@ -667,21 +689,6 @@ class Game {
     setTimeout(() => {
       try { window.location.href = target; } catch (e) { /* ignore */ }
     }, 50);
-  }
-
-  _showVibeJamControlsHint() {
-    const el = document.getElementById('vj-controls-hint');
-    if (!el) return;
-    // Hide platform-specific rows that don't apply
-    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-    el.querySelectorAll('.vj-keyboard').forEach(r => r.style.display = isMobile ? 'none' : '');
-    el.querySelectorAll('.vj-mobile').forEach(r => r.style.display = isMobile ? '' : 'none');
-    el.style.display = '';
-    requestAnimationFrame(() => el.classList.add('visible'));
-    setTimeout(() => {
-      el.classList.remove('visible');
-      setTimeout(() => { el.style.display = 'none'; }, 450);
-    }, 4500);
   }
 
   // ============================================================

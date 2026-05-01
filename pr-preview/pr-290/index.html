@@ -1442,24 +1442,24 @@
     position: fixed;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
-    background: rgba(0,0,0,0.78);
+    background: rgba(0,0,0,0.85);
     color: #fff;
-    padding: 18px 24px;
+    padding: 22px 28px 24px;
     border-radius: 16px;
-    border: 1px solid rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.2);
     font-size: 15px;
     line-height: 1.55;
     text-align: center;
     z-index: 70;
     max-width: 88vw;
-    pointer-events: none;
+    pointer-events: auto;
     opacity: 0;
-    transition: opacity 0.4s;
+    transition: opacity 0.35s;
   }
   #vj-controls-hint.visible { opacity: 1; }
   #vj-controls-hint h3 {
     font-size: 17px;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
     color: #ffd966;
     letter-spacing: 0.5px;
   }
@@ -1479,6 +1479,21 @@
     font-size: 12px;
     color: #9ad6ff;
   }
+  #vj-start-btn {
+    margin-top: 16px;
+    padding: 12px 28px;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: #000;
+    background: #ffd966;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    touch-action: manipulation;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.4);
+  }
+  #vj-start-btn:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,0.4); }
 
   /* ── Tap to Start overlay ── */
   #tap-to-start {
@@ -4024,7 +4039,7 @@ ON</button>
 <!-- Vibe Jam 2026 entrant badge (visible corner link, required) -->
 <a id="vibe-jam-badge" target="_blank" href="https://jam.pieter.com" style="font-family:'system-ui',sans-serif;position:fixed;bottom:-1px;right:-1px;padding:7px;font-size:14px;font-weight:bold;background:#fff;color:#000;text-decoration:none;z-index:10000;border-top-left-radius:12px;border:1px solid #fff">🕹️ Vibe Jam 2026</a>
 
-<!-- Vibe Jam 2026 controls hint (shown briefly when deep-linked via ?solo=1 / ?portal=true) -->
+<!-- Vibe Jam 2026 controls hint (shown only when deep-linked via ?portal=true) -->
 <div id="vj-controls-hint" style="display:none;">
   <h3>CONTROLS</h3>
   <div class="vj-row vj-keyboard">
@@ -4036,6 +4051,7 @@ ON</button>
   <div class="vj-row vj-gamepad">Gamepad: left stick to steer, A/B to pedal</div>
   <div class="vj-row vj-mobile">Tilt phone to steer • tap left/right pedals</div>
   <div class="vj-pref">Gamepad with gyro preferred</div>
+  <button id="vj-start-btn" type="button">TAP TO RIDE</button>
 </div>
 
 <!-- Tap/Press to Start overlay -->
