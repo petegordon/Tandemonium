@@ -1370,11 +1370,11 @@ class Game {
     this.hud.showCollectibles(level);
     this.world.setRaceMarkers(level, this.camera);
 
-    // Vibe Jam 2026 portals — exit portal always; return portal only when
-    // arriving via ?portal=true&ref=<other-game>. Forwards optional username/
-    // color/speed to the next game so it can spawn the player with continuity.
-    {
-      const dl = this._vibeJam || {};
+    // Vibe Jam 2026 portals — only spawned when arriving via ?portal=true.
+    // Forwards optional username/color/speed back through the exit portal so
+    // the next game can spawn the player with continuity.
+    if (this._vibeJam && this._vibeJam.portal) {
+      const dl = this._vibeJam;
       const exitParams = new URLSearchParams();
       exitParams.set('ref', window.location.host || 'tandemonium.com');
       if (dl.username) exitParams.set('username', dl.username);
@@ -1382,10 +1382,13 @@ class Game {
       if (dl.speed) exitParams.set('speed', dl.speed);
       this.world.setupVibeJamPortals({
         exitUrl: 'https://vibej.am/portal/2026?' + exitParams.toString(),
-        returnRef: dl.portal && dl.ref ? dl.ref : null,
+        returnRef: dl.ref || null,
         firstCheckpointD: level.checkpointInterval,
         finishD: level.distance,
       });
+    } else if (this.world && typeof this.world._cleanupVibeJamPortals === 'function') {
+      // Tear down any portals from a previous portal-entry ride
+      this.world._cleanupVibeJamPortals();
     }
 
     // Tutorial: place all items from all phases so they're visible ahead
