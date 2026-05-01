@@ -1312,6 +1312,7 @@ class Game {
       this.world.setupVibeJamPortals({
         exitUrl: 'https://vibej.am/portal/2026?' + exitParams.toString(),
         returnRef: dl.portal && dl.ref ? dl.ref : null,
+        firstCheckpointD: level.checkpointInterval,
       });
     }
 
