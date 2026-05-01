@@ -687,6 +687,7 @@ class Game {
     const onStart = async (ev) => {
       if (ev) { ev.stopPropagation(); ev.preventDefault(); }
       btn.removeEventListener('click', onStart);
+      document.removeEventListener('keydown', onKeyStart, true);
       btn.disabled = true;
 
       // SYNCHRONOUS gesture work (must run before any await — iOS loses the
@@ -727,6 +728,18 @@ class Game {
       if (this.state === 'instructions') this._startCountdown();
     };
     btn.addEventListener('click', onStart);
+
+    // Desktop: any keypress dismisses the dialog. Skip modifier-only presses
+    // (Shift/Ctrl/Alt/Meta) and fullscreen toggles so accidental taps don't
+    // double-fire. Don't attach on mobile (no physical keyboard expected).
+    const onKeyStart = (ev) => {
+      if (isMobile) return;
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(ev.key)) return;
+      onStart(ev);
+    };
+    if (!isMobile) {
+      document.addEventListener('keydown', onKeyStart, true);
+    }
   }
 
   _checkVibeJamPortal() {
