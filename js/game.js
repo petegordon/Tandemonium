@@ -632,7 +632,10 @@ class Game {
     const dl = this._vibeJam;
     if (!dl) return;
 
-    // Apply portal color hint (best-effort: map common names to existing bike presets)
+    // Apply portal color hint (best-effort: map common names to existing bike presets).
+    // _presetData is loaded async by Lobby._initBikeCarousel, so we don't apply here —
+    // we stash the requested key and apply at TAP TO RIDE / countdown time.
+    this._vjPendingColorKey = null;
     if (dl.color) {
       const map = {
         red: 'bike_red', blue: 'bike_blue', green: 'bike_green',
@@ -640,10 +643,7 @@ class Game {
         pink: 'bike_magenta', purple: 'bike_magenta',
       };
       const key = map[dl.color.toLowerCase()];
-      if (key && this.lobby._presetData && this.lobby._presetData[key]) {
-        this.lobby.selectedPresetKey = key;
-        this.lobby.selectedPreset = this.lobby._presetData[key];
-      }
+      if (key) this._vjPendingColorKey = key;
     }
 
     // Tear down the lobby UI + tap-to-start overlay (already pre-emptied in HTML)
@@ -688,6 +688,26 @@ class Game {
       if (ev) { ev.stopPropagation(); ev.preventDefault(); }
       btn.removeEventListener('click', onStart);
       btn.disabled = true;
+
+      // SYNCHRONOUS gesture work (must run before any await — iOS loses the
+      // user-gesture token across awaits). Prime audio so iOS doesn't play
+      // the procedural bike loop in a degraded "running but buzzing" state,
+      // and apply the deferred bike color now that _presetData has had time
+      // to load via Lobby._initBikeCarousel.
+      try {
+        this.audioEngine.ensureContext();
+        this.audioEngine.resume();
+        this.audioEngine.warmup();
+      } catch (e) {}
+      if (this._vjPendingColorKey && this.lobby._presetData &&
+          this.lobby._presetData[this._vjPendingColorKey]) {
+        const k = this._vjPendingColorKey;
+        this.lobby.selectedPresetKey = k;
+        this.lobby.selectedPreset = this.lobby._presetData[k];
+        this.bike.applyPreset(this.lobby.selectedPreset);
+        this._vjPendingColorKey = null;
+      }
+
       analytics.trackEvent('vibejam_start_tap', {
         ref: this._vibeJam ? this._vibeJam.ref || null : null,
         had_motion_perm_prompt: !!(this.input && this.input.needsMotionPermission),
