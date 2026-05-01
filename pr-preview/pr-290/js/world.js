@@ -1112,40 +1112,49 @@ export class World {
   }
 
   /**
-   * Build Vibe Jam 2026 portals just past the first checkpoint, off-track
-   * in the dirt. Called once per ride from Game._startCountdown.
-   * - exit portal: redirects to https://vibej.am/portal/2026 (always added)
-   * - return portal: only when arriving via ?portal=true&ref=<other-game>
+   * Build Vibe Jam 2026 portals just past the first checkpoint and again
+   * shortly before the finish, off-track in the dirt. Called once per
+   * ride from Game._startCountdown.
+   * - exit portals: redirect to https://vibej.am/portal/2026 (always added)
+   * - return portals: only when arriving via ?portal=true&ref=<other-game>
    */
-  setupVibeJamPortals({ exitUrl, returnRef, firstCheckpointD }) {
+  setupVibeJamPortals({ exitUrl, returnRef, firstCheckpointD, finishD }) {
     this._cleanupVibeJamPortals();
     this._vjPortals = [];
 
     // Place 16m past the first checkpoint so players ride through the
     // checkpoint arch first, then notice the portals. Falls back to a
     // sensible default if the level has no checkpoint.
-    const portalD = (firstCheckpointD || 60) + 16;
+    const earlyD = (firstCheckpointD || 60) + 16;
+    // Second pair sits ~25m before the finish line so the rider sees them
+    // on the home stretch.
+    const lateD = finishD ? Math.max(earlyD + 30, finishD - 25) : null;
 
-    // Exit portal — right side off the road in the dirt
-    this._vjPortals.push(this._buildPortal({
-      roadD: portalD,
-      lateralOffset: 9,
-      ringColor: 0xff66cc,
-      label: 'VIBE JAM',
-      target: exitUrl,
-    }));
+    const refUrl = returnRef
+      ? (/^https?:\/\//i.test(returnRef) ? returnRef : ('https://' + returnRef))
+      : null;
 
-    // Return portal — left side, only when arriving via ?portal=true
-    if (returnRef) {
-      const refUrl = /^https?:\/\//i.test(returnRef) ? returnRef : ('https://' + returnRef);
+    const placePair = (roadD) => {
       this._vjPortals.push(this._buildPortal({
-        roadD: portalD,
-        lateralOffset: -9,
-        ringColor: 0x66ddff,
-        label: 'BACK',
-        target: refUrl,
+        roadD,
+        lateralOffset: 9,
+        ringColor: 0xff66cc,
+        label: 'VIBE JAM',
+        target: exitUrl,
       }));
-    }
+      if (refUrl) {
+        this._vjPortals.push(this._buildPortal({
+          roadD,
+          lateralOffset: -9,
+          ringColor: 0x66ddff,
+          label: 'BACK',
+          target: refUrl,
+        }));
+      }
+    };
+
+    placePair(earlyD);
+    if (lateD != null) placePair(lateD);
   }
 
   _cleanupVibeJamPortals() {
