@@ -634,17 +634,23 @@ class Game {
     }
     this.lobby._hideLobby();
 
-    // Enter solo flow — sets state='instructions' and wires the start handler
-    this._onSolo();
-
-    // Portal entry: replace the instructions screen with a TAP TO RIDE
-    // dialog. The button click is a real user gesture so iOS will accept
-    // DeviceMotionEvent.requestPermission(), giving portal arrivals gyro
-    // controls without a hidden flow.
     if (dl.portal) {
-      this.instructionsEl.classList.add('hidden');
+      // Portal entry: do NOT call _onSolo() — its _setupStartHandler attaches
+      // document-level click/touchstart listeners that would fire from any tap
+      // (including on our dialog) and start the countdown without a real
+      // user-gesture'd motion-permission request. Replicate just the parts we
+      // need and gate countdown solely on the TAP TO RIDE button.
+      this.mode = 'solo';
+      this.bike.applyPreset(this.lobby.selectedPreset);
+      this._lobbyBtn.textContent = 'LOBBY';
+      this._loadSavedTuning();
+      this.state = 'instructions';
       this._showVibeJamPortalGate();
+      return;
     }
+
+    // ?solo=1: existing instructions-tap flow handles motion permission
+    this._onSolo();
   }
 
   _showVibeJamPortalGate() {
@@ -659,7 +665,8 @@ class Game {
 
     const btn = document.getElementById('vj-start-btn');
     if (!btn) return;
-    const onStart = async () => {
+    const onStart = async (ev) => {
+      if (ev) { ev.stopPropagation(); ev.preventDefault(); }
       btn.removeEventListener('click', onStart);
       btn.disabled = true;
       // Request iOS motion permission from this real user gesture
