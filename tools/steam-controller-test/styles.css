@@ -121,3 +121,21 @@ footer {
   margin-left: 10px;
   color: #6cd97e;
 }
+.hint-banner {
+  margin: 10px 0;
+  padding: 0;
+  color: #f0c060;
+}
+.hint-banner ul {
+  margin: 6px 0 6px 18px;
+  padding: 0;
+  color: #cda;
+}
+.hint-banner li {
+  margin: 4px 0;
+}
+main {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+section { min-height: 60vh; }
+

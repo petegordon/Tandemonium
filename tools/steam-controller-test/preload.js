@@ -9,4 +9,5 @@ contextBridge.exposeInMainWorld('steamTest', {
   // One-shot diagnostics
   checkIGA: () => ipcRenderer.invoke('steam:iga-check'),
   controllerLogTail: () => ipcRenderer.invoke('steam:controller-log-tail'),
+  showBindingPanel: (handleStr) => ipcRenderer.invoke('steam:show-binding-panel', handleStr),
 });

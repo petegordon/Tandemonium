@@ -22,17 +22,35 @@ Configuration > Custom Configuration.)
 
 ## What's in the window
 
+Three independent signal sources, so you can locate where the chain breaks
+when no controller is detected.
+
 ### Steam Input panel (left)
 - `SDK init` — did `steamworks.input.init()` succeed?
+- `Session config bitmask` — `getSessionInputConfigurationSettings()`. Non-zero
+  means Steam Input has at least one controller-type enabled for this app.
 - `Action handles` — `getActionSet('InGameControls')`, `getAnalogAction('Steer')`,
   `getDigitalAction('Confirm')`. Any non-zero handle means Steam parsed our
   IGA's corresponding entry. All-zero = the action manifest didn't load.
-- `Captured controllers` — `getControllers()` results. Press a button on
-  your pad if the list is empty.
+- `Gamepad-index probe` — `getControllerForGamepadIndex(0..3)`, a secondary
+  enumeration path. Useful when `getConnectedControllers()` returns empty but
+  Steam Input still sees a pad in an XInput slot.
+- `Captured controllers` — union of the two enumeration paths. Each row has
+  steer/confirm values, motion data when supported, and a button to open the
+  Steam binding panel directly for that controller.
 - `IGA file presence` — checks the file exists at the Steam-managed install
   path and the local dev paths.
 - `Steam controller.txt tail` — pulls IGA-relevant lines from Steam's own
   log so you can confirm Steam logged "Found App Manifest for appid 4510250".
+- Idle-time hints appear if Steam Input has been ready >5s but enumeration
+  returns nothing — calls out the likely cause (Steam not running, process not
+  Steam-launched, configuration support disabled, etc).
+
+### Gamepad API panel (middle)
+- Polls `navigator.getGamepads()` at 10 Hz. Independent of Steam Input.
+- If a pad appears here but NOT under Steam Input, the OS sees it but Steam
+  isn't claiming it for this app — pointing at a Steam-side problem rather
+  than a hardware or driver problem.
 
 ### WebHID panel (right)
 - Connect buttons (need a user gesture) — Steam Controller / DualSense / Any
