@@ -1,42 +1,30 @@
-// ============================================================
 // Steam Input action manifest - Tandemonium (release app 4482940)
-//
-// IDENTICAL CONTENT to game_actions_4510250.vdf - the playtest copy.
-// Each Steam app ID needs its own copy shipped in the depot. We
-// keep both files in the repo so the two app IDs cannot drift.
-//
-// See game_actions_4510250.vdf for design notes.
-//
-// IMPORTANT: keep this file ASCII-only. Steam's VDF parser does not
-// handle non-ASCII bytes well, even inside // comments.
-// ============================================================
+// IDENTICAL CONTENT to game_actions_4510250.vdf except the appid.
+// Keep this file pure ASCII - Steam's VDF parser is strict.
 
 "In Game Actions"
 {
-    "actions"
-    {
-        "InGameControls"
-        {
-            "title"        "#Set_InGameControls"
-            "legacy_set"   "0"
-
-            "StickPadGyro"
-            {
-                "Steer"
-                {
-                    "title"        "#Action_Steer"
-                    "input_mode"   "joystick_move"
-                }
-            }
-        }
-    }
-
-    "localization"
-    {
-        "english"
-        {
-            "Set_InGameControls"   "Gameplay"
-            "Action_Steer"         "Steer (Gyro Tilt)"
-        }
-    }
+	"actions"
+	{
+		"InGameControls"
+		{
+			"title"		"#Set_InGameControls"
+			"StickPadGyro"
+			{
+				"Steer"
+				{
+					"title"			"#Action_Steer"
+					"input_mode"	"joystick_move"
+				}
+			}
+		}
+	}
+	"localization"
+	{
+		"english"
+		{
+			"Set_InGameControls"	"Gameplay"
+			"Action_Steer"			"Steer"
+		}
+	}
 }

@@ -1,56 +1,32 @@
-// ============================================================
 // Steam Input action manifest - Tandemonium (playtest app 4510250)
-//
-// Purpose: expose ONE analog action ("Steer") to the game so Steam
-// Input can route any controller's gyro into our bike-steer pipeline.
-// All other controller inputs (face buttons, sticks, dpad, triggers,
-// keyboard) stay on the existing Gamepad-API / WebHID paths - Steam
-// Input is not asked to own them.
-//
-// Shipped inside the game depot at controller_config/ via forge's
-// postPackage hook so Steam Input loads it on game launch.
-//
-// Iteration loop: edit -> npm run package -> CI upload -> promote
-// build in Steamworks. Default bindings per controller type are
-// tuned through Steam's Configure Controller UI and published as
-// Official configs; they are NOT in this file.
-//
-// IMPORTANT: keep this file ASCII-only. Steam's VDF parser does not
-// handle non-ASCII bytes well, even inside // comments.
-// ============================================================
+// Ships in the depot at controller_config/game_actions_4510250.vdf and is
+// registered server-side via Steamworks > App > Controller > Steam Input
+// Default Controller Configuration > Custom Configuration > path field.
+// Keep this file pure ASCII - Steam's VDF parser is strict.
 
 "In Game Actions"
 {
-    "actions"
-    {
-        // Single action set. Steer is read every frame the game is
-        // running; menus simply ignore the value, so we don't need
-        // a separate Menu set yet.
-        "InGameControls"
-        {
-            "title"        "#Set_InGameControls"
-            "legacy_set"   "0"
-
-            // StickPadGyro = analog 2D inputs. joystick_move outputs
-            // an (x, y) vector in -1..+1. We read X as steer; Y is
-            // unused but harmless to leave bindable for future use.
-            "StickPadGyro"
-            {
-                "Steer"
-                {
-                    "title"        "#Action_Steer"
-                    "input_mode"   "joystick_move"
-                }
-            }
-        }
-    }
-
-    "localization"
-    {
-        "english"
-        {
-            "Set_InGameControls"   "Gameplay"
-            "Action_Steer"         "Steer (Gyro Tilt)"
-        }
-    }
+	"actions"
+	{
+		"InGameControls"
+		{
+			"title"		"#Set_InGameControls"
+			"StickPadGyro"
+			{
+				"Steer"
+				{
+					"title"			"#Action_Steer"
+					"input_mode"	"joystick_move"
+				}
+			}
+		}
+	}
+	"localization"
+	{
+		"english"
+		{
+			"Set_InGameControls"	"Gameplay"
+			"Action_Steer"			"Steer"
+		}
+	}
 }
