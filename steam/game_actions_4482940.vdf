@@ -1,0 +1,40 @@
+// ============================================================
+// Steam Input action manifest — Tandemonium (release app 4482940)
+//
+// IDENTICAL CONTENT to game_actions_4510250.vdf — the playtest copy.
+// Each Steam app ID needs its own upload through Steamworks partner
+// site → Steam Input → In-Game Actions File. We keep both files in
+// the repo so the two app IDs can never drift accidentally.
+//
+// See game_actions_4510250.vdf for design notes.
+// ============================================================
+
+"In Game Actions"
+{
+    "actions"
+    {
+        "InGameControls"
+        {
+            "title"        "#Set_InGameControls"
+            "legacy_set"   "0"
+
+            "StickPadGyro"
+            {
+                "Steer"
+                {
+                    "title"        "#Action_Steer"
+                    "input_mode"   "joystick_move"
+                }
+            }
+        }
+    }
+
+    "localization"
+    {
+        "english"
+        {
+            "Set_InGameControls"   "Gameplay"
+            "Action_Steer"         "Steer (Gyro Tilt)"
+        }
+    }
+}

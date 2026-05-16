@@ -50,8 +50,118 @@ try {
   console.log('Steamworks unavailable, running without Steam:', err.message);
 }
 
+// --- Steam Input (action-based gyro→Steer) ---
+// We declare ONE analog action "Steer" in steam/game_actions_<appid>.vdf and
+// let Steam Input map the controller's gyro to it (input_mode joystick_move).
+// At runtime we ask Steam Input which controllers it has captured, read the
+// Steer vector for each, and push the snapshot to the renderer at ~60Hz. The
+// renderer overrides motionLean for slots that Steam Input owns; everything
+// else (sticks, buttons, triggers, keyboard) flows through the existing
+// Gamepad API / WebHID / keyboard pipelines unchanged.
+let steamInputReady = false;
+let steamInputSetHandle = 0n;
+let steamInputSteerHandle = 0n;
+const steamInputActivated = new Set(); // controller handles we've already activated the action set on
+let steamInputSnapshot = [];
+let steamInputTimer = null;
+
+if (steamworks) {
+  try {
+    steamworks.input.init();
+    steamInputReady = true;
+    console.log('Steam Input initialized');
+  } catch (err) {
+    console.warn('Steam Input init failed:', err.message);
+  }
+}
+
+// Handle resolution is lazy: Steam may not have loaded the action manifest
+// at init() time (depends on when the game_actions VDF is fetched), so we
+// re-try every tick until both handles are non-zero.
+// Diagnostic: log the first resolution attempt and the first time each handle
+// becomes non-zero, so we can tell from console output whether Steam Input
+// actually loaded our action manifest. Remove once Steam Input is confirmed
+// working end-to-end.
+let _diagFirstResolveLogged = false;
+let _diagSetHandleLogged = false;
+let _diagSteerHandleLogged = false;
+let _diagControllersEverSeen = 0;
+
+function resolveSteamInputHandles() {
+  if (!steamInputReady) return false;
+  if (steamInputSetHandle === 0n) {
+    try { steamInputSetHandle = steamworks.input.getActionSet('InGameControls'); }
+    catch (e) { /* manifest not yet loaded */ }
+  }
+  if (steamInputSteerHandle === 0n) {
+    try { steamInputSteerHandle = steamworks.input.getAnalogAction('Steer'); }
+    catch (e) { /* manifest not yet loaded */ }
+  }
+  if (!_diagFirstResolveLogged) {
+    _diagFirstResolveLogged = true;
+    console.log(`[SteamInput diag] first resolve: set=${steamInputSetHandle.toString()} steer=${steamInputSteerHandle.toString()}`);
+  }
+  if (!_diagSetHandleLogged && steamInputSetHandle !== 0n) {
+    _diagSetHandleLogged = true;
+    console.log(`[SteamInput diag] InGameControls action set resolved: ${steamInputSetHandle.toString()}`);
+  }
+  if (!_diagSteerHandleLogged && steamInputSteerHandle !== 0n) {
+    _diagSteerHandleLogged = true;
+    console.log(`[SteamInput diag] Steer analog action resolved: ${steamInputSteerHandle.toString()}`);
+  }
+  return steamInputSetHandle !== 0n && steamInputSteerHandle !== 0n;
+}
+
+function tickSteamInput() {
+  if (!resolveSteamInputHandles()) return [];
+  let controllers;
+  try { controllers = steamworks.input.getControllers(); }
+  catch (e) { return []; }
+  if (controllers.length > _diagControllersEverSeen) {
+    _diagControllersEverSeen = controllers.length;
+    console.log(`[SteamInput diag] getControllers() now returning ${controllers.length} captured pad(s)`);
+  }
+  const out = [];
+  const seen = new Set();
+  for (const c of controllers) {
+    const handle = c.getHandle();
+    const handleStr = handle.toString();
+    seen.add(handleStr);
+    if (!steamInputActivated.has(handleStr)) {
+      try {
+        c.activateActionSet(steamInputSetHandle);
+        steamInputActivated.add(handleStr);
+      } catch (e) { /* skip — Steam will keep prior action set */ }
+    }
+    let vec = { x: 0, y: 0 };
+    try { vec = c.getAnalogActionVector(steamInputSteerHandle); }
+    catch (e) { /* skip — leave at zero */ }
+    out.push({
+      handle: handleStr,
+      type: c.getType(),
+      steerX: vec.x,
+      steerY: vec.y,
+    });
+  }
+  // Drop handles that disappeared so re-attach re-activates.
+  for (const h of steamInputActivated) if (!seen.has(h)) steamInputActivated.delete(h);
+  return out;
+}
+
+function startSteamInputTickLoop() {
+  if (steamInputTimer || !steamInputReady) return;
+  steamInputTimer = setInterval(() => {
+    steamInputSnapshot = tickSteamInput();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('steam:input:tick', steamInputSnapshot);
+    }
+  }, 16);
+}
+
 // --- IPC handlers for Steam API calls from renderer ---
 ipcMain.handle('steam:isAvailable', () => !!steamworks);
+ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
+ipcMain.handle('steam:input:poll', () => steamInputSnapshot);
 ipcMain.handle('steam:getPlayerName', () => {
   if (!steamworks) return null;
   return steamworks.localplayer.getName();
@@ -197,6 +307,7 @@ app.whenReady().then(async () => {
   });
 
   createWindow();
+  startSteamInputTickLoop();
 
   // Auto-select first matching HID device (skip the browser picker dialog)
   mainWindow.webContents.session.on('select-hid-device', (event, details, callback) => {

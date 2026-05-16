@@ -107,6 +107,15 @@ export class InputManager {
     // motionEnabled. Set while fusion.calibrating, cleared after arm.
     this._wasFusionCalibrating = false;
 
+    // Steam Input gyro override: when steamworks.input has captured a
+    // controller, its `Steer` analog action (gyro→joystick_move in the VDF)
+    // becomes the gyro source for that pad, replacing WebHID fusion. We
+    // track the active flag here so callers and the lobby UI can tell that
+    // Steam Input is the gyro source. `_steamInputType` mirrors Steam's
+    // InputType enum (e.g. 'SteamDeckController', 'PS5Controller').
+    this._steamInputActive = false;
+    this._steamInputType = null;
+
     if (enableKeyboard) this._setupKeyboard();
     if (isMobile) {
       if (enableTouch) this._setupTouch();
@@ -122,7 +131,10 @@ export class InputManager {
   // owns the lifecycle; InputManager is a pure consumer.
   get gamepadConnected() { return this._slot?.state === 'claimed'; }
   get gamepadIndex() { return this._slot?.gamepadIndex ?? null; }
-  get gyroConnected() { return !!(this._slot?.fusion); }
+  // Steam Input counts as a gyro source — it owns Steer for any captured pad
+  // and replaces the WebHID fusion path. The lobby reads this to decide
+  // whether to surface the gyro toggle.
+  get gyroConnected() { return !!(this._slot?.fusion) || this._steamInputActive; }
   get gyroDevice() { return this._slot?.hidDevice ?? null; }
   get _gpName() { return this._slot?.controllerLabel ?? ''; }
   get _syntheticGamepad() { return this._slot?.synthetic ?? null; }
@@ -557,6 +569,43 @@ export class InputManager {
         this._markActive();
       }
     }
+
+    // Steam Input gyro path — when Steam Input has captured ANY controller,
+    // its Steer analog action wins over the WebHID fusion pipeline for the
+    // gyro channel. Steam's per-controller config owns sensitivity/deadzone/
+    // response-curve tuning; we just route the resulting scalar into
+    // motionLean and let the existing BalanceController sum it with the
+    // joystick stick. The renderer reads a snapshot pushed by main at
+    // ~60Hz via 'steam:input:tick' — no per-frame IPC round-trip.
+    const steamInputData = (typeof window !== 'undefined' && window.steam && window.steam.input)
+      ? window.steam.input.getLatest()
+      : null;
+    const hadSteamInput = this._steamInputActive;
+    this._steamInputActive = !!(steamInputData && steamInputData.length > 0);
+    if (this._steamInputActive) {
+      // One-shot auto-arm on first capture, mirroring the fusion-calibration
+      // arm. After this, the user's lobby motion toggle controls the channel.
+      if (!hadSteamInput && !this.motionEnabled) {
+        this.motionEnabled = true;
+        if (this.onMotionEnabled) this.onMotionEnabled();
+      }
+      this._wasFusionCalibrating = false;
+      if (!this.motionEnabled) return;
+      // For now: map first Steam Input controller to this InputManager.
+      // Local-MP multi-pad mapping is a follow-up — see project memory.
+      const primary = steamInputData[0];
+      this._steamInputType = primary.type;
+      this.motionLean = primary.steerX;
+      this._smoothedLean = primary.steerX;
+      this._prevLeanRaw = primary.steerX;
+      // Diagnostic mirror for HUD / test/input.html (no real roll angle
+      // available — Steam SDK only exposes the post-mapping vector).
+      this._gyroRollAccum = -primary.steerX * 90;
+      this._accelRoll = 0;
+      if (Math.abs(primary.steerX) > 0.05) this._markActive();
+      return;
+    }
+    this._steamInputType = null;
 
     // Orientation → tilt projection. The slot's HidEntry ingests gyro at
     // HID-report frequency (100–250Hz) independently; we read the output

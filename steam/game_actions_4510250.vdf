@@ -1,0 +1,54 @@
+// ============================================================
+// Steam Input action manifest — Tandemonium (playtest app 4510250)
+//
+// Purpose: expose ONE analog action ("Steer") to the game so Steam
+// Input can route any controller's gyro into our bike-steer pipeline.
+// All other controller inputs (face buttons, sticks, dpad, triggers,
+// keyboard) stay on the existing Gamepad-API / WebHID paths — Steam
+// Input is not asked to own them.
+//
+// Upload path: Steamworks partner site → Edit Steamworks Settings →
+// Steam Input → upload this file as the In-Game Actions File. Steam
+// then ships it to all clients of app 4510250.
+//
+// Iteration loop: edit this file → re-upload → relaunch from Steam.
+// Default bindings per controller type are tuned through Steam's
+// "Configure Controller" UI and published as Official configs;
+// they are NOT in this file.
+// ============================================================
+
+"In Game Actions"
+{
+    "actions"
+    {
+        // Single action set. Steer is read every frame the game is
+        // running; menus simply ignore the value, so we don't need
+        // a separate Menu set yet.
+        "InGameControls"
+        {
+            "title"        "#Set_InGameControls"
+            "legacy_set"   "0"
+
+            // StickPadGyro = analog 2D inputs. joystick_move outputs
+            // an (x, y) vector in -1..+1. We read X as steer; Y is
+            // unused but harmless to leave bindable for future use.
+            "StickPadGyro"
+            {
+                "Steer"
+                {
+                    "title"        "#Action_Steer"
+                    "input_mode"   "joystick_move"
+                }
+            }
+        }
+    }
+
+    "localization"
+    {
+        "english"
+        {
+            "Set_InGameControls"   "Gameplay"
+            "Action_Steer"         "Steer (Gyro Tilt)"
+        }
+    }
+}
