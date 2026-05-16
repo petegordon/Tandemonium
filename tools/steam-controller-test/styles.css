@@ -1,0 +1,123 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, Segoe UI, sans-serif;
+  background: #1a1a1a;
+  color: #ddd;
+  font-size: 13px;
+  line-height: 1.5;
+}
+header {
+  padding: 14px 22px;
+  background: #2a2a2a;
+  border-bottom: 1px solid #333;
+}
+header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+header .subtitle { color: #888; font-size: 12px; }
+main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: #333;
+}
+section {
+  padding: 18px 22px;
+  background: #1a1a1a;
+  min-height: 60vh;
+}
+section h2 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+.block {
+  margin: 18px 0;
+  padding: 12px 14px;
+  background: #232323;
+  border: 1px solid #303030;
+  border-radius: 4px;
+}
+.block-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #ccc;
+}
+.hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: #888;
+  margin-left: 4px;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+.label {
+  color: #aaa;
+  min-width: 160px;
+}
+.value {
+  font-family: ui-monospace, Consolas, monospace;
+}
+.value.ok    { color: #6cd97e; }
+.value.bad   { color: #d97e6c; }
+.empty {
+  color: #777;
+  font-style: italic;
+}
+.controller-row,
+.device-row {
+  padding: 8px 10px;
+  margin: 6px 0;
+  background: #1a1a1a;
+  border-left: 3px solid #4a8;
+  border-radius: 0 3px 3px 0;
+}
+code {
+  font-family: ui-monospace, Consolas, monospace;
+  background: #111;
+  padding: 1px 5px;
+  border-radius: 2px;
+  color: #ddd;
+}
+.path {
+  font-size: 11px;
+  word-break: break-all;
+}
+button {
+  background: #355;
+  color: #fff;
+  border: 1px solid #466;
+  padding: 6px 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  margin: 2px 4px 2px 0;
+}
+button:hover { background: #466; }
+pre {
+  background: #111;
+  padding: 10px;
+  border-radius: 3px;
+  overflow-x: auto;
+  font-size: 11px;
+  color: #cda;
+  margin: 4px 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+footer {
+  padding: 14px 22px;
+  background: #2a2a2a;
+  border-top: 1px solid #333;
+  text-align: right;
+}
+#copy-status {
+  margin-left: 10px;
+  color: #6cd97e;
+}

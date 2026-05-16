@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Steam Controller Test Bench</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>Steam Controller Test Bench</h1>
+    <div class="subtitle">app 4510250 (Tandemonium Playtest) &middot; Steam Input + WebHID isolated harness</div>
+  </header>
+
+  <main>
+    <!-- ============== Steam Input panel ============== -->
+    <section id="steam-input-panel">
+      <h2>Steam Input</h2>
+
+      <div class="row">
+        <span class="label">SDK init:</span>
+        <span id="si-ready" class="value">?</span>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Action handles <span class="hint">(non-zero = Steam parsed our IGA)</span></div>
+        <div class="row"><span class="label">InGameControls set:</span> <span id="si-h-set" class="value">0</span></div>
+        <div class="row"><span class="label">Steer analog:</span> <span id="si-h-steer" class="value">0</span></div>
+        <div class="row"><span class="label">Confirm digital:</span> <span id="si-h-confirm" class="value">0</span></div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Captured controllers <span class="hint">(press a button on your pad if list is empty)</span></div>
+        <div id="si-controllers">
+          <div class="empty">No controllers captured by Steam Input yet.</div>
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Name probe <span class="hint">(non-zero = Steam actually has this name)</span></div>
+        <div id="si-probe"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">IGA file presence <span class="hint">(across known install + dev paths)</span></div>
+        <div id="iga-paths"><button id="check-iga-btn">Check now</button></div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Steam controller.txt tail <span class="hint">(IGA-relevant lines)</span></div>
+        <pre id="steam-log-tail"><button id="check-log-btn">Read last lines</button></pre>
+      </div>
+    </section>
+
+    <!-- ============== WebHID panel ============== -->
+    <section id="webhid-panel">
+      <h2>WebHID</h2>
+
+      <div class="block">
+        <div class="block-title">Connect <span class="hint">(user gesture required; first connect prompts permission)</span></div>
+        <button class="connect-btn" data-target="steam-controller">Connect Steam Controller</button>
+        <button class="connect-btn" data-target="dualsense">Connect DualSense</button>
+        <button class="connect-btn" data-target="any">Connect Any HID</button>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Devices</div>
+        <div id="hid-devices"><div class="empty">No HID devices paired yet. Click a Connect button above.</div></div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Last input reports <span class="hint">(most recent 5, raw hex)</span></div>
+        <pre id="hid-reports"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <button id="copy-repro-btn">Copy diagnostic snapshot to clipboard</button>
+    <span id="copy-status"></span>
+  </footer>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
