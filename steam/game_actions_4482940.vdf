@@ -17,6 +17,13 @@
 					"input_mode"	"joystick_move"
 				}
 			}
+			"Button"
+			{
+				"Confirm"
+				{
+					"title"		"#Action_Confirm"
+				}
+			}
 		}
 	}
 	"localization"
@@ -25,6 +32,7 @@
 		{
 			"Set_InGameControls"	"Gameplay"
 			"Action_Steer"			"Steer"
+			"Action_Confirm"		"Confirm"
 		}
 	}
 }

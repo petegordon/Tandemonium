@@ -3,6 +3,11 @@
 // registered server-side via Steamworks > App > Controller > Steam Input
 // Default Controller Configuration > Custom Configuration > path field.
 // Keep this file pure ASCII - Steam's VDF parser is strict.
+//
+// Hail-mary: added a dummy 'Confirm' Button action alongside Steer, in case
+// Steam silently rejects action sets that only declare one StickPadGyro
+// action with no Button entries. We don't read Confirm from the API; it's
+// only here to give the action set a multi-category structure.
 
 "In Game Actions"
 {
@@ -19,6 +24,13 @@
 					"input_mode"	"joystick_move"
 				}
 			}
+			"Button"
+			{
+				"Confirm"
+				{
+					"title"		"#Action_Confirm"
+				}
+			}
 		}
 	}
 	"localization"
@@ -27,6 +39,7 @@
 		{
 			"Set_InGameControls"	"Gameplay"
 			"Action_Steer"			"Steer"
+			"Action_Confirm"		"Confirm"
 		}
 	}
 }
