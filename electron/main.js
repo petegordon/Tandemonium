@@ -40,14 +40,15 @@ if (!gotTheLock) {
 }
 
 // --- Steamworks initialization (before app.ready) ---
-let steamworks = null;
+// Migrated 2026-05-16 from steamworks.js@0.4.0 to steamworks-ffi-node@0.10.3.
+// The new SDK exposes Steam Input methods (runFrame, getActionSetHandle, etc.)
+// that 0.4.0 was missing - that gap was the root cause of every IGA failure
+// we hit earlier on this branch.
+let steam = null;
 let appId = 4482940; // hoisted so Steam Input diagnostic can reference it below
 try {
-  const { init, electronEnableSteamOverlay } = require('steamworks.js');
-  electronEnableSteamOverlay();
   // Read app ID from steam_appid.txt (playtest: 4510250, release: 4482940)
   try {
-    // extraResource copies steam_appid.txt into resources/ when packaged
     const idPath = app.isPackaged
       ? path.join(process.resourcesPath, 'steam_appid.txt')
       : path.join(__dirname, '..', 'steam_appid.txt');
@@ -56,10 +57,35 @@ try {
   } catch (e) {
     console.warn('Could not read steam_appid.txt, using default app ID:', e.message);
   }
-  steamworks = init(appId);
-  console.log('Steamworks initialized');
+
+  // Steam Overlay support: the Chromium switches below are what upstream
+  // steamworks.js's electronEnableSteamOverlay() used. We deliberately do
+  // NOT install the per-frame webContents.invalidate() shim that ships with
+  // that helper - it caused visible flicker and made the overlay's close
+  // button unresponsive. The two command-line switches are enough for the
+  // overlay to render in most cases; if specific frames glitch we'll add a
+  // narrower fix.
+  app.commandLine.appendSwitch('in-process-gpu');
+  app.commandLine.appendSwitch('disable-direct-composition');
+
+  const { SteamworksSDK } = require('steamworks-ffi-node');
+  steam = SteamworksSDK.getInstance();
+
+  // Tell the SDK where to find steam_api64.dll. In dev it's checked into
+  // the repo at <repo>/steamworks_sdk/redistributable_bin/win64/. Packaged
+  // builds get the same folder shipped via forge.config.js extraResource
+  // into the install's resources/ dir.
+  const sdkDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'steamworks_sdk')
+    : path.join(__dirname, '..', 'steamworks_sdk');
+  steam.setSdkPath(sdkDir);
+
+  const ok = steam.init({ appId });
+  if (!ok) throw new Error('SteamworksSDK.init() returned false');
+  console.log('Steamworks initialized via steamworks-ffi-node, appId=' + appId);
 } catch (err) {
-  console.log('Steamworks unavailable, running without Steam:', err.message);
+  console.warn('Steamworks unavailable, running without Steam:', err.message);
+  steam = null;
 }
 
 // --- Steam Input (action-based gyro→Steer) ---
@@ -77,11 +103,34 @@ const steamInputActivated = new Set(); // controller handles we've already activ
 let steamInputSnapshot = [];
 let steamInputTimer = null;
 
-if (steamworks) {
+if (steam) {
   try {
-    steamworks.input.init();
+    // explicitCallRunFrame=true means we drive ISteamInput::RunFrame() from
+    // our tick loop. The upstream steamworks.js package didn't expose
+    // RunFrame and that's why action handles never populated for us.
+    const inputOk = steam.input.init(true);
+    if (!inputOk) throw new Error('Steam Input init returned false');
     steamInputReady = true;
     _diagLog('Steam Input initialized');
+
+    // Optional explicit override - point Steam at the action manifest in
+    // the game's install dir. The Steamworks-side Custom Configuration
+    // path setting should already cover this, but doing it explicitly at
+    // runtime is harmless and aids dev iteration (in dev mode we point at
+    // the repo's source VDF so editing it doesn't require a CI cycle).
+    try {
+      const igaForSet = app.isPackaged
+        ? path.join(path.dirname(app.getPath('exe')), 'controller_config', `game_actions_${appId}.vdf`)
+        : path.join(__dirname, '..', 'steam', `game_actions_${appId}.vdf`);
+      if (fs.existsSync(igaForSet)) {
+        const setOk = steam.input.setInputActionManifestFilePath(igaForSet);
+        _diagLog(`[SteamInput diag] setInputActionManifestFilePath(${igaForSet}) -> ${setOk}`);
+      } else {
+        _diagLog(`[SteamInput diag] IGA not at ${igaForSet} (skipping explicit set)`);
+      }
+    } catch (e) {
+      _diagLog('[SteamInput diag] setInputActionManifestFilePath threw: ' + e.message);
+    }
   } catch (err) {
     _diagLog('Steam Input init failed: ' + err.message);
   }
@@ -111,12 +160,9 @@ if (steamworks) {
 }
 
 // Handle resolution is lazy: Steam may not have loaded the action manifest
-// at init() time (depends on when the game_actions VDF is fetched), so we
-// re-try every tick until both handles are non-zero.
-// Diagnostic: log the first resolution attempt and the first time each handle
-// becomes non-zero, so we can tell from console output whether Steam Input
-// actually loaded our action manifest. Remove once Steam Input is confirmed
-// working end-to-end.
+// at init() time, so we re-try every tick until both handles are non-zero.
+// Diagnostic logging stays in place until end-to-end success is confirmed
+// (we'll strip it in a follow-up commit).
 let _diagFirstResolveLogged = false;
 let _diagSetHandleLogged = false;
 let _diagSteerHandleLogged = false;
@@ -125,57 +171,66 @@ let _diagControllersEverSeen = 0;
 function resolveSteamInputHandles() {
   if (!steamInputReady) return false;
   if (steamInputSetHandle === 0n) {
-    try { steamInputSetHandle = steamworks.input.getActionSet('InGameControls'); }
+    try { steamInputSetHandle = steam.input.getActionSetHandle('InGameControls'); }
     catch (e) { /* manifest not yet loaded */ }
   }
   if (steamInputSteerHandle === 0n) {
-    try { steamInputSteerHandle = steamworks.input.getAnalogAction('Steer'); }
+    try { steamInputSteerHandle = steam.input.getAnalogActionHandle('Steer'); }
     catch (e) { /* manifest not yet loaded */ }
   }
   if (!_diagFirstResolveLogged) {
     _diagFirstResolveLogged = true;
-    console.log(`[SteamInput diag] first resolve: set=${steamInputSetHandle.toString()} steer=${steamInputSteerHandle.toString()}`);
+    _diagLog(`[SteamInput diag] first resolve: set=${steamInputSetHandle.toString()} steer=${steamInputSteerHandle.toString()}`);
   }
   if (!_diagSetHandleLogged && steamInputSetHandle !== 0n) {
     _diagSetHandleLogged = true;
-    console.log(`[SteamInput diag] InGameControls action set resolved: ${steamInputSetHandle.toString()}`);
+    _diagLog(`[SteamInput diag] InGameControls action set resolved: ${steamInputSetHandle.toString()}`);
   }
   if (!_diagSteerHandleLogged && steamInputSteerHandle !== 0n) {
     _diagSteerHandleLogged = true;
-    console.log(`[SteamInput diag] Steer analog action resolved: ${steamInputSteerHandle.toString()}`);
+    _diagLog(`[SteamInput diag] Steer analog action resolved: ${steamInputSteerHandle.toString()}`);
   }
   return steamInputSetHandle !== 0n && steamInputSteerHandle !== 0n;
 }
 
 function tickSteamInput() {
+  // Drive ISteamInput::RunFrame each tick - required for getConnectedControllers
+  // and getAnalogActionData to return fresh values when init(true) was used.
+  try { steam.input.runFrame(); } catch (e) { /* skip transient errors */ }
+
   if (!resolveSteamInputHandles()) return [];
+
   let controllers;
-  try { controllers = steamworks.input.getControllers(); }
+  try { controllers = steam.input.getConnectedControllers(); }
   catch (e) { return []; }
   if (controllers.length > _diagControllersEverSeen) {
     _diagControllersEverSeen = controllers.length;
-    console.log(`[SteamInput diag] getControllers() now returning ${controllers.length} captured pad(s)`);
+    _diagLog(`[SteamInput diag] getConnectedControllers() now returning ${controllers.length} captured pad(s)`);
   }
+
   const out = [];
   const seen = new Set();
-  for (const c of controllers) {
-    const handle = c.getHandle();
+  for (const handle of controllers) {
     const handleStr = handle.toString();
     seen.add(handleStr);
     if (!steamInputActivated.has(handleStr)) {
       try {
-        c.activateActionSet(steamInputSetHandle);
+        steam.input.activateActionSet(handle, steamInputSetHandle);
         steamInputActivated.add(handleStr);
-      } catch (e) { /* skip — Steam will keep prior action set */ }
+      } catch (e) { /* skip - Steam will keep prior action set */ }
     }
-    let vec = { x: 0, y: 0 };
-    try { vec = c.getAnalogActionVector(steamInputSteerHandle); }
-    catch (e) { /* skip — leave at zero */ }
+    let data = { x: 0, y: 0, active: false };
+    try { data = steam.input.getAnalogActionData(handle, steamInputSteerHandle); }
+    catch (e) { /* leave at zero */ }
+    let type = 'Unknown';
+    try { type = steam.input.getInputTypeForHandle(handle); }
+    catch (e) {}
     out.push({
       handle: handleStr,
-      type: c.getType(),
-      steerX: vec.x,
-      steerY: vec.y,
+      type: String(type),
+      steerX: data.x,
+      steerY: data.y,
+      active: !!data.active,
     });
   }
   // Drop handles that disappeared so re-attach re-activates.
@@ -194,59 +249,59 @@ function startSteamInputTickLoop() {
 }
 
 // --- IPC handlers for Steam API calls from renderer ---
-ipcMain.handle('steam:isAvailable', () => !!steamworks);
+// Renderer-facing IPC channel names stay identical to the old steamworks.js
+// implementation; only the handler bodies changed. preload.js and every JS
+// file under js/ that calls window.steam.* keep working without edits.
+ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
 ipcMain.handle('steam:input:poll', () => steamInputSnapshot);
 ipcMain.handle('steam:getPlayerName', () => {
-  if (!steamworks) return null;
-  return steamworks.localplayer.getName();
+  if (!steam) return null;
+  try { return steam.friends.getPersonaName(); }
+  catch (e) { return null; }
 });
 ipcMain.handle('steam:getSteamId', () => {
-  if (!steamworks) return null;
-  return steamworks.localplayer.getSteamId().steamId64.toString();
+  if (!steam) return null;
+  try { return steam.getStatus().steamId; }
+  catch (e) { return null; }
 });
 ipcMain.handle('steam:isSubscribed', () => {
-  if (!steamworks) return false;
-  return steamworks.apps.isSubscribed();
+  if (!steam) return false;
+  try { return steam.apps.isSubscribed(); }
+  catch (e) { return false; }
 });
-ipcMain.handle('steam:activateAchievement', (_event, apiName) => {
-  if (!steamworks) return false;
+ipcMain.handle('steam:activateAchievement', async (_event, apiName) => {
+  if (!steam) return false;
   try {
-    steamworks.achievement.activate(apiName);
-    return true;
+    // unlockAchievement auto-calls StoreStats internally
+    return await steam.achievements.unlockAchievement(apiName);
   } catch (e) {
     console.error('Steam achievement error:', e.message);
     return false;
   }
 });
-ipcMain.handle('steam:isAchievementActivated', (_event, apiName) => {
-  if (!steamworks) return false;
-  try {
-    return steamworks.achievement.isActivated(apiName);
-  } catch (e) {
-    return false;
-  }
+ipcMain.handle('steam:isAchievementActivated', async (_event, apiName) => {
+  if (!steam) return false;
+  try { return await steam.achievements.isAchievementUnlocked(apiName); }
+  catch (e) { return false; }
 });
 ipcMain.handle('steam:getAuthTicket', async () => {
-  if (!steamworks) return null;
+  if (!steam) return null;
   try {
-    // steamworks.js 0.4.0: use getAuthTicketForWebApi for server-side verification
-    const ticket = await steamworks.auth.getAuthTicketForWebApi('tandemonium');
-    return Buffer.from(ticket.getBytes()).toString('hex');
+    // The ffi-node binding returns ticketHex already (no Buffer→hex needed).
+    const ticket = await steam.user.getAuthTicketForWebApi({ identity: 'tandemonium' });
+    return ticket && ticket.success ? ticket.ticketHex : null;
   } catch (e) {
     console.error('Steam auth ticket error:', e.message);
     return null;
   }
 });
 ipcMain.handle('steam:storeStats', () => {
-  if (!steamworks) return false;
-  try {
-    steamworks.stats.store();
-    return true;
-  } catch (e) {
-    console.warn('Steam storeStats error:', e.message);
-    return false;
-  }
+  // No-op: every stats-affecting call in the new SDK (unlockAchievement,
+  // setStatInt, etc.) auto-flushes via StoreStats internally. Kept as an
+  // IPC handler so renderer code that still calls window.steam.storeStats()
+  // doesn't break.
+  return !!steam;
 });
 
 ipcMain.handle('app:toggleDevTools', () => {

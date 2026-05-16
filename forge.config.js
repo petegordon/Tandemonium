@@ -3,12 +3,20 @@ const fs = require('fs');
 
 module.exports = {
   packagerConfig: {
+    // steamworks-ffi-node is pure JS + uses Koffi FFI; no native .node binary
+    // to unpack from asar. Koffi itself does carry small .node bindings, so
+    // we unpack koffi to ensure its loader can find them at runtime.
     asar: {
-      unpack: '**/node_modules/steamworks.js/**',
+      unpack: '**/node_modules/koffi/**',
     },
     icon: path.join(__dirname, 'assets', 'icon'),
     extraResource: [
       path.join(__dirname, 'steam_appid.txt'),
+      // Ship the Steamworks redistributable (steam_api64.dll) inside the
+      // packaged app's resources/ folder. electron/main.js calls
+      // steam.setSdkPath(path.join(process.resourcesPath, 'steamworks_sdk'))
+      // when app.isPackaged so the FFI loader looks here.
+      path.join(__dirname, 'steamworks_sdk'),
     ],
     name: 'Tandemonium',
   },
