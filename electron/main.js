@@ -105,19 +105,12 @@ let steamInputTimer = null;
 
 if (steam) {
   try {
-    // explicitCallRunFrame=true means we drive ISteamInput::RunFrame() from
-    // our tick loop. The upstream steamworks.js package didn't expose
-    // RunFrame and that's why action handles never populated for us.
-    const inputOk = steam.input.init(true);
-    if (!inputOk) throw new Error('Steam Input init returned false');
-    steamInputReady = true;
-    _diagLog('Steam Input initialized');
-
-    // Optional explicit override - point Steam at the action manifest in
-    // the game's install dir. The Steamworks-side Custom Configuration
-    // path setting should already cover this, but doing it explicitly at
-    // runtime is harmless and aids dev iteration (in dev mode we point at
-    // the repo's source VDF so editing it doesn't require a CI cycle).
+    // ORDER MATTERS: SetInputActionManifestFilePath MUST be called BEFORE
+    // input.init() per Valve's ISteamInput docs and steamworks-ffi-node JSDoc.
+    // Calling it after init is a silent no-op — Steam Input has already
+    // loaded its (empty) manifest by then and won't reload from a new path.
+    // This was the root cause of the "Steam parses our IGA but action set
+    // never registers" symptom we'd been treating as a Valve-side blocker.
     try {
       const igaForSet = app.isPackaged
         ? path.join(path.dirname(app.getPath('exe')), 'controller_config', `game_actions_${appId}.vdf`)
@@ -131,6 +124,14 @@ if (steam) {
     } catch (e) {
       _diagLog('[SteamInput diag] setInputActionManifestFilePath threw: ' + e.message);
     }
+
+    // explicitCallRunFrame=true means we drive ISteamInput::RunFrame() from
+    // our tick loop. The upstream steamworks.js package didn't expose
+    // RunFrame and that's why action handles never populated for us.
+    const inputOk = steam.input.init(true);
+    if (!inputOk) throw new Error('Steam Input init returned false');
+    steamInputReady = true;
+    _diagLog('Steam Input initialized');
   } catch (err) {
     _diagLog('Steam Input init failed: ' + err.message);
   }
