@@ -4,10 +4,11 @@
 // Default Controller Configuration > Custom Configuration > path field.
 // Keep this file pure ASCII - Steam's VDF parser is strict.
 //
-// Hail-mary: added a dummy 'Confirm' Button action alongside Steer, in case
-// Steam silently rejects action sets that only declare one StickPadGyro
-// action with no Button entries. We don't read Confirm from the API; it's
-// only here to give the action set a multi-category structure.
+// Button entries use one-liner syntax per Valve's IGA documentation:
+//   "Button" { "Confirm" "#Action_Confirm" }
+// NOT block syntax with a "title" field. Earlier versions of this file
+// got that wrong, which appears to have caused Steam to silently bail
+// on parsing the entire action set.
 
 "In Game Actions"
 {
@@ -26,10 +27,7 @@
 			}
 			"Button"
 			{
-				"Confirm"
-				{
-					"title"		"#Action_Confirm"
-				}
+				"Confirm"	"#Action_Confirm"
 			}
 		}
 	}

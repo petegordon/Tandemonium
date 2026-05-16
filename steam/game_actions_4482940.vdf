@@ -19,10 +19,7 @@
 			}
 			"Button"
 			{
-				"Confirm"
-				{
-					"title"		"#Action_Confirm"
-				}
+				"Confirm"	"#Action_Confirm"
 			}
 		}
 	}
