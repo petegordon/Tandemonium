@@ -2,6 +2,18 @@ const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net } = 
 const path = require('path');
 const fs = require('fs');
 
+// Diagnostic file logger for Steam Input troubleshooting.
+// Writes to %USERPROFILE%\tandemonium-diag.log so we can see main-
+// process diagnostics from Steam-launched runs (which swallow stdout).
+// Reset on each launch. Remove this whole block once Steam Input is
+// confirmed working end-to-end.
+const _diagLogPath = path.join(process.env.USERPROFILE || process.env.HOME || __dirname, 'tandemonium-diag.log');
+try { fs.writeFileSync(_diagLogPath, `--- launch ${new Date().toISOString()} ---\n`); } catch (e) {}
+function _diagLog(msg) {
+  console.log(msg);
+  try { fs.appendFileSync(_diagLogPath, `[${new Date().toISOString()}] ${msg}\n`); } catch (e) {}
+}
+
 // Group all Electron processes under one taskbar/alt-tab entry on Windows.
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.jimandi.tandemonium');
@@ -29,11 +41,11 @@ if (!gotTheLock) {
 
 // --- Steamworks initialization (before app.ready) ---
 let steamworks = null;
+let appId = 4482940; // hoisted so Steam Input diagnostic can reference it below
 try {
   const { init, electronEnableSteamOverlay } = require('steamworks.js');
   electronEnableSteamOverlay();
   // Read app ID from steam_appid.txt (playtest: 4510250, release: 4482940)
-  let appId = 4482940;
   try {
     // extraResource copies steam_appid.txt into resources/ when packaged
     const idPath = app.isPackaged
@@ -69,9 +81,32 @@ if (steamworks) {
   try {
     steamworks.input.init();
     steamInputReady = true;
-    console.log('Steam Input initialized');
+    _diagLog('Steam Input initialized');
   } catch (err) {
-    console.warn('Steam Input init failed:', err.message);
+    _diagLog('Steam Input init failed: ' + err.message);
+  }
+
+  // Sanity-check the action manifest is actually present in the install
+  // dir at the path Steam Input expects. When packaged, the exe sits at
+  // <install>/Tandemonium.exe, so the manifest should be at
+  // <install>/controller_config/game_actions_<appid>.vdf.
+  try {
+    const exeDir = path.dirname(app.getPath('exe'));
+    const igaPath = path.join(exeDir, 'controller_config', `game_actions_${appId}.vdf`);
+    _diagLog(`[SteamInput diag] expected IGA path: ${igaPath}`);
+    if (fs.existsSync(igaPath)) {
+      const stat = fs.statSync(igaPath);
+      _diagLog(`[SteamInput diag] IGA file exists: ${stat.size} bytes`);
+      // Sniff for non-ASCII bytes that could trip Steam's VDF parser.
+      const buf = fs.readFileSync(igaPath);
+      let nonAscii = 0;
+      for (let i = 0; i < buf.length; i++) if (buf[i] > 0x7F) nonAscii++;
+      _diagLog(`[SteamInput diag] IGA non-ASCII byte count: ${nonAscii}`);
+    } else {
+      _diagLog('[SteamInput diag] IGA file MISSING at expected path');
+    }
+  } catch (e) {
+    _diagLog('[SteamInput diag] IGA path check threw: ' + e.message);
   }
 }
 
