@@ -1,0 +1,99 @@
+"controller_mappings"
+{
+	"version"		"3"
+	"revision"		"1"
+	"title"		"#Title"
+	"description"		"#Description"
+	"creator"		"Tandemonium"
+	"controller_type"		"controller_ps5"
+	"actions"
+	{
+		"InGameControls"
+		{
+			"title"		"#Set_InGameControls"
+			"legacy_set"		"0"
+			"StickPadGyro"
+			{
+				"Steer"
+				{
+					"title"		"#Action_Steer"
+					"input_mode"		"joystick_move"
+				}
+			}
+			"Button"
+			{
+				"Confirm"		"#Action_Confirm"
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"0"
+		"mode"		"joystick_move"
+		"inputs"
+		{
+		}
+		"gameactions"
+		{
+			"InGameControls"		"Steer"
+		}
+	}
+	"group"
+	{
+		"id"		"1"
+		"mode"		"joystick_move"
+		"inputs"
+		{
+		}
+		"gameactions"
+		{
+			"InGameControls"		"Steer"
+		}
+	}
+	"group"
+	{
+		"id"		"2"
+		"mode"		"four_buttons"
+		"inputs"
+		{
+			"button_a"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"game_action InGameControls Confirm, Confirm, "
+						}
+					}
+				}
+			}
+		}
+	}
+	"preset"
+	{
+		"id"		"0"
+		"name"		"Default"
+		"group_source_bindings"
+		{
+			"0"		"joystick active"
+			"1"		"gyro active"
+			"2"		"button_diamond active"
+		}
+	}
+	"settings"
+	{
+	}
+	"localization"
+	{
+		"english"
+		{
+			"title"		"Tandemonium Default"
+			"description"		"Gyro and Left Stick steer the bike; Cross confirms."
+			"Set_InGameControls"		"Gameplay"
+			"Action_Steer"		"Steer"
+			"Action_Confirm"		"Confirm"
+		}
+	}
+}

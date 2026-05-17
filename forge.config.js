@@ -21,15 +21,27 @@ module.exports = {
     name: 'Tandemonium',
   },
   hooks: {
-    // After packaging, drop the Steam Input action manifests next to the
-    // exe under controller_config/. Steam Input reads the manifest from
-    // <gameInstallDir>/controller_config/game_actions_<appid>.vdf at launch.
-    // Shipping both VDFs covers playtest (4510250) and release (4482940).
+    // After packaging, drop the Steam Input files next to the exe under
+    // controller_config/. Steam reads from <gameInstallDir>/controller_config/
+    // at launch:
+    //   - game_actions_<appid>.vdf : Action manifest (schema). Both app IDs
+    //     ship so playtest (4510250) and release (4482940) both work.
+    //   - controller_<type>.vdf    : Default bindings (per controller type)
+    //     that map physical inputs to the actions declared in the IGA.
+    //     Without these, Steam falls back to controller_base/empty.vdf and
+    //     action handles never resolve. See docs/steam-input.md.
     postPackage: async (_forgeConfig, packageResult) => {
+      const filesToShip = [
+        'game_actions_4510250.vdf',
+        'game_actions_4482940.vdf',
+        'controller_ps5.vdf',
+        // Future controller types (steam_controller_v2, neptune2, etc.)
+        // get added here as bindings are authored. See docs/steam-input.md.
+      ];
       for (const outputPath of (packageResult.outputPaths || [])) {
         const cfgDir = path.join(outputPath, 'controller_config');
         fs.mkdirSync(cfgDir, { recursive: true });
-        for (const vdf of ['game_actions_4510250.vdf', 'game_actions_4482940.vdf']) {
+        for (const vdf of filesToShip) {
           const src = path.join(__dirname, 'steam', vdf);
           if (fs.existsSync(src)) fs.copyFileSync(src, path.join(cfgDir, vdf));
         }
