@@ -1,15 +1,3 @@
-// Steam Input action manifest - Tandemonium (playtest app 4510250)
-// Ships in the depot at controller_config/game_actions_4510250.vdf and is
-// registered server-side via Steamworks > App > Controller > Steam Input
-// Default Controller Configuration > Custom Configuration > path field.
-// Keep this file pure ASCII - Steam's VDF parser is strict.
-//
-// Button entries use one-liner syntax per Valve's IGA documentation:
-//   "Button" { "Confirm" "#Action_Confirm" }
-// NOT block syntax with a "title" field. Earlier versions of this file
-// got that wrong, which appears to have caused Steam to silently bail
-// on parsing the entire action set.
-
 "In Game Actions"
 {
 	"actions"
@@ -17,6 +5,10 @@
 		"InGameControls"
 		{
 			"title"		"#Set_InGameControls"
+			"Button"
+			{
+				"Confirm"	"#Action_Confirm"
+			}
 			"StickPadGyro"
 			{
 				"Steer"
@@ -24,10 +16,6 @@
 					"title"			"#Action_Steer"
 					"input_mode"	"joystick_move"
 				}
-			}
-			"Button"
-			{
-				"Confirm"	"#Action_Confirm"
 			}
 		}
 	}

@@ -1,7 +1,3 @@
-// Steam Input action manifest - Tandemonium (release app 4482940)
-// IDENTICAL CONTENT to game_actions_4510250.vdf except the appid.
-// Keep this file pure ASCII - Steam's VDF parser is strict.
-
 "In Game Actions"
 {
 	"actions"
@@ -9,6 +5,10 @@
 		"InGameControls"
 		{
 			"title"		"#Set_InGameControls"
+			"Button"
+			{
+				"Confirm"	"#Action_Confirm"
+			}
 			"StickPadGyro"
 			{
 				"Steer"
@@ -16,10 +16,6 @@
 					"title"			"#Action_Steer"
 					"input_mode"	"joystick_move"
 				}
-			}
-			"Button"
-			{
-				"Confirm"	"#Action_Confirm"
 			}
 		}
 	}
