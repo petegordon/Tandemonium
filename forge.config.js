@@ -32,11 +32,14 @@ module.exports = {
     //     action handles never resolve. See docs/steam-input.md.
     postPackage: async (_forgeConfig, packageResult) => {
       const filesToShip = [
-        'game_actions_4510250.vdf',
-        'game_actions_4482940.vdf',
+        // TEMP EXPERIMENT (issue #292): IGAs are temporarily NOT shipped to
+        // test whether their presence in the depot is what flags us as
+        // Steam-Input-API-aware (which suppresses virtual XInput emission).
+        // Binding stays so Steam still has a default controller config.
+        // Restore both IGA lines once we know the answer.
+        // 'game_actions_4510250.vdf',
+        // 'game_actions_4482940.vdf',
         'controller_ps5.vdf',
-        // Future controller types (steam_controller_v2, neptune2, etc.)
-        // get added here as bindings are authored. See docs/steam-input.md.
       ];
       for (const outputPath of (packageResult.outputPaths || [])) {
         const cfgDir = path.join(outputPath, 'controller_config');
