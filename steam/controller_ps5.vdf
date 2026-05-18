@@ -319,10 +319,6 @@
 				}
 			}
 		}
-		"gameactions"
-		{
-			"InGameControls"		"Steer"
-		}
 	}
 	"group"
 	{
@@ -756,6 +752,10 @@
 		"mode"		"joystick_move"
 		"inputs"
 		{
+		}
+		"settings"
+		{
+			"virtual_mode"		"1"
 		}
 		"gameactions"
 		{
