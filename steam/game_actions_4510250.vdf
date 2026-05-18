@@ -5,10 +5,6 @@
 		"InGameControls"
 		{
 			"title"		"#Set_InGameControls"
-			"Button"
-			{
-				"Confirm"	"#Action_Confirm"
-			}
 			"StickPadGyro"
 			{
 				"Steer"
@@ -16,6 +12,18 @@
 					"title"			"#Action_Steer"
 					"input_mode"	"joystick_move"
 				}
+			}
+			"Button"
+			{
+				"MenuUp"		"#Action_MenuUp"
+				"MenuDown"		"#Action_MenuDown"
+				"MenuLeft"		"#Action_MenuLeft"
+				"MenuRight"		"#Action_MenuRight"
+				"Confirm"		"#Action_Confirm"
+				"Cancel"		"#Action_Cancel"
+				"PedalLeft"		"#Action_PedalLeft"
+				"PedalRight"	"#Action_PedalRight"
+				"Pause"			"#Action_Pause"
 			}
 		}
 	}
@@ -25,7 +33,15 @@
 		{
 			"Set_InGameControls"	"Gameplay"
 			"Action_Steer"			"Steer"
+			"Action_MenuUp"			"Menu Up"
+			"Action_MenuDown"		"Menu Down"
+			"Action_MenuLeft"		"Menu Left"
+			"Action_MenuRight"		"Menu Right"
 			"Action_Confirm"		"Confirm"
+			"Action_Cancel"			"Cancel"
+			"Action_PedalLeft"		"Pedal Left"
+			"Action_PedalRight"		"Pedal Right"
+			"Action_Pause"			"Pause"
 		}
 	}
 }

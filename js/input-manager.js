@@ -128,6 +128,13 @@ export class InputManager {
     // InputType enum (e.g. 'SteamDeckController', 'PS5Controller').
     this._steamInputActive = false;
     this._steamInputType = null;
+    // Latest Steam Input snapshot from main, refreshed at top of pollGamepad.
+    // Used by both the gyro path and the synthetic-Gamepad fallback in
+    // getGamepadState() — when Steam Input intercepts the DualSense, Electron's
+    // navigator.getGamepads() doesn't always surface the virtual XInput pad,
+    // so the snapshot is the only source of button/stick state.
+    this._steamInputSnapshot = [];
+    this._steamInputSyntheticGp = null;
     // User preference (Auto / Steam Input / WebHID) — sampled once at
     // construction; takes effect on next session boot.
     this._dualsenseSource = readDualSenseSourcePref();
@@ -145,7 +152,7 @@ export class InputManager {
   // ── Slot accessors ──
   // Read-only getters that delegate to the attached slot. ControllerManager
   // owns the lifecycle; InputManager is a pure consumer.
-  get gamepadConnected() { return this._slot?.state === 'claimed'; }
+  get gamepadConnected() { return this._slot?.state === 'claimed' || this._steamInputActive; }
   get gamepadIndex() { return this._slot?.gamepadIndex ?? null; }
   // Steam Input counts as a gyro source — it owns Steer for any captured pad
   // and replaces the WebHID fusion path. The lobby reads this to decide
@@ -561,6 +568,9 @@ export class InputManager {
    * current frame so the slot's state reflects the latest pads.
    */
   pollGamepad() {
+    // Snapshot Steam Input state first so getGamepadState()'s synthetic
+    // fallback and the gyro path below see the same data this frame.
+    this._refreshSteamInputSnapshot();
     const gp = this.getGamepadState();
     if (gp) {
       // Left stick X — deadzone 0.08
@@ -593,18 +603,12 @@ export class InputManager {
     // motionLean and let the existing BalanceController sum it with the
     // joystick stick. The renderer reads a snapshot pushed by main at
     // ~60Hz via 'steam:input:tick' — no per-frame IPC round-trip.
-    const steamInputRaw = (typeof window !== 'undefined' && window.steam && window.steam.input)
-      ? window.steam.input.getLatest()
-      : null;
-    // Apply DualSense Input Source preference: in 'webhid' mode we ignore
-    // Steam Input entries that report as PS5 controllers (DualSense). Other
-    // controller types — notably Steam Controller v2 — pass through always,
-    // since they have no WebHID path. See project_dualsense_input_source_toggle.
-    const steamInputData = (steamInputRaw && this._dualsenseSource === 'webhid')
-      ? steamInputRaw.filter(c => !(c.type || '').toString().toLowerCase().includes('ps5'))
-      : steamInputRaw;
-    const hadSteamInput = this._steamInputActive;
-    this._steamInputActive = !!(steamInputData && steamInputData.length > 0);
+    // _refreshSteamInputSnapshot() (called at top of pollGamepad) has already
+    // applied the DualSense Input Source preference to the cached snapshot
+    // and updated this._steamInputActive. _steamInputPrevActive is the prior
+    // frame's value so the edge-detect below still fires correctly.
+    const steamInputData = this._steamInputSnapshot;
+    const hadSteamInput = this._steamInputPrevActive;
     if (this._steamInputActive) {
       // One-shot auto-arm on first capture, mirroring the fusion-calibration
       // arm. After this, the user's lobby motion toggle controls the channel.
@@ -669,17 +673,88 @@ export class InputManager {
   }
 
   /**
+   * Refresh the cached Steam Input snapshot. Called at the top of
+   * pollGamepad() so subsequent reads (getGamepadState, gyro path) see the
+   * same data within a frame. Applies the DualSense Input Source preference.
+   */
+  _refreshSteamInputSnapshot() {
+    const raw = (typeof window !== 'undefined' && window.steam && window.steam.input)
+      ? window.steam.input.getLatest()
+      : null;
+    const filtered = (raw && this._dualsenseSource === 'webhid')
+      ? raw.filter(c => !(c.type || '').toString().toLowerCase().includes('ps5'))
+      : raw;
+    this._steamInputSnapshot = filtered || [];
+    // Save the prior-frame active flag so the gyro-section can edge-detect
+    // the "Steam Input just became active" transition; then update.
+    this._steamInputPrevActive = this._steamInputActive;
+    this._steamInputActive = this._steamInputSnapshot.length > 0;
+  }
+
+  /**
+   * Build a Gamepad-shaped object from the first Steam Input controller in
+   * the snapshot. Returned object follows the standard 18-button layout so
+   * existing consumers (lobby nav, pollGamepad stick/trigger reads) work
+   * unchanged. Pedal actions are duplicated across bumper (4/5) and trigger
+   * (6/7) slots since the game accepts either as the "pedal" input.
+   *
+   * @returns {Gamepad|null}
+   */
+  _buildSteamInputGamepad() {
+    if (!this._steamInputSnapshot.length) return null;
+    const c = this._steamInputSnapshot[0];
+    const d = c.digital || {};
+    const btn = (pressed) => ({ pressed: !!pressed, touched: !!pressed, value: pressed ? 1 : 0 });
+    const buttons = [
+      btn(d.Confirm),     // 0  Cross / A — Confirm
+      btn(d.Cancel),      // 1  Circle / B — Cancel
+      btn(false),         // 2  Square / X — unbound
+      btn(false),         // 3  Triangle / Y — unbound
+      btn(d.PedalLeft),   // 4  L1 — left pedal
+      btn(d.PedalRight),  // 5  R1 — right pedal
+      btn(d.PedalLeft),   // 6  L2 (digital pedal)
+      btn(d.PedalRight),  // 7  R2 (digital pedal)
+      btn(false),         // 8  Share — unbound
+      btn(d.Pause),       // 9  Options / Start — Pause
+      btn(false),         // 10 L3
+      btn(false),         // 11 R3
+      btn(d.MenuUp),      // 12 D-pad up
+      btn(d.MenuDown),    // 13 D-pad down
+      btn(d.MenuLeft),    // 14 D-pad left
+      btn(d.MenuRight),   // 15 D-pad right
+      btn(false),         // 16 PS / Home
+      btn(false),         // 17 Touchpad
+    ];
+    return {
+      id: `DualSense via Steam Input (${c.type || 'unknown'} Vendor: 054c Product: 0ce6)`,
+      index: -1,
+      mapping: 'standard',
+      connected: true,
+      timestamp: performance.now(),
+      buttons,
+      axes: [c.steerX || 0, c.steerY || 0, 0, 0],
+      _isSyntheticSteamInput: true,
+    };
+  }
+
+  /**
    * Return the current gamepad state — HID-synthetic when the slot's
    * driver emits buttons (BT DualSense case), else the Gamepad API pad.
-   * Stale-synthetic protection and button-mode detection live on the
-   * slot itself, in `Slot.effectiveGamepad(pads)`.
+   * Falls back to a synthesized Steam-Input gamepad when Steam Input has
+   * captured a controller but no real Gamepad API pad exists (typical when
+   * Steam Input intercepts the DualSense on Electron, where the virtual
+   * XInput device doesn't surface via navigator.getGamepads()).
    *
    * @returns {Gamepad|null}
    */
   getGamepadState() {
-    if (!this._slot) return null;
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    return this._slot.effectiveGamepad(pads);
+    if (this._slot) {
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      const slotPad = this._slot.effectiveGamepad(pads);
+      if (slotPad) return slotPad;
+    }
+    if (this._steamInputActive) return this._buildSteamInputGamepad();
+    return null;
   }
 
   getGamepadLean() {

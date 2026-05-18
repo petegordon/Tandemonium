@@ -1,5 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Forward uncaught renderer errors to the main-process diag log so we can
+// debug headless launches without DevTools. Fires on syntax/runtime errors
+// during module evaluation AND on unhandled promise rejections.
+window.addEventListener('error', (ev) => {
+  try {
+    ipcRenderer.send('renderer:diag', `[renderer error] ${ev.message} @ ${ev.filename}:${ev.lineno}:${ev.colno}${ev.error?.stack ? '\n' + ev.error.stack : ''}`);
+  } catch (e) {}
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  try {
+    const reason = ev.reason && ev.reason.stack ? ev.reason.stack : String(ev.reason);
+    ipcRenderer.send('renderer:diag', `[renderer rejection] ${reason}`);
+  } catch (e) {}
+});
+
 contextBridge.exposeInMainWorld('electronApp', {
   toggleDevTools: () => ipcRenderer.invoke('app:toggleDevTools'),
 });

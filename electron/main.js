@@ -167,7 +167,19 @@ if (steam) {
 let _diagFirstResolveLogged = false;
 let _diagSetHandleLogged = false;
 let _diagSteerHandleLogged = false;
+let _diagDigitalHandlesLogged = false;
 let _diagControllersEverSeen = 0;
+
+// Digital action names declared in the IGA. Handles are resolved lazily
+// alongside Steer (Steam may not have loaded the manifest at init() time).
+const STEAM_INPUT_DIGITAL_ACTIONS = [
+  'MenuUp', 'MenuDown', 'MenuLeft', 'MenuRight',
+  'Confirm', 'Cancel',
+  'PedalLeft', 'PedalRight',
+  'Pause',
+];
+const steamInputDigitalHandles = {}; // name -> bigint handle (0n = unresolved)
+for (const name of STEAM_INPUT_DIGITAL_ACTIONS) steamInputDigitalHandles[name] = 0n;
 
 function resolveSteamInputHandles() {
   if (!steamInputReady) return false;
@@ -178,6 +190,14 @@ function resolveSteamInputHandles() {
   if (steamInputSteerHandle === 0n) {
     try { steamInputSteerHandle = steam.input.getAnalogActionHandle('Steer'); }
     catch (e) { /* manifest not yet loaded */ }
+  }
+  let unresolvedDigital = 0;
+  for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
+    if (steamInputDigitalHandles[name] === 0n) {
+      try { steamInputDigitalHandles[name] = steam.input.getDigitalActionHandle(name); }
+      catch (e) { /* manifest not yet loaded */ }
+      if (steamInputDigitalHandles[name] === 0n) unresolvedDigital++;
+    }
   }
   if (!_diagFirstResolveLogged) {
     _diagFirstResolveLogged = true;
@@ -190,6 +210,11 @@ function resolveSteamInputHandles() {
   if (!_diagSteerHandleLogged && steamInputSteerHandle !== 0n) {
     _diagSteerHandleLogged = true;
     _diagLog(`[SteamInput diag] Steer analog action resolved: ${steamInputSteerHandle.toString()}`);
+  }
+  if (!_diagDigitalHandlesLogged && unresolvedDigital === 0) {
+    _diagDigitalHandlesLogged = true;
+    const parts = STEAM_INPUT_DIGITAL_ACTIONS.map(n => `${n}=${steamInputDigitalHandles[n].toString()}`);
+    _diagLog(`[SteamInput diag] digital action handles resolved: ${parts.join(', ')}`);
   }
   return steamInputSetHandle !== 0n && steamInputSteerHandle !== 0n;
 }
@@ -226,12 +251,24 @@ function tickSteamInput() {
     let type = 'Unknown';
     try { type = steam.input.getInputTypeForHandle(handle); }
     catch (e) {}
+    // Read each digital action's state for this controller. Steam returns
+    // { state, active } per action; we forward state bits as a flat map.
+    const digital = {};
+    for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
+      const h = steamInputDigitalHandles[name];
+      if (h === 0n) { digital[name] = false; continue; }
+      try {
+        const d = steam.input.getDigitalActionData(handle, h);
+        digital[name] = !!(d && d.state);
+      } catch (e) { digital[name] = false; }
+    }
     out.push({
       handle: handleStr,
       type: String(type),
       steerX: data.x,
       steerY: data.y,
       active: !!data.active,
+      digital,
     });
   }
   // Drop handles that disappeared so re-attach re-activates.
