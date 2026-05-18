@@ -2769,7 +2769,11 @@ class Game {
     const stateEl = document.getElementById('opt-ds-state');
     if (!stateEl) return;
     const steamData = (window.steam && window.steam.input) ? (window.steam.input.getLatest() || []) : [];
-    const steamHasPS5 = steamData.some(c => (c.type || '').toString().toLowerCase().includes('ps5'));
+    // Steam returns the SteamInputType enum as a numeric string ('13' = PS5Controller,
+    // '5' = PS4Controller). Earlier code did .includes('ps5') which never matched.
+    // Match the numeric enum AND the string forms for safety across SDK versions.
+    const PS_TYPES = new Set(['5', '12', '13', 'ps5controller', 'ps4controller', 'ps3controller']);
+    const steamHasPS5 = steamData.some(c => PS_TYPES.has(String(c.type || '').toLowerCase()));
     const hidDual = !!(this.input && this.input._slot && this.input._slot.driver
                        && (this.input._slot.driver.constructor.driverName || '').toLowerCase().includes('dualsense'));
     let status;

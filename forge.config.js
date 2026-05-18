@@ -32,13 +32,20 @@ module.exports = {
     //     action handles never resolve. See docs/steam-input.md.
     postPackage: async (_forgeConfig, packageResult) => {
       const filesToShip = [
-        // TEMP EXPERIMENT (issue #292): IGAs are temporarily NOT shipped to
-        // test whether their presence in the depot is what flags us as
-        // Steam-Input-API-aware (which suppresses virtual XInput emission).
-        // Binding stays so Steam still has a default controller config.
-        // Restore both IGA lines once we know the answer.
-        // 'game_actions_4510250.vdf',
-        // 'game_actions_4482940.vdf',
+        // IGAs are deliberately NOT shipped here. Their presence in the
+        // depot's controller_config/ dir flags our app as "Steam Input SDK
+        // exclusive" at the Steam runtime layer, which suppresses Steam's
+        // virtual XInput device emission to Electron. With no IGA, Steam
+        // happily emits a normal virtual XInput pad that navigator.getGamepads()
+        // can see, and the existing Gamepad-API steering path Just Works —
+        // including gyro, when the user has a gyro-capable Big Picture
+        // template selected with Roll → Left Stick X (the standard config
+        // we ship docs for). See memory: dualsense-steam-input-working-recipe.
+        //
+        // Source IGAs are kept in steam/ for future use — Steam Controller v2
+        // may need custom actions for haptics/grip features.
+        // 'game_actions_4510250.vdf',  // intentionally not shipped
+        // 'game_actions_4482940.vdf',  // intentionally not shipped
         'controller_ps5.vdf',
       ];
       for (const outputPath of (packageResult.outputPaths || [])) {
