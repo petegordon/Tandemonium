@@ -38,15 +38,23 @@ module.exports = {
         // virtual XInput device emission to Electron. With no IGA, Steam
         // happily emits a normal virtual XInput pad that navigator.getGamepads()
         // can see, and the existing Gamepad-API steering path Just Works —
-        // including gyro, when the user has a gyro-capable Big Picture
-        // template selected with Roll → Left Stick X (the standard config
-        // we ship docs for). See memory: dualsense-steam-input-working-recipe.
+        // including gyro, when the binding configures Roll → Left Stick X.
+        // See memory: dualsense-steam-input-working-recipe.
         //
-        // Source IGAs are kept in steam/ for future use — Steam Controller v2
-        // may need custom actions for haptics/grip features.
+        // Source IGAs are kept in steam/ for future use — custom actions
+        // may be needed if Steam Controller v2 ships features that can't be
+        // bound via stock template (advanced haptics, capacitive grip, etc.).
         // 'game_actions_4510250.vdf',  // intentionally not shipped
         // 'game_actions_4482940.vdf',  // intentionally not shipped
-        'controller_ps5.vdf',
+
+        // Big-Picture-authored bindings (NOT hand-edited — Steam rejects
+        // hand-edited configs). Exported 2026-05-18 from a working setup with
+        // gyro→Joystick Deflection→Left Stick X. New players who connect a
+        // PS5 controller or a Steam Deck/v2-family controller will get our
+        // gyro tilt-steering by default; they can still customize via Big
+        // Picture per-user.
+        'controller_ps5.vdf',       // DualSense
+        'controller_neptune.vdf',   // Steam Deck / Steam Controller v2 family
       ];
       for (const outputPath of (packageResult.outputPaths || [])) {
         const cfgDir = path.join(outputPath, 'controller_config');

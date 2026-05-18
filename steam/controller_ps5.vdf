@@ -1,159 +1,32 @@
 "controller_mappings"
 {
 	"version"		"3"
-	"game" "Gamepad with Joystick Camera"
-	"title" "#Title"
-	"description" "#Description"
+	"revision"		"12"
+	"title"		"#Title"
+	"description"		"#SettingsController_AutosaveDescription"
+	"creator"		"76561199059121209"
+	"progenitor"		"template://controller_ps5_gamepad_mouse_gyro.vdf"
+	"url"		"autosave://C:\\Program Files (x86)\\Steam\\steamapps\\common\\Steam Controller Configs\\1098855481\\config\\4510250-dev-private\\controller_ps5.vdf"
+	"export_type"		"unknown"
 	"controller_type"		"controller_ps5"
+	"controller_caps"		"580344831"
+	"major_revision"		"0"
+	"minor_revision"		"0"
+	"Timestamp"		"-129355536"
 	"localization"
 	{
 		"english"
 		{
-			"title"		"Tandemonium Default"
-			"description"		"Standard gamepad controls with DualSense gyro mapped to steering."
-			"Set_InGameControls"		"Gameplay"
-			"Action_Steer"		"Steer"
-			"Action_MenuUp"		"Menu Up"
-			"Action_MenuDown"		"Menu Down"
-			"Action_MenuLeft"		"Menu Left"
-			"Action_MenuRight"		"Menu Right"
-			"Action_Confirm"		"Confirm"
-			"Action_Cancel"		"Cancel"
-			"Action_PedalLeft"		"Pedal Left"
-			"Action_PedalRight"		"Pedal Right"
-			"Action_Pause"		"Pause"
-		}
-		"czech"
-		{
-			"title"		"Gamepad s ovládáním kamery"
-			"description"		"Tato šablona je pro většinu her podporujících gamepad a disponujících kamerou z pohledu první nebo třetí osoby. Mezi takové hry patří například akční hry z pohledu první nebo třetí osoby."
-		}
-		"dutch"
-		{
-			"title"		"Gamepad met camerabesturing"
-			"description"		"Deze template is voor de meeste spellen die reeds ingebouwde gamepadondersteuning hebben en die een camera hebben die wordt bestuurd in de eerste of derde persoon. FPS, third person-avontuurspellen, etc."
-		}
-		"finnish"
-		{
-			"title"		"Kameraa ohjaava peliohjain"
-			"description"		"Tämä malli on useimmille muita ohjaimia valmiiksi tukeville peleille, joissa on ensimmäisessä tai kolmannessa persoonassa ohjattava kamera. FPS-pelit, kolmannen persoonan seikkailupelit jne."
-		}
-		"french"
-		{
-			"title"		"Manette avec contrôles caméra"
-			"description"		"Ce modèle fonctionne pour la plupart des jeux ayant un support manette intégré et une caméra contrôlée à la première ou à la troisième personne. FPS, jeux d'aventure à la troisième personne, etc."
-		}
-		"german"
-		{
-			"title"		"Gamepad mit Kamerasteuerung"
-			"description"		"Diese Vorlage ist für die meisten Spiele konzipiert, die bereits volle Untersützung für Gamepads mit sich bringen und eine First- oder Third-Person-Kamerasteuerung haben. Gedacht für Ego-Shooter, Third-Person-Abenteuerspiele usw."
-		}
-		"hungarian"
-		{
-			"title"		"Gamepad kamerairányítással"
-			"description"		"Ez a sablon a legtöbb olyan játékhoz való, melyek már rendelkeznek beépített gamepad-támogatással, és van első vagy harmadik személyű kezelésű kamerájuk. Ilyenek az FPS vagy harmadik személyű kalandjátékok stb."
-		}
-		"koreana"
-		{
-			"title"		"카메라 조작 기능이 있는 게임패드"
-		}
-		"polish"
-		{
-			"title"		"Kontroler obsługujący kamerę"
-			"description"		"Ten szablon jest dla większości gier, które mają wbudowane wsparcie dla kontrolerów, a także kamerę kontrolowaną z perspektywy pierwszej lub trzeciej osoby, np. FPS-y bądź gry przygodowe."
-		}
-		"portuguese"
-		{
-			"title"		"Comando com controlos de câmara"
-			"description"		"Este modelo é indicado para jogos que já têm compatibilidade nativa com comando e têm uma câmara que pode ser controlada. Por exemplo, jogos em primeira ou terceira pessoa, do género de aventura, de tiros, etc."
-		}
-		"romanian"
-		{
-			"title"		"Gamepad cu controale pentru cameră"
-			"description"		"Acest șablon este pentru majoritatea jocurilor care au deja suport pentru gamepad implementat și au o cameră controlată din perspectivă first sau third person. FPS sau jocuri de aventură third person, etc."
-		}
-		"russian"
-		{
-			"title"		"Геймпад с управлением камерой"
-			"description"		"Этот шаблон предназначен для большинства игр от первого или третьего лица, в которых уже есть встроенная поддержка геймпада (например, для шутеров или экшенов)."
-		}
-		"spanish"
-		{
-			"title"		"Mando con controles de cámara"
-			"description"		"Esta plantilla es para la mayoría de juegos que ya incluyen de serie compatibilidad con mando y disponen de cámara controlada en primera o tercera persona: FPS, juegos de aventura en tercera persona, etc."
-		}
-		"swedish"
-		{
-			"title"		"Gamepad med kamerakontroller"
-			"description"		"Denna mall är för de flesta spel som redan har inbyggt stöd för spelkontroller och har en kamera som styrs i första- eller tredjeperson. FPS eller äventyrsspel etc."
-		}
-		"schinese"
-		{
-			"title"		"支持视角控制的手柄"
-			"description"		"该模板适用于已内置手柄支持，并且拥有第一或第三人称控制视角的大多数游戏。包括 FPS 或第三人称冒险游戏等。"
-		}
-		"thai"
-		{
-			"title"		"เกมแพดพร้อมการควบคุมกล้อง"
-		}
-		"brazilian"
-		{
-			"title"		"Controle com controle de câmera"
-			"description"		"Este modelo é para jogos já compatíveis com controles que possuem uma câmera controlável, seja em primeira ou terceira pessoa, como jogos de tiro, aventura, etc."
-		}
-		"bulgarian"
-		{
-			"title"		"Геймпад с управление на камерата"
-			"description"		"Този шаблон е за повечето игри, които вече имат вградена поддръжка на геймпад и включват управление на камерата от първо или трето лице. Екшъни от първо лице, приключенски игри от трето лице и т.н."
-		}
-		"greek"
-		{
-			"title"		"Χειριστήριο με πλήκτρα κάμερας"
-			"description"		"Αυτό το πρότυπο είναι για τα περισσότερα παιχνίδια που έχουν ενσωματωμένη υποστήριξη χειριστηρίου και έχουν μια ελεγχόμενη κάμερα πρώτου ή τρίτου προσώπου. FPS ή παιχνίδια περιπέτειας τρίτου προσώπου κλπ."
-		}
-		"turkish"
-		{
-			"title"		"Kamera Kontrollü Oyun Kumandası"
-			"description"		"Bu şablon hali hazırda oyun içi oyun kumandası desteği ve birincil veya üçüncü kişi kontrollü kameraya sahip oyunlar içindir. FPS veya Üçüncü Kişi Macera oyunları vb."
-		}
-		"ukrainian"
-		{
-			"title"		"Ґеймпад з елементами керування камерою"
-			"description"		"Цей шаблон для більшості ігор, що вже мають вбудовану підтримку ґеймпада і у яких камера керується від першої або третьої особи. Шутери від першої особи чи пригодницькі ігри від третьої особи тощо."
-		}
-	}
-	"actions"
-	{
-		"InGameControls"
-		{
-			"title"		"#Set_InGameControls"
-			"legacy_set"		"0"
-			"StickPadGyro"
-			{
-				"Steer"
-				{
-					"title"		"#Action_Steer"
-					"input_mode"		"joystick_move"
-				}
-			}
-			"Button"
-			{
-				"MenuUp"		"#Action_MenuUp"
-				"MenuDown"		"#Action_MenuDown"
-				"MenuLeft"		"#Action_MenuLeft"
-				"MenuRight"		"#Action_MenuRight"
-				"Confirm"		"#Action_Confirm"
-				"Cancel"		"#Action_Cancel"
-				"PedalLeft"		"#Action_PedalLeft"
-				"PedalRight"		"#Action_PedalRight"
-				"Pause"		"#Action_Pause"
-			}
+			"title"		"Gamepad with Mouse and Gyro"
+			"description"		"The template works best for games that are designed with a gamepad in mind, but also support a desktop mouse for camera control or aim (Mixed Input). This uses both the pad and the gyro to control the mouse for fine aiming."
 		}
 	}
 	"group"
 	{
 		"id"		"0"
 		"mode"		"four_buttons"
+		"name"		""
+		"description"		""
 		"inputs"
 		{
 			"button_a"
@@ -164,9 +37,12 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls Confirm"
+							"binding"		"xinput_button A, , "
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"button_b"
@@ -177,9 +53,12 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls Cancel"
+							"binding"		"xinput_button B, , "
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"button_x"
@@ -190,9 +69,12 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button X"
+							"binding"		"xinput_button X, , "
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"button_y"
@@ -203,9 +85,12 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button Y"
+							"binding"		"xinput_button Y, , "
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 		}
@@ -213,83 +98,9 @@
 	"group"
 	{
 		"id"		"1"
-		"mode"		"dpad"
-		"inputs"
-		{
-			"dpad_north"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button dpad_up"
-						}
-						"settings"
-						{
-							"haptic_intensity"		"1"
-						}
-					}
-				}
-			}
-			"dpad_south"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button dpad_down"
-						}
-						"settings"
-						{
-							"haptic_intensity"		"1"
-						}
-					}
-				}
-			}
-			"dpad_east"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button dpad_right"
-						}
-						"settings"
-						{
-							"haptic_intensity"		"1"
-						}
-					}
-				}
-			}
-			"dpad_west"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button dpad_left"
-						}
-						"settings"
-						{
-							"haptic_intensity"		"1"
-						}
-					}
-				}
-			}
-		}
-	}
-	"group"
-	{
-		"id"		"2"
-		"mode"		"joystick_move"
+		"mode"		"single_button"
+		"name"		""
+		"description"		""
 		"inputs"
 		{
 			"click"
@@ -300,13 +111,38 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button JOYSTICK_RIGHT"
-						}
-						"settings"
-						{
-							"haptic_intensity"		"2"
+							"binding"		"xinput_button SELECT, , "
 						}
 					}
+				}
+				"disabled_activators"
+				{
+				}
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"2"
+		"mode"		"single_button"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button START, , "
+						}
+					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 		}
@@ -315,6 +151,8 @@
 	{
 		"id"		"3"
 		"mode"		"joystick_move"
+		"name"		""
+		"description"		""
 		"inputs"
 		{
 			"click"
@@ -325,7 +163,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button JOYSTICK_LEFT"
+							"binding"		"xinput_button JOYSTICK_LEFT, , "
 						}
 						"settings"
 						{
@@ -333,17 +171,18 @@
 						}
 					}
 				}
+				"disabled_activators"
+				{
+				}
 			}
-		}
-		"gameactions"
-		{
-			"InGameControls"		"Steer"
 		}
 	}
 	"group"
 	{
 		"id"		"4"
 		"mode"		"trigger"
+		"name"		""
+		"description"		""
 		"inputs"
 		{
 			"click"
@@ -354,13 +193,16 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls PedalLeft"
+							"binding"		"xinput_button TRIGGER_LEFT, , "
 						}
 						"settings"
 						{
 							"haptic_intensity"		"2"
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 		}
@@ -373,6 +215,8 @@
 	{
 		"id"		"5"
 		"mode"		"trigger"
+		"name"		""
+		"description"		""
 		"inputs"
 		{
 			"click"
@@ -383,13 +227,16 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls PedalRight"
+							"binding"		"xinput_button TRIGGER_RIGHT, , "
 						}
 						"settings"
 						{
 							"haptic_intensity"		"2"
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 		}
@@ -400,54 +247,36 @@
 	}
 	"group"
 	{
-		"id"		"6"
-		"mode"		"joystick_move"
-		"inputs"
-		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button JOYSTICK_RIGHT"
-						}
-						"settings"
-						{
-							"haptic_intensity"		"2"
-						}
-					}
-				}
-			}
-		}
-	}
-	"group"
-	{
-		"id"		"8"
-		"mode"		"joystick_move"
-		"inputs"
-		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button JOYSTICK_RIGHT"
-						}
-					}
-				}
-			}
-		}
-	}
-	"group"
-	{
 		"id"		"9"
+		"mode"		"joystick_move"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button JOYSTICK_RIGHT, , "
+						}
+					}
+				}
+				"disabled_activators"
+				{
+				}
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"10"
 		"mode"		"dpad"
+		"name"		""
+		"description"		""
 		"inputs"
 		{
 			"dpad_north"
@@ -458,13 +287,16 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls MenuUp"
+							"binding"		"xinput_button DPAD_UP, , "
 						}
 						"settings"
 						{
 							"haptic_intensity"		"1"
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"dpad_south"
@@ -475,13 +307,16 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls MenuDown"
+							"binding"		"xinput_button DPAD_DOWN, , "
 						}
 						"settings"
 						{
 							"haptic_intensity"		"1"
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"dpad_east"
@@ -492,13 +327,16 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls MenuRight"
+							"binding"		"xinput_button DPAD_RIGHT, , "
 						}
 						"settings"
 						{
 							"haptic_intensity"		"1"
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"dpad_west"
@@ -509,7 +347,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls MenuLeft"
+							"binding"		"xinput_button DPAD_LEFT, , "
 						}
 						"settings"
 						{
@@ -517,17 +355,230 @@
 						}
 					}
 				}
+				"disabled_activators"
+				{
+				}
 			}
 		}
 		"settings"
 		{
 			"requires_click"		"0"
+			"haptic_intensity_override"		"0"
 		}
 	}
 	"group"
 	{
-		"id"		"7"
+		"id"		"11"
+		"mode"		"gyro_to_mouse"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+		}
+		"settings"
+		{
+			"gyro_button"		"12"
+			"gyro_ratchet_button_mask"		"33554432"
+		}
+	}
+	"group"
+	{
+		"id"		"12"
+		"mode"		"absolute_mouse"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button JOYSTICK_RIGHT, , "
+						}
+						"settings"
+						{
+							"haptic_intensity"		"1"
+						}
+					}
+				}
+				"disabled_activators"
+				{
+				}
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"13"
+		"mode"		"flickstick"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button JOYSTICK_RIGHT, , "
+						}
+					}
+					"Double_Press"
+					{
+						"bindings"
+						{
+							"binding"		"controller_action camera_reset 180 66 90, , "
+						}
+					}
+				}
+				"disabled_activators"
+				{
+				}
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"14"
+		"mode"		"flickstick"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button JOYSTICK_LEFT, , "
+						}
+					}
+					"Double_Press"
+					{
+						"bindings"
+						{
+							"binding"		"controller_action camera_reset 180 66 90, , "
+						}
+					}
+				}
+				"disabled_activators"
+				{
+				}
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"15"
+		"mode"		"flickstick"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button JOYSTICK_RIGHT, , "
+						}
+					}
+					"Double_Press"
+					{
+						"bindings"
+						{
+							"binding"		"controller_action camera_reset 180 66 90, , "
+						}
+					}
+				}
+				"disabled_activators"
+				{
+				}
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"16"
+		"mode"		"flickstick"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+			"click"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button JOYSTICK_LEFT, , "
+						}
+					}
+					"Double_Press"
+					{
+						"bindings"
+						{
+							"binding"		"controller_action camera_reset 180 66 90, , "
+						}
+					}
+				}
+				"disabled_activators"
+				{
+				}
+			}
+		}
+	}
+	"group"
+	{
+		"id"		"17"
+		"mode"		"gyro_to_joystick_deflection"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+		}
+		"settings"
+		{
+			"gyro_to_2d_conversion_style"		"1"
+			"gyro_button_invert"		"0"
+		}
+	}
+	"group"
+	{
+		"id"		"18"
+		"mode"		"gyro_to_joystick"
+		"name"		""
+		"description"		""
+		"inputs"
+		{
+		}
+		"settings"
+		{
+			"gyro_button_invert"		"0"
+			"output_joystick"		"0"
+		}
+	}
+	"group"
+	{
+		"id"		"8"
 		"mode"		"switches"
+		"name"		""
+		"description"		""
 		"inputs"
 		{
 			"button_escape"
@@ -538,9 +589,12 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls Pause"
+							"binding"		"xinput_button start, , "
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"button_menu"
@@ -551,9 +605,12 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button select"
+							"binding"		"xinput_button select, , "
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"left_bumper"
@@ -564,9 +621,12 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls PedalLeft"
+							"binding"		"xinput_button shoulder_left, , "
 						}
 					}
+				}
+				"disabled_activators"
+				{
 				}
 			}
 			"right_bumper"
@@ -577,209 +637,14 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGameControls PedalRight"
+							"binding"		"xinput_button shoulder_right, , "
 						}
 					}
 				}
-			}
-			"button_back_left"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button a"
-						}
-					}
-				}
-			}
-			"button_back_right"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button x"
-						}
-					}
-				}
-			}
-		}
-	}
-	"group"
-	{
-		"id"		"10"
-		"mode"		"single_button"
-		"inputs"
-		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button START"
-						}
-					}
-				}
-			}
-			"touch"
-			{
-				"activators"
+				"disabled_activators"
 				{
 				}
 			}
-		}
-		"gameactions"
-		{
-		}
-	}
-	"group"
-	{
-		"id"		"11"
-		"mode"		"single_button"
-		"inputs"
-		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button SELECT"
-						}
-					}
-				}
-			}
-			"touch"
-			{
-				"activators"
-				{
-				}
-			}
-		}
-		"gameactions"
-		{
-		}
-	}
-	"group"
-	{
-		"id"		"12"
-		"mode"		"flickstick"
-		"inputs"
-		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button JOYSTICK_RIGHT"
-						}
-					}
-				}
-			}
-		}
-		"gameactions"
-		{
-		}
-	}
-	"group"
-	{
-		"id"		"13"
-		"mode"		"flickstick"
-		"inputs"
-		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button JOYSTICK_LEFT"
-						}
-					}
-				}
-			}
-		}
-		"gameactions"
-		{
-		}
-	}
-	"group"
-	{
-		"id"		"14"
-		"mode"		"flickstick"
-		"inputs"
-		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button JOYSTICK_RIGHT"
-						}
-					}
-				}
-			}
-		}
-		"gameactions"
-		{
-		}
-	}
-	"group"
-	{
-		"id"		"15"
-		"mode"		"flickstick"
-		"inputs"
-		{
-			"click"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"xinput_button JOYSTICK_LEFT"
-						}
-					}
-				}
-			}
-		}
-		"gameactions"
-		{
-		}
-	}
-	"group"
-	{
-		"id"		"16"
-		"mode"		"joystick_move"
-		"inputs"
-		{
-		}
-		"settings"
-		{
-			"virtual_mode"		"1"
-		}
-		"gameactions"
-		{
-			"InGameControls"		"Steer"
 		}
 	}
 	"preset"
@@ -788,23 +653,23 @@
 		"name"		"Default"
 		"group_source_bindings"
 		{
-			"7"		"switch active"
+			"8"		"switch active"
 			"0"		"button_diamond active"
-			"1"		"left_trackpad inactive"
-			"11"		"left_trackpad active"
-			"2"		"right_trackpad inactive"
-			"6"		"right_trackpad inactive"
-			"10"		"right_trackpad active"
+			"1"		"left_trackpad active"
+			"16"		"left_trackpad inactive"
+			"2"		"right_trackpad active"
+			"15"		"right_trackpad inactive"
 			"3"		"joystick active"
+			"14"		"joystick inactive"
 			"4"		"left_trigger active"
 			"5"		"right_trigger active"
-			"8"		"right_joystick active"
-			"9"		"dpad active"
-			"12"		"right_joystick inactive"
-			"13"		"joystick inactive"
-			"14"		"right_trackpad inactive"
-			"15"		"left_trackpad inactive"
-			"16"		"gyro active"
+			"9"		"right_joystick active"
+			"13"		"right_joystick inactive"
+			"10"		"dpad active"
+			"11"		"gyro inactive"
+			"17"		"gyro active"
+			"18"		"gyro inactive"
+			"12"		"center_trackpad inactive"
 		}
 	}
 	"settings"
