@@ -164,7 +164,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button A, game_action InGameControls Confirm"
+							"binding"		"game_action InGameControls Confirm"
 						}
 					}
 				}
@@ -177,7 +177,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button B, game_action InGameControls Cancel"
+							"binding"		"game_action InGameControls Cancel"
 						}
 					}
 				}
@@ -354,7 +354,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button TRIGGER_LEFT, game_action InGameControls PedalLeft"
+							"binding"		"game_action InGameControls PedalLeft"
 						}
 						"settings"
 						{
@@ -383,7 +383,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button TRIGGER_RIGHT, game_action InGameControls PedalRight"
+							"binding"		"game_action InGameControls PedalRight"
 						}
 						"settings"
 						{
@@ -458,7 +458,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button DPAD_UP, game_action InGameControls MenuUp"
+							"binding"		"game_action InGameControls MenuUp"
 						}
 						"settings"
 						{
@@ -475,7 +475,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button DPAD_DOWN, game_action InGameControls MenuDown"
+							"binding"		"game_action InGameControls MenuDown"
 						}
 						"settings"
 						{
@@ -492,7 +492,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button DPAD_RIGHT, game_action InGameControls MenuRight"
+							"binding"		"game_action InGameControls MenuRight"
 						}
 						"settings"
 						{
@@ -509,7 +509,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button DPAD_LEFT, game_action InGameControls MenuLeft"
+							"binding"		"game_action InGameControls MenuLeft"
 						}
 						"settings"
 						{
@@ -538,7 +538,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button start, game_action InGameControls Pause"
+							"binding"		"game_action InGameControls Pause"
 						}
 					}
 				}
@@ -564,7 +564,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button shoulder_left, game_action InGameControls PedalLeft"
+							"binding"		"game_action InGameControls PedalLeft"
 						}
 					}
 				}
@@ -577,7 +577,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"xinput_button shoulder_right, game_action InGameControls PedalRight"
+							"binding"		"game_action InGameControls PedalRight"
 						}
 					}
 				}
