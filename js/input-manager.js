@@ -8,6 +8,19 @@ import * as analytics from './analytics.js';
 import { addHapticSource, removeHapticSource } from './haptics.js';
 import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
 
+/**
+ * DualSense input-source preference (Auto / Steam Input / WebHID) — see
+ * project_dualsense_input_source_toggle.md. Read once at boot, applied to
+ * the next session. Stored in localStorage under 'tandemonium_dualsense_source'.
+ */
+export function readDualSenseSourcePref() {
+  try {
+    const v = localStorage.getItem('tandemonium_dualsense_source');
+    if (v === 'steam-input' || v === 'webhid') return v;
+  } catch (e) {}
+  return 'auto';
+}
+
 // Controller state (gamepad binding, WebHID, sensor fusion, synthetic
 // gamepad for BT-silent DualSense) now lives on a ControllerManager slot.
 // See shared/controller-manager.js. InputManager is a thin consumer that
@@ -115,6 +128,9 @@ export class InputManager {
     // InputType enum (e.g. 'SteamDeckController', 'PS5Controller').
     this._steamInputActive = false;
     this._steamInputType = null;
+    // User preference (Auto / Steam Input / WebHID) — sampled once at
+    // construction; takes effect on next session boot.
+    this._dualsenseSource = readDualSenseSourcePref();
 
     if (enableKeyboard) this._setupKeyboard();
     if (isMobile) {
@@ -577,9 +593,16 @@ export class InputManager {
     // motionLean and let the existing BalanceController sum it with the
     // joystick stick. The renderer reads a snapshot pushed by main at
     // ~60Hz via 'steam:input:tick' — no per-frame IPC round-trip.
-    const steamInputData = (typeof window !== 'undefined' && window.steam && window.steam.input)
+    const steamInputRaw = (typeof window !== 'undefined' && window.steam && window.steam.input)
       ? window.steam.input.getLatest()
       : null;
+    // Apply DualSense Input Source preference: in 'webhid' mode we ignore
+    // Steam Input entries that report as PS5 controllers (DualSense). Other
+    // controller types — notably Steam Controller v2 — pass through always,
+    // since they have no WebHID path. See project_dualsense_input_source_toggle.
+    const steamInputData = (steamInputRaw && this._dualsenseSource === 'webhid')
+      ? steamInputRaw.filter(c => !(c.type || '').toString().toLowerCase().includes('ps5'))
+      : steamInputRaw;
     const hadSteamInput = this._steamInputActive;
     this._steamInputActive = !!(steamInputData && steamInputData.length > 0);
     if (this._steamInputActive) {
@@ -613,6 +636,15 @@ export class InputManager {
     // rate-independent EMA smoothing so cadence doesn't affect feel.
     const fusion = this._slot?.fusion;
     if (!fusion) { this._wasFusionCalibrating = false; return; }
+    // Honor 'steam-input' preference for DualSense: if the user explicitly
+    // picked Steam Input but Steam isn't intercepting this session, don't
+    // fall back to WebHID fusion for the DualSense — leave gyro silent so
+    // the toggle's behavior is deterministic. Non-DualSense drivers are
+    // unaffected.
+    if (this._dualsenseSource === 'steam-input') {
+      const driverName = (this._slot?.driver?.constructor?.driverName || '').toLowerCase();
+      if (driverName.includes('dualsense')) { this._wasFusionCalibrating = false; return; }
+    }
     if (fusion.calibrating) { this._wasFusionCalibrating = true; return; }
     // Auto-arm motion pipeline ONCE when calibration transitions from
     // active → done (matching the old `_finishGyroCalibration` edge).

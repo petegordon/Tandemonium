@@ -10,7 +10,7 @@ import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
-import { InputManager } from './input-manager.js';
+import { InputManager, readDualSenseSourcePref } from './input-manager.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
 import { BalanceController } from './balance-controller.js';
@@ -2717,6 +2717,13 @@ class Game {
     autoBtn.addEventListener('click', () => this._setQuality('auto'));
     devToolsBtn.addEventListener('click', () => { window.location.href = 'test/index.html'; });
 
+    const dsAutoBtn   = document.getElementById('opt-ds-auto');
+    const dsSteamBtn  = document.getElementById('opt-ds-steam');
+    const dsWebhidBtn = document.getElementById('opt-ds-webhid');
+    if (dsAutoBtn)   dsAutoBtn.addEventListener('click',   () => this._setDualSenseSource('auto'));
+    if (dsSteamBtn)  dsSteamBtn.addEventListener('click',  () => this._setDualSenseSource('steam-input'));
+    if (dsWebhidBtn) dsWebhidBtn.addEventListener('click', () => this._setDualSenseSource('webhid'));
+
     if (isElectron) {
       browserDevBtn.addEventListener('click', async () => {
         const opened = await window.electronApp.toggleDevTools();
@@ -2746,6 +2753,35 @@ class Game {
     });
 
     this._updateOptionsQualityUI();
+    this._updateOptionsDualSenseSourceUI();
+  }
+
+  _updateOptionsDualSenseSourceUI() {
+    const pref = readDualSenseSourcePref();
+    const autoBtn   = document.getElementById('opt-ds-auto');
+    const steamBtn  = document.getElementById('opt-ds-steam');
+    const webhidBtn = document.getElementById('opt-ds-webhid');
+    if (!autoBtn) return;
+    autoBtn.classList.toggle('active',   pref === 'auto');
+    steamBtn.classList.toggle('active',  pref === 'steam-input');
+    webhidBtn.classList.toggle('active', pref === 'webhid');
+
+    const stateEl = document.getElementById('opt-ds-state');
+    if (!stateEl) return;
+    const steamData = (window.steam && window.steam.input) ? (window.steam.input.getLatest() || []) : [];
+    const steamHasPS5 = steamData.some(c => (c.type || '').toString().toLowerCase().includes('ps5'));
+    const hidDual = !!(this.input && this.input._slot && this.input._slot.driver
+                       && (this.input._slot.driver.constructor.driverName || '').toLowerCase().includes('dualsense'));
+    let status;
+    if (steamHasPS5)      status = 'Steam Input active (DualSense intercepted)';
+    else if (hidDual)     status = 'WebHID active (DualSense direct)';
+    else                  status = 'No DualSense detected';
+    stateEl.textContent = `Current: ${status} — applied on next launch`;
+  }
+
+  _setDualSenseSource(source) {
+    try { localStorage.setItem('tandemonium_dualsense_source', source); } catch(e) {}
+    this._updateOptionsDualSenseSourceUI();
   }
 
   _updateOptionsQualityUI() {
@@ -2800,11 +2836,15 @@ class Game {
       document.getElementById('opt-high'),
       document.getElementById('opt-low'),
       document.getElementById('opt-auto'),
+      document.getElementById('opt-ds-auto'),
+      document.getElementById('opt-ds-steam'),
+      document.getElementById('opt-ds-webhid'),
       document.getElementById('options-perf-btn'),
       document.getElementById('options-devtools-btn'),
       document.getElementById('options-browserdev-btn'),
       document.getElementById('options-close-btn'),
     ].filter(Boolean);
+    this._updateOptionsDualSenseSourceUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
   }
 
