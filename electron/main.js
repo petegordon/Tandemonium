@@ -105,6 +105,39 @@ let steamInputTimer = null;
 
 if (steam) {
   try {
+    // Mirror the depot-shipped IGA to Steam's root controller_config dir.
+    // Steam Input caches action-set definitions from THIS path at runtime —
+    // a stale IGA there overrides our depot copy and causes new actions to
+    // resolve as zero handles. Best-effort: if Electron lacks write access
+    // to the Steam dir (typical without admin), we log and continue.
+    // <Steam>/steamapps/common/<game>/Tandemonium.exe → three dirnames up.
+    if (app.isPackaged) {
+      try {
+        const exeDir = path.dirname(app.getPath('exe'));
+        const srcIga = path.join(exeDir, 'controller_config', `game_actions_${appId}.vdf`);
+        const steamRoot = path.dirname(path.dirname(path.dirname(exeDir)));
+        const destDir = path.join(steamRoot, 'controller_config');
+        const destIga = path.join(destDir, `game_actions_${appId}.vdf`);
+        if (fs.existsSync(srcIga)) {
+          if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+          const srcStat = fs.statSync(srcIga);
+          let needCopy = true;
+          if (fs.existsSync(destIga)) {
+            const destStat = fs.statSync(destIga);
+            if (destStat.size === srcStat.size && destStat.mtimeMs >= srcStat.mtimeMs) needCopy = false;
+          }
+          if (needCopy) {
+            fs.copyFileSync(srcIga, destIga);
+            _diagLog(`[SteamInput diag] Mirrored IGA to Steam-root: ${destIga} (${srcStat.size} bytes)`);
+          } else {
+            _diagLog(`[SteamInput diag] Steam-root IGA already in sync: ${destIga}`);
+          }
+        }
+      } catch (e) {
+        _diagLog(`[SteamInput diag] IGA mirror to Steam-root failed: ${e.message}. If digital action handles resolve to 0, manually copy controller_config/game_actions_${appId}.vdf from the game install dir to <Steam>/controller_config/`);
+      }
+    }
+
     // ORDER MATTERS: SetInputActionManifestFilePath MUST be called BEFORE
     // input.init() per Valve's ISteamInput docs and steamworks-ffi-node JSDoc.
     // Calling it after init is a silent no-op — Steam Input has already
@@ -191,12 +224,17 @@ function resolveSteamInputHandles() {
     try { steamInputSteerHandle = steam.input.getAnalogActionHandle('Steer'); }
     catch (e) { /* manifest not yet loaded */ }
   }
+  // Type-agnostic "is this handle zero?" check. The Steamworks binding can
+  // return BigInt 0n for unrecognized actions but also sometimes a plain
+  // Number 0 — `=== 0n` alone misses the Number case and silently treats
+  // the action as resolved.
+  const isZeroHandle = (h) => h == null || h === 0n || h === 0;
   let unresolvedDigital = 0;
   for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
-    if (steamInputDigitalHandles[name] === 0n) {
+    if (isZeroHandle(steamInputDigitalHandles[name])) {
       try { steamInputDigitalHandles[name] = steam.input.getDigitalActionHandle(name); }
       catch (e) { /* manifest not yet loaded */ }
-      if (steamInputDigitalHandles[name] === 0n) unresolvedDigital++;
+      if (isZeroHandle(steamInputDigitalHandles[name])) unresolvedDigital++;
     }
   }
   if (!_diagFirstResolveLogged) {
