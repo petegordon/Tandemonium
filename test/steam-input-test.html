@@ -175,6 +175,12 @@ async function poll() {
     gp += '</div>';
   }
   if (!any) gp = '<div class="err">navigator.getGamepads() returned no connected pads</div>';
+  gp += '<h2 style="font-size:13px;margin-top:12px;">gamepadconnected / disconnected events</h2>';
+  if (gpEventLog.length === 0) {
+    gp += '<div class="warn">no events fired yet (try unplug+replug the controller — Chromium needs the connect event to see Steam virtual pads)</div>';
+  } else {
+    gp += '<pre style="font-size:11px;">' + escape(gpEventLog.join('\n')) + '</pre>';
+  }
   $('gamepad-api-state').innerHTML = gp;
 
   // ── Summary banner ──
@@ -198,7 +204,28 @@ async function poll() {
 }
 
 const rawBuffer = [];
+const gpEventLog = [];
+window.addEventListener('gamepadconnected', (e) => {
+  gpEventLog.push(`${new Date().toISOString().slice(11,23)} CONNECTED idx=${e.gamepad.index} id=${e.gamepad.id} mapping=${e.gamepad.mapping}`);
+  if (gpEventLog.length > 10) gpEventLog.shift();
+});
+window.addEventListener('gamepaddisconnected', (e) => {
+  gpEventLog.push(`${new Date().toISOString().slice(11,23)} DISCONNECTED idx=${e.gamepad.index} id=${e.gamepad.id}`);
+  if (gpEventLog.length > 10) gpEventLog.shift();
+});
 $('back').addEventListener('click', () => { window.location.href = '../index.html'; });
+// Some Chromium versions require user activation OR a click before
+// navigator.getGamepads() returns connected pads. Add a "Force gamepad scan"
+// button that the user can click to satisfy that requirement explicitly.
+const forceBtn = document.createElement('button');
+forceBtn.textContent = '🎯 Force gamepad scan (click to satisfy Chromium user-activation)';
+forceBtn.style.cssText = 'position:fixed; top:12px; left:200px; background:#234; border:1px solid #456; color:#fff; padding:6px 12px; border-radius:4px; cursor:pointer; font-family:inherit;';
+forceBtn.addEventListener('click', () => {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  alert('navigator.getGamepads() after click returned ' + (pads.filter(Boolean).length) + ' connected pad(s):\n' +
+    pads.filter(Boolean).map(p => `${p.index}: ${p.id} (mapping=${p.mapping})`).join('\n'));
+});
+document.body.appendChild(forceBtn);
 setInterval(poll, 100);
 poll();
 </script>
