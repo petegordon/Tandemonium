@@ -202,6 +202,8 @@ let _diagSetHandleLogged = false;
 let _diagSteerHandleLogged = false;
 let _diagDigitalHandlesLogged = false;
 let _diagControllersEverSeen = 0;
+const steamInputActiveLogged = new Set(); // controller handles for which we've logged active-action diagnostic
+const steamInputLastPressed = new Map(); // controller handle -> last comma-joined pressed-action names
 
 // Digital action names declared in the IGA. Handles are resolved lazily
 // alongside Steer (Steam may not have loaded the manifest at init() time).
@@ -281,7 +283,16 @@ function tickSteamInput() {
       try {
         steam.input.activateActionSet(handle, steamInputSetHandle);
         steamInputActivated.add(handleStr);
-      } catch (e) { /* skip - Steam will keep prior action set */ }
+        // Diag: confirm Steam actually accepted the activation. If
+        // getCurrentActionSet returns something other than our handle,
+        // Steam silently rejected (cause: missing Steamworks-side config,
+        // unknown action set, etc.).
+        let active = null;
+        try { active = steam.input.getCurrentActionSet(handle); } catch (e) {}
+        _diagLog(`[SteamInput diag] activateActionSet(handle=${handleStr}, set=${steamInputSetHandle.toString()}) -> current=${active && active.toString()}`);
+      } catch (e) {
+        _diagLog(`[SteamInput diag] activateActionSet threw: ${e.message}`);
+      }
     }
     let data = { x: 0, y: 0, active: false };
     try { data = steam.input.getAnalogActionData(handle, steamInputSteerHandle); }
@@ -292,13 +303,40 @@ function tickSteamInput() {
     // Read each digital action's state for this controller. Steam returns
     // { state, active } per action; we forward state bits as a flat map.
     const digital = {};
+    let _diagAnyPressed = false;
+    let _diagAnyInactive = [];
     for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
       const h = steamInputDigitalHandles[name];
-      if (h === 0n) { digital[name] = false; continue; }
+      if (!h || h === 0n || h === 0) { digital[name] = false; continue; }
       try {
         const d = steam.input.getDigitalActionData(handle, h);
         digital[name] = !!(d && d.state);
+        if (d && !d.active) _diagAnyInactive.push(name);
+        if (d && d.state) _diagAnyPressed = true;
       } catch (e) { digital[name] = false; }
+    }
+    // First-tick diagnostic: log which actions Steam reports as ACTIVE
+    // (i.e. bound to a physical input under the current binding). If
+    // an action is in the snapshot but inactive, the binding file isn't
+    // wiring physical input to it for this controller type.
+    if (!steamInputActiveLogged.has(handleStr)) {
+      steamInputActiveLogged.add(handleStr);
+      _diagLog(`[SteamInput diag] controller ${handleStr} inactive digital actions: ${_diagAnyInactive.join(', ') || '(none — all bound)'}`);
+    }
+    // Log button-press edges so we can verify physical→action firing.
+    if (_diagAnyPressed) {
+      const pressed = STEAM_INPUT_DIGITAL_ACTIONS.filter(n => digital[n]).join(',');
+      const prev = steamInputLastPressed.get(handleStr) || '';
+      if (pressed !== prev) {
+        steamInputLastPressed.set(handleStr, pressed);
+        _diagLog(`[SteamInput diag] digital pressed: ${pressed}`);
+      }
+    } else {
+      const prev = steamInputLastPressed.get(handleStr);
+      if (prev) {
+        steamInputLastPressed.set(handleStr, '');
+        _diagLog(`[SteamInput diag] digital released (was: ${prev})`);
+      }
     }
     out.push({
       handle: handleStr,
