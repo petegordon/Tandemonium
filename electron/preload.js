@@ -39,5 +39,6 @@ contextBridge.exposeInMainWorld('steam', {
   input: {
     isAvailable: () => ipcRenderer.invoke('steam:input:isAvailable'),
     getLatest: () => _steamInputLatest,
+    getFullDiag: () => ipcRenderer.invoke('steam:input:fullDiag'),
   },
 });

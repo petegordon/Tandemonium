@@ -387,6 +387,75 @@ function startSteamInputTickLoop() {
 ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
 ipcMain.handle('steam:input:poll', () => steamInputSnapshot);
+
+// Full-diagnostic dump for the in-game Steam Input test page. Queries Steam
+// on demand for every piece of state we can read (handles, controllers,
+// per-action origins, motion data, current action set, gamepad-index probe).
+// Returns plain JS shapes (no BigInts) so the renderer can JSON.stringify.
+ipcMain.handle('steam:input:fullDiag', () => {
+  const out = {
+    ready: steamInputReady,
+    setHandle: steamInputReady ? steamInputSetHandle.toString() : '0',
+    steerHandle: steamInputReady ? steamInputSteerHandle.toString() : '0',
+    digitalHandles: {},
+    controllers: [],
+    gamepadIndexProbe: [],
+    sessionConfig: null,
+  };
+  if (!steamInputReady) return out;
+  try {
+    for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
+      const h = steamInputDigitalHandles[name];
+      out.digitalHandles[name] = h ? h.toString() : '0';
+    }
+  } catch (e) {}
+  try { out.sessionConfig = steam.input.getSessionInputConfigurationSettings(); }
+  catch (e) { out.sessionConfig = `err: ${e.message}`; }
+  // Gamepad-index probe — secondary enumeration path.
+  for (let i = 0; i < 4; i++) {
+    try {
+      const h = steam.input.getControllerForGamepadIndex(i);
+      out.gamepadIndexProbe.push({ index: i, handle: h ? h.toString() : '0' });
+    } catch (e) {
+      out.gamepadIndexProbe.push({ index: i, handle: 'err' });
+    }
+  }
+  let controllers = [];
+  try { controllers = steam.input.getConnectedControllers(); } catch (e) {}
+  for (const handle of controllers) {
+    const c = { handle: handle.toString(), type: 'Unknown', steer: null, digital: {}, origins: { steer: [], digital: {} }, motion: null };
+    try { c.type = String(steam.input.getInputTypeForHandle(handle)); } catch (e) {}
+    try { c.currentSet = steam.input.getCurrentActionSet(handle).toString(); } catch (e) { c.currentSet = 'err'; }
+    if (steamInputSteerHandle && steamInputSteerHandle !== 0n) {
+      try {
+        const d = steam.input.getAnalogActionData(handle, steamInputSteerHandle);
+        c.steer = { x: d.x, y: d.y, active: !!d.active, mode: d.mode };
+      } catch (e) { c.steer = { err: e.message }; }
+      try {
+        const origins = steam.input.getAnalogActionOrigins(handle, steamInputSetHandle, steamInputSteerHandle);
+        c.origins.steer = (origins || []).map(String);
+      } catch (e) { c.origins.steer = [`err: ${e.message}`]; }
+    }
+    for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
+      const h = steamInputDigitalHandles[name];
+      if (!h || h === 0n || h === 0) { c.digital[name] = { state: false, active: false, noHandle: true }; continue; }
+      try {
+        const d = steam.input.getDigitalActionData(handle, h);
+        c.digital[name] = { state: !!(d && d.state), active: !!(d && d.active) };
+      } catch (e) { c.digital[name] = { err: e.message }; }
+      try {
+        const origins = steam.input.getDigitalActionOrigins(handle, steamInputSetHandle, h);
+        c.origins.digital[name] = (origins || []).map(String);
+      } catch (e) { c.origins.digital[name] = [`err: ${e.message}`]; }
+    }
+    try {
+      const m = steam.input.getMotionData(handle);
+      c.motion = m ? { rotQuat: [m.rotQuatX, m.rotQuatY, m.rotQuatZ, m.rotQuatW], accel: [m.posAccelX, m.posAccelY, m.posAccelZ], rotVel: [m.rotVelX, m.rotVelY, m.rotVelZ] } : null;
+    } catch (e) { c.motion = { err: e.message }; }
+    out.controllers.push(c);
+  }
+  return out;
+});
 ipcMain.handle('steam:getPlayerName', () => {
   if (!steam) return null;
   try { return steam.friends.getPersonaName(); }
