@@ -322,6 +322,24 @@ function tickSteamInput() {
     if (!steamInputActiveLogged.has(handleStr)) {
       steamInputActiveLogged.add(handleStr);
       _diagLog(`[SteamInput diag] controller ${handleStr} inactive digital actions: ${_diagAnyInactive.join(', ') || '(none — all bound)'}`);
+      // Stronger check: getDigitalActionOrigins returns the actual physical
+      // EInputActionOrigin values bound to each action. Empty array = no
+      // physical input wired (binding file isn't actually reaching the action).
+      const originSummary = [];
+      for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
+        const h = steamInputDigitalHandles[name];
+        if (!h || h === 0n || h === 0) { originSummary.push(`${name}=<no handle>`); continue; }
+        try {
+          const origins = steam.input.getDigitalActionOrigins(handle, steamInputSetHandle, h);
+          originSummary.push(`${name}=[${(origins || []).join(',')}]`);
+        } catch (e) { originSummary.push(`${name}=<err:${e.message}>`); }
+      }
+      _diagLog(`[SteamInput diag] digital action origins: ${originSummary.join(' | ')}`);
+      // Same for Steer (analog) so we can confirm the gyro/stick wiring.
+      try {
+        const steerOrigins = steam.input.getAnalogActionOrigins(handle, steamInputSetHandle, steamInputSteerHandle);
+        _diagLog(`[SteamInput diag] Steer analog origins: [${(steerOrigins || []).join(',')}]`);
+      } catch (e) { _diagLog(`[SteamInput diag] Steer origins err: ${e.message}`); }
     }
     // Log button-press edges so we can verify physical→action firing.
     if (_diagAnyPressed) {
