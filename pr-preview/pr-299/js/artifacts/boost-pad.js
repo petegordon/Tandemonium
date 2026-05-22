@@ -102,6 +102,12 @@ export class BoostPad {
     }
   }
 
+  /** Called by ArtifactManager on a checkpoint/game-over reset. */
+  reset() {
+    this._inside = false;
+    this._boostRemaining = 0;
+  }
+
   destroy() {
     this.scene.remove(this.mesh);
     this.mesh.geometry.dispose();
