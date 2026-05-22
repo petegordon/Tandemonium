@@ -103,6 +103,17 @@ export class ArtifactManager {
     return null;
   }
 
+  /** Reset every artifact's per-pass state when the bike is sent back to a
+   *  checkpoint or restarted from game-over. Without this, ramps and sync
+   *  gates remember they already fired on this race and refuse to re-engage. */
+  reset(bike) {
+    for (const { inst } of this._artifacts) {
+      if (typeof inst.reset === 'function') {
+        try { inst.reset(bike); } catch (err) { console.warn('[ArtifactManager] reset failed:', err); }
+      }
+    }
+  }
+
   destroy() {
     for (const { inst } of this._artifacts) {
       try { inst.destroy(); } catch {}

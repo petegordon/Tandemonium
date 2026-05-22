@@ -176,6 +176,22 @@ export class Ramp {
     }
   }
 
+  /** Called by ArtifactManager when the bike is hard-reset to a checkpoint
+   *  or game-over respawn. Clears all per-pass state and any airborne flags
+   *  on the bike so the next traversal triggers cleanly. */
+  reset(bike) {
+    this._launched = false;
+    this._onSlope = false;
+    this._airT = 0;
+    this._v0y = 0;
+    this._launchY = 0;
+    this._lastResetD = -Infinity;
+    if (bike) {
+      bike._airborne = false;
+      bike._airYOffset = 0;
+    }
+  }
+
   destroy() {
     this.scene.remove(this.group);
     this.group.traverse(o => {

@@ -118,6 +118,15 @@ export class SyncGate {
     }
   }
 
+  /** Called by ArtifactManager on a checkpoint/game-over reset. */
+  reset() {
+    this._inside = false;
+    this._resolved = false;
+    this._minSyncWhileInside = 1.0;
+    this._rewardRemaining = 0;
+    this._lastResetD = -Infinity;
+  }
+
   destroy() {
     this.scene.remove(this.group);
     this.group.traverse(o => {

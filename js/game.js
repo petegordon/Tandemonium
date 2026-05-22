@@ -374,6 +374,7 @@ class Game {
         this.raceManager.passedCheckpoints.add(nextCp);
         this.raceManager.resetSegmentTimer(nextCp);
         this.bike.resetToDistance(nextCp);
+        if (this.artifactManager) this.artifactManager.reset(this.bike);
         if (this.ddaManager) this.ddaManager.onCheckpointPassed(nextCp);
         this._showCheckpointFlash();
       }
@@ -1435,6 +1436,10 @@ class Game {
     } else {
       this.bike.fullReset();
     }
+    // Clear per-pass artifact state (ramps, sync gates, boost pads) so they
+    // re-engage on the next traversal after a checkpoint reset or game-over
+    // restart.
+    if (this.artifactManager) this.artifactManager.reset(this.bike);
 
     // Reset segment timer for current segment on checkpoint restart
     if (this.raceManager && checkpointD > 0) {
