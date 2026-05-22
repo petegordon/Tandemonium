@@ -14,21 +14,25 @@ function makeRampMesh(skin, width, length, angle) {
   const color = skin === 'metal' ? 0xa1a8b3 : skin === 'dirt' ? 0x8a5a2d : 0x7c4a26;
   const mat = new THREE.MeshLambertMaterial({ color });
 
-  // Top surface (the ramp face)
+  // Top surface (the ramp face). Slope rises in the +Z direction so the bike,
+  // moving along the road's forward axis, climbs the wedge and launches off
+  // the high end. Rotation sign is `-angleRad` so the +Y edge of the plane
+  // ends up at the HIGH end (z = +halfL, y = height).
   const topGeo = new THREE.PlaneGeometry(width, length);
   const top = new THREE.Mesh(topGeo, mat);
-  top.rotation.x = -Math.PI / 2 + angleRad;
+  top.rotation.x = -Math.PI / 2 - angleRad;
   top.position.y = height / 2;
   top.position.z = 0;
   grp.add(top);
 
-  // Two side triangles (BufferGeometry)
+  // Two side triangles (BufferGeometry). Vertical edge at +halfL (high end),
+  // horizontal base from -halfL to +halfL, hypotenuse rising as z increases.
   const sideGeo = new THREE.BufferGeometry();
   const halfL = length / 2;
   sideGeo.setAttribute('position', new THREE.Float32BufferAttribute([
-    -halfL, 0, 0,
      halfL, 0, 0,
-     halfL, height, 0
+    -halfL, 0, 0,
+    -halfL, height, 0
   ], 3));
   sideGeo.setIndex([0, 1, 2]);
   sideGeo.computeVertexNormals();
@@ -42,7 +46,8 @@ function makeRampMesh(skin, width, length, angle) {
   sideR.rotation.y = Math.PI / 2;
   grp.add(sideR);
 
-  // Back wall (the tall end of the ramp, so it doesn't look hollow)
+  // Back wall (the tall end of the ramp, so it doesn't look hollow).
+  // Sits at the high end (z = +halfL) on the bike's exit side.
   const backGeo = new THREE.PlaneGeometry(width, height);
   const back = new THREE.Mesh(backGeo, mat);
   back.position.y = height / 2;

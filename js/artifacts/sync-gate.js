@@ -31,10 +31,11 @@ export class SyncGate {
     right.position.set(2.4, POLE_HEIGHT / 2, 0);
     this.group.add(right);
 
-    // Arch: a torus segment (half-circle) connecting the two pole tops
+    // Arch: a torus segment (half-circle) connecting the two pole tops.
+    // Half-torus is built in the XY plane spanning x = ±radius through y = +radius,
+    // which lines up directly with the poles at x = ±2.4 — no extra rotation needed.
     const archGeo = new THREE.TorusGeometry(2.4, ARCH_RADIUS, 8, 24, Math.PI);
     this.archMesh = new THREE.Mesh(archGeo, archMat);
-    this.archMesh.rotation.y = Math.PI / 2;
     this.archMesh.position.set(0, POLE_HEIGHT, 0);
     this.group.add(this.archMesh);
 
