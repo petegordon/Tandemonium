@@ -91,6 +91,19 @@ export class Ramp {
       this.group.rotation.y = f.heading;
     }
 
+    // Detect a checkpoint/respawn reset: bike distance moved backward past
+    // the last launch point. Re-arm the ramp and clear any stale airborne
+    // state on the bike so a second pass triggers cleanly.
+    if (bikeDistanceTraveled < this._lastResetD) {
+      this._lastResetD = -Infinity;
+      if (this._launched || this._onSlope) {
+        this._launched = false;
+        this._onSlope = false;
+        bike._airborne = false;
+        bike._airYOffset = 0;
+      }
+    }
+
     if (bike.fallen) {
       if (this._launched || this._onSlope) {
         this._launched = false;
