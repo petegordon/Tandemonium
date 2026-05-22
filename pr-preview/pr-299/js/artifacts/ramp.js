@@ -12,12 +12,17 @@ function makeRampMesh(skin, width, length, angle) {
   const height = Math.sin(angleRad) * length;
   const grp = new THREE.Group();
   const color = skin === 'metal' ? 0xa1a8b3 : skin === 'dirt' ? 0x8a5a2d : 0x7c4a26;
-  const mat = new THREE.MeshLambertMaterial({ color });
+  // DoubleSide everywhere so the wedge reads correctly from any camera angle.
+  // The slope's normal tilts toward -Z so the bike sees its back face during
+  // the close approach; without DoubleSide the slope visually disappears and
+  // the wedge looks "backwards".
+  const mat = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
 
   // Top surface (the ramp face). Slope rises in the +Z direction so the bike,
   // moving along the road's forward axis, climbs the wedge and launches off
   // the high end. Rotation sign is `-angleRad` so the +Y edge of the plane
-  // ends up at the HIGH end (z = +halfL, y = height).
+  // ends up at the LOW end (z = -halfL, y = 0) and the -Y edge at the HIGH
+  // end (z = +halfL, y = height).
   const topGeo = new THREE.PlaneGeometry(width, length);
   const top = new THREE.Mesh(topGeo, mat);
   top.rotation.x = -Math.PI / 2 - angleRad;
@@ -36,12 +41,11 @@ function makeRampMesh(skin, width, length, angle) {
   ], 3));
   sideGeo.setIndex([0, 1, 2]);
   sideGeo.computeVertexNormals();
-  const sideMat = new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide });
-  const sideL = new THREE.Mesh(sideGeo, sideMat);
+  const sideL = new THREE.Mesh(sideGeo, mat);
   sideL.position.x = -width / 2;
   sideL.rotation.y = Math.PI / 2;
   grp.add(sideL);
-  const sideR = new THREE.Mesh(sideGeo, sideMat);
+  const sideR = new THREE.Mesh(sideGeo, mat);
   sideR.position.x = width / 2;
   sideR.rotation.y = Math.PI / 2;
   grp.add(sideR);
