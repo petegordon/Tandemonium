@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "castle",
+  "name": "The Castle",
+  "author": "official",
+  "artifacts": [
+    { "type": "boost",      "d":  80, "offset":  0,   "width": 2.5, "length": 4.5, "strength": 1.4,  "decay": 0.9 },
+    { "type": "mud",        "d": 145, "offset":  1.0, "width": 1.6, "length": 3.0, "friction": 0.5 },
+    { "type": "ramp",       "d": 215, "offset":  0,   "width": 2.4, "length": 3.5, "angle": 20, "skin": "wood" },
+    { "type": "sync",       "d": 265, "phaseTolerance": 30, "rewardStrength": 1.4,  "rewardDuration": 1.2 },
+    { "type": "choke",      "d": 325, "offset":  0,   "gap": 2.0, "depth": 1.0, "mode": "crash", "skin": "barrier" },
+    { "type": "boost",      "d": 385, "offset": -0.5, "width": 2.5, "length": 4.0, "strength": 1.35, "decay": 0.8 },
+    { "type": "drawbridge", "d": 450, "period": 6.0, "phase": 1.0, "downRatio": 0.6, "skin": "wood" },
+    { "type": "mud",        "d": 505, "offset": -1.2, "width": 1.6, "length": 3.0, "friction": 0.55 },
+    { "type": "ramp",       "d": 565, "offset":  0,   "width": 2.4, "length": 4.0, "angle": 22, "skin": "metal" },
+    { "type": "sync",       "d": 620, "phaseTolerance": 28, "rewardStrength": 1.45, "rewardDuration": 1.2 },
+    { "type": "choke",      "d": 665, "offset":  0,   "gap": 1.8, "depth": 1.0, "mode": "crash", "skin": "statue" }
+  ]
+}
