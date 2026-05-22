@@ -77,6 +77,15 @@ export class SyncGate {
 
     if (bike.fallen) return;
 
+    // Checkpoint/respawn reset — re-arm so a second pass can score the gate.
+    if (bikeDistanceTraveled < this._lastResetD) {
+      this._lastResetD = -Infinity;
+      this._resolved = false;
+      this._minSyncWhileInside = 1.0;
+      this._inside = false;
+      this._rewardRemaining = 0;
+    }
+
     const r = pointInRoadRect(this.roadPath, this.p.d, 0, 5.0, 1.2, bikePos);
 
     // Re-arm only after the bike has moved on
