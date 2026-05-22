@@ -95,7 +95,7 @@ export class ArtifactManager {
       if (type === 'choke') {
         const result = inst.checkCollision(bikePos);
         if (result === 'crash') return 'choke_point';
-        if (result === 'scrape') inst.applyScrape(bike, dt);
+        if (result === 'scrape') inst.applyScrape(bike, bikePos, dt);
       } else if (type === 'drawbridge') {
         if (inst.checkCollision(bikePos)) return 'drawbridge';
       }
