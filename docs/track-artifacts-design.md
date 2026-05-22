@@ -18,8 +18,10 @@ This document defines **six new track artifacts** that:
    `obstacles.js` and `collectibles.js`.
 3. Expose a parameter surface that can be authored by hand *and* by a future
    user-generated content (UGC) track builder.
-4. Work in single-player and tandem multiplayer (one bike, two riders) as
-   well as networked multiplayer (multiple bikes).
+4. Work in both single-player and **tandem multiplayer** — the current
+   multiplayer model, where two players (Captain + Stoker) share one bike
+   over the network. There is no versus / multi-bike mode today; designing
+   for one is explicitly out of scope here.
 
 The artifacts are: **ramps, boost pads, mud patches, drawbridges, choke
 points, sync gates.**
@@ -114,9 +116,12 @@ Each spec below lists: **player verb**, **physics effect**, **visual**,
   ```
 
 * **UGC-safe ranges:** `width` 1.0–3.5, `length` 1.5–6.0, `angle` 5–35.
-* **Multiplayer:** Each bike resolves jump independently. Mid-air bikes
-  do not collide. Networked: send `airborne=true/false` in remote state so
-  partners see jumps.
+* **Multiplayer (Captain + Stoker on one bike):** The airborne state is
+  a property of the single shared bike. The client running the bike
+  physics computes the jump from bike position + manifest (deterministic);
+  the partner client mirrors via the existing remote-bike-state sync. One
+  added field: `airborne: bool` so the partner renders the bike off the
+  ground.
 
 ### 3.2 Boost Pad
 
@@ -146,8 +151,11 @@ Each spec below lists: **player verb**, **physics effect**, **visual**,
 * **UGC-safe ranges:** `strength` 1.1–1.8, `decay` 0.3–2.0,
   `width` 1.5–4.0, `length` 2.0–8.0. Hard cap on per-segment cumulative
   boost so a builder can't spam pads.
-* **Multiplayer:** Per-bike. Visual chevrons sync from the artifact, not
-  from each bike.
+* **Multiplayer (Captain + Stoker on one bike):** Speed effect is applied
+  to the single shared bike; both clients derive the same effect
+  deterministically from bike position vs the manifest. Visual chevrons
+  animate from the artifact's local clock, not bike state, so they look
+  identical on both clients.
 
 ### 3.3 Mud Patch
 
@@ -174,8 +182,9 @@ Each spec below lists: **player verb**, **physics effect**, **visual**,
 
 * **UGC-safe ranges:** `friction` 0.4–0.9, `width` 1.0–3.5,
   `length` 1.0–6.0.
-* **Multiplayer:** Per-bike. Other bikes see your spray particles via
-  remote state's `surface` field.
+* **Multiplayer (Captain + Stoker on one bike):** Slow effect applies to
+  the single shared bike; deterministic from position vs manifest so both
+  clients agree without extra sync.
 
 ### 3.4 Drawbridge
 
@@ -211,8 +220,9 @@ Each spec below lists: **player verb**, **physics effect**, **visual**,
 
 * **Verb:** squeeze through.
 * **Effect:** Narrows the drivable corridor at this distance. Outside the
-  corridor the bike crashes (or scrapes — see param). Used to force
-  steering precision and, in multiplayer, to create overtake pressure.
+  corridor the bike crashes (or scrapes — see param). Forces steering
+  precision from the Captain and a brief moment of tension. Pairs well
+  placed right after a boost pad or ramp landing.
 * **Visual:** Pair of opposing scenery objects (cones+barriers,
   haystacks, knight statues) bordering the corridor. Optional flashing
   warning markers ~5 m ahead.
@@ -233,10 +243,10 @@ Each spec below lists: **player verb**, **physics effect**, **visual**,
 
 * **UGC-safe ranges:** `gap` 1.2–3.5 (bike body is ~0.7 m;
   below 1.2 is unfair). `offset` clamped to road width minus gap/2.
-* **Multiplayer:** In networked play, the artifact's mesh is shared; per-bike
-  collision is independent so two bikes can pass simultaneously *if* the
-  builder placed the gap wide enough. This creates the overtake pressure
-  organically without extra logic.
+* **Multiplayer (Captain + Stoker on one bike):** Single bike, single
+  collision — no extra logic needed. Steering ownership stays with whoever
+  has it today (Captain). The Stoker can still affect outcome via the
+  shared pedal contribution / balance signal feeding the lean.
 
 ### 3.6 Sync Gate
 
@@ -267,9 +277,12 @@ Each spec below lists: **player verb**, **physics effect**, **visual**,
 
 * **UGC-safe ranges:** `phaseTolerance` 15–60, `rewardStrength` 1.1–1.7,
   `rewardDuration` 0.5–2.0.
-* **Multiplayer:** Each bike (each tandem pair) resolves independently.
-  In single-player, the second rider's phase is derived from the bot
-  pedal-controller; tolerance auto-widens so solo play stays winnable.
+* **Multiplayer (Captain + Stoker on one bike):** This is the headline
+  artifact for tandem play — the gate explicitly rewards Captain and
+  Stoker pedaling in phase. Phase data already exists in
+  `shared-pedal-controller.js` / `contribution-tracker.js`. In single-player
+  the Stoker phase comes from the bot pedal controller and tolerance
+  auto-widens so solo play stays winnable.
 
 ## 4. Track Manifest Schema
 
@@ -441,18 +454,32 @@ budget issues that v1 should not pay for.
 
 ## 8. Multiplayer Considerations
 
-* All six artifacts are **deterministic given the manifest**. No need to
-  sync per-artifact state across clients.
-* Drawbridge phase is computed from `(race_time + manifest.phase) % period`
-  — same on every client because race start time is already synced via
-  `network-manager.js`.
-* Per-bike effects (boost, slow, airborne) are local; the only network
-  field added is `airborne: bool` so partners see jumps. Confirm there is
-  budget in `remote-bike-state.js` payload before adding.
-* Sync gates only resolve when *both* of the local tandem's riders are
-  in phase — they do **not** require cross-bike sync.
-* In races with multiple bikes, choke points organically gate overtakes
-  (intentional design lever, not a bug).
+**Current model: one bike, two riders (Captain + Stoker), one per
+client, kept in sync via `network-manager.js` and `remote-bike-state.js`.**
+There is no versus / multi-bike mode today. The design below targets only
+the single-bike tandem case; see Section 11 for the multi-bike future.
+
+* All six artifacts are **deterministic given the manifest + race clock**,
+  so the artifact world is identical on Captain and Stoker clients with
+  no per-artifact network messages.
+* **Drawbridge** phase derives from `(race_time + manifest.phase) % period`
+  — race start is already synced via `network-manager.js`, so both clients
+  draw the bridge at the same position every frame.
+* **Boost, mud, airborne (ramp), sync-gate boost** all act on the single
+  shared bike. They are applied identically on both clients because:
+  - The manifest is shared.
+  - The bike's distance-along-road is already part of the synced state.
+  - The effect formula is pure (`f(bike position, artifact params, time)`).
+* The only new field added to the synced bike state is `airborne: bool`
+  (or, if payload budget is tight, derive from vertical velocity already
+  in state — confirm in Phase 3).
+* **Sync gate** explicitly evaluates Captain + Stoker pedal phase using
+  the signal already exposed by `shared-pedal-controller.js` /
+  `contribution-tracker.js`. This is the most tandem-specific artifact
+  and the most likely to feel uniquely satisfying in multiplayer.
+* **Steering / collision ownership:** Whichever client owns bike physics
+  today (Captain in current code) keeps owning collision checks for the
+  new artifacts. Stoker mirrors. No new authority model needed.
 
 ## 9. Implementation Plan
 
@@ -513,16 +540,29 @@ In order of risk:
   poly meshes on `lowEnd`.
 * **Tutorial impact**: must not break existing tutorial flow.
   Phase 1 ships empty manifests for that reason.
-* **Multiplayer payload**: adding `airborne` to remote state. Confirm
-  byte budget; if tight, derive from vertical velocity instead.
+* **Tandem-multiplayer payload**: adding `airborne` to the shared bike
+  state. Confirm byte budget in `remote-bike-state.js`; if tight, derive
+  the airborne flag on the partner client from vertical velocity that's
+  already in state instead of adding a new field.
 
 ## 11. Out of Scope (v1)
 
 * Loops, half-pipes, see-saws (Section B from brainstorm)
 * Open hub world
 * UGC custom skins / meshes
-* Cross-bike cooperative switches
 * Power-ups (Mario Kart-style items)
+* **Versus / multi-bike racing mode.** Today's multiplayer is one bike
+  shared by Captain + Stoker; a versus mode would be a separate
+  initiative. If/when it's introduced, the artifacts here mostly carry
+  over with two additions worth noting now so we don't paint into a
+  corner:
+  - **Choke point** becomes an organic overtake-pressure mechanic
+    (a feature, not a problem) — already wide enough by spec for two
+    bikes if the builder picks `gap >= 3.5`.
+  - **Boost / mud / ramp** would need per-bike effect application, which
+    today is "the bike" rather than "this bike vs that bike." The
+    `ArtifactManager` should keep the effect-apply call site narrow so a
+    future refactor can swap "the bike" for a bike list.
 
 These remain in the design backlog and should be re-evaluated after the
 six-artifact set ships.
