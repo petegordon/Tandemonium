@@ -75,7 +75,10 @@ export class Ramp {
     this._airT = 0;       // seconds since launch
     this._airDur = 0;     // total airtime
     this._airSpeed0 = 0;  // launch speed
+    this._v0y = 0;
+    this._launchY = 0;    // bike Y at the moment of ballistic launch
     this._launched = false;
+    this._onSlope = false;
     this._lastResetD = -Infinity;
   }
 
@@ -89,57 +92,74 @@ export class Ramp {
     }
 
     if (bike.fallen) {
-      // If the bike fell mid-jump, end the airborne state cleanly.
-      if (this._launched) {
+      if (this._launched || this._onSlope) {
         this._launched = false;
+        this._onSlope = false;
         bike._airborne = false;
         bike._airYOffset = 0;
       }
       return;
     }
 
-    // Allow re-trigger only after the bike has progressed past + lap-distance gap.
-    // Detect crossing of the ramp footprint center (entering from behind).
-    const r = pointInRoadRect(this.roadPath, this.p.d, this.p.offset || 0, this.p.width, this.p.length, bikePos);
-    if (r && !this._launched && bikeDistanceTraveled > this._lastResetD + 50) {
-      // Launch when bike center crosses the front half of the ramp
-      if (r.alongNorm > 0.6) {
-        this._launched = true;
-        this._airT = 0;
-        this._airSpeed0 = bike.speed;
-        // Airtime scales with speed × ramp angle. Clamp to params hint and ground truth.
-        const angleRad = this.p.angle * Math.PI / 180;
-        const v0y = Math.min(8, bike.speed * Math.sin(angleRad) * 1.4);
-        this._airDur = Math.max(0.2, Math.min(1.5, (2 * v0y) / 9.8));
-        this._v0y = v0y;
-        bike._airborne = true;
-        bike._airYOffset = 0;
-        this._lastResetD = bikeDistanceTraveled;
-      }
-    }
-
-    // Integrate jump arc
+    // Phase B: in the air after launch — integrate ballistic arc, then land.
     if (this._launched) {
       this._airT += dt;
       const t = this._airT;
-      const y = this._v0y * t - 0.5 * 9.8 * t * t;
-      bike._airYOffset = Math.max(0, y);
-      // Keep speed roughly constant (no air drag); slight forward continuance
-      if (this._airT >= this._airDur) {
-        // Landing
+      const y = this._launchY + this._v0y * t - 0.5 * 9.8 * t * t;
+      if (y <= 0 || this._airT >= this._airDur) {
         const cleanLanding = Math.abs(bike._lateralOffset) < 1.5;
         bike._airYOffset = 0;
         bike._airborne = false;
         this._launched = false;
         if (cleanLanding) {
-          // Small forward boost as reward
-          bike.speed = Math.min(bike.maxSpeed, bike.speed + 1.5);
+          bike.speed = Math.min(bike.maxSpeed, bike.speed + 2.0);
         } else {
-          // Skid: shake the bike a bit by adding lean velocity
           bike.leanVelocity += (Math.random() - 0.5) * 1.5;
           bike.speed *= 0.85;
         }
+      } else {
+        bike._airYOffset = y;
       }
+      return;
+    }
+
+    // Phase A: bike is rolling across the wedge footprint. Lift the bike's
+    // Y-offset linearly with progress so it visibly climbs the slope, then
+    // launch off the top with the slope's apex as the starting altitude.
+    const r = pointInRoadRect(this.roadPath, this.p.d, this.p.offset || 0, this.p.width, this.p.length, bikePos);
+    const canEngage = bikeDistanceTraveled > this._lastResetD + 50;
+
+    if (r && canEngage) {
+      const slopeY = r.alongNorm * this._height;
+      bike._airYOffset = slopeY;
+      this._onSlope = true;
+
+      // Launch near the top of the slope.
+      if (r.alongNorm > 0.85) {
+        const angleRad = this.p.angle * Math.PI / 180;
+        const v0y = Math.min(8, bike.speed * Math.sin(angleRad) * 1.8 + 1.5);
+        const g = 9.8;
+        const launchY = slopeY;
+        // Time until y returns to 0 (ground): solve launchY + v0y*t - 0.5*g*t² = 0.
+        const airDur = Math.min(2.0, (v0y + Math.sqrt(v0y * v0y + 2 * g * launchY)) / g);
+
+        this._launched = true;
+        this._onSlope = false;
+        this._airT = 0;
+        this._airSpeed0 = bike.speed;
+        this._v0y = v0y;
+        this._launchY = launchY;
+        this._airDur = airDur;
+        bike._airborne = true;
+        // Forward kick — the ramp throws you forward as well as up.
+        bike.speed = Math.min(bike.maxSpeed, bike.speed + 1.5);
+        this._lastResetD = bikeDistanceTraveled;
+      }
+    } else if (this._onSlope) {
+      // Left the footprint without launching (stopped on the ramp, fell off
+      // the side, etc.) — drop back to road level.
+      this._onSlope = false;
+      bike._airYOffset = 0;
     }
   }
 
