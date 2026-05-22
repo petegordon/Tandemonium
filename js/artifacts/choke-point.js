@@ -91,9 +91,42 @@ export class ChokePoint {
     return this.p.mode === 'scrape' ? 'scrape' : 'crash';
   }
 
-  /** Called by manager if mode==='scrape' and bike is intersecting. */
-  applyScrape(bike, dt) {
-    bike.speed *= Math.max(0, 1 - 3.0 * dt);
+  /**
+   * Called by manager if mode==='scrape' and bike is intersecting.
+   * Hard-wall pushback: clamps the bike laterally so it can't penetrate the
+   * side block, then drags speed so scraping costs real momentum.
+   */
+  applyScrape(bike, bikePos, dt) {
+    const halfGap = this.p.gap / 2;
+    const sideInner = (this.p.offset || 0);
+    const innerA = sideInner - halfGap; // right edge of left block (faces gap)
+    const innerB = sideInner + halfGap; // left edge of right block (faces gap)
+
+    const f = roadFrame(this.roadPath, this.p.d, 0);
+    const dx = bikePos.x - f.x;
+    const dz = bikePos.z - f.z;
+    const lat = dx * f.rightX + dz * f.rightZ;
+    const along = dx * f.forwardX + dz * f.forwardZ;
+
+    // Only push laterally if we're actually within the block's depth window
+    if (Math.abs(along) <= this.p.depth / 2 + BIKE_RADIUS) {
+      const EPS = 0.05; // small buffer so the bike pops out of the inflated rect
+      let push = 0;
+      if (lat - BIKE_RADIUS < innerA) {
+        push = (innerA + BIKE_RADIUS + EPS) - lat;     // push toward +lat (right)
+      } else if (lat + BIKE_RADIUS > innerB) {
+        push = (innerB - BIKE_RADIUS - EPS) - lat;     // push toward -lat (left)
+      }
+      if (push !== 0) {
+        bike.position.x += push * f.rightX;
+        bike.position.z += push * f.rightZ;
+        // Dampen the lean that drove the bike into the wall, so it doesn't
+        // instantly squish back in next frame.
+        bike.leanVelocity *= 0.4;
+      }
+    }
+    // Strong drag while scraping
+    bike.speed *= Math.max(0, 1 - 5.0 * dt);
   }
 
   destroy() {
