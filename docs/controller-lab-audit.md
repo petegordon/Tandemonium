@@ -86,9 +86,14 @@ tandemonium-controller-steam/
 
 Depends on `@usersfirst/controller-core` from npm.
 
-`steamworks_sdk/` binaries do **not** ship in the public repo — they
-get downloaded by a postinstall script per Valve's redistribution
-terms. (Open question — see below.)
+`steamworks_sdk/` binaries do **not** ship in the public repo. Each
+developer downloads the SDK themselves from the Steamworks Partner
+site and drops the `redistributable_bin/` folder into `steamworks_sdk/`
+(matching the path `steamworks-ffi-node` expects). The repo
+`.gitignore`s the directory; the test harness prints a clear error
+when the SDK is missing. No postinstall auto-download — Valve's
+license forbids it and `steamworks-ffi-node` itself takes the same
+stance.
 
 ## File-by-file disposition
 
@@ -210,46 +215,40 @@ That's the shape that lets the lab serve both "I just want to read my
 SuperNova in a browser tab" hackers and "I need full multi-player
 pairing" game devs.
 
-## Open questions before I start moving files
+## Decisions
 
-1. **License for the GLB models?** Overlay README credits
-   larfingshnew/3d-controller-overlay (MIT) as the source for the OBJ
-   models. Need to confirm the converted GLBs can ship in a separate
-   repo under the same license — almost certainly yes given MIT, but
-   worth a re-read of that repo's LICENSE.
-2. **Steamworks SDK redistribution.** Valve's terms forbid
-   re-distributing the SDK binaries. Plan is a postinstall script that
-   downloads them from Steam's CDN at install time — needs to be
-   compatible with `steamworks-ffi-node`'s expected layout.
-3. **npm scope.** `@usersfirst/controller-core` vs.
-   `@tandemonium/controller-core` vs. unscoped
-   `tandemonium-controller-core`. Scope matches the GitHub org cleanly
-   but reads slightly weird given the package name still says
-   "tandemonium". My vote: `@usersfirst/controller-*` (core,
-   visualizer, manager) — keeps the door open to non-Tandemonium-
-   themed packages in the same scope later.
-4. **Should `manager.js` live in `core` or its own package?** It's
-   864 lines of opinionated UX. Could go as
-   `@usersfirst/controller-manager` for cleaner separation, but that's
-   one more package to maintain. Leaning: keep it in `core` under a
-   subpath export (`@usersfirst/controller-core/manager`) — tree-
-   shakeable but discoverable.
-5. **Does the Tandemonium game switch to consuming the npm package**,
-   or keep its in-tree copy of `shared/controllers/`? The clean answer
-   is "consume the package" — but that ties Tandemonium's release
-   cadence to the lab's. Reasonable middle ground: Tandemonium keeps
-   the in-tree copy *generated from the lab repo* via a
-   `bin/sync-from-lab.sh` script, so the lab stays the source of
-   truth and Tandemonium can pin a specific lab commit.
+| # | Question | Decision |
+|---|---|---|
+| 1 | GLB model licensing | Source repo (`larfingshnew/3d-controller-overlay`) is MIT. Copy the upstream LICENSE into `packages/visualizer/assets/controllers/LICENSE`, credit the source in both the package README and `packages/visualizer/README.md`. Same attribution the current overlay README already uses — no new legal surface. |
+| 2 | Steamworks SDK redistribution | Match `steamworks-ffi-node`'s stance: do **not** bundle or auto-download. `.gitignore` the `steamworks_sdk/` directory in the companion repo. README documents the manual download step from the Steamworks Partner site. The test harness checks for the SDK path on startup and prints a clear error with a link to the download page when missing. |
+| 3 | npm scope | **`@usersfirst/*`** — matches the studio (usersfirst.games), keeps the door open for non-Tandemonium packages later. Packages: `@usersfirst/controller-core`, `@usersfirst/controller-visualizer`. Steam companion publishes as `@usersfirst/controller-steam`. |
+| 4 | Slot/claim manager location | Keep in `@usersfirst/controller-core` as a subpath export. Imports: `import { ControllerManager } from '@usersfirst/controller-core/manager'`. Tree-shakeable, single package to publish, one issue tracker. Revisit only if manager grows substantially or a "driver-only without manager" use case shows up. |
+| 5 | Tandemonium consumption | Two phases. **Phase 1** (extraction + first ~2 months): Tandemonium keeps its in-tree copy of `shared/controllers/`, kept up to date via `npm run sync-controller-lab` — a sync script that pulls the latest commit from the lab repo and writes it into `shared/`. Lab is source of truth; Tandemonium pins a specific lab commit in a `.controller-lab-sha` file. **Phase 2** (after lab API hits 1.0): Tandemonium switches to consuming `@usersfirst/controller-core` from npm and deletes its in-tree copy. |
 
 ## Suggested next steps
 
-1. You review this audit and answer the open questions.
-2. I sketch the actual `packages/core/package.json`, `tsconfig.json`,
-   workspace root, and exports map — pure scaffolding, no code yet.
-3. We pick the day to actually do the extraction (it's a sustained
-   ~2-hour move with careful import rewriting; better to do in one
-   sitting on a clean branch).
-4. After the move lands, file the issues for the new drivers
-   (SuperNova, Cyclone 2, Steam Controller 2026) so the project has
-   a public roadmap from day one.
+1. **Scaffold the new repo's structure.** Pure skeleton — root
+   `package.json` with workspaces, `packages/core/package.json` with
+   the exports map, `packages/visualizer/package.json`, `apps/overlay/
+   package.json` (mostly copied from the current overlay), and a
+   one-page README per package. No code moved yet. This is the doc
+   that proves the package boundaries actually work before we commit
+   to moving files.
+2. **Decide where the new repo physically lives during scaffolding.**
+   Three options: (a) scaffold in a sibling directory on this machine
+   and push to a brand-new `UsersFirst/tandemonium-controller-lab`
+   repo created via the GitHub web UI, (b) scaffold inside this repo
+   under a temporary `lab-scaffold/` path and migrate later, (c) wait
+   to scaffold until the `UsersFirst` org exists on GitHub.
+3. **The extraction itself.** Sustained ~2-hour move once scaffolding
+   is approved — careful import rewriting, asset relocation, and a
+   smoke test that the lab's web demo loads + the Electron overlay
+   still launches.
+4. **Roadmap issues.** After the move lands, file public issues for
+   the new drivers (SuperNova as a first-class driver, Cyclone 2,
+   Steam Controller 2026) so the project has a visible roadmap from
+   day one.
+5. **Tandemonium-side sync script.** Add `scripts/sync-controller-lab.
+   sh` and a `shared/.controller-lab-sha` file to Tandemonium on a
+   follow-up PR, once the lab repo has a stable enough main branch
+   to sync from.
