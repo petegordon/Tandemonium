@@ -65,7 +65,8 @@ export function trackEvent(eventType, eventData = null) {
   const immediate = [
     'tutorial_complete', 'tutorial_abandon',
     'cta_click', 'room_connect', 'room_connect_fail',
-    'room_disconnect', 'auth_complete'
+    'room_disconnect', 'auth_complete',
+    'survey_complete', 'survey_dismiss'
   ];
   if (immediate.includes(eventType)) {
     flushUIEvents();

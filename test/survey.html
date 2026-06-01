@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Survey System — test &amp; QA harness</title>
+<style>
+  body {
+    margin: 0; padding: 24px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    background: #15161a; color: #eee;
+  }
+  h1 { font-size: 20px; }
+  h2 { font-size: 15px; margin-top: 28px; color: #8ab4ff; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  button.demo {
+    padding: 10px 14px; border-radius: 10px; cursor: pointer;
+    border: 2px solid rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.08); color: #fff; font-weight: 700;
+  }
+  button.demo:hover { background: rgba(255,255,255,0.16); }
+  #assertions { font-family: ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.6; }
+  .pass { color: #44ff66; }
+  .fail { color: #ff5566; font-weight: 700; }
+  #log { margin-top: 16px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+         white-space: pre-wrap; color: #9fb; background: #0d0e11; padding: 12px;
+         border-radius: 8px; max-height: 220px; overflow: auto; }
+</style>
+</head>
+<body>
+  <h1>Survey System — test &amp; QA harness</h1>
+  <p>Pure-logic assertions run on load. Buttons force-render each branch (bypassing
+  sampling/throttle) so you can eyeball the question trees. Emitted telemetry events
+  are logged below instead of being sent to the analytics endpoint.</p>
+
+  <h2>Branch resolution assertions</h2>
+  <div id="assertions"></div>
+
+  <h2>Force-render a branch</h2>
+  <div class="row">
+    <button class="demo" data-mode="solo"    data-done="1">Solo · completed</button>
+    <button class="demo" data-mode="solo"    data-done="0">Solo · abandoned</button>
+    <button class="demo" data-mode="captain" data-done="1">MP host · completed</button>
+    <button class="demo" data-mode="stoker"  data-done="1">MP guest · completed</button>
+    <button class="demo" data-mode="captain" data-done="0">MP host · abandoned</button>
+    <button class="demo" data-mode="stoker"  data-done="0">MP guest · abandoned</button>
+    <button class="demo" data-mode="local"   data-done="1">Local (expect: no survey)</button>
+  </div>
+
+  <h2>Emitted telemetry</h2>
+  <div id="log"></div>
+
+<script type="module">
+  import { resolveBranch, BRANCH, SURVEY_BRANCHES, SurveyManager } from '../js/survey.js';
+
+  // ---- Assertions ----
+  const cases = [
+    [{ mode:'solo',    completed:true  }, BRANCH.SOLO_COMPLETED],
+    [{ mode:'solo',    completed:false }, BRANCH.SOLO_ABANDONED],
+    [{ mode:'captain', completed:true  }, BRANCH.MP_HOST_COMPLETED],
+    [{ mode:'stoker',  completed:true  }, BRANCH.MP_GUEST_COMPLETED],
+    [{ mode:'captain', completed:false }, BRANCH.MP_HOST_ABANDONED],
+    [{ mode:'stoker',  completed:false }, BRANCH.MP_GUEST_ABANDONED],
+    [{ mode:'local',   completed:true  }, null],
+    [null, null],
+  ];
+  const out = document.getElementById('assertions');
+  let pass = 0, fail = 0;
+  for (const [ctx, exp] of cases) {
+    const got = resolveBranch(ctx);
+    const ok = got === exp;
+    ok ? pass++ : fail++;
+    const div = document.createElement('div');
+    div.className = ok ? 'pass' : 'fail';
+    div.textContent = `${ok ? 'PASS' : 'FAIL'}  resolveBranch(${JSON.stringify(ctx)}) => ${got}` +
+      (ok ? '' : `  (expected ${exp})`);
+    out.appendChild(div);
+  }
+  // Shape check: every branch asks 2-3 questions.
+  for (const key of Object.keys(SURVEY_BRANCHES)) {
+    const n = SURVEY_BRANCHES[key].questions.length;
+    const ok = n >= 2 && n <= 3;
+    ok ? pass++ : fail++;
+    const div = document.createElement('div');
+    div.className = ok ? 'pass' : 'fail';
+    div.textContent = `${ok ? 'PASS' : 'FAIL'}  ${key} has ${n} questions`;
+    out.appendChild(div);
+  }
+  const summary = document.createElement('div');
+  summary.innerHTML = `<br><strong>${pass} passed, ${fail} failed</strong>`;
+  out.appendChild(summary);
+
+  // ---- Force-render harness ----
+  const logEl = document.getElementById('log');
+  const log = (type, payload) => {
+    logEl.textContent += `[${type}] ${JSON.stringify(payload, (k, v) => k === 'context' ? undefined : v)}\n`;
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+  // Fresh manager with no persistence so the buttons always render.
+  const manager = new SurveyManager({ onEvent: log, storage: null });
+
+  document.querySelectorAll('button.demo').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      manager.forceTrigger({
+        mode: btn.dataset.mode,
+        completed: btn.dataset.done === '1',
+        rideId: 'test-ride-1234',
+        level: 'Test Hill',
+        difficulty: 'adventurous',
+      });
+    });
+  });
+</script>
+</body>
+</html>

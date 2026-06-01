@@ -28,6 +28,7 @@ import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
+import { getSurveyManager, attachSurveyTelemetry } from './survey.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
@@ -317,12 +318,16 @@ class Game {
     // Lobby / Room button
     this._lobbyBtn = document.getElementById('lobby-btn');
     this._lobbyBtn.addEventListener('click', () => {
-      if (analytics.getCurrentRideId()) {
+      const abandonedRideId = analytics.getCurrentRideId();
+      if (abandonedRideId) {
         analytics.endRide({
           completed: false,
           abandon_reason: 'lobby_button',
           distance: this.bike ? this.bike.distanceTraveled : 0,
         });
+        // Trigger the abandon survey before navigating — once we return to
+        // the room/lobby, this.mode may no longer reflect the ride.
+        this._maybeShowSurvey(false, 'lobby_button', abandonedRideId);
       }
       if (this.net) {
         this._returnToRoom();
@@ -404,12 +409,15 @@ class Game {
     // Game Over: quit (full disconnect)
     this._onTap('btn-gameover-lobby', () => {
       this._hideGameOver();
-      if (analytics.getCurrentRideId()) {
+      const abandonedRideId = analytics.getCurrentRideId();
+      if (abandonedRideId) {
         analytics.endRide({
           completed: false,
           abandon_reason: 'end_ride',
           distance: this.bike ? this.bike.distanceTraveled : 0,
         });
+        // Abandon survey before navigating away, while this.mode is intact.
+        this._maybeShowSurvey(false, 'end_ride', abandonedRideId);
       }
       this._returnToLobby();
     });
@@ -423,6 +431,11 @@ class Game {
     // Achievements (persists across sessions)
     this.achievements = new AchievementManager();
     this._updateBadges();
+
+    // Contextual end-of-ride feedback surveys. The manager owns its own UI,
+    // sampling and throttling; we only feed it ride context at the moments
+    // below (see _maybeShowSurvey). Telemetry is routed through analytics.
+    this.survey = getSurveyManager({ onEvent: attachSurveyTelemetry(analytics) });
 
     // Contribution bar elements
     this._contribBar = document.getElementById('contribution-bar');
@@ -1965,8 +1978,36 @@ class Game {
     }
   }
 
+  // ─────────────────────────────────────────────────────────
+  // Survey hook. Builds ride context and hands it to the survey
+  // manager, which decides (via branch resolution + sampling +
+  // throttling) whether and what to ask. Capture the ride id BEFORE
+  // calling analytics.endRide(), which clears it.
+  //   completed     — true if the player reached the finish
+  //   abandonReason — matches the analytics abandon_reason on quit paths
+  //   rideId        — analytics ride id captured before endRide()
+  // ─────────────────────────────────────────────────────────
+  _maybeShowSurvey(completed, abandonReason = null, rideId = null) {
+    if (!this.survey) return;
+    const level = this.lobby ? this.lobby.selectedLevel : null;
+    this.survey.maybeTrigger({
+      mode: this.mode,                    // 'solo' | 'captain' | 'stoker' | 'local'
+      completed: !!completed,
+      rideId: rideId || analytics.getCurrentRideId(),
+      sessionId: analytics.getSessionId(),
+      level: level ? (level.name || level.id) : null,
+      difficulty: this.lobby ? this.lobby.selectedDifficulty : null,
+      role: this.mode,
+      abandonReason,
+      distance: this.bike ? Math.round(this.bike.distanceTraveled) : null,
+    });
+  }
+
   _showVictory(fromRemote = false) {
     this.state = 'victory';
+    // Capture the ride id now — analytics.endRide() below clears it, but the
+    // survey (triggered at the end of this method) needs it to correlate.
+    const surveyRideId = analytics.getCurrentRideId();
     this.hud.hideTimer();
     const overlay = document.getElementById('victory-overlay');
     overlay.classList.add('visible');
@@ -2243,6 +2284,18 @@ class Game {
         if (this.state === 'lobby') return;
         this._showStokerCTA();
       }, 6000);
+    }
+
+    // Contextual feedback survey for completed rides. Delay so the player
+    // sees their result first; skip if they've already left the screen or
+    // an unlicensed stoker is about to get the purchase CTA instead.
+    const wantSurvey = !(this.mode === 'stoker' && this.lobby && !this.lobby.license.isLicensed);
+    if (wantSurvey) {
+      this._victorySurveyTimer = setTimeout(() => {
+        this._victorySurveyTimer = null;
+        if (this.state !== 'victory') return;
+        this._maybeShowSurvey(true, null, surveyRideId);
+      }, 2800);
     }
   }
 
