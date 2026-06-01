@@ -341,6 +341,10 @@ const DEFAULTS = {
   cooldownMs: 6 * 60 * 60 * 1000, // 6 hours
   // Don't re-ask the *same branch* within this window, in ms.
   perBranchCooldownMs: 7 * 24 * 60 * 60 * 1000, // 7 days
+  // A deferred (close/quit-at-unload) abandon survey is resurfaced on the
+  // next session — but only if the ride ended within this window, so we
+  // never ask about a ride from days ago.
+  pendingMaxAgeMs: 24 * 60 * 60 * 1000, // 24 hours
   // localStorage key for throttling state.
   storageKey: 'tandemonium_survey_state',
   // z-index for the modal (sits above victory/gameover overlays at 60).
@@ -403,6 +407,64 @@ export class SurveyManager {
     if (!branchKey || this._active) return null;
     this._open(branchKey, context);
     return branchKey;
+  }
+
+  // ---- Deferred (unload-time) abandon surveys ----
+  //
+  // When a ride ends because the player closed the tab/app, there's no
+  // opportunity to render UI before teardown. Instead the game calls this
+  // from an unload handler to persist the intent, and we resurface the
+  // survey on the next session via maybeShowPending().
+  //
+  // SAFE TO CALL FROM beforeunload/pagehide: it performs only a synchronous
+  // localStorage write and never touches the event object, so it cannot
+  // cancel the unload (important in Electron, where returning a value from
+  // beforeunload blocks the window/app from closing).
+  recordPendingAbandon(context = {}) {
+    if (!this.config.enabled || !this.storage) return false;
+    const branchKey = resolveBranch(context);
+    if (!branchKey) return false; // local / tutorial / unknown — nothing to ask
+    const state = this._readState();
+    state.pending = {
+      branch: branchKey,
+      // Store only the small fields telemetry needs — not the live game object.
+      context: {
+        mode: context.mode,
+        completed: false,
+        rideId: context.rideId || null,
+        level: context.level || null,
+        difficulty: context.difficulty || null,
+        role: context.role || context.mode || null,
+        abandonReason: context.abandonReason || 'page_close',
+        distance: context.distance != null ? context.distance : null,
+      },
+      recordedAt: this.now(),
+    };
+    this._writeState(state);
+    return true;
+  }
+
+  // Resurface a deferred abandon survey from a previous session. Call once
+  // on startup (e.g. when the lobby is ready). One-shot: the pending record
+  // is cleared whether or not it ends up being shown, and normal eligibility
+  // (freshness, cooldown, sampling) still applies.
+  maybeShowPending() {
+    if (!this.config.enabled || this._active || !this.storage) return null;
+    const state = this._readState();
+    const pending = state.pending;
+    if (!pending) return null;
+
+    // Clear first — a pending survey is shown at most once.
+    delete state.pending;
+    this._writeState(state);
+
+    if (this.now() - pending.recordedAt > this.config.pendingMaxAgeMs) return null;
+    if (!SURVEY_BRANCHES[pending.branch]) return null;
+    if (!this._isEligible(pending.branch)) return null;
+
+    this._ensureStyles();
+    this._open(pending.branch, { ...pending.context, deferred: true });
+    return pending.branch;
   }
 
   // ---- Eligibility / throttling ----
@@ -721,6 +783,8 @@ export function attachSurveyTelemetry(analytics) {
       ride_id: payload.context && payload.context.rideId || null,
       level: payload.context && payload.context.level || null,
       difficulty: payload.context && payload.context.difficulty || null,
+      // True when resurfaced on a later session (ride ended by closing the app).
+      deferred: !!(payload.context && payload.context.deferred),
     };
     switch (type) {
       case 'shown':

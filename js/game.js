@@ -605,6 +605,15 @@ class Game {
     });
     analytics.setPage('landing');
 
+    // Record close-while-riding abandons for a deferred survey, and resurface
+    // any pending one from a previous session once the menu is up.
+    this._registerAbandonUnloadHooks();
+    setTimeout(() => {
+      if (this.state !== 'playing' && this.state !== 'countdown') {
+        this.survey.maybeShowPending();
+      }
+    }, 1500);
+
     // Start loop
     this.lastTime = performance.now();
     requestAnimationFrame((t) => this._loop(t));
@@ -1987,10 +1996,9 @@ class Game {
   //   abandonReason — matches the analytics abandon_reason on quit paths
   //   rideId        — analytics ride id captured before endRide()
   // ─────────────────────────────────────────────────────────
-  _maybeShowSurvey(completed, abandonReason = null, rideId = null) {
-    if (!this.survey) return;
+  _surveyContext(completed, abandonReason = null, rideId = null) {
     const level = this.lobby ? this.lobby.selectedLevel : null;
-    this.survey.maybeTrigger({
+    return {
       mode: this.mode,                    // 'solo' | 'captain' | 'stoker' | 'local'
       completed: !!completed,
       rideId: rideId || analytics.getCurrentRideId(),
@@ -2000,7 +2008,31 @@ class Game {
       role: this.mode,
       abandonReason,
       distance: this.bike ? Math.round(this.bike.distanceTraveled) : null,
-    });
+    };
+  }
+
+  _maybeShowSurvey(completed, abandonReason = null, rideId = null) {
+    if (!this.survey) return;
+    this.survey.maybeTrigger(this._surveyContext(completed, abandonReason, rideId));
+  }
+
+  // Record a deferred abandon survey when the player closes the tab/app
+  // mid-ride. We can't render UI during teardown, so we persist the intent
+  // (synchronous localStorage write) and resurface it next session. Bound to
+  // both beforeunload (desktop/Electron) and pagehide (mobile/bfcache). We
+  // never touch the event, so the unload is never cancelled — critical in
+  // Electron, where returning a value from beforeunload blocks app quit.
+  _registerAbandonUnloadHooks() {
+    if (!this.survey) return;
+    const record = () => {
+      // A truthy ride id means a ride is in progress and hasn't ended via a
+      // button (those paths clear it and show a live survey). So this fires
+      // only for genuine close-while-riding abandons.
+      if (!analytics.getCurrentRideId()) return;
+      this.survey.recordPendingAbandon(this._surveyContext(false, 'page_close'));
+    };
+    window.addEventListener('beforeunload', record);
+    window.addEventListener('pagehide', record);
   }
 
   _showVictory(fromRemote = false) {

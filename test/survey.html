@@ -86,6 +86,46 @@
     div.textContent = `${ok ? 'PASS' : 'FAIL'}  ${key} has ${n} questions`;
     out.appendChild(div);
   }
+  // Deferred (unload-time) abandon flow: record -> resurface next session.
+  (() => {
+    const mem = {};
+    const storage = {
+      getItem: (k) => (k in mem ? mem[k] : null),
+      setItem: (k, v) => { mem[k] = String(v); },
+      removeItem: (k) => { delete mem[k]; },
+    };
+    let t = 1e6;
+    const m = new SurveyManager({ storage, now: () => t, random: () => 0, onEvent: () => {} });
+    // Headless: don't actually render.
+    m._ensureStyles = m._ensureRoot = m._render = m._renderThanks = () => ({});
+    const checks = [
+      ['records pending for mp guest abandon',
+        () => m.recordPendingAbandon({ mode: 'stoker', rideId: 'r1' }) === true],
+      ['does NOT record for local mode',
+        () => m.recordPendingAbandon({ mode: 'local' }) === false],
+      ['resurfaces mp_guest_abandoned next session',
+        () => m.maybeShowPending() === BRANCH.MP_GUEST_ABANDONED],
+      ['pending is one-shot (cleared after show)',
+        () => { m._active = null; return m.maybeShowPending() === null; }],
+      ['drops a stale (>24h) pending record',
+        () => {
+          mem['tandemonium_survey_state'] = JSON.stringify({
+            pending: { branch: BRANCH.SOLO_ABANDONED, context: { mode: 'solo' }, recordedAt: t - 25 * 3600e3 },
+          });
+          return m.maybeShowPending() === null;
+        }],
+    ];
+    for (const [name, fn] of checks) {
+      let ok = false;
+      try { ok = fn(); } catch { ok = false; }
+      ok ? pass++ : fail++;
+      const div = document.createElement('div');
+      div.className = ok ? 'pass' : 'fail';
+      div.textContent = `${ok ? 'PASS' : 'FAIL'}  deferred: ${name}`;
+      out.appendChild(div);
+    }
+  })();
+
   const summary = document.createElement('div');
   summary.innerHTML = `<br><strong>${pass} passed, ${fail} failed</strong>`;
   out.appendChild(summary);

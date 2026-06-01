@@ -184,6 +184,7 @@ The manager throttles itself so players aren't surveyed every ride:
 | `sampleRate`          | `1.0` (lower in prod) | fraction of eligible ride-ends that surface a survey |
 | `cooldownMs`          | 6 h  | minimum gap between *any* two surveys |
 | `perBranchCooldownMs` | 7 d  | don't re-ask the *same branch* |
+| `pendingMaxAgeMs`     | 24 h | max age of a deferred abandon before it's dropped |
 | `enabled`             | `true` | global kill switch |
 
 State persists in `localStorage` under `tandemonium_survey_state`.
@@ -197,17 +198,54 @@ at three points. The ride id is captured **before** `analytics.endRide()` (which
 clears it), and the survey fires **before** navigating away so `this.mode` still
 reflects the ride.
 
-| Lifecycle moment | Call site | completed | Branches reachable |
-|------------------|-----------|-----------|--------------------|
-| Finish line crossed | `_showVictory()` (delayed 2.8 s) | `true`  | the three `*_completed` branches |
-| Quit via lobby/pause button | `lobby-btn` click handler | `false` | `solo_abandoned`, `mp_*_abandoned` |
-| "END RIDE" on game-over | `btn-gameover-lobby` handler | `false` | `solo_abandoned`, `mp_*_abandoned` |
+| Lifecycle moment | Call site | completed | When shown | Branches reachable |
+|------------------|-----------|-----------|------------|--------------------|
+| Finish line crossed | `_showVictory()` | `true`  | same session, +2.8 s | the three `*_completed` branches |
+| Quit via lobby/pause button | `lobby-btn` handler | `false` | same session, immediate | `solo_abandoned`, `mp_*_abandoned` |
+| "END RIDE" on game-over | `btn-gameover-lobby` handler | `false` | same session, immediate | `solo_abandoned`, `mp_*_abandoned` |
+| **Closed tab/app mid-ride** | `beforeunload` + `pagehide` | `false` | **next session** | `solo_abandoned`, `mp_*_abandoned` |
 
 The completed survey is delayed so the player enjoys their result first, and is
-suppressed for unlicensed stokers (who get the purchase CTA instead). Tab-close
-abandons (`beforeunload`) intentionally have no survey — there is no time to show
-UI. The survey overlay renders at `z-index 120`, above the victory/game-over
-overlays (`z-index 60`).
+suppressed for unlicensed stokers (who get the purchase CTA instead). The survey
+overlay renders at `z-index 120`, above the victory/game-over overlays (`z-index 60`).
+
+### Deferred abandons (close-while-riding) — `beforeunload`
+
+When a player closes the tab or quits the app **mid-ride**, the page is being
+torn down, so there is no opportunity to render a survey and collect an answer.
+Instead the system splits the work across two sessions:
+
+1. **At unload** (`beforeunload` + `pagehide` in `_registerAbandonUnloadHooks`):
+   if a ride is still active (`analytics.getCurrentRideId()` is truthy), call
+   `survey.recordPendingAbandon(context)`. This does only a **synchronous
+   `localStorage` write** and never touches the event object.
+2. **On next startup**: `survey.maybeShowPending()` resurfaces the survey (once
+   the menu is up), tagged `deferred: true` in telemetry. It is one-shot, only
+   fires if the ride ended within `pendingMaxAgeMs` (24 h), and still respects
+   normal cooldown/sampling.
+
+The active-ride guard means this fires **only** for genuine close-while-riding
+abandons — quitting via a button ends the ride (clearing the id) and shows a
+*live* survey, so no pending record is written.
+
+### Will `beforeunload` work in web and Electron/Steam?
+
+Yes, with the deferred design above — the differences are about *which unload
+signal fires*, not about whether the approach works, because the survey is shown
+next session from persisted state (and `localStorage` persists in all three).
+
+| Environment | `beforeunload` | `pagehide` | Notes |
+|-------------|----------------|------------|-------|
+| **Desktop web** | reliable | reliable | Either fires on tab/window close. |
+| **Mobile web** | unreliable (esp. iOS Safari) | reliable | `pagehide` is the dependable mobile signal; it covers backgrounding into bfcache. |
+| **Electron / Steam** | fires on window close / Cmd-Q | fires | Chromium renderer, so both exist. **We never call `preventDefault()` or set `returnValue`** — in Electron, returning a value from `beforeunload` *cancels the quit*, which would trap players in the app. Our handler only writes to storage, so quit proceeds normally. `localStorage` lives in the app's `userData`, so the pending record survives to the next launch. |
+
+**Best-effort, by design.** Hard kills (force-quit, crash, OS terminate, Steam
+"Stop") may fire nothing — those rides simply get the existing
+`endRide({abandon_reason:'page_close'})` telemetry with no follow-up survey. We
+intentionally do **not** use `visibilitychange→hidden` to *record* abandons
+(only to flush telemetry, as analytics already does), because it also fires on
+ordinary tab-switching and would produce false abandons.
 
 ---
 
