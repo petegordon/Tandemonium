@@ -7,6 +7,7 @@
   "scripts": {
     "start": "electron .",
     "sync-controller-core": "node scripts/sync-controller-core.js",
+    "check:controller-core": "node scripts/check-controller-core.js",
     "download-vendors": "node scripts/download-vendors.js",
     "build-desktop": "node scripts/build-desktop.js",
     "package": "electron-forge package --platform win32 --arch x64",

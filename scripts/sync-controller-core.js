@@ -4,68 +4,63 @@
 // ============================================================
 //
 // `shared/` is a VENDORED copy of @usersfirst/controller-core
-// (packages/core/src) from the tandemonium-controller-lab repo, which is
-// the single source of truth for all controller drivers. The lab is where
-// drivers/devices/manager/sensor-fusion are developed and tested; this
-// script pulls the latest src into `shared/`, mirroring the lab's layout
-// so the copied files stay byte-identical (run `git diff shared/` after to
-// see exactly what changed, and `git status` to detect drift).
+// (packages/core/src) from the tandemonium-controller-lab repo — the single
+// source of truth for all controller drivers. This refreshes shared/ from the
+// lab and writes a provenance stamp (CONTROLLER_CORE_VERSION.json) recording
+// which version/commit produced it. `npm run check:controller-core` then
+// guards against drift.
 //
-// Why vendored (not an npm dependency): Tandemonium ships with no bundler.
-// The web build (GitHub Pages, .github/workflows/deploy.yml) rsyncs the
-// repo and serves raw ESM with node_modules EXCLUDED, and the Electron
-// build loads ESM from file://. Committed files under shared/ are the only
-// thing both targets can resolve. See README / item #4 for the plan to
-// pin the lab source to a published version or git tag.
+// Dependency mechanism (item #4): vendored + git-tag-pinned. Tandemonium ships
+// with no bundler — the web build (GitHub Pages) rsyncs the repo and serves raw
+// ESM with node_modules EXCLUDED, and Electron loads ESM from file://, so the
+// committed files under shared/ are the only thing both targets can resolve.
+// The lab is pinned by TAG, not a moving checkout: to update, check the lab out
+// at the desired tag, run this, and commit.
 //
-// Usage:
-//   node scripts/sync-controller-core.js
-//   CONTROLLER_LAB_DIR=/path/to/tandemonium-controller-lab node scripts/sync-controller-core.js
+//   git -C ../tandemonium-controller-lab checkout core-v0.1.0
+//   npm run sync-controller-core
+//   npm run check:controller-core   # verify, then commit shared/
 //
-// The lab is located via (in order):
-//   1. $CONTROLLER_LAB_DIR
-//   2. ../tandemonium-controller-lab  (sibling checkout — the default)
+// Lab location: $CONTROLLER_LAB_DIR, else the sibling ../tandemonium-controller-lab.
 
 const fs = require('fs');
 const path = require('path');
+const L = require('./lib/controller-core');
 
-const repoRoot = path.join(__dirname, '..');
-const labDir = process.env.CONTROLLER_LAB_DIR
-  || path.join(repoRoot, '..', 'tandemonium-controller-lab');
-const srcDir = path.join(labDir, 'packages', 'core', 'src');
-const sharedDir = path.join(repoRoot, 'shared');
-
-if (!fs.existsSync(srcDir)) {
-  console.error(`ERROR: controller-core source not found at ${srcDir}`);
+const src = L.srcDir();
+if (!fs.existsSync(src)) {
+  console.error(`ERROR: controller-core source not found at ${src}`);
   console.error('Set CONTROLLER_LAB_DIR or check out tandemonium-controller-lab as a sibling directory.');
   process.exit(1);
 }
+const shared = L.sharedDir();
 
-// Top-level modules taken verbatim from the lab's package root.
-const TOP_LEVEL = ['devices.js', 'manager.js', 'sensor-fusion.js', 'imu-analysis.js', 'index.js'];
-
-function copyDir(src, dest) {
-  fs.rmSync(dest, { recursive: true, force: true });
-  fs.mkdirSync(dest, { recursive: true });
-  for (const entry of fs.readdirSync(src)) {
-    if (!entry.endsWith('.js')) continue;
-    fs.copyFileSync(path.join(src, entry), path.join(dest, entry));
-  }
-}
-
-// drivers/ — wipe + recopy so renamed/deleted lab drivers don't linger.
-copyDir(path.join(srcDir, 'drivers'), path.join(sharedDir, 'drivers'));
-
-// Top-level modules.
-fs.mkdirSync(sharedDir, { recursive: true });
-for (const f of TOP_LEVEL) {
-  const from = path.join(srcDir, f);
-  if (fs.existsSync(from)) fs.copyFileSync(from, path.join(sharedDir, f));
+// Wipe drivers/ so renamed/deleted lab drivers don't linger, then copy every
+// vendored file verbatim (byte-identical to the lab — that's what the drift
+// check relies on).
+fs.rmSync(path.join(shared, 'drivers'), { recursive: true, force: true });
+fs.mkdirSync(shared, { recursive: true });
+for (const rel of L.vendoredFiles(src)) {
+  const dest = path.join(shared, rel);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(path.join(src, rel), dest);
 }
 
 // Remove the pre-migration layout if a stale checkout still has it.
-fs.rmSync(path.join(sharedDir, 'controllers'), { recursive: true, force: true });
-fs.rmSync(path.join(sharedDir, 'controller-manager.js'), { force: true });
+fs.rmSync(path.join(shared, 'controllers'), { recursive: true, force: true });
+fs.rmSync(path.join(shared, 'controller-manager.js'), { force: true });
 
-console.log(`Synced controller-core from ${path.relative(repoRoot, srcDir)} → shared/`);
-console.log('Review with: git status shared/ && git diff shared/');
+// Provenance stamp.
+const version = L.labVersion();
+const { commit, ref } = L.labGit();
+const stamp = {
+  package: '@usersfirst/controller-core',
+  version,
+  sourceCommit: commit,
+  sourceRef: ref,
+  syncedAt: new Date().toISOString().slice(0, 10),
+};
+fs.writeFileSync(path.join(shared, L.STAMP), JSON.stringify(stamp, null, 2) + '\n');
+
+console.log(`Synced controller-core@${version || '?'} (${ref || commit || 'unknown'}) → shared/`);
+console.log('Verify with: npm run check:controller-core   (then git add shared/ && commit)');
