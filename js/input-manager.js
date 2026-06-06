@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { isMobile, TUNE } from './config.js';
 import * as analytics from './analytics.js';
 import { addHapticSource, removeHapticSource } from './haptics.js';
-import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
+import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 
 /**
  * DualSense input-source preference (Auto / Steam Input / WebHID) — see
@@ -23,14 +23,14 @@ export function readDualSenseSourcePref() {
 
 // Controller state (gamepad binding, WebHID, sensor fusion, synthetic
 // gamepad for BT-silent DualSense) now lives on a ControllerManager slot.
-// See shared/controller-manager.js. InputManager is a thin consumer that
+// See shared/manager.js. InputManager is a thin consumer that
 // reads the slot's effective gamepad + fusion orientation each frame and
 // turns them into tilt/lean/trigger state for the game loop.
 
 export class InputManager {
   /**
    * @param {Object} [options]
-   * @param {import('../shared/controller-manager.js').Slot|null} [options.slot=null]
+   * @param {import('../shared/manager.js').Slot|null} [options.slot=null]
    *   — ControllerManager slot this InputManager consumes for gamepad +
    *   gyro state. Null means no controller bound yet; the InputManager
    *   still serves keyboard/touch/motion. Call `attachSlot(slot)` later
@@ -468,14 +468,36 @@ export class InputManager {
       return;
     }
 
-    // Drift compensation: nudge motionOffset toward long-term average rawGamma
-    // Only for mobile tilt (!isGyro), only when not actively steering
-    if (!isGyro) {
-      if (this._driftEma === null) {
-        this._driftEma = this.rawGamma;
-      } else {
-        this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
+    // Drift compensation: nudge motionOffset toward the long-term average
+    // rawGamma so slow sensor drift can't accumulate into a one-way pull.
+    // Mobile tilt needs this for slow bias; gyro needs it MORE — the
+    // integrated orientation drifts continuously (especially over Bluetooth),
+    // and with no correction it pulls one way until steering saturates and the
+    // joystick can't bring it back (the DS4-BT "gradual pull" report). The EMA
+    // tracks the running center; we only chase it while leans are small, so an
+    // intentional turn is never cancelled, and the rate is slow enough to
+    // follow drift over seconds without fighting quick corrections. Gyro uses
+    // a tighter gate + slower rate for extra safety (L3 still hard-recenters).
+    if (this._driftEma === null) {
+      this._driftEma = this.rawGamma;
+    } else if (isGyro) {
+      // Gyro: taper drift learning + correction by lean magnitude instead of a
+      // hard on/off gate. Full strength near center; fades to zero by a large
+      // lean. This keeps GENTLY correcting through sustained moderate leans —
+      // where drift was creeping toward "fusing to one side" — while never
+      // re-centering a big intentional turn. A brief sharp turn spikes the
+      // lean, so the taper ≈ 0 at its peak and it can't poison the neutral
+      // estimate (the bug that made it fuse fast on sharp turns).
+      const FULL_BELOW = 0.2, ZERO_AT = 0.7; // tuning knobs (lean fraction)
+      const L = Math.abs(this._smoothedLean);
+      const taper = L <= FULL_BELOW ? 1 : L >= ZERO_AT ? 0 : (ZERO_AT - L) / (ZERO_AT - FULL_BELOW);
+      if (taper > 0) {
+        this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
+        this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
       }
+    } else {
+      // Mobile tilt (gravity-absolute): original always-on EMA + hard 0.3 gate.
+      this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
       if (Math.abs(this._smoothedLean) < 0.3) {
         this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate;
       }
@@ -646,8 +668,8 @@ export class InputManager {
     // the toggle's behavior is deterministic. Non-DualSense drivers are
     // unaffected.
     if (this._dualsenseSource === 'steam-input') {
-      const driverName = (this._slot?.driver?.constructor?.driverName || '').toLowerCase();
-      if (driverName.includes('dualsense')) { this._wasFusionCalibrating = false; return; }
+      const proto = this._slot?.driver?.entry?.protocol || '';
+      if (proto === 'dualsense') { this._wasFusionCalibrating = false; return; }
     }
     if (fusion.calibrating) { this._wasFusionCalibrating = true; return; }
     // Auto-arm motion pipeline ONCE when calibration transitions from
@@ -802,6 +824,9 @@ export class InputManager {
     this._gyroRollAccum = 0;
     this._smoothedLean = 0;
     this.motionLean = 0;
+    // Re-seed drift compensation so the freshly-set center isn't immediately
+    // yanked by a stale long-term average.
+    this._driftEma = null;
     this._slot?.fusion?.reset();
   }
 

@@ -30,8 +30,8 @@ import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
-import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
-import { ControllerManager } from '../shared/controller-manager.js';
+import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { ControllerManager } from '../shared/manager.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -2775,7 +2775,7 @@ class Game {
     const PS_TYPES = new Set(['5', '12', '13', 'ps5controller', 'ps4controller', 'ps3controller']);
     const steamHasPS5 = steamData.some(c => PS_TYPES.has(String(c.type || '').toLowerCase()));
     const hidDual = !!(this.input && this.input._slot && this.input._slot.driver
-                       && (this.input._slot.driver.constructor.driverName || '').toLowerCase().includes('dualsense'));
+                       && this.input._slot.driver.entry?.protocol === 'dualsense');
     let status;
     if (steamHasPS5)      status = 'Steam Input active (DualSense intercepted)';
     else if (hidDual)     status = 'WebHID active (DualSense direct)';

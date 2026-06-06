@@ -4,45 +4,21 @@
 
 import { ControllerDriver } from './base-driver.js';
 
+// Identity (vid:pid, name, capabilities, gamepad-id pattern, GameSir Cyclone
+// swapAB quirk) lives in devices.js — this class is the Switch Pro protocol
+// only.
+
 export class SwitchProDriver extends ControllerDriver {
-
-  static get vendorId() { return 0x057e; }
-  static get productIds() { return [0x2009]; }
-  static get driverName() { return 'Switch Pro'; }
-  static get gamepadIdPattern() { return /pro controller|057e.*2009|nintendo/i; }
-
-  /**
-   * GameSir Cyclone enumerates with Switch Pro vid:pid (057e:2009) but its
-   * gamepad.id starts with "Gamepad" (rather than "Pro Controller") and it
-   * uses Nintendo-style physical face-button ordering — the positions of A
-   * and B are swapped relative to the Xbox-standard Gamepad API mapping.
-   * Callers that show on-screen prompts or apply confirm/back actions
-   * should swap buttons 0 and 1 when this quirk is set.
-   */
-  static getGamepadQuirks(idString) {
-    if (!idString) return {};
-    if (this.gamepadIdPattern.test(idString) && /^Gamepad/i.test(idString)) {
-      return { swapAB: true };
-    }
-    return {};
-  }
-
-  static get capabilities() {
-    return { gyro: true, accel: true, touchpad: false };
-  }
 
   // No usagePage/usage filter — the Gamepad API claims the gamepad interface
   // exclusively on macOS Chrome. Using vendor+product only lets the picker
   // show any available HID interface for this device.
-  static get hidFilters() {
-    return this.productIds.map(productId => ({
-      vendorId: this.vendorId,
-      productId
-    }));
+  static makeHidFilter(vendorId, productId) {
+    return { vendorId, productId };
   }
 
-  constructor(device, connectionType) {
-    super(device, connectionType);
+  constructor(device, connectionType, entry = null) {
+    super(device, connectionType, entry);
     this._packetNumber = 0;
     this._debugCount = 0;
     this._reportIds = new Set();

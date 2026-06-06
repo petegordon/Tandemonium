@@ -1,39 +1,162 @@
 // ============================================================
-// DUALSENSE / DUALSHOCK 4 DRIVER
+// PLAYSTATION DRIVER — DualSense (DS5) + DualShock 4 (DS4) protocol
 // ============================================================
+//
+// Covers both Sony PlayStation HID protocols and any clones that spoof
+// them (GameSir Super Nova / Cyclone 2 in DS4 mode, etc.). The two
+// protocols share most of the input-report layout, differing mainly in
+// IMU byte offsets — that branch is driven by the dictionary entry's
+// `mode` field ('ds5' vs 'ds4'), not by a separate driver class.
+//
+// Registered in PROTOCOLS under the key 'dualsense' (preserved as-is so
+// existing visualizer profile mappings keep working without forcing a
+// controllerProfile override on every Sony PlayStation entry).
+//
+// Identity (vid:pid, name, capabilities, gamepad-id pattern) lives in
+// devices.js — this class is purely the protocol implementation.
 
 import { ControllerDriver } from './base-driver.js';
 
-export class DualSenseDriver extends ControllerDriver {
+export class PlayStationDriver extends ControllerDriver {
 
-  static get vendorId() { return 0x054c; }
-  static get productIds() { return [0x0ce6, 0x0df2, 0x05c4, 0x09cc]; }
-  static get driverName() { return 'DualSense'; }
-  static get gamepadIdPattern() { return /playstation|dualsense|dualshock|054c/i; }
-
-  static get capabilities() {
-    return { gyro: true, accel: true, touchpad: true };
-  }
-
-  constructor(device, connectionType) {
-    super(device, connectionType);
+  constructor(device, connectionType, entry = null) {
+    super(device, connectionType, entry);
     this._rumbleStopTimer = null;
   }
 
   async init() {
-    // Over Bluetooth, DualSense defaults to a compatibility mode that only
-    // streams report 0x01 (sticks/buttons, no IMU). Reading feature report
-    // 0x05 (calibration) switches it into full-report mode, after which it
-    // streams 0x31 reports containing gyro and accel. Same trick used by
-    // Linux's hid-playstation driver.
+    // Over Bluetooth both Sony families default to a compatibility mode that
+    // streams only the short report 0x01 (sticks/buttons, no IMU). Reading a
+    // family-specific feature report flips them into full-report mode:
+    //   DualSense (DS5) → feature 0x05, then streams report 0x31 (gyro+accel)
+    //   DualShock 4 (DS4) → feature 0x02, then streams report 0x11 (gyro+accel)
+    // Same trick Linux's hid-playstation / hid-sony drivers use. Without the
+    // DS4-specific 0x02 read, a DualShock 4 over BT never leaves compatibility
+    // mode and no gyro ever arrives (see the DS4-BT investigation).
     if (this.connectionType === 'bluetooth') {
+      const featureId = this.entry?.mode === 'ds4' ? 0x02 : 0x05;
       try {
-        await this.device.receiveFeatureReport(0x05);
-        console.log('DualSense BT: enabled full report mode via feature 0x05');
+        await this.device.receiveFeatureReport(featureId);
+        console.log(`PlayStation BT: enabled full report mode via feature 0x${featureId.toString(16).padStart(2, '0')}`);
       } catch (err) {
-        console.warn('DualSense BT: feature 0x05 query failed:', err.message);
+        console.warn(`PlayStation BT: feature 0x${featureId.toString(16).padStart(2, '0')} query failed:`, err.message);
       }
     }
+
+    // IMU-offset probe: PlayStation-family controllers (real Sony DS4/DS5 +
+    // GameSir clones in DS4 mode) share vid:pid families and differ only in
+    // IMU byte offsets. Score candidate offsets by at-rest accel magnitude
+    // (≈ 8192 raw = 1g at ±4g/16-bit) plus gyro-near-zero; the winner sets
+    // this._detectedImuOffset, which parseReport prefers over the mode
+    // default. Runs over USB (report 0x01) AND Bluetooth (DS4 0x11 / DS5
+    // 0x31) — so after the feature-report activation above it auto-corrects
+    // the BT offset too.
+    //
+    // Family mapping by USB-equivalent offset (= gyroOffset − baseOffset):
+    //   12 → 'gamesir-ds4'   13 → 'sony-ds4'   15 → 'sony-ds5'
+    //
+    // Best-effort: if no reports arrive within the timeout, parseReport falls
+    // back to the mode/transport default offset.
+    const probe = await this._probeImuOffset();
+    if (probe) {
+      // At-rest accel magnitude is ambiguous to ±2 bytes: gravity sits on a
+      // single axis that's shared between an offset and its neighbour-by-2, so
+      // both score ~1g. If the pad isn't perfectly still during the probe, the
+      // gyro tie-breaker can flip to the wrong (off-by-2) neighbour — which
+      // reads an accel axis as gyro and makes steering jerk hard side to side.
+      // So: trust the DOCUMENTED default offset whenever it scored plausibly
+      // (~1g); only let the probe override when the default is clearly wrong
+      // (a clone with a genuinely different layout).
+      const defaultOffset = this._defaultGyroOffset();
+      const defaultScore = probe.scores?.find((s) => s.gyroOffset === defaultOffset);
+      const plausible = (s) => s && s.meanAccelMag > 6500 && s.meanAccelMag < 11500;
+      const chosen = plausible(defaultScore) ? defaultScore : probe;
+      this._detectedImuOffset = chosen;
+      this._detectedImuFamily = PlayStationDriver._imuFamilyFor(chosen.gyroOffset, chosen.baseOffset);
+      console.log(`PlayStation IMU offset=${chosen.gyroOffset} (default=${defaultOffset}, probe-best=${probe.gyroOffset}, accelMag≈${chosen.meanAccelMag.toFixed(0)}) → family='${this._detectedImuFamily}' (${this.entry?.name || 'unknown'})`);
+    }
+  }
+
+  // Documented gyro start offset per transport/mode. The IMU probe defers to
+  // this when it scores plausibly (~1g); see init() for why.
+  _defaultGyroOffset() {
+    const isDs4 = this.entry?.mode === 'ds4';
+    if (this.connectionType === 'usb') return isDs4 ? 12 : 15;
+    return isDs4 ? 14 : 16; // Bluetooth: DS4 0x11 (+2) / DS5 0x31 (+1)
+  }
+
+  /**
+   * One-shot IMU layout probe. Listens to inputreport for up to `timeoutMs`,
+   * collecting up to 10 reports, then scores each candidate gyro offset by
+   * how close the at-rest accel magnitude is to 8192 (1g). Returns the
+   * winner, or null if no usable reports arrived.
+   *
+   * Only runs on USB report 0x01 today. BT branch differs (offset shifts
+   * with the leading counter byte) and the offset relationship is the same
+   * up to that constant, so the same probe-then-add-baseOffset logic could
+   * extend to BT later — punted for now since the immediate case is USB.
+   *
+   * @param {number} [timeoutMs=500]
+   * @returns {Promise<{gyroOffset:number, accelOffset:number, meanAccelMag:number}|null>}
+   */
+  // Per-transport probe configuration: which input report carries the IMU,
+  // the byte its payload starts at (BT prepends counter/header bytes — DS5
+  // 0x31 is +1, DS4 0x11 is +2 vs USB), and the candidate gyro offsets to
+  // score.
+  _probeConfig() {
+    if (this.connectionType === 'usb') {
+      return { reportId: 0x01, baseOffset: 0, candidates: [12, 13, 15] };
+    }
+    if (this.entry?.mode === 'ds4') {
+      return { reportId: 0x11, baseOffset: 2, candidates: [14, 15, 13, 16] };
+    }
+    return { reportId: 0x31, baseOffset: 1, candidates: [16, 15, 17] };
+  }
+
+  async _probeImuOffset(timeoutMs = 600) {
+    const { reportId: wantId, baseOffset, candidates } = this._probeConfig();
+    const reports = [];
+
+    return new Promise((resolve) => {
+      const onReport = (event) => {
+        if (event.reportId !== wantId) return;
+        reports.push(event.data);
+        if (reports.length >= 10) finish();
+      };
+
+      const finish = () => {
+        clearTimeout(timer);
+        this.device.removeEventListener('inputreport', onReport);
+
+        if (reports.length === 0) { resolve(null); return; }
+        const r = ControllerDriver.readSigned16;
+        const scores = [];
+        for (const gyroOffset of candidates) {
+          const accelOffset = gyroOffset + 6;
+          let sumMag = 0, sumGyroAbs = 0, n = 0;
+          for (const data of reports) {
+            if (data.byteLength < accelOffset + 6) continue;
+            sumMag += Math.hypot(r(data, accelOffset), r(data, accelOffset + 2), r(data, accelOffset + 4));
+            sumGyroAbs += Math.abs(r(data, gyroOffset)) + Math.abs(r(data, gyroOffset + 2)) + Math.abs(r(data, gyroOffset + 4));
+            n++;
+          }
+          if (n === 0) continue;
+          const meanAccelMag = sumMag / n;
+          const meanGyroAbs = sumGyroAbs / n;
+          // Best = at-rest accel closest to 1g (8192 raw) with gyro near zero.
+          scores.push({ gyroOffset, accelOffset, baseOffset, meanAccelMag, meanGyroAbs, score: Math.abs(meanAccelMag - 8192) + meanGyroAbs });
+        }
+        if (scores.length === 0) { resolve(null); return; }
+        scores.sort((a, b) => a.score - b.score);
+        // Diagnostic: full candidate table (report id + length + per-offset).
+        console.log(`PlayStation IMU probe scan (report 0x${wantId.toString(16)}, ${reports[0].byteLength}B):`,
+          scores.map(s => `g=${s.gyroOffset} accel≈${s.meanAccelMag.toFixed(0)} gyro≈${s.meanGyroAbs.toFixed(0)}`).join('  |  '));
+        resolve({ ...scores[0], scores });
+      };
+
+      this.device.addEventListener('inputreport', onReport);
+      const timer = setTimeout(finish, timeoutMs);
+    });
   }
 
   destroy() {
@@ -44,19 +167,41 @@ export class DualSenseDriver extends ControllerDriver {
   }
 
   parseReport(reportId, data) {
-    // USB 0x01 and BT 0x31 share a common input-report layout, shifted by
-    // one byte: BT prefixes with a sequence/counter byte. baseOffset handles
-    // the shift so everything downstream stays symmetric.
+    // USB 0x01 and BT 0x31 share most of the input-report layout, shifted by
+    // one byte (BT prefixes with a sequence/counter byte). baseOffset handles
+    // the shift. The IMU and touchpad bytes also shift based on protocol
+    // mode: DS4 packs IMU 3 bytes earlier than DualSense (DS5).
+    //
+    // DS4 offsets (mode === 'ds4') confirmed by Test Report captures of BOTH a
+    // GameSir Super Nova (USB) and a genuine Sony DualShock 4 v1 (Bluetooth):
+    // gyro at USB offset 12 / accel 18 (BT: 14 / 20, +2 for the BT header),
+    // accel ≈8192 raw (1g) with gyro bias ≈0 at rest. So a real Sony DS4 uses
+    // the SAME byte-12 layout as the clones — NOT the byte-13 "Linux hid-sony"
+    // layout once assumed. Axis mapping is identical too (pitch→gyroX,
+    // roll→gyroZ, yaw→gyroY). See test/fixtures/sony-dualshock4-v1-bt_*.json.
     let baseOffset, gyroOffset, touchOffset;
+    const isDs4 = this.entry?.mode === 'ds4';
+    // Runtime IMU probe (set during init) is the source of truth when
+    // available; the mode/transport default is the fallback when the probe
+    // couldn't collect any reports.
+    const probeOffset = this._detectedImuOffset?.gyroOffset;
 
     if (this.connectionType === 'usb' && reportId === 0x01) {
       baseOffset = 0;
-      gyroOffset = 15;
-      touchOffset = 32;
+      gyroOffset = probeOffset ?? (isDs4 ? 12 : 15);
+      touchOffset = isDs4 ? 35 : 32;
     } else if (this.connectionType === 'bluetooth' && reportId === 0x31) {
+      // DualSense (DS5) Bluetooth full report — 1-byte counter prefix.
       baseOffset = 1;
-      gyroOffset = 16;
+      gyroOffset = probeOffset ?? 16;
       touchOffset = 33;
+    } else if (this.connectionType === 'bluetooth' && reportId === 0x11) {
+      // DualShock 4 (DS4) Bluetooth full report (enabled via feature 0x02).
+      // A 2-byte BT header precedes the otherwise-USB-identical layout, so
+      // every offset is USB + 2.
+      baseOffset = 2;
+      gyroOffset = probeOffset ?? 14;   // USB 12 + 2
+      touchOffset = 37;                 // USB 35 + 2
     } else {
       return null;
     }
@@ -125,13 +270,29 @@ export class DualSenseDriver extends ControllerDriver {
 
     // ── Touchpad — 2 touch points, 4 bytes each ──
     const touchpad = [
-      DualSenseDriver._parseTouchPoint(data, touchOffset),
-      DualSenseDriver._parseTouchPoint(data, touchOffset + 4)
+      PlayStationDriver._parseTouchPoint(data, touchOffset),
+      PlayStationDriver._parseTouchPoint(data, touchOffset + 4)
     ];
 
     // Touchpad click: bit 1 of the PS byte
     const touchpadButton = !!(psByte & 0x02);
 
+    if (isDs4) {
+      // DS4-family (real Sony DS4 + GameSir clones): WebHID supplies the IMU
+      // only. Buttons/sticks/triggers come from the Gamepad API (a DS4
+      // enumerates as a standard gamepad on every OS). We deliberately omit
+      // them here — parsing at the DualSense offsets is wrong for a real DS4,
+      // and a non-empty button set would make ControllerManager prefer this
+      // mis-parsed synthetic over the correct Gamepad-API pad. Touchpad is
+      // omitted too until a real-DS4 button/touchpad layout is captured and
+      // validated.
+      return {
+        gyro,
+        accel,
+        gyroScale: 2000.0 / 32768.0,   // ±2000 dps, 16-bit
+        accelScale: 1.0 / 8192.0        // ±4g, 16-bit (gravity ~8192)
+      };
+    }
     return {
       sticks,
       triggers,
@@ -390,7 +551,7 @@ export class DualSenseDriver extends ControllerDriver {
     crcInput[0] = 0xA2;
     crcInput[1] = 0x31;
     crcInput.set(buf.subarray(0, PAYLOAD_LEN - 4), 2);
-    const crc = DualSenseDriver._crc32(crcInput);
+    const crc = PlayStationDriver._crc32(crcInput);
     buf[PAYLOAD_LEN - 4] = crc & 0xFF;
     buf[PAYLOAD_LEN - 3] = (crc >>> 8) & 0xFF;
     buf[PAYLOAD_LEN - 2] = (crc >>> 16) & 0xFF;
@@ -417,14 +578,34 @@ export class DualSenseDriver extends ControllerDriver {
   }
 
   static detectConnectionType(device) {
+    // Bluetooth is identified by the family-specific full-report ID:
+    //   DualSense BT → report 0x31   DualShock 4 BT → report 0x11
+    // Over USB the input report is 0x01; crucially DS4 USB lists 0x11 only as
+    // a *feature* report, so we must check INPUT reports for 0x11 (not feature
+    // reports) or a USB DS4 would misdetect as Bluetooth. The legacy
+    // output-report 0x31 check is kept for DualSense.
     for (const col of device.collections) {
-      if (col.outputReports && col.outputReports.length > 0) {
-        for (const report of col.outputReports) {
-          if (report.reportId === 0x31) return 'bluetooth';
-        }
+      for (const report of (col.outputReports || [])) {
+        if (report.reportId === 0x31) return 'bluetooth';
+      }
+      for (const report of (col.inputReports || [])) {
+        if (report.reportId === 0x31 || report.reportId === 0x11) return 'bluetooth';
       }
     }
     return 'usb';
+  }
+
+  // USB-equivalent gyro offset → IMU family. baseOffset removes the BT
+  // counter/header shift (USB 0, DS5 BT 1, DS4 BT 2) so one map covers all
+  // transports.
+  static _imuFamilyFor(gyroOffset, baseOffset = 0) {
+    const usbEquiv = gyroOffset - baseOffset;
+    return (
+      usbEquiv === 12 ? 'gamesir-ds4' :
+      usbEquiv === 13 ? 'sony-ds4' :
+      usbEquiv === 15 ? 'sony-ds5' :
+      null
+    );
   }
 
   static _parseTouchPoint(data, offset) {
