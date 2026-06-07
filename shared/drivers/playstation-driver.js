@@ -35,12 +35,7 @@ export class PlayStationDriver extends ControllerDriver {
     // mode and no gyro ever arrives (see the DS4-BT investigation).
     if (this.connectionType === 'bluetooth') {
       const featureId = this.entry?.mode === 'ds4' ? 0x02 : 0x05;
-      try {
-        await this.device.receiveFeatureReport(featureId);
-        console.log(`PlayStation BT: enabled full report mode via feature 0x${featureId.toString(16).padStart(2, '0')}`);
-      } catch (err) {
-        console.warn(`PlayStation BT: feature 0x${featureId.toString(16).padStart(2, '0')} query failed:`, err.message);
-      }
+      await this._activateFullReportMode(featureId);
     }
 
     // IMU-offset probe: PlayStation-family controllers (real Sony DS4/DS5 +
@@ -75,6 +70,75 @@ export class PlayStationDriver extends ControllerDriver {
       this._detectedImuFamily = PlayStationDriver._imuFamilyFor(chosen.gyroOffset, chosen.baseOffset);
       console.log(`PlayStation IMU offset=${chosen.gyroOffset} (default=${defaultOffset}, probe-best=${probe.gyroOffset}, accelMag≈${chosen.meanAccelMag.toFixed(0)}) → family='${this._detectedImuFamily}' (${this.entry?.name || 'unknown'})`);
     }
+  }
+
+  /**
+   * Bring a Bluetooth DualShock 4 / DualSense out of compatibility mode
+   * (short report 0x01, no IMU) into full-report mode (DS4 0x11 / DS5 0x31,
+   * with gyro+accel) by reading the family-specific feature report — then
+   * CONFIRM the full report stream actually started, retrying if not.
+   *
+   * A single read at connect time is enough on a settled link (controller
+   * paired before the app launched — the cold-plug case that always worked).
+   * But on a HOT-PLUG / reconnect the BT link is often still negotiating when
+   * init() runs: the feature read returns without error, yet the controller
+   * keeps streaming 0x01 and no gyro ever arrives ("thinks it has gyro but
+   * the data isn't used"). So re-issue the read and wait for the first full
+   * report, a few times, until the stream flips. On the settled case the
+   * first full report lands almost immediately, so this adds negligible cost.
+   *
+   * @returns {Promise<boolean>} whether the full report stream was confirmed
+   */
+  async _activateFullReportMode(featureId, { attempts = 5, perAttemptMs = 450 } = {}) {
+    const fullId = this._fullReportId();
+    const hex = (n) => '0x' + n.toString(16).padStart(2, '0');
+    // A device without receiveFeatureReport is a test/unsupported handle —
+    // don't hammer it; make a single pass and rely on whatever it streams.
+    const canRead = typeof this.device.receiveFeatureReport === 'function';
+    const maxAttempts = canRead ? attempts : 1;
+
+    for (let i = 1; i <= maxAttempts; i++) {
+      if (canRead) {
+        try {
+          await this.device.receiveFeatureReport(featureId);
+        } catch (err) {
+          console.warn(`PlayStation BT: feature ${hex(featureId)} query failed (attempt ${i}/${maxAttempts}):`, err.message);
+        }
+      }
+      const streaming = await this._waitForReport(fullId, perAttemptMs);
+      if (streaming) {
+        console.log(`PlayStation BT: full report mode active (${hex(fullId)}) after ${i} attempt(s)`);
+        return true;
+      }
+      if (i < maxAttempts) {
+        console.log(`PlayStation BT: still in compatibility mode after feature ${hex(featureId)} (attempt ${i}/${maxAttempts}); retrying`);
+      }
+    }
+    console.warn(`PlayStation BT: full report mode (${hex(fullId)}) did not start after ${maxAttempts} attempt(s) — gyro unavailable until reconnect`);
+    return false;
+  }
+
+  /** The IMU-bearing input report id for this transport/mode. */
+  _fullReportId() {
+    if (this.connectionType !== 'bluetooth') return 0x01;
+    return this.entry?.mode === 'ds4' ? 0x11 : 0x31;
+  }
+
+  /** Resolve true if an inputreport with `reportId` arrives within `ms`. */
+  _waitForReport(reportId, ms) {
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.device.removeEventListener('inputreport', onReport);
+      };
+      const onReport = (event) => {
+        if (event.reportId !== reportId) return;
+        cleanup();
+        resolve(true);
+      };
+      const timer = setTimeout(() => { cleanup(); resolve(false); }, ms);
+      this.device.addEventListener('inputreport', onReport);
+    });
   }
 
   // Documented gyro start offset per transport/mode. The IMU probe defers to
