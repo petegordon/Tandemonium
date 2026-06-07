@@ -26,26 +26,9 @@ jobs:
                    --exclude='out' --exclude='desktop' --exclude='electron' \
                    --exclude='scripts' --exclude='.env' \
                    ./ _site/
-          # The overlay imports `../shared/...` relative to its src/js/ dir.
-          # The web-deployed overlay (served via iframe from
-          # /controller-overlay-web/) needs src/shared/ populated for those
-          # imports to resolve. Copy shared/ directly into the staged _site
-          # tree — pre-rsync population was unreliable in the previous
-          # deploy.yml iteration.
-          mkdir -p _site/controller-overlay/src/shared
-          cp -r shared/* _site/controller-overlay/src/shared/
-          # Overwrite dev-only .gitignore with an empty file. peaceiris
-          # uses rsync (not delete-and-replace) to copy _site over the
-          # gh-pages checkout, so an existing stale .gitignore on gh-pages
-          # (from a previous deploy that committed it) stays active at
-          # `git add -A` time and silently filters src/shared/ out. Writing
-          # an empty file at the same path ensures the gh-pages copy gets
-          # overwritten with no ignore rules, letting the shared files
-          # commit properly. Delete-from-_site alone isn't enough — that
-          # leaves the stale gh-pages version in place.
-          : > _site/controller-overlay/.gitignore
-          echo "Overlay shared/ contents in _site:"
-          ls -R _site/controller-overlay/src/shared
+          # The 3D controller overlay is no longer part of this repo — it lives
+          # in UsersFirst/tandemonium-controller-lab and is served at
+          # https://lab.usersfirst.games/overlay (the /test card links out to it).
 
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
