@@ -34,10 +34,16 @@
 
 import { ControllerDriver } from './base-driver.js';
 
-// 53-byte STATE report on the 2026 device. SteamlessController docs
-// list other shorter report shapes (status, secondary), so gating on
-// length filters those out without us having to enumerate ids.
+// 53-byte STATE report on the 2026 device. Length alone is NOT enough to
+// identify it: the firmware emits *multiple* 53-byte report types (a real
+// at-rest Puck capture showed 0x45 ×1343 STATE plus 0x7b ×9 and 0x43 ×2
+// non-STATE, all 53 bytes). The non-STATE reports parse as garbage —
+// phantom buttons/sticks + zeroed IMU that trips the stuck-IMU self-heal.
+// So we gate on BOTH length and the STATE report id. 2026 firmware uses
+// 0x45; SteamlessController docs note 0x42 — accept both, reject the rest.
+// See issue #28.
 const STATE_REPORT_LEN = 53;
+const STATE_REPORT_IDS = new Set([0x45, 0x42]);
 
 const PUCK_PID = 0x1304;
 const LIZARD_HEARTBEAT_MS = 800;
@@ -271,13 +277,21 @@ export class SteamControllerDriver extends ControllerDriver {
   }
 
   parseReport(reportId, data) {
-    // Gate on the STATE report's length (53 bytes on the 2026 device).
-    // Other report shapes from this firmware (status @ 5 bytes, etc.)
-    // get filtered out without us having to enumerate report ids; the
-    // 0x42-vs-0x45 reportId discrepancy between SteamlessController's
-    // docs and our captures becomes moot. Log the actual id once per
-    // instance so future debugging still has the data point.
+    // Gate on length AND the STATE report id. The 2026 firmware emits
+    // several 53-byte report types; only 0x45 (and per docs 0x42) is the
+    // STATE report. Parsing the others (0x7b, 0x43, …) as STATE produced
+    // phantom button/stick input and zeroed IMU that tripped the manager's
+    // stuck-IMU self-heal — the spurious-input + gyro-dropout bug (#28).
+    // Reject anything not on the allow-list. Log accepted and rejected
+    // ids once each so future firmware variants are easy to spot.
     if (data.byteLength !== STATE_REPORT_LEN) return null;
+    if (!STATE_REPORT_IDS.has(reportId)) {
+      if (!this._loggedReportIds.has(reportId)) {
+        this._loggedReportIds.add(reportId);
+        console.log(`Steam Controller: ignoring non-STATE 53-byte report id 0x${reportId.toString(16)} (#28 guard)`);
+      }
+      return null;
+    }
     if (!this._loggedReportIds.has(reportId)) {
       this._loggedReportIds.add(reportId);
       console.log(`Steam Controller STATE report id observed: 0x${reportId.toString(16)} (${data.byteLength} bytes)`);

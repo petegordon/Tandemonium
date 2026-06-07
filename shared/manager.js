@@ -20,7 +20,12 @@
 // ============================================================
 
 import { ControllerRegistry } from './drivers/controller-registry.js';
-import { SensorFusion } from './sensor-fusion.js';
+// NOTE: SensorFusion (and its `three` dependency) is loaded lazily in
+// poolDevice — the only place a real fusion is constructed — so importing
+// this module for its slot/claim/reconnect logic doesn't drag in `three`.
+// That keeps the headless manager tests dependency-free (CI runs them with
+// no `npm install`) and matches core's package.json, which doesn't declare
+// `three` directly.
 
 const DEFAULTS = {
   releaseHoldMs: 2000,
@@ -157,10 +162,10 @@ const IMU_ZERO_TIMEOUT_MS = 500;
 const MAX_IMU_REINIT = 2;
 
 class HidEntry {
-  constructor(device, driver) {
+  constructor(device, driver, fusion) {
     this.device = device;
     this.driver = driver;
-    this.fusion = new SensorFusion();
+    this.fusion = fusion;
     this.fusion.startCalibration(driver?.connectionType);
     this.synthetic = makeSyntheticGamepad(device);
     this.hasButtons = false;
@@ -507,7 +512,10 @@ export class ControllerManager {
     if (this._isDeviceInPoolOrSlot(device)) return this._hidPool.get(device) || null;
     try {
       const driver = await ControllerRegistry.connect(device);
-      const entry = new HidEntry(device, driver);
+      // Lazy-load SensorFusion (pulls in `three`) only here, where a real
+      // fusion is actually needed — see the import note at the top.
+      const { SensorFusion } = await import('./sensor-fusion.js');
+      const entry = new HidEntry(device, driver, new SensorFusion());
       this._hidPool.set(device, entry);
       return entry;
     } catch (err) {
@@ -601,6 +609,48 @@ export class ControllerManager {
     return null;
   }
 
+  /**
+   * Find an already-claimed slot that this pool entry belongs to but isn't
+   * yet bound to — matched by the slot's gamepad vid:pid OR by productName
+   * substring (covers multi-interface pads like GameSir Super Nova where
+   * the Gamepad API and WebHID report different vid:pid for one physical
+   * device). Returns the slot or null. Binding-only: never creates a slot.
+   */
+  _findClaimedUnboundSlotForEntry(entry) {
+    return this.slots.find((s) =>
+      s.state === 'claimed' && !s._hidEntry && this._entryMatchesSlot(entry, s)
+    ) || null;
+  }
+
+  /**
+   * Does this pool entry belong to `slot`'s controller? Matched by the
+   * slot's gamepad vid:pid OR by productName substring (covers multi-
+   * interface pads like GameSir Super Nova where the Gamepad API and
+   * WebHID report different vid:pid for one physical device). Works for
+   * orphaned slots too — orphan() keeps controllerLabel.
+   */
+  _entryMatchesSlot(entry, slot) {
+    const vp = ControllerRegistry.parseGamepadVendorProduct(slot.controllerLabel);
+    if (vp && vp.vendorId === entry.device.vendorId && vp.productId === entry.device.productId) return true;
+    const name = (entry.device.productName || '').trim().toLowerCase();
+    if (name && slot.controllerLabel && slot.controllerLabel.toLowerCase().includes(name)) return true;
+    return false;
+  }
+
+  /**
+   * A live Gamepad-API pad whose stable id matches `slot`'s remembered
+   * controller and that no OTHER slot already owns. Used for sticky
+   * reconnect (an orphaned slot recovering the SAME physical controller,
+   * keeping its player number).
+   */
+  _findReturningPadForSlot(slot, pads) {
+    if (!slot.controllerId) return null;
+    return pads.find((p) =>
+      p && stableIdFor(p) === slot.controllerId &&
+      !this.slots.some((o) => o !== slot && o.gamepadIndex === p.index)
+    ) || null;
+  }
+
   ingestFrame(pads, now) {
     const claimedThisFrame = [];
     const releasedThisFrame = [];
@@ -622,6 +672,52 @@ export class ControllerManager {
       const gpActive = gamepadHasActivity(gp);
       const synthActive = s._hidEntry && gamepadHasActivity(s._hidEntry.synthetic);
       if (!gpActive && !synthActive) s._awaitingSilence = false;
+    }
+
+    // ── Reconnect recovery ──
+    // An orphaned slot — its controller dropped, e.g. the GameSir Super
+    // Nova docking on its charger — is reclaimed by the SAME controller
+    // when it returns, keeping its player number. Without this, orphan was
+    // a dead end: nothing ever transitioned a slot out of it, so a re-
+    // paired controller recovered neither buttons nor gyro (#30 State 2).
+    // Two signals can bring it back; take whichever lands first and the
+    // other half wires up afterward:
+    //   (1) its Gamepad-API pad re-enumerates (match by stable id), or
+    //   (2) its WebHID handle re-pools (match by vid:pid / productName) —
+    //       restores gyro immediately; the adopt pass below re-attaches
+    //       buttons if/when the Gamepad pad returns.
+    for (const s of this.slots) {
+      if (s.state !== 'orphan') continue;
+      const gp = this._findReturningPadForSlot(s, pads);
+      if (gp) {
+        s.claim(gp, { controllerTypeHint: s.controllerType, silent: true });
+        this._attachMatchingPoolEntry(s);
+        s._emit('claimed');
+        claimedThisFrame.push(s.id);
+        console.log(`[manager] ${s.id}: reconnected — re-claimed orphan via Gamepad API`);
+        continue;
+      }
+      const entry = [...this._hidPool.values()].find((e) => this._entryMatchesSlot(e, s));
+      if (entry) {
+        const pseudo = { index: -1, id: s.controllerLabel || `HID::${entry.device.productName || ''}`, mapping: 'standard' };
+        s.claim(pseudo, { controllerTypeHint: s.controllerType, silent: true });
+        this._attachEntryToSlot(s, entry);
+        s._emit('claimed');
+        claimedThisFrame.push(s.id);
+        console.log(`[manager] ${s.id}: reconnected — re-claimed orphan via WebHID (gyro restored, awaiting Gamepad pad)`);
+      }
+    }
+
+    // Adopt a returning Gamepad pad into a slot that recovered HID-first
+    // (gamepadIndex still null) so one physical controller isn't split
+    // across two slots. effectiveGamepad picks up the buttons next frame.
+    for (const s of this.slots) {
+      if (s.state !== 'claimed' || s.gamepadIndex != null) continue;
+      const gp = this._findReturningPadForSlot(s, pads);
+      if (gp) {
+        s.gamepadIndex = gp.index;
+        console.log(`[manager] ${s.id}: adopted returning Gamepad pad (buttons restored)`);
+      }
     }
 
     // Claim via Gamepad API activity. Uses gamepadHasFreshActivity
@@ -655,6 +751,22 @@ export class ControllerManager {
       empty._emit('claimed');
     }
 
+    // Reconcile late / reconnected HID entries with already-claimed slots.
+    // _attachMatchingPoolEntry only binds at claim time, and the HID-pool
+    // claim loop below is gated on a fresh button press — so a device whose
+    // WebHID handle arrives (or RE-arrives after a reconnect) AFTER the
+    // Gamepad-API claim, and that never emits buttons (IMU-only, e.g.
+    // GameSir-as-DS4), would otherwise be left with working buttons but a
+    // dead gyro toggle after a reconnect (GameSir Super Nova auto-re-pairs
+    // off its charger, so this path gets hit constantly). Binding-only — it
+    // never creates a
+    // slot — so it's safe to run every frame regardless of button activity.
+    // Snapshot the pool values: _attachEntryToSlot mutates the pool map.
+    for (const entry of [...this._hidPool.values()]) {
+      const slot = this._findClaimedUnboundSlotForEntry(entry);
+      if (slot) this._attachEntryToSlot(slot, entry);
+    }
+
     // Claim via WebHID synthetic activity (covers BT-silent DualSense):
     // iterate the HID pool, not slots. Any pool entry showing activity
     // promotes into an empty slot.
@@ -670,15 +782,10 @@ export class ControllerManager {
       // Gamepad API path (same vid:pid), attach the HID entry to that slot
       // for gyro/touchpad rather than spawning a second slot. Fixes pads
       // that expose both Gamepad API and WebHID interfaces (e.g. GameSir
-      // Super Nova presenting as DS4 + raw HID).
-      const existing = this.slots.find((s) => {
-        if (s.state !== 'claimed' || s._hidEntry) return false;
-        const vp = ControllerRegistry.parseGamepadVendorProduct(s.controllerLabel);
-        if (vp && vp.vendorId === entry.device.vendorId && vp.productId === entry.device.productId) return true;
-        const name = (entry.device.productName || '').trim().toLowerCase();
-        if (name && s.controllerLabel && s.controllerLabel.toLowerCase().includes(name)) return true;
-        return false;
-      });
+      // Super Nova presenting as DS4 + raw HID). (The reconciliation pass
+      // above already covers IMU-only devices; this catches a device that
+      // emits buttons AND matches an already-claimed slot.)
+      const existing = this._findClaimedUnboundSlotForEntry(entry);
       if (existing) {
         this._attachEntryToSlot(existing, entry);
         continue;
