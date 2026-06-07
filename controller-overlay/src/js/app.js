@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { ControllerOverlay } from './controller-overlay.js';
 import { detectControllerType, PROFILES } from './controller-profiles.js';
-import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
+import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { SensorFusion } from '../shared/sensor-fusion.js';
 import { GyroGimbal } from './gyro-gimbal.js';
 
@@ -349,12 +349,12 @@ async function bootstrapFromHID() {
     return;
   }
   for (const d of devices) {
-    const drv = ControllerRegistry.getDriver(d.vendorId, d.productId);
-    if (!drv || !drv.capabilities.gyro) continue;
+    const entry = ControllerRegistry.getEntry(d.vendorId, d.productId);
+    if (!entry || !entry.capabilities.gyro) continue;
     console.log('bootstrapFromHID: found', d.productName,
       'vid:' + d.vendorId.toString(16), 'pid:' + d.productId.toString(16));
     const stub = {
-      id: d.productName || drv.driverName,
+      id: d.productName || entry.name,
       index: -1,
       axes: [0, 0, 0, 0],
       buttons: Array.from({ length: 18 }, () => ({ pressed: false, value: 0 })),
@@ -535,8 +535,8 @@ async function connectControllerGyro() {
     const granted = await navigator.hid.getDevices();
     console.log('connectControllerGyro: getDevices returned', granted.length, 'device(s)');
     for (const d of granted) {
-      const drv = ControllerRegistry.getDriver(d.vendorId, d.productId);
-      if (drv && drv.capabilities.gyro) {
+      const entry = ControllerRegistry.getEntry(d.vendorId, d.productId);
+      if (entry && entry.capabilities.gyro) {
         device = d;
         console.log('connectControllerGyro: found granted device:', d.productName);
         break;

@@ -2,7 +2,7 @@
 // MULTI-APP.JS — Multi-controller overlay view layer
 // ============================================================
 //
-// Thin view on top of shared/controller-manager.js. The manager owns
+// Thin view on top of shared/manager.js. The manager owns
 // all slot state, claim/release lifecycle, HID pairing, and sensor
 // fusion. This file only:
 //   - instantiates 3D ControllerOverlay canvases
@@ -10,14 +10,14 @@
 //   - runs the raf loop and forwards pads + gyro to overlays
 //   - renders diagnostics panels + debug strip
 //
-// See shared/controller-manager.js for the state machine, #222 for
+// See shared/manager.js for the state machine, #222 for
 // the design doc, #224 for the consolidation plan.
 // ============================================================
 
 import { ControllerOverlay } from './controller-overlay.js';
 import { detectControllerType } from './controller-profiles.js';
-import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
-import { ControllerManager, gamepadHasActivity } from '../shared/controller-manager.js';
+import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { ControllerManager, gamepadHasActivity } from '../shared/manager.js';
 
 const SLOT_IDS = ['P1', 'P2', 'P3', 'P4'];
 
@@ -252,8 +252,8 @@ function renderSlotDiagnostics(view, pads) {
   if (hid) {
     lines.push(`<span class="k">product  </span> <span class="v">${esc(hid.productName || '(unnamed)')}</span>`);
     lines.push(`<span class="k">vid:pid  </span> <span class="v">${hex4(hid.vendorId)}:${hex4(hid.productId)}</span>`);
-    lines.push(`<span class="k">driver   </span> <span class="ok">${esc(driver?.constructor?.driverName || '?')}</span>  <span class="k">conn</span> <span class="v">${esc(driver?.connectionType || '?')}</span>`);
-    const caps = driver?.constructor?.capabilities || {};
+    lines.push(`<span class="k">driver   </span> <span class="ok">${esc(driver?.entry?.name || '?')}</span>  <span class="k">conn</span> <span class="v">${esc(driver?.connectionType || '?')}</span>`);
+    const caps = driver?.entry?.capabilities || {};
     lines.push(`<span class="k">caps     </span> gyro=${caps.gyro} accel=${caps.accel} touchpad=${caps.touchpad}`);
     const gyroOk = s.fusion && s.fusion._lastGyroTime > 0 && !s.fusion.calibrating;
     lines.push(`<span class="k">gyro     </span> ${gyroOk ? '<span class="ok">integrating</span>' : (s.fusion?.calibrating ? '<span class="warn">calibrating…</span>' : '<span class="warn">idle</span>')}`);

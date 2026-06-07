@@ -4344,7 +4344,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.3476abd | 04-12-2026 09:18</span></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.3476abd | 04-12-2026 09:18</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Steam Input live diagnostic">🎮 Test</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -4497,6 +4497,13 @@ ON</button>
   modal.addEventListener('click', function() { modal.classList.remove('visible'); });
   modal.querySelector('#help-modal-inner').addEventListener('click', function(e) { e.stopPropagation(); });
   document.getElementById('help-close').addEventListener('click', function() { modal.classList.remove('visible'); });
+  var ctrlTestBtn = document.getElementById('ctrl-test-btn');
+  if (ctrlTestBtn) {
+    ctrlTestBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      window.location.href = 'test/steam-input-test.html';
+    });
+  }
 })();
 </script>
 
@@ -4646,6 +4653,13 @@ ON</button>
       <button class="opt-btn" id="opt-auto">Auto</button>
     </div>
     <div class="options-note">Some changes take effect on next restart</div>
+    <div class="label" id="opt-ds-label">DualSense Input Source</div>
+    <div class="options-row" id="opt-ds-row">
+      <button class="opt-btn" id="opt-ds-auto">Auto</button>
+      <button class="opt-btn" id="opt-ds-steam">Steam Input</button>
+      <button class="opt-btn" id="opt-ds-webhid">WebHID</button>
+    </div>
+    <div class="options-note" id="opt-ds-state">Applied on next launch</div>
     <button id="options-perf-btn">Run Perf Test</button>
     <div id="options-perf-result"></div>
     <button id="options-devtools-btn">Tools</button>

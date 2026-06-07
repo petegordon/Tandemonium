@@ -6,18 +6,31 @@ import * as THREE from 'three';
 import { isMobile, TUNE } from './config.js';
 import * as analytics from './analytics.js';
 import { addHapticSource, removeHapticSource } from './haptics.js';
-import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
+import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+
+/**
+ * DualSense input-source preference (Auto / Steam Input / WebHID) — see
+ * project_dualsense_input_source_toggle.md. Read once at boot, applied to
+ * the next session. Stored in localStorage under 'tandemonium_dualsense_source'.
+ */
+export function readDualSenseSourcePref() {
+  try {
+    const v = localStorage.getItem('tandemonium_dualsense_source');
+    if (v === 'steam-input' || v === 'webhid') return v;
+  } catch (e) {}
+  return 'auto';
+}
 
 // Controller state (gamepad binding, WebHID, sensor fusion, synthetic
 // gamepad for BT-silent DualSense) now lives on a ControllerManager slot.
-// See shared/controller-manager.js. InputManager is a thin consumer that
+// See shared/manager.js. InputManager is a thin consumer that
 // reads the slot's effective gamepad + fusion orientation each frame and
 // turns them into tilt/lean/trigger state for the game loop.
 
 export class InputManager {
   /**
    * @param {Object} [options]
-   * @param {import('../shared/controller-manager.js').Slot|null} [options.slot=null]
+   * @param {import('../shared/manager.js').Slot|null} [options.slot=null]
    *   — ControllerManager slot this InputManager consumes for gamepad +
    *   gyro state. Null means no controller bound yet; the InputManager
    *   still serves keyboard/touch/motion. Call `attachSlot(slot)` later
@@ -107,6 +120,25 @@ export class InputManager {
     // motionEnabled. Set while fusion.calibrating, cleared after arm.
     this._wasFusionCalibrating = false;
 
+    // Steam Input gyro override: when steamworks.input has captured a
+    // controller, its `Steer` analog action (gyro→joystick_move in the VDF)
+    // becomes the gyro source for that pad, replacing WebHID fusion. We
+    // track the active flag here so callers and the lobby UI can tell that
+    // Steam Input is the gyro source. `_steamInputType` mirrors Steam's
+    // InputType enum (e.g. 'SteamDeckController', 'PS5Controller').
+    this._steamInputActive = false;
+    this._steamInputType = null;
+    // Latest Steam Input snapshot from main, refreshed at top of pollGamepad.
+    // Used by both the gyro path and the synthetic-Gamepad fallback in
+    // getGamepadState() — when Steam Input intercepts the DualSense, Electron's
+    // navigator.getGamepads() doesn't always surface the virtual XInput pad,
+    // so the snapshot is the only source of button/stick state.
+    this._steamInputSnapshot = [];
+    this._steamInputSyntheticGp = null;
+    // User preference (Auto / Steam Input / WebHID) — sampled once at
+    // construction; takes effect on next session boot.
+    this._dualsenseSource = readDualSenseSourcePref();
+
     if (enableKeyboard) this._setupKeyboard();
     if (isMobile) {
       if (enableTouch) this._setupTouch();
@@ -120,9 +152,12 @@ export class InputManager {
   // ── Slot accessors ──
   // Read-only getters that delegate to the attached slot. ControllerManager
   // owns the lifecycle; InputManager is a pure consumer.
-  get gamepadConnected() { return this._slot?.state === 'claimed'; }
+  get gamepadConnected() { return this._slot?.state === 'claimed' || this._steamInputActive; }
   get gamepadIndex() { return this._slot?.gamepadIndex ?? null; }
-  get gyroConnected() { return !!(this._slot?.fusion); }
+  // Steam Input counts as a gyro source — it owns Steer for any captured pad
+  // and replaces the WebHID fusion path. The lobby reads this to decide
+  // whether to surface the gyro toggle.
+  get gyroConnected() { return !!(this._slot?.fusion) || this._steamInputActive; }
   get gyroDevice() { return this._slot?.hidDevice ?? null; }
   get _gpName() { return this._slot?.controllerLabel ?? ''; }
   get _syntheticGamepad() { return this._slot?.synthetic ?? null; }
@@ -433,14 +468,36 @@ export class InputManager {
       return;
     }
 
-    // Drift compensation: nudge motionOffset toward long-term average rawGamma
-    // Only for mobile tilt (!isGyro), only when not actively steering
-    if (!isGyro) {
-      if (this._driftEma === null) {
-        this._driftEma = this.rawGamma;
-      } else {
-        this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
+    // Drift compensation: nudge motionOffset toward the long-term average
+    // rawGamma so slow sensor drift can't accumulate into a one-way pull.
+    // Mobile tilt needs this for slow bias; gyro needs it MORE — the
+    // integrated orientation drifts continuously (especially over Bluetooth),
+    // and with no correction it pulls one way until steering saturates and the
+    // joystick can't bring it back (the DS4-BT "gradual pull" report). The EMA
+    // tracks the running center; we only chase it while leans are small, so an
+    // intentional turn is never cancelled, and the rate is slow enough to
+    // follow drift over seconds without fighting quick corrections. Gyro uses
+    // a tighter gate + slower rate for extra safety (L3 still hard-recenters).
+    if (this._driftEma === null) {
+      this._driftEma = this.rawGamma;
+    } else if (isGyro) {
+      // Gyro: taper drift learning + correction by lean magnitude instead of a
+      // hard on/off gate. Full strength near center; fades to zero by a large
+      // lean. This keeps GENTLY correcting through sustained moderate leans —
+      // where drift was creeping toward "fusing to one side" — while never
+      // re-centering a big intentional turn. A brief sharp turn spikes the
+      // lean, so the taper ≈ 0 at its peak and it can't poison the neutral
+      // estimate (the bug that made it fuse fast on sharp turns).
+      const FULL_BELOW = 0.2, ZERO_AT = 0.7; // tuning knobs (lean fraction)
+      const L = Math.abs(this._smoothedLean);
+      const taper = L <= FULL_BELOW ? 1 : L >= ZERO_AT ? 0 : (ZERO_AT - L) / (ZERO_AT - FULL_BELOW);
+      if (taper > 0) {
+        this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
+        this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
       }
+    } else {
+      // Mobile tilt (gravity-absolute): original always-on EMA + hard 0.3 gate.
+      this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
       if (Math.abs(this._smoothedLean) < 0.3) {
         this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate;
       }
@@ -533,6 +590,9 @@ export class InputManager {
    * current frame so the slot's state reflects the latest pads.
    */
   pollGamepad() {
+    // Snapshot Steam Input state first so getGamepadState()'s synthetic
+    // fallback and the gyro path below see the same data this frame.
+    this._refreshSteamInputSnapshot();
     const gp = this.getGamepadState();
     if (gp) {
       // Left stick X — deadzone 0.08
@@ -558,12 +618,59 @@ export class InputManager {
       }
     }
 
+    // Steam Input gyro path — when Steam Input has captured ANY controller,
+    // its Steer analog action wins over the WebHID fusion pipeline for the
+    // gyro channel. Steam's per-controller config owns sensitivity/deadzone/
+    // response-curve tuning; we just route the resulting scalar into
+    // motionLean and let the existing BalanceController sum it with the
+    // joystick stick. The renderer reads a snapshot pushed by main at
+    // ~60Hz via 'steam:input:tick' — no per-frame IPC round-trip.
+    // _refreshSteamInputSnapshot() (called at top of pollGamepad) has already
+    // applied the DualSense Input Source preference to the cached snapshot
+    // and updated this._steamInputActive. _steamInputPrevActive is the prior
+    // frame's value so the edge-detect below still fires correctly.
+    const steamInputData = this._steamInputSnapshot;
+    const hadSteamInput = this._steamInputPrevActive;
+    if (this._steamInputActive) {
+      // One-shot auto-arm on first capture, mirroring the fusion-calibration
+      // arm. After this, the user's lobby motion toggle controls the channel.
+      if (!hadSteamInput && !this.motionEnabled) {
+        this.motionEnabled = true;
+        if (this.onMotionEnabled) this.onMotionEnabled();
+      }
+      this._wasFusionCalibrating = false;
+      if (!this.motionEnabled) return;
+      // For now: map first Steam Input controller to this InputManager.
+      // Local-MP multi-pad mapping is a follow-up — see project memory.
+      const primary = steamInputData[0];
+      this._steamInputType = primary.type;
+      this.motionLean = primary.steerX;
+      this._smoothedLean = primary.steerX;
+      this._prevLeanRaw = primary.steerX;
+      // Diagnostic mirror for HUD / test/input.html (no real roll angle
+      // available — Steam SDK only exposes the post-mapping vector).
+      this._gyroRollAccum = -primary.steerX * 90;
+      this._accelRoll = 0;
+      if (Math.abs(primary.steerX) > 0.05) this._markActive();
+      return;
+    }
+    this._steamInputType = null;
+
     // Orientation → tilt projection. The slot's HidEntry ingests gyro at
     // HID-report frequency (100–250Hz) independently; we read the output
     // quaternion once per frame at raf rate. `_applyTilt` uses
     // rate-independent EMA smoothing so cadence doesn't affect feel.
     const fusion = this._slot?.fusion;
     if (!fusion) { this._wasFusionCalibrating = false; return; }
+    // Honor 'steam-input' preference for DualSense: if the user explicitly
+    // picked Steam Input but Steam isn't intercepting this session, don't
+    // fall back to WebHID fusion for the DualSense — leave gyro silent so
+    // the toggle's behavior is deterministic. Non-DualSense drivers are
+    // unaffected.
+    if (this._dualsenseSource === 'steam-input') {
+      const proto = this._slot?.driver?.entry?.protocol || '';
+      if (proto === 'dualsense') { this._wasFusionCalibrating = false; return; }
+    }
     if (fusion.calibrating) { this._wasFusionCalibrating = true; return; }
     // Auto-arm motion pipeline ONCE when calibration transitions from
     // active → done (matching the old `_finishGyroCalibration` edge).
@@ -588,17 +695,88 @@ export class InputManager {
   }
 
   /**
+   * Refresh the cached Steam Input snapshot. Called at the top of
+   * pollGamepad() so subsequent reads (getGamepadState, gyro path) see the
+   * same data within a frame. Applies the DualSense Input Source preference.
+   */
+  _refreshSteamInputSnapshot() {
+    const raw = (typeof window !== 'undefined' && window.steam && window.steam.input)
+      ? window.steam.input.getLatest()
+      : null;
+    const filtered = (raw && this._dualsenseSource === 'webhid')
+      ? raw.filter(c => !(c.type || '').toString().toLowerCase().includes('ps5'))
+      : raw;
+    this._steamInputSnapshot = filtered || [];
+    // Save the prior-frame active flag so the gyro-section can edge-detect
+    // the "Steam Input just became active" transition; then update.
+    this._steamInputPrevActive = this._steamInputActive;
+    this._steamInputActive = this._steamInputSnapshot.length > 0;
+  }
+
+  /**
+   * Build a Gamepad-shaped object from the first Steam Input controller in
+   * the snapshot. Returned object follows the standard 18-button layout so
+   * existing consumers (lobby nav, pollGamepad stick/trigger reads) work
+   * unchanged. Pedal actions are duplicated across bumper (4/5) and trigger
+   * (6/7) slots since the game accepts either as the "pedal" input.
+   *
+   * @returns {Gamepad|null}
+   */
+  _buildSteamInputGamepad() {
+    if (!this._steamInputSnapshot.length) return null;
+    const c = this._steamInputSnapshot[0];
+    const d = c.digital || {};
+    const btn = (pressed) => ({ pressed: !!pressed, touched: !!pressed, value: pressed ? 1 : 0 });
+    const buttons = [
+      btn(d.Confirm),     // 0  Cross / A — Confirm
+      btn(d.Cancel),      // 1  Circle / B — Cancel
+      btn(false),         // 2  Square / X — unbound
+      btn(false),         // 3  Triangle / Y — unbound
+      btn(d.PedalLeft),   // 4  L1 — left pedal
+      btn(d.PedalRight),  // 5  R1 — right pedal
+      btn(d.PedalLeft),   // 6  L2 (digital pedal)
+      btn(d.PedalRight),  // 7  R2 (digital pedal)
+      btn(false),         // 8  Share — unbound
+      btn(d.Pause),       // 9  Options / Start — Pause
+      btn(false),         // 10 L3
+      btn(false),         // 11 R3
+      btn(d.MenuUp),      // 12 D-pad up
+      btn(d.MenuDown),    // 13 D-pad down
+      btn(d.MenuLeft),    // 14 D-pad left
+      btn(d.MenuRight),   // 15 D-pad right
+      btn(false),         // 16 PS / Home
+      btn(false),         // 17 Touchpad
+    ];
+    return {
+      id: `DualSense via Steam Input (${c.type || 'unknown'} Vendor: 054c Product: 0ce6)`,
+      index: -1,
+      mapping: 'standard',
+      connected: true,
+      timestamp: performance.now(),
+      buttons,
+      axes: [c.steerX || 0, c.steerY || 0, 0, 0],
+      _isSyntheticSteamInput: true,
+    };
+  }
+
+  /**
    * Return the current gamepad state — HID-synthetic when the slot's
    * driver emits buttons (BT DualSense case), else the Gamepad API pad.
-   * Stale-synthetic protection and button-mode detection live on the
-   * slot itself, in `Slot.effectiveGamepad(pads)`.
+   * Falls back to a synthesized Steam-Input gamepad when Steam Input has
+   * captured a controller but no real Gamepad API pad exists (typical when
+   * Steam Input intercepts the DualSense on Electron, where the virtual
+   * XInput device doesn't surface via navigator.getGamepads()).
    *
    * @returns {Gamepad|null}
    */
   getGamepadState() {
-    if (!this._slot) return null;
-    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    return this._slot.effectiveGamepad(pads);
+    if (this._slot) {
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      const slotPad = this._slot.effectiveGamepad(pads);
+      if (slotPad) return slotPad;
+    }
+    if (this._steamInputActive) return this._buildSteamInputGamepad();
+    return null;
   }
 
   getGamepadLean() {
@@ -646,6 +824,9 @@ export class InputManager {
     this._gyroRollAccum = 0;
     this._smoothedLean = 0;
     this.motionLean = 0;
+    // Re-seed drift compensation so the freshly-set center isn't immediately
+    // yanked by a stale long-term average.
+    this._driftEma = null;
     this._slot?.fusion?.reset();
   }
 
