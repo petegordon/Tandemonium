@@ -22,6 +22,8 @@ export class PlayStationDriver extends ControllerDriver {
   constructor(device, connectionType, entry = null) {
     super(device, connectionType, entry);
     this._rumbleStopTimer = null;
+    this._reactivateTimer = null;
+    this._reactivateStop = null;
   }
 
   async init() {
@@ -35,7 +37,13 @@ export class PlayStationDriver extends ControllerDriver {
     // mode and no gyro ever arrives (see the DS4-BT investigation).
     if (this.connectionType === 'bluetooth') {
       const featureId = this.entry?.mode === 'ds4' ? 0x02 : 0x05;
-      await this._activateFullReportMode(featureId);
+      const active = await this._activateFullReportMode(featureId);
+      // A slow re-pair (controller sat on the charger a while) can take longer
+      // than the inline window to start streaming. Don't leave gyro dead —
+      // keep nudging the feature read in the background until the stream flips
+      // (HidEntry's listener is already attached, so it picks up the IMU the
+      // moment full reports arrive). Fire-and-forget: init must not block on it.
+      if (!active) this._startBackgroundReactivation(featureId);
     }
 
     // IMU-offset probe: PlayStation-family controllers (real Sony DS4/DS5 +
@@ -141,6 +149,49 @@ export class PlayStationDriver extends ControllerDriver {
     });
   }
 
+  /**
+   * Keep re-issuing the full-report feature read in the background until the
+   * stream actually flips (or we give up). For the slow-re-pair case where the
+   * inline _activateFullReportMode window expires before a controller that's
+   * been on the charger finishes negotiating its BT link. A persistent
+   * listener watches for the first full report and stops the loop; HidEntry's
+   * own listener is what feeds the IMU once it arrives, so no offset re-probe
+   * is needed here (parseReport falls back to the documented default offset).
+   *
+   * Fire-and-forget from init(); returns a Promise so tests can await it.
+   * Cleared by destroy(). Idempotent — a second call while one is running is a
+   * no-op.
+   *
+   * @returns {Promise<boolean>} true if the stream started, false if it gave up
+   */
+  _startBackgroundReactivation(featureId, { intervalMs = 1000, maxMs = 12000 } = {}) {
+    if (this._reactivateTimer) return Promise.resolve(false);
+    const fullId = this._fullReportId();
+    const hex = (n) => '0x' + n.toString(16).padStart(2, '0');
+    return new Promise((resolve) => {
+      let elapsed = 0;
+      const finish = (ok, why) => {
+        if (this._reactivateTimer) { clearInterval(this._reactivateTimer); this._reactivateTimer = null; }
+        this.device.removeEventListener('inputreport', onReport);
+        this._reactivateStop = null;
+        if (ok) console.log(`PlayStation BT: full report mode active (${hex(fullId)}) via background re-activation`);
+        else console.warn(`PlayStation BT: background re-activation gave up (${why}) — gyro unavailable until reconnect`);
+        resolve(ok);
+      };
+      const onReport = (event) => { if (event.reportId === fullId) finish(true); };
+      this._reactivateStop = () => finish(false, 'driver destroyed');
+      this.device.addEventListener('inputreport', onReport);
+      console.warn(`PlayStation BT: full report stream not up yet — re-activating in the background (every ${intervalMs}ms, up to ${maxMs}ms)`);
+      this._reactivateTimer = setInterval(() => {
+        elapsed += intervalMs;
+        if (elapsed > maxMs) { finish(false, `no full report after ${maxMs}ms`); return; }
+        if (typeof this.device.receiveFeatureReport === 'function') {
+          this.device.receiveFeatureReport(featureId).catch(() => {});
+        }
+      }, intervalMs);
+    });
+  }
+
   // Documented gyro start offset per transport/mode. The IMU probe defers to
   // this when it scores plausibly (~1g); see init() for why.
   _defaultGyroOffset() {
@@ -228,6 +279,9 @@ export class PlayStationDriver extends ControllerDriver {
       clearTimeout(this._rumbleStopTimer);
       this._rumbleStopTimer = null;
     }
+    // Stop any in-flight background re-activation (e.g. device disconnected
+    // mid-loop) so it isn't left polling a dead handle.
+    if (this._reactivateStop) this._reactivateStop();
   }
 
   parseReport(reportId, data) {

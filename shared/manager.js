@@ -280,6 +280,10 @@ class HidEntry {
 
   destroy() {
     try { this.device.removeEventListener('inputreport', this._handler); } catch {}
+    // Let the driver tear down its own timers/listeners (PlayStation BT
+    // background re-activation, Steam lizard-mode heartbeat) so they don't
+    // keep running against a disconnected device.
+    try { this.driver?.destroy?.(); } catch {}
     this._handler = null;
     this.slot = null;
   }
