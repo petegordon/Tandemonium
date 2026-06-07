@@ -16,7 +16,8 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout
-        if: github.event.action != 'closed'
+        # Always check out — the cleanup path (PR closed/merged) also needs a
+        # git repo, or pr-preview-action fails with "not in a git directory".
         uses: actions/checkout@v4
 
       - name: Stage deploy files
