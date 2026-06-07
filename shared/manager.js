@@ -19,7 +19,7 @@
 // See #222 for the design doc and #224 for the consolidation plan.
 // ============================================================
 
-import { ControllerRegistry } from './controllers/controller-registry.js';
+import { ControllerRegistry } from './drivers/controller-registry.js';
 import { SensorFusion } from './sensor-fusion.js';
 
 const DEFAULTS = {
@@ -225,7 +225,7 @@ class HidEntry {
         const expectedG = parsed.accelScale ? (1.0 / parsed.accelScale) : 8192;
         if (mag > expectedG * 0.4 && mag < expectedG * 2.0) {
           this._accelVerified = true;
-          console.log(`Accel verified (${this.driver.constructor.driverName}): mag=${mag.toFixed(0)} expected ~${expectedG.toFixed(0)}`);
+          console.log(`Accel verified (${this.driver.entry?.name || '?'}): mag=${mag.toFixed(0)} expected ~${expectedG.toFixed(0)}`);
         }
       }
       this.fusion.ingest(
@@ -483,7 +483,7 @@ export class ControllerManager {
     const gp = candidates[0];
     const info = ControllerRegistry.identifyFromGamepadId(gp.id);
     slot.claim(gp, {
-      controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+      controllerTypeHint: info?.controllerProfile || info?.protocol || null,
       silent: true,
     });
     this._attachMatchingPoolEntry(slot);
@@ -641,7 +641,7 @@ export class ControllerManager {
       if (!empty) break;
       const info = ControllerRegistry.identifyFromGamepadId(gp.id);
       empty.claim(gp, {
-        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+        controllerTypeHint: info?.controllerProfile || info?.protocol || null,
         silent: true,
       });
       claimedThisFrame.push(empty.id);
@@ -707,7 +707,7 @@ export class ControllerManager {
       };
       const info = ControllerRegistry.identifyFromGamepadId(pseudoPad.id);
       empty.claim(pseudoPad, {
-        controllerTypeHint: info?.driverName?.toLowerCase().replace(' ', '-') || null,
+        controllerTypeHint: info?.controllerProfile || info?.protocol || null,
         silent: true,
       });
       this._attachEntryToSlot(empty, entry);

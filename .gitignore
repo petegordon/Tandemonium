@@ -7,6 +7,7 @@ out/
 
 tandemonium-octalysis-v3.jsx
 worker/.wrangler/
-builds/
+/builds/
 steam_output/
+steam/builds/output/
 debug-*.png

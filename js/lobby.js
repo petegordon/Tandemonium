@@ -44,7 +44,7 @@ import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 import * as analytics from './analytics.js';
-import { ControllerRegistry } from '../shared/controllers/controller-registry.js';
+import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -3830,9 +3830,9 @@ export class Lobby {
     if (this.input && this.input.gyroDevice && this._cachedHIDDevices) {
       for (const d of this._cachedHIDDevices) {
         if (d === this.input.gyroDevice) continue; // skip P1
-        const drv = ControllerRegistry.getDriver(d.vendorId, d.productId);
-        if (!drv) continue;
-        const name = this._prettyGamepadName(d.productName || drv.driverName);
+        const entry = ControllerRegistry.getEntry(d.vendorId, d.productId);
+        if (!entry) continue;
+        const name = this._prettyGamepadName(d.productName || entry.name);
         return {
           available: true,
           hasGamepad: true,
@@ -3894,9 +3894,9 @@ export class Lobby {
     if (!rawGamepadId) return 'A';
     const info = ControllerRegistry.identifyFromGamepadId(rawGamepadId);
     if (info) {
-      const name = info.driverName.toLowerCase();
-      if (name.includes('dualsense') || name.includes('dualshock')) return '\u2715'; // ✕
-      if (name.includes('switch')) return 'B'; // Bottom face button on Nintendo layout
+      const proto = info.protocol;
+      if (proto === 'dualsense') return '\u2715'; // ✕
+      if (proto === 'switch-pro') return 'B'; // Bottom face button on Nintendo layout
     }
     return 'A'; // Xbox / generic
   }
@@ -4114,8 +4114,8 @@ export class Lobby {
       if (submitIcon && backIcon && this.input) {
         const gpId = this.input._gpName || '';
         const info = ControllerRegistry.identifyFromGamepadId(gpId);
-        const isPS = info && info.driverName === 'DualSense';
-        const isXbox = info && info.driverName === 'Xbox';
+        const isPS = info && info.protocol === 'dualsense';
+        const isXbox = info && info.protocol === 'xbox';
         if (isPS) {
           submitIcon.innerHTML = '\u2715';
           submitIcon.style.color = '#4a9df8';
@@ -4256,8 +4256,8 @@ export class Lobby {
       const icon = document.getElementById('gamepad-back-icon');
       const gpId = this.input._gpName || '';
       const info = ControllerRegistry.identifyFromGamepadId(gpId);
-      const isPS = info && info.driverName === 'DualSense';
-      const isXbox = info && info.driverName === 'Xbox';
+      const isPS = info && info.protocol === 'dualsense';
+      const isXbox = info && info.protocol === 'xbox';
       if (isPS) {
         icon.innerHTML = '\u25EF';
         icon.style.color = '#ff6b81';

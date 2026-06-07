@@ -176,7 +176,7 @@
 
 <script type="module">
 import * as THREE from 'three';
-import { ControllerRegistry } from '../js/controllers/controller-registry.js';
+import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 
 // ── Renderer ──
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -574,7 +574,7 @@ document.getElementById('hid-connect-btn').addEventListener('click', async () =>
     // Dismiss overlay and show device name
     overlay.classList.add('hidden');
     document.getElementById('gp-name').textContent =
-      controllerDriver.constructor.driverName + ' (WebHID)';
+      (controllerDriver.entry?.name || 'Controller') + ' (WebHID)';
 
     gyroBtn.classList.add('connected');
     activateSplit();
