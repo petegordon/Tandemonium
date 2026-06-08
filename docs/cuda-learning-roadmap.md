@@ -1,9 +1,18 @@
-# CUDA Learning & Projects Roadmap — RTX 5070 Ti (Blackwell, sm_120, 16 GB)
+# CUDA Learning & Projects Roadmap — RTX 5070 Ti (Blackwell, sm_120, 12 GB) + Colab
 
 > Personalized deep-research roadmap compiled 2026-06-07. Tailored for an experienced
 > Python/ML practitioner & educator (taught a 2U Python AI bootcamp; works in generative
 > 3D via ComfyUI/Hunyuan3D/TRELLIS/Blender/thrixel; background in NLP, LDA, embeddings,
 > cosine/dot-product). New to CUDA C++/GPU kernels.
+>
+> **Hardware:** RTX 5070 Ti (Blackwell, sm_120), **12 GB VRAM**, **32 GB system RAM**,
+> plus a **paid Google Colab subscription** (A100 / L4 / H100 on tap) as a cloud
+> workhorse for jobs that exceed 12 GB locally.
+>
+> > ⚠️ Spec note: the retail RTX **5070 Ti ships with 16 GB GDDR7**; the **12 GB** card
+> > is the non-Ti **RTX 5070**. The doc is written for **12 GB** as you reported (the
+> > conservative case) — if a quick `nvidia-smi` shows 16 GB you simply have more
+> > headroom than every VRAM figure below assumes.
 >
 > This field moves fast — versions and VRAM numbers shift monthly. Claims below are cited;
 > uncertain/volatile items are flagged. Verify version-specific facts at install time.
@@ -15,7 +24,8 @@
 1. **Get the environment right first** (this is where 80% of Blackwell pain lives): driver ≥ R570, CUDA Toolkit ≥ 12.8, and **PyTorch ≥ 2.7 installed from the `cu128`+ index URL**. Verify `sm_120` is in `torch.cuda.get_arch_list()`.
 2. **Learn the CUDA memory model, then default to Triton** for real kernel work — it suits a Python person and reaches ~90–105% of hand-tuned CUDA for ML kernels.
 3. **Anchor your first project to what you already know**: a cosine-similarity / dot-product top-k kernel. It turns your embeddings intuition into GPU code and teaches GEMM + reductions + top-k selection — the core pattern behind every vector-search library.
-4. **For your 3D work, the practical CUDA skill is config, not kernels**: VRAM offloading, fp8/quantization, tiled VAE, attention-backend selection, and profiling. That's what makes 16 GB usable.
+4. **For your 3D work, the practical CUDA skill is config, not kernels**: VRAM offloading, fp8/quantization, tiled VAE, attention-backend selection, and profiling. That's what makes **12 GB** usable.
+5. **Use Colab as your second machine.** Learn CUDA C++ on Colab's A100 (no local Blackwell-setup pain, well-supported sm_80), and run the jobs that won't fit 12 GB — HY3D texture, SAM 3D Objects, big TRELLIS.2 — on **A100 40/80 GB** there. (See §1b.)
 
 ---
 
@@ -63,6 +73,33 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 
 ---
 
+## 1b. Cloud GPU — Google Colab (your second machine)
+
+Your paid Colab subscription is a major asset for **both** halves of this roadmap: it removes the local Blackwell-setup friction for *learning*, and it provides the big VRAM you don't have locally for *heavy 3D inference*.
+
+**What's available (2026, paid Pro / Pro+):** **A100 in 40 GB and 80 GB** (pick via the "High RAM" toggle), **L4**, **T4**, **H100**, and even a Blackwell **RTX PRO 6000 (~96 GB)** option. Burn rate is roughly **T4 ≈ 1.76 compute-units/hr, A100 ≈ 15 CU/hr**. **Pro** ($9.99/mo) gives premium-GPU access; **Pro+** ($49.99/mo) adds **background execution** (jobs keep running when the tab closes) and higher burst quotas. *Volatile: GPU availability, CU rates, and plan tiers change — check the current [Colab signup](https://colab.research.google.com/signup) / [Colab pricing](https://cloud.google.com/colab/pricing) pages.*
+
+**Why it's ideal for learning CUDA C++:** Colab's **A100 is Ampere (sm_80)** — mature, universally supported, *zero* sm_120 wheel-matching pain. You can write and run CUDA kernels directly in a notebook:
+- Install the helper: `!pip install nvcc4jupyter`, then `%load_ext nvcc4jupyter` and write a cell with `%%cuda` (or `%%writefile kernel.cu` + `!nvcc kernel.cu -o k && ./k`).
+- Profile with `!nsys`/`!ncu` (where permitted) or PyTorch memory snapshots.
+- **Tensara/LeetGPU** (from §2) run on real cloud GPUs too, so you can mix browser problems with your own Colab notebooks.
+
+**Why it's ideal for your 3D work:** the workloads that **won't fit 12 GB locally run comfortably on a Colab A100 40/80 GB** — Hunyuan3D 2.1 full texture/PBR (~21–29 GB), TRELLIS.2 at 1024³+, and **SAM 3D Objects (~32 GB)** which is otherwise out of reach on 12 GB. Pattern: prototype/mesh locally on the 5070 Ti, push the VRAM-heavy texture/high-res/SAM-3D passes to Colab.
+
+**Division of labor (recommended):**
+
+| Do locally (12 GB 5070 Ti) | Push to Colab (A100 40/80 GB) |
+|---|---|
+| Learning fundamentals, Triton tutorials, small kernels | Long CUDA profiling labs, anything needing background execution |
+| Hunyuan3D **mesh/shape** (~10 GB), SDXL, prototyping | HY3D **texture/PBR**, TRELLIS.2 high-res, **SAM 3D Objects** |
+| Quick iteration where latency matters | Batch/overnight jobs (Pro+ background execution) |
+
+> One caveat for the kernel track: Colab A100 is **sm_80**, your card is **sm_120**. Code you write is portable, but if you specifically want to exercise **Blackwell** features (NVFP4, 5th-gen tensor cores), use the H100 (sm_90) or RTX PRO 6000 (sm_120) Colab options, or your local card.
+
+*Sources:* [Colab signup/pricing](https://colab.research.google.com/signup); [Colab pricing (Google Cloud)](https://cloud.google.com/colab/pricing); [Chris McCormick — Colab GPUs features & pricing](http://mccormickml.com/2024/04/23/colab-gpus-features-and-pricing/); [nvcc4jupyter](https://github.com/andreinechaev/nvcc4jupyter).
+
+---
+
 ## 2. Learning ladder + resources (Python/ML → intermediate CUDA)
 
 **The progression** (community consensus, mirrors GPU MODE's "1st Contact → 2nd Contact → advanced"):
@@ -94,6 +131,10 @@ python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda
 **Practice platforms (do problems alongside)**
 - **LeetGPU** <https://leetgpu.com/> (free tier) — 50+ in-browser problems on real GPUs.
 - **Tensara** <https://tensara.org/> (free, OSS) — 60+ challenges in **CUDA, Triton, and Mojo** on real T4/A100/H100.
+
+### What is Triton? (read this if it's new to you)
+
+**Triton is an open-source, Python-embedded language from OpenAI for writing GPU kernels** — the small, massively-parallel programs that run *on* the GPU (a matmul, a softmax, an attention block) — without writing CUDA C++. You write what looks like ordinary Python (decorate a function with `@triton.jit`, use `tl.load`/`tl.store` and array math), and Triton's compiler turns it into optimized GPU machine code. The key idea that makes it approachable: in raw CUDA you manage **individual threads** (thousands of them, by hand — who reads which byte, how they share memory, how they synchronize); in Triton you instead think in **tiles** — "this program instance handles a 128×64 block of the matrix" — and the compiler automatically handles thread assignment, memory **coalescing**, and most **shared-memory** management for you. **Why it exists / why you'd use it:** the vast majority of deep-learning speed comes from a handful of custom kernels, and hand-writing them in CUDA is slow, error-prone expert work; Triton lets a *Python* person write fused, problem-specific kernels in hours instead of days and still reach **~90–105% of hand-tuned CUDA** performance for typical ML ops, while **porting across GPU generations** (A100→H100→Blackwell) without retuning. **How it's actually used in practice:** it's the kernel layer underneath modern PyTorch — `torch.compile` generates Triton kernels automatically, and landmark ops like FlashAttention have Triton implementations — so you reach for it when you need an operation that's *not* already a fast library call: fusing several elementwise/reduction steps into one kernel (eliminating memory round-trips), a custom attention/normalization variant, or — directly relevant to you — a **cosine-similarity / top-k kernel** over embeddings (Project 3a). You don't need it on day one; learn the CUDA memory model first (so you understand *why* tiling and coalescing matter), then Triton becomes the high-leverage tool you'll actually write production kernels in. Start with the [official tutorials](https://triton-lang.org/main/getting-started/tutorials/index.html), in order, on a Colab A100.
 
 ### Triton vs raw CUDA C++ (your default decision)
 - Triton is **not** "CUDA in Python" — it's a **tile-based DSL**; you reason about tiles, it handles thread assignment/coalescing/most shared memory.
@@ -141,16 +182,16 @@ This `fused-matmul-for-similarity + selection-kernel-for-top-k` is the exact arc
 
 ### 3c. Generative-3D performance track — *where CUDA literacy pays off for your real workflow*
 
-**What fits in 16 GB (rules of thumb):**
+**What fits in 12 GB (rules of thumb):**
 
-| Workload | 16 GB verdict |
+| Workload | 12 GB verdict (your 32 GB system RAM is the offload budget) |
 |---|---|
-| SDXL image gen | Fits natively |
-| Flux / large diffusion | Fits via fp8 / GGUF + offload |
-| **Hunyuan3D mesh/shape** (~10 GB) | **Fits comfortably** (official "2–5 min on a 16 GB GPU") |
-| **Hunyuan3D 2.1 texture/PBR** (~21 GB) / full pipeline (~29 GB) | **Needs offload** (`--low_vram_mode`, mmgp) or cloud |
-| **TRELLIS** (original) | Right at the **16 GB official minimum** — workable, not roomy |
-| **TRELLIS.2** (4B, official **24 GB**, Linux) | 16 GB only via low-VRAM @ 512³ per *third-party* guides — lower confidence |
+| SDXL image gen | Fits (use fp8 / `--medvram` if tight) |
+| Flux / large diffusion | fp8 / GGUF + CPU offload |
+| **Hunyuan3D mesh/shape** (~10 GB) | **Tight but fits** — close other GPU apps; or run on Colab |
+| **Hunyuan3D 2.1 texture/PBR** (~21 GB) / full (~29 GB) | **Won't fit 12 GB** — offload to system RAM (slow; mmgp wants 24 GB+ RAM, you have 32) or **Colab A100** |
+| **TRELLIS** (original, 16 GB official min) | Doesn't fit natively — use the **FP16 low-VRAM fork** (~8 GB) |
+| **TRELLIS.2** (4B, official **24 GB**) | **✅ Confirmed working on your setup** via the community low-VRAM ComfyUI path (6–8 GB floor @ 512³, ~2–3× slower than a 24 GB card); **1024³+ → Colab** |
 
 **Optimization levers, by bang-for-buck:** fp16/bf16 default → **fp8** (~40% cut) → quantization (GGUF/NVFP4) → **model offloading** (`--lowvram`/sequential CPU offload/mmgp; needs ample system RAM, 24 GB+) → **tiled/sequential VAE decode** (kills the VAE OOM spike) → **attention backend** (flash-attn/xformers/**SageAttention**, ~30–35% faster sampling) → **lower 3D resolution** (512³ vs 1024³ is the biggest TRELLIS.2 driver). Combining attention-opt + tiled VAE + offload typically frees 4–8 GB.
 
@@ -162,7 +203,9 @@ This `fused-matmul-for-similarity + selection-kernel-for-top-k` is the exact arc
 
 **Mostly upstream (not worth a learner's time to patch):** custom sparse-conv/fused-attention kernels (spconv/SageAttention/Triton maintainers own these); getting sm_120 into stable PyTorch; NVFP4/Blackwell quant kernels (depend on cu130 + upstream libs). **Bottom line: your wins are config + profiling, not kernel-writing — but the CUDA fundamentals are what let you reason about the config.**
 
-**ComfyUI nodes:** Hunyuan3D 2.1 — [visualbruno/ComfyUI-Hunyuan3d-2-1](https://github.com/visualbruno/ComfyUI-Hunyuan3d-2-1) (+ native ComfyUI support, [docs](https://docs.comfy.org/tutorials/3d/hunyuan3D-2)); low-VRAM fork [Hunyuan3D-2GP](https://github.com/deepbeepmeep/Hunyuan3D-2GP). TRELLIS.2 — [visualbruno/ComfyUI-Trellis2](https://github.com/visualbruno/ComfyUI-Trellis2). Blackwell/ComfyUI setup: discussions [#6643](https://github.com/Comfy-Org/ComfyUI/discussions/6643), [#6980](https://github.com/Comfy-Org/ComfyUI/discussions/6980).
+**ComfyUI nodes:** Hunyuan3D 2.1 — [visualbruno/ComfyUI-Hunyuan3d-2-1](https://github.com/visualbruno/ComfyUI-Hunyuan3d-2-1) (+ native ComfyUI support, [docs](https://docs.comfy.org/tutorials/3d/hunyuan3D-2)); low-VRAM fork [Hunyuan3D-2GP](https://github.com/deepbeepmeep/Hunyuan3D-2GP). TRELLIS.2 — [visualbruno/ComfyUI-Trellis2](https://github.com/visualbruno/ComfyUI-Trellis2) (PozzettiAndrea/GeometryPack nodes); the easiest dependency-clean install is via **ComfyUI-Easy-Install**, and the **low-VRAM mode** is what brings the 4B model down to a 6–8 GB floor. Blackwell/ComfyUI setup: discussions [#6643](https://github.com/Comfy-Org/ComfyUI/discussions/6643), [#6980](https://github.com/Comfy-Org/ComfyUI/discussions/6980).
+
+> **You've already done this** — you confirmed TRELLIS 2 running on your 12 GB 5070 Ti (per the walkthrough you referenced, <https://youtu.be/FuFm8zBHDWI>). That's the proof point: 12 GB is viable for TRELLIS.2 at modest resolution with low-VRAM mode; reach for Colab's A100 only when you want higher resolution / faster turnaround. Low-VRAM guides: [TRELLIS 2 low-VRAM (6–8 GB)](https://trellis2.app/blog/trellis-2-low-vram), [TRELLIS 2 ComfyUI install](https://trellis2.app/blog/trellis-2-comfyui).
 
 > *Naming caution:* "TRELLIS.2" is Microsoft's real 4B model ([HF card](https://huggingface.co/microsoft/TRELLIS.2-4B), ~Dec 2025). Sites like trellis2.app/.com are promotional SEO — prefer the `microsoft/` GitHub + HF.
 
@@ -177,10 +220,11 @@ This `fused-matmul-for-similarity + selection-kernel-for-top-k` is the exact arc
 
 **Get it:** [Meta blog](https://ai.meta.com/blog/sam-3d/) · GitHub repos above (inference code, checkpoints, notebooks) · Hugging Face `facebook/` checkpoints · the no-code **Segment Anything Playground**. **License:** custom **"SAM License"** (research + commercial with restrictions — no weapons/military-surveillance, attribution required); MHR human model under a separate permissive commercial license. *Verify terms in-repo before commercial use — not OSI-standard.*
 
-**Can it run on your 16 GB 5070 Ti? — Probably not for Objects without heavy modification.** ⚠️
-- Secondary sources cite **~32 GB VRAM** for SAM 3D Objects (Linux, CUDA 12.1). GitHub issues show a **20 GB GPU OOM** ([#6](https://github.com/facebookresearch/sam-3d-objects/issues/6)) and an open "is 32 GB strict?" question ([#30](https://github.com/facebookresearch/sam-3d-objects/issues/30)) with **no official minimum and no confirmed sub-32 GB success**.
-- **SAM 3D Body** (631M–840M backbones) is far lighter and **more plausible on 16 GB**, though no explicit VRAM figure was published.
-- *Flags:* the 32 GB number is community/secondary, not an official spec; **Blackwell/sm_120 compatibility with the repo's CUDA 12.1 build is unverified** (you'd likely need a newer CUDA/PyTorch).
+**Can it run on your 12 GB 5070 Ti? — No for Objects locally; yes on Colab.** ⚠️
+- Secondary sources cite **~32 GB VRAM** for SAM 3D Objects (Linux, CUDA 12.1). GitHub issues show a **20 GB GPU OOM** ([#6](https://github.com/facebookresearch/sam-3d-objects/issues/6)) and an open "is 32 GB strict?" question ([#30](https://github.com/facebookresearch/sam-3d-objects/issues/30)) with **no official minimum and no confirmed sub-32 GB success**. At **12 GB locally this is out of reach** for Objects.
+- **➡️ This is the textbook case for Colab:** an **A100 80 GB** (or even 40 GB) clears the ~32 GB requirement comfortably — the cleanest way for you to actually try SAM 3D Objects. (Watch the CUDA-version angle: the repo targets CUDA 12.1; Colab's A100/sm_80 avoids the Blackwell-build question entirely.)
+- **SAM 3D Body** (631M–840M backbones) is far lighter and **plausible even on 12 GB**, though no explicit VRAM figure was published — a good local experiment.
+- *Flags:* the 32 GB number is community/secondary, not an official spec; **Blackwell/sm_120 compatibility with the repo's CUDA 12.1 build is unverified** (you'd likely need a newer CUDA/PyTorch — another reason to start on Colab's Ampere).
 
 **Integration / output:**
 - **ComfyUI wrappers** (community, PozzettiAndrea): [ComfyUI-SAM3DObjects](https://github.com/PozzettiAndrea/ComfyUI-SAM3DObjects), [ComfyUI-SAM3DBody](https://github.com/PozzettiAndrea/ComfyUI-SAM3DBody) (has a **Blender-based "Export FBX"** node for rigged meshes), [ComfyUI-SAM3](https://github.com/PozzettiAndrea/ComfyUI-SAM3).
@@ -219,9 +263,11 @@ Your edge: you already teach the ML concepts that GPU parallelism naturally illu
 | **7–8** | **Triton** | Tutorials 01→05; reimplement softmax/layer-norm, benchmark vs PyTorch |
 | **8–9** | **Project 3a** | Cosine top-k: normalize → GEMM similarity → top-k; verify vs PyTorch; benchmark vs `cuvs.brute_force` |
 | **9–10** | **Project 3b** | Port a bootcamp NLP pipeline to cuML (TF-IDF + HDBSCAN/BERTopic); contrast with CPU LDA |
-| **10–12** | **Project 3c** + teach | Get Hunyuan3D mesh→texture working in ComfyUI on 16 GB via offload/fp8/tiling; profile the OOM; write up one teaching demo from §5 |
+| **10–12** | **Project 3c** + teach | Hunyuan3D mesh locally on 12 GB; run the **texture pass on Colab A100**; profile where the local OOM peaks; write up one teaching demo from §5 |
 
-**Stretch / optional:** Triton fused-attention tutorial (06); attempt SAM 3D **Body** locally (lighter than Objects); evaluate SageAttention on Blackwell for your ComfyUI sampling.
+**Stretch / optional:** Triton fused-attention tutorial (06) on a Colab A100; try SAM 3D **Body** locally (12 GB) and SAM 3D **Objects on Colab A100 80 GB**; evaluate SageAttention on Blackwell for your local ComfyUI sampling.
+
+> **Where to run each week:** weeks 1–9 (learning + kernels) run great on **either** your local card or a **Colab A100** — use Colab when you want the no-setup Ampere environment or background execution. Weeks 10–12 (heavy 3D) are the explicit **local-mesh / Colab-texture** split.
 
 ---
 
@@ -229,8 +275,9 @@ Your edge: you already teach the ML concepts that GPU parallelism naturally illu
 
 - **High confidence:** CUDA 12.8 = first sm_120 toolkit; driver R570 floor + Linux open module; cosine = normalized dot product; FAISS v1.10 cuVS backend + index types; cuML has TF-IDF but **no native LDA**; SAM 3D released Nov 19 2025 with Objects + Body; Hunyuan3D 2.1 VRAM (~10 GB shape / ~21 GB texture); TRELLIS official 16 GB min, TRELLIS.2 official 24 GB.
 - **Resolved conflict:** "stable PyTorch lacks sm_120" reports trace to the wrong wheel; stable ≥2.7 from the `cu128`+ index URL works.
-- **Moderate / verify yourself:** exact cuML speedup figures; current cuVS release version; the ~32 GB SAM 3D Objects number (community/secondary, no official spec); TRELLIS.2-on-16 GB claims (promotional guides); HY3D 8 GB low-VRAM (single anecdote).
-- **Unverified:** SAM 3D Objects on 16 GB (no confirmed success); SAM 3D Body exact VRAM; SAM 3D repo's CUDA 12.1 build vs Blackwell sm_120; live status of cuML LDA issue #4455.
+- **Moderate / verify yourself:** exact cuML speedup figures; current cuVS release version; the ~32 GB SAM 3D Objects number (community/secondary, no official spec); HY3D 8 GB low-VRAM (single anecdote); Colab GPU availability / CU rates / plan tiers (change frequently — check current pricing pages).
+- **User-confirmed:** TRELLIS.2 runs on your 12 GB 5070 Ti via the community low-VRAM ComfyUI path (you verified this); exact resolution/speed depend on settings, and the 6–8 GB floor comes from third-party low-VRAM guides.
+- **Unverified:** SAM 3D Objects on 12 GB (out of reach; no confirmed sub-32 GB success anywhere); SAM 3D Body exact VRAM; SAM 3D repo's CUDA 12.1 build vs Blackwell sm_120; live status of cuML LDA issue #4455.
 - **Default wheel tag drifts** (cu128 → cu129 → cu130) and **driver branches advance** (R575/R580 in 2026). Re-check at <https://pytorch.org/get-started/locally/> when you install.
 
 *Several primary pages (NVIDIA blog, pytorch.org, Meta blog, fal.ai) returned HTTP 403 to automated fetch; their content was corroborated via official social posts, download archives, GitHub, and multiple secondary sources rather than read verbatim.*
