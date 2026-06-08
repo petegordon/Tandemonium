@@ -142,6 +142,25 @@ Your paid Colab subscription is a major asset for **both** halves of this roadma
 - **Use raw CUDA when** you need warp-level primitives, async-copy pipelines, explicit tensor-core programming, or exotic memory (L2 residency, constant/texture).
 - **Recommendation:** learn enough CUDA C++ to reason about *why* a kernel is slow (memory model + profiling), then do most production work in Triton.
 
+### Who uses what — Triton vs CUDA vs PyTorch (adoption sidebar)
+
+Think of it as a **funnel, not three comparable totals** — the public figures measure different things (registered-developer counts vs. framework-adoption % vs. "is it the default backend"), and **there is no clean published "headcount of engineers using X."**
+
+| Layer | What "using" it means | Best available proxy | Relative scale |
+|---|---|---|---|
+| **PyTorch** | Use the framework; mostly **never write a kernel** | ~63% model-training adoption (Linux Foundation); ~60–85% of research papers; ~38% of ML job postings | **Millions** — widest |
+| **CUDA** | NVIDIA's whole developer ecosystem (libraries + tools, not just kernels) | **~4–4.5M registered developers** (2025), up from 1.8M in 2020; 40,000+ orgs | Millions *registered*; **hand-kernel writers are a small fraction** |
+| **Triton** | Write GPU kernels in Python | No published user count; **default `torch.compile` backend**, used by vLLM/Unsloth/FlagGems | **Smallest by hand-authors**, fastest-growing |
+
+**How to read it:**
+- **PyTorch ≫ CUDA-kernel writers ≫ Triton-kernel writers.** The vast majority of ML engineers live entirely in PyTorch and never write a kernel; many "use CUDA" only through cuDNN/cuBLAS/Triton underneath.
+- The **4–4.5M "CUDA developers"** headline is the *entire* developer program — the population that actually hand-writes CUDA C++ is far smaller.
+- **Triton's footprint is larger than its hand-author count looks**, because `torch.compile` auto-generates Triton — but that's automatic, not people writing it. Hand-writing Triton is still niche, though it's where much current kernel hiring concentrates.
+
+**So is Triton "the path"?** For *learning the concepts*, no — don't start there; you still need the CUDA memory model to make a Triton kernel fast. For *working* as a Python/ML person, yes as your **default kernel tool**, with raw CUDA C++ reserved for the last 5–10% of performance, library-grade kernels, and hardware features. You don't pick one — you operate at the layer the task needs.
+
+*Sources:* [NVIDIA registered-developer milestone](https://blogs.nvidia.com/blog/2-million-registered-developers-breakthroughs/); [PyTorch 2024 Year in Review](https://pytorch.org/blog/2024-year-in-review/); [MarkTechPost PyTorch vs TensorFlow 2025](https://www.marktechpost.com/2025/08/20/deep-learning-framework-showdown-pytorch-vs-tensorflow-in-2025/); [OpenAI Triton](https://openai.com/index/triton/); [Red Hat — democratizing GPU kernels with Triton](https://next.redhat.com/2024/11/07/democratizing-ai-accelerators-and-gpu-kernel-programming-using-triton/).
+
 **Time expectations:** first kernels in days; comfortable with fundamentals in **4–8 weeks**; genuine **intermediate** competence (profile/optimize non-trivial kernels, streams/graphs, useful Triton) in **~3–4 months** of consistent hands-on practice. The "100 days of CUDA" challenge format maps well to this.
 
 ---
