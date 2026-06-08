@@ -1,18 +1,22 @@
-# CUDA Learning & Projects Roadmap — RTX 5070 Ti (Blackwell, sm_120, 12 GB) + Colab
+# CUDA Learning & Projects Roadmap — RTX 5070 Ti Laptop GPU (Blackwell, sm_120, 12 GB) + Colab
 
 > Personalized deep-research roadmap compiled 2026-06-07. Tailored for an experienced
 > Python/ML practitioner & educator (taught a 2U Python AI bootcamp; works in generative
 > 3D via ComfyUI/Hunyuan3D/TRELLIS/Blender/thrixel; background in NLP, LDA, embeddings,
 > cosine/dot-product). New to CUDA C++/GPU kernels.
 >
-> **Hardware:** RTX 5070 Ti (Blackwell, sm_120), **12 GB VRAM**, **32 GB system RAM**,
-> plus a **paid Google Colab subscription** (A100 / L4 / H100 on tap) as a cloud
-> workhorse for jobs that exceed 12 GB locally.
+> **Hardware:** RTX 5070 Ti **Laptop GPU** (Blackwell, sm_120), **12 GB VRAM**, **32 GB
+> system RAM**, plus a **paid Google Colab subscription** (A100 / L4 / H100 on tap) as a
+> cloud workhorse for jobs that exceed 12 GB locally.
 >
-> > ⚠️ Spec note: the retail RTX **5070 Ti ships with 16 GB GDDR7**; the **12 GB** card
-> > is the non-Ti **RTX 5070**. The doc is written for **12 GB** as you reported (the
-> > conservative case) — if a quick `nvidia-smi` shows 16 GB you simply have more
-> > headroom than every VRAM figure below assumes.
+> > ℹ️ Spec note: the **Laptop** RTX 5070 Ti ships with **12 GB GDDR7** — that's correct
+> > and expected (only the *desktop* 5070 Ti has 16 GB). Two laptop-specific things to
+> > keep in mind: (1) **lower sustained performance** than the desktop part — mobile GPUs
+> > run at a reduced power limit (TGP, often ~80–115 W vs 250+ W desktop), so generation/
+> > compile times will be longer than desktop benchmarks; (2) **thermals/power matter** —
+> > keep it plugged into AC on a "max performance" power profile, watch for thermal
+> > throttling on long runs, and lean on Colab for sustained heavy jobs. All sm_120 /
+> > CUDA / driver requirements below are identical to the desktop card.
 >
 > This field moves fast — versions and VRAM numbers shift monthly. Claims below are cited;
 > uncertain/volatile items are flagged. Verify version-specific facts at install time.
