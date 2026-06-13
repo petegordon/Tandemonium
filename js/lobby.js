@@ -45,6 +45,7 @@ import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { FocusController } from './nav/focus-controller.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -206,6 +207,18 @@ export class Lobby {
     this._focusIndex = 0;
     this._currentStep = null;
     this._pollRafId = null;
+    // Step navigation (mode/level/role/host/join/room) now uses the shared
+    // nav-core FocusController in spatial mode (#318): directions move to the
+    // nearest on-screen focusable, dissolving the old _modeColumns/_moveColumn/
+    // _modeColIndex column math and the difficulty-sibling special-casing.
+    // (Modals — profile/leaderboard/help/rejoin/spinner — still use the
+    // hand-rolled branches in _pollGamepadNav for now.)
+    this._stepFocus = new FocusController({
+      input: this.input,
+      onConfirm: (el) => { if (el.tagName === 'INPUT') el.focus(); else el.click(); },
+      onBack: () => this._goBack(),
+    });
+    this._stepNavRanLastFrame = false; // for reprime() on modal→step transitions
     this._gpPrevUp = false;
     this._gpPrevDown = false;
     this._gpPrevA = false;
@@ -675,8 +688,7 @@ export class Lobby {
     this._modeColumns[1] = centerItems;
     this._stepItems.set(step, centerItems);
 
-    this._focusIndex = this._stepDefaultFocus.get(step) || 0;
-    this._applyFocusHighlight();
+    this._applyStepSpatialFocus(step);
     this._updateBackHint(step);
     this._updateCardHeader(step);
     if (step === this.levelStep) {
@@ -1160,6 +1172,8 @@ export class Lobby {
       if (this._modeCol === 1) {
         this._stepItems.set(this.levelStep, centerItems);
       }
+      // Refresh the spatial scope so newly-built cards are navigable (#318).
+      this._applyStepSpatialFocus(this.levelStep);
     }
   }
 
@@ -2599,6 +2613,8 @@ export class Lobby {
       }
       // Defer so input-manager's gamepadconnected handler has set gamepadConnected
       setTimeout(() => this._updateBackHint(this._currentStep), 0);
+      // Set up spatial step focus now that a gamepad is present (#318).
+      this._applyStepSpatialFocus(this._currentStep);
       // Switch to spinners if currently on join step
       if (this._currentStep === this.joinStep) {
         if (this._lastFailedCode) {
@@ -4396,6 +4412,12 @@ export class Lobby {
   _pollGamepadNav() {
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
 
+    // Whether the step-nav section ran last frame. Reset each frame; set true
+    // only when we reach it, so a modal frame (early return) flips it false and
+    // the next step frame re-primes the spatial controller's edges (#318).
+    const ranLast = this._stepNavRanLastFrame;
+    this._stepNavRanLastFrame = false;
+
     if (!this.input || !this.input.gamepadConnected) return;
 
     // Don't process lobby navigation while options overlay is open
@@ -4592,14 +4614,15 @@ export class Lobby {
       return;
     }
 
-    // Edge detection: fire on press, not hold
-    if (up && !this._gpPrevUp) this._moveFocus(-1);
-    if (down && !this._gpPrevDown) this._moveFocus(1);
-    if (left && !this._gpPrevLeft) this._moveColumn(-1);
-    if (right && !this._gpPrevRight) this._moveColumn(1);
-    if (a && !this._gpPrevA) this._confirmFocus();
-    if (b && !this._gpPrevB) this._goBack();
+    // Step navigation: delegated to the spatial FocusController (#318).
+    // Re-prime its edges when returning from a modal (ranLast captured at the
+    // top of this poll) so a held button across the transition isn't read as a
+    // fresh press.
+    if (!ranLast) this._stepFocus.reprime();
+    this._stepNavRanLastFrame = true;
+    this._stepFocus.poll();
 
+    // _gpPrev* are still maintained for the LB/RB bumpers + the modal branches.
     this._gpPrevUp = up;
     this._gpPrevDown = down;
     this._gpPrevLeft = left;
@@ -4742,6 +4765,25 @@ export class Lobby {
   _clearFocusHighlight() {
     const prev = this.lobbyEl.querySelector('.gamepad-focus');
     if (prev) prev.classList.remove('gamepad-focus');
+  }
+
+  /**
+   * Hand the current step's full focusable set (all toggle columns + the
+   * active step's center items) to the spatial FocusController, focusing the
+   * step's default item. Only highlights when a gamepad is connected (matching
+   * the old _applyFocusHighlight gate). Called from _showStep and on gamepad
+   * hot-connect. (#318)
+   */
+  _applyStepSpatialFocus(step) {
+    if (!step) return;
+    if (this.input && this.input.gamepadConnected) {
+      const centerItems = this._stepCenterItems.get(step) || [];
+      this._modeColumns[1] = centerItems;
+      const defaultEl = centerItems[this._stepDefaultFocus.get(step) || 0] || null;
+      this._stepFocus.setSpatial(this._modeColumns.flat(), defaultEl);
+    } else {
+      this._stepFocus.clear();
+    }
   }
 
   // ============================================================
