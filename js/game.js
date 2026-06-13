@@ -3669,12 +3669,13 @@ class Game {
 
     this._recordBalanceCrashIfNew(wasFallen);
 
-    // Race progress + contribution tracking (captain is authoritative)
-    // Freeze race timer while reconnecting
+    // Race progress + contribution tracking (captain is authoritative).
+    // The race clock keeps running during a partner reconnect (#316): a brief
+    // phone-lock shouldn't pause the timer for both players. (#321 already
+    // debounces the reconnect UI so quick blips don't even show.)
     if (this.raceManager) {
-      const raceDt = this._reconnecting ? 0 : dt;
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, raceDt);
-      if (raceEvent && !this._reconnecting) {
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
+      if (raceEvent) {
         if (raceEvent.event === 'timeout') { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
       }
@@ -3746,7 +3747,7 @@ class Game {
     if (this._localP2Type === 'gamepad' && !this.inputP2.gamepadConnected) {
       if (!this._localP2Disconnected) {
         this._localP2Disconnected = true;
-        this._reconnecting = true; // shared flag with online MP freezes raceManager
+        this._reconnecting = true; // pauses local co-op (this fn early-returns below)
         this._showDisconnect('Player 2 controller disconnected');
       }
       // Render a still frame so the world doesn't look crashed, but skip
@@ -3895,7 +3896,9 @@ class Game {
     // Timer value is synced from captain via onStateReceived; stoker only
     // decrements locally between network updates to keep display smooth.
     if (this.raceManager) {
-      const raceDt = this._reconnecting ? 0 : dt;
+      // Keep the displayed clock ticking during reconnect (#316); captain's
+      // authoritative timer resyncs it on the next state update.
+      const raceDt = dt;
       // Local decrement for smooth display between 20Hz state updates
       if (raceDt > 0 && this.raceManager.segmentTimeRemaining > 0) {
         this.raceManager.segmentTimeRemaining -= raceDt;
