@@ -21,6 +21,24 @@ export function readDualSenseSourcePref() {
   return 'auto';
 }
 
+/**
+ * Controller-gyro roll source (Issue #314):
+ *   'gravity' — roll from the gravity-corrected down vector (DEFAULT).
+ *               Drift-free and bounded (no ±180° wrap), so it can't exhibit
+ *               the "fuses to one side then bounces to the other" failure.
+ *   'euler'   — legacy roll from Euler-Z of the integrated orientation; kept
+ *               as a fallback via the Options toggle (relies on the drift-EMA
+ *               compensation in _applyTilt).
+ * Stored under 'tandemonium_gyro_roll_mode'; applied live. Defaults to 'gravity'.
+ */
+export function readGyroRollMode() {
+  try {
+    const v = localStorage.getItem('tandemonium_gyro_roll_mode');
+    if (v === 'euler') return v;
+  } catch (e) {}
+  return 'gravity';
+}
+
 // Controller state (gamepad binding, WebHID, sensor fusion, synthetic
 // gamepad for BT-silent DualSense) now lives on a ControllerManager slot.
 // See shared/manager.js. InputManager is a thin consumer that
@@ -138,6 +156,9 @@ export class InputManager {
     // User preference (Auto / Steam Input / WebHID) — sampled once at
     // construction; takes effect on next session boot.
     this._dualsenseSource = readDualSenseSourcePref();
+    // Controller-gyro roll source (#314). Read at construction; updated live
+    // via setGyroRollMode() so the Options toggle takes effect immediately.
+    this._gyroRollMode = readGyroRollMode();
 
     if (enableKeyboard) this._setupKeyboard();
     if (isMobile) {
@@ -701,8 +722,39 @@ export class InputManager {
       if (this.onMotionEnabled) this.onMotionEnabled();
     }
     if (!this.motionEnabled) return;
+
+    // Euler-Z roll from the integrated orientation (current default). Prone to
+    // drift ("fuses to one side") and a ±180° wrap / gimbal-lock flip ("bounces
+    // to the other side") — see #314.
     this._tmpEuler.setFromQuaternion(fusion.orientation, 'XYZ');
-    const leanDeg = -this._tmpEuler.z * (180 / Math.PI);
+    const eulerLeanDeg = -this._tmpEuler.z * (180 / Math.PI);
+
+    // Gravity-vector roll: derived from the gravity-corrected down vector, so it
+    // can't drift and is naturally bounded (no ±180° runaway). Experimental
+    // A/B toggle (#314); fusion.gravityRollRadians() documents the convention.
+    const gravLeanDeg = (typeof fusion.gravityRollRadians === 'function')
+      ? fusion.gravityRollRadians() * (180 / Math.PI)
+      : eulerLeanDeg;
+
+    const leanDeg = this._gyroRollMode === 'gravity' ? gravLeanDeg : eulerLeanDeg;
+
+    // Lightweight diagnostic (off unless window.__gyroDebug is set). Lets us
+    // capture the fuse/bounce live and compare Euler vs gravity roll (#314).
+    if (typeof window !== 'undefined' && window.__gyroDebug) {
+      window.__gyroDebugState = {
+        mode: this._gyroRollMode, eulerLeanDeg, gravLeanDeg,
+        motionOffset: this.motionOffset, relative: this.motionRawRelative,
+        lean: this._smoothedLean,
+      };
+      const t = performance.now();
+      if (!this._gyroDbgT || t - this._gyroDbgT > 250) {
+        this._gyroDbgT = t;
+        console.log('[gyro]', this._gyroRollMode,
+          'euler=' + eulerLeanDeg.toFixed(1), 'grav=' + gravLeanDeg.toFixed(1),
+          'rel=' + (this.motionRawRelative || 0).toFixed(1), 'lean=' + this._smoothedLean.toFixed(2));
+      }
+    }
+
     // Do NOT clamp before passing to _applyTilt — clamping the fusion input
     // prevents gravity correction from tracking through extreme angles,
     // causing the "gyro goes wild" feedback loop on noisy BT connections.
@@ -710,6 +762,11 @@ export class InputManager {
     this._gyroRollAccum = -leanDeg;
     this._accelRoll = leanDeg;
     this._applyTilt(leanDeg, true);
+  }
+
+  // Switch the controller-gyro roll source live (Options toggle, #314).
+  setGyroRollMode(mode) {
+    this._gyroRollMode = (mode === 'gravity') ? 'gravity' : 'euler';
   }
 
   /**
