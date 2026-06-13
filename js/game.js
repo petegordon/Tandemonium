@@ -172,10 +172,12 @@ class Game {
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
     this.recorder = new GameRecorder(this.renderer.domElement, this.input);
-    if (this._lowQuality) {
-      this.recorder.supported = false;
-      if (this.recorder.shareBtn) this.recorder.shareBtn.style.display = 'none';
-    }
+    // NOTE: clip recording is NOT gated on the general _lowQuality render flag.
+    // The recorder runs its own GPU-readback probe (_detectLowEndDevice) to
+    // decide if recording is viable. A coarse/stale hardware-tier
+    // classification was wrongly disabling clips on capable desktops even when
+    // that probe passed (issue: sup=true at construction, then overridden).
+    // Manual "Low" in Options still disables recording (see _setQuality).
 
     // Mode
     this.mode = 'solo'; // 'solo' | 'captain' | 'stoker' | 'local'
@@ -239,8 +241,9 @@ class Game {
           this._lowQuality = true;
           this.renderer.setPixelRatio(0.5);
           this.renderer.shadowMap.enabled = false;
-          this.recorder.supported = false;
-          if (this.recorder.shareBtn) this.recorder.shareBtn.style.display = 'none';
+          // Don't disable clip recording here — the recorder's own GPU-readback
+          // probe is authoritative; auto low-end render quality shouldn't kill
+          // clips on a machine that can actually record. (Manual Low still does.)
           this._updateOptionsQualityUI();
         }
       });
