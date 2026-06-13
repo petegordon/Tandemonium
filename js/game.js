@@ -1137,9 +1137,38 @@ class Game {
       });
       return;
     }
+
+    // First entry: if the lobby already established a valid steering input
+    // (toggles / connected controller / motion granted), don't re-ask — that
+    // choice is redundant with the lobby. Only fall through to the overlay when
+    // there's no working input yet, which on mobile means motion still needs a
+    // tap gesture to grant permission.
+    const detected = this._detectStokerInput();
+    if (detected) {
+      this._chosenInputMethod = detected;
+      this._readyWithInput({ method: detected, canSteer: true, hasTilt: detected === 'motion' });
+      return;
+    }
+
     const choice = await this._showStokerInputChoice();
     this._chosenInputMethod = choice.method;
     this._readyWithInput(choice);
+  }
+
+  // Best-effort detection of the steering input the invited player already has
+  // working (established via the lobby). Returns null only when there's no
+  // usable input yet — the case that genuinely needs the choice overlay.
+  _detectStokerInput() {
+    if (isMobile) {
+      if (this.input.motionEnabled) return 'motion';
+      if (this.input.gamepadConnected) return 'gamepad';
+      if (this.input.gyroConnected) return 'gyro';
+      return null; // needs the overlay (grant motion, or "I can't")
+    }
+    // Desktop always has at least the keyboard, so the overlay is never needed.
+    if (this.input.gyroConnected) return 'gyro';
+    if (this.input.gamepadConnected) return 'gamepad';
+    return 'keyboard';
   }
 
   // Is the given steering method currently usable (valid handle present)?
