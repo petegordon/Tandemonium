@@ -1041,7 +1041,32 @@ export class World {
 
   clearRaceMarkers() {
     this._cleanupDestVideo();
-    this._raceMarkers.forEach(m => this.scene.remove(m.mesh));
+    this._raceMarkers.forEach(m => {
+      this.scene.remove(m.mesh);
+      // Dispose materials/textures/geometries on the way out. Without
+      // this, every return-to-room/lobby leaks the per-race arch puffs,
+      // checkpoint/finish markers, and any cloned sprite materials they
+      // own — accumulates as GPU memory on iOS Chrome and contributes
+      // to the renderer-OOM freeze (audio keeps playing, UI locks).
+      if (m.mesh.traverse) {
+        m.mesh.traverse(child => {
+          if (child.material) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            for (const mat of mats) {
+              if (mat.map) mat.map.dispose();
+              mat.dispose();
+            }
+          }
+          if (child.geometry) child.geometry.dispose();
+        });
+      } else {
+        if (m.mesh.material) {
+          if (m.mesh.material.map) m.mesh.material.map.dispose();
+          m.mesh.material.dispose();
+        }
+        if (m.mesh.geometry) m.mesh.geometry.dispose();
+      }
+    });
     this._raceMarkers = [];
   }
 

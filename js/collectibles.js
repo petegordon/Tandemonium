@@ -367,18 +367,44 @@ export class CollectibleManager {
     for (const slot of this._pool) {
       this.scene.remove(slot.mesh);
     }
-    // Clean up video element if presents theme
+    // Variants may share their geo/mat (presents theme uses a single
+    // geo+mat across 3 variants). Dedupe before dispose so we don't
+    // call .dispose() twice on the same resource.
+    const seenGeo = new Set();
+    const seenMat = new Set();
+    const seenTex = new Set();
     for (const v of this._variants) {
-      if (v.mat.uniforms && v.mat.uniforms.map) {
-        const tex = v.mat.uniforms.map.value;
-        if (tex.image && tex.image.tagName === 'VIDEO') {
-          tex.image.pause();
-          tex.image.src = '';
-          tex.dispose();
-          break; // all variants share same texture
+      if (v.geo && !seenGeo.has(v.geo)) {
+        seenGeo.add(v.geo);
+        v.geo.dispose();
+      }
+      if (v.mat && !seenMat.has(v.mat)) {
+        seenMat.add(v.mat);
+        // Pull video off the texture before disposing — without removing
+        // the .src + .load() the <video> can stay decoding in the
+        // background and pin GPU/decoder memory on iOS.
+        if (v.mat.uniforms && v.mat.uniforms.map) {
+          const tex = v.mat.uniforms.map.value;
+          if (tex && !seenTex.has(tex)) {
+            seenTex.add(tex);
+            if (tex.image && tex.image.tagName === 'VIDEO') {
+              try { tex.image.pause(); } catch (e) {}
+              try {
+                tex.image.removeAttribute('src');
+                tex.image.load();
+              } catch (e) {}
+            }
+            tex.dispose();
+          }
         }
+        if (v.mat.map && !seenTex.has(v.mat.map)) {
+          seenTex.add(v.mat.map);
+          v.mat.map.dispose();
+        }
+        v.mat.dispose();
       }
     }
+    this._variants = [];
     this._pool = [];
     this._items = [];
   }
