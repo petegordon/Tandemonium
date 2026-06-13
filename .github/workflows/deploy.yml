@@ -49,8 +49,13 @@ jobs:
         run: |
           git fetch origin gh-pages --depth=1 || true
           if git ls-tree -d origin/gh-pages pr-preview 2>/dev/null | grep -q pr-preview; then
-            git archive origin/gh-pages pr-preview | tar -x -C _site
-            echo "Preserved PR previews: $(ls _site/pr-preview 2>/dev/null | tr '\n' ' ')"
+            # `if` consumes the pipeline status, so a failure here can't abort
+            # the deploy (bash -eo pipefail) — worst case previews aren't kept.
+            if git archive origin/gh-pages pr-preview | tar -x -C _site; then
+              echo "Preserved PR previews: $(ls _site/pr-preview 2>/dev/null | tr '\n' ' ')"
+            else
+              echo "WARNING: failed to preserve pr-preview; continuing deploy"
+            fi
           else
             echo "No existing PR previews to preserve"
           fi
