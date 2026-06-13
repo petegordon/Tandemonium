@@ -10,7 +10,7 @@ import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
-import { InputManager, readDualSenseSourcePref } from './input-manager.js';
+import { InputManager, readDualSenseSourcePref, readGyroRollMode } from './input-manager.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
 import { BalanceController } from './balance-controller.js';
@@ -3006,6 +3006,11 @@ class Game {
     if (dsSteamBtn)  dsSteamBtn.addEventListener('click',  () => this._setDualSenseSource('steam-input'));
     if (dsWebhidBtn) dsWebhidBtn.addEventListener('click', () => this._setDualSenseSource('webhid'));
 
+    const gyroEulerBtn   = document.getElementById('opt-gyro-euler');
+    const gyroGravityBtn = document.getElementById('opt-gyro-gravity');
+    if (gyroEulerBtn)   gyroEulerBtn.addEventListener('click',   () => this._setGyroRollMode('euler'));
+    if (gyroGravityBtn) gyroGravityBtn.addEventListener('click', () => this._setGyroRollMode('gravity'));
+
     if (isElectron) {
       browserDevBtn.addEventListener('click', async () => {
         const opened = await window.electronApp.toggleDevTools();
@@ -3036,6 +3041,7 @@ class Game {
 
     this._updateOptionsQualityUI();
     this._updateOptionsDualSenseSourceUI();
+    this._updateOptionsGyroRollUI();
   }
 
   _updateOptionsDualSenseSourceUI() {
@@ -3068,6 +3074,24 @@ class Game {
   _setDualSenseSource(source) {
     try { localStorage.setItem('tandemonium_dualsense_source', source); } catch(e) {}
     this._updateOptionsDualSenseSourceUI();
+  }
+
+  _setGyroRollMode(mode) {
+    const m = (mode === 'gravity') ? 'gravity' : 'euler';
+    try { localStorage.setItem('tandemonium_gyro_roll_mode', m); } catch(e) {}
+    // Apply live to both players' input managers so it can be felt immediately.
+    if (this.input) this.input.setGyroRollMode(m);
+    if (this.inputP2) this.inputP2.setGyroRollMode(m);
+    this._updateOptionsGyroRollUI();
+  }
+
+  _updateOptionsGyroRollUI() {
+    const mode = readGyroRollMode();
+    const eulerBtn   = document.getElementById('opt-gyro-euler');
+    const gravityBtn = document.getElementById('opt-gyro-gravity');
+    if (!eulerBtn) return;
+    eulerBtn.classList.toggle('active',   mode !== 'gravity');
+    gravityBtn.classList.toggle('active', mode === 'gravity');
   }
 
   _updateOptionsQualityUI() {
@@ -3125,12 +3149,15 @@ class Game {
       document.getElementById('opt-ds-auto'),
       document.getElementById('opt-ds-steam'),
       document.getElementById('opt-ds-webhid'),
+      document.getElementById('opt-gyro-euler'),
+      document.getElementById('opt-gyro-gravity'),
       document.getElementById('options-perf-btn'),
       document.getElementById('options-devtools-btn'),
       document.getElementById('options-browserdev-btn'),
       document.getElementById('options-close-btn'),
     ].filter(Boolean);
     this._updateOptionsDualSenseSourceUI();
+    this._updateOptionsGyroRollUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
   }
 
