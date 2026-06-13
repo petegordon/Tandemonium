@@ -139,10 +139,11 @@ export class SensorFusion {
    * fixing the "fuses to one side then bounces to the other" behavior (#314).
    * `_gravityVec` is gravity in the sensor-local frame (≈ (0,-1,0) at rest),
    * so a roll tips it into the local X axis. Returns radians; sign matches the
-   * Euler-Z convention used by the gyro path (positive = lean right).
+   * Euler-Z convention used by the gyro path (positive = lean right) — verified
+   * on a DualSense (the un-negated form steered inverted), see #314.
    */
   gravityRollRadians() {
-    return -Math.atan2(this._gravityVec.x, -this._gravityVec.y);
+    return Math.atan2(this._gravityVec.x, -this._gravityVec.y);
   }
 
   /**
