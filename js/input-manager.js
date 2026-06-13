@@ -349,6 +349,20 @@ export class InputManager {
     }
   }
 
+  // Attach motion listeners directly when permission was already granted
+  // elsewhere on this origin (e.g. the lobby's InputManager requested it via a
+  // user gesture). iOS grants motion permission per page, so a second
+  // InputManager only needs to attach its listeners — no new prompt/gesture.
+  // Used so an invited player gets tilt even if the captain starts the
+  // countdown before they tap "tap to start". Safe to call when permission was
+  // NOT granted: listeners simply stay inert until/unless events fire.
+  ensureMotionListening() {
+    if (this.motionReady) return;
+    if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
+      this._startMotionListening();
+    }
+  }
+
   _startMotionListening() {
     if (this.motionReady) return; // prevent duplicate listeners
     this.motionReady = true;

@@ -187,6 +187,8 @@ class Game {
     this._localP2Disconnected = false;
     this._partnerHasTilt = undefined; // undefined = unknown, true/false = received
     this._onPartnerTiltStatus = null;
+    this._stokerReady = false;        // captain-side: stoker tapped through start prompt
+    this._onStokerReady = null;
     this._partnerServerId = null;
     this._remoteLastFoot = null;
     this._remoteLastTapTime = 0;
@@ -631,6 +633,15 @@ class Game {
     this._lobbyBtn.textContent = 'ROOM';
     this.bike.applyPreset(this.lobby.selectedPreset);
 
+    // The lobby's InputManager may already hold motion permission (granted via
+    // a user gesture in the lobby). Our game InputManager is a separate
+    // instance, so proactively attach its motion listeners here — iOS grants
+    // permission per page, so no new prompt is needed. This guarantees an
+    // invited player gets tilt even if the captain starts before they tap.
+    if (this.lobby && this.lobby.input && this.lobby.input.motionReady) {
+      this.input.ensureMotionListening();
+    }
+
     // Load saved tuning so multiplayer tilt players get tutorial calibration benefit
     this._loadSavedTuning();
 
@@ -797,7 +808,16 @@ class Game {
       // Handle tilt status from partner
       if (profile && profile.type === 'tiltStatus') {
         this._partnerHasTilt = profile.hasTilt;
+        if (this.hud) this.hud.partnerHasMotion = (profile.hasTilt !== false);
         if (this._onPartnerTiltStatus) this._onPartnerTiltStatus(profile.hasTilt);
+        return;
+      }
+      // Stoker confirmed they tapped through their start prompt (captain gate).
+      if (profile && profile.type === 'playerReady') {
+        this._stokerReady = true;
+        this._partnerHasTilt = profile.hasTilt;
+        if (this.hud) this.hud.partnerHasMotion = (profile.hasTilt !== false);
+        if (this._onStokerReady) this._onStokerReady();
         return;
       }
       // Handle camera toggle from partner during gameplay
@@ -1036,6 +1056,13 @@ class Game {
       // In multiplayer, only captain initiates countdown
       // Stoker waits for EVT_COUNTDOWN from captain
       if (this.mode === 'stoker') {
+        // Confirm readiness to the captain. This is sent only AFTER the stoker
+        // has tapped "tap to start" and resolved the motion-permission prompt
+        // (granted or declined), so the captain can be certain we were given
+        // the chance to enable motion. hasTilt reports the outcome.
+        if (this.net) {
+          this.net.sendProfile({ type: 'playerReady', hasTilt: !!this.input.motionEnabled });
+        }
         // Stoker just dismisses instructions and waits
         this.instructionsEl.classList.add('hidden');
         const statusEl = document.getElementById('status');
@@ -1043,6 +1070,15 @@ class Game {
         statusEl.style.color = '#ffffff';
         statusEl.style.fontSize = '';
         return;
+      }
+
+      // Captain: don't start until the stoker has tapped through their start
+      // prompt (so they were given the motion opportunity) and confirmed their
+      // status to us. They can still play without motion if they declined —
+      // we only gate on them being READY, not on them having tilt. A timeout
+      // prevents a backgrounded/AFK partner from hard-locking the start.
+      if (this.mode === 'captain' && this.net && this.net.connected) {
+        await this._awaitStokerReady();
       }
 
       this._startCountdown();
@@ -1072,6 +1108,54 @@ class Game {
       requestAnimationFrame(pollGamepadStart);
     };
     requestAnimationFrame(pollGamepadStart);
+  }
+
+  // Captain-side gate: wait for the stoker to confirm they've tapped through
+  // their start prompt (and thus had the chance to enable motion). Resolves
+  // immediately if they're already ready; otherwise shows a waiting status and
+  // falls through after a timeout so an AFK/backgrounded partner can't lock us.
+  async _awaitStokerReady() {
+    const statusEl = document.getElementById('status');
+    if (!this._stokerReady) {
+      // Hide the start overlay so the waiting status is visible.
+      this.instructionsEl.classList.add('hidden');
+      if (statusEl) {
+        statusEl.textContent = 'Waiting for partner to be ready…';
+        statusEl.style.color = '#ffffff';
+        statusEl.style.fontSize = '';
+      }
+      const STOKER_READY_TIMEOUT_MS = 30000;
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          this._onStokerReady = null;
+          resolve();
+        };
+        this._onStokerReady = finish;
+        const timer = setTimeout(finish, STOKER_READY_TIMEOUT_MS);
+      });
+      // Briefly confirm the partner's motion status to the captain before we go.
+      this._showPartnerMotionStatus();
+      await new Promise((r) => setTimeout(r, 1000));
+    } else {
+      this._showPartnerMotionStatus();
+    }
+  }
+
+  // Show the captain a short confirmation of whether their partner has motion.
+  _showPartnerMotionStatus() {
+    const statusEl = document.getElementById('status');
+    if (!statusEl) return;
+    if (this._partnerHasTilt === false) {
+      statusEl.textContent = 'Partner has no motion — you steer';
+      statusEl.style.color = '#ffaa00';
+    } else if (this._partnerHasTilt === true) {
+      statusEl.textContent = 'Partner motion ready';
+      statusEl.style.color = '#00cc66';
+    }
   }
 
   _startCountdown() {

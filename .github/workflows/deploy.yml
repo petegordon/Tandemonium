@@ -19,6 +19,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Stamp the deployed commit + time into the lobby footer (#lobby-version)
+      # so the live web build shows what's actually deployed. Mirrors the
+      # PowerShell stamp step in build-windows.yml (which only covers desktop).
+      - name: Stamp version in index.html
+        run: |
+          HASH=$(git rev-parse --short HEAD)
+          DATE=$(TZ='America/New_York' date '+%m-%d-%Y %H:%M')
+          VERSION="v.$HASH | $DATE"
+          sed -i -E "s#id=\"lobby-version\">[^<]*#id=\"lobby-version\">${VERSION}#" index.html
+
       - name: Stage deploy files
         run: |
           mkdir -p _site
