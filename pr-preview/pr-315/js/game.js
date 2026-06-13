@@ -1138,6 +1138,18 @@ class Game {
       return;
     }
 
+    // On mobile, try to silently re-establish motion if permission was granted
+    // in a prior session (iOS persists it per origin). requestPermission()
+    // resolves 'granted' WITHOUT a prompt when already allowed; a non-gesture
+    // call when NOT yet granted just rejects (no prompt). So this either brings
+    // motion alive — letting us skip the redundant choice — or harmlessly fails
+    // and we fall through to the overlay (whose tap then grants permission).
+    if (isMobile && !this.input.motionEnabled) {
+      try { await this.input.requestMotionPermission(); } catch (_) {}
+      this.input.ensureMotionListening();
+      await this._waitForMotion(600);
+    }
+
     // First entry: if the lobby already established a valid steering input
     // (toggles / connected controller / motion granted), don't re-ask — that
     // choice is redundant with the lobby. Only fall through to the overlay when
@@ -1153,6 +1165,17 @@ class Game {
     const choice = await this._showStokerInputChoice();
     this._chosenInputMethod = choice.method;
     this._readyWithInput(choice);
+  }
+
+  // Resolve once motion events are firing, or after `ms` (whichever first).
+  _waitForMotion(ms) {
+    return new Promise((resolve) => {
+      if (this.input.motionEnabled) return resolve();
+      const iv = setInterval(() => {
+        if (this.input.motionEnabled) { clearInterval(iv); clearTimeout(t); resolve(); }
+      }, 50);
+      const t = setTimeout(() => { clearInterval(iv); resolve(); }, ms);
+    });
   }
 
   // Best-effort detection of the steering input the invited player already has
@@ -1260,11 +1283,7 @@ class Game {
               this.input.ensureMotionListening();
             }
             // Wait briefly for sensor events to confirm motion actually works.
-            await new Promise((r) => {
-              if (this.input.motionEnabled) return r();
-              const iv = setInterval(() => { if (this.input.motionEnabled) { clearInterval(iv); r(); } }, 100);
-              setTimeout(() => { clearInterval(iv); r(); }, 1500);
-            });
+            await this._waitForMotion(1500);
             if (this.input.motionEnabled) {
               finish({ method: 'motion', canSteer: true, hasTilt: true });
             } else if (noteEl) {
