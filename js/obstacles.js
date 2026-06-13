@@ -136,6 +136,13 @@ export class ObstacleManager {
       depthWrite: false
     });
 
+    // Hold refs to the shared GPU resources so destroy() can dispose them.
+    this._pylonGeo = geo;
+    this._pylonMat = mat;
+    this._shadowGeo = shadowGeo;
+    this._shadowMat = shadowMat;
+    this._shadowTex = shadowTex;
+
     // Create mesh pool (pylon + shadow per slot)
     for (let i = 0; i < POOL_SIZE; i++) {
       const mesh = new THREE.Mesh(geo, mat);
@@ -353,11 +360,21 @@ export class ObstacleManager {
     }
     if (this._video) {
       this._video.pause();
-      this._video.src = '';
+      this._video.removeAttribute('src');
+      this._video.load();
+      this._video = null;
     }
-    if (this._videoTexture) {
-      this._videoTexture.dispose();
-    }
+    if (this._videoTexture) { this._videoTexture.dispose(); this._videoTexture = null; }
+    // Dispose shared GPU resources — the pool meshes share these so we
+    // dispose once. Without this, every race-restart leaks a PlaneGeometry,
+    // a ShaderMaterial, another PlaneGeometry, a MeshBasicMaterial, and a
+    // CanvasTexture, which on iOS Chrome accumulates fast enough to OOM
+    // the renderer after a few races.
+    if (this._pylonGeo)  { this._pylonGeo.dispose();  this._pylonGeo = null; }
+    if (this._pylonMat)  { this._pylonMat.dispose();  this._pylonMat = null; }
+    if (this._shadowGeo) { this._shadowGeo.dispose(); this._shadowGeo = null; }
+    if (this._shadowMat) { this._shadowMat.dispose(); this._shadowMat = null; }
+    if (this._shadowTex) { this._shadowTex.dispose(); this._shadowTex = null; }
     this._pool = [];
     this._items = [];
   }
