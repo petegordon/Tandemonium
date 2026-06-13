@@ -38,6 +38,10 @@ export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';
 export const SITE_URL = 'https://tandemonium.jimandi.love';
 export const TURN_CREDENTIALS_URL = 'https://tandemonium-relay.pete-872.workers.dev/turn-credentials';
 
+// Display name shown to a partner when a player joins an invite without
+// signing in (anonymous play). See Issue #312.
+export const GUEST_NAME = 'Guest';
+
 // Self-hosted PeerJS signaling server (Cloud Run)
 export const PEERJS_HOST = 'peerjs-640682648249.us-central1.run.app';
 export const PEERJS_PORT = 443;

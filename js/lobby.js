@@ -38,7 +38,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { NetworkManager } from './network-manager.js';
 import { InputManager } from './input-manager.js';
-import { isMobile, RELAY_URL, SITE_URL, BIKE_MODEL_PATH, TUNE, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, RELAY_URL, SITE_URL, BIKE_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -2669,13 +2669,11 @@ export class Lobby {
     // Dismiss tap-to-start overlay — user already acted by navigating via URL
     if (this._tapOverlay) this._dismissTapOverlay();
 
-    // If not logged in, prompt sign-in first and join after auth completes
-    if (!this.auth.isLoggedIn()) {
-      this._pendingAutoJoinCode = fullCode;
-      this.auth.login();
-      return;
-    }
-
+    // No login required to join an invite. The relay accepts unauthenticated
+    // connections (worker/relay.js — auth is optional), and the manual join
+    // paths (btn-stoker / btn-join) never gated on login either. Sign-in stays
+    // available via the profile toggle for achievements/leaderboards, but it
+    // must not block joining a room from a QR/shared link. (Issue #312)
     this._showStep(this.joinStep);
     // Put the last 4 chars in the text input and pre-set for spinners
     const suffix = fullCode.slice(-4);
@@ -3530,13 +3528,14 @@ export class Lobby {
   _sendRoomProfile() {
     if (!this.net || !this.net.connected) return;
     const profile = { achievements: this._achievements.getEarned() };
-    if (this.auth && this.auth.isLoggedIn()) {
-      const user = this.auth.getUser();
-      if (user) {
-        if (user.avatar) profile.avatar = user.avatar;
-        if (user.name) profile.name = user.name;
-      }
+    const user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
+    if (user) {
+      if (user.avatar) profile.avatar = user.avatar;
+      if (user.name) profile.name = user.name;
     }
+    // Anonymous players (joined via invite without signing in) have no name —
+    // give the partner a friendly label instead of a blank. (Issue #312)
+    if (!profile.name) profile.name = GUEST_NAME;
     this.net.sendProfile(profile);
   }
 
