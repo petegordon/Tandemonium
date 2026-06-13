@@ -324,14 +324,18 @@ export class InputManager {
 
   async requestMotionPermission() {
     if (this.motionEnabled) return;
-    this.needsMotionPermission = false;
+    // NOTE: do NOT clear needsMotionPermission up front. iOS requires
+    // requestPermission() to be called from a user gesture; a non-gesture call
+    // (e.g. the lobby's auto-join) rejects without prompting. Clearing the flag
+    // eagerly would then permanently suppress the real, gesture-driven prompt
+    // (since the lobby and game share one InputManager). Only clear on a grant.
     // iOS: DeviceMotionEvent.requestPermission() grants access to BOTH
     // motion and orientation events — call it first (proven iOS API).
     if (typeof DeviceMotionEvent !== 'undefined' &&
         typeof DeviceMotionEvent.requestPermission === 'function') {
       try {
         const response = await DeviceMotionEvent.requestPermission();
-        if (response === 'granted') this._startMotionListening();
+        if (response === 'granted') { this.needsMotionPermission = false; this._startMotionListening(); }
       } catch (e) {
         console.warn('Motion permission error:', e);
       }
@@ -342,7 +346,7 @@ export class InputManager {
         typeof DeviceOrientationEvent.requestPermission === 'function') {
       try {
         const response = await DeviceOrientationEvent.requestPermission();
-        if (response === 'granted') this._startMotionListening();
+        if (response === 'granted') { this.needsMotionPermission = false; this._startMotionListening(); }
       } catch (e) {
         console.warn('Orientation permission error:', e);
       }

@@ -1192,9 +1192,12 @@ class Game {
         btn.addEventListener('click', async () => {
           const o = options[Number(btn.dataset.idx)];
           if (o.method === 'motion') {
-            if (this.input.needsMotionPermission) {
+            // Always (re)request from THIS tap — it's a guaranteed user gesture.
+            // Don't gate on needsMotionPermission: a prior non-gesture attempt
+            // (e.g. the lobby's auto-join) may have failed without prompting,
+            // and iOS only honors requestPermission() from a real gesture.
+            if (!this.input.motionEnabled) {
               await this.input.requestMotionPermission();
-            } else {
               this.input.ensureMotionListening();
             }
             // Wait briefly for sensor events to confirm motion actually works.
