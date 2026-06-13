@@ -29,11 +29,12 @@ export class HUD {
     this.partnerLabel = document.getElementById('partner-label');
     this.partnerPedalUp = document.getElementById('partner-pedal-up');
     this.partnerPedalDown = document.getElementById('partner-pedal-down');
-    // Whether the partner has motion/tilt steering. When false, the lean needle
-    // would sit frozen at 0°, so we hide the gauge (pedal indicators stay).
-    // Set by the game from the partner's reported tilt status; defaults true
-    // (show) until we learn otherwise.
-    this.partnerHasMotion = true;
+    // Whether the partner has ANY steering input (tilt, gamepad, gyro, or
+    // keyboard). When false (e.g. a mobile player who declined motion with no
+    // gamepad), their lean stays 0 and the needle sits frozen, so we hide the
+    // gauge. A desktop joystick/keyboard partner CAN steer, so we keep it shown.
+    // Set by the game from the partner's reported readiness; defaults true.
+    this.partnerCanSteer = true;
     this._lastRemoteTapTime = 0;
     this._lastRemoteFootValue = null;
     this._pedalFlashTimer = 0;
@@ -322,9 +323,9 @@ export class HUD {
 
     // Partner gauge + pedal indicators
     if (remoteData && this.partnerGauge) {
-      // Hide the lean needle when the partner has no motion — otherwise it sits
-      // frozen at 0°. Pedal indicators below stay (they can pedal without tilt).
-      this.partnerGauge.style.display = (this.partnerHasMotion !== false) ? '' : 'none';
+      // Hide the lean needle when the partner has no steering input — otherwise
+      // it sits frozen at 0°. Pedal indicators below stay (they can still pedal).
+      this.partnerGauge.style.display = (this.partnerCanSteer !== false) ? '' : 'none';
       if (this.partnerPedalUp) this.partnerPedalUp.style.display = 'flex';
       if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'flex';
       // Needle: remoteLean (-1..1) → degrees (-90..90)
