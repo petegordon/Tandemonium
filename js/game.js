@@ -36,6 +36,12 @@ import { ControllerManager } from '../shared/manager.js';
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 
+// Grace period before surfacing the "reconnecting" badge / freezing the race.
+// A brief partner phone-lock self-heals within ~1-2s (relay close → fast
+// reconnect + the partner force-reconnects on unlock), so debouncing the
+// presentation avoids a jarring freeze-flash for blips. See #320.
+const RECONNECT_GRACE_MS = 2000;
+
 // Tutorial phase boundaries — sequential layout so all phases are visible ahead
 const TUTORIAL_PHASES = {
   1: { runwayStart: 0,   contentStart: 30,  contentEnd: 80  },
@@ -207,6 +213,7 @@ class Game {
     this._stokerWasFallen = false;
     this._stokerTimeoutShown = false;
     this._reconnecting = false;
+    this._reconnectGraceTimer = null; // debounce timer for _showReconnecting (#320)
 
     // Recording partner pedal flash tracking
     this._recLastTapTime = 0;
@@ -743,7 +750,7 @@ class Game {
 
     this.net.onReconnecting = (attempt, max) => {
       if (this.state !== 'lobby') {
-        this._showReconnecting();
+        this._armReconnectGrace();
       }
     };
 
@@ -1810,12 +1817,28 @@ class Game {
     }
   }
 
+  // Debounce: arm a grace timer that surfaces the reconnecting UI only if the
+  // drop hasn't self-healed by then. Brief partner phone-locks recover within
+  // the window, so the captain never sees a freeze-flash for them (#320).
+  _armReconnectGrace() {
+    if (this._reconnecting) return;        // already shown
+    if (this._reconnectGraceTimer) return; // already pending
+    this._reconnectGraceTimer = setTimeout(() => {
+      this._reconnectGraceTimer = null;
+      this._showReconnecting();
+    }, RECONNECT_GRACE_MS);
+  }
+
   _showReconnecting() {
     this._reconnecting = true;
     document.getElementById('conn-badge').classList.add('reconnecting');
   }
 
   _hideReconnecting() {
+    if (this._reconnectGraceTimer) {
+      clearTimeout(this._reconnectGraceTimer);
+      this._reconnectGraceTimer = null;
+    }
     this._reconnecting = false;
     document.getElementById('conn-badge').classList.remove('reconnecting');
   }
