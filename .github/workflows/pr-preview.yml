@@ -32,6 +32,12 @@ jobs:
           # not from the /pr-preview/pr-N/ subdirectory
           # Custom domain (CNAME) means no /repo-name/ prefix in URLs
           sed -i 's|<head>|<head><base href="/pr-preview/pr-${{ github.event.number }}/">|' _site/index.html
+          # Stamp the previewed commit + time into the lobby footer so the
+          # preview build's version is visible (tagged with the PR number).
+          HASH=$(git rev-parse --short HEAD)
+          DATE=$(TZ='America/New_York' date '+%m-%d-%Y %H:%M')
+          VERSION="v.$HASH | $DATE (PR #${{ github.event.number }})"
+          sed -i -E "s#id=\"lobby-version\">[^<]*#id=\"lobby-version\">${VERSION}#" _site/index.html
 
       - name: Deploy PR Preview
         uses: rossjrw/pr-preview-action@v1
