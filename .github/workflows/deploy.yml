@@ -40,12 +40,28 @@ jobs:
           # in UsersFirst/tandemonium-controller-lab and is served at
           # https://lab.usersfirst.games/overlay (the /test card links out to it).
 
+      # Carry the existing PR previews into the publish tree so this deploy
+      # can't drop them. `keep_files: true` alone has proven unreliable at
+      # preserving the pr-preview/ subtree, so we restore it explicitly: the
+      # previews become part of _site and are therefore always re-published.
+      # (#319)
+      - name: Preserve existing PR previews
+        run: |
+          git fetch origin gh-pages --depth=1 || true
+          if git ls-tree -d origin/gh-pages pr-preview 2>/dev/null | grep -q pr-preview; then
+            git archive origin/gh-pages pr-preview | tar -x -C _site
+            echo "Preserved PR previews: $(ls _site/pr-preview 2>/dev/null | tr '\n' ' ')"
+          else
+            echo "No existing PR previews to preserve"
+          fi
+
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./_site
           publish_branch: gh-pages
+          # No exclude_assets for pr-preview: we now restore it INTO _site (see
+          # the preserve step), so it must be published rather than excluded.
           keep_files: true
-          exclude_assets: 'pr-preview/**'
           cname: tandemonium.jimandi.love
