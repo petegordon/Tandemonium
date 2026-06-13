@@ -1124,8 +1124,38 @@ class Game {
   // Stoker flow: show the input-choice overlay, then signal readiness to the
   // captain with the chosen method and whether we can steer at all.
   async _stokerChooseInputAndReady() {
+    // On reconnect / re-entry within the same session (e.g. the phone locked
+    // and reopened), don't re-ask how to steer if we already picked a
+    // still-valid input — just re-confirm readiness. Avoids a redundant
+    // overlay (and any motion prompt) when we already hold a working handle.
+    if (this._chosenInputMethod && this._inputMethodValid(this._chosenInputMethod)) {
+      const method = this._chosenInputMethod;
+      this._readyWithInput({
+        method,
+        canSteer: method !== 'none',
+        hasTilt: method === 'motion' && !!this.input.motionEnabled,
+      });
+      return;
+    }
     const choice = await this._showStokerInputChoice();
     this._chosenInputMethod = choice.method;
+    this._readyWithInput(choice);
+  }
+
+  // Is the given steering method currently usable (valid handle present)?
+  _inputMethodValid(method) {
+    switch (method) {
+      case 'motion':   return !!this.input.motionEnabled;
+      case 'gyro':     return !!this.input.gyroConnected;
+      case 'gamepad':  return !!this.input.gamepadConnected;
+      case 'keyboard': return true;
+      case 'none':     return true; // deliberately not steering
+      default:         return false;
+    }
+  }
+
+  // Tell the captain we're ready (with our chosen method) and wait for the ride.
+  _readyWithInput(choice) {
     if (this.net) {
       this.net.sendProfile({ type: 'playerReady', method: choice.method, canSteer: choice.canSteer, hasTilt: choice.hasTilt });
       // Keep legacy tiltStatus so the captain's in-game "partner steers" checks
