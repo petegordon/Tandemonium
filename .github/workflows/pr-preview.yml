@@ -37,7 +37,8 @@ jobs:
           HASH=$(git rev-parse --short HEAD)
           DATE=$(TZ='America/New_York' date '+%m-%d-%Y %H:%M')
           VERSION="v.$HASH | $DATE (PR #${{ github.event.number }})"
-          sed -i -E "s#id=\"lobby-version\">[^<]*#id=\"lobby-version\">${VERSION}#" _site/index.html
+          # Delimiter '@' (not '#') — the version contains '#' from the PR number.
+          sed -i -E "s@id=\"lobby-version\">[^<]*@id=\"lobby-version\">${VERSION}@" _site/index.html
 
       - name: Deploy PR Preview
         uses: rossjrw/pr-preview-action@v1
