@@ -5,6 +5,7 @@
 // iOS Safari: canvas.captureStream() produces blank video (WebKit bugs 229611, 181663).
 // Detect iOS and use WebCodecs VideoEncoder + mp4-muxer instead.
 import * as analytics from './analytics.js';
+import { FocusController } from './nav/focus-controller.js';
 
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -268,14 +269,14 @@ export class GameRecorder {
       this.shareBtn.style.display = 'none';
     }
 
-    // Gamepad navigation for clip preview modal
-    this._previewItems = [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn].filter(Boolean);
-    this._previewFocusIndex = 0;
+    // Gamepad navigation for clip preview modal — driven by the shared
+    // FocusController (nav-core, #318). B discards the clip; A clicks the
+    // focused button (the controller's default).
     this._previewPollId = null;
-    this._gpPrevLeft = false;
-    this._gpPrevRight = false;
-    this._gpPrevA = false;
-    this._gpPrevB = false;
+    this._previewFocus = new FocusController({
+      input: this.input,
+      onBack: () => this._discardClip(),
+    });
 
     // Resize listener to keep compositing canvas in sync
     window.addEventListener('resize', () => this._syncCanvasSize());
@@ -1433,33 +1434,12 @@ export class GameRecorder {
   // ── Clip preview gamepad navigation ──
 
   _startPreviewGamepadNav() {
-    // Build visible items list (SHARE may be hidden)
-    this._previewItems = [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn]
-      .filter(el => el && el.style.display !== 'none');
-    this._previewFocusIndex = 0;
-    this._gpPrevUp = false;
-    this._gpPrevDown = false;
-    this._gpPrevLeft = false;
-    this._gpPrevRight = false;
-    this._gpPrevA = false;
-    this._gpPrevB = false;
-
-    // Prime edge-detect from current gamepad state
-    if (this.input && this.input.gamepadConnected) {
-      const gp = this.input.getGamepadState();
-      if (gp) {
-        this._gpPrevUp = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
-        this._gpPrevDown = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
-        this._gpPrevLeft = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
-        this._gpPrevRight = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
-        const aIdx = this.input._gpSwapAB ? 1 : 0;
-        const bIdx = this.input._gpSwapAB ? 0 : 1;
-        this._gpPrevA = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
-        this._gpPrevB = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
-      }
-    }
-
-    this._applyPreviewFocus();
+    // Visible items only (SHARE may be hidden on desktop). The controller
+    // primes edge-state so a button held when the modal opens doesn't fire.
+    this._previewFocus.setItems(
+      [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn]
+        .filter(el => el && el.style.display !== 'none')
+    );
     this._pollPreviewGamepad();
   }
 
@@ -1468,60 +1448,12 @@ export class GameRecorder {
       cancelAnimationFrame(this._previewPollId);
       this._previewPollId = null;
     }
-    this._clearPreviewFocus();
+    this._previewFocus.clear();
   }
 
   _pollPreviewGamepad() {
     this._previewPollId = requestAnimationFrame(() => this._pollPreviewGamepad());
-
-    if (!this.input || !this.input.gamepadConnected) return;
-    const gp = this.input.getGamepadState();
-    if (!gp) return;
-
-    const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
-    const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
-    const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
-    const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
-    const aIdx = this.input._gpSwapAB ? 1 : 0;
-    const bIdx = this.input._gpSwapAB ? 0 : 1;
-    const a = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
-    const b = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
-
-    // Both axes navigate the button list (buttons wrap vertically on narrow screens)
-    if ((up && !this._gpPrevUp) || (left && !this._gpPrevLeft)) this._movePreviewFocus(-1);
-    if ((down && !this._gpPrevDown) || (right && !this._gpPrevRight)) this._movePreviewFocus(1);
-    if (a && !this._gpPrevA) this._confirmPreviewFocus();
-    if (b && !this._gpPrevB) this._discardClip();
-
-    this._gpPrevUp = up;
-    this._gpPrevDown = down;
-    this._gpPrevLeft = left;
-    this._gpPrevRight = right;
-    this._gpPrevA = a;
-    this._gpPrevB = b;
-  }
-
-  _movePreviewFocus(dir) {
-    if (!this._previewItems.length) return;
-    this._clearPreviewFocus();
-    this._previewFocusIndex = Math.max(0, Math.min(this._previewItems.length - 1, this._previewFocusIndex + dir));
-    this._applyPreviewFocus();
-  }
-
-  _confirmPreviewFocus() {
-    const el = this._previewItems[this._previewFocusIndex];
-    if (el) el.click();
-  }
-
-  _applyPreviewFocus() {
-    const el = this._previewItems[this._previewFocusIndex];
-    if (el) el.classList.add('gamepad-focus');
-  }
-
-  _clearPreviewFocus() {
-    for (const el of this._previewItems) {
-      if (el) el.classList.remove('gamepad-focus');
-    }
+    this._previewFocus.poll();
   }
 
   // ── Canvas drawing helpers ──
