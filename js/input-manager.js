@@ -324,14 +324,18 @@ export class InputManager {
 
   async requestMotionPermission() {
     if (this.motionEnabled) return;
-    this.needsMotionPermission = false;
+    // NOTE: do NOT clear needsMotionPermission up front. iOS requires
+    // requestPermission() to be called from a user gesture; a non-gesture call
+    // (e.g. the lobby's auto-join) rejects without prompting. Clearing the flag
+    // eagerly would then permanently suppress the real, gesture-driven prompt
+    // (since the lobby and game share one InputManager). Only clear on a grant.
     // iOS: DeviceMotionEvent.requestPermission() grants access to BOTH
     // motion and orientation events — call it first (proven iOS API).
     if (typeof DeviceMotionEvent !== 'undefined' &&
         typeof DeviceMotionEvent.requestPermission === 'function') {
       try {
         const response = await DeviceMotionEvent.requestPermission();
-        if (response === 'granted') this._startMotionListening();
+        if (response === 'granted') { this.needsMotionPermission = false; this._startMotionListening(); }
       } catch (e) {
         console.warn('Motion permission error:', e);
       }
@@ -342,10 +346,24 @@ export class InputManager {
         typeof DeviceOrientationEvent.requestPermission === 'function') {
       try {
         const response = await DeviceOrientationEvent.requestPermission();
-        if (response === 'granted') this._startMotionListening();
+        if (response === 'granted') { this.needsMotionPermission = false; this._startMotionListening(); }
       } catch (e) {
         console.warn('Orientation permission error:', e);
       }
+    }
+  }
+
+  // Attach motion listeners directly when permission was already granted
+  // elsewhere on this origin (e.g. the lobby's InputManager requested it via a
+  // user gesture). iOS grants motion permission per page, so a second
+  // InputManager only needs to attach its listeners — no new prompt/gesture.
+  // Used so an invited player gets tilt even if the captain starts the
+  // countdown before they tap "tap to start". Safe to call when permission was
+  // NOT granted: listeners simply stay inert until/unless events fire.
+  ensureMotionListening() {
+    if (this.motionReady) return;
+    if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
+      this._startMotionListening();
     }
   }
 
