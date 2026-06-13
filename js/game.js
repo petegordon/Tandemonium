@@ -187,6 +187,12 @@ class Game {
     this._localP2Disconnected = false;
     this._partnerHasTilt = undefined; // undefined = unknown, true/false = received
     this._onPartnerTiltStatus = null;
+    this._stokerReady = false;        // captain-side: stoker tapped through start prompt
+    this._onStokerReady = null;
+    this._partnerCanSteer = true;     // captain-side: partner has a working steering input
+    this._partnerMethod = null;       // captain-side: partner's chosen input method
+    this._chosenInputMethod = null;   // stoker-side: input picked on the start screen
+    this._inputChoiceOpen = false;    // stoker-side: input-choice overlay is up
     this._partnerServerId = null;
     this._remoteLastFoot = null;
     this._remoteLastTapTime = 0;
@@ -631,6 +637,15 @@ class Game {
     this._lobbyBtn.textContent = 'ROOM';
     this.bike.applyPreset(this.lobby.selectedPreset);
 
+    // The lobby's InputManager may already hold motion permission (granted via
+    // a user gesture in the lobby). Our game InputManager is a separate
+    // instance, so proactively attach its motion listeners here — iOS grants
+    // permission per page, so no new prompt is needed. This guarantees an
+    // invited player gets tilt even if the captain starts before they tap.
+    if (this.lobby && this.lobby.input && this.lobby.input.motionReady) {
+      this.input.ensureMotionListening();
+    }
+
     // Load saved tuning so multiplayer tilt players get tutorial calibration benefit
     this._loadSavedTuning();
 
@@ -794,10 +809,22 @@ class Game {
         this._remoteFinishStats = profile;
         return;
       }
-      // Handle tilt status from partner
+      // Handle tilt status from partner (motion availability only — NOT a
+      // steering-capability signal; a desktop partner steers without tilt).
       if (profile && profile.type === 'tiltStatus') {
         this._partnerHasTilt = profile.hasTilt;
         if (this._onPartnerTiltStatus) this._onPartnerTiltStatus(profile.hasTilt);
+        return;
+      }
+      // Stoker confirmed they picked an input on their start screen (captain
+      // gate). canSteer reflects whether they have ANY working steering input.
+      if (profile && profile.type === 'playerReady') {
+        this._stokerReady = true;
+        this._partnerHasTilt = profile.hasTilt;
+        this._partnerCanSteer = (profile.canSteer !== false);
+        this._partnerMethod = profile.method || null;
+        if (this.hud) this.hud.partnerCanSteer = this._partnerCanSteer;
+        if (this._onStokerReady) this._onStokerReady();
         return;
       }
       // Handle camera toggle from partner during gameplay
@@ -959,6 +986,17 @@ class Game {
   // ============================================================
 
   _setupStartHandler() {
+    // Invited player (stoker) in online multiplayer: present an explicit input
+    // choice instead of a bare "tap to start". This makes their steering input
+    // deliberate, and on mobile the tap on "Tilt" is the user gesture that
+    // grants motion permission — fixing the case where the captain's countdown
+    // would otherwise start before they ever enabled motion. The choice doubles
+    // as the readiness signal the captain waits on.
+    if (this.mode === 'stoker') {
+      this._stokerChooseInputAndReady();
+      return;
+    }
+
     let started = false;
     const doStart = async () => {
       if (this.state !== 'instructions' || started) return;
@@ -1033,16 +1071,25 @@ class Game {
       document.removeEventListener('touchstart', handler);
       document.removeEventListener('click', handler);
 
-      // In multiplayer, only captain initiates countdown
-      // Stoker waits for EVT_COUNTDOWN from captain
+      // In multiplayer, only captain initiates countdown.
+      // (Stokers don't reach doStart — they ready up via the input-choice
+      // overlay in _stokerChooseInputAndReady. This branch is a safety net.)
       if (this.mode === 'stoker') {
-        // Stoker just dismisses instructions and waits
         this.instructionsEl.classList.add('hidden');
         const statusEl = document.getElementById('status');
         statusEl.textContent = 'Waiting for captain...';
         statusEl.style.color = '#ffffff';
         statusEl.style.fontSize = '';
         return;
+      }
+
+      // Captain: don't start until the stoker has tapped through their start
+      // prompt (so they were given the motion opportunity) and confirmed their
+      // status to us. They can still play without motion if they declined —
+      // we only gate on them being READY, not on them having tilt. A timeout
+      // prevents a backgrounded/AFK partner from hard-locking the start.
+      if (this.mode === 'captain' && this.net && this.net.connected) {
+        await this._awaitStokerReady();
       }
 
       this._startCountdown();
@@ -1072,6 +1119,239 @@ class Game {
       requestAnimationFrame(pollGamepadStart);
     };
     requestAnimationFrame(pollGamepadStart);
+  }
+
+  // Stoker flow: show the input-choice overlay, then signal readiness to the
+  // captain with the chosen method and whether we can steer at all.
+  async _stokerChooseInputAndReady() {
+    // On reconnect / re-entry within the same session (e.g. the phone locked
+    // and reopened), don't re-ask how to steer if we already picked a
+    // still-valid input — just re-confirm readiness. Avoids a redundant
+    // overlay (and any motion prompt) when we already hold a working handle.
+    if (this._chosenInputMethod && this._inputMethodValid(this._chosenInputMethod)) {
+      const method = this._chosenInputMethod;
+      this._readyWithInput({
+        method,
+        canSteer: method !== 'none',
+        hasTilt: method === 'motion' && !!this.input.motionEnabled,
+      });
+      return;
+    }
+
+    // On mobile, try to silently re-establish motion if permission was granted
+    // in a prior session (iOS persists it per origin). requestPermission()
+    // resolves 'granted' WITHOUT a prompt when already allowed; a non-gesture
+    // call when NOT yet granted just rejects (no prompt). So this either brings
+    // motion alive — letting us skip the redundant choice — or harmlessly fails
+    // and we fall through to the overlay (whose tap then grants permission).
+    if (isMobile && !this.input.motionEnabled) {
+      try { await this.input.requestMotionPermission(); } catch (_) {}
+      this.input.ensureMotionListening();
+      await this._waitForMotion(600);
+    }
+
+    // First entry: if the lobby already established a valid steering input
+    // (toggles / connected controller / motion granted), don't re-ask — that
+    // choice is redundant with the lobby. Only fall through to the overlay when
+    // there's no working input yet, which on mobile means motion still needs a
+    // tap gesture to grant permission.
+    const detected = this._detectStokerInput();
+    if (detected) {
+      this._chosenInputMethod = detected;
+      this._readyWithInput({ method: detected, canSteer: true, hasTilt: detected === 'motion' });
+      return;
+    }
+
+    const choice = await this._showStokerInputChoice();
+    this._chosenInputMethod = choice.method;
+    this._readyWithInput(choice);
+  }
+
+  // Resolve once motion events are firing, or after `ms` (whichever first).
+  _waitForMotion(ms) {
+    return new Promise((resolve) => {
+      if (this.input.motionEnabled) return resolve();
+      const iv = setInterval(() => {
+        if (this.input.motionEnabled) { clearInterval(iv); clearTimeout(t); resolve(); }
+      }, 50);
+      const t = setTimeout(() => { clearInterval(iv); resolve(); }, ms);
+    });
+  }
+
+  // Best-effort detection of the steering input the invited player already has
+  // working (established via the lobby). Returns null only when there's no
+  // usable input yet — the case that genuinely needs the choice overlay.
+  _detectStokerInput() {
+    if (isMobile) {
+      if (this.input.motionEnabled) return 'motion';
+      if (this.input.gamepadConnected) return 'gamepad';
+      if (this.input.gyroConnected) return 'gyro';
+      return null; // needs the overlay (grant motion, or "I can't")
+    }
+    // Desktop always has at least the keyboard, so the overlay is never needed.
+    if (this.input.gyroConnected) return 'gyro';
+    if (this.input.gamepadConnected) return 'gamepad';
+    return 'keyboard';
+  }
+
+  // Is the given steering method currently usable (valid handle present)?
+  _inputMethodValid(method) {
+    switch (method) {
+      case 'motion':   return !!this.input.motionEnabled;
+      case 'gyro':     return !!this.input.gyroConnected;
+      case 'gamepad':  return !!this.input.gamepadConnected;
+      case 'keyboard': return true;
+      case 'none':     return true; // deliberately not steering
+      default:         return false;
+    }
+  }
+
+  // Tell the captain we're ready (with our chosen method) and wait for the ride.
+  _readyWithInput(choice) {
+    if (this.net) {
+      this.net.sendProfile({ type: 'playerReady', method: choice.method, canSteer: choice.canSteer, hasTilt: choice.hasTilt });
+      // Keep legacy tiltStatus so the captain's in-game "partner steers" checks
+      // (and any older client) still see our motion availability.
+      this.net.sendProfile({ type: 'tiltStatus', hasTilt: choice.hasTilt });
+    }
+    this.instructionsEl.classList.add('hidden');
+    const statusEl = document.getElementById('status');
+    if (statusEl) {
+      statusEl.textContent = 'Waiting for captain…';
+      statusEl.style.color = '#ffffff';
+      statusEl.style.fontSize = '';
+    }
+  }
+
+  // Overlay letting the invited player pick how they steer. Resolves with
+  // { method, canSteer, hasTilt }. Reuses the overlay gamepad-nav system so a
+  // gamepad-only desktop player can select with the D-pad + A.
+  _showStokerInputChoice() {
+    const options = [];
+    if (isMobile) {
+      options.push({ method: 'motion', label: '📱 Tilt to steer', desc: 'Use your phone’s motion' });
+      if (this.input.gamepadConnected) options.push({ method: 'gamepad', label: '🎮 Gamepad', desc: 'Steer with the stick' });
+      options.push({ method: 'none', label: '🚫 I can’t — partner steers', desc: 'Pedal only' });
+    } else {
+      options.push({ method: 'keyboard', label: '⌨️ Keyboard', desc: 'A / D or ← →' });
+      if (this.input.gamepadConnected) options.push({ method: 'gamepad', label: '🎮 Gamepad', desc: 'Steer with the stick' });
+      if (this.input.gyroConnected) options.push({ method: 'gyro', label: '🌀 Controller gyro', desc: 'Tilt your controller' });
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'input-choice-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    const btnRows = options.map((o, i) =>
+      '<button class="input-choice-btn" data-idx="' + i + '" style="display:block;width:100%;margin:8px 0;padding:14px 18px;border-radius:10px;border:none;background:#2a2a4e;color:#fff;font-family:inherit;font-size:1.05em;font-weight:bold;cursor:pointer;text-align:left;">' +
+        o.label + '<div style="font-size:0.75em;font-weight:normal;opacity:0.7;margin-top:2px;">' + o.desc + '</div>' +
+      '</button>'
+    ).join('');
+    overlay.innerHTML =
+      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:340px;width:86%;text-align:center;color:#fff;font-family:inherit;">' +
+        '<div style="font-size:1.3em;font-weight:bold;margin-bottom:6px;color:#a6f;">How will you steer?</div>' +
+        '<div id="input-choice-note" style="font-size:0.9em;line-height:1.4;margin-bottom:16px;opacity:0.85;">Pick your input to join the ride.</div>' +
+        btnRows +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    this._inputChoiceOpen = true;
+    this._overlayCooldownUntil = performance.now() + 350;
+    const btnEls = Array.from(overlay.querySelectorAll('.input-choice-btn'));
+    this._setOverlayButtons(btnEls);
+
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (result) => {
+        if (done) return;
+        done = true;
+        this._inputChoiceOpen = false;
+        this._clearOverlayButtons();
+        overlay.remove();
+        resolve(result);
+      };
+      const noteEl = overlay.querySelector('#input-choice-note');
+      btnEls.forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const o = options[Number(btn.dataset.idx)];
+          if (o.method === 'motion') {
+            // Always (re)request from THIS tap — it's a guaranteed user gesture.
+            // Don't gate on needsMotionPermission: a prior non-gesture attempt
+            // (e.g. the lobby's auto-join) may have failed without prompting,
+            // and iOS only honors requestPermission() from a real gesture.
+            if (!this.input.motionEnabled) {
+              await this.input.requestMotionPermission();
+              this.input.ensureMotionListening();
+            }
+            // Wait briefly for sensor events to confirm motion actually works.
+            await this._waitForMotion(1500);
+            if (this.input.motionEnabled) {
+              finish({ method: 'motion', canSteer: true, hasTilt: true });
+            } else if (noteEl) {
+              noteEl.textContent = 'Couldn’t enable motion — check browser settings, or pick another option.';
+              noteEl.style.color = '#ffaa00';
+            }
+            return;
+          }
+          if (o.method === 'none') {
+            finish({ method: 'none', canSteer: false, hasTilt: false });
+            return;
+          }
+          // keyboard / gamepad / gyro — steering arbitrates from live input.
+          finish({ method: o.method, canSteer: true, hasTilt: false });
+        });
+      });
+    });
+  }
+
+  // Captain-side gate: wait for the stoker to confirm they've tapped through
+  // their start prompt (and thus had the chance to enable motion). Resolves
+  // immediately if they're already ready; otherwise shows a waiting status and
+  // falls through after a timeout so an AFK/backgrounded partner can't lock us.
+  async _awaitStokerReady() {
+    const statusEl = document.getElementById('status');
+    if (!this._stokerReady) {
+      // Hide the start overlay so the waiting status is visible.
+      this.instructionsEl.classList.add('hidden');
+      if (statusEl) {
+        statusEl.textContent = 'Waiting for partner to be ready…';
+        statusEl.style.color = '#ffffff';
+        statusEl.style.fontSize = '';
+      }
+      const STOKER_READY_TIMEOUT_MS = 30000;
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          this._onStokerReady = null;
+          resolve();
+        };
+        this._onStokerReady = finish;
+        const timer = setTimeout(finish, STOKER_READY_TIMEOUT_MS);
+      });
+      // Briefly confirm the partner's readiness to the captain before we go.
+      this._showPartnerReadyStatus();
+      await new Promise((r) => setTimeout(r, 1000));
+    } else {
+      this._showPartnerReadyStatus();
+    }
+  }
+
+  // Show the captain a short confirmation of the partner's readiness and how
+  // they steer. Distinguishes "can't steer" (you steer) from a working input.
+  _showPartnerReadyStatus() {
+    const statusEl = document.getElementById('status');
+    if (!statusEl) return;
+    if (this._partnerCanSteer === false) {
+      statusEl.textContent = 'Partner can’t steer — you steer';
+      statusEl.style.color = '#ffaa00';
+    } else {
+      const labels = { motion: 'Tilt', gyro: 'Gyro', gamepad: 'Gamepad', keyboard: 'Keyboard' };
+      const m = labels[this._partnerMethod];
+      statusEl.textContent = m ? ('Partner ready — ' + m) : 'Partner ready';
+      statusEl.style.color = '#00cc66';
+    }
   }
 
   _startCountdown() {
@@ -3152,6 +3432,13 @@ class Game {
     if (this._optionsOpen) {
       this._pollOverlayGamepad();
       this.input.consumeTaps(); // drain buffered input so it doesn't fire when overlay closes
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    // Stoker input-choice overlay: allow gamepad selection while it's up.
+    if (this._inputChoiceOpen) {
+      this._pollOverlayGamepad();
+      this.input.consumeTaps();
       this.renderer.render(this.scene, this.camera);
       return;
     }
