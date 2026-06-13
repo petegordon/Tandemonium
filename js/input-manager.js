@@ -22,18 +22,21 @@ export function readDualSenseSourcePref() {
 }
 
 /**
- * Controller-gyro roll source (experimental A/B toggle, Issue #314):
- *   'euler'   — roll from Euler-Z of the integrated orientation (current).
- *   'gravity' — roll from the gravity-corrected down vector (drift-free,
- *               no ±180° wrap). Stored under 'tandemonium_gyro_roll_mode'.
- * Applied live so both can be felt back-to-back. Defaults to 'euler'.
+ * Controller-gyro roll source (Issue #314):
+ *   'gravity' — roll from the gravity-corrected down vector (DEFAULT).
+ *               Drift-free and bounded (no ±180° wrap), so it can't exhibit
+ *               the "fuses to one side then bounces to the other" failure.
+ *   'euler'   — legacy roll from Euler-Z of the integrated orientation; kept
+ *               as a fallback via the Options toggle (relies on the drift-EMA
+ *               compensation in _applyTilt).
+ * Stored under 'tandemonium_gyro_roll_mode'; applied live. Defaults to 'gravity'.
  */
 export function readGyroRollMode() {
   try {
     const v = localStorage.getItem('tandemonium_gyro_roll_mode');
-    if (v === 'gravity') return v;
+    if (v === 'euler') return v;
   } catch (e) {}
-  return 'euler';
+  return 'gravity';
 }
 
 // Controller state (gamepad binding, WebHID, sensor fusion, synthetic
