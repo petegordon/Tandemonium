@@ -11,6 +11,7 @@ import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode } from './input-manager.js';
+import { FocusController } from './nav/focus-controller.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
 import { BalanceController } from './balance-controller.js';
@@ -172,10 +173,12 @@ class Game {
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
     this.recorder = new GameRecorder(this.renderer.domElement, this.input);
-    if (this._lowQuality) {
-      this.recorder.supported = false;
-      if (this.recorder.shareBtn) this.recorder.shareBtn.style.display = 'none';
-    }
+    // NOTE: clip recording is NOT gated on the general _lowQuality render flag.
+    // The recorder runs its own GPU-readback probe (_detectLowEndDevice) to
+    // decide if recording is viable. A coarse/stale hardware-tier
+    // classification was wrongly disabling clips on capable desktops even when
+    // that probe passed (issue: sup=true at construction, then overridden).
+    // Manual "Low" in Options still disables recording (see _setQuality).
 
     // Mode
     this.mode = 'solo'; // 'solo' | 'captain' | 'stoker' | 'local'
@@ -239,8 +242,9 @@ class Game {
           this._lowQuality = true;
           this.renderer.setPixelRatio(0.5);
           this.renderer.shadowMap.enabled = false;
-          this.recorder.supported = false;
-          if (this.recorder.shareBtn) this.recorder.shareBtn.style.display = 'none';
+          // Don't disable clip recording here — the recorder's own GPU-readback
+          // probe is authoritative; auto low-end render quality shouldn't kill
+          // clips on a machine that can actually record. (Manual Low still does.)
           this._updateOptionsQualityUI();
         }
       });
@@ -482,12 +486,16 @@ class Game {
       this._returnToLobby();
     });
 
-    // Overlay gamepad navigation (game-over & victory)
-    this._overlayButtons = [];
-    this._overlayFocusIdx = 0;
-    this._olPrevUp = false;
-    this._olPrevDown = false;
-    this._olPrevA = false;
+    // Overlay gamepad navigation (game-over, victory, disconnect, tutorial-end,
+    // options, input-choice) — driven by the shared nav-core FocusController
+    // (#318). Vertical button stack + an optional slider (steering-feel), with
+    // a confirm cooldown (_overlayCooldownUntil) so a held A / a just-opened
+    // victory screen can't be dismissed instantly.
+    this._overlayFocus = new FocusController({
+      input: this.input,
+      orientation: 'vertical',
+      canConfirm: () => performance.now() >= this._overlayCooldownUntil,
+    });
 
     // Game state
     this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory'
@@ -3286,99 +3294,18 @@ class Game {
   // OVERLAY GAMEPAD NAVIGATION (game-over & victory)
   // ============================================================
 
+  // Overlay gamepad nav now delegates to the shared FocusController (#318).
+  // These wrappers keep the existing call sites unchanged.
   _setOverlayButtons(buttons, initialFocus = 0) {
-    this._overlayButtons = buttons.filter(Boolean);
-    this._overlayFocusIdx = Math.min(initialFocus, this._overlayButtons.length - 1);
-    this._olPrevUp = false;
-    this._olPrevDown = false;
-    this._olPrevLeft = false;
-    this._olPrevRight = false;
-    this._olPrevA = false;
-    if (this._overlayButtons.length > 0) {
-      this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
-    }
+    this._overlayFocus.setItems(buttons, initialFocus);
   }
 
   _clearOverlayButtons() {
-    for (const btn of this._overlayButtons) btn.classList.remove('gamepad-focus');
-    this._overlayButtons = [];
-    this._overlaySlider = null;
+    this._overlayFocus.clear();
   }
 
   _pollOverlayGamepad() {
-    if (this._overlayButtons.length === 0) return;
-    if (!this.input.gamepadConnected) return;
-    const gp = this.input.getGamepadState();
-    if (!gp) return;
-
-    const up = (gp.buttons[12] && gp.buttons[12].pressed) || gp.axes[1] < -0.5;
-    const down = (gp.buttons[13] && gp.buttons[13].pressed) || gp.axes[1] > 0.5;
-    const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
-    const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
-    const aIdx = this.input._gpSwapAB ? 1 : 0;
-    const a = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
-
-    if (up && !this._olPrevUp) {
-      this._overlayButtons[this._overlayFocusIdx].classList.remove('gamepad-focus');
-      this._overlayFocusIdx = Math.max(0, this._overlayFocusIdx - 1);
-      this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
-    }
-    if (down && !this._olPrevDown) {
-      this._overlayButtons[this._overlayFocusIdx].classList.remove('gamepad-focus');
-      this._overlayFocusIdx = Math.min(this._overlayButtons.length - 1, this._overlayFocusIdx + 1);
-      this._overlayButtons[this._overlayFocusIdx].classList.add('gamepad-focus');
-    }
-
-    // Left/right: always drive the overlay slider if one is registered
-    const slider = this._overlaySlider;
-    if (slider) {
-      const rawX = gp.axes[0] || 0;
-      const deadzone = 0.12;
-      let changed = false;
-
-      // Analog stick: continuous proportional movement
-      if (Math.abs(rawX) > deadzone) {
-        const speed = rawX * 1.5; // ~1.5 units/frame at full deflection (60fps = full sweep in ~1s)
-        slider.value = Math.min(Number(slider.max), Math.max(Number(slider.min), Number(slider.value) + speed));
-        changed = true;
-      }
-
-      // D-pad: repeating discrete steps (fires on press, then repeats while held)
-      if (left) {
-        if (!this._olPrevLeft) {
-          slider.value = Math.max(Number(slider.min), Number(slider.value) - 3);
-          changed = true;
-          this._olDpadRepeatTime = performance.now() + 400; // initial delay
-        } else if (performance.now() > this._olDpadRepeatTime) {
-          slider.value = Math.max(Number(slider.min), Number(slider.value) - 2);
-          changed = true;
-          this._olDpadRepeatTime = performance.now() + 80; // repeat rate
-        }
-      }
-      if (right) {
-        if (!this._olPrevRight) {
-          slider.value = Math.min(Number(slider.max), Number(slider.value) + 3);
-          changed = true;
-          this._olDpadRepeatTime = performance.now() + 400;
-        } else if (performance.now() > this._olDpadRepeatTime) {
-          slider.value = Math.min(Number(slider.max), Number(slider.value) + 2);
-          changed = true;
-          this._olDpadRepeatTime = performance.now() + 80;
-        }
-      }
-
-      if (changed) slider.dispatchEvent(new Event('input'));
-    }
-
-    if (a && !this._olPrevA && performance.now() >= this._overlayCooldownUntil) {
-      this._overlayButtons[this._overlayFocusIdx].click();
-    }
-
-    this._olPrevUp = up;
-    this._olPrevDown = down;
-    this._olPrevLeft = left;
-    this._olPrevRight = right;
-    this._olPrevA = a;
+    this._overlayFocus.poll();
   }
 
   // ============================================================
@@ -5024,7 +4951,7 @@ class Game {
     if (steamStoreBtn) overlayBtns.push(steamStoreBtn);
     overlayBtns.push(continueBtn);
     this._setOverlayButtons(overlayBtns, overlayBtns.length - 1);
-    this._overlaySlider = slider;
+    this._overlayFocus.setSlider(slider);
 
     if (isMobile) {
       this._overlayCooldownUntil = performance.now() + 3000;
@@ -5067,7 +4994,7 @@ class Game {
 
     const overlayBtns = [continueBtn];
     this._setOverlayButtons(overlayBtns, 0);
-    this._overlaySlider = slider;
+    this._overlayFocus.setSlider(slider);
 
     if (isMobile) {
       this._overlayCooldownUntil = performance.now() + 3000;
