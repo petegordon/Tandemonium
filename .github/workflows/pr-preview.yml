@@ -4,9 +4,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
 
+# Share the single gh-pages write queue with deploy.yml so previews and the
+# main deploy never push to gh-pages concurrently (non-fast-forward race). All
+# gh-pages writes across the repo serialize; cancel-in-progress:false → queue. (#319)
 concurrency:
-  group: pr-preview-${{ github.ref }}
-  cancel-in-progress: true
+  group: gh-pages-write
+  cancel-in-progress: false
 
 jobs:
   preview:

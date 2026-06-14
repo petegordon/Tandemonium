@@ -8,9 +8,12 @@ on:
 permissions:
   contents: write
 
+# Serialize ALL gh-pages writes (this deploy + every PR-preview deploy/cleanup)
+# under one queue so they can't push concurrently and reject each other as
+# non-fast-forward. cancel-in-progress:false → queue, never drop a deploy. (#319)
 concurrency:
-  group: pages-main
-  cancel-in-progress: true
+  group: gh-pages-write
+  cancel-in-progress: false
 
 jobs:
   deploy:
