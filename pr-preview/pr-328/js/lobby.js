@@ -4257,6 +4257,10 @@ export class Lobby {
         this._gpPrevRight = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
       }
     }
+    // Set up the spatial step focus for the current step on (re)start — initial
+    // load and show() set _currentStep directly without going through
+    // _showStep, so the highlight + d-pad/stick nav need seeding here too (#318).
+    this._applyStepSpatialFocus(this._currentStep);
     this._pollGamepadNav();
   }
 
@@ -4615,8 +4619,13 @@ export class Lobby {
     }
 
     // Step navigation: delegated to the spatial FocusController (#318).
-    // Re-prime its edges when returning from a modal (ranLast captured at the
-    // top of this poll) so a held button across the transition isn't read as a
+    // Lazily seed the scope the first time we run with a gamepad — covers
+    // controllers that connect async without a 'gamepadconnected' event (e.g.
+    // a WebHID DualSense), which otherwise left the mode screen un-navigable
+    // until the first _showStep.
+    if (this._stepFocus.items.length === 0) this._applyStepSpatialFocus(this._currentStep);
+    // Re-prime edges when returning from a modal (ranLast captured at the top
+    // of this poll) so a held button across the transition isn't read as a
     // fresh press.
     if (!ranLast) this._stepFocus.reprime();
     this._stepNavRanLastFrame = true;
