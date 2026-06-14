@@ -28,10 +28,13 @@
 //   _stepItems           — Map<step, focusableElements[]> — active nav items per step
 //   _stepCenterItems     — Map<step, elements[]> — immutable center column items
 //   _stepBack            — Map<step, backButton> — back button per step
-//   _modeColumns         — 4-column layout [leftToggles, center, rightToggles, farRight]
-//   _moveFocus(dir)      — vertical nav (up/down), skips difficulty siblings
-//   _moveColumn(dir)     — horizontal nav (left/right), difficulty sibling cycling
-//   _pollGamepadNav()    — RAF loop polling gamepad, dispatches to above
+//   _modeColumns         — 4-column layout [leftToggles, center, rightToggles, farRight];
+//                          flattened into the spatial FocusController's scope
+//   _stepFocus           — nav-core FocusController (spatial mode) driving all
+//                          step nav; directions move to the nearest on-screen
+//                          focusable by geometry (#318) — replaced _moveFocus/
+//                          _moveColumn/_modeColIndex column math
+//   _pollGamepadNav()    — RAF loop: modal branches + LB/RB, else _stepFocus.poll()
 // ═══════════════════════════════════════════════════════════════
 
 import * as THREE from 'three';
@@ -4407,11 +4410,11 @@ export class Lobby {
   }
 
   /**
-   * RAF-based gamepad polling loop. Reads navigator.getGamepads() every frame.
-   * Dispatches: D-pad/left-stick up/down → _moveFocus(), left/right → _moveColumn(),
-   * A button → _confirmFocus(), B button → _goBack(), LB/RB → bike color cycle.
-   * Special modes: spinner input on join step, modal navigation for profile/
-   * leaderboard/help overlays.
+   * RAF-based gamepad polling loop. Handles the modal branches (profile/
+   * leaderboard/help/rejoin/spinner) and LB/RB bike-color bumpers inline, then
+   * delegates step navigation to the spatial FocusController (_stepFocus.poll()
+   * — up/down/left/right move to the nearest on-screen focusable, A confirms,
+   * B backs out). (#318)
    */
   _pollGamepadNav() {
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
@@ -4640,135 +4643,9 @@ export class Lobby {
     this._gpPrevB = b;
   }
 
-  /**
-   * Move gamepad focus vertically (up/down) through the current step's items.
-   * Special handling: difficulty buttons are horizontal siblings — up/down skips
-   * over them as a group. Down from a level card jumps to the selected difficulty
-   * button. Skips hidden items.
-   * @param {number} dir — +1 for down, -1 for up
-   */
-  _moveFocus(dir) {
-    const items = this._stepItems.get(this._currentStep);
-    if (!items || items.length === 0) return;
-
-    // Difficulty buttons are horizontal — up/down should skip over siblings
-    const focusedEl = items[this._focusIndex];
-    if (focusedEl && focusedEl.classList.contains('difficulty-btn')) {
-      if (dir === -1) {
-        // Up from any difficulty button: jump to tutorial button if visible, else last level card
-        const preDiffItem = [...items].reverse().find(el =>
-          !el.classList.contains('difficulty-btn') &&
-          el.offsetParent !== null && el.style.display !== 'none' &&
-          items.indexOf(el) < items.indexOf(focusedEl)
-        );
-        if (preDiffItem) {
-          this._clearFocusHighlight();
-          this._focusIndex = items.indexOf(preDiffItem);
-          this._applyFocusHighlight();
-          return;
-        }
-      } else {
-        // Down from any difficulty button: jump past all difficulty buttons
-        const firstNonDiff = items.findIndex((el, i) =>
-          i > this._focusIndex && !el.classList.contains('difficulty-btn') &&
-          el.offsetParent !== null && el.style.display !== 'none'
-        );
-        if (firstNonDiff >= 0) {
-          this._clearFocusHighlight();
-          this._focusIndex = firstNonDiff;
-          this._applyFocusHighlight();
-          return;
-        }
-      }
-    }
-
-    this._clearFocusHighlight();
-    // Skip hidden items
-    let next = this._focusIndex + dir;
-    while (next >= 0 && next < items.length) {
-      const el = items[next];
-      if (el && el.offsetParent !== null && el.style.display !== 'none') break;
-      next += dir;
-    }
-    this._focusIndex = Math.max(0, Math.min(items.length - 1, next));
-    // If we landed on a hidden item, stay put
-    const landed = items[this._focusIndex];
-    if (landed && (landed.offsetParent === null || landed.style.display === 'none')) {
-      this._focusIndex -= dir; // revert
-    }
-    this._applyFocusHighlight();
-  }
-
-  /**
-   * Move gamepad focus horizontally (left/right). On difficulty buttons, cycles
-   * between sibling difficulty options. On mode step, switches between the 4
-   * columns (left toggles, center, right toggles, far-right toggles). Saves
-   * and restores focus position per column.
-   * @param {number} dir — +1 for right, -1 for left
-   */
-  _moveColumn(dir) {
-    const items = this._stepItems.get(this._currentStep);
-    const focusedEl = items && items[this._focusIndex];
-    // If focused on a difficulty button, move to sibling difficulty button instead of changing columns
-    if (focusedEl && focusedEl.classList.contains('difficulty-btn')) {
-      const siblings = [...focusedEl.parentElement.querySelectorAll('.difficulty-btn')];
-      const curIdx = siblings.indexOf(focusedEl);
-      const nextIdx = curIdx + dir;
-      if (nextIdx >= 0 && nextIdx < siblings.length) {
-        // Find the target button in the items list and move focus there
-        const target = siblings[nextIdx];
-        const targetFocusIdx = items.indexOf(target);
-        if (targetFocusIdx >= 0) {
-          this._clearFocusHighlight();
-          this._focusIndex = targetFocusIdx;
-          this._applyFocusHighlight();
-        }
-      }
-      return;
-    }
-
-    // Level cards are vertical — left/right always switches to toggle columns
-    const newCol = Math.max(0, Math.min(this._modeColumns.length - 1, this._modeCol + dir));
-    if (newCol === this._modeCol) return;
-
-    this._clearFocusHighlight();
-    // Save current row index for the column we're leaving
-    this._modeColIndex[this._modeCol] = this._focusIndex;
-    this._modeCol = newCol;
-    // Restore row index for destination column (clamped); filter hidden buttons
-    const colItems = this._modeColumns[newCol].filter(el => el.style.display !== 'none');
-    this._focusIndex = Math.min(this._modeColIndex[newCol], colItems.length - 1);
-    // Update _stepItems to point at the active column's items
-    this._stepItems.set(this._currentStep, colItems);
-    this._applyFocusHighlight();
-  }
-
-  _confirmFocus() {
-    const items = this._stepItems.get(this._currentStep);
-    if (!items || items.length === 0) return;
-
-    const el = items[this._focusIndex];
-    if (!el) return;
-
-    if (el.tagName === 'INPUT') {
-      el.focus();
-    } else {
-      el.click();
-    }
-  }
-
   _goBack() {
     const backBtn = this._stepBack.get(this._currentStep);
     if (backBtn) backBtn.click();
-  }
-
-  _applyFocusHighlight() {
-    if (!this.input || !this.input.gamepadConnected) return;
-    const items = this._stepItems.get(this._currentStep);
-    if (!items || items.length === 0) return;
-
-    const el = items[this._focusIndex];
-    if (el) el.classList.add('gamepad-focus');
   }
 
   _clearFocusHighlight() {
