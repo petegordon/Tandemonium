@@ -214,14 +214,24 @@ export class Lobby {
     // nav-core FocusController in spatial mode (#318): directions move to the
     // nearest on-screen focusable, dissolving the old _modeColumns/_moveColumn/
     // _modeColIndex column math and the difficulty-sibling special-casing.
-    // (Modals — profile/leaderboard/help/rejoin/spinner — still use the
-    // hand-rolled branches in _pollGamepadNav for now.)
     this._stepFocus = new FocusController({
       input: this.input,
       onConfirm: (el) => { if (el.tagName === 'INPUT') el.focus(); else el.click(); },
       onBack: () => this._goBack(),
     });
     this._stepNavRanLastFrame = false; // for reprime() on modal→step transitions
+    // Shared controller for the linear modal lists (profile popup, rejoin
+    // overlay). Vertical nav; B runs a per-modal back action set on open.
+    // (Leaderboard/help/spinner stay on their bespoke branches — 2D table,
+    // scroll-only, and character-wheel input don't fit a flat list.)
+    this._modalFocus = new FocusController({
+      input: this.input,
+      orientation: 'vertical',
+      onBack: () => { if (this._modalBack) this._modalBack(); },
+    });
+    this._activeModal = null; // 'profile' | 'rejoin' | null
+    this._modalBack = null;
+    this._gpPrevUp = false;
     this._gpPrevUp = false;
     this._gpPrevDown = false;
     this._gpPrevA = false;
@@ -4470,25 +4480,15 @@ export class Lobby {
 
     // If profile popup is open, navigate between logout and back
     if (this.profilePopup.classList.contains('visible')) {
-      const isLoggedIn = this.auth.isLoggedIn();
-      const items = isLoggedIn
+      const items = this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
         : [document.getElementById('profile-popup-signin-back')];
-      if (up && !this._gpPrevUp) this._profileFocusIndex = Math.max(0, this._profileFocusIndex - 1);
-      if (down && !this._gpPrevDown) this._profileFocusIndex = Math.min(items.length - 1, this._profileFocusIndex + 1);
-      // Apply focus highlight
-      items.forEach(el => el.classList.remove('gamepad-focus'));
-      if (items[this._profileFocusIndex]) items[this._profileFocusIndex].classList.add('gamepad-focus');
-      if (a && !this._gpPrevA) {
-        if (items[this._profileFocusIndex]) items[this._profileFocusIndex].click();
+      if (this._activeModal !== 'profile') {
+        this._activeModal = 'profile';
+        this._modalBack = () => this.profilePopup.classList.remove('visible');
+        this._modalFocus.setItems(items);
       }
-      if (b && !this._gpPrevB) {
-        items.forEach(el => el.classList.remove('gamepad-focus'));
-        this.profilePopup.classList.remove('visible');
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
     // Leaderboard modal gamepad navigation
@@ -4557,33 +4557,19 @@ export class Lobby {
       return;
     }
 
-    // Recent rooms popup: navigate room cards + New Room button
+    // Recent rooms popup: navigate room cards + New Room button. B = New Room.
     const rejoinOverlay = document.getElementById('rejoin-overlay');
     if (rejoinOverlay) {
       const items = [...rejoinOverlay.querySelectorAll('.rejoin-room-card'), document.getElementById('btn-rejoin-new')].filter(Boolean);
-      if (items.length === 0) { this._rejoinFocus = undefined; return; }
-      if (this._rejoinFocus === undefined) this._rejoinFocus = 0;
-      if (up && !this._gpPrevUp) {
-        items[this._rejoinFocus].classList.remove('gamepad-focus');
-        this._rejoinFocus = Math.max(0, this._rejoinFocus - 1);
-        items[this._rejoinFocus].classList.add('gamepad-focus');
+      if (items.length === 0) { return; }
+      if (this._activeModal !== 'rejoin') {
+        this._activeModal = 'rejoin';
+        this._modalBack = () => { const n = document.getElementById('btn-rejoin-new'); if (n) n.click(); };
+        this._modalFocus.setItems(items);
       }
-      if (down && !this._gpPrevDown) {
-        items[this._rejoinFocus].classList.remove('gamepad-focus');
-        this._rejoinFocus = Math.min(items.length - 1, this._rejoinFocus + 1);
-        items[this._rejoinFocus].classList.add('gamepad-focus');
-      }
-      if (a && !this._gpPrevA) items[this._rejoinFocus].click();
-      if (b && !this._gpPrevB) {
-        const newBtn = document.getElementById('btn-rejoin-new');
-        if (newBtn) newBtn.click();
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
-    this._rejoinFocus = undefined;
 
     // If "Tap to Start" overlay is showing, any button dismisses it
     if (this._tapOverlay) {
@@ -4620,6 +4606,10 @@ export class Lobby {
       this._gpPrevA = a; this._gpPrevB = b;
       return;
     }
+
+    // Reaching here means no modal is open — release a linear modal controller
+    // (profile/rejoin) if one was active, clearing its highlight.
+    if (this._activeModal) { this._modalFocus.clear(); this._activeModal = null; this._modalBack = null; }
 
     // Step navigation: delegated to the spatial FocusController (#318).
     // Lazily seed the scope the first time we run with a gamepad — covers
