@@ -1407,11 +1407,16 @@ export class Lobby {
     // Profile popup gamepad focus index (0 = logout/sign-in, 1 = back)
     this._profileFocusIndex = 0;
 
-    // Close popup when clicking outside
+    // Close popup when clicking outside.
+    // The DualSense touchpad is mapped to a system mouse (via Steam Input), so
+    // navigating the controller emits stray pointer clicks outside the popup
+    // that would dismiss it the instant it opened — the "flash". When a gamepad
+    // is driving, dismiss via B / RETURN TO LOBBY instead of outside-clicks. (#325)
     document.addEventListener('click', (e) => {
       if (!this.profilePopup.classList.contains('visible')) return;
       if (this.profilePopup.contains(e.target)) return;
       if (this.toggleProfile.contains(e.target)) return;
+      if (this.input && this.input.gamepadConnected) return;
       this.profilePopup.classList.remove('visible');
     });
 
@@ -1894,7 +1899,12 @@ export class Lobby {
     };
     const autoDismiss = () => dismiss();
     const timer = setTimeout(dismiss, 2000);
-    setTimeout(() => document.addEventListener('click', autoDismiss, true), 0);
+    // Only wire dismiss-on-click for mouse users. With a gamepad connected the
+    // DualSense touchpad (Steam Input → system mouse) emits stray clicks that
+    // would dismiss this notice the instant it appears — rely on the 2s timer. (#325)
+    if (!(this.input && this.input.gamepadConnected)) {
+      setTimeout(() => document.addEventListener('click', autoDismiss, true), 0);
+    }
   }
 
   _showRecalPopup() {
