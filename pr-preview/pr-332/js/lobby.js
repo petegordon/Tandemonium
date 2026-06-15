@@ -1418,6 +1418,20 @@ export class Lobby {
       this.profilePopup.classList.remove('visible');
     });
 
+    // Controller/keyboard-reachable sign-in proxy: the rendered Google button is
+    // a cross-origin iframe a synthetic .click() can't activate, so this button
+    // triggers One Tap in code. If One Tap is suppressed (FedCM cooldown), reveal
+    // a hint pointing at the mouse/phone paths instead of failing silently. (#325)
+    document.getElementById('profile-popup-signin-proxy').addEventListener('click', () => {
+      this.auth.login((n) => {
+        const suppressed = n && ((n.isNotDisplayed && n.isNotDisplayed()) || (n.isSkippedMoment && n.isSkippedMoment()));
+        if (suppressed || n === null) {
+          const hint = document.getElementById('profile-popup-signin-hint');
+          if (hint) hint.style.display = '';
+        }
+      });
+    });
+
     // Profile popup gamepad focus index (0 = logout/sign-in, 1 = back)
     this._profileFocusIndex = 0;
 
@@ -2119,17 +2133,22 @@ export class Lobby {
       // Show sign-in button, hide logged-in content
       document.querySelector('.profile-popup-content').style.display = 'none';
       document.getElementById('profile-popup-signin').style.display = '';
+      // Reset the suppressed-One-Tap hint each open; the proxy reveals it on demand.
+      const hint = document.getElementById('profile-popup-signin-hint');
+      if (hint) hint.style.display = 'none';
       this.profilePopup.classList.toggle('visible');
       // Also try One Tap prompt as a bonus
       this.auth.login();
     }
-    // Reset gamepad focus for profile popup
+    // Reset gamepad focus for profile popup. Default focus is a non-closing
+    // action (sign-in proxy / log out) so opening with A then a stray A press
+    // can't immediately dismiss the popup via the only focusable item. (#325)
     if (this.profilePopup.classList.contains('visible')) {
       this._profileFocusIndex = 0;
       // Apply initial highlight
       const items = this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
-        : [document.getElementById('profile-popup-signin-back')];
+        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')];
       items.forEach(el => el.classList.remove('gamepad-focus'));
       items[0].classList.add('gamepad-focus');
     } else {
@@ -4494,7 +4513,7 @@ export class Lobby {
     if (this.profilePopup.classList.contains('visible')) {
       const items = this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
-        : [document.getElementById('profile-popup-signin-back')];
+        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')];
       if (this._activeModal !== 'profile') {
         this._activeModal = 'profile';
         this._modalBack = () => this.profilePopup.classList.remove('visible');

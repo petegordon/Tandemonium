@@ -2675,6 +2675,25 @@
   .profile-popup-logout:hover {
     background: rgba(255,80,80,0.25);
   }
+  /* Controller-reachable sign-in proxy (#325) — affirmative, distinct from the
+     red LOG OUT and the neutral RETURN TO LOBBY buttons. */
+  .profile-popup-signin-btn {
+    margin-top: 8px;
+    padding: 6px 18px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    border: 1px solid rgba(90,170,255,0.5);
+    border-radius: 6px;
+    background: rgba(90,170,255,0.15);
+    color: rgba(150,200,255,0.95);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .profile-popup-signin-btn:hover {
+    background: rgba(90,170,255,0.28);
+  }
   .profile-popup-back {
     margin-top: 4px;
     padding: 6px 18px;
@@ -4070,6 +4089,11 @@ ON</button>
           </div>
           <div id="profile-popup-signin" style="display:none;padding:12px;text-align:center;">
             <div id="gsi-button-container"></div>
+            <!-- Controller/keyboard-reachable sign-in: the rendered Google button
+                 above is a cross-origin iframe that a synthetic .click() can't
+                 activate, so this proxy triggers One Tap in code instead. (#325) -->
+            <button class="profile-popup-signin-btn" id="profile-popup-signin-proxy" style="margin-top:10px;">SIGN IN WITH GOOGLE</button>
+            <div id="profile-popup-signin-hint" style="display:none;font-size:11px;line-height:1.4;opacity:0.75;margin-top:8px;">One&nbsp;Tap isn't available right now — sign in with the button above (mouse) or on your phone.</div>
             <button class="profile-popup-back" id="profile-popup-signin-back" style="margin-top:10px;">RETURN TO LOBBY</button>
           </div>
         </div>
@@ -4344,7 +4368,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.40f7d28 | 06-14-2026 20:47 (PR #332)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Steam Input live diagnostic">🎮 Test</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b800ff5 | 06-14-2026 21:02 (PR #332)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Steam Input live diagnostic">🎮 Test</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
