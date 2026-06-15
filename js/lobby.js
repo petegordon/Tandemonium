@@ -2088,13 +2088,21 @@ export class Lobby {
     if (items[idx]) items[idx].classList.add('gamepad-focus');
   }
 
+  // Tabs (main + sub) + close button — the leaderboard's spatial focusable set.
+  _lbFocusables() {
+    return [
+      ...document.querySelectorAll('#lb-main-tabs .lb-tab'),
+      ...document.querySelectorAll('#lb-sub-tabs .lb-tab'),
+      document.getElementById('leaderboard-close'),
+    ].filter(Boolean);
+  }
+
   _lbResetFocus() {
-    // Default: focus the active main tab
-    this._lbFocusRow = 0;
-    const mainTabs = document.getElementById('lb-main-tabs').querySelectorAll('.lb-tab');
-    this._lbFocusCol = [...mainTabs].findIndex(t => t.classList.contains('active'));
-    if (this._lbFocusCol < 0) this._lbFocusCol = 0;
-    this._lbApplyFocus();
+    // Set up spatial focus over the tabs + close, defaulting to the active main
+    // tab. The leaderboard branch in _pollGamepadNav drives it (#318).
+    this._activeModal = 'leaderboard';
+    this._modalBack = () => this._closeLeaderboard();
+    this._modalFocus.setSpatial(this._lbFocusables(), document.querySelector('#lb-main-tabs .lb-tab.active'));
   }
 
   _toggleProfile() {
@@ -4493,52 +4501,23 @@ export class Lobby {
     }
     // Leaderboard modal gamepad navigation
     if (document.getElementById('leaderboard-modal').style.display !== 'none') {
-      // Right stick (axis 3) scrolls the leaderboard list
+      // Right stick (axis 3) scrolls the leaderboard score list (focus nav is
+      // over the tabs/close only).
       const lbStickY = gp.axes[3] || 0;
       if (Math.abs(lbStickY) > 0.15) {
         const lbBox = document.querySelector('.leaderboard-box');
         if (lbBox) lbBox.scrollTop += lbStickY * 12;
       }
-      if (left && !this._gpPrevLeft) {
-        this._lbFocusCol = Math.max(0, this._lbFocusCol - 1);
-        this._lbApplyFocus();
+      // Tabs (main + sub) + close form a small spatial grid (#318). Sub-tabs
+      // rebuild on main-tab change, so refresh the set each frame; B closes.
+      if (this._activeModal !== 'leaderboard') {
+        this._activeModal = 'leaderboard';
+        this._modalBack = () => this._closeLeaderboard();
+        this._modalFocus.setSpatial(this._lbFocusables(), document.querySelector('#lb-main-tabs .lb-tab.active'));
+      } else {
+        this._modalFocus.refreshSpatial(this._lbFocusables());
       }
-      if (right && !this._gpPrevRight) {
-        const rowLen = this._lbGetRowItems(this._lbFocusRow).length;
-        this._lbFocusCol = Math.min(rowLen - 1, this._lbFocusCol + 1);
-        this._lbApplyFocus();
-      }
-      if (up && !this._gpPrevUp) {
-        let r = this._lbFocusRow - 1;
-        while (r >= 0 && this._lbGetRowItems(r).length === 0) r--;
-        if (r >= 0) {
-          this._lbFocusRow = r;
-          const rowLen = this._lbGetRowItems(r).length;
-          this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
-          this._lbApplyFocus();
-        }
-      }
-      if (down && !this._gpPrevDown) {
-        let r = this._lbFocusRow + 1;
-        while (r <= 2 && this._lbGetRowItems(r).length === 0) r++;
-        if (r <= 2) {
-          this._lbFocusRow = r;
-          const rowLen = this._lbGetRowItems(r).length;
-          this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
-          this._lbApplyFocus();
-        }
-      }
-      if (a && !this._gpPrevA) {
-        const items = this._lbGetRowItems(this._lbFocusRow);
-        const idx = Math.min(this._lbFocusCol, items.length - 1);
-        if (items[idx]) items[idx].click();
-      }
-      if (b && !this._gpPrevB) {
-        this._closeLeaderboard();
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
     if (this.helpModal.classList.contains('visible')) {
