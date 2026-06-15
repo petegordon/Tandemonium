@@ -1440,7 +1440,26 @@ export class Lobby {
       if (!this.profilePopup.classList.contains('visible')) return;
       if (this.profilePopup.contains(e.target)) return;
       if (this.toggleProfile.contains(e.target)) return;
+      // [#325 DIAG] who is closing the popup, and is it a real pointer event?
+      const t = e.target;
+      console.log('[#325] outside-click CLOSE profilePopup; isTrusted=', e.isTrusted,
+        'target=', (t && (t.id || t.className || t.tagName)) || t);
       this.profilePopup.classList.remove('visible');
+    });
+
+    // [#325 DIAG] TEMPORARY: log every open/close of the two flashing popups
+    // with a stack trace so the actual close path is captured instead of
+    // guessed. Remove once the flash is pinned.
+    ['profile-popup', 'keyboard-confirm-popup'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      let wasVisible = el.classList.contains('visible');
+      new MutationObserver(() => {
+        const v = el.classList.contains('visible');
+        if (v === wasVisible) return;
+        wasVisible = v;
+        console.log(`[#325] ${id} -> ${v ? 'OPEN' : 'CLOSE'}\n` + new Error().stack);
+      }).observe(el, { attributes: true, attributeFilter: ['class'] });
     });
 
     // Leaderboard close
