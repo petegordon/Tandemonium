@@ -1185,8 +1185,12 @@ export class Lobby {
       if (this._modeCol === 1) {
         this._stepItems.set(this.levelStep, centerItems);
       }
-      // Refresh the spatial scope so newly-built cards are navigable (#318).
-      this._applyStepSpatialFocus(this.levelStep);
+      // Refresh items (new cards) while PRESERVING the current focus — don't
+      // reset to the step default, which would jump focus off a toggle the
+      // user just pressed (e.g. ALL/gyro rebuilds the cards). (#318)
+      if (this.input && this.input.gamepadConnected) {
+        this._stepFocus.refreshSpatial(this._modeColumns.flat());
+      }
     }
   }
 
