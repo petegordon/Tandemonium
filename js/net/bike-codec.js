@@ -125,4 +125,37 @@ export class BikeCodec {
     const json = new TextDecoder().decode(bytes.slice(1));
     return JSON.parse(json);
   }
+
+  /**
+   * Route an opaque inbound frame to the matching game handler. This is the
+   * inbound half of the protocol — it keeps the transport free of any
+   * `MSG_*` knowledge (the transport hands over any non-keepalive bytes and
+   * this decides what they mean). Returns true if the frame was a known game
+   * message, false otherwise (so the transport can ignore unknown frames).
+   *
+   * @param {Uint8Array} bytes
+   * @param {{onState?:Function,onPedal?:Function,onEvent?:Function,onLean?:Function,onProfile?:Function}} h
+   */
+  dispatch(bytes, h) {
+    if (!bytes || bytes.length === 0) return false;
+    switch (bytes[0]) {
+      case MSG_PEDAL:
+        if (h.onPedal) h.onPedal(this.decodePedal(bytes));
+        return true;
+      case MSG_STATE:
+        if (h.onState) h.onState(this.decodeState(bytes));
+        return true;
+      case MSG_EVENT:
+        if (bytes.length >= 2 && h.onEvent) h.onEvent(bytes[1]);
+        return true;
+      case MSG_LEAN:
+        if (bytes.length >= 5 && h.onLean) h.onLean(this.decodeLean(bytes));
+        return true;
+      case MSG_PROFILE:
+        try { if (h.onProfile) h.onProfile(this.decodeProfile(bytes)); } catch (e) { /* malformed */ }
+        return true;
+      default:
+        return false;
+    }
+  }
 }
