@@ -1320,6 +1320,12 @@ export class Lobby {
       this.auth.initGSI();
     }
 
+    // Hide LOG OUT in any Electron session, not just verified-Steam. Google
+    // sign-in can't run on the file:// origin, so logging out of a persisted
+    // (Steam) session strands the user with no way back in. Steam identity is
+    // automatic, so there's no meaningful logout in the desktop app. (#332)
+    if (isElectron && logoutBtn) logoutBtn.style.display = 'none';
+
     // Save original SVG to restore on logout
     const profileSvg = this.toggleProfile.innerHTML;
 
@@ -2157,12 +2163,14 @@ export class Lobby {
     // can't immediately dismiss the popup via the only focusable item. (#325)
     if (this.profilePopup.classList.contains('visible')) {
       this._profileFocusIndex = 0;
-      // Apply initial highlight
-      const items = this.auth.isLoggedIn()
+      // Apply initial highlight (skip the logout button when it's hidden — e.g.
+      // Electron/Steam — so focus never lands on an invisible control). (#332)
+      const items = (this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
-        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')];
+        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')]
+      ).filter(el => el && el.style.display !== 'none');
       items.forEach(el => el.classList.remove('gamepad-focus'));
-      items[0].classList.add('gamepad-focus');
+      if (items[0]) items[0].classList.add('gamepad-focus');
     } else {
       // Clear highlights on close
       this.profilePopup.querySelectorAll('.gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
@@ -4533,11 +4541,14 @@ export class Lobby {
     this._gpPrevLB = lb;
     this._gpPrevRB = rb;
 
-    // If profile popup is open, navigate between logout and back
+    // If profile popup is open, navigate between logout and back (skip the
+    // logout button when it's hidden — Electron/Steam — so gamepad focus can't
+    // land on or confirm an invisible control). (#332)
     if (this.profilePopup.classList.contains('visible')) {
-      const items = this.auth.isLoggedIn()
+      const items = (this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
-        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')];
+        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')]
+      ).filter(el => el && el.style.display !== 'none');
       if (this._activeModal !== 'profile') {
         this._activeModal = 'profile';
         this._modalBack = () => this.profilePopup.classList.remove('visible');
