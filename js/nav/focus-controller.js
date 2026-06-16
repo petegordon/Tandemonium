@@ -59,6 +59,13 @@ export class FocusController {
     // overrides) instead of index math. Used for 2-D screens like the lobby.
     this._spatial = false;
     this.focusedEl = null;
+    // One-confirm-per-press latch (#318): when true, confirm is suppressed
+    // until the A button is observed released. Armed on scope entry
+    // (setItems/setSpatial) and after every confirm, so a single held press
+    // can neither auto-repeat a confirm nor bleed a confirm into a scope it
+    // just opened (the lobby popup "flash"). Null-safe: only an observed
+    // release clears it, so a missed/null pad read never opens the gate.
+    this._awaitConfirmRelease = false;
   }
 
   /**
@@ -76,6 +83,7 @@ export class FocusController {
       (initialEl && this.items.indexOf(initialEl) >= 0 && this._visible(initialEl)) ? initialEl :
       (this.items.find((el) => this._visible(el)) || null);
     this._edge = this._readEdges() || { ...NO_EDGES };
+    this._awaitConfirmRelease = true; // require A release before first confirm
     if (this.focusedEl) this.focusedEl.classList.add(this.focusClass);
     return this;
   }
@@ -104,6 +112,7 @@ export class FocusController {
     this.items = (items || []).filter(Boolean);
     this.index = this._clamp(initialIndex);
     this._edge = this._readEdges() || { ...NO_EDGES };
+    this._awaitConfirmRelease = true; // require A release before first confirm
     this._applyFocus();
     return this;
   }
@@ -133,6 +142,7 @@ export class FocusController {
     this.index = 0;
     this._slider = null;
     this._spatial = false;
+    this._awaitConfirmRelease = false;
   }
 
   /**
@@ -145,12 +155,19 @@ export class FocusController {
     if (!e) return;
     const prev = this._edge;
 
+    // One-confirm-per-press latch: clear only on an observed A release, then
+    // a fresh A-down edge confirms. `_confirmReady` is the single source of
+    // truth for "may fire a confirm this frame". (#318)
+    if (this._awaitConfirmRelease && !e.a) this._awaitConfirmRelease = false;
+    const confirmReady = e.a && !prev.a && !this._awaitConfirmRelease
+      && (!this._canConfirm || this._canConfirm());
+
     if (this._spatial) {
       if (e.up && !prev.up) this._moveDir('up');
       if (e.down && !prev.down) this._moveDir('down');
       if (e.left && !prev.left) this._moveDir('left');
       if (e.right && !prev.right) this._moveDir('right');
-      if (e.a && !prev.a && (!this._canConfirm || this._canConfirm())) this._confirmSpatial();
+      if (confirmReady) { this._confirmSpatial(); this._awaitConfirmRelease = true; }
       if (e.b && !prev.b) this.back();
       this._edge = e;
       return;
@@ -165,7 +182,7 @@ export class FocusController {
     }
     if (e.up && !prev.up) this.move(-1);
     if (e.down && !prev.down) this.move(1);
-    if (e.a && !prev.a && (!this._canConfirm || this._canConfirm())) this.confirm();
+    if (confirmReady) { this.confirm(); this._awaitConfirmRelease = true; }
     if (e.b && !prev.b) this.back();
 
     this._edge = e;
@@ -227,6 +244,7 @@ export class FocusController {
    */
   reprime() {
     this._edge = this._readEdges() || { ...NO_EDGES };
+    this._awaitConfirmRelease = true; // require A release after a scope handoff
   }
 
   /** Currently focused element, or null. */
