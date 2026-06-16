@@ -1,0 +1,13 @@
+node_modules/
+vendor/
+desktop/
+out/
+.env
+.DS_Store
+
+tandemonium-octalysis-v3.jsx
+worker/.wrangler/
+/builds/
+steam_output/
+steam/builds/output/
+debug-*.png
