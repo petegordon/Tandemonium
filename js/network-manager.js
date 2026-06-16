@@ -3,7 +3,7 @@
 // ============================================================
 
 import {
-  MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN, MSG_PROFILE,
+  MSG_HEARTBEAT,
   TURN_CREDENTIALS_URL, PEERJS_HOST, PEERJS_PORT, PEERJS_PATH, PEERJS_SECURE
 } from './config.js';
 import { BikeCodec } from './net/bike-codec.js';
@@ -64,9 +64,20 @@ export class NetworkManager {
     this._statsSamples = []; // { rtt, packetsLost, packetsSent, bytesReceived, bytesSent, timestamp }
 
     // Game-specific message codec (bike state/lean/pedal/event/profile). The
-    // transport below sends/receives opaque bytes; the codec owns the schema
-    // and the pre-allocated 60Hz send buffers. (#318 Step 2)
+    // transport below sends/receives opaque bytes; the codec owns the schema,
+    // the pre-allocated 60Hz send buffers, AND the inbound dispatch. (#318 Step 2)
     this._codec = new BikeCodec();
+    // Inbound routing table handed to the codec — maps decoded game messages
+    // back to this adapter's public callbacks. Built once; reads the (possibly
+    // reassigned) on*Received fields at call time. Role-flip for pedal lives
+    // here (session state), not in the codec.
+    this._msgHandlers = {
+      onState:   (s) => { if (this.onStateReceived) this.onStateReceived(s); },
+      onPedal:   (foot) => { if (this.onPedalReceived) this.onPedalReceived(this.role === 'captain' ? 'stoker' : 'captain', foot); },
+      onEvent:   (b) => { if (this.onEventReceived) this.onEventReceived(b); },
+      onLean:    (v) => { if (this.onLeanReceived) this.onLeanReceived(v); },
+      onProfile: (p) => { if (this.onProfileReceived) this.onProfileReceived(p); },
+    };
 
     // Pending retries for sendEventReliable (eventByte → setTimeout id list)
     this._reliableEventTimers = [];
@@ -207,24 +218,10 @@ export class NetworkManager {
     }
 
     if (bytes.length === 0) return;
-    const type = bytes[0];
 
-    if (type === MSG_PEDAL) {
-      const foot = this._codec.decodePedal(bytes);
-      if (this.onPedalReceived) this.onPedalReceived(this.role === 'captain' ? 'stoker' : 'captain', foot);
-    } else if (type === MSG_STATE) {
-      const state = this._codec.decodeState(bytes);
-      if (this.onStateReceived) this.onStateReceived(state);
-    } else if (type === MSG_EVENT) {
-      if (bytes.length >= 2 && this.onEventReceived) {
-        this.onEventReceived(bytes[1]);
-      }
-    } else if (type === MSG_LEAN) {
-      if (bytes.length >= 5) {
-        const leanValue = this._codec.decodeLean(bytes);
-        if (this.onLeanReceived) this.onLeanReceived(leanValue);
-      }
-    } else if (type === MSG_HEARTBEAT) {
+    // HEARTBEAT is the transport's own keepalive (connection health + reconnect
+    // reset + ping echo) — handle it here and don't surface it as game data.
+    if (bytes[0] === MSG_HEARTBEAT) {
       this._lastRemoteHeartbeat = performance.now();
       // Verified data exchange — safe to reset reconnect counter
       this._reconnectAttempts = 0;
@@ -233,12 +230,11 @@ export class NetworkManager {
       } else {
         this._send(new Uint8Array([MSG_HEARTBEAT, 0x01]));
       }
-    } else if (type === MSG_PROFILE) {
-      try {
-        const profile = this._codec.decodeProfile(bytes);
-        if (this.onProfileReceived) this.onProfileReceived(profile);
-      } catch (e) { /* ignore malformed profile */ }
+      return;
     }
+
+    // Everything else is opaque game payload — the codec owns what it means.
+    this._codec.dispatch(bytes, this._msgHandlers);
   }
 
   sendPedal(foot) {
