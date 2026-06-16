@@ -214,10 +214,21 @@ export class Lobby {
     // nav-core FocusController in spatial mode (#318): directions move to the
     // nearest on-screen focusable, dissolving the old _modeColumns/_moveColumn/
     // _modeColIndex column math and the difficulty-sibling special-casing.
+    // Global "one confirm per physical A press" gate, shared by the step and
+    // modal controllers (set each frame in _pollGamepadNav). Per-controller edge
+    // detection alone wasn't enough: when an A press opens a popup, the handoff
+    // from the step scope to the modal scope (setItems re-priming, occasional
+    // null pad reads, reprime()) could let the SAME held press fire a second
+    // confirm that immediately closed the popup — the "flash". A gate computed
+    // once per frame from the raw pad is immune to those per-controller resets. (#332)
+    this._confirmEdgeThisFrame = false;
+    this._confirmPrevA = false;
+    const confirmGate = () => this._confirmEdgeThisFrame;
     this._stepFocus = new FocusController({
       input: this.input,
       onConfirm: (el) => { if (el.tagName === 'INPUT') el.focus(); else el.click(); },
       onBack: () => this._goBack(),
+      canConfirm: confirmGate,
     });
     this._stepNavRanLastFrame = false; // for reprime() on modal→step transitions
     // Shared controller for the linear modal lists (profile popup, rejoin
@@ -228,6 +239,7 @@ export class Lobby {
       input: this.input,
       orientation: 'vertical',
       onBack: () => { if (this._modalBack) this._modalBack(); },
+      canConfirm: confirmGate,
     });
     this._activeModal = null; // 'profile' | 'rejoin' | null
     this._modalBack = null;
@@ -4495,6 +4507,13 @@ export class Lobby {
     const btns = this._gpButtons(gp);
     const a = btns.a;
     const b = btns.b;
+
+    // Global confirm gate: A only counts as a confirm on the frame it goes
+    // down, and that single edge is shared by every scope (step + modals) via
+    // canConfirm. Computed here — before any branch's early return — so a held
+    // A press can never fire a second confirm in another scope (the flash). (#332)
+    this._confirmEdgeThisFrame = a && !this._confirmPrevA;
+    this._confirmPrevA = a;
 
     // D-pad left/right (buttons 14/15 or left stick axis 0)
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
