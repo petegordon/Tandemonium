@@ -2619,6 +2619,12 @@
   }
 
   /* ── Profile popup ── */
+  /* The profile popup lives inside the left toggle column, which is a
+     z-index:60 stacking context — so the popup's own z-index can't lift it
+     above the right toggle column (also z-index:60, painted later in the DOM).
+     Elevate the whole left column while the popup is open so it overlays the
+     right-side toggles instead of hiding behind them. (#332) */
+  .lobby-left-col:has(#profile-popup.visible) { z-index: 120; }
   #profile-popup {
     display: none;
     position: absolute;
