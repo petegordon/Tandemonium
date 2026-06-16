@@ -20,6 +20,8 @@ import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
+import { TouristWorld } from './tourist-world.js';
+import { isTouristMode, getMapsApiKey } from './tourist-config.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
@@ -164,9 +166,28 @@ class Game {
     setHapticSources([this.input]);
     this.pedalCtrl = new PedalController(this.input);
     this.balanceCtrl = new BalanceController(this.input);
-    this.world = new World(this.scene, { lowEnd: this._lowQuality });
-    this.bike = new BikeModel(this.scene);
-    this.bike.roadPath = this.world.roadPath;
+    // Tourist Mode (#333): stream a real-world location from Google
+    // Photorealistic 3D Tiles instead of the procedural road. The bike,
+    // camera, physics and loop are reused unchanged; only the world source
+    // swaps. The bike's roadPath is null so TouristWorld owns vertical
+    // placement via ground-following raycasts.
+    this.isTourist = isTouristMode();
+    if (this.isTourist) {
+      const apiKey = getMapsApiKey();
+      if (!apiKey) {
+        console.error('[Tourist Mode] No Google Map Tiles API key found. ' +
+          'Run `npm run gen-tourist-key` (reads .env), or pass ?key=YOUR_KEY, ' +
+          'or set localStorage "tourist_maps_key".');
+      }
+      this.world = new TouristWorld(this.scene, this.camera, this.renderer, { apiKey });
+      this.bike = new BikeModel(this.scene);
+      this.bike.roadPath = null;
+      this.world.setBike(this.bike);
+    } else {
+      this.world = new World(this.scene, { lowEnd: this._lowQuality });
+      this.bike = new BikeModel(this.scene);
+      this.bike.roadPath = this.world.roadPath;
+    }
     this.chaseCamera = new ChaseCamera(this.camera);
     this.hud = new HUD(this.input);
     this.grassParticles = new GrassParticles(this.scene);
@@ -3511,7 +3532,9 @@ class Game {
 
     // Race progress + contribution tracking
     if (this.raceManager) {
-      const timerEnabled = !this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false;
+      // Tourist Mode (#333): free-roam — no race timer / timeout.
+      const timerEnabled = !this.isTourist &&
+        (!this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false);
       const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled ? dt : 0);
       if (raceEvent) {
         if (raceEvent.event === 'timeout' && timerEnabled) { this._onTimerExpired(); return; }

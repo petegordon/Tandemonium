@@ -13,7 +13,8 @@
     "package": "electron-forge package --platform win32 --arch x64",
     "make": "electron-forge make --platform win32 --arch x64",
     "steamtest": "electron tools/steam-controller-test/main.js",
-    "gamepadtest": "electron tools/gamepad-test/main.js"
+    "gamepadtest": "electron tools/gamepad-test/main.js",
+    "gen-tourist-key": "node scripts/gen-tourist-key.js"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",
