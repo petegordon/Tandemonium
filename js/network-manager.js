@@ -6,6 +6,7 @@ import {
   MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_HEARTBEAT, MSG_LEAN, MSG_PROFILE,
   TURN_CREDENTIALS_URL, PEERJS_HOST, PEERJS_PORT, PEERJS_PATH, PEERJS_SECURE
 } from './config.js';
+import { BikeCodec } from './net/bike-codec.js';
 
 const PEERJS_CONFIG = {
   host: PEERJS_HOST,
@@ -62,13 +63,10 @@ export class NetworkManager {
     this._statsInterval = null;
     this._statsSamples = []; // { rtt, packetsLost, packetsSent, bytesReceived, bytesSent, timestamp }
 
-    // Pre-allocated send buffers (avoid per-send allocations)
-    this._stateBuf = new ArrayBuffer(46);
-    this._stateView = new DataView(this._stateBuf);
-    this._stateBytes = new Uint8Array(this._stateBuf);
-    this._leanBuf = new ArrayBuffer(5);
-    this._leanView = new DataView(this._leanBuf);
-    this._leanBytes = new Uint8Array(this._leanBuf);
+    // Game-specific message codec (bike state/lean/pedal/event/profile). The
+    // transport below sends/receives opaque bytes; the codec owns the schema
+    // and the pre-allocated 60Hz send buffers. (#318 Step 2)
+    this._codec = new BikeCodec();
 
     // Pending retries for sendEventReliable (eventByte → setTimeout id list)
     this._reliableEventTimers = [];
@@ -212,10 +210,10 @@ export class NetworkManager {
     const type = bytes[0];
 
     if (type === MSG_PEDAL) {
-      const foot = (bytes.length >= 2 && bytes[1] === 0x01) ? 'down' : 'up';
+      const foot = this._codec.decodePedal(bytes);
       if (this.onPedalReceived) this.onPedalReceived(this.role === 'captain' ? 'stoker' : 'captain', foot);
     } else if (type === MSG_STATE) {
-      const state = this._decodeState(bytes);
+      const state = this._codec.decodeState(bytes);
       if (this.onStateReceived) this.onStateReceived(state);
     } else if (type === MSG_EVENT) {
       if (bytes.length >= 2 && this.onEventReceived) {
@@ -223,8 +221,7 @@ export class NetworkManager {
       }
     } else if (type === MSG_LEAN) {
       if (bytes.length >= 5) {
-        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-        const leanValue = view.getFloat32(1, true);
+        const leanValue = this._codec.decodeLean(bytes);
         if (this.onLeanReceived) this.onLeanReceived(leanValue);
       }
     } else if (type === MSG_HEARTBEAT) {
@@ -238,47 +235,26 @@ export class NetworkManager {
       }
     } else if (type === MSG_PROFILE) {
       try {
-        const json = new TextDecoder().decode(bytes.slice(1));
-        const profile = JSON.parse(json);
+        const profile = this._codec.decodeProfile(bytes);
         if (this.onProfileReceived) this.onProfileReceived(profile);
       } catch (e) { /* ignore malformed profile */ }
     }
   }
 
   sendPedal(foot) {
-    this._send(new Uint8Array([MSG_PEDAL, foot === 'down' ? 0x01 : 0x00]));
+    this._send(this._codec.encodePedal(foot));
   }
 
   sendLean(leanValue) {
-    const view = this._leanView;
-    view.setUint8(0, MSG_LEAN);
-    view.setFloat32(1, leanValue, true);
-    this._send(this._leanBytes);
+    this._send(this._codec.encodeLean(leanValue));
   }
 
   sendState(bike, timerRemaining) {
-    const view = this._stateView;
-    view.setUint8(0, MSG_STATE);
-    view.setFloat32(1, bike.position.x, true);
-    view.setFloat32(5, bike.position.y, true);
-    view.setFloat32(9, bike.position.z, true);
-    view.setFloat32(13, bike.heading, true);
-    view.setFloat32(17, bike.lean, true);
-    view.setFloat32(21, bike.leanVelocity, true);
-    view.setFloat32(25, bike.speed, true);
-    view.setFloat32(29, bike.crankAngle || 0, true);
-    view.setFloat32(33, bike.distanceTraveled, true);
-    view.setFloat32(37, bike.roadD, true);
-    let flags = 0;
-    if (bike.fallen) flags |= 1;
-    if (bike._braking) flags |= 2;
-    view.setUint8(41, flags);
-    view.setFloat32(42, timerRemaining >= 0 ? timerRemaining : -1, true);
-    this._send(this._stateBytes);
+    this._send(this._codec.encodeState(bike, timerRemaining));
   }
 
   sendEvent(eventType) {
-    this._send(new Uint8Array([MSG_EVENT, eventType]));
+    this._send(this._codec.encodeEvent(eventType));
   }
 
   // Send a one-shot terminal event (FINISH, GAMEOVER) with retries so a
@@ -286,7 +262,7 @@ export class NetworkManager {
   // partner waiting forever. Receiver-side handlers must be idempotent
   // (state-guarded) — they already are for FINISH and GAMEOVER.
   sendEventReliable(eventType, attempts = 3, intervalMs = 200) {
-    const msg = new Uint8Array([MSG_EVENT, eventType]);
+    const msg = this._codec.encodeEvent(eventType);
     this._send(msg);
     for (let i = 1; i < attempts; i++) {
       const t = setTimeout(() => {
@@ -315,34 +291,7 @@ export class NetworkManager {
   }
 
   sendProfile(data) {
-    const json = JSON.stringify(data);
-    const encoded = new TextEncoder().encode(json);
-    const msg = new Uint8Array(1 + encoded.length);
-    msg[0] = MSG_PROFILE;
-    msg.set(encoded, 1);
-    this._send(msg);
-  }
-
-  _decodeState(bytes) {
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const state = {
-      x: view.getFloat32(1, true),
-      y: view.getFloat32(5, true),
-      z: view.getFloat32(9, true),
-      heading: view.getFloat32(13, true),
-      lean: view.getFloat32(17, true),
-      leanVelocity: view.getFloat32(21, true),
-      speed: view.getFloat32(25, true),
-      crankAngle: view.getFloat32(29, true),
-      distanceTraveled: view.getFloat32(33, true),
-      roadD: view.getFloat32(37, true),
-      flags: view.getUint8(41)
-    };
-    // Timer field added in 46-byte messages; absent in legacy 42-byte messages
-    if (bytes.byteLength >= 46) {
-      state.timerRemaining = view.getFloat32(42, true);
-    }
-    return state;
+    this._send(this._codec.encodeProfile(data));
   }
 
   _send(data) {
