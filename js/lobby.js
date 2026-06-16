@@ -214,14 +214,36 @@ export class Lobby {
     // nav-core FocusController in spatial mode (#318): directions move to the
     // nearest on-screen focusable, dissolving the old _modeColumns/_moveColumn/
     // _modeColIndex column math and the difficulty-sibling special-casing.
-    // (Modals — profile/leaderboard/help/rejoin/spinner — still use the
-    // hand-rolled branches in _pollGamepadNav for now.)
+    // Global "one confirm per physical A press" gate, shared by the step and
+    // modal controllers (set each frame in _pollGamepadNav). Per-controller edge
+    // detection alone wasn't enough: when an A press opens a popup, the handoff
+    // from the step scope to the modal scope (setItems re-priming, occasional
+    // null pad reads, reprime()) could let the SAME held press fire a second
+    // confirm that immediately closed the popup — the "flash". A gate computed
+    // once per frame from the raw pad is immune to those per-controller resets. (#332)
+    this._confirmEdgeThisFrame = false;
+    this._confirmPrevA = false;
+    const confirmGate = () => this._confirmEdgeThisFrame;
     this._stepFocus = new FocusController({
       input: this.input,
       onConfirm: (el) => { if (el.tagName === 'INPUT') el.focus(); else el.click(); },
       onBack: () => this._goBack(),
+      canConfirm: confirmGate,
     });
     this._stepNavRanLastFrame = false; // for reprime() on modal→step transitions
+    // Shared controller for the linear modal lists (profile popup, rejoin
+    // overlay). Vertical nav; B runs a per-modal back action set on open.
+    // (Leaderboard/help/spinner stay on their bespoke branches — 2D table,
+    // scroll-only, and character-wheel input don't fit a flat list.)
+    this._modalFocus = new FocusController({
+      input: this.input,
+      orientation: 'vertical',
+      onBack: () => { if (this._modalBack) this._modalBack(); },
+      canConfirm: confirmGate,
+    });
+    this._activeModal = null; // 'profile' | 'rejoin' | null
+    this._modalBack = null;
+    this._gpPrevUp = false;
     this._gpPrevUp = false;
     this._gpPrevDown = false;
     this._gpPrevA = false;
@@ -1175,8 +1197,12 @@ export class Lobby {
       if (this._modeCol === 1) {
         this._stepItems.set(this.levelStep, centerItems);
       }
-      // Refresh the spatial scope so newly-built cards are navigable (#318).
-      this._applyStepSpatialFocus(this.levelStep);
+      // Refresh items (new cards) while PRESERVING the current focus — don't
+      // reset to the step default, which would jump focus off a toggle the
+      // user just pressed (e.g. ALL/gyro rebuilds the cards). (#318)
+      if (this.input && this.input.gamepadConnected) {
+        this._stepFocus.refreshSpatial(this._modeColumns.flat());
+      }
     }
   }
 
@@ -1402,6 +1428,20 @@ export class Lobby {
     });
     document.getElementById('profile-popup-signin-back').addEventListener('click', () => {
       this.profilePopup.classList.remove('visible');
+    });
+
+    // Controller/keyboard-reachable sign-in proxy: the rendered Google button is
+    // a cross-origin iframe a synthetic .click() can't activate, so this button
+    // triggers One Tap in code. If One Tap is suppressed (FedCM cooldown), reveal
+    // a hint pointing at the mouse/phone paths instead of failing silently. (#325)
+    document.getElementById('profile-popup-signin-proxy').addEventListener('click', () => {
+      this.auth.login((n) => {
+        const suppressed = n && ((n.isNotDisplayed && n.isNotDisplayed()) || (n.isSkippedMoment && n.isSkippedMoment()));
+        if (suppressed || n === null) {
+          const hint = document.getElementById('profile-popup-signin-hint');
+          if (hint) hint.style.display = '';
+        }
+      });
     });
 
     // Profile popup gamepad focus index (0 = logout/sign-in, 1 = back)
@@ -2078,13 +2118,21 @@ export class Lobby {
     if (items[idx]) items[idx].classList.add('gamepad-focus');
   }
 
+  // Tabs (main + sub) + close button — the leaderboard's spatial focusable set.
+  _lbFocusables() {
+    return [
+      ...document.querySelectorAll('#lb-main-tabs .lb-tab'),
+      ...document.querySelectorAll('#lb-sub-tabs .lb-tab'),
+      document.getElementById('leaderboard-close'),
+    ].filter(Boolean);
+  }
+
   _lbResetFocus() {
-    // Default: focus the active main tab
-    this._lbFocusRow = 0;
-    const mainTabs = document.getElementById('lb-main-tabs').querySelectorAll('.lb-tab');
-    this._lbFocusCol = [...mainTabs].findIndex(t => t.classList.contains('active'));
-    if (this._lbFocusCol < 0) this._lbFocusCol = 0;
-    this._lbApplyFocus();
+    // Set up spatial focus over the tabs + close, defaulting to the active main
+    // tab. The leaderboard branch in _pollGamepadNav drives it (#318).
+    this._activeModal = 'leaderboard';
+    this._modalBack = () => this._closeLeaderboard();
+    this._modalFocus.setSpatial(this._lbFocusables(), document.querySelector('#lb-main-tabs .lb-tab.active'));
   }
 
   _toggleProfile() {
@@ -2097,17 +2145,22 @@ export class Lobby {
       // Show sign-in button, hide logged-in content
       document.querySelector('.profile-popup-content').style.display = 'none';
       document.getElementById('profile-popup-signin').style.display = '';
+      // Reset the suppressed-One-Tap hint each open; the proxy reveals it on demand.
+      const hint = document.getElementById('profile-popup-signin-hint');
+      if (hint) hint.style.display = 'none';
       this.profilePopup.classList.toggle('visible');
       // Also try One Tap prompt as a bonus
       this.auth.login();
     }
-    // Reset gamepad focus for profile popup
+    // Reset gamepad focus for profile popup. Default focus is a non-closing
+    // action (sign-in proxy / log out) so opening with A then a stray A press
+    // can't immediately dismiss the popup via the only focusable item. (#325)
     if (this.profilePopup.classList.contains('visible')) {
       this._profileFocusIndex = 0;
       // Apply initial highlight
       const items = this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
-        : [document.getElementById('profile-popup-signin-back')];
+        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')];
       items.forEach(el => el.classList.remove('gamepad-focus'));
       items[0].classList.add('gamepad-focus');
     } else {
@@ -4264,6 +4317,11 @@ export class Lobby {
     // load and show() set _currentStep directly without going through
     // _showStep, so the highlight + d-pad/stick nav need seeding here too (#318).
     this._applyStepSpatialFocus(this._currentStep);
+    // Singleton RAF loop: _startGamepadNav runs again on every re-entry from
+    // gameplay (show()), so cancel any prior loop first. Otherwise the loops
+    // accumulate and each frame polls the pad N times, double-firing confirms
+    // (e.g. opening the profile popup AND advancing the step in one press). (#332)
+    if (this._pollRafId) cancelAnimationFrame(this._pollRafId);
     this._pollGamepadNav();
   }
 
@@ -4450,6 +4508,13 @@ export class Lobby {
     const a = btns.a;
     const b = btns.b;
 
+    // Global confirm gate: A only counts as a confirm on the frame it goes
+    // down, and that single edge is shared by every scope (step + modals) via
+    // canConfirm. Computed here — before any branch's early return — so a held
+    // A press can never fire a second confirm in another scope (the flash). (#332)
+    this._confirmEdgeThisFrame = a && !this._confirmPrevA;
+    this._confirmPrevA = a;
+
     // D-pad left/right (buttons 14/15 or left stick axis 0)
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
     const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
@@ -4470,75 +4535,36 @@ export class Lobby {
 
     // If profile popup is open, navigate between logout and back
     if (this.profilePopup.classList.contains('visible')) {
-      const isLoggedIn = this.auth.isLoggedIn();
-      const items = isLoggedIn
+      const items = this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
-        : [document.getElementById('profile-popup-signin-back')];
-      if (up && !this._gpPrevUp) this._profileFocusIndex = Math.max(0, this._profileFocusIndex - 1);
-      if (down && !this._gpPrevDown) this._profileFocusIndex = Math.min(items.length - 1, this._profileFocusIndex + 1);
-      // Apply focus highlight
-      items.forEach(el => el.classList.remove('gamepad-focus'));
-      if (items[this._profileFocusIndex]) items[this._profileFocusIndex].classList.add('gamepad-focus');
-      if (a && !this._gpPrevA) {
-        if (items[this._profileFocusIndex]) items[this._profileFocusIndex].click();
+        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')];
+      if (this._activeModal !== 'profile') {
+        this._activeModal = 'profile';
+        this._modalBack = () => this.profilePopup.classList.remove('visible');
+        this._modalFocus.setItems(items);
       }
-      if (b && !this._gpPrevB) {
-        items.forEach(el => el.classList.remove('gamepad-focus'));
-        this.profilePopup.classList.remove('visible');
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
     // Leaderboard modal gamepad navigation
     if (document.getElementById('leaderboard-modal').style.display !== 'none') {
-      // Right stick (axis 3) scrolls the leaderboard list
+      // Right stick (axis 3) scrolls the leaderboard score list (focus nav is
+      // over the tabs/close only).
       const lbStickY = gp.axes[3] || 0;
       if (Math.abs(lbStickY) > 0.15) {
         const lbBox = document.querySelector('.leaderboard-box');
         if (lbBox) lbBox.scrollTop += lbStickY * 12;
       }
-      if (left && !this._gpPrevLeft) {
-        this._lbFocusCol = Math.max(0, this._lbFocusCol - 1);
-        this._lbApplyFocus();
+      // Tabs (main + sub) + close form a small spatial grid (#318). Sub-tabs
+      // rebuild on main-tab change, so refresh the set each frame; B closes.
+      if (this._activeModal !== 'leaderboard') {
+        this._activeModal = 'leaderboard';
+        this._modalBack = () => this._closeLeaderboard();
+        this._modalFocus.setSpatial(this._lbFocusables(), document.querySelector('#lb-main-tabs .lb-tab.active'));
+      } else {
+        this._modalFocus.refreshSpatial(this._lbFocusables());
       }
-      if (right && !this._gpPrevRight) {
-        const rowLen = this._lbGetRowItems(this._lbFocusRow).length;
-        this._lbFocusCol = Math.min(rowLen - 1, this._lbFocusCol + 1);
-        this._lbApplyFocus();
-      }
-      if (up && !this._gpPrevUp) {
-        let r = this._lbFocusRow - 1;
-        while (r >= 0 && this._lbGetRowItems(r).length === 0) r--;
-        if (r >= 0) {
-          this._lbFocusRow = r;
-          const rowLen = this._lbGetRowItems(r).length;
-          this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
-          this._lbApplyFocus();
-        }
-      }
-      if (down && !this._gpPrevDown) {
-        let r = this._lbFocusRow + 1;
-        while (r <= 2 && this._lbGetRowItems(r).length === 0) r++;
-        if (r <= 2) {
-          this._lbFocusRow = r;
-          const rowLen = this._lbGetRowItems(r).length;
-          this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
-          this._lbApplyFocus();
-        }
-      }
-      if (a && !this._gpPrevA) {
-        const items = this._lbGetRowItems(this._lbFocusRow);
-        const idx = Math.min(this._lbFocusCol, items.length - 1);
-        if (items[idx]) items[idx].click();
-      }
-      if (b && !this._gpPrevB) {
-        this._closeLeaderboard();
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
     if (this.helpModal.classList.contains('visible')) {
@@ -4557,33 +4583,19 @@ export class Lobby {
       return;
     }
 
-    // Recent rooms popup: navigate room cards + New Room button
+    // Recent rooms popup: navigate room cards + New Room button. B = New Room.
     const rejoinOverlay = document.getElementById('rejoin-overlay');
     if (rejoinOverlay) {
       const items = [...rejoinOverlay.querySelectorAll('.rejoin-room-card'), document.getElementById('btn-rejoin-new')].filter(Boolean);
-      if (items.length === 0) { this._rejoinFocus = undefined; return; }
-      if (this._rejoinFocus === undefined) this._rejoinFocus = 0;
-      if (up && !this._gpPrevUp) {
-        items[this._rejoinFocus].classList.remove('gamepad-focus');
-        this._rejoinFocus = Math.max(0, this._rejoinFocus - 1);
-        items[this._rejoinFocus].classList.add('gamepad-focus');
+      if (items.length === 0) { return; }
+      if (this._activeModal !== 'rejoin') {
+        this._activeModal = 'rejoin';
+        this._modalBack = () => { const n = document.getElementById('btn-rejoin-new'); if (n) n.click(); };
+        this._modalFocus.setItems(items);
       }
-      if (down && !this._gpPrevDown) {
-        items[this._rejoinFocus].classList.remove('gamepad-focus');
-        this._rejoinFocus = Math.min(items.length - 1, this._rejoinFocus + 1);
-        items[this._rejoinFocus].classList.add('gamepad-focus');
-      }
-      if (a && !this._gpPrevA) items[this._rejoinFocus].click();
-      if (b && !this._gpPrevB) {
-        const newBtn = document.getElementById('btn-rejoin-new');
-        if (newBtn) newBtn.click();
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
-    this._rejoinFocus = undefined;
 
     // If "Tap to Start" overlay is showing, any button dismisses it
     if (this._tapOverlay) {
@@ -4620,6 +4632,10 @@ export class Lobby {
       this._gpPrevA = a; this._gpPrevB = b;
       return;
     }
+
+    // Reaching here means no modal is open — release a linear modal controller
+    // (profile/rejoin) if one was active, clearing its highlight.
+    if (this._activeModal) { this._modalFocus.clear(); this._activeModal = null; this._modalBack = null; }
 
     // Step navigation: delegated to the spatial FocusController (#318).
     // Lazily seed the scope the first time we run with a gamepad — covers

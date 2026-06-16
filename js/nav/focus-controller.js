@@ -99,10 +99,29 @@ export class FocusController {
    */
   setItems(items, initialIndex = 0) {
     this._clearFocus();
+    this._clearSpatialFocus();
+    this._spatial = false; // linear mode (in case this controller was spatial)
     this.items = (items || []).filter(Boolean);
     this.index = this._clamp(initialIndex);
     this._edge = this._readEdges() || { ...NO_EDGES };
     this._applyFocus();
+    return this;
+  }
+
+  /**
+   * Update the spatial item set in place, preserving the current focus when
+   * that element is still present+visible (else re-default). For screens whose
+   * focusables rebuild while open (e.g. the leaderboard's sub-tabs). Call each
+   * frame; cheap. Does NOT re-prime edges (keeps an in-progress press intact).
+   */
+  refreshSpatial(items) {
+    this._spatial = true;
+    this.items = (items || []).filter(Boolean);
+    if (!this.focusedEl || this.items.indexOf(this.focusedEl) < 0 || !this._visible(this.focusedEl)) {
+      if (this.focusedEl) this.focusedEl.classList.remove(this.focusClass);
+      this.focusedEl = this.items.find((el) => this._visible(el)) || null;
+      if (this.focusedEl) this.focusedEl.classList.add(this.focusClass);
+    }
     return this;
   }
 
