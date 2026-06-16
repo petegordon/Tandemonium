@@ -213,9 +213,19 @@ export class AuthManager {
     }
   }
 
-  login() {
-    if (typeof google === 'undefined' || !google.accounts) return;
-    google.accounts.id.prompt();
+  /**
+   * Trigger Google One Tap. Pass `onMoment` to learn whether the prompt
+   * actually displayed — it receives the GSI PromptMomentNotification (or null
+   * if GSI isn't loaded), so callers can surface a fallback when One Tap is
+   * suppressed by FedCM cooldown / browser policy. (#325)
+   */
+  login(onMoment = null) {
+    if (typeof google === 'undefined' || !google.accounts) {
+      if (onMoment) onMoment(null);
+      return;
+    }
+    if (onMoment) google.accounts.id.prompt((n) => onMoment(n));
+    else google.accounts.id.prompt();
   }
 
   // Clear server JWT token only (keeps user profile for re-auth)
