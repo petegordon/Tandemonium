@@ -50,6 +50,7 @@ import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { FocusController } from './nav/focus-controller.js';
 import { RoomStore } from './lobby/room-store.js';
+import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -885,8 +886,8 @@ export class Lobby {
     document.getElementById('btn-play-game').addEventListener('click', () => {
       if (this._roomRole !== 'captain') return;
       if (this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'playGame' });
-        this.net.sendProfile({ type: 'difficultySync', difficulty: this.selectedDifficulty });
+        this.net.sendProfile(RoomProtocol.playGame());
+        this.net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
       }
       this._showRoomLevelsStep();
     });
@@ -901,7 +902,7 @@ export class Lobby {
           if (statusEl) statusEl.textContent = 'Reconnecting to partner...';
           return;
         }
-        this.net.sendProfile({ type: 'startRide' });
+        this.net.sendProfile(RoomProtocol.startRide());
         this._transitionToGame();
       } else if (this._pendingMode === 'local') {
         // Local same-screen co-op: hand off the pre-constructed P2 InputManager
@@ -1095,7 +1096,7 @@ export class Lobby {
             if (startBtn) startBtn.disabled = false;
             analytics.trackEvent('level_select', { level: level.id, difficulty: this.selectedDifficulty });
             if (this.net && this.net.connected) {
-              this.net.sendProfile({ type: 'levelSync', levelId: level.id });
+              this.net.sendProfile(RoomProtocol.levelSync(level.id));
             }
           });
         } else {
@@ -1127,7 +1128,7 @@ export class Lobby {
         this._updateDifficultyVisibility(defaultCard.dataset.levelId);
         // Sync to partner on multiplayer re-entry
         if (this.net && this.net.connected) {
-          this.net.sendProfile({ type: 'levelSync', levelId: this.selectedLevel.id });
+          this.net.sendProfile(RoomProtocol.levelSync(this.selectedLevel.id));
         }
       }
     }
@@ -1246,7 +1247,7 @@ export class Lobby {
           this.selectedDifficulty = btn.dataset.difficulty;
           // Sync difficulty to partner in multiplayer
           if (this.net && this.net.connected) {
-            this.net.sendProfile({ type: 'difficultySync', difficulty: btn.dataset.difficulty });
+            this.net.sendProfile(RoomProtocol.difficultySync(btn.dataset.difficulty));
           }
         });
       });
@@ -1754,10 +1755,8 @@ export class Lobby {
       this._applyVideoTrackState(false);
       // Notify partner to show avatar
       if (this.net && this.net.connected) {
-        const msg = { type: 'cameraToggle', enabled: false };
         const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-        if (user && user.avatar) msg.avatar = user.avatar;
-        this.net.sendProfile(msg);
+        this.net.sendProfile(RoomProtocol.cameraToggle(false, user && user.avatar));
       }
       return;
     }
@@ -1772,7 +1771,7 @@ export class Lobby {
       }
       // Notify partner to show video
       if (this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'cameraToggle', enabled: true });
+        this.net.sendProfile(RoomProtocol.cameraToggle(true));
       }
       return;
     }
@@ -1789,7 +1788,7 @@ export class Lobby {
       }
       // Notify partner to show video
       if (this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'cameraToggle', enabled: true });
+        this.net.sendProfile(RoomProtocol.cameraToggle(true));
       }
     }).catch((err) => {
       if (err && err.message === 'permission_timeout') this._showStaleOverlay();
@@ -3216,16 +3215,14 @@ export class Lobby {
     this._rejoinMessageQueue = null;
 
     // Send current bike preset to partner
-    this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+    this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
 
     // Send profile with avatar + achievements so partner sees them in room
     this._sendRoomProfile();
 
     // Notify partner of current camera state so they show video or avatar
-    const camMsg = { type: 'cameraToggle', enabled: this.cameraActive };
     const camUser = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-    if (camUser && camUser.avatar) camMsg.avatar = camUser.avatar;
-    this.net.sendProfile(camMsg);
+    this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, camUser && camUser.avatar));
 
     // Handle partner disconnect while in room or levels
     this.net.onDisconnected = (reason) => {
@@ -3485,9 +3482,9 @@ export class Lobby {
       return;
     }
 
-    if (profile.type === 'bikeSync') {
+    if (profile.type === ROOM_MSG.BIKE_SYNC) {
       // Partner changed bike — no label update needed (keep role-only labels)
-    } else if (profile.type === 'levelSync') {
+    } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
       this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
       // Track if captain selected tutorial — stoker needs _forceWizard too
@@ -3498,7 +3495,7 @@ export class Lobby {
       });
       // Update difficulty selector (disable harder options for tutorial)
       this._updateDifficultyVisibility(profile.levelId);
-    } else if (profile.type === 'cameraToggle') {
+    } else if (profile.type === ROOM_MSG.CAMERA_TOGGLE) {
       // Partner toggled their camera — update state and refresh PiP
       this._partnerCameraOn = !!profile.enabled;
       if (!profile.enabled) {
@@ -3512,16 +3509,16 @@ export class Lobby {
         setTimeout(() => this._updatePartnerPip(), 4000);
       }
       this._updatePartnerPip();
-    } else if (profile.type === 'difficultySync') {
+    } else if (profile.type === ROOM_MSG.DIFFICULTY_SYNC) {
       // Stoker: update difficulty selection to match captain's choice
       this.selectedDifficulty = profile.difficulty;
       document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
       document.querySelectorAll('.difficulty-btn[data-difficulty="' + profile.difficulty + '"]')
         .forEach(b => b.classList.add('selected'));
-    } else if (profile.type === 'playGame') {
+    } else if (profile.type === ROOM_MSG.PLAY_GAME) {
       // Stoker: captain clicked PLAY GAME → go to levels step
       this._showRoomLevelsStep();
-    } else if (profile.type === 'startRide') {
+    } else if (profile.type === ROOM_MSG.START_RIDE) {
       // Stoker: captain started the ride
       this._transitionToGame();
     }
@@ -4063,12 +4060,10 @@ export class Lobby {
 
     // Send current bike preset and profile to partner on re-entry
     if (this.net.connected) {
-      this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+      this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
       this._sendRoomProfile();
-      const camMsg = { type: 'cameraToggle', enabled: this.cameraActive };
       const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-      if (user && user.avatar) camMsg.avatar = user.avatar;
-      this.net.sendProfile(camMsg);
+      this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, user && user.avatar));
     }
 
     // Re-register disconnect handler for room
@@ -4865,7 +4860,7 @@ export class Lobby {
 
   _sendBikeSyncIfInRoom() {
     if ((this._currentStep === this.roomStep || (this._currentStep === this.levelStep && this._pendingMode === 'multiplayer')) && this.net && this.net.connected) {
-      this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+      this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
     }
   }
 

@@ -12,6 +12,7 @@ import { ObstacleManager } from './obstacles.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode } from './input-manager.js';
 import { FocusController } from './nav/focus-controller.js';
+import { ROOM_MSG } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
 import { BalanceController } from './balance-controller.js';
@@ -843,7 +844,7 @@ class Game {
         return;
       }
       // Handle camera toggle from partner during gameplay
-      if (profile && profile.type === 'cameraToggle') {
+      if (profile && profile.type === ROOM_MSG.CAMERA_TOGGLE) {
         if (profile.enabled) {
           // Partner turned camera on — show video if stream exists
           if (this.recorder.partnerVideo && this.recorder.partnerVideo.srcObject) {
