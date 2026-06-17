@@ -829,14 +829,17 @@ export class Lobby {
       this._showStep(this.modeStep);
     });
     document.getElementById('btn-back-role-host').addEventListener('click', () => {
-      this._roomStore.clear();
+      // Don't wipe recent rooms on back-out — keep them so RIDE TOGETHER can
+      // still offer to rejoin this room within the 5-min window. Only an
+      // explicit "New Room" (rejoin prompt / stale-room timer) clears. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
-      this._roomStore.clear();
+      // Keep recent rooms on back-out (see btn-back-role-host) so rejoin
+      // stays available. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
       this._showSpinners(false);
       this._spinnerStopRepeat();
