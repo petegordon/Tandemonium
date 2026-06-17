@@ -316,6 +316,9 @@ export class Lobby {
 
     // Auth (after _avatarCache — _setupAuth triggers updateUI which reads the cache)
     this.auth = new AuthManager();
+    // Achievements push to the backend via the identity (token provider), so
+    // auth no longer reaches into achievements. (#318 Step 4)
+    this._achievements.setIdentity(this.auth);
 
     // Steam: bypass LicenseManager when Steam ownership is confirmed
     // Initialize with a default license so code that reads this.license.isLicensed
@@ -1403,11 +1406,8 @@ export class Lobby {
 
     // Logout: sync achievements to server, then clear local state
     logoutBtn.addEventListener('click', async () => {
-      // Push local achievements to server before clearing
-      const ids = this._achievements.getEarnedIds();
-      if (ids.length > 0) {
-        try { await this.auth.syncAchievements(ids); } catch (e) {}
-      }
+      // Push local achievements to server before clearing (no-op if none/anon)
+      await this._achievements.syncToServer();
       this._achievements.clear();
       this.license.clear();
       this.auth.logout();

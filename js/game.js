@@ -2612,7 +2612,10 @@ class Game {
 
     try {
       await auth.submitScore(data);
-      const syncResult = await auth.syncAchievements(this.achievements.getEarnedIds());
+      // Achievements own their server sync now; inject the identity (token
+      // provider) so they can authorize it. (#318 Step 4)
+      this.achievements.setIdentity(auth);
+      const syncResult = await this.achievements.syncToServer();
       if (syncResult && syncResult.achievements) {
         this.achievements.mergeFromServer(
           syncResult.achievements.map(a => ({ id: a.achievement_id, earnedAt: a.earned_at }))
