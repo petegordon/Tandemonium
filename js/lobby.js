@@ -39,9 +39,8 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { NetworkManager } from './network-manager.js';
 import { InputManager } from './input-manager.js';
-import { isMobile, RELAY_URL, SITE_URL, BIKE_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, RELAY_URL, BIKE_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -51,6 +50,8 @@ import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { FocusController } from './nav/focus-controller.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
+import { NetSession } from './lobby/net-session.js';
+import { renderRoomQR } from './lobby/room-qr.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -122,13 +123,12 @@ export class Lobby {
     this.onLocalReady = onLocalReady;
     this.input = input; // P1 InputManager (slot-bound via ControllerManager)
     this.controllerManager = controllerManager; // shared with Game
-    this.net = null;
+    // Room network session: owns the NetworkManager instance + the stale-
+    // callback epoch guard. `this.net` is a getter/setter over it, so every
+    // existing `this.net.*` read/write is unchanged. (#318 Step 3)
+    this._netSession = new NetSession();
     // Recent-room persistence (rejoin UX) — pure localStorage layer. (#318 Step 3)
     this._roomStore = new RoomStore();
-    // Bumped every time `this.net` is replaced; closures capture the value
-    // at registration so stale callbacks from a discarded NetworkManager
-    // can no-op instead of overwriting UI for the live instance.
-    this._netEpoch = 0;
     this.selectedLevel = LEVELS.find(l => !l.isTutorial) || LEVELS[0]; // default to first non-tutorial level
     this._forceWizard = false;
     this.selectedPresetKey = 'default';
@@ -829,14 +829,17 @@ export class Lobby {
       this._showStep(this.modeStep);
     });
     document.getElementById('btn-back-role-host').addEventListener('click', () => {
-      this._roomStore.clear();
+      // Don't wipe recent rooms on back-out — keep them so RIDE TOGETHER can
+      // still offer to rejoin this room within the 5-min window. Only an
+      // explicit "New Room" (rejoin prompt / stale-room timer) clears. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
-      this._roomStore.clear();
+      // Keep recent rooms on back-out (see btn-back-role-host) so rejoin
+      // stays available. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
       this._showSpinners(false);
       this._spinnerStopRepeat();
@@ -2737,7 +2740,7 @@ export class Lobby {
 
   async _createRoom() {
     this._replaceNet();
-    const netEpoch = this._netEpoch;
+    const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
     this.net.audioEnabled = this.audioActive;
@@ -2759,7 +2762,7 @@ export class Lobby {
     if (relayToken) this.net._relayToken = relayToken;
 
     this.net.onRoomJoined = () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       codeEl.textContent = code;
       this._updateCardHeader(this._currentStep);
       statusEl.textContent = 'Waiting for partner...';
@@ -2767,52 +2770,12 @@ export class Lobby {
       // Save room to localStorage for rejoin after refresh
       this._roomStore.save(code, 'captain');
 
-      // Generate QR code with join URL
-      const qrEl = document.getElementById('room-qr');
-      const urlEl = document.getElementById('room-url');
-      // In Electron, use the production web URL for QR codes (localhost isn't reachable from mobile)
-      const isDesktop = navigator.userAgent.includes('Electron');
-      const baseUrl = isDesktop
-        ? SITE_URL
-        : window.location.origin + window.location.pathname;
-      const url = baseUrl + '?room=' + code;
-      try {
-        const qr = qrcode(0, 'M');
-        qr.addData(url);
-        qr.make();
-        qrEl.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 2 });
-      } catch (_) {
-        qrEl.style.display = 'none';
-      }
-
-      // Show full URL
-      if (urlEl) urlEl.textContent = url;
-
-      // Long-press to copy on both QR and URL
-      const copyUrl = () => {
-        navigator.clipboard.writeText(url).then(() => {
-          if (urlEl) {
-            const orig = urlEl.textContent;
-            urlEl.textContent = 'Copied!';
-            urlEl.classList.add('room-url-copied');
-            setTimeout(() => { urlEl.textContent = orig; urlEl.classList.remove('room-url-copied'); }, 1500);
-          }
-        }).catch(() => {});
-      };
-      [qrEl, urlEl].forEach(el => {
-        if (!el) return;
-        let timer = null;
-        const start = (e) => { e.preventDefault(); timer = setTimeout(copyUrl, 500); };
-        const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-        el.addEventListener('touchstart', start, { passive: false });
-        el.addEventListener('touchend', cancel);
-        el.addEventListener('touchcancel', cancel);
-        el.addEventListener('contextmenu', (e) => { e.preventDefault(); copyUrl(); });
-      });
+      // Generate the join QR + shareable URL (with long-press-to-copy).
+      renderRoomQR(code);
     };
 
     this.net.onConnected = () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       statusEl.textContent = 'Partner connected!';
       statusEl.className = 'conn-status connected';
       analytics.trackEvent('room_connect', { type: this.net.connectionType || 'p2p' });
@@ -2823,29 +2786,29 @@ export class Lobby {
         audio_enabled: this.audioActive ? 1 : 0,
       });
       setTimeout(() => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         this._showRoomStep('captain');
       }, 1000);
     };
 
     this.net.onDisconnected = (reason) => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       statusEl.textContent = reason || 'Disconnected';
       statusEl.className = 'conn-status error';
     };
 
     // Auth error: token was rejected by relay — try silent refresh first
     this.net.onAuthError = async () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       console.warn('LOBBY: Relay auth failed for captain — refreshing token');
       statusEl.textContent = 'Session expired, refreshing...';
       statusEl.className = 'conn-status';
       const refreshed = await this.auth.ensureValidToken();
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       if (refreshed) {
         // Token refreshed — retry room creation
         const freshToken = await this.auth.getRelayToken(code, 'captain');
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         if (freshToken) this.net._relayToken = freshToken;
         this.net.enterRoom(code, 'captain');
       } else {
@@ -2859,7 +2822,7 @@ export class Lobby {
 
   async _joinRoom(code) {
     this._replaceNet();
-    const netEpoch = this._netEpoch;
+    const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
     this.net.audioEnabled = this.audioActive;
@@ -2884,26 +2847,26 @@ export class Lobby {
     if (relayToken) this.net._relayToken = relayToken;
 
     this.net.onRoomJoined = () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       statusEl.textContent = 'Waiting for captain...';
       // Save room to localStorage for rejoin after refresh
       this._roomStore.save(code, 'stoker');
     };
 
     this.net.onConnected = () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       this._lastFailedCode = null;
       statusEl.textContent = 'Connected!';
       statusEl.className = 'conn-status connected';
       analytics.trackEvent('room_connect', { type: this.net.connectionType || 'p2p' });
       setTimeout(() => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         this._showRoomStep('stoker');
       }, 1000);
     };
 
     this.net.onDisconnected = (reason) => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       statusEl.textContent = reason || 'Could not connect';
       statusEl.className = 'conn-status error';
       // Sync error into spinner status area
@@ -2920,16 +2883,16 @@ export class Lobby {
 
     // Auth error: token was rejected by relay — try silent refresh first
     this.net.onAuthError = async () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       console.warn('LOBBY: Relay auth failed for stoker — refreshing token');
       statusEl.textContent = 'Session expired, refreshing...';
       statusEl.className = 'conn-status';
 
       const refreshed = await this.auth.ensureValidToken();
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       if (refreshed) {
         const freshToken = await this.auth.getRelayToken(code, 'stoker');
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         if (freshToken) {
           statusEl.textContent = 'Reconnecting...';
           this.net.retryWithToken(freshToken);
@@ -2948,23 +2911,19 @@ export class Lobby {
 
   // ── NetworkManager lifecycle ─────────────────────────────────
 
-  // Tear down the current NetworkManager (if any) and create a fresh one.
-  // Bumps `_netEpoch` so any in-flight callbacks captured by closures on
-  // the prior instance can early-return instead of clobbering UI for the
-  // new room. Callers should capture `this._netEpoch` immediately after
-  // calling this and guard their callback bodies with it.
+  // `this.net` is the live room NetworkManager, owned by `_netSession`. Kept as
+  // a getter/setter so existing `this.net.*` reads and `this.net = …` writes
+  // (teardown to null, return-from-game re-attach) are unchanged. (#318 Step 3)
+  get net() { return this._netSession.net; }
+  set net(v) { this._netSession.net = v; }
+
+  // Tear down the current NetworkManager (if any) and create a fresh one,
+  // bumping the session epoch so in-flight callbacks captured by closures on
+  // the prior instance early-return instead of clobbering UI for the new room.
+  // Callers capture `this._netSession.epoch` right after and guard their
+  // callback bodies with `this._netSession.isCurrent(epoch)`.
   _replaceNet() {
-    if (this.net) {
-      this.net.onRoomJoined = null;
-      this.net.onConnected = null;
-      this.net.onDisconnected = null;
-      this.net.onAuthError = null;
-      this.net.onProfileReceived = null;
-      try { this.net.destroy(); } catch (e) {}
-    }
-    this._netEpoch++;
-    this.net = new NetworkManager();
-    return this.net;
+    return this._netSession.replace();
   }
 
   // ── Room Persistence ─────────────────────────────────────────
@@ -3037,7 +2996,7 @@ export class Lobby {
       this._showStep(this.hostStep);
       // Re-use _createRoom logic but with saved code
       this._replaceNet();
-      const netEpoch = this._netEpoch;
+      const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
       this.net.audioEnabled = this.audioActive;
@@ -3047,15 +3006,15 @@ export class Lobby {
       statusEl.className = 'conn-status';
 
       const relayToken = await this.auth.getRelayToken(saved.roomCode, 'captain');
-      if (netEpoch !== this._netEpoch) return true;
+      if (!this._netSession.isCurrent(netEpoch)) return true;
       if (relayToken) this.net._relayToken = relayToken;
 
       // Acquire local media early so it's ready when P2P connects
       await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
-      if (netEpoch !== this._netEpoch) return true;
+      if (!this._netSession.isCurrent(netEpoch)) return true;
 
       this.net.onRoomJoined = () => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         codeEl.textContent = saved.roomCode;
         this._updateCardHeader(this._currentStep);
         statusEl.textContent = 'Waiting for partner...';
@@ -3065,7 +3024,7 @@ export class Lobby {
       };
 
       this.net.onConnected = () => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         this._clearStaleRoomTimer();
         statusEl.textContent = 'Partner connected!';
         statusEl.className = 'conn-status connected';
@@ -3073,13 +3032,13 @@ export class Lobby {
         this._rejoinMessageQueue = [];
         this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
         setTimeout(() => {
-          if (netEpoch !== this._netEpoch) return;
+          if (!this._netSession.isCurrent(netEpoch)) return;
           this._showRoomStep('captain');
         }, 1000);
       };
 
       this.net.onDisconnected = (reason) => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         statusEl.textContent = reason || 'Disconnected';
         statusEl.className = 'conn-status error';
       };
@@ -3089,7 +3048,7 @@ export class Lobby {
       this._showStep(this.joinStep);
       // Re-use _joinRoom logic with saved code
       this._replaceNet();
-      const netEpoch = this._netEpoch;
+      const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
       this.net.audioEnabled = this.audioActive;
@@ -3098,22 +3057,22 @@ export class Lobby {
       statusEl.className = 'conn-status';
 
       const relayToken = await this.auth.getRelayToken(saved.roomCode, 'stoker');
-      if (netEpoch !== this._netEpoch) return true;
+      if (!this._netSession.isCurrent(netEpoch)) return true;
       if (relayToken) this.net._relayToken = relayToken;
 
       // Acquire local media early so it's ready when P2P connects
       await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
-      if (netEpoch !== this._netEpoch) return true;
+      if (!this._netSession.isCurrent(netEpoch)) return true;
 
       this.net.onRoomJoined = () => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         statusEl.textContent = 'Waiting for captain...';
         this._roomStore.save(saved.roomCode, 'stoker');
         this._startStaleRoomTimer(statusEl);
       };
 
       this.net.onConnected = () => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         this._clearStaleRoomTimer();
         statusEl.textContent = 'Connected!';
         statusEl.className = 'conn-status connected';
@@ -3121,13 +3080,13 @@ export class Lobby {
         this._rejoinMessageQueue = [];
         this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
         setTimeout(() => {
-          if (netEpoch !== this._netEpoch) return;
+          if (!this._netSession.isCurrent(netEpoch)) return;
           this._showRoomStep('stoker');
         }, 1000);
       };
 
       this.net.onDisconnected = (reason) => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         statusEl.textContent = reason || 'Could not connect';
         statusEl.className = 'conn-status error';
       };
