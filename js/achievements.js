@@ -2,6 +2,8 @@
 // ACHIEVEMENTS — unlock conditions, persistence, toast display
 // ============================================================
 
+import { API_BASE } from './config.js';
+
 const ACHIEVEMENTS = [
   // Distance milestones (cumulative across completed rides)
   { id: 'first_500m',   name: 'First 500m',      icon: '\uD83D\uDC5F', condition: s => s.cumulativeDistance >= 500 },  // 👟
@@ -48,8 +50,42 @@ export class AchievementManager {
     this._newThisSession = []; // newly earned this session
     this._syncHighScore = 0; // consecutive seconds with offsetScore > 0.9
     this._cumulativeDistance = 0;
+    // Injected identity ({ getToken() }) — lets achievements push to the
+    // backend without knowing about auth. Set via setIdentity(). (#318 Step 4)
+    this._identity = null;
     this._load();
     this._loadStats();
+  }
+
+  /** Inject the identity provider used to authorize server sync. */
+  setIdentity(identity) {
+    this._identity = identity;
+    return this;
+  }
+
+  /**
+   * Push earned achievement IDs to the backend (D1). Uses the injected
+   * identity's token; no-op if not logged in or nothing earned. This is the
+   * achievements→server glue that used to live in auth.syncAchievements —
+   * inverted so identity doesn't know achievements exist. (#318 Step 4)
+   */
+  async syncToServer() {
+    const ids = this.getEarnedIds();
+    const token = this._identity && this._identity.getToken && this._identity.getToken();
+    if (!token || !ids || ids.length === 0) return null;
+    try {
+      const res = await fetch(`${API_BASE}/achievements/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ achievements: ids }),
+      });
+      return res.ok ? res.json() : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   _load() {
