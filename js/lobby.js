@@ -49,6 +49,7 @@ import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { FocusController } from './nav/focus-controller.js';
+import { RoomStore } from './lobby/room-store.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -121,6 +122,8 @@ export class Lobby {
     this.input = input; // P1 InputManager (slot-bound via ControllerManager)
     this.controllerManager = controllerManager; // shared with Game
     this.net = null;
+    // Recent-room persistence (rejoin UX) — pure localStorage layer. (#318 Step 3)
+    this._roomStore = new RoomStore();
     // Bumped every time `this.net` is replaced; closures capture the value
     // at registration so stale callbacks from a discarded NetworkManager
     // can no-op instead of overwriting UI for the live instance.
@@ -825,14 +828,14 @@ export class Lobby {
       this._showStep(this.modeStep);
     });
     document.getElementById('btn-back-role-host').addEventListener('click', () => {
-      this._clearRoom();
+      this._roomStore.clear();
       if (this.net) { this.net.destroy(); this.net = null; }
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
-      this._clearRoom();
+      this._roomStore.clear();
       if (this.net) { this.net.destroy(); this.net = null; }
       this._showSpinners(false);
       this._spinnerStopRepeat();
@@ -2763,7 +2766,7 @@ export class Lobby {
       statusEl.textContent = 'Waiting for partner...';
 
       // Save room to localStorage for rejoin after refresh
-      this._saveRoom(code, 'captain');
+      this._roomStore.save(code, 'captain');
 
       // Generate QR code with join URL
       const qrEl = document.getElementById('room-qr');
@@ -2885,7 +2888,7 @@ export class Lobby {
       if (netEpoch !== this._netEpoch) return;
       statusEl.textContent = 'Waiting for captain...';
       // Save room to localStorage for rejoin after refresh
-      this._saveRoom(code, 'stoker');
+      this._roomStore.save(code, 'stoker');
     };
 
     this.net.onConnected = () => {
@@ -2965,60 +2968,9 @@ export class Lobby {
     return this.net;
   }
 
-  // ── Room Persistence (localStorage) ──────────────────────────
-
-  _saveRoom(roomCode, role, partnerName) {
-    try {
-      const rooms = this._getRecentRooms();
-      const entry = { roomCode, role, timestamp: Date.now(), partnerName: partnerName || null };
-      const existing = rooms.findIndex(r => r.roomCode === roomCode);
-      if (existing >= 0) {
-        // Preserve partner name if not provided
-        if (!entry.partnerName && rooms[existing].partnerName) entry.partnerName = rooms[existing].partnerName;
-        rooms[existing] = entry;
-      } else {
-        rooms.push(entry);
-      }
-      localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
-    } catch (e) {}
-  }
-
-  _clearRoom(roomCode) {
-    try {
-      if (roomCode) {
-        const rooms = this._getRecentRooms().filter(r => r.roomCode !== roomCode);
-        localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
-      } else {
-        localStorage.removeItem('tandemonium-rooms');
-      }
-    } catch (e) {}
-  }
-
-  _getRecentRooms() {
-    try {
-      // Migrate old single-room format
-      const oldRaw = localStorage.getItem('tandemonium-room');
-      if (oldRaw) {
-        localStorage.removeItem('tandemonium-room');
-        const old = JSON.parse(oldRaw);
-        if (old.roomCode) {
-          const existing = localStorage.getItem('tandemonium-rooms');
-          const rooms = existing ? JSON.parse(existing) : [];
-          if (!rooms.some(r => r.roomCode === old.roomCode)) rooms.push(old);
-          localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
-        }
-      }
-      const raw = localStorage.getItem('tandemonium-rooms');
-      if (!raw) return [];
-      const rooms = JSON.parse(raw);
-      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-      const recent = rooms.filter(r => r.timestamp > fiveMinAgo);
-      if (recent.length !== rooms.length) {
-        localStorage.setItem('tandemonium-rooms', JSON.stringify(recent));
-      }
-      return recent;
-    } catch (e) { return []; }
-  }
+  // ── Room Persistence ─────────────────────────────────────────
+  // Recent-room localStorage now lives in js/lobby/room-store.js
+  // (this._roomStore: .save() / .clear() / .getRecent()). (#318 Step 3)
 
   _showRecentRoomsPrompt(rooms) {
     const overlay = document.createElement('div');
@@ -3071,7 +3023,7 @@ export class Lobby {
   }
 
   async _handleRejoinCheck() {
-    const rooms = this._getRecentRooms();
+    const rooms = this._roomStore.getRecent();
     if (rooms.length === 0) return false;
 
     const selected = await this._showRecentRoomsPrompt(rooms);
@@ -3108,7 +3060,7 @@ export class Lobby {
         codeEl.textContent = saved.roomCode;
         this._updateCardHeader(this._currentStep);
         statusEl.textContent = 'Waiting for partner...';
-        this._saveRoom(saved.roomCode, 'captain');
+        this._roomStore.save(saved.roomCode, 'captain');
         // Start stale room timer
         this._startStaleRoomTimer(statusEl);
       };
@@ -3157,7 +3109,7 @@ export class Lobby {
       this.net.onRoomJoined = () => {
         if (netEpoch !== this._netEpoch) return;
         statusEl.textContent = 'Waiting for captain...';
-        this._saveRoom(saved.roomCode, 'stoker');
+        this._roomStore.save(saved.roomCode, 'stoker');
         this._startStaleRoomTimer(statusEl);
       };
 
@@ -3196,8 +3148,8 @@ export class Lobby {
         const newBtn = document.getElementById('btn-stale-new-room');
         if (newBtn) {
           newBtn.addEventListener('click', () => {
-            if (this.net && this.net.roomCode) this._clearRoom(this.net.roomCode);
-            else this._clearRoom();
+            if (this.net && this.net.roomCode) this._roomStore.clear(this.net.roomCode);
+            else this._roomStore.clear();
             if (this.net) { this.net.destroy(); this.net = null; }
             this._showStep(this.roleStep);
           });
@@ -3515,7 +3467,7 @@ export class Lobby {
         partnerNameEl.textContent = profile.name;
         // Save partner name for recent rooms display
         if (this.net && this.net.roomCode && this._roomRole) {
-          this._saveRoom(this.net.roomCode, this._roomRole, profile.name);
+          this._roomStore.save(this.net.roomCode, this._roomRole, profile.name);
         }
       }
       // Cache partner avatar URL for camera toggle
