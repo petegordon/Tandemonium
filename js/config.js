@@ -33,6 +33,10 @@ export const MSG_PROFILE     = 0x07;
 
 export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';
 
+// Backend API (auth, scores, achievements, leaderboard, /me). Shared by the
+// identity client and the achievements sync glue. (#318 Step 4)
+export const API_BASE = 'https://tandemonium-api.pete-872.workers.dev';
+
 // Production web URL — used for QR codes in Electron, share links, etc.
 // Update this when the domain changes.
 export const SITE_URL = 'https://tandemonium.jimandi.love';
