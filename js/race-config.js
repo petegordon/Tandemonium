@@ -9,31 +9,34 @@ export const LEVELS = [
     distance: 225,
     collectibles: 'presents',
     checkpointInterval: 225,   // single checkpoint = entire ride
-    icon: '\uD83D\uDEB4',        // 🚴
+    icon: '🚴',        // 🚴
     description: 'Master pedaling and steering!',
     isTutorial: true,
     coaching: { dodgeArrow: true, collectIndicator: true },
     timerEnabled: false,
     treeCollision: false,
-    motionAdaptation: false
+    motionAdaptation: false,
+    track: 'assets/tracks/tutorial.json'
   },
   {
     id: 'grandma',
     name: "Grandma's",
-    distance: 250,
+    distance: 350,
     collectibles: 'presents',
-    checkpointInterval: 62,
-    icon: '\uD83C\uDFE0',        // 🏠
-    description: 'Grandma called — she needs her presents!'
+    checkpointInterval: 88,
+    icon: '🏠',        // 🏠
+    description: 'Grandma called — she needs her presents!',
+    track: 'assets/tracks/grandma.json'
   },
   {
     id: 'castle',
     name: 'The Castle',
-    distance: 500,
+    distance: 700,
     collectibles: 'gems',
-    checkpointInterval: 125,
-    icon: '\uD83C\uDFF0',        // 🏰
-    description: 'The King awaits! Collect gems on the road to glory!'
+    checkpointInterval: 175,
+    icon: '🏰',        // 🏰
+    description: 'The King awaits! Collect gems on the road to glory!',
+    track: 'assets/tracks/castle.json'
   }
 ];
 

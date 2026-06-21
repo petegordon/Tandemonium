@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "grandma",
+  "name": "Grandma's",
+  "author": "official",
+  "artifacts": [
+    { "type": "boost",      "d": 105, "offset":  0,   "width": 2.5, "length": 4.0, "strength": 1.7,  "decay": 1.2 },
+    { "type": "mud",        "d": 145, "offset": -1.0, "width": 1.5, "length": 2.5, "friction": 0.55 },
+    { "type": "ramp",       "d": 200, "offset":  0,   "width": 2.2, "length": 3.0, "angle": 15, "skin": "wood" },
+    { "type": "sync",       "d": 245, "phaseTolerance": 35, "rewardStrength": 1.7,  "rewardDuration": 1.8 },
+    { "type": "choke",      "d": 295, "offset":  0,   "gap": 2.4, "depth": 1.0, "mode": "scrape", "skin": "haystack" }
+  ]
+}

@@ -9,6 +9,7 @@ import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
+import { ArtifactManager } from './artifacts/artifact-manager.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode } from './input-manager.js';
 import { FocusController } from './nav/focus-controller.js';
@@ -391,6 +392,7 @@ class Game {
         this.raceManager.passedCheckpoints.add(nextCp);
         this.raceManager.resetSegmentTimer(nextCp);
         this.bike.resetToDistance(nextCp);
+        if (this.artifactManager) this.artifactManager.reset(this.bike);
         if (this.ddaManager) this.ddaManager.onCheckpointPassed(nextCp);
         this._showCheckpointFlash();
       }
@@ -713,6 +715,7 @@ class Game {
         // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
         if (this.raceManager) this.raceManager.start();
+        if (this.artifactManager) this.artifactManager.setRaceStart(performance.now() / 1000);
         const flavorNum = document.getElementById('countdown-flavor-num');
         const flavorIcon = document.getElementById('countdown-flavor-icon');
         const flavorText = document.getElementById('countdown-flavor-text');
@@ -1468,6 +1471,10 @@ class Game {
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
+    if (this.artifactManager) this.artifactManager.destroy();
+    this.artifactManager = new ArtifactManager(this.scene, this.world.roadPath, level, this.camera);
+    // Kick off async manifest load; safe to update before ready (it no-ops).
+    this.artifactManager.load().catch(err => console.warn('[ArtifactManager] load failed:', err));
 
     // Wire up collectibles total for analytics
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
@@ -1589,6 +1596,7 @@ class Game {
       }
       this._playBeep(800, 0.4);
       if (this.raceManager) this.raceManager.start();
+      if (this.artifactManager) this.artifactManager.setRaceStart(performance.now() / 1000);
 
       // Update analytics input method now that motion/gyro has had time to activate
       const steerSrc = this.balanceCtrl.getSteerSource();
@@ -1724,6 +1732,10 @@ class Game {
     } else {
       this.bike.fullReset();
     }
+    // Clear per-pass artifact state (ramps, sync gates, boost pads) so they
+    // re-engage on the next traversal after a checkpoint reset or game-over
+    // restart.
+    if (this.artifactManager) this.artifactManager.reset(this.bike);
 
     // Reset segment timer for current segment on checkpoint restart
     if (this.raceManager && checkpointD > 0) {
@@ -3346,7 +3358,7 @@ class Game {
     }
   }
 
-  _checkTreeCollision() {
+  _checkTreeCollision(dt) {
     if (this.bike.fallen || this.bike.speed < 0.5) return;
     // Skip tree collision when level config disables it — only pylons matter
     const level = this.lobby.selectedLevel;
@@ -3358,7 +3370,9 @@ class Game {
         this.chaseCamera.shakeAmount = 0.25;
         this._playCrash(1.0);
         hapticTreeHit();
+        return;
       }
+      this._checkArtifactCollision(dt);
       return;
     }
     const result = this.world.checkTreeCollision(
@@ -3375,6 +3389,22 @@ class Game {
     // Pylon obstacle collision
     if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
       this._recordCrash('obstacle');
+      this.bike._fall();
+      this.chaseCamera.shakeAmount = 0.25;
+      this._playCrash(1.0);
+      hapticTreeHit();
+      return;
+    }
+    this._checkArtifactCollision(dt);
+  }
+
+  _checkArtifactCollision(dt) {
+    if (!this.artifactManager) return;
+    // Skip artifact crashes while airborne (ramp jump)
+    if (this.bike._airborne) return;
+    const cause = this.artifactManager.checkCollision(this.bike.position, this.bike, dt || 0.016);
+    if (cause) {
+      this._recordCrash(cause);
       this.bike._fall();
       this.chaseCamera.shakeAmount = 0.25;
       this._playCrash(1.0);
@@ -3509,7 +3539,7 @@ class Game {
 
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
-    this._checkTreeCollision();
+    this._checkTreeCollision(dt);
 
     this._recordBalanceCrashIfNew(wasFallen);
 
@@ -3596,7 +3626,7 @@ class Game {
 
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
-    this._checkTreeCollision();
+    this._checkTreeCollision(dt);
 
     this._recordBalanceCrashIfNew(wasFallen);
 
@@ -3762,6 +3792,9 @@ class Game {
     }
     if (this.obstacleManager) {
       this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    }
+    if (this.artifactManager) {
+      this.artifactManager.update(dt, this.bike.distanceTraveled, this.bike.position, this.bike, this.sharedPedal);
     }
   }
 

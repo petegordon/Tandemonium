@@ -28,6 +28,10 @@ export class BikeModel {
     this._braking = false;
     this.boostTimer = 0;
 
+    // Airborne state (set by ramp artifacts in artifact-manager.js)
+    this._airborne = false;
+    this._airYOffset = 0;
+
     // Balance assist (0 = off, 0-1 = graduated assist strength)
     this._balanceAssist = 0;
 
@@ -379,7 +383,7 @@ export class BikeModel {
         const rearRightZ = -Math.sin(rearPt.heading);
         this._rearWheelOffset = rearDx * rearRightX + rearDz * rearRightZ;
 
-        this.position.y = this.roadPath.getPointAtDistance(this.roadD).y;
+        this.position.y = this.roadPath.getPointAtDistance(this.roadD).y + (this._airYOffset || 0);
       }
     }
 
