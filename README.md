@@ -21,6 +21,7 @@ npx serve -l 8888
 Open `http://localhost:8888` in your browser.
 
 - **Solo**: Click SOLO RIDE — pedal with Up/Down arrows, lean with A/D (or tilt on mobile)
+- **Front view**: A small window in the lower-right shows a front-facing "selfie cam" of the bike as you ride. Toggle it with `V`.
 - **Multiplayer**: Click RIDE TOGETHER — one player creates a room, the other joins with the room code
 
 ## Multiplayer
