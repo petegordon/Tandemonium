@@ -599,6 +599,7 @@ class Game {
     // ---- Analytics session init ----
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
+    const vjBoot = window.__vibeJamDeepLink || null;
     analytics.initSession({
       device_type: isMobile ? 'mobile' : 'desktop',
       input_method: null,
@@ -611,12 +612,191 @@ class Game {
       platform: window.steam ? 'steam' : (navigator.userAgent.includes('Electron') ? 'electron' : 'browser'),
       screen_width: window.screen.width,
       screen_height: window.screen.height,
+      // Vibe Jam 2026 source attribution (extra fields land in the JSON
+      // payload; server can backfill columns later without a client deploy)
+      source: vjBoot ? 'vibejam' : null,
+      vibejam_entry: vjBoot ? (vjBoot.portal ? 'portal' : (vjBoot.solo ? 'solo' : null)) : null,
+      vibejam_ref: vjBoot ? vjBoot.ref || null : null,
+      vibejam_username: vjBoot ? vjBoot.username || null : null,
+      vibejam_color: vjBoot ? vjBoot.color || null : null,
+      vibejam_speed: vjBoot ? vjBoot.speed || null : null,
     });
     analytics.setPage('landing');
+
+    // Vibe Jam 2026 deep-link: ?solo=1 or ?portal=true skips the lobby
+    // and goes straight to Solo Ride. Read by index.html bootstrap script.
+    this._vibeJam = window.__vibeJamDeepLink || null;
+    if (this._vibeJam && (this._vibeJam.solo || this._vibeJam.portal)) {
+      analytics.trackEvent('vibejam_arrival', {
+        entry: this._vibeJam.portal ? 'portal' : 'solo',
+        ref: this._vibeJam.ref || null,
+        username: this._vibeJam.username || null,
+        color: this._vibeJam.color || null,
+        speed: this._vibeJam.speed || null,
+        url: window.location.href,
+        referrer: document.referrer || null,
+        query: window.location.search || null,
+      });
+      // Defer one frame so the lobby's async init (_setup, gamepad nav) settles.
+      requestAnimationFrame(() => this._enterVibeJamSolo());
+    }
 
     // Start loop
     this.lastTime = performance.now();
     requestAnimationFrame((t) => this._loop(t));
+  }
+
+  /**
+   * Vibe Jam 2026 deep-link entry. Skips lobby, lands directly on the
+   * Solo Ride instructions screen (or auto-starts if arriving via portal).
+   */
+  _enterVibeJamSolo() {
+    const dl = this._vibeJam;
+    if (!dl) return;
+
+    // Apply portal color hint (best-effort: map common names to existing bike presets).
+    // _presetData is loaded async by Lobby._initBikeCarousel, so we don't apply here —
+    // we stash the requested key and apply at TAP TO RIDE / countdown time.
+    this._vjPendingColorKey = null;
+    if (dl.color) {
+      const map = {
+        red: 'bike_red', blue: 'bike_blue', green: 'bike_green',
+        yellow: 'bike_yellow', orange: 'bike_orange', magenta: 'bike_magenta',
+        pink: 'bike_magenta', purple: 'bike_magenta',
+      };
+      const key = map[dl.color.toLowerCase()];
+      if (key) this._vjPendingColorKey = key;
+    }
+
+    // Tear down the lobby UI + tap-to-start overlay (already pre-emptied in HTML)
+    if (this.lobby._tapOverlay) {
+      this.lobby._tapOverlay.remove();
+      this.lobby._tapOverlay = null;
+    }
+    this.lobby._hideLobby();
+
+    if (dl.portal) {
+      // Portal entry: do NOT call _onSolo() — its _setupStartHandler attaches
+      // document-level click/touchstart listeners that would fire from any tap
+      // (including on our dialog) and start the countdown without a real
+      // user-gesture'd motion-permission request. Replicate just the parts we
+      // need and gate countdown solely on the TAP TO RIDE button.
+      this.mode = 'solo';
+      this.bike.applyPreset(this.lobby.selectedPreset);
+      this._lobbyBtn.textContent = 'LOBBY';
+      this._loadSavedTuning();
+      this.state = 'instructions';
+      this._showVibeJamPortalGate();
+      return;
+    }
+
+    // ?solo=1: existing instructions-tap flow handles motion permission
+    this._onSolo();
+  }
+
+  _showVibeJamPortalGate() {
+    const el = document.getElementById('vj-controls-hint');
+    if (!el) return;
+    const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    el.querySelectorAll('.vj-keyboard').forEach(r => r.style.display = isMobile ? 'none' : '');
+    el.querySelectorAll('.vj-mobile').forEach(r => r.style.display = isMobile ? '' : 'none');
+    el.querySelectorAll('.vj-gamepad').forEach(r => r.style.display = isMobile ? 'none' : '');
+    el.style.display = '';
+    requestAnimationFrame(() => el.classList.add('visible'));
+
+    const btn = document.getElementById('vj-start-btn');
+    if (!btn) return;
+    const onStart = async (ev) => {
+      if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+      btn.removeEventListener('click', onStart);
+      document.removeEventListener('keydown', onKeyStart, true);
+      btn.disabled = true;
+
+      // SYNCHRONOUS gesture work (must run before any await — iOS loses the
+      // user-gesture token across awaits). Prime audio so iOS doesn't play
+      // the procedural bike loop in a degraded "running but buzzing" state,
+      // and apply the deferred bike color now that _presetData has had time
+      // to load via Lobby._initBikeCarousel. Force-enable + start music here
+      // too so iOS allows playback before the gesture expires.
+      try {
+        this.audioEngine.ensureContext();
+        this.audioEngine.resume();
+        this.audioEngine.warmup();
+        if (!this.lobby.musicActive && typeof this.lobby._toggleMusic === 'function') {
+          this.lobby._toggleMusic();
+        }
+        this.audioEngine.connectMusicElement(this._musicEl);
+        if (this.lobby.musicActive) {
+          this._musicEl.play().catch(() => {});
+        }
+      } catch (e) {}
+      if (this._vjPendingColorKey && this.lobby._presetData &&
+          this.lobby._presetData[this._vjPendingColorKey]) {
+        const k = this._vjPendingColorKey;
+        this.lobby.selectedPresetKey = k;
+        this.lobby.selectedPreset = this.lobby._presetData[k];
+        this.bike.applyPreset(this.lobby.selectedPreset);
+        this._vjPendingColorKey = null;
+      }
+
+      analytics.trackEvent('vibejam_start_tap', {
+        ref: this._vibeJam ? this._vibeJam.ref || null : null,
+        had_motion_perm_prompt: !!(this.input && this.input.needsMotionPermission),
+      });
+      // Request iOS motion permission from this real user gesture
+      if (this.input && this.input.needsMotionPermission) {
+        try { await this.input.requestMotionPermission(); } catch (e) {}
+      }
+      // If still no motion (denied or unsupported), force-enable touch joystick
+      if (isMobile && !this.input.motionEnabled && !this.input.gyroConnected) {
+        if (this.lobby && !this.lobby.joystickActive && typeof this.lobby._toggleJoystick === 'function') {
+          try { this.lobby._toggleJoystick(); } catch (e) {}
+        }
+      }
+      // Now that gamepad/motion state is settled, populate the analytics
+      // input_method column so portal rides don't all log as "unknown".
+      if (this.lobby && typeof this.lobby._detectAndSetInputMethod === 'function') {
+        try { this.lobby._detectAndSetInputMethod(); } catch (e) {}
+      }
+      el.classList.remove('visible');
+      setTimeout(() => { el.style.display = 'none'; }, 350);
+      if (this.state === 'instructions') this._startCountdown();
+    };
+    btn.addEventListener('click', onStart);
+
+    // Desktop: any keypress dismisses the dialog. Skip modifier-only presses
+    // (Shift/Ctrl/Alt/Meta) and fullscreen toggles so accidental taps don't
+    // double-fire. Don't attach on mobile (no physical keyboard expected).
+    const onKeyStart = (ev) => {
+      if (isMobile) return;
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(ev.key)) return;
+      onStart(ev);
+    };
+    if (!isMobile) {
+      document.addEventListener('keydown', onKeyStart, true);
+    }
+  }
+
+  _checkVibeJamPortal() {
+    if (this._vjPortalRedirecting) return;
+    if (!this.world || !this.world.checkVibeJamPortalCollision) return;
+    const target = this.world.checkVibeJamPortalCollision(this.bike.position);
+    if (!target) return;
+    this._vjPortalRedirecting = true;
+    const isVibeJamExit = /^https?:\/\/vibej\.am\//i.test(target);
+    analytics.trackEvent(isVibeJamExit ? 'vibejam_portal_exit' : 'vibejam_portal_return', {
+      target,
+      distance: this.bike ? this.bike.distanceTraveled : 0,
+      speed: this.bike ? this.bike.speed : 0,
+      ride_id: analytics.getCurrentRideId(),
+      entry_ref: this._vibeJam ? this._vibeJam.ref || null : null,
+    });
+    // Best-effort flush of buffered events before navigating away.
+    try { analytics.flushRideEvents && analytics.flushRideEvents(); } catch (e) {}
+    // Redirect on the next tick so the current frame + analytics flush finish cleanly
+    setTimeout(() => {
+      try { window.location.href = target; } catch (e) { /* ignore */ }
+    }, 80);
   }
 
   // ============================================================
@@ -1476,6 +1656,7 @@ class Game {
     // _startCountdown is also called on restart-from-beginning after early crashes)
     if (!analytics.getCurrentRideId()) {
       analytics.setPage('ride');
+      const dl = this._vibeJam || null;
       analytics.startRide({
         level: level.id,
         role: this.mode,
@@ -1483,7 +1664,24 @@ class Game {
         difficulty: difficultyName,
         bike_preset: this.lobby.selectedPresetKey,
         steering_feel: TUNE.steeringFeel,
+        // Vibe Jam attribution on the ride record (extra fields ride along
+        // in the JSON payload — the worker can backfill columns later).
+        source: dl ? 'vibejam' : null,
+        vibejam_entry: dl ? (dl.portal ? 'portal' : (dl.solo ? 'solo' : null)) : null,
+        vibejam_ref: dl ? dl.ref || null : null,
+        vibejam_username: dl ? dl.username || null : null,
+        vibejam_color: dl ? dl.color || null : null,
+        vibejam_speed: dl ? dl.speed || null : null,
       });
+      if (dl) {
+        analytics.trackEvent('vibejam_ride_start', {
+          level: level.id,
+          difficulty: difficultyName,
+          bike_preset: this.lobby.selectedPresetKey,
+          entry: dl.portal ? 'portal' : 'solo',
+          ref: dl.ref || null,
+        });
+      }
     }
     this.hud.initProgress(level);
     this.hud.initTimer();
@@ -1493,6 +1691,27 @@ class Game {
     this.hud.updateTimer(initialBudget, initialBudget);
     this.hud.showCollectibles(level);
     this.world.setRaceMarkers(level, this.camera);
+
+    // Vibe Jam 2026 portals — only spawned when arriving via ?portal=true.
+    // Forwards optional username/color/speed back through the exit portal so
+    // the next game can spawn the player with continuity.
+    if (this._vibeJam && this._vibeJam.portal) {
+      const dl = this._vibeJam;
+      const exitParams = new URLSearchParams();
+      exitParams.set('ref', window.location.host || 'tandemonium.com');
+      if (dl.username) exitParams.set('username', dl.username);
+      if (dl.color) exitParams.set('color', dl.color);
+      if (dl.speed) exitParams.set('speed', dl.speed);
+      this.world.setupVibeJamPortals({
+        exitUrl: 'https://vibej.am/portal/2026?' + exitParams.toString(),
+        returnRef: dl.ref || null,
+        firstCheckpointD: level.checkpointInterval,
+        finishD: level.distance,
+      });
+    } else if (this.world && typeof this.world._cleanupVibeJamPortals === 'function') {
+      // Tear down any portals from a previous portal-entry ride
+      this.world._cleanupVibeJamPortals();
+    }
 
     // Tutorial: place all items from all phases so they're visible ahead
     if (level.isTutorial && this._tutorialActive) {
@@ -3450,6 +3669,9 @@ class Game {
       } else if (this.mode === 'local') {
         this._updateLocal(dt);
       }
+
+      // Vibe Jam portal collision — redirect to the next jam game when entered
+      this._checkVibeJamPortal();
     } else if (this.state === 'finishCinematic') {
       // Cinematic finish camera owns its own world/bike updates and
       // render — bypass the chase cam so it doesn't fight the swing.
