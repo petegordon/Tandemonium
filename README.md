@@ -181,13 +181,35 @@ The demo opens two Chrome windows in mobile device emulation (landscape) with De
 
 Tunable balance constants live in `BALANCE_DEFAULTS` in [`js/config.js`](js/config.js) — the single source of truth shared by the game and the test harness ([`test/input.html`](test/input.html)). The test page generates tuning sliders from a `SLIDER_CONFIG` array whose defaults should match.
 
-### Input Processing
+### Mobile Tilt Input
 
-| Parameter | Default | Formula | Description |
-|-----------|---------|---------|-------------|
-| `lowPassK` | `0.3` | `gx += (raw - gx) * k` per event | Accelerometer smoothing (0 = frozen, 1 = raw) |
-| `deadzone` | `2°` | `if (abs(relative) < deadzone) relative = 0` | Tilt under this angle is ignored |
-| `sensitivity` | `40°` | `motionLean = clamp(relative / sensitivity, -1, 1)` | Degrees past dead zone for full lean (±1) |
+On mobile, steering reads the **device orientation sensor**, not the screen buttons. The primary source is the `deviceorientation` event (the browser's fused left/right `gamma` angle); raw `devicemotion` (accelerometer) is only a fallback for the rare devices that don't emit orientation events. iOS requires a user-gesture-gated `DeviceMotionEvent.requestPermission()` (the first tap on the start screen); Android needs no prompt. On the first ride the phone's rest angle is captured into a recenter offset (`motionOffset`), with slow drift compensation afterward — so "neutral" is wherever you're holding the phone, not dead-flat.
+
+Tilt defaults are **platform-specific** (`PLATFORM_TILT_DEFAULTS` in [`js/config.js`](js/config.js)) because Android and iOS report tilt with different scale and noise:
+
+| Parameter | iOS | Android | Description |
+|-----------|-----|---------|-------------|
+| `sensitivity` | `23°` | `32°` | Degrees of tilt past the dead zone for full lean (±1). Android gamma reads ~30–50% higher, so it needs a wider range |
+| `deadzone` | `4°` | `5°` | Tilt under this angle is ignored (rest noise: iOS ±1–2°, Android ±2–4°) |
+| `lowPassK` | `0.1` | `0.08` | Low-pass on raw gamma, applied frame-rate-independently: `k = 1 - (1 - lowPassK)^(dt·60)` per event. Lower = smoother but laggier |
+| `responseCurve` | `2.0` | `2.2` | Exponent applied beyond a small linear zone — higher = gentler near center, sharper near full lean |
+| `outputSmoothing` | `0.38` | `0.50` | EMA smoothing on the final lean output. Higher = smoother but laggier |
+
+Per-event pipeline: `relative = gamma − motionOffset` → dead-zone gate → piecewise response curve (linear near the dead-zone edge, then `pow(curved, responseCurve)`) → velocity-dependent attenuation (less lean at high speed) → output-smoothing EMA → `motionLean` (clamped to ±1). Implemented in [`js/input-manager.js`](js/input-manager.js).
+
+### Controller Gyro (WebHID)
+
+Controllers with a gyroscope (DualSense, Switch Pro / Joy-Con) can steer by tilting the pad. This path replaces mobile tilt when an HID gyro is active and uses its **own platform-independent** parameter set (hardware is consistent across devices):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `gyroSensitivity` | `40°` | Rotation past the dead zone for full lean |
+| `gyroDeadzone` | `4°` | Rotation at rest that is ignored |
+| `gyroResponseCurve` | `1.5` | Response exponent (gentler than mobile tilt) |
+| `gyroOutputSmoothing` | `0.5` | EMA smoothing on output |
+| `gyroAccelCorrection` | `0.02` | Accelerometer-based drift correction toward gravity |
+
+Both the tilt and controller-gyro defaults are scaled by the **Stable ↔ Responsive** "steering feel" setting (`applySteeringFeel`) and can be live-tuned with the sliders in [`test/input.html`](test/input.html).
 
 ### Balance Forces
 
@@ -198,7 +220,7 @@ All forces accumulate into `leanVelocity` each frame: `leanVel += (sum of forces
 | `leanForce` | `12` | `leanInput * leanForce` | Player tilt input force. Higher = snappier steering response |
 | `gravityForce` | `2.5` | `sin(lean) * gravityForce` | Toppling force that pulls toward a fall. Lower = wider safe lean range |
 | `damping` | `4.0` | `-leanVelocity * damping` | Resists lean velocity changes. Higher = more controlled, less runaway |
-| gyro | — | `-lean * min(speed * 0.8, 6.0)` | Speed-dependent self-righting force (not tunable) |
+| gyro (self-righting) | — | `-lean * min(speed * 0.8, 6.0)` | Speed-dependent self-righting force (not tunable). Named for the gyroscopic effect of spinning wheels — **unrelated** to the device/controller gyroscope sensors above |
 | pedalWobble | — | `wobble * (random() - 0.5) * 2` | Random wobble on wrong-foot pedal |
 | lowSpeedWobble | — | `max(0, 1 - speed*0.3) * (sin(t*2.7)*0.3 + sin(t*4.3)*0.15)` | Sine-wave wobble that fades with speed |
 | pedalLeanKick | — | `(random() - 0.5) * 0.2` | Random lean impulse per pedal stroke |
