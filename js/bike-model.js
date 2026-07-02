@@ -7,9 +7,19 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
 
 export class BikeModel {
-  constructor(scene, modelPath) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {string} [modelPath]
+   * @param {BikeModel} [cloneSource] an already-loaded BikeModel to deep-
+   *   clone instead of re-fetching the GLB. The tandem GLB is ~7MB and its
+   *   load path does a per-vertex bounds scan — versus spawns two extra
+   *   bikes at once, and re-loading made Player 2's bike pop in seconds
+   *   late (after the countdown). Cloning is instant and shares geometry.
+   */
+  constructor(scene, modelPath, cloneSource = null) {
     this.scene = scene;
     this._modelPath = modelPath || BIKE_MODEL_PATH;
+    this._sharedGeometry = false; // true when cloned — never dispose shared geo
     this.group = new THREE.Group();
     scene.add(this.group);
 
@@ -60,7 +70,39 @@ export class BikeModel {
     this._tmpAxisZ = new THREE.Vector3(0, 0, 1);
     this._tmpAxisX = new THREE.Vector3(1, 0, 0);
 
-    this._loadModel();
+    if (cloneSource && cloneSource.modelLoaded) {
+      this._initFromClone(cloneSource);
+    } else {
+      this._loadModel();
+    }
+  }
+
+  /**
+   * Deep-clone another BikeModel's loaded scene graph. Geometry is shared
+   * (clone() reuses BufferGeometry); materials start shared too, but every
+   * versus bike immediately runs applyPreset(), which replaces them with
+   * per-instance clones — and spoke materials are cloned here regardless
+   * because their opacity animates per bike.
+   */
+  _initFromClone(source) {
+    const model = source.group.children[0].clone(true);
+    model.traverse((child) => {
+      const n = (child.name || '').toLowerCase();
+      if (child.isMesh && (n === 'cylinder035_cycle_0' || n === 'cylinder024_cycle_0')) {
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        this.spokeMeshes.push(child);
+      }
+      if (n.includes('pedal')) this.pedalNodes.push(child);
+    });
+    this.group.add(model);
+    this.group.updateMatrixWorld(true);
+    this._sharedGeometry = true;
+    this.modelLoaded = true;
+    if (this._pendingPreset) {
+      this.applyPreset(this._pendingPreset);
+      this._pendingPreset = null;
+    }
   }
 
   _loadModel() {

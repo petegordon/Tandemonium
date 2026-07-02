@@ -1207,12 +1207,28 @@ export class World {
 
     // Versus: second floor follows bike B. Created lazily on first use,
     // hidden again when versus ends (anchorB back to null).
+    //
+    // The two floors are deformed against DIFFERENT anchors, so where they
+    // overlap each is only accurate near its own bike — rendering both in
+    // one view z-fights badly (grass seams poking through the road). Split
+    // them by render layer instead: layer 1 = floor A (team A's camera),
+    // layer 2 = floor B (team B's camera). Each viewport then sees exactly
+    // one floor, deformed for the bike it follows — same quality as solo.
     if (anchorB) {
       if (!this.floorB) this._createFloorB();
+      if (!this._floorLayersSplit) {
+        this._floorLayersSplit = true;
+        this.floor.layers.set(1);
+        this.floorB.layers.set(2);
+      }
       this.floorB.visible = true;
       this._updateFloor(this.floorB, anchorB.pos, anchorB.d, 'B');
-    } else if (this.floorB && this.floorB.visible) {
-      this.floorB.visible = false;
+    } else {
+      if (this._floorLayersSplit) {
+        this._floorLayersSplit = false;
+        this.floor.layers.set(0); // default layer — visible to solo camera again
+      }
+      if (this.floorB && this.floorB.visible) this.floorB.visible = false;
     }
   }
 
@@ -1235,7 +1251,8 @@ export class World {
   /**
    * Second deformable floor for versus mode: same geometry recipe as the
    * primary, cloned material + texture (each floor scrolls its own UV
-   * offset), sunk 3cm lower so overlapping regions don't z-fight.
+   * offset). Rendered on layer 2 (team B's camera only) — see the layer
+   * split in update().
    */
   _createFloorB() {
     const geom = this.floor.geometry.clone();
@@ -1246,7 +1263,9 @@ export class World {
     this.floorB.rotation.x = -Math.PI / 2;
     this.floorB.receiveShadow = this.floor.receiveShadow;
     this.floorB.frustumCulled = false;
-    this.floorB.position.y = -0.03;
+    // No y offset needed: floors A/B are split by render layer, so they
+    // never share a viewport — B sits at the same height as A for a
+    // seamless match against the road mesh.
     this.scene.add(this.floorB);
     this._lastSnapXB = NaN;
     this._lastSnapZB = NaN;

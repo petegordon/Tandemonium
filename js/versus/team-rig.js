@@ -30,17 +30,23 @@ export class TeamRig {
    * @param {number} [opts.lateralOffset] sideways start offset in meters so
    *   the two bikes don't overlap on the start line
    */
-  constructor({ id, members, scene, world, lateralOffset = 0 }) {
+  constructor({ id, members, scene, world, lateralOffset = 0, bikeCloneSource = null }) {
     this.id = id;
     this.color = TEAM_COLORS[id];
     this.members = members.map((m) => ({ ...m, prevUp: false, prevDown: false }));
     this.lateralOffset = lateralOffset;
 
-    this.bike = new BikeModel(scene);
+    // Clone the boot bike's loaded GLB when available — re-fetching the
+    // ~7MB model made the second team's bike appear seconds late.
+    this.bike = new BikeModel(scene, null, bikeCloneSource);
     this.bike.roadPath = world.roadPath;
 
     // Aspect is owned by the game's versus resize handler (half-width viewport).
+    // Layer 1 (team A) / layer 2 (team B) show that team's own deformable
+    // floor only — overlapping floors deformed to different anchors
+    // z-fight badly (each is only accurate near its own bike).
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.1, 500);
+    this.camera.layers.enable(id === 'A' ? 1 : 2);
     this.chaseCamera = new ChaseCamera(this.camera);
 
     this.grassParticles = new GrassParticles(scene);
@@ -55,6 +61,9 @@ export class TeamRig {
     this.finishMs = 0;
     this.crashCount = 0;
     this.collectibles = 0;
+    // Per-member steering input (-1..1), pre-merge — written each frame by
+    // _stepTeam and rendered by VersusHud's tilt gauge.
+    this.hudLeans = [0, 0];
   }
 
   get isDuo() { return this.members.length > 1; }
@@ -99,11 +108,13 @@ export class TeamRig {
     scene.remove(this.bike.group);
     this.bike.group.traverse((child) => {
       if (child.isMesh) {
-        if (child.geometry) child.geometry.dispose();
+        // Cloned bikes share geometry (and textures) with the boot bike —
+        // disposing them would corrupt the singleton used by solo/co-op.
+        if (child.geometry && !this.bike._sharedGeometry) child.geometry.dispose();
         const mats = Array.isArray(child.material) ? child.material : [child.material];
         for (const m of mats) {
           if (!m) continue;
-          if (m.map) m.map.dispose();
+          if (m.map && !this.bike._sharedGeometry) m.map.dispose();
           m.dispose();
         }
       }

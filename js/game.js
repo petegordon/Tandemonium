@@ -1037,6 +1037,7 @@ class Game {
         scene: this.scene,
         world: this.world,
         lateralOffset: i === 0 ? -0.8 : 0.8,
+        bikeCloneSource: this.bike, // boot bike's GLB is loaded — clone, don't re-fetch
       });
       rig.bike.applyPreset(presets[rig.color.presetKey] || null);
       rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
@@ -4155,10 +4156,14 @@ class Game {
 
     // Lean: average all members (same merge rule as co-op captain+stoker).
     // Bot teams ride with full balance assist — no human is steering them.
+    // Per-member (pre-merge) leans are stashed for the HUD tilt gauge.
     const assist = rig.members.some((m) => m.type === 'bot') ? 1 : this._assistWeight;
     const balanceResult = rig.balanceCtrls[0].update(bike, assist, this.collectibleManager, this.obstacleManager);
+    rig.hudLeans[0] = balanceResult.leanInput;
+    rig.hudLeans[1] = 0;
     if (rig.balanceCtrls.length > 1) {
       const second = rig.balanceCtrls[1].update(bike, assist, this.collectibleManager, this.obstacleManager);
+      rig.hudLeans[1] = second.leanInput;
       balanceResult.leanInput = Math.max(-1, Math.min(1,
         (balanceResult.leanInput + second.leanInput) * 0.5
       ));
