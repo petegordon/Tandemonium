@@ -4207,6 +4207,17 @@ class Game {
       hapticCrash(rig.inputs);
     }
 
+    // Remount recovery: relocate a few meters back and re-center on the
+    // road. Versus remounts in place (no game-over/checkpoint restart
+    // like solo), and remounting against the tree you just hit re-fired
+    // the collision the instant speed passed 0.5 — an inescapable crash
+    // loop. roadD (not distanceTraveled) is the geometric truth for
+    // placement; the small extra progress penalty from weaving drift is
+    // part of the crash cost.
+    if (wasFallen && !bike.fallen) {
+      bike.resetToDistance(Math.max(0, bike.roadD - 6));
+    }
+
     // Off-road scrape haptic for this team's controllers only
     if (!bike.fallen && bike.speed >= 1) {
       const frontOff = Math.max(0, Math.abs(bike._frontWheelOffset) - 2.5);
