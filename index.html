@@ -2042,6 +2042,20 @@
     border-style: dashed;
     background: transparent;
   }
+  /* Detected-but-unjoined controller: live join button (co-op palette) */
+  .versus-player-card.vp-join {
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    background: rgba(255, 69, 96, 0.18);
+    border: 1px solid rgba(255, 69, 96, 0.7);
+    animation: btn-local-join-flash 1.6s ease-out infinite;
+  }
+  .versus-player-card.vp-join:hover {
+    background: rgba(255, 69, 96, 0.32);
+    border-color: rgba(255, 69, 96, 0.95);
+  }
+  .versus-player-card.vp-join .vp-name { color: var(--tandem-player2); }
   .versus-join-hint {
     font-size: 0.62em;
     opacity: 0.65;

@@ -153,6 +153,11 @@ export class InputManager {
     // so the snapshot is the only source of button/stick state.
     this._steamInputSnapshot = [];
     this._steamInputSyntheticGp = null;
+    // Versus multi-pad: when set (stable handle string from the snapshot),
+    // this InputManager reads ONLY that Steam controller for buttons/stick
+    // AND gyro. null = legacy behavior (first controller in the snapshot),
+    // which is what solo and co-op P1 expect.
+    this.steamInputHandle = null;
     // User preference (Auto / Steam Input / WebHID) — sampled once at
     // construction; takes effect on next session boot.
     this._dualsenseSource = readDualSenseSourcePref();
@@ -173,7 +178,15 @@ export class InputManager {
   // ── Slot accessors ──
   // Read-only getters that delegate to the attached slot. ControllerManager
   // owns the lifecycle; InputManager is a pure consumer.
-  get gamepadConnected() { return this._slot?.state === 'claimed' || this._steamInputActive; }
+  get gamepadConnected() {
+    if (this._slot?.state === 'claimed') return true;
+    if (!this._steamInputActive) return false;
+    // Handle-bound managers (versus multi-pad) are only "connected" while
+    // their specific controller is still in the Steam snapshot.
+    return this.steamInputHandle === null
+      ? true
+      : this._steamInputSnapshot.some((c) => c.handle === this.steamInputHandle);
+  }
   get gamepadIndex() { return this._slot?.gamepadIndex ?? null; }
   // Steam Input counts as a gyro source — it owns Steer for any captured pad
   // and replaces the WebHID fusion path. The lobby reads this to decide
@@ -668,7 +681,6 @@ export class InputManager {
     // applied the DualSense Input Source preference to the cached snapshot
     // and updated this._steamInputActive. _steamInputPrevActive is the prior
     // frame's value so the edge-detect below still fires correctly.
-    const steamInputData = this._steamInputSnapshot;
     const hadSteamInput = this._steamInputPrevActive;
     if (this._steamInputActive) {
       // One-shot auto-arm on first capture, mirroring the fusion-calibration
@@ -679,9 +691,10 @@ export class InputManager {
       }
       this._wasFusionCalibrating = false;
       if (!this.motionEnabled) return;
-      // For now: map first Steam Input controller to this InputManager.
-      // Local-MP multi-pad mapping is a follow-up — see project memory.
-      const primary = steamInputData[0];
+      // Bound-handle managers (versus multi-pad) read their own controller;
+      // unbound managers keep the original first-controller mapping.
+      const primary = this._selectedSteamEntry();
+      if (!primary) { this._steamInputType = null; return; }
       this._steamInputType = primary.type;
       this.motionLean = primary.steerX;
       this._smoothedLean = primary.steerX;
@@ -789,17 +802,32 @@ export class InputManager {
   }
 
   /**
-   * Build a Gamepad-shaped object from the first Steam Input controller in
-   * the snapshot. Returned object follows the standard 18-button layout so
-   * existing consumers (lobby nav, pollGamepad stick/trigger reads) work
-   * unchanged. Pedal actions are duplicated across bumper (4/5) and trigger
-   * (6/7) slots since the game accepts either as the "pedal" input.
+   * The Steam Input snapshot entry this InputManager reads. Bound-handle
+   * managers (versus multi-pad) get exactly their controller — or null if
+   * it vanished from the snapshot (disconnect). Unbound managers get the
+   * first entry, preserving the original single-pad behavior.
+   */
+  _selectedSteamEntry() {
+    if (!this._steamInputSnapshot.length) return null;
+    if (this.steamInputHandle !== null) {
+      return this._steamInputSnapshot.find((c) => c.handle === this.steamInputHandle) || null;
+    }
+    return this._steamInputSnapshot[0];
+  }
+
+  /**
+   * Build a Gamepad-shaped object from this manager's Steam Input
+   * controller (bound handle, else first in the snapshot). Returned object
+   * follows the standard 18-button layout so existing consumers (lobby
+   * nav, pollGamepad stick/trigger reads) work unchanged. Pedal actions
+   * are duplicated across bumper (4/5) and trigger (6/7) slots since the
+   * game accepts either as the "pedal" input.
    *
    * @returns {Gamepad|null}
    */
   _buildSteamInputGamepad() {
-    if (!this._steamInputSnapshot.length) return null;
-    const c = this._steamInputSnapshot[0];
+    const c = this._selectedSteamEntry();
+    if (!c) return null;
     const d = c.digital || {};
     const btn = (pressed) => ({ pressed: !!pressed, touched: !!pressed, value: pressed ? 1 : 0 });
     const buttons = [

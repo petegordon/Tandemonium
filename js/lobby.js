@@ -149,9 +149,10 @@ export class Lobby {
     // onVersusReady({ teams }) on START RIDE.
     this._versusPlayers = [];
     this._versusMonitorRAF = null;
-    this._versusPrevButtons = new Map(); // gpIndex -> { a, left, right }
+    this._versusPrevButtons = new Map(); // candidate key / member n -> { a, left, right }
     this._versusLastCardsKey = null;
     this._versusKeyHandler = null;
+    this._versusCandidates = []; // detected-but-unjoined controllers (all sources)
     this._localLastUnclaimedGp = null;  // last detected unclaimed gamepad index
     this._localLastJoinState = null;    // cached state string for dirty-checking
     // WebHID device cache for P2 detection (async getDevices() can't run per-frame)
@@ -3993,6 +3994,42 @@ export class Lobby {
    * auto-joins Team A; everyone else joins from the monitor loop by
    * pressing A on an unclaimed pad, or via the keyboard button.
    */
+  /**
+   * Describe P1's current physical source. gamepadIndex is USELESS for
+   * this — HID pseudo-pad claims (BT DualSense in 0x31 mode, the normal
+   * state in Electron) leave it null. gamepadConnected covers Gamepad API,
+   * HID-slot, and Steam Input bindings.
+   */
+  /** Human label for a Steam Input controller type enum string. */
+  _prettySteamType(type) {
+    const t = String(type || '').replace(/^k_ESteamInputType_/i, '');
+    const map = {
+      PS5Controller: 'DUALSENSE',
+      PS4Controller: 'DUALSHOCK 4',
+      XBoxOneController: 'XBOX',
+      XBox360Controller: 'XBOX 360',
+      SwitchProController: 'SWITCH PRO',
+      SteamController: 'STEAM CONTROLLER',
+      SteamDeckController: 'STEAM DECK',
+    };
+    return map[t] || (t ? t.toUpperCase().slice(0, 20) : 'CONTROLLER');
+  }
+
+  _versusP1Descriptor() {
+    const inp = this.input;
+    if (!inp) return { type: 'keyboard', name: 'KEYBOARD' };
+    if (inp._steamInputActive) {
+      const entry = inp._selectedSteamEntry();
+      return { type: 'gamepad', name: this._prettySteamType(entry?.type) };
+    }
+    if (inp.gamepadConnected) {
+      const slot = inp._slot;
+      const raw = slot?.hidDevice?.productName || inp._gpName || slot?.controllerLabel;
+      return { type: 'gamepad', name: this._prettyGamepadName(raw) };
+    }
+    return { type: 'keyboard', name: 'KEYBOARD' };
+  }
+
   _enterVersusStep() {
     // Tear down any in-flight online session — versus is purely local.
     if (this.net) {
@@ -4003,16 +4040,45 @@ export class Lobby {
     this._versusPlayers = [];
     this._versusPrevButtons.clear();
     this._versusLastCardsKey = null;
+    this._versusCandidates = [];
 
-    // P1 auto-joins Team A. Type reflects the live input source and is
-    // re-synced every monitor tick (a pad plugged in later upgrades P1).
-    const p1OnPad = this.input && this.input.gamepadIndex !== null;
+    // Give P1 one last chance to bind a visible pad BEFORE suspending
+    // auto-claim (pads plugged in pre-launch never fire gamepadconnected;
+    // same rationale as _detectLocalP2State's forced claim).
+    if (this.input && this.input.gamepadIndex === null && this.controllerManager) {
+      const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+      this.controllerManager.claimFirstAvailable('P1', pads);
+    }
+
+    // While this screen is open, the join monitor is the ONLY claimer.
+    // Without this, ingestFrame's activity-claim would grab a joiner's
+    // first button press into the first empty slot — P1's — hijacking a
+    // keyboard-driven P1. Cleared in _leaveVersus and on START RIDE
+    // (game._onVersusReady side).
+    if (this.controllerManager) this.controllerManager.autoClaimSuspended = true;
+
+    // Seed the WebHID device cache (same pattern as the co-op monitor) so
+    // hid candidates can be labeled before their first report arrives.
+    if (navigator.hid) {
+      navigator.hid.getDevices().then(devices => {
+        this._cachedHIDDevices = devices;
+        this._hidCacheTime = performance.now();
+      }).catch(() => {});
+    }
+
+    // P1 auto-joins Team A. If Steam Input is active, pin P1 to the first
+    // captured controller so a joiner can't bind the same handle.
+    const p1 = this._versusP1Descriptor();
+    if (this.input && this.input._steamInputActive) {
+      const entry = this.input._selectedSteamEntry();
+      if (entry) this.input.steamInputHandle = entry.handle;
+    }
     this._versusPlayers.push({
       n: 1,
-      type: p1OnPad ? 'gamepad' : 'keyboard',
-      gpIndex: p1OnPad ? this.input.gamepadIndex : null,
+      type: p1.type,
+      gpIndex: this.input ? this.input.gamepadIndex : null,
       slotId: 'P1',
-      name: p1OnPad ? this._prettyGamepadName(this.input._gpName) : 'KEYBOARD',
+      name: p1.name,
       team: 'A',
       input: this.input,
     });
@@ -4043,11 +4109,16 @@ export class Lobby {
   _leaveVersus() {
     this._stopVersusMonitor();
     for (const p of this._versusPlayers) {
-      if (p.slotId === 'P1' || p.type !== 'gamepad') continue;
-      const slot = this.controllerManager?.getSlot(p.slotId);
-      if (slot && slot.state === 'claimed') slot.release();
+      // Unbind Steam handles so the InputManager defaults revert.
+      if (p.input) p.input.steamInputHandle = null;
+      if (p.slotId === 'P1' || p.type !== 'gamepad' || !p.slotId) continue;
+      // Return HID entries to the pool cleanly so re-entering the screen
+      // (or co-op) can claim them again.
+      this.controllerManager?.releaseSlotToPool(p.slotId);
     }
+    if (this.controllerManager) this.controllerManager.autoClaimSuspended = false;
     this._versusPlayers = [];
+    this._versusCandidates = [];
     this._versusLastCardsKey = null;
     this._pendingMode = null;
   }
@@ -4074,50 +4145,65 @@ export class Lobby {
       }
       const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
 
-      // Keep P1 bound to a pad when one exists (same rationale as
-      // _detectLocalP2State — pads plugged in pre-launch never fire
-      // gamepadconnected, so claim explicitly).
-      if (this.input && this.input.gamepadIndex === null && this.controllerManager) {
-        this.controllerManager.claimFirstAvailable('P1', pads);
-      }
-      // Re-sync P1's live source (pad may have connected after entry).
-      const p1 = this._versusPlayers[0];
-      const p1OnPad = this.input.gamepadIndex !== null;
-      if (p1 && (p1.gpIndex !== this.input.gamepadIndex || (p1.type === 'gamepad') !== p1OnPad)) {
-        p1.type = p1OnPad ? 'gamepad' : 'keyboard';
-        p1.gpIndex = p1OnPad ? this.input.gamepadIndex : null;
-        p1.name = p1OnPad ? this._prettyGamepadName(this.input._gpName) : 'KEYBOARD';
+      // Refresh the WebHID device cache every 2s (hot-plug labeling).
+      if (navigator.hid && performance.now() - this._hidCacheTime > 2000) {
+        this._hidCacheTime = performance.now();
+        navigator.hid.getDevices().then(devices => {
+          this._cachedHIDDevices = devices;
+        }).catch(() => {});
       }
 
-      // 1) Unclaimed pads: A-button edge → join.
-      const takenIndices = new Set(
-        this._versusPlayers.filter(p => p.gpIndex !== null).map(p => p.gpIndex)
-      );
-      for (let i = 0; i < pads.length; i++) {
-        const gp = pads[i];
-        if (!gp || takenIndices.has(i)) continue;
-        const prev = this._versusPrevButtons.get(i) || { a: false, left: false, right: false };
+      // Re-sync P1's live source. gamepadConnected-based: covers Gamepad
+      // API pads, HID-claimed slots (gamepadIndex null!), and Steam Input.
+      const p1 = this._versusPlayers[0];
+      if (p1) {
+        const d = this._versusP1Descriptor();
+        if (p1.type !== d.type || p1.name !== d.name) {
+          p1.type = d.type;
+          p1.name = d.name;
+        }
+        p1.gpIndex = this.input ? this.input.gamepadIndex : null;
+      }
+
+      // 1) Detect joinable controllers from all sources (Gamepad API,
+      //    HID pool/slots, Steam Input) and poll each for a join press.
+      this._versusCandidates = this._detectVersusCandidates(pads);
+      for (const c of this._versusCandidates) {
+        const gp = c.pollGp;
+        if (!gp || !gp.buttons) continue;
+        const prev = this._versusPrevButtons.get(c.key) || { a: false, left: false, right: false };
         const a = !!(gp.buttons[0] && gp.buttons[0].pressed);
         if (a && !prev.a && this._versusPlayers.length < 4) {
-          this._versusJoinGamepad(i, gp);
+          this._versusJoinCandidate(c);
         }
         prev.a = a;
-        this._versusPrevButtons.set(i, prev);
+        this._versusPrevButtons.set(c.key, prev);
       }
 
-      // 2) Joined gamepad players: d-pad/stick left/right edge → pick team.
+      // 2) Joined pad players: d-pad/stick left/right edge → pick team.
+      //    getGamepadState() unifies the sources (real pad, HID synthetic,
+      //    Steam synthetic all expose buttons 14/15 + axes[0]).
+      //    Joiner InputManagers aren't in the game loop's poll set until
+      //    the race starts, so poll them here — Steam-bound managers need
+      //    it to refresh their snapshot (and gamepadConnected).
       for (const p of this._versusPlayers) {
-        if (p.type !== 'gamepad' || p.gpIndex === null) continue;
-        const gp = pads[p.gpIndex];
-        if (!gp) continue;
-        const prev = this._versusPrevButtons.get(p.gpIndex) || { a: false, left: false, right: false };
+        if (!p.input || p.input === this.input || p.type === 'keyboard' || p.type === 'bot') continue;
+        p.input.pollGamepad();
+        p.input.consumeTaps();
+      }
+      for (const p of this._versusPlayers) {
+        if (p.type !== 'gamepad' || !p.input) continue;
+        const gp = p.input.getGamepadState();
+        if (!gp || !gp.buttons) continue;
+        const key = 'member:' + p.n;
+        const prev = this._versusPrevButtons.get(key) || { a: false, left: false, right: false };
         const left = !!(gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] || 0) < -0.6;
         const right = !!(gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] || 0) > 0.6;
         if (left && !prev.left) this._versusSwitchTeam(p, 'A');
         if (right && !prev.right) this._versusSwitchTeam(p, 'B');
         prev.left = left;
         prev.right = right;
-        this._versusPrevButtons.set(p.gpIndex, prev);
+        this._versusPrevButtons.set(key, prev);
       }
 
       // 3) Keyboard join button: visible only when no keyboard player yet.
@@ -4140,6 +4226,121 @@ export class Lobby {
     this._versusMonitorRAF = requestAnimationFrame(tick);
   }
 
+  /**
+   * Enumerate joinable controllers, one candidate per physical pad:
+   * - steam: Steam Input snapshot entries (Electron under Steam — the
+   *   Gamepad API is blind there; the snapshot is the source of truth,
+   *   so other sources are skipped to avoid double-listing).
+   * - gamepad: unclaimed navigator.getGamepads() pads (Xbox/Switch/USB).
+   * - hid: ControllerManager pool entries + claimed-but-unowned slots.
+   *   This is the PRIMARY path in Electron: the PlayStation driver flips
+   *   BT DualSenses to 0x31 full-report mode at boot, which removes them
+   *   from the Gamepad API entirely — their synthetics are the only
+   *   button source.
+   */
+  _detectVersusCandidates(pads) {
+    const out = [];
+    const openSeats = 4 - this._versusPlayers.length;
+    if (openSeats <= 0) return out;
+    const mgr = this.controllerManager;
+
+    // Steam Input active → snapshot handles are the truth.
+    if (this.input && this.input._steamInputActive) {
+      const ownedHandles = new Set();
+      for (const p of this._versusPlayers) {
+        if (p.input && p.input.steamInputHandle !== null) ownedHandles.add(p.input.steamInputHandle);
+      }
+      // P1 unpinned (legacy default = first entry) still owns entry [0].
+      const p1Entry = this.input._selectedSteamEntry();
+      if (p1Entry && this._versusPlayers[0] && this._versusPlayers[0].type === 'gamepad') {
+        ownedHandles.add(p1Entry.handle);
+      }
+      for (const c of this.input._steamInputSnapshot) {
+        if (ownedHandles.has(c.handle)) continue;
+        out.push({
+          kind: 'steam',
+          key: 'steam:' + c.handle,
+          handle: c.handle,
+          name: this._prettySteamType(c.type),
+          pollGp: this._steamEntryToPollGp(c),
+        });
+      }
+      return out.slice(0, openSeats);
+    }
+
+    // Devices already owned by a pad-typed member (P1 included).
+    const ownedDevices = new Set();
+    const ownedIndices = new Set();
+    const ownedSlotIds = new Set();
+    for (const p of this._versusPlayers) {
+      if (p.type !== 'gamepad' || !p.input) continue;
+      const slot = p.input._slot;
+      if (slot?.hidDevice) ownedDevices.add(slot.hidDevice);
+      if (slot) ownedSlotIds.add(slot.id);
+      if (p.input.gamepadIndex !== null) ownedIndices.add(p.input.gamepadIndex);
+    }
+
+    // Gamepad API pads.
+    for (const gp of pads) {
+      if (!gp || ownedIndices.has(gp.index)) continue;
+      out.push({
+        kind: 'gamepad',
+        key: 'gp:' + gp.index,
+        gpIndex: gp.index,
+        gp,
+        name: this._prettyGamepadName(gp.id),
+        pollGp: gp,
+      });
+    }
+
+    if (mgr) {
+      // Pool entries (unclaimed HID pads — synthetics live pre-claim).
+      for (const entry of mgr._hidPool.values()) {
+        if (ownedDevices.has(entry.device)) continue;
+        // Dual-interface pads: if a visible unclaimed Gamepad API pad
+        // shares this device's productName, the gamepad candidate above
+        // already covers it.
+        const hidName = (entry.device.productName || '').trim().toLowerCase();
+        if (hidName && out.some(c => c.kind === 'gamepad' && c.gp.id.toLowerCase().includes(hidName))) continue;
+        out.push({
+          kind: 'hid',
+          key: 'hid:' + (entry.device.vendorId || 0) + ':' + (entry.device.productId || 0) + ':' + (entry.device.productName || ''),
+          device: entry.device,
+          name: this._prettyGamepadName(entry.device.productName),
+          pollGp: entry.synthetic,
+        });
+      }
+      // Claimed slots holding a device no member owns — a pad that
+      // activity-claimed a slot while navigating menus BEFORE this screen
+      // suspended auto-claim. Joining adopts that slot.
+      for (const s of mgr.slots) {
+        if (s.state !== 'claimed' || !s.hidDevice) continue;
+        if (ownedSlotIds.has(s.id) || ownedDevices.has(s.hidDevice)) continue;
+        out.push({
+          kind: 'hid',
+          key: 'hidslot:' + s.id,
+          device: s.hidDevice,
+          slotId: s.id,
+          name: this._prettyGamepadName(s.hidDevice.productName || s.controllerLabel),
+          pollGp: s.synthetic,
+        });
+      }
+    }
+    return out.slice(0, openSeats);
+  }
+
+  /** Gamepad-shaped poll object for a Steam Input snapshot entry. */
+  _steamEntryToPollGp(c) {
+    const d = c.digital || {};
+    const btn = (pressed) => ({ pressed: !!pressed, value: pressed ? 1 : 0 });
+    const buttons = [];
+    for (let i = 0; i < 16; i++) buttons.push(btn(false));
+    buttons[0] = btn(d.Confirm);
+    buttons[14] = btn(d.MenuLeft);
+    buttons[15] = btn(d.MenuRight);
+    return { buttons, axes: [0, 0, 0, 0] };
+  }
+
   _stopVersusMonitor() {
     if (this._versusMonitorRAF !== null) {
       cancelAnimationFrame(this._versusMonitorRAF);
@@ -4152,31 +4353,76 @@ export class Lobby {
     this._versusPrevButtons.clear();
   }
 
-  /** Join a specific pad as the next player. */
-  _versusJoinGamepad(gpIndex, gp) {
-    // Find the slot this pad already claimed (ingestFrame's activity claim
-    // may have gotten there first), else claim the next free P2-P4 slot.
+  /**
+   * Join a detected candidate as the next player. Handles all three
+   * sources: Gamepad API pads (explicit slot claim), WebHID devices
+   * (explicit HID claim or adopting the slot a pre-screen activity-claim
+   * landed on), and Steam Input controllers (handle-bound InputManager,
+   * no slot involved).
+   */
+  _versusJoinCandidate(c) {
+    if (this._versusPlayers.length >= 4) return;
+    const mgr = this.controllerManager;
+    const usedSlots = new Set(this._versusPlayers.map(p => p.slotId).filter(Boolean));
+    usedSlots.add('P1'); // this.input is bound to P1's slot — never give it to a joiner
+    let input = null;
     let slotId = null;
-    const usedSlots = new Set(this._versusPlayers.map(p => p.slotId));
-    for (const s of this.controllerManager?.slots || []) {
-      if (s.gamepadIndex === gpIndex && !usedSlots.has(s.id)) { slotId = s.id; break; }
-    }
-    if (!slotId) {
-      for (const id of ['P2', 'P3', 'P4']) {
-        if (usedSlots.has(id)) continue;
-        if (this.controllerManager?.claimPadForSlot(id, gp)) { slotId = id; break; }
-      }
-    }
-    if (!slotId) return; // no slot available (shouldn't happen under the 4-player cap)
+    let gpIndex = null;
 
-    const input = new InputManager({
-      slot: this.controllerManager.getSlot(slotId),
-      enableKeyboard: false,
-      enableMotion: false,
-      enableTouch: false,
-    });
+    if (c.kind === 'steam') {
+      input = new InputManager({
+        enableKeyboard: false,
+        enableMotion: false,
+        enableTouch: false,
+      });
+      input.steamInputHandle = c.handle;
+      // Steam gyro auto-arms on first snapshot; nothing else to wire.
+    } else if (c.kind === 'hid') {
+      let slot = null;
+      if (c.slotId && !usedSlots.has(c.slotId)) {
+        // Adopt the slot ingestFrame claimed before this screen opened.
+        slot = mgr?.getSlot(c.slotId) || null;
+      }
+      if (!slot && mgr) {
+        for (const id of ['P2', 'P3', 'P4']) {
+          if (usedSlots.has(id)) continue;
+          slot = mgr.claimHidDeviceForSlot(id, c.device);
+          if (slot) break;
+        }
+      }
+      if (!slot) return;
+      slotId = slot.id;
+      input = new InputManager({
+        slot,
+        enableKeyboard: false,
+        enableMotion: false,
+        enableTouch: false,
+      });
+      // HID pads carry gyro (that's why they're in 0x31 mode) — arm it.
+      input.motionEnabled = true;
+      input.startTiltCalibration();
+    } else { // 'gamepad'
+      for (const s of mgr?.slots || []) {
+        if (s.gamepadIndex === c.gpIndex && !usedSlots.has(s.id)) { slotId = s.id; break; }
+      }
+      if (!slotId && mgr) {
+        for (const id of ['P2', 'P3', 'P4']) {
+          if (usedSlots.has(id)) continue;
+          if (mgr.claimPadForSlot(id, c.gp)) { slotId = id; break; }
+        }
+      }
+      if (!slotId) return;
+      gpIndex = c.gpIndex;
+      input = new InputManager({
+        slot: mgr.getSlot(slotId),
+        enableKeyboard: false,
+        enableMotion: false,
+        enableTouch: false,
+      });
+      if (this.motionActive) input.motionEnabled = true;
+    }
+
     input.suppressGamepadLean = !this.joystickActive;
-    if (this.motionActive) input.motionEnabled = true;
 
     const sizeA = this._versusPlayers.filter(p => p.team === 'A').length;
     const sizeB = this._versusPlayers.filter(p => p.team === 'B').length;
@@ -4185,12 +4431,12 @@ export class Lobby {
       type: 'gamepad',
       gpIndex,
       slotId,
-      name: this._prettyGamepadName(gp.id),
+      name: c.name,
       team: sizeB < sizeA ? 'B' : 'A',
       input,
     });
     analytics.trackEvent('versus_player_joined', {
-      source: 'gamepad',
+      source: c.kind,
       players: this._versusPlayers.length,
     });
   }
@@ -4250,11 +4496,34 @@ export class Lobby {
     ];
   }
 
-  /** Re-render team columns when membership/teams change (dirty-checked). */
+  /**
+   * Re-render team columns when membership/teams/candidates change
+   * (dirty-checked). Detected-but-unjoined controllers render as live
+   * join cards (mouse-clickable; their own ✕/A press also joins via the
+   * monitor's edge poll) distributed to teams with room; leftover open
+   * seats show the passive placeholder.
+   */
   _renderVersusCards() {
-    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}`).join('|');
+    const candidates = this._versusCandidates || [];
+    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}`).join('|')
+      + '§' + candidates.map(c => `${c.key}:${c.name}`).join('|');
     if (key === this._versusLastCardsKey) return;
     this._versusLastCardsKey = key;
+
+    // Distribute join cards: fill the emptier team first (mirrors the
+    // team auto-assignment a join will actually make).
+    const roomIn = (team) => 2 - this._versusPlayers.filter(p => p.team === team).length;
+    const queue = [...candidates];
+    const joinCardsFor = { A: [], B: [] };
+    let roomA = roomIn('A');
+    let roomB = roomIn('B');
+    for (const c of queue) {
+      const sizeA = this._versusPlayers.filter(p => p.team === 'A').length + joinCardsFor.A.length;
+      const sizeB = this._versusPlayers.filter(p => p.team === 'B').length + joinCardsFor.B.length;
+      if (roomB > 0 && (sizeB < sizeA || roomA <= 0)) { joinCardsFor.B.push(c); roomB--; }
+      else if (roomA > 0) { joinCardsFor.A.push(c); roomA--; }
+    }
+
     for (const team of ['A', 'B']) {
       const wrap = document.getElementById(`versus-team-${team.toLowerCase()}-slots`);
       if (!wrap) continue;
@@ -4267,10 +4536,18 @@ export class Lobby {
         card.innerHTML = `<span class="vp-name">PLAYER ${p.n}</span><span class="vp-device">${icon}${p.name}</span>`;
         wrap.appendChild(card);
       }
-      if (members.length < 2 && this._versusPlayers.length < 4) {
+      for (const c of joinCardsFor[team]) {
+        const card = document.createElement('button');
+        card.className = 'versus-player-card vp-join';
+        card.innerHTML = `<span class="vp-name">JOIN — ${c.name}</span><span class="vp-device">Press ✕/A or click</span>`;
+        card.addEventListener('click', () => this._versusJoinCandidate(c));
+        wrap.appendChild(card);
+      }
+      const shown = members.length + joinCardsFor[team].length;
+      if (shown < 2 && this._versusPlayers.length + candidates.length < 4) {
         const empty = document.createElement('div');
         empty.className = 'versus-player-card vp-empty';
-        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">PRESS A TO JOIN</span>';
+        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">CONNECT A CONTROLLER</span>';
         wrap.appendChild(empty);
       }
     }

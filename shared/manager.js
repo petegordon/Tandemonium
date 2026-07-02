@@ -440,6 +440,13 @@ export class ControllerManager {
     this._prevAxesByIndex = new Map();
     this._hidConnectHandler = null;
     this._hidDisconnectHandler = null;
+    // When true, ingestFrame skips BOTH activity-claim paths (Gamepad API
+    // and HID pool) — report ingestion, orphan recovery, reconciliation,
+    // and the release gesture keep running. The versus join screen sets
+    // this so IT is the sole claimer: without it, a joiner's first button
+    // press would auto-claim the first empty slot (P1!) and hijack a
+    // keyboard-driven P1 InputManager. Cleared when the screen closes.
+    this.autoClaimSuspended = false;
   }
 
   getSlot(id) { return this._slotById[id] || null; }
@@ -498,6 +505,54 @@ export class ControllerManager {
     this._attachMatchingPoolEntry(slot);
     slot._emit('claimed');
     return gp;
+  }
+
+  /**
+   * Claim a specific WebHID device to a specific slot — the explicit-join
+   * twin of claimPadForSlot for pads the Gamepad API can't see (BT
+   * DualSense in 0x31 full-report mode). If a slot already holds this
+   * device, that slot is returned as-is (adopt). Otherwise the device's
+   * pool entry is promoted with the same pseudo-pad shape ingestFrame's
+   * HID claim path uses. Returns the claimed slot, or null.
+   */
+  claimHidDeviceForSlot(slotId, device) {
+    if (!device) return null;
+    const holder = this.slots.find((s) => s.hidDevice === device);
+    if (holder) return holder;
+    const slot = this.getSlot(slotId);
+    if (!slot || slot.state !== 'empty') return null;
+    const entry = this._hidPool.get(device);
+    if (!entry) return null;
+    const pseudoPad = {
+      index: -1,
+      id: `HID::${device.productName || ''} Vendor: ${device.vendorId.toString(16)} Product: ${device.productId.toString(16)}`,
+      mapping: 'standard',
+    };
+    const info = ControllerRegistry.identifyFromGamepadId(pseudoPad.id);
+    slot.claim(pseudoPad, {
+      controllerTypeHint: info?.controllerProfile || info?.protocol || null,
+      silent: true,
+    });
+    this._attachEntryToSlot(slot, entry);
+    slot._emit('claimed');
+    return slot;
+  }
+
+  /**
+   * Release a slot and return its HID entry (if any) to the pool so an
+   * explicit claim can move the device to a different slot. Unlike the
+   * release GESTURE this does not stamp the reclaim cooldown for the pad —
+   * the caller is about to re-claim it deliberately.
+   */
+  releaseSlotToPool(slotId) {
+    const slot = this.getSlot(slotId);
+    if (!slot || slot.state === 'empty') return false;
+    if (slot._hidEntry) this._detachEntryFromSlot(slot);
+    slot.release();
+    // Clear the awaiting-silence latch: this is a programmatic move, not a
+    // user release gesture — the device should be immediately re-claimable.
+    slot._awaitingSilence = false;
+    return true;
   }
 
   /**
@@ -748,10 +803,11 @@ export class ControllerManager {
     // Claim via Gamepad API activity. Uses gamepadHasFreshActivity
     // (not gamepadHasActivity) so pinned-stick ghost pads don't get
     // claimed — only real button presses or stick motion count.
+    // Suspended while an explicit-claim UI (versus join screen) is open.
     const claimedIndices = new Set(
       this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex)
     );
-    for (const gp of pads) {
+    for (const gp of this.autoClaimSuspended ? [] : pads) {
       if (!gp) continue;
       if (claimedIndices.has(gp.index)) continue;
       const releasedAt = this._recentlyReleasedByIndex.get(gp.index);
@@ -794,8 +850,9 @@ export class ControllerManager {
 
     // Claim via WebHID synthetic activity (covers BT-silent DualSense):
     // iterate the HID pool, not slots. Any pool entry showing activity
-    // promotes into an empty slot.
-    for (const entry of this._hidPool.values()) {
+    // promotes into an empty slot. Suspended alongside the Gamepad path
+    // while an explicit-claim UI is open.
+    for (const entry of this.autoClaimSuspended ? [] : this._hidPool.values()) {
       // Require a *fresh* button press to claim via HID pool (ignoring
       // buttons that were stuck-pressed from the first HID report).
       // GameSir-as-DS4 gets mis-parsed by the DualSense driver, producing

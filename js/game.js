@@ -1019,6 +1019,10 @@ class Game {
     this._versusTeams = teams;
     this._lobbyBtn.textContent = 'LOBBY';
     this._loadSavedTuning();
+    // The join screen suspended activity-claims so it could be the sole
+    // claimer; rosters are locked now, so restore normal behavior (spare
+    // slots claiming idle pads is harmless — nothing reads them in-race).
+    this.controllerManager.autoClaimSuspended = false;
     console.log('[versus] teams ready:',
       teams.map(t => `${t.id}: ${t.members.map(m => `${m.slotId || 'kb'}(${m.type})`).join(' + ')}`).join(' vs '));
 
@@ -3031,13 +3035,23 @@ class Game {
       this.versusHud = null;
     }
     if (this.versusRigs) {
-      for (const rig of this.versusRigs) rig.dispose(this.scene);
+      for (const rig of this.versusRigs) {
+        // Unbind Steam handles so InputManagers revert to the
+        // first-controller default (what solo/co-op expect).
+        for (const m of rig.members) {
+          if (m.input) m.input.steamInputHandle = null;
+        }
+        rig.dispose(this.scene);
+      }
       this.versusRigs = null;
       this.bike.group.visible = true;
       this.renderer.setScissorTest(false);
       this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
       this.input.keyboardActive = true;
     }
+    // Auto-claim was suspended by the versus join screen; make sure it's
+    // back on regardless of how we exited.
+    this.controllerManager.autoClaimSuspended = false;
     this._versusTeams = null;
     this._versusPaused = false;
   }
@@ -4046,9 +4060,11 @@ class Game {
 
     // Mid-race pad drop: freeze the whole race (both teams) until the pad
     // returns — same freeze pattern as local co-op's P2 disconnect, but
-    // any gamepad member of either team can trigger it.
+    // any physical-pad member of either team can trigger it.
+    // gamepadConnected covers Gamepad API slots, HID-claimed slots, and
+    // Steam-handle-bound managers alike.
     const dropped = rigs.flatMap((r) => r.members)
-      .find((m) => m.type === 'gamepad' && !m.input.gamepadConnected);
+      .find((m) => m.type !== 'keyboard' && m.type !== 'bot' && !m.input.gamepadConnected);
     if (dropped) {
       if (!this._versusPaused) {
         this._versusPaused = true;
