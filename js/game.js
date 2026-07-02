@@ -35,6 +35,7 @@ import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
+import { VersusHud } from './versus/versus-hud.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -189,6 +190,8 @@ class Game {
     // Versus (issue #351): teams payload from the lobby, set in _onVersusReady.
     this._versusTeams = null;
     this.versusRigs = null; // [TeamRig, TeamRig] while a versus session is live
+    this.versusHud = null;  // VersusHud instance (created at first versus countdown)
+    this._versusPaused = false; // true while a member's pad is disconnected
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
@@ -504,7 +507,7 @@ class Game {
     });
 
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults'
     this._finishCinematic = null;
     this.countdownTimer = 0;
     this._lastCountNum = 3;
@@ -1711,6 +1714,9 @@ class Game {
       rig.raceManager = new RaceManager(level);
       for (const bc of rig.balanceCtrls) bc.resetSteerFrames();
     }
+    if (!this.versusHud) this.versusHud = new VersusHud(this.versusRigs);
+    this.versusHud.initProgress(level, this.versusRigs[0].raceManager.checkpoints);
+    this._versusPaused = false;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
     if (this.obstacleManager) this.obstacleManager.destroy();
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
@@ -3016,6 +3022,10 @@ class Game {
    */
   _teardownVersus() {
     document.body.classList.remove('mode-versus');
+    if (this.versusHud) {
+      this.versusHud.destroy();
+      this.versusHud = null;
+    }
     if (this.versusRigs) {
       for (const rig of this.versusRigs) rig.dispose(this.scene);
       this.versusRigs = null;
@@ -3025,6 +3035,7 @@ class Game {
       this.input.keyboardActive = true;
     }
     this._versusTeams = null;
+    this._versusPaused = false;
   }
 
   _returnToRoom() {
@@ -3666,7 +3677,7 @@ class Game {
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
-      if (this.state === 'gameover' || this.state === 'victory' ||
+      if (this.state === 'gameover' || this.state === 'victory' || this.state === 'versusResults' ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
       if (this.mode === 'versus' && this.versusRigs) {
         // Versus non-playing states (instructions/countdown/results) still
@@ -4029,6 +4040,25 @@ class Game {
     const rigs = this.versusRigs;
     if (!rigs) return;
 
+    // Mid-race pad drop: freeze the whole race (both teams) until the pad
+    // returns — same freeze pattern as local co-op's P2 disconnect, but
+    // any gamepad member of either team can trigger it.
+    const dropped = rigs.flatMap((r) => r.members)
+      .find((m) => m.type === 'gamepad' && !m.input.gamepadConnected);
+    if (dropped) {
+      if (!this._versusPaused) {
+        this._versusPaused = true;
+        this._showDisconnect(`${dropped.name || 'A'} controller disconnected`);
+      }
+      this._renderVersusViews();
+      return;
+    }
+    if (this._versusPaused) {
+      this._versusPaused = false;
+      document.getElementById('disconnect-overlay').style.display = 'none';
+      this._clearOverlayButtons();
+    }
+
     for (const rig of rigs) this._stepTeam(rig, dt);
 
     // World: multi-anchor streaming around both bikes
@@ -4043,6 +4073,7 @@ class Game {
       rig.grassParticles.update(rig.bike, dt);
     }
 
+    if (this.versusHud) this.versusHud.update();
     this._renderVersusViews();
   }
 
@@ -4117,7 +4148,7 @@ class Game {
     }
   }
 
-  /** Checkpoint/finish events for one team. Winner/results UI lands in M4. */
+  /** Checkpoint/finish events for one team. */
   _handleVersusRaceEvent(rig, raceEvent) {
     if (raceEvent.event === 'checkpoint') {
       this._playBeep(600, 0.12);
@@ -4125,9 +4156,71 @@ class Game {
     } else if (raceEvent.event === 'finish') {
       rig.finished = true;
       rig.finishMs = rig.raceManager.getElapsedMs();
-      hapticFinish();
-      console.log(`[versus] ${rig.color.name} finished in ${rig.raceManager.getElapsedFormatted()}`);
+      this._finishVersusRace(rig);
     }
+  }
+
+  /**
+   * First team across the line wins. Freeze both rigs (state leaves
+   * 'playing'), flash the winner banner over both halves, then show the
+   * results overlay with REMATCH / LOBBY. The loser is scored as
+   * DNF-with-distance — no second-place finish riding.
+   */
+  _finishVersusRace(winner) {
+    const loser = this.versusRigs.find((r) => r !== winner);
+    this.state = 'versusResults';
+    hapticFinish(); // everyone feels the finish
+    this._playBeep(800, 0.3);
+    setTimeout(() => this._playBeep(1000, 0.3), 150);
+    setTimeout(() => this._playBeep(1200, 0.45), 300);
+    this.audioEngine.duckMusic(1.0, 0.8);
+
+    const summary = winner.raceManager.getSummary(winner.bike.distanceTraveled);
+    analytics.trackEvent('versus_finish', {
+      winner: winner.id,
+      winner_players: winner.members.length,
+      loser_players: loser.members.length,
+      winner_time_ms: summary.timeMs,
+      loser_distance: Math.floor(loser.bike.distanceTraveled),
+      winner_crashes: winner.crashCount,
+      loser_crashes: loser.crashCount,
+    });
+    analytics.endRide({
+      completed: true,
+      duration_ms: summary.timeMs,
+      distance: summary.distance,
+      checkpoints_passed: summary.checkpointsPassed,
+      checkpoints_total: summary.checkpointsTotal,
+      crash_count: winner.crashCount + loser.crashCount,
+      timeout_count: 0,
+      restarts: 0,
+    });
+
+    this.versusHud.showBanner(`${winner.color.name} WINS!`, winner.color.hex);
+    setTimeout(() => {
+      if (this.state !== 'versusResults') return; // torn down meanwhile
+      this.versusHud.hideBanner();
+      const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser);
+      rematchBtn.addEventListener('click', () => this._rematchVersus());
+      lobbyBtn.addEventListener('click', () => {
+        this._clearOverlayButtons();
+        this._returnToLobby();
+      });
+      this._setOverlayButtons([rematchBtn, lobbyBtn]);
+      this._overlayCooldownUntil = performance.now() + 1000;
+    }, 1600);
+  }
+
+  /** Reset both rigs and rerun the versus countdown on the same level. */
+  _rematchVersus() {
+    this._clearOverlayButtons();
+    if (this.versusHud) this.versusHud.hideResults();
+    analytics.trackEvent('versus_rematch', {
+      level: this.lobby.selectedLevel ? this.lobby.selectedLevel.id : null,
+    });
+    // _startVersusCountdown rebuilds race managers, resets rigs (position,
+    // pedal controllers, crash counts), and re-inits the HUD progress bars.
+    this._startVersusCountdown();
   }
 
   /**
