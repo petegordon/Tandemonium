@@ -27,7 +27,7 @@ import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { AudioEngine, MOTIF } from './audio-engine.js';
-import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, setHapticSources } from './haptics.js';
+import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
@@ -1722,6 +1722,20 @@ class Game {
     if (!this.versusHud) this.versusHud = new VersusHud(this.versusRigs);
     this.versusHud.initProgress(level, this.versusRigs[0].raceManager.checkpoints);
     this._versusPaused = false;
+
+    // Per-team radial tilt dial over each bike (same gauge as solo/co-op;
+    // shown when the team has a motion/gyro steering source). Duo teams
+    // get captain + stoker needles; team color for the primary needle,
+    // gold for the second (matches the co-op partner convention).
+    for (const rig of this.versusRigs) {
+      const hasTilt = rig.members.some((m) => m.input.motionEnabled || m.input.gyroConnected);
+      if (hasTilt) {
+        rig.archIndicator.setup(rig.isDuo ? 'local' : 'solo', rig.color.hex, '#ffd24c');
+        rig.applyArchLayer();
+      } else {
+        rig.archIndicator.hide();
+      }
+    }
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
@@ -3705,6 +3719,10 @@ class Game {
         this.world.update(a.bike.position, a.bike.roadD, dt, { pos: b.bike.position, d: b.bike.roadD });
         for (const rig of this.versusRigs) {
           rig.chaseCamera.update(rig.bike, dt, roadPath);
+          if (rig.archIndicator._visible) {
+            rig.archIndicator.update(rig.bike, 0, 0);
+            rig.applyArchLayer();
+          }
         }
         this._renderVersusViews();
       } else {
@@ -4082,6 +4100,9 @@ class Game {
 
     for (const rig of rigs) this._stepTeam(rig, dt);
 
+    // Bike-vs-bike contact: bumping knocks both around a little.
+    this._resolveVersusBikeContact(dt);
+
     // Items: FCFS collectibles + multi-anchor obstacle pooling
     if (this.collectibleManager) {
       const counts = this.collectibleManager.updateVersus(
@@ -4106,6 +4127,10 @@ class Game {
         rig.chaseCamera.shakeAmount = 0.15;
       }
       rig.grassParticles.update(rig.bike, dt);
+      if (rig.archIndicator._visible) {
+        rig.archIndicator.update(rig.bike, rig.hudLeans[0], rig.hudLeans[1]);
+        rig.applyArchLayer();
+      }
     }
 
     if (this.versusHud) this.versusHud.update();
@@ -4195,6 +4220,78 @@ class Game {
     if (rig.raceManager && !rig.finished) {
       const raceEvent = rig.raceManager.updateProgressOnly(bike.distanceTraveled);
       if (raceEvent) this._handleVersusRaceEvent(rig, raceEvent);
+    }
+  }
+
+  /**
+   * Bike-vs-bike contact (versus only). Each tandem is approximated by
+   * three circles (rear / center / front, r=0.5m) along its heading; on
+   * overlap the bikes are pushed apart, destabilized with a lean-velocity
+   * impulse away from the contact, and scrubbed of some speed — enough to
+   * "knock each other around a little" without instant crashes. Fresh
+   * contacts (0.35s cooldown) also thud + rumble both teams' pads.
+   */
+  _resolveVersusBikeContact(dt) {
+    this._versusBumpCd = Math.max(0, (this._versusBumpCd || 0) - dt);
+    const [ra, rb] = this.versusRigs;
+    const a = ra.bike;
+    const b = rb.bike;
+    if (a.fallen || b.fallen) return;
+
+    const R = 1.0;          // combined contact radius (0.5m per circle)
+    const HALF_LEN = 1.4;   // circle offsets along the frame
+    const fax = Math.sin(a.heading), faz = Math.cos(a.heading);
+    const fbx = Math.sin(b.heading), fbz = Math.cos(b.heading);
+
+    // Closest circle pair between the two frames
+    let best = Infinity, bnx = 0, bnz = 0;
+    for (const ta of [-HALF_LEN, 0, HALF_LEN]) {
+      const pax = a.position.x + fax * ta;
+      const paz = a.position.z + faz * ta;
+      for (const tb of [-HALF_LEN, 0, HALF_LEN]) {
+        const dx = pax - (b.position.x + fbx * tb);
+        const dz = paz - (b.position.z + fbz * tb);
+        const d2 = dx * dx + dz * dz;
+        if (d2 < best) {
+          best = d2;
+          const d = Math.sqrt(d2) || 1e-6;
+          bnx = dx / d;
+          bnz = dz / d;
+        }
+      }
+    }
+    const dist = Math.sqrt(best);
+    if (dist >= R) return;
+
+    // Push apart, half each (n points from B toward A)
+    const push = (R - dist) * 0.5;
+    a.position.x += bnx * push;
+    a.position.z += bnz * push;
+    b.position.x -= bnx * push;
+    b.position.z -= bnz * push;
+
+    // Fresh contact: wobble + speed scrub + thud + rumble. Continuous
+    // grinding only keeps them separated — no repeated impulses.
+    if (this._versusBumpCd <= 0) {
+      this._versusBumpCd = 0.35;
+      // Closing speed along the contact normal scales the effect
+      const cvx = fbx * b.speed - fax * a.speed;
+      const cvz = fbz * b.speed - faz * a.speed;
+      const closing = Math.max(0, cvx * bnx + cvz * bnz);
+      const bump = Math.min(1, closing / 6);
+      // Lean impulse away from the contact: sign from the opponent's side
+      // relative to each bike's right vector (right = cos h, -sin h).
+      const impulse = 0.35 + bump * 0.75;
+      const sideA = ((-bnx) * Math.cos(a.heading) + (-bnz) * -Math.sin(a.heading)) >= 0 ? -1 : 1;
+      const sideB = (bnx * Math.cos(b.heading) + bnz * -Math.sin(b.heading)) >= 0 ? -1 : 1;
+      a.leanVelocity += sideA * impulse;
+      b.leanVelocity += sideB * impulse;
+      const scrub = 1 - (0.06 + 0.12 * bump);
+      a.speed *= scrub;
+      b.speed *= scrub;
+      this._playCrash(0.3 + bump * 0.25);
+      hapticBump(ra.inputs);
+      hapticBump(rb.inputs);
     }
   }
 

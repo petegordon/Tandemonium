@@ -16,7 +16,6 @@ if (typeof document !== 'undefined') {
   document.addEventListener('click', _prime, { once: true });
 }
 
-let _offRoadThrottleUntil = 0;
 
 // Targeted haptic sources: a list of objects (typically InputManager
 // instances) whose `.gamepadIndex` property identifies which gamepads
@@ -148,6 +147,12 @@ export function hapticTreeHit(sources = null) {
   _gamepadRumble(1.0, 0.5, 150, sources);
 }
 
+/** Bike-vs-bike contact in versus — a solid thump, softer than a crash. */
+export function hapticBump(sources = null) {
+  if (canVibrate) navigator.vibrate(60);
+  _gamepadRumble(0.5, 0.25, 120, sources);
+}
+
 export function hapticCheckpoint(sources = null) {
   if (canVibrate) navigator.vibrate(50);
   _gamepadRumble(0.2, 0.3, 50, sources);
@@ -158,13 +163,20 @@ export function hapticFinish(sources = null) {
   _gamepadRumble(0.4, 0.6, 400, sources);
 }
 
+// Off-road throttle is PER TARGET GROUP (keyed by the first source, or a
+// global key for untargeted calls). A single module-wide window starved
+// versus: team A's per-frame call always set the throttle first, so team
+// B's call landed inside the window and its riders never felt the grass.
+const _offRoadThrottleByKey = new Map();
+
 export function hapticOffRoad(intensity, sources = null) {
   const now = performance.now();
-  if (now < _offRoadThrottleUntil) return;
+  const key = sources && sources.length ? sources[0] : '__global__';
+  if (now < (_offRoadThrottleByKey.get(key) || 0)) return;
   if (intensity < 0.1) return;
 
   const duration = Math.round(20 + intensity * 30);
-  _offRoadThrottleUntil = now + duration + 40;
+  _offRoadThrottleByKey.set(key, now + duration + 40);
 
   if (canVibrate) navigator.vibrate(duration);
   _gamepadRumble(intensity * 0.3, intensity * 0.2, duration, sources);

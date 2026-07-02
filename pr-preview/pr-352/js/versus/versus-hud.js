@@ -28,15 +28,6 @@ export class VersusHud {
           <div class="vh-marker vh-marker-a" title="Team Blue"></div>
           <div class="vh-marker vh-marker-b" title="Team Red"></div>
         </div>
-        <div class="vh-tilt-row">
-          <span class="vh-tilt-label">TILT</span>
-          <div class="vh-tilt">
-            <div class="vh-tilt-bike"></div>
-            <div class="vh-tilt-center"></div>
-            <div class="vh-tilt-needle vh-n1"></div>
-            ${rig.isDuo ? '<div class="vh-tilt-needle vh-n2"></div>' : ''}
-          </div>
-        </div>
         ${rig.isDuo ? '<div class="vh-sync"><span class="vh-sync-dot"></span> PEDAL SYNC</div>' : ''}
         <div class="vh-crash">CRASHED!</div>`;
       this.root.appendChild(panel);
@@ -50,9 +41,6 @@ export class VersusHud {
         markerA: panel.querySelector('.vh-marker-a'),
         markerB: panel.querySelector('.vh-marker-b'),
         syncDot: panel.querySelector('.vh-sync-dot'),
-        tiltBike: panel.querySelector('.vh-tilt-bike'),
-        tiltN1: panel.querySelector('.vh-tilt-needle.vh-n1'),
-        tiltN2: panel.querySelector('.vh-tilt-needle.vh-n2'),
         crash: panel.querySelector('.vh-crash'),
         _lastSpeed: -1,
         _lastDist: -1,
@@ -124,24 +112,6 @@ export class VersusHud {
         const s = rig.pedalCtrl.offsetScore ?? 0.5;
         const hue = Math.round(s * 120);
         p.syncDot.style.background = `hsl(${hue}, 90%, 55%)`;
-      }
-      // Tilt gauge: bar fill = actual bike lean, needle(s) = each rider's
-      // live steering input (gyro/stick/keys, pre-merge) so players get
-      // immediate feedback that their tilt is registering.
-      if (p.tiltBike) {
-        const leanPct = Math.max(-1, Math.min(1, (rig.bike.lean || 0) / 0.6));
-        if (leanPct >= 0) {
-          p.tiltBike.style.left = '50%';
-          p.tiltBike.style.width = `${(leanPct * 50).toFixed(1)}%`;
-        } else {
-          p.tiltBike.style.left = `${(50 + leanPct * 50).toFixed(1)}%`;
-          p.tiltBike.style.width = `${(-leanPct * 50).toFixed(1)}%`;
-        }
-        const leans = rig.hudLeans || [0, 0];
-        p.tiltN1.style.left = `${(50 + Math.max(-1, Math.min(1, leans[0])) * 48).toFixed(1)}%`;
-        if (p.tiltN2) {
-          p.tiltN2.style.left = `${(50 + Math.max(-1, Math.min(1, leans[1])) * 48).toFixed(1)}%`;
-        }
       }
       const crashed = rig.bike.fallen;
       if (crashed !== p._crashVisible) {
