@@ -143,9 +143,10 @@ class Game {
     );
 
     // Controller manager — owns slot/claim state, HID pool, sensor fusion.
-    // P1 = slot[0], P2 = slot[1]. Shared with the Lobby so join detection
+    // P1 = slot[0] … P4 = slot[3]. Shared with the Lobby so join detection
     // in the lobby and in-race input read from the same source of truth.
-    this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2'] });
+    // P3/P4 exist for versus mode; solo/co-op paths only ever touch P1/P2.
+    this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2', 'P3', 'P4'] });
     // Fire-and-forget: pair approved HID devices, auto-request any
     // remaining via Electron (gated by env detection inside the manager),
     // and listen for hot-plug events.
@@ -182,8 +183,10 @@ class Game {
     // Manual "Low" in Options still disables recording (see _setQuality).
 
     // Mode
-    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker' | 'local'
+    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker' | 'local' | 'versus'
     this.net = null;
+    // Versus (issue #351): teams payload from the lobby, set in _onVersusReady.
+    this._versusTeams = null;
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
@@ -512,6 +515,7 @@ class Game {
       onSolo: () => this._onSolo(),
       onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
       onLocalReady: (opts) => this._onLocalReady(opts),
+      onVersusReady: (opts) => this._onVersusReady(opts),
       input: this.input,
       controllerManager: this.controllerManager,
     });
@@ -992,6 +996,29 @@ class Game {
     }
 
     // Show instructions (tap to start)
+    this.state = 'instructions';
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  /**
+   * Versus (local split-screen team racing, issue #351): the lobby hands
+   * over both teams with their pre-constructed InputManagers.
+   *
+   * @param {Object} opts
+   * @param {Array<{id: 'A'|'B', members: Array<{input, type, slotId, name, isP1}>}>} opts.teams
+   */
+  _onVersusReady({ teams }) {
+    this.mode = 'versus';
+    this.net = null;
+    this._versusTeams = teams;
+    console.log('[versus] teams ready:',
+      teams.map(t => `${t.id}: ${t.members.map(m => `${m.slotId || 'kb'}(${m.type})`).join(' + ')}`).join(' vs '));
+    // M1 scaffold — rig construction, split-screen render, and the versus
+    // update loop land with the next milestones. Instructions screen still
+    // shows so the flow is walkable end-to-end.
+    this._lobbyBtn.textContent = 'LOBBY';
+    document.body.classList.add('mode-versus');
     this.state = 'instructions';
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
@@ -2795,6 +2822,10 @@ class Game {
       this.input.keyboardActive = true;
     }
     document.body.classList.remove('mode-local');
+    // Versus teardown: drop team references; joined P2-P4 slots release when
+    // the lobby's versus screen is re-entered or via controller idle flow.
+    document.body.classList.remove('mode-versus');
+    this._versusTeams = null;
     // Route haptics back to P1 only now that we're out of local MP.
     setHapticSources([this.input]);
     // Room stays in recent rooms list for 5 min so players can rejoin

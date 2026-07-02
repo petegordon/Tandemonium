@@ -1963,6 +1963,95 @@
   .lobby-btn-p2-gp.p2-flash {
     animation: btn-local-join-flash 450ms ease-out;
   }
+  /* ── VERSUS mode: lobby team-setup screen ── */
+  :root {
+    --versus-team-a: #4c7dff;  /* matches ControllerManager P1/P3 lightbar blue */
+    --versus-team-b: #ff4560;  /* matches P2/P4 red + existing player-2 token */
+  }
+  .lobby-btn-versus {
+    background: rgba(160, 64, 255, 0.18);
+    border-color: rgba(160, 64, 255, 0.65);
+    color: #c898ff;
+  }
+  .lobby-btn-versus:hover { background: rgba(160, 64, 255, 0.32); border-color: rgba(160, 64, 255, 0.9); }
+  .lobby-btn-versus:active { background: rgba(160, 64, 255, 0.45); }
+  .versus-teams {
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: calc(1.2 * var(--ls));
+    width: 100%;
+    margin: calc(0.5 * var(--ls)) 0;
+  }
+  .versus-team {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: calc(0.5 * var(--ls));
+    padding: calc(0.8 * var(--ls));
+    border-radius: calc(0.8 * var(--ls));
+    border: 2px solid transparent;
+  }
+  .versus-team-a { border-color: rgba(76, 125, 255, 0.5); background: rgba(76, 125, 255, 0.08); }
+  .versus-team-b { border-color: rgba(255, 69, 96, 0.5); background: rgba(255, 69, 96, 0.08); }
+  .versus-team-title {
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+  }
+  .versus-team-a .versus-team-title { color: var(--versus-team-a); }
+  .versus-team-b .versus-team-title { color: var(--versus-team-b); }
+  .versus-vs {
+    align-self: center;
+    font-size: 1.1em;
+    font-weight: 800;
+    opacity: 0.5;
+    letter-spacing: 0.1em;
+  }
+  .versus-team-slots {
+    display: flex;
+    flex-direction: column;
+    gap: calc(0.4 * var(--ls));
+    width: 100%;
+    min-height: calc(4.4 * var(--ls));
+  }
+  .versus-player-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: calc(0.45 * var(--ls)) calc(0.6 * var(--ls));
+    border-radius: calc(0.5 * var(--ls));
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    line-height: 1.2;
+  }
+  .versus-player-card .vp-name {
+    font-size: 0.65em;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+  }
+  .versus-player-card .vp-device {
+    font-size: 0.5em;
+    opacity: 0.7;
+    letter-spacing: 0.08em;
+  }
+  .versus-player-card.vp-empty {
+    opacity: 0.45;
+    border-style: dashed;
+    background: transparent;
+  }
+  .versus-join-hint {
+    font-size: 0.62em;
+    opacity: 0.65;
+    letter-spacing: 0.05em;
+    margin: calc(0.3 * var(--ls)) 0;
+  }
+  /* Reuse the P2 join flash for versus cards (player pressed a button) */
+  .versus-player-card.p2-flash {
+    animation: btn-local-join-flash 450ms ease-out;
+  }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -4145,7 +4234,41 @@ ON</button>
           <p class="lobby-prompt">Choose your seat:</p>
           <button class="lobby-btn lobby-btn-accent" id="btn-captain">START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span></button>
           <button class="lobby-btn" id="btn-stoker">JOIN A RIDE<br><span class="lobby-role-desc">Stoker &middot; Back seat</span></button>
+          <!-- VERSUS: local split-screen team racing. Desktop-only (needs
+               2-4 physical controllers); lobby.js shows it when !isMobile. -->
+          <button class="lobby-btn lobby-btn-versus" id="btn-versus" style="display:none;">VERSUS<br><span class="lobby-role-desc">Race side by side &middot; 2&ndash;4 players</span></button>
           <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════
+             SCREEN: Versus Team Setup (#lobby-versus)
+             Local split-screen team racing — 2-4 players join with
+             their own controllers (press A) or keyboard, then get
+             auto-assigned to alternating teams. D-pad ←/→ switches a
+             player's team. CHOOSE LEVEL continues to level select
+             with _pendingMode='versus'.
+             Back: #lobby-role
+             ════════════════════════════════════════════════════ -->
+        <div id="lobby-versus" class="lobby-step" style="display:none;">
+          <p class="lobby-prompt">Build your teams:</p>
+          <div class="versus-teams">
+            <div class="versus-team versus-team-a">
+              <div class="versus-team-title">TEAM BLUE</div>
+              <div class="versus-team-slots" id="versus-team-a-slots"></div>
+            </div>
+            <div class="versus-vs">VS</div>
+            <div class="versus-team versus-team-b">
+              <div class="versus-team-title">TEAM RED</div>
+              <div class="versus-team-slots" id="versus-team-b-slots"></div>
+            </div>
+          </div>
+          <p class="versus-join-hint" id="versus-join-hint">Press <strong>A</strong> on a controller to join &middot; <strong>&#x25C0;/&#x25B6;</strong> switch team</p>
+          <button class="lobby-btn lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
+            <span class="btn-local-join-main">JOIN WITH KEYBOARD</span>
+            <span class="btn-local-join-hint">Click or press Enter</span>
+          </button>
+          <button class="lobby-btn lobby-btn-accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</button>
+          <button class="lobby-back" id="btn-back-versus">&larr; Back</button>
         </div>
 
         <!-- ════════════════════════════════════════════════════

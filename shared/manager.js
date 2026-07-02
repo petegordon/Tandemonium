@@ -500,6 +500,27 @@ export class ControllerManager {
     return gp;
   }
 
+  /**
+   * Claim a specific Gamepad API pad to a specific slot. Used by the versus
+   * join screen, where the pad that pressed A is known exactly — no
+   * disambiguation heuristics needed. No-ops if the slot isn't empty or the
+   * pad is already claimed by another slot (returns null in both cases).
+   */
+  claimPadForSlot(slotId, gp) {
+    const slot = this.getSlot(slotId);
+    if (!slot || slot.state !== 'empty' || !gp) return null;
+    const alreadyClaimed = this.slots.some((s) => s.gamepadIndex === gp.index && s !== slot);
+    if (alreadyClaimed) return null;
+    const info = ControllerRegistry.identifyFromGamepadId(gp.id);
+    slot.claim(gp, {
+      controllerTypeHint: info?.controllerProfile || info?.protocol || null,
+      silent: true,
+    });
+    this._attachMatchingPoolEntry(slot);
+    slot._emit('claimed');
+    return gp;
+  }
+
   _isDeviceInPoolOrSlot(device) {
     if (this._hidPool.has(device)) return true;
     return this.slots.some((s) => s.hidDevice === device);
