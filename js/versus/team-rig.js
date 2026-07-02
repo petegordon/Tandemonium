@@ -101,6 +101,13 @@ export class TeamRig {
     const rightZ = -Math.sin(pt.heading);
     this.bike.position.x += rightX * this.lateralOffset;
     this.bike.position.z += rightZ * this.lateralOffset;
+    // Re-apply the visual transform NOW: resetToDistance() already synced
+    // the model to the pre-offset position, and nothing else applies it
+    // until bike.update() runs when the race starts. Without this, both
+    // bikes render overlapped at road center through instructions +
+    // countdown — which read as "Player 2's bike doesn't appear until
+    // after the countdown" (the last-drawn bike hid the other).
+    this.bike._applyTransform();
   }
 
   /** Remove this rig's scene objects and free GPU resources. */
