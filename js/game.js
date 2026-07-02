@@ -1706,9 +1706,9 @@ class Game {
       flavorNum.className = 'tick-3 pop';
     }
 
-    // Per-team race managers; shared obstacles (checkCollision is
-    // position-pure, so both bikes collide with the same pylons).
-    // Collectibles stay off in versus until FCFS attribution lands (M5).
+    // Per-team race managers; shared obstacles + collectibles
+    // (checkCollision is position-pure so both bikes hit the same pylons;
+    // collectibles are first-come-first-served via updateVersus).
     for (const rig of this.versusRigs) {
       rig.resetForRace();
       rig.raceManager = new RaceManager(level);
@@ -1717,9 +1717,13 @@ class Game {
     if (!this.versusHud) this.versusHud = new VersusHud(this.versusRigs);
     this.versusHud.initProgress(level, this.versusRigs[0].raceManager.checkpoints);
     this._versusPaused = false;
-    if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.collectibleManager) this.collectibleManager.destroy();
+    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
+    for (const rig of this.versusRigs) {
+      rig.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
+    }
 
     if (!analytics.getCurrentRideId()) {
       analytics.setPage('ride');
@@ -4061,6 +4065,20 @@ class Game {
 
     for (const rig of rigs) this._stepTeam(rig, dt);
 
+    // Items: FCFS collectibles + multi-anchor obstacle pooling
+    if (this.collectibleManager) {
+      const counts = this.collectibleManager.updateVersus(
+        dt,
+        rigs.map((r) => ({ d: r.bike.distanceTraveled, position: r.bike.position }))
+      );
+      for (let i = 0; i < counts.length; i++) {
+        if (counts[i] > 0) this._onVersusCollect(rigs[i], counts[i]);
+      }
+    }
+    if (this.obstacleManager) {
+      this.obstacleManager.updateVersus(dt, rigs.map((r) => r.bike.distanceTraveled));
+    }
+
     // World: multi-anchor streaming around both bikes
     const [a, b] = rigs;
     this.world.update(a.bike.position, a.bike.roadD, dt, { pos: b.bike.position, d: b.bike.roadD });
@@ -4087,10 +4105,21 @@ class Game {
   _stepTeam(rig, dt) {
     const bike = rig.bike;
 
-    // Velocity-dependent input sensitivity per member
+    // Velocity-dependent input sensitivity per member; bot members
+    // (?versusbot=1 debug rider) tap alternate feet at a fixed cadence
+    // via the buffered-tap flags isPressed() honors.
     for (const m of rig.members) {
       m.input.bikeSpeed = bike.speed;
       m.input.bikeMaxSpeed = TUNE.maxSpeed || 19;
+      if (m.type === 'bot') {
+        m.botTimer = (m.botTimer || 0) + dt;
+        if (m.botTimer >= 0.45) {
+          m.botTimer = 0;
+          m.botFoot = m.botFoot === 'left' ? 'right' : 'left';
+          if (m.botFoot === 'left') m.input._leftTapped = true;
+          else m.input._rightTapped = true;
+        }
+      }
     }
 
     // Pedals: duo teams edge-detect taps into the shared controller
@@ -4109,16 +4138,16 @@ class Game {
     const pedalResult = rig.pedalCtrl.update(dt);
 
     // Lean: average all members (same merge rule as co-op captain+stoker).
-    // Collectible manager is null in versus until FCFS attribution lands,
-    // so the balance controller's item-assist input is simply absent.
-    const balanceResult = rig.balanceCtrls[0].update(bike, this._assistWeight, null, this.obstacleManager);
+    // Bot teams ride with full balance assist — no human is steering them.
+    const assist = rig.members.some((m) => m.type === 'bot') ? 1 : this._assistWeight;
+    const balanceResult = rig.balanceCtrls[0].update(bike, assist, this.collectibleManager, this.obstacleManager);
     if (rig.balanceCtrls.length > 1) {
-      const second = rig.balanceCtrls[1].update(bike, this._assistWeight, null, this.obstacleManager);
+      const second = rig.balanceCtrls[1].update(bike, assist, this.collectibleManager, this.obstacleManager);
       balanceResult.leanInput = Math.max(-1, Math.min(1,
         (balanceResult.leanInput + second.leanInput) * 0.5
       ));
     }
-    bike._balanceAssist = this._assistWeight;
+    bike._balanceAssist = assist;
 
     const wasFallen = bike.fallen;
     bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
@@ -4146,6 +4175,20 @@ class Game {
       const raceEvent = rig.raceManager.updateProgressOnly(bike.distanceTraveled);
       if (raceEvent) this._handleVersusRaceEvent(rig, raceEvent);
     }
+  }
+
+  /** A team grabbed collectible(s): count + 3s boost, FCFS attribution. */
+  _onVersusCollect(rig, count) {
+    rig.collectibles += count;
+    if (rig.raceManager) rig.raceManager.collectiblesCount += count;
+    rig.bike.boostTimer = 3;
+    this._playBeep(1200, 0.1);
+    setTimeout(() => this._playBeep(1600, 0.08), 80);
+    hapticCheckpoint(rig.inputs);
+    analytics.trackRideEvent('collectible', rig.bike.distanceTraveled, {
+      collectible_type: this.lobby.selectedLevel?.collectibles || 'presents',
+      team: rig.id,
+    });
   }
 
   /** Checkpoint/finish events for one team. */
@@ -4249,12 +4292,14 @@ class Game {
       this.world.sun.target.position.copy(bp);
       this.world.sun.target.updateMatrixWorld();
 
-      // Race-marker billboards track the camera used for this pass
-      // (sprites auto-face; only quaternion-copied video billboards care)
+      // Billboards (race markers, collectibles, pylons) face the camera
+      // used for this pass (sprites auto-face; these are quaternion-copied)
       this.world._camera = rig.camera;
       if (this.world._raceMarkers.length > 0) {
         this.world._updateRaceMarkerHeights(rig.bike.roadD);
       }
+      if (this.collectibleManager) this.collectibleManager.faceCamera(rig.camera);
+      if (this.obstacleManager) this.obstacleManager.faceCamera(rig.camera);
 
       this.renderer.render(this.scene, rig.camera);
     }

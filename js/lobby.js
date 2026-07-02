@@ -4016,6 +4016,26 @@ export class Lobby {
       team: 'A',
       input: this.input,
     });
+
+    // Debug: ?versusbot=1 fills Team B with a synthetic rider so split-
+    // screen, streaming separation, and the finish flow are testable with
+    // one human. The game drives its taps at a fixed cadence (_stepTeam).
+    if (new URLSearchParams(window.location.search).get('versusbot') === '1') {
+      this._versusPlayers.push({
+        n: 2,
+        type: 'bot',
+        gpIndex: null,
+        slotId: null,
+        name: 'BOT',
+        team: 'B',
+        input: new InputManager({
+          enableKeyboard: false,
+          enableMotion: false,
+          enableTouch: false,
+        }),
+      });
+    }
+
     this._showStep(this.versusStep); // starts the monitor
   }
 
@@ -4243,7 +4263,8 @@ export class Lobby {
       for (const p of members) {
         const card = document.createElement('div');
         card.className = 'versus-player-card';
-        card.innerHTML = `<span class="vp-name">PLAYER ${p.n}</span><span class="vp-device">${p.type === 'keyboard' ? '⌨️ ' : '🎮 '}${p.name}</span>`;
+        const icon = p.type === 'keyboard' ? '⌨️ ' : (p.type === 'bot' ? '🤖 ' : '🎮 ');
+        card.innerHTML = `<span class="vp-name">PLAYER ${p.n}</span><span class="vp-device">${icon}${p.name}</span>`;
         wrap.appendChild(card);
       }
       if (members.length < 2 && this._versusPlayers.length < 4) {

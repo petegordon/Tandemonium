@@ -21,7 +21,7 @@ export class VersusHud {
       panel.style.setProperty('--vh-color', rig.color.hex);
       panel.innerHTML = `
         <div class="vh-chip">${rig.color.name}</div>
-        <div class="vh-stats"><span class="vh-speed">0</span><span class="vh-unit"> km/h</span> &middot; <span class="vh-dist">0m</span></div>
+        <div class="vh-stats"><span class="vh-speed">0</span><span class="vh-unit"> km/h</span> &middot; <span class="vh-dist">0m</span> &middot; <span class="vh-items">🎁 0</span></div>
         <div class="vh-progress">
           <div class="vh-prog-fill"></div>
           <div class="vh-ticks"></div>
@@ -35,6 +35,7 @@ export class VersusHud {
         el: panel,
         speed: panel.querySelector('.vh-speed'),
         dist: panel.querySelector('.vh-dist'),
+        items: panel.querySelector('.vh-items'),
         fill: panel.querySelector('.vh-prog-fill'),
         ticks: panel.querySelector('.vh-ticks'),
         markerA: panel.querySelector('.vh-marker-a'),
@@ -43,6 +44,7 @@ export class VersusHud {
         crash: panel.querySelector('.vh-crash'),
         _lastSpeed: -1,
         _lastDist: -1,
+        _lastItems: -1,
         _crashVisible: false,
       };
     });
@@ -89,12 +91,21 @@ export class VersusHud {
       if (dist !== p._lastDist) {
         p._lastDist = dist;
         p.dist.textContent = `${dist}m`;
-        // Own progress fills the bar; both team markers ride on every bar
-        // so each side sees the gap at a glance.
+      }
+      // Own progress fills the bar; both team markers ride on every bar so
+      // each side sees the gap at a glance. Keyed on EITHER team moving —
+      // the rival's marker must advance even while this bike is stopped.
+      const barKey = `${(progA * 1000) | 0}|${(progB * 1000) | 0}`;
+      if (barKey !== p._lastBarKey) {
+        p._lastBarKey = barKey;
         const own = i === 0 ? progA : progB;
         p.fill.style.width = `${(own * 100).toFixed(1)}%`;
         p.markerA.style.left = `${(progA * 100).toFixed(1)}%`;
         p.markerB.style.left = `${(progB * 100).toFixed(1)}%`;
+      }
+      if (rig.collectibles !== p._lastItems) {
+        p._lastItems = rig.collectibles;
+        p.items.textContent = `🎁 ${rig.collectibles}`;
       }
       if (p.syncDot) {
         // offsetScore 0-1 → red→yellow→green sync dot
@@ -132,7 +143,7 @@ export class VersusHud {
       <div class="vr-team" style="--vh-color:${rig.color.hex}">
         <div class="vr-team-name">${rig.color.name}</div>
         <div class="vr-outcome">${outcome}</div>
-        <div class="vr-detail">${rig.crashCount} crash${rig.crashCount === 1 ? '' : 'es'}</div>
+        <div class="vr-detail">${rig.crashCount} crash${rig.crashCount === 1 ? '' : 'es'} &middot; 🎁 ${rig.collectibles}</div>
       </div>`;
     el.innerHTML = `
       <div class="vr-card">
