@@ -296,22 +296,35 @@ export class RoadChunkManager {
     this._lastBikeD = bikeD;
   }
 
-  /** Call each frame with current bike road-distance */
+  /**
+   * Call each frame with the current bike road-distance, or (versus mode)
+   * an array of road-distances — one per bike. With multiple anchors each
+   * gets a smaller window (2 behind + 6 ahead) and the pool lazily grows
+   * to cover the union; the Set naturally dedups when bikes are close.
+   */
   update(bikeD) {
+    const anchors = Array.isArray(bikeD) ? bikeD : [bikeD];
     const L = this.roadPath.loopLength;
-
-    // Determine desired range
     const behindChunks = 2;
-    const firstChunkD = Math.floor(bikeD / CHUNK_LENGTH) * CHUNK_LENGTH - behindChunks * CHUNK_LENGTH;
+    const windowChunks = anchors.length > 1 ? 8 : POOL_SIZE;
 
-    // Check if we need to recycle
+    // Union of needed chunk starts across all anchors
     const neededDs = new Set();
-    for (let i = 0; i < POOL_SIZE; i++) {
-      const rawD = firstChunkD + i * CHUNK_LENGTH;
-      neededDs.add(((rawD % L) + L) % L);
+    for (const d of anchors) {
+      const firstChunkD = Math.floor(d / CHUNK_LENGTH) * CHUNK_LENGTH - behindChunks * CHUNK_LENGTH;
+      for (let i = 0; i < windowChunks; i++) {
+        const rawD = firstChunkD + i * CHUNK_LENGTH;
+        neededDs.add(((rawD % L) + L) % L);
+      }
+    }
+
+    // Grow the pool if the union outstrips it (2 anchors far apart → 16).
+    while (this._chunks.length < neededDs.size) {
+      this._chunks.push(this._createChunkSlot());
     }
 
     // Find chunks that are no longer needed, reassign them
+    const neededAll = new Set(neededDs);
     for (const chunk of this._chunks) {
       if (!neededDs.has(chunk.startD)) {
         // Find a needed D that isn't currently assigned
@@ -329,7 +342,16 @@ export class RoadChunkManager {
       }
     }
 
-    this._lastBikeD = bikeD;
+    // When the pool is larger than the union (bikes converged after
+    // separating), park the leftovers so stale road pieces don't linger.
+    for (const chunk of this._chunks) {
+      const wanted = neededAll.has(chunk.startD);
+      if (chunk.group.visible !== wanted && chunk.startD >= 0) {
+        chunk.group.visible = wanted;
+      }
+    }
+
+    this._lastBikeD = anchors[0];
   }
 
   dispose() {

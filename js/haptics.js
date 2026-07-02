@@ -67,13 +67,15 @@ export function removeHapticSource(src) {
   if (_hapticSources.length === 0) _hapticSources = null;
 }
 
-function _gamepadRumble(strong, weak, duration) {
+function _gamepadRumble(strong, weak, duration, sources = null) {
   try {
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-    if (_hapticSources) {
+    const targets = sources || _hapticSources;
+    if (targets) {
       // Targeted: rumble the specific gamepad index of each source.
       // Multiple sources in local MP means both players feel the event.
-      for (const src of _hapticSources) {
+      // Versus passes per-team `sources` so only that team's pads rumble.
+      for (const src of targets) {
         if (!src) continue;
 
         // Skip controllers sitting idle on the desk during one-human local
@@ -131,27 +133,32 @@ function _gamepadRumble(strong, weak, duration) {
   } catch { /* unsupported */ }
 }
 
-export function hapticCrash() {
+// Event helpers take an optional `sources` array (same shape as
+// setHapticSources) to target a subset of players — versus mode routes
+// team events (crash, checkpoint, off-road) to that team's controllers
+// only. Omitted → module-global sources (all registered players).
+
+export function hapticCrash(sources = null) {
   if (canVibrate) navigator.vibrate([100, 30, 200]);
-  _gamepadRumble(0.8, 0.4, 300);
+  _gamepadRumble(0.8, 0.4, 300, sources);
 }
 
-export function hapticTreeHit() {
+export function hapticTreeHit(sources = null) {
   if (canVibrate) navigator.vibrate(150);
-  _gamepadRumble(1.0, 0.5, 150);
+  _gamepadRumble(1.0, 0.5, 150, sources);
 }
 
-export function hapticCheckpoint() {
+export function hapticCheckpoint(sources = null) {
   if (canVibrate) navigator.vibrate(50);
-  _gamepadRumble(0.2, 0.3, 50);
+  _gamepadRumble(0.2, 0.3, 50, sources);
 }
 
-export function hapticFinish() {
+export function hapticFinish(sources = null) {
   if (canVibrate) navigator.vibrate([50, 50, 50, 50, 200]);
-  _gamepadRumble(0.4, 0.6, 400);
+  _gamepadRumble(0.4, 0.6, 400, sources);
 }
 
-export function hapticOffRoad(intensity) {
+export function hapticOffRoad(intensity, sources = null) {
   const now = performance.now();
   if (now < _offRoadThrottleUntil) return;
   if (intensity < 0.1) return;
@@ -160,5 +167,5 @@ export function hapticOffRoad(intensity) {
   _offRoadThrottleUntil = now + duration + 40;
 
   if (canVibrate) navigator.vibrate(duration);
-  _gamepadRumble(intensity * 0.3, intensity * 0.2, duration);
+  _gamepadRumble(intensity * 0.3, intensity * 0.2, duration, sources);
 }

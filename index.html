@@ -2052,6 +2052,34 @@
   .versus-player-card.p2-flash {
     animation: btn-local-join-flash 450ms ease-out;
   }
+  /* ── VERSUS mode: in-game split screen ── */
+  /* Hide the singleton-bike HUD — versus draws its own per-team panels. */
+  body.mode-versus #hud-top,
+  body.mode-versus #hud-dashboard,
+  body.mode-versus #bottom-hud,
+  body.mode-versus #progress-bar-wrap,
+  body.mode-versus #side-buttons,
+  body.mode-versus #bike-gauge,
+  body.mode-versus #phone-gauge,
+  body.mode-versus #partner-gauge,
+  body.mode-versus #contribution-bar,
+  body.mode-versus #gamepad-badge {
+    display: none !important;
+  }
+  /* Center divider between the two viewports */
+  #versus-divider {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 100%;
+    margin-left: -1px;
+    background: rgba(255, 255, 255, 0.35);
+    z-index: 40;
+    pointer-events: none;
+  }
+  body.mode-versus #versus-divider { display: block; }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -4066,6 +4094,9 @@ ON</button>
 
 <!-- Crash flash -->
 <div id="crash-overlay"></div>
+
+<!-- Versus split-screen center divider (visible only with body.mode-versus) -->
+<div id="versus-divider"></div>
 
 <!-- Tutorial calibration flow overlay -->
 <div id="calib-flow-overlay" style="display:none;">

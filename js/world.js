@@ -356,28 +356,54 @@ export class World {
     }
   }
 
-  _updateTreeVisibility(bikeD) {
+  /**
+   * Wrap-aware "is roadD within (-behind, +ahead) of any anchor" test.
+   * Anchors is an array of road distances (1 normally, 2 in versus).
+   */
+  _nearAnyAnchor(roadD, anchors, behind, ahead) {
     const L = this.roadPath.loopLength;
+    for (const d of anchors) {
+      let rel = roadD - d;
+      if (rel < -L / 2) rel += L;
+      if (rel > L / 2) rel -= L;
+      if (rel > -behind && rel < ahead) return true;
+    }
+    return false;
+  }
+
+  _updateTreeVisibility(anchors) {
     for (const slot of this._treePool) {
       if (!slot.active) continue;
-      let ahead = slot.roadD - bikeD;
-      if (ahead < -L / 2) ahead += L;
-      if (ahead > L / 2) ahead -= L;
-      slot.mesh.visible = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
+      slot.mesh.visible = this._nearAnyAnchor(slot.roadD, anchors, TREE_BEHIND, TREE_AHEAD);
     }
   }
 
-  _updateTreeHeights(bikeD) {
-    // Update visible tree Y positions using same forward-projection as ground mesh
-    const bikePt = this.roadPath.getPointAtDistance(bikeD);
-    const fwdX = Math.sin(bikePt.heading);
-    const fwdZ = Math.cos(bikePt.heading);
+  _updateTreeHeights(anchors) {
+    // Update visible tree Y positions using same forward-projection as the
+    // ground mesh. With multiple anchors each tree projects against its
+    // nearest anchor so heights stay correct around both bikes.
+    const L = this.roadPath.loopLength;
+    const bases = anchors.map((d) => {
+      const pt = this.roadPath.getPointAtDistance(d);
+      return { d, pt, fwdX: Math.sin(pt.heading), fwdZ: Math.cos(pt.heading) };
+    });
 
     for (const slot of this._treePool) {
       if (!slot.mesh.visible) continue;
-      const dx = slot.mesh.position.x - bikePt.x;
-      const dz = slot.mesh.position.z - bikePt.z;
-      const estD = bikeD + dx * fwdX + dz * fwdZ;
+      let base = bases[0];
+      if (bases.length > 1) {
+        let bestAbs = Infinity;
+        for (const b of bases) {
+          let rel = slot.roadD - b.d;
+          if (rel < -L / 2) rel += L;
+          if (rel > L / 2) rel -= L;
+          const a = Math.abs(rel);
+          if (a < bestAbs) { bestAbs = a; base = b; }
+        }
+      }
+      const dx = slot.mesh.position.x - base.pt.x;
+      const dz = slot.mesh.position.z - base.pt.z;
+      const estD = base.d + dx * base.fwdX + dz * base.fwdZ;
       const h = this.roadPath.getPointAtDistance(estD).y;
       slot.mesh.position.y = h + TREE_BASE_OFFSET * slot.scale;
     }
@@ -477,14 +503,10 @@ export class World {
     }
   }
 
-  _updateCloudVisibility(bikeD) {
-    const L = this.roadPath.loopLength;
+  _updateCloudVisibility(anchors) {
     for (const slot of this._cloudPool) {
       if (!slot.active) continue;
-      let ahead = slot.roadD - bikeD;
-      if (ahead < -L / 2) ahead += L;
-      if (ahead > L / 2) ahead -= L;
-      slot.group.visible = (ahead > -CLOUD_BEHIND && ahead < CLOUD_AHEAD);
+      slot.group.visible = this._nearAnyAnchor(slot.roadD, anchors, CLOUD_BEHIND, CLOUD_AHEAD);
     }
   }
 
@@ -587,15 +609,11 @@ export class World {
     }
   }
 
-  _updateBalloons(bikeD) {
+  _updateBalloons(anchors) {
     if (this._balloons.length === 0) return;
-    const L = this.roadPath.loopLength;
     const t = performance.now() * 0.001;
     for (const b of this._balloons) {
-      let ahead = b.roadD - bikeD;
-      if (ahead < -L / 2) ahead += L;
-      if (ahead > L / 2) ahead -= L;
-      b.group.visible = (ahead > -CLOUD_BEHIND && ahead < CLOUD_AHEAD);
+      b.group.visible = this._nearAnyAnchor(b.roadD, anchors, CLOUD_BEHIND, CLOUD_AHEAD);
       if (b.group.visible) {
         // Gentle bob
         b.group.position.y = b.baseY + Math.sin(t * 0.4 + b.bobPhase) * 2;
@@ -605,19 +623,27 @@ export class World {
 
   // ── Ground deformation ────────────────────────────────────
 
-  _deformGround(bikePos, bikeD) {
+  _deformGround(bikePos, bikeD, floor = this.floor, cacheKey = 'A') {
     // Floor is rotated -PI/2 on X, so geometry X = world X, geometry Y = world -Z
     // relative to the mesh's snap position
     const snapSize = this.tileSize;
     const snapX = Math.round(bikePos.x / snapSize) * snapSize;
     const snapZ = Math.round(bikePos.z / snapSize) * snapSize;
 
-    // Skip recomputation when snap position hasn't changed (~4-8ms saved per frame)
-    if (snapX === this._lastSnapX && snapZ === this._lastSnapZ) return;
-    this._lastSnapX = snapX;
-    this._lastSnapZ = snapZ;
+    // Skip recomputation when snap position hasn't changed (~4-8ms saved per
+    // frame). Each floor (A = primary, B = versus second bike) keeps its own
+    // snap cache.
+    if (cacheKey === 'B') {
+      if (snapX === this._lastSnapXB && snapZ === this._lastSnapZB) return;
+      this._lastSnapXB = snapX;
+      this._lastSnapZB = snapZ;
+    } else {
+      if (snapX === this._lastSnapX && snapZ === this._lastSnapZ) return;
+      this._lastSnapX = snapX;
+      this._lastSnapZ = snapZ;
+    }
 
-    const posAttr = this.floor.geometry.attributes.position;
+    const posAttr = floor.geometry.attributes.position;
     const count = posAttr.count;
 
     // Pre-sample road elevations into a 1D height profile.
@@ -1095,13 +1121,9 @@ export class World {
     this._billboardVideos = [];
   }
 
-  _updateRaceMarkerVisibility(bikeD) {
-    const L = this.roadPath.loopLength;
+  _updateRaceMarkerVisibility(anchors) {
     for (const marker of this._raceMarkers) {
-      let ahead = marker.roadD - bikeD;
-      if (ahead < -L / 2) ahead += L;
-      if (ahead > L / 2) ahead -= L;
-      const inRange = (ahead > -TREE_BEHIND && ahead < TREE_AHEAD);
+      const inRange = this._nearAnyAnchor(marker.roadD, anchors, TREE_BEHIND, TREE_AHEAD);
       if (marker._permanentlyHidden) { marker.mesh.visible = false; continue; }
       // Gate billboard video on readiness to prevent black frame flash
       marker.mesh.visible = marker.billboard ? (inRange && marker.videoReady) : inRange;
@@ -1136,11 +1158,22 @@ export class World {
     }
   }
 
-  update(bikePos, bikeD, dt) {
+  /**
+   * @param {THREE.Vector3} bikePos primary bike world position
+   * @param {number} bikeD primary bike road distance
+   * @param {number} dt
+   * @param {{pos: THREE.Vector3, d: number}|null} [anchorB] second bike
+   *   (versus mode) — streams road/trees/clouds around it and maintains a
+   *   second deformable floor so both viewports look right when the bikes
+   *   separate. Sun positioning stays on the primary here; versus
+   *   repositions the sun per render pass in game.js.
+   */
+  update(bikePos, bikeD, dt, anchorB = null) {
     // Default bikeD from position if not provided (backward compat)
     if (bikeD === undefined) {
       bikeD = Math.max(0, bikePos.z);
     }
+    const anchors = anchorB ? [bikeD, anchorB.d] : [bikeD];
 
     // Sun follows bike
     this.sun.position.set(bikePos.x + 30, bikePos.y + 40, bikePos.z + 20);
@@ -1148,39 +1181,74 @@ export class World {
     this.sun.target.updateMatrixWorld();
 
     // Road chunks
-    this.roadChunks.update(bikeD);
+    this.roadChunks.update(anchorB ? anchors : bikeD);
 
     // Trees
     if (!this._noTrees) {
-      this._updateTreeVisibility(bikeD);
-      this._updateTreeHeights(bikeD);
+      this._updateTreeVisibility(anchors);
+      this._updateTreeHeights(anchors);
     }
 
     // Clouds & balloons
     if (!this._noTrees) {
-      this._updateCloudVisibility(bikeD);
+      this._updateCloudVisibility(anchors);
       if (dt) this._driftClouds(dt);
-      this._updateBalloons(bikeD);
+      this._updateBalloons(anchors);
     }
 
     // Race markers
     if (this._raceMarkers.length > 0) {
-      this._updateRaceMarkerVisibility(bikeD);
+      this._updateRaceMarkerVisibility(anchors);
       this._updateRaceMarkerHeights(bikeD);
     }
 
     // Floor snap-follow + deform (snap at tileSize to reduce visual pop)
+    this._updateFloor(this.floor, bikePos, bikeD, 'A');
+
+    // Versus: second floor follows bike B. Created lazily on first use,
+    // hidden again when versus ends (anchorB back to null).
+    if (anchorB) {
+      if (!this.floorB) this._createFloorB();
+      this.floorB.visible = true;
+      this._updateFloor(this.floorB, anchorB.pos, anchorB.d, 'B');
+    } else if (this.floorB && this.floorB.visible) {
+      this.floorB.visible = false;
+    }
+  }
+
+  /** Snap-follow + texture offset + deform for one floor mesh. */
+  _updateFloor(floor, bikePos, bikeD, cacheKey) {
     const snapSize = this.tileSize;
     const snapX = Math.round(bikePos.x / snapSize) * snapSize;
     const snapZ = Math.round(bikePos.z / snapSize) * snapSize;
-    this.floor.position.x = snapX;
-    this.floor.position.z = snapZ;
+    floor.position.x = snapX;
+    floor.position.z = snapZ;
 
     // Offset texture to keep grass stable in world space
-    const tex = this.floor.material.map;
+    const tex = floor.material.map;
     tex.offset.x = snapX / GROUND_SIZE;
     tex.offset.y = -snapZ / GROUND_SIZE;
 
-    this._deformGround(bikePos, bikeD);
+    this._deformGround(bikePos, bikeD, floor, cacheKey);
+  }
+
+  /**
+   * Second deformable floor for versus mode: same geometry recipe as the
+   * primary, cloned material + texture (each floor scrolls its own UV
+   * offset), sunk 3cm lower so overlapping regions don't z-fight.
+   */
+  _createFloorB() {
+    const geom = this.floor.geometry.clone();
+    const mat = this.floor.material.clone();
+    mat.map = this.floor.material.map.clone();
+    mat.map.needsUpdate = true;
+    this.floorB = new THREE.Mesh(geom, mat);
+    this.floorB.rotation.x = -Math.PI / 2;
+    this.floorB.receiveShadow = this.floor.receiveShadow;
+    this.floorB.frustumCulled = false;
+    this.floorB.position.y = -0.03;
+    this.scene.add(this.floorB);
+    this._lastSnapXB = NaN;
+    this._lastSnapZB = NaN;
   }
 }
