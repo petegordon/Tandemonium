@@ -2161,58 +2161,6 @@
   }
   .vh-marker-a { background: var(--versus-team-a); }
   .vh-marker-b { background: var(--versus-team-b); z-index: 1; }
-  /* Tilt gauge: bar fill = bike lean, needle(s) = each rider's live
-     steering input. Replaces the singleton bike/phone gauges in versus. */
-  .vh-tilt-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 7px;
-  }
-  .vh-tilt-label {
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    opacity: 0.6;
-  }
-  .vh-tilt {
-    position: relative;
-    flex: 1;
-    height: 6px;
-    border-radius: 3px;
-    background: rgba(255, 255, 255, 0.15);
-  }
-  .vh-tilt-center {
-    position: absolute;
-    left: 50%;
-    top: -2px;
-    width: 2px;
-    height: 10px;
-    margin-left: -1px;
-    background: rgba(255, 255, 255, 0.45);
-  }
-  .vh-tilt-bike {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 50%;
-    width: 0;
-    background: var(--vh-color);
-    opacity: 0.65;
-    border-radius: 3px;
-  }
-  .vh-tilt-needle {
-    position: absolute;
-    top: -3px;
-    left: 50%;
-    width: 3px;
-    height: 12px;
-    margin-left: -1.5px;
-    border-radius: 1.5px;
-    background: #ffffff;
-    box-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
-  }
-  .vh-tilt-needle.vh-n2 { background: #ffd24c; }
   .vh-sync {
     margin-top: 6px;
     font-size: 10px;

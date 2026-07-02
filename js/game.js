@@ -1722,6 +1722,20 @@ class Game {
     if (!this.versusHud) this.versusHud = new VersusHud(this.versusRigs);
     this.versusHud.initProgress(level, this.versusRigs[0].raceManager.checkpoints);
     this._versusPaused = false;
+
+    // Per-team radial tilt dial over each bike (same gauge as solo/co-op;
+    // shown when the team has a motion/gyro steering source). Duo teams
+    // get captain + stoker needles; team color for the primary needle,
+    // gold for the second (matches the co-op partner convention).
+    for (const rig of this.versusRigs) {
+      const hasTilt = rig.members.some((m) => m.input.motionEnabled || m.input.gyroConnected);
+      if (hasTilt) {
+        rig.archIndicator.setup(rig.isDuo ? 'local' : 'solo', rig.color.hex, '#ffd24c');
+        rig.applyArchLayer();
+      } else {
+        rig.archIndicator.hide();
+      }
+    }
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
@@ -3705,6 +3719,10 @@ class Game {
         this.world.update(a.bike.position, a.bike.roadD, dt, { pos: b.bike.position, d: b.bike.roadD });
         for (const rig of this.versusRigs) {
           rig.chaseCamera.update(rig.bike, dt, roadPath);
+          if (rig.archIndicator._visible) {
+            rig.archIndicator.update(rig.bike, 0, 0);
+            rig.applyArchLayer();
+          }
         }
         this._renderVersusViews();
       } else {
@@ -4106,6 +4124,10 @@ class Game {
         rig.chaseCamera.shakeAmount = 0.15;
       }
       rig.grassParticles.update(rig.bike, dt);
+      if (rig.archIndicator._visible) {
+        rig.archIndicator.update(rig.bike, rig.hudLeans[0], rig.hudLeans[1]);
+        rig.applyArchLayer();
+      }
     }
 
     if (this.versusHud) this.versusHud.update();

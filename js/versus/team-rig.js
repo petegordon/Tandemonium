@@ -11,6 +11,7 @@ import { BalanceController } from '../balance-controller.js';
 import { PedalController } from '../pedal-controller.js';
 import { SharedPedalController } from '../shared-pedal-controller.js';
 import { GrassParticles } from '../grass-particles.js';
+import { ArchIndicator } from '../arch-indicator.js';
 
 // Team identity. Colors line up with the lobby's versus screen CSS and,
 // roughly, with the ControllerManager's P1/P2 lightbar colors.
@@ -51,6 +52,12 @@ export class TeamRig {
 
     this.grassParticles = new GrassParticles(scene);
 
+    // Radial tilt dial floating over this team's bike (same gauge as
+    // solo/co-op). Kept on this team's render layer so each viewport
+    // shows only its own dial — at the start line the bikes are 1.6m
+    // apart and two overlapping 3m arches would be unreadable.
+    this.archIndicator = new ArchIndicator(scene);
+
     this.pedalCtrl = null;
     this._buildPedalController();
     this.balanceCtrls = this.members.map((m) => new BalanceController(m.input));
@@ -67,6 +74,17 @@ export class TeamRig {
   }
 
   get isDuo() { return this.members.length > 1; }
+
+  /**
+   * Pin every arch part to this team's render layer. Called each frame
+   * after archIndicator.update() — the arch rebuilds its parts (on the
+   * default layer) whenever TUNE.sensitivity changes, and re-traversing
+   * ~25 objects per frame is effectively free.
+   */
+  applyArchLayer() {
+    const layer = this.id === 'A' ? 1 : 2;
+    this.archIndicator.group.traverse((o) => o.layers.set(layer));
+  }
 
   /** First member's InputManager — the team's "primary" pad for haptics etc. */
   get inputs() { return this.members.map((m) => m.input); }
@@ -131,5 +149,6 @@ export class TeamRig {
       this.grassParticles.geometry.dispose();
       this.grassParticles.material.dispose();
     }
+    if (this.archIndicator) this.archIndicator.destroy();
   }
 }
