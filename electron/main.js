@@ -550,6 +550,13 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // Dev: purge any previously-cached tandemonium:// responses so source
+  // edits always show up on the next `npm start` (older sessions cached
+  // JS modules heuristically — see the no-store note in protocol.handle).
+  if (!app.isPackaged) {
+    try { await session.defaultSession.clearCache(); } catch (e) {}
+  }
+
   // WebHID permissions (required for PlayStation gyro via WebHID)
   session.defaultSession.setPermissionCheckHandler(() => true);
   session.defaultSession.setDevicePermissionHandler((details) => {
@@ -584,7 +591,7 @@ app.whenReady().then(async () => {
 
   // Register custom protocol handler to serve game files without a network socket
   const rootDir = path.join(__dirname, '..');
-  protocol.handle('tandemonium', (request) => {
+  protocol.handle('tandemonium', async (request) => {
     const url = new URL(request.url);
     let filePath = decodeURIComponent(url.pathname);
     if (filePath === '/' || filePath === '') filePath = '/index.html';
@@ -593,8 +600,15 @@ app.whenReady().then(async () => {
     if (!fullPath.startsWith(rootDir)) {
       return new Response('Forbidden', { status: 403 });
     }
-    // Serve via net.fetch for proper streaming and MIME handling
-    return net.fetch('file://' + fullPath);
+    // Serve via net.fetch for proper streaming and MIME handling.
+    // no-store: the scheme is registered as 'standard', so without cache
+    // headers Chromium heuristically caches responses in the profile —
+    // which served STALE JS after source edits (fresh `npm start` showed
+    // old code). Files are local; re-reading from disk costs nothing.
+    const resp = await net.fetch('file://' + fullPath);
+    const headers = new Headers(resp.headers);
+    headers.set('Cache-Control', 'no-store');
+    return new Response(resp.body, { status: resp.status, headers });
   });
 
   createWindow();
