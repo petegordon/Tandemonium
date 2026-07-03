@@ -4295,8 +4295,18 @@ export class Lobby {
 
     if (mgr) {
       // Pool entries (unclaimed HID pads — synthetics live pre-claim).
+      const now = performance.now();
       for (const entry of mgr._hidPool.values()) {
         if (ownedDevices.has(entry.device)) continue;
+        // Only interfaces that are actively streaming input reports are
+        // real, joinable controllers. Wireless dongles pool every HID
+        // interface they expose — the Steam Controller Puck has FIVE, of
+        // which exactly one emits STATE reports — and a single connected
+        // controller was showing as three join cards. Silent interfaces
+        // (and powered-off pads) never/no longer emit, so a freshness
+        // window filters them; a sleeping pad's card appears the moment
+        // a button press wakes it, which matches the join hint anyway.
+        if (!entry.hidActiveSince || now - entry.hidActiveSince > 5000) continue;
         // Dual-interface pads: if a visible unclaimed Gamepad API pad
         // shares this device's productName, the gamepad candidate above
         // already covers it.
