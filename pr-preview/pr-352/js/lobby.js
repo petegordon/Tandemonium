@@ -153,6 +153,11 @@ export class Lobby {
     this._versusLastCardsKey = null;
     this._versusKeyHandler = null;
     this._versusCandidates = []; // detected-but-unjoined controllers (all sources)
+    // Stable per-device ids for candidate keys — two identical pads (e.g.
+    // a pair of DualSenses) share vendor/product/name and would otherwise
+    // collide in the edge-detect map.
+    this._versusDeviceIds = new WeakMap();
+    this._versusNextDeviceId = 1;
     this._localLastUnclaimedGp = null;  // last detected unclaimed gamepad index
     this._localLastJoinState = null;    // cached state string for dirty-checking
     // WebHID device cache for P2 detection (async getDevices() can't run per-frame)
@@ -4173,7 +4178,9 @@ export class Lobby {
         if (!gp || !gp.buttons) continue;
         const prev = this._versusPrevButtons.get(c.key) || { a: false, left: false, right: false };
         const a = !!(gp.buttons[0] && gp.buttons[0].pressed);
-        if (a && !prev.a && this._versusPlayers.length < 4) {
+        if (a && !prev.a) {
+          // _versusJoinCandidate enforces seats itself — including the
+          // keyboard-P1 takeover when the roster is otherwise full.
           this._versusJoinCandidate(c);
         }
         prev.a = a;
@@ -4238,10 +4245,24 @@ export class Lobby {
    *   from the Gamepad API entirely — their synthetics are the only
    *   button source.
    */
+  /** Stable id for a HIDDevice (distinguishes identical pads). */
+  _deviceKeyId(device) {
+    let id = this._versusDeviceIds.get(device);
+    if (!id) {
+      id = this._versusNextDeviceId++;
+      this._versusDeviceIds.set(device, id);
+    }
+    return id;
+  }
+
   _detectVersusCandidates(pads) {
     const out = [];
-    const openSeats = 4 - this._versusPlayers.length;
-    if (openSeats <= 0) return out;
+    // Even with all four seats filled, a pad can still TAKE OVER a
+    // keyboard-typed P1 seat (see _versusJoinCandidate), so keep
+    // detecting while that escape hatch applies.
+    const p1 = this._versusPlayers[0];
+    const canConvertP1 = !!(p1 && p1.type === 'keyboard');
+    if (this._versusPlayers.length >= 4 && !canConvertP1) return out;
     const mgr = this.controllerManager;
 
     // Steam Input active → snapshot handles are the truth.
@@ -4265,7 +4286,7 @@ export class Lobby {
           pollGp: this._steamEntryToPollGp(c),
         });
       }
-      return out.slice(0, openSeats);
+      return out; // all live candidates — join-time logic enforces seats
     }
 
     // Devices already owned by a pad-typed member (P1 included).
@@ -4314,7 +4335,7 @@ export class Lobby {
         if (hidName && out.some(c => c.kind === 'gamepad' && c.gp.id.toLowerCase().includes(hidName))) continue;
         out.push({
           kind: 'hid',
-          key: 'hid:' + (entry.device.vendorId || 0) + ':' + (entry.device.productId || 0) + ':' + (entry.device.productName || ''),
+          key: 'hid:' + this._deviceKeyId(entry.device),
           device: entry.device,
           name: this._prettyGamepadName(entry.device.productName),
           pollGp: entry.synthetic,
@@ -4336,7 +4357,7 @@ export class Lobby {
         });
       }
     }
-    return out.slice(0, openSeats);
+    return out; // all live candidates — join-time logic enforces seats
   }
 
   /** Gamepad-shaped poll object for a Steam Input snapshot entry. */
@@ -4371,15 +4392,48 @@ export class Lobby {
    * no slot involved).
    */
   _versusJoinCandidate(c) {
-    if (this._versusPlayers.length >= 4) return;
     const mgr = this.controllerManager;
+    const p1 = this._versusPlayers[0];
+    const seatsLeft = this._versusPlayers.length < 4;
+    // Escape hatch: a keyboard-typed P1 is a placeholder seat. When no
+    // regular seat/slot is available, a joining pad TAKES OVER P1 —
+    // P1's InputManager is permanently bound to slot P1, so claiming the
+    // pad there makes it Player 1's controller directly. This is how
+    // "keyboard + 4 pads" resolves to a full 4-pad roster.
+    const canConvertP1 = !!(p1 && p1.type === 'keyboard' && mgr);
+    if (!seatsLeft && !canConvertP1) {
+      console.log(`[versus] join ignored (roster full): ${c.name}`);
+      return;
+    }
+
+    const convertP1 = (claimFn) => {
+      const slotP1 = mgr.getSlot('P1');
+      if (!slotP1) return false;
+      // Pad may sit on another slot from a pre-screen activity claim —
+      // move it home to P1.
+      if (c.slotId && c.slotId !== 'P1') mgr.releaseSlotToPool(c.slotId);
+      if (slotP1.state !== 'empty') return false;
+      if (!claimFn()) return false;
+      p1.type = 'gamepad';
+      p1.name = c.name;
+      p1.gpIndex = this.input.gamepadIndex;
+      if (c.kind === 'hid') {
+        this.input.motionEnabled = true;
+        this.input.startTiltCalibration();
+      }
+      console.log(`[versus] keyboard P1 seat taken over by ${c.name}`);
+      analytics.trackEvent('versus_player_joined', { source: c.kind, players: this._versusPlayers.length, p1_takeover: true });
+      return true;
+    };
+
     const usedSlots = new Set(this._versusPlayers.map(p => p.slotId).filter(Boolean));
-    usedSlots.add('P1'); // this.input is bound to P1's slot — never give it to a joiner
+    usedSlots.add('P1'); // regular joiners never take P1's slot (see convertP1)
     let input = null;
     let slotId = null;
     let gpIndex = null;
 
     if (c.kind === 'steam') {
+      if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
       input = new InputManager({
         enableKeyboard: false,
         enableMotion: false,
@@ -4389,18 +4443,24 @@ export class Lobby {
       // Steam gyro auto-arms on first snapshot; nothing else to wire.
     } else if (c.kind === 'hid') {
       let slot = null;
-      if (c.slotId && !usedSlots.has(c.slotId)) {
-        // Adopt the slot ingestFrame claimed before this screen opened.
-        slot = mgr?.getSlot(c.slotId) || null;
-      }
-      if (!slot && mgr) {
-        for (const id of ['P2', 'P3', 'P4']) {
-          if (usedSlots.has(id)) continue;
-          slot = mgr.claimHidDeviceForSlot(id, c.device);
-          if (slot) break;
+      if (seatsLeft) {
+        if (c.slotId && !usedSlots.has(c.slotId)) {
+          // Adopt the slot ingestFrame claimed before this screen opened.
+          slot = mgr?.getSlot(c.slotId) || null;
+        }
+        if (!slot && mgr) {
+          for (const id of ['P2', 'P3', 'P4']) {
+            if (usedSlots.has(id)) continue;
+            slot = mgr.claimHidDeviceForSlot(id, c.device);
+            if (slot) break;
+          }
         }
       }
-      if (!slot) return;
+      if (!slot) {
+        if (canConvertP1 && convertP1(() => mgr.claimHidDeviceForSlot('P1', c.device))) return;
+        console.log(`[versus] join ignored (no free slot): ${c.name}`);
+        return;
+      }
       slotId = slot.id;
       input = new InputManager({
         slot,
@@ -4412,16 +4472,22 @@ export class Lobby {
       input.motionEnabled = true;
       input.startTiltCalibration();
     } else { // 'gamepad'
-      for (const s of mgr?.slots || []) {
-        if (s.gamepadIndex === c.gpIndex && !usedSlots.has(s.id)) { slotId = s.id; break; }
-      }
-      if (!slotId && mgr) {
-        for (const id of ['P2', 'P3', 'P4']) {
-          if (usedSlots.has(id)) continue;
-          if (mgr.claimPadForSlot(id, c.gp)) { slotId = id; break; }
+      if (seatsLeft) {
+        for (const s of mgr?.slots || []) {
+          if (s.gamepadIndex === c.gpIndex && !usedSlots.has(s.id)) { slotId = s.id; break; }
+        }
+        if (!slotId && mgr) {
+          for (const id of ['P2', 'P3', 'P4']) {
+            if (usedSlots.has(id)) continue;
+            if (mgr.claimPadForSlot(id, c.gp)) { slotId = id; break; }
+          }
         }
       }
-      if (!slotId) return;
+      if (!slotId) {
+        if (canConvertP1 && convertP1(() => mgr.claimPadForSlot('P1', c.gp))) return;
+        console.log(`[versus] join ignored (no free slot): ${c.name}`);
+        return;
+      }
       gpIndex = c.gpIndex;
       input = new InputManager({
         slot: mgr.getSlot(slotId),
@@ -4445,6 +4511,7 @@ export class Lobby {
       team: sizeB < sizeA ? 'B' : 'A',
       input,
     });
+    console.log(`[versus] ${c.name} joined as player ${this._versusPlayers.length} (${c.kind}${slotId ? ', slot ' + slotId : ''})`);
     analytics.trackEvent('versus_player_joined', {
       source: c.kind,
       players: this._versusPlayers.length,
