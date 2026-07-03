@@ -192,6 +192,8 @@ class Game {
     this.versusRigs = null; // [TeamRig, TeamRig] while a versus session is live
     this.versusHud = null;  // VersusHud instance (created at first versus countdown)
     this._versusPaused = false; // true while a member's pad is disconnected
+    this._versusWinner = null;  // winning/losing rigs during cinematic + results
+    this._versusLoser = null;
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
@@ -3045,6 +3047,15 @@ class Game {
    */
   _teardownVersus() {
     document.body.classList.remove('mode-versus');
+    // Cinematic may be mid-orbit (options → LOBBY during the fly-around)
+    if (this.state === 'versusCinematic' && this._finishCinematic) {
+      this._finishCinematic.cleanup();
+      this._finishCinematic = null;
+    }
+    this.camera.layers.disable(1);
+    this.camera.layers.disable(2);
+    this._versusWinner = null;
+    this._versusLoser = null;
     if (this.versusHud) {
       this.versusHud.destroy();
       this.versusHud = null;
@@ -3707,6 +3718,9 @@ class Game {
       // Cinematic finish camera owns its own world/bike updates and
       // render — bypass the chase cam so it doesn't fight the swing.
       this._updateFinishCinematic(dt);
+    } else if (this.state === 'versusCinematic') {
+      // Versus winner fly-around — full-frame orbit of the winning bike.
+      this._updateVersusFinishCinematic(dt);
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
@@ -4333,14 +4347,16 @@ class Game {
   }
 
   /**
-   * First team across the line wins. Freeze both rigs (state leaves
-   * 'playing'), flash the winner banner over both halves, then show the
-   * results overlay with REMATCH / LOBBY. The loser is scored as
-   * DNF-with-distance — no second-place finish riding.
+   * First team across the line wins. Both rigs freeze, the screen goes
+   * FULL-FRAME for a fly-around cinematic of the winner's bike (banner
+   * overlaid), then the results overlay with REMATCH / LOBBY. The loser
+   * is scored as DNF-with-distance — no second-place finish riding.
    */
   _finishVersusRace(winner) {
     const loser = this.versusRigs.find((r) => r !== winner);
-    this.state = 'versusResults';
+    this._versusWinner = winner;
+    this._versusLoser = loser;
+    this.state = 'versusCinematic';
     hapticFinish(); // everyone feels the finish
     this._playBeep(800, 0.3);
     setTimeout(() => this._playBeep(1000, 0.3), 150);
@@ -4368,24 +4384,84 @@ class Game {
       restarts: 0,
     });
 
+    // Full-frame cinematic around the winner's bike. The singleton camera
+    // renders it (full window aspect, maintained by _onResize); it must be
+    // granted the winner's floor layer or the ground disappears (floors
+    // are layer-split per team in versus). Arches would photobomb the
+    // orbit — hide them; the rematch countdown re-arms them.
+    for (const rig of this.versusRigs) rig.archIndicator.hide();
+    this.camera.layers.enable(winner.id === 'A' ? 1 : 2);
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+    this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike);
+
     this.versusHud.showBanner(`${winner.color.name} WINS!`, winner.color.hex);
-    setTimeout(() => {
-      if (this.state !== 'versusResults') return; // torn down meanwhile
-      this.versusHud.hideBanner();
-      const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser);
-      rematchBtn.addEventListener('click', () => this._rematchVersus());
-      lobbyBtn.addEventListener('click', () => {
-        this._clearOverlayButtons();
-        this._returnToLobby();
-      });
-      this._setOverlayButtons([rematchBtn, lobbyBtn]);
-      this._overlayCooldownUntil = performance.now() + 1000;
-    }, 1600);
+  }
+
+  /**
+   * Drive the versus winner fly-around: slow-mo roll-out for both bikes,
+   * full-rate camera orbit of the winner, then the results overlay.
+   */
+  _updateVersusFinishCinematic(dt) {
+    const cinematic = this._finishCinematic;
+    if (!cinematic) { this._showVersusResultsPanel(); return; }
+
+    const slowDt = dt * cinematic.getTimeScale();
+    const winner = this._versusWinner;
+    const loser = this._versusLoser;
+
+    // Both bikes roll out under friction with neutral input so wheels
+    // keep turning into the slow-motion (same trick as the solo finish).
+    for (const rig of [winner, loser]) {
+      const bike = rig.bike;
+      if (bike.fallen) continue;
+      const neutralPedal = { crankAngle: bike.crankAngle, braking: false, acceleration: 0, wobble: 0 };
+      const neutralBalance = { leanInput: 0, gyroActive: false };
+      bike.update(neutralPedal, neutralBalance, slowDt, true, false);
+    }
+
+    this.world.update(
+      winner.bike.position, winner.bike.roadD, slowDt,
+      { pos: loser.bike.position, d: loser.bike.roadD }
+    );
+    winner.grassParticles.update(winner.bike, slowDt);
+
+    // Camera orbits at real time for consistent cinematic pacing.
+    const done = cinematic.update(dt);
+    this.renderer.render(this.scene, this.camera);
+
+    if (done) {
+      cinematic.cleanup();
+      this._finishCinematic = null;
+      winner.chaseCamera.initialized = false;
+      this._showVersusResultsPanel();
+    }
+  }
+
+  /** Banner down, results card up (REMATCH / LOBBY, gamepad-navigable). */
+  _showVersusResultsPanel() {
+    const winner = this._versusWinner;
+    const loser = this._versusLoser;
+    this.state = 'versusResults';
+    this.camera.layers.disable(1);
+    this.camera.layers.disable(2);
+    if (!winner || !loser || !this.versusHud) return;
+    this.versusHud.hideBanner();
+    const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser);
+    rematchBtn.addEventListener('click', () => this._rematchVersus());
+    lobbyBtn.addEventListener('click', () => {
+      this._clearOverlayButtons();
+      this._returnToLobby();
+    });
+    this._setOverlayButtons([rematchBtn, lobbyBtn]);
+    this._overlayCooldownUntil = performance.now() + 1000;
   }
 
   /** Reset both rigs and rerun the versus countdown on the same level. */
   _rematchVersus() {
     this._clearOverlayButtons();
+    this._versusWinner = null;
+    this._versusLoser = null;
     if (this.versusHud) this.versusHud.hideResults();
     analytics.trackEvent('versus_rematch', {
       level: this.lobby.selectedLevel ? this.lobby.selectedLevel.id : null,
