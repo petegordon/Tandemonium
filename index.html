@@ -2094,6 +2094,10 @@
     pointer-events: none;
   }
   body.mode-versus #versus-divider { display: block; }
+  /* Full-frame phase (winner cinematic + results): the split is gone, so
+     the divider and per-half panels go with it. The banner stays. */
+  body.mode-versus.versus-fullframe #versus-divider { display: none; }
+  body.mode-versus.versus-fullframe .vh-panel { display: none; }
   /* Per-team HUD panels (built by js/versus/versus-hud.js) */
   #versus-hud {
     position: fixed;
