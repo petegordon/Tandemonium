@@ -138,6 +138,10 @@ class Game {
       if (this._glRestoreTimer) { clearTimeout(this._glRestoreTimer); this._glRestoreTimer = null; }
       this._glContextLost = false;
       console.warn('WebGL context restored — resuming');
+      try { analytics.trackEvent('gl_context_restored'); } catch (err) {}
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
+      this._refreshGpuResources();
     });
 
     // Scene
@@ -301,17 +305,8 @@ class Game {
       this._recalibrateTilt();
     });
 
-    // WebGL context loss recovery — prevent grey screen on mobile
-    // (Creating a 2nd WebGL context for victory video can evict the main one on iOS)
-    this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
-      e.preventDefault();
-      console.warn('WebGL context lost — will restore when available');
-    });
-    this.renderer.domElement.addEventListener('webglcontextrestored', () => {
-      console.log('WebGL context restored');
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
-    });
+    // (WebGL context loss/restore handlers consolidated with the GPU
+    // device-lost recovery block registered right after renderer creation.)
 
     // FPS tracking for analytics
     this._fpsFrameTimes = [];  // rolling buffer of frame durations (seconds)
@@ -3773,6 +3768,10 @@ class Game {
             rig.applyArchLayer();
           }
         }
+        // Keep the team panels current outside 'playing' too — without
+        // this the rematch countdown showed the PREVIOUS race's distances
+        // until GO (panels only refreshed inside _updateVersus).
+        if (this.versusHud) this.versusHud.update();
         this._renderVersusViews();
       } else {
         this.world.update(this.bike.position, this.bike.roadD, dt);
@@ -4104,6 +4103,37 @@ class Game {
     }
     if (this.obstacleManager) {
       this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    }
+  }
+
+  /**
+   * Force-refresh every GPU texture after a GL context restore. three.js
+   * re-creates programs and most resources automatically, but already-
+   * uploaded canvas textures can come back BLACK (observed as a black
+   * road after a mid-session driver reset — the road surface is a
+   * procedural CanvasTexture). Marking everything dirty re-uploads on the
+   * next frame; it's a one-time cost.
+   */
+  _refreshGpuResources() {
+    const bumpMaterial = (m) => {
+      if (!m) return;
+      for (const k of ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'alphaMap', 'aoMap', 'lightMap']) {
+        if (m[k] && m[k].isTexture) m[k].needsUpdate = true;
+      }
+      if (m.uniforms) { // ShaderMaterial (chromakey billboards)
+        for (const u of Object.values(m.uniforms)) {
+          if (u && u.value && u.value.isTexture) u.value.needsUpdate = true;
+        }
+      }
+      m.needsUpdate = true;
+    };
+    this.scene.traverse((o) => {
+      if (!o.material) return;
+      if (Array.isArray(o.material)) o.material.forEach(bumpMaterial);
+      else bumpMaterial(o.material);
+    });
+    if (this.scene.background && this.scene.background.isTexture) {
+      this.scene.background.needsUpdate = true;
     }
   }
 
