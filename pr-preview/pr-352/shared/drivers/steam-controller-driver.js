@@ -26,11 +26,13 @@
 // the prior-art survey and the per-byte verification against our own
 // captures.
 //
-// IMU is a quaternion (4× int16 at WebHID offsets 31-38). Phase 1 omits
-// it — parsed.gyro / parsed.accel return null so the existing fusion
-// pipeline isn't fed bogus integrate-from-zero data. Wiring quaternion
-// orientation through the visualizer (bypassing fusion's integrate-and-
-// correct loop) is follow-up work.
+// IMU: fully wired. Raw 3-axis gyro (bytes 39-44, ±2000 dps) and accel
+// (bytes 33-38, ±2g) parse through the standard fusion pipeline, same as
+// DualSense — gyro steering works. (An earlier phase plan assumed only a
+// quaternion at offsets 31-38 was available and deferred IMU support;
+// the raw rate encoding in parseReport superseded that — see the byte-
+// layout notes there. This header previously still said "Phase 1 omits
+// it", which misled at least one reader into thinking SC was stick-only.)
 
 import { ControllerDriver } from './base-driver.js';
 
