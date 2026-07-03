@@ -116,6 +116,30 @@ class Game {
     if (!isMobile && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.prepend(this.renderer.domElement);
 
+    // GPU device-lost recovery. A driver TDR (D3D "device removed") kills
+    // the GL context; if it restores we resume, and if it doesn't come
+    // back within a few seconds the device is gone for this context —
+    // reload the page rather than spin on a dead renderer. (The Steam
+    // build runs with in-process-gpu for the overlay, where Chromium
+    // can't relaunch the GPU process, so the reload is the only recovery.)
+    this._glContextLost = false;
+    this._glRestoreTimer = null;
+    this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault(); // signal that we want a restore attempt
+      this._glContextLost = true;
+      console.warn('WebGL context lost — pausing rendering, waiting for restore');
+      this._glRestoreTimer = setTimeout(() => {
+        console.warn('WebGL context not restored — reloading');
+        try { analytics.trackEvent('gl_context_lost_reload'); } catch (err) {}
+        window.location.reload();
+      }, 4000);
+    });
+    this.renderer.domElement.addEventListener('webglcontextrestored', () => {
+      if (this._glRestoreTimer) { clearTimeout(this._glRestoreTimer); this._glRestoreTimer = null; }
+      this._glContextLost = false;
+      console.warn('WebGL context restored — resuming');
+    });
+
     // Scene
     this.scene = new THREE.Scene();
 
@@ -1670,6 +1694,8 @@ class Game {
     this._hideGameOver();
     this._hideVictory();
     this.instructionsEl.classList.add('hidden');
+    // Back to split-screen presentation (divider + per-half panels)
+    document.body.classList.remove('versus-fullframe');
     this._musicBtn.style.display = 'block';
     this._updateMusicBtnIcon();
 
@@ -3047,6 +3073,7 @@ class Game {
    */
   _teardownVersus() {
     document.body.classList.remove('mode-versus');
+    document.body.classList.remove('versus-fullframe');
     // Cinematic may be mid-orbit (options → LOBBY during the fly-around)
     if (this.state === 'versusCinematic' && this._finishCinematic) {
       this._finishCinematic.cleanup();
@@ -3649,6 +3676,14 @@ class Game {
 
   _loop(timestamp) {
     requestAnimationFrame((t) => this._loop(t));
+
+    // GL context lost (GPU driver reset): skip all work until the
+    // restore event — or the reload fallback — fires. Rendering into a
+    // dead context just floods the log with context-creation errors.
+    if (this._glContextLost) {
+      this.lastTime = timestamp;
+      return;
+    }
 
     // Advance controller slot state machine once per frame — handles
     // Gamepad-API claim, HID-pool claim, release-ring, and orphan
@@ -4393,6 +4428,9 @@ class Game {
     this.camera.layers.enable(winner.id === 'A' ? 1 : 2);
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+    // Full-frame phase: hide the split-screen divider + per-half panels
+    // (CSS keys off this class). Cleared at rematch countdown / teardown.
+    document.body.classList.add('versus-fullframe');
     this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike);
 
     this.versusHud.showBanner(`${winner.color.name} WINS!`, winner.color.hex);
