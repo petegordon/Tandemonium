@@ -67,6 +67,10 @@ export class VersusPedalHud {
     this._prevCorrect = !!pedalCtrl.wasCorrect;
     this._prevWrong = !!pedalCtrl.wasWrong;
     if ((newCorrect || newWrong) && (capLeft || capRight)) {
+      // Same immediate-clear as the stoker arrows below: a new flash on the
+      // other button must not leave the previous button's flash lingering.
+      this.left.classList.remove('tap-flash', 'tap-flash-wrong');
+      this.right.classList.remove('tap-flash', 'tap-flash-wrong');
       this._flashTimer = 0.2;
       this._flashEl = capLeft ? this.left : this.right;
       this._flashWrong = newWrong;
@@ -90,6 +94,12 @@ export class VersusPedalHud {
       const foot = leftEdge ? 'left' : 'right';
       const wrong = this._prevStoFoot === foot; // stoker repeated their own foot
       this._prevStoFoot = foot;
+      // A new stroke clears the previous arrow immediately (mirrors hud.js's
+      // partner-pedal arrows) — at cadences faster than the flash duration,
+      // waiting for the timer leaves both arrows lit and the display visibly
+      // lags the stoker's actual pedaling.
+      this.arrowUp.classList.remove('flash', 'flash-wrong');
+      this.arrowDown.classList.remove('flash', 'flash-wrong');
       this._arrowTimer = 0.3;
       this._arrowEl = leftEdge ? this.arrowUp : this.arrowDown;
       this._arrowWrong = wrong;
