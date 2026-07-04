@@ -30,6 +30,15 @@ export function getShowRiders() {
   catch (e) { return false; }
 }
 
+/**
+ * "FPS Display" setting — when on, a small frame-rate readout shows at the
+ * top of the screen in every mode. Off by default; applies immediately.
+ */
+export function getShowFps() {
+  try { return localStorage.getItem('tandemonium_show_fps') === 'on'; }
+  catch (e) { return false; }
+}
+
 // Protocol message types
 export const MSG_PEDAL     = 0x01;
 export const MSG_STATE     = 0x02;

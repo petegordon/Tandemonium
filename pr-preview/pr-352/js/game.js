@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -21,6 +21,7 @@ import { BikeModel } from './bike-model.js';
 import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
+import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
 import { HUD } from './hud.js';
@@ -234,6 +235,10 @@ class Game {
     // (it exists to show off their lean).
     this.frontView = this._showRiders ? new FrontViewCamera(this.camera) : null;
     this.hud = new HUD(this.input);
+    // FPS readout (Options → FPS Display) — ticks in _loop, so it reads in
+    // every mode and state.
+    this.fpsMeter = new FpsMeter();
+    this.fpsMeter.setVisible(getShowFps());
     this.grassParticles = new GrassParticles(this.scene);
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
@@ -3445,6 +3450,11 @@ class Game {
     if (ridersOnBtn)  ridersOnBtn.addEventListener('click',  () => this._setShowRiders(true));
     if (ridersOffBtn) ridersOffBtn.addEventListener('click', () => this._setShowRiders(false));
 
+    const fpsOnBtn  = document.getElementById('opt-fps-on');
+    const fpsOffBtn = document.getElementById('opt-fps-off');
+    if (fpsOnBtn)  fpsOnBtn.addEventListener('click',  () => this._setShowFps(true));
+    if (fpsOffBtn) fpsOffBtn.addEventListener('click', () => this._setShowFps(false));
+
     if (isElectron) {
       browserDevBtn.addEventListener('click', async () => {
         const opened = await window.electronApp.toggleDevTools();
@@ -3477,6 +3487,22 @@ class Game {
     this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
+    this._updateOptionsFpsUI();
+  }
+
+  _setShowFps(on) {
+    try { localStorage.setItem('tandemonium_show_fps', on ? 'on' : 'off'); } catch (e) {}
+    this.fpsMeter.setVisible(on);
+    this._updateOptionsFpsUI();
+  }
+
+  _updateOptionsFpsUI() {
+    const on = getShowFps();
+    const onBtn  = document.getElementById('opt-fps-on');
+    const offBtn = document.getElementById('opt-fps-off');
+    if (!onBtn) return;
+    onBtn.classList.toggle('active', on);
+    offBtn.classList.toggle('active', !on);
   }
 
   _setShowRiders(on) {
@@ -3653,6 +3679,8 @@ class Game {
       document.getElementById('opt-gyro-gravity'),
       document.getElementById('opt-riders-on'),
       document.getElementById('opt-riders-off'),
+      document.getElementById('opt-fps-on'),
+      document.getElementById('opt-fps-off'),
       document.getElementById('options-perf-btn'),
       document.getElementById('options-devtools-btn'),
       document.getElementById('options-browserdev-btn'),
@@ -3661,6 +3689,7 @@ class Game {
     this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
+    this._updateOptionsFpsUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
   }
 
@@ -3875,6 +3904,8 @@ class Game {
       this.lastTime = timestamp;
       return;
     }
+
+    this.fpsMeter.tick(timestamp);
 
     // Advance controller slot state machine once per frame — handles
     // Gamepad-API claim, HID-pool claim, release-ring, and orphan
