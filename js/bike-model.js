@@ -4,7 +4,21 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
+
+// The riders GLB ships Draco-compressed geometry to keep it small; the plain
+// frame GLB isn't compressed, so the decoder is only fetched when a Draco mesh
+// is actually encountered. Version-matched to the CDN three build. Shared across
+// all BikeModel loads.
+let _dracoLoader = null;
+function getDracoLoader() {
+  if (!_dracoLoader) {
+    _dracoLoader = new DRACOLoader();
+    _dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/libs/draco/');
+  }
+  return _dracoLoader;
+}
 
 export class BikeModel {
   constructor(scene, modelPath) {
@@ -85,6 +99,7 @@ export class BikeModel {
 
   _loadModel() {
     const loader = new GLTFLoader();
+    loader.setDRACOLoader(getDracoLoader());
     loader.load(this._modelPath, (gltf) => {
       const model = gltf.scene;
       model.traverse((child) => {
