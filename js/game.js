@@ -4358,6 +4358,12 @@ class Game {
         (balanceResult.leanInput + second.leanInput) * 0.5
       ));
     }
+    // Per-bike rider lean (Show Riders): captain leans by member[0], stoker by
+    // member[1] — solo teams keep the stoker upright. Each rig's bike has its
+    // own skeleton + mixer (skinned clone), so the geese lean independently per
+    // team. No-op on the plain frame model (no riderMixer).
+    balanceResult.captainLean = rig.hudLeans[0];
+    balanceResult.stokerLean = rig.isDuo ? rig.hudLeans[1] : 0;
     bike._balanceAssist = assist;
 
     const wasFallen = bike.fallen;
