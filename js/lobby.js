@@ -40,7 +40,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager } from './input-manager.js';
-import { isMobile, RELAY_URL, BIKE_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -4642,9 +4642,10 @@ export class Lobby {
     ground.receiveShadow = true;
     this._previewScene.add(ground);
 
-    // Load bike model
+    // Load bike model — the chooser shows the original recolorable frame so the
+    // color presets apply here (the in-game bike is the fused riders model).
     const loader = new GLTFLoader();
-    loader.load(BIKE_MODEL_PATH, (gltf) => {
+    loader.load(CHOOSER_MODEL_PATH, (gltf) => {
       this._previewModel = gltf.scene;
 
       // Scale to fit preview

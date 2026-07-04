@@ -2928,6 +2928,14 @@
     min-width: 300px;
     max-width: 400px;
     text-align: center;
+    /* Cap to the viewport and scroll internally so tall content (e.g. the
+       Show Riders row) is reachable on short/mobile screens by touch. dvh
+       tracks the mobile URL bar; vh is the fallback. */
+    max-height: 85vh;
+    max-height: 90dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   .options-card h2 { font-size: 20px; margin-bottom: 20px; }
   .options-card .label { font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -4374,7 +4382,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d65d14e | 06-24-2026 10:37</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Steam Input live diagnostic">🎮 Test</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.1e89496 | 07-04-2026 16:11</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
@@ -4696,6 +4704,12 @@ ON</button>
       <button class="opt-btn" id="opt-gyro-gravity">Gravity</button>
     </div>
     <div class="options-note">Controller gyro only — applies immediately</div>
+    <div class="label" id="opt-riders-label">Show Riders</div>
+    <div class="options-row" id="opt-riders-row">
+      <button class="opt-btn" id="opt-riders-on">On</button>
+      <button class="opt-btn" id="opt-riders-off">Off</button>
+    </div>
+    <div class="options-note">Canadian-goose riders + front camera — applied on next launch</div>
     <button id="options-perf-btn">Run Perf Test</button>
     <div id="options-perf-result"></div>
     <button id="options-devtools-btn">Tools</button>
