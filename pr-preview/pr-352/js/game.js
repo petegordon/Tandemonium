@@ -1113,12 +1113,15 @@ class Game {
       this.versusFrontViews = null;
     }
 
-    // Per-team pedal HUD (buttons + rhythm arrows), one per split-screen half —
-    // same visualization as local/remote multiplayer, driven by each team.
-    this.versusPedalHuds = [
-      new VersusPedalHud(document.getElementById('versus-pedals-a')),
-      new VersusPedalHud(document.getElementById('versus-pedals-b')),
-    ];
+    // Per-team pedal HUD (buttons = captain, arrows = stoker), one per
+    // split-screen half — same visualization as local/remote multiplayer. Solo
+    // teams get no stoker arrows (like the arch's stoker needle).
+    this.versusPedalHuds = this.versusRigs.map((rig, i) =>
+      new VersusPedalHud(
+        document.getElementById(i === 0 ? 'versus-pedals-a' : 'versus-pedals-b'),
+        rig.isDuo
+      )
+    );
 
     // Park the singleton bike — versus renders only the rigs' bikes.
     this.bike.group.visible = false;
@@ -4375,13 +4378,19 @@ class Game {
       }
     }
 
-    // Per-team pedal button + rhythm-arrow visuals (same as multiplayer).
+    // Per-team pedal visuals: captain (member 0) drives the buttons, stoker
+    // (member 1, duo only) drives the arrows — same split as multiplayer.
     if (this.versusPedalHuds) {
       for (let i = 0; i < rigs.length; i++) {
         const rig = rigs[i];
-        const lh = rig.members.some((m) => m.input.isPressed('ArrowLeft'));
-        const rh = rig.members.some((m) => m.input.isPressed('ArrowRight'));
-        this.versusPedalHuds[i].update(lh, rh, rig.pedalCtrl, rig.bike.speed, dt);
+        const cap = rig.members[0].input;
+        const sto = rig.members[1] ? rig.members[1].input : null;
+        this.versusPedalHuds[i].update(
+          cap.isPressed('ArrowLeft'), cap.isPressed('ArrowRight'),
+          sto ? sto.isPressed('ArrowLeft') : false,
+          sto ? sto.isPressed('ArrowRight') : false,
+          rig.pedalCtrl, rig.bike.speed, dt
+        );
       }
     }
 
