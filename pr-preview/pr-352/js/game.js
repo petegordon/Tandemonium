@@ -114,7 +114,8 @@ class Game {
 
     // "Show Riders" (Options, default off) gates the whole riders experience:
     // the goose model + front selfie-cam AND the richer lighting/tone-mapping
-    // tuned for them. Off = the base game exactly as before. Read once at boot.
+    // tuned for them. Off = the base game exactly as before. Read at boot;
+    // toggling in Options re-applies everything live (_applyShowRiders).
     this._showRiders = getShowRiders();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile && !this._lowQuality, preserveDrawingBuffer: true });
@@ -162,13 +163,15 @@ class Game {
     // Scene
     this.scene = new THREE.Scene();
 
+    this._riderEnvTex = null; // cached PMREM env, reused when Show Riders re-toggles
     if (this._showRiders) {
       // Soft image-based lighting: PBR materials expect an environment to
       // reflect; without one they read muddy. RoomEnvironment is generated
       // procedurally (no asset files), so brass, silk, and the coat pick up
       // gentle reflections and their colors pop.
       const _pmrem = new THREE.PMREMGenerator(this.renderer);
-      this.scene.environment = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this._riderEnvTex = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environment = this._riderEnvTex;
       _pmrem.dispose();
     }
 
@@ -3479,8 +3482,57 @@ class Game {
   _setShowRiders(on) {
     try { localStorage.setItem('tandemonium_show_riders', on ? 'on' : 'off'); } catch (e) {}
     this._updateOptionsShowRidersUI();
-    // Bike model + front cam are chosen at boot, so this applies on next launch
-    // (matches the note in the row and the DualSense-source setting).
+    this._applyShowRiders(on);
+  }
+
+  /**
+   * Apply Show Riders at runtime — everything the boot path gates on the flag:
+   * tone mapping + env map + world lighting, the bike GLB, and the front PiP.
+   * The riders GLB loads async (~7MB), so the model itself pops in a moment
+   * after the lighting shifts. A live versus session keeps its already-cloned
+   * rigs (and their shared geometry is left undisposed); the next race picks
+   * up the new setting.
+   */
+  _applyShowRiders(on) {
+    on = !!on;
+    if (on === this._showRiders) return;
+    this._showRiders = on;
+
+    this.renderer.toneMapping = on ? THREE.AgXToneMapping : THREE.NoToneMapping;
+    this.renderer.toneMappingExposure = on ? 1.3 : 1.0;
+
+    if (on) {
+      if (!this._riderEnvTex) {
+        const _pmrem = new THREE.PMREMGenerator(this.renderer);
+        this._riderEnvTex = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+        _pmrem.dispose();
+      }
+      this.scene.environment = this._riderEnvTex;
+    } else {
+      this.scene.environment = null;
+    }
+
+    this.world.setShowRiders(on);
+
+    // Tone-mapping lives in the compiled shader program — every material in
+    // the scene must recompile to pick up the change.
+    this.scene.traverse((obj) => {
+      if (!obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) if (m) m.needsUpdate = true;
+    });
+
+    this.bike.swapModel(
+      on ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH,
+      !this.versusRigs // live versus clones share the old model's geometry
+    );
+
+    if (on && !this.frontView) {
+      this.frontView = new FrontViewCamera(this.camera);
+    } else if (!on && this.frontView) {
+      this.frontView.dispose();
+      this.frontView = null;
+    }
   }
 
   _updateOptionsShowRidersUI() {

@@ -699,8 +699,8 @@ export class World {
 
   _buildLighting() {
     const riders = this._showRiders;
-    const ambient = new THREE.AmbientLight(0x5566aa, riders ? 0.8 : 0.5);
-    this.scene.add(ambient);
+    this._ambient = new THREE.AmbientLight(0x5566aa, riders ? 0.8 : 0.5);
+    this.scene.add(this._ambient);
 
     this.sun = new THREE.DirectionalLight(0xffffdd, riders ? 1.7 : 1.1);
     this.sun.position.set(30, 40, 20);
@@ -716,15 +716,35 @@ export class World {
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
 
-    const hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, riders ? 0.6 : 0.35);
-    this.scene.add(hemi);
+    this._hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, riders ? 0.6 : 0.35);
+    this.scene.add(this._hemi);
 
     if (riders) {
       // Warm fill opposite the sun so the riders' shadowed front (facing the
       // chase camera) still reads its Victorian colors instead of going murky.
-      const fill = new THREE.DirectionalLight(0xfff2e0, 0.6);
-      fill.position.set(-25, 25, -25);
-      this.scene.add(fill);
+      this._fill = new THREE.DirectionalLight(0xfff2e0, 0.6);
+      this._fill.position.set(-25, 25, -25);
+      this.scene.add(this._fill);
+    } else {
+      this._fill = null;
+    }
+  }
+
+  /** Re-tune the lighting rig for Show Riders toggled at runtime. */
+  setShowRiders(on) {
+    on = !!on;
+    if (on === this._showRiders) return;
+    this._showRiders = on;
+    this._ambient.intensity = on ? 0.8 : 0.5;
+    this.sun.intensity = on ? 1.7 : 1.1;
+    this._hemi.intensity = on ? 0.6 : 0.35;
+    if (on && !this._fill) {
+      this._fill = new THREE.DirectionalLight(0xfff2e0, 0.6);
+      this._fill.position.set(-25, 25, -25);
+      this.scene.add(this._fill);
+    } else if (!on && this._fill) {
+      this.scene.remove(this._fill);
+      this._fill = null;
     }
   }
 
