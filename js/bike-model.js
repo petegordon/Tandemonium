@@ -166,6 +166,49 @@ export class BikeModel {
     }
   }
 
+  /**
+   * Swap this bike's GLB in place (Show Riders toggled at runtime). The
+   * BikeModel object itself survives — physics state and every external
+   * reference (chase camera, world, versus clone source) stay valid. The old
+   * model keeps rendering until the new GLB lands, then is removed; visual
+   * state (spokes, pedals, rider rig, preset originals) is rebuilt for the
+   * new model. applyPreset calls during the load queue via _pendingPreset.
+   * @param {string} modelPath
+   * @param {boolean} [disposeOld] false when live clones may share the old
+   *   model's geometry (e.g. a versus session cloned from this bike).
+   */
+  swapModel(modelPath, disposeOld = true) {
+    if (modelPath === this._modelPath) return;
+    this._modelPath = modelPath;
+    const oldChildren = this.group.children.slice();
+    const oldShared = this._sharedGeometry;
+    this._sharedGeometry = false;
+    this.modelLoaded = false;
+    this.spokeMeshes = [];
+    this.pedalNodes = [];
+    this.smoothSpokeFade = 0;
+    this._prevSpokeOpacity = NaN;
+    this.riderMixer = null;
+    this.captainAction = null;
+    this.stokerAction = null;
+    this.riderClipDuration = 0;
+    this._originalMats = null;
+    this._loadModel(() => {
+      for (const c of oldChildren) {
+        this.group.remove(c);
+        if (disposeOld && !oldShared) {
+          c.traverse((child) => {
+            if (child.isMesh) {
+              if (child.geometry) child.geometry.dispose();
+              const mats = Array.isArray(child.material) ? child.material : [child.material];
+              for (const m of mats) if (m) m.dispose();
+            }
+          });
+        }
+      }
+    });
+  }
+
   // Torso lean (radians) at the ends of the exported clip — matches LEAN_AMP_DEG
   // in export_riders_lean_glb.py, so |normalized lean| = 1 maps to the clip peak.
   static RIDER_LEAN_AMP = 45 * Math.PI / 180;
@@ -173,7 +216,9 @@ export class BikeModel {
   // travel direction. Tuned against the road in _loadModel.
   static RIDER_MODEL_YAW = Math.PI / 2;
 
-  _loadModel() {
+  /** @param {Function} [onAttached] runs once the new model is in the group
+   *    and recentered, before it becomes children[0]-addressable state. */
+  _loadModel(onAttached) {
     const loader = new GLTFLoader();
     loader.setDRACOLoader(getDracoLoader());
     loader.load(this._modelPath, (gltf) => {
@@ -243,6 +288,10 @@ export class BikeModel {
       model.position.y -= minY;
       model.position.x -= centerX;
       model.position.z -= centerZ;
+
+      // Swap path: retire the previous model now, so the new one is
+      // children[0] before applyPreset / _initFromClone can address it.
+      if (onAttached) onAttached(model);
 
       this.modelLoaded = true;
       if (isRiders) this._setupRiderLean(model, gltf.animations);
