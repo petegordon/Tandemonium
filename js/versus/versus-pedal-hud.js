@@ -1,67 +1,76 @@
 // ============================================================
 // VERSUS PEDAL HUD — per-team pedal buttons + rhythm arrows
-// Mirrors the singleton HUD's pedal visualization (identical CSS classes:
-// pressed / wrong / brake / idle-pulse / tap-flash on the buttons, and
-// flash / flash-wrong on the purple ▲▼ arrows), scoped to one split-screen
-// half and driven by that team's own pedal state. One instance per rig.
+// Mirrors the singleton HUD's pedal visualization (identical CSS classes),
+// scoped to one split-screen half:
+//   * big buttons (pressed/wrong/brake/idle-pulse/tap-flash) = CAPTAIN's foot
+//   * purple ▲▼ arrows (flash/flash-wrong)                    = STOKER's foot
+// so the two riders on a duo team can watch each other and alternate. A SOLO
+// team has no stoker, so its arrows are hidden entirely (like the arch's
+// stoker needle). One instance per rig.
 // ============================================================
 
 export class VersusPedalHud {
-  constructor(barEl) {
+  constructor(barEl, hasStoker) {
     this.left = barEl.querySelector('.vp-left');
     this.right = barEl.querySelector('.vp-right');
     this.arrowUp = barEl.querySelector('.vp-arrow-up');
     this.arrowDown = barEl.querySelector('.vp-arrow-down');
+    this.hasStoker = !!hasStoker;
 
+    // Solo team: no stoker → no arrows (inline overrides the mode-versus flex).
+    this.arrowUp.style.display = this.hasStoker ? '' : 'none';
+    this.arrowDown.style.display = this.hasStoker ? '' : 'none';
+
+    // Captain button tap-flash
     this._flashTimer = 0;
     this._flashEl = null;
     this._flashWrong = false;
     this._prevCorrect = false;
     this._prevWrong = false;
 
+    // Stoker arrow flash
     this._arrowTimer = 0;
     this._arrowEl = null;
     this._arrowWrong = false;
+    this._prevStoLeft = false;
+    this._prevStoRight = false;
+    this._prevStoFoot = null;
   }
 
   /**
-   * @param {boolean} leftHeld  any team member pressing the left pedal
-   * @param {boolean} rightHeld any team member pressing the right pedal
+   * @param {boolean} capLeft  captain pressing the left pedal
+   * @param {boolean} capRight captain pressing the right pedal
+   * @param {boolean} stoLeft  stoker pressing the left pedal (duo only)
+   * @param {boolean} stoRight stoker pressing the right pedal (duo only)
    * @param {{wasBrake:boolean,wasWrong:boolean,wasCorrect:boolean}} pedalCtrl
    * @param {number} speed bike speed (for the idle pulse)
    * @param {number} dt
    */
-  update(leftHeld, rightHeld, pedalCtrl, speed, dt) {
-    const brake = (leftHeld && rightHeld) || !!pedalCtrl.wasBrake;
-
-    // Big-button states — same classes the singleton HUD uses.
+  update(capLeft, capRight, stoLeft, stoRight, pedalCtrl, speed, dt) {
+    // ── Captain → big buttons ──
+    const brake = (capLeft && capRight) || !!pedalCtrl.wasBrake;
     this.left.classList.toggle('brake', brake);
     this.right.classList.toggle('brake', brake);
-    this.left.classList.toggle('pressed', !brake && leftHeld && !pedalCtrl.wasWrong);
-    this.right.classList.toggle('pressed', !brake && rightHeld && !pedalCtrl.wasWrong);
-    this.left.classList.toggle('wrong', !brake && leftHeld && !!pedalCtrl.wasWrong);
-    this.right.classList.toggle('wrong', !brake && rightHeld && !!pedalCtrl.wasWrong);
+    this.left.classList.toggle('pressed', !brake && capLeft && !pedalCtrl.wasWrong);
+    this.right.classList.toggle('pressed', !brake && capRight && !pedalCtrl.wasWrong);
+    this.left.classList.toggle('wrong', !brake && capLeft && !!pedalCtrl.wasWrong);
+    this.right.classList.toggle('wrong', !brake && capRight && !!pedalCtrl.wasWrong);
 
-    const isIdle = speed < 0.3 && !leftHeld && !rightHeld;
+    const isIdle = speed < 0.3 && !capLeft && !capRight;
     this.left.classList.toggle('idle-pulse', isIdle);
     this.right.classList.toggle('idle-pulse', isIdle);
 
-    // New-stroke edge (gated on a pedal actually being held this frame, so a
-    // duo teammate's tap doesn't phantom-flash the other foot — same guard as
-    // the HUD). Up arrow = left foot, down arrow = right foot.
+    // Captain tap-flash: team stroke while the captain is actually holding
+    // (the gate that stops a stoker tap from phantom-flashing the button).
     const newCorrect = pedalCtrl.wasCorrect && !this._prevCorrect;
     const newWrong = pedalCtrl.wasWrong && !this._prevWrong;
     this._prevCorrect = !!pedalCtrl.wasCorrect;
     this._prevWrong = !!pedalCtrl.wasWrong;
-    if ((newCorrect || newWrong) && (leftHeld || rightHeld)) {
+    if ((newCorrect || newWrong) && (capLeft || capRight)) {
       this._flashTimer = 0.2;
-      this._flashEl = leftHeld ? this.left : this.right;
+      this._flashEl = capLeft ? this.left : this.right;
       this._flashWrong = newWrong;
-      this._arrowTimer = 0.3;
-      this._arrowEl = leftHeld ? this.arrowUp : this.arrowDown;
-      this._arrowWrong = newWrong;
     }
-
     if (this._flashTimer > 0) {
       this._flashTimer -= dt;
       if (this._flashEl) this._flashEl.classList.add(this._flashWrong ? 'tap-flash-wrong' : 'tap-flash');
@@ -71,6 +80,20 @@ export class VersusPedalHud {
       }
     }
 
+    // ── Stoker → arrows (duo only) ──
+    if (!this.hasStoker) return;
+    const leftEdge = stoLeft && !this._prevStoLeft;
+    const rightEdge = stoRight && !this._prevStoRight;
+    this._prevStoLeft = stoLeft;
+    this._prevStoRight = stoRight;
+    if (leftEdge || rightEdge) {
+      const foot = leftEdge ? 'left' : 'right';
+      const wrong = this._prevStoFoot === foot; // stoker repeated their own foot
+      this._prevStoFoot = foot;
+      this._arrowTimer = 0.3;
+      this._arrowEl = leftEdge ? this.arrowUp : this.arrowDown;
+      this._arrowWrong = wrong;
+    }
     if (this._arrowTimer > 0) {
       this._arrowTimer -= dt;
       if (this._arrowEl) this._arrowEl.classList.add(this._arrowWrong ? 'flash-wrong' : 'flash');
