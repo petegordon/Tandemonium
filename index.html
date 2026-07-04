@@ -2098,6 +2098,36 @@
      the divider and per-half panels go with it. The banner stays. */
   body.mode-versus.versus-fullframe #versus-divider { display: none; }
   body.mode-versus.versus-fullframe .vh-panel { display: none; }
+
+  /* Per-team pedal controls: one bar in each split-screen half. Hidden unless
+     versus; also gone during the winner cinematic (full-frame). */
+  .versus-pedals {
+    display: none;
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    z-index: 45;
+    gap: 10px;
+    padding: 0 12px;
+    box-sizing: border-box;
+    justify-content: center;
+    pointer-events: none;
+  }
+  body.mode-versus #versus-pedals-a { display: flex; left: 0; width: 50%; }
+  body.mode-versus #versus-pedals-b { display: flex; left: 50%; width: 50%; }
+  body.mode-versus.versus-fullframe .versus-pedals { display: none; }
+  .versus-pedals .pedal-touch {
+    pointer-events: auto;
+    width: 40%;
+    max-width: 130px;
+    height: 12vh;
+    min-height: 56px;
+    max-height: 92px;
+  }
+  .versus-pedals .pedal-touch.active {
+    transform: translateY(3px) scale(0.97);
+    background: linear-gradient(to bottom, rgba(255,255,255,0.42) 0%, rgba(255,255,255,0.18) 100%);
+    border-color: rgba(255,255,255,0.75);
+  }
   /* Per-team HUD panels (built by js/versus/versus-hud.js) */
   #versus-hud {
     position: fixed;
@@ -4275,6 +4305,17 @@ ON</button>
 
 <!-- Versus split-screen center divider (visible only with body.mode-versus) -->
 <div id="versus-divider"></div>
+
+<!-- Versus per-team pedal controls (one per split-screen half; body.mode-versus).
+     Top-level (not inside #bottom-hud, which versus hides). Wired in game.js. -->
+<div id="versus-pedals-a" class="versus-pedals">
+  <div class="pedal-touch vp-left"><img src="images/pedal_left.png" alt="Left Pedal"></div>
+  <div class="pedal-touch vp-right"><img src="images/pedal_right.png" alt="Right Pedal"></div>
+</div>
+<div id="versus-pedals-b" class="versus-pedals">
+  <div class="pedal-touch vp-left"><img src="images/pedal_left.png" alt="Left Pedal"></div>
+  <div class="pedal-touch vp-right"><img src="images/pedal_right.png" alt="Right Pedal"></div>
+</div>
 
 <!-- Tutorial calibration flow overlay -->
 <div id="calib-flow-overlay" style="display:none;">

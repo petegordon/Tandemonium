@@ -302,6 +302,7 @@ class Game {
     this._gpPrevStart = false;
     this._gpPrevB = false;
     this._initOptionsOverlay();
+    this._initVersusPedals();
 
     // Async hardware detection (first visit, no cache, no manual override)
     if (!_hwCached && _qualityPref !== 'high' && _qualityPref !== 'low' && _qualityParam !== 'high' && _qualityParam !== 'low') {
@@ -3330,6 +3331,51 @@ class Game {
   // ============================================================
   // OPTIONS OVERLAY
   // ============================================================
+
+  /**
+   * Wire the per-team versus pedal controls once. Handlers reference
+   * this.versusRigs live, so they no-op outside versus (and the bars are
+   * CSS-hidden then anyway). A tap sets the team captain's buffered pedal flag
+   * — the same path touch/keys use — so it drives that bike and is cleared by
+   * consumeTaps each frame. Team A = left half → rig 0, Team B = right → rig 1.
+   */
+  _initVersusPedals() {
+    const bindBar = (barId, teamIdx) => {
+      const bar = document.getElementById(barId);
+      if (!bar) return;
+      for (const [sel, side] of [['.vp-left', 'left'], ['.vp-right', 'right']]) {
+        const btn = bar.querySelector(sel);
+        if (!btn) continue;
+        const inputOf = () => {
+          const rig = this.versusRigs && this.versusRigs[teamIdx];
+          return rig ? rig.members[0].input : null;
+        };
+        const press = (e) => {
+          e.preventDefault();
+          const input = inputOf();
+          if (!input) return;
+          if (side === 'left') { input.touchLeft = true; input._leftTapped = true; }
+          else { input.touchRight = true; input._rightTapped = true; }
+          if (input._markActive) input._markActive();
+          btn.classList.add('active');
+        };
+        const release = () => {
+          const input = inputOf();
+          if (input) {
+            if (side === 'left') input.touchLeft = false;
+            else input.touchRight = false;
+          }
+          btn.classList.remove('active');
+        };
+        btn.addEventListener('pointerdown', press);
+        btn.addEventListener('pointerup', release);
+        btn.addEventListener('pointercancel', release);
+        btn.addEventListener('pointerleave', release);
+      }
+    };
+    bindBar('versus-pedals-a', 0);
+    bindBar('versus-pedals-b', 1);
+  }
 
   _initOptionsOverlay() {
     const overlay = document.getElementById('options-overlay');
