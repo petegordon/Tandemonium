@@ -3,6 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
@@ -113,10 +114,23 @@ class Game {
     this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
     if (!isMobile && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Filmic tone mapping so PBR colors (the riders' brass/silk/coat, and the
+    // world) read rich instead of the flat raw output. AgX keeps the Victorian
+    // reds/browns true where ACES would desaturate them; exposure is the dial.
+    this.renderer.toneMapping = THREE.AgXToneMapping;
+    this.renderer.toneMappingExposure = 1.3;
     document.body.prepend(this.renderer.domElement);
 
     // Scene
     this.scene = new THREE.Scene();
+
+    // Soft image-based lighting: PBR materials expect an environment to reflect;
+    // without one they read muddy. RoomEnvironment is generated procedurally (no
+    // asset files), so brass, silk, and the coat pick up gentle reflections and
+    // their colors pop. Applies scene-wide.
+    const _pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    _pmrem.dispose();
 
     // Sky gradient: rich blue top → soft light blue at horizon
     const skyCanvas = document.createElement('canvas');
