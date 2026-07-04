@@ -9,7 +9,26 @@ export const isMobile = !_isElectron && (
 export const isAndroid = /Android/i.test(navigator.userAgent);
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-export const BIKE_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
+// Riders model: the fused tandem + Victorian goose captain & stoker, skinned so
+// their torsos lean with the balance. See BikeModel rider-lean wiring. The older
+// rider-less frame lives at 'tandem-3d/tandem_bicycle.glb'.
+export const BIKE_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
+
+// The bike chooser / lobby preview keeps the original recolorable frame so the
+// color presets still take effect there. The in-game bike uses the riders model
+// above (one fused mesh, so presets no-op on it).
+export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
+
+/**
+ * "Show Riders" setting — when on, the in-game bike is the Canadian-goose
+ * riders model (with torso lean + the front-facing selfie cam); when off, the
+ * plain frame. Off by default. Read at boot (see Game constructor); the Options
+ * dialog persists it and it applies on next launch.
+ */
+export function getShowRiders() {
+  try { return localStorage.getItem('tandemonium_show_riders') === 'on'; }
+  catch (e) { return false; }
+}
 
 // Protocol message types
 export const MSG_PEDAL     = 0x01;

@@ -3,7 +3,8 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -19,6 +20,7 @@ import { BalanceController } from './balance-controller.js';
 import { BikeModel } from './bike-model.js';
 import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
+import { FrontViewCamera } from './front-view-camera.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
 import { HUD } from './hud.js';
@@ -109,11 +111,23 @@ class Game {
       this._lowQuality = false;
     }
 
+    // "Show Riders" (Options, default off) gates the whole riders experience:
+    // the goose model + front selfie-cam AND the richer lighting/tone-mapping
+    // tuned for them. Off = the base game exactly as before. Read once at boot.
+    this._showRiders = getShowRiders();
+
     this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile && !this._lowQuality, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
     if (!isMobile && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    if (this._showRiders) {
+      // Filmic tone mapping so PBR colors (the riders' brass/silk/coat, and the
+      // world) read rich instead of the flat raw output. AgX keeps the Victorian
+      // reds/browns true where ACES would desaturate them; exposure is the dial.
+      this.renderer.toneMapping = THREE.AgXToneMapping;
+      this.renderer.toneMappingExposure = 1.3;
+    }
     document.body.prepend(this.renderer.domElement);
 
     // GPU device-lost recovery. A driver TDR (D3D "device removed") kills
@@ -146,6 +160,16 @@ class Game {
 
     // Scene
     this.scene = new THREE.Scene();
+
+    if (this._showRiders) {
+      // Soft image-based lighting: PBR materials expect an environment to
+      // reflect; without one they read muddy. RoomEnvironment is generated
+      // procedurally (no asset files), so brass, silk, and the coat pick up
+      // gentle reflections and their colors pop.
+      const _pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.scene.environment = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      _pmrem.dispose();
+    }
 
     // Sky gradient: rich blue top → soft light blue at horizon
     const skyCanvas = document.createElement('canvas');
@@ -196,10 +220,15 @@ class Game {
     setHapticSources([this.input]);
     this.pedalCtrl = new PedalController(this.input);
     this.balanceCtrl = new BalanceController(this.input);
-    this.world = new World(this.scene, { lowEnd: this._lowQuality });
-    this.bike = new BikeModel(this.scene);
+    this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+    // Riders model (goose captain + stoker) when Show Riders is on, else the
+    // plain frame. See the flag read above.
+    this.bike = new BikeModel(this.scene, this._showRiders ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH);
     this.bike.roadPath = this.world.roadPath;
     this.chaseCamera = new ChaseCamera(this.camera);
+    // Picture-in-picture front-facing "selfie cam" — only with the riders model
+    // (it exists to show off their lean).
+    this.frontView = this._showRiders ? new FrontViewCamera(this.camera) : null;
     this.hud = new HUD(this.input);
     this.grassParticles = new GrassParticles(this.scene);
     this.archIndicator = new ArchIndicator(this.scene);
@@ -3306,6 +3335,16 @@ class Game {
     autoBtn.addEventListener('click', () => this._setQuality('auto'));
     devToolsBtn.addEventListener('click', () => { window.location.href = 'test/index.html'; });
 
+    // Lobby gear icon → open settings. Works on every platform (click/tap), so
+    // touch and controller users can reach Options without the Start-button combo.
+    const settingsBtn = document.getElementById('ctrl-settings-btn');
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._openOptions();
+      });
+    }
+
     const dsAutoBtn   = document.getElementById('opt-ds-auto');
     const dsSteamBtn  = document.getElementById('opt-ds-steam');
     const dsWebhidBtn = document.getElementById('opt-ds-webhid');
@@ -3317,6 +3356,11 @@ class Game {
     const gyroGravityBtn = document.getElementById('opt-gyro-gravity');
     if (gyroEulerBtn)   gyroEulerBtn.addEventListener('click',   () => this._setGyroRollMode('euler'));
     if (gyroGravityBtn) gyroGravityBtn.addEventListener('click', () => this._setGyroRollMode('gravity'));
+
+    const ridersOnBtn  = document.getElementById('opt-riders-on');
+    const ridersOffBtn = document.getElementById('opt-riders-off');
+    if (ridersOnBtn)  ridersOnBtn.addEventListener('click',  () => this._setShowRiders(true));
+    if (ridersOffBtn) ridersOffBtn.addEventListener('click', () => this._setShowRiders(false));
 
     if (isElectron) {
       browserDevBtn.addEventListener('click', async () => {
@@ -3349,6 +3393,23 @@ class Game {
     this._updateOptionsQualityUI();
     this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
+    this._updateOptionsShowRidersUI();
+  }
+
+  _setShowRiders(on) {
+    try { localStorage.setItem('tandemonium_show_riders', on ? 'on' : 'off'); } catch (e) {}
+    this._updateOptionsShowRidersUI();
+    // Bike model + front cam are chosen at boot, so this applies on next launch
+    // (matches the note in the row and the DualSense-source setting).
+  }
+
+  _updateOptionsShowRidersUI() {
+    const on = getShowRiders();
+    const onBtn  = document.getElementById('opt-riders-on');
+    const offBtn = document.getElementById('opt-riders-off');
+    if (!onBtn) return;
+    onBtn.classList.toggle('active', on);
+    offBtn.classList.toggle('active', !on);
   }
 
   _updateOptionsDualSenseSourceUI() {
@@ -3458,6 +3519,8 @@ class Game {
       document.getElementById('opt-ds-webhid'),
       document.getElementById('opt-gyro-euler'),
       document.getElementById('opt-gyro-gravity'),
+      document.getElementById('opt-riders-on'),
+      document.getElementById('opt-riders-off'),
       document.getElementById('options-perf-btn'),
       document.getElementById('options-devtools-btn'),
       document.getElementById('options-browserdev-btn'),
@@ -3465,6 +3528,7 @@ class Game {
     ].filter(Boolean);
     this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
+    this._updateOptionsShowRidersUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
   }
 
@@ -3705,6 +3769,7 @@ class Game {
       this.input.consumeTaps(); // drain buffered input so it doesn't fire when overlay closes
       if (this.mode === 'versus' && this.versusRigs) this._renderVersusViews();
       else this.renderer.render(this.scene, this.camera);
+      if (this.frontView) this.frontView.hide();
       return;
     }
     // Stoker input-choice overlay: allow gamepad selection while it's up.
@@ -3712,6 +3777,7 @@ class Game {
       this._pollOverlayGamepad();
       this.input.consumeTaps();
       this.renderer.render(this.scene, this.camera);
+      if (this.frontView) this.frontView.hide();
       return;
     }
 
@@ -3780,6 +3846,21 @@ class Game {
 
         this.renderer.render(this.scene, this.camera);
       }
+    }
+
+    // Front-view PiP — composite a front-facing "selfie cam" of the bike
+    // into the lower-right corner, on top of whatever was just rendered.
+    // Only while a ride is on screen (not during the cinematic, which runs
+    // its own camera choreography).
+    if (this.frontView && this.frontView.enabled && this.bike &&
+        this.mode !== 'versus' &&
+        (this.state === 'playing' || this.state === 'countdown')) {
+      this.frontView.update(this.bike, dt);
+      this.frontView.render(this.renderer, this.scene);
+    } else if (this.frontView) {
+      // Not shown in Versus (split-screen) — that integration is a follow-up.
+      this.frontView.hide();
+      this.frontView.reset();
     }
 
     // Sp3 — feed bike velocity to the procedural motion loop every frame.
@@ -3934,6 +4015,11 @@ class Game {
     balanceResult.leanInput = Math.max(-1, Math.min(1,
       (balanceResult.leanInput + this.remoteLean) * 0.5
     ));
+
+    // Independent rider torsos: captain leans by his own gyro, stoker by hers,
+    // while the bike tilts by the merged aggregate above (leanInput).
+    balanceResult.captainLean = captainLean;
+    balanceResult.stokerLean = this.remoteLean;
 
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
@@ -4685,6 +4771,10 @@ class Game {
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     const stokerLean = this.balanceCtrl.update().leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
+    // Independent rider torsos on the stoker's screen too: captain leans by the
+    // lean he broadcasts (this.remoteLean), the stoker by her own local lean.
+    // applyRemoteState() poses the riders from these targets next frame.
+    this.bike.setRiderLeans(this.remoteLean, stokerLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl, remoteData));
   }
