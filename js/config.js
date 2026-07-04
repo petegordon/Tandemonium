@@ -9,7 +9,10 @@ export const isMobile = !_isElectron && (
 export const isAndroid = /Android/i.test(navigator.userAgent);
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-export const BIKE_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
+// Riders model: the fused tandem + Victorian goose captain & stoker, skinned so
+// their torsos lean with the balance. See BikeModel rider-lean wiring. The older
+// rider-less frame lives at 'tandem-3d/tandem_bicycle.glb'.
+export const BIKE_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
 
 // Protocol message types
 export const MSG_PEDAL     = 0x01;

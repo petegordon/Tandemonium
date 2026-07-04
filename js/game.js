@@ -3594,6 +3594,11 @@ class Game {
       (balanceResult.leanInput + this.remoteLean) * 0.5
     ));
 
+    // Independent rider torsos: captain leans by his own gyro, stoker by hers,
+    // while the bike tilts by the merged aggregate above (leanInput).
+    balanceResult.captainLean = captainLean;
+    balanceResult.stokerLean = this.remoteLean;
+
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
     this._checkTreeCollision();
@@ -3879,6 +3884,10 @@ class Game {
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     const stokerLean = this.balanceCtrl.update().leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
+    // Independent rider torsos on the stoker's screen too: captain leans by the
+    // lean he broadcasts (this.remoteLean), the stoker by her own local lean.
+    // applyRemoteState() poses the riders from these targets next frame.
+    this.bike.setRiderLeans(this.remoteLean, stokerLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl, remoteData));
   }
