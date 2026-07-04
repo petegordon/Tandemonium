@@ -247,6 +247,7 @@ class Game {
     // Versus (issue #351): teams payload from the lobby, set in _onVersusReady.
     this._versusTeams = null;
     this.versusRigs = null; // [TeamRig, TeamRig] while a versus session is live
+    this.versusFrontViews = null; // per-rig front-cam PiPs (Show Riders + versus)
     this.versusHud = null;  // VersusHud instance (created at first versus countdown)
     this._versusPaused = false; // true while a member's pad is disconnected
     this._versusWinner = null;  // winning/losing rigs during cinematic + results
@@ -1095,6 +1096,19 @@ class Game {
       rig.resetForRace();
       return rig;
     });
+
+    // Per-bike front-facing selfie-cam PiP (Show Riders only). One per rig,
+    // rendered in that rig's viewport half; each camera enables the team's
+    // floor layer so the PiP's ground matches its half.
+    if (this._showRiders) {
+      this.versusFrontViews = this.versusRigs.map((rig) => {
+        const fv = new FrontViewCamera(this.camera);
+        fv.camera.layers.enable(rig.id === 'A' ? 1 : 2);
+        return fv;
+      });
+    } else {
+      this.versusFrontViews = null;
+    }
 
     // Park the singleton bike — versus renders only the rigs' bikes.
     this.bike.group.visible = false;
@@ -3121,6 +3135,10 @@ class Game {
         rig.dispose(this.scene);
       }
       this.versusRigs = null;
+      if (this.versusFrontViews) {
+        for (const fv of this.versusFrontViews) fv.dispose();
+        this.versusFrontViews = null;
+      }
       this.bike.group.visible = true;
       this.renderer.setScissorTest(false);
       this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
@@ -4670,6 +4688,15 @@ class Game {
     }
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, w, h);
+
+    // Per-bike front-facing PiP (Show Riders): one in the lower-right of each
+    // half. Done after the split loop — each renderInHalf owns its own scissor.
+    if (this.versusFrontViews) {
+      for (let i = 0; i < rigs.length; i++) {
+        const fx = i === 0 ? 0 : w - halfW;
+        this.versusFrontViews[i].renderInHalf(this.renderer, this.scene, rigs[i].bike, 1 / 60, fx, halfW);
+      }
+    }
   }
 
   // ============================================================
