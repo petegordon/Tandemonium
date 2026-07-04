@@ -2928,6 +2928,14 @@
     min-width: 300px;
     max-width: 400px;
     text-align: center;
+    /* Cap to the viewport and scroll internally so tall content (e.g. the
+       Show Riders row) is reachable on short/mobile screens by touch. dvh
+       tracks the mobile URL bar; vh is the fallback. */
+    max-height: 85vh;
+    max-height: 90dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   .options-card h2 { font-size: 20px; margin-bottom: 20px; }
   .options-card .label { font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
