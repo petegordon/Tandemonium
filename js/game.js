@@ -38,6 +38,7 @@ import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
+import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -248,6 +249,7 @@ class Game {
     this._versusTeams = null;
     this.versusRigs = null; // [TeamRig, TeamRig] while a versus session is live
     this.versusFrontViews = null; // per-rig front-cam PiPs (Show Riders + versus)
+    this.versusPedalHuds = null;  // per-rig pedal button + rhythm-arrow visuals
     this.versusHud = null;  // VersusHud instance (created at first versus countdown)
     this._versusPaused = false; // true while a member's pad is disconnected
     this._versusWinner = null;  // winning/losing rigs during cinematic + results
@@ -1110,6 +1112,13 @@ class Game {
     } else {
       this.versusFrontViews = null;
     }
+
+    // Per-team pedal HUD (buttons + rhythm arrows), one per split-screen half —
+    // same visualization as local/remote multiplayer, driven by each team.
+    this.versusPedalHuds = [
+      new VersusPedalHud(document.getElementById('versus-pedals-a')),
+      new VersusPedalHud(document.getElementById('versus-pedals-b')),
+    ];
 
     // Park the singleton bike — versus renders only the rigs' bikes.
     this.bike.group.visible = false;
@@ -3140,6 +3149,10 @@ class Game {
         for (const fv of this.versusFrontViews) fv.dispose();
         this.versusFrontViews = null;
       }
+      if (this.versusPedalHuds) {
+        for (const ph of this.versusPedalHuds) ph.clear();
+        this.versusPedalHuds = null;
+      }
       this.bike.group.visible = true;
       this.renderer.setScissorTest(false);
       this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
@@ -3357,7 +3370,8 @@ class Game {
           if (side === 'left') { input.touchLeft = true; input._leftTapped = true; }
           else { input.touchRight = true; input._rightTapped = true; }
           if (input._markActive) input._markActive();
-          btn.classList.add('active');
+          // Button visual (.pressed / tap-flash) is driven by VersusPedalHud
+          // from the resulting touch/pedal state — same as multiplayer.
         };
         const release = () => {
           const input = inputOf();
@@ -3365,7 +3379,6 @@ class Game {
             if (side === 'left') input.touchLeft = false;
             else input.touchRight = false;
           }
-          btn.classList.remove('active');
         };
         btn.addEventListener('pointerdown', press);
         btn.addEventListener('pointerup', release);
@@ -4359,6 +4372,16 @@ class Game {
       if (rig.archIndicator._visible) {
         rig.archIndicator.update(rig.bike, rig.hudLeans[0], rig.hudLeans[1]);
         rig.applyArchLayer();
+      }
+    }
+
+    // Per-team pedal button + rhythm-arrow visuals (same as multiplayer).
+    if (this.versusPedalHuds) {
+      for (let i = 0; i < rigs.length; i++) {
+        const rig = rigs[i];
+        const lh = rig.members.some((m) => m.input.isPressed('ArrowLeft'));
+        const rh = rig.members.some((m) => m.input.isPressed('ArrowRight'));
+        this.versusPedalHuds[i].update(lh, rh, rig.pedalCtrl, rig.bike.speed, dt);
       }
     }
 
