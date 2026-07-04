@@ -669,10 +669,10 @@ export class World {
   }
 
   _buildLighting() {
-    const ambient = new THREE.AmbientLight(0x5566aa, 0.5);
+    const ambient = new THREE.AmbientLight(0x5566aa, 0.8);
     this.scene.add(ambient);
 
-    this.sun = new THREE.DirectionalLight(0xffffdd, 1.1);
+    this.sun = new THREE.DirectionalLight(0xffffdd, 1.7);
     this.sun.position.set(30, 40, 20);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.width = 1024;
@@ -686,8 +686,14 @@ export class World {
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
 
-    const hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, 0.35);
+    const hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, 0.6);
     this.scene.add(hemi);
+
+    // Warm fill opposite the sun so the riders' shadowed front (facing the chase
+    // camera) still reads its Victorian colors instead of going murky.
+    const fill = new THREE.DirectionalLight(0xfff2e0, 0.6);
+    fill.position.set(-25, 25, -25);
+    this.scene.add(fill);
   }
 
   checkTreeCollision(bikePos, bikeD, bikeHeading) {

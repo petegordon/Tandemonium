@@ -223,11 +223,15 @@ export class BikeModel {
     const k = Math.min(1, 12 * (dt || 1 / 60));
     this._captainLeanNorm += (this._captainLeanTarget - this._captainLeanNorm) * k;
     this._stokerLeanNorm += (this._stokerLeanTarget - this._stokerLeanNorm) * k;
+    // Map [-1, 1] -> the monotonic clip [0, duration], NEGATED so the riders
+    // lean into the same side the bike tilts. (After the model's RIDER_MODEL_YAW,
+    // the baked torso roll composes with the group's Z-tilt such that matching
+    // signs read as opposite in the full scene, so we flip here.)
     if (this.captainAction) {
-      this.captainAction.time = (this._captainLeanNorm * 0.5 + 0.5) * this.riderClipDuration;
+      this.captainAction.time = (0.5 - this._captainLeanNorm * 0.5) * this.riderClipDuration;
     }
     if (this.stokerAction) {
-      this.stokerAction.time = (this._stokerLeanNorm * 0.5 + 0.5) * this.riderClipDuration;
+      this.stokerAction.time = (0.5 - this._stokerLeanNorm * 0.5) * this.riderClipDuration;
     }
     this.riderMixer.update(0); // apply the posed times without advancing them
   }
@@ -311,8 +315,11 @@ export class BikeModel {
     // both sway with the single aggregate lean (solo). The bike's tilt itself is
     // unaffected — that still comes from this.lean in _applyTransform.
     if (this.riderMixer) {
+      // Coop provides each rider's own lean; solo provides only the aggregate
+      // leanInput, in which case the captain leans with it and the stoker (who
+      // has no second input in solo) stays upright.
       const cap = (balanceResult.captainLean != null) ? balanceResult.captainLean : balanceResult.leanInput;
-      const sto = (balanceResult.stokerLean != null) ? balanceResult.stokerLean : balanceResult.leanInput;
+      const sto = (balanceResult.stokerLean != null) ? balanceResult.stokerLean : 0;
       this.setRiderLeans(cap, sto);
     }
 

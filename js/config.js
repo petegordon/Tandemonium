@@ -14,6 +14,11 @@ export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 // rider-less frame lives at 'tandem-3d/tandem_bicycle.glb'.
 export const BIKE_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
 
+// The bike chooser / lobby preview keeps the original recolorable frame so the
+// color presets still take effect there. The in-game bike uses the riders model
+// above (one fused mesh, so presets no-op on it).
+export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
+
 // Protocol message types
 export const MSG_PEDAL     = 0x01;
 export const MSG_STATE     = 0x02;
