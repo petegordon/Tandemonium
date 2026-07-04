@@ -4693,8 +4693,13 @@ class Game {
     // renders it (full window aspect, maintained by _onResize); it must be
     // granted the winner's floor layer or the ground disappears (floors
     // are layer-split per team in versus). Arches would photobomb the
-    // orbit — hide them; the rematch countdown re-arms them.
+    // orbit — hide them; the rematch countdown re-arms them. The front-cam
+    // PiP frames are DOM — nothing re-renders them during the cinematic, so
+    // they'd linger over the fly-around unless hidden here.
     for (const rig of this.versusRigs) rig.archIndicator.hide();
+    if (this.versusFrontViews) {
+      for (const fv of this.versusFrontViews) fv.hide();
+    }
     this.camera.layers.enable(winner.id === 'A' ? 1 : 2);
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
@@ -4821,7 +4826,10 @@ class Game {
 
     // Per-bike front-facing PiP (Show Riders): one in the lower-right of each
     // half. Done after the split loop — each renderInHalf owns its own scissor.
-    if (this.versusFrontViews) {
+    // Skipped once the race is decided (renderInHalf re-shows the DOM frame
+    // every call, which would undo the cinematic's hide during results); the
+    // rematch countdown brings them back.
+    if (this.versusFrontViews && this.state !== 'versusResults') {
       for (let i = 0; i < rigs.length; i++) {
         const fx = i === 0 ? 0 : w - halfW;
         this.versusFrontViews[i].renderInHalf(this.renderer, this.scene, rigs[i].bike, 1 / 60, fx, halfW);
