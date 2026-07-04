@@ -19,6 +19,7 @@ import { BalanceController } from './balance-controller.js';
 import { BikeModel } from './bike-model.js';
 import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
+import { FrontViewCamera } from './front-view-camera.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
 import { HUD } from './hud.js';
@@ -169,6 +170,8 @@ class Game {
     this.bike = new BikeModel(this.scene);
     this.bike.roadPath = this.world.roadPath;
     this.chaseCamera = new ChaseCamera(this.camera);
+    // Picture-in-picture front-facing "selfie cam" of the bike (lower-right).
+    this.frontView = new FrontViewCamera(this.camera);
     this.hud = new HUD(this.input);
     this.grassParticles = new GrassParticles(this.scene);
     this.archIndicator = new ArchIndicator(this.scene);
@@ -575,6 +578,11 @@ class Game {
     window.addEventListener('keydown', (e) => {
       const tag = document.activeElement && document.activeElement.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.code === 'KeyV') {
+        // Toggle the front-facing PiP "selfie cam" of the bike.
+        if (this.frontView) this.frontView.toggle();
+        return;
+      }
       if (e.code === 'KeyM') {
         if (e.shiftKey) {
           // Shift+M: toggle volume picker in lobby
@@ -3414,6 +3422,7 @@ class Game {
       this._pollOverlayGamepad();
       this.input.consumeTaps(); // drain buffered input so it doesn't fire when overlay closes
       this.renderer.render(this.scene, this.camera);
+      if (this.frontView) this.frontView.hide();
       return;
     }
     // Stoker input-choice overlay: allow gamepad selection while it's up.
@@ -3421,6 +3430,7 @@ class Game {
       this._pollOverlayGamepad();
       this.input.consumeTaps();
       this.renderer.render(this.scene, this.camera);
+      if (this.frontView) this.frontView.hide();
       return;
     }
 
@@ -3464,6 +3474,19 @@ class Game {
       if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
 
       this.renderer.render(this.scene, this.camera);
+    }
+
+    // Front-view PiP — composite a front-facing "selfie cam" of the bike
+    // into the lower-right corner, on top of whatever was just rendered.
+    // Only while a ride is on screen (not during the cinematic, which runs
+    // its own camera choreography).
+    if (this.frontView && this.frontView.enabled && this.bike &&
+        (this.state === 'playing' || this.state === 'countdown')) {
+      this.frontView.update(this.bike, dt);
+      this.frontView.render(this.renderer, this.scene);
+    } else if (this.frontView) {
+      this.frontView.hide();
+      this.frontView.reset();
     }
 
     // Sp3 — feed bike velocity to the procedural motion loop every frame.
