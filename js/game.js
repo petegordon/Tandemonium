@@ -3068,6 +3068,16 @@ class Game {
     autoBtn.addEventListener('click', () => this._setQuality('auto'));
     devToolsBtn.addEventListener('click', () => { window.location.href = 'test/index.html'; });
 
+    // Lobby gear icon → open settings. Works on every platform (click/tap), so
+    // touch and controller users can reach Options without the Start-button combo.
+    const settingsBtn = document.getElementById('ctrl-settings-btn');
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._openOptions();
+      });
+    }
+
     const dsAutoBtn   = document.getElementById('opt-ds-auto');
     const dsSteamBtn  = document.getElementById('opt-ds-steam');
     const dsWebhidBtn = document.getElementById('opt-ds-webhid');
