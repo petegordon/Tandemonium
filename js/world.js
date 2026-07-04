@@ -61,6 +61,9 @@ export class World {
   constructor(scene, options = {}) {
     this.scene = scene;
     this._lowEnd = !!options.lowEnd;
+    // Brighter, warmer lighting is part of the Show Riders experience (so the
+    // riders' Victorian colors read); off = the original world lighting.
+    this._showRiders = !!options.showRiders;
     this.tileSize = 4;
 
     // Road path (deterministic)
@@ -669,10 +672,11 @@ export class World {
   }
 
   _buildLighting() {
-    const ambient = new THREE.AmbientLight(0x5566aa, 0.8);
+    const riders = this._showRiders;
+    const ambient = new THREE.AmbientLight(0x5566aa, riders ? 0.8 : 0.5);
     this.scene.add(ambient);
 
-    this.sun = new THREE.DirectionalLight(0xffffdd, 1.7);
+    this.sun = new THREE.DirectionalLight(0xffffdd, riders ? 1.7 : 1.1);
     this.sun.position.set(30, 40, 20);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.width = 1024;
@@ -686,14 +690,16 @@ export class World {
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
 
-    const hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, 0.6);
+    const hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, riders ? 0.6 : 0.35);
     this.scene.add(hemi);
 
-    // Warm fill opposite the sun so the riders' shadowed front (facing the chase
-    // camera) still reads its Victorian colors instead of going murky.
-    const fill = new THREE.DirectionalLight(0xfff2e0, 0.6);
-    fill.position.set(-25, 25, -25);
-    this.scene.add(fill);
+    if (riders) {
+      // Warm fill opposite the sun so the riders' shadowed front (facing the
+      // chase camera) still reads its Victorian colors instead of going murky.
+      const fill = new THREE.DirectionalLight(0xfff2e0, 0.6);
+      fill.position.set(-25, 25, -25);
+      this.scene.add(fill);
+    }
   }
 
   checkTreeCollision(bikePos, bikeD, bikeHeading) {

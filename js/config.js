@@ -19,6 +19,17 @@ export const BIKE_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
 // above (one fused mesh, so presets no-op on it).
 export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
 
+/**
+ * "Show Riders" setting — when on, the in-game bike is the Canadian-goose
+ * riders model (with torso lean + the front-facing selfie cam); when off, the
+ * plain frame. Off by default. Read at boot (see Game constructor); the Options
+ * dialog persists it and it applies on next launch.
+ */
+export function getShowRiders() {
+  try { return localStorage.getItem('tandemonium_show_riders') === 'on'; }
+  catch (e) { return false; }
+}
+
 // Protocol message types
 export const MSG_PEDAL     = 0x01;
 export const MSG_STATE     = 0x02;
