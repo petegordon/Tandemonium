@@ -604,11 +604,6 @@ class Game {
     window.addEventListener('keydown', (e) => {
       const tag = document.activeElement && document.activeElement.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (e.code === 'KeyV') {
-        // Toggle the front-facing PiP "selfie cam" of the bike.
-        if (this.frontView) this.frontView.toggle();
-        return;
-      }
       if (e.code === 'KeyM') {
         if (e.shiftKey) {
           // Shift+M: toggle volume picker in lobby
