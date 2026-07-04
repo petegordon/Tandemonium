@@ -2110,10 +2110,13 @@
     padding: 0 12px;
     box-sizing: border-box;
     justify-content: center;
+    align-items: center;
     pointer-events: none;
   }
   body.mode-versus #versus-pedals-a { display: flex; left: 0; width: 50%; }
   body.mode-versus #versus-pedals-b { display: flex; left: 50%; width: 50%; }
+  /* Purple pedal-rhythm arrows, same as multiplayer — shown per half in versus. */
+  body.mode-versus .versus-pedals .pedal-indicator { display: flex; }
   body.mode-versus.versus-fullframe .versus-pedals { display: none; }
   .versus-pedals .pedal-touch {
     pointer-events: auto;
@@ -2122,11 +2125,6 @@
     height: 12vh;
     min-height: 56px;
     max-height: 92px;
-  }
-  .versus-pedals .pedal-touch.active {
-    transform: translateY(3px) scale(0.97);
-    background: linear-gradient(to bottom, rgba(255,255,255,0.42) 0%, rgba(255,255,255,0.18) 100%);
-    border-color: rgba(255,255,255,0.75);
   }
   /* Per-team HUD panels (built by js/versus/versus-hud.js) */
   #versus-hud {
@@ -4309,12 +4307,16 @@ ON</button>
 <!-- Versus per-team pedal controls (one per split-screen half; body.mode-versus).
      Top-level (not inside #bottom-hud, which versus hides). Wired in game.js. -->
 <div id="versus-pedals-a" class="versus-pedals">
+  <div class="pedal-indicator vp-arrow-up">&#9650;</div>
   <div class="pedal-touch vp-left"><img src="images/pedal_left.png" alt="Left Pedal"></div>
   <div class="pedal-touch vp-right"><img src="images/pedal_right.png" alt="Right Pedal"></div>
+  <div class="pedal-indicator vp-arrow-down">&#9660;</div>
 </div>
 <div id="versus-pedals-b" class="versus-pedals">
+  <div class="pedal-indicator vp-arrow-up">&#9650;</div>
   <div class="pedal-touch vp-left"><img src="images/pedal_left.png" alt="Left Pedal"></div>
   <div class="pedal-touch vp-right"><img src="images/pedal_right.png" alt="Right Pedal"></div>
+  <div class="pedal-indicator vp-arrow-down">&#9660;</div>
 </div>
 
 <!-- Tutorial calibration flow overlay -->
@@ -4747,7 +4749,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.693a4cb | 07-04-2026 17:29 (PR #352)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.a981b00 | 07-04-2026 17:57 (PR #352)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
