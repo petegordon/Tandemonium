@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
 
 // The riders GLB ships Draco-compressed geometry to keep it small; the plain
@@ -98,13 +99,41 @@ export class BikeModel {
     this._stokerLeanNorm = 0;    // smoothed
 
     // Versus spawns extra bikes by cloning an already-loaded one (instant, shares
-    // geometry). A SKINNED riders model can't be shallow-cloned — three's clone()
-    // shares the one Skeleton, so every clone would pose/lean together — so a
-    // riders source falls back to a fresh per-bike load (its own skeleton + mixer).
-    if (cloneSource && cloneSource.modelLoaded && !cloneSource.riderMixer) {
-      this._initFromClone(cloneSource);
+    // geometry — no re-fetch/decode). A SKINNED riders model needs SkeletonUtils
+    // so the clone gets its OWN Skeleton (a plain clone() shares the source's, so
+    // every bike would pose/lean together); the plain frame uses the fast clone.
+    if (cloneSource && cloneSource.modelLoaded) {
+      if (cloneSource.riderMixer) this._initFromCloneSkinned(cloneSource);
+      else this._initFromClone(cloneSource);
     } else {
       this._loadModel();
+    }
+  }
+
+  /**
+   * Clone a skinned riders bike for versus. SkeletonUtils.clone gives the clone
+   * its own Skeleton (independent posing) while still sharing geometry + textures,
+   * so it's ~instant and cheap on VRAM. Each clone gets its own AnimationMixer
+   * bound to the source's already-bone-stripped lean clips, so it leans by its
+   * own team's input (set via setRiderLeans / balanceResult in _stepTeam).
+   */
+  _initFromCloneSkinned(source) {
+    const model = cloneSkinned(source.group.children[0]);
+    this.group.add(model);
+    this.group.updateMatrixWorld(true);
+    this._sharedGeometry = true;
+    this.modelLoaded = true;
+
+    this.riderMixer = new THREE.AnimationMixer(model);
+    this.riderClipDuration = source.riderClipDuration;
+    const capClip = source.captainAction && source.captainAction.getClip();
+    const stoClip = source.stokerAction && source.stokerAction.getClip();
+    if (capClip) this.captainAction = this._makeScrubAction(capClip);
+    if (stoClip) this.stokerAction = this._makeScrubAction(stoClip);
+
+    if (this._pendingPreset) {
+      this.applyPreset(this._pendingPreset);
+      this._pendingPreset = null;
     }
   }
 

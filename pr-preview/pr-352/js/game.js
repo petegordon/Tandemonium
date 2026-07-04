@@ -247,6 +247,7 @@ class Game {
     // Versus (issue #351): teams payload from the lobby, set in _onVersusReady.
     this._versusTeams = null;
     this.versusRigs = null; // [TeamRig, TeamRig] while a versus session is live
+    this.versusFrontViews = null; // per-rig front-cam PiPs (Show Riders + versus)
     this.versusHud = null;  // VersusHud instance (created at first versus countdown)
     this._versusPaused = false; // true while a member's pad is disconnected
     this._versusWinner = null;  // winning/losing rigs during cinematic + results
@@ -301,6 +302,7 @@ class Game {
     this._gpPrevStart = false;
     this._gpPrevB = false;
     this._initOptionsOverlay();
+    this._initVersusPedals();
 
     // Async hardware detection (first visit, no cache, no manual override)
     if (!_hwCached && _qualityPref !== 'high' && _qualityPref !== 'low' && _qualityParam !== 'high' && _qualityParam !== 'low') {
@@ -1095,6 +1097,19 @@ class Game {
       rig.resetForRace();
       return rig;
     });
+
+    // Per-bike front-facing selfie-cam PiP (Show Riders only). One per rig,
+    // rendered in that rig's viewport half; each camera enables the team's
+    // floor layer so the PiP's ground matches its half.
+    if (this._showRiders) {
+      this.versusFrontViews = this.versusRigs.map((rig) => {
+        const fv = new FrontViewCamera(this.camera);
+        fv.camera.layers.enable(rig.id === 'A' ? 1 : 2);
+        return fv;
+      });
+    } else {
+      this.versusFrontViews = null;
+    }
 
     // Park the singleton bike — versus renders only the rigs' bikes.
     this.bike.group.visible = false;
@@ -3121,6 +3136,10 @@ class Game {
         rig.dispose(this.scene);
       }
       this.versusRigs = null;
+      if (this.versusFrontViews) {
+        for (const fv of this.versusFrontViews) fv.dispose();
+        this.versusFrontViews = null;
+      }
       this.bike.group.visible = true;
       this.renderer.setScissorTest(false);
       this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
@@ -3312,6 +3331,51 @@ class Game {
   // ============================================================
   // OPTIONS OVERLAY
   // ============================================================
+
+  /**
+   * Wire the per-team versus pedal controls once. Handlers reference
+   * this.versusRigs live, so they no-op outside versus (and the bars are
+   * CSS-hidden then anyway). A tap sets the team captain's buffered pedal flag
+   * — the same path touch/keys use — so it drives that bike and is cleared by
+   * consumeTaps each frame. Team A = left half → rig 0, Team B = right → rig 1.
+   */
+  _initVersusPedals() {
+    const bindBar = (barId, teamIdx) => {
+      const bar = document.getElementById(barId);
+      if (!bar) return;
+      for (const [sel, side] of [['.vp-left', 'left'], ['.vp-right', 'right']]) {
+        const btn = bar.querySelector(sel);
+        if (!btn) continue;
+        const inputOf = () => {
+          const rig = this.versusRigs && this.versusRigs[teamIdx];
+          return rig ? rig.members[0].input : null;
+        };
+        const press = (e) => {
+          e.preventDefault();
+          const input = inputOf();
+          if (!input) return;
+          if (side === 'left') { input.touchLeft = true; input._leftTapped = true; }
+          else { input.touchRight = true; input._rightTapped = true; }
+          if (input._markActive) input._markActive();
+          btn.classList.add('active');
+        };
+        const release = () => {
+          const input = inputOf();
+          if (input) {
+            if (side === 'left') input.touchLeft = false;
+            else input.touchRight = false;
+          }
+          btn.classList.remove('active');
+        };
+        btn.addEventListener('pointerdown', press);
+        btn.addEventListener('pointerup', release);
+        btn.addEventListener('pointercancel', release);
+        btn.addEventListener('pointerleave', release);
+      }
+    };
+    bindBar('versus-pedals-a', 0);
+    bindBar('versus-pedals-b', 1);
+  }
 
   _initOptionsOverlay() {
     const overlay = document.getElementById('options-overlay');
@@ -4358,6 +4422,12 @@ class Game {
         (balanceResult.leanInput + second.leanInput) * 0.5
       ));
     }
+    // Per-bike rider lean (Show Riders): captain leans by member[0], stoker by
+    // member[1] — solo teams keep the stoker upright. Each rig's bike has its
+    // own skeleton + mixer (skinned clone), so the geese lean independently per
+    // team. No-op on the plain frame model (no riderMixer).
+    balanceResult.captainLean = rig.hudLeans[0];
+    balanceResult.stokerLean = rig.isDuo ? rig.hudLeans[1] : 0;
     bike._balanceAssist = assist;
 
     const wasFallen = bike.fallen;
@@ -4664,6 +4734,15 @@ class Game {
     }
     this.renderer.setScissorTest(false);
     this.renderer.setViewport(0, 0, w, h);
+
+    // Per-bike front-facing PiP (Show Riders): one in the lower-right of each
+    // half. Done after the split loop — each renderInHalf owns its own scissor.
+    if (this.versusFrontViews) {
+      for (let i = 0; i < rigs.length; i++) {
+        const fx = i === 0 ? 0 : w - halfW;
+        this.versusFrontViews[i].renderInHalf(this.renderer, this.scene, rigs[i].bike, 1 / 60, fx, halfW);
+      }
+    }
   }
 
   // ============================================================
