@@ -97,7 +97,7 @@ export class PlayStationDriver extends ControllerDriver {
    *
    * @returns {Promise<boolean>} whether the full report stream was confirmed
    */
-  async _activateFullReportMode(featureId, { attempts = 5, perAttemptMs = 450 } = {}) {
+  async _activateFullReportMode(featureId, { attempts = 3, perAttemptMs = 300 } = {}) {
     const fullId = this._fullReportId();
     const hex = (n) => '0x' + n.toString(16).padStart(2, '0');
     // A device without receiveFeatureReport is a test/unsupported handle —
@@ -106,23 +106,32 @@ export class PlayStationDriver extends ControllerDriver {
     const maxAttempts = canRead ? attempts : 1;
 
     for (let i = 1; i <= maxAttempts; i++) {
+      let readOk = true;
       if (canRead) {
         try {
           await this.device.receiveFeatureReport(featureId);
         } catch (err) {
+          readOk = false;
           console.warn(`PlayStation BT: feature ${hex(featureId)} query failed (attempt ${i}/${maxAttempts}):`, err.message);
         }
       }
-      const streaming = await this._waitForReport(fullId, perAttemptMs);
-      if (streaming) {
-        console.log(`PlayStation BT: full report mode active (${hex(fullId)}) after ${i} attempt(s)`);
-        return true;
+      // Only wait for the stream when the activating read was ACCEPTED. A
+      // thrown read means the BT link is still negotiating (the hot-plug case)
+      // — no full report will arrive, so skip the wait and let init hand off to
+      // the non-blocking background loop instead of blocking ~perAttemptMs per
+      // doomed attempt (this was ~2s of dead init that serialized pool loads).
+      if (readOk) {
+        const streaming = await this._waitForReport(fullId, perAttemptMs);
+        if (streaming) {
+          console.log(`PlayStation BT: full report mode active (${hex(fullId)}) after ${i} attempt(s)`);
+          return true;
+        }
       }
       if (i < maxAttempts) {
         console.log(`PlayStation BT: still in compatibility mode after feature ${hex(featureId)} (attempt ${i}/${maxAttempts}); retrying`);
       }
     }
-    console.warn(`PlayStation BT: full report mode (${hex(fullId)}) did not start after ${maxAttempts} attempt(s) — gyro unavailable until reconnect`);
+    console.warn(`PlayStation BT: full report mode (${hex(fullId)}) not up inline after ${maxAttempts} attempt(s) — handing off to background re-activation`);
     return false;
   }
 
@@ -164,7 +173,7 @@ export class PlayStationDriver extends ControllerDriver {
    *
    * @returns {Promise<boolean>} true if the stream started, false if it gave up
    */
-  _startBackgroundReactivation(featureId, { intervalMs = 1000, maxMs = 12000 } = {}) {
+  _startBackgroundReactivation(featureId, { intervalMs = 500, maxMs = 12000 } = {}) {
     if (this._reactivateTimer) return Promise.resolve(false);
     const fullId = this._fullReportId();
     const hex = (n) => '0x' + n.toString(16).padStart(2, '0');
@@ -179,15 +188,19 @@ export class PlayStationDriver extends ControllerDriver {
         resolve(ok);
       };
       const onReport = (event) => { if (event.reportId === fullId) finish(true); };
-      this._reactivateStop = () => finish(false, 'driver destroyed');
-      this.device.addEventListener('inputreport', onReport);
-      console.warn(`PlayStation BT: full report stream not up yet — re-activating in the background (every ${intervalMs}ms, up to ${maxMs}ms)`);
-      this._reactivateTimer = setInterval(() => {
-        elapsed += intervalMs;
-        if (elapsed > maxMs) { finish(false, `no full report after ${maxMs}ms`); return; }
+      const nudge = () => {
         if (typeof this.device.receiveFeatureReport === 'function') {
           this.device.receiveFeatureReport(featureId).catch(() => {});
         }
+      };
+      this._reactivateStop = () => finish(false, 'driver destroyed');
+      this.device.addEventListener('inputreport', onReport);
+      console.warn(`PlayStation BT: full report stream not up yet — re-activating in the background (every ${intervalMs}ms, up to ${maxMs}ms)`);
+      nudge(); // fire the first read immediately — don't idle a full interval before nudging
+      this._reactivateTimer = setInterval(() => {
+        elapsed += intervalMs;
+        if (elapsed > maxMs) { finish(false, `no full report after ${maxMs}ms`); return; }
+        nudge();
       }, intervalMs);
     });
   }
@@ -396,17 +409,43 @@ export class PlayStationDriver extends ControllerDriver {
     const touchpadButton = !!(psByte & 0x02);
 
     if (isDs4) {
-      // DS4-family (real Sony DS4 + GameSir clones): WebHID supplies the IMU
-      // only. Buttons/sticks/triggers come from the Gamepad API (a DS4
-      // enumerates as a standard gamepad on every OS). We deliberately omit
-      // them here — parsing at the DualSense offsets is wrong for a real DS4,
-      // and a non-empty button set would make ControllerManager prefer this
-      // mis-parsed synthetic over the correct Gamepad-API pad. Touchpad is
-      // omitted too until a real-DS4 button/touchpad layout is captured and
-      // validated.
+      // DS4-family (real Sony DS4 + GameSir DS4-mode clones). The DS4 report
+      // puts buttons at DIFFERENT offsets than the DualSense fields read above:
+      //   +4 dpad(low nibble)+face(high)   +5 shoulders/options/stick-clicks
+      //   +6 PS(bit0)/touchpad(bit1)+counter   +7/+8 L2/R2 analog
+      // Layout validated from a GameSir Super Nova BT capture (054c:05c4).
+      // We now RETURN buttons/sticks/triggers (previously omitted) so a DS4
+      // whose input only reaches us over WebHID — a Bluetooth clone, or one of
+      // two same-vid:pid pads the Gamepad API can't disambiguate — drives and
+      // folds from its OWN HID stream instead of being stuck button-less.
+      const face = data.getUint8(baseOffset + 4);
+      const shoulder = data.getUint8(baseOffset + 5);
+      const sys = data.getUint8(baseOffset + 6);
+      const hat = face & 0x0F;
+      const ds4Buttons = {
+        square: !!(face & 0x10), cross: !!(face & 0x20),
+        circle: !!(face & 0x40), triangle: !!(face & 0x80),
+        l1: !!(shoulder & 0x01), r1: !!(shoulder & 0x02),
+        l2: !!(shoulder & 0x04), r2: !!(shoulder & 0x08),
+        create: !!(shoulder & 0x10), options: !!(shoulder & 0x20),
+        l3: !!(shoulder & 0x40), r3: !!(shoulder & 0x80),
+        ps: !!(sys & 0x01),
+        dpadUp:    hat === 7 || hat === 0 || hat === 1,
+        dpadRight: hat === 1 || hat === 2 || hat === 3,
+        dpadDown:  hat === 3 || hat === 4 || hat === 5,
+        dpadLeft:  hat === 5 || hat === 6 || hat === 7,
+      };
+      const ds4Triggers = {
+        l2: data.getUint8(baseOffset + 7) / 255,
+        r2: data.getUint8(baseOffset + 8) / 255,
+      };
       return {
+        sticks,
+        triggers: ds4Triggers,
+        buttons: ds4Buttons,
         gyro,
         accel,
+        touchpadButton: !!(sys & 0x02),
         gyroScale: 2000.0 / 32768.0,   // ±2000 dps, 16-bit
         accelScale: 1.0 / 8192.0        // ±4g, 16-bit (gravity ~8192)
       };
@@ -702,15 +741,27 @@ export class PlayStationDriver extends ControllerDriver {
     // a *feature* report, so we must check INPUT reports for 0x11 (not feature
     // reports) or a USB DS4 would misdetect as Bluetooth. The legacy
     // output-report 0x31 check is kept for DualSense.
+    //
+    // DIAGNOSTIC: dump the descriptor so a mis-detect (e.g. a GameSir that
+    // declares input 0x11 while streaming 0x01 over USB → detected 'bluetooth'
+    // → parseReport matches no branch → NO GYRO) is visible in the console.
+    const inIds = [], outIds = [];
+    let type = 'usb', len01 = 0;
     for (const col of device.collections) {
-      for (const report of (col.outputReports || [])) {
-        if (report.reportId === 0x31) return 'bluetooth';
+      for (const r of (col.inputReports || [])) {
+        let bits = 0; for (const it of (r.items || [])) bits += (it.reportSize || 0) * (it.reportCount || 0);
+        const bytes = Math.ceil(bits / 8);
+        inIds.push('0x' + (r.reportId || 0).toString(16) + ':' + bytes + 'B');
+        if (r.reportId === 0x01) len01 = Math.max(len01, bytes);
+        if (r.reportId === 0x31 || r.reportId === 0x11) type = 'bluetooth';
       }
-      for (const report of (col.inputReports || [])) {
-        if (report.reportId === 0x31 || report.reportId === 0x11) return 'bluetooth';
+      for (const r of (col.outputReports || [])) {
+        outIds.push('0x' + (r.reportId || 0).toString(16));
+        if (r.reportId === 0x31) type = 'bluetooth';
       }
     }
-    return 'usb';
+    console.log(`[PS detect] ${device.productName || '?'} ${(device.vendorId || 0).toString(16)}:${(device.productId || 0).toString(16)} → ${type} · in=[${inIds.join(' ')}] out=[${outIds.join(' ')}] 0x01=${len01}B`);
+    return type;
   }
 
   // USB-equivalent gyro offset → IMU family. baseOffset removes the BT
