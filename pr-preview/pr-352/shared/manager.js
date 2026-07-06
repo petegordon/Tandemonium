@@ -33,6 +33,14 @@ const DEFAULTS = {
   psButtonIndex: 16,
   hidStaleMs: 800,
   axisActivityThreshold: 0.6,
+  // Grace window before a pooled HID handle that has NEVER streamed a report is
+  // evicted as a phantom. Present controllers stream within tens of ms; a
+  // spoofing pad's dragged-in same-vid:pid ghosts never do.
+  poolProbationMs: 3000,
+  // Window over which a button counts as "recently pressed" when folding a
+  // Gamepad pad to its WebHID handle. The claiming press often lands on the two
+  // faces a frame or two apart, so a same-frame match misses it.
+  foldWindowMs: 350,
   // Per-player DualSense lightbar colors (1-indexed by slot ordinal).
   // Override via `new ControllerManager({ playerColors: { 1: {...}, ... } })`.
   playerColors: {
@@ -47,7 +55,10 @@ const DEFAULTS = {
 
 export function makeSyntheticGamepad(hidDevice) {
   const buttons = [];
-  for (let i = 0; i < 17; i++) buttons.push({ pressed: false, touched: false, value: 0 });
+  // 22 slots: 0-16 standard + 17 shared extra (Switch Capture / DualSense mic /
+  // Steam "…") + 18-21 back paddles (L4/L5/R4/R5). None of 17-21 have a standard
+  // Gamepad-API index; each controller profile maps them to its own meshes.
+  for (let i = 0; i < 22; i++) buttons.push({ pressed: false, touched: false, value: 0 });
   return {
     id: `HID::${hidDevice.productName || 'hid'}`,
     index: -1,
@@ -83,6 +94,16 @@ export function applyParsedToSynthetic(gp, parsed) {
     setBtn(12, b.dpadUp); setBtn(13, b.dpadDown);
     setBtn(14, b.dpadLeft); setBtn(15, b.dpadRight);
     setBtn(16, b.ps);
+    // 17 = shared "extra" slot with no standard Gamepad index: DualSense mic /
+    // Steam Controller "…" quick-access / Switch Pro Capture. Each controller
+    // profile maps slot 17 to its own mesh; undefined fields stay false.
+    setBtn(17, b.capture || b.mic || b.quickAccess);
+  }
+  if (parsed.paddles) {
+    // 18-21 = back paddles (Steam Controller L4/L5/R4/R5). No standard index;
+    // the Steam profile maps these slots to the paddle meshes.
+    const p = parsed.paddles;
+    setBtn(18, p.l4); setBtn(19, p.l5); setBtn(20, p.r4); setBtn(21, p.r5);
   }
   if (parsed.triggers) {
     setBtn(6, parsed.triggers.l2 > 0.1, parsed.triggers.l2);
@@ -170,6 +191,23 @@ class HidEntry {
     this.synthetic = makeSyntheticGamepad(device);
     this.hasButtons = false;
     this.hidActiveSince = 0;
+    // Liveness bookkeeping for phantom eviction: when this handle entered the
+    // pool, and when it last received ANY raw inputreport (0 = never streamed).
+    // A physically-present controller sets lastRawReportAt within tens of ms;
+    // a granted-but-absent / spoof-dragged-in handle stays at 0.
+    this.pooledAt = performance.now();
+    this.lastRawReportAt = 0;
+    // Rolling window of recently-pressed buttons (index → timestamp), used to
+    // fold this handle to the Gamepad pad showing the same press. Populated by
+    // the manager each frame from `synthetic`.
+    this._recentBtns = new Map();
+    // True once this handle has EVER reported a non-zero button. Distinct from
+    // hasButtons (has a buttons *field*): a GameSir-as-DS4 gyro interface reports
+    // a DS4-shaped buttons field that's always zero — hasButtons=true but it
+    // never actually presses. _everPressed drives (a) whether effectiveGamepad
+    // trusts this synthetic for buttons and (b) whether it can be input-folded
+    // vs must be folded by elimination.
+    this._everPressed = false;
     this.slot = null; // set by ControllerManager when claimed
     this._handler = (ev) => this._onReport(ev);
     device.addEventListener('inputreport', this._handler);
@@ -189,6 +227,28 @@ class HidEntry {
     // and report phantom stuck buttons that would otherwise auto-claim a
     // slot with no user input.
     this._initialPressedMask = null;
+    // Axis baseline (first report), paired with the button mask above so a
+    // stick NUDGE also counts as fresh input — not just a stuck/drifted axis.
+    this._initialAxes = null;
+  }
+
+  /**
+   * Fresh USER input to gate a pool→slot claim: a button not stuck from the
+   * first report, OR a stick moved past a deadband from its first-report
+   * baseline. The stick path matters for a DualSense over Bluetooth in full-
+   * report (0x31) mode — Chromium's Gamepad API can't see it, so its ONLY way
+   * to become active is this WebHID claim, and a user often nudges the stick
+   * (which lights the "in use" dot) without pressing a face button.
+   */
+  hasFreshInput() {
+    if (this.hasFreshButtonPress()) return true;
+    const gp = this.synthetic;
+    if (!gp || !gp.axes || this.hidActiveSince === 0) return false;
+    if (this._initialAxes == null) { this._initialAxes = [...gp.axes]; return false; }
+    for (let i = 0; i < gp.axes.length; i++) {
+      if (Math.abs((gp.axes[i] || 0) - (this._initialAxes[i] || 0)) > 0.35) return true;
+    }
+    return false;
   }
 
   /** True if any button not in the initial-stuck set is currently pressed. */
@@ -214,11 +274,21 @@ class HidEntry {
   }
 
   _onReport(ev) {
+    this.lastRawReportAt = performance.now();   // raw report arrived — proves the device is present/streaming
     if (!this.driver) return;
     const parsed = this.driver.parseReport(ev.reportId, ev.data);
     if (!parsed) return;
     if (parsed.buttons) this.hasButtons = true;
     applyParsedToSynthetic(this.synthetic, parsed);
+    // Expose report-level extras so a POOLED (unclaimed) entry driving a viz can
+    // read touchpad/grips without a slot 'hid-report' emit. Used by the overlay
+    // once it reads the selected pool entry directly (WebHID-first, Phase 3b).
+    this._lastTouchpad = parsed.touchpad || null;
+    this._lastTouchpadButton = !!parsed.touchpadButton;
+    this._lastGrips = parsed.grips || null;
+    if (!this._everPressed) {
+      for (const b of this.synthetic.buttons) { if (b && (b.pressed || (b.value || 0) > 0.5)) { this._everPressed = true; break; } }
+    }
     this.hidActiveSince = performance.now();
     if (parsed.gyro) {
       const a = parsed.accel;
@@ -382,15 +452,16 @@ export class Slot {
   }
 
   /**
-   * Choose the input source each frame: prefer the HID-backed synthetic
-   * when bound and the driver emits buttons (BT DualSense case); fall
-   * back to Gamepad API for driver-skinny devices (Switch Pro) or when
-   * HID reports have gone stale.
+   * Choose the input source each frame: prefer the HID-backed synthetic when
+   * bound AND that handle has actually shown real button presses (BT DualSense).
+   * Fall back to the Gamepad pad for driver-skinny devices (Switch Pro) and for
+   * a spoof interface whose HID buttons are always zero (GameSir-as-DS4: buttons
+   * come over the Gamepad API, only gyro over WebHID) — or when HID goes stale.
    */
   effectiveGamepad(pads) {
     const realGp = this.gamepadIndex != null ? pads[this.gamepadIndex] : null;
     const entry = this._hidEntry;
-    if (entry && entry.hidActiveSince > 0 && entry.hasButtons) {
+    if (entry && entry.hidActiveSince > 0 && entry._everPressed) {
       const staleFor = performance.now() - entry.hidActiveSince;
       if (staleFor > this._opts.hidStaleMs) {
         resetSynthetic(entry.synthetic);
@@ -438,18 +509,33 @@ export class ControllerManager {
     // require axis motion (not just pinned position) to treat a pad as
     // active. Counters Chrome BT-reconnect ghost pads with stuck axes.
     this._prevAxesByIndex = new Map();
+    // Rolling window of recently-pressed buttons per Gamepad-pad index — the
+    // pad half of the fold correlation (the HID half lives on each HidEntry).
+    this._recentPadBtns = new Map();
+    this._frameNow = 0;
     this._hidConnectHandler = null;
     this._hidDisconnectHandler = null;
-    // When true, ingestFrame skips BOTH activity-claim paths (Gamepad API
-    // and HID pool) — report ingestion, orphan recovery, reconciliation,
-    // and the release gesture keep running. The versus join screen sets
-    // this so IT is the sole claimer: without it, a joiner's first button
-    // press would auto-claim the first empty slot (P1!) and hijack a
-    // keyboard-driven P1 InputManager. Cleared when the screen closes.
-    this.autoClaimSuspended = false;
   }
 
   getSlot(id) { return this._slotById[id] || null; }
+
+  /**
+   * Public seat-release used by the lobby's "leave" (B on a joined seat).
+   * Mirrors the PS/Home hold-to-release gesture: detach any HID entry back to
+   * the pool, empty the slot, and arm the reclaim cooldown + await-silence so
+   * the still-connected controller doesn't instantly re-grab the seat. Returns
+   * true if a claimed slot was actually released.
+   */
+  releaseSlotToPool(slotId, now = performance.now()) {
+    const s = this.getSlot(slotId);
+    if (!s || s.state !== 'claimed') return false;
+    const freedIndex = s.gamepadIndex;
+    if (s._hidEntry) this._detachEntryFromSlot(s);
+    s.release();
+    if (freedIndex != null) this._recentlyReleasedByIndex.set(freedIndex, now);
+    this._recentlyReleasedBySlot.set(s.id, now);
+    return true;
+  }
 
   /**
    * Claim a specific slot to the first live Gamepad API pad that isn't
@@ -502,76 +588,7 @@ export class ControllerManager {
       controllerTypeHint: info?.controllerProfile || info?.protocol || null,
       silent: true,
     });
-    this._attachMatchingPoolEntry(slot);
-    slot._emit('claimed');
-    return gp;
-  }
-
-  /**
-   * Claim a specific WebHID device to a specific slot — the explicit-join
-   * twin of claimPadForSlot for pads the Gamepad API can't see (BT
-   * DualSense in 0x31 full-report mode). If a slot already holds this
-   * device, that slot is returned as-is (adopt). Otherwise the device's
-   * pool entry is promoted with the same pseudo-pad shape ingestFrame's
-   * HID claim path uses. Returns the claimed slot, or null.
-   */
-  claimHidDeviceForSlot(slotId, device) {
-    if (!device) return null;
-    const holder = this.slots.find((s) => s.hidDevice === device);
-    if (holder) return holder;
-    const slot = this.getSlot(slotId);
-    if (!slot || slot.state !== 'empty') return null;
-    const entry = this._hidPool.get(device);
-    if (!entry) return null;
-    const pseudoPad = {
-      index: -1,
-      id: `HID::${device.productName || ''} Vendor: ${device.vendorId.toString(16)} Product: ${device.productId.toString(16)}`,
-      mapping: 'standard',
-    };
-    const info = ControllerRegistry.identifyFromGamepadId(pseudoPad.id);
-    slot.claim(pseudoPad, {
-      controllerTypeHint: info?.controllerProfile || info?.protocol || null,
-      silent: true,
-    });
-    this._attachEntryToSlot(slot, entry);
-    slot._emit('claimed');
-    return slot;
-  }
-
-  /**
-   * Release a slot and return its HID entry (if any) to the pool so an
-   * explicit claim can move the device to a different slot. Unlike the
-   * release GESTURE this does not stamp the reclaim cooldown for the pad —
-   * the caller is about to re-claim it deliberately.
-   */
-  releaseSlotToPool(slotId) {
-    const slot = this.getSlot(slotId);
-    if (!slot || slot.state === 'empty') return false;
-    if (slot._hidEntry) this._detachEntryFromSlot(slot);
-    slot.release();
-    // Clear the awaiting-silence latch: this is a programmatic move, not a
-    // user release gesture — the device should be immediately re-claimable.
-    slot._awaitingSilence = false;
-    return true;
-  }
-
-  /**
-   * Claim a specific Gamepad API pad to a specific slot. Used by the versus
-   * join screen, where the pad that pressed A is known exactly — no
-   * disambiguation heuristics needed. No-ops if the slot isn't empty or the
-   * pad is already claimed by another slot (returns null in both cases).
-   */
-  claimPadForSlot(slotId, gp) {
-    const slot = this.getSlot(slotId);
-    if (!slot || slot.state !== 'empty' || !gp) return null;
-    const alreadyClaimed = this.slots.some((s) => s.gamepadIndex === gp.index && s !== slot);
-    if (alreadyClaimed) return null;
-    const info = ControllerRegistry.identifyFromGamepadId(gp.id);
-    slot.claim(gp, {
-      controllerTypeHint: info?.controllerProfile || info?.protocol || null,
-      silent: true,
-    });
-    this._attachMatchingPoolEntry(slot);
+    this._attachMatchingPoolEntry(slot, pads);
     slot._emit('claimed');
     return gp;
   }
@@ -689,6 +706,127 @@ export class ControllerManager {
     return null;
   }
 
+  /** Indices of buttons currently pressed on a gamepad-shaped object. */
+  static _pressedSet(gp) {
+    const set = new Set();
+    const b = gp && gp.buttons;
+    if (b) for (let i = 0; i < b.length; i++) {
+      const x = b[i];
+      if (x && (x.pressed || (typeof x.value === 'number' && x.value > 0.5))) set.add(i);
+    }
+    return set;
+  }
+
+  /**
+   * Record this frame's pressed buttons into the rolling fold windows — one per
+   * Gamepad pad, one per pooled HID handle. Folding reads these windows so a
+   * press that lands on the two faces a frame or two apart still correlates.
+   */
+  _recordInput(pads, now) {
+    for (const gp of pads) {
+      if (!gp) continue;
+      let m = this._recentPadBtns.get(gp.index);
+      if (!m) { m = new Map(); this._recentPadBtns.set(gp.index, m); }
+      for (const i of ControllerManager._pressedSet(gp)) m.set(i, now);
+    }
+    for (const entry of this._hidPool.values()) {
+      if (!entry._recentBtns) entry._recentBtns = new Map();
+      for (const i of ControllerManager._pressedSet(entry.synthetic)) entry._recentBtns.set(i, now);
+    }
+  }
+
+  /** Buttons pressed within the fold window as of this frame. */
+  _recentPressed(map) {
+    const s = new Set();
+    if (!map) return s;
+    const w = this.opts.foldWindowMs;
+    for (const [i, ts] of map) if (this._frameNow - ts <= w) s.add(i);
+    return s;
+  }
+
+  /**
+   * Unbound pool entries that could belong to `slot` — the full vid:pid-OR-
+   * productName set (same rule as _entryMatchesSlot). We deliberately do NOT
+   * narrow to vid:pid: a multi-interface pad (GameSir Super Nova presents
+   * 054c:0ce6 to the Gamepad API but its real HID handle is 054c:09cc) is
+   * reachable only by name, so a vid:pid-only candidate set binds NOTHING and
+   * kills its gyro. Cross-wiring among candidates is prevented downstream by
+   * input correlation (_correlateEntryByInput), not by shrinking this set.
+   */
+  _candidateEntriesForSlot(slot) {
+    const out = [];
+    for (const entry of this._hidPool.values()) {
+      if (this._entryMatchesSlot(entry, slot)) out.push(entry);
+    }
+    return out;
+  }
+
+  /**
+   * Among several candidate entries that a seat's vid:pid can't tell apart
+   * (two identical controllers — a real DS4 and a DS4-spoofing clone both on
+   * 054c:*), pick the one whose OWN report stream shows the same input as the
+   * seat's live Gamepad pad. That's the only signal that ties a physical unit
+   * to its HID handle in the browser (no serial). Returns null when there's no
+   * input to correlate on, or when two entries match equally — defer rather
+   * than guess and cross-wire.
+   */
+  _correlateEntryByInput(candidates, gp) {
+    if (!gp) return null;
+    // Buttons over the fold window (not just this frame) — the claiming press
+    // reaches the Gamepad pad and the HID stream a frame or two apart.
+    const target = this._recentPressed(this._recentPadBtns.get(gp.index));
+    const axes = gp.axes || [];
+    const thr = this.opts.axisActivityThreshold;
+    const axisActive = axes.some((a) => Math.abs(a) > thr);
+    if (target.size === 0 && !axisActive) return null;
+
+    let best = null, bestScore = 0, tie = false;
+    for (const e of candidates) {
+      const ep = this._recentPressed(e._recentBtns);
+      let score = 0;
+      for (const i of target) if (ep.has(i)) score++;
+      const ea = (e.synthetic && e.synthetic.axes) || [];
+      for (let i = 0; i < 4; i++) {
+        const a = axes[i] || 0;
+        if (Math.abs(a) > thr && Math.sign(a) === Math.sign(ea[i] || 0) && Math.abs(a - (ea[i] || 0)) < 0.4) score += 0.5;
+      }
+      if (score > bestScore) { bestScore = score; best = e; tie = false; }
+      else if (score === bestScore && score > 0) tie = true;
+    }
+    if (bestScore <= 0 || tie) return null;
+    return best;
+  }
+
+  /**
+   * Choose which pooled HID entry to bind to `slot`. Fast path (the norm):
+   * exactly one candidate → that one, no input needed. Ambiguous (2+ identical
+   * units) → correlate by the seat's live Gamepad input; defer (null) until the
+   * player presses something rather than binding the wrong unit's gyro.
+   */
+  _pickPoolEntryForSlot(slot, pads) {
+    const candidates = this._candidateEntriesForSlot(slot);
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0];
+    const gp = (pads && slot.gamepadIndex != null) ? pads[slot.gamepadIndex] : null;
+    // Tier 1 — correlate live input among handles that have actually shown a
+    // real button press. A pressed button appearing in a handle's own report
+    // stream unambiguously identifies the physical unit (real DS4, DualSense).
+    // Never binds an idle handle, so it can't cross-wire to a phantom.
+    const pressers = candidates.filter((e) => e._everPressed);
+    const corr = this._correlateEntryByInput(pressers, gp);
+    if (corr) return corr;
+    // Tier 2 — a handle that has never pressed a real button can't be input-
+    // correlated: either a truly gyro-only interface, or a spoof (GameSir-as-DS4)
+    // whose HID buttons are always zero because its buttons live on the Gamepad
+    // API. Bind it when it's the SOLE such candidate — otherwise its gyro is
+    // stranded and the seat stays mislabeled as the spoofed Gamepad identity. We
+    // never fall back to a non-correlated presser (that cross-wires to an idle
+    // real unit).
+    const silent = candidates.filter((e) => !e._everPressed);
+    if (silent.length === 1) return silent[0];
+    return null;
+  }
+
   /**
    * Find an already-claimed slot that this pool entry belongs to but isn't
    * yet bound to — matched by the slot's gamepad vid:pid OR by productName
@@ -696,10 +834,23 @@ export class ControllerManager {
    * the Gamepad API and WebHID report different vid:pid for one physical
    * device). Returns the slot or null. Binding-only: never creates a slot.
    */
-  _findClaimedUnboundSlotForEntry(entry) {
-    return this.slots.find((s) =>
+  _findClaimedUnboundSlotForEntry(entry, pads) {
+    const matching = this.slots.filter((s) =>
       s.state === 'claimed' && !s._hidEntry && this._entryMatchesSlot(entry, s)
-    ) || null;
+    );
+    if (matching.length <= 1) return matching[0] || null;
+    // Two identical-vid:pid units, two seats each awaiting their HID handle:
+    // bind this entry to the seat whose Gamepad pad shows the same button THIS
+    // entry's own report stream shows pressed (over the fold window). No shared
+    // press → defer.
+    const ep = this._recentPressed(entry._recentBtns);
+    if (ep.size) {
+      for (const s of matching) {
+        const sp = this._recentPressed(this._recentPadBtns.get(s.gamepadIndex));
+        for (const i of ep) if (sp.has(i)) return s;
+      }
+    }
+    return null;
   }
 
   /**
@@ -731,9 +882,40 @@ export class ControllerManager {
     ) || null;
   }
 
+  /**
+   * For a slot claimed via WebHID (its bound HID handle carries buttons), find
+   * that device's own Gamepad-API pad — same vid:pid, not already owned by
+   * another slot. Prevents a DS4/DualSense that seated over WebHID from leaving
+   * a redundant free-floating pad that would double-seat (and shows as a phantom
+   * panel row). Two identical pads → the one whose recent buttons match THIS
+   * slot's HID stream; ambiguous & idle → wait.
+   */
+  _findUnownedPadForHidSlot(slot, pads) {
+    const d = slot._hidEntry && slot._hidEntry.device;
+    if (!d) return null;
+    const owned = new Set(this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex));
+    const candidates = (pads || []).filter((p) => {
+      if (!p || owned.has(p.index)) return false;
+      const vp = ControllerRegistry.parseGamepadVendorProduct(p.id);
+      return vp && vp.vendorId === d.vendorId && vp.productId === d.productId;
+    });
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0];
+    const hidBtns = this._recentPressed(slot._hidEntry._recentBtns);
+    if (hidBtns.size) {
+      for (const p of candidates) {
+        const padBtns = this._recentPressed(this._recentPadBtns.get(p.index));
+        for (const i of hidBtns) if (padBtns.has(i)) return p;
+      }
+    }
+    return null;
+  }
+
   ingestFrame(pads, now) {
     const claimedThisFrame = [];
     const releasedThisFrame = [];
+    this._frameNow = now;
+    this._recordInput(pads, now);   // fold-correlation windows (pad + HID button history)
 
     // Orphan check (Gamepad-API-backed claims only)
     // Note: _prevAxesByIndex is updated at the END of the frame so the
@@ -771,7 +953,7 @@ export class ControllerManager {
       const gp = this._findReturningPadForSlot(s, pads);
       if (gp) {
         s.claim(gp, { controllerTypeHint: s.controllerType, silent: true });
-        this._attachMatchingPoolEntry(s);
+        this._attachMatchingPoolEntry(s, pads);
         s._emit('claimed');
         claimedThisFrame.push(s.id);
         console.log(`[manager] ${s.id}: reconnected — re-claimed orphan via Gamepad API`);
@@ -793,21 +975,23 @@ export class ControllerManager {
     // across two slots. effectiveGamepad picks up the buttons next frame.
     for (const s of this.slots) {
       if (s.state !== 'claimed' || s.gamepadIndex != null) continue;
-      const gp = this._findReturningPadForSlot(s, pads);
+      // (a) sticky reconnect: the SAME pad returning (matched by stable id).
+      // (b) WebHID-claimed slot: adopt its device's own Gamepad pad (vid:pid)
+      //     so one physical controller isn't split into a second phantom seat.
+      const gp = this._findReturningPadForSlot(s, pads) || (s._hidEntry ? this._findUnownedPadForHidSlot(s, pads) : null);
       if (gp) {
         s.gamepadIndex = gp.index;
-        console.log(`[manager] ${s.id}: adopted returning Gamepad pad (buttons restored)`);
+        console.log(`[manager] ${s.id}: adopted Gamepad pad (buttons restored / deduped)`);
       }
     }
 
     // Claim via Gamepad API activity. Uses gamepadHasFreshActivity
     // (not gamepadHasActivity) so pinned-stick ghost pads don't get
     // claimed — only real button presses or stick motion count.
-    // Suspended while an explicit-claim UI (versus join screen) is open.
     const claimedIndices = new Set(
       this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex)
     );
-    for (const gp of this.autoClaimSuspended ? [] : pads) {
+    for (const gp of pads) {
       if (!gp) continue;
       if (claimedIndices.has(gp.index)) continue;
       const releasedAt = this._recentlyReleasedByIndex.get(gp.index);
@@ -828,7 +1012,7 @@ export class ControllerManager {
       // hooked up. Without this defer, a lobby subscriber asking "does
       // this slot have gyro?" at claim time would always see false and
       // skip arming the motion toggle.
-      this._attachMatchingPoolEntry(empty);
+      this._attachMatchingPoolEntry(empty, pads);
       empty._emit('claimed');
     }
 
@@ -840,26 +1024,29 @@ export class ControllerManager {
     // GameSir-as-DS4), would otherwise be left with working buttons but a
     // dead gyro toggle after a reconnect (GameSir Super Nova auto-re-pairs
     // off its charger, so this path gets hit constantly). Binding-only — it
-    // never creates a
-    // slot — so it's safe to run every frame regardless of button activity.
-    // Snapshot the pool values: _attachEntryToSlot mutates the pool map.
-    for (const entry of [...this._hidPool.values()]) {
-      const slot = this._findClaimedUnboundSlotForEntry(entry);
-      if (slot) this._attachEntryToSlot(slot, entry);
+    // never creates a slot — so it's safe to run every frame regardless of
+    // button activity. Slot-centric so a UNIQUE remaining candidate cascades
+    // to a certain bind: once one of two identical units is bound (and leaves
+    // the pool), the other seat has a single candidate left and binds without
+    // needing input. Genuinely ambiguous same-vid:pid pairs correlate by live
+    // input inside _pickPoolEntryForSlot, and defer until a button is pressed.
+    for (const slot of this.slots) {
+      if (slot.state !== 'claimed' || slot._hidEntry) continue;
+      const entry = this._pickPoolEntryForSlot(slot, pads);
+      if (entry) this._attachEntryToSlot(slot, entry);
     }
 
     // Claim via WebHID synthetic activity (covers BT-silent DualSense):
     // iterate the HID pool, not slots. Any pool entry showing activity
-    // promotes into an empty slot. Suspended alongside the Gamepad path
-    // while an explicit-claim UI is open.
-    for (const entry of this.autoClaimSuspended ? [] : this._hidPool.values()) {
-      // Require a *fresh* button press to claim via HID pool (ignoring
-      // buttons that were stuck-pressed from the first HID report).
-      // GameSir-as-DS4 gets mis-parsed by the DualSense driver, producing
-      // phantom stuck buttons (e.g. button 12) that would otherwise
-      // auto-claim a slot with no user input. BT-silent DualSense still
-      // claims normally because the user's PS press is a fresh transition.
-      if (!entry.hasFreshButtonPress()) continue;
+    // promotes into an empty slot.
+    for (const entry of this._hidPool.values()) {
+      // Require *fresh* input to claim via the HID pool — a button press that
+      // wasn't stuck from the first report, OR a stick nudge past its baseline.
+      // (Stuck buttons from a mis-parsed foreign layout, and drifted axes, are
+      // excluded by the baseline snapshots.) The stick path lets a DualSense
+      // over Bluetooth — invisible to the Gamepad API in 0x31 mode — become
+      // active when the user moves the stick, matching its lit "in use" dot.
+      if (!entry.hasFreshInput()) continue;
       // Dedupe: if this physical controller is already claimed via the
       // Gamepad API path (same vid:pid), attach the HID entry to that slot
       // for gyro/touchpad rather than spawning a second slot. Fixes pads
@@ -867,7 +1054,7 @@ export class ControllerManager {
       // Super Nova presenting as DS4 + raw HID). (The reconciliation pass
       // above already covers IMU-only devices; this catches a device that
       // emits buttons AND matches an already-claimed slot.)
-      const existing = this._findClaimedUnboundSlotForEntry(entry);
+      const existing = this._findClaimedUnboundSlotForEntry(entry, pads);
       if (existing) {
         this._attachEntryToSlot(existing, entry);
         continue;
@@ -918,6 +1105,23 @@ export class ControllerManager {
       }
     }
 
+    // Phantom eviction: drop pooled handles that have NEVER streamed a report
+    // within the probation window. A spoofing pad (GameSir Super Nova presenting
+    // DualSense 054c:0ce6 to the Gamepad API) makes autoPoolApprovedHid grab
+    // other approved same-vid:pid handles that aren't physically present; silent,
+    // they bloat per-frame cost and confound same-id binding (extra "no-button"
+    // candidates that keep the real unit from being uniquely identified). A
+    // present controller streams within tens of ms, so this only removes genuine
+    // phantoms. Guarded on numeric pooledAt so lightweight test doubles that omit
+    // it are never swept.
+    for (const [device, entry] of [...this._hidPool]) {
+      if (typeof entry.pooledAt !== 'number') continue;
+      if (entry.lastRawReportAt === 0 && (now - entry.pooledAt) > this.opts.poolProbationMs) {
+        console.log(`[manager] evicting phantom HID handle ${device.vendorId?.toString(16)}:${device.productId?.toString(16)} (${device.productName || '?'}) — silent for ${Math.round(now - entry.pooledAt)}ms`);
+        this._evictFromPool(device);
+      }
+    }
+
     // Snapshot axes for next frame's fresh-activity check.
     for (const gp of pads) {
       if (!gp) continue;
@@ -931,11 +1135,9 @@ export class ControllerManager {
    * On Gamepad API claim, pull a matching HID entry from the pool into
    * this slot. Matches by vid:pid parsed from gamepad.id.
    */
-  _attachMatchingPoolEntry(slot) {
+  _attachMatchingPoolEntry(slot, pads) {
     if (slot._hidEntry) return;
-    const vp = ControllerRegistry.parseGamepadVendorProduct(slot.controllerLabel);
-    if (!vp) return;
-    const entry = this._findPoolEntryByVidPid(vp.vendorId, vp.productId);
+    const entry = this._pickPoolEntryForSlot(slot, pads);
     if (entry) this._attachEntryToSlot(slot, entry);
   }
 
@@ -971,28 +1173,19 @@ export class ControllerManager {
   }
 
   /**
-   * Electron-only: requestDevice auto-approved by main.js handler, so we
-   * can call it at boot to pool controllers that haven't been approved yet.
+   * @deprecated No-op. Auto-pairing not-yet-approved devices at boot is
+   * impossible: WebHID `requestDevice()` requires transient user activation,
+   * which a fire-and-forget boot call doesn't have — it threw "Must be handling
+   * a user gesture to show a permission request" and pooled nothing. The paths
+   * that actually work:
+   *   • already-approved devices  → autoPoolApprovedHid()  (gesture-free)
+   *   • a not-yet-approved device → connectHidForSlot() from a user gesture
+   *                                 (the overlay's per-slot Connect button)
+   *   • hot-plug of approved ones → wireHidHotplug()
+   * Kept as a no-op so existing/synced callers (e.g. the game's boot chain)
+   * don't break; safe to delete once all call sites are gone.
    */
-  async electronAutoRequestDevice() {
-    if (!navigator.hid) return;
-    const filters = ControllerRegistry.getHIDFilters();
-    await new Promise((r) => setTimeout(r, 400));
-    // Call once per slot count so we cover the typical 2-controller case
-    // without looping forever on a single-controller setup.
-    for (let i = 0; i < this.slots.length; i++) {
-      try {
-        const picked = await navigator.hid.requestDevice({ filters });
-        const d = (picked || []).find((dev) => !this._isDeviceInPoolOrSlot(dev));
-        if (!d) break;
-        await this.poolDevice(d);
-        await new Promise((r) => setTimeout(r, 200));
-      } catch (err) {
-        console.log('electronAutoRequestDevice stopped:', err.message);
-        break;
-      }
-    }
-  }
+  async electronAutoRequestDevice() { /* intentionally a no-op — see deprecation note */ }
 
   /**
    * User-gesture HID pairing, initiated from a Connect button. If a slot

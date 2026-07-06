@@ -135,7 +135,22 @@ export class ControllerRegistry {
       if (!entry.gamepadIdMatch.test(idString)) continue;
       return toResult(entry);
     }
-    // Pass 2: defaults — entries with no secondary filter
+    // Pass 2: EXACT vid:pid among default entries. Sony DualSense and DualShock 4
+    // (v1 05c4 / v2 09cc) all share ONE PLAYSTATION_ID pattern, so a bare
+    // first-pattern-match returns DualSense for EVERY Sony pad — mislabeling a
+    // DS4 (05c4) as "DualSense". The vid:pid in the id string disambiguates them;
+    // variants that share a vid:pid are already resolved by Pass 1.
+    const vp = ControllerRegistry.parseGamepadVendorProduct(idString);
+    if (vp) {
+      for (const entry of DEVICES) {
+        if (entry.gamepadIdMatch) continue;
+        if (entry.vendorId !== vp.vendorId || entry.productId !== vp.productId) continue;
+        if (!entry.gamepadIdPattern.test(idString)) continue;
+        return toResult(entry);
+      }
+    }
+    // Pass 3: first default pattern match (fallback when the id carries no
+    // recognisable vid:pid, or the pid isn't in the dictionary).
     for (const entry of DEVICES) {
       if (entry.gamepadIdMatch) continue;
       if (!entry.gamepadIdPattern.test(idString)) continue;
