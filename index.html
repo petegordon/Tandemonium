@@ -4350,9 +4350,20 @@ ON</button>
 </div>
 <script>
 (function() {
-  var isDesktop = navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
+  var ua = navigator.userAgent;
+  var isDesktop = ua.includes('Electron') || ua.includes('electron');
+  // Mirror config.js isMobile so the boot veil label agrees with the app.
+  var isMobile = !isDesktop && (/Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua) || navigator.maxTouchPoints > 1);
+  // Desktop (Electron) and mobile both show a "Loading…" veil instead of the
+  // "Tap to Start" prompt: desktop dismisses on gamepad input (poll below),
+  // mobile auto-dismisses once the Lobby loads (the tap-gate is obsolete — iOS
+  // motion permission is requested from a real gesture at ride start). Desktop
+  // *browsers* keep the click-to-start prompt (they need the click to dismiss).
+  if (isDesktop || isMobile) {
+    var textEl = document.getElementById('tap-to-start-text');
+    if (textEl) textEl.textContent = 'Loading…';
+  }
   if (isDesktop) {
-    document.getElementById('tap-to-start-text').textContent = 'Loading...';
     // Poll for gamepad input to dismiss the overlay
     var overlay = document.getElementById('tap-to-start');
     function pollForButton() {
