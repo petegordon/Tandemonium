@@ -593,6 +593,28 @@ export class ControllerManager {
     return gp;
   }
 
+  /**
+   * Claim a SPECIFIC Gamepad pad into a SPECIFIC slot — e.g. versus/co-op seat
+   * assignment where the user has already chosen both (pressed to join a chosen
+   * seat). Unlike claimFirstAvailable (which PICKS from `pads` with ghost
+   * detection), the caller supplies the exact pad. Returns true if claimed;
+   * false if the slot is unavailable, the pad is missing, or the pad already
+   * owns another slot. Attaches the matching WebHID pool entry (gyro/synthetic).
+   */
+  claimPadForSlot(slotId, gp, pads = gp ? [gp] : []) {
+    const slot = this.getSlot(slotId);
+    if (!slot || slot.state !== 'empty' || slot._awaitingSilence || !gp) return false;
+    if (this.slots.some((s) => s.gamepadIndex != null && s.gamepadIndex === gp.index)) return false;
+    const info = ControllerRegistry.identifyFromGamepadId(gp.id);
+    slot.claim(gp, {
+      controllerTypeHint: info?.controllerProfile || info?.protocol || null,
+      silent: true,
+    });
+    this._attachMatchingPoolEntry(slot, pads);
+    slot._emit('claimed');
+    return true;
+  }
+
   _isDeviceInPoolOrSlot(device) {
     if (this._hidPool.has(device)) return true;
     return this.slots.some((s) => s.hidDevice === device);
