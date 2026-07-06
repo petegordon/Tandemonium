@@ -4350,9 +4350,20 @@ ON</button>
 </div>
 <script>
 (function() {
-  var isDesktop = navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
+  var ua = navigator.userAgent;
+  var isDesktop = ua.includes('Electron') || ua.includes('electron');
+  // Mirror config.js isMobile so the boot veil label agrees with the app.
+  var isMobile = !isDesktop && (/Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua) || navigator.maxTouchPoints > 1);
+  // Desktop (Electron) and mobile both show a "Loading…" veil instead of the
+  // "Tap to Start" prompt: desktop dismisses on gamepad input (poll below),
+  // mobile auto-dismisses once the Lobby loads (the tap-gate is obsolete — iOS
+  // motion permission is requested from a real gesture at ride start). Desktop
+  // *browsers* keep the click-to-start prompt (they need the click to dismiss).
+  if (isDesktop || isMobile) {
+    var textEl = document.getElementById('tap-to-start-text');
+    if (textEl) textEl.textContent = 'Loading…';
+  }
   if (isDesktop) {
-    document.getElementById('tap-to-start-text').textContent = 'Loading...';
     // Poll for gamepad input to dismiss the overlay
     var overlay = document.getElementById('tap-to-start');
     function pollForButton() {
@@ -4749,7 +4760,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.0c13b23 | 07-06-2026 17:42</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.e3fdc73 | 07-06-2026 17:43</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
