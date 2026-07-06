@@ -381,7 +381,25 @@ export class Lobby {
     // Only shown once ever; after first dismissal, localStorage flag prevents it.
     this._tapOverlay = document.getElementById('tap-to-start');
     if (this._tapOverlay) {
-      if (localStorage.getItem('tandemonium_started')) {
+      if (isMobile) {
+        // Mobile: the old "Tap to Start" tap-gate is obsolete. iOS motion
+        // permission is now requested from a real gesture at ride start
+        // (game.js doStart) and audio unlocks on the first lobby interaction,
+        // so no boot gesture is needed. The overlay is now purely a "Loading…"
+        // veil (label set by the boot script) that auto-dismisses once the page
+        // finishes loading — no tap. _toggleAll is intentionally NOT called
+        // here: a non-gesture requestPermission() is rejected by iOS anyway.
+        const lift = () => {
+          const o = this._tapOverlay;
+          if (!o) return;
+          this._tapOverlay = null;
+          o.classList.add('fade-out');
+          setTimeout(() => o.remove(), 400);
+        };
+        if (document.readyState === 'complete') requestAnimationFrame(lift);
+        else window.addEventListener('load', () => requestAnimationFrame(lift), { once: true });
+        setTimeout(lift, 4000); // safety: never let the veil dead-end (see #350)
+      } else if (localStorage.getItem('tandemonium_started')) {
         this._tapOverlay.remove();
         this._tapOverlay = null;
         // Subsequent-launch case: the tap overlay was dismissed in a
@@ -392,9 +410,7 @@ export class Lobby {
         // otherwise the user has to power-cycle the controller on
         // every app restart to force it back into Chromium-visible
         // compat mode.
-        if (!isMobile) {
-          this._runDesktopGamepadDetection();
-        }
+        this._runDesktopGamepadDetection();
       } else {
         this._tapOverlay.addEventListener('click', () => this._dismissTapOverlay(), { once: true });
       }
