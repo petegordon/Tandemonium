@@ -58,16 +58,6 @@ try {
     console.warn('Could not read steam_appid.txt, using default app ID:', e.message);
   }
 
-  // Steam Overlay support: the Chromium switches below are what upstream
-  // steamworks.js's electronEnableSteamOverlay() used. We deliberately do
-  // NOT install the per-frame webContents.invalidate() shim that ships with
-  // that helper - it caused visible flicker and made the overlay's close
-  // button unresponsive. The two command-line switches are enough for the
-  // overlay to render in most cases; if specific frames glitch we'll add a
-  // narrower fix.
-  app.commandLine.appendSwitch('in-process-gpu');
-  app.commandLine.appendSwitch('disable-direct-composition');
-
   const { SteamworksSDK } = require('steamworks-ffi-node');
   steam = SteamworksSDK.getInstance();
 
@@ -83,6 +73,21 @@ try {
   const ok = steam.init({ appId });
   if (!ok) throw new Error('SteamworksSDK.init() returned false');
   console.log('Steamworks initialized via steamworks-ffi-node, appId=' + appId);
+
+  // Steam Overlay support: the Chromium switches below are what upstream
+  // steamworks.js's electronEnableSteamOverlay() used. We deliberately do
+  // NOT install the per-frame webContents.invalidate() shim that ships with
+  // that helper - it caused visible flicker and made the overlay's close
+  // button unresponsive.
+  //
+  // Applied ONLY after Steam init SUCCEEDS. in-process-gpu makes a D3D
+  // device-lost (driver TDR, DXGI 0x887A00xx) unrecoverable: Chromium
+  // normally relaunches the crashed GPU process, but in-process there is
+  // nothing to relaunch, so the app spins forever on "eglCreateContext:
+  // Context lost" (seen after a versus race with Steam exited). Non-Steam
+  // sessions don't need the overlay and keep the recoverable GPU process.
+  app.commandLine.appendSwitch('in-process-gpu');
+  app.commandLine.appendSwitch('disable-direct-composition');
 } catch (err) {
   console.warn('Steamworks unavailable, running without Steam:', err.message);
   steam = null;
@@ -550,6 +555,13 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // Dev: purge any previously-cached tandemonium:// responses so source
+  // edits always show up on the next `npm start` (older sessions cached
+  // JS modules heuristically — see the no-store note in protocol.handle).
+  if (!app.isPackaged) {
+    try { await session.defaultSession.clearCache(); } catch (e) {}
+  }
+
   // WebHID permissions (required for PlayStation gyro via WebHID)
   session.defaultSession.setPermissionCheckHandler(() => true);
   session.defaultSession.setDevicePermissionHandler((details) => {
@@ -584,7 +596,7 @@ app.whenReady().then(async () => {
 
   // Register custom protocol handler to serve game files without a network socket
   const rootDir = path.join(__dirname, '..');
-  protocol.handle('tandemonium', (request) => {
+  protocol.handle('tandemonium', async (request) => {
     const url = new URL(request.url);
     let filePath = decodeURIComponent(url.pathname);
     if (filePath === '/' || filePath === '') filePath = '/index.html';
@@ -593,8 +605,15 @@ app.whenReady().then(async () => {
     if (!fullPath.startsWith(rootDir)) {
       return new Response('Forbidden', { status: 403 });
     }
-    // Serve via net.fetch for proper streaming and MIME handling
-    return net.fetch('file://' + fullPath);
+    // Serve via net.fetch for proper streaming and MIME handling.
+    // no-store: the scheme is registered as 'standard', so without cache
+    // headers Chromium heuristically caches responses in the profile —
+    // which served STALE JS after source edits (fresh `npm start` showed
+    // old code). Files are local; re-reading from disk costs nothing.
+    const resp = await net.fetch('file://' + fullPath);
+    const headers = new Headers(resp.headers);
+    headers.set('Cache-Control', 'no-store');
+    return new Response(resp.body, { status: resp.status, headers });
   });
 
   createWindow();

@@ -346,6 +346,106 @@ export class CollectibleManager {
     return collected; // array of collected item indices
   }
 
+  /**
+   * Versus (issue #351): both bikes share one item set, first-come-first-
+   * served. Pool slots are assigned to items visible near EITHER bike.
+   * @param {number} dt
+   * @param {Array<{d: number, position: {x,z}}>} anchors one per team,
+   *   in team order — a same-frame tie goes to the earlier entry
+   * @returns {number[]} items collected this frame, per anchor
+   */
+  updateVersus(dt, anchors) {
+    const counts = anchors.map(() => 0);
+    const nearAny = (absD) => {
+      for (const a of anchors) {
+        const ahead = absD - a.d;
+        if (ahead >= -VISIBLE_BEHIND && ahead <= VISIBLE_AHEAD) return true;
+      }
+      return false;
+    };
+
+    // Release pool slots for items out of range or collected
+    for (const slot of this._pool) {
+      if (slot.itemIdx < 0) continue;
+      const item = this._items[slot.itemIdx];
+      if (!item || item.collected || !nearAny(item.absoluteD)) {
+        slot.mesh.visible = false;
+        if (item) item.poolIdx = -1;
+        slot.itemIdx = -1;
+      }
+    }
+
+    // Assign pool slots to visible items, check collections per team
+    for (let i = 0; i < this._items.length; i++) {
+      const item = this._items[i];
+      if (item.collected) continue;
+      if (!nearAny(item.absoluteD)) continue;
+
+      const pt = this.roadPath.getPointAtDistance(item.roadD);
+      const rightX = Math.cos(pt.heading);
+      const rightZ = -Math.sin(pt.heading);
+      const worldX = pt.x + rightX * item.lateralOffset;
+      const worldZ = pt.z + rightZ * item.lateralOffset;
+
+      // FCFS collection — first team within radius takes it
+      const radius = this._tutorialRadius || COLLECT_RADIUS;
+      let taken = false;
+      for (let a = 0; a < anchors.length; a++) {
+        const dx = anchors[a].position.x - worldX;
+        const dz = anchors[a].position.z - worldZ;
+        if (dx * dx + dz * dz < radius * radius) {
+          item.collected = true;
+          this.collected++;
+          counts[a]++;
+          if (item.poolIdx >= 0) {
+            this._pool[item.poolIdx].mesh.visible = false;
+            this._pool[item.poolIdx].itemIdx = -1;
+            item.poolIdx = -1;
+          }
+          taken = true;
+          break;
+        }
+      }
+      if (taken) continue;
+
+      // Assign pool mesh if not already assigned
+      if (item.poolIdx < 0) {
+        const freeSlot = this._pool.findIndex(s => s.itemIdx < 0);
+        if (freeSlot < 0) continue;
+        item.poolIdx = freeSlot;
+        this._pool[freeSlot].itemIdx = i;
+      }
+
+      // Position mesh
+      const slot = this._pool[item.poolIdx];
+      const t = performance.now() / 1000;
+      const bobY = Math.sin(t * 2 + i * 1.7) * 0.15;
+      slot.mesh.position.set(worldX, pt.y + 0.8 + bobY, worldZ);
+      if (this._billboard && this.camera) {
+        slot.mesh.quaternion.copy(this.camera.quaternion);
+      } else {
+        slot.mesh.rotation.y = t * 1.5 + i;
+      }
+      slot.mesh.visible = true;
+    }
+
+    return counts;
+  }
+
+  /**
+   * Re-face visible billboarded items to `camera` — called once per
+   * split-screen render pass so each viewport's billboards face its own
+   * chase camera.
+   */
+  faceCamera(camera) {
+    if (!this._billboard || !camera) return;
+    for (const slot of this._pool) {
+      if (slot.itemIdx >= 0 && slot.mesh.visible) {
+        slot.mesh.quaternion.copy(camera.quaternion);
+      }
+    }
+  }
+
   resetToCheckpoint(checkpointDistance) {
     // Un-collect items that were past the checkpoint — they need to be re-collected
     let restored = 0;

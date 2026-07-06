@@ -22,11 +22,21 @@ export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
 /**
  * "Show Riders" setting — when on, the in-game bike is the Canadian-goose
  * riders model (with torso lean + the front-facing selfie cam); when off, the
- * plain frame. Off by default. Read at boot (see Game constructor); the Options
- * dialog persists it and it applies on next launch.
+ * plain frame. ON by default (opt-out): only an explicit 'off' disables it, so
+ * a fresh install shows the geese riders. Read at boot (see Game constructor);
+ * the Options dialog persists it and it applies on next launch.
  */
 export function getShowRiders() {
-  try { return localStorage.getItem('tandemonium_show_riders') === 'on'; }
+  try { return localStorage.getItem('tandemonium_show_riders') !== 'off'; }
+  catch (e) { return true; }
+}
+
+/**
+ * "FPS Display" setting — when on, a small frame-rate readout shows at the
+ * top of the screen in every mode. Off by default; applies immediately.
+ */
+export function getShowFps() {
+  try { return localStorage.getItem('tandemonium_show_fps') === 'on'; }
   catch (e) { return false; }
 }
 

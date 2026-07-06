@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -21,6 +21,7 @@ import { BikeModel } from './bike-model.js';
 import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
+import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
 import { HUD } from './hud.js';
@@ -29,13 +30,16 @@ import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { AudioEngine, MOTIF } from './audio-engine.js';
-import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, setHapticSources } from './haptics.js';
+import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
+import { TeamRig } from './versus/team-rig.js';
+import { VersusHud } from './versus/versus-hud.js';
+import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -111,7 +115,8 @@ class Game {
 
     // "Show Riders" (Options, default off) gates the whole riders experience:
     // the goose model + front selfie-cam AND the richer lighting/tone-mapping
-    // tuned for them. Off = the base game exactly as before. Read once at boot.
+    // tuned for them. Off = the base game exactly as before. Read at boot;
+    // toggling in Options re-applies everything live (_applyShowRiders).
     this._showRiders = getShowRiders();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile && !this._lowQuality, preserveDrawingBuffer: true });
@@ -128,16 +133,46 @@ class Game {
     }
     document.body.prepend(this.renderer.domElement);
 
+    // GPU device-lost recovery. A driver TDR (D3D "device removed") kills
+    // the GL context; if it restores we resume, and if it doesn't come
+    // back within a few seconds the device is gone for this context —
+    // reload the page rather than spin on a dead renderer. (The Steam
+    // build runs with in-process-gpu for the overlay, where Chromium
+    // can't relaunch the GPU process, so the reload is the only recovery.)
+    this._glContextLost = false;
+    this._glRestoreTimer = null;
+    this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault(); // signal that we want a restore attempt
+      this._glContextLost = true;
+      console.warn('WebGL context lost — pausing rendering, waiting for restore');
+      this._glRestoreTimer = setTimeout(() => {
+        console.warn('WebGL context not restored — reloading');
+        try { analytics.trackEvent('gl_context_lost_reload'); } catch (err) {}
+        window.location.reload();
+      }, 4000);
+    });
+    this.renderer.domElement.addEventListener('webglcontextrestored', () => {
+      if (this._glRestoreTimer) { clearTimeout(this._glRestoreTimer); this._glRestoreTimer = null; }
+      this._glContextLost = false;
+      console.warn('WebGL context restored — resuming');
+      try { analytics.trackEvent('gl_context_restored'); } catch (err) {}
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
+      this._refreshGpuResources();
+    });
+
     // Scene
     this.scene = new THREE.Scene();
 
+    this._riderEnvTex = null; // cached PMREM env, reused when Show Riders re-toggles
     if (this._showRiders) {
       // Soft image-based lighting: PBR materials expect an environment to
       // reflect; without one they read muddy. RoomEnvironment is generated
       // procedurally (no asset files), so brass, silk, and the coat pick up
       // gentle reflections and their colors pop.
       const _pmrem = new THREE.PMREMGenerator(this.renderer);
-      this.scene.environment = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this._riderEnvTex = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      this.scene.environment = this._riderEnvTex;
       _pmrem.dispose();
     }
 
@@ -167,9 +202,10 @@ class Game {
     );
 
     // Controller manager — owns slot/claim state, HID pool, sensor fusion.
-    // P1 = slot[0], P2 = slot[1]. Shared with the Lobby so join detection
+    // P1 = slot[0] … P4 = slot[3]. Shared with the Lobby so join detection
     // in the lobby and in-race input read from the same source of truth.
-    this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2'] });
+    // P3/P4 exist for versus mode; solo/co-op paths only ever touch P1/P2.
+    this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2', 'P3', 'P4'] });
     // Fire-and-forget: pair approved HID devices, auto-request any
     // remaining via Electron (gated by env detection inside the manager),
     // and listen for hot-plug events.
@@ -199,6 +235,10 @@ class Game {
     // (it exists to show off their lean).
     this.frontView = this._showRiders ? new FrontViewCamera(this.camera) : null;
     this.hud = new HUD(this.input);
+    // FPS readout (Options → FPS Display) — ticks in _loop, so it reads in
+    // every mode and state.
+    this.fpsMeter = new FpsMeter();
+    this.fpsMeter.setVisible(getShowFps());
     this.grassParticles = new GrassParticles(this.scene);
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
@@ -211,8 +251,17 @@ class Game {
     // Manual "Low" in Options still disables recording (see _setQuality).
 
     // Mode
-    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker' | 'local'
+    this.mode = 'solo'; // 'solo' | 'captain' | 'stoker' | 'local' | 'versus'
     this.net = null;
+    // Versus (issue #351): teams payload from the lobby, set in _onVersusReady.
+    this._versusTeams = null;
+    this.versusRigs = null; // [TeamRig, TeamRig] while a versus session is live
+    this.versusFrontViews = null; // per-rig front-cam PiPs (Show Riders + versus)
+    this.versusPedalHuds = null;  // per-rig pedal button + rhythm-arrow visuals
+    this.versusHud = null;  // VersusHud instance (created at first versus countdown)
+    this._versusPaused = false; // true while a member's pad is disconnected
+    this._versusWinner = null;  // winning/losing rigs during cinematic + results
+    this._versusLoser = null;
     this.sharedPedal = null;
     this.remoteBikeState = null;
     this.remoteLean = 0;
@@ -263,6 +312,7 @@ class Game {
     this._gpPrevStart = false;
     this._gpPrevB = false;
     this._initOptionsOverlay();
+    this._initVersusPedals();
 
     // Async hardware detection (first visit, no cache, no manual override)
     if (!_hwCached && _qualityPref !== 'high' && _qualityPref !== 'low' && _qualityParam !== 'high' && _qualityParam !== 'low') {
@@ -296,17 +346,8 @@ class Game {
       this._recalibrateTilt();
     });
 
-    // WebGL context loss recovery — prevent grey screen on mobile
-    // (Creating a 2nd WebGL context for victory video can evict the main one on iOS)
-    this.renderer.domElement.addEventListener('webglcontextlost', (e) => {
-      e.preventDefault();
-      console.warn('WebGL context lost — will restore when available');
-    });
-    this.renderer.domElement.addEventListener('webglcontextrestored', () => {
-      console.log('WebGL context restored');
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
-    });
+    // (WebGL context loss/restore handlers consolidated with the GPU
+    // device-lost recovery block registered right after renderer creation.)
 
     // FPS tracking for analytics
     this._fpsFrameTimes = [];  // rolling buffer of frame durations (seconds)
@@ -528,7 +569,7 @@ class Game {
     });
 
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults'
     this._finishCinematic = null;
     this.countdownTimer = 0;
     this._lastCountNum = 3;
@@ -541,6 +582,7 @@ class Game {
       onSolo: () => this._onSolo(),
       onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
       onLocalReady: (opts) => this._onLocalReady(opts),
+      onVersusReady: (opts) => this._onVersusReady(opts),
       input: this.input,
       controllerManager: this.controllerManager,
     });
@@ -1026,6 +1068,102 @@ class Game {
     this._setupStartHandler();
   }
 
+  /**
+   * Versus (local split-screen team racing, issue #351): the lobby hands
+   * over both teams with their pre-constructed InputManagers.
+   *
+   * @param {Object} opts
+   * @param {Array<{id: 'A'|'B', members: Array<{input, type, slotId, name, isP1}>}>} opts.teams
+   */
+  _onVersusReady({ teams }) {
+    this.mode = 'versus';
+    this.net = null;
+    this._versusTeams = teams;
+    this._lobbyBtn.textContent = 'LOBBY';
+    this._loadSavedTuning();
+    // The join screen suspended activity-claims so it could be the sole
+    // claimer; rosters are locked now, so restore normal behavior (spare
+    // slots claiming idle pads is harmless — nothing reads them in-race).
+    this.controllerManager.autoClaimSuspended = false;
+    console.log('[versus] teams ready:',
+      teams.map(t => `${t.id}: ${t.members.map(m => `${m.slotId || 'kb'}(${m.type})`).join(' + ')}`).join(' vs '));
+
+    // Build one rig per team: own bike, camera, chase cam, pedal/balance
+    // controllers. Bikes stagger ±0.8m laterally so they don't overlap on
+    // the start line. Team tint comes from the existing bike presets.
+    const presets = this.lobby._presetData || {};
+    this.versusRigs = teams.map((t, i) => {
+      const rig = new TeamRig({
+        id: t.id,
+        members: t.members,
+        scene: this.scene,
+        world: this.world,
+        lateralOffset: i === 0 ? -0.8 : 0.8,
+        bikeCloneSource: this.bike, // boot bike's GLB is loaded — clone, don't re-fetch
+      });
+      rig.bike.applyPreset(presets[rig.color.presetKey] || null);
+      rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
+      rig.camera.updateProjectionMatrix();
+      rig.resetForRace();
+      return rig;
+    });
+
+    // Per-bike front-facing selfie-cam PiP (Show Riders only). One per rig,
+    // rendered in that rig's viewport half; each camera enables the team's
+    // floor layer so the PiP's ground matches its half.
+    if (this._showRiders) {
+      this.versusFrontViews = this.versusRigs.map((rig) => {
+        const fv = new FrontViewCamera(this.camera);
+        fv.camera.layers.enable(rig.id === 'A' ? 1 : 2);
+        return fv;
+      });
+    } else {
+      this.versusFrontViews = null;
+    }
+
+    // Per-team pedal HUD (buttons = captain, arrows = stoker), one per
+    // split-screen half — same visualization as local/remote multiplayer. Solo
+    // teams get no stoker arrows (like the arch's stoker needle).
+    this.versusPedalHuds = this.versusRigs.map((rig, i) =>
+      new VersusPedalHud(
+        document.getElementById(i === 0 ? 'versus-pedals-a' : 'versus-pedals-b'),
+        rig.isDuo
+      )
+    );
+
+    // Park the singleton bike — versus renders only the rigs' bikes.
+    this.bike.group.visible = false;
+
+    // One physical keyboard can't serve two players: if a non-P1 member
+    // rides on keyboard, park P1's keyboard subscription (same rule as
+    // local co-op).
+    const kbJoiner = teams.flatMap((t) => t.members).find((m) => m.type === 'keyboard' && !m.isP1);
+    if (kbJoiner) {
+      this.input.keyboardActive = false;
+      this.input.keys = {};
+    }
+
+    // Shared events (countdown, finish) rumble every player's controller.
+    setHapticSources(this.versusRigs.flatMap((r) => r.inputs));
+
+    // Gamepad joiners: arm motion so controller gyro steering works once
+    // the slot's fusion calibrates (mirrors _onLocalReady's P2 handling).
+    // P1's motion stays governed by the lobby's motion toggle, same as solo.
+    for (const rig of this.versusRigs) {
+      for (const m of rig.members) {
+        if (m.type === 'gamepad' && !m.isP1) {
+          m.input.motionEnabled = true;
+          m.input.startTiltCalibration();
+        }
+      }
+    }
+
+    document.body.classList.add('mode-versus');
+    this.state = 'instructions';
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
   // ============================================================
   // START / COUNTDOWN
   // ============================================================
@@ -1400,6 +1538,10 @@ class Game {
   }
 
   _startCountdown() {
+    // Versus has its own lean countdown path — no singleton HUD, DDA,
+    // recorder, or contribution tracking.
+    if (this.mode === 'versus') { this._startVersusCountdown(); return; }
+
     this.state = 'countdown';
     this.countdownTimer = 3.0;
     this._hideGameOver();
@@ -1598,6 +1740,122 @@ class Game {
     }
   }
 
+  /**
+   * Versus countdown (issue #351): the shared-screen subset of
+   * _startCountdown. Builds a RaceManager per rig (progress-only — no
+   * segment-timeout eliminations in versus), creates the shared obstacle
+   * course, and skips every singleton-bike system: HUD progress/timer,
+   * DDA, contribution bar, recorder, arch indicator, finish cinematic.
+   */
+  _startVersusCountdown() {
+    this.state = 'countdown';
+    this.countdownTimer = 3.0;
+    this._hideGameOver();
+    this._hideVictory();
+    this.instructionsEl.classList.add('hidden');
+    // Back to split-screen presentation (divider + per-half panels)
+    document.body.classList.remove('versus-fullframe');
+    this._musicBtn.style.display = 'block';
+    this._updateMusicBtnIcon();
+
+    const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
+    applyDifficulty(difficultyName);
+    this.ddaManager = null; // no dynamic assist in versus — fair race
+    this._assistWeight = 0;
+    if (TUNE.autoSpeed != null) {
+      this.autoSpeed = TUNE.autoSpeed;
+      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+      this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
+    }
+
+    // Motion recenter + bias recapture for every gyro-steering member
+    // (same rationale as the solo path — see _startCountdown).
+    for (const rig of this.versusRigs) {
+      for (const m of rig.members) {
+        if (m.input.motionEnabled) {
+          if (m.input.gyroConnected) {
+            m.input.recenterGyro();
+            m.input.calibrateGyro();
+          }
+          m.input.startTiltCalibration();
+        }
+        if (m.input._markActive) m.input._markActive();
+      }
+    }
+
+    const statusEl = document.getElementById('status');
+    statusEl.textContent = '';
+    this._lastCountNum = 3;
+
+    const level = this.lobby.selectedLevel;
+    const flavorIcon = document.getElementById('countdown-flavor-icon');
+    const flavorText = document.getElementById('countdown-flavor-text');
+    const flavorNum = document.getElementById('countdown-flavor-num');
+    if (flavorIcon) flavorIcon.textContent = level.icon;
+    if (flavorText) flavorText.textContent = level.description;
+    if (flavorNum) {
+      flavorNum.textContent = '3';
+      flavorNum.className = 'tick-3 pop';
+    }
+
+    // Per-team race managers; shared obstacles + collectibles
+    // (checkCollision is position-pure so both bikes hit the same pylons;
+    // collectibles are first-come-first-served via updateVersus).
+    for (const rig of this.versusRigs) {
+      rig.resetForRace();
+      rig.raceManager = new RaceManager(level);
+      for (const bc of rig.balanceCtrls) bc.resetSteerFrames();
+    }
+    if (!this.versusHud) this.versusHud = new VersusHud(this.versusRigs);
+    this.versusHud.initProgress(level, this.versusRigs[0].raceManager.checkpoints);
+    this._versusPaused = false;
+
+    // Per-team radial tilt dial over each bike (same gauge as solo/co-op;
+    // shown when the team has a motion/gyro steering source). Duo teams
+    // get captain + stoker needles; team color for the primary needle,
+    // gold for the second (matches the co-op partner convention).
+    for (const rig of this.versusRigs) {
+      const hasTilt = rig.members.some((m) => m.input.motionEnabled || m.input.gyroConnected);
+      if (hasTilt) {
+        rig.archIndicator.setup(rig.isDuo ? 'local' : 'solo', rig.color.hex, '#ffd24c');
+        rig.applyArchLayer();
+      } else {
+        rig.archIndicator.hide();
+      }
+    }
+    if (this.collectibleManager) this.collectibleManager.destroy();
+    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
+    if (this.obstacleManager) this.obstacleManager.destroy();
+    this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
+    for (const rig of this.versusRigs) {
+      rig.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
+    }
+
+    if (!analytics.getCurrentRideId()) {
+      analytics.setPage('ride');
+      analytics.startRide({
+        level: level.id,
+        role: 'versus',
+        room_code: null,
+        difficulty: difficultyName,
+        bike_preset: this.lobby.selectedPresetKey,
+        steering_feel: TUNE.steeringFeel,
+      });
+    }
+    this.world.setRaceMarkers(level, this.versusRigs[0].camera);
+
+    // Audio warmup + music duck (same as the solo path, minus the recorder).
+    this.audioEngine.ensureContext();
+    this.audioEngine.resume();
+    this.audioEngine.warmup();
+    this.audioCtx = this.audioEngine.ctx;
+    this.audioEngine.connectMusicElement(this._musicEl);
+    if (this.lobby.musicActive) this._musicEl.play().catch(() => {});
+    this.audioEngine.duckMusic(0.55, 0.8);
+    this.audioEngine.startBike();
+    this._playBeep(400, 0.15);
+  }
+
   _updateCountdown(dt) {
     this.countdownTimer -= dt;
     const flavorNum = document.getElementById('countdown-flavor-num');
@@ -1618,6 +1876,11 @@ class Game {
       }
       this._playBeep(800, 0.4);
       if (this.raceManager) this.raceManager.start();
+      if (this.mode === 'versus' && this.versusRigs) {
+        for (const rig of this.versusRigs) {
+          if (rig.raceManager) rig.raceManager.start();
+        }
+      }
 
       // Update analytics input method now that motion/gyro has had time to activate
       const steerSrc = this.balanceCtrl.getSteerSource();
@@ -2824,6 +3087,7 @@ class Game {
       this.input.keyboardActive = true;
     }
     document.body.classList.remove('mode-local');
+    this._teardownVersus();
     // Route haptics back to P1 only now that we're out of local MP.
     setHapticSources([this.input]);
     // Room stays in recent rooms list for 5 min so players can rejoin
@@ -2860,6 +3124,57 @@ class Game {
     analytics.setPage('lobby');
   }
 
+
+  /**
+   * Versus teardown (safe to call from any mode — no-ops when versus was
+   * never entered). Disposes both rigs' scene objects, restores the
+   * singleton bike + full-frame rendering, and re-enables P1 keyboard.
+   */
+  _teardownVersus() {
+    document.body.classList.remove('mode-versus');
+    document.body.classList.remove('versus-fullframe');
+    // Cinematic may be mid-orbit (options → LOBBY during the fly-around)
+    if (this.state === 'versusCinematic' && this._finishCinematic) {
+      this._finishCinematic.cleanup();
+      this._finishCinematic = null;
+    }
+    this.camera.layers.disable(1);
+    this.camera.layers.disable(2);
+    this._versusWinner = null;
+    this._versusLoser = null;
+    if (this.versusHud) {
+      this.versusHud.destroy();
+      this.versusHud = null;
+    }
+    if (this.versusRigs) {
+      for (const rig of this.versusRigs) {
+        // Unbind Steam handles so InputManagers revert to the
+        // first-controller default (what solo/co-op expect).
+        for (const m of rig.members) {
+          if (m.input) m.input.steamInputHandle = null;
+        }
+        rig.dispose(this.scene);
+      }
+      this.versusRigs = null;
+      if (this.versusFrontViews) {
+        for (const fv of this.versusFrontViews) fv.dispose();
+        this.versusFrontViews = null;
+      }
+      if (this.versusPedalHuds) {
+        for (const ph of this.versusPedalHuds) ph.clear();
+        this.versusPedalHuds = null;
+      }
+      this.bike.group.visible = true;
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+      this.input.keyboardActive = true;
+    }
+    // Auto-claim was suspended by the versus join screen; make sure it's
+    // back on regardless of how we exited.
+    this.controllerManager.autoClaimSuspended = false;
+    this._versusTeams = null;
+    this._versusPaused = false;
+  }
 
   _returnToRoom() {
     this._musicBtn.style.display = 'none';
@@ -3041,6 +3356,51 @@ class Game {
   // OPTIONS OVERLAY
   // ============================================================
 
+  /**
+   * Wire the per-team versus pedal controls once. Handlers reference
+   * this.versusRigs live, so they no-op outside versus (and the bars are
+   * CSS-hidden then anyway). A tap sets the team captain's buffered pedal flag
+   * — the same path touch/keys use — so it drives that bike and is cleared by
+   * consumeTaps each frame. Team A = left half → rig 0, Team B = right → rig 1.
+   */
+  _initVersusPedals() {
+    const bindBar = (barId, teamIdx) => {
+      const bar = document.getElementById(barId);
+      if (!bar) return;
+      for (const [sel, side] of [['.vp-left', 'left'], ['.vp-right', 'right']]) {
+        const btn = bar.querySelector(sel);
+        if (!btn) continue;
+        const inputOf = () => {
+          const rig = this.versusRigs && this.versusRigs[teamIdx];
+          return rig ? rig.members[0].input : null;
+        };
+        const press = (e) => {
+          e.preventDefault();
+          const input = inputOf();
+          if (!input) return;
+          if (side === 'left') { input.touchLeft = true; input._leftTapped = true; }
+          else { input.touchRight = true; input._rightTapped = true; }
+          if (input._markActive) input._markActive();
+          // Button visual (.pressed / tap-flash) is driven by VersusPedalHud
+          // from the resulting touch/pedal state — same as multiplayer.
+        };
+        const release = () => {
+          const input = inputOf();
+          if (input) {
+            if (side === 'left') input.touchLeft = false;
+            else input.touchRight = false;
+          }
+        };
+        btn.addEventListener('pointerdown', press);
+        btn.addEventListener('pointerup', release);
+        btn.addEventListener('pointercancel', release);
+        btn.addEventListener('pointerleave', release);
+      }
+    };
+    bindBar('versus-pedals-a', 0);
+    bindBar('versus-pedals-b', 1);
+  }
+
   _initOptionsOverlay() {
     const overlay = document.getElementById('options-overlay');
     const closeBtn = document.getElementById('options-close-btn');
@@ -3090,6 +3450,11 @@ class Game {
     if (ridersOnBtn)  ridersOnBtn.addEventListener('click',  () => this._setShowRiders(true));
     if (ridersOffBtn) ridersOffBtn.addEventListener('click', () => this._setShowRiders(false));
 
+    const fpsOnBtn  = document.getElementById('opt-fps-on');
+    const fpsOffBtn = document.getElementById('opt-fps-off');
+    if (fpsOnBtn)  fpsOnBtn.addEventListener('click',  () => this._setShowFps(true));
+    if (fpsOffBtn) fpsOffBtn.addEventListener('click', () => this._setShowFps(false));
+
     if (isElectron) {
       browserDevBtn.addEventListener('click', async () => {
         const opened = await window.electronApp.toggleDevTools();
@@ -3122,13 +3487,78 @@ class Game {
     this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
+    this._updateOptionsFpsUI();
+  }
+
+  _setShowFps(on) {
+    try { localStorage.setItem('tandemonium_show_fps', on ? 'on' : 'off'); } catch (e) {}
+    this.fpsMeter.setVisible(on);
+    this._updateOptionsFpsUI();
+  }
+
+  _updateOptionsFpsUI() {
+    const on = getShowFps();
+    const onBtn  = document.getElementById('opt-fps-on');
+    const offBtn = document.getElementById('opt-fps-off');
+    if (!onBtn) return;
+    onBtn.classList.toggle('active', on);
+    offBtn.classList.toggle('active', !on);
   }
 
   _setShowRiders(on) {
     try { localStorage.setItem('tandemonium_show_riders', on ? 'on' : 'off'); } catch (e) {}
     this._updateOptionsShowRidersUI();
-    // Bike model + front cam are chosen at boot, so this applies on next launch
-    // (matches the note in the row and the DualSense-source setting).
+    this._applyShowRiders(on);
+  }
+
+  /**
+   * Apply Show Riders at runtime — everything the boot path gates on the flag:
+   * tone mapping + env map + world lighting, the bike GLB, and the front PiP.
+   * The riders GLB loads async (~7MB), so the model itself pops in a moment
+   * after the lighting shifts. A live versus session keeps its already-cloned
+   * rigs (and their shared geometry is left undisposed); the next race picks
+   * up the new setting.
+   */
+  _applyShowRiders(on) {
+    on = !!on;
+    if (on === this._showRiders) return;
+    this._showRiders = on;
+
+    this.renderer.toneMapping = on ? THREE.AgXToneMapping : THREE.NoToneMapping;
+    this.renderer.toneMappingExposure = on ? 1.3 : 1.0;
+
+    if (on) {
+      if (!this._riderEnvTex) {
+        const _pmrem = new THREE.PMREMGenerator(this.renderer);
+        this._riderEnvTex = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+        _pmrem.dispose();
+      }
+      this.scene.environment = this._riderEnvTex;
+    } else {
+      this.scene.environment = null;
+    }
+
+    this.world.setShowRiders(on);
+
+    // Tone-mapping lives in the compiled shader program — every material in
+    // the scene must recompile to pick up the change.
+    this.scene.traverse((obj) => {
+      if (!obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) if (m) m.needsUpdate = true;
+    });
+
+    this.bike.swapModel(
+      on ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH,
+      !this.versusRigs // live versus clones share the old model's geometry
+    );
+
+    if (on && !this.frontView) {
+      this.frontView = new FrontViewCamera(this.camera);
+    } else if (!on && this.frontView) {
+      this.frontView.dispose();
+      this.frontView = null;
+    }
   }
 
   _updateOptionsShowRidersUI() {
@@ -3249,6 +3679,8 @@ class Game {
       document.getElementById('opt-gyro-gravity'),
       document.getElementById('opt-riders-on'),
       document.getElementById('opt-riders-off'),
+      document.getElementById('opt-fps-on'),
+      document.getElementById('opt-fps-off'),
       document.getElementById('options-perf-btn'),
       document.getElementById('options-devtools-btn'),
       document.getElementById('options-browserdev-btn'),
@@ -3257,6 +3689,7 @@ class Game {
     this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
+    this._updateOptionsFpsUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
   }
 
@@ -3396,13 +3829,13 @@ class Game {
     this._fpsMaxDt = 0;
   }
 
-  _recordCrash(cause) {
+  _recordCrash(cause, bike = this.bike) {
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
-    if (this.bike) {
-      analytics.trackRideEvent('crash', this.bike.distanceTraveled, {
-        lean_angle: this.bike.lean,
-        speed: this.bike.speed,
+    if (bike) {
+      analytics.trackRideEvent('crash', bike.distanceTraveled, {
+        lean_angle: bike.lean,
+        speed: bike.speed,
         cause,
         input_method: analytics.getInputMethod(),
       });
@@ -3410,39 +3843,42 @@ class Game {
     }
   }
 
-  _checkTreeCollision() {
-    if (this.bike.fallen || this.bike.speed < 0.5) return;
+  // Default args keep the solo/co-op call sites byte-identical in behavior;
+  // versus passes each rig's bike/camera plus that team's inputs so only
+  // the crashing team's controllers rumble.
+  _checkTreeCollision(bike = this.bike, chaseCam = this.chaseCamera, hapticTargets = null) {
+    if (bike.fallen || bike.speed < 0.5) return;
     // Skip tree collision when level config disables it — only pylons matter
     const level = this.lobby.selectedLevel;
     if (level && level.treeCollision === false) {
       // Still check pylon collision
-      if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
-        this._recordCrash('obstacle');
-        this.bike._fall();
-        this.chaseCamera.shakeAmount = 0.25;
+      if (this.obstacleManager && this.obstacleManager.checkCollision(bike.position)) {
+        this._recordCrash('obstacle', bike);
+        bike._fall();
+        chaseCam.shakeAmount = 0.25;
         this._playCrash(1.0);
-        hapticTreeHit();
+        hapticTreeHit(hapticTargets);
       }
       return;
     }
     const result = this.world.checkTreeCollision(
-      this.bike.position, this.bike.roadD, this.bike.heading
+      bike.position, bike.roadD, bike.heading
     );
     if (result.hit) {
-      this._recordCrash('tree');
-      this.bike._fall();
-      this.chaseCamera.shakeAmount = 0.2;
+      this._recordCrash('tree', bike);
+      bike._fall();
+      chaseCam.shakeAmount = 0.2;
       this._playCrash(0.85);
-      hapticTreeHit();
+      hapticTreeHit(hapticTargets);
       return;
     }
     // Pylon obstacle collision
-    if (this.obstacleManager && this.obstacleManager.checkCollision(this.bike.position)) {
-      this._recordCrash('obstacle');
-      this.bike._fall();
-      this.chaseCamera.shakeAmount = 0.25;
+    if (this.obstacleManager && this.obstacleManager.checkCollision(bike.position)) {
+      this._recordCrash('obstacle', bike);
+      bike._fall();
+      chaseCam.shakeAmount = 0.25;
       this._playCrash(1.0);
-      hapticTreeHit();
+      hapticTreeHit(hapticTargets);
     }
   }
 
@@ -3461,6 +3897,16 @@ class Game {
   _loop(timestamp) {
     requestAnimationFrame((t) => this._loop(t));
 
+    // GL context lost (GPU driver reset): skip all work until the
+    // restore event — or the reload fallback — fires. Rendering into a
+    // dead context just floods the log with context-creation errors.
+    if (this._glContextLost) {
+      this.lastTime = timestamp;
+      return;
+    }
+
+    this.fpsMeter.tick(timestamp);
+
     // Advance controller slot state machine once per frame — handles
     // Gamepad-API claim, HID-pool claim, release-ring, and orphan
     // transitions in one place. Must run before any input reads.
@@ -3470,6 +3916,13 @@ class Game {
     // Poll gamepad every frame before reading any input
     this.input.pollGamepad();
     if (this.inputP2) this.inputP2.pollGamepad();
+    if (this.versusRigs) {
+      for (const rig of this.versusRigs) {
+        for (const m of rig.members) {
+          if (m.input !== this.input) m.input.pollGamepad();
+        }
+      }
+    }
 
     // Start button → options overlay (available in all states)
     this._pollStartButton();
@@ -3477,7 +3930,8 @@ class Game {
     if (this._optionsOpen) {
       this._pollOverlayGamepad();
       this.input.consumeTaps(); // drain buffered input so it doesn't fire when overlay closes
-      this.renderer.render(this.scene, this.camera);
+      if (this.mode === 'versus' && this.versusRigs) this._renderVersusViews();
+      else this.renderer.render(this.scene, this.camera);
       if (this.frontView) this.frontView.hide();
       return;
     }
@@ -3503,8 +3957,9 @@ class Game {
         if (dt > this._fpsMaxDt) this._fpsMaxDt = dt;
       }
 
-      // D-pad actions (safety/speed/reset/lobby)
-      this._pollDpad();
+      // D-pad actions (safety/speed/reset/lobby) — singleton-bike shortcuts,
+      // skipped in versus (reset/safety would only act on the parked bike).
+      if (this.mode !== 'versus') this._pollDpad();
 
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
@@ -3515,21 +3970,45 @@ class Game {
         this._updateStoker(dt);
       } else if (this.mode === 'local') {
         this._updateLocal(dt);
+      } else if (this.mode === 'versus') {
+        this._updateVersus(dt);
       }
     } else if (this.state === 'finishCinematic') {
       // Cinematic finish camera owns its own world/bike updates and
       // render — bypass the chase cam so it doesn't fight the swing.
       this._updateFinishCinematic(dt);
+    } else if (this.state === 'versusCinematic') {
+      // Versus winner fly-around — full-frame orbit of the winning bike.
+      this._updateVersusFinishCinematic(dt);
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
-      if (this.state === 'gameover' || this.state === 'victory' ||
+      if (this.state === 'gameover' || this.state === 'victory' || this.state === 'versusResults' ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
-      this.world.update(this.bike.position, this.bike.roadD, dt);
-      this.chaseCamera.update(this.bike, dt, roadPath);
-      if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
+      if (this.mode === 'versus' && this.versusRigs) {
+        // Versus non-playing states (instructions/countdown/results) still
+        // render split so both teams see their own start line.
+        const [a, b] = this.versusRigs;
+        this.world.update(a.bike.position, a.bike.roadD, dt, { pos: b.bike.position, d: b.bike.roadD });
+        for (const rig of this.versusRigs) {
+          rig.chaseCamera.update(rig.bike, dt, roadPath);
+          if (rig.archIndicator._visible) {
+            rig.archIndicator.update(rig.bike, 0, 0);
+            rig.applyArchLayer();
+          }
+        }
+        // Keep the team panels current outside 'playing' too — without
+        // this the rematch countdown showed the PREVIOUS race's distances
+        // until GO (panels only refreshed inside _updateVersus).
+        if (this.versusHud) this.versusHud.update();
+        this._renderVersusViews();
+      } else {
+        this.world.update(this.bike.position, this.bike.roadD, dt);
+        this.chaseCamera.update(this.bike, dt, roadPath);
+        if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
 
-      this.renderer.render(this.scene, this.camera);
+        this.renderer.render(this.scene, this.camera);
+      }
     }
 
     // Front-view PiP — composite a front-facing "selfie cam" of the bike
@@ -3537,10 +4016,12 @@ class Game {
     // Only while a ride is on screen (not during the cinematic, which runs
     // its own camera choreography).
     if (this.frontView && this.frontView.enabled && this.bike &&
+        this.mode !== 'versus' &&
         (this.state === 'playing' || this.state === 'countdown')) {
       this.frontView.update(this.bike, dt);
       this.frontView.render(this.renderer, this.scene);
     } else if (this.frontView) {
+      // Not shown in Versus (split-screen) — that integration is a follow-up.
       this.frontView.hide();
       this.frontView.reset();
     }
@@ -3549,7 +4030,25 @@ class Game {
     // When not actively playing (victory / gameover / lobby / countdown),
     // feed speed=0 so the loop fades to silence via the engine's internal
     // ramp instead of holding the last gain value indefinitely.
-    if (this.bike) {
+    if (this.mode === 'versus' && this.versusRigs) {
+      // Versus: motion loop follows the faster bike; off-road follows the
+      // worse offender so the scrape reads on either half of the screen.
+      const playing = this.state === 'playing';
+      let topSpeed = 0, offRoad = 0, anyUpright = false;
+      for (const rig of this.versusRigs) {
+        topSpeed = Math.max(topSpeed, rig.bike.speed);
+        const fo = Math.abs(rig.bike._frontWheelOffset || 0);
+        const ro = Math.abs(rig.bike._rearWheelOffset || 0);
+        offRoad = Math.max(offRoad, Math.min(1, Math.max(0, Math.max(fo, ro) - 2.5) / 3));
+        if (!rig.bike.fallen) anyUpright = true;
+      }
+      this.audioEngine.updateBike(
+        playing ? topSpeed : 0,
+        TUNE.maxSpeed || 19,
+        playing ? offRoad : 0,
+        !playing || !anyUpright
+      );
+    } else if (this.bike) {
       const playing = this.state === 'playing';
       const frontOff = Math.abs(this.bike._frontWheelOffset || 0);
       const rearOff = Math.abs(this.bike._rearWheelOffset || 0);
@@ -3567,6 +4066,13 @@ class Game {
     // Clear buffered tap flags after all input has been read this frame
     this.input.consumeTaps();
     if (this.inputP2) this.inputP2.consumeTaps();
+    if (this.versusRigs) {
+      for (const rig of this.versusRigs) {
+        for (const m of rig.members) {
+          if (m.input !== this.input) m.input.consumeTaps();
+        }
+      }
+    }
   }
 
   // ============================================================
@@ -3849,12 +4355,516 @@ class Game {
     }
   }
 
+  /**
+   * Force-refresh every GPU texture after a GL context restore. three.js
+   * re-creates programs and most resources automatically, but already-
+   * uploaded canvas textures can come back BLACK (observed as a black
+   * road after a mid-session driver reset — the road surface is a
+   * procedural CanvasTexture). Marking everything dirty re-uploads on the
+   * next frame; it's a one-time cost.
+   */
+  _refreshGpuResources() {
+    const bumpMaterial = (m) => {
+      if (!m) return;
+      for (const k of ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'alphaMap', 'aoMap', 'lightMap']) {
+        if (m[k] && m[k].isTexture) m[k].needsUpdate = true;
+      }
+      if (m.uniforms) { // ShaderMaterial (chromakey billboards)
+        for (const u of Object.values(m.uniforms)) {
+          if (u && u.value && u.value.isTexture) u.value.needsUpdate = true;
+        }
+      }
+      m.needsUpdate = true;
+    };
+    this.scene.traverse((o) => {
+      if (!o.material) return;
+      if (Array.isArray(o.material)) o.material.forEach(bumpMaterial);
+      else bumpMaterial(o.material);
+    });
+    if (this.scene.background && this.scene.background.isTexture) {
+      this.scene.background.needsUpdate = true;
+    }
+  }
+
   /** Advance the world streaming, chase camera, and apply crash-recovery camera shake. */
   _updateWorldAndCamera(dt) {
     this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
     if (this.bike.fallen && this.bike.fallTimer > 1.8) {
       this.chaseCamera.shakeAmount = 0.15;
+    }
+  }
+
+  // ============================================================
+  // VERSUS UPDATE — local split-screen team racing (issue #351)
+  // Two TeamRigs step independently; the world streams around both
+  // bikes; each rig renders to its own viewport half.
+  // ============================================================
+
+  _updateVersus(dt) {
+    const rigs = this.versusRigs;
+    if (!rigs) return;
+
+    // Mid-race pad drop: freeze the whole race (both teams) until the pad
+    // returns — same freeze pattern as local co-op's P2 disconnect, but
+    // any physical-pad member of either team can trigger it.
+    // gamepadConnected covers Gamepad API slots, HID-claimed slots, and
+    // Steam-handle-bound managers alike.
+    const dropped = rigs.flatMap((r) => r.members)
+      .find((m) => m.type !== 'keyboard' && m.type !== 'bot' && !m.input.gamepadConnected);
+    if (dropped) {
+      if (!this._versusPaused) {
+        this._versusPaused = true;
+        this._showDisconnect(`${dropped.name || 'A'} controller disconnected`);
+      }
+      this._renderVersusViews();
+      return;
+    }
+    if (this._versusPaused) {
+      this._versusPaused = false;
+      document.getElementById('disconnect-overlay').style.display = 'none';
+      this._clearOverlayButtons();
+    }
+
+    for (const rig of rigs) this._stepTeam(rig, dt);
+
+    // Bike-vs-bike contact: bumping knocks both around a little.
+    this._resolveVersusBikeContact(dt);
+
+    // Items: FCFS collectibles + multi-anchor obstacle pooling
+    if (this.collectibleManager) {
+      const counts = this.collectibleManager.updateVersus(
+        dt,
+        rigs.map((r) => ({ d: r.bike.distanceTraveled, position: r.bike.position }))
+      );
+      for (let i = 0; i < counts.length; i++) {
+        if (counts[i] > 0) this._onVersusCollect(rigs[i], counts[i]);
+      }
+    }
+    if (this.obstacleManager) {
+      this.obstacleManager.updateVersus(dt, rigs.map((r) => r.bike.distanceTraveled));
+    }
+
+    // World: multi-anchor streaming around both bikes
+    const [a, b] = rigs;
+    this.world.update(a.bike.position, a.bike.roadD, dt, { pos: b.bike.position, d: b.bike.roadD });
+
+    for (const rig of rigs) {
+      rig.chaseCamera.update(rig.bike, dt, this.world.roadPath);
+      if (rig.bike.fallen && rig.bike.fallTimer > 1.8) {
+        rig.chaseCamera.shakeAmount = 0.15;
+      }
+      rig.grassParticles.update(rig.bike, dt);
+      if (rig.archIndicator._visible) {
+        rig.archIndicator.update(rig.bike, rig.hudLeans[0], rig.hudLeans[1]);
+        rig.applyArchLayer();
+      }
+    }
+
+    // Per-team pedal visuals: captain (member 0) drives the buttons, stoker
+    // (member 1, duo only) drives the arrows — same split as multiplayer.
+    if (this.versusPedalHuds) {
+      for (let i = 0; i < rigs.length; i++) {
+        const rig = rigs[i];
+        const cap = rig.members[0].input;
+        const sto = rig.members[1] ? rig.members[1].input : null;
+        this.versusPedalHuds[i].update(
+          cap.isPressed('ArrowLeft'), cap.isPressed('ArrowRight'),
+          sto ? sto.isPressed('ArrowLeft') : false,
+          sto ? sto.isPressed('ArrowRight') : false,
+          rig.pedalCtrl, rig.bike.speed, dt
+        );
+      }
+    }
+
+    if (this.versusHud) this.versusHud.update();
+    this._renderVersusViews();
+  }
+
+  /**
+   * One team's physics step — the versus counterpart of _updateSolo's core.
+   * Duo teams feed edge-detected taps into a SharedPedalController
+   * (captain = first member) and average both members' lean; solo teams
+   * run a plain PedalController. Crashes cost the built-in ~2s remount
+   * (bike._fall/_reset) with NO game-over screen — the race rides on.
+   */
+  _stepTeam(rig, dt) {
+    const bike = rig.bike;
+
+    // Velocity-dependent input sensitivity per member; bot members
+    // (?versusbot=1 debug rider) tap alternate feet at a fixed cadence
+    // via the buffered-tap flags isPressed() honors.
+    for (const m of rig.members) {
+      m.input.bikeSpeed = bike.speed;
+      m.input.bikeMaxSpeed = TUNE.maxSpeed || 19;
+      if (m.type === 'bot') {
+        m.botTimer = (m.botTimer || 0) + dt;
+        if (m.botTimer >= 0.45) {
+          m.botTimer = 0;
+          m.botFoot = m.botFoot === 'left' ? 'right' : 'left';
+          if (m.botFoot === 'left') m.input._leftTapped = true;
+          else m.input._rightTapped = true;
+        }
+      }
+    }
+
+    // Pedals: duo teams edge-detect taps into the shared controller
+    if (rig.isDuo) {
+      const roles = ['captain', 'stoker'];
+      for (let i = 0; i < rig.members.length; i++) {
+        const m = rig.members[i];
+        const up = m.input.isPressed('ArrowLeft');
+        const down = m.input.isPressed('ArrowRight');
+        if (up && !m.prevUp) rig.pedalCtrl.receiveTap(roles[i], 'up');
+        if (down && !m.prevDown) rig.pedalCtrl.receiveTap(roles[i], 'down');
+        m.prevUp = up;
+        m.prevDown = down;
+      }
+    }
+    const pedalResult = rig.pedalCtrl.update(dt);
+
+    // Lean: average all members (same merge rule as co-op captain+stoker).
+    // Bot teams ride with full balance assist — no human is steering them.
+    // Per-member (pre-merge) leans are stashed for the HUD tilt gauge.
+    const assist = rig.members.some((m) => m.type === 'bot') ? 1 : this._assistWeight;
+    const balanceResult = rig.balanceCtrls[0].update(bike, assist, this.collectibleManager, this.obstacleManager);
+    rig.hudLeans[0] = balanceResult.leanInput;
+    rig.hudLeans[1] = 0;
+    if (rig.balanceCtrls.length > 1) {
+      const second = rig.balanceCtrls[1].update(bike, assist, this.collectibleManager, this.obstacleManager);
+      rig.hudLeans[1] = second.leanInput;
+      balanceResult.leanInput = Math.max(-1, Math.min(1,
+        (balanceResult.leanInput + second.leanInput) * 0.5
+      ));
+    }
+    // Per-bike rider lean (Show Riders): captain leans by member[0], stoker by
+    // member[1] — solo teams keep the stoker upright. Each rig's bike has its
+    // own skeleton + mixer (skinned clone), so the geese lean independently per
+    // team. No-op on the plain frame model (no riderMixer).
+    balanceResult.captainLean = rig.hudLeans[0];
+    balanceResult.stokerLean = rig.isDuo ? rig.hudLeans[1] : 0;
+    bike._balanceAssist = assist;
+
+    const wasFallen = bike.fallen;
+    bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this._checkTreeCollision(bike, rig.chaseCamera, rig.inputs);
+
+    // Any new fall (balance or collision) counts against the team. Crash
+    // haptic targets this team only (collision falls already rumbled
+    // inside _checkTreeCollision with the same targets).
+    if (!wasFallen && bike.fallen) {
+      rig.crashCount++;
+      hapticCrash(rig.inputs);
+    }
+
+    // Remount recovery: relocate a few meters back and re-center on the
+    // road. Versus remounts in place (no game-over/checkpoint restart
+    // like solo), and remounting against the tree you just hit re-fired
+    // the collision the instant speed passed 0.5 — an inescapable crash
+    // loop. roadD (not distanceTraveled) is the geometric truth for
+    // placement; the small extra progress penalty from weaving drift is
+    // part of the crash cost.
+    if (wasFallen && !bike.fallen) {
+      bike.resetToDistance(Math.max(0, bike.roadD - 6));
+    }
+
+    // Off-road scrape haptic for this team's controllers only
+    if (!bike.fallen && bike.speed >= 1) {
+      const frontOff = Math.max(0, Math.abs(bike._frontWheelOffset) - 2.5);
+      const rearOff = Math.max(0, Math.abs(bike._rearWheelOffset) - 2.5);
+      const intensity = Math.min(Math.max(frontOff, rearOff) / 3, 1);
+      if (intensity > 0) hapticOffRoad(intensity, rig.inputs);
+    }
+
+    // Progress (checkpoints + finish; updateProgressOnly never decrements
+    // the segment timer, so versus can't hit timeout eliminations)
+    if (rig.raceManager && !rig.finished) {
+      const raceEvent = rig.raceManager.updateProgressOnly(bike.distanceTraveled);
+      if (raceEvent) this._handleVersusRaceEvent(rig, raceEvent);
+    }
+  }
+
+  /**
+   * Bike-vs-bike contact (versus only). Each tandem is approximated by
+   * three circles (rear / center / front, r=0.5m) along its heading; on
+   * overlap the bikes are pushed apart, destabilized with a lean-velocity
+   * impulse away from the contact, and scrubbed of some speed — enough to
+   * "knock each other around a little" without instant crashes. Fresh
+   * contacts (0.35s cooldown) also thud + rumble both teams' pads.
+   */
+  _resolveVersusBikeContact(dt) {
+    this._versusBumpCd = Math.max(0, (this._versusBumpCd || 0) - dt);
+    const [ra, rb] = this.versusRigs;
+    const a = ra.bike;
+    const b = rb.bike;
+    if (a.fallen || b.fallen) return;
+
+    const R = 1.0;          // combined contact radius (0.5m per circle)
+    const HALF_LEN = 1.4;   // circle offsets along the frame
+    const fax = Math.sin(a.heading), faz = Math.cos(a.heading);
+    const fbx = Math.sin(b.heading), fbz = Math.cos(b.heading);
+
+    // Closest circle pair between the two frames
+    let best = Infinity, bnx = 0, bnz = 0;
+    for (const ta of [-HALF_LEN, 0, HALF_LEN]) {
+      const pax = a.position.x + fax * ta;
+      const paz = a.position.z + faz * ta;
+      for (const tb of [-HALF_LEN, 0, HALF_LEN]) {
+        const dx = pax - (b.position.x + fbx * tb);
+        const dz = paz - (b.position.z + fbz * tb);
+        const d2 = dx * dx + dz * dz;
+        if (d2 < best) {
+          best = d2;
+          const d = Math.sqrt(d2) || 1e-6;
+          bnx = dx / d;
+          bnz = dz / d;
+        }
+      }
+    }
+    const dist = Math.sqrt(best);
+    if (dist >= R) return;
+
+    // Push apart, half each (n points from B toward A)
+    const push = (R - dist) * 0.5;
+    a.position.x += bnx * push;
+    a.position.z += bnz * push;
+    b.position.x -= bnx * push;
+    b.position.z -= bnz * push;
+
+    // Fresh contact: wobble + speed scrub + thud + rumble. Continuous
+    // grinding only keeps them separated — no repeated impulses.
+    if (this._versusBumpCd <= 0) {
+      this._versusBumpCd = 0.35;
+      // Closing speed along the contact normal scales the effect
+      const cvx = fbx * b.speed - fax * a.speed;
+      const cvz = fbz * b.speed - faz * a.speed;
+      const closing = Math.max(0, cvx * bnx + cvz * bnz);
+      const bump = Math.min(1, closing / 6);
+      // Lean impulse away from the contact: sign from the opponent's side
+      // relative to each bike's right vector (right = cos h, -sin h).
+      const impulse = 0.35 + bump * 0.75;
+      const sideA = ((-bnx) * Math.cos(a.heading) + (-bnz) * -Math.sin(a.heading)) >= 0 ? -1 : 1;
+      const sideB = (bnx * Math.cos(b.heading) + bnz * -Math.sin(b.heading)) >= 0 ? -1 : 1;
+      a.leanVelocity += sideA * impulse;
+      b.leanVelocity += sideB * impulse;
+      const scrub = 1 - (0.06 + 0.12 * bump);
+      a.speed *= scrub;
+      b.speed *= scrub;
+      this._playCrash(0.3 + bump * 0.25);
+      hapticBump(ra.inputs);
+      hapticBump(rb.inputs);
+    }
+  }
+
+  /** A team grabbed collectible(s): count + 3s boost, FCFS attribution. */
+  _onVersusCollect(rig, count) {
+    rig.collectibles += count;
+    if (rig.raceManager) rig.raceManager.collectiblesCount += count;
+    rig.bike.boostTimer = 3;
+    this._playBeep(1200, 0.1);
+    setTimeout(() => this._playBeep(1600, 0.08), 80);
+    hapticCheckpoint(rig.inputs);
+    analytics.trackRideEvent('collectible', rig.bike.distanceTraveled, {
+      collectible_type: this.lobby.selectedLevel?.collectibles || 'presents',
+      team: rig.id,
+    });
+  }
+
+  /** Checkpoint/finish events for one team. */
+  _handleVersusRaceEvent(rig, raceEvent) {
+    if (raceEvent.event === 'checkpoint') {
+      this._playBeep(600, 0.12);
+      hapticCheckpoint(rig.inputs);
+    } else if (raceEvent.event === 'finish') {
+      rig.finished = true;
+      rig.finishMs = rig.raceManager.getElapsedMs();
+      this._finishVersusRace(rig);
+    }
+  }
+
+  /**
+   * First team across the line wins. Both rigs freeze, the screen goes
+   * FULL-FRAME for a fly-around cinematic of the winner's bike (banner
+   * overlaid), then the results overlay with REMATCH / LOBBY. The loser
+   * is scored as DNF-with-distance — no second-place finish riding.
+   */
+  _finishVersusRace(winner) {
+    const loser = this.versusRigs.find((r) => r !== winner);
+    this._versusWinner = winner;
+    this._versusLoser = loser;
+    this.state = 'versusCinematic';
+    hapticFinish(); // everyone feels the finish
+    this._playBeep(800, 0.3);
+    setTimeout(() => this._playBeep(1000, 0.3), 150);
+    setTimeout(() => this._playBeep(1200, 0.45), 300);
+    this.audioEngine.duckMusic(1.0, 0.8);
+
+    const summary = winner.raceManager.getSummary(winner.bike.distanceTraveled);
+    analytics.trackEvent('versus_finish', {
+      winner: winner.id,
+      winner_players: winner.members.length,
+      loser_players: loser.members.length,
+      winner_time_ms: summary.timeMs,
+      loser_distance: Math.floor(loser.bike.distanceTraveled),
+      winner_crashes: winner.crashCount,
+      loser_crashes: loser.crashCount,
+    });
+    analytics.endRide({
+      completed: true,
+      duration_ms: summary.timeMs,
+      distance: summary.distance,
+      checkpoints_passed: summary.checkpointsPassed,
+      checkpoints_total: summary.checkpointsTotal,
+      crash_count: winner.crashCount + loser.crashCount,
+      timeout_count: 0,
+      restarts: 0,
+    });
+
+    // Full-frame cinematic around the winner's bike. The singleton camera
+    // renders it (full window aspect, maintained by _onResize); it must be
+    // granted the winner's floor layer or the ground disappears (floors
+    // are layer-split per team in versus). Arches would photobomb the
+    // orbit — hide them; the rematch countdown re-arms them. The front-cam
+    // PiP frames are DOM — nothing re-renders them during the cinematic, so
+    // they'd linger over the fly-around unless hidden here.
+    for (const rig of this.versusRigs) rig.archIndicator.hide();
+    if (this.versusFrontViews) {
+      for (const fv of this.versusFrontViews) fv.hide();
+    }
+    this.camera.layers.enable(winner.id === 'A' ? 1 : 2);
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+    // Full-frame phase: hide the split-screen divider + per-half panels
+    // (CSS keys off this class). Cleared at rematch countdown / teardown.
+    document.body.classList.add('versus-fullframe');
+    this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike);
+
+    this.versusHud.showBanner(`${winner.color.name} WINS!`, winner.color.hex);
+  }
+
+  /**
+   * Drive the versus winner fly-around: slow-mo roll-out for both bikes,
+   * full-rate camera orbit of the winner, then the results overlay.
+   */
+  _updateVersusFinishCinematic(dt) {
+    const cinematic = this._finishCinematic;
+    if (!cinematic) { this._showVersusResultsPanel(); return; }
+
+    const slowDt = dt * cinematic.getTimeScale();
+    const winner = this._versusWinner;
+    const loser = this._versusLoser;
+
+    // Both bikes roll out under friction with neutral input so wheels
+    // keep turning into the slow-motion (same trick as the solo finish).
+    for (const rig of [winner, loser]) {
+      const bike = rig.bike;
+      if (bike.fallen) continue;
+      const neutralPedal = { crankAngle: bike.crankAngle, braking: false, acceleration: 0, wobble: 0 };
+      const neutralBalance = { leanInput: 0, gyroActive: false };
+      bike.update(neutralPedal, neutralBalance, slowDt, true, false);
+    }
+
+    this.world.update(
+      winner.bike.position, winner.bike.roadD, slowDt,
+      { pos: loser.bike.position, d: loser.bike.roadD }
+    );
+    winner.grassParticles.update(winner.bike, slowDt);
+
+    // Camera orbits at real time for consistent cinematic pacing.
+    const done = cinematic.update(dt);
+    this.renderer.render(this.scene, this.camera);
+
+    if (done) {
+      cinematic.cleanup();
+      this._finishCinematic = null;
+      winner.chaseCamera.initialized = false;
+      this._showVersusResultsPanel();
+    }
+  }
+
+  /** Banner down, results card up (REMATCH / LOBBY, gamepad-navigable). */
+  _showVersusResultsPanel() {
+    const winner = this._versusWinner;
+    const loser = this._versusLoser;
+    this.state = 'versusResults';
+    this.camera.layers.disable(1);
+    this.camera.layers.disable(2);
+    if (!winner || !loser || !this.versusHud) return;
+    this.versusHud.hideBanner();
+    const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser);
+    rematchBtn.addEventListener('click', () => this._rematchVersus());
+    lobbyBtn.addEventListener('click', () => {
+      this._clearOverlayButtons();
+      this._returnToLobby();
+    });
+    this._setOverlayButtons([rematchBtn, lobbyBtn]);
+    this._overlayCooldownUntil = performance.now() + 1000;
+  }
+
+  /** Reset both rigs and rerun the versus countdown on the same level. */
+  _rematchVersus() {
+    this._clearOverlayButtons();
+    this._versusWinner = null;
+    this._versusLoser = null;
+    if (this.versusHud) this.versusHud.hideResults();
+    analytics.trackEvent('versus_rematch', {
+      level: this.lobby.selectedLevel ? this.lobby.selectedLevel.id : null,
+    });
+    // _startVersusCountdown rebuilds race managers, resets rigs (position,
+    // pedal controllers, crash counts), and re-inits the HUD progress bars.
+    this._startVersusCountdown();
+  }
+
+  /**
+   * Split-screen render: left half = team A, right half = team B, each
+   * through its own chase camera. The sun (and its shadow frustum) is
+   * repositioned per pass so shadows center on whichever bike that
+   * viewport follows; billboarded race markers face the pass's camera.
+   */
+  _renderVersusViews() {
+    const rigs = this.versusRigs;
+    if (!rigs) return;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const halfW = Math.floor(w / 2);
+
+    this.renderer.setScissorTest(true);
+    for (let i = 0; i < rigs.length; i++) {
+      const rig = rigs[i];
+      const x = i === 0 ? 0 : w - halfW;
+      this.renderer.setViewport(x, 0, halfW, h);
+      this.renderer.setScissor(x, 0, halfW, h);
+
+      // Sun + shadow frustum follow this viewport's bike
+      const bp = rig.bike.position;
+      this.world.sun.position.set(bp.x + 30, bp.y + 40, bp.z + 20);
+      this.world.sun.target.position.copy(bp);
+      this.world.sun.target.updateMatrixWorld();
+
+      // Billboards (race markers, collectibles, pylons) face the camera
+      // used for this pass (sprites auto-face; these are quaternion-copied)
+      this.world._camera = rig.camera;
+      if (this.world._raceMarkers.length > 0) {
+        this.world._updateRaceMarkerHeights(rig.bike.roadD);
+      }
+      if (this.collectibleManager) this.collectibleManager.faceCamera(rig.camera);
+      if (this.obstacleManager) this.obstacleManager.faceCamera(rig.camera);
+
+      this.renderer.render(this.scene, rig.camera);
+    }
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, w, h);
+
+    // Per-bike front-facing PiP (Show Riders): one in the lower-right of each
+    // half. Done after the split loop — each renderInHalf owns its own scissor.
+    // Skipped once the race is decided (renderInHalf re-shows the DOM frame
+    // every call, which would undo the cinematic's hide during results); the
+    // rematch countdown brings them back.
+    if (this.versusFrontViews && this.state !== 'versusResults') {
+      for (let i = 0; i < rigs.length; i++) {
+        const fx = i === 0 ? 0 : w - halfW;
+        this.versusFrontViews[i].renderInHalf(this.renderer, this.scene, rigs[i].bike, 1 / 60, fx, halfW);
+      }
     }
   }
 
@@ -5241,6 +6251,15 @@ class Game {
   _onResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
+    if (this.versusRigs) {
+      // Split-screen: each half is (w/2)/h — conveniently portrait-ish on
+      // a landscape desktop window, matching the portrait-tuned camera.
+      const halfAspect = (window.innerWidth / 2) / window.innerHeight;
+      for (const rig of this.versusRigs) {
+        rig.camera.aspect = halfAspect;
+        rig.camera.updateProjectionMatrix();
+      }
+    }
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 }

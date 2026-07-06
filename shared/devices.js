@@ -115,11 +115,26 @@ const GAMESIR_DS4_FEATURES = {
   backPaddles: true, lightbar: false, rumble: true,
 };
 
+// ── Haptics inventory (best-effort; `count` = physical force-feedback
+// actuators). Surfaced by the controller inventory UI alongside trackpad
+// counts. Kept per-entry (not in the shared *_FEATURES presets) because
+// DualSense's adaptive triggers make it differ from a DualShock 4 that
+// otherwise shares PS_FEATURES.
+const HAPTICS = {
+  ds5:        { count: 4, type: 'dual voice-coil + 2 adaptive triggers' },
+  ds4:        { count: 2, type: 'dual ERM rumble' },
+  gamesirDs4: { count: 2, type: 'dual rumble' },
+  switchPro:  { count: 2, type: 'HD rumble (linear actuators)' },
+  xbox:       { count: 4, type: '2 body rumble + 2 impulse triggers' },
+  xbox360:    { count: 2, type: 'dual ERM rumble' },
+  steam:      { count: 2, type: 'trackpad haptic actuators' },
+};
+
 export const DEVICES = [
   // ── Sony DualSense (PS5) ──
   // imuSignature: 'sony-ds5' — IMU at byte 15 (DualSense layout)
-  { name: 'Sony DualSense',         vendorId: 0x054c, productId: 0x0ce6, protocol: 'dualsense', mode: 'ds5', imuSignature: 'sony-ds5', capabilities: PS_CAPS, features: PS_FEATURES, gamepadIdPattern: PLAYSTATION_ID },
-  { name: 'Sony DualSense Edge',    vendorId: 0x054c, productId: 0x0df2, protocol: 'dualsense', mode: 'ds5', imuSignature: 'sony-ds5', capabilities: PS_CAPS, features: PS_EDGE_FEATURES, gamepadIdPattern: PLAYSTATION_ID },
+  { name: 'Sony DualSense',         vendorId: 0x054c, productId: 0x0ce6, protocol: 'dualsense', mode: 'ds5', imuSignature: 'sony-ds5', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds5, gamepadIdPattern: PLAYSTATION_ID },
+  { name: 'Sony DualSense Edge',    vendorId: 0x054c, productId: 0x0df2, protocol: 'dualsense', mode: 'ds5', imuSignature: 'sony-ds5', capabilities: PS_CAPS, features: PS_EDGE_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds5, gamepadIdPattern: PLAYSTATION_ID },
 
   // ── Sony DualShock 4 (PS4) ──
   // Same protocol class as DualSense; mode='ds4' selects the DS4 input-report
@@ -130,8 +145,8 @@ export const DEVICES = [
   // default offset, overriding only when it scores implausibly. imuSignature
   // 'sony-ds4' is retained but cannot distinguish a real DS4 from a GameSir at
   // the same vid:pid (identical IMU layout).
-  { name: 'Sony DualShock 4 v1',    vendorId: 0x054c, productId: 0x05c4, protocol: 'dualsense', mode: 'ds4', imuSignature: 'sony-ds4', capabilities: PS_CAPS, features: PS_FEATURES, gamepadIdPattern: PLAYSTATION_ID },
-  { name: 'Sony DualShock 4 v2',    vendorId: 0x054c, productId: 0x09cc, protocol: 'dualsense', mode: 'ds4', imuSignature: 'sony-ds4', capabilities: PS_CAPS, features: PS_FEATURES, gamepadIdPattern: PLAYSTATION_ID },
+  { name: 'Sony DualShock 4 v1',    vendorId: 0x054c, productId: 0x05c4, protocol: 'dualsense', mode: 'ds4', imuSignature: 'sony-ds4', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds4, gamepadIdPattern: PLAYSTATION_ID },
+  { name: 'Sony DualShock 4 v2',    vendorId: 0x054c, productId: 0x09cc, protocol: 'dualsense', mode: 'ds4', imuSignature: 'sony-ds4', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds4, gamepadIdPattern: PLAYSTATION_ID },
 
   // ── GameSir DS4-mode family ──
   // Both Super Nova and Cyclone 2 spoof Sony's DS4 v2 USB identity
@@ -153,6 +168,7 @@ export const DEVICES = [
     protocol: 'dualsense', mode: 'ds4', imuSignature: 'gamesir-ds4',
     capabilities: PS_CAPS,
     features: GAMESIR_DS4_FEATURES,
+    trackpadCount: 1, haptics: HAPTICS.gamesirDs4,
     gamepadIdPattern: PLAYSTATION_ID,
     spoofs: { of: 'Sony DualShock 4 v2', vendorId: 0x054c, productId: 0x09cc },
     // Photogrammetry-sourced GLB; monolithic mesh so gyro rotation works
@@ -167,13 +183,14 @@ export const DEVICES = [
     protocol: 'dualsense', mode: 'ds4', imuSignature: 'gamesir-ds4',
     capabilities: PS_CAPS,
     features: { ...GAMESIR_DS4_FEATURES, backPaddles: false },
+    trackpadCount: 1, haptics: HAPTICS.gamesirDs4,
     gamepadIdPattern: PLAYSTATION_ID,
     spoofs: { of: 'Sony DualShock 4 v2', vendorId: 0x054c, productId: 0x09cc },
     notes: 'GameSir clone reporting Sony 054c:09cc. IMU layout matches Sony DS4 (offsets 12/18). Has physical back paddles BUT they rebind to A/B at the firmware level — no independent HID bits, so the wizard skips the back-paddles step.',
   },
 
   // ── Nintendo Switch Pro ──
-  { name: 'Nintendo Switch Pro',    vendorId: 0x057e, productId: 0x2009, protocol: 'switch-pro', capabilities: SWITCH_CAPS, features: SWITCH_FEATURES, gamepadIdPattern: SWITCH_PRO_ID },
+  { name: 'Nintendo Switch Pro',    vendorId: 0x057e, productId: 0x2009, protocol: 'switch-pro', capabilities: SWITCH_CAPS, features: SWITCH_FEATURES, trackpadCount: 0, haptics: HAPTICS.switchPro, gamepadIdPattern: SWITCH_PRO_ID },
 
   // ── GameSir Cyclone (Switch mode) ──
   // Same vid:pid as Switch Pro but reports gamepad.id as "Gamepad" rather
@@ -185,6 +202,7 @@ export const DEVICES = [
     protocol: 'switch-pro',
     capabilities: SWITCH_CAPS,
     features: { ...SWITCH_FEATURES, backPaddles: true },
+    trackpadCount: 0, haptics: HAPTICS.switchPro,
     gamepadIdPattern: SWITCH_PRO_ID,
     gamepadIdMatch: /^Gamepad/i,
     spoofs: { of: 'Nintendo Switch Pro', vendorId: 0x057e, productId: 0x2009 },
@@ -193,11 +211,11 @@ export const DEVICES = [
   },
 
   // ── Xbox family (identity-only — Gamepad API handles input) ──
-  { name: 'Xbox Wireless (BT)',     vendorId: 0x045e, productId: 0x0b12, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, gamepadIdPattern: XBOX_ID },
-  { name: 'Xbox Series X|S',        vendorId: 0x045e, productId: 0x0b13, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, gamepadIdPattern: XBOX_ID },
-  { name: 'Xbox Elite v2',          vendorId: 0x045e, productId: 0x02fd, protocol: 'xbox', capabilities: NO_CAPS, features: { ...XBOX_FEATURES, backPaddles: true }, gamepadIdPattern: XBOX_ID },
-  { name: 'Xbox One',               vendorId: 0x045e, productId: 0x02e0, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, gamepadIdPattern: XBOX_ID },
-  { name: 'Xbox 360',               vendorId: 0x045e, productId: 0x028e, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox Wireless (BT)',     vendorId: 0x045e, productId: 0x0b12, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox Series X|S',        vendorId: 0x045e, productId: 0x0b13, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox Elite v2',          vendorId: 0x045e, productId: 0x02fd, protocol: 'xbox', capabilities: NO_CAPS, features: { ...XBOX_FEATURES, backPaddles: true }, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox One',               vendorId: 0x045e, productId: 0x02e0, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox 360',               vendorId: 0x045e, productId: 0x028e, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox360, gamepadIdPattern: XBOX_ID },
 
   // ── Steam Controller (2026) — two USB identities for one physical pad ──
   //
@@ -240,7 +258,8 @@ export const DEVICES = [
     vendorId: 0x28de, productId: 0x1302,
     protocol: 'steam-controller',
     capabilities: PS_CAPS,
-    features: { faceButtons: true, systemButtons: true, triggers: 'analog', shoulders: true, sticks: 2, dpad: true, gyro: true, accel: true, touchpad: true, backPaddles: true, lightbar: false, rumble: true },
+    features: { faceButtons: true, systemButtons: true, triggers: 'analog', shoulders: true, sticks: 2, dpad: true, gyro: true, accel: true, touchpad: true, backPaddles: true, gripSense: true, lightbar: false, rumble: true },
+    trackpadCount: 2, haptics: HAPTICS.steam,
     gamepadIdPattern: STEAM_ID,
     controllerProfile: 'steam-controller',
     notes: 'Controller body plugged in directly over USB-C. One HID interface; Steam Input HID format flows on connect, no mode switch needed. Visualizer GLB is CC BY-NC-SA 4.0; see packages/visualizer/assets/controllers/STEAM_CONTROLLER_ATTRIBUTION.md.',
@@ -250,7 +269,8 @@ export const DEVICES = [
     vendorId: 0x28de, productId: 0x1304,
     protocol: 'steam-controller',
     capabilities: PS_CAPS,
-    features: { faceButtons: true, systemButtons: true, triggers: 'analog', shoulders: true, sticks: 2, dpad: true, gyro: true, accel: true, touchpad: true, backPaddles: true, lightbar: false, rumble: true },
+    features: { faceButtons: true, systemButtons: true, triggers: 'analog', shoulders: true, sticks: 2, dpad: true, gyro: true, accel: true, touchpad: true, backPaddles: true, gripSense: true, lightbar: false, rumble: true },
+    trackpadCount: 2, haptics: HAPTICS.steam,
     gamepadIdPattern: STEAM_ID,
     controllerProfile: 'steam-controller',
     notes: 'Wireless Puck dongle. Driver sends CLEAR_DIGITAL_MAPPINGS feature report on init + every 800ms to keep the controller out of keyboard/mouse fallback. Only one of the Puck\'s 5 HID interfaces (iface[3]) emits 53-byte STATE reports.',

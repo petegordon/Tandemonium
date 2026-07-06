@@ -31,7 +31,10 @@ function sharedDir() { return path.join(repoRoot(), 'shared'); }
 
 /**
  * Relative paths (POSIX) of the files we vendor from the lab src: every
- * drivers/*.js plus the existing TOP_LEVEL modules.
+ * drivers/*.js plus every top-level *.js. Both are DISCOVERED (not a hardcoded
+ * allowlist) so a new lab module — e.g. yaw-return.js, imported by
+ * sensor-fusion.js — is vendored automatically instead of being silently
+ * dropped and breaking the dynamic import at runtime.
  */
 function vendoredFiles(src = srcDir()) {
   const files = [];
@@ -39,7 +42,7 @@ function vendoredFiles(src = srcDir()) {
   if (fs.existsSync(drivers)) {
     for (const e of fs.readdirSync(drivers)) if (e.endsWith('.js')) files.push('drivers/' + e);
   }
-  for (const f of TOP_LEVEL) if (fs.existsSync(path.join(src, f))) files.push(f);
+  for (const e of fs.readdirSync(src)) if (e.endsWith('.js')) files.push(e);
   return files;
 }
 

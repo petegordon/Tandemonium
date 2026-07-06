@@ -47,7 +47,7 @@ export class FrontViewCamera {
 
   _buildFrame() {
     const frame = document.createElement('div');
-    frame.id = 'front-view-frame';
+    frame.className = 'front-view-frame'; // class, not id — versus uses one per bike
     frame.style.cssText = [
       'position:fixed',
       'pointer-events:none',
@@ -237,5 +237,49 @@ export class FrontViewCamera {
 
     this._applyRectToFrame(r);
     this._showFrame(true);
+  }
+
+  /**
+   * Versus: draw the front view into the lower-right corner of ONE viewport
+   * half. Call after that half's main render, inside the same scissored pass.
+   * halfX/halfW are the half's CSS-pixel bounds (left origin); the full window
+   * height is used. Each versus bike owns its own FrontViewCamera instance.
+   */
+  renderInHalf(renderer, scene, bike, dt, halfX, halfW) {
+    if (!this.enabled) return;
+    this.update(bike, dt);
+
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const size = Math.round(Math.min(halfW, h) * 0.30);
+    const margin = Math.round(Math.min(halfW, h) * 0.045);
+    const cssLeft = halfX + halfW - size - margin; // lower-right of this half
+    const cssTop = h - size - margin;
+    const r = { size, cssLeft, cssTop };
+    this._rect = r;
+
+    const x = Math.round(cssLeft);
+    const y = Math.round(h - cssTop - size);
+
+    this.camera.aspect = 1;
+    this.camera.updateProjectionMatrix();
+
+    renderer.setScissorTest(true);
+    renderer.setScissor(x, y, size, size);
+    renderer.setViewport(x, y, size, size);
+    renderer.render(scene, this.camera);
+
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, w, h);
+    renderer.setScissor(0, 0, w, h);
+
+    this._applyRectToFrame(r);
+    this._showFrame(true);
+  }
+
+  /** Tear down the DOM frame (e.g. leaving versus). */
+  dispose() {
+    if (this.frame && this.frame.parentNode) this.frame.parentNode.removeChild(this.frame);
+    this.frame = null;
   }
 }
