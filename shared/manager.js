@@ -615,6 +615,40 @@ export class ControllerManager {
     return true;
   }
 
+  /**
+   * Claim a specific HID DEVICE into a specific slot — the HID-only counterpart
+   * of claimPadForSlot, for controllers invisible to the Gamepad API (Steam
+   * Controller Puck, DualSense over Bluetooth in 0x31 mode). Resolves the pool
+   * entry for `device` (or its streaming same-vid:pid sibling on a fan-out Puck),
+   * claims the slot with a HID-derived pseudo-pad, and attaches the entry so the
+   * seat has gyro + synthetic buttons. Returns the claimed Slot, or null if the
+   * slot is unavailable or no live pool entry matches.
+   */
+  claimHidDeviceForSlot(slotId, device) {
+    const slot = this.getSlot(slotId);
+    if (!slot || slot.state !== 'empty' || slot._awaitingSilence || !device) return null;
+    const sameVp = (e) => e.device.vendorId === device.vendorId && e.device.productId === device.productId;
+    let entry = this._hidPool.get(device);
+    // getDevices() can hand back a different handle object for the same physical
+    // device — fall back to a streaming same-vid:pid entry.
+    if (!entry) { for (const e of this._hidPool.values()) if (sameVp(e) && e.hidActiveSince > 0) { entry = e; break; } }
+    // Fan-out (Steam Puck): designate the sibling actually emitting STATE reports.
+    if (entry && entry.driver?.constructor?.needsSiblingFanout) {
+      for (const e of this._hidPool.values()) if (sameVp(e) && e.hidActiveSince > 0) { entry = e; break; }
+    }
+    if (!entry) return null;
+    const pseudoPad = {
+      index: -1,
+      id: `HID::${device.productName || ''} Vendor: ${device.vendorId.toString(16)} Product: ${device.productId.toString(16)}`,
+      mapping: 'standard',
+    };
+    const info = ControllerRegistry.identifyFromGamepadId(pseudoPad.id);
+    slot.claim(pseudoPad, { controllerTypeHint: info?.controllerProfile || info?.protocol || null, silent: true });
+    this._attachEntryToSlot(slot, entry);
+    slot._emit('claimed');
+    return slot;
+  }
+
   _isDeviceInPoolOrSlot(device) {
     if (this._hidPool.has(device)) return true;
     return this.slots.some((s) => s.hidDevice === device);
