@@ -621,15 +621,12 @@ class Game {
       this._updateMusicBtnIcon();
     };
 
-    // Desktop first-visit: the "Tap to Start" overlay in lobby.js supplies the
-    // autoplay-unlock gesture (its dismiss calls onMusicChanged). Everyone else
-    // — returning visitors (overlay skipped) AND mobile (the overlay is now a
-    // passive "Loading…" veil that auto-dismisses, not a tap gate) — must start
-    // music on the first real user interaction instead.
+    // First-visit: the "Tap to Start" overlay in lobby.js handles autoplay unlock.
+    // Returning visitors (overlay skipped): start music on first user interaction.
     if (this.lobby.musicActive) {
       this._musicEl.play().catch(() => {});
     }
-    if (!this.lobby._tapOverlay || isMobile) {
+    if (!this.lobby._tapOverlay) {
       const startMusic = () => {
         if (this.lobby.musicActive) {
           this._musicEl.play().catch(() => {});
