@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
 
 // The riders GLB ships Draco-compressed geometry to keep it small; the plain
@@ -21,9 +22,19 @@ function getDracoLoader() {
 }
 
 export class BikeModel {
-  constructor(scene, modelPath) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {string} [modelPath]
+   * @param {BikeModel} [cloneSource] an already-loaded BikeModel to deep-
+   *   clone instead of re-fetching the GLB. The tandem GLB is ~7MB and its
+   *   load path does a per-vertex bounds scan — versus spawns two extra
+   *   bikes at once, and re-loading made Player 2's bike pop in seconds
+   *   late (after the countdown). Cloning is instant and shares geometry.
+   */
+  constructor(scene, modelPath, cloneSource = null) {
     this.scene = scene;
     this._modelPath = modelPath || BIKE_MODEL_PATH;
+    this._sharedGeometry = false; // true when cloned — never dispose shared geo
     this.group = new THREE.Group();
     scene.add(this.group);
 
@@ -87,7 +98,115 @@ export class BikeModel {
     this._captainLeanNorm = 0;   // smoothed
     this._stokerLeanNorm = 0;    // smoothed
 
-    this._loadModel();
+    // Versus spawns extra bikes by cloning an already-loaded one (instant, shares
+    // geometry — no re-fetch/decode). A SKINNED riders model needs SkeletonUtils
+    // so the clone gets its OWN Skeleton (a plain clone() shares the source's, so
+    // every bike would pose/lean together); the plain frame uses the fast clone.
+    if (cloneSource && cloneSource.modelLoaded) {
+      if (cloneSource.riderMixer) this._initFromCloneSkinned(cloneSource);
+      else this._initFromClone(cloneSource);
+    } else {
+      this._loadModel();
+    }
+  }
+
+  /**
+   * Clone a skinned riders bike for versus. SkeletonUtils.clone gives the clone
+   * its own Skeleton (independent posing) while still sharing geometry + textures,
+   * so it's ~instant and cheap on VRAM. Each clone gets its own AnimationMixer
+   * bound to the source's already-bone-stripped lean clips, so it leans by its
+   * own team's input (set via setRiderLeans / balanceResult in _stepTeam).
+   */
+  _initFromCloneSkinned(source) {
+    const model = cloneSkinned(source.group.children[0]);
+    this.group.add(model);
+    this.group.updateMatrixWorld(true);
+    this._sharedGeometry = true;
+    this.modelLoaded = true;
+
+    this.riderMixer = new THREE.AnimationMixer(model);
+    this.riderClipDuration = source.riderClipDuration;
+    const capClip = source.captainAction && source.captainAction.getClip();
+    const stoClip = source.stokerAction && source.stokerAction.getClip();
+    if (capClip) this.captainAction = this._makeScrubAction(capClip);
+    if (stoClip) this.stokerAction = this._makeScrubAction(stoClip);
+
+    if (this._pendingPreset) {
+      this.applyPreset(this._pendingPreset);
+      this._pendingPreset = null;
+    }
+  }
+
+  /**
+   * Deep-clone another BikeModel's loaded scene graph. Geometry is shared
+   * (clone() reuses BufferGeometry); materials start shared too, but every
+   * versus bike immediately runs applyPreset(), which replaces them with
+   * per-instance clones — and spoke materials are cloned here regardless
+   * because their opacity animates per bike. Only for the non-skinned frame
+   * model; skinned riders bikes fresh-load (see the constructor guard).
+   */
+  _initFromClone(source) {
+    const model = source.group.children[0].clone(true);
+    model.traverse((child) => {
+      const n = (child.name || '').toLowerCase();
+      if (child.isMesh && (n === 'cylinder035_cycle_0' || n === 'cylinder024_cycle_0')) {
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        this.spokeMeshes.push(child);
+      }
+      if (n.includes('pedal')) this.pedalNodes.push(child);
+    });
+    this.group.add(model);
+    this.group.updateMatrixWorld(true);
+    this._sharedGeometry = true;
+    this.modelLoaded = true;
+    if (this._pendingPreset) {
+      this.applyPreset(this._pendingPreset);
+      this._pendingPreset = null;
+    }
+  }
+
+  /**
+   * Swap this bike's GLB in place (Show Riders toggled at runtime). The
+   * BikeModel object itself survives — physics state and every external
+   * reference (chase camera, world, versus clone source) stay valid. The old
+   * model keeps rendering until the new GLB lands, then is removed; visual
+   * state (spokes, pedals, rider rig, preset originals) is rebuilt for the
+   * new model. applyPreset calls during the load queue via _pendingPreset.
+   * @param {string} modelPath
+   * @param {boolean} [disposeOld] false when live clones may share the old
+   *   model's geometry (e.g. a versus session cloned from this bike).
+   */
+  swapModel(modelPath, disposeOld = true) {
+    if (modelPath === this._modelPath) return;
+    this._modelPath = modelPath;
+    const oldChildren = this.group.children.slice();
+    const oldShared = this._sharedGeometry;
+    this._sharedGeometry = false;
+    this.modelLoaded = false;
+    this.spokeMeshes = [];
+    this.pedalNodes = [];
+    this.smoothSpokeFade = 0;
+    this._prevSpokeOpacity = NaN;
+    this.riderMixer = null;
+    this.captainAction = null;
+    this.stokerAction = null;
+    this.riderClipDuration = 0;
+    this._originalMats = null;
+    this._loadModel(() => {
+      for (const c of oldChildren) {
+        this.group.remove(c);
+        if (disposeOld && !oldShared) {
+          c.traverse((child) => {
+            if (child.isMesh) {
+              if (child.geometry) child.geometry.dispose();
+              const mats = Array.isArray(child.material) ? child.material : [child.material];
+              for (const m of mats) if (m) m.dispose();
+            }
+          });
+        }
+      }
+    });
   }
 
   // Torso lean (radians) at the ends of the exported clip — matches LEAN_AMP_DEG
@@ -97,7 +216,9 @@ export class BikeModel {
   // travel direction. Tuned against the road in _loadModel.
   static RIDER_MODEL_YAW = Math.PI / 2;
 
-  _loadModel() {
+  /** @param {Function} [onAttached] runs once the new model is in the group
+   *    and recentered, before it becomes children[0]-addressable state. */
+  _loadModel(onAttached) {
     const loader = new GLTFLoader();
     loader.setDRACOLoader(getDracoLoader());
     loader.load(this._modelPath, (gltf) => {
@@ -167,6 +288,10 @@ export class BikeModel {
       model.position.y -= minY;
       model.position.x -= centerX;
       model.position.z -= centerZ;
+
+      // Swap path: retire the previous model now, so the new one is
+      // children[0] before applyPreset / _initFromClone can address it.
+      if (onAttached) onAttached(model);
 
       this.modelLoaded = true;
       if (isRiders) this._setupRiderLean(model, gltf.animations);

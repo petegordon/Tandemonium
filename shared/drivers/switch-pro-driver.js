@@ -191,7 +191,56 @@ export class SwitchProDriver extends ControllerDriver {
     // The previous partial remap also had the wrong sign for gyro.z
     // relative to DualSense, which surfaced as "Switch Pro lean is
     // inverted" once sensor fusion landed.
+    // ── Buttons + sticks (report 0x30 data bytes 2-10) ──
+    // Needed for WebHID-first: previously the Switch Pro's buttons/sticks came
+    // ONLY from the Gamepad API, so an all-WebHID path had gyro but no inputs.
+    // Layout per Nintendo report 0x30 (DataView excludes the report id):
+    //   byte 2 (right): Y0x01 X0x02 B0x04 A0x08  R0x40 ZR0x80
+    //   byte 3 (shared): Minus0x01 Plus0x02 Rstick0x04 Lstick0x08 Home0x10 Capture0x20
+    //   byte 4 (left): Down0x01 Up0x02 Right0x04 Left0x08  L0x40 ZL0x80
+    // Nintendo's face layout is rotated vs Xbox/PS: the Gamepad-API "standard"
+    // maps button[0]=bottom=B, [1]=right=A, [2]=left=Y, [3]=top=X — so map into
+    // our cross/circle/square/triangle (= synthetic 0/1/2/3) accordingly.
+    let buttons, sticks, triggers;
+    if (data.byteLength >= 11) {
+      const b0 = data.getUint8(2), b1 = data.getUint8(3), b2 = data.getUint8(4);
+      buttons = {
+        cross:    !!(b0 & 0x04),  // B (bottom)
+        circle:   !!(b0 & 0x08),  // A (right)
+        square:   !!(b0 & 0x01),  // Y (left)
+        triangle: !!(b0 & 0x02),  // X (top)
+        l1:       !!(b2 & 0x40),  // L
+        r1:       !!(b0 & 0x40),  // R
+        create:   !!(b1 & 0x01),  // Minus (View)
+        options:  !!(b1 & 0x02),  // Plus (Menu)
+        l3:       !!(b1 & 0x08),  // left stick click
+        r3:       !!(b1 & 0x04),  // right stick click
+        ps:       !!(b1 & 0x10),  // Home
+        capture:  !!(b1 & 0x20),  // Capture (extra — not in standard map)
+        dpadDown:  !!(b2 & 0x01),
+        dpadUp:    !!(b2 & 0x02),
+        dpadRight: !!(b2 & 0x04),
+        dpadLeft:  !!(b2 & 0x08),
+      };
+      // ZL/ZR are DIGITAL on the Pro Controller (no analog travel) → 0 or 1.
+      triggers = { l2: (b2 & 0x80) ? 1 : 0, r2: (b0 & 0x80) ? 1 : 0 };
+      // Sticks: 12-bit packed, 3 bytes each. Nominal center 0x800; usable half-
+      // range ~0x5A8 (no per-unit calibration). Gamepad-API convention up = -1.
+      const stick = (o) => {
+        const a = data.getUint8(o), b = data.getUint8(o + 1), c = data.getUint8(o + 2);
+        const x = a | ((b & 0x0F) << 8);
+        const y = (b >> 4) | (c << 4);
+        const n = (v) => Math.max(-1, Math.min(1, (v - 0x800) / 0x5A8));
+        return { x: n(x), y: n(y) };
+      };
+      const ls = stick(5), rs = stick(8);
+      sticks = { lx: ls.x, ly: -ls.y, rx: rs.x, ry: -rs.y };
+    }
+
     return {
+      buttons,
+      sticks,
+      triggers,
       gyro: { x: -rawGyroY, y: rawGyroZ, z: -rawGyroX },
       accel: { x: -rawAccelY, y: rawAccelZ, z: rawAccelX },
       touchpad: null,
@@ -202,6 +251,18 @@ export class SwitchProDriver extends ControllerDriver {
   }
 
   static detectConnectionType(device) {
+    // The USB Pro Controller exposes the Nintendo handshake OUTPUT report 0x80;
+    // the Bluetooth transport does not. (Hardcoding 'usb' mislabelled BT pads AND
+    // ran a doomed USB handshake over BT — see the oversized 0x30 BT reports.)
+    try {
+      let has80 = false, sawReports = false;
+      for (const c of (device.collections || [])) {
+        for (const r of (c.outputReports || [])) { sawReports = true; if (r.reportId === 0x80) has80 = true; }
+        for (const _ of (c.inputReports || [])) { sawReports = true; }
+      }
+      if (has80) return 'usb';
+      if (sawReports) return 'bluetooth';   // has reports but no 0x80 → Bluetooth
+    } catch (e) { /* fall through to default */ }
     return 'usb';
   }
 

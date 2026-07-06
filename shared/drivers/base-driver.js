@@ -10,6 +10,14 @@
 // or check capabilities.
 
 export class ControllerDriver {
+  // Whether the overlay should fan `inputreport` out to OTHER approved handles
+  // sharing this device's vid:pid. Only true for controllers whose one physical
+  // unit legitimately exposes several same-vid:pid interfaces (Steam Controller
+  // Puck). Default false: for Sony pads a "sibling" same-vid:pid handle is a
+  // DIFFERENT physical device (a real DS4 next to a DS4-spoofing GameSir), and
+  // feeding its reports into this driver corrupts the stream — kills gyro.
+  static needsSiblingFanout = false;
+
   /**
    * @param {HIDDevice} device — the WebHID device
    * @param {string} connectionType — 'usb' | 'bluetooth'

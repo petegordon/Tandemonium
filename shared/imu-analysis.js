@@ -13,8 +13,14 @@
 // renders and decides redo/keep on.
 
 const AT_REST_GYRO_STD_MAX = 40;     // raw σ; above this the pad wasn't still
-const AT_REST_ACCEL_MIN = 6500;      // raw |accel| window around 1g (8192)
-const AT_REST_ACCEL_MAX = 10000;
+// At-rest |accel| must land within this fraction of 1g. The 1g raw value is
+// device-specific (DS4/DS5 = 8192 at ±4g, Steam Controller = 16384 at ±2g,
+// Switch Pro = 4096), so the window is expressed relative to the caller-
+// supplied 1g rather than hardcoded — otherwise a correctly-scaled SC always
+// false-warns "|accel| isn't ~8192". Defaults to 8192 when no scale is given.
+const DEFAULT_1G = 8192;
+const AT_REST_ACCEL_TOL_LO = 0.8;    // 0.8x..1.25x 1g (≈ the old 6500..10000 @8192)
+const AT_REST_ACCEL_TOL_HI = 1.25;
 const ROT_MIN_STD = 80;              // raw σ on the dominant axis = clear rotation
 const ROT_DOMINANCE_RATIO = 2.0;     // top axis σ / 2nd axis σ = isolated to one axis
 const YAW_ACCEL_STD_MAX = 200;       // raw σ; above this the "yaw" wasn't level
@@ -28,9 +34,12 @@ const std = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((v) => (v - 
  * Score one IMU capture step.
  * @param {string} stepId — 'at-rest' | 'pitch' | 'roll' | 'yaw'
  * @param {Array<{gyro:{x,y,z}, accel:{x,y,z}}>} samples — parsed, raw units
+ * @param {number} [accelScale] — g per raw accel unit (from the driver's parse,
+ *   e.g. 1/16384 for the Steam Controller). Sets the expected at-rest 1g
+ *   magnitude; omit to assume the 8192 (±4g) default.
  * @returns {{ok:boolean, level:'pass'|'warn'|'fail', message:string, detail:object|null}}
  */
-export function analyzeImuStep(stepId, samples) {
+export function analyzeImuStep(stepId, samples, accelScale) {
   if (!samples || samples.length < MIN_SAMPLES) {
     return { ok: false, level: 'fail', detail: null,
       message: `Only ${samples?.length || 0} IMU reports parsed — is the controller actually streaming gyro?` };
@@ -44,14 +53,15 @@ export function analyzeImuStep(stepId, samples) {
   const detail = { gyroStd: round(gStd), accelStd: round(aStd), accelMag: Math.round(accelMag), gyroBias: round(gBias) };
 
   if (stepId === 'at-rest') {
+    const oneG = accelScale ? Math.round(1 / accelScale) : DEFAULT_1G;
     const maxG = Math.max(...gStd);
     if (maxG > AT_REST_GYRO_STD_MAX) {
       return { ok: false, level: 'fail', detail,
         message: `Not still — gyro σ ${maxG.toFixed(0)} (raw). Set it down, hands fully off, and redo.` };
     }
-    if (accelMag < AT_REST_ACCEL_MIN || accelMag > AT_REST_ACCEL_MAX) {
+    if (accelMag < oneG * AT_REST_ACCEL_TOL_LO || accelMag > oneG * AT_REST_ACCEL_TOL_HI) {
       return { ok: false, level: 'warn', detail,
-        message: `At-rest |accel| ${accelMag.toFixed(0)} isn't ~8192 (1g) — IMU offset/scale looks wrong.` };
+        message: `At-rest |accel| ${accelMag.toFixed(0)} isn't ~${oneG} (1g) — IMU offset/scale looks wrong.` };
     }
     return { ok: true, level: 'pass', detail,
       message: `Still ✓  gyro σ ${maxG.toFixed(0)}, |accel| ${accelMag.toFixed(0)}≈1g, bias (${round(gBias).join(',')})` };
