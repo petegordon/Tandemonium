@@ -12,3 +12,5 @@ worker/.wrangler/
 steam_output/
 steam/builds/output/
 debug-*.png
+# Claude Code per-user local settings (machine-specific; shared config/skills stay tracked)
+.claude/settings.local.json

@@ -9,7 +9,36 @@ export const isMobile = !_isElectron && (
 export const isAndroid = /Android/i.test(navigator.userAgent);
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-export const BIKE_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
+// Riders model: the fused tandem + Victorian goose captain & stoker, skinned so
+// their torsos lean with the balance. See BikeModel rider-lean wiring. The older
+// rider-less frame lives at 'tandem-3d/tandem_bicycle.glb'.
+export const BIKE_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
+
+// The bike chooser / lobby preview keeps the original recolorable frame so the
+// color presets still take effect there. The in-game bike uses the riders model
+// above (one fused mesh, so presets no-op on it).
+export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
+
+/**
+ * "Show Riders" setting — when on, the in-game bike is the Canadian-goose
+ * riders model (with torso lean + the front-facing selfie cam); when off, the
+ * plain frame. ON by default (opt-out): only an explicit 'off' disables it, so
+ * a fresh install shows the geese riders. Read at boot (see Game constructor);
+ * the Options dialog persists it and it applies on next launch.
+ */
+export function getShowRiders() {
+  try { return localStorage.getItem('tandemonium_show_riders') !== 'off'; }
+  catch (e) { return true; }
+}
+
+/**
+ * "FPS Display" setting — when on, a small frame-rate readout shows at the
+ * top of the screen in every mode. Off by default; applies immediately.
+ */
+export function getShowFps() {
+  try { return localStorage.getItem('tandemonium_show_fps') === 'on'; }
+  catch (e) { return false; }
+}
 
 // Protocol message types
 export const MSG_PEDAL     = 0x01;
@@ -32,6 +61,10 @@ export const MSG_COLLECT     = 0x06;
 export const MSG_PROFILE     = 0x07;
 
 export const RELAY_URL = 'wss://tandemonium-relay.pete-872.workers.dev';
+
+// Backend API (auth, scores, achievements, leaderboard, /me). Shared by the
+// identity client and the achievements sync glue. (#318 Step 4)
+export const API_BASE = 'https://tandemonium-api.pete-872.workers.dev';
 
 // Production web URL — used for QR codes in Electron, share links, etc.
 // Update this when the domain changes.

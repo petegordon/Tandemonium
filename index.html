@@ -1963,6 +1963,321 @@
   .lobby-btn-p2-gp.p2-flash {
     animation: btn-local-join-flash 450ms ease-out;
   }
+  /* ── VERSUS mode: lobby team-setup screen ── */
+  :root {
+    --versus-team-a: #4c7dff;  /* matches ControllerManager P1/P3 lightbar blue */
+    --versus-team-b: #ff4560;  /* matches P2/P4 red + existing player-2 token */
+  }
+  .lobby-btn-versus {
+    background: rgba(160, 64, 255, 0.18);
+    border-color: rgba(160, 64, 255, 0.65);
+    color: #c898ff;
+  }
+  .lobby-btn-versus:hover { background: rgba(160, 64, 255, 0.32); border-color: rgba(160, 64, 255, 0.9); }
+  .lobby-btn-versus:active { background: rgba(160, 64, 255, 0.45); }
+  .versus-teams {
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    gap: calc(1.2 * var(--ls));
+    width: 100%;
+    margin: calc(0.5 * var(--ls)) 0;
+  }
+  .versus-team {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: calc(0.5 * var(--ls));
+    padding: calc(0.8 * var(--ls));
+    border-radius: calc(0.8 * var(--ls));
+    border: 2px solid transparent;
+  }
+  .versus-team-a { border-color: rgba(76, 125, 255, 0.5); background: rgba(76, 125, 255, 0.08); }
+  .versus-team-b { border-color: rgba(255, 69, 96, 0.5); background: rgba(255, 69, 96, 0.08); }
+  .versus-team-title {
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+  }
+  .versus-team-a .versus-team-title { color: var(--versus-team-a); }
+  .versus-team-b .versus-team-title { color: var(--versus-team-b); }
+  .versus-vs {
+    align-self: center;
+    font-size: 1.1em;
+    font-weight: 800;
+    opacity: 0.5;
+    letter-spacing: 0.1em;
+  }
+  .versus-team-slots {
+    display: flex;
+    flex-direction: column;
+    gap: calc(0.4 * var(--ls));
+    width: 100%;
+    min-height: calc(4.4 * var(--ls));
+  }
+  .versus-player-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: calc(0.45 * var(--ls)) calc(0.6 * var(--ls));
+    border-radius: calc(0.5 * var(--ls));
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    line-height: 1.2;
+  }
+  .versus-player-card .vp-name {
+    font-size: 0.65em;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+  }
+  .versus-player-card .vp-device {
+    font-size: 0.5em;
+    opacity: 0.7;
+    letter-spacing: 0.08em;
+  }
+  .versus-player-card.vp-empty {
+    opacity: 0.45;
+    border-style: dashed;
+    background: transparent;
+  }
+  /* Detected-but-unjoined controller: live join button (co-op palette) */
+  .versus-player-card.vp-join {
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    background: rgba(255, 69, 96, 0.18);
+    border: 1px solid rgba(255, 69, 96, 0.7);
+    animation: btn-local-join-flash 1.6s ease-out infinite;
+  }
+  .versus-player-card.vp-join:hover {
+    background: rgba(255, 69, 96, 0.32);
+    border-color: rgba(255, 69, 96, 0.95);
+  }
+  .versus-player-card.vp-join .vp-name { color: var(--tandem-player2); }
+  .versus-join-hint {
+    font-size: 0.62em;
+    opacity: 0.65;
+    letter-spacing: 0.05em;
+    margin: calc(0.3 * var(--ls)) 0;
+  }
+  /* Reuse the P2 join flash for versus cards (player pressed a button) */
+  .versus-player-card.p2-flash {
+    animation: btn-local-join-flash 450ms ease-out;
+  }
+  /* ── VERSUS mode: in-game split screen ── */
+  /* Hide the singleton-bike HUD — versus draws its own per-team panels. */
+  body.mode-versus #hud-top,
+  body.mode-versus #hud-dashboard,
+  body.mode-versus #bottom-hud,
+  body.mode-versus #progress-bar-wrap,
+  body.mode-versus #side-buttons,
+  body.mode-versus #bike-gauge,
+  body.mode-versus #phone-gauge,
+  body.mode-versus #partner-gauge,
+  body.mode-versus #contribution-bar,
+  body.mode-versus #gamepad-badge {
+    display: none !important;
+  }
+  /* Center divider between the two viewports */
+  #versus-divider {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 100%;
+    margin-left: -1px;
+    background: rgba(255, 255, 255, 0.35);
+    z-index: 40;
+    pointer-events: none;
+  }
+  body.mode-versus #versus-divider { display: block; }
+  /* Full-frame phase (winner cinematic + results): the split is gone, so
+     the divider and per-half panels go with it. The banner stays. */
+  body.mode-versus.versus-fullframe #versus-divider { display: none; }
+  body.mode-versus.versus-fullframe .vh-panel { display: none; }
+
+  /* Per-team pedal controls: one bar in each split-screen half. Hidden unless
+     versus; also gone during the winner cinematic (full-frame). */
+  .versus-pedals {
+    display: none;
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    z-index: 45;
+    gap: 10px;
+    padding: 0 12px;
+    box-sizing: border-box;
+    justify-content: center;
+    align-items: center;
+    pointer-events: none;
+  }
+  body.mode-versus #versus-pedals-a { display: flex; left: 0; width: 50%; }
+  body.mode-versus #versus-pedals-b { display: flex; left: 50%; width: 50%; }
+  /* Purple pedal-rhythm arrows, same as multiplayer — shown per half in versus. */
+  body.mode-versus .versus-pedals .pedal-indicator { display: flex; }
+  body.mode-versus.versus-fullframe .versus-pedals { display: none; }
+  .versus-pedals .pedal-touch {
+    pointer-events: auto;
+    width: 40%;
+    max-width: 130px;
+    height: 12vh;
+    min-height: 56px;
+    max-height: 92px;
+  }
+  /* Per-team HUD panels (built by js/versus/versus-hud.js) */
+  #versus-hud {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    pointer-events: none;
+    font-family: inherit;
+  }
+  .vh-panel {
+    position: absolute;
+    top: 10px;
+    width: min(38vw, 340px);
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--vh-color);
+    color: #fff;
+  }
+  .vh-panel.vh-left { left: 10px; }
+  .vh-panel.vh-right { right: 10px; }
+  .vh-chip {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    color: var(--vh-color);
+  }
+  .vh-stats {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 2px 0 6px;
+  }
+  .vh-stats .vh-unit { font-size: 11px; opacity: 0.7; font-weight: 400; }
+  .vh-progress {
+    position: relative;
+    height: 8px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.18);
+    overflow: visible;
+  }
+  .vh-prog-fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 0%;
+    border-radius: 4px;
+    background: var(--vh-color);
+    opacity: 0.75;
+  }
+  .vh-tick {
+    position: absolute;
+    top: -2px;
+    width: 2px;
+    height: 12px;
+    background: rgba(255, 255, 255, 0.55);
+  }
+  .vh-marker {
+    position: absolute;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    margin: -5px 0 0 -5px;
+    border-radius: 50%;
+    border: 1.5px solid #fff;
+    box-sizing: border-box;
+  }
+  .vh-marker-a { background: var(--versus-team-a); }
+  .vh-marker-b { background: var(--versus-team-b); z-index: 1; }
+  .vh-sync {
+    margin-top: 6px;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    opacity: 0.85;
+  }
+  .vh-sync-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #888;
+    vertical-align: -1px;
+  }
+  .vh-crash {
+    display: none;
+    margin-top: 6px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    color: #ff5555;
+    animation: vh-crash-pulse 0.5s ease-in-out infinite alternate;
+  }
+  @keyframes vh-crash-pulse {
+    from { opacity: 1; }
+    to   { opacity: 0.35; }
+  }
+  /* Winner banner across both halves */
+  #versus-banner {
+    position: absolute;
+    top: 34%;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: clamp(28px, 6vw, 64px);
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+    pointer-events: none;
+  }
+  /* Results overlay */
+  #versus-results {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.65);
+  }
+  .vr-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 28px 36px;
+    border-radius: 16px;
+    background: rgba(20, 24, 40, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    text-align: center;
+  }
+  .vr-title {
+    font-size: clamp(22px, 4vw, 40px);
+    font-weight: 900;
+    letter-spacing: 0.08em;
+  }
+  .vr-teams {
+    display: flex;
+    gap: 28px;
+  }
+  .vr-team {
+    min-width: 130px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--vh-color);
+  }
+  .vr-team-name {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: var(--vh-color);
+  }
+  .vr-outcome { font-size: 20px; font-weight: 800; margin: 4px 0; }
+  .vr-detail { font-size: 11px; opacity: 0.7; }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -2619,6 +2934,12 @@
   }
 
   /* ── Profile popup ── */
+  /* The profile popup lives inside the left toggle column, which is a
+     z-index:60 stacking context — so the popup's own z-index can't lift it
+     above the right toggle column (also z-index:60, painted later in the DOM).
+     Elevate the whole left column while the popup is open so it overlays the
+     right-side toggles instead of hiding behind them. (#332) */
+  .lobby-left-col:has(#profile-popup.visible) { z-index: 120; }
   #profile-popup {
     display: none;
     position: absolute;
@@ -2674,6 +2995,25 @@
   }
   .profile-popup-logout:hover {
     background: rgba(255,80,80,0.25);
+  }
+  /* Controller-reachable sign-in proxy (#325) — affirmative, distinct from the
+     red LOG OUT and the neutral RETURN TO LOBBY buttons. */
+  .profile-popup-signin-btn {
+    margin-top: 8px;
+    padding: 6px 18px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    border: 1px solid rgba(90,170,255,0.5);
+    border-radius: 6px;
+    background: rgba(90,170,255,0.15);
+    color: rgba(150,200,255,0.95);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+  .profile-popup-signin-btn:hover {
+    background: rgba(90,170,255,0.28);
   }
   .profile-popup-back {
     margin-top: 4px;
@@ -2903,6 +3243,14 @@
     min-width: 300px;
     max-width: 400px;
     text-align: center;
+    /* Cap to the viewport and scroll internally so tall content (e.g. the
+       Show Riders row) is reachable on short/mobile screens by touch. dvh
+       tracks the mobile URL bar; vh is the fallback. */
+    max-height: 85vh;
+    max-height: 90dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   .options-card h2 { font-size: 20px; margin-bottom: 20px; }
   .options-card .label { font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -3953,6 +4301,24 @@ ON</button>
 <!-- Crash flash -->
 <div id="crash-overlay"></div>
 
+<!-- Versus split-screen center divider (visible only with body.mode-versus) -->
+<div id="versus-divider"></div>
+
+<!-- Versus per-team pedal controls (one per split-screen half; body.mode-versus).
+     Top-level (not inside #bottom-hud, which versus hides). Wired in game.js. -->
+<div id="versus-pedals-a" class="versus-pedals">
+  <div class="pedal-indicator vp-arrow-up">&#9650;</div>
+  <div class="pedal-touch vp-left"><img src="images/pedal_left.png" alt="Left Pedal"></div>
+  <div class="pedal-touch vp-right"><img src="images/pedal_right.png" alt="Right Pedal"></div>
+  <div class="pedal-indicator vp-arrow-down">&#9660;</div>
+</div>
+<div id="versus-pedals-b" class="versus-pedals">
+  <div class="pedal-indicator vp-arrow-up">&#9650;</div>
+  <div class="pedal-touch vp-left"><img src="images/pedal_left.png" alt="Left Pedal"></div>
+  <div class="pedal-touch vp-right"><img src="images/pedal_right.png" alt="Right Pedal"></div>
+  <div class="pedal-indicator vp-arrow-down">&#9660;</div>
+</div>
+
 <!-- Tutorial calibration flow overlay -->
 <div id="calib-flow-overlay" style="display:none;">
   <div id="calib-flow-icon"></div>
@@ -3984,9 +4350,20 @@ ON</button>
 </div>
 <script>
 (function() {
-  var isDesktop = navigator.userAgent.includes('Electron') || navigator.userAgent.includes('electron');
+  var ua = navigator.userAgent;
+  var isDesktop = ua.includes('Electron') || ua.includes('electron');
+  // Mirror config.js isMobile so the boot veil label agrees with the app.
+  var isMobile = !isDesktop && (/Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua) || navigator.maxTouchPoints > 1);
+  // Desktop (Electron) and mobile both show a "Loading…" veil instead of the
+  // "Tap to Start" prompt: desktop dismisses on gamepad input (poll below),
+  // mobile auto-dismisses once the Lobby loads (the tap-gate is obsolete — iOS
+  // motion permission is requested from a real gesture at ride start). Desktop
+  // *browsers* keep the click-to-start prompt (they need the click to dismiss).
+  if (isDesktop || isMobile) {
+    var textEl = document.getElementById('tap-to-start-text');
+    if (textEl) textEl.textContent = 'Loading…';
+  }
   if (isDesktop) {
-    document.getElementById('tap-to-start-text').textContent = 'Loading...';
     // Poll for gamepad input to dismiss the overlay
     var overlay = document.getElementById('tap-to-start');
     function pollForButton() {
@@ -4070,6 +4447,11 @@ ON</button>
           </div>
           <div id="profile-popup-signin" style="display:none;padding:12px;text-align:center;">
             <div id="gsi-button-container"></div>
+            <!-- Controller/keyboard-reachable sign-in: the rendered Google button
+                 above is a cross-origin iframe that a synthetic .click() can't
+                 activate, so this proxy triggers One Tap in code instead. (#325) -->
+            <button class="profile-popup-signin-btn" id="profile-popup-signin-proxy" style="margin-top:10px;">SIGN IN WITH GOOGLE</button>
+            <div id="profile-popup-signin-hint" style="display:none;font-size:11px;line-height:1.4;opacity:0.75;margin-top:8px;">One&nbsp;Tap isn't available right now — sign in with the button above (mouse) or on your phone.</div>
             <button class="profile-popup-back" id="profile-popup-signin-back" style="margin-top:10px;">RETURN TO LOBBY</button>
           </div>
         </div>
@@ -4115,7 +4497,41 @@ ON</button>
           <p class="lobby-prompt">Choose your seat:</p>
           <button class="lobby-btn lobby-btn-accent" id="btn-captain">START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span></button>
           <button class="lobby-btn" id="btn-stoker">JOIN A RIDE<br><span class="lobby-role-desc">Stoker &middot; Back seat</span></button>
+          <!-- VERSUS: local split-screen team racing. Desktop-only (needs
+               2-4 physical controllers); lobby.js shows it when !isMobile. -->
+          <button class="lobby-btn lobby-btn-versus" id="btn-versus" style="display:none;">VERSUS<br><span class="lobby-role-desc">Race side by side &middot; 2&ndash;4 players</span></button>
           <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════
+             SCREEN: Versus Team Setup (#lobby-versus)
+             Local split-screen team racing — 2-4 players join with
+             their own controllers (press A) or keyboard, then get
+             auto-assigned to alternating teams. D-pad ←/→ switches a
+             player's team. CHOOSE LEVEL continues to level select
+             with _pendingMode='versus'.
+             Back: #lobby-role
+             ════════════════════════════════════════════════════ -->
+        <div id="lobby-versus" class="lobby-step" style="display:none;">
+          <p class="lobby-prompt">Build your teams:</p>
+          <div class="versus-teams">
+            <div class="versus-team versus-team-a">
+              <div class="versus-team-title">TEAM BLUE</div>
+              <div class="versus-team-slots" id="versus-team-a-slots"></div>
+            </div>
+            <div class="versus-vs">VS</div>
+            <div class="versus-team versus-team-b">
+              <div class="versus-team-title">TEAM RED</div>
+              <div class="versus-team-slots" id="versus-team-b-slots"></div>
+            </div>
+          </div>
+          <p class="versus-join-hint" id="versus-join-hint">Press <strong>A</strong> on a controller to join &middot; <strong>&#x25C0;/&#x25B6;</strong> switch team</p>
+          <button class="lobby-btn lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
+            <span class="btn-local-join-main">JOIN WITH KEYBOARD</span>
+            <span class="btn-local-join-hint">Click or press Enter</span>
+          </button>
+          <button class="lobby-btn lobby-btn-accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</button>
+          <button class="lobby-back" id="btn-back-versus">&larr; Back</button>
         </div>
 
         <!-- ════════════════════════════════════════════════════
@@ -4344,11 +4760,11 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.3476abd | 04-12-2026 09:18</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Steam Input live diagnostic">🎮 Test</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.811a37d | 07-07-2026 17:55</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
-  <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png" alt="Tandemonium Actions">
-  <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png" alt="">
-  <img id="lobby-img-right" class="lobby-desktop-img" src="images/large_action_facing.png" alt="">
+  <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
+  <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
+  <img id="lobby-img-right" class="lobby-desktop-img" src="images/large_action_facing.png?v=geese" alt="">
 </div>
 
 <!-- Leaderboard modal -->
@@ -4666,6 +5082,18 @@ ON</button>
       <button class="opt-btn" id="opt-gyro-gravity">Gravity</button>
     </div>
     <div class="options-note">Controller gyro only — applies immediately</div>
+    <div class="label" id="opt-riders-label">Show Riders</div>
+    <div class="options-row" id="opt-riders-row">
+      <button class="opt-btn" id="opt-riders-on">On</button>
+      <button class="opt-btn" id="opt-riders-off">Off</button>
+    </div>
+    <div class="options-note">Canadian-goose riders + front camera — applies immediately</div>
+    <div class="label" id="opt-fps-label">FPS Display</div>
+    <div class="options-row" id="opt-fps-row">
+      <button class="opt-btn" id="opt-fps-on">On</button>
+      <button class="opt-btn" id="opt-fps-off">Off</button>
+    </div>
+    <div class="options-note">Frame-rate readout, all modes — applies immediately</div>
     <button id="options-perf-btn">Run Perf Test</button>
     <div id="options-perf-result"></div>
     <button id="options-devtools-btn">Tools</button>

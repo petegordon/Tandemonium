@@ -16,7 +16,6 @@ if (typeof document !== 'undefined') {
   document.addEventListener('click', _prime, { once: true });
 }
 
-let _offRoadThrottleUntil = 0;
 
 // Targeted haptic sources: a list of objects (typically InputManager
 // instances) whose `.gamepadIndex` property identifies which gamepads
@@ -67,13 +66,15 @@ export function removeHapticSource(src) {
   if (_hapticSources.length === 0) _hapticSources = null;
 }
 
-function _gamepadRumble(strong, weak, duration) {
+function _gamepadRumble(strong, weak, duration, sources = null) {
   try {
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-    if (_hapticSources) {
+    const targets = sources || _hapticSources;
+    if (targets) {
       // Targeted: rumble the specific gamepad index of each source.
       // Multiple sources in local MP means both players feel the event.
-      for (const src of _hapticSources) {
+      // Versus passes per-team `sources` so only that team's pads rumble.
+      for (const src of targets) {
         if (!src) continue;
 
         // Skip controllers sitting idle on the desk during one-human local
@@ -131,34 +132,52 @@ function _gamepadRumble(strong, weak, duration) {
   } catch { /* unsupported */ }
 }
 
-export function hapticCrash() {
+// Event helpers take an optional `sources` array (same shape as
+// setHapticSources) to target a subset of players — versus mode routes
+// team events (crash, checkpoint, off-road) to that team's controllers
+// only. Omitted → module-global sources (all registered players).
+
+export function hapticCrash(sources = null) {
   if (canVibrate) navigator.vibrate([100, 30, 200]);
-  _gamepadRumble(0.8, 0.4, 300);
+  _gamepadRumble(0.8, 0.4, 300, sources);
 }
 
-export function hapticTreeHit() {
+export function hapticTreeHit(sources = null) {
   if (canVibrate) navigator.vibrate(150);
-  _gamepadRumble(1.0, 0.5, 150);
+  _gamepadRumble(1.0, 0.5, 150, sources);
 }
 
-export function hapticCheckpoint() {
+/** Bike-vs-bike contact in versus — a solid thump, softer than a crash. */
+export function hapticBump(sources = null) {
+  if (canVibrate) navigator.vibrate(60);
+  _gamepadRumble(0.5, 0.25, 120, sources);
+}
+
+export function hapticCheckpoint(sources = null) {
   if (canVibrate) navigator.vibrate(50);
-  _gamepadRumble(0.2, 0.3, 50);
+  _gamepadRumble(0.2, 0.3, 50, sources);
 }
 
-export function hapticFinish() {
+export function hapticFinish(sources = null) {
   if (canVibrate) navigator.vibrate([50, 50, 50, 50, 200]);
-  _gamepadRumble(0.4, 0.6, 400);
+  _gamepadRumble(0.4, 0.6, 400, sources);
 }
 
-export function hapticOffRoad(intensity) {
+// Off-road throttle is PER TARGET GROUP (keyed by the first source, or a
+// global key for untargeted calls). A single module-wide window starved
+// versus: team A's per-frame call always set the throttle first, so team
+// B's call landed inside the window and its riders never felt the grass.
+const _offRoadThrottleByKey = new Map();
+
+export function hapticOffRoad(intensity, sources = null) {
   const now = performance.now();
-  if (now < _offRoadThrottleUntil) return;
+  const key = sources && sources.length ? sources[0] : '__global__';
+  if (now < (_offRoadThrottleByKey.get(key) || 0)) return;
   if (intensity < 0.1) return;
 
   const duration = Math.round(20 + intensity * 30);
-  _offRoadThrottleUntil = now + duration + 40;
+  _offRoadThrottleByKey.set(key, now + duration + 40);
 
   if (canVibrate) navigator.vibrate(duration);
-  _gamepadRumble(intensity * 0.3, intensity * 0.2, duration);
+  _gamepadRumble(intensity * 0.3, intensity * 0.2, duration, sources);
 }

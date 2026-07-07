@@ -2,10 +2,11 @@
 // AUTH — Google Identity Services (GSI) client-side auth
 // ============================================================
 
+import { API_BASE } from './config.js';
+
 const STORAGE_USER = 'tandemonium_auth_user';
 const STORAGE_TOKEN = 'tandemonium_auth_token';
 const GOOGLE_CLIENT_ID = '640682648249-dp1dou0mmpkm6m697oakbe9odabt1dui.apps.googleusercontent.com';
-const API_BASE = 'https://tandemonium-api.pete-872.workers.dev';
 
 export class AuthManager {
   constructor() {
@@ -37,6 +38,12 @@ export class AuthManager {
 
   getUser() {
     return this.user;
+  }
+
+  /** Current server JWT (or null). The injected-identity surface other modules
+   *  depend on, so they can make authed requests without knowing about auth. */
+  getToken() {
+    return this.token;
   }
 
   onLogin(callback) {
@@ -213,9 +220,19 @@ export class AuthManager {
     }
   }
 
-  login() {
-    if (typeof google === 'undefined' || !google.accounts) return;
-    google.accounts.id.prompt();
+  /**
+   * Trigger Google One Tap. Pass `onMoment` to learn whether the prompt
+   * actually displayed — it receives the GSI PromptMomentNotification (or null
+   * if GSI isn't loaded), so callers can surface a fallback when One Tap is
+   * suppressed by FedCM cooldown / browser policy. (#325)
+   */
+  login(onMoment = null) {
+    if (typeof google === 'undefined' || !google.accounts) {
+      if (onMoment) onMoment(null);
+      return;
+    }
+    if (onMoment) google.accounts.id.prompt((n) => onMoment(n));
+    else google.accounts.id.prompt();
   }
 
   // Clear server JWT token only (keeps user profile for re-auth)
@@ -254,19 +271,6 @@ export class AuthManager {
         'Authorization': `Bearer ${this.token}`,
       },
       body: JSON.stringify(data),
-    });
-    return res.ok ? res.json() : null;
-  }
-
-  async syncAchievements(ids) {
-    if (!this.token || !ids || ids.length === 0) return null;
-    const res = await fetch(`${API_BASE}/achievements/sync`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.token}`,
-      },
-      body: JSON.stringify({ achievements: ids }),
     });
     return res.ok ? res.json() : null;
   }
