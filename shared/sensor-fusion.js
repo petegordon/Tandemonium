@@ -3,9 +3,29 @@
 // ============================================================
 //
 // Ported from InputManager's sensor fusion block (see PR #186 and the
-// follow-up polish in feature/gyro-sensor-fusion). Originally derived from
-// JibbSmart/GamepadMotionHelpers — see the GyroWiki "Finding Gravity with
-// Sensor Fusion" article for the algorithm derivation.
+// follow-up polish in feature/gyro-sensor-fusion). Derived from
+// JibbSmart/GamepadMotionHelpers by Julian "Jibb" Smart — see the GyroWiki
+// "Finding Gravity with Sensor Fusion" article (http://gyrowiki.jibbsmart.com/)
+// for the algorithm derivation. The original C++ is MIT-licensed; this is a
+// JavaScript port adapted for the WebHID runtime. The required copyright and
+// permission notice is reproduced below and in packages/core/THIRD_PARTY_NOTICES.md.
+//
+// ── Upstream license (GamepadMotionHelpers) ──────────────────
+//   MIT License — Copyright (c) 2020-2023 Julian "Jibb" Smart
+//
+//   Permission is hereby granted, free of charge, to any person obtaining a
+//   copy of this software and associated documentation files (the "Software"),
+//   to deal in the Software without restriction, including without limitation
+//   the rights to use, copy, modify, merge, publish, distribute, sublicense,
+//   and/or sell copies of the Software, and to permit persons to whom the
+//   Software is furnished to do so, subject to the following conditions:
+//
+//   The above copyright notice and this permission notice shall be included in
+//   all copies or substantial portions of the Software.
+//
+//   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//   IMPLIED. See THIRD_PARTY_NOTICES.md for the full warranty disclaimer.
+// ─────────────────────────────────────────────────────────────
 //
 // Three pipelines run in parallel each ingest() call:
 //  1. Axis-angle quaternion integration of gyro rates
@@ -20,6 +40,9 @@
 // ============================================================
 
 import * as THREE from 'three';
+
+import { twistAngleY, stepYawReturn, composeHeadingOffset } from './yaw-return.js';
+import { rollFromGravity } from './gravity-roll.js';
 
 // ── Initial one-shot bias calibration ──
 // Bluetooth captures are noisier (lower effective sample rate + packet
@@ -66,6 +89,16 @@ const SENSOR_FUSION_ANGULAR_ACCEL_THRESHOLD = 20.0;  // deg/s² gate
 const SENSOR_FUSION_EASE_IN_TIME = 3.0;
 const SENSOR_FUSION_HALF_TIME = 0.1;
 
+// ── At-rest yaw return-to-neutral (SC yaw-drift fix, issue #88) ──
+// Gravity correction anchors pitch and roll but can never touch yaw: the
+// accelerometer has no reference for heading about the gravity axis, so any
+// residual yaw-axis gyro bias integrates without bound and re-accumulates
+// after every recenter. When the controller is detected at rest, slowly bleed
+// the *displayed* heading back toward the recenter reference — pitch/roll are
+// left physically true. Mirrors how Steam Input's gyro re-centers "when you
+// let go". Gated on rest so it never fights an intentional slow turn.
+const YAW_RETURN_REST_DELAY = 0.75; // must be at rest this long before decay starts (s)
+
 export class SensorFusion {
   constructor() {
     // Bias in raw sensor units (subtracted from raw gyro every frame).
@@ -93,6 +126,27 @@ export class SensorFusion {
     this._gravityVec = new THREE.Vector3(0, -1, 0);
     this._smoothAccel = new THREE.Vector3(0, -1, 0);
     this._shakiness = 0;
+
+    // Recentered orientation the overlay actually displays. Equals the raw
+    // integrated `orientation` with its heading (yaw) offset removed, so a
+    // recenter — or the at-rest auto-return below — sticks without fighting
+    // the gravity-anchored pitch/roll. Consumers should read THIS, not the raw
+    // `orientation`, when they want what the user sees.
+    this.displayOrientation = new THREE.Quaternion();
+
+    // Heading offset (radians about world-up) subtracted from `orientation` to
+    // form `displayOrientation`. recenter() snaps it to the current heading;
+    // the at-rest yaw return slews it toward the current heading over time.
+    this._refYaw = 0;
+
+    // Half-life (seconds) of the at-rest yaw return-to-neutral. 0 disables it
+    // (raw yaw passes straight through). Set from the overlay's "Yaw Drift"
+    // setting; larger = slower return.
+    this.yawReturnHalfLife = 0;
+
+    // Seconds the controller has been continuously detected at rest, updated by
+    // the stillness pipeline. Gates the yaw return.
+    this._restDuration = 0;
 
     // Stillness window (continuous bias refinement at rest)
     this._stillnessWindow = {
@@ -132,18 +186,15 @@ export class SensorFusion {
   get calibrating() { return this._calibrating; }
 
   /**
-   * Roll (left/right lean) about the sensor's forward axis, derived from the
-   * gravity-corrected down vector rather than the integrated orientation's
-   * Euler decomposition. Because gravity is an absolute reference, this does
-   * NOT drift and is naturally bounded to (-π, π] with no degenerate flip —
-   * fixing the "fuses to one side then bounces to the other" behavior (#314).
-   * `_gravityVec` is gravity in the sensor-local frame (≈ (0,-1,0) at rest),
-   * so a roll tips it into the local X axis. Returns radians; sign matches the
-   * Euler-Z convention used by the gyro path (positive = lean right) — verified
-   * on a DualSense (the un-negated form steered inverted), see #314.
+   * Roll (bank) angle in radians from the gravity-anchored down vector — the
+   * drift-free steering axis for lean-to-steer games. Reads only `_gravityVec`
+   * (accelerometer-tracked), never yaw (which a 6-axis IMU can't anchor) or the
+   * gyro, so it can't "fuse to one side" the way Euler-Z of the integrated
+   * orientation does. Sign matches the -EulerZ convention consumers already use,
+   * so it's a drop-in that only removes the drift. See gravity-roll.js (#314).
    */
   gravityRollRadians() {
-    return Math.atan2(this._gravityVec.x, -this._gravityVec.y);
+    return rollFromGravity(this._gravityVec.x, this._gravityVec.y);
   }
 
   /**
@@ -187,6 +238,9 @@ export class SensorFusion {
    */
   reset() {
     this.orientation.identity();
+    this.displayOrientation.identity();
+    this._refYaw = 0;
+    this._restDuration = 0;
     this._gravityVec.set(0, -1, 0);
     this._smoothAccel.set(0, -1, 0);
     this._shakiness = 0;
@@ -201,6 +255,17 @@ export class SensorFusion {
     this._sfTimeSteady = 0;
     this._sfSkippedTime = 0;
     this._lastGyroTime = 0;
+  }
+
+  /**
+   * Soft recenter: zero the *displayed* heading without disturbing the raw
+   * integrated orientation, the fusion state, or the gravity-anchored
+   * pitch/roll. Only yaw (heading about world-up) is offset out, so
+   * recentering while the controller is tilted keeps the tilt physically true.
+   * Unlike reset(), accumulated orientation is preserved.
+   */
+  recenter() {
+    this._refYaw = twistAngleY(this.orientation);
   }
 
   /**
@@ -406,6 +471,22 @@ export class SensorFusion {
     if (!this._calibrating && hasAccel && nowMs >= this._suppressCalibUntilMs) {
       this._updateSensorFusionCalibration(rawGx, rawGy, rawGz, gyroScale, rawAx, rawAy, rawAz, dt);
     }
+
+    this._updateDisplayOrientation(dt);
+  }
+
+  /**
+   * Rebuild displayOrientation from the raw orientation and the heading offset.
+   * When yaw return is enabled and the controller has been at rest past the
+   * delay, first bleed the displayed heading back toward center (yaw-only —
+   * pitch/roll pass straight through, since gravity already anchors them).
+   * displayOrientation = R_y(-refYaw) · orientation.
+   */
+  _updateDisplayOrientation(dt) {
+    if (this._restDuration >= YAW_RETURN_REST_DELAY) {
+      this._refYaw = stepYawReturn(this._refYaw, this.orientation, dt, this.yawReturnHalfLife);
+    }
+    composeHeadingOffset(this.displayOrientation, this._refYaw, this.orientation);
   }
 
   _updateStillnessCalibration(gxRaw, gyRaw, gzRaw, axRaw, ayRaw, azRaw, accelScale, dt, nowMs) {
@@ -419,7 +500,7 @@ export class SensorFusion {
 
     const windowStart = nowMs - STILLNESS_WINDOW_TIME * 1000;
     while (sw.samples.length > 0 && sw.samples[0].t < windowStart) sw.samples.shift();
-    if (sw.samples.length < 10) { sw.stillSince = 0; return; }
+    if (sw.samples.length < 10) { sw.stillSince = 0; this._restDuration = 0; return; }
 
     let gxMin = Infinity, gxMax = -Infinity, gyMin = Infinity, gyMax = -Infinity, gzMin = Infinity, gzMax = -Infinity;
     let axMin = Infinity, axMax = -Infinity, ayMin = Infinity, ayMax = -Infinity, azMin = Infinity, azMax = -Infinity;
@@ -446,6 +527,7 @@ export class SensorFusion {
     if (isStill) {
       if (sw.stillSince === 0) sw.stillSince = nowMs;
       const stillDuration = (nowMs - sw.stillSince) / 1000;
+      this._restDuration = stillDuration;
       if (stillDuration >= STILLNESS_CORRECTION_TIME) {
         sw.easeIn = Math.min(sw.easeIn + dt / STILLNESS_CAL_EASE_IN, 1.0);
         const lerpFactor = Math.pow(2, -sw.easeIn * dt / STILLNESS_CAL_HALF_TIME);
@@ -459,6 +541,7 @@ export class SensorFusion {
     } else {
       sw.stillSince = 0;
       sw.easeIn = 0;
+      this._restDuration = 0;
     }
   }
 

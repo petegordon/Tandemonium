@@ -4,12 +4,37 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
 
+// The riders GLB ships Draco-compressed geometry to keep it small; the plain
+// frame GLB isn't compressed, so the decoder is only fetched when a Draco mesh
+// is actually encountered. Version-matched to the CDN three build. Shared across
+// all BikeModel loads.
+let _dracoLoader = null;
+function getDracoLoader() {
+  if (!_dracoLoader) {
+    _dracoLoader = new DRACOLoader();
+    _dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/libs/draco/');
+  }
+  return _dracoLoader;
+}
+
 export class BikeModel {
-  constructor(scene, modelPath) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {string} [modelPath]
+   * @param {BikeModel} [cloneSource] an already-loaded BikeModel to deep-
+   *   clone instead of re-fetching the GLB. The tandem GLB is ~7MB and its
+   *   load path does a per-vertex bounds scan — versus spawns two extra
+   *   bikes at once, and re-loading made Player 2's bike pop in seconds
+   *   late (after the countdown). Cloning is instant and shares geometry.
+   */
+  constructor(scene, modelPath, cloneSource = null) {
     this.scene = scene;
     this._modelPath = modelPath || BIKE_MODEL_PATH;
+    this._sharedGeometry = false; // true when cloned — never dispose shared geo
     this.group = new THREE.Group();
     scene.add(this.group);
 
@@ -60,11 +85,142 @@ export class BikeModel {
     this._tmpAxisZ = new THREE.Vector3(0, 0, 1);
     this._tmpAxisX = new THREE.Vector3(1, 0, 0);
 
-    this._loadModel();
+    // Rider-lean: the captain and stoker sway their torsos INDEPENDENTLY — each
+    // by their own gyro/lean input — while the whole bike still tilts by this.lean
+    // (the aggregate) in _applyTransform. Only set up when the loaded GLB carries
+    // the skinned rider armature + the two lean clips. See _setupRiderLean.
+    this.riderMixer = null;
+    this.captainAction = null;
+    this.stokerAction = null;
+    this.riderClipDuration = 0;
+    this._captainLeanTarget = 0; // [-1, 1] this frame's captain input
+    this._stokerLeanTarget = 0;  // [-1, 1] this frame's stoker input
+    this._captainLeanNorm = 0;   // smoothed
+    this._stokerLeanNorm = 0;    // smoothed
+
+    // Versus spawns extra bikes by cloning an already-loaded one (instant, shares
+    // geometry — no re-fetch/decode). A SKINNED riders model needs SkeletonUtils
+    // so the clone gets its OWN Skeleton (a plain clone() shares the source's, so
+    // every bike would pose/lean together); the plain frame uses the fast clone.
+    if (cloneSource && cloneSource.modelLoaded) {
+      if (cloneSource.riderMixer) this._initFromCloneSkinned(cloneSource);
+      else this._initFromClone(cloneSource);
+    } else {
+      this._loadModel();
+    }
   }
 
-  _loadModel() {
+  /**
+   * Clone a skinned riders bike for versus. SkeletonUtils.clone gives the clone
+   * its own Skeleton (independent posing) while still sharing geometry + textures,
+   * so it's ~instant and cheap on VRAM. Each clone gets its own AnimationMixer
+   * bound to the source's already-bone-stripped lean clips, so it leans by its
+   * own team's input (set via setRiderLeans / balanceResult in _stepTeam).
+   */
+  _initFromCloneSkinned(source) {
+    const model = cloneSkinned(source.group.children[0]);
+    this.group.add(model);
+    this.group.updateMatrixWorld(true);
+    this._sharedGeometry = true;
+    this.modelLoaded = true;
+
+    this.riderMixer = new THREE.AnimationMixer(model);
+    this.riderClipDuration = source.riderClipDuration;
+    const capClip = source.captainAction && source.captainAction.getClip();
+    const stoClip = source.stokerAction && source.stokerAction.getClip();
+    if (capClip) this.captainAction = this._makeScrubAction(capClip);
+    if (stoClip) this.stokerAction = this._makeScrubAction(stoClip);
+
+    if (this._pendingPreset) {
+      this.applyPreset(this._pendingPreset);
+      this._pendingPreset = null;
+    }
+  }
+
+  /**
+   * Deep-clone another BikeModel's loaded scene graph. Geometry is shared
+   * (clone() reuses BufferGeometry); materials start shared too, but every
+   * versus bike immediately runs applyPreset(), which replaces them with
+   * per-instance clones — and spoke materials are cloned here regardless
+   * because their opacity animates per bike. Only for the non-skinned frame
+   * model; skinned riders bikes fresh-load (see the constructor guard).
+   */
+  _initFromClone(source) {
+    const model = source.group.children[0].clone(true);
+    model.traverse((child) => {
+      const n = (child.name || '').toLowerCase();
+      if (child.isMesh && (n === 'cylinder035_cycle_0' || n === 'cylinder024_cycle_0')) {
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        this.spokeMeshes.push(child);
+      }
+      if (n.includes('pedal')) this.pedalNodes.push(child);
+    });
+    this.group.add(model);
+    this.group.updateMatrixWorld(true);
+    this._sharedGeometry = true;
+    this.modelLoaded = true;
+    if (this._pendingPreset) {
+      this.applyPreset(this._pendingPreset);
+      this._pendingPreset = null;
+    }
+  }
+
+  /**
+   * Swap this bike's GLB in place (Show Riders toggled at runtime). The
+   * BikeModel object itself survives — physics state and every external
+   * reference (chase camera, world, versus clone source) stay valid. The old
+   * model keeps rendering until the new GLB lands, then is removed; visual
+   * state (spokes, pedals, rider rig, preset originals) is rebuilt for the
+   * new model. applyPreset calls during the load queue via _pendingPreset.
+   * @param {string} modelPath
+   * @param {boolean} [disposeOld] false when live clones may share the old
+   *   model's geometry (e.g. a versus session cloned from this bike).
+   */
+  swapModel(modelPath, disposeOld = true) {
+    if (modelPath === this._modelPath) return;
+    this._modelPath = modelPath;
+    const oldChildren = this.group.children.slice();
+    const oldShared = this._sharedGeometry;
+    this._sharedGeometry = false;
+    this.modelLoaded = false;
+    this.spokeMeshes = [];
+    this.pedalNodes = [];
+    this.smoothSpokeFade = 0;
+    this._prevSpokeOpacity = NaN;
+    this.riderMixer = null;
+    this.captainAction = null;
+    this.stokerAction = null;
+    this.riderClipDuration = 0;
+    this._originalMats = null;
+    this._loadModel(() => {
+      for (const c of oldChildren) {
+        this.group.remove(c);
+        if (disposeOld && !oldShared) {
+          c.traverse((child) => {
+            if (child.isMesh) {
+              if (child.geometry) child.geometry.dispose();
+              const mats = Array.isArray(child.material) ? child.material : [child.material];
+              for (const m of mats) if (m) m.dispose();
+            }
+          });
+        }
+      }
+    });
+  }
+
+  // Torso lean (radians) at the ends of the exported clip — matches LEAN_AMP_DEG
+  // in export_riders_lean_glb.py, so |normalized lean| = 1 maps to the clip peak.
+  static RIDER_LEAN_AMP = 45 * Math.PI / 180;
+  // Yaw applied to the riders GLB so its authored forward (Blender -X) faces the
+  // travel direction. Tuned against the road in _loadModel.
+  static RIDER_MODEL_YAW = Math.PI / 2;
+
+  /** @param {Function} [onAttached] runs once the new model is in the group
+   *    and recentered, before it becomes children[0]-addressable state. */
+  _loadModel(onAttached) {
     const loader = new GLTFLoader();
+    loader.setDRACOLoader(getDracoLoader());
     loader.load(this._modelPath, (gltf) => {
       const model = gltf.scene;
       model.traverse((child) => {
@@ -86,6 +242,10 @@ export class BikeModel {
         }
       });
 
+      // The riders GLB ships a skinned armature + a lean clip; the plain frame
+      // GLB ships neither. Detect it here to drive rider lean and orient it.
+      const isRiders = !!(gltf.animations && gltf.animations.length > 0);
+
       // Scale to ~4.4m long
       const targetLength = 4.4;
       const preBox = new THREE.Box3().setFromObject(model);
@@ -93,6 +253,10 @@ export class BikeModel {
       const maxDim = Math.max(preSize.x, preSize.y, preSize.z);
       const scale = targetLength / maxDim;
       model.scale.setScalar(scale);
+
+      // Face the riders model down the road. Applied before the bounds scan so
+      // recentering happens in the final orientation.
+      if (isRiders) model.rotation.y = BikeModel.RIDER_MODEL_YAW;
 
       this.group.add(model);
       this.group.updateMatrixWorld(true);
@@ -125,17 +289,101 @@ export class BikeModel {
       model.position.x -= centerX;
       model.position.z -= centerZ;
 
+      // Swap path: retire the previous model now, so the new one is
+      // children[0] before applyPreset / _initFromClone can address it.
+      if (onAttached) onAttached(model);
+
       this.modelLoaded = true;
+      if (isRiders) this._setupRiderLean(model, gltf.animations);
       console.log('Bike loaded. Spokes:', this.spokeMeshes.length,
-        'Pedals:', this.pedalNodes.length);
+        'Pedals:', this.pedalNodes.length, 'Riders:', isRiders);
 
       if (this._pendingPreset) {
         this.applyPreset(this._pendingPreset);
         this._pendingPreset = null;
       }
     }, undefined, (err) => {
-      console.error('Failed to load tandem_bicycle.glb:', err);
+      console.error('Failed to load bike model:', this._modelPath, err);
     });
+  }
+
+  /**
+   * Wire the two exported rider-lean clips for independent scrubbing. Each clip
+   * is a MONOTONIC sweep (frame 1 = full lean one way, last = full lean the
+   * other): CaptainLean moves only the captain's spine/chest (his arm IK baked
+   * so gloves stay on the bars); StokerLean only the stoker's. We don't play
+   * them — each frame we scrub each to the time matching THAT rider's own lean.
+   *
+   * The exporter samples every bone into both clips (constant for the still
+   * rider), so the raw clips would fight over shared bones. We strip each clip
+   * down to just its rider's bones (M_* / F_*) so the two play together without
+   * interfering; the Bike_* bones stay in neither, so the frame keeps its bind
+   * pose and the whole-bike tilt is left to _applyTransform (this.lean).
+   */
+  _setupRiderLean(model, animations) {
+    this.riderMixer = new THREE.AnimationMixer(model);
+    const byName = (n) => animations.find(c => c.name === n);
+    const cap = byName('CaptainLean') || animations[0];
+    const sto = byName('StokerLean') || animations[1];
+    if (cap) {
+      this._keepTracksWithPrefix(cap, 'M_');
+      this.riderClipDuration = cap.duration;
+      this.captainAction = this._makeScrubAction(cap);
+    }
+    if (sto) {
+      this._keepTracksWithPrefix(sto, 'F_');
+      this.riderClipDuration = this.riderClipDuration || sto.duration;
+      this.stokerAction = this._makeScrubAction(sto);
+    }
+  }
+
+  // Drop every track whose target bone isn't this rider's, so two clips that
+  // were each sampled over the full skeleton no longer collide.
+  _keepTracksWithPrefix(clip, prefix) {
+    clip.tracks = clip.tracks.filter(t => t.name.startsWith(prefix));
+  }
+
+  _makeScrubAction(clip) {
+    const action = this.riderMixer.clipAction(clip);
+    action.play();
+    action.paused = true; // we drive .time ourselves, never let it advance
+    return action;
+  }
+
+  /**
+   * Scrub each rider's lean clip to that rider's own input. _captainLeanTarget /
+   * _stokerLeanTarget are the two gyro/lean inputs in [-1, 1] (set from
+   * balanceResult in update()); the bike's own tilt still comes from this.lean
+   * (the aggregate) in _applyTransform. Map [-1, 1] -> the monotonic clip
+   * [0, duration].
+   */
+  _updateRiderLean(dt) {
+    if (!this.riderMixer) return;
+    // Light smoothing so wobble/danger-shake doesn't make the riders twitch.
+    const k = Math.min(1, 12 * (dt || 1 / 60));
+    this._captainLeanNorm += (this._captainLeanTarget - this._captainLeanNorm) * k;
+    this._stokerLeanNorm += (this._stokerLeanTarget - this._stokerLeanNorm) * k;
+    // Map [-1, 1] -> the monotonic clip [0, duration], NEGATED so the riders
+    // lean into the same side the bike tilts. (After the model's RIDER_MODEL_YAW,
+    // the baked torso roll composes with the group's Z-tilt such that matching
+    // signs read as opposite in the full scene, so we flip here.)
+    if (this.captainAction) {
+      this.captainAction.time = (0.5 - this._captainLeanNorm * 0.5) * this.riderClipDuration;
+    }
+    if (this.stokerAction) {
+      this.stokerAction.time = (0.5 - this._stokerLeanNorm * 0.5) * this.riderClipDuration;
+    }
+    this.riderMixer.update(0); // apply the posed times without advancing them
+  }
+
+  /**
+   * Set this frame's rider lean inputs (each in [-1, 1]). Call before/within
+   * update(). captain = the captain's own lean, stoker = the stoker's own lean.
+   * In solo play pass the single lean for both so the pair sways together.
+   */
+  setRiderLeans(captain, stoker) {
+    this._captainLeanTarget = Math.max(-1, Math.min(1, captain));
+    this._stokerLeanTarget = Math.max(-1, Math.min(1, stoker));
   }
 
   applyPreset(presetData) {
@@ -201,6 +449,19 @@ export class BikeModel {
 
   update(pedalResult, balanceResult, dt, safetyMode, autoSpeed) {
     this.crankAngle = pedalResult.crankAngle;
+
+    // Rider torso lean. Each rider leans by their OWN input when the caller
+    // provides it (coop: captainLean / stokerLean on balanceResult); otherwise
+    // both sway with the single aggregate lean (solo). The bike's tilt itself is
+    // unaffected — that still comes from this.lean in _applyTransform.
+    if (this.riderMixer) {
+      // Coop provides each rider's own lean; solo provides only the aggregate
+      // leanInput, in which case the captain leans with it and the stoker (who
+      // has no second input in solo) stays upright.
+      const cap = (balanceResult.captainLean != null) ? balanceResult.captainLean : balanceResult.leanInput;
+      const sto = (balanceResult.stokerLean != null) ? balanceResult.stokerLean : 0;
+      this.setRiderLeans(cap, sto);
+    }
 
     if (this.fallen) {
       this.fallTimer -= dt;
@@ -509,6 +770,9 @@ export class BikeModel {
     this._tmpQ.multiplyQuaternions(this._tmpQYaw, this._tmpQPitch);
     this._tmpQ.multiply(this._tmpQLean);
     this.group.quaternion.copy(this._tmpQ);
+
+    // Sway the riders to match the balance (no-op on the rider-less frame GLB).
+    this._updateRiderLean(dt);
   }
 
   _fall() {

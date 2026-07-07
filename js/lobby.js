@@ -39,9 +39,8 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { NetworkManager } from './network-manager.js';
 import { InputManager } from './input-manager.js';
-import { isMobile, RELAY_URL, SITE_URL, BIKE_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -49,6 +48,10 @@ import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { FocusController } from './nav/focus-controller.js';
+import { RoomStore } from './lobby/room-store.js';
+import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
+import { NetSession } from './lobby/net-session.js';
+import { renderRoomQR } from './lobby/room-qr.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -114,28 +117,47 @@ const HOLIDAY_BIKES = {
 };
 
 export class Lobby {
-  constructor({ onSolo, onMultiplayerReady, onLocalReady, input, controllerManager }) {
+  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, input, controllerManager }) {
     this.onSolo = onSolo;
     this.onMultiplayerReady = onMultiplayerReady;
     this.onLocalReady = onLocalReady;
+    this.onVersusReady = onVersusReady;
     this.input = input; // P1 InputManager (slot-bound via ControllerManager)
     this.controllerManager = controllerManager; // shared with Game
-    this.net = null;
-    // Bumped every time `this.net` is replaced; closures capture the value
-    // at registration so stale callbacks from a discarded NetworkManager
-    // can no-op instead of overwriting UI for the live instance.
-    this._netEpoch = 0;
+    // Room network session: owns the NetworkManager instance + the stale-
+    // callback epoch guard. `this.net` is a getter/setter over it, so every
+    // existing `this.net.*` read/write is unchanged. (#318 Step 3)
+    this._netSession = new NetSession();
+    // Recent-room persistence (rejoin UX) — pure localStorage layer. (#318 Step 3)
+    this._roomStore = new RoomStore();
     this.selectedLevel = LEVELS.find(l => !l.isTutorial) || LEVELS[0]; // default to first non-tutorial level
     this._forceWizard = false;
     this.selectedPresetKey = 'default';
     this.selectedDifficulty = 'chill'; // 'chill' | 'adventurous' | 'daredevil'
-    this._pendingMode = null; // 'solo' | 'multiplayer' | 'local', set during level selection
+    this._pendingMode = null; // 'solo' | 'multiplayer' | 'local' | 'versus', set during level selection
 
     // Local multiplayer (JOIN RIDE on host page): second InputManager is created
     // here when P2 presses JOIN RIDE, then handed off to the game via onLocalReady.
     this._localP2InputManager = null;
     this._localP2Type = null; // 'gamepad' | 'keyboard'
     this._localJoinMonitorRAF = null;
+
+    // Versus (local split-screen team racing): 2-4 players, each entry
+    // { n, type: 'gamepad'|'keyboard', gpIndex, slotId, name, team: 'A'|'B', input }.
+    // P1 auto-joins on entering the versus step; others join by pressing A
+    // on an unclaimed pad (or the keyboard button). Handed to the game via
+    // onVersusReady({ teams }) on START RIDE.
+    this._versusPlayers = [];
+    this._versusMonitorRAF = null;
+    this._versusPrevButtons = new Map(); // candidate key / member n -> { a, left, right }
+    this._versusLastCardsKey = null;
+    this._versusKeyHandler = null;
+    this._versusCandidates = []; // detected-but-unjoined controllers (all sources)
+    // Stable per-device ids for candidate keys — two identical pads (e.g.
+    // a pair of DualSenses) share vendor/product/name and would otherwise
+    // collide in the edge-detect map.
+    this._versusDeviceIds = new WeakMap();
+    this._versusNextDeviceId = 1;
     this._localLastUnclaimedGp = null;  // last detected unclaimed gamepad index
     this._localLastJoinState = null;    // cached state string for dirty-checking
     // WebHID device cache for P2 detection (async getDevices() can't run per-frame)
@@ -149,6 +171,7 @@ export class Lobby {
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
     this.roomStep = document.getElementById('lobby-room');
+    this.versusStep = document.getElementById('lobby-versus');
     this._roomRole = null; // 'captain' | 'stoker'
 
     // Permission toggle buttons
@@ -207,21 +230,35 @@ export class Lobby {
     this._updateVolumeUI();
 
     // Gamepad navigation state
-    this._focusIndex = 0;
     this._currentStep = null;
     this._pollRafId = null;
     // Step navigation (mode/level/role/host/join/room) now uses the shared
     // nav-core FocusController in spatial mode (#318): directions move to the
     // nearest on-screen focusable, dissolving the old _modeColumns/_moveColumn/
     // _modeColIndex column math and the difficulty-sibling special-casing.
-    // (Modals — profile/leaderboard/help/rejoin/spinner — still use the
-    // hand-rolled branches in _pollGamepadNav for now.)
+    // The "one confirm per physical A press" gate that kills the popup flash
+    // (a held press bleeding a second confirm into the scope it just opened)
+    // now lives inside FocusController itself — armed on scope entry + after
+    // each confirm, cleared only on an observed A release — so every call site
+    // inherits it; no shared lobby-level gate needed. (#318)
     this._stepFocus = new FocusController({
       input: this.input,
       onConfirm: (el) => { if (el.tagName === 'INPUT') el.focus(); else el.click(); },
       onBack: () => this._goBack(),
     });
     this._stepNavRanLastFrame = false; // for reprime() on modal→step transitions
+    // Shared controller for the linear modal lists (profile popup, rejoin
+    // overlay). Vertical nav; B runs a per-modal back action set on open.
+    // (Leaderboard/help/spinner stay on their bespoke branches — 2D table,
+    // scroll-only, and character-wheel input don't fit a flat list.)
+    this._modalFocus = new FocusController({
+      input: this.input,
+      orientation: 'vertical',
+      onBack: () => { if (this._modalBack) this._modalBack(); },
+    });
+    this._activeModal = null; // 'profile' | 'rejoin' | null
+    this._modalBack = null;
+    this._gpPrevUp = false;
     this._gpPrevUp = false;
     this._gpPrevDown = false;
     this._gpPrevA = false;
@@ -245,7 +282,6 @@ export class Lobby {
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
     this._modeCol = 1;
-    this._modeColIndex = [0, 0, 0, 0];
 
     // Per-step focusable items and back buttons
     this._stepItems = new Map();
@@ -256,10 +292,18 @@ export class Lobby {
     const roleItems = [
       document.getElementById('btn-captain'),
       document.getElementById('btn-stoker'),
+      document.getElementById('btn-versus'),
       document.getElementById('btn-back-mode'),
     ];
     this._stepItems.set(this.roleStep, roleItems);
     this._stepCenterItems.set(this.roleStep, roleItems);
+    const versusItems = [
+      document.getElementById('btn-versus-join-kb'),
+      document.getElementById('btn-versus-continue'),
+      document.getElementById('btn-back-versus'),
+    ];
+    this._stepItems.set(this.versusStep, versusItems);
+    this._stepCenterItems.set(this.versusStep, versusItems);
     const hostItems = [
       document.getElementById('btn-back-role-host'),
     ];
@@ -276,6 +320,7 @@ export class Lobby {
     this._stepBack.set(this.roleStep, document.getElementById('btn-back-mode'));
     this._stepBack.set(this.hostStep, document.getElementById('btn-back-role-host'));
     this._stepBack.set(this.joinStep, document.getElementById('btn-back-role-join'));
+    this._stepBack.set(this.versusStep, document.getElementById('btn-back-versus'));
 
     // Fixed back button (non-gamepad, stays at bottom of steps column)
     this._fixedBackBtn = document.getElementById('lobby-fixed-back');
@@ -303,6 +348,9 @@ export class Lobby {
 
     // Auth (after _avatarCache — _setupAuth triggers updateUI which reads the cache)
     this.auth = new AuthManager();
+    // Achievements push to the backend via the identity (token provider), so
+    // auth no longer reaches into achievements. (#318 Step 4)
+    this._achievements.setIdentity(this.auth);
 
     // Steam: bypass LicenseManager when Steam ownership is confirmed
     // Initialize with a default license so code that reads this.license.isLicensed
@@ -310,8 +358,6 @@ export class Lobby {
     this._isSteam = false;
     this.license = new LicenseManager(this.auth);
     this._steamReady = this._initSteamLicense().then(() => this._setupAuth());
-    this._lbFocusRow = 0;   // 0 = main tabs, 1 = sub tabs, 2 = close button
-    this._lbFocusCol = 0;   // index within the current row
 
     this._setup();
     this._buildLeaderboardTabs();
@@ -335,7 +381,25 @@ export class Lobby {
     // Only shown once ever; after first dismissal, localStorage flag prevents it.
     this._tapOverlay = document.getElementById('tap-to-start');
     if (this._tapOverlay) {
-      if (localStorage.getItem('tandemonium_started')) {
+      if (isMobile) {
+        // Mobile: the old "Tap to Start" tap-gate is obsolete. iOS motion
+        // permission is now requested from a real gesture at ride start
+        // (game.js doStart) and audio unlocks on the first lobby interaction,
+        // so no boot gesture is needed. The overlay is now purely a "Loading…"
+        // veil (label set by the boot script) that auto-dismisses once the page
+        // finishes loading — no tap. _toggleAll is intentionally NOT called
+        // here: a non-gesture requestPermission() is rejected by iOS anyway.
+        const lift = () => {
+          const o = this._tapOverlay;
+          if (!o) return;
+          this._tapOverlay = null;
+          o.classList.add('fade-out');
+          setTimeout(() => o.remove(), 400);
+        };
+        if (document.readyState === 'complete') requestAnimationFrame(lift);
+        else window.addEventListener('load', () => requestAnimationFrame(lift), { once: true });
+        setTimeout(lift, 4000); // safety: never let the veil dead-end (see #350)
+      } else if (localStorage.getItem('tandemonium_started')) {
         this._tapOverlay.remove();
         this._tapOverlay = null;
         // Subsequent-launch case: the tap overlay was dismissed in a
@@ -346,9 +410,7 @@ export class Lobby {
         // otherwise the user has to power-cycle the controller on
         // every app restart to force it back into Chromium-visible
         // compat mode.
-        if (!isMobile) {
-          this._runDesktopGamepadDetection();
-        }
+        this._runDesktopGamepadDetection();
       } else {
         this._tapOverlay.addEventListener('click', () => this._dismissTapOverlay(), { once: true });
       }
@@ -614,7 +676,7 @@ export class Lobby {
       const backHint = document.getElementById('gamepad-back-hint');
       if (backHint) { backHint.style.display = ''; backHint.style.visibility = ''; }
     }
-    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep]
+    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep, this.versusStep]
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
@@ -626,6 +688,14 @@ export class Lobby {
       this._startLocalJoinMonitor();
     } else if (prevStep === this.hostStep) {
       this._stopLocalJoinMonitor();
+    }
+
+    // Versus join monitor: run only while the team-setup screen is visible.
+    // (Level select keeps the joined players but stops the polling loop.)
+    if (step === this.versusStep) {
+      this._startVersusMonitor();
+    } else if (prevStep === this.versusStep) {
+      this._stopVersusMonitor();
     }
 
     // Room step: toggle grid layout on lobby-card
@@ -686,7 +756,6 @@ export class Lobby {
 
     // Always reset to center column and update its items
     this._modeCol = 1;
-    this._modeColIndex = [0, 0, 0, 0];
     const centerItems = this._stepCenterItems.get(step) || [];
     this._modeColumns[1] = centerItems;
     this._stepItems.set(step, centerItems);
@@ -790,7 +859,10 @@ export class Lobby {
     this._setupDifficultySelector();
 
     document.getElementById('btn-back-level').addEventListener('click', () => {
-      if (this._pendingMode === 'multiplayer') {
+      if (this._pendingMode === 'versus') {
+        // Back to team setup — players stay joined, monitor restarts via _showStep.
+        this._showStep(this.versusStep);
+      } else if (this._pendingMode === 'multiplayer') {
         // Reset multiplayer elements when leaving level step
         const startBtn = document.getElementById('btn-start-ride');
         const waitText = document.getElementById('level-wait-text');
@@ -812,14 +884,17 @@ export class Lobby {
       this._showStep(this.modeStep);
     });
     document.getElementById('btn-back-role-host').addEventListener('click', () => {
-      this._clearRoom();
+      // Don't wipe recent rooms on back-out — keep them so RIDE TOGETHER can
+      // still offer to rejoin this room within the 5-min window. Only an
+      // explicit "New Room" (rejoin prompt / stale-room timer) clears. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
-      this._clearRoom();
+      // Keep recent rooms on back-out (see btn-back-role-host) so rejoin
+      // stays available. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
       this._showSpinners(false);
       this._spinnerStopRepeat();
@@ -849,6 +924,31 @@ export class Lobby {
       }
     });
 
+    // VERSUS (local split-screen team racing) — desktop-only, like local co-op:
+    // needs multiple physical controllers on one machine.
+    const btnVersus = document.getElementById('btn-versus');
+    if (btnVersus && !isMobile) {
+      btnVersus.style.display = '';
+      btnVersus.addEventListener('click', async () => {
+        analytics.trackEvent('versus_setup_opened');
+        await this._requestMotion();
+        this._syncMotionState();
+        this._enterVersusStep();
+      });
+    }
+    document.getElementById('btn-back-versus').addEventListener('click', () => {
+      this._leaveVersus();
+      this._showStep(this.roleStep);
+    });
+    document.getElementById('btn-versus-join-kb').addEventListener('click', () => {
+      this._versusJoinKeyboard();
+    });
+    document.getElementById('btn-versus-continue').addEventListener('click', () => {
+      if (!this._versusTeamsValid()) return;
+      this._pendingMode = 'versus';
+      this._showStep(this.levelStep);
+    });
+
     // JOIN button
     document.getElementById('btn-join').addEventListener('click', () => {
       const raw = document.getElementById('room-code-input').value.trim().toUpperCase();
@@ -869,8 +969,8 @@ export class Lobby {
     document.getElementById('btn-play-game').addEventListener('click', () => {
       if (this._roomRole !== 'captain') return;
       if (this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'playGame' });
-        this.net.sendProfile({ type: 'difficultySync', difficulty: this.selectedDifficulty });
+        this.net.sendProfile(RoomProtocol.playGame());
+        this.net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
       }
       this._showRoomLevelsStep();
     });
@@ -885,7 +985,7 @@ export class Lobby {
           if (statusEl) statusEl.textContent = 'Reconnecting to partner...';
           return;
         }
-        this.net.sendProfile({ type: 'startRide' });
+        this.net.sendProfile(RoomProtocol.startRide());
         this._transitionToGame();
       } else if (this._pendingMode === 'local') {
         // Local same-screen co-op: hand off the pre-constructed P2 InputManager
@@ -895,6 +995,15 @@ export class Lobby {
           inputP2: this._localP2InputManager,
           sourceType: this._localP2Type,
         });
+      } else if (this._pendingMode === 'versus') {
+        // Versus: hand off both teams' pre-constructed InputManagers.
+        if (!this._versusTeamsValid()) return;
+        analytics.trackEvent('versus_start', {
+          team_a: this._versusPlayers.filter(p => p.team === 'A').length,
+          team_b: this._versusPlayers.filter(p => p.team === 'B').length,
+        });
+        this._hideLobby();
+        this.onVersusReady({ teams: this._versusTeams() });
       } else {
         // Solo: start game directly
         this._hideLobby();
@@ -1079,7 +1188,7 @@ export class Lobby {
             if (startBtn) startBtn.disabled = false;
             analytics.trackEvent('level_select', { level: level.id, difficulty: this.selectedDifficulty });
             if (this.net && this.net.connected) {
-              this.net.sendProfile({ type: 'levelSync', levelId: level.id });
+              this.net.sendProfile(RoomProtocol.levelSync(level.id));
             }
           });
         } else {
@@ -1111,7 +1220,7 @@ export class Lobby {
         this._updateDifficultyVisibility(defaultCard.dataset.levelId);
         // Sync to partner on multiplayer re-entry
         if (this.net && this.net.connected) {
-          this.net.sendProfile({ type: 'levelSync', levelId: this.selectedLevel.id });
+          this.net.sendProfile(RoomProtocol.levelSync(this.selectedLevel.id));
         }
       }
     }
@@ -1175,8 +1284,12 @@ export class Lobby {
       if (this._modeCol === 1) {
         this._stepItems.set(this.levelStep, centerItems);
       }
-      // Refresh the spatial scope so newly-built cards are navigable (#318).
-      this._applyStepSpatialFocus(this.levelStep);
+      // Refresh items (new cards) while PRESERVING the current focus — don't
+      // reset to the step default, which would jump focus off a toggle the
+      // user just pressed (e.g. ALL/gyro rebuilds the cards). (#318)
+      if (this.input && this.input.gamepadConnected) {
+        this._stepFocus.refreshSpatial(this._modeColumns.flat());
+      }
     }
   }
 
@@ -1226,7 +1339,7 @@ export class Lobby {
           this.selectedDifficulty = btn.dataset.difficulty;
           // Sync difficulty to partner in multiplayer
           if (this.net && this.net.connected) {
-            this.net.sendProfile({ type: 'difficultySync', difficulty: btn.dataset.difficulty });
+            this.net.sendProfile(RoomProtocol.difficultySync(btn.dataset.difficulty));
           }
         });
       });
@@ -1293,6 +1406,12 @@ export class Lobby {
     } else {
       this.auth.initGSI();
     }
+
+    // Hide LOG OUT in any Electron session, not just verified-Steam. Google
+    // sign-in can't run on the file:// origin, so logging out of a persisted
+    // (Steam) session strands the user with no way back in. Steam identity is
+    // automatic, so there's no meaningful logout in the desktop app. (#332)
+    if (isElectron && logoutBtn) logoutBtn.style.display = 'none';
 
     // Save original SVG to restore on logout
     const profileSvg = this.toggleProfile.innerHTML;
@@ -1383,11 +1502,8 @@ export class Lobby {
 
     // Logout: sync achievements to server, then clear local state
     logoutBtn.addEventListener('click', async () => {
-      // Push local achievements to server before clearing
-      const ids = this._achievements.getEarnedIds();
-      if (ids.length > 0) {
-        try { await this.auth.syncAchievements(ids); } catch (e) {}
-      }
+      // Push local achievements to server before clearing (no-op if none/anon)
+      await this._achievements.syncToServer();
       this._achievements.clear();
       this.license.clear();
       this.auth.logout();
@@ -1404,8 +1520,20 @@ export class Lobby {
       this.profilePopup.classList.remove('visible');
     });
 
-    // Profile popup gamepad focus index (0 = logout/sign-in, 1 = back)
-    this._profileFocusIndex = 0;
+    // Controller/keyboard-reachable sign-in proxy: the rendered Google button is
+    // a cross-origin iframe a synthetic .click() can't activate, so this button
+    // triggers One Tap in code. If One Tap is suppressed (FedCM cooldown), reveal
+    // a hint pointing at the mouse/phone paths instead of failing silently. (#325)
+    document.getElementById('profile-popup-signin-proxy').addEventListener('click', () => {
+      this.auth.login((n) => {
+        const suppressed = n && ((n.isNotDisplayed && n.isNotDisplayed()) || (n.isSkippedMoment && n.isSkippedMoment()));
+        if (suppressed || n === null) {
+          const hint = document.getElementById('profile-popup-signin-hint');
+          if (hint) hint.style.display = '';
+        }
+      });
+    });
+
 
     // Close popup when clicking outside
     document.addEventListener('click', (e) => {
@@ -1719,10 +1847,8 @@ export class Lobby {
       this._applyVideoTrackState(false);
       // Notify partner to show avatar
       if (this.net && this.net.connected) {
-        const msg = { type: 'cameraToggle', enabled: false };
         const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-        if (user && user.avatar) msg.avatar = user.avatar;
-        this.net.sendProfile(msg);
+        this.net.sendProfile(RoomProtocol.cameraToggle(false, user && user.avatar));
       }
       return;
     }
@@ -1737,7 +1863,7 @@ export class Lobby {
       }
       // Notify partner to show video
       if (this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'cameraToggle', enabled: true });
+        this.net.sendProfile(RoomProtocol.cameraToggle(true));
       }
       return;
     }
@@ -1754,7 +1880,7 @@ export class Lobby {
       }
       // Notify partner to show video
       if (this.net && this.net.connected) {
-        this.net.sendProfile({ type: 'cameraToggle', enabled: true });
+        this.net.sendProfile(RoomProtocol.cameraToggle(true));
       }
     }).catch((err) => {
       if (err && err.message === 'permission_timeout') this._showStaleOverlay();
@@ -2060,31 +2186,25 @@ export class Lobby {
     document.getElementById('leaderboard-modal').style.display = 'none';
   }
 
-  _lbGetRowItems(row) {
-    if (row === 0) return [...document.getElementById('lb-main-tabs').querySelectorAll('.lb-tab')];
-    if (row === 1) return [...document.getElementById('lb-sub-tabs').querySelectorAll('.lb-tab')];
-    if (row === 2) return [document.getElementById('leaderboard-close')];
-    return [];
-  }
-
   _lbClearFocus() {
     document.querySelectorAll('#leaderboard-modal .gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
   }
 
-  _lbApplyFocus() {
-    this._lbClearFocus();
-    const items = this._lbGetRowItems(this._lbFocusRow);
-    const idx = Math.min(this._lbFocusCol, items.length - 1);
-    if (items[idx]) items[idx].classList.add('gamepad-focus');
+  // Tabs (main + sub) + close button — the leaderboard's spatial focusable set.
+  _lbFocusables() {
+    return [
+      ...document.querySelectorAll('#lb-main-tabs .lb-tab'),
+      ...document.querySelectorAll('#lb-sub-tabs .lb-tab'),
+      document.getElementById('leaderboard-close'),
+    ].filter(Boolean);
   }
 
   _lbResetFocus() {
-    // Default: focus the active main tab
-    this._lbFocusRow = 0;
-    const mainTabs = document.getElementById('lb-main-tabs').querySelectorAll('.lb-tab');
-    this._lbFocusCol = [...mainTabs].findIndex(t => t.classList.contains('active'));
-    if (this._lbFocusCol < 0) this._lbFocusCol = 0;
-    this._lbApplyFocus();
+    // Set up spatial focus over the tabs + close, defaulting to the active main
+    // tab. The leaderboard branch in _pollGamepadNav drives it (#318).
+    this._activeModal = 'leaderboard';
+    this._modalBack = () => this._closeLeaderboard();
+    this._modalFocus.setSpatial(this._lbFocusables(), document.querySelector('#lb-main-tabs .lb-tab.active'));
   }
 
   _toggleProfile() {
@@ -2097,19 +2217,25 @@ export class Lobby {
       // Show sign-in button, hide logged-in content
       document.querySelector('.profile-popup-content').style.display = 'none';
       document.getElementById('profile-popup-signin').style.display = '';
+      // Reset the suppressed-One-Tap hint each open; the proxy reveals it on demand.
+      const hint = document.getElementById('profile-popup-signin-hint');
+      if (hint) hint.style.display = 'none';
       this.profilePopup.classList.toggle('visible');
       // Also try One Tap prompt as a bonus
       this.auth.login();
     }
-    // Reset gamepad focus for profile popup
+    // Reset gamepad focus for profile popup. Default focus is a non-closing
+    // action (sign-in proxy / log out) so opening with A then a stray A press
+    // can't immediately dismiss the popup via the only focusable item. (#325)
     if (this.profilePopup.classList.contains('visible')) {
-      this._profileFocusIndex = 0;
-      // Apply initial highlight
-      const items = this.auth.isLoggedIn()
+      // Apply initial highlight (skip the logout button when it's hidden — e.g.
+      // Electron/Steam — so focus never lands on an invisible control). (#332)
+      const items = (this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
-        : [document.getElementById('profile-popup-signin-back')];
+        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')]
+      ).filter(el => el && el.style.display !== 'none');
       items.forEach(el => el.classList.remove('gamepad-focus'));
-      items[0].classList.add('gamepad-focus');
+      if (items[0]) items[0].classList.add('gamepad-focus');
     } else {
       // Clear highlights on close
       this.profilePopup.querySelectorAll('.gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
@@ -2703,7 +2829,7 @@ export class Lobby {
 
   async _createRoom() {
     this._replaceNet();
-    const netEpoch = this._netEpoch;
+    const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
     this.net.audioEnabled = this.audioActive;
@@ -2725,60 +2851,20 @@ export class Lobby {
     if (relayToken) this.net._relayToken = relayToken;
 
     this.net.onRoomJoined = () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       codeEl.textContent = code;
       this._updateCardHeader(this._currentStep);
       statusEl.textContent = 'Waiting for partner...';
 
       // Save room to localStorage for rejoin after refresh
-      this._saveRoom(code, 'captain');
+      this._roomStore.save(code, 'captain');
 
-      // Generate QR code with join URL
-      const qrEl = document.getElementById('room-qr');
-      const urlEl = document.getElementById('room-url');
-      // In Electron, use the production web URL for QR codes (localhost isn't reachable from mobile)
-      const isDesktop = navigator.userAgent.includes('Electron');
-      const baseUrl = isDesktop
-        ? SITE_URL
-        : window.location.origin + window.location.pathname;
-      const url = baseUrl + '?room=' + code;
-      try {
-        const qr = qrcode(0, 'M');
-        qr.addData(url);
-        qr.make();
-        qrEl.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 2 });
-      } catch (_) {
-        qrEl.style.display = 'none';
-      }
-
-      // Show full URL
-      if (urlEl) urlEl.textContent = url;
-
-      // Long-press to copy on both QR and URL
-      const copyUrl = () => {
-        navigator.clipboard.writeText(url).then(() => {
-          if (urlEl) {
-            const orig = urlEl.textContent;
-            urlEl.textContent = 'Copied!';
-            urlEl.classList.add('room-url-copied');
-            setTimeout(() => { urlEl.textContent = orig; urlEl.classList.remove('room-url-copied'); }, 1500);
-          }
-        }).catch(() => {});
-      };
-      [qrEl, urlEl].forEach(el => {
-        if (!el) return;
-        let timer = null;
-        const start = (e) => { e.preventDefault(); timer = setTimeout(copyUrl, 500); };
-        const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-        el.addEventListener('touchstart', start, { passive: false });
-        el.addEventListener('touchend', cancel);
-        el.addEventListener('touchcancel', cancel);
-        el.addEventListener('contextmenu', (e) => { e.preventDefault(); copyUrl(); });
-      });
+      // Generate the join QR + shareable URL (with long-press-to-copy).
+      renderRoomQR(code);
     };
 
     this.net.onConnected = () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       statusEl.textContent = 'Partner connected!';
       statusEl.className = 'conn-status connected';
       analytics.trackEvent('room_connect', { type: this.net.connectionType || 'p2p' });
@@ -2789,29 +2875,29 @@ export class Lobby {
         audio_enabled: this.audioActive ? 1 : 0,
       });
       setTimeout(() => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         this._showRoomStep('captain');
       }, 1000);
     };
 
     this.net.onDisconnected = (reason) => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       statusEl.textContent = reason || 'Disconnected';
       statusEl.className = 'conn-status error';
     };
 
     // Auth error: token was rejected by relay — try silent refresh first
     this.net.onAuthError = async () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       console.warn('LOBBY: Relay auth failed for captain — refreshing token');
       statusEl.textContent = 'Session expired, refreshing...';
       statusEl.className = 'conn-status';
       const refreshed = await this.auth.ensureValidToken();
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       if (refreshed) {
         // Token refreshed — retry room creation
         const freshToken = await this.auth.getRelayToken(code, 'captain');
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         if (freshToken) this.net._relayToken = freshToken;
         this.net.enterRoom(code, 'captain');
       } else {
@@ -2825,7 +2911,7 @@ export class Lobby {
 
   async _joinRoom(code) {
     this._replaceNet();
-    const netEpoch = this._netEpoch;
+    const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
     this.net.audioEnabled = this.audioActive;
@@ -2850,26 +2936,26 @@ export class Lobby {
     if (relayToken) this.net._relayToken = relayToken;
 
     this.net.onRoomJoined = () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       statusEl.textContent = 'Waiting for captain...';
       // Save room to localStorage for rejoin after refresh
-      this._saveRoom(code, 'stoker');
+      this._roomStore.save(code, 'stoker');
     };
 
     this.net.onConnected = () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       this._lastFailedCode = null;
       statusEl.textContent = 'Connected!';
       statusEl.className = 'conn-status connected';
       analytics.trackEvent('room_connect', { type: this.net.connectionType || 'p2p' });
       setTimeout(() => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         this._showRoomStep('stoker');
       }, 1000);
     };
 
     this.net.onDisconnected = (reason) => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       statusEl.textContent = reason || 'Could not connect';
       statusEl.className = 'conn-status error';
       // Sync error into spinner status area
@@ -2886,16 +2972,16 @@ export class Lobby {
 
     // Auth error: token was rejected by relay — try silent refresh first
     this.net.onAuthError = async () => {
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       console.warn('LOBBY: Relay auth failed for stoker — refreshing token');
       statusEl.textContent = 'Session expired, refreshing...';
       statusEl.className = 'conn-status';
 
       const refreshed = await this.auth.ensureValidToken();
-      if (netEpoch !== this._netEpoch) return;
+      if (!this._netSession.isCurrent(netEpoch)) return;
       if (refreshed) {
         const freshToken = await this.auth.getRelayToken(code, 'stoker');
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         if (freshToken) {
           statusEl.textContent = 'Reconnecting...';
           this.net.retryWithToken(freshToken);
@@ -2914,79 +3000,24 @@ export class Lobby {
 
   // ── NetworkManager lifecycle ─────────────────────────────────
 
-  // Tear down the current NetworkManager (if any) and create a fresh one.
-  // Bumps `_netEpoch` so any in-flight callbacks captured by closures on
-  // the prior instance can early-return instead of clobbering UI for the
-  // new room. Callers should capture `this._netEpoch` immediately after
-  // calling this and guard their callback bodies with it.
+  // `this.net` is the live room NetworkManager, owned by `_netSession`. Kept as
+  // a getter/setter so existing `this.net.*` reads and `this.net = …` writes
+  // (teardown to null, return-from-game re-attach) are unchanged. (#318 Step 3)
+  get net() { return this._netSession.net; }
+  set net(v) { this._netSession.net = v; }
+
+  // Tear down the current NetworkManager (if any) and create a fresh one,
+  // bumping the session epoch so in-flight callbacks captured by closures on
+  // the prior instance early-return instead of clobbering UI for the new room.
+  // Callers capture `this._netSession.epoch` right after and guard their
+  // callback bodies with `this._netSession.isCurrent(epoch)`.
   _replaceNet() {
-    if (this.net) {
-      this.net.onRoomJoined = null;
-      this.net.onConnected = null;
-      this.net.onDisconnected = null;
-      this.net.onAuthError = null;
-      this.net.onProfileReceived = null;
-      try { this.net.destroy(); } catch (e) {}
-    }
-    this._netEpoch++;
-    this.net = new NetworkManager();
-    return this.net;
+    return this._netSession.replace();
   }
 
-  // ── Room Persistence (localStorage) ──────────────────────────
-
-  _saveRoom(roomCode, role, partnerName) {
-    try {
-      const rooms = this._getRecentRooms();
-      const entry = { roomCode, role, timestamp: Date.now(), partnerName: partnerName || null };
-      const existing = rooms.findIndex(r => r.roomCode === roomCode);
-      if (existing >= 0) {
-        // Preserve partner name if not provided
-        if (!entry.partnerName && rooms[existing].partnerName) entry.partnerName = rooms[existing].partnerName;
-        rooms[existing] = entry;
-      } else {
-        rooms.push(entry);
-      }
-      localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
-    } catch (e) {}
-  }
-
-  _clearRoom(roomCode) {
-    try {
-      if (roomCode) {
-        const rooms = this._getRecentRooms().filter(r => r.roomCode !== roomCode);
-        localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
-      } else {
-        localStorage.removeItem('tandemonium-rooms');
-      }
-    } catch (e) {}
-  }
-
-  _getRecentRooms() {
-    try {
-      // Migrate old single-room format
-      const oldRaw = localStorage.getItem('tandemonium-room');
-      if (oldRaw) {
-        localStorage.removeItem('tandemonium-room');
-        const old = JSON.parse(oldRaw);
-        if (old.roomCode) {
-          const existing = localStorage.getItem('tandemonium-rooms');
-          const rooms = existing ? JSON.parse(existing) : [];
-          if (!rooms.some(r => r.roomCode === old.roomCode)) rooms.push(old);
-          localStorage.setItem('tandemonium-rooms', JSON.stringify(rooms));
-        }
-      }
-      const raw = localStorage.getItem('tandemonium-rooms');
-      if (!raw) return [];
-      const rooms = JSON.parse(raw);
-      const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-      const recent = rooms.filter(r => r.timestamp > fiveMinAgo);
-      if (recent.length !== rooms.length) {
-        localStorage.setItem('tandemonium-rooms', JSON.stringify(recent));
-      }
-      return recent;
-    } catch (e) { return []; }
-  }
+  // ── Room Persistence ─────────────────────────────────────────
+  // Recent-room localStorage now lives in js/lobby/room-store.js
+  // (this._roomStore: .save() / .clear() / .getRecent()). (#318 Step 3)
 
   _showRecentRoomsPrompt(rooms) {
     const overlay = document.createElement('div');
@@ -3020,7 +3051,6 @@ export class Lobby {
     document.body.appendChild(overlay);
 
     // Default gamepad focus on first card
-    this._rejoinFocus = 0;
     const cards = overlay.querySelectorAll('.rejoin-room-card');
     if (cards.length > 0) cards[0].classList.add('gamepad-focus');
 
@@ -3040,7 +3070,7 @@ export class Lobby {
   }
 
   async _handleRejoinCheck() {
-    const rooms = this._getRecentRooms();
+    const rooms = this._roomStore.getRecent();
     if (rooms.length === 0) return false;
 
     const selected = await this._showRecentRoomsPrompt(rooms);
@@ -3055,7 +3085,7 @@ export class Lobby {
       this._showStep(this.hostStep);
       // Re-use _createRoom logic but with saved code
       this._replaceNet();
-      const netEpoch = this._netEpoch;
+      const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
       this.net.audioEnabled = this.audioActive;
@@ -3065,25 +3095,25 @@ export class Lobby {
       statusEl.className = 'conn-status';
 
       const relayToken = await this.auth.getRelayToken(saved.roomCode, 'captain');
-      if (netEpoch !== this._netEpoch) return true;
+      if (!this._netSession.isCurrent(netEpoch)) return true;
       if (relayToken) this.net._relayToken = relayToken;
 
       // Acquire local media early so it's ready when P2P connects
       await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
-      if (netEpoch !== this._netEpoch) return true;
+      if (!this._netSession.isCurrent(netEpoch)) return true;
 
       this.net.onRoomJoined = () => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         codeEl.textContent = saved.roomCode;
         this._updateCardHeader(this._currentStep);
         statusEl.textContent = 'Waiting for partner...';
-        this._saveRoom(saved.roomCode, 'captain');
+        this._roomStore.save(saved.roomCode, 'captain');
         // Start stale room timer
         this._startStaleRoomTimer(statusEl);
       };
 
       this.net.onConnected = () => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         this._clearStaleRoomTimer();
         statusEl.textContent = 'Partner connected!';
         statusEl.className = 'conn-status connected';
@@ -3091,13 +3121,13 @@ export class Lobby {
         this._rejoinMessageQueue = [];
         this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
         setTimeout(() => {
-          if (netEpoch !== this._netEpoch) return;
+          if (!this._netSession.isCurrent(netEpoch)) return;
           this._showRoomStep('captain');
         }, 1000);
       };
 
       this.net.onDisconnected = (reason) => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         statusEl.textContent = reason || 'Disconnected';
         statusEl.className = 'conn-status error';
       };
@@ -3107,7 +3137,7 @@ export class Lobby {
       this._showStep(this.joinStep);
       // Re-use _joinRoom logic with saved code
       this._replaceNet();
-      const netEpoch = this._netEpoch;
+      const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
       this.net.audioEnabled = this.audioActive;
@@ -3116,22 +3146,22 @@ export class Lobby {
       statusEl.className = 'conn-status';
 
       const relayToken = await this.auth.getRelayToken(saved.roomCode, 'stoker');
-      if (netEpoch !== this._netEpoch) return true;
+      if (!this._netSession.isCurrent(netEpoch)) return true;
       if (relayToken) this.net._relayToken = relayToken;
 
       // Acquire local media early so it's ready when P2P connects
       await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
-      if (netEpoch !== this._netEpoch) return true;
+      if (!this._netSession.isCurrent(netEpoch)) return true;
 
       this.net.onRoomJoined = () => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         statusEl.textContent = 'Waiting for captain...';
-        this._saveRoom(saved.roomCode, 'stoker');
+        this._roomStore.save(saved.roomCode, 'stoker');
         this._startStaleRoomTimer(statusEl);
       };
 
       this.net.onConnected = () => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         this._clearStaleRoomTimer();
         statusEl.textContent = 'Connected!';
         statusEl.className = 'conn-status connected';
@@ -3139,13 +3169,13 @@ export class Lobby {
         this._rejoinMessageQueue = [];
         this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
         setTimeout(() => {
-          if (netEpoch !== this._netEpoch) return;
+          if (!this._netSession.isCurrent(netEpoch)) return;
           this._showRoomStep('stoker');
         }, 1000);
       };
 
       this.net.onDisconnected = (reason) => {
-        if (netEpoch !== this._netEpoch) return;
+        if (!this._netSession.isCurrent(netEpoch)) return;
         statusEl.textContent = reason || 'Could not connect';
         statusEl.className = 'conn-status error';
       };
@@ -3165,8 +3195,8 @@ export class Lobby {
         const newBtn = document.getElementById('btn-stale-new-room');
         if (newBtn) {
           newBtn.addEventListener('click', () => {
-            if (this.net && this.net.roomCode) this._clearRoom(this.net.roomCode);
-            else this._clearRoom();
+            if (this.net && this.net.roomCode) this._roomStore.clear(this.net.roomCode);
+            else this._roomStore.clear();
             if (this.net) { this.net.destroy(); this.net = null; }
             this._showStep(this.roleStep);
           });
@@ -3233,16 +3263,14 @@ export class Lobby {
     this._rejoinMessageQueue = null;
 
     // Send current bike preset to partner
-    this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+    this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
 
     // Send profile with avatar + achievements so partner sees them in room
     this._sendRoomProfile();
 
     // Notify partner of current camera state so they show video or avatar
-    const camMsg = { type: 'cameraToggle', enabled: this.cameraActive };
     const camUser = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-    if (camUser && camUser.avatar) camMsg.avatar = camUser.avatar;
-    this.net.sendProfile(camMsg);
+    this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, camUser && camUser.avatar));
 
     // Handle partner disconnect while in room or levels
     this.net.onDisconnected = (reason) => {
@@ -3484,7 +3512,7 @@ export class Lobby {
         partnerNameEl.textContent = profile.name;
         // Save partner name for recent rooms display
         if (this.net && this.net.roomCode && this._roomRole) {
-          this._saveRoom(this.net.roomCode, this._roomRole, profile.name);
+          this._roomStore.save(this.net.roomCode, this._roomRole, profile.name);
         }
       }
       // Cache partner avatar URL for camera toggle
@@ -3502,9 +3530,9 @@ export class Lobby {
       return;
     }
 
-    if (profile.type === 'bikeSync') {
+    if (profile.type === ROOM_MSG.BIKE_SYNC) {
       // Partner changed bike — no label update needed (keep role-only labels)
-    } else if (profile.type === 'levelSync') {
+    } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
       this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
       // Track if captain selected tutorial — stoker needs _forceWizard too
@@ -3515,7 +3543,7 @@ export class Lobby {
       });
       // Update difficulty selector (disable harder options for tutorial)
       this._updateDifficultyVisibility(profile.levelId);
-    } else if (profile.type === 'cameraToggle') {
+    } else if (profile.type === ROOM_MSG.CAMERA_TOGGLE) {
       // Partner toggled their camera — update state and refresh PiP
       this._partnerCameraOn = !!profile.enabled;
       if (!profile.enabled) {
@@ -3529,16 +3557,16 @@ export class Lobby {
         setTimeout(() => this._updatePartnerPip(), 4000);
       }
       this._updatePartnerPip();
-    } else if (profile.type === 'difficultySync') {
+    } else if (profile.type === ROOM_MSG.DIFFICULTY_SYNC) {
       // Stoker: update difficulty selection to match captain's choice
       this.selectedDifficulty = profile.difficulty;
       document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
       document.querySelectorAll('.difficulty-btn[data-difficulty="' + profile.difficulty + '"]')
         .forEach(b => b.classList.add('selected'));
-    } else if (profile.type === 'playGame') {
+    } else if (profile.type === ROOM_MSG.PLAY_GAME) {
       // Stoker: captain clicked PLAY GAME → go to levels step
       this._showRoomLevelsStep();
-    } else if (profile.type === 'startRide') {
+    } else if (profile.type === ROOM_MSG.START_RIDE) {
       // Stoker: captain started the ride
       this._transitionToGame();
     }
@@ -3978,6 +4006,646 @@ export class Lobby {
     this._showStep(this.levelStep);
   }
 
+  // ============================================================
+  // VERSUS — local split-screen team racing (2-4 players, issue #351)
+  // ============================================================
+
+  /**
+   * Enter the versus team-setup screen. P1 (the lobby's own InputManager)
+   * auto-joins Team A; everyone else joins from the monitor loop by
+   * pressing A on an unclaimed pad, or via the keyboard button.
+   */
+  /**
+   * Describe P1's current physical source. gamepadIndex is USELESS for
+   * this — HID pseudo-pad claims (BT DualSense in 0x31 mode, the normal
+   * state in Electron) leave it null. gamepadConnected covers Gamepad API,
+   * HID-slot, and Steam Input bindings.
+   */
+  /** Human label for a Steam Input controller type enum string. */
+  _prettySteamType(type) {
+    const t = String(type || '').replace(/^k_ESteamInputType_/i, '');
+    const map = {
+      PS5Controller: 'DUALSENSE',
+      PS4Controller: 'DUALSHOCK 4',
+      XBoxOneController: 'XBOX',
+      XBox360Controller: 'XBOX 360',
+      SwitchProController: 'SWITCH PRO',
+      SteamController: 'STEAM CONTROLLER',
+      SteamDeckController: 'STEAM DECK',
+    };
+    return map[t] || (t ? t.toUpperCase().slice(0, 20) : 'CONTROLLER');
+  }
+
+  _versusP1Descriptor() {
+    const inp = this.input;
+    if (!inp) return { type: 'keyboard', name: 'KEYBOARD' };
+    if (inp._steamInputActive) {
+      const entry = inp._selectedSteamEntry();
+      return { type: 'gamepad', name: this._prettySteamType(entry?.type) };
+    }
+    if (inp.gamepadConnected) {
+      const slot = inp._slot;
+      const raw = slot?.hidDevice?.productName || inp._gpName || slot?.controllerLabel;
+      return { type: 'gamepad', name: this._prettyGamepadName(raw) };
+    }
+    return { type: 'keyboard', name: 'KEYBOARD' };
+  }
+
+  _enterVersusStep() {
+    // Tear down any in-flight online session — versus is purely local.
+    if (this.net) {
+      try { this.net.destroy(); } catch (e) {}
+      this.net = null;
+    }
+    this._pendingMode = 'versus';
+    this._versusPlayers = [];
+    this._versusPrevButtons.clear();
+    this._versusLastCardsKey = null;
+    this._versusCandidates = [];
+
+    // Give P1 one last chance to bind a visible pad BEFORE suspending
+    // auto-claim (pads plugged in pre-launch never fire gamepadconnected;
+    // same rationale as _detectLocalP2State's forced claim).
+    if (this.input && this.input.gamepadIndex === null && this.controllerManager) {
+      const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+      this.controllerManager.claimFirstAvailable('P1', pads);
+    }
+
+    // While this screen is open, the join monitor is the ONLY claimer.
+    // Without this, ingestFrame's activity-claim would grab a joiner's
+    // first button press into the first empty slot — P1's — hijacking a
+    // keyboard-driven P1. Cleared in _leaveVersus and on START RIDE
+    // (game._onVersusReady side).
+    if (this.controllerManager) this.controllerManager.autoClaimSuspended = true;
+
+    // Seed the WebHID device cache (same pattern as the co-op monitor) so
+    // hid candidates can be labeled before their first report arrives.
+    if (navigator.hid) {
+      navigator.hid.getDevices().then(devices => {
+        this._cachedHIDDevices = devices;
+        this._hidCacheTime = performance.now();
+      }).catch(() => {});
+    }
+
+    // P1 auto-joins Team A. If Steam Input is active, pin P1 to the first
+    // captured controller so a joiner can't bind the same handle.
+    const p1 = this._versusP1Descriptor();
+    if (this.input && this.input._steamInputActive) {
+      const entry = this.input._selectedSteamEntry();
+      if (entry) this.input.steamInputHandle = entry.handle;
+    }
+    this._versusPlayers.push({
+      n: 1,
+      type: p1.type,
+      gpIndex: this.input ? this.input.gamepadIndex : null,
+      slotId: 'P1',
+      name: p1.name,
+      team: 'A',
+      input: this.input,
+    });
+
+    // Debug: ?versusbot=1 fills Team B with a synthetic rider so split-
+    // screen, streaming separation, and the finish flow are testable with
+    // one human. The game drives its taps at a fixed cadence (_stepTeam).
+    if (new URLSearchParams(window.location.search).get('versusbot') === '1') {
+      this._versusPlayers.push({
+        n: 2,
+        type: 'bot',
+        gpIndex: null,
+        slotId: null,
+        name: 'BOT',
+        team: 'B',
+        input: new InputManager({
+          enableKeyboard: false,
+          enableMotion: false,
+          enableTouch: false,
+        }),
+      });
+    }
+
+    this._showStep(this.versusStep); // starts the monitor
+  }
+
+  /** Leave versus setup: release joined slots (not P1's) and clear state. */
+  _leaveVersus() {
+    this._stopVersusMonitor();
+    for (const p of this._versusPlayers) {
+      // Unbind Steam handles so the InputManager defaults revert.
+      if (p.input) p.input.steamInputHandle = null;
+      if (p.slotId === 'P1' || p.type !== 'gamepad' || !p.slotId) continue;
+      // Return HID entries to the pool cleanly so re-entering the screen
+      // (or co-op) can claim them again.
+      this.controllerManager?.releaseSlotToPool(p.slotId);
+    }
+    if (this.controllerManager) this.controllerManager.autoClaimSuspended = false;
+    this._versusPlayers = [];
+    this._versusCandidates = [];
+    this._versusLastCardsKey = null;
+    this._pendingMode = null;
+  }
+
+  _startVersusMonitor() {
+    if (isMobile) return;
+    if (this._versusMonitorRAF !== null) return;
+
+    // Keyboard team-switch: arrows move the keyboard-typed player (P1 when
+    // P1 is on keyboard, else the keyboard joiner). Gamepad players use
+    // their own d-pad/stick, polled in the tick below.
+    this._versusKeyHandler = (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const kbPlayer = this._versusPlayers.find(p => p.type === 'keyboard');
+      if (!kbPlayer) return;
+      this._versusSwitchTeam(kbPlayer, e.key === 'ArrowLeft' ? 'A' : 'B');
+    };
+    window.addEventListener('keydown', this._versusKeyHandler);
+
+    const tick = () => {
+      if (this._currentStep !== this.versusStep) {
+        this._versusMonitorRAF = null;
+        return;
+      }
+      const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+
+      // Refresh the WebHID device cache every 2s (hot-plug labeling).
+      if (navigator.hid && performance.now() - this._hidCacheTime > 2000) {
+        this._hidCacheTime = performance.now();
+        navigator.hid.getDevices().then(devices => {
+          this._cachedHIDDevices = devices;
+        }).catch(() => {});
+      }
+
+      // Re-sync P1's live source. gamepadConnected-based: covers Gamepad
+      // API pads, HID-claimed slots (gamepadIndex null!), and Steam Input.
+      const p1 = this._versusPlayers[0];
+      if (p1) {
+        const d = this._versusP1Descriptor();
+        if (p1.type !== d.type || p1.name !== d.name) {
+          p1.type = d.type;
+          p1.name = d.name;
+        }
+        p1.gpIndex = this.input ? this.input.gamepadIndex : null;
+      }
+
+      // 1) Detect joinable controllers from all sources (Gamepad API,
+      //    HID pool/slots, Steam Input) and poll each for a join press.
+      this._versusCandidates = this._detectVersusCandidates(pads);
+      for (const c of this._versusCandidates) {
+        const gp = c.pollGp;
+        if (!gp || !gp.buttons) continue;
+        const prev = this._versusPrevButtons.get(c.key) || { a: false, left: false, right: false };
+        const a = !!(gp.buttons[0] && gp.buttons[0].pressed);
+        if (a && !prev.a) {
+          // _versusJoinCandidate enforces seats itself — including the
+          // keyboard-P1 takeover when the roster is otherwise full.
+          this._versusJoinCandidate(c);
+        }
+        prev.a = a;
+        this._versusPrevButtons.set(c.key, prev);
+      }
+
+      // 2) Joined pad players: d-pad/stick left/right edge → pick team.
+      //    getGamepadState() unifies the sources (real pad, HID synthetic,
+      //    Steam synthetic all expose buttons 14/15 + axes[0]).
+      //    Joiner InputManagers aren't in the game loop's poll set until
+      //    the race starts, so poll them here — Steam-bound managers need
+      //    it to refresh their snapshot (and gamepadConnected).
+      for (const p of this._versusPlayers) {
+        if (!p.input || p.input === this.input || p.type === 'keyboard' || p.type === 'bot') continue;
+        p.input.pollGamepad();
+        p.input.consumeTaps();
+      }
+      for (const p of this._versusPlayers) {
+        if (p.type !== 'gamepad' || !p.input) continue;
+        const gp = p.input.getGamepadState();
+        if (!gp || !gp.buttons) continue;
+        const key = 'member:' + p.n;
+        const prev = this._versusPrevButtons.get(key) || { a: false, left: false, right: false };
+        const left = !!(gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] || 0) < -0.6;
+        const right = !!(gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] || 0) > 0.6;
+        if (left && !prev.left) this._versusSwitchTeam(p, 'A');
+        if (right && !prev.right) this._versusSwitchTeam(p, 'B');
+        prev.left = left;
+        prev.right = right;
+        this._versusPrevButtons.set(key, prev);
+      }
+
+      // 3) Keyboard join button: visible only when no keyboard player yet.
+      //    (One physical keyboard can't serve two players — same rule as co-op.)
+      const kbBtn = document.getElementById('btn-versus-join-kb');
+      if (kbBtn) {
+        const hasKb = this._versusPlayers.some(p => p.type === 'keyboard');
+        const show = !hasKb && this._versusPlayers.length < 4;
+        const disp = show ? '' : 'none';
+        if (kbBtn.style.display !== disp) kbBtn.style.display = disp;
+      }
+
+      // 4) Continue button + cards.
+      const contBtn = document.getElementById('btn-versus-continue');
+      if (contBtn) contBtn.disabled = !this._versusTeamsValid();
+      this._renderVersusCards();
+
+      this._versusMonitorRAF = requestAnimationFrame(tick);
+    };
+    this._versusMonitorRAF = requestAnimationFrame(tick);
+  }
+
+  /**
+   * Enumerate joinable controllers, one candidate per physical pad:
+   * - steam: Steam Input snapshot entries (Electron under Steam — the
+   *   Gamepad API is blind there; the snapshot is the source of truth,
+   *   so other sources are skipped to avoid double-listing).
+   * - gamepad: unclaimed navigator.getGamepads() pads (Xbox/Switch/USB).
+   * - hid: ControllerManager pool entries + claimed-but-unowned slots.
+   *   This is the PRIMARY path in Electron: the PlayStation driver flips
+   *   BT DualSenses to 0x31 full-report mode at boot, which removes them
+   *   from the Gamepad API entirely — their synthetics are the only
+   *   button source.
+   */
+  /** Stable id for a HIDDevice (distinguishes identical pads). */
+  _deviceKeyId(device) {
+    let id = this._versusDeviceIds.get(device);
+    if (!id) {
+      id = this._versusNextDeviceId++;
+      this._versusDeviceIds.set(device, id);
+    }
+    return id;
+  }
+
+  _detectVersusCandidates(pads) {
+    const out = [];
+    // Even with all four seats filled, a pad can still TAKE OVER a
+    // keyboard-typed P1 seat (see _versusJoinCandidate), so keep
+    // detecting while that escape hatch applies.
+    const p1 = this._versusPlayers[0];
+    const canConvertP1 = !!(p1 && p1.type === 'keyboard');
+    if (this._versusPlayers.length >= 4 && !canConvertP1) return out;
+    const mgr = this.controllerManager;
+
+    // Steam Input active → snapshot handles are the truth.
+    if (this.input && this.input._steamInputActive) {
+      const ownedHandles = new Set();
+      for (const p of this._versusPlayers) {
+        if (p.input && p.input.steamInputHandle !== null) ownedHandles.add(p.input.steamInputHandle);
+      }
+      // P1 unpinned (legacy default = first entry) still owns entry [0].
+      const p1Entry = this.input._selectedSteamEntry();
+      if (p1Entry && this._versusPlayers[0] && this._versusPlayers[0].type === 'gamepad') {
+        ownedHandles.add(p1Entry.handle);
+      }
+      for (const c of this.input._steamInputSnapshot) {
+        if (ownedHandles.has(c.handle)) continue;
+        out.push({
+          kind: 'steam',
+          key: 'steam:' + c.handle,
+          handle: c.handle,
+          name: this._prettySteamType(c.type),
+          pollGp: this._steamEntryToPollGp(c),
+        });
+      }
+      return out; // all live candidates — join-time logic enforces seats
+    }
+
+    // Devices already owned by a pad-typed member (P1 included).
+    const ownedDevices = new Set();
+    const ownedIndices = new Set();
+    const ownedSlotIds = new Set();
+    for (const p of this._versusPlayers) {
+      if (p.type !== 'gamepad' || !p.input) continue;
+      const slot = p.input._slot;
+      if (slot?.hidDevice) ownedDevices.add(slot.hidDevice);
+      if (slot) ownedSlotIds.add(slot.id);
+      if (p.input.gamepadIndex !== null) ownedIndices.add(p.input.gamepadIndex);
+    }
+
+    // Gamepad API pads.
+    for (const gp of pads) {
+      if (!gp || ownedIndices.has(gp.index)) continue;
+      out.push({
+        kind: 'gamepad',
+        key: 'gp:' + gp.index,
+        gpIndex: gp.index,
+        gp,
+        name: this._prettyGamepadName(gp.id),
+        pollGp: gp,
+      });
+    }
+
+    if (mgr) {
+      // Pool entries (unclaimed HID pads — synthetics live pre-claim).
+      const now = performance.now();
+      for (const entry of mgr._hidPool.values()) {
+        if (ownedDevices.has(entry.device)) continue;
+        // Only interfaces that are actively streaming input reports are
+        // real, joinable controllers. Wireless dongles pool every HID
+        // interface they expose — the Steam Controller Puck has FIVE, of
+        // which exactly one emits STATE reports — and a single connected
+        // controller was showing as three join cards. Silent interfaces
+        // (and powered-off pads) never/no longer emit, so a freshness
+        // window filters them; a sleeping pad's card appears the moment
+        // a button press wakes it, which matches the join hint anyway.
+        if (!entry.hidActiveSince || now - entry.hidActiveSince > 5000) continue;
+        // Dual-interface pads: if a visible unclaimed Gamepad API pad
+        // shares this device's productName, the gamepad candidate above
+        // already covers it.
+        const hidName = (entry.device.productName || '').trim().toLowerCase();
+        if (hidName && out.some(c => c.kind === 'gamepad' && c.gp.id.toLowerCase().includes(hidName))) continue;
+        out.push({
+          kind: 'hid',
+          key: 'hid:' + this._deviceKeyId(entry.device),
+          device: entry.device,
+          name: this._prettyGamepadName(entry.device.productName),
+          pollGp: entry.synthetic,
+        });
+      }
+      // Claimed slots holding a device no member owns — a pad that
+      // activity-claimed a slot while navigating menus BEFORE this screen
+      // suspended auto-claim. Joining adopts that slot.
+      for (const s of mgr.slots) {
+        if (s.state !== 'claimed' || !s.hidDevice) continue;
+        if (ownedSlotIds.has(s.id) || ownedDevices.has(s.hidDevice)) continue;
+        out.push({
+          kind: 'hid',
+          key: 'hidslot:' + s.id,
+          device: s.hidDevice,
+          slotId: s.id,
+          name: this._prettyGamepadName(s.hidDevice.productName || s.controllerLabel),
+          pollGp: s.synthetic,
+        });
+      }
+    }
+    return out; // all live candidates — join-time logic enforces seats
+  }
+
+  /** Gamepad-shaped poll object for a Steam Input snapshot entry. */
+  _steamEntryToPollGp(c) {
+    const d = c.digital || {};
+    const btn = (pressed) => ({ pressed: !!pressed, value: pressed ? 1 : 0 });
+    const buttons = [];
+    for (let i = 0; i < 16; i++) buttons.push(btn(false));
+    buttons[0] = btn(d.Confirm);
+    buttons[14] = btn(d.MenuLeft);
+    buttons[15] = btn(d.MenuRight);
+    return { buttons, axes: [0, 0, 0, 0] };
+  }
+
+  _stopVersusMonitor() {
+    if (this._versusMonitorRAF !== null) {
+      cancelAnimationFrame(this._versusMonitorRAF);
+      this._versusMonitorRAF = null;
+    }
+    if (this._versusKeyHandler) {
+      window.removeEventListener('keydown', this._versusKeyHandler);
+      this._versusKeyHandler = null;
+    }
+    this._versusPrevButtons.clear();
+  }
+
+  /**
+   * Join a detected candidate as the next player. Handles all three
+   * sources: Gamepad API pads (explicit slot claim), WebHID devices
+   * (explicit HID claim or adopting the slot a pre-screen activity-claim
+   * landed on), and Steam Input controllers (handle-bound InputManager,
+   * no slot involved).
+   */
+  _versusJoinCandidate(c) {
+    const mgr = this.controllerManager;
+    const p1 = this._versusPlayers[0];
+    const seatsLeft = this._versusPlayers.length < 4;
+    // Escape hatch: a keyboard-typed P1 is a placeholder seat. When no
+    // regular seat/slot is available, a joining pad TAKES OVER P1 —
+    // P1's InputManager is permanently bound to slot P1, so claiming the
+    // pad there makes it Player 1's controller directly. This is how
+    // "keyboard + 4 pads" resolves to a full 4-pad roster.
+    const canConvertP1 = !!(p1 && p1.type === 'keyboard' && mgr);
+    if (!seatsLeft && !canConvertP1) {
+      console.log(`[versus] join ignored (roster full): ${c.name}`);
+      return;
+    }
+
+    const convertP1 = (claimFn) => {
+      const slotP1 = mgr.getSlot('P1');
+      if (!slotP1) return false;
+      // Pad may sit on another slot from a pre-screen activity claim —
+      // move it home to P1.
+      if (c.slotId && c.slotId !== 'P1') mgr.releaseSlotToPool(c.slotId);
+      if (slotP1.state !== 'empty') return false;
+      if (!claimFn()) return false;
+      p1.type = 'gamepad';
+      p1.name = c.name;
+      p1.gpIndex = this.input.gamepadIndex;
+      if (c.kind === 'hid') {
+        this.input.motionEnabled = true;
+        this.input.startTiltCalibration();
+      }
+      console.log(`[versus] keyboard P1 seat taken over by ${c.name}`);
+      analytics.trackEvent('versus_player_joined', { source: c.kind, players: this._versusPlayers.length, p1_takeover: true });
+      return true;
+    };
+
+    const usedSlots = new Set(this._versusPlayers.map(p => p.slotId).filter(Boolean));
+    usedSlots.add('P1'); // regular joiners never take P1's slot (see convertP1)
+    let input = null;
+    let slotId = null;
+    let gpIndex = null;
+
+    if (c.kind === 'steam') {
+      if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
+      input = new InputManager({
+        enableKeyboard: false,
+        enableMotion: false,
+        enableTouch: false,
+      });
+      input.steamInputHandle = c.handle;
+      // Steam gyro auto-arms on first snapshot; nothing else to wire.
+    } else if (c.kind === 'hid') {
+      let slot = null;
+      if (seatsLeft) {
+        if (c.slotId && !usedSlots.has(c.slotId)) {
+          // Adopt the slot ingestFrame claimed before this screen opened.
+          slot = mgr?.getSlot(c.slotId) || null;
+        }
+        if (!slot && mgr) {
+          for (const id of ['P2', 'P3', 'P4']) {
+            if (usedSlots.has(id)) continue;
+            slot = mgr.claimHidDeviceForSlot(id, c.device);
+            if (slot) break;
+          }
+        }
+      }
+      if (!slot) {
+        if (canConvertP1 && convertP1(() => mgr.claimHidDeviceForSlot('P1', c.device))) return;
+        console.log(`[versus] join ignored (no free slot): ${c.name}`);
+        return;
+      }
+      slotId = slot.id;
+      input = new InputManager({
+        slot,
+        enableKeyboard: false,
+        enableMotion: false,
+        enableTouch: false,
+      });
+      // HID pads carry gyro (that's why they're in 0x31 mode) — arm it.
+      input.motionEnabled = true;
+      input.startTiltCalibration();
+    } else { // 'gamepad'
+      if (seatsLeft) {
+        for (const s of mgr?.slots || []) {
+          if (s.gamepadIndex === c.gpIndex && !usedSlots.has(s.id)) { slotId = s.id; break; }
+        }
+        if (!slotId && mgr) {
+          for (const id of ['P2', 'P3', 'P4']) {
+            if (usedSlots.has(id)) continue;
+            if (mgr.claimPadForSlot(id, c.gp)) { slotId = id; break; }
+          }
+        }
+      }
+      if (!slotId) {
+        if (canConvertP1 && convertP1(() => mgr.claimPadForSlot('P1', c.gp))) return;
+        console.log(`[versus] join ignored (no free slot): ${c.name}`);
+        return;
+      }
+      gpIndex = c.gpIndex;
+      input = new InputManager({
+        slot: mgr.getSlot(slotId),
+        enableKeyboard: false,
+        enableMotion: false,
+        enableTouch: false,
+      });
+      if (this.motionActive) input.motionEnabled = true;
+    }
+
+    input.suppressGamepadLean = !this.joystickActive;
+
+    const sizeA = this._versusPlayers.filter(p => p.team === 'A').length;
+    const sizeB = this._versusPlayers.filter(p => p.team === 'B').length;
+    this._versusPlayers.push({
+      n: this._versusPlayers.length + 1,
+      type: 'gamepad',
+      gpIndex,
+      slotId,
+      name: c.name,
+      team: sizeB < sizeA ? 'B' : 'A',
+      input,
+    });
+    console.log(`[versus] ${c.name} joined as player ${this._versusPlayers.length} (${c.kind}${slotId ? ', slot ' + slotId : ''})`);
+    analytics.trackEvent('versus_player_joined', {
+      source: c.kind,
+      players: this._versusPlayers.length,
+    });
+  }
+
+  /** Join the (single) keyboard player. */
+  _versusJoinKeyboard() {
+    if (this._versusPlayers.length >= 4) return;
+    if (this._versusPlayers.some(p => p.type === 'keyboard')) return;
+    const input = new InputManager({
+      enableKeyboard: true,
+      enableMotion: false,
+      enableTouch: false,
+    });
+    const sizeA = this._versusPlayers.filter(p => p.team === 'A').length;
+    const sizeB = this._versusPlayers.filter(p => p.team === 'B').length;
+    this._versusPlayers.push({
+      n: this._versusPlayers.length + 1,
+      type: 'keyboard',
+      gpIndex: null,
+      slotId: null,
+      name: 'KEYBOARD',
+      team: sizeB < sizeA ? 'B' : 'A',
+      input,
+    });
+    analytics.trackEvent('versus_player_joined', {
+      source: 'keyboard',
+      players: this._versusPlayers.length,
+    });
+  }
+
+  /** Move a player to `team` if that side has room. */
+  _versusSwitchTeam(player, team) {
+    if (player.team === team) return;
+    const size = this._versusPlayers.filter(p => p.team === team).length;
+    if (size >= 2) return;
+    player.team = team;
+  }
+
+  _versusTeamsValid() {
+    const a = this._versusPlayers.filter(p => p.team === 'A').length;
+    const b = this._versusPlayers.filter(p => p.team === 'B').length;
+    return a >= 1 && a <= 2 && b >= 1 && b <= 2;
+  }
+
+  /** Teams payload for onVersusReady: two entries, A then B. */
+  _versusTeams() {
+    const member = (p) => ({
+      input: p.input,
+      type: p.type,
+      slotId: p.slotId,
+      name: p.name,
+      isP1: p.slotId === 'P1',
+    });
+    return [
+      { id: 'A', members: this._versusPlayers.filter(p => p.team === 'A').map(member) },
+      { id: 'B', members: this._versusPlayers.filter(p => p.team === 'B').map(member) },
+    ];
+  }
+
+  /**
+   * Re-render team columns when membership/teams/candidates change
+   * (dirty-checked). Detected-but-unjoined controllers render as live
+   * join cards (mouse-clickable; their own ✕/A press also joins via the
+   * monitor's edge poll) distributed to teams with room; leftover open
+   * seats show the passive placeholder.
+   */
+  _renderVersusCards() {
+    const candidates = this._versusCandidates || [];
+    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}`).join('|')
+      + '§' + candidates.map(c => `${c.key}:${c.name}`).join('|');
+    if (key === this._versusLastCardsKey) return;
+    this._versusLastCardsKey = key;
+
+    // Distribute join cards: fill the emptier team first (mirrors the
+    // team auto-assignment a join will actually make).
+    const roomIn = (team) => 2 - this._versusPlayers.filter(p => p.team === team).length;
+    const queue = [...candidates];
+    const joinCardsFor = { A: [], B: [] };
+    let roomA = roomIn('A');
+    let roomB = roomIn('B');
+    for (const c of queue) {
+      const sizeA = this._versusPlayers.filter(p => p.team === 'A').length + joinCardsFor.A.length;
+      const sizeB = this._versusPlayers.filter(p => p.team === 'B').length + joinCardsFor.B.length;
+      if (roomB > 0 && (sizeB < sizeA || roomA <= 0)) { joinCardsFor.B.push(c); roomB--; }
+      else if (roomA > 0) { joinCardsFor.A.push(c); roomA--; }
+    }
+
+    for (const team of ['A', 'B']) {
+      const wrap = document.getElementById(`versus-team-${team.toLowerCase()}-slots`);
+      if (!wrap) continue;
+      wrap.innerHTML = '';
+      const members = this._versusPlayers.filter(p => p.team === team);
+      for (const p of members) {
+        const card = document.createElement('div');
+        card.className = 'versus-player-card';
+        const icon = p.type === 'keyboard' ? '⌨️ ' : (p.type === 'bot' ? '🤖 ' : '🎮 ');
+        card.innerHTML = `<span class="vp-name">PLAYER ${p.n}</span><span class="vp-device">${icon}${p.name}</span>`;
+        wrap.appendChild(card);
+      }
+      for (const c of joinCardsFor[team]) {
+        const card = document.createElement('button');
+        card.className = 'versus-player-card vp-join';
+        card.innerHTML = `<span class="vp-name">JOIN — ${c.name}</span><span class="vp-device">Press ✕/A or click</span>`;
+        card.addEventListener('click', () => this._versusJoinCandidate(c));
+        wrap.appendChild(card);
+      }
+      const shown = members.length + joinCardsFor[team].length;
+      if (shown < 2 && this._versusPlayers.length + candidates.length < 4) {
+        const empty = document.createElement('div');
+        empty.className = 'versus-player-card vp-empty';
+        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">CONNECT A CONTROLLER</span>';
+        wrap.appendChild(empty);
+      }
+    }
+  }
+
   _removePipLobbyMode() {
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
@@ -4080,12 +4748,10 @@ export class Lobby {
 
     // Send current bike preset and profile to partner on re-entry
     if (this.net.connected) {
-      this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+      this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
       this._sendRoomProfile();
-      const camMsg = { type: 'cameraToggle', enabled: this.cameraActive };
       const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-      if (user && user.avatar) camMsg.avatar = user.avatar;
-      this.net.sendProfile(camMsg);
+      this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, user && user.avatar));
     }
 
     // Re-register disconnect handler for room
@@ -4264,6 +4930,11 @@ export class Lobby {
     // load and show() set _currentStep directly without going through
     // _showStep, so the highlight + d-pad/stick nav need seeding here too (#318).
     this._applyStepSpatialFocus(this._currentStep);
+    // Singleton RAF loop: _startGamepadNav runs again on every re-entry from
+    // gameplay (show()), so cancel any prior loop first. Otherwise the loops
+    // accumulate and each frame polls the pad N times, double-firing confirms
+    // (e.g. opening the profile popup AND advancing the step in one press). (#332)
+    if (this._pollRafId) cancelAnimationFrame(this._pollRafId);
     this._pollGamepadNav();
   }
 
@@ -4468,77 +5139,41 @@ export class Lobby {
     this._gpPrevLB = lb;
     this._gpPrevRB = rb;
 
-    // If profile popup is open, navigate between logout and back
+    // If profile popup is open, navigate between logout and back (skip the
+    // logout button when it's hidden — Electron/Steam — so gamepad focus can't
+    // land on or confirm an invisible control). (#332)
     if (this.profilePopup.classList.contains('visible')) {
-      const isLoggedIn = this.auth.isLoggedIn();
-      const items = isLoggedIn
+      const items = (this.auth.isLoggedIn()
         ? [document.getElementById('profile-popup-logout'), document.getElementById('profile-popup-back')]
-        : [document.getElementById('profile-popup-signin-back')];
-      if (up && !this._gpPrevUp) this._profileFocusIndex = Math.max(0, this._profileFocusIndex - 1);
-      if (down && !this._gpPrevDown) this._profileFocusIndex = Math.min(items.length - 1, this._profileFocusIndex + 1);
-      // Apply focus highlight
-      items.forEach(el => el.classList.remove('gamepad-focus'));
-      if (items[this._profileFocusIndex]) items[this._profileFocusIndex].classList.add('gamepad-focus');
-      if (a && !this._gpPrevA) {
-        if (items[this._profileFocusIndex]) items[this._profileFocusIndex].click();
+        : [document.getElementById('profile-popup-signin-proxy'), document.getElementById('profile-popup-signin-back')]
+      ).filter(el => el && el.style.display !== 'none');
+      if (this._activeModal !== 'profile') {
+        this._activeModal = 'profile';
+        this._modalBack = () => this.profilePopup.classList.remove('visible');
+        this._modalFocus.setItems(items);
       }
-      if (b && !this._gpPrevB) {
-        items.forEach(el => el.classList.remove('gamepad-focus'));
-        this.profilePopup.classList.remove('visible');
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
     // Leaderboard modal gamepad navigation
     if (document.getElementById('leaderboard-modal').style.display !== 'none') {
-      // Right stick (axis 3) scrolls the leaderboard list
+      // Right stick (axis 3) scrolls the leaderboard score list (focus nav is
+      // over the tabs/close only).
       const lbStickY = gp.axes[3] || 0;
       if (Math.abs(lbStickY) > 0.15) {
         const lbBox = document.querySelector('.leaderboard-box');
         if (lbBox) lbBox.scrollTop += lbStickY * 12;
       }
-      if (left && !this._gpPrevLeft) {
-        this._lbFocusCol = Math.max(0, this._lbFocusCol - 1);
-        this._lbApplyFocus();
+      // Tabs (main + sub) + close form a small spatial grid (#318). Sub-tabs
+      // rebuild on main-tab change, so refresh the set each frame; B closes.
+      if (this._activeModal !== 'leaderboard') {
+        this._activeModal = 'leaderboard';
+        this._modalBack = () => this._closeLeaderboard();
+        this._modalFocus.setSpatial(this._lbFocusables(), document.querySelector('#lb-main-tabs .lb-tab.active'));
+      } else {
+        this._modalFocus.refreshSpatial(this._lbFocusables());
       }
-      if (right && !this._gpPrevRight) {
-        const rowLen = this._lbGetRowItems(this._lbFocusRow).length;
-        this._lbFocusCol = Math.min(rowLen - 1, this._lbFocusCol + 1);
-        this._lbApplyFocus();
-      }
-      if (up && !this._gpPrevUp) {
-        let r = this._lbFocusRow - 1;
-        while (r >= 0 && this._lbGetRowItems(r).length === 0) r--;
-        if (r >= 0) {
-          this._lbFocusRow = r;
-          const rowLen = this._lbGetRowItems(r).length;
-          this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
-          this._lbApplyFocus();
-        }
-      }
-      if (down && !this._gpPrevDown) {
-        let r = this._lbFocusRow + 1;
-        while (r <= 2 && this._lbGetRowItems(r).length === 0) r++;
-        if (r <= 2) {
-          this._lbFocusRow = r;
-          const rowLen = this._lbGetRowItems(r).length;
-          this._lbFocusCol = Math.min(this._lbFocusCol, rowLen - 1);
-          this._lbApplyFocus();
-        }
-      }
-      if (a && !this._gpPrevA) {
-        const items = this._lbGetRowItems(this._lbFocusRow);
-        const idx = Math.min(this._lbFocusCol, items.length - 1);
-        if (items[idx]) items[idx].click();
-      }
-      if (b && !this._gpPrevB) {
-        this._closeLeaderboard();
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
     if (this.helpModal.classList.contains('visible')) {
@@ -4557,33 +5192,19 @@ export class Lobby {
       return;
     }
 
-    // Recent rooms popup: navigate room cards + New Room button
+    // Recent rooms popup: navigate room cards + New Room button. B = New Room.
     const rejoinOverlay = document.getElementById('rejoin-overlay');
     if (rejoinOverlay) {
       const items = [...rejoinOverlay.querySelectorAll('.rejoin-room-card'), document.getElementById('btn-rejoin-new')].filter(Boolean);
-      if (items.length === 0) { this._rejoinFocus = undefined; return; }
-      if (this._rejoinFocus === undefined) this._rejoinFocus = 0;
-      if (up && !this._gpPrevUp) {
-        items[this._rejoinFocus].classList.remove('gamepad-focus');
-        this._rejoinFocus = Math.max(0, this._rejoinFocus - 1);
-        items[this._rejoinFocus].classList.add('gamepad-focus');
+      if (items.length === 0) { return; }
+      if (this._activeModal !== 'rejoin') {
+        this._activeModal = 'rejoin';
+        this._modalBack = () => { const n = document.getElementById('btn-rejoin-new'); if (n) n.click(); };
+        this._modalFocus.setItems(items);
       }
-      if (down && !this._gpPrevDown) {
-        items[this._rejoinFocus].classList.remove('gamepad-focus');
-        this._rejoinFocus = Math.min(items.length - 1, this._rejoinFocus + 1);
-        items[this._rejoinFocus].classList.add('gamepad-focus');
-      }
-      if (a && !this._gpPrevA) items[this._rejoinFocus].click();
-      if (b && !this._gpPrevB) {
-        const newBtn = document.getElementById('btn-rejoin-new');
-        if (newBtn) newBtn.click();
-      }
-      this._gpPrevUp = up; this._gpPrevDown = down;
-      this._gpPrevLeft = left; this._gpPrevRight = right;
-      this._gpPrevA = a; this._gpPrevB = b;
+      this._modalFocus.poll();
       return;
     }
-    this._rejoinFocus = undefined;
 
     // If "Tap to Start" overlay is showing, any button dismisses it
     if (this._tapOverlay) {
@@ -4620,6 +5241,10 @@ export class Lobby {
       this._gpPrevA = a; this._gpPrevB = b;
       return;
     }
+
+    // Reaching here means no modal is open — release a linear modal controller
+    // (profile/rejoin) if one was active, clearing its highlight.
+    if (this._activeModal) { this._modalFocus.clear(); this._activeModal = null; this._modalBack = null; }
 
     // Step navigation: delegated to the spatial FocusController (#318).
     // Lazily seed the scope the first time we run with a gamepad — covers
@@ -4746,9 +5371,10 @@ export class Lobby {
     ground.receiveShadow = true;
     this._previewScene.add(ground);
 
-    // Load bike model
+    // Load bike model — the chooser shows the original recolorable frame so the
+    // color presets apply here (the in-game bike is the fused riders model).
     const loader = new GLTFLoader();
-    loader.load(BIKE_MODEL_PATH, (gltf) => {
+    loader.load(CHOOSER_MODEL_PATH, (gltf) => {
       this._previewModel = gltf.scene;
 
       // Scale to fit preview
@@ -4923,7 +5549,7 @@ export class Lobby {
 
   _sendBikeSyncIfInRoom() {
     if ((this._currentStep === this.roomStep || (this._currentStep === this.levelStep && this._pendingMode === 'multiplayer')) && this.net && this.net.connected) {
-      this.net.sendProfile({ type: 'bikeSync', presetKey: this.selectedPresetKey });
+      this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
     }
   }
 

@@ -213,6 +213,28 @@ export class ObstacleManager {
   }
 
   update(dt, bikeDistanceTraveled, bikePosition) {
+    this._updateWithAnchors([bikeDistanceTraveled]);
+  }
+
+  /**
+   * Versus: pool + world positions maintained around BOTH bikes. Matters
+   * for correctness, not just visuals — checkCollision reads item._worldX,
+   * which is only computed for items inside an anchor's visible window.
+   * @param {number[]} anchorDs bike road distances, one per team
+   */
+  updateVersus(dt, anchorDs) {
+    this._updateWithAnchors(anchorDs);
+  }
+
+  _nearAny(absoluteD, anchorDs) {
+    for (const d of anchorDs) {
+      const ahead = absoluteD - d;
+      if (ahead >= -VISIBLE_BEHIND && ahead <= VISIBLE_AHEAD) return true;
+    }
+    return false;
+  }
+
+  _updateWithAnchors(anchorDs) {
     // Release pool slots for items out of range
     for (const slot of this._pool) {
       if (slot.itemIdx < 0) continue;
@@ -223,8 +245,7 @@ export class ObstacleManager {
         slot.itemIdx = -1;
         continue;
       }
-      const ahead = item.absoluteD - bikeDistanceTraveled;
-      if (ahead < -VISIBLE_BEHIND || ahead > VISIBLE_AHEAD) {
+      if (!this._nearAny(item.absoluteD, anchorDs)) {
         slot.mesh.visible = false;
         slot.shadow.visible = false;
         item.poolIdx = -1;
@@ -236,8 +257,7 @@ export class ObstacleManager {
     for (let i = 0; i < this._items.length; i++) {
       const item = this._items[i];
       if (item._hidden) continue;
-      const ahead = item.absoluteD - bikeDistanceTraveled;
-      if (ahead < -VISIBLE_BEHIND || ahead > VISIBLE_AHEAD) continue;
+      if (!this._nearAny(item.absoluteD, anchorDs)) continue;
 
       // Compute world position
       const pt = this.roadPath.getPointAtDistance(item.roadD);
@@ -266,6 +286,16 @@ export class ObstacleManager {
       // Shadow sits just above ground
       slot.shadow.position.set(item._worldX, item._worldY + 0.02, item._worldZ);
       slot.shadow.visible = true;
+    }
+  }
+
+  /** Re-face visible billboarded pylons per split-screen render pass. */
+  faceCamera(camera) {
+    if (!camera) return;
+    for (const slot of this._pool) {
+      if (slot.itemIdx >= 0 && slot.mesh.visible) {
+        slot.mesh.quaternion.copy(camera.quaternion);
+      }
     }
   }
 

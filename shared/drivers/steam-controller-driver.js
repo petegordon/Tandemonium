@@ -48,6 +48,17 @@ const STATE_REPORT_IDS = new Set([0x45, 0x42]);
 const PUCK_PID = 0x1304;
 const LIZARD_HEARTBEAT_MS = 800;
 
+// Trackpad "click" (the pad physically presses down as a button). The pad's
+// contact-area field doubles as a PRESSURE reading, and a click is just a
+// hard press — pressure crosses a threshold. Verified against a real Puck
+// capture (issue #53): a light touch/slide tops out at ~3872, while a click
+// jumps to 7162–32767 (saturated), with a clean gap around 4000. The
+// firmware also exposes a digital left-click bit (flags byte 0x04) that
+// flips at exactly this threshold — the two agree on every sample — but the
+// matching right-pad bit hasn't been observed yet, so we threshold the
+// pressure for BOTH pads to stay symmetric and unblock the right pad.
+const TRACKPAD_CLICK_PRESSURE = 4000;
+
 const CMD_CLEAR_DIGITAL_MAPPINGS = 0x81;
 const CMD_SET_SETTINGS = 0x87;
 const SETTING_RIGHT_TRACKPAD_MODE = 0x07;
@@ -58,6 +69,27 @@ const FEATURE_REPORT_ID_PRIMARY = 0x01;
 const FEATURE_REPORT_ID_FALLBACK = 0x02;
 
 export class SteamControllerDriver extends ControllerDriver {
+
+  // The Puck exposes 5 same-vid:pid HID interfaces on ONE physical unit and only
+  // some emit the state reports we parse — so the overlay must fan inputreport
+  // out across siblings. (Safe here because they're genuinely one device.)
+  static needsSiblingFanout = true;
+
+  // Whether to suppress the Puck's lizard-mode keyboard/mouse emulation
+  // (default on). Toggled from overlay settings before/at connect; read in
+  // init(). Static so the setting can be applied without a driver instance.
+  static suppressLizardMode = true;
+
+  // One elected lizard-mode owner per physical Puck. All five of the Puck's
+  // HID interfaces share vid:pid and get pooled as separate driver instances;
+  // previously EVERY instance probed all five siblings AND ran its own 800ms
+  // heartbeat — 5× redundant SET_REPORT churn that the NotAllowedError storm
+  // made expensive enough to jank the renderer (~4s, issue #101). Only the
+  // first instance to init a given Puck probes + heartbeats; because it already
+  // broadcasts CLEAR to all five siblings, suppression coverage is unchanged.
+  // Keyed by vid:pid — two physical Pucks would share one owner, which is fine:
+  // the owner's heartbeat already targets every matching interface.
+  static _lizardOwners = new Map(); // 'vid:pid' -> owner driver instance
 
   // Steam Controller emits raw 3-axis gyro (bytes 39-44, ±2000 dps)
   // and 3-axis accel (bytes 33-38, ±2g) — same rate-based encoding as
@@ -88,6 +120,24 @@ export class SteamControllerDriver extends ControllerDriver {
 
   async init() {
     if (this.device.productId !== PUCK_PID) return;
+
+    // Opt-out: when suppression is turned off (e.g. the user lets Steam Input
+    // own keyboard/mouse), skip the lizard-mode disable + heartbeat entirely
+    // and leave the firmware's keyboard/mouse emulation active. Note: without
+    // suppression the Puck may not emit STATE reports unless something else
+    // (Steam Input, USB-C) keeps the device active.
+    if (!SteamControllerDriver.suppressLizardMode) {
+      console.log('Steam Controller (Puck): kbd/mouse suppression OFF (setting) — leaving lizard mode active.');
+      return;
+    }
+
+    // Elect a single lizard-mode owner per Puck. Sibling interfaces bail here —
+    // the owner's heartbeat already broadcasts CLEAR to all of them, so this
+    // avoids the 5×-per-interface probe + heartbeat churn (issue #101).
+    const puckKey = this._puckKey();
+    const owner = SteamControllerDriver._lizardOwners.get(puckKey);
+    if (owner && owner !== this && owner._lizardTimer) return;
+    SteamControllerDriver._lizardOwners.set(puckKey, this);
 
     // Puck path: disable lizard-mode (the firmware's default keyboard +
     // mouse + scroll emulation) by sending CLEAR_DIGITAL_MAPPINGS +
@@ -225,7 +275,15 @@ export class SteamControllerDriver extends ControllerDriver {
       this._lizardTimer = null;
     }
     this._lizardCandidates = [];
+    // Release ownership so the next connect for this Puck can re-elect an owner
+    // (e.g. this interface unplugged/re-pooled) rather than being skipped.
+    if (SteamControllerDriver._lizardOwners.get(this._puckKey()) === this) {
+      SteamControllerDriver._lizardOwners.delete(this._puckKey());
+    }
   }
+
+  /** Stable per-Puck key. All 5 interfaces of one Puck share vid:pid. */
+  _puckKey() { return `${this.device.vendorId}:${this.device.productId}`; }
 
   /**
    * Enumerate already-approved HID handles for this Puck (primary +
@@ -303,7 +361,12 @@ export class SteamControllerDriver extends ControllerDriver {
     const btn0 = data.getUint8(1);
     const btn1 = data.getUint8(2);
     const btn2 = data.getUint8(3);
-    // byte 4 = flags (touch/click state) — not surfaced in Phase 1
+    // byte 4 = touch/grip flags. Capacitive GRIP sensors live here (digital,
+    // no pressure): 0x20 = left grip held, 0x10 = right grip held — verified by
+    // squeeze-correlation against a real capture. (Stick-touch / touchpad-touch
+    // flags are in btn2, not here.)
+    const flags = data.getUint8(4);
+    const grips = { left: !!(flags & 0x20), right: !!(flags & 0x10) };
 
     // Sticks: int16 LE centered at 0, range ±0x7FFF → normalize to [-1, 1].
     // Y axes are inverted relative to the Gamepad-API "up = -1" convention,
@@ -338,6 +401,7 @@ export class SteamControllerDriver extends ControllerDriver {
       create:   !!(btn1 & 0x40), // View
       options:  !!(btn0 & 0x40), // Menu
       ps:       !!(btn2 & 0x01), // Steam (PS-equivalent)
+      quickAccess: !!(btn0 & 0x10), // "…" quick-access button (between trackpads)
       // Stick clicks
       l3:       !!(btn1 & 0x80),
       r3:       !!(btn0 & 0x20),
@@ -362,12 +426,15 @@ export class SteamControllerDriver extends ControllerDriver {
     // Trackpads: two int16 LE XY pairs + a contact-area uint16 each.
     // The contact-area being non-zero is the cleanest "is the finger
     // touching this trackpad" signal; X/Y read 0 when not touching but
-    // also legitimately 0 dead-center.
+    // also legitimately 0 dead-center. The same area field doubles as a
+    // pressure reading, so a hard press past TRACKPAD_CLICK_PRESSURE is a
+    // physical pad click (see the constant's note + issue #53).
     const lPadArea = u16(21);
     const rPadArea = u16(27);
     const touchpad = [
       {
         active: lPadArea > 0,
+        clicked: lPadArea >= TRACKPAD_CLICK_PRESSURE,
         id: 0,
         x: r(data, 17),
         y: r(data, 19),
@@ -375,6 +442,7 @@ export class SteamControllerDriver extends ControllerDriver {
       },
       {
         active: rPadArea > 0,
+        clicked: rPadArea >= TRACKPAD_CLICK_PRESSURE,
         id: 1,
         x: r(data, 23),
         y: r(data, 25),
@@ -429,6 +497,7 @@ export class SteamControllerDriver extends ControllerDriver {
       triggers,
       buttons,
       paddles,
+      grips,
       touchpad,
       touchpadButton: false,
       gyro,

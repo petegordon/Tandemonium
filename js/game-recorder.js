@@ -1440,6 +1440,9 @@ export class GameRecorder {
       [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn]
         .filter(el => el && el.style.display !== 'none')
     );
+    // Singleton RAF loop: cancel any prior poll before starting a new one so
+    // re-showing the preview can't stack loops that double-process input. (#318)
+    if (this._previewPollId) cancelAnimationFrame(this._previewPollId);
     this._pollPreviewGamepad();
   }
 
