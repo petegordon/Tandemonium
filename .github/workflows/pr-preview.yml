@@ -43,6 +43,19 @@ jobs:
           # Delimiter '@' (not '#') — the version contains '#' from the PR number.
           sed -i -E "s@id=\"lobby-version\">[^<]*@id=\"lobby-version\">${VERSION}@" _site/index.html
 
+      # Tourist Mode (#333) reads window.__TOURIST_MAPS_KEY__ from the gitignored
+      # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).
+      # That file never enters git, so recreate it here from the GOOGLE_MAPS_API_KEY
+      # secret — mirrors scripts/gen-tourist-key.js. The Map Tiles key is client-
+      # side by design; keep it locked to the tandemonium.jimandi.love referrer +
+      # Map Tiles API in Google Cloud so publishing it here is safe.
+      - name: Inject Tourist Maps key
+        if: github.event.action != 'closed'
+        env:
+          TOURIST_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          node -e 'require("fs").writeFileSync("_site/js/tourist-key.local.js", "window.__TOURIST_MAPS_KEY__ = " + JSON.stringify(process.env.TOURIST_MAPS_KEY || "") + ";\n")'
+
       - name: Deploy PR Preview
         uses: rossjrw/pr-preview-action@v1
         with:
