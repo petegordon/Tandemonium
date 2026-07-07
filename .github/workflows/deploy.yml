@@ -43,6 +43,18 @@ jobs:
           # in UsersFirst/tandemonium-controller-lab and is served at
           # https://lab.usersfirst.games/overlay (the /test card links out to it).
 
+      # Tourist Mode (#333) reads window.__TOURIST_MAPS_KEY__ from the gitignored
+      # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).
+      # That file never enters git, so recreate it here from the GOOGLE_MAPS_API_KEY
+      # secret — mirrors scripts/gen-tourist-key.js. The Map Tiles key is client-
+      # side by design; keep it locked to the tandemonium.jimandi.love referrer +
+      # Map Tiles API in Google Cloud so publishing it here is safe.
+      - name: Inject Tourist Maps key
+        env:
+          TOURIST_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          node -e 'require("fs").writeFileSync("_site/js/tourist-key.local.js", "window.__TOURIST_MAPS_KEY__ = " + JSON.stringify(process.env.TOURIST_MAPS_KEY || "") + ";\n")'
+
       # Carry the existing PR previews into the publish tree so this deploy
       # can't drop them. `keep_files: true` alone has proven unreliable at
       # preserving the pr-preview/ subtree, so we restore it explicitly: the
