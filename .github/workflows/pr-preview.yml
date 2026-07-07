@@ -27,9 +27,13 @@ jobs:
         if: github.event.action != 'closed'
         run: |
           mkdir -p _site
-          rsync -a --exclude='.git' --exclude='.github' --exclude='node_modules' \
-                   --exclude='out' --exclude='desktop' --exclude='electron' \
-                   --exclude='scripts' --exclude='.env' \
+          # Exclude .gitignore: it would be published into pr-preview/pr-N/ and
+          # its `js/tourist-key.local.js` rule makes the gh-pages `git add` skip
+          # the key file we inject below. Nothing it ignores needs publishing —
+          # it's all already excluded here.
+          rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' \
+                   --exclude='node_modules' --exclude='out' --exclude='desktop' \
+                   --exclude='electron' --exclude='scripts' --exclude='.env' \
                    ./ _site/
           # Inject <base> tag so relative asset paths resolve from the repo root,
           # not from the /pr-preview/pr-N/ subdirectory

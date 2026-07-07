@@ -35,9 +35,12 @@ jobs:
       - name: Stage deploy files
         run: |
           mkdir -p _site
-          rsync -a --exclude='.git' --exclude='.github' --exclude='node_modules' \
-                   --exclude='out' --exclude='desktop' --exclude='electron' \
-                   --exclude='scripts' --exclude='.env' \
+          # Exclude .gitignore: its `js/tourist-key.local.js` rule would make the
+          # gh-pages `git add` skip the key file we inject below. Nothing it
+          # ignores needs publishing — it's all already excluded here.
+          rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' \
+                   --exclude='node_modules' --exclude='out' --exclude='desktop' \
+                   --exclude='electron' --exclude='scripts' --exclude='.env' \
                    ./ _site/
           # The 3D controller overlay is no longer part of this repo — it lives
           # in UsersFirst/tandemonium-controller-lab and is served at
