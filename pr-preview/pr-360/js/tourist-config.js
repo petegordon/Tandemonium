@@ -81,11 +81,17 @@ export const TOURIST_TUNE = {
   // desktop keeps the library defaults. Applied in tourist-world.js.
   mobile: {
     cameraFar: 3000,       // shorter view distance → less streamed at once
-    errorTarget: 24,       // coarser LOD (default 6) → far fewer/lighter tiles
-    maxDepth: 12,          // cap subdivision so one view can't balloon
+    // errorTarget raises the allowed screen-space error so the renderer stops
+    // refining sooner — fewer/lighter tiles in view (default 6). Keep it modest
+    // so buildings still read clearly; the cache byte cap is the real ceiling.
+    // NOTE: do NOT cap maxDepth here — Google's tileset is rooted at the whole
+    // globe and street-level geometry sits dozens of levels down, so a depth cap
+    // halts refinement before any buildings load (they vanish). errorTarget +
+    // the cache caps bound memory without that failure mode.
+    errorTarget: 12,       // 2× desktop → lighter, still legible
     downloadJobs: 4,       // fewer concurrent downloads (library default 10)
-    cacheMinBytes: 64 * 1024 * 1024,   // evict down toward ~64 MB (default 0.3 GB)
-    cacheMaxBytes: 96 * 1024 * 1024,   // hard cap ~96 MB   (default 0.4 GB)
+    cacheMinBytes: 96 * 1024 * 1024,   // evict down toward ~96 MB  (default 0.3 GB)
+    cacheMaxBytes: 128 * 1024 * 1024,  // hard cap ~128 MB          (default 0.4 GB)
     cacheMinTiles: 400,    // item-count floor  (default 6000)
     cacheMaxTiles: 600,    // item-count ceiling (default 8000)
   },

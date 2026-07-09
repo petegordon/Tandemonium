@@ -89,7 +89,10 @@ export class TouristWorld {
     if (this._mobile) {
       const m = TOURIST_TUNE.mobile;
       tiles.errorTarget = m.errorTarget;
-      tiles.maxDepth = m.maxDepth;
+      // NB: deliberately NOT capping tiles.maxDepth — Google's tileset is rooted
+      // at the globe and street-level geometry is dozens of levels deep, so a
+      // depth cap halts refinement before buildings ever load. errorTarget + the
+      // cache byte caps below bound memory without hiding the world.
       tiles.downloadQueue.maxJobs = m.downloadJobs;
       tiles.lruCache.minBytesSize = m.cacheMinBytes;
       tiles.lruCache.maxBytesSize = m.cacheMaxBytes;
