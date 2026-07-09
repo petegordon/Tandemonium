@@ -67,4 +67,31 @@ export const TOURIST_TUNE = {
   // Ground-follow vertical smoothing (higher = snappier). Eased to avoid pops
   // when tiles stream in/out and a frame has no ray hit.
   groundLerp: 8,
+
+  // Camera far plane (metres). Real hills/skyline run far, so desktop opens it
+  // wide; mobile pulls it in to bound how much terrain streams at once.
+  cameraFar: 6000,
+
+  // --- Mobile tile budget (iOS web view especially) --------------------------
+  // Photorealistic 3D Tiles are memory-hungry. The library defaults to a 0.4 GB
+  // tile cache and 10 concurrent downloads — on a mobile browser with a tight
+  // per-tab memory ceiling that alone can exhaust the heap and starve OTHER
+  // allocations (notably the bike GLB's Draco decode, so the geese never
+  // appear). These caps trade some visual detail for headroom on mobile;
+  // desktop keeps the library defaults. Applied in tourist-world.js.
+  mobile: {
+    cameraFar: 3000,       // shorter view distance → less streamed at once
+    errorTarget: 24,       // coarser LOD (default 6) → far fewer/lighter tiles
+    maxDepth: 12,          // cap subdivision so one view can't balloon
+    downloadJobs: 4,       // fewer concurrent downloads (library default 10)
+    cacheMinBytes: 64 * 1024 * 1024,   // evict down toward ~64 MB (default 0.3 GB)
+    cacheMaxBytes: 96 * 1024 * 1024,   // hard cap ~96 MB   (default 0.4 GB)
+    cacheMinTiles: 400,    // item-count floor  (default 6000)
+    cacheMaxTiles: 600,    // item-count ceiling (default 8000)
+  },
+
+  // Fix #1 (ordering): on mobile, hold off opening the tile firehose until the
+  // small bike GLB has finished decoding, so the two don't race for memory.
+  // Safety cap (seconds) so tiles still start even if the bike load stalls.
+  tileStartMaxWait: 8,
 };
