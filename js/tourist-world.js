@@ -24,6 +24,7 @@ import {
 } from '3d-tiles-renderer/plugins';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { TOURIST_ORIGIN, TOURIST_TUNE } from './tourist-config.js';
+import { isMobile } from './config.js';
 
 const DEG2RAD = Math.PI / 180;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -41,9 +42,12 @@ export class TouristWorld {
     this.renderer = renderer;
     this._bike = null;
 
+    this._mobile = isMobile;
+
     // Roads/hills are real and can run far — open up the view distance and
-    // soften fog so streamed terrain isn't culled or washed out.
-    camera.far = 6000;
+    // soften fog so streamed terrain isn't culled or washed out. Mobile pulls
+    // the far plane in to bound how much terrain streams (memory headroom).
+    camera.far = this._mobile ? TOURIST_TUNE.mobile.cameraFar : TOURIST_TUNE.cameraFar;
     camera.updateProjectionMatrix();
     scene.fog = new THREE.FogExp2(0xcfe0ee, 0.00018);
 
@@ -77,10 +81,32 @@ export class TouristWorld {
       height: TOURIST_ORIGIN.height,
     }));
 
+    // Fix #2 — mobile tile budget. The library defaults (0.4 GB cache, 10
+    // concurrent downloads, unbounded depth) can exhaust a mobile browser's
+    // per-tab memory and starve other allocations (e.g. the bike GLB decode).
+    // Cap detail + footprint on mobile so the ride stays within budget; desktop
+    // keeps the defaults. Must be set before the first update() streams tiles.
+    if (this._mobile) {
+      const m = TOURIST_TUNE.mobile;
+      tiles.errorTarget = m.errorTarget;
+      tiles.maxDepth = m.maxDepth;
+      tiles.downloadQueue.maxJobs = m.downloadJobs;
+      tiles.lruCache.minBytesSize = m.cacheMinBytes;
+      tiles.lruCache.maxBytesSize = m.cacheMaxBytes;
+      tiles.lruCache.minSize = m.cacheMinTiles;
+      tiles.lruCache.maxSize = m.cacheMaxTiles;
+    }
+
     tiles.setCamera(camera);
     tiles.setResolutionFromRenderer(camera, renderer);
     scene.add(tiles.group);
     this.tiles = tiles;
+
+    // Fix #1 — on mobile, don't start streaming tiles until the bike GLB has
+    // decoded, so the small one-shot load isn't racing the tile firehose for
+    // memory. Desktop has headroom, so it streams immediately (gate open).
+    this._tilesStarted = !this._mobile;
+    this._tileGateElapsed = 0;
 
     // Camera terrain-clipping shim (ChaseCamera calls roadPath.getHeightAtWorld).
     this.roadPath = new TouristRoadPath(this);
@@ -115,16 +141,29 @@ export class TouristWorld {
    * corrected Y is what the camera follows.
    */
   update(bikePos, bikeD, dt) {
-    // Camera moves every frame; keep tile LOD selection in sync.
-    this.tiles.setResolutionFromRenderer(this.camera, this.renderer);
-    this.tiles.setCamera(this.camera);
-    this.tiles.update();
+    // Fix #1 — hold tile streaming until the bike GLB has decoded (mobile only;
+    // desktop opens the gate at construction). A time cap makes sure tiles still
+    // start even if the bike load stalls, so the ride is never permanently blank.
+    if (!this._tilesStarted) {
+      this._tileGateElapsed += dt;
+      if ((this._bike && this._bike.modelLoaded) ||
+          this._tileGateElapsed > TOURIST_TUNE.tileStartMaxWait) {
+        this._tilesStarted = true;
+      }
+    }
 
-    // Force matrixWorld to reflect the ReorientationPlugin transform NOW, before
-    // we raycast. Without this the tile meshes' matrixWorld is stale at raw ECEF
-    // (Earth-radius) scale until the renderer updates it post-update, so the
-    // ground probe finds nothing. (The library's own examples do this too.)
-    this.tiles.group.updateMatrixWorld(true);
+    if (this._tilesStarted) {
+      // Camera moves every frame; keep tile LOD selection in sync.
+      this.tiles.setResolutionFromRenderer(this.camera, this.renderer);
+      this.tiles.setCamera(this.camera);
+      this.tiles.update();
+
+      // Force matrixWorld to reflect the ReorientationPlugin transform NOW, before
+      // we raycast. Without this the tile meshes' matrixWorld is stale at raw ECEF
+      // (Earth-radius) scale until the renderer updates it post-update, so the
+      // ground probe finds nothing. (The library's own examples do this too.)
+      this.tiles.group.updateMatrixWorld(true);
+    }
 
     this._groundFollow(bikePos, dt);
 
