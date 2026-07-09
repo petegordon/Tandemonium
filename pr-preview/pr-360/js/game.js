@@ -234,7 +234,7 @@ class Game {
     // placement via ground-following raycasts.
     this.isTourist = isTouristMode();
     // Riders model (goose captain + stoker) when Show Riders is on, else the
-    // plain frame. See the flag read above. Applies in both world modes.
+    // plain frame. Applied in both worlds so Tourist Mode shows the riders too.
     const bikeModelPath = this._showRiders ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH;
     if (this.isTourist) {
       const apiKey = getMapsApiKey();

@@ -27,6 +27,35 @@ import { ControllerRegistry } from './drivers/controller-registry.js';
 // no `npm install`) and matches core's package.json, which doesn't declare
 // `three` directly.
 
+// Default maximum number of controllers/players an app pre-allocates slots for.
+// Slots are cheap (a Slot is just state — no canvas); a view/panel is created
+// only when a slot is CLAIMED, so this is a safety ceiling well past a practical
+// local-multiplayer count, not a per-slot cost. Apps import this instead of
+// hardcoding their own cap so the overlay, multi, and lobby stay consistent.
+export const MAX_CONTROLLERS = 16;
+
+/** Convenience: ['P1','P2',…,'Pn'] for `new ControllerManager({ slotIds })`. */
+export function playerSlotIds(n = MAX_CONTROLLERS) {
+  return Array.from({ length: n }, (_, i) => `P${i + 1}`);
+}
+
+/**
+ * Is a POOLED HID entry a real, currently-usable controller worth showing in a
+ * controller list — as opposed to a latent fan-out sibling interface? A fan-out
+ * driver (SteamControllerDriver.needsSiblingFanout) exposes several same-vid:pid
+ * interfaces per physical Puck; only the ones actually streaming STATE
+ * (hidActiveSince > 0, i.e. a body is paired on that receiver slot) represent a
+ * real controller — the idle siblings are kept pooled (so a later power-on is
+ * caught) but must not appear as phantom "AVAILABLE" rows. Non-fan-out entries
+ * are always presentable. This is the single source of truth for the filter the
+ * overlay / multi / lobby controller lists all share.
+ */
+export function isPresentableEntry(entry) {
+  if (!entry) return false;
+  const fanout = entry.driver && entry.driver.constructor && entry.driver.constructor.needsSiblingFanout;
+  return fanout ? entry.hidActiveSince > 0 : true;
+}
+
 const DEFAULTS = {
   releaseHoldMs: 2000,
   reclaimCooldownMs: 1500,
@@ -520,6 +549,16 @@ export class ControllerManager {
   getSlot(id) { return this._slotById[id] || null; }
 
   /**
+   * Pooled entries worth listing as controllers — hides latent fan-out sibling
+   * interfaces (idle Steam Puck receiver slots). See isPresentableEntry. Used by
+   * the overlay / multi / lobby "controllers" lists so the filter lives in one
+   * place instead of being re-implemented per app.
+   */
+  presentablePoolEntries() {
+    return [...this._hidPool.values()].filter(isPresentableEntry);
+  }
+
+  /**
    * Public seat-release used by the lobby's "leave" (B on a joined seat).
    * Mirrors the PS/Home hold-to-release gesture: detach any HID entry back to
    * the pool, empty the slot, and arm the reclaim cooldown + await-silence so
@@ -632,8 +671,15 @@ export class ControllerManager {
     // getDevices() can hand back a different handle object for the same physical
     // device — fall back to a streaming same-vid:pid entry.
     if (!entry) { for (const e of this._hidPool.values()) if (sameVp(e) && e.hidActiveSince > 0) { entry = e; break; } }
-    // Fan-out (Steam Puck): designate the sibling actually emitting STATE reports.
-    if (entry && entry.driver?.constructor?.needsSiblingFanout) {
+    // Fan-out (Steam Puck): the designated handle may be a sibling interface
+    // that never emits STATE — reroute to a same-vid:pid sibling that IS
+    // streaming. BUT only when the designated handle isn't itself streaming:
+    // the 2026 Puck is a MULTI-receiver where each paired body streams on its
+    // OWN interface, so a streaming handle already IS its own unit. Collapsing
+    // to "the first streaming sibling" here would attach the same body to every
+    // seat (see [[multi-steam-controller]]). Keep a live handle; only rescue a
+    // silent one.
+    if (entry && entry.driver?.constructor?.needsSiblingFanout && !(entry.hidActiveSince > 0)) {
       for (const e of this._hidPool.values()) if (sameVp(e) && e.hidActiveSince > 0) { entry = e; break; }
     }
     if (!entry) return null;
@@ -1172,6 +1218,14 @@ export class ControllerManager {
     // it are never swept.
     for (const [device, entry] of [...this._hidPool]) {
       if (typeof entry.pooledAt !== 'number') continue;
+      // Fan-out (Steam Puck) interfaces are present as long as the dongle is
+      // plugged, even before any body is paired/streaming — an idle receiver
+      // slot is NOT a ghost. Evicting it breaks power-on-after-launch: the
+      // controller streams into an already-enumerated interface, which fires no
+      // WebHID 'connect', so nothing re-pools it and the user must restart the
+      // app. Real removal comes from the hotplug 'disconnect' path (whole Puck
+      // unplugged), not this silence sweep. See [[multi-steam-controller]].
+      if (entry.driver?.constructor?.needsSiblingFanout) continue;
       if (entry.lastRawReportAt === 0 && (now - entry.pooledAt) > this.opts.poolProbationMs) {
         console.log(`[manager] evicting phantom HID handle ${device.vendorId?.toString(16)}:${device.productId?.toString(16)} (${device.productName || '?'}) — silent for ${Math.round(now - entry.pooledAt)}ms`);
         this._evictFromPool(device);
@@ -1198,29 +1252,30 @@ export class ControllerManager {
   }
 
   /**
-   * Pool approved HID devices at boot (no user gesture required).
-   * Only pools devices whose vid:pid has a live Gamepad API counterpart,
-   * so stale pairings from prior sessions don't get initialized.
+   * Pool every approved, known HID device at boot (no user gesture required).
+   *
+   * WebHID-first: WebHID is the primary input path, so we pool any controller
+   * with a WebHID driver regardless of whether the Gamepad API also sees it.
+   * The Gamepad API / XInput is the FALLBACK — ingestFrame's Gamepad-claim loop
+   * covers controllers that provide input only there (Xbox), and a WebHID-pooled
+   * pad that ALSO enumerates in the Gamepad API is de-duped at claim time.
+   *
+   * There is deliberately NO "is it live in the Gamepad API?" gate here: it
+   * structurally excluded HID-only controllers (the Steam Controller Puck is
+   * vendor-defined HID and never appears in the Gamepad API), so a present Puck
+   * was dropped whenever any other Gamepad-API pad was connected. Stale pairings
+   * from prior sessions (approved but not physically present) are handled the
+   * same way the single overlay handles them — the phantom-eviction sweep in
+   * ingestFrame drops any pooled handle that never streams a raw report within
+   * the probation window. See [[multi-steam-controller]].
    */
   async autoPoolApprovedHid() {
     if (!navigator.hid) return;
     try {
       const approved = await navigator.hid.getDevices();
-      const known = approved.filter((d) => ControllerRegistry.isKnownDevice(d));
-      const liveVidPids = new Set();
-      const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
-      for (const gp of pads) {
-        if (!gp) continue;
-        const vp = ControllerRegistry.parseGamepadVendorProduct(gp.id);
-        if (vp) liveVidPids.add(`${vp.vendorId}:${vp.productId}`);
-      }
-      for (const d of known) {
+      for (const d of approved) {
+        if (!ControllerRegistry.isKnownDevice(d)) continue;
         if (this._isDeviceInPoolOrSlot(d)) continue;
-        const key = `${d.vendorId}:${d.productId}`;
-        if (liveVidPids.size > 0 && !liveVidPids.has(key)) {
-          console.log(`[manager] skipping stale HID pairing ${key} (not live in Gamepad API)`);
-          continue;
-        }
         await this.poolDevice(d);
       }
     } catch (err) {
@@ -1247,8 +1302,16 @@ export class ControllerManager {
    * User-gesture HID pairing, initiated from a Connect button. If a slot
    * is specified and is currently claimed, attach the newly-paired device
    * to that slot. Otherwise pool it and let ingestFrame assign on claim.
+   *
+   * Two phases: (1) pool an already-approved-but-unpooled device (cheap —
+   * getDevices only); (2) if none and `prompt` is set, fall back to
+   * requestDevice to grant a new one. `prompt` defaults true (browser: the
+   * picker IS the connect mechanism). Callers that want to avoid the
+   * requestDevice scan — which in Electron enumerates every system HID device
+   * and briefly blocks even when nothing new is present — pass `prompt: false`
+   * for the cheap phase and only opt into the scan when it's actually useful.
    */
-  async connectHidForSlot(slotId) {
+  async connectHidForSlot(slotId, { prompt = true } = {}) {
     if (!navigator.hid) throw new Error('WebHID not available');
     const slot = slotId ? this.getSlot(slotId) : null;
     const approved = await navigator.hid.getDevices();
@@ -1256,7 +1319,7 @@ export class ControllerManager {
       ControllerRegistry.isKnownDevice(d) && !this._isDeviceInPoolOrSlot(d)
     );
     let device = candidate;
-    if (!device) {
+    if (!device && prompt) {
       const filters = ControllerRegistry.getHIDFilters();
       const picked = await navigator.hid.requestDevice({ filters });
       device = (picked || []).find((d) => !this._isDeviceInPoolOrSlot(d));
