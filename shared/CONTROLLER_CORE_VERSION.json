@@ -1,7 +1,7 @@
 {
   "package": "@usersfirst/controller-core",
-  "version": "0.4.0",
-  "sourceCommit": "6ffb202",
-  "sourceRef": "core-v0.4.0",
+  "version": "0.4.1",
+  "sourceCommit": "0a89640",
+  "sourceRef": "core-v0.4.1",
   "syncedAt": "2026-07-09"
 }

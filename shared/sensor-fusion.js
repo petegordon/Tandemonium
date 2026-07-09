@@ -42,6 +42,7 @@
 import * as THREE from 'three';
 
 import { twistAngleY, stepYawReturn, composeHeadingOffset } from './yaw-return.js';
+import { rollFromGravity } from './gravity-roll.js';
 
 // ── Initial one-shot bias calibration ──
 // Bluetooth captures are noisier (lower effective sample rate + packet
@@ -183,6 +184,18 @@ export class SensorFusion {
 
   /** Whether the initial one-shot bias calibration is still collecting. */
   get calibrating() { return this._calibrating; }
+
+  /**
+   * Roll (bank) angle in radians from the gravity-anchored down vector — the
+   * drift-free steering axis for lean-to-steer games. Reads only `_gravityVec`
+   * (accelerometer-tracked), never yaw (which a 6-axis IMU can't anchor) or the
+   * gyro, so it can't "fuse to one side" the way Euler-Z of the integrated
+   * orientation does. Sign matches the -EulerZ convention consumers already use,
+   * so it's a drop-in that only removes the drift. See gravity-roll.js (#314).
+   */
+  gravityRollRadians() {
+    return rollFromGravity(this._gravityVec.x, this._gravityVec.y);
+  }
 
   /**
    * Begin initial one-shot bias calibration. Clears any prior samples.
