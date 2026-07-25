@@ -53,22 +53,77 @@ nothing.
    `1 = SteamController`). Any code matching on type names silently never
    fires.
 
-## Two ways to get gyro from a Steam-captured controller
+## How it actually works today (VERIFIED on hardware 2026-07-25)
 
-| | **A · Action binding** | **B · Raw motion + our fusion** |
-|---|---|---|
-| Gyro source | `getAnalogActionData(Steer)` | `getMotionData(handle)` → SensorFusion |
-| Needs IGA shipped | Yes | No (only if we also want digital actions) |
-| Needs per-type Big-Picture binding | Yes — author + export gyro→`Steer` for **each** controller type | No |
-| Gyro quality | Steam's modes; inherits #295/#296 | Our validated fusion (same as WebHID) |
-| Reuses existing work | No (new steering feel per Steam config) | Yes (identical to WebHID lean) |
-| Aligns with | #293/#306/#307 | #348 `@usersfirst/controller-steam` adapter |
+**The Steam Controller already steers by gyro on a real depot build, and none
+of our fusion code is involved.** Measured end to end on the `dev-private`
+branch of 4510250:
 
-**Recommendation: B for gyro.** It sidesteps the Steam gyro bugs, reuses the
-pipeline we just validated end-to-end on the DualSense, and needs zero
-per-controller binding authoring. The action layer (A) is only worth it for
-**digital actions** (menu nav / pedals) on captured pads that don't emit a
-usable virtual gamepad.
+```
+Steam layout: Gyro Behavior = Gyro To Joystick Deflection
+  → Steam maps gyro onto the virtual XInput pad's Left Stick X
+  → navigator.getGamepads()[0].axes[0] swings the full -1 … +1
+  → InputManager.gamepadLean → BalanceController → bike
+```
+
+A/B proof, same build, only the Steam layout changed:
+
+| Gyro Behavior | `axes[0]` while tilting |
+|---|---|
+| Gyro To Joystick Deflection | `-0.999 … +1.0` |
+| None | `0.011 – 0.015` (static stick bias, below our 0.08 deadzone → lean 0) |
+
+This is **emulation mode**, which `forge.config.js` deliberately preserves by
+NOT shipping the IGA: with no manifest, Steam emits a normal virtual XInput pad
+that `getGamepads()` can see. `getConnectedControllers()` returns `[]` the whole
+session (heartbeat: `0 captured pad(s)`) — Steam never hands the pad to our SDK
+session at all.
+
+**Gotcha: layout changes apply on game RESTART.** Changing Gyro Behavior while
+the game runs affects the *next* launch, which reads as the setting doing the
+opposite of what you set. Exit fully between A/B legs.
+
+**Gotcha: layouts are per-appid, not per-branch.** `default` and `dev-private`
+share appid 4510250 and therefore share one layout. Switching depot branch
+cannot change controller behavior.
+
+## Three ways to get gyro from a Steam controller
+
+| | **A · Action binding** | **B · Raw motion + our fusion** | **C · Emulation mode** |
+|---|---|---|---|
+| Gyro source | `getAnalogActionData(Steer)` | `getMotionData(handle)` | Steam layout → virtual pad `axes[0]` |
+| Needs IGA shipped | Yes | No | **No — must NOT ship it** |
+| Needs Big-Picture layout | Yes, per type | No | Yes, one published official layout |
+| Works today | Untested | **No — returns `quat=[0,0,0,0]`** | **YES, verified** |
+| Gyro feel | Steam's modes | Our validated fusion | Steam's, raw into `gamepadLean` |
+
+**Recommendation: C.** It is the only one demonstrated to work on this
+hardware, it needs no new code, and it is what the shipped build already does.
+~~Recommendation: B~~ — superseded: B's premise (fact 4) was falsified, and
+shipping the IGA that A needs would suppress the virtual pad that C depends on.
+Keep B only as the fallback for pads Steam captures outright and which emit no
+virtual pad (Steam Deck built-in controls).
+
+## The open shipping risk
+
+Steam reports **"This game does not have controller support"** (no IGA), so it
+applies a *layout*, and which layout decides whether players get gyro at all.
+An **Official Layout for Tandemonium Playtest** does exist under RECOMMENDED
+("Layouts selected by the game's developer"), but its description is Steam's
+stock `Gamepad With Joystick Trackpad` template blurb, and the layout observed
+working was `pete / Gamepad With Joystick Trackpad` — a *personal* layout.
+
+**Unresolved: does the Official layout have Gyro Behavior set to Joystick
+Deflection?** If yes, players get tilt steering out of the box and nothing more
+is needed. If no, gyro works only on machines where the user configured it by
+hand — which would explain the original "gyro doesn't work in the Steam
+deployment" report entirely, with no code bug anywhere. Fix in that case is to
+author the layout in Big Picture against the real Puck and publish it as the
+official one; the working personal layout is the artifact to export.
+
+Note the depot ships `controller_neptune.vdf` / `controller_ps5.vdf`, but those
+map physical inputs to **actions declared in the IGA** — with no IGA there are
+no actions to bind, so they cannot be what is driving this.
 
 ## Target architecture — one fusion, two sources
 
@@ -169,16 +224,38 @@ Future breakout: `PitchLean` / `YawLean` for the other gyro axes. Studio name:
 
 ## Open questions to verify before committing
 
-1. Does the shipped `controller_neptune.vdf` binding actually reach the 2026
-   Puck, i.e. does gyro arrive as virtual-pad `axes[0]`? **This is the whole
-   ballgame** — if yes, the Steam path needs no new code.
-2. Does `getMotionData` return real values once the appid is real, or is the
-   degenerate struct (fact 4) inherent to this controller?
+1. ~~Does gyro arrive as virtual-pad `axes[0]`?~~ **ANSWERED: yes**, full
+   ±1 range, via the Steam layout's Gyro To Joystick Deflection. The remaining
+   question is only *which layout* carries that setting (see shipping risk).
+2. ~~Does `getMotionData` return real values once the appid is real?~~
+   **ANSWERED: no.** On the real depot build `getConnectedControllers()` returns
+   `[]` entirely, so there is no handle to read motion from. Design B has no
+   input on this controller in emulation mode.
 3. Does the Steam Controller emit a virtual gamepad our Gamepad API nav sees, or
    must buttons go through Steam Input digital actions? (Decides Phase 2 scope.)
 4. Can WebHID and Steam Input coexist on the Puck at all, or does capture always
    freeze the IMU (fact 5)? If it always freezes, the per-controller source
    setting must hard-disable one side rather than arbitrate between them.
+
+5. **Feel.** `axes[0]` saturates to ±1 easily, and `gamepadLean` passes the raw
+   stick through with only a 0.08 deadzone — no sensitivity, response curve, or
+   drift compensation, unlike the WebHID gyro path that was tuned over months.
+   Gyro-through-Steam will feel twitchier. Tunable from Steam's sensitivity /
+   "Gyro to Joystick Minimum Stick Output" sliders, or by applying a curve on
+   our side once the stick is known to be gyro-driven (see below).
+6. **Double-drive risk.** `BalanceController` SUMS both sources:
+   `leanInput += getMotionLean()` then `leanInput += getGamepadLean()`. Today
+   this is harmless only because Steam capture freezes the WebHID IMU so the
+   first term is ~0. If WebHID gyro ever works while Steam gyro-as-stick is
+   live, steering doubles. This is the real argument for the per-controller
+   source setting (Phase 0b) — correctness, not polish.
+
+**Detection hook (verified):** `getConnectedControllers()` returns `[]` in
+emulation mode, but `getControllerForGamepadIndex(0)` DOES return a live handle
+(`275536649660275`). So the game *can* tell that a virtual pad is a Steam
+Controller, which is what is needed to (a) show the lobby gyro toggle —
+currently hidden because `gyroConnected` is false — and (b) stop analytics
+attributing gyro runs to `steerFrames.gamepad` instead of `gamepad-gyro`.
 
 **Answered 2026-07-25:** the axis mapping is correct (gravity swings out of Y
 into X on tilt, `lean` saturates at ±0.96) — a suspected axis-remap bug was
