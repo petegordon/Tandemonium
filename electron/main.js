@@ -390,7 +390,14 @@ function tickSteamInput() {
     let motion = null;
     try {
       const m = steam.input.getMotionData(handle);
-      if (m) motion = {
+      // Reject the DEGENERATE struct. Steam returns an all-zero quaternion when
+      // it has no motion for this controller — and [0,0,0,0] is not a valid
+      // orientation (identity is w=1), so it is "no data", not "not moving".
+      // Passing it through would feed a zero gravity vector into SensorFusion
+      // and present a dead source as a live one (observed on the 2026 Puck).
+      const q = m && (Math.abs(m.rotQuatX) + Math.abs(m.rotQuatY)
+                    + Math.abs(m.rotQuatZ) + Math.abs(m.rotQuatW));
+      if (m && q > 1e-6) motion = {
         rotQuat: [m.rotQuatX, m.rotQuatY, m.rotQuatZ, m.rotQuatW],
         accel:   [m.posAccelX, m.posAccelY, m.posAccelZ],
         rotVel:  [m.rotVelX, m.rotVelY, m.rotVelZ],
