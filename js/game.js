@@ -11,7 +11,7 @@ import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
-import { InputManager, readDualSenseSourcePref, readGyroRollMode } from './input-manager.js';
+import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { FocusController } from './nav/focus-controller.js';
 import { ROOM_MSG } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
@@ -206,6 +206,9 @@ class Game {
     // in the lobby and in-race input read from the same source of truth.
     // P3/P4 exist for versus mode; solo/co-op paths only ever touch P1/P2.
     this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2', 'P3', 'P4'] });
+    // Let InputManager see the WebHID pool so it can tell when a pad in the
+    // Steam Input snapshot is already streaming over WebHID (#347).
+    setControllerManager(this.controllerManager);
     // Fire-and-forget: pair approved HID devices, auto-request any
     // remaining via Electron (gated by env detection inside the manager),
     // and listen for hot-plug events.

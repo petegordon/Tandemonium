@@ -334,6 +334,29 @@ export class SteamControllerDriver extends ControllerDriver {
     return null;
   }
 
+  /**
+   * Per-interface report tally for multi-receiver triage (#347). The Puck
+   * enumerates as several HID interfaces that all present as one controller,
+   * but only one carries the live IMU stream. When steering "works and then
+   * stops", the question is whether the bound interface went quiet while a
+   * sibling kept streaming — this makes that visible instead of inferred.
+   * Read it live in DevTools: `__scReportStats`.
+   */
+  _tallyReport(kind, reportId) {
+    if (typeof window === 'undefined') return;
+    const all = window.__scReportStats || (window.__scReportStats = {});
+    if (!this._statsKey) {
+      window.__scStatsSeq = (window.__scStatsSeq || 0) + 1;
+      this._statsKey = `iface${window.__scStatsSeq}`;
+    }
+    const s = all[this._statsKey] ||
+      (all[this._statsKey] = { accepted: 0, rejected: 0, ids: {}, lastAcceptedMs: 0 });
+    s[kind]++;
+    const idKey = '0x' + reportId.toString(16);
+    s.ids[idKey] = (s.ids[idKey] || 0) + 1;
+    if (kind === 'accepted') s.lastAcceptedMs = Math.round(performance.now());
+  }
+
   parseReport(reportId, data) {
     // Gate on length AND the STATE report id. The 2026 firmware emits
     // several 53-byte report types; only 0x45 (and per docs 0x42) is the
@@ -344,12 +367,14 @@ export class SteamControllerDriver extends ControllerDriver {
     // ids once each so future firmware variants are easy to spot.
     if (data.byteLength !== STATE_REPORT_LEN) return null;
     if (!STATE_REPORT_IDS.has(reportId)) {
+      this._tallyReport('rejected', reportId);
       if (!this._loggedReportIds.has(reportId)) {
         this._loggedReportIds.add(reportId);
         console.log(`Steam Controller: ignoring non-STATE 53-byte report id 0x${reportId.toString(16)} (#28 guard)`);
       }
       return null;
     }
+    this._tallyReport('accepted', reportId);
     if (!this._loggedReportIds.has(reportId)) {
       this._loggedReportIds.add(reportId);
       console.log(`Steam Controller STATE report id observed: 0x${reportId.toString(16)} (${data.byteLength} bytes)`);

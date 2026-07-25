@@ -207,6 +207,8 @@ let _diagSetHandleLogged = false;
 let _diagSteerHandleLogged = false;
 let _diagDigitalHandlesLogged = false;
 let _diagControllersEverSeen = 0;
+let _diagHeartbeatAt = 0;
+const _diagMotionLogged = new Set(); // controller handles whose motion availability we've logged
 const steamInputActiveLogged = new Set(); // controller handles for which we've logged active-action diagnostic
 const steamInputLastPressed = new Map(); // controller handle -> last comma-joined pressed-action names
 
@@ -261,7 +263,9 @@ function resolveSteamInputHandles() {
     const parts = STEAM_INPUT_DIGITAL_ACTIONS.map(n => `${n}=${steamInputDigitalHandles[n].toString()}`);
     _diagLog(`[SteamInput diag] digital action handles resolved: ${parts.join(', ')}`);
   }
-  return steamInputSetHandle !== 0n && steamInputSteerHandle !== 0n;
+  // Same type-agnostic check as above — `!== 0n` alone treats a plain Number 0
+  // as "resolved" and reports the action layer ready when it isn't.
+  return !isZeroHandle(steamInputSetHandle) && !isZeroHandle(steamInputSteerHandle);
 }
 
 function tickSteamInput() {
@@ -269,7 +273,15 @@ function tickSteamInput() {
   // and getAnalogActionData to return fresh values when init(true) was used.
   try { steam.input.runFrame(); } catch (e) { /* skip transient errors */ }
 
-  if (!resolveSteamInputHandles()) return [];
+  // Action handles need the IGA shipped; raw motion (design B, #347) does NOT.
+  // So resolve the handles but DO NOT gate the tick on them — an early return
+  // here would also kill getConnectedControllers/getMotionData whenever the IGA
+  // is absent, which is the exact configuration design B is meant to serve.
+  // (This gate used to pass by accident: unresolved handles come back as Number
+  // 0, and the old `!== 0n` check read that as resolved. Tightening that check
+  // without this decoupling would have hard-blocked the motion path.)
+  // Every action read below is individually guarded on `actionsReady` instead.
+  const actionsReady = resolveSteamInputHandles();
 
   let controllers;
   try { controllers = steam.input.getConnectedControllers(); }
@@ -278,13 +290,20 @@ function tickSteamInput() {
     _diagControllersEverSeen = controllers.length;
     _diagLog(`[SteamInput diag] getConnectedControllers() now returning ${controllers.length} captured pad(s)`);
   }
+  // Heartbeat. A silent log is ambiguous — no controller captured, or the tick
+  // died? Log the live count periodically so a zero-capture session is
+  // unmistakable in tandemonium-diag.log.
+  if (Date.now() - _diagHeartbeatAt > 10000) {
+    _diagHeartbeatAt = Date.now();
+    _diagLog(`[SteamInput diag] heartbeat: ${controllers.length} captured pad(s); actions ${actionsReady ? 'ready' : 'UNRESOLVED (no IGA — motion path only)'}`);
+  }
 
   const out = [];
   const seen = new Set();
   for (const handle of controllers) {
     const handleStr = handle.toString();
     seen.add(handleStr);
-    if (!steamInputActivated.has(handleStr)) {
+    if (actionsReady && !steamInputActivated.has(handleStr)) {
       try {
         steam.input.activateActionSet(handle, steamInputSetHandle);
         steamInputActivated.add(handleStr);
@@ -300,8 +319,10 @@ function tickSteamInput() {
       }
     }
     let data = { x: 0, y: 0, active: false };
-    try { data = steam.input.getAnalogActionData(handle, steamInputSteerHandle); }
-    catch (e) { /* leave at zero */ }
+    if (actionsReady) {
+      try { data = steam.input.getAnalogActionData(handle, steamInputSteerHandle); }
+      catch (e) { /* leave at zero */ }
+    }
     let type = 'Unknown';
     try { type = steam.input.getInputTypeForHandle(handle); }
     catch (e) {}
@@ -324,7 +345,7 @@ function tickSteamInput() {
     // (i.e. bound to a physical input under the current binding). If
     // an action is in the snapshot but inactive, the binding file isn't
     // wiring physical input to it for this controller type.
-    if (!steamInputActiveLogged.has(handleStr)) {
+    if (actionsReady && !steamInputActiveLogged.has(handleStr)) {
       steamInputActiveLogged.add(handleStr);
       _diagLog(`[SteamInput diag] controller ${handleStr} inactive digital actions: ${_diagAnyInactive.join(', ') || '(none — all bound)'}`);
       // Stronger check: getDigitalActionOrigins returns the actual physical
@@ -361,6 +382,30 @@ function tickSteamInput() {
         _diagLog(`[SteamInput diag] digital released (was: ${prev})`);
       }
     }
+    // Raw motion for design-B gyro (#347/#348): getMotionData needs no IGA and
+    // no binding — Steam returns the controller's fused orientation plus raw
+    // accel/gyro directly. The renderer feeds this into the same SensorFusion
+    // the WebHID pads use, so an always-captured Steam Controller steers by
+    // gyro without a gyro->Steer binding.
+    let motion = null;
+    try {
+      const m = steam.input.getMotionData(handle);
+      if (m) motion = {
+        rotQuat: [m.rotQuatX, m.rotQuatY, m.rotQuatZ, m.rotQuatW],
+        accel:   [m.posAccelX, m.posAccelY, m.posAccelZ],
+        rotVel:  [m.rotVelX, m.rotVelY, m.rotVelZ],
+      };
+    } catch (e) { /* no motion for this controller */ }
+    // One-shot per handle: does this pad report motion at all, and in what
+    // units? Decides design-B viability and answers open question #3 (frame /
+    // scale) in docs/steam-input-design.md without a rebuild-and-guess loop.
+    if (!_diagMotionLogged.has(handleStr)) {
+      _diagMotionLogged.add(handleStr);
+      const f = (arr) => arr.map(v => Number(v).toFixed(3)).join(',');
+      _diagLog(motion
+        ? `[SteamInput diag] motion on ${handleStr} (type=${type}): quat=[${f(motion.rotQuat)}] accel=[${f(motion.accel)}] rotVel=[${f(motion.rotVel)}]`
+        : `[SteamInput diag] NO motion from getMotionData on ${handleStr} (type=${type}) — design-B gyro unavailable for this pad`);
+    }
     out.push({
       handle: handleStr,
       type: String(type),
@@ -368,6 +413,7 @@ function tickSteamInput() {
       steerY: data.y,
       active: !!data.active,
       digital,
+      motion,
     });
   }
   // Drop handles that disappeared so re-attach re-activates.
