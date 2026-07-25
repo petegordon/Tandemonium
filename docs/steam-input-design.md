@@ -113,13 +113,25 @@ An **Official Layout for Tandemonium Playtest** does exist under RECOMMENDED
 stock `Gamepad With Joystick Trackpad` template blurb, and the layout observed
 working was `pete / Gamepad With Joystick Trackpad` — a *personal* layout.
 
-**Unresolved: does the Official layout have Gyro Behavior set to Joystick
-Deflection?** If yes, players get tilt steering out of the box and nothing more
-is needed. If no, gyro works only on machines where the user configured it by
-hand — which would explain the original "gyro doesn't work in the Steam
-deployment" report entirely, with no code bug anywhere. Fix in that case is to
-author the layout in Big Picture against the real Puck and publish it as the
-official one; the working personal layout is the artifact to export.
+**RESOLVED 2026-07-25 — this is the root cause.** The Official Layout has
+**Gyro Behavior = None**. Players get no tilt steering with a Steam Controller.
+Pete's machine worked only because his personal layout had Gyro To Joystick
+Deflection set by hand months earlier. The original "gyro doesn't work in the
+Steam deployment" report was never a code bug — not driver, axis, fusion,
+arbitration, or IGA. The shipped layout simply has gyro switched off.
+
+**Fix:** author a layout with Gyro → Joystick Deflection against the real Puck
+and publish it as the game's official layout. The working personal layout
+(`pete / Gamepad With Joystick Trackpad`) is the artifact to export. Requires
+the controller in hand — cannot be automated.
+
+**Telling the two apart:** the small grey **author** line above the name in
+Current Button Layout. `pete` = personal; the official one shows no personal
+attribution and reads "Official Layout for Tandemonium Playtest". Both use the
+same underlying template name, which makes them very easy to confuse. Do not
+change Quick Settings while an official layout is active — Steam forks it into a
+personal copy, which both destroys the reading and adds another near-identically
+named layout.
 
 Note the depot ships `controller_neptune.vdf` / `controller_ps5.vdf`, but those
 map physical inputs to **actions declared in the IGA** — with no IGA there are
