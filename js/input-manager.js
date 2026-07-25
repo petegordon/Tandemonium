@@ -56,6 +56,18 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// Steam-family controller types. `getInputTypeForHandle` returns the raw
+// ESteamInputType enum, and main.js stringifies it — so this arrives as "14",
+// NOT "SteamDeckController". Matching on the name alone silently never fires
+// (the bug that made the first version of this filter a no-op). Accept both
+// forms: 1 = SteamController, 14 = SteamDeckController, which is what the 2026
+// Puck reports as.
+const STEAM_FAMILY_TYPE_IDS = new Set(['1', '14']);
+function isSteamFamilyType(type) {
+  const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
+  return STEAM_FAMILY_TYPE_IDS.has(t) || /^steam/i.test(t);
+}
+
 /**
  * True when a Steam Controller is actively streaming input reports over
  * WebHID — whether still pooled or already claimed into a slot.
@@ -67,6 +79,11 @@ if (typeof window !== 'undefined') {
  * "has an entry, ever" is not the same question as "is streaming now".
  */
 function steamControllerLiveOnWebHid() {
+  // Escape hatch: `window.__webhidFirst = false` forces the Steam Input path
+  // even while WebHID is streaming. Needed because "streaming" is NOT the same
+  // as "has usable gyro" — under a Steam launch the Puck's HID interface keeps
+  // delivering STATE reports while the IMU fields inside them stay frozen.
+  if (typeof window !== 'undefined' && window.__webhidFirst === false) return false;
   const mgr = _controllerManager;
   if (!mgr) return false;
   const now = performance.now();
@@ -979,8 +996,7 @@ export class InputManager {
     // `k_ESteamInputType_` prefix first — it contains "Steam" and would
     // otherwise match every controller type.
     if (filtered && filtered.length && steamControllerLiveOnWebHid()) {
-      filtered = filtered.filter(c =>
-        !/^steam/i.test(String(c.type || '').replace(/^k_ESteamInputType_/i, '')));
+      filtered = filtered.filter(c => !isSteamFamilyType(c.type));
     }
     this._steamInputSnapshot = filtered || [];
     // Save the prior-frame active flag so the gyro-section can edge-detect
