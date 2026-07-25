@@ -255,7 +255,19 @@ Future breakout: `PitchLean` / `YawLean` for the other gyro axes. Studio name:
    Gyro-through-Steam will feel twitchier. Tunable from Steam's sensitivity /
    "Gyro to Joystick Minimum Stick Output" sliders, or by applying a curve on
    our side once the stick is known to be gyro-driven (see below).
-6. **Double-drive risk.** `BalanceController` SUMS both sources:
+6. **The JOYSTICK toggle silently kills Steam gyro (latent, not yet biting).**
+   Steam-delivered gyro arrives as *joystick* input, so everything that disables
+   joystick steering disables gyro too. `getGamepadLean()` returns 0 whenever
+   `suppressGamepadLean` is set, and that flag is set by the lobby JOYSTICK
+   toggle — persisted in `localStorage.tandemonium_joystick`, so it survives
+   relaunches and follows the user across depot branches — and by the tutorial
+   (`game.js:5388`) whenever `motionEnabled || gyroConnected`. The failure mode
+   is cruel: a player who steers by gyro naturally turns the joystick toggle
+   OFF, which mutes the exact channel carrying their gyro. Worse when WebHID
+   also attaches: `gyroConnected` goes true off a frozen IMU, so the game
+   suppresses the live channel in favour of a dead one. Verified working today
+   only because the toggle was left on.
+7. **Double-drive risk.** `BalanceController` SUMS both sources:
    `leanInput += getMotionLean()` then `leanInput += getGamepadLean()`. Today
    this is harmless only because Steam capture freezes the WebHID IMU so the
    first term is ~0. If WebHID gyro ever works while Steam gyro-as-stick is
