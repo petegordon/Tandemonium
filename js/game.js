@@ -583,7 +583,9 @@ class Game {
     // forget: absent or undecodable, the synthesized honk stays in use, so
     // the build never depends on the asset existing.
     this.audioEngine.loadGooseSample('assets/goose-honk.mp3').then((ok) => {
-      if (ok) console.log('Goose honk: using recorded sample');
+      if (!ok) return;
+      const n = this.audioEngine._gooseOnsets?.length || 0;
+      console.log(`Goose honk: recorded sample, ${n} honk onsets detected`);
     });
     this.audioCtx = null; // mirrors audioEngine.ctx once created (recorder API)
 
