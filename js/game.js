@@ -2681,6 +2681,13 @@ class Game {
       }
       html += '</div>';
 
+      // Geese scattered (#363). Only shown when some were actually startled,
+      // so a rider who kept to the road doesn't get a "0" they can't read.
+      const geeseScattered = this.geeseManager ? this.geeseManager.getDisruptedCount() : 0;
+      if (geeseScattered > 0) {
+        html += '<div class="victory-stat">🪿 Geese Scattered: <strong>' + geeseScattered + '</strong></div>';
+      }
+
       // Perfect ride / crashes
       if (summary.crashes > 0) {
         html += '<div class="victory-stat">\uD83D\uDCA5 Crashes: <strong>' + summary.crashes + '</strong></div>';

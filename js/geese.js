@@ -96,6 +96,8 @@ const HONK_WINDOW_MS = 220;
 const HONK_MAX_IN_WINDOW = 3;
 
 const GROUND_FRAMES = 3;       // neck upright → grazing
+const STRIDE_FRAMES = 4;       // leg positions through one walk cycle
+const STRIDE_HZ = 3.4;         // steps/sec — geese waddle unhurriedly
 const WALK_SPEED = 0.42;       // m/s
 const WALK_TURN_RATE = 0.55;   // rad/s of heading drift while walking
 const WALK_MIN = 1.6;          // seconds per walk/pause leg
@@ -126,6 +128,7 @@ const C_BACK   = '#6d5c43';  // warm brown back/wing
 const C_WING   = '#5a4b36';  // darker wing, separates from the back
 const C_WINGTIP= '#3a3026';  // primaries
 const C_BILL   = '#0d0d0f';
+const C_LEG    = '#1b1a1c';  // legs/feet — near-black, same read as the neck
 
 /**
  * Goose sprite drawn to a canvas. Step 2 of #363 swaps these for a ComfyUI
@@ -135,7 +138,7 @@ const C_BILL   = '#0d0d0f';
  *   (body horizontal, neck extended forward)
  * @param {number} frame  wing position 0..FLAP_FRAMES-1, ignored when idle
  */
-function makeGooseTexture(mode, frame = 0, view = VIEW_SIDE) {
+function makeGooseTexture(mode, frame = 0, view = VIEW_SIDE, stride = -1) {
   const S = 128;
   const c = document.createElement('canvas');
   c.width = S; c.height = S;
@@ -245,6 +248,36 @@ function makeGooseTexture(mode, frame = 0, view = VIEW_SIDE) {
     // head-down eating, so the pose cycle is doing most of the "alive" work —
     // more than the leg motion a billboard can't show anyway.
     const t = frame / (GROUND_FRAMES - 1);           // 0 up … 1 grazing
+
+    // Legs go down FIRST so the body ellipse overlaps their tops and they
+    // read as attached rather than stuck on. stride < 0 means standing:
+    // both feet planted, slightly apart.
+    const walking = stride >= 0;
+    const sp = walking ? Math.sin((stride / STRIDE_FRAMES) * Math.PI * 2) : 0;
+    const hipX = 0.505, hipY = 0.745;
+    const leg = (dx, lift) => {
+      const footX = hipX + dx;
+      const footY = 0.905 - lift;
+      g.strokeStyle = C_LEG;
+      g.lineWidth = S * 0.030;
+      g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(S * hipX, S * hipY);
+      g.quadraticCurveTo(S * (hipX + dx * 0.4), S * (hipY + 0.075), S * footX, S * footY);
+      g.stroke();
+      // Webbed foot — a small wedge, the cue that says waterfowl
+      g.fillStyle = C_LEG;
+      g.beginPath();
+      g.moveTo(S * (footX - 0.030), S * (footY + 0.012));
+      g.lineTo(S * (footX + 0.052), S * (footY + 0.012));
+      g.lineTo(S * (footX + 0.010), S * (footY - 0.018));
+      g.closePath();
+      g.fill();
+    };
+    // Far leg first (dimmer via draw order under the body), then near leg.
+    leg(walking ? -sp * 0.075 : -0.032, walking ? Math.max(0, -sp) * 0.045 : 0);
+    leg(walking ? sp * 0.075 : 0.030, walking ? Math.max(0, sp) * 0.045 : 0);
+
     const headX = 0.745 + t * 0.115;
     const headY = 0.235 + t * 0.475;
     const ctrlX = 0.78 + t * 0.035;
@@ -310,9 +343,19 @@ export class GeeseManager {
     this._pool = [];
     this._honkWindowStart = 0;
     this._honksInWindow = 0;
+    // Disruption tally. Attributed to the bike that startled each goose —
+    // solo only ever uses index 0, but versus already passes multiple anchors,
+    // so per-bike attribution is free here and avoids a rewrite later (#364).
+    this._disrupted = [0, 0, 0, 0];
 
+    // [pose][stride] — stride 0 is the standing (planted-feet) variant, so a
+    // grazing goose isn't mid-step. Poses x strides is 3 x 5 small canvases.
     this._texIdle = [];
-    for (let f = 0; f < GROUND_FRAMES; f++) this._texIdle.push(makeGooseTexture('idle', f));
+    for (let f = 0; f < GROUND_FRAMES; f++) {
+      const strides = [makeGooseTexture('idle', f, VIEW_SIDE, -1)];
+      for (let s = 0; s < STRIDE_FRAMES; s++) strides.push(makeGooseTexture('idle', f, VIEW_SIDE, s));
+      this._texIdle.push(strides);
+    }
     // [view][frame] — 3 views x 4 flap frames, plus a per-goose horizontal
     // flip at render time, giving 6 apparent headings from 3 drawings.
     this._texFly = [];
@@ -536,13 +579,14 @@ export class GeeseManager {
         item._worldY = pt.y;
 
         // Proximity flee — the whole reason contact never has to be handled.
-        for (const b of bikes) {
+        for (let bi = 0; bi < bikes.length; bi++) {
+          const b = bikes[bi];
           if (!b) continue;
           const dx = b.x - item._worldX;
           const dz = b.z - item._worldZ;
           const d2 = dx * dx + dz * dz;
           if (d2 < FLEE_RADIUS_SQ) {
-            this._startle(item, dx, dz, Math.sqrt(d2));
+            this._startle(item, dx, dz, Math.sqrt(d2), bi);
             break;
           }
         }
@@ -604,7 +648,11 @@ export class GeeseManager {
           ? this._flipForHeading(this.camera, item)
           : item.flip;
         const pf = Math.min(GROUND_FRAMES - 1, Math.max(0, Math.round(item.pose)));
-        const tex = this._texIdle[pf];
+        // stride index 0 = planted; 1..STRIDE_FRAMES = the walk cycle
+        const sf = item.walking
+          ? 1 + (Math.floor(t * STRIDE_HZ + item.phase) % STRIDE_FRAMES)
+          : 0;
+        const tex = this._texIdle[pf][sf];
         if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
       } else {
         slot.mesh.position.set(item._worldX, item._worldY, item._worldZ);
@@ -710,9 +758,10 @@ export class GeeseManager {
   }
 
   /** Launch one goose: arc away from the bike, tumbling, feathers, honk. */
-  _startle(item, dx, dz, dist) {
+  _startle(item, dx, dz, dist, bikeIndex = 0) {
     item.state = STATE_FLYING;
     item.age = 0;
+    if (bikeIndex >= 0 && bikeIndex < this._disrupted.length) this._disrupted[bikeIndex]++;
     // Away from the bike, with a forward bias so they burst outward rather
     // than hanging in the player's face.
     const inv = dist > 0.001 ? 1 / dist : 0;
@@ -759,6 +808,15 @@ export class GeeseManager {
     }
   }
 
+  /**
+   * Geese startled so far. Pass a bike index for that bike's own tally
+   * (versus); omit it for the total across all bikes.
+   */
+  getDisruptedCount(bikeIndex) {
+    if (bikeIndex == null) return this._disrupted.reduce((a, b) => a + b, 0);
+    return this._disrupted[bikeIndex] || 0;
+  }
+
   /** Re-face billboards for a split-screen render pass. */
   faceCamera(camera) {
     if (!camera) return;
@@ -771,6 +829,7 @@ export class GeeseManager {
   }
 
   clear() {
+    this._disrupted.fill(0);
     for (const slot of this._pool) {
       slot.mesh.visible = false;
       slot.itemIdx = -1;
@@ -795,7 +854,7 @@ export class GeeseManager {
     this.scene.remove(this._fPoints);
     this._fGeo.dispose();
     this._fMat.dispose();
-    for (const t of this._texIdle) t.dispose();
+    for (const strides of this._texIdle) for (const t of strides) t.dispose();
     for (const frames of this._texFly) for (const t of frames) t.dispose();
   }
 }
