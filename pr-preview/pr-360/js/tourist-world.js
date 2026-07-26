@@ -145,11 +145,50 @@ export class TouristWorld {
     // Attribution overlay (Google requires visible credit when streaming tiles).
     this._creditsEl = document.getElementById('tourist-credits');
     this._creditTimer = 0;
+
+    // "No 3D coverage" notice state — see _setCoverageNotice.
+    this._noHitElapsed = 0;
+    this._noticeEl = null;
   }
 
   /** Give the world the bike so it can place/pitch it on the streamed ground. */
   setBike(bike) {
     this._bike = bike;
+  }
+
+  /**
+   * Show/hide the "no 3D coverage" notice. Without it, a location Google has
+   * never captured in 3D just leaves the bike hanging in empty space with no
+   * explanation — indistinguishable from a bug. Deliberately says "3D coverage",
+   * NOT "map coverage": Google Maps covers these places perfectly well (roads,
+   * labels, satellite), and it is only the photogrammetry mesh that is missing.
+   * Calling it a map problem would read as our bug rather than a limit of the
+   * data, and would misdescribe the common case — a rural address Maps knows
+   * fine but that has never been scanned.
+   */
+  _setCoverageNotice(show) {
+    if (!show) {
+      if (this._noticeEl) this._noticeEl.style.display = 'none';
+      return;
+    }
+    if (!this._noticeEl) {
+      const el = document.createElement('div');
+      el.id = 'tourist-notice';
+      // pre-line keeps the two lines in one textContent write (no innerHTML).
+      el.style.cssText = [
+        'position:fixed', 'left:50%', 'top:38%', 'transform:translate(-50%,-50%)',
+        'z-index:60', 'max-width:min(80vw,460px)', 'padding:14px 20px',
+        'background:rgba(0,0,0,.72)', 'border-radius:10px', 'color:#fff',
+        'font:15px/1.45 system-ui,sans-serif', 'text-align:center',
+        'white-space:pre-line', 'pointer-events:none',
+        'text-shadow:0 1px 2px rgba(0,0,0,.8)',
+      ].join(';');
+      document.body.appendChild(el);
+      this._noticeEl = el;
+    }
+    this._noticeEl.textContent =
+      'No 3D coverage here\nGoogle hasn’t captured this spot in 3D. Try a street in a town or city.';
+    this._noticeEl.style.display = '';
   }
 
   /**
@@ -252,8 +291,16 @@ export class TouristWorld {
         if (this._tmpNormal.y < 0) this._tmpNormal.negate(); // face upward
         this._smoothNormal.lerp(this._tmpNormal, ease).normalize();
       }
+
+      this._noHitElapsed = 0;
+      this._setCoverageNotice(false);
+    } else if (this._tilesStarted) {
+      // No hit this frame — hold last _groundY/normal. Usually just tiles still
+      // streaming, so only the SUSTAINED case means "nothing here to ride".
+      // Gated on _tilesStarted so the mobile tile-gate wait never counts.
+      this._noHitElapsed += dt;
+      if (this._noHitElapsed > TOURIST_TUNE.noCoverageAfter) this._setCoverageNotice(true);
     }
-    // else: no hit this frame (tiles not loaded yet) — hold last _groundY/normal.
 
     // Apply Y to the bike (bikePos is the bike's live position vector).
     bikePos.y = this._groundY;
