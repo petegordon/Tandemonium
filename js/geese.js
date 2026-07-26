@@ -27,8 +27,16 @@
 import * as THREE from 'three';
 import { isMobile } from './config.js';
 
-const POOL_SIZE = isMobile ? 14 : 28;
-const FEATHER_POOL = isMobile ? 60 : 140;
+// Pool has to cover everything on screen at once: the visible window holds
+// roughly (VISIBLE_AHEAD + VISIBLE_BEHIND) / GROUP_GAP groups, and airborne
+// geese hold their slot past the window until they time out. Undersized, the
+// far geese simply never appear.
+const POOL_SIZE = isMobile ? 34 : 72;
+const FEATHER_POOL = isMobile ? 90 : 220;
+
+// A standing Canada goose is about a metre tall and near two across in flight.
+const GOOSE_SIZE = 1.3;
+const GOOSE_HALF = GOOSE_SIZE * 0.5;
 
 const VISIBLE_AHEAD = 140;
 const VISIBLE_BEHIND = 30;
@@ -74,6 +82,19 @@ const ESCAPE_SPREAD = 1.15;
 // occasional pauses to graze. Wandering is deliberately gentle — birds that
 // change heading constantly read as agitated, and these are meant to look
 // oblivious right up until you arrive.
+// Density. Gaps and group sizes are what make the verges feel populated —
+// tuned for "a lot of them" rather than occasional set dressing.
+const GROUP_GAP_MIN = 16;
+const GROUP_GAP_VAR = 30;
+const GROUP_MIN = 3;
+const GROUP_VAR = 6;           // group of GROUP_MIN … GROUP_MIN+GROUP_VAR-1
+
+// Honk throttle. A group of eight startling within a couple of frames would
+// fire eight honks on top of each other and read as noise, not geese. Cap the
+// rate and let the rest scatter silently — the eye fills in the sound.
+const HONK_WINDOW_MS = 220;
+const HONK_MAX_IN_WINDOW = 3;
+
 const GROUND_FRAMES = 3;       // neck upright → grazing
 const WALK_SPEED = 0.42;       // m/s
 const WALK_TURN_RATE = 0.55;   // rad/s of heading drift while walking
@@ -287,6 +308,8 @@ export class GeeseManager {
     this._loopLen = roadPath.loopLength;
     this._items = [];
     this._pool = [];
+    this._honkWindowStart = 0;
+    this._honksInWindow = 0;
 
     this._texIdle = [];
     for (let f = 0; f < GROUND_FRAMES; f++) this._texIdle.push(makeGooseTexture('idle', f));
@@ -299,7 +322,7 @@ export class GeeseManager {
       this._texFly.push(frames);
     }
 
-    const geo = new THREE.PlaneGeometry(0.85, 0.85);
+    const geo = new THREE.PlaneGeometry(GOOSE_SIZE, GOOSE_SIZE);
     for (let i = 0; i < POOL_SIZE; i++) {
       const mat = new THREE.MeshBasicMaterial({
         map: this._texIdle,
@@ -415,7 +438,7 @@ export class GeeseManager {
     let d = 40;
     while (d < dist - 40) {
       const side = rng() < 0.5 ? -1 : 1;
-      const groupSize = 2 + Math.floor(rng() * 4);
+      const groupSize = GROUP_MIN + Math.floor(rng() * GROUP_VAR);
       const baseLateral = VERGE_MIN + rng() * (VERGE_MAX - VERGE_MIN);
       for (let n = 0; n < groupSize; n++) {
         const gd = d + rng() * 5;
@@ -447,7 +470,7 @@ export class GeeseManager {
           _worldX: 0, _worldY: 0, _worldZ: 0,
         });
       }
-      d += 45 + rng() * 90;
+      d += GROUP_GAP_MIN + rng() * GROUP_GAP_VAR;
     }
   }
 
@@ -571,7 +594,7 @@ export class GeeseManager {
         const bob = item.walking
           ? Math.abs(Math.sin(t * 5.2 + item.phase)) * 0.035
           : Math.sin(t * 1.6 + item.phase) * 0.02;
-        slot.mesh.position.set(item._worldX, item._worldY + 0.42 + bob, item._worldZ);
+        slot.mesh.position.set(item._worldX, item._worldY + GOOSE_HALF + bob, item._worldZ);
         slot.mesh.rotation.z = 0;
         // Face the way it's walking, as seen by THIS camera: project the road-
         // space heading into world space and compare with the camera's right
@@ -716,11 +739,23 @@ export class GeeseManager {
     item.view = Math.floor(Math.random() * VIEW_COUNT);
     item.flip = Math.random() < 0.5 ? -1 : 1;
     item.flapOffset = Math.random() * FLAP_FRAMES;
-    item._worldY += 0.42;
+    item._worldY += GOOSE_HALF;
 
     this._emitFeathers(item._worldX, item._worldY, item._worldZ, 5 + Math.floor(Math.random() * 5));
+
+    // Throttled: a big group startles within a couple of frames, and eight
+    // simultaneous honks read as noise rather than birds. The silent ones still
+    // look right — the eye supplies the sound.
     if (this.audio && typeof this.audio.gooseHonk === 'function') {
-      this.audio.gooseHonk();
+      const now = performance.now();
+      if (now - this._honkWindowStart > HONK_WINDOW_MS) {
+        this._honkWindowStart = now;
+        this._honksInWindow = 0;
+      }
+      if (this._honksInWindow < HONK_MAX_IN_WINDOW) {
+        this._honksInWindow++;
+        this.audio.gooseHonk();
+      }
     }
   }
 
