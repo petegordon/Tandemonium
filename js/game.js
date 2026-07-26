@@ -579,6 +579,12 @@ class Game {
     this._lastCountNum = 3;
     this.instructionsEl = document.getElementById('instructions');
     this.audioEngine = new AudioEngine();
+    // Optional real goose recording for the scatter honk (#363). Fire and
+    // forget: absent or undecodable, the synthesized honk stays in use, so
+    // the build never depends on the asset existing.
+    this.audioEngine.loadGooseSample('assets/goose-honk.mp3').then((ok) => {
+      if (ok) console.log('Goose honk: using recorded sample');
+    });
     this.audioCtx = null; // mirrors audioEngine.ctx once created (recorder API)
 
     // Lobby
