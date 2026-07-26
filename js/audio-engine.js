@@ -200,7 +200,7 @@ export class AudioEngine {
   // fast upward pitch bend on the attack and a sag on the release, squeezed
   // through a bandpass around the vocal formant. The short noise blip at the
   // start is the breath that makes it read as an animal instead of a synth.
-  gooseHonk(gain = 0.42) {
+  gooseHonk(gain = 0.52) {
     const ctx = this.ctx;
     if (!ctx) return;
     this.resume();
@@ -233,7 +233,7 @@ export class AudioEngine {
 
     for (const f of [
       { hz: base * 1.6, q: 1.4, amp: 0.80 },
-      { hz: base * 3.4, q: 1.8, amp: 0.55 },   // survives phone-speaker rolloff
+      { hz: base * 3.4, q: 1.8, amp: 0.72 },   // survives phone-speaker rolloff
     ]) {
       const band = ctx.createBiquadFilter();
       band.type = 'bandpass';
