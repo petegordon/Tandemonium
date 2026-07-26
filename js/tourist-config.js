@@ -284,6 +284,11 @@ export const TOURIST_TUNE = {
   // when tiles stream in/out and a frame has no ray hit.
   groundLerp: 8,
 
+  // Seconds of sustained "no ground found" (after tiles start streaming) before
+  // telling the rider this location has no photogrammetry coverage. Long enough
+  // that ordinary streaming gaps — or a slow first load — never trip it.
+  noCoverageAfter: 12,
+
   // Camera far plane (metres). Real hills/skyline run far, so desktop opens it
   // wide; mobile pulls it in to bound how much terrain streams at once.
   cameraFar: 6000,
