@@ -250,18 +250,31 @@ export class InputManager {
     // (lobby picker, P1, versus seats) and only ONE is read by the balance
     // controller, so __inputManagers exposes all of them — a gyro that reads
     // correctly on the wrong instance looks identical to a broken gyro.
+    // Held as WeakRefs. A plain array would retain every InputManager ever
+    // constructed — versus creates one per join, so repeated lobby visits
+    // would leak them along with their slots, fusions and listeners. A debug
+    // handle must never be the reason an object stays alive.
     if (typeof window !== 'undefined') {
       window.__inputManager = this;
-      (window.__inputManagers || (window.__inputManagers = [])).push(this);
-      window.__leanReport = () => window.__inputManagers.map((m, i) => ({
-        i,
-        hasSlot: !!m._slot,
-        hasFusion: !!m._slot?.fusion,
-        motionEnabled: m.motionEnabled,
-        motionLean: +(m.motionLean || 0).toFixed(3),
-        getMotionLean: +(m.getMotionLean() || 0).toFixed(3),
-        steamHandle: m.steamInputHandle,
-      }));
+      const refs = window.__inputManagerRefs || (window.__inputManagerRefs = []);
+      refs.push(new WeakRef(this));
+      window.__leanReport = () => {
+        const live = [];
+        for (let i = refs.length - 1; i >= 0; i--) {
+          const m = refs[i].deref();
+          if (!m) { refs.splice(i, 1); continue; }   // prune collected entries
+          live.unshift(m);
+        }
+        return live.map((m, i) => ({
+          i,
+          hasSlot: !!m._slot,
+          hasFusion: !!m._slot?.fusion,
+          motionEnabled: m.motionEnabled,
+          motionLean: +(m.motionLean || 0).toFixed(3),
+          getMotionLean: +(m.getMotionLean() || 0).toFixed(3),
+          steamHandle: m.steamInputHandle,
+        }));
+      };
     }
     this._steamInputSyntheticGp = null;
     // Versus multi-pad: when set (stable handle string from the snapshot),
