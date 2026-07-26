@@ -115,12 +115,19 @@ export class TouristWorld {
       tiles.lruCache.maxSize = m.cacheMaxTiles;
     }
 
-    // Render the photogrammetry as captured, not as a lit surface. Add
-    // ?tlight=legacy to restore the old look for an A/B.
+    // Render the photogrammetry as captured (no AgX over an already-graded
+    // image). ?tlight=legacy restores the old look for an A/B.
     this._unlitTiles = new URLSearchParams(window.location.search).get('tlight') !== 'legacy';
     if (this._unlitTiles) {
       tiles.addEventListener('load-model', ({ scene: tileScene }) => {
-        tileScene.traverse((c) => { if (c.material) this._makeTilesUnlit(c.material); });
+        tileScene.traverse((c) => { if (c.material) this._renderTileAsCaptured(c.material); });
+        // Report once, so a silently-skipped conversion can never again look like
+        // "the change made no visible difference".
+        if (!this._gradeLogged && this._gradedMaterials) {
+          this._gradeLogged = true;
+          console.log(`[Tourist] rendering tiles as captured (${this._gradedMaterials} materials, ` +
+            'tone mapping off). Add &tlight=legacy to compare.');
+        }
       });
     }
 
@@ -167,42 +174,42 @@ export class TouristWorld {
   }
 
   /**
-   * Make one tile material render as captured rather than as a lit surface.
+   * Render one tile material as captured rather than as a re-graded surface.
    *
-   * Photogrammetry textures are albedo with the lighting ALREADY BAKED IN — the
-   * sun, the sky and every shadow under every eave are painted into the image.
-   * Lighting them a second time (hemi 1.6 + sun 1.4) fills those baked shadows
-   * and lifts the midtones; AgX tone mapping at the exposure the riders need
-   * then desaturates what's left. Together that is the washed-out look. It is
-   * the equivalent of shining a lamp on a photograph of a sunny street.
+   * MEASURED, not assumed: Google ships Photorealistic 3D Tiles with
+   * KHR_materials_unlit, which GLTFLoader maps to MeshBasicMaterial. The tiles
+   * therefore already ignore the scene lights — the hemi/sun above reach only the
+   * bike and riders. An earlier version of this method assumed the opposite and
+   * tried to drive `emissive` from the base map; MeshBasicMaterial has no
+   * `emissive`, so it silently skipped all 204 materials and changed nothing.
    *
-   * Mutates the material IN PLACE rather than swapping in a MeshBasicMaterial,
-   * because TilesFadePlugin patches these materials for its crossfade and a
-   * replacement would drop those patches. Driving `emissive` from the base map
-   * with a black `color` yields the same unlit result on the existing instance,
-   * and needs no disposal bookkeeping (which matters given the mobile tile
-   * memory budget).
+   * The one lever that does apply is TONE MAPPING. Show Riders turns on AgX at
+   * exposure 1.3 (game.js `_applyShowRiders`) for the riders' PBR, and that runs
+   * over the tiles too — lifting midtones and desaturating, since AgX rolls off
+   * and desaturates highlights. The capture was already tone-mapped by the camera
+   * that shot it, so doing it again is the one genuine double-application here.
    *
-   * Deliberately per-material and NOT a renderer-level change: the scene lights
-   * and AgX must keep applying to the bike and riders, which are real PBR and do
-   * need them.
+   * Per-material and NOT a renderer-level change, so the riders keep their AgX.
    */
-  _makeTilesUnlit(material) {
+  _renderTileAsCaptured(material) {
     const mats = Array.isArray(material) ? material : [material];
     for (const mat of mats) {
-      if (!mat || mat.userData?._touristUnlit || !('emissive' in mat)) continue;
-      mat.emissive = new THREE.Color(0xffffff);
-      mat.emissiveMap = mat.map;
-      mat.emissiveIntensity = 1;
-      // Kill the lit contribution so only the baked image remains.
-      mat.color.setRGB(0, 0, 0);
-      // The capture was already tone-mapped by the camera that shot it.
+      if (!mat || mat.userData?._touristUnlit) continue;
       mat.toneMapped = false;
+      // Defensive: if a tile ever arrives lit (no KHR_materials_unlit), drive it
+      // from its own base map so it still renders as captured.
+      if ('emissive' in mat && mat.emissive && mat.color) {
+        mat.emissive = new THREE.Color(0xffffff);
+        mat.emissiveMap = mat.map;
+        mat.emissiveIntensity = 1;
+        mat.color.setRGB(0, 0, 0);
+      }
       // Keep fog — aerial perspective is the depth cue separating near from far.
       mat.fog = true;
       mat.userData = mat.userData || {};
       mat.userData._touristUnlit = true;
       mat.needsUpdate = true;
+      this._gradedMaterials = (this._gradedMaterials || 0) + 1;
     }
   }
 
