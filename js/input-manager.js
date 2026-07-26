@@ -315,7 +315,18 @@ export class InputManager {
   // Steam Input counts as a gyro source — it owns Steer for any captured pad
   // and replaces the WebHID fusion path. The lobby reads this to decide
   // whether to surface the gyro toggle.
-  get gyroConnected() { return !!(this._slot?.fusion) || this._steamInputActive; }
+  // A fusion OBJECT exists the moment an entry is attached, whether or not that
+  // entry has ever delivered a sample. On the Steam Controller Puck — five HID
+  // interfaces, one of which streams, bound at boot with no user input to gate
+  // it — the slot can hold an interface that never reports, and this getter
+  // would still claim gyro was available. Require evidence of actual data, so
+  // a mis-bound interface shows as "no gyro" instead of a toggle that does
+  // nothing. See tandemonium-controller-lab#111.
+  get gyroConnected() {
+    if (this._steamInputActive) return true;
+    const entry = this._slot?._hidEntry;
+    return !!(this._slot?.fusion) && !!entry && entry.hidActiveSince > 0;
+  }
   get gyroDevice() { return this._slot?.hidDevice ?? null; }
   get _gpName() { return this._slot?.controllerLabel ?? ''; }
   get _syntheticGamepad() { return this._slot?.synthetic ?? null; }
