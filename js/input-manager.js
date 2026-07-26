@@ -658,9 +658,20 @@ export class InputManager {
       // re-centering a big intentional turn. A brief sharp turn spikes the
       // lean, so the taper ≈ 0 at its peak and it can't poison the neutral
       // estimate (the bug that made it fuse fast on sharp turns).
+      // TAPER_FLOOR stops the correction ever reaching zero. With a constant
+      // uncorrected gyro bias (startup calibration aborted as too noisy — see
+      // #365) rawGamma grows steadily: lean grows, so the taper shrinks, so
+      // the correction weakens, so lean grows faster. Past ZERO_AT it stopped
+      // entirely and could never recover — the "pulls to one side and sticks"
+      // report. A floor keeps a slow pull-back alive through sustained leans
+      // without meaningfully fighting a real turn: at 0.15 the offset moves
+      // with a ~7s time constant, far longer than any deliberate corner but
+      // far shorter than a whole ride.
       const FULL_BELOW = 0.2, ZERO_AT = 0.7; // tuning knobs (lean fraction)
+      const TAPER_FLOOR = 0.15;
       const L = Math.abs(this._smoothedLean);
-      const taper = L <= FULL_BELOW ? 1 : L >= ZERO_AT ? 0 : (ZERO_AT - L) / (ZERO_AT - FULL_BELOW);
+      const rawTaper = L <= FULL_BELOW ? 1 : L >= ZERO_AT ? 0 : (ZERO_AT - L) / (ZERO_AT - FULL_BELOW);
+      const taper = Math.max(TAPER_FLOOR, rawTaper);
       if (taper > 0) {
         this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
         this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
