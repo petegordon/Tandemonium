@@ -105,6 +105,7 @@ const GROUP_GAP_MIN = 16;
 const GROUP_GAP_VAR = 30;
 const GROUP_MIN = 3;
 const GROUP_VAR = 6;           // group of GROUP_MIN … GROUP_MIN+GROUP_VAR-1
+const MIN_SEPARATION = 0.85;   // metres between group-mates at spawn
 
 // Honk throttle. A group of eight startling within a couple of frames would
 // fire eight honks on top of each other and read as noise, not geese. Cap the
@@ -384,11 +385,17 @@ export class GeeseManager {
 
     const geo = new THREE.PlaneGeometry(GOOSE_SIZE, GOOSE_SIZE);
     for (let i = 0; i < POOL_SIZE; i++) {
+      // Cut-out, NOT blended. `transparent: true` with `depthWrite: false`
+      // makes two overlapping geese composite instead of occlude — where their
+      // dark necks cross you get a doubled, denser silhouette, which reads as
+      // one two-headed goose. Alpha-testing with depth writing gives proper
+      // per-pixel occlusion and no blending, at the cost of harder sprite
+      // edges (standard foliage/billboard trade).
       const mat = new THREE.MeshBasicMaterial({
-        map: this._texIdle,
-        transparent: true,
-        alphaTest: 0.35,
-        depthWrite: false,
+        map: this._texIdle[0][0],
+        transparent: false,
+        alphaTest: 0.5,
+        depthWrite: true,
         side: THREE.DoubleSide,
       });
       const mesh = new THREE.Mesh(geo, mat);
@@ -500,9 +507,20 @@ export class GeeseManager {
       const side = rng() < 0.5 ? -1 : 1;
       const groupSize = GROUP_MIN + Math.floor(rng() * GROUP_VAR);
       const baseLateral = VERGE_MIN + rng() * (VERGE_MAX - VERGE_MIN);
+      const placed = [];
       for (let n = 0; n < groupSize; n++) {
-        const gd = d + rng() * 5;
-        const glat = side * (baseLateral + (rng() - 0.5) * 1.6);
+        // Reject positions on top of a group-mate. Groups are dense enough
+        // that two geese could land within centimetres, which reads as one
+        // malformed bird however the material is configured.
+        let gd = 0, glat = 0;
+        for (let attempt = 0; attempt < 8; attempt++) {
+          gd = d + rng() * 7;
+          glat = side * (baseLateral + (rng() - 0.5) * 1.8);
+          const clash = placed.some(p =>
+            Math.hypot(p.d - gd, p.lat - glat) < MIN_SEPARATION);
+          if (!clash) break;
+        }
+        placed.push({ d: gd, lat: glat });
         this._items.push({
           absoluteD: gd,
           roadD: gd % this._loopLen,
