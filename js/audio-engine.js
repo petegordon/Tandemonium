@@ -269,8 +269,12 @@ export class AudioEngine {
     // formants. The upper formant carries the small-speaker case — phone
     // speakers roll off below the fundamental, so nearly everything audible
     // there comes from the 1.1kHz-2kHz band.
+    // 0.55, not 1.0: two summed oscillators plus continuous rasp is roughly
+    // twice the source energy of the single oscillator this replaces, and the
+    // level was already judged right. Compensating here keeps the timbre
+    // change from doubling as a volume change.
     const voice = ctx.createGain();
-    voice.gain.value = 1.0;
+    voice.gain.value = 0.55;
     osc.connect(voice);
     osc2.connect(voice);
 
