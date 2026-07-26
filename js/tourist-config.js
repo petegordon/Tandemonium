@@ -83,9 +83,70 @@ export const TOURIST_CUSTOM_HEIGHT = 1500;
  */
 export const ANCHOR_MARGIN = 150;
 
-/** Keyless, CORS-enabled elevation lookup (metres above sea level). */
-const ELEVATION_URL = 'https://api.open-meteo.com/v1/elevation';
-const ELEVATION_TIMEOUT_MS = 4000;
+// --- Elevation sources -------------------------------------------------------
+// Google's ElevationService is primary: same key, same vendor and same billing
+// account as the tiles themselves, so there is no extra third-party dependency
+// on the boot path. It must be the *Maps JavaScript API* service, not the
+// Elevation web service (maps.googleapis.com/maps/api/elevation/json) — that one
+// sends no CORS headers and cannot be called from a browser, and it ignores HTTP
+// referrer restrictions, which is exactly how this key is locked down.
+//
+// REQUIRES on the Google Cloud key: "Maps JavaScript API" and "Elevation API"
+// both enabled AND both added to the key's API restrictions (it was previously
+// restricted to the Map Tiles API alone, which rejects these calls).
+const MAPS_JS_URL = 'https://maps.googleapis.com/maps/api/js';
+/** Keyless CORS fallback, used only when Google's lookup fails. */
+const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/elevation';
+const ELEVATION_TIMEOUT_MS = 6000;
+
+let _mapsJsPromise = null;
+
+/** Inject the Maps JavaScript API once; resolves when its callback fires. */
+function loadMapsJs(apiKey) {
+  if (_mapsJsPromise) return _mapsJsPromise;
+  _mapsJsPromise = new Promise((resolve, reject) => {
+    const CB = '__touristMapsReady';
+    window[CB] = () => { delete window[CB]; resolve(); };
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `${MAPS_JS_URL}?key=${encodeURIComponent(apiKey)}` +
+      `&loading=async&libraries=elevation&callback=${CB}`;
+    script.onerror = () => reject(new Error('Maps JS API script failed to load'));
+    document.head.appendChild(script);
+  });
+  return _mapsJsPromise;
+}
+
+/** Ground elevation in metres above sea level, via the Maps JS ElevationService. */
+async function elevationFromGoogle(lat, lon, apiKey) {
+  if (!apiKey) throw new Error('no Maps API key available');
+  await loadMapsJs(apiKey);
+  const { ElevationService } = await google.maps.importLibrary('elevation');
+  const { results } = await new ElevationService()
+    .getElevationForLocations({ locations: [{ lat, lng: lon }] });
+  const elevation = results?.[0]?.elevation;
+  if (!Number.isFinite(elevation)) throw new Error('empty ElevationService result');
+  return elevation;
+}
+
+/** Same units (metres above sea level), so ANCHOR_MARGIN reasoning is unchanged. */
+async function elevationFromOpenMeteo(lat, lon) {
+  const res = await fetch(`${OPEN_METEO_URL}?latitude=${lat}&longitude=${lon}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const elevation = Array.isArray(data?.elevation) ? Number(data.elevation[0]) : NaN;
+  if (!Number.isFinite(elevation)) throw new Error('empty elevation response');
+  return elevation;
+}
+
+/** Bound a lookup so a hung network never stalls boot behind ELEVATION_TIMEOUT_MS. */
+function withTimeout(promise, label) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out`)), ELEVATION_TIMEOUT_MS);
+  });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
 
 /** Filled in by resolveTouristOrigin(); read back by getTouristOrigin(). */
 let _resolvedOrigin = null;
@@ -143,20 +204,30 @@ export async function resolveTouristOrigin() {
     return;
   }
 
+  let elevation = NaN;
+  let source = null;
   try {
-    const res = await fetch(`${ELEVATION_URL}?latitude=${p.lat}&longitude=${p.lon}`, {
-      signal: AbortSignal.timeout(ELEVATION_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const elevation = Array.isArray(data?.elevation) ? Number(data.elevation[0]) : NaN;
-    if (!Number.isFinite(elevation)) throw new Error('no elevation in response');
-    _resolvedOrigin = { ...base, height: elevation + ANCHOR_MARGIN, anchored: true, elevation };
+    elevation = await withTimeout(
+      elevationFromGoogle(p.lat, p.lon, getMapsApiKey()), 'Google ElevationService');
+    source = 'Google ElevationService';
   } catch (err) {
-    // Non-fatal: getTouristOrigin() falls back to the blind guess + wide probe.
-    console.warn(`[Tourist] elevation lookup failed (${err.message}); ` +
-      `falling back to a ${TOURIST_CUSTOM_HEIGHT}m anchor and a wide ground probe. ` +
-      'Pass ?h=<metres above the ellipsoid> to set it explicitly.');
+    console.warn(`[Tourist] Google ElevationService unavailable (${err.message}). ` +
+      'Check the Cloud key has BOTH "Maps JavaScript API" and "Elevation API" enabled ' +
+      'and allowed in its API restrictions. Trying the fallback source.');
+    try {
+      elevation = await withTimeout(
+        elevationFromOpenMeteo(p.lat, p.lon), 'fallback elevation lookup');
+      source = 'open-meteo fallback';
+    } catch (err2) {
+      // Non-fatal: getTouristOrigin() falls back to the blind guess + wide probe.
+      console.warn(`[Tourist] elevation lookup failed (${err2.message}); ` +
+        `falling back to a ${TOURIST_CUSTOM_HEIGHT}m anchor and a wide ground probe. ` +
+        'Pass ?h=<metres above the ellipsoid> to set it explicitly.');
+    }
+  }
+
+  if (Number.isFinite(elevation)) {
+    _resolvedOrigin = { ...base, height: elevation + ANCHOR_MARGIN, anchored: true, elevation, source };
   }
 }
 

@@ -77,7 +77,7 @@ export class TouristWorld {
     const origin = getTouristOrigin();
     this._origin = origin;
     console.log(`[Tourist] riding ${origin.name} — anchor ${Math.round(origin.height)}m ` +
-      `(${origin.anchored === false ? 'GUESSED, wide probe' : 'from elevation'})`);
+      `(${origin.anchored === false ? 'GUESSED, wide probe' : origin.source || 'explicit ?h'})`);
 
     // Anchor the chosen lat/lon/height at the three.js origin with +Y up so
     // the bike's abstract X/Z world maps to local east/north metres.
