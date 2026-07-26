@@ -43,23 +43,28 @@ const VISIBLE_BEHIND = 30;
 
 // Verge placement: geese sit beyond the road edge (road half-width ~2.5) so
 // they are scenery, not hazards. Riding onto the verge is what reaches them.
-const VERGE_MIN = 2.9;
-const VERGE_MAX = 6.5;
+const VERGE_MIN = 3.3;
+const VERGE_MAX = 7.0;
 
-// Flee radius must be SMALLER than VERGE_MIN, or riding down the centre of the
-// road is already inside every goose's trigger and the whole verge flushes
-// whether you went near them or not (which is what 7.0 did). At 2.4 the road
-// itself is safe — you have to steer onto the verge to scatter anything, so
-// each gaggle is a deliberate target rather than ambient noise.
-const FLEE_RADIUS = 2.4;
+// Flee radius must stay BELOW VERGE_MIN, or riding down the centre of the road
+// sits inside every goose's trigger and the whole verge flushes whether you
+// went near them or not (what 7.0 did). But it wants to be as close to that
+// ceiling as the margin allows, or scattering demands a direct hit.
+//
+// The margin has to be real, not a knife edge: geese wander and the verge clamp
+// pins them at exactly VERGE_MIN, so a radius a hair under it would trigger on
+// any small steering wobble — unpredictable, which is worse than either
+// extreme. VERGE_MIN moved out to 3.3 to buy that headroom rather than trimming
+// the radius further.
+const FLEE_RADIUS = 3.0;
 
 // Not every goose spooks at the same distance. Each carries a boldness factor
 // scaling its own trigger, so a pass through a gaggle lifts the skittish ones
 // while the bold ones hold their ground until you are right on top of them —
-// which is both truer to real birds and the thing that makes a scatter read as
-// individuals rather than one object dissolving.
-const BOLDNESS_MIN = 0.55;
-const BOLDNESS_VAR = 0.45;
+// truer to real birds, and what makes a scatter read as individuals reacting
+// rather than one object dissolving.
+const BOLDNESS_MIN = 0.60;
+const BOLDNESS_VAR = 0.40;
 
 // Two-phase flight. The burst is ballistic — that initial "thrown" pop is what
 // sells the startle. Then gravity fades out and they beat away under their own
