@@ -192,6 +192,296 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Load a real goose recording to use instead of the synthesized honk.
+   * Fire-and-forget: if the file is missing or fails to decode, the synth
+   * stays in use, so the game never depends on the asset being present.
+   *
+   * A recording will always beat synthesis for an animal call — the point of
+   * gooseHonk() was to need no asset, not to be better than one.
+   *
+   * @param {string} url e.g. 'assets/goose-honk.mp3'
+   * @returns {Promise<boolean>} whether the sample is now available
+   */
+  async loadGooseSample(url) {
+    try {
+      const ctx = this.ensureContext();
+      if (!ctx) return false;
+      const res = await fetch(url);
+      if (!res.ok) return false;
+      const bytes = await res.arrayBuffer();
+      this._gooseBuf = await ctx.decodeAudioData(bytes);
+      this._gooseOnsets = this._findOnsets(this._gooseBuf);
+      return true;
+    } catch (e) {
+      return false;   // synth fallback — not an error worth surfacing
+    }
+  }
+
+  /**
+   * Find honk onsets in a decoded buffer, so a long field recording of a flock
+   * can be used as a BANK of individual honks rather than played whole.
+   *
+   * Field recordings are what's actually available under permissive licences —
+   * they're several seconds of a flock, not a trimmed one-shot. Playing one
+   * from the top per startle would fire seconds of geese and pile up badly.
+   *
+   * Windowed RMS with a rising-edge test: an onset is where energy crosses the
+   * threshold having been below it, with a refractory gap so one honk's
+   * sustain can't register as several.
+   *
+   * @returns {number[]} onset times in seconds
+   */
+  _findOnsets(buf) {
+    const data = buf.getChannelData(0);
+    const sr = buf.sampleRate;
+    const win = Math.floor(sr * 0.02);          // 20ms analysis window
+    const refractory = Math.floor(sr * 0.22);   // ignore re-triggers for 220ms
+
+    // Threshold relative to the recording's own peak, so it adapts to level.
+    let peak = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const a = Math.abs(data[i]);
+      if (a > peak) peak = a;
+    }
+    const thresh = peak * 0.30;
+
+    const onsets = [];
+    let below = true;
+    let lastOnset = -refractory;
+    for (let i = 0; i + win < data.length; i += win) {
+      let sum = 0;
+      for (let j = i; j < i + win; j++) sum += data[j] * data[j];
+      const rms = Math.sqrt(sum / win);
+      if (rms > thresh) {
+        if (below && i - lastOnset > refractory) {
+          onsets.push(i / sr);
+          lastOnset = i;
+        }
+        below = false;
+      } else if (rms < thresh * 0.55) {
+        below = true;                            // hysteresis
+      }
+    }
+    return onsets;
+  }
+
+  /**
+   * Play one honk from the loaded sample. Returns false when no sample is
+   * loaded so the caller can fall through to the synth.
+   *
+   * Plays a short window starting at a detected onset rather than the whole
+   * buffer. A flock recording then yields a different honk each time — better
+   * variety than any pitch jitter could fake, and it sidesteps the leading
+   * silence that would otherwise read as input latency.
+   *
+   * Rate and level still jitter: a gaggle firing identical audio six times
+   * reads as one sound effect repeating, which is what makes stock audio sound
+   * like stock audio.
+   */
+  _playGooseSample(gain) {
+    const ctx = this.ctx;
+    if (!ctx || !this._gooseBuf) return false;
+    const now = ctx.currentTime;
+    const onsets = this._gooseOnsets;
+
+    // Onsets work for a SPARSE recording (discrete honks separated by quiet).
+    // A dense flock recording never drops below the threshold, so few or no
+    // onsets are found — but in that case the whole file is geese, and a random
+    // window into it is a perfectly good honk. Falling back to offset 0 would
+    // instead replay the identical opening every time.
+    const total = this._gooseBuf.duration;
+    const offset = (onsets && onsets.length >= 3)
+      ? onsets[Math.floor(Math.random() * onsets.length)]
+      : Math.random() * Math.max(0, total - 0.6);
+    const dur = Math.min(0.55, Math.max(0.2, this._gooseBuf.duration - offset));
+
+    const src = ctx.createBufferSource();
+    src.buffer = this._gooseBuf;
+    src.playbackRate.value = 0.88 + Math.random() * 0.30;
+
+    // Short fades at both ends — starting mid-recording would click otherwise.
+    const g = ctx.createGain();
+    const level = gain * (0.8 + Math.random() * 0.4);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(level, now + 0.008);
+    g.gain.setValueAtTime(level, now + dur - 0.05);
+    g.gain.linearRampToValueAtTime(0.0001, now + dur);
+
+    src.connect(g).connect(this.sfxBus);
+    src.start(now, offset, dur + 0.02);
+    return true;
+  }
+
+  /**
+   * Soft-clip curve for the goose honk's voiced source. Cached — building a
+   * 2048-point Float32Array per honk would be wasteful when a gaggle fires
+   * several at once.
+   *
+   * tanh-style saturation rather than hard clipping: it folds energy into
+   * upper harmonics without the fizzy aliasing of a hard knee, which is what
+   * makes a source sound harsh-but-organic instead of broken.
+   */
+  _getHonkCurve() {
+    if (this._honkCurve) return this._honkCurve;
+    const N = 2048;
+    const curve = new Float32Array(N);
+    const drive = 2.6;
+    for (let i = 0; i < N; i++) {
+      const x = (i / (N - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * drive) / Math.tanh(drive);
+    }
+    this._honkCurve = curve;
+    return curve;
+  }
+
+  // Goose honk (#363). Synthesized rather than sampled — the whole engine is
+  // procedural, and per-honk pitch/length jitter is what keeps a gaggle from
+  // sounding like one sound effect fired six times.
+  //
+  // A single clean oscillator through a bandpass is a KAZOO, not a goose —
+  // that's what the first version sounded like. Real calls are ROUGH, and four
+  // things carry that:
+  //
+  //   1. Two detuned oscillators. The beating between them is the raucous
+  //      edge; one oscillator is always too pure however it's filtered.
+  //   2. Continuous rasp. Noise runs through the same formants for the whole
+  //      call, not just as an attack blip — animal calls are noisy throughout.
+  //   3. A two-part pitch gesture, the "ah-HONK": a low start, a fast rise
+  //      through an overshoot, then a fall. A single bend up reads as a toot.
+  //   4. Amplitude roughness. A ~45Hz tremolo sits below pitch perception and
+  //      reads as vocal grain rather than as wobble.
+  //
+  // Plus real length — a honk has body, and 0.2s is inherently a toot.
+  gooseHonk(gain = 0.52) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.resume();
+    // A real recording wins if one has been loaded; the synth below is the
+    // no-asset fallback, not the preferred path.
+    if (this._playGooseSample(gain)) return;
+    const now = ctx.currentTime;
+
+    const base = 250 + Math.random() * 170;     // per-goose voice
+    const dur = 0.34 + Math.random() * 0.18;
+
+    // Pitch contour, shared by both oscillators. Fast rise to an overshoot at
+    // ~18% of the call, then a long fall — the shape of the actual call.
+    const contour = (osc) => {
+      osc.frequency.setValueAtTime(base * 0.62, now);
+      osc.frequency.linearRampToValueAtTime(base * 1.10, now + dur * 0.18);
+      osc.frequency.linearRampToValueAtTime(base * 0.95, now + dur * 0.55);
+      osc.frequency.linearRampToValueAtTime(base * 0.74, now + dur);
+    };
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    contour(osc);
+    // Detuned twin — the beating between them is the rasp.
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'sawtooth';
+    contour(osc2);
+    osc2.detune.value = 14 + Math.random() * 12;   // cents
+
+    // TWO formants in parallel, not one narrow band. The original single
+    // bandpass sat at base*2.2 with Q=3.2, so its passband (~1.9x-2.5x base)
+    // excluded the fundamental entirely and passed mainly the 2nd harmonic at
+    // half amplitude — throwing away most of the level the gain implied. Wide,
+    // overlapping formants keep far more energy and sound more like a voice
+    // than a filtered buzz.
+    //
+    // The upper formant carries the small-speaker case: phone speakers roll
+    // off hard below ~500Hz, and the fundamental is 300-490Hz, so on iOS
+    // almost everything audible comes from the 1.1kHz-2kHz band.
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, now);
+    env.gain.exponentialRampToValueAtTime(gain, now + 0.018);   // hard onset
+    env.gain.setValueAtTime(gain, now + dur * 0.5);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    env.connect(this.sfxBus);
+
+    // Amplitude roughness. ~45Hz is below pitch perception, so it reads as
+    // vocal grain rather than a wobble. Summed into the envelope's gain param.
+    const rough = ctx.createOscillator();
+    rough.type = 'sine';
+    rough.frequency.value = 38 + Math.random() * 18;
+    const roughDepth = ctx.createGain();
+    roughDepth.gain.value = gain * 0.22;
+    rough.connect(roughDepth).connect(env.gain);
+    rough.start(now);
+    rough.stop(now + dur + 0.02);
+
+    // Voiced source: both oscillators plus continuous rasp, through shared
+    // formants. The upper formant carries the small-speaker case — phone
+    // speakers roll off below the fundamental, so nearly everything audible
+    // there comes from the 1.1kHz-2kHz band.
+    // 0.55, not 1.0: two summed oscillators plus continuous rasp is roughly
+    // twice the source energy of the single oscillator this replaces, and the
+    // level was already judged right. Compensating here keeps the timbre
+    // change from doubling as a volume change.
+    const voice = ctx.createGain();
+    voice.gain.value = 0.55;
+    osc.connect(voice);
+    osc2.connect(voice);
+
+    const rasp = ctx.createBufferSource();
+    rasp.buffer = this._getNoiseBuffer();
+    rasp.loop = true;
+    const raspGain = ctx.createGain();
+    raspGain.gain.value = 0.28;          // grain through the whole call
+    rasp.connect(raspGain).connect(voice);
+
+    // Drive the source into a soft clip BEFORE the formants — the same order a
+    // real voice works in (harsh source, then tract resonance). Filtering a
+    // clean oscillator can only ever sound like a filtered oscillator; the
+    // harmonics distortion generates are what the formants then have something
+    // to shape. This is the other half of why it read as a toot.
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = this._getHonkCurve();
+    shaper.oversample = '2x';
+    voice.connect(shaper);
+
+    // FIXED formants, not multiples of `base`. This is what stopped it
+    // sounding like a goose: formants tied to the fundamental move with every
+    // pitch, so the timbre never changes and the ear reads it as a kazoo. Real
+    // vocal formants are resonances of the animal's throat — they stay put
+    // while the pitch slides through them, and that relative motion IS the
+    // vocal character. Values are a nasal, honk-shaped tract; the third is
+    // deliberately weak and high, where phone speakers still have output.
+    const jitter = 0.92 + Math.random() * 0.16;   // per-goose throat size
+    for (const f of [
+      { hz: 620 * jitter, q: 3.0, amp: 0.85 },
+      { hz: 1750 * jitter, q: 2.6, amp: 0.80 },
+      { hz: 2900 * jitter, q: 2.0, amp: 0.35 },
+    ]) {
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.frequency.value = f.hz;
+      band.Q.value = f.q;
+      const fg = ctx.createGain();
+      fg.gain.value = f.amp;
+      shaper.connect(band).connect(fg).connect(env);
+    }
+
+    osc.start(now);  osc.stop(now + dur + 0.02);
+    osc2.start(now); osc2.stop(now + dur + 0.02);
+    rasp.start(now); rasp.stop(now + dur + 0.02);
+
+    // Breath transient on the onset — the puff before the voice engages.
+    const noise = ctx.createBufferSource();
+    noise.buffer = this._getNoiseBuffer();
+    const nFilt = ctx.createBiquadFilter();
+    nFilt.type = 'bandpass';
+    nFilt.frequency.value = 1500;
+    nFilt.Q.value = 0.8;
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(gain * 0.5, now);
+    nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+    noise.connect(nFilt).connect(nGain).connect(this.sfxBus);
+    noise.start(now);
+    noise.stop(now + 0.06);
+  }
+
   // Noise-based crash impact with a low-frequency thump. Replaces the old
   // double-beep crash cue with something that actually reads as an impact.
   crash(intensity = 1) {

@@ -23,7 +23,7 @@ import {
   ReorientationPlugin,
 } from '3d-tiles-renderer/plugins';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { TOURIST_ORIGIN, TOURIST_TUNE } from './tourist-config.js';
+import { getTouristOrigin, TOURIST_TUNE } from './tourist-config.js';
 import { isMobile } from './config.js';
 
 const DEG2RAD = Math.PI / 180;
@@ -73,13 +73,25 @@ export class TouristWorld {
     tiles.registerPlugin(new GLTFExtensionsPlugin({ dracoLoader: draco }));
     tiles.registerPlugin(new TileCompressionPlugin());
     tiles.registerPlugin(new TilesFadePlugin());
+    // Where are we riding? Defaults to Scioto Mile; ?lat/?lon points it anywhere.
+    const origin = getTouristOrigin();
+    this._origin = origin;
+    console.log(`[Tourist] riding ${origin.name} (anchor ${origin.height}m)`);
+
     // Anchor the chosen lat/lon/height at the three.js origin with +Y up so
     // the bike's abstract X/Z world maps to local east/north metres.
     tiles.registerPlugin(new ReorientationPlugin({
-      lat: TOURIST_ORIGIN.lat * DEG2RAD,
-      lon: TOURIST_ORIGIN.lon * DEG2RAD,
-      height: TOURIST_ORIGIN.height,
+      lat: origin.lat * DEG2RAD,
+      lon: origin.lon * DEG2RAD,
+      height: origin.height,
     }));
+
+    // A custom location's anchor height is a guess, so the ground can be far
+    // below (or above) local y=0. Widen the probe to find it; the first hit
+    // snaps the bike down and the guess stops mattering.
+    const probe = origin.custom ? TOURIST_TUNE.customProbe : TOURIST_TUNE;
+    this._probeUp = probe.spawnProbeHeight;
+    this._probeFar = probe.spawnProbeHeight + probe.rayLength;
 
     // Fix #2 — mobile tile budget. The library defaults (0.4 GB cache, 10
     // concurrent downloads, unbounded depth) can exhaust a mobile browser's
@@ -187,10 +199,10 @@ export class TouristWorld {
    */
   _groundFollow(bikePos, dt) {
     const ray = this._raycaster;
-    const probeTop = bikePos.y + TOURIST_TUNE.spawnProbeHeight;
+    const probeTop = bikePos.y + this._probeUp;
     this._tmpOrigin.set(bikePos.x, probeTop, bikePos.z);
     ray.set(this._tmpOrigin, new THREE.Vector3(0, -1, 0));
-    ray.far = TOURIST_TUNE.spawnProbeHeight + TOURIST_TUNE.rayLength;
+    ray.far = this._probeFar;
 
     // Use the library's own raycast: it transforms the world-space ray into the
     // tiles' (ECEF) coordinate frame via the group transform. Raycasting the tile
@@ -215,7 +227,12 @@ export class TouristWorld {
       hits.sort((a, b) => a.distance - b.distance);
       const hit = hits[0];
       const targetY = hit.point.y + TOURIST_TUNE.wheelOffset;
-      this._groundY += (targetY - this._groundY) * ease;
+      // First hit SNAPS rather than eases: this is the moment the real surface
+      // height becomes known, and for a custom location it can be a kilometre
+      // from the guessed anchor — easing that would be a long visible fall.
+      // It also means the anchor height never has to be looked up or tuned.
+      if (!this._hasGround) this._groundY = targetY;
+      else this._groundY += (targetY - this._groundY) * ease;
       this._hasGround = true;
 
       // Ground normal → world space, smoothed, for pitch/roll.

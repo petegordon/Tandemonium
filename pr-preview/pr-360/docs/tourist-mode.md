@@ -7,10 +7,37 @@ v1 goal is **ride feel**: the bike hugs real ground and pitches with real hills.
 
 Activate with the URL param **`?mode=tourist`** (e.g. `index.html?mode=tourist`).
 
-Starting location (v1): **Scioto Mile / Bicentennial Park, downtown Columbus, OH**
+Default location: **Scioto Mile / Bicentennial Park, downtown Columbus, OH**
 (`39.9576, -83.0007`) — a real riverfront bike promenade with skyline scenery and
-dense Photorealistic 3D Tiles coverage. Change it in `js/tourist-config.js`
+dense Photorealistic 3D Tiles coverage. Change the default in `js/tourist-config.js`
 (`TOURIST_ORIGIN`).
+
+## Riding somewhere else
+
+Point Tourist Mode at any coordinates with **`?lat=` / `?lon=`**:
+
+```
+?mode=tourist&lat=39.9576&lon=-83.0007
+```
+
+| Param  | Required | Meaning |
+| ------ | -------- | ------- |
+| `lat`  | with `lon` | Latitude in degrees. Out-of-range values fall back to the default. |
+| `lon`  | with `lat` | Longitude in degrees. |
+| `h`    | no       | Anchor height (m above the WGS84 ellipsoid). Rarely needed — see below. |
+| `name` | no       | Label for the console line; cosmetic. |
+
+**You do not need to know the elevation.** `h` defaults to `TOURIST_CUSTOM_HEIGHT`
+(1500 m), which is just an anchor for the local ENU frame — the bike starts at
+local `y≈0` and the first successful down-raycast onto the streamed tiles snaps it
+to the true surface (`_groundFollow`, first-hit snap). `TOURIST_TUNE.customProbe`
+widens the probe (2 km up, 14 km reach) so that snap lands anywhere from below sea
+level to well past any rideable elevation.
+
+This is deliberately *not* an Elevation API lookup. Elevation returns bare terrain
+height, but Tourist Mode rides the **photogrammetry surface** — road decks, bridges,
+overpasses — and the two disagree by metres exactly where the interesting riding is.
+The tiles are the ground truth, and they're already streaming.
 
 ## Prerequisites (Google Cloud)
 

@@ -10,8 +10,9 @@ import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
+import { GeeseManager } from './geese.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
-import { InputManager, readDualSenseSourcePref, readGyroRollMode } from './input-manager.js';
+import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { FocusController } from './nav/focus-controller.js';
 import { ROOM_MSG } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
@@ -208,6 +209,9 @@ class Game {
     // in the lobby and in-race input read from the same source of truth.
     // P3/P4 exist for versus mode; solo/co-op paths only ever touch P1/P2.
     this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2', 'P3', 'P4'] });
+    // Let InputManager see the WebHID pool so it can tell when a pad in the
+    // Steam Input snapshot is already streaming over WebHID (#347).
+    setControllerManager(this.controllerManager);
     // Fire-and-forget: pair approved HID devices, auto-request any
     // remaining via Electron (gated by env detection inside the manager),
     // and listen for hot-plug events.
@@ -597,6 +601,14 @@ class Game {
     this._lastCountNum = 3;
     this.instructionsEl = document.getElementById('instructions');
     this.audioEngine = new AudioEngine();
+    // Optional real goose recording for the scatter honk (#363). Fire and
+    // forget: absent or undecodable, the synthesized honk stays in use, so
+    // the build never depends on the asset existing.
+    this.audioEngine.loadGooseSample('assets/goose-honk.mp3').then((ok) => {
+      if (!ok) return;
+      const n = this.audioEngine._gooseOnsets?.length || 0;
+      console.log(`Goose honk: recorded sample, ${n} honk onsets detected`);
+    });
     this.audioCtx = null; // mirrors audioEngine.ctx once created (recorder API)
 
     // Lobby
@@ -1664,6 +1676,9 @@ class Game {
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
+    // Roadside geese (#363) — decorative verge scenery, no collision response.
+    if (this.geeseManager) this.geeseManager.dispose();
+    this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine);
 
     // Wire up collectibles total for analytics
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
@@ -1852,6 +1867,8 @@ class Game {
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
+    if (this.geeseManager) this.geeseManager.dispose();
+    this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, this.audioEngine);
     for (const rig of this.versusRigs) {
       rig.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
     }
@@ -2063,6 +2080,7 @@ class Game {
     }
 
     this.grassParticles.clear();
+    if (this.geeseManager) this.geeseManager.clear();
     this._stokerWasFallen = false;
     this._remoteFinishStats = null;
 
@@ -2692,6 +2710,13 @@ class Game {
         html += '<div class="vs-cell">' + (r ? '<span class="vs-icon">' + r.icon + '</span> <strong>' + r.value + '</strong>' : '') + '</div>';
       }
       html += '</div>';
+
+      // Geese scattered (#363). Only shown when some were actually startled,
+      // so a rider who kept to the road doesn't get a "0" they can't read.
+      const geeseScattered = this.geeseManager ? this.geeseManager.getDisruptedCount() : 0;
+      if (geeseScattered > 0) {
+        html += '<div class="victory-stat">🪿 Geese Scattered: <strong>' + geeseScattered + '</strong></div>';
+      }
 
       // Perfect ride / crashes
       if (summary.crashes > 0) {
@@ -4380,6 +4405,9 @@ class Game {
     if (this.obstacleManager) {
       this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     }
+    if (this.geeseManager) {
+      this.geeseManager.update(dt, this.bike.distanceTraveled, [this.bike.position]);
+    }
   }
 
   /**
@@ -4470,6 +4498,10 @@ class Game {
     }
     if (this.obstacleManager) {
       this.obstacleManager.updateVersus(dt, rigs.map((r) => r.bike.distanceTraveled));
+    }
+    if (this.geeseManager) {
+      this.geeseManager.updateVersus(dt, rigs.map((r) => r.bike.distanceTraveled),
+        rigs.map((r) => r.bike.position));
     }
 
     // World: multi-anchor streaming around both bikes
@@ -4876,6 +4908,7 @@ class Game {
       }
       if (this.collectibleManager) this.collectibleManager.faceCamera(rig.camera);
       if (this.obstacleManager) this.obstacleManager.faceCamera(rig.camera);
+      if (this.geeseManager) this.geeseManager.faceCamera(rig.camera);
 
       this.renderer.render(this.scene, rig.camera);
     }
@@ -4984,6 +5017,9 @@ class Game {
     // Obstacles
     if (this.obstacleManager) {
       this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    }
+    if (this.geeseManager) {
+      this.geeseManager.update(dt, this.bike.distanceTraveled, [this.bike.position]);
     }
 
     if (this.bike.speed > 8) {
