@@ -285,9 +285,15 @@ export class AudioEngine {
     const now = ctx.currentTime;
     const onsets = this._gooseOnsets;
 
-    const offset = (onsets && onsets.length)
+    // Onsets work for a SPARSE recording (discrete honks separated by quiet).
+    // A dense flock recording never drops below the threshold, so few or no
+    // onsets are found — but in that case the whole file is geese, and a random
+    // window into it is a perfectly good honk. Falling back to offset 0 would
+    // instead replay the identical opening every time.
+    const total = this._gooseBuf.duration;
+    const offset = (onsets && onsets.length >= 3)
       ? onsets[Math.floor(Math.random() * onsets.length)]
-      : 0;
+      : Math.random() * Math.max(0, total - 0.6);
     const dur = Math.min(0.55, Math.max(0.2, this._gooseBuf.duration - offset));
 
     const src = ctx.createBufferSource();
