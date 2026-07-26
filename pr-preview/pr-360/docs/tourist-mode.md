@@ -28,8 +28,38 @@ Point Tourist Mode at any coordinates with **`?lat=` / `?lon=`**:
 | `name` | no       | Label for the console line; cosmetic. |
 
 **You do not need to know the elevation** — `resolveTouristOrigin()` looks it up at
-boot from a keyless, CORS-enabled service and anchors `ANCHOR_MARGIN` (150 m) above
-it. Pass `?h=` only to override that.
+boot and anchors `ANCHOR_MARGIN` (150 m) above it. Pass `?h=` only to override that.
+
+### Elevation lookup and the extra key permissions
+
+Primary source is **Google's `ElevationService`**, from the Maps JavaScript API —
+same key, vendor and billing account as the tiles, so there is no third-party
+dependency on the boot path. A keyless service is kept only as a fallback.
+
+It must be the *Maps JavaScript* service. The Elevation **web service**
+(`maps.googleapis.com/maps/api/elevation/json`) is not usable here: it sends no CORS
+headers, so a browser cannot call it, and it ignores HTTP-referrer restrictions —
+which is precisely how this key is locked down.
+
+⚠️ **This needs key permissions the Map Tiles setup did not.** In Google Cloud
+Console, on the same key:
+
+1. Enable **Maps JavaScript API**.
+2. Enable **Elevation API**.
+3. Under the key's **API restrictions**, add both alongside Map Tiles API. A key
+   restricted to Map Tiles alone will reject the lookup.
+
+Referrer restrictions and billing are unchanged. If the lookup is rejected you get a
+console warning naming this step, the fallback source takes over, and the ride still
+works — so a missed step degrades quietly rather than breaking. Watch the boot line
+to see which source won:
+
+```
+[Tourist] riding 39.70850, -104.81000 — anchor 1819m (Google ElevationService)
+```
+
+In Electron the same key needs a matching `Referer` on `maps.googleapis.com` as well
+as `tile.googleapis.com`; `electron/main.js` covers both.
 
 ### Why the anchor height actually matters
 
