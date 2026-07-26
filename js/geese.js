@@ -46,8 +46,20 @@ const VISIBLE_BEHIND = 30;
 const VERGE_MIN = 2.9;
 const VERGE_MAX = 6.5;
 
-const FLEE_RADIUS = 7.0;      // start lifting this far out
-const FLEE_RADIUS_SQ = FLEE_RADIUS * FLEE_RADIUS;
+// Flee radius must be SMALLER than VERGE_MIN, or riding down the centre of the
+// road is already inside every goose's trigger and the whole verge flushes
+// whether you went near them or not (which is what 7.0 did). At 2.4 the road
+// itself is safe — you have to steer onto the verge to scatter anything, so
+// each gaggle is a deliberate target rather than ambient noise.
+const FLEE_RADIUS = 2.4;
+
+// Not every goose spooks at the same distance. Each carries a boldness factor
+// scaling its own trigger, so a pass through a gaggle lifts the skittish ones
+// while the bold ones hold their ground until you are right on top of them —
+// which is both truer to real birds and the thing that makes a scatter read as
+// individuals rather than one object dissolving.
+const BOLDNESS_MIN = 0.55;
+const BOLDNESS_VAR = 0.45;
 
 // Two-phase flight. The burst is ballistic — that initial "thrown" pop is what
 // sells the startle. Then gravity fades out and they beat away under their own
@@ -502,6 +514,7 @@ export class GeeseManager {
           view: VIEW_SIDE,
           flip: rng() < 0.5 ? -1 : 1,
           flapOffset: 0,
+          boldness: BOLDNESS_MIN + rng() * BOLDNESS_VAR,
           // Ground wander. homeD/homeLat is the spawn point the leash pulls
           // back toward, so a gaggle stays a gaggle instead of dispersing.
           homeD: gd, homeLat: glat,
@@ -585,7 +598,8 @@ export class GeeseManager {
           const dx = b.x - item._worldX;
           const dz = b.z - item._worldZ;
           const d2 = dx * dx + dz * dz;
-          if (d2 < FLEE_RADIUS_SQ) {
+          const r = FLEE_RADIUS * item.boldness;
+          if (d2 < r * r) {
             this._startle(item, dx, dz, Math.sqrt(d2), bi);
             break;
           }
