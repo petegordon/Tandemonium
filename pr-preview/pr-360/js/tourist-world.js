@@ -121,13 +121,6 @@ export class TouristWorld {
     if (this._unlitTiles) {
       tiles.addEventListener('load-model', ({ scene: tileScene }) => {
         tileScene.traverse((c) => { if (c.material) this._renderTileAsCaptured(c.material); });
-        // Report once, so a silently-skipped conversion can never again look like
-        // "the change made no visible difference".
-        if (!this._gradeLogged && this._gradedMaterials) {
-          this._gradeLogged = true;
-          console.log(`[Tourist] rendering tiles as captured (${this._gradedMaterials} materials, ` +
-            'tone mapping off). Add &tlight=legacy to compare.');
-        }
       });
     }
 
@@ -276,6 +269,18 @@ export class TouristWorld {
       // (Earth-radius) scale until the renderer updates it post-update, so the
       // ground probe finds nothing. (The library's own examples do this too.)
       this.tiles.group.updateMatrixWorld(true);
+    }
+
+    // Report the conversion ONCE the world has actually streamed, not on the
+    // first tile — the first-tile count is 1 and reads as "it barely did
+    // anything", which is exactly the misleading signal this log exists to stop.
+    if (this._unlitTiles && !this._gradeLogged && this._tilesStarted) {
+      this._gradeLogTimer = (this._gradeLogTimer || 0) + dt;
+      if (this._gradeLogTimer > 5 && this._gradedMaterials) {
+        this._gradeLogged = true;
+        console.log(`[Tourist] rendering tiles as captured — ${this._gradedMaterials} materials ` +
+          'converted so far, tone mapping off. Add &tlight=legacy to compare.');
+      }
     }
 
     this._groundFollow(bikePos, dt);
