@@ -7,6 +7,94 @@ import { isMobile, TUNE } from './config.js';
 import * as analytics from './analytics.js';
 import { addHapticSource, removeHapticSource } from './haptics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { SensorFusion } from '../shared/sensor-fusion.js';
+
+// Steam getMotionData -> SensorFusion mapping (design B, #347/#348). Steam may
+// report motion in a different axis frame / accel scale than our WebHID IMU
+// convention, and we have no Steam Controller on hand at author time to confirm
+// it. These defaults are overridable LIVE via window.__steamMotionTune (no
+// rebuild) so the frame can be locked on hardware — see docs/steam-input-design.md
+// open question #3. e.g. window.__steamMotionTune = { gyroSign:[1,-1,1] }.
+const STEAM_MOTION_DEFAULTS = {
+  gyroScale: 1.0,          // getMotionData rotVel is already rad/s
+  accelScale: 1 / 16384,   // Steam Controller accel ~ 16384/g (from live capture)
+  gyroSign: [1, 1, 1],
+  accelSign: [1, 1, 1],
+  gyroOrder: [0, 1, 2],    // rotVel index -> fusion (gx, gy, gz)
+  accelOrder: [0, 1, 2],   // accel  index -> fusion (ax, ay, az)
+};
+
+// The ControllerManager that owns the WebHID pool. Set once at startup by
+// game.js. InputManager stays a pure consumer of slots; this exists only to
+// answer "is this controller ALREADY live on WebHID?" when arbitrating which
+// source owns a pad, which a slot-less InputManager cannot otherwise know.
+let _controllerManager = null;
+export function setControllerManager(mgr) {
+  _controllerManager = mgr;
+  if (typeof window !== 'undefined') window.__controllerManager = mgr;
+}
+
+// Debug: explain why WebHID-first arbitration did or didn't fire. Run
+// `__whyNotHid()` in DevTools while the gyro is dead. Reports each condition
+// separately so a false result names its own cause instead of being inferred.
+if (typeof window !== 'undefined') {
+  window.__whyNotHid = () => {
+    const mgr = _controllerManager;
+    if (!mgr) return { managerWired: false, hint: 'setControllerManager() never ran' };
+    const now = performance.now();
+    const describe = (entry, where) => ({
+      where,
+      product: entry.device?.productName || null,
+      driver: entry.driver?.constructor?.name || null,
+      isSteamController: !!entry.driver?.constructor?.needsSiblingFanout,
+      msSinceReport: entry.hidActiveSince > 0 ? Math.round(now - entry.hidActiveSince) : null,
+    });
+    const entries = [];
+    if (mgr._hidPool) for (const e of mgr._hidPool.values()) entries.push(describe(e, 'pool'));
+    for (const s of (mgr.slots || [])) if (s._hidEntry) entries.push(describe(s._hidEntry, 'slot:' + s.id));
+    return { managerWired: true, filterWouldFire: steamControllerLiveOnWebHid(), entries };
+  };
+}
+
+// Steam-family controller types. `getInputTypeForHandle` returns the raw
+// ESteamInputType enum, and main.js stringifies it — so this arrives as "14",
+// NOT "SteamDeckController". Matching on the name alone silently never fires
+// (the bug that made the first version of this filter a no-op). Accept both
+// forms: 1 = SteamController, 14 = SteamDeckController, which is what the 2026
+// Puck reports as.
+const STEAM_FAMILY_TYPE_IDS = new Set(['1', '14']);
+function isSteamFamilyType(type) {
+  const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
+  return STEAM_FAMILY_TYPE_IDS.has(t) || /^steam/i.test(t);
+}
+
+/**
+ * True when a Steam Controller is actively streaming input reports over
+ * WebHID — whether still pooled or already claimed into a slot.
+ *
+ * `needsSiblingFanout` is the Steam-Controller marker (only that driver sets
+ * it) and is what ControllerManager already uses for the same purpose. The
+ * freshness window matches the manager's own 5s join-candidate filter: the
+ * Puck pools five HID interfaces and only one ever emits STATE reports, so
+ * "has an entry, ever" is not the same question as "is streaming now".
+ */
+function steamControllerLiveOnWebHid() {
+  // Escape hatch: `window.__webhidFirst = false` forces the Steam Input path
+  // even while WebHID is streaming. Needed because "streaming" is NOT the same
+  // as "has usable gyro" — under a Steam launch the Puck's HID interface keeps
+  // delivering STATE reports while the IMU fields inside them stay frozen.
+  if (typeof window !== 'undefined' && window.__webhidFirst === false) return false;
+  const mgr = _controllerManager;
+  if (!mgr) return false;
+  const now = performance.now();
+  const live = (entry) => !!entry
+    && !!entry.driver?.constructor?.needsSiblingFanout
+    && entry.hidActiveSince > 0
+    && (now - entry.hidActiveSince) < 5000;
+  if (mgr._hidPool) { for (const entry of mgr._hidPool.values()) if (live(entry)) return true; }
+  for (const s of (mgr.slots || [])) if (live(s._hidEntry)) return true;
+  return false;
+}
 
 /**
  * DualSense input-source preference (Auto / Steam Input / WebHID) — see
@@ -152,6 +240,42 @@ export class InputManager {
     // navigator.getGamepads() doesn't always surface the virtual XInput pad,
     // so the snapshot is the only source of button/stick state.
     this._steamInputSnapshot = [];
+    // Design B (#347): per-captured-handle SensorFusion fed from Steam's
+    // getMotionData, so Steam Controllers steer by gyro through the same
+    // pipeline as WebHID pads.
+    this._steamFusions = new Map();
+    // Live debug handles. There is no other way to reach the attached slot's
+    // fusion from DevTools, and that's exactly what gyro triage needs.
+    // __inputManager is the most recently constructed instance; several exist
+    // (lobby picker, P1, versus seats) and only ONE is read by the balance
+    // controller, so __inputManagers exposes all of them — a gyro that reads
+    // correctly on the wrong instance looks identical to a broken gyro.
+    // Held as WeakRefs. A plain array would retain every InputManager ever
+    // constructed — versus creates one per join, so repeated lobby visits
+    // would leak them along with their slots, fusions and listeners. A debug
+    // handle must never be the reason an object stays alive.
+    if (typeof window !== 'undefined') {
+      window.__inputManager = this;
+      const refs = window.__inputManagerRefs || (window.__inputManagerRefs = []);
+      refs.push(new WeakRef(this));
+      window.__leanReport = () => {
+        const live = [];
+        for (let i = refs.length - 1; i >= 0; i--) {
+          const m = refs[i].deref();
+          if (!m) { refs.splice(i, 1); continue; }   // prune collected entries
+          live.unshift(m);
+        }
+        return live.map((m, i) => ({
+          i,
+          hasSlot: !!m._slot,
+          hasFusion: !!m._slot?.fusion,
+          motionEnabled: m.motionEnabled,
+          motionLean: +(m.motionLean || 0).toFixed(3),
+          getMotionLean: +(m.getMotionLean() || 0).toFixed(3),
+          steamHandle: m.steamInputHandle,
+        }));
+      };
+    }
     this._steamInputSyntheticGp = null;
     // Versus multi-pad: when set (stable handle string from the snapshot),
     // this InputManager reads ONLY that Steam controller for buttons/stick
@@ -489,6 +613,13 @@ export class InputManager {
     this._calibrating = true;
     this._calibBuf = [];
     this._warmupCount = 5; // already warmed up if explicitly called
+    // Design B: recenter active Steam Input motion fusions too, so
+    // "recalibrate gyro" is no longer a no-op under Steam Input (#296).
+    if (this._steamFusions) {
+      for (const f of this._steamFusions.values()) {
+        if (typeof f.recenter === 'function') f.recenter();
+      }
+    }
   }
 
   _applyTilt(rawTilt, isGyro = false) {
@@ -682,7 +813,14 @@ export class InputManager {
     // and updated this._steamInputActive. _steamInputPrevActive is the prior
     // frame's value so the edge-detect below still fires correctly.
     const hadSteamInput = this._steamInputPrevActive;
-    if (this._steamInputActive) {
+    // Design B applies ONLY when Steam Input has the pad AND WebHID does NOT.
+    // A live WebHID fusion for this slot means our driver still opened the Steam
+    // Controller (dev / non-Steam launch) — prefer it: it reads the IMU directly
+    // and is higher-fidelity than getMotionData, which Steam reports as ZERO
+    // while WebHID holds the device (two owners starve the HID interface). Steam
+    // motion is the fallback for when Steam Input owns the pad exclusively (the
+    // real packaged build, where WebHID can't open the Steam Controller).
+    if (this._steamInputActive && !this._slot?.fusion) {
       // One-shot auto-arm on first capture, mirroring the fusion-calibration
       // arm. After this, the user's lobby motion toggle controls the channel.
       if (!hadSteamInput && !this.motionEnabled) {
@@ -696,17 +834,34 @@ export class InputManager {
       const primary = this._selectedSteamEntry();
       if (!primary) { this._steamInputType = null; return; }
       this._steamInputType = primary.type;
+
+      // Design B (#347/#348): when Steam hands us raw motion (getMotionData —
+      // no IGA/binding needed), run it through the SAME SensorFusion the WebHID
+      // pads use — real gyro->lean with our gravity-roll, drift-EMA, calibration
+      // and recenter. This is how the always-captured Steam Controller steers by
+      // gyro without a gyro->Steer binding. Falls back to the bound Steer analog
+      // action (design A) when no motion is present for this controller.
+      const fusion = primary.motion ? this._steamFusionFor(primary.handle) : null;
+      if (fusion && primary.motion.rotVel && primary.motion.accel) {
+        this._ingestSteamMotion(fusion, primary.motion);
+        if (fusion.calibrating) return;   // wait out the one-shot bias calibration
+        if (Math.abs(fusion.gravityRollRadians?.() || 0) > 0.09) this._markActive();
+        this._projectFusionToLean(fusion, 'steam');
+        return;
+      }
+
+      // Fallback — bound Steer analog action. No real roll angle: Steam only
+      // exposes the post-mapping vector on this path.
       this.motionLean = primary.steerX;
       this._smoothedLean = primary.steerX;
       this._prevLeanRaw = primary.steerX;
-      // Diagnostic mirror for HUD / test/input.html (no real roll angle
-      // available — Steam SDK only exposes the post-mapping vector).
       this._gyroRollAccum = -primary.steerX * 90;
       this._accelRoll = 0;
       if (Math.abs(primary.steerX) > 0.05) this._markActive();
       return;
     }
     this._steamInputType = null;
+    this._releaseSteamFusions();  // drop per-handle fusions when capture ends
 
     // Orientation → tilt projection. The slot's HidEntry ingests gyro at
     // HID-report frequency (100–250Hz) independently; we read the output
@@ -736,45 +891,93 @@ export class InputManager {
     }
     if (!this.motionEnabled) return;
 
-    // Euler-Z roll from the integrated orientation (current default). Prone to
-    // drift ("fuses to one side") and a ±180° wrap / gimbal-lock flip ("bounces
-    // to the other side") — see #314.
+    this._projectFusionToLean(fusion, 'hid');
+  }
+
+  /**
+   * Project a SensorFusion's world orientation to a lean angle and push it
+   * through _applyTilt (calibration + drift-EMA + smoothing). Shared by the
+   * WebHID gyro path and the Steam Input motion path (#347) so both feel
+   * identical. `label` tags __gyroDebug output ('hid' | 'steam').
+   */
+  _projectFusionToLean(fusion, label = 'hid') {
+    // Euler-Z roll from the integrated orientation (default). Prone to drift
+    // ("fuses to one side") and a ±180° wrap / gimbal-lock flip — see #314.
     this._tmpEuler.setFromQuaternion(fusion.orientation, 'XYZ');
     const eulerLeanDeg = -this._tmpEuler.z * (180 / Math.PI);
 
     // Gravity-vector roll: derived from the gravity-corrected down vector, so it
-    // can't drift and is naturally bounded (no ±180° runaway). Experimental
-    // A/B toggle (#314); fusion.gravityRollRadians() documents the convention.
+    // can't drift and is naturally bounded (no ±180° runaway). #314.
     const gravLeanDeg = (typeof fusion.gravityRollRadians === 'function')
       ? fusion.gravityRollRadians() * (180 / Math.PI)
       : eulerLeanDeg;
 
     const leanDeg = this._gyroRollMode === 'gravity' ? gravLeanDeg : eulerLeanDeg;
 
-    // Lightweight diagnostic (off unless window.__gyroDebug is set). Lets us
-    // capture the fuse/bounce live and compare Euler vs gravity roll (#314).
+    // Lightweight diagnostic (off unless window.__gyroDebug is set). Also the
+    // primary tool for tuning the Steam motion frame (window.__steamMotionTune).
     if (typeof window !== 'undefined' && window.__gyroDebug) {
+      // The gravity vector is the ground truth for "which way is the pad
+      // physically tilted". gravityRollRadians() reads ONLY x and y, so if a
+      // real tilt moves gravity into z instead, roll stays ~0 and steering is
+      // silent while every driver-side log looks healthy. Print the vector so
+      // the physical tilt axis can be identified without guessing.
+      const gv = fusion._gravityVec;
       window.__gyroDebugState = {
-        mode: this._gyroRollMode, eulerLeanDeg, gravLeanDeg,
+        source: label, mode: this._gyroRollMode, eulerLeanDeg, gravLeanDeg,
         motionOffset: this.motionOffset, relative: this.motionRawRelative,
         lean: this._smoothedLean,
+        gravVec: gv ? { x: gv.x, y: gv.y, z: gv.z } : null,
       };
       const t = performance.now();
       if (!this._gyroDbgT || t - this._gyroDbgT > 250) {
         this._gyroDbgT = t;
-        console.log('[gyro]', this._gyroRollMode,
+        console.log('[gyro]', label, this._gyroRollMode,
           'euler=' + eulerLeanDeg.toFixed(1), 'grav=' + gravLeanDeg.toFixed(1),
+          gv ? 'g=[' + gv.x.toFixed(2) + ',' + gv.y.toFixed(2) + ',' + gv.z.toFixed(2) + ']' : 'g=[none]',
           'rel=' + (this.motionRawRelative || 0).toFixed(1), 'lean=' + this._smoothedLean.toFixed(2));
       }
     }
 
     // Do NOT clamp before passing to _applyTilt — clamping the fusion input
-    // prevents gravity correction from tracking through extreme angles,
-    // causing the "gyro goes wild" feedback loop on noisy BT connections.
-    // _applyTilt's sensitivity/response-curve naturally bounds steering output.
+    // prevents gravity correction from tracking through extreme angles.
     this._gyroRollAccum = -leanDeg;
     this._accelRoll = leanDeg;
     this._applyTilt(leanDeg, true);
+  }
+
+  /** Get/create the per-handle Steam Input motion fusion (design B, #347). */
+  _steamFusionFor(handle) {
+    let f = this._steamFusions.get(handle);
+    if (!f) {
+      f = new SensorFusion();
+      f.startCalibration('steam');
+      this._steamFusions.set(handle, f);
+    }
+    return f;
+  }
+
+  /**
+   * Feed one getMotionData sample into a Steam Input fusion. Axis order, sign,
+   * and scale are live-tunable via window.__steamMotionTune (see
+   * STEAM_MOTION_DEFAULTS) so the Steam Controller frame can be locked on
+   * hardware without a rebuild.
+   */
+  _ingestSteamMotion(fusion, motion) {
+    const t = { ...STEAM_MOTION_DEFAULTS,
+      ...(typeof window !== 'undefined' ? window.__steamMotionTune : null) };
+    const rv = motion.rotVel, ac = motion.accel;
+    const g = t.gyroOrder, a = t.accelOrder;
+    fusion.ingest(
+      rv[g[0]] * t.gyroSign[0], rv[g[1]] * t.gyroSign[1], rv[g[2]] * t.gyroSign[2],
+      ac[a[0]] * t.accelSign[0], ac[a[1]] * t.accelSign[1], ac[a[2]] * t.accelSign[2],
+      t.gyroScale, t.accelScale, performance.now(),
+    );
+  }
+
+  /** Drop per-handle Steam fusions when Steam Input capture ends. */
+  _releaseSteamFusions() {
+    if (this._steamFusions && this._steamFusions.size) this._steamFusions.clear();
   }
 
   // Switch the controller-gyro roll source live (Options toggle, #314).
@@ -791,9 +994,23 @@ export class InputManager {
     const raw = (typeof window !== 'undefined' && window.steam && window.steam.input)
       ? window.steam.input.getLatest()
       : null;
-    const filtered = (raw && this._dualsenseSource === 'webhid')
+    let filtered = (raw && this._dualsenseSource === 'webhid')
       ? raw.filter(c => !(c.type || '').toString().toLowerCase().includes('ps5'))
       : raw;
+    // WebHID-first arbitration (#347). Steam Input and raw HID are mutually
+    // exclusive per controller, but the Puck is a multi-receiver: Steam grabs
+    // one interface while our driver opens another, so the SAME pad shows up
+    // in both the Steam snapshot and the WebHID pool. When that happens Steam's
+    // getMotionData returns all zeros (it isn't the one holding the IMU), yet
+    // the Steam entry still wins every downstream arbitration — a slot-less
+    // InputManager, gyro read from Steam, and dead steering while a perfectly
+    // good WebHID stream sits unattached. Drop the duplicate so the HID entry
+    // wins, matching the architecture's WebHID-first rule. Strip Steam's
+    // `k_ESteamInputType_` prefix first — it contains "Steam" and would
+    // otherwise match every controller type.
+    if (filtered && filtered.length && steamControllerLiveOnWebHid()) {
+      filtered = filtered.filter(c => !isSteamFamilyType(c.type));
+    }
     this._steamInputSnapshot = filtered || [];
     // Save the prior-frame active flag so the gyro-section can edge-detect
     // the "Steam Input just became active" transition; then update.

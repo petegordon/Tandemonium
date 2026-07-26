@@ -8,11 +8,12 @@ on:
       steam_branch:
         description: 'Steam branch to deploy to'
         required: true
-        default: 'default'
+        default: 'dev-private'
         type: choice
         options:
-          - default
+          - dev-private
           - beta
+          - default
 
 jobs:
   build:
@@ -74,4 +75,10 @@ jobs:
           buildDescription: 'Build ${{ github.sha }} from ${{ github.ref_name }}'
           rootPath: builds
           depot1Path: windows
-          releaseBranch: ${{ inputs.steam_branch || 'default' }}
+          # Push-triggered builds go to dev-private, NOT default. `default` is
+          # the public branch real playtesters are on, and a plain push carries
+          # no steam_branch input — so the previous `|| 'default'` fallback set
+          # every steam-publishing push live for everyone. Promoting a build to
+          # default stays a deliberate act: dispatch this workflow and pick it,
+          # or flip the live build in Steamworks.
+          releaseBranch: ${{ inputs.steam_branch || 'dev-private' }}
