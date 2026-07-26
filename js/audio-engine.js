@@ -200,14 +200,14 @@ export class AudioEngine {
   // fast upward pitch bend on the attack and a sag on the release, squeezed
   // through a bandpass around the vocal formant. The short noise blip at the
   // start is the breath that makes it read as an animal instead of a synth.
-  gooseHonk(gain = 0.22) {
+  gooseHonk(gain = 0.42) {
     const ctx = this.ctx;
     if (!ctx) return;
     this.resume();
     const now = ctx.currentTime;
 
     const base = 300 + Math.random() * 190;     // per-goose voice
-    const dur = 0.16 + Math.random() * 0.12;
+    const dur = 0.20 + Math.random() * 0.13;
 
     const osc = ctx.createOscillator();
     osc.type = 'sawtooth';
@@ -215,17 +215,35 @@ export class AudioEngine {
     osc.frequency.linearRampToValueAtTime(base, now + 0.035);        // bend up
     osc.frequency.linearRampToValueAtTime(base * 0.82, now + dur);   // sag off
 
-    const band = ctx.createBiquadFilter();
-    band.type = 'bandpass';
-    band.frequency.value = base * 2.2;
-    band.Q.value = 3.2;
-
+    // TWO formants in parallel, not one narrow band. The original single
+    // bandpass sat at base*2.2 with Q=3.2, so its passband (~1.9x-2.5x base)
+    // excluded the fundamental entirely and passed mainly the 2nd harmonic at
+    // half amplitude — throwing away most of the level the gain implied. Wide,
+    // overlapping formants keep far more energy and sound more like a voice
+    // than a filtered buzz.
+    //
+    // The upper formant carries the small-speaker case: phone speakers roll
+    // off hard below ~500Hz, and the fundamental is 300-490Hz, so on iOS
+    // almost everything audible comes from the 1.1kHz-2kHz band.
     const env = ctx.createGain();
     env.gain.setValueAtTime(0.0001, now);
     env.gain.exponentialRampToValueAtTime(gain, now + 0.02);
     env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    env.connect(this.sfxBus);
 
-    osc.connect(band).connect(env).connect(this.sfxBus);
+    for (const f of [
+      { hz: base * 1.6, q: 1.4, amp: 0.80 },
+      { hz: base * 3.4, q: 1.8, amp: 0.55 },   // survives phone-speaker rolloff
+    ]) {
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.frequency.value = f.hz;
+      band.Q.value = f.q;
+      const fg = ctx.createGain();
+      fg.gain.value = f.amp;
+      osc.connect(band).connect(fg).connect(env);
+    }
+
     osc.start(now);
     osc.stop(now + dur + 0.02);
 
