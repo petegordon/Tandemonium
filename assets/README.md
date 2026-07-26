@@ -78,3 +78,26 @@ All music tracks by [Kevin MacLeod](https://incompetech.com) are licensed under
 > "Mischief Maker" Kevin MacLeod (incompetech.com)
 > Licensed under Creative Commons: By Attribution 4.0 License
 > https://creativecommons.org/licenses/by/4.0/
+
+---
+
+# Sound Effects
+
+## Goose Calls
+
+- **File:** `goose-honk.mp3`
+- **Source:** https://pixabay.com/users/freesound_community-46691455/
+- **Author:** freesound_community (via Pixabay)
+- **License:** [Pixabay Content License](https://pixabay.com/service/license-summary/)
+  — permits commercial use, no attribution required. Credited anyway, in-game
+  under Help → Attributions and here.
+
+Processing applied: converted to mono, 24kHz, 64kbps, +3dB
+(353KB → 142KB, peak −2.3dB). Headroom is deliberate — the game applies its own
+gain on top and up to three honks can overlap.
+
+Used as a *bank* rather than a one-shot: `AudioEngine.loadGooseSample()` scans
+for honk onsets at load, and each goose scatter plays a short window from the
+recording. This is a continuous flock recording with only one silence gap, so
+onset detection finds little and playback falls back to a random window — every
+window is geese, so the variety comes for free. See `js/audio-engine.js`.
