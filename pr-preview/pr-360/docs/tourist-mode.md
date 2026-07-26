@@ -27,17 +27,42 @@ Point Tourist Mode at any coordinates with **`?lat=` / `?lon=`**:
 | `h`    | no       | Anchor height (m above the WGS84 ellipsoid). Rarely needed — see below. |
 | `name` | no       | Label for the console line; cosmetic. |
 
-**You do not need to know the elevation.** `h` defaults to `TOURIST_CUSTOM_HEIGHT`
-(1500 m), which is just an anchor for the local ENU frame — the bike starts at
-local `y≈0` and the first successful down-raycast onto the streamed tiles snaps it
-to the true surface (`_groundFollow`, first-hit snap). `TOURIST_TUNE.customProbe`
-widens the probe (2 km up, 14 km reach) so that snap lands anywhere from below sea
-level to well past any rideable elevation.
+**You do not need to know the elevation** — `resolveTouristOrigin()` looks it up at
+boot from a keyless, CORS-enabled service and anchors `ANCHOR_MARGIN` (150 m) above
+it. Pass `?h=` only to override that.
 
-This is deliberately *not* an Elevation API lookup. Elevation returns bare terrain
-height, but Tourist Mode rides the **photogrammetry surface** — road decks, bridges,
-overpasses — and the two disagree by metres exactly where the interesting riding is.
-The tiles are the ground truth, and they're already streaming.
+### Why the anchor height actually matters
+
+It is tempting to think any anchor works, since the bike spawns at local `y≈0` and a
+downward raycast finds the real ground anyway. That reasoning has a hole, and it cost
+a debugging session:
+
+Google's tileset is **rooted at the whole globe**, so the first geometry to stream is
+an extremely coarse approximation. A triangle spanning hundreds of km chords straight
+through the ellipsoid and sags *kilometres* below the true surface. Probe against that
+and you get a ground height wildly too low. The bike descends to it — and because the
+probe starts a fixed distance above the bike, the real ground is now *above* the ray
+origin, where a downward ray can never find it. `hits=0` forever, rider frozen
+kilometres underground looking at open sky through the terrain's back faces.
+
+Observed at Aurora, CO with a blind 1500 m anchor: first hit at local `-4831`
+(ellipsoid ≈ −3331 m, a ~400 km tile sagging ~3.3 km), then `hits=0` permanently.
+
+Two defences, both in place:
+
+1. **A roughly-correct anchor keeps the probe window tight.** With the ground reliably
+   ~150–250 m below the anchor, `TOURIST_TUNE.spawnProbeHeight`/`rayLength` (300 m up,
+   2 km reach) put those coarse root-tile hits **out of range**, so they are never
+   accepted. Only a blind-guess anchor falls back to the wide `customProbe` window.
+2. **The probe origin is clamped to the anchor plane** (`Math.max(bikePos.y + probeUp,
+   probeUp)`). Without this the probe is a one-way trapdoor; with it, the bike can
+   always climb back out of a bad hit.
+
+The accuracy of the elevation is irrelevant — only that it is **above** the ground.
+`ANCHOR_MARGIN` is sized to cover geoid undulation (−107 m to +85 m worldwide; the
+service returns height above sea level, the anchor wants height above the WGS84
+ellipsoid) plus the gap between bare terrain and the photogrammetry surface, which
+includes buildings and bridge decks.
 
 ## Prerequisites (Google Cloud)
 
