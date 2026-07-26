@@ -10,6 +10,7 @@ import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
+import { GeeseManager } from './geese.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { FocusController } from './nav/focus-controller.js';
@@ -1645,6 +1646,9 @@ class Game {
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
+    // Roadside geese (#363) — decorative verge scenery, no collision response.
+    if (this.geeseManager) this.geeseManager.dispose();
+    this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine);
 
     // Wire up collectibles total for analytics
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
@@ -1833,6 +1837,8 @@ class Game {
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
     if (this.obstacleManager) this.obstacleManager.destroy();
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
+    if (this.geeseManager) this.geeseManager.dispose();
+    this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, this.audioEngine);
     for (const rig of this.versusRigs) {
       rig.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
     }
@@ -2044,6 +2050,7 @@ class Game {
     }
 
     this.grassParticles.clear();
+    if (this.geeseManager) this.geeseManager.clear();
     this._stokerWasFallen = false;
     this._remoteFinishStats = null;
 
@@ -2673,6 +2680,13 @@ class Game {
         html += '<div class="vs-cell">' + (r ? '<span class="vs-icon">' + r.icon + '</span> <strong>' + r.value + '</strong>' : '') + '</div>';
       }
       html += '</div>';
+
+      // Geese scattered (#363). Only shown when some were actually startled,
+      // so a rider who kept to the road doesn't get a "0" they can't read.
+      const geeseScattered = this.geeseManager ? this.geeseManager.getDisruptedCount() : 0;
+      if (geeseScattered > 0) {
+        html += '<div class="victory-stat">🪿 Geese Scattered: <strong>' + geeseScattered + '</strong></div>';
+      }
 
       // Perfect ride / crashes
       if (summary.crashes > 0) {
@@ -4359,6 +4373,9 @@ class Game {
     if (this.obstacleManager) {
       this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     }
+    if (this.geeseManager) {
+      this.geeseManager.update(dt, this.bike.distanceTraveled, [this.bike.position]);
+    }
   }
 
   /**
@@ -4449,6 +4466,10 @@ class Game {
     }
     if (this.obstacleManager) {
       this.obstacleManager.updateVersus(dt, rigs.map((r) => r.bike.distanceTraveled));
+    }
+    if (this.geeseManager) {
+      this.geeseManager.updateVersus(dt, rigs.map((r) => r.bike.distanceTraveled),
+        rigs.map((r) => r.bike.position));
     }
 
     // World: multi-anchor streaming around both bikes
@@ -4855,6 +4876,7 @@ class Game {
       }
       if (this.collectibleManager) this.collectibleManager.faceCamera(rig.camera);
       if (this.obstacleManager) this.obstacleManager.faceCamera(rig.camera);
+      if (this.geeseManager) this.geeseManager.faceCamera(rig.camera);
 
       this.renderer.render(this.scene, rig.camera);
     }
@@ -4963,6 +4985,9 @@ class Game {
     // Obstacles
     if (this.obstacleManager) {
       this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    }
+    if (this.geeseManager) {
+      this.geeseManager.update(dt, this.bike.distanceTraveled, [this.bike.position]);
     }
 
     if (this.bike.speed > 8) {

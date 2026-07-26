@@ -192,6 +192,58 @@ export class AudioEngine {
     }
   }
 
+  // Goose honk (#363). Synthesized rather than sampled — the whole engine is
+  // procedural, and per-honk pitch/length jitter is what keeps a gaggle from
+  // sounding like one sound effect fired six times.
+  //
+  // A goose is a nasal buzz, not a tone: a sawtooth (rich in harmonics) with a
+  // fast upward pitch bend on the attack and a sag on the release, squeezed
+  // through a bandpass around the vocal formant. The short noise blip at the
+  // start is the breath that makes it read as an animal instead of a synth.
+  gooseHonk(gain = 0.22) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.resume();
+    const now = ctx.currentTime;
+
+    const base = 300 + Math.random() * 190;     // per-goose voice
+    const dur = 0.16 + Math.random() * 0.12;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(base * 0.72, now);
+    osc.frequency.linearRampToValueAtTime(base, now + 0.035);        // bend up
+    osc.frequency.linearRampToValueAtTime(base * 0.82, now + dur);   // sag off
+
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = base * 2.2;
+    band.Q.value = 3.2;
+
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, now);
+    env.gain.exponentialRampToValueAtTime(gain, now + 0.02);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(band).connect(env).connect(this.sfxBus);
+    osc.start(now);
+    osc.stop(now + dur + 0.02);
+
+    // Breath transient
+    const noise = ctx.createBufferSource();
+    noise.buffer = this._getNoiseBuffer();
+    const nFilt = ctx.createBiquadFilter();
+    nFilt.type = 'bandpass';
+    nFilt.frequency.value = 1500;
+    nFilt.Q.value = 0.8;
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(gain * 0.5, now);
+    nGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+    noise.connect(nFilt).connect(nGain).connect(this.sfxBus);
+    noise.start(now);
+    noise.stop(now + 0.06);
+  }
+
   // Noise-based crash impact with a low-frequency thump. Replaces the old
   // double-beep crash cue with something that actually reads as an impact.
   crash(intensity = 1) {
