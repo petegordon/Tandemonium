@@ -196,24 +196,46 @@ export class AudioEngine {
   // procedural, and per-honk pitch/length jitter is what keeps a gaggle from
   // sounding like one sound effect fired six times.
   //
-  // A goose is a nasal buzz, not a tone: a sawtooth (rich in harmonics) with a
-  // fast upward pitch bend on the attack and a sag on the release, squeezed
-  // through a bandpass around the vocal formant. The short noise blip at the
-  // start is the breath that makes it read as an animal instead of a synth.
+  // A single clean oscillator through a bandpass is a KAZOO, not a goose —
+  // that's what the first version sounded like. Real calls are ROUGH, and four
+  // things carry that:
+  //
+  //   1. Two detuned oscillators. The beating between them is the raucous
+  //      edge; one oscillator is always too pure however it's filtered.
+  //   2. Continuous rasp. Noise runs through the same formants for the whole
+  //      call, not just as an attack blip — animal calls are noisy throughout.
+  //   3. A two-part pitch gesture, the "ah-HONK": a low start, a fast rise
+  //      through an overshoot, then a fall. A single bend up reads as a toot.
+  //   4. Amplitude roughness. A ~45Hz tremolo sits below pitch perception and
+  //      reads as vocal grain rather than as wobble.
+  //
+  // Plus real length — a honk has body, and 0.2s is inherently a toot.
   gooseHonk(gain = 0.52) {
     const ctx = this.ctx;
     if (!ctx) return;
     this.resume();
     const now = ctx.currentTime;
 
-    const base = 300 + Math.random() * 190;     // per-goose voice
-    const dur = 0.20 + Math.random() * 0.13;
+    const base = 250 + Math.random() * 170;     // per-goose voice
+    const dur = 0.34 + Math.random() * 0.18;
+
+    // Pitch contour, shared by both oscillators. Fast rise to an overshoot at
+    // ~18% of the call, then a long fall — the shape of the actual call.
+    const contour = (osc) => {
+      osc.frequency.setValueAtTime(base * 0.62, now);
+      osc.frequency.linearRampToValueAtTime(base * 1.10, now + dur * 0.18);
+      osc.frequency.linearRampToValueAtTime(base * 0.95, now + dur * 0.55);
+      osc.frequency.linearRampToValueAtTime(base * 0.74, now + dur);
+    };
 
     const osc = ctx.createOscillator();
     osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(base * 0.72, now);
-    osc.frequency.linearRampToValueAtTime(base, now + 0.035);        // bend up
-    osc.frequency.linearRampToValueAtTime(base * 0.82, now + dur);   // sag off
+    contour(osc);
+    // Detuned twin — the beating between them is the rasp.
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'sawtooth';
+    contour(osc2);
+    osc2.detune.value = 14 + Math.random() * 12;   // cents
 
     // TWO formants in parallel, not one narrow band. The original single
     // bandpass sat at base*2.2 with Q=3.2, so its passband (~1.9x-2.5x base)
@@ -227,13 +249,41 @@ export class AudioEngine {
     // almost everything audible comes from the 1.1kHz-2kHz band.
     const env = ctx.createGain();
     env.gain.setValueAtTime(0.0001, now);
-    env.gain.exponentialRampToValueAtTime(gain, now + 0.02);
+    env.gain.exponentialRampToValueAtTime(gain, now + 0.018);   // hard onset
+    env.gain.setValueAtTime(gain, now + dur * 0.5);
     env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
     env.connect(this.sfxBus);
 
+    // Amplitude roughness. ~45Hz is below pitch perception, so it reads as
+    // vocal grain rather than a wobble. Summed into the envelope's gain param.
+    const rough = ctx.createOscillator();
+    rough.type = 'sine';
+    rough.frequency.value = 38 + Math.random() * 18;
+    const roughDepth = ctx.createGain();
+    roughDepth.gain.value = gain * 0.22;
+    rough.connect(roughDepth).connect(env.gain);
+    rough.start(now);
+    rough.stop(now + dur + 0.02);
+
+    // Voiced source: both oscillators plus continuous rasp, through shared
+    // formants. The upper formant carries the small-speaker case — phone
+    // speakers roll off below the fundamental, so nearly everything audible
+    // there comes from the 1.1kHz-2kHz band.
+    const voice = ctx.createGain();
+    voice.gain.value = 1.0;
+    osc.connect(voice);
+    osc2.connect(voice);
+
+    const rasp = ctx.createBufferSource();
+    rasp.buffer = this._getNoiseBuffer();
+    rasp.loop = true;
+    const raspGain = ctx.createGain();
+    raspGain.gain.value = 0.28;          // grain through the whole call
+    rasp.connect(raspGain).connect(voice);
+
     for (const f of [
       { hz: base * 1.6, q: 1.4, amp: 0.80 },
-      { hz: base * 3.4, q: 1.8, amp: 0.72 },   // survives phone-speaker rolloff
+      { hz: base * 3.4, q: 1.8, amp: 0.72 },
     ]) {
       const band = ctx.createBiquadFilter();
       band.type = 'bandpass';
@@ -241,13 +291,14 @@ export class AudioEngine {
       band.Q.value = f.q;
       const fg = ctx.createGain();
       fg.gain.value = f.amp;
-      osc.connect(band).connect(fg).connect(env);
+      voice.connect(band).connect(fg).connect(env);
     }
 
-    osc.start(now);
-    osc.stop(now + dur + 0.02);
+    osc.start(now);  osc.stop(now + dur + 0.02);
+    osc2.start(now); osc2.stop(now + dur + 0.02);
+    rasp.start(now); rasp.stop(now + dur + 0.02);
 
-    // Breath transient
+    // Breath transient on the onset — the puff before the voice engages.
     const noise = ctx.createBufferSource();
     noise.buffer = this._getNoiseBuffer();
     const nFilt = ctx.createBiquadFilter();
