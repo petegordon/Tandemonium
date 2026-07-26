@@ -590,14 +590,6 @@ function createWindow() {
     fullscreen: true,
     fullscreenable: true,
     autoHideMenuBar: true,
-    // Opaque backing for the window surface. Without it the window has no
-    // backing colour, so until the compositor owns a fully painted frame the
-    // desktop behind bleeds through — visible for the first seconds of a race
-    // while the GLBs and first WebGL frames land. Much more likely to show
-    // when Steam init succeeded, since that path adds `in-process-gpu` and
-    // `disable-direct-composition`, which take Windows' own compositor out of
-    // the loop and remove the surface that would otherwise hide this.
-    backgroundColor: '#000000',
     icon: path.join(__dirname, '..', 'assets', 'icon'),
     webPreferences: {
       nodeIntegration: false,
