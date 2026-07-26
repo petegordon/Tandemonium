@@ -40,8 +40,21 @@ const VERGE_MAX = 6.5;
 
 const FLEE_RADIUS = 7.0;      // start lifting this far out
 const FLEE_RADIUS_SQ = FLEE_RADIUS * FLEE_RADIUS;
-const GOOSE_GRAVITY = 5.5;
-const GOOSE_LIFE = 3.2;       // seconds airborne before recycling
+
+// Two-phase flight. The burst is ballistic — that initial "thrown" pop is what
+// sells the startle. Then gravity fades out and they beat away under their own
+// power, climbing and accelerating into the distance. Staying ballistic the
+// whole way made them arc up and fall back down like launched objects rather
+// than birds leaving.
+const BURST_TIME = 0.42;
+const GOOSE_GRAVITY = 7.5;    // during burst only
+const CLIMB_RATE = 2.2;       // steady climb once flying
+const FLY_ACCEL = 3.4;        // horizontal beat-away acceleration
+const FLY_SPEED_MAX = 15.0;
+const GOOSE_LIFE = 5.0;       // long enough to get properly small
+
+const FLAP_FRAMES = 4;
+const FLAP_HZ = 9;            // wingbeats read best a bit slower than reality
 
 const STATE_IDLE = 0;
 const STATE_FLYING = 1;
@@ -55,66 +68,123 @@ function makeRng(seed) {
   };
 }
 
+// Canada goose palette. The species reads by CONTRAST, not shape: a near-black
+// neck against a hard white chinstrap, over a pale breast and a warm brown
+// back. Get those four values apart and it reads at 20m and 3cm alike; muddy
+// them together and it's a grey blob (which the first pass was).
+const C_NECK   = '#141416';  // near-black head + neck
+const C_CHEEK  = '#ffffff';  // chinstrap — the single strongest cue
+const C_BREAST = '#e8dcc4';  // pale cream underside
+const C_BACK   = '#6d5c43';  // warm brown back/wing
+const C_WING   = '#5a4b36';  // darker wing, separates from the back
+const C_WINGTIP= '#3a3026';  // primaries
+const C_BILL   = '#0d0d0f';
+
 /**
- * Placeholder goose sprite drawn to a canvas — a white body, dark head and
- * bill in the Canada-goose read, over a transparent background. Step 2 of
- * #363 replaces this with a ComfyUI-generated sprite sheet; the swap is this
- * function only, so nothing else in the system changes.
- * @param {boolean} wingsUp draw the raised-wing frame
+ * Goose sprite drawn to a canvas. Step 2 of #363 swaps these for a ComfyUI
+ * sprite sheet; that swap is this function alone.
+ *
+ * @param {'idle'|'fly'} mode  standing (neck up, wings folded) or airborne
+ *   (body horizontal, neck extended forward)
+ * @param {number} frame  wing position 0..FLAP_FRAMES-1, ignored when idle
  */
-function makeGooseTexture(wingsUp) {
+function makeGooseTexture(mode, frame = 0) {
   const S = 128;
   const c = document.createElement('canvas');
   c.width = S; c.height = S;
   const g = c.getContext('2d');
+  const flying = mode === 'fly';
 
-  const body = '#f2f0ea';
-  const dark = '#2b2b2f';
+  // Wing phase: -1 fully down … +1 fully up, around the flap cycle.
+  const phase = flying ? Math.cos((frame / FLAP_FRAMES) * Math.PI * 2) : 0;
 
-  // Body — fat ellipse, slightly nose-down
-  g.fillStyle = body;
-  g.beginPath();
-  g.ellipse(S * 0.52, S * 0.62, S * 0.26, S * 0.19, -0.15, 0, Math.PI * 2);
-  g.fill();
+  const ell = (x, y, rx, ry, rot, fill) => {
+    g.fillStyle = fill;
+    g.beginPath();
+    g.ellipse(x * S, y * S, rx * S, ry * S, rot, 0, Math.PI * 2);
+    g.fill();
+  };
 
-  // Wings — the only thing that differs between frames. Up reads as flapping.
-  g.fillStyle = wingsUp ? '#e6e3db' : '#dedbd3';
-  g.beginPath();
-  if (wingsUp) {
-    g.ellipse(S * 0.50, S * 0.36, S * 0.20, S * 0.11, -0.55, 0, Math.PI * 2);
+  if (flying) {
+    // FAR wing first so the body overlaps it — cheap depth.
+    const farY = 0.50 - phase * 0.16;
+    g.save();
+    g.translate(S * 0.44, S * farY);
+    g.rotate(-phase * 0.55);
+    ell(0, 0, 0.20, 0.055, 0, C_WINGTIP);
+    g.restore();
+
+    // Body — horizontal, tapering to the tail
+    ell(0.47, 0.52, 0.23, 0.115, -0.06, C_BACK);
+    ell(0.47, 0.565, 0.20, 0.075, -0.04, C_BREAST);   // pale underside
+    // Tail
+    g.fillStyle = C_WINGTIP;
+    g.beginPath();
+    g.moveTo(S * 0.26, S * 0.50);
+    g.lineTo(S * 0.14, S * 0.47);
+    g.lineTo(S * 0.16, S * 0.56);
+    g.closePath();
+    g.fill();
+
+    // Neck extended straight forward — the flight silhouette
+    g.strokeStyle = C_NECK;
+    g.lineWidth = S * 0.062;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(S * 0.66, S * 0.515);
+    g.lineTo(S * 0.86, S * 0.478);
+    g.stroke();
+
+    ell(0.885, 0.472, 0.052, 0.045, 0, C_NECK);       // head
+    ell(0.868, 0.492, 0.020, 0.026, 0.5, C_CHEEK);    // chinstrap
+    g.fillStyle = C_BILL;
+    g.beginPath();
+    g.moveTo(S * 0.930, S * 0.462);
+    g.lineTo(S * 0.985, S * 0.478);
+    g.lineTo(S * 0.930, S * 0.492);
+    g.closePath();
+    g.fill();
+
+    // NEAR wing over the body
+    const nearY = 0.50 - phase * 0.20;
+    g.save();
+    g.translate(S * 0.46, S * nearY);
+    g.rotate(-phase * 0.62);
+    ell(0, 0, 0.235, 0.068, 0, C_WING);
+    ell(0.13, 0.005, 0.105, 0.040, 0, C_WINGTIP);     // primaries
+    g.restore();
   } else {
-    g.ellipse(S * 0.50, S * 0.66, S * 0.22, S * 0.09, 0.18, 0, Math.PI * 2);
+    // Standing: upright neck, wings folded along the back
+    ell(0.50, 0.635, 0.235, 0.165, -0.10, C_BACK);
+    ell(0.505, 0.685, 0.205, 0.105, -0.06, C_BREAST);
+    ell(0.455, 0.615, 0.175, 0.075, -0.16, C_WING);   // folded wing
+    // Tail
+    g.fillStyle = C_WINGTIP;
+    g.beginPath();
+    g.moveTo(S * 0.29, S * 0.60);
+    g.lineTo(S * 0.17, S * 0.575);
+    g.lineTo(S * 0.20, S * 0.655);
+    g.closePath();
+    g.fill();
+
+    g.strokeStyle = C_NECK;
+    g.lineWidth = S * 0.070;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(S * 0.66, S * 0.60);
+    g.quadraticCurveTo(S * 0.78, S * 0.42, S * 0.745, S * 0.235);
+    g.stroke();
+
+    ell(0.748, 0.215, 0.056, 0.048, 0.1, C_NECK);
+    ell(0.722, 0.242, 0.021, 0.030, 0.25, C_CHEEK);
+    g.fillStyle = C_BILL;
+    g.beginPath();
+    g.moveTo(S * 0.800, S * 0.203);
+    g.lineTo(S * 0.862, S * 0.228);
+    g.lineTo(S * 0.800, S * 0.247);
+    g.closePath();
+    g.fill();
   }
-  g.fill();
-
-  // Neck + head — dark, the strongest silhouette cue at distance
-  g.strokeStyle = dark;
-  g.lineWidth = S * 0.075;
-  g.lineCap = 'round';
-  g.beginPath();
-  g.moveTo(S * 0.70, S * 0.58);
-  g.quadraticCurveTo(S * 0.80, S * 0.40, S * 0.76, S * 0.24);
-  g.stroke();
-
-  g.fillStyle = dark;
-  g.beginPath();
-  g.ellipse(S * 0.77, S * 0.21, S * 0.062, S * 0.052, 0.2, 0, Math.PI * 2);
-  g.fill();
-
-  // Cheek patch — the giveaway that reads "goose" even tiny
-  g.fillStyle = body;
-  g.beginPath();
-  g.ellipse(S * 0.745, S * 0.225, S * 0.022, S * 0.032, 0.2, 0, Math.PI * 2);
-  g.fill();
-
-  // Bill
-  g.fillStyle = '#1d1d20';
-  g.beginPath();
-  g.moveTo(S * 0.83, S * 0.20);
-  g.lineTo(S * 0.90, S * 0.225);
-  g.lineTo(S * 0.83, S * 0.245);
-  g.closePath();
-  g.fill();
 
   const tex = new THREE.CanvasTexture(c);
   tex.minFilter = THREE.LinearFilter;
@@ -142,8 +212,9 @@ export class GeeseManager {
     this._items = [];
     this._pool = [];
 
-    this._texIdle = makeGooseTexture(false);
-    this._texFly = makeGooseTexture(true);
+    this._texIdle = makeGooseTexture('idle');
+    this._texFly = [];
+    for (let f = 0; f < FLAP_FRAMES; f++) this._texFly.push(makeGooseTexture('fly', f));
 
     const geo = new THREE.PlaneGeometry(0.85, 0.85);
     for (let i = 0; i < POOL_SIZE; i++) {
@@ -308,10 +379,15 @@ export class GeeseManager {
       ? bikePositions
       : (bikePositions ? [bikePositions] : []);
 
-    // Release pool slots for items that left the window
+    // Release pool slots for items that left the window. Airborne geese keep
+    // their slot regardless: absoluteD is their ground position and never
+    // moves, so a goose startled just ahead falls out of the window ~2s after
+    // you pass it — while it is still climbing in the upper half of the frame.
+    // Releasing it there pops it out of existence mid-flight.
     for (const slot of this._pool) {
       if (slot.itemIdx < 0) continue;
       const item = this._items[slot.itemIdx];
+      if (item && item.state === STATE_FLYING) continue;
       if (!item || !this._nearAny(item.absoluteD, anchorDs)) {
         slot.mesh.visible = false;
         slot.itemIdx = -1;
@@ -323,7 +399,10 @@ export class GeeseManager {
 
     for (let i = 0; i < this._items.length; i++) {
       const item = this._items[i];
-      if (!this._nearAny(item.absoluteD, anchorDs)) continue;
+      // Airborne geese keep integrating even once their ground position leaves
+      // the window — they hold a pool slot until they land or time out, and
+      // skipping them here would freeze them in mid-air instead.
+      if (item.state !== STATE_FLYING && !this._nearAny(item.absoluteD, anchorDs)) continue;
 
       if (item.state === STATE_IDLE) {
         const pt = this.roadPath.getPointAtDistance(item.roadD);
@@ -346,7 +425,19 @@ export class GeeseManager {
         }
       } else {
         item.age += dt;
-        item.vy -= GOOSE_GRAVITY * dt;
+        if (item.age < BURST_TIME) {
+          // Ballistic pop — the startle
+          item.vy -= GOOSE_GRAVITY * dt;
+        } else {
+          // Under their own power now: settle to a steady climb and beat away.
+          item.vy += (CLIMB_RATE - item.vy) * Math.min(1, 2.5 * dt);
+          const sp = Math.hypot(item.vx, item.vz);
+          if (sp > 0.001 && sp < FLY_SPEED_MAX) {
+            const k = 1 + (FLY_ACCEL * dt) / sp;
+            item.vx *= k;
+            item.vz *= k;
+          }
+        }
         item._worldX += item.vx * dt;
         item._worldY += item.vy * dt;
         item._worldZ += item.vz * dt;
@@ -382,14 +473,28 @@ export class GeeseManager {
         if (slot.mat.map !== this._texIdle) { slot.mat.map = this._texIdle; slot.mat.needsUpdate = true; }
       } else {
         slot.mesh.position.set(item._worldX, item._worldY, item._worldZ);
-        if (slot.mat.map !== this._texFly) { slot.mat.map = this._texFly; slot.mat.needsUpdate = true; }
+        const f = Math.floor(item.age * FLAP_HZ) % FLAP_FRAMES;
+        const tex = this._texFly[f];
+        if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
       }
       if (this.camera) slot.mesh.quaternion.copy(this.camera.quaternion);
-      // Tumble applied AFTER the billboard quaternion so it reads as roll
-      // about the view axis rather than fighting the facing.
-      if (item.state === STATE_FLYING) slot.mesh.rotateZ(item.spin * item.age);
+      // Tumble applied AFTER the billboard quaternion so it reads as roll about
+      // the view axis rather than fighting the facing. It decays with the
+      // burst: a startled bird tips as it leaves the ground, then levels off.
+      // Carrying the spin the whole way makes it read as a thrown object.
+      if (item.state === STATE_FLYING) slot.mesh.rotateZ(this._tiltFor(item));
       slot.mesh.visible = true;
     }
+  }
+
+  /**
+   * Body roll for an airborne goose: a sharp tip during the ballistic burst
+   * that decays to level as it settles into flight. Shared by update() and
+   * faceCamera() so split-screen passes agree.
+   */
+  _tiltFor(item) {
+    const decay = Math.max(0, 1 - item.age / (BURST_TIME * 2.2));
+    return item.spin * item.age * decay * decay;
   }
 
   /** Launch one goose: arc away from the bike, tumbling, feathers, honk. */
@@ -401,11 +506,11 @@ export class GeeseManager {
     const inv = dist > 0.001 ? 1 / dist : 0;
     const awayX = -dx * inv;
     const awayZ = -dz * inv;
-    const speed = 3.2 + Math.random() * 2.4;
-    item.vx = awayX * speed + (Math.random() - 0.5) * 1.2;
-    item.vz = awayZ * speed + (Math.random() - 0.5) * 1.2;
-    item.vy = 4.6 + Math.random() * 2.2;
-    item.spin = (Math.random() - 0.5) * 5.0;
+    const speed = 4.0 + Math.random() * 2.6;
+    item.vx = awayX * speed + (Math.random() - 0.5) * 1.4;
+    item.vz = awayZ * speed + (Math.random() - 0.5) * 1.4;
+    item.vy = 5.2 + Math.random() * 2.0;
+    item.spin = (Math.random() - 0.5) * 4.0;
     item._worldY += 0.42;
 
     this._emitFeathers(item._worldX, item._worldY, item._worldZ, 5 + Math.floor(Math.random() * 5));
@@ -421,7 +526,7 @@ export class GeeseManager {
       if (slot.itemIdx < 0 || !slot.mesh.visible) continue;
       const item = this._items[slot.itemIdx];
       slot.mesh.quaternion.copy(camera.quaternion);
-      if (item && item.state === STATE_FLYING) slot.mesh.rotateZ(item.spin * item.age);
+      if (item && item.state === STATE_FLYING) slot.mesh.rotateZ(this._tiltFor(item));
     }
   }
 
@@ -451,6 +556,6 @@ export class GeeseManager {
     this._fGeo.dispose();
     this._fMat.dispose();
     this._texIdle.dispose();
-    this._texFly.dispose();
+    for (const t of this._texFly) t.dispose();
   }
 }
