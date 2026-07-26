@@ -193,6 +193,53 @@ export class AudioEngine {
   }
 
   /**
+   * Load a real goose recording to use instead of the synthesized honk.
+   * Fire-and-forget: if the file is missing or fails to decode, the synth
+   * stays in use, so the game never depends on the asset being present.
+   *
+   * A recording will always beat synthesis for an animal call — the point of
+   * gooseHonk() was to need no asset, not to be better than one.
+   *
+   * @param {string} url e.g. 'assets/goose-honk.mp3'
+   * @returns {Promise<boolean>} whether the sample is now available
+   */
+  async loadGooseSample(url) {
+    try {
+      const ctx = this.ensureContext();
+      if (!ctx) return false;
+      const res = await fetch(url);
+      if (!res.ok) return false;
+      const bytes = await res.arrayBuffer();
+      this._gooseBuf = await ctx.decodeAudioData(bytes);
+      return true;
+    } catch (e) {
+      return false;   // synth fallback — not an error worth surfacing
+    }
+  }
+
+  /**
+   * Play the loaded goose sample with per-honk variation. Returns false when
+   * no sample is loaded so the caller can fall through to the synth.
+   *
+   * Pitch and level jitter matter as much here as with the synth: a gaggle
+   * firing the identical buffer six times reads as one sound effect repeating,
+   * which is exactly the thing that makes stock audio sound like stock audio.
+   */
+  _playGooseSample(gain) {
+    const ctx = this.ctx;
+    if (!ctx || !this._gooseBuf) return false;
+    const now = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this._gooseBuf;
+    src.playbackRate.value = 0.88 + Math.random() * 0.30;  // voice + urgency
+    const g = ctx.createGain();
+    g.gain.value = gain * (0.8 + Math.random() * 0.4);
+    src.connect(g).connect(this.sfxBus);
+    src.start(now);
+    return true;
+  }
+
+  /**
    * Soft-clip curve for the goose honk's voiced source. Cached — building a
    * 2048-point Float32Array per honk would be wasteful when a gaggle fires
    * several at once.
@@ -236,6 +283,9 @@ export class AudioEngine {
     const ctx = this.ctx;
     if (!ctx) return;
     this.resume();
+    // A real recording wins if one has been loaded; the synth below is the
+    // no-asset fallback, not the preferred path.
+    if (this._playGooseSample(gain)) return;
     const now = ctx.currentTime;
 
     const base = 250 + Math.random() * 170;     // per-goose voice
