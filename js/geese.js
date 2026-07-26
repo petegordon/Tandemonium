@@ -693,11 +693,13 @@ export class GeeseManager {
         if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
       } else {
         slot.mesh.position.set(item._worldX, item._worldY, item._worldZ);
+        const [view, flip] = this._poseForVelocity(this.camera, item);
+        item.view = view;
+        item.flip = flip;
         const f = Math.floor(item.age * FLAP_HZ + item.flapOffset) % FLAP_FRAMES;
-        const tex = this._texFly[item.view][f];
+        const tex = this._texFly[view][f];
         if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
-        // Flip mirrors the sprite so a heading can point either way.
-        slot.mesh.scale.x = item.flip;
+        slot.mesh.scale.x = flip;
       }
       if (this.camera) slot.mesh.quaternion.copy(this.camera.quaternion);
       // Tumble applied AFTER the billboard quaternion so it reads as roll about
@@ -725,6 +727,37 @@ export class GeeseManager {
    * Returns +1/-1 for mesh.scale.x. Falls back to the goose's stored flip
    * when there's no camera or the motion is edge-on.
    */
+  /**
+   * Pick the view angle and mirror for an airborne goose from its actual
+   * velocity, relative to the given camera. Without this the sprite is a coin
+   * flip against the flight vector and half of them appear to fly backwards.
+   *
+   * Alignment with the camera's forward axis chooses the drawing (edge-on →
+   * profile, straight away/toward → rear view, between → three-quarter); the
+   * camera's right axis chooses the mirror. Recomputed per frame because the
+   * chase camera swings, so a goose crossing the view should rotate through
+   * the views as it goes.
+   *
+   * @returns {[number, number]} [view, flip]
+   */
+  _poseForVelocity(camera, item) {
+    const vx = item.vx, vz = item.vz;
+    const sp = Math.hypot(vx, vz);
+    if (!camera || sp < 0.05) return [item.view, item.flip];
+    const dx = vx / sp, dz = vz / sp;
+    const e = camera.matrixWorld.elements;
+    // three.js cameras look down -Z, so forward is the negated third column.
+    const align = Math.abs(dx * -e[8] + dz * -e[10]);
+    const view = align > 0.72 ? VIEW_AWAY
+               : align > 0.34 ? VIEW_QUARTER
+               : VIEW_SIDE;
+    const side = dx * e[0] + dz * e[2];
+    // Hold the previous mirror through the edge-on crossing, or it flickers
+    // as the sign passes through zero.
+    const flip = Math.abs(side) < 0.10 ? item.flip : (side > 0 ? 1 : -1);
+    return [view, flip];
+  }
+
   _flipForHeading(camera, item) {
     if (!camera) return item.flip;
     const pt = this.roadPath.getPointAtDistance(item.roadD);
@@ -820,10 +853,10 @@ export class GeeseManager {
     item.vy = 4.8 + Math.random() * 2.6;
     item.spin = (Math.random() - 0.5) * 4.0;
 
-    // Appearance: random view + flip, and a random flap phase so a whole
-    // gaggle doesn't beat its wings in unison.
-    item.view = Math.floor(Math.random() * VIEW_COUNT);
-    item.flip = Math.random() < 0.5 ? -1 : 1;
+    // View and flip are NOT random — they're derived from the flight vector
+    // every frame (_poseForVelocity), or half the geese fly tail-first and a
+    // rear-view sprite can land on one crossing the screen. Only the flap
+    // phase is random, so a gaggle doesn't beat its wings in unison.
     item.flapOffset = Math.random() * FLAP_FRAMES;
     item._worldY += GOOSE_HALF;
 
@@ -861,7 +894,15 @@ export class GeeseManager {
       if (slot.itemIdx < 0 || !slot.mesh.visible) continue;
       const item = this._items[slot.itemIdx];
       slot.mesh.quaternion.copy(camera.quaternion);
-      if (item && item.state === STATE_FLYING) slot.mesh.rotateZ(this._tiltFor(item));
+      if (item && item.state === STATE_FLYING) {
+        // Re-mirror for THIS rig's camera. The texture can't differ per pass
+        // (one mesh, one material), so the view drawing stays as the main
+        // update chose it — but the mirror is per-mesh and cheap to correct,
+        // and it's the mirror that makes a goose look like it's flying
+        // backwards when it's wrong.
+        slot.mesh.scale.x = this._poseForVelocity(camera, item)[1];
+        slot.mesh.rotateZ(this._tiltFor(item));
+      }
     }
   }
 
