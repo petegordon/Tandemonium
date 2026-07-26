@@ -52,7 +52,8 @@ export class TouristWorld {
     scene.fog = new THREE.FogExp2(0xcfe0ee, 0.00018);
 
     // Tourist Mode skips the procedural World, so it must light the scene
-    // itself (both the photorealistic tiles' glTF materials and the bike).
+    // itself. NOTE: with unlit tiles (see _makeTilesUnlit) these lights now reach
+    // only the bike and riders — the tiles carry their own baked lighting.
     this._hemi = new THREE.HemisphereLight(0xffffff, 0x808088, 1.6);
     this.scene.add(this._hemi);
     this._sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
@@ -114,6 +115,15 @@ export class TouristWorld {
       tiles.lruCache.maxSize = m.cacheMaxTiles;
     }
 
+    // Render the photogrammetry as captured, not as a lit surface. Add
+    // ?tlight=legacy to restore the old look for an A/B.
+    this._unlitTiles = new URLSearchParams(window.location.search).get('tlight') !== 'legacy';
+    if (this._unlitTiles) {
+      tiles.addEventListener('load-model', ({ scene: tileScene }) => {
+        tileScene.traverse((c) => { if (c.material) this._makeTilesUnlit(c.material); });
+      });
+    }
+
     tiles.setCamera(camera);
     tiles.setResolutionFromRenderer(camera, renderer);
     scene.add(tiles.group);
@@ -154,6 +164,46 @@ export class TouristWorld {
   /** Give the world the bike so it can place/pitch it on the streamed ground. */
   setBike(bike) {
     this._bike = bike;
+  }
+
+  /**
+   * Make one tile material render as captured rather than as a lit surface.
+   *
+   * Photogrammetry textures are albedo with the lighting ALREADY BAKED IN — the
+   * sun, the sky and every shadow under every eave are painted into the image.
+   * Lighting them a second time (hemi 1.6 + sun 1.4) fills those baked shadows
+   * and lifts the midtones; AgX tone mapping at the exposure the riders need
+   * then desaturates what's left. Together that is the washed-out look. It is
+   * the equivalent of shining a lamp on a photograph of a sunny street.
+   *
+   * Mutates the material IN PLACE rather than swapping in a MeshBasicMaterial,
+   * because TilesFadePlugin patches these materials for its crossfade and a
+   * replacement would drop those patches. Driving `emissive` from the base map
+   * with a black `color` yields the same unlit result on the existing instance,
+   * and needs no disposal bookkeeping (which matters given the mobile tile
+   * memory budget).
+   *
+   * Deliberately per-material and NOT a renderer-level change: the scene lights
+   * and AgX must keep applying to the bike and riders, which are real PBR and do
+   * need them.
+   */
+  _makeTilesUnlit(material) {
+    const mats = Array.isArray(material) ? material : [material];
+    for (const mat of mats) {
+      if (!mat || mat.userData?._touristUnlit || !('emissive' in mat)) continue;
+      mat.emissive = new THREE.Color(0xffffff);
+      mat.emissiveMap = mat.map;
+      mat.emissiveIntensity = 1;
+      // Kill the lit contribution so only the baked image remains.
+      mat.color.setRGB(0, 0, 0);
+      // The capture was already tone-mapped by the camera that shot it.
+      mat.toneMapped = false;
+      // Keep fog — aerial perspective is the depth cue separating near from far.
+      mat.fog = true;
+      mat.userData = mat.userData || {};
+      mat.userData._touristUnlit = true;
+      mat.needsUpdate = true;
+    }
   }
 
   /**
