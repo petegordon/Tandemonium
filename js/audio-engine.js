@@ -192,6 +192,28 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * Soft-clip curve for the goose honk's voiced source. Cached — building a
+   * 2048-point Float32Array per honk would be wasteful when a gaggle fires
+   * several at once.
+   *
+   * tanh-style saturation rather than hard clipping: it folds energy into
+   * upper harmonics without the fizzy aliasing of a hard knee, which is what
+   * makes a source sound harsh-but-organic instead of broken.
+   */
+  _getHonkCurve() {
+    if (this._honkCurve) return this._honkCurve;
+    const N = 2048;
+    const curve = new Float32Array(N);
+    const drive = 2.6;
+    for (let i = 0; i < N; i++) {
+      const x = (i / (N - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * drive) / Math.tanh(drive);
+    }
+    this._honkCurve = curve;
+    return curve;
+  }
+
   // Goose honk (#363). Synthesized rather than sampled — the whole engine is
   // procedural, and per-honk pitch/length jitter is what keeps a gaggle from
   // sounding like one sound effect fired six times.
@@ -285,9 +307,28 @@ export class AudioEngine {
     raspGain.gain.value = 0.28;          // grain through the whole call
     rasp.connect(raspGain).connect(voice);
 
+    // Drive the source into a soft clip BEFORE the formants — the same order a
+    // real voice works in (harsh source, then tract resonance). Filtering a
+    // clean oscillator can only ever sound like a filtered oscillator; the
+    // harmonics distortion generates are what the formants then have something
+    // to shape. This is the other half of why it read as a toot.
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = this._getHonkCurve();
+    shaper.oversample = '2x';
+    voice.connect(shaper);
+
+    // FIXED formants, not multiples of `base`. This is what stopped it
+    // sounding like a goose: formants tied to the fundamental move with every
+    // pitch, so the timbre never changes and the ear reads it as a kazoo. Real
+    // vocal formants are resonances of the animal's throat — they stay put
+    // while the pitch slides through them, and that relative motion IS the
+    // vocal character. Values are a nasal, honk-shaped tract; the third is
+    // deliberately weak and high, where phone speakers still have output.
+    const jitter = 0.92 + Math.random() * 0.16;   // per-goose throat size
     for (const f of [
-      { hz: base * 1.6, q: 1.4, amp: 0.80 },
-      { hz: base * 3.4, q: 1.8, amp: 0.72 },
+      { hz: 620 * jitter, q: 3.0, amp: 0.85 },
+      { hz: 1750 * jitter, q: 2.6, amp: 0.80 },
+      { hz: 2900 * jitter, q: 2.0, amp: 0.35 },
     ]) {
       const band = ctx.createBiquadFilter();
       band.type = 'bandpass';
@@ -295,7 +336,7 @@ export class AudioEngine {
       band.Q.value = f.q;
       const fg = ctx.createGain();
       fg.gain.value = f.amp;
-      voice.connect(band).connect(fg).connect(env);
+      shaper.connect(band).connect(fg).connect(env);
     }
 
     osc.start(now);  osc.stop(now + dur + 0.02);
