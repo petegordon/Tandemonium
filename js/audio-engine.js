@@ -211,6 +211,7 @@ export class AudioEngine {
       if (!res.ok) return false;
       const bytes = await res.arrayBuffer();
       this._gooseBuf = await ctx.decodeAudioData(bytes);
+      this._gooseOnsets = this._findOnsets(this._gooseBuf);
       return true;
     } catch (e) {
       return false;   // synth fallback — not an error worth surfacing
@@ -218,24 +219,91 @@ export class AudioEngine {
   }
 
   /**
-   * Play the loaded goose sample with per-honk variation. Returns false when
-   * no sample is loaded so the caller can fall through to the synth.
+   * Find honk onsets in a decoded buffer, so a long field recording of a flock
+   * can be used as a BANK of individual honks rather than played whole.
    *
-   * Pitch and level jitter matter as much here as with the synth: a gaggle
-   * firing the identical buffer six times reads as one sound effect repeating,
-   * which is exactly the thing that makes stock audio sound like stock audio.
+   * Field recordings are what's actually available under permissive licences —
+   * they're several seconds of a flock, not a trimmed one-shot. Playing one
+   * from the top per startle would fire seconds of geese and pile up badly.
+   *
+   * Windowed RMS with a rising-edge test: an onset is where energy crosses the
+   * threshold having been below it, with a refractory gap so one honk's
+   * sustain can't register as several.
+   *
+   * @returns {number[]} onset times in seconds
+   */
+  _findOnsets(buf) {
+    const data = buf.getChannelData(0);
+    const sr = buf.sampleRate;
+    const win = Math.floor(sr * 0.02);          // 20ms analysis window
+    const refractory = Math.floor(sr * 0.22);   // ignore re-triggers for 220ms
+
+    // Threshold relative to the recording's own peak, so it adapts to level.
+    let peak = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const a = Math.abs(data[i]);
+      if (a > peak) peak = a;
+    }
+    const thresh = peak * 0.30;
+
+    const onsets = [];
+    let below = true;
+    let lastOnset = -refractory;
+    for (let i = 0; i + win < data.length; i += win) {
+      let sum = 0;
+      for (let j = i; j < i + win; j++) sum += data[j] * data[j];
+      const rms = Math.sqrt(sum / win);
+      if (rms > thresh) {
+        if (below && i - lastOnset > refractory) {
+          onsets.push(i / sr);
+          lastOnset = i;
+        }
+        below = false;
+      } else if (rms < thresh * 0.55) {
+        below = true;                            // hysteresis
+      }
+    }
+    return onsets;
+  }
+
+  /**
+   * Play one honk from the loaded sample. Returns false when no sample is
+   * loaded so the caller can fall through to the synth.
+   *
+   * Plays a short window starting at a detected onset rather than the whole
+   * buffer. A flock recording then yields a different honk each time — better
+   * variety than any pitch jitter could fake, and it sidesteps the leading
+   * silence that would otherwise read as input latency.
+   *
+   * Rate and level still jitter: a gaggle firing identical audio six times
+   * reads as one sound effect repeating, which is what makes stock audio sound
+   * like stock audio.
    */
   _playGooseSample(gain) {
     const ctx = this.ctx;
     if (!ctx || !this._gooseBuf) return false;
     const now = ctx.currentTime;
+    const onsets = this._gooseOnsets;
+
+    const offset = (onsets && onsets.length)
+      ? onsets[Math.floor(Math.random() * onsets.length)]
+      : 0;
+    const dur = Math.min(0.55, Math.max(0.2, this._gooseBuf.duration - offset));
+
     const src = ctx.createBufferSource();
     src.buffer = this._gooseBuf;
-    src.playbackRate.value = 0.88 + Math.random() * 0.30;  // voice + urgency
+    src.playbackRate.value = 0.88 + Math.random() * 0.30;
+
+    // Short fades at both ends — starting mid-recording would click otherwise.
     const g = ctx.createGain();
-    g.gain.value = gain * (0.8 + Math.random() * 0.4);
+    const level = gain * (0.8 + Math.random() * 0.4);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(level, now + 0.008);
+    g.gain.setValueAtTime(level, now + dur - 0.05);
+    g.gain.linearRampToValueAtTime(0.0001, now + dur);
+
     src.connect(g).connect(this.sfxBus);
-    src.start(now);
+    src.start(now, offset, dur + 0.02);
     return true;
   }
 
