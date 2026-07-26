@@ -56,6 +56,32 @@ const GOOSE_LIFE = 5.0;       // long enough to get properly small
 const FLAP_FRAMES = 4;
 const FLAP_HZ = 9;            // wingbeats read best a bit slower than reality
 
+// Three view angles. Which one a goose uses is picked at random on startle,
+// together with a random horizontal flip (mesh.scale.x) — so 6 apparent
+// headings from 3 drawings. Without this every goose leaves in the same
+// profile and a gaggle reads as one object moving, not many.
+const VIEW_SIDE = 0;      // full profile
+const VIEW_QUARTER = 1;   // three-quarter, body foreshortened
+const VIEW_AWAY = 2;      // from behind, wings spread symmetrically
+const VIEW_COUNT = 3;
+
+// How far a goose's escape heading may deviate from "straight away from the
+// bike", in radians. Real flushed birds scatter; a shared vector looks
+// choreographed.
+const ESCAPE_SPREAD = 1.15;
+
+// Ground behaviour. Geese potter about the verge: slow, mostly straight, with
+// occasional pauses to graze. Wandering is deliberately gentle — birds that
+// change heading constantly read as agitated, and these are meant to look
+// oblivious right up until you arrive.
+const GROUND_FRAMES = 3;       // neck upright → grazing
+const WALK_SPEED = 0.42;       // m/s
+const WALK_TURN_RATE = 0.55;   // rad/s of heading drift while walking
+const WALK_MIN = 1.6;          // seconds per walk/pause leg
+const WALK_MAX = 4.5;
+const PAUSE_CHANCE = 0.45;     // fraction of legs spent standing/grazing
+const LEASH = 2.6;             // metres from spawn before steering back
+
 const STATE_IDLE = 0;
 const STATE_FLYING = 1;
 
@@ -88,7 +114,7 @@ const C_BILL   = '#0d0d0f';
  *   (body horizontal, neck extended forward)
  * @param {number} frame  wing position 0..FLAP_FRAMES-1, ignored when idle
  */
-function makeGooseTexture(mode, frame = 0) {
+function makeGooseTexture(mode, frame = 0, view = VIEW_SIDE) {
   const S = 128;
   const c = document.createElement('canvas');
   c.width = S; c.height = S;
@@ -105,65 +131,114 @@ function makeGooseTexture(mode, frame = 0) {
     g.fill();
   };
 
-  if (flying) {
+  if (flying && view === VIEW_AWAY) {
+    // Seen from behind — the common case, since most geese leave away from the
+    // camera. Wings spread symmetrically, body foreshortened to almost nothing,
+    // head a small dark knob above. Reads as "bird receding" far better than a
+    // profile does when the flight vector points downrange.
+    const spread = 0.30 + phase * 0.10;
+    const lift = -phase * 0.13;
+    for (const side of [-1, 1]) {
+      g.save();
+      g.translate(S * 0.5, S * 0.52);
+      g.rotate(side * (0.20 - phase * 0.75));
+      ell(side * spread, lift, 0.215, 0.058, 0, C_WING);
+      ell(side * (spread + 0.15), lift, 0.09, 0.040, 0, C_WINGTIP);
+      g.restore();
+    }
+    ell(0.50, 0.545, 0.088, 0.115, 0, C_BACK);        // foreshortened body
+    ell(0.50, 0.585, 0.062, 0.075, 0, C_BREAST);
+    g.fillStyle = C_WINGTIP;                          // tail below
+    g.beginPath();
+    g.moveTo(S * 0.455, S * 0.645);
+    g.lineTo(S * 0.545, S * 0.645);
+    g.lineTo(S * 0.50, S * 0.715);
+    g.closePath();
+    g.fill();
+    g.strokeStyle = C_NECK;                           // neck straight away
+    g.lineWidth = S * 0.055;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(S * 0.50, S * 0.475);
+    g.lineTo(S * 0.50, S * 0.395);
+    g.stroke();
+    ell(0.50, 0.378, 0.046, 0.042, 0, C_NECK);
+    ell(0.50, 0.400, 0.030, 0.016, 0, C_CHEEK);       // chinstrap from behind
+  } else if (flying) {
+    // Profile (VIEW_SIDE) and three-quarter (VIEW_QUARTER). The quarter view
+    // compresses the body along x and shortens the neck reach, so the same
+    // drawing code covers both without a second sprite set.
+    const q = view === VIEW_QUARTER ? 0.62 : 1.0;   // horizontal foreshortening
+    const cx = 0.5 - 0.03 * q;
+    const sx = (x) => cx + (x - 0.5) * q;           // squash about centre
+
     // FAR wing first so the body overlaps it — cheap depth.
     const farY = 0.50 - phase * 0.16;
     g.save();
-    g.translate(S * 0.44, S * farY);
+    g.translate(S * sx(0.44), S * farY);
     g.rotate(-phase * 0.55);
-    ell(0, 0, 0.20, 0.055, 0, C_WINGTIP);
+    ell(0, 0, 0.20 * q, 0.055, 0, C_WINGTIP);
     g.restore();
 
     // Body — horizontal, tapering to the tail
-    ell(0.47, 0.52, 0.23, 0.115, -0.06, C_BACK);
-    ell(0.47, 0.565, 0.20, 0.075, -0.04, C_BREAST);   // pale underside
-    // Tail
+    ell(sx(0.47), 0.52, 0.23 * q, 0.115, -0.06 * q, C_BACK);
+    ell(sx(0.47), 0.565, 0.20 * q, 0.075, -0.04 * q, C_BREAST);
     g.fillStyle = C_WINGTIP;
     g.beginPath();
-    g.moveTo(S * 0.26, S * 0.50);
-    g.lineTo(S * 0.14, S * 0.47);
-    g.lineTo(S * 0.16, S * 0.56);
+    g.moveTo(S * sx(0.26), S * 0.50);
+    g.lineTo(S * sx(0.14), S * 0.47);
+    g.lineTo(S * sx(0.16), S * 0.56);
     g.closePath();
     g.fill();
 
-    // Neck extended straight forward — the flight silhouette
+    // Neck extended forward — the flight silhouette
     g.strokeStyle = C_NECK;
     g.lineWidth = S * 0.062;
     g.lineCap = 'round';
     g.beginPath();
-    g.moveTo(S * 0.66, S * 0.515);
-    g.lineTo(S * 0.86, S * 0.478);
+    g.moveTo(S * sx(0.66), S * 0.515);
+    g.lineTo(S * sx(0.86), S * 0.478);
     g.stroke();
 
-    ell(0.885, 0.472, 0.052, 0.045, 0, C_NECK);       // head
-    ell(0.868, 0.492, 0.020, 0.026, 0.5, C_CHEEK);    // chinstrap
+    ell(sx(0.885), 0.472, 0.052, 0.045, 0, C_NECK);
+    ell(sx(0.868), 0.492, 0.020, 0.026, 0.5, C_CHEEK);
     g.fillStyle = C_BILL;
     g.beginPath();
-    g.moveTo(S * 0.930, S * 0.462);
-    g.lineTo(S * 0.985, S * 0.478);
-    g.lineTo(S * 0.930, S * 0.492);
+    g.moveTo(S * sx(0.930), S * 0.462);
+    g.lineTo(S * sx(0.985), S * 0.478);
+    g.lineTo(S * sx(0.930), S * 0.492);
     g.closePath();
     g.fill();
 
     // NEAR wing over the body
     const nearY = 0.50 - phase * 0.20;
     g.save();
-    g.translate(S * 0.46, S * nearY);
+    g.translate(S * sx(0.46), S * nearY);
     g.rotate(-phase * 0.62);
-    ell(0, 0, 0.235, 0.068, 0, C_WING);
-    ell(0.13, 0.005, 0.105, 0.040, 0, C_WINGTIP);     // primaries
+    ell(0, 0, 0.235 * q, 0.068, 0, C_WING);
+    ell(0.13 * q, 0.005, 0.105 * q, 0.040, 0, C_WINGTIP);
     g.restore();
   } else {
-    // Standing: upright neck, wings folded along the back
-    ell(0.50, 0.635, 0.235, 0.165, -0.10, C_BACK);
-    ell(0.505, 0.685, 0.205, 0.105, -0.06, C_BREAST);
-    ell(0.455, 0.615, 0.175, 0.075, -0.16, C_WING);   // folded wing
-    // Tail
-    g.fillStyle = C_WINGTIP;
+    // Ground poses. `frame` walks the neck from fully upright (0) down to
+    // grazing (GROUND_FRAMES-1). Geese on a verge spend most of their time
+    // head-down eating, so the pose cycle is doing most of the "alive" work —
+    // more than the leg motion a billboard can't show anyway.
+    const t = frame / (GROUND_FRAMES - 1);           // 0 up … 1 grazing
+    const headX = 0.745 + t * 0.115;
+    const headY = 0.235 + t * 0.475;
+    const ctrlX = 0.78 + t * 0.035;
+    const ctrlY = 0.42 + t * 0.30;
+    // Body tips forward as the neck goes down
+    const tilt = -0.10 - t * 0.16;
+
+    ell(0.50, 0.635, 0.235, 0.165, tilt, C_BACK);
+    ell(0.505, 0.685, 0.205, 0.105, tilt * 0.6, C_BREAST);
+    ell(0.455, 0.615, 0.175, 0.075, tilt - 0.06, C_WING);   // folded wing
+    g.fillStyle = C_WINGTIP;                                 // tail lifts as head drops
     g.beginPath();
-    g.moveTo(S * 0.29, S * 0.60);
-    g.lineTo(S * 0.17, S * 0.575);
-    g.lineTo(S * 0.20, S * 0.655);
+    g.moveTo(S * 0.29, S * (0.60 - t * 0.04));
+    g.lineTo(S * 0.17, S * (0.575 - t * 0.09));
+    g.lineTo(S * 0.20, S * (0.655 - t * 0.05));
     g.closePath();
     g.fill();
 
@@ -172,16 +247,17 @@ function makeGooseTexture(mode, frame = 0) {
     g.lineCap = 'round';
     g.beginPath();
     g.moveTo(S * 0.66, S * 0.60);
-    g.quadraticCurveTo(S * 0.78, S * 0.42, S * 0.745, S * 0.235);
+    g.quadraticCurveTo(S * ctrlX, S * ctrlY, S * headX, S * headY);
     g.stroke();
 
-    ell(0.748, 0.215, 0.056, 0.048, 0.1, C_NECK);
-    ell(0.722, 0.242, 0.021, 0.030, 0.25, C_CHEEK);
+    ell(headX + 0.003, headY - 0.020, 0.056, 0.048, 0.1 + t * 0.6, C_NECK);
+    ell(headX - 0.026, headY + 0.007, 0.021, 0.030, 0.25 + t * 0.6, C_CHEEK);
     g.fillStyle = C_BILL;
+    const bx = headX + 0.052, by = headY - 0.032 + t * 0.055;
     g.beginPath();
-    g.moveTo(S * 0.800, S * 0.203);
-    g.lineTo(S * 0.862, S * 0.228);
-    g.lineTo(S * 0.800, S * 0.247);
+    g.moveTo(S * bx, S * by);
+    g.lineTo(S * (bx + 0.062), S * (by + 0.025));
+    g.lineTo(S * bx, S * (by + 0.044));
     g.closePath();
     g.fill();
   }
@@ -212,9 +288,16 @@ export class GeeseManager {
     this._items = [];
     this._pool = [];
 
-    this._texIdle = makeGooseTexture('idle');
+    this._texIdle = [];
+    for (let f = 0; f < GROUND_FRAMES; f++) this._texIdle.push(makeGooseTexture('idle', f));
+    // [view][frame] — 3 views x 4 flap frames, plus a per-goose horizontal
+    // flip at render time, giving 6 apparent headings from 3 drawings.
     this._texFly = [];
-    for (let f = 0; f < FLAP_FRAMES; f++) this._texFly.push(makeGooseTexture('fly', f));
+    for (let v = 0; v < VIEW_COUNT; v++) {
+      const frames = [];
+      for (let f = 0; f < FLAP_FRAMES; f++) frames.push(makeGooseTexture('fly', f, v));
+      this._texFly.push(frames);
+    }
 
     const geo = new THREE.PlaneGeometry(0.85, 0.85);
     for (let i = 0; i < POOL_SIZE; i++) {
@@ -335,16 +418,32 @@ export class GeeseManager {
       const groupSize = 2 + Math.floor(rng() * 4);
       const baseLateral = VERGE_MIN + rng() * (VERGE_MAX - VERGE_MIN);
       for (let n = 0; n < groupSize; n++) {
+        const gd = d + rng() * 5;
+        const glat = side * (baseLateral + (rng() - 0.5) * 1.6);
         this._items.push({
-          absoluteD: d + rng() * 5,
-          roadD: (d + rng() * 5) % this._loopLen,
-          lateralOffset: side * (baseLateral + (rng() - 0.5) * 1.6),
+          absoluteD: gd,
+          roadD: gd % this._loopLen,
+          lateralOffset: glat,
+          side,
           state: STATE_IDLE,
           poolIdx: -1,
           phase: rng() * Math.PI * 2,
           vx: 0, vy: 0, vz: 0,
           spin: 0,
           age: 0,
+          // Standing geese face either way too, so a gaggle isn't a row of
+          // clones. view/flapOffset are re-rolled on startle.
+          view: VIEW_SIDE,
+          flip: rng() < 0.5 ? -1 : 1,
+          flapOffset: 0,
+          // Ground wander. homeD/homeLat is the spawn point the leash pulls
+          // back toward, so a gaggle stays a gaggle instead of dispersing.
+          homeD: gd, homeLat: glat,
+          heading: rng() * Math.PI * 2,
+          walking: rng() > PAUSE_CHANCE,
+          legTimer: WALK_MIN + rng() * (WALK_MAX - WALK_MIN),
+          pose: 0,          // 0..GROUND_FRAMES-1, eased toward poseTarget
+          poseTarget: 0,
           _worldX: 0, _worldY: 0, _worldZ: 0,
         });
       }
@@ -405,6 +504,7 @@ export class GeeseManager {
       if (item.state !== STATE_FLYING && !this._nearAny(item.absoluteD, anchorDs)) continue;
 
       if (item.state === STATE_IDLE) {
+        this._wander(item, dt);
         const pt = this.roadPath.getPointAtDistance(item.roadD);
         const rightX = Math.cos(pt.heading);
         const rightZ = -Math.sin(pt.heading);
@@ -467,15 +567,29 @@ export class GeeseManager {
       const slot = this._pool[item.poolIdx];
       if (item.state === STATE_IDLE) {
         // Idle bob — enough life that a still goose doesn't look like a decal
-        const bob = Math.sin(t * 1.6 + item.phase) * 0.03;
+        // Walking geese bob at a stride cadence; standing ones just breathe.
+        const bob = item.walking
+          ? Math.abs(Math.sin(t * 5.2 + item.phase)) * 0.035
+          : Math.sin(t * 1.6 + item.phase) * 0.02;
         slot.mesh.position.set(item._worldX, item._worldY + 0.42 + bob, item._worldZ);
         slot.mesh.rotation.z = 0;
-        if (slot.mat.map !== this._texIdle) { slot.mat.map = this._texIdle; slot.mat.needsUpdate = true; }
+        // Face the way it's walking, as seen by THIS camera: project the road-
+        // space heading into world space and compare with the camera's right
+        // vector. A billboard has no yaw of its own, so the mirror is the only
+        // thing that can express which way the bird is pointing.
+        slot.mesh.scale.x = item.walking
+          ? this._flipForHeading(this.camera, item)
+          : item.flip;
+        const pf = Math.min(GROUND_FRAMES - 1, Math.max(0, Math.round(item.pose)));
+        const tex = this._texIdle[pf];
+        if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
       } else {
         slot.mesh.position.set(item._worldX, item._worldY, item._worldZ);
-        const f = Math.floor(item.age * FLAP_HZ) % FLAP_FRAMES;
-        const tex = this._texFly[f];
+        const f = Math.floor(item.age * FLAP_HZ + item.flapOffset) % FLAP_FRAMES;
+        const tex = this._texFly[item.view][f];
         if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
+        // Flip mirrors the sprite so a heading can point either way.
+        slot.mesh.scale.x = item.flip;
       }
       if (this.camera) slot.mesh.quaternion.copy(this.camera.quaternion);
       // Tumble applied AFTER the billboard quaternion so it reads as roll about
@@ -484,6 +598,81 @@ export class GeeseManager {
       // Carrying the spin the whole way makes it read as a thrown object.
       if (item.state === STATE_FLYING) slot.mesh.rotateZ(this._tiltFor(item));
       slot.mesh.visible = true;
+    }
+  }
+
+  /**
+   * Potter about the verge. Movement is in ROAD space — heading 0 is along the
+   * road, PI/2 is across it — so the leash and the verge clamp are both simple
+   * scalars and a goose can never wander onto the racing line no matter how
+   * the road curves.
+   *
+   * Legs alternate walk/pause. Grazing is tied to standing still, because a
+   * goose that walks with its head down looks broken, and one that never puts
+   * its head down looks like a statue.
+   */
+  /**
+   * Mirror a walking goose so it faces its direction of travel on screen.
+   * Road-space heading → world direction → dot with the camera's right axis.
+   * Returns +1/-1 for mesh.scale.x. Falls back to the goose's stored flip
+   * when there's no camera or the motion is edge-on.
+   */
+  _flipForHeading(camera, item) {
+    if (!camera) return item.flip;
+    const pt = this.roadPath.getPointAtDistance(item.roadD);
+    // Road tangent (heading 0) and its right normal (heading PI/2)
+    const fwdX = Math.sin(pt.heading), fwdZ = Math.cos(pt.heading);
+    const rgtX = Math.cos(pt.heading), rgtZ = -Math.sin(pt.heading);
+    const ch = Math.cos(item.heading), sh = Math.sin(item.heading);
+    const dirX = fwdX * ch + rgtX * sh;
+    const dirZ = fwdZ * ch + rgtZ * sh;
+    const e = camera.matrixWorld.elements;   // camera right axis = column 0
+    const dot = dirX * e[0] + dirZ * e[2];
+    if (Math.abs(dot) < 0.08) return item.flip;
+    return dot > 0 ? 1 : -1;
+  }
+
+  _wander(item, dt) {
+    item.legTimer -= dt;
+    if (item.legTimer <= 0) {
+      item.walking = Math.random() > PAUSE_CHANCE;
+      item.legTimer = WALK_MIN + Math.random() * (WALK_MAX - WALK_MIN);
+      // Standing geese graze; walkers carry their heads up.
+      item.poseTarget = item.walking ? 0 : 1 + Math.floor(Math.random() * (GROUND_FRAMES - 1));
+      if (item.walking) item.heading += (Math.random() - 0.5) * 1.4;
+    }
+
+    // Ease the neck between poses so it lifts and lowers instead of snapping.
+    item.pose += (item.poseTarget - item.pose) * Math.min(1, 3.2 * dt);
+
+    if (!item.walking) return;
+
+    // Gentle heading drift — enough that paths curve, not so much they look
+    // agitated.
+    item.heading += (Math.random() - 0.5) * WALK_TURN_RATE * dt;
+
+    const alongD = Math.cos(item.heading) * WALK_SPEED * dt;
+    const acrossD = Math.sin(item.heading) * WALK_SPEED * dt;
+    item.absoluteD += alongD;
+    item.roadD = ((item.absoluteD % this._loopLen) + this._loopLen) % this._loopLen;
+    item.lateralOffset += acrossD;
+
+    // Verge clamp: never step inside VERGE_MIN (the road) or past VERGE_MAX.
+    const mag = Math.abs(item.lateralOffset);
+    if (mag < VERGE_MIN || mag > VERGE_MAX + 1.0) {
+      item.lateralOffset = item.side * Math.min(VERGE_MAX, Math.max(VERGE_MIN, mag));
+      item.heading = Math.PI - item.heading;   // turn back
+    }
+
+    // Leash toward home so a gaggle stays together over a long ride.
+    const dHome = item.absoluteD - item.homeD;
+    const latHome = item.lateralOffset - item.homeLat;
+    if (Math.hypot(dHome, latHome) > LEASH) {
+      const want = Math.atan2(-latHome, -dHome);
+      let diff = want - item.heading;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      item.heading += diff * Math.min(1, 1.5 * dt);
     }
   }
 
@@ -504,13 +693,29 @@ export class GeeseManager {
     // Away from the bike, with a forward bias so they burst outward rather
     // than hanging in the player's face.
     const inv = dist > 0.001 ? 1 / dist : 0;
-    const awayX = -dx * inv;
-    const awayZ = -dz * inv;
+    let awayX = -dx * inv;
+    let awayZ = -dz * inv;
+
+    // Scatter the heading. Every goose leaving on the exact away-vector looks
+    // choreographed; real flushed birds fan out. Rotate the away-vector by a
+    // random yaw within ESCAPE_SPREAD.
+    const yaw = (Math.random() - 0.5) * 2 * ESCAPE_SPREAD;
+    const cs = Math.cos(yaw), sn = Math.sin(yaw);
+    const rx = awayX * cs - awayZ * sn;
+    const rz = awayX * sn + awayZ * cs;
+    awayX = rx; awayZ = rz;
+
     const speed = 4.0 + Math.random() * 2.6;
-    item.vx = awayX * speed + (Math.random() - 0.5) * 1.4;
-    item.vz = awayZ * speed + (Math.random() - 0.5) * 1.4;
-    item.vy = 5.2 + Math.random() * 2.0;
+    item.vx = awayX * speed;
+    item.vz = awayZ * speed;
+    item.vy = 4.8 + Math.random() * 2.6;
     item.spin = (Math.random() - 0.5) * 4.0;
+
+    // Appearance: random view + flip, and a random flap phase so a whole
+    // gaggle doesn't beat its wings in unison.
+    item.view = Math.floor(Math.random() * VIEW_COUNT);
+    item.flip = Math.random() < 0.5 ? -1 : 1;
+    item.flapOffset = Math.random() * FLAP_FRAMES;
     item._worldY += 0.42;
 
     this._emitFeathers(item._worldX, item._worldY, item._worldZ, 5 + Math.floor(Math.random() * 5));
@@ -555,7 +760,7 @@ export class GeeseManager {
     this.scene.remove(this._fPoints);
     this._fGeo.dispose();
     this._fMat.dispose();
-    this._texIdle.dispose();
-    for (const t of this._texFly) t.dispose();
+    for (const t of this._texIdle) t.dispose();
+    for (const frames of this._texFly) for (const t of frames) t.dispose();
   }
 }
