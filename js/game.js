@@ -25,7 +25,7 @@ import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
 import { TouristWorld } from './tourist-world.js';
-import { isTouristMode, getMapsApiKey } from './tourist-config.js';
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin } from './tourist-config.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
@@ -6294,6 +6294,12 @@ class Game {
 // ============================================================
 // BOOT
 // ============================================================
+// Tourist Mode with a ?lat/?lon location needs its anchor height resolved from
+// the ground elevation BEFORE the world is built (the ReorientationPlugin takes
+// the anchor at construction). Gated on isTouristMode() so the normal boot path
+// stays fully synchronous — top-level await would otherwise defer it a tick.
+if (isTouristMode()) await resolveTouristOrigin();
+
 const game = new Game();
 window._game = game;
 window.perfProbe = perfProbe;

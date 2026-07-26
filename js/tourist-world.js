@@ -76,7 +76,8 @@ export class TouristWorld {
     // Where are we riding? Defaults to Scioto Mile; ?lat/?lon points it anywhere.
     const origin = getTouristOrigin();
     this._origin = origin;
-    console.log(`[Tourist] riding ${origin.name} (anchor ${origin.height}m)`);
+    console.log(`[Tourist] riding ${origin.name} — anchor ${Math.round(origin.height)}m ` +
+      `(${origin.anchored === false ? 'GUESSED, wide probe' : 'from elevation'})`);
 
     // Anchor the chosen lat/lon/height at the three.js origin with +Y up so
     // the bike's abstract X/Z world maps to local east/north metres.
@@ -86,12 +87,13 @@ export class TouristWorld {
       height: origin.height,
     }));
 
-    // A custom location's anchor height is a guess, so the ground can be far
-    // below (or above) local y=0. Widen the probe to find it; the first hit
-    // snaps the bike down and the guess stops mattering.
-    const probe = origin.custom ? TOURIST_TUNE.customProbe : TOURIST_TUNE;
+    // Probe width follows how much we trust the anchor. An anchored origin (real
+    // elevation, or an explicit ?h) keeps the TIGHT default window, which is what
+    // puts coarse root-tile hits — kilometres below the true surface — out of
+    // range so they are never accepted. Only a blind-guess anchor widens it.
+    const probe = (origin.custom && !origin.anchored) ? TOURIST_TUNE.customProbe : TOURIST_TUNE;
     this._probeUp = probe.spawnProbeHeight;
-    this._probeFar = probe.spawnProbeHeight + probe.rayLength;
+    this._probeRay = probe.rayLength;
 
     // Fix #2 — mobile tile budget. The library defaults (0.4 GB cache, 10
     // concurrent downloads, unbounded depth) can exhaust a mobile browser's
@@ -199,10 +201,18 @@ export class TouristWorld {
    */
   _groundFollow(bikePos, dt) {
     const ray = this._raycaster;
-    const probeTop = bikePos.y + this._probeUp;
+    // The ray starts above the bike, but never below the anchor plane + probeUp.
+    // Without that floor the probe is a one-way trapdoor: accept one bad hit far
+    // below the real ground (a coarse root tile), and the origin drops with the
+    // bike until the true surface is ABOVE the ray start — at which point a
+    // downward ray can never find it again and the rider is stuck underground
+    // forever. Clamping up means the bike can always climb back out.
+    const probeTop = Math.max(bikePos.y + this._probeUp, this._probeUp);
     this._tmpOrigin.set(bikePos.x, probeTop, bikePos.z);
     ray.set(this._tmpOrigin, new THREE.Vector3(0, -1, 0));
-    ray.far = this._probeFar;
+    // Measured from the bike, not the (possibly clamped) ray origin, so the reach
+    // below the bike stays constant however far the origin was lifted.
+    ray.far = (probeTop - bikePos.y) + this._probeRay;
 
     // Use the library's own raycast: it transforms the world-space ray into the
     // tiles' (ECEF) coordinate frame via the group transform. Raycasting the tile
