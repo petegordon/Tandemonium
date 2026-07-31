@@ -13,6 +13,22 @@ const PHASE = {
   DONE: 3,
 };
 
+// The frontal three-quarter pose the swing lands on and the two later phases
+// hold. theta=0 is directly in front of the bike.
+//
+// Camera and aim both sit higher than the geometry alone would ask for: the
+// riders' heads are the tallest thing on the bike, and a pose framed on the
+// bike centre pushed them into the top ~10% of a portrait screen — straight
+// under the HUD's top strip, which clipped their faces at the moment the shot
+// exists to show them. Lifting the camera and lifting the aim further still
+// drops the heads to roughly a third down the frame and flattens the downward
+// tilt from ~20° to ~9°, which is a kinder angle for a victory frame anyway.
+const END_THETA = -0.35;
+const END_RADIUS = 4.2;
+const END_HEIGHT = 2.0;
+const END_LOOK_FWD = 1.4;
+const END_LOOK_Y = 1.55;
+
 export class FinishCameraAnimation {
   constructor(camera, bike) {
     this.camera = camera;
@@ -114,18 +130,20 @@ export class FinishCameraAnimation {
     const e = this._easeInOut(t);
     const bikePos = this.bike.position;
 
-    const theta = this._lerp(Math.PI, -0.35, e);
-    const radius = this._lerp(11, 4.2, e);
-    const height = this._lerp(4.0, 1.7, e);
+    const theta = this._lerp(Math.PI, END_THETA, e);
+    const radius = this._lerp(11, END_RADIUS, e);
+    const height = this._lerp(4.0, END_HEIGHT, e);
 
     this._orbitOffset(theta, radius, height, this._orbitPos);
     this._desiredPos.copy(bikePos).add(this._orbitPos);
 
-    const lookFwdBias = this._lerp(-0.5, 1.4, e);
+    const lookFwdBias = this._lerp(-0.5, END_LOOK_FWD, e);
     this._desiredLook.copy(bikePos);
     this._desiredLook.x += this._fwd.x * lookFwdBias;
     this._desiredLook.z += this._fwd.z * lookFwdBias;
-    this._desiredLook.y += this._lerp(0.9, 0.65, e);
+    // Rises through the swing, so the riders sit lower in frame the closer the
+    // camera gets rather than climbing towards the top strip.
+    this._desiredLook.y += this._lerp(1.2, END_LOOK_Y, e);
 
     // Ease out of the chase cam's last pose for the first ~40% of swing.
     const blend = Math.min(1, t * 2.5);
@@ -143,24 +161,27 @@ export class FinishCameraAnimation {
     this.camera.updateProjectionMatrix();
   }
 
+  /** Park the camera on the held end pose. Shared by the zoom and hold phases. */
+  _applyEndPose() {
+    const bikePos = this.bike.position;
+    this._orbitOffset(END_THETA, END_RADIUS, END_HEIGHT, this._orbitPos);
+    this._desiredPos.copy(bikePos).add(this._orbitPos);
+    this.camera.position.copy(this._desiredPos);
+
+    this._desiredLook.copy(bikePos);
+    this._desiredLook.x += this._fwd.x * END_LOOK_FWD;
+    this._desiredLook.z += this._fwd.z * END_LOOK_FWD;
+    this._desiredLook.y += END_LOOK_Y;
+    this.camera.lookAt(this._desiredLook);
+  }
+
   // Phase 2: settle on the frontal three-quarter pose the swing landed
   // on — no further dolly-in. FOV eases back from the swing's wide
   // bias to the camera's normal value so the held frame doesn't read
   // as distorted.
   _updateZoom(t) {
     const e = this._easeOutQuint(t);
-    const bikePos = this.bike.position;
-
-    this._orbitOffset(-0.35, 4.2, 1.7, this._orbitPos);
-    this._desiredPos.copy(bikePos).add(this._orbitPos);
-    this.camera.position.copy(this._desiredPos);
-
-    this._desiredLook.copy(bikePos);
-    this._desiredLook.x += this._fwd.x * 1.4;
-    this._desiredLook.z += this._fwd.z * 1.4;
-    this._desiredLook.y += 0.65;
-    this.camera.lookAt(this._desiredLook);
-
+    this._applyEndPose();
     this.camera.fov = this._lerp(this.startFov + 6, this.startFov, e);
     this.camera.updateProjectionMatrix();
   }
@@ -168,17 +189,7 @@ export class FinishCameraAnimation {
   // Phase 3: hold the same frontal three-quarter pose for a beat
   // before the victory overlay reveals — no zoom past the swing.
   _updateHold() {
-    const bikePos = this.bike.position;
-    this._orbitOffset(-0.35, 4.2, 1.7, this._orbitPos);
-    this._desiredPos.copy(bikePos).add(this._orbitPos);
-    this.camera.position.copy(this._desiredPos);
-
-    this._desiredLook.copy(bikePos);
-    this._desiredLook.x += this._fwd.x * 1.4;
-    this._desiredLook.z += this._fwd.z * 1.4;
-    this._desiredLook.y += 0.65;
-    this.camera.lookAt(this._desiredLook);
-
+    this._applyEndPose();
     this.camera.fov = this.startFov;
     this.camera.updateProjectionMatrix();
   }
