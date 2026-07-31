@@ -11,7 +11,7 @@
 | 5 | Onboarding & Accessibility | Tutorial phases, DDA | `game.js` (tutorial), `dda-manager.js` |
 | 6 | Input Systems | Keyboard, touch, gyro, gamepad API | `input-manager.js` |
 | 7 | Controller Drivers | WebHID (DualSense, Switch Pro, Xbox), vendor-specific | `controllers/dualsense-driver.js`, `switch-pro-driver.js`, `xbox-driver.js` |
-| 8 | Player Feedback | HUD, haptics, balance gauge, crash overlay | `hud.js`, `haptics.js`, `arch-indicator.js` |
+| 8 | Player Feedback | HUD, quick menu, haptics, balance gauge, crash overlay | `hud.js`, `quick-menu.js`, `haptics.js`, `arch-indicator.js` |
 | 9 | Multiplayer Networking | Rooms, relay, PeerJS, remote state, sync tracking | `network-manager.js`, `remote-bike-state.js`, `contribution-tracker.js`, `shared-pedal-controller.js` |
 | 10 | Video/PiP | Camera streams, recording, partner video | `game-recorder.js` |
 | 11 | Cloudflare Workers API | REST routes, rate limiting, relay tokens | `worker/leaderboard.js`, `worker/relay.js` |

@@ -800,10 +800,7 @@ export class GameRecorder {
     // ── Pedal buttons (bottom, matches .pedal-touch) ──
     this._drawPedalButtons(ctx, w, h, s, state);
 
-    // ── Gauges (YOU + BIKE, centered above pedals) ──
-    this._drawGauges(ctx, w, h, s, state);
-
-    // ── Partner pedal indicators (wider apart, flanking partner label) ──
+    // ── Partner pedal indicators (just above the pedal buttons) ──
     if (state.hasPartner) {
       this._drawPartnerIndicators(ctx, w, h, s, state);
     }
@@ -878,81 +875,104 @@ export class GameRecorder {
     if (kmh > 35) { speedColor = '#00e040'; barColor = '#00e040'; }
     else if (kmh > 15) { speedColor = '#88ff88'; barColor = '#88ff88'; }
 
-    // Dashboard card dimensions
+    const FF = 'Helvetica Neue, Arial, sans-serif';
+    // Canvas gets no automatic emoji fallback the way the DOM does — name the
+    // platform emoji fonts explicitly or the gift and goose icons draw as tofu.
+    const EF = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", ' + FF;
+    const DIM = 'rgba(255,255,255,0.5)';
+    const BRIGHT = 'rgba(255,255,255,0.85)';
+
+    // One horizontal strip, mirroring #hud-stats: each stat is a short list of
+    // text runs drawn left to right, and consecutive stats are parted by a
+    // hairline. Same order, same colors, same hidden-when-absent rules as the
+    // live HUD, so a saved clip looks like what the rider was looking at.
+    const stats = [];
+    stats.push([
+      { text: '' + kmh, font: 'bold ' + Math.round(20 * s) + 'px ' + FF, color: speedColor },
+      { text: 'km/h', font: '600 ' + Math.round(10 * s) + 'px ' + FF, color: DIM, gap: 3 * s },
+    ]);
+    stats.push([{ text: distText, font: '600 ' + Math.round(12 * s) + 'px ' + FF, color: DIM }]);
+    if (state.elapsedText) {
+      stats.push([{ text: state.elapsedText, font: '600 ' + Math.round(12 * s) + 'px ' + FF, color: DIM }]);
+    }
+    if (hasTimer) {
+      stats.push([{ text: timerText, font: 'bold ' + Math.round(16 * s) + 'px ' + FF, color: timerColor }]);
+    }
+    if (state.collectibleIcon) {
+      stats.push([
+        { text: state.collectibleIcon, font: Math.round(13 * s) + 'px ' + EF, color: BRIGHT },
+        { text: state.collectibleText, font: 'bold ' + Math.round(12 * s) + 'px ' + FF, color: BRIGHT, gap: 3 * s },
+      ]);
+    }
+    if (state.geese != null) {
+      // Worded, not the HUD's goose emoji: U+1FABF only landed in system fonts
+      // in 2022, and canvas has no DOM-style fallback to save a device that
+      // lacks it — a shared clip would carry a tofu box. The gift emoji above
+      // is old enough to be everywhere, so it stays as drawn.
+      stats.push([
+        { text: 'GEESE', font: '700 ' + Math.round(9 * s) + 'px ' + FF, color: DIM },
+        { text: '' + state.geese, font: 'bold ' + Math.round(12 * s) + 'px ' + FF, color: BRIGHT, gap: 3 * s },
+      ]);
+    }
+
+    // Measure — matches #hud-stats gap 7px + the 1px rule with its 4px margin.
+    const sepPre = 7 * s;
+    const sepW = 1 * s;
+    const sepPost = 4 * s;
+    let rowW = 0;
+    for (let i = 0; i < stats.length; i++) {
+      if (i > 0) rowW += sepPre + sepW + sepPost;
+      for (const run of stats[i]) {
+        ctx.font = run.font;
+        rowW += (run.gap || 0) + ctx.measureText(run.text).width;
+      }
+    }
+
+    // Card geometry
     const px = 14 * s;
     const py = 10 * s;
-    const padH = 8 * s;
-    const padV = 8 * s;
-    const speedFontSize = Math.round(28 * s);
-    const unitFontSize = Math.round(11 * s);
-    const distFontSize = Math.round(11 * s);
-    const timerFontSize = Math.round(21 * s);
-    const barH = 4 * s;
-    const lineGap = 3 * s;
+    const padH = 12 * s;
+    const padV = 7 * s;
+    const rowH = 20 * s;
+    const barH = 3 * s;
+    const lineGap = 4 * s;
+    const cardW = rowW + padH * 2;
+    const cardH = padV * 2 + rowH + lineGap + barH;
 
-    // Measure text to size the card
-    ctx.font = 'bold ' + speedFontSize + 'px Helvetica Neue, Arial, sans-serif';
-    const speedTextW = ctx.measureText('' + kmh).width;
-    ctx.font = '600 ' + unitFontSize + 'px Helvetica Neue, Arial, sans-serif';
-    const unitTextW = ctx.measureText('km/h').width;
-    const rowW = speedTextW + 4 * s + unitTextW;
-    ctx.font = '500 ' + distFontSize + 'px Helvetica Neue, Arial, sans-serif';
-    const distTextW = ctx.measureText(distText).width;
-    let timerTextW = 0;
-    if (hasTimer) {
-      ctx.font = 'bold ' + timerFontSize + 'px Helvetica Neue, Arial, sans-serif';
-      timerTextW = ctx.measureText(timerText).width;
-    }
-    const cardW = Math.max(rowW, distTextW, timerTextW) + padH * 2;
-    let cardH = speedFontSize + lineGap + barH + lineGap + distFontSize + padV * 2;
-    if (hasTimer) cardH += lineGap + timerFontSize;
-
-    // Card background (rgba(0,0,0,0.45) + border)
     ctx.save();
-    this._roundRect(ctx, px, py, cardW, cardH, 12 * s,
+    this._roundRect(ctx, px, py, cardW, cardH, 14 * s,
       'rgba(0,0,0,0.45)', 'rgba(255,255,255,0.12)', 1);
 
-    // Speed value
-    let cy = py + padV;
-    ctx.font = 'bold ' + speedFontSize + 'px Helvetica Neue, Arial, sans-serif';
-    ctx.fillStyle = speedColor;
-    ctx.textBaseline = 'top';
+    // Stats row — one shared centre line so the different sizes align.
+    const midY = py + padV + rowH / 2;
     ctx.textAlign = 'left';
-    ctx.fillText('' + kmh, px + padH, cy);
-
-    // "km/h" unit
-    ctx.font = '600 ' + unitFontSize + 'px Helvetica Neue, Arial, sans-serif';
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText('km/h', px + padH + speedTextW + 4 * s, cy + speedFontSize);
-
-    // Speed bar
-    cy += speedFontSize + lineGap;
-    const barW = cardW - padH * 2;
-    // Bar track
-    this._roundRect(ctx, px + padH, cy, barW, barH, 2 * s,
-      'rgba(255,255,255,0.1)', 'transparent', 0);
-    // Bar fill
-    const fillW = Math.min(1, kmh / maxKmh) * barW;
-    if (fillW > 0) {
-      this._roundRect(ctx, px + padH, cy, fillW, barH, 2 * s,
-        barColor, 'transparent', 0);
+    ctx.textBaseline = 'middle';
+    let cx = px + padH;
+    for (let i = 0; i < stats.length; i++) {
+      if (i > 0) {
+        cx += sepPre;
+        ctx.fillStyle = 'rgba(255,255,255,0.16)';
+        ctx.fillRect(cx, midY - 6.5 * s, sepW, 13 * s);
+        cx += sepW + sepPost;
+      }
+      for (const run of stats[i]) {
+        cx += run.gap || 0;
+        ctx.font = run.font;
+        ctx.fillStyle = run.color;
+        ctx.fillText(run.text, cx, midY);
+        cx += ctx.measureText(run.text).width;
+      }
     }
 
-    // Distance
-    cy += barH + lineGap;
-    ctx.font = '500 ' + distFontSize + 'px Helvetica Neue, Arial, sans-serif';
-    ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.textBaseline = 'top';
-    ctx.fillText(distText, px + padH, cy);
-
-    // Timer
-    if (hasTimer) {
-      cy += distFontSize + lineGap;
-      ctx.font = 'bold ' + timerFontSize + 'px Helvetica Neue, Arial, sans-serif';
-      ctx.fillStyle = timerColor;
-      ctx.textBaseline = 'top';
-      ctx.fillText(timerText, px + padH, cy);
+    // Speed bar under the strip, spanning the card
+    const barY = py + padV + rowH + lineGap;
+    const barW = cardW - padH * 2;
+    this._roundRect(ctx, px + padH, barY, barW, barH, 2 * s,
+      'rgba(255,255,255,0.1)', 'transparent', 0);
+    const fillW = Math.min(1, kmh / maxKmh) * barW;
+    if (fillW > 0) {
+      this._roundRect(ctx, px + padH, barY, fillW, barH, 2 * s,
+        barColor, 'transparent', 0);
     }
 
     ctx.restore();
@@ -1138,208 +1158,22 @@ export class GameRecorder {
     drawBtn(rx, state.rightPressed, false);
   }
 
-  // ── Gauges — replicates .gauge-wrap (YOU + BIKE, optionally PARTNER) ──
-
-  _drawGauges(ctx, w, h, s, state) {
-    const btnH = Math.min(Math.max(80 * s, h * 0.12), 140 * s);
-    const bottomPad = 8 * s;
-    const pedalTop = h - bottomPad - btnH;
-    const gaugeSize = 54 * s;
-    const gaugeGap = 6 * s;
-
-    // Position gauges above pedal buttons, centered
-    const gaugeY = pedalTop - gaugeGap - gaugeSize;
-
-    if (state.hasPartner) {
-      // 3 gauges: YOU | BIKE | PARTNER
-      const totalW = gaugeSize * 3 + gaugeGap * 2;
-      const startX = (w - totalW) / 2;
-      this._drawSingleGauge(ctx, startX, gaugeY, gaugeSize, s, 'YOU', state.youDeg, '#fa3', 'green', 0);
-      this._drawSingleGauge(ctx, startX + gaugeSize + gaugeGap, gaugeY, gaugeSize, s, 'BIKE', state.bikeDeg, '#4af', 'red', state.bikeDanger);
-      this._drawSingleGauge(ctx, startX + (gaugeSize + gaugeGap) * 2, gaugeY, gaugeSize, s,
-        state.mode === 'captain' ? 'STOKER' : 'CAPTAIN', state.partnerDeg, '#a6f', 'purple', 0);
-    } else {
-      // 2 gauges: YOU | BIKE
-      const totalW = gaugeSize * 2 + gaugeGap;
-      const startX = (w - totalW) / 2;
-      this._drawSingleGauge(ctx, startX, gaugeY, gaugeSize, s, 'YOU', state.youDeg, '#fa3', 'green', 0);
-      this._drawSingleGauge(ctx, startX + gaugeSize + gaugeGap, gaugeY, gaugeSize, s, 'BIKE', state.bikeDeg, '#4af', 'red', state.bikeDanger);
-    }
-  }
-
-  _drawSingleGauge(ctx, gx, gy, size, s, title, needleDeg, needleColor, sectorType, danger) {
-    const cx = gx + size / 2;
-    const cy = gy + size / 2;
-    const r = size * 52 / 120; // matches SVG r=52 in viewBox 120
-
-    ctx.save();
-
-    // Background circle
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-    ctx.lineWidth = 1.5 * s;
-    ctx.stroke();
-
-    // Sector zones
-    if (sectorType === 'green') {
-      // Right safe zone (45° to 135° from top = π/4 to 3π/4 from right)
-      ctx.fillStyle = 'rgba(0,180,0,0.2)';
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, -Math.PI * 3 / 4, -Math.PI / 4);
-      ctx.closePath();
-      ctx.fill();
-      // Left safe zone
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, Math.PI / 4, Math.PI * 3 / 4);
-      ctx.closePath();
-      ctx.fill();
-    } else if (sectorType === 'red') {
-      // Danger zones at sides (horizontal = tipped over)
-      ctx.fillStyle = 'rgba(255,50,50,0.25)';
-      // Left danger
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, Math.PI * 0.55, Math.PI * 0.8);
-      ctx.closePath();
-      ctx.fill();
-      // Right danger
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, -Math.PI * 0.8, -Math.PI * 0.55);
-      ctx.closePath();
-      ctx.fill();
-    } else if (sectorType === 'purple') {
-      ctx.fillStyle = 'rgba(170,102,255,0.15)';
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, -Math.PI * 3 / 4, -Math.PI / 4);
-      ctx.closePath();
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.arc(cx, cy, r, Math.PI / 4, Math.PI * 3 / 4);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    // Top tick mark
-    const tickLen = size * 9 / 120;
-    ctx.beginPath();
-    ctx.moveTo(cx, gy + size * 9 / 120);
-    ctx.lineTo(cx, gy + size * 18 / 120);
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-    ctx.lineWidth = 1.2 * s;
-    ctx.stroke();
-
-    // Red danger ticks for BIKE gauge
-    if (sectorType === 'red') {
-      ctx.strokeStyle = 'rgba(255,50,50,0.5)';
-      ctx.lineWidth = 0.8 * s;
-      const drawTick = (ang, inner, outer) => {
-        const a = (ang - 90) * Math.PI / 180;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * r * outer, cy + Math.sin(a) * r * outer);
-        ctx.lineTo(cx + Math.cos(a) * r * inner, cy + Math.sin(a) * r * inner);
-        ctx.stroke();
-      };
-      drawTick(-60, 0.75, 0.95);
-      drawTick(60, 0.75, 0.95);
-      drawTick(-75, 0.8, 0.95);
-      drawTick(75, 0.8, 0.95);
-    }
-
-    // Needle (rotated)
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(needleDeg * Math.PI / 180);
-    const needleW = 2.2 * s;
-    // Left arm
-    ctx.beginPath();
-    ctx.moveTo(-r * 0.7, 0);
-    ctx.lineTo(-r * 0.2, 0);
-    ctx.strokeStyle = needleColor;
-    ctx.lineWidth = needleW;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-    // Right arm
-    ctx.beginPath();
-    ctx.moveTo(r * 0.2, 0);
-    ctx.lineTo(r * 0.7, 0);
-    ctx.stroke();
-    // Center ring
-    ctx.beginPath();
-    ctx.arc(0, 0, 3 * s, 0, Math.PI * 2);
-    ctx.strokeStyle = needleColor;
-    ctx.lineWidth = 1.5 * s;
-    ctx.stroke();
-    // Center crosshair lines
-    ctx.lineWidth = 1.2 * s;
-    ctx.beginPath(); ctx.moveTo(-3 * s, 0); ctx.lineTo(-r * 0.2, 0); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(3 * s, 0); ctx.lineTo(r * 0.2, 0); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, -3 * s); ctx.lineTo(0, -r * 0.18); ctx.stroke();
-    ctx.restore();
-
-    // Top pointer triangle
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
-    ctx.beginPath();
-    ctx.moveTo(cx, gy + size * 10 / 120);
-    ctx.lineTo(cx - 2.5 * s, gy + size * 16 / 120);
-    ctx.lineTo(cx + 2.5 * s, gy + size * 16 / 120);
-    ctx.closePath();
-    ctx.fill();
-
-    // Title text above gauge
-    ctx.font = '600 ' + Math.round(7 * s) + 'px Helvetica Neue, Arial, sans-serif';
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(title, cx, gy - 1 * s);
-
-    // Degree label below gauge
-    const degText = Math.abs(needleDeg).toFixed(1) + '\u00B0';
-    let labelColor = '#fff';
-    if (sectorType === 'red') {
-      if (danger > 0.75) labelColor = '#ff4444';
-      else if (danger > 0.5) labelColor = '#ffaa22';
-    }
-    ctx.font = 'bold ' + Math.round(9 * s) + 'px Helvetica Neue, Arial, sans-serif';
-    ctx.fillStyle = labelColor;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.shadowColor = 'rgba(0,0,0,0.7)';
-    ctx.shadowBlur = 2 * s;
-    ctx.fillText(degText, cx, gy + size + 1 * s);
-    ctx.shadowBlur = 0;
-
-    ctx.restore();
-  }
-
-  // ── Partner pedal indicators — wider apart with partner role label ──
+  // ── Partner pedal indicators — a pair centred above the pedal buttons ──
 
   _drawPartnerIndicators(ctx, w, h, s, state) {
     const btnH = Math.min(Math.max(80 * s, h * 0.12), 140 * s);
     const bottomPad = 8 * s;
     const pedalTop = h - bottomPad - btnH;
-    const gaugeSize = 54 * s;
-    const gaugeGap = 6 * s;
-    // Indicators sit at same Y as gauges, flanking the gauge row
-    const gaugeY = pedalTop - gaugeGap - gaugeSize;
 
     const indW = 28 * s;
     const indH = 54 * s;
     const indR = 8 * s;
+    const indGap = 18 * s;
 
-    // Position: wider apart — outside the 3-gauge row
-    const totalGaugeW = gaugeSize * 3 + gaugeGap * 2;
-    const gaugeStartX = (w - totalGaugeW) / 2;
-    const upX = gaugeStartX - indW - 6 * s;
-    const downX = gaugeStartX + totalGaugeW + 6 * s;
-    const indY = gaugeY;
+    // Matches #gauge-bar: the two indicators, centred, sitting on the pedals.
+    const indY = pedalTop - 6 * s - indH;
+    const upX = w / 2 - indGap / 2 - indW;
+    const downX = w / 2 + indGap / 2;
 
     const drawInd = (ix, iy, isUp, isFlash, isWrong) => {
       let bg, border;

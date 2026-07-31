@@ -16,25 +16,10 @@ export class HUD {
     this.crashOverlay = document.getElementById('crash-overlay');
     this.crashFlash = 0;
 
-    // Gauges
-    this.bikeNeedle = document.getElementById('bike-needle');
-    this.bikeLabel = document.getElementById('bike-label');
-    this.phoneNeedle = document.getElementById('phone-needle');
-    this.phoneLabel = document.getElementById('phone-label');
-    this.phoneGauge = document.getElementById('phone-gauge');
-
-    // Partner gauge
-    this.partnerGauge = document.getElementById('partner-gauge');
-    this.partnerNeedle = document.getElementById('partner-needle');
-    this.partnerLabel = document.getElementById('partner-label');
+    // Partner pedal indicators. The YOU / BIKE / PARTNER lean gauges that used
+    // to sit beside them were removed from the HUD entirely — see index.html.
     this.partnerPedalUp = document.getElementById('partner-pedal-up');
     this.partnerPedalDown = document.getElementById('partner-pedal-down');
-    // Whether the partner has ANY steering input (tilt, gamepad, gyro, or
-    // keyboard). When false (e.g. a mobile player who declined motion with no
-    // gamepad), their lean stays 0 and the needle sits frozen, so we hide the
-    // gauge. A desktop joystick/keyboard partner CAN steer, so we keep it shown.
-    // Set by the game from the partner's reported readiness; defaults true.
-    this.partnerCanSteer = true;
     this._lastRemoteTapTime = 0;
     this._lastRemoteFootValue = null;
     this._pedalFlashTimer = 0;
@@ -57,14 +42,19 @@ export class HUD {
     this.progressDest = document.getElementById('progress-destination');
     this._checkpointEls = [];
 
-    // Collectible counter
+    // Collectible + geese counters (both stats in the top strip)
     this.collectibleWrap = document.getElementById('collectible-counter');
     this.collectibleIcon = document.getElementById('collectible-icon');
     this.collectibleCount = document.getElementById('collectible-count');
+    this.geeseWrap = document.getElementById('geese-counter');
+    this.geeseCount = document.getElementById('geese-count');
+    this.collectibleIconChar = '';
+    this._prevGeese = -1;
 
     // Segment timer
     this.timerRow = document.getElementById('timer-row');
     this.timerEl = document.getElementById('segment-timer');
+    this.elapsedRow = document.getElementById('elapsed-row');
 
     // Center countdown overlay
     this.countdownOverlay = document.getElementById('countdown-overlay');
@@ -75,9 +65,6 @@ export class HUD {
     this._prevKmh = -1;
     this._prevSpeedColor = '';
     this._prevDistText = '';
-    this._prevBikeDeg = NaN;
-    this._prevBikeDangerZone = -1;
-    this._prevPhoneDeg = NaN;
     this._prevStatusText = '';
     this._prevStatusColor = '';
   }
@@ -121,6 +108,7 @@ export class HUD {
 
   initTimer() {
     this.timerRow.classList.add('visible');
+    this.elapsedRow.classList.add('visible');
     this.timerEl.className = '';
     this.timerEl.textContent = '';
     this.elapsedEl.textContent = '\u23F1 0s';
@@ -159,25 +147,49 @@ export class HUD {
 
   hideTimer() {
     this.timerRow.classList.remove('visible');
+    this.elapsedRow.classList.remove('visible');
     this.countdownOverlay.classList.remove('visible');
     this.countdownNumber.textContent = '';
     this._lastCountdownSec = -1;
     this.elapsedEl.textContent = '';
   }
 
-  showCollectibles(level) {
+  showCollectibles(level, total) {
     const icons = { presents: '\uD83C\uDF81', gems: '\uD83D\uDC8E' }; // 🎁 💎
-    this.collectibleIcon.textContent = icons[level.collectibles] || '\u2B50';
-    this.collectibleCount.textContent = '0';
-    this.collectibleWrap.style.display = 'flex';
+    // Kept as a field too: GameRecorder redraws this strip into saved clips.
+    this.collectibleIconChar = icons[level.collectibles] || '\u2B50';
+    this.collectibleIcon.textContent = this.collectibleIconChar;
+    // Show the target from the start — "0" alone reads as a stat with no scale.
+    this.collectibleCount.textContent = total > 0 ? '0/' + total : '0';
+    this.collectibleWrap.classList.add('visible');
   }
 
   updateCollectibles(collected, total) {
-    this.collectibleCount.textContent = collected + ' / ' + total;
+    this.collectibleCount.textContent = collected + '/' + total;
   }
 
   hideCollectibles() {
-    this.collectibleWrap.style.display = 'none';
+    this.collectibleWrap.classList.remove('visible');
+  }
+
+  /** Start the geese tally at zero and reveal it in the top strip. */
+  showGeese() {
+    if (!this.geeseWrap) return;
+    this._prevGeese = 0;
+    this.geeseCount.textContent = '0';
+    this.geeseWrap.classList.add('visible');
+  }
+
+  updateGeese(count) {
+    if (!this.geeseWrap || count === this._prevGeese) return;
+    this._prevGeese = count;
+    this.geeseCount.textContent = count;
+  }
+
+  hideGeese() {
+    if (!this.geeseWrap) return;
+    this.geeseWrap.classList.remove('visible');
+    this._prevGeese = -1;
   }
 
   update(bike, input, pedalCtrl, dt, remoteData) {
@@ -268,39 +280,6 @@ export class HUD {
       }
     }
 
-    // Phone gauge (show on both mobile and desktop)
-    let phoneDeg;
-    if (isMobile) {
-      const rawRel = input.motionRawRelative || 0;
-      phoneDeg = Math.round(Math.max(-90, Math.min(90, rawRel)));
-    } else if (input.gamepadConnected) {
-      phoneDeg = input.suppressGamepadLean ? 0 : Math.round(input.gamepadLean * 90);
-    } else {
-      const aHeld = input.isPressed('KeyA');
-      const dHeld = input.isPressed('KeyD');
-      phoneDeg = aHeld ? -45 : (dHeld ? 45 : 0);
-    }
-    if (phoneDeg !== this._prevPhoneDeg) {
-      this._prevPhoneDeg = phoneDeg;
-      this.phoneNeedle.setAttribute('transform', 'rotate(' + phoneDeg + ', 60, 60)');
-      this.phoneLabel.textContent = Math.abs(phoneDeg) + '\u00B0';
-    }
-
-    // Bike gauge (round to integer degrees to reduce DOM writes)
-    const tiltDeg = (bike.lean * 180 / Math.PI);
-    const bikeDeg = Math.round(Math.max(-90, Math.min(90, tiltDeg)));
-    if (bikeDeg !== this._prevBikeDeg) {
-      this._prevBikeDeg = bikeDeg;
-      this.bikeNeedle.setAttribute('transform', 'rotate(' + bikeDeg + ', 60, 60)');
-      this.bikeLabel.textContent = Math.abs(tiltDeg).toFixed(1) + '\u00B0';
-    }
-    const danger = Math.abs(bike.lean) / 1.35;
-    const dangerZone = danger > 0.75 ? 2 : (danger > 0.5 ? 1 : 0);
-    if (dangerZone !== this._prevBikeDangerZone) {
-      this._prevBikeDangerZone = dangerZone;
-      this.bikeLabel.style.color = dangerZone === 2 ? '#ff4444' : (dangerZone === 1 ? '#ffaa22' : '#ffffff');
-    }
-
     // Status text (only when not controlled by countdown)
     let statusText = '';
     let statusColor = '';
@@ -321,17 +300,10 @@ export class HUD {
       if (statusColor) this.statusEl.style.color = statusColor;
     }
 
-    // Partner gauge + pedal indicators
-    if (remoteData && this.partnerGauge) {
-      // Hide the lean needle when the partner has no steering input — otherwise
-      // it sits frozen at 0°. Pedal indicators below stay (they can still pedal).
-      this.partnerGauge.style.display = (this.partnerCanSteer !== false) ? '' : 'none';
+    // Partner pedal indicators
+    if (remoteData) {
       if (this.partnerPedalUp) this.partnerPedalUp.style.display = 'flex';
       if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'flex';
-      // Needle: remoteLean (-1..1) → degrees (-90..90)
-      const partnerDeg = Math.max(-90, Math.min(90, remoteData.remoteLean * 90));
-      this.partnerNeedle.setAttribute('transform', 'rotate(' + partnerDeg.toFixed(1) + ', 60, 60)');
-      this.partnerLabel.textContent = Math.abs(partnerDeg).toFixed(1) + '\u00B0';
 
       // Pedal flash: detect new taps, red for wrong (same foot repeated)
       if (remoteData.remoteLastTapTime && remoteData.remoteLastTapTime !== this._lastRemoteTapTime) {
@@ -352,8 +324,7 @@ export class HUD {
           if (this.partnerPedalDown) this.partnerPedalDown.classList.remove('flash', 'flash-wrong');
         }
       }
-    } else if (this.partnerGauge) {
-      this.partnerGauge.style.display = 'none';
+    } else {
       if (this.partnerPedalUp) this.partnerPedalUp.style.display = 'none';
       if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'none';
     }

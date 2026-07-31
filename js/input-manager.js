@@ -293,7 +293,6 @@ export class InputManager {
     if (isMobile) {
       if (enableTouch) this._setupTouch();
       if (enableMotion) this._setupMotion();
-      if (enableTouch || enableMotion) this._setupCalibration();
     }
 
     if (this._slot) this.attachSlot(this._slot);
@@ -759,19 +758,6 @@ export class InputManager {
 
     this._smoothedLean += (lean - this._smoothedLean) * smoothK;
     this.motionLean = this._smoothedLean;
-  }
-
-  _setupCalibration() {
-    const gauge = document.getElementById('phone-gauge');
-    const flash = document.getElementById('calibrate-flash');
-    const doCalibrate = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.startTiltCalibration();
-      if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 800); }
-    };
-    gauge.addEventListener('touchstart', doCalibrate, { passive: false });
-    gauge.addEventListener('click', doCalibrate);
   }
 
   /**
