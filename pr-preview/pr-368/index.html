@@ -16,11 +16,19 @@
   canvas { display: block; width: 100%; height: 100%; }
 
   /* ── HUD: top bar ── */
+  /* Column: the stat strip, then the quick-menu button tucked under its right
+     end. The button used to sit beside the strip, which cost the strip ~58px of
+     width in the corner where the numbers are widest — a late-ride readout
+     (three-digit speed, km distance, mm:ss elapsed) outgrew it and wrapped. */
   #hud-top {
     position: fixed;
     top: env(safe-area-inset-top, 0px);
     left: 0; right: 0;
     padding: 10px 14px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
     pointer-events: none;
     z-index: 10;
   }
@@ -38,14 +46,18 @@
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 14px;
     padding: 7px 12px 6px;
-    /* Never grow under the quick-menu button in the opposite corner. */
-    max-width: calc(100% - 58px);
+    /* Full width on a phone so the strip has the whole screen to grow into;
+       back to hugging its content once there is room to spare. */
+    width: 100%;
+  }
+  @media (min-width: 700px) {
+    #hud-dashboard { width: auto; }
   }
   #hud-stats {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 5px 7px;
+    gap: 5px 6px;
   }
   .hud-stat {
     display: none;
@@ -62,10 +74,16 @@
     content: '';
     width: 1px;
     height: 13px;
-    margin-right: 4px;
+    margin-right: 3px;
     background: rgba(255,255,255,0.16);
   }
+  /* Every number gets a reserved slot, wide enough for the digits it usually
+     reaches, so 9 -> 10 -> 100 grows into its own column instead of shoving the
+     rest of the strip sideways. Tabular figures keep the slots honest. */
   #speed-value {
+    display: inline-block;
+    min-width: 2ch;
+    text-align: right;
     font-size: 20px;
     font-weight: 700;
     color: #fff;
@@ -94,32 +112,28 @@
   }
   #distance-display,
   #elapsed-display {
+    display: inline-block;
     font-size: 12px;
     font-weight: 600;
     color: rgba(255,255,255,0.5);
   }
+  #distance-display { min-width: 4.5ch; }
+  #elapsed-display { min-width: 5ch; }
   .hud-stat-icon { font-size: 13px; }
-  /* Narrow phones: trim the strip rather than let it wrap for ordinary
-     values. It still wraps rather than spilling if every stat runs long. */
-  @media (max-width: 400px) {
-    #hud-dashboard { padding: 6px 10px 5px; }
-    #hud-stats { gap: 4px 5px; }
-    #speed-value { font-size: 18px; }
-    #segment-timer { font-size: 15px; }
-    #distance-display,
-    #elapsed-display,
-    #collectible-count,
-    #geese-count { font-size: 11px; }
-  }
   #collectible-count,
   #geese-count {
+    display: inline-block;
     font-size: 12px;
     font-weight: 700;
     color: rgba(255,255,255,0.85);
   }
+  #collectible-count { min-width: 3ch; }
+  #geese-count { min-width: 2ch; }
 
   /* ── Segment timer ── */
   #segment-timer {
+    display: inline-block;
+    min-width: 4ch;
     font-size: 16px;
     font-weight: 700;
     color: #44ff66;
@@ -131,6 +145,35 @@
   #segment-timer.warning { color: #ffd700; }
   #segment-timer.danger { color: #ff4444; animation: timerPulse 0.5s infinite; }
   @keyframes timerPulse { 50% { opacity: 0.5; } }
+
+  /* Narrow phones: trim the strip rather than let it wrap for ordinary
+     values. It still wraps rather than spilling if every stat runs long. */
+  @media (max-width: 400px) {
+    #hud-dashboard { padding: 6px 9px 5px; }
+    #hud-stats { gap: 4px 5px; }
+    .hud-stat.visible ~ .hud-stat.visible::before { margin-right: 2px; }
+    #speed-value { font-size: 18px; }
+    #segment-timer { font-size: 15px; }
+    #distance-display,
+    #elapsed-display,
+    #collectible-count,
+    #geese-count { font-size: 11px; }
+  }
+  /* Second step for the smallest phones, where even the trimmed strip runs out
+     of room once every stat is at full length. */
+  @media (max-width: 385px) {
+    #hud-dashboard { padding: 6px 7px 5px; }
+    #hud-stats { gap: 3px 4px; }
+    .hud-stat.visible ~ .hud-stat.visible::before { margin-right: 2px; height: 11px; }
+    #speed-value { font-size: 16px; }
+    #speed-unit { font-size: 9px; }
+    #segment-timer { font-size: 13px; }
+    .hud-stat-icon { font-size: 11px; }
+    #distance-display,
+    #elapsed-display,
+    #collectible-count,
+    #geese-count { font-size: 10px; }
+  }
 
   /* ── Center countdown overlay ── */
   #countdown-overlay {
@@ -1260,9 +1303,8 @@
      #share-btn / #music-btn elements, which remain the single source of truth
      for both state and behaviour. */
   #quick-menu-btn {
-    position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + 10px);
-    right: 14px;
+    align-self: flex-end;
+    flex: 0 0 auto;
     width: 44px;
     height: 44px;
     border-radius: 50%;
@@ -1276,7 +1318,6 @@
     justify-content: center;
     cursor: pointer;
     pointer-events: auto;
-    z-index: 12;
     -webkit-tap-highlight-color: transparent;
     -webkit-appearance: none;
     appearance: none;
@@ -4310,6 +4351,18 @@
       <div id="contrib-stoker"></div>
     </div>
   </div>
+  <!-- Quick menu: the one on-screen control during a ride. Sits under the strip's
+       right end and opens the sheet further down, whose entries proxy clicks to
+       the hidden #side-buttons, #share-btn and #music-btn. Wired in
+       js/quick-menu.js. -->
+  <button id="quick-menu-btn" aria-label="Ride controls" aria-haspopup="dialog" aria-expanded="false">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+      <path d="M3 6h9M15.5 6H17M3 14h3M9.5 14H17M3 10h6M12.5 10H17"/>
+      <circle cx="13.75" cy="6" r="1.75"/>
+      <circle cx="7.75" cy="14" r="1.75"/>
+      <circle cx="10.75" cy="10" r="1.75"/>
+    </svg>
+  </button>
 </div>
 
 <div id="countdown-overlay"><span id="countdown-number"></span></div>
@@ -4366,18 +4419,6 @@ ON</button>
   <button class="side-btn speed-off" id="speed-btn">SPEED</button>
   <button class="side-btn assist-off" id="assist-btn" style="display:none;">ASSIST</button>
 </div>
-
-<!-- Quick menu: the one on-screen control during a ride. Opens the sheet below,
-     whose entries proxy clicks to the hidden buttons above plus #share-btn and
-     #music-btn. Wired in js/quick-menu.js. -->
-<button id="quick-menu-btn" aria-label="Ride controls" aria-haspopup="dialog" aria-expanded="false">
-  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
-    <path d="M3 6h9M15.5 6H17M3 14h3M9.5 14H17M3 10h6M12.5 10H17"/>
-    <circle cx="13.75" cy="6" r="1.75"/>
-    <circle cx="7.75" cy="14" r="1.75"/>
-    <circle cx="10.75" cy="10" r="1.75"/>
-  </svg>
-</button>
 
 <div id="quick-menu-overlay" role="dialog" aria-modal="true" aria-label="Ride controls">
   <div id="quick-menu-sheet">
@@ -4889,7 +4930,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.da15272 | 07-31-2026 03:47 (PR #368)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.92df3e7 | 07-31-2026 04:23 (PR #368)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
