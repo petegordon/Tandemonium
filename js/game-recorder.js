@@ -795,7 +795,7 @@ export class GameRecorder {
     }
 
     // ── Speed dashboard (top-left, matches #hud-dashboard) ──
-    this._drawSpeedDashboard(ctx, s, state);
+    this._drawSpeedDashboard(ctx, w, s, state);
 
     // ── Pedal buttons (bottom, matches .pedal-touch) ──
     this._drawPedalButtons(ctx, w, h, s, state);
@@ -851,7 +851,7 @@ export class GameRecorder {
 
   // ── Speed dashboard — replicates #hud-dashboard ──
 
-  _drawSpeedDashboard(ctx, s, state) {
+  _drawSpeedDashboard(ctx, w, s, state) {
     const kmh = Math.round((state.speed || 0) * 3.6);
     const maxKmh = 58;
     const dist = state.distance || 0;
@@ -915,10 +915,10 @@ export class GameRecorder {
       ]);
     }
 
-    // Measure — matches #hud-stats gap 7px + the 1px rule with its 4px margin.
-    const sepPre = 7 * s;
+    // Measure — matches #hud-stats gap 6px + the 1px rule with its 3px margin.
+    const sepPre = 6 * s;
     const sepW = 1 * s;
-    const sepPost = 4 * s;
+    const sepPost = 3 * s;
     let rowW = 0;
     for (let i = 0; i < stats.length; i++) {
       if (i > 0) rowW += sepPre + sepW + sepPost;
@@ -936,7 +936,9 @@ export class GameRecorder {
     const rowH = 20 * s;
     const barH = 3 * s;
     const lineGap = 4 * s;
-    const cardW = rowW + padH * 2;
+    // Spans the frame like the phone's strip does, but grows past that rather
+    // than clipping if a long readout needs more than the width allows.
+    const cardW = Math.max(rowW + padH * 2, w - px * 2);
     const cardH = padV * 2 + rowH + lineGap + barH;
 
     ctx.save();
