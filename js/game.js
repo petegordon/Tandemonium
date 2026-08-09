@@ -29,6 +29,7 @@ import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
+import { QuickMenu } from './quick-menu.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, setHapticSources } from './haptics.js';
@@ -611,6 +612,14 @@ class Game {
       this._updateMusicBtnIcon();
     });
 
+    // Quick menu — the only ride control left on screen. It proxies the hidden
+    // safety/speed/assist/reset/lobby buttons plus the clip and music toggles,
+    // so it has to be built after all of them are wired above.
+    this.quickMenu = new QuickMenu({
+      available: () => this.input.motionEnabled || this.input.gyroConnected,
+      run: () => this._recalibrateTilt(),
+    });
+
     // Volume changes from lobby slider
     this.lobby.onVolumeChanged = (vol) => {
       this._musicEl.volume = vol;
@@ -925,7 +934,6 @@ class Game {
         this._partnerHasTilt = profile.hasTilt;
         this._partnerCanSteer = (profile.canSteer !== false);
         this._partnerMethod = profile.method || null;
-        if (this.hud) this.hud.partnerCanSteer = this._partnerCanSteer;
         if (this._onStokerReady) this._onStokerReady();
         return;
       }
@@ -981,12 +989,7 @@ class Game {
     // Store room role for return-to-room
     this._roomRole = mode;
 
-    // Update partner gauge label to show partner's role
-    const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
-    if (partnerTitle) partnerTitle.textContent = mode === 'captain' ? 'STOKER' : 'CAPTAIN';
-
-    // Show partner gauge + pedal indicators immediately
-    document.getElementById('partner-gauge').style.display = '';
+    // Show the partner's pedal indicators immediately
     document.getElementById('partner-pedal-up').style.display = 'flex';
     document.getElementById('partner-pedal-down').style.display = 'flex';
 
@@ -1053,12 +1056,9 @@ class Game {
     this._remoteLastTapTime = 0;
     this.remoteLean = 0;
 
-    // Partner gauge: show P2 lean + pedal indicators (reuses the online MP HUD)
-    document.getElementById('partner-gauge').style.display = '';
+    // Show P2's pedal indicators (reuses the online MP HUD)
     document.getElementById('partner-pedal-up').style.display = 'flex';
     document.getElementById('partner-pedal-down').style.display = 'flex';
-    const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
-    if (partnerTitle) partnerTitle.textContent = 'PLAYER 2';
 
     // Tag the body so local-mode-specific CSS (contribution bar recolor, etc.)
     // can take effect. Cleared in _returnToLobby.
@@ -1563,9 +1563,10 @@ class Game {
     this._hideVictory();
     this.instructionsEl.classList.add('hidden');
 
-    // Show in-game music button
+    // Show in-game music button (off-screen; the quick menu proxies it)
     this._musicBtn.style.display = 'block';
     this._updateMusicBtnIcon();
+    this.quickMenu.setVisible(true);
 
     // Apply difficulty preset and create DDA manager
     const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
@@ -1680,7 +1681,8 @@ class Game {
     const firstTarget = this.raceManager.checkpoints.length > 0 ? this.raceManager.checkpoints[0] : this.raceManager.raceDistance;
     const initialBudget = this.raceManager._segmentBudget(firstTarget);
     this.hud.updateTimer(initialBudget, initialBudget);
-    this.hud.showCollectibles(level);
+    this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
+    this.hud.showGeese();
     this.world.setRaceMarkers(level, this.camera);
 
     // Tutorial: place all items from all phases so they're visible ahead
@@ -1775,6 +1777,7 @@ class Game {
     document.body.classList.remove('versus-fullframe');
     this._musicBtn.style.display = 'block';
     this._updateMusicBtnIcon();
+    this.quickMenu.setVisible(true);
 
     const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
     applyDifficulty(difficultyName);
@@ -2095,6 +2098,8 @@ class Game {
 
     // Refresh HUD so speed/distance reflect the reset state during countdown
     this.hud.update(this.bike, this.input, this.pedalCtrl || this.sharedPedal, 0);
+    // Back into a ride — restore the quick menu the result overlays retired.
+    this.quickMenu.setVisible(true);
 
     // Captain always broadcasts reset so stoker also resets.
     // Stoker receiving EVT_RESET calls _resetGame(fromRemote=true) which won't re-send.
@@ -2237,6 +2242,8 @@ class Game {
   _showGameOver(fromRemote = false) {
     this.state = 'gameover';
     this.hud.hideTimer();
+    // The quick menu sits above the result overlays, so retire it with the ride.
+    this.quickMenu.setVisible(false);
     if (this.raceManager) this.raceManager.crashCount++;
     hapticCrash();
 
@@ -2595,6 +2602,8 @@ class Game {
   _showVictory(fromRemote = false) {
     this.state = 'victory';
     this.hud.hideTimer();
+    // The quick menu sits above the result overlays, so retire it with the ride.
+    this.quickMenu.setVisible(false);
     const overlay = document.getElementById('victory-overlay');
     overlay.classList.add('visible');
 
@@ -3078,6 +3087,7 @@ class Game {
       this.input.suppressGamepadLean = !this.lobby.joystickActive;
     }
     this._musicBtn.style.display = 'none';
+    this.quickMenu.setVisible(false);
     if (!this.lobby.musicActive) {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
@@ -3096,6 +3106,7 @@ class Game {
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
+    this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
     this.recorder.stopBuffer();
@@ -3137,8 +3148,6 @@ class Game {
     const gpBadge = document.getElementById('gamepad-badge');
     if (gpBadge && this.input.gamepadConnected) gpBadge.style.display = 'block';
     document.getElementById('side-buttons').style.display = '';
-    const partnerTitle = document.querySelector('#partner-gauge .gauge-title');
-    if (partnerTitle) partnerTitle.textContent = 'PARTNER';
 
     this.archIndicator.hide();
     this._partnerBikeColor = null;
@@ -3206,6 +3215,7 @@ class Game {
 
   _returnToRoom() {
     this._musicBtn.style.display = 'none';
+    this.quickMenu.setVisible(false);
     if (!this.net) {
       // Fallback to full lobby return if no connection
       this._returnToLobby();
@@ -3239,6 +3249,7 @@ class Game {
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
+    this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
     this.recorder.stopBuffer();
@@ -3323,25 +3334,15 @@ class Game {
     }
     const flashing = this._recFlashTimer > 0;
 
-    // YOU gauge angle (phone tilt / gamepad / keyboard)
-    let youDeg = 0;
-    if (isMobile) {
-      youDeg = Math.max(-90, Math.min(90, this.input.motionRawRelative || 0));
-    } else if (this.input.gamepadConnected) {
-      youDeg = this.input.suppressGamepadLean ? 0 : this.input.gamepadLean * 90;
-    } else {
-      const aHeld = this.input.isPressed('KeyA');
-      const dHeld = this.input.isPressed('KeyD');
-      youDeg = aHeld ? -45 : (dHeld ? 45 : 0);
-    }
-
-    // BIKE gauge angle + danger level
-    const bikeLeanRad = this.bike.lean;
-    const bikeDeg = Math.max(-90, Math.min(90, bikeLeanRad * 180 / Math.PI));
-    const bikeDanger = Math.abs(bikeLeanRad) / 1.35;
-
-    // PARTNER gauge angle
-    const partnerDeg = remoteData ? Math.max(-90, Math.min(90, remoteData.remoteLean * 90)) : 0;
+    // Top strip stats, mirroring the HUD's #hud-stats row
+    const elapsedText = this.raceManager && this.raceManager.startTime > 0
+      ? '\u23F1 ' + this.raceManager.getElapsedFormatted()
+      : '';
+    const collectibleIcon = this.collectibleManager ? this.hud.collectibleIconChar : '';
+    const collectibleText = this.collectibleManager
+      ? this.collectibleManager.collected + '/' + this.collectibleManager.getTotalItems()
+      : '';
+    const geese = this.geeseManager ? this.geeseManager.getDisruptedCount() : null;
 
     // Checkpoint flash progress (0..1 = animating, -1 = inactive)
     const cpElapsed = (performance.now() - this._checkpointFlashTime) / 1000;
@@ -3371,10 +3372,10 @@ class Game {
       partnerDownFlash: flashing && this._recFlashFoot === 'down',
       partnerFlashWrong: flashing && this._recFlashWrong,
       mode: this.mode,
-      youDeg,
-      bikeDeg,
-      bikeDanger,
-      partnerDeg,
+      elapsedText,
+      collectibleIcon,
+      collectibleText,
+      geese,
       hasPartner: !!remoteData,
       checkpointFlash: cpFlash
     };
@@ -4383,6 +4384,7 @@ class Game {
     }
     if (this.geeseManager) {
       this.geeseManager.update(dt, this.bike.distanceTraveled, [this.bike.position]);
+      this.hud.updateGeese(this.geeseManager.getDisruptedCount());
     }
   }
 
@@ -4996,6 +4998,7 @@ class Game {
     }
     if (this.geeseManager) {
       this.geeseManager.update(dt, this.bike.distanceTraveled, [this.bike.position]);
+      this.hud.updateGeese(this.geeseManager.getDisruptedCount());
     }
 
     if (this.bike.speed > 8) {
@@ -6255,6 +6258,7 @@ class Game {
 
     // Solo: full cleanup and return to lobby
     this._musicBtn.style.display = 'none';
+    this.quickMenu.setVisible(false);
     this._hideGameOver();
     this._hideVictory();
     this._hideAllOverlays();
@@ -6263,6 +6267,7 @@ class Game {
     this.raceManager = null;
     this.hud.raceManager = null;
     this.hud.hideCollectibles();
+    this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
     this.archIndicator.hide();

@@ -16,32 +16,75 @@
   canvas { display: block; width: 100%; height: 100%; }
 
   /* ── HUD: top bar ── */
+  /* Column: the stat strip, then the quick-menu button tucked under its right
+     end. The button used to sit beside the strip, which cost the strip ~58px of
+     width in the corner where the numbers are widest — a late-ride readout
+     (three-digit speed, km distance, mm:ss elapsed) outgrew it and wrapped. */
   #hud-top {
     position: fixed;
     top: env(safe-area-inset-top, 0px);
     left: 0; right: 0;
     padding: 10px 14px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
     pointer-events: none;
     z-index: 10;
   }
+  /* One horizontal strip instead of a stacked card: speed · distance ·
+     elapsed · segment timer · collectibles · geese. Everything the rider
+     reads at a glance lives on one line, so the top of the screen is a single
+     band rather than four separate widgets competing for the same corner. */
   #hud-dashboard {
     display: inline-flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
     background: rgba(0,0,0,0.45);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 12px;
-    padding: 8px 14px 7px;
+    border-radius: 14px;
+    padding: 7px 12px 6px;
+    /* Full width on a phone so the strip has the whole screen to grow into;
+       back to hugging its content once there is room to spare. */
+    width: 100%;
   }
-  #speed-row {
+  @media (min-width: 700px) {
+    #hud-dashboard { width: auto; }
+  }
+  #hud-stats {
     display: flex;
-    align-items: baseline;
-    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px 6px;
   }
+  .hud-stat {
+    display: none;
+    align-items: center;
+    gap: 3px;
+    line-height: 1;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud-stat.visible { display: flex; }
+  /* Hairline separator, drawn by the stat that follows another visible one.
+     Because it is a child of the stat itself it disappears with it. */
+  .hud-stat.visible ~ .hud-stat.visible::before {
+    content: '';
+    width: 1px;
+    height: 13px;
+    margin-right: 3px;
+    background: rgba(255,255,255,0.16);
+  }
+  /* Every number gets a reserved slot, wide enough for the digits it usually
+     reaches, so 9 -> 10 -> 100 grows into its own column instead of shoving the
+     rest of the strip sideways. Tabular figures keep the slots honest. */
   #speed-value {
-    font-size: 28px;
+    display: inline-block;
+    min-width: 2ch;
+    text-align: right;
+    font-size: 20px;
     font-weight: 700;
     color: #fff;
     font-variant-numeric: tabular-nums;
@@ -49,13 +92,13 @@
     transition: color 0.2s;
   }
   #speed-unit {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: rgba(255,255,255,0.5);
   }
   #speed-bar-wrap {
     width: 100%;
-    height: 4px;
+    height: 3px;
     background: rgba(255,255,255,0.1);
     border-radius: 2px;
     overflow: hidden;
@@ -67,32 +110,31 @@
     background: #fff;
     transition: width 0.15s, background 0.2s;
   }
-  #distance-row {
-    display: flex;
-  }
-  #distance-display {
-    font-size: 11px;
-    font-weight: 500;
-    color: rgba(255,255,255,0.45);
-  }
-  #elapsed-row {
-    display: flex;
-  }
+  #distance-display,
   #elapsed-display {
-    font-size: 11px;
-    font-weight: 500;
-    color: rgba(255,255,255,0.45);
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.5);
   }
+  #distance-display { min-width: 4.5ch; }
+  #elapsed-display { min-width: 5ch; }
+  .hud-stat-icon { font-size: 13px; }
+  #collectible-count,
+  #geese-count {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.85);
+  }
+  #collectible-count { min-width: 3ch; }
+  #geese-count { min-width: 2ch; }
 
   /* ── Segment timer ── */
-  #timer-row {
-    display: none;
-  }
-  #timer-row.visible {
-    display: flex;
-  }
   #segment-timer {
-    font-size: 21px;
+    display: inline-block;
+    min-width: 4ch;
+    font-size: 16px;
     font-weight: 700;
     color: #44ff66;
     font-variant-numeric: tabular-nums;
@@ -103,6 +145,35 @@
   #segment-timer.warning { color: #ffd700; }
   #segment-timer.danger { color: #ff4444; animation: timerPulse 0.5s infinite; }
   @keyframes timerPulse { 50% { opacity: 0.5; } }
+
+  /* Narrow phones: trim the strip rather than let it wrap for ordinary
+     values. It still wraps rather than spilling if every stat runs long. */
+  @media (max-width: 400px) {
+    #hud-dashboard { padding: 6px 9px 5px; }
+    #hud-stats { gap: 4px 5px; }
+    .hud-stat.visible ~ .hud-stat.visible::before { margin-right: 2px; }
+    #speed-value { font-size: 18px; }
+    #segment-timer { font-size: 15px; }
+    #distance-display,
+    #elapsed-display,
+    #collectible-count,
+    #geese-count { font-size: 11px; }
+  }
+  /* Second step for the smallest phones, where even the trimmed strip runs out
+     of room once every stat is at full length. */
+  @media (max-width: 385px) {
+    #hud-dashboard { padding: 6px 7px 5px; }
+    #hud-stats { gap: 3px 4px; }
+    .hud-stat.visible ~ .hud-stat.visible::before { margin-right: 2px; height: 11px; }
+    #speed-value { font-size: 16px; }
+    #speed-unit { font-size: 9px; }
+    #segment-timer { font-size: 13px; }
+    .hud-stat-icon { font-size: 11px; }
+    #distance-display,
+    #elapsed-display,
+    #collectible-count,
+    #geese-count { font-size: 10px; }
+  }
 
   /* ── Center countdown overlay ── */
   #countdown-overlay {
@@ -643,23 +714,6 @@
     font-size: 12px;
     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7));
   }
-  #collectible-counter {
-    position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + 12px);
-    right: 14px;
-    font-size: 13px;
-    font-weight: 700;
-    color: rgba(255,255,255,0.8);
-    z-index: 11;
-    pointer-events: none;
-    display: none;
-    align-items: center;
-    gap: 4px;
-    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
-  }
-  #collectible-icon { font-size: 16px; }
-  #collectible-count { font-variant-numeric: tabular-nums; }
-
   /* ── Contribution bar (multiplayer) ── */
   #contribution-bar {
     display: none;
@@ -964,7 +1018,7 @@
     box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
   }
 
-  /* ── Bottom HUD: gauge bar + pedal buttons ── */
+  /* ── Bottom HUD: partner pedal indicators + pedal buttons ── */
   #bottom-hud {
     position: fixed;
     bottom: env(safe-area-inset-bottom, 0px);
@@ -981,34 +1035,7 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 6px;
-  }
-
-  /* ── Gauges ── */
-  .gauge-wrap {
-    width: 54px; height: 54px;
-    position: relative;
-  }
-  .gauge-wrap svg { width: 100%; height: 100%; }
-  .gauge-label {
-    position: absolute;
-    bottom: -2px; left: 0; right: 0;
-    text-align: center;
-    font-size: 10px;
-    font-weight: 700;
-    color: #fff;
-    text-shadow: 0 1px 3px rgba(0,0,0,0.7);
-  }
-  .gauge-title {
-    position: absolute;
-    top: -2px; left: 0; right: 0;
-    text-align: center;
-    font-size: 8px;
-    font-weight: 600;
-    color: rgba(255,255,255,0.7);
-    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    gap: 18px;
   }
   .pedal-indicator {
     width: 28px;
@@ -1127,12 +1154,19 @@
     z-index: 10;
   }
 
-  /* ── Top-right D-pad buttons (PS-style) ── */
+  /* ── Top-right D-pad buttons (PS-style) ──
+     Retired from the screen: the disc ate the top-right corner on phones, and
+     its four actions now live in the quick menu. The element stays in the DOM
+     and keeps its handlers — the quick menu and the gamepad D-pad both drive
+     the game by clicking these buttons, and Game still toggles their inline
+     display to signal which actions the current role may use. Note the rule
+     below is `display: none`, so the `style.display = ''` restores in game.js
+     resolve back to hidden rather than re-showing the disc. */
   #side-buttons {
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 10px);
     right: 14px;
-    display: grid;
+    display: none;
     grid-template-areas:
       ".      safety ."
       "lobby  .      reset"
@@ -1260,6 +1294,138 @@
   #assist-btn.assist-off {
     background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
+
+  /* ── Quick menu ──
+     One button in the corner the D-pad used to fill. Tap it to open a sheet of
+     the ride controls (safety, speed, assist, music, clip, reset, lobby), tap
+     an entry to run it — two taps for anything you rarely need, and nothing on
+     screen while you ride. The sheet drives the hidden #side-buttons /
+     #share-btn / #music-btn elements, which remain the single source of truth
+     for both state and behaviour. */
+  #quick-menu-btn {
+    align-self: flex-end;
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.22);
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: rgba(255,255,255,0.9);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    pointer-events: auto;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #quick-menu-btn.visible { display: flex; }
+  #quick-menu-btn:active {
+    background: rgba(255,255,255,0.2);
+    border-color: rgba(255,255,255,0.5);
+  }
+
+  #quick-menu-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 70;
+  }
+  #quick-menu-overlay.visible { display: flex; }
+  #quick-menu-sheet {
+    position: relative;
+    width: 100%;
+    max-width: 340px;
+    background: rgba(22,22,26,0.92);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 20px;
+    padding: 46px 16px 16px;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.55);
+  }
+  #quick-menu-title {
+    position: absolute;
+    top: 16px; left: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: rgba(255,255,255,0.4);
+  }
+  #quick-menu-close {
+    position: absolute;
+    top: 8px; right: 8px;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.75);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  #quick-menu-close:active { background: rgba(255,255,255,0.2); }
+  #quick-menu-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .qm-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 76px;
+    padding: 10px 6px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 14px;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.9);
+    font-family: inherit;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-appearance: none;
+    appearance: none;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+  }
+  .qm-item:active { background: rgba(255,255,255,0.16); }
+  .qm-item[hidden] { display: none; }
+  .qm-item:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  .qm-icon { font-size: 21px; line-height: 1; }
+  .qm-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+  }
+  .qm-state {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: rgba(255,255,255,0.4);
+  }
+  .qm-item.qm-on {
+    background: rgba(65,220,90,0.18);
+    border-color: rgba(65,220,90,0.45);
+  }
+  .qm-item.qm-on .qm-state { color: #6ee88a; }
+  .qm-item.qm-danger { grid-column: span 2; }
+  .qm-item.qm-danger .qm-label { color: #ff8a8a; }
 
   /* ── Pedal touch buttons (bottom) ── */
   #pedal-bar {
@@ -2073,9 +2239,7 @@
   body.mode-versus #bottom-hud,
   body.mode-versus #progress-bar-wrap,
   body.mode-versus #side-buttons,
-  body.mode-versus #bike-gauge,
-  body.mode-versus #phone-gauge,
-  body.mode-versus #partner-gauge,
+  body.mode-versus #quick-menu-btn,
   body.mode-versus #contribution-bar,
   body.mode-versus #gamepad-badge {
     display: none !important;
@@ -3033,7 +3197,13 @@
     background: rgba(255,255,255,0.18);
   }
 
-  /* ── Share / Record button ── */
+  /* ── Share / Record + music buttons ──
+     Both are off-screen now; the quick menu carries them. They keep their
+     geometry below only so nothing else has to change, and are forced hidden
+     here with `!important` because GameRecorder and Game still write
+     `style.display` on them to record availability — that inline value is the
+     signal the quick menu reads, so it must keep being written. */
+  #share-btn, #music-btn { display: none !important; }
   #share-btn {
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 130px);
@@ -4152,25 +4322,47 @@
 <!-- HUD: top bar -->
 <div id="hud-top">
   <div id="hud-dashboard">
-    <div id="speed-row">
-      <span id="speed-value">0</span>
-      <span id="speed-unit">km/h</span>
+    <div id="hud-stats">
+      <div class="hud-stat visible" id="speed-row">
+        <span id="speed-value">0</span>
+        <span id="speed-unit">km/h</span>
+      </div>
+      <div class="hud-stat visible" id="distance-row">
+        <span id="distance-display">0 m</span>
+      </div>
+      <div class="hud-stat" id="elapsed-row">
+        <span id="elapsed-display"></span>
+      </div>
+      <div class="hud-stat" id="timer-row">
+        <span id="segment-timer"></span>
+      </div>
+      <div class="hud-stat" id="collectible-counter">
+        <span class="hud-stat-icon" id="collectible-icon"></span>
+        <span id="collectible-count"></span>
+      </div>
+      <div class="hud-stat" id="geese-counter">
+        <span class="hud-stat-icon">&#x1FABF;</span>
+        <span id="geese-count">0</span>
+      </div>
     </div>
     <div id="speed-bar-wrap"><div id="speed-bar-fill"></div></div>
-    <div id="distance-row">
-      <span id="distance-display">0 m</span>
-    </div>
-    <div id="elapsed-row">
-      <span id="elapsed-display"></span>
-    </div>
-    <div id="timer-row">
-      <span id="segment-timer"></span>
-    </div>
     <div id="contribution-bar">
       <div id="contrib-captain"></div>
       <div id="contrib-stoker"></div>
     </div>
   </div>
+  <!-- Quick menu: the one on-screen control during a ride. Sits under the strip's
+       right end and opens the sheet further down, whose entries proxy clicks to
+       the hidden #side-buttons, #share-btn and #music-btn. Wired in
+       js/quick-menu.js. -->
+  <button id="quick-menu-btn" aria-label="Ride controls" aria-haspopup="dialog" aria-expanded="false">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+      <path d="M3 6h9M15.5 6H17M3 14h3M9.5 14H17M3 10h6M12.5 10H17"/>
+      <circle cx="13.75" cy="6" r="1.75"/>
+      <circle cx="7.75" cy="14" r="1.75"/>
+      <circle cx="10.75" cy="10" r="1.75"/>
+    </svg>
+  </button>
 </div>
 
 <div id="countdown-overlay"><span id="countdown-number"></span></div>
@@ -4182,8 +4374,11 @@
   <span id="progress-bar-bike">&#x1F6B2;</span>
   <span id="progress-destination"></span>
 </div>
-<div id="collectible-counter"><span id="collectible-icon"></span><span id="collectible-count"></span></div>
 
+<!-- Clip + music toggles. Both moved into the quick menu (#quick-menu-overlay)
+     to clear the left edge; they stay in the DOM because their handlers and
+     their inline display (set by GameRecorder / Game) are what the quick menu
+     reads for availability and proxies clicks to. -->
 <!-- Share button (recording) -->
 <button id="share-btn" aria-label="Share clip">&#x1F3AC;</button>
 
@@ -4225,71 +4420,46 @@ ON</button>
   <button class="side-btn assist-off" id="assist-btn" style="display:none;">ASSIST</button>
 </div>
 
+<div id="quick-menu-overlay" role="dialog" aria-modal="true" aria-label="Ride controls">
+  <div id="quick-menu-sheet">
+    <span id="quick-menu-title">CONTROLS</span>
+    <button id="quick-menu-close" aria-label="Close">&times;</button>
+    <div id="quick-menu-grid">
+      <button class="qm-item" id="qm-safety">
+        <span class="qm-icon">&#x1F6E1;&#xFE0F;</span><span class="qm-label">SAFETY</span><span class="qm-state"></span>
+      </button>
+      <button class="qm-item" id="qm-speed">
+        <span class="qm-icon">&#x26A1;</span><span class="qm-label">AUTO SPEED</span><span class="qm-state"></span>
+      </button>
+      <button class="qm-item" id="qm-assist">
+        <span class="qm-icon">&#x1F91D;</span><span class="qm-label">ASSIST</span><span class="qm-state"></span>
+      </button>
+      <button class="qm-item" id="qm-music">
+        <span class="qm-icon">&#x1F3B5;</span><span class="qm-label">MUSIC</span><span class="qm-state"></span>
+      </button>
+      <button class="qm-item" id="qm-clip">
+        <span class="qm-icon">&#x1F3AC;</span><span class="qm-label">SAVE CLIP</span><span class="qm-state"></span>
+      </button>
+      <button class="qm-item" id="qm-recenter">
+        <span class="qm-icon">&#x1F3AF;</span><span class="qm-label">RECENTER TILT</span><span class="qm-state"></span>
+      </button>
+      <button class="qm-item" id="qm-reset">
+        <span class="qm-icon">&#x21BA;</span><span class="qm-label">RESET</span><span class="qm-state"></span>
+      </button>
+      <button class="qm-item qm-danger" id="qm-lobby">
+        <span class="qm-icon">&#x1F3E0;</span><span class="qm-label">RETURN TO LOBBY</span>
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Bottom HUD: gauge bar + pedal buttons -->
 <div id="bottom-hud">
+  <!-- Partner pedal indicators. The YOU / BIKE / PARTNER lean gauges that used
+       to sit here were removed: they crowded the space directly above the pedal
+       buttons and duplicated what the bike itself already shows on screen. -->
   <div id="gauge-bar">
     <div class="pedal-indicator" id="partner-pedal-up">&#9650;</div>
-    <div class="gauge-wrap" id="phone-gauge">
-      <div class="gauge-title">YOU</div>
-      <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-        <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(0,180,0,0.2)"/>
-        <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(0,180,0,0.2)"/>
-        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-        <g id="phone-needle" transform="rotate(0, 60, 60)">
-          <line x1="18" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
-          <line x1="72" y1="60" x2="102" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
-          <circle cx="60" cy="60" r="4" fill="none" stroke="#fa3" stroke-width="2"/>
-          <line x1="56" y1="60" x2="48" y2="60" stroke="#fa3" stroke-width="2"/>
-          <line x1="64" y1="60" x2="72" y2="60" stroke="#fa3" stroke-width="2"/>
-          <line x1="60" y1="56" x2="60" y2="50" stroke="#fa3" stroke-width="2"/>
-        </g>
-        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
-      </svg>
-      <div class="gauge-label" id="phone-label">0.0&deg;</div>
-    </div>
-    <div class="gauge-wrap" id="bike-gauge">
-      <div class="gauge-title">BIKE</div>
-      <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-        <path d="M 60 60 L 14.4 79.6 A 52 52 0 0 1 8 60 L 60 60" fill="rgba(255,50,50,0.25)"/>
-        <path d="M 60 60 L 112 60 A 52 52 0 0 1 105.6 79.6 L 60 60" fill="rgba(255,50,50,0.25)"/>
-        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-        <line x1="29" y1="20" x2="34" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-        <line x1="91" y1="20" x2="86" y2="28" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-        <line x1="12" y1="44" x2="21" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-        <line x1="108" y1="44" x2="99" y2="47" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
-        <g id="bike-needle" transform="rotate(0, 60, 60)">
-          <line x1="18" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
-          <line x1="72" y1="60" x2="102" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
-          <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
-          <line x1="56" y1="60" x2="48" y2="60" stroke="#4af" stroke-width="2"/>
-          <line x1="64" y1="60" x2="72" y2="60" stroke="#4af" stroke-width="2"/>
-          <line x1="60" y1="56" x2="60" y2="50" stroke="#4af" stroke-width="2"/>
-        </g>
-        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
-      </svg>
-      <div class="gauge-label" id="bike-label">0.0&deg;</div>
-    </div>
-    <div class="gauge-wrap" id="partner-gauge" style="display:none;">
-      <div class="gauge-title">PARTNER</div>
-      <svg viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r="52" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
-        <path d="M 60 60 L 96.8 23.2 A 52 52 0 0 1 96.8 96.8 L 60 60" fill="rgba(170,102,255,0.15)"/>
-        <path d="M 60 60 L 23.2 96.8 A 52 52 0 0 1 23.2 23.2 L 60 60" fill="rgba(170,102,255,0.15)"/>
-        <line x1="60" y1="9" x2="60" y2="18" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-        <g id="partner-needle" transform="rotate(0, 60, 60)">
-          <line x1="18" y1="60" x2="48" y2="60" stroke="#a6f" stroke-width="3" stroke-linecap="round"/>
-          <line x1="72" y1="60" x2="102" y2="60" stroke="#a6f" stroke-width="3" stroke-linecap="round"/>
-          <circle cx="60" cy="60" r="4" fill="none" stroke="#a6f" stroke-width="2"/>
-          <line x1="56" y1="60" x2="48" y2="60" stroke="#a6f" stroke-width="2"/>
-          <line x1="64" y1="60" x2="72" y2="60" stroke="#a6f" stroke-width="2"/>
-          <line x1="60" y1="56" x2="60" y2="50" stroke="#a6f" stroke-width="2"/>
-        </g>
-        <polygon points="60,10 57,16 63,16" fill="#fff" opacity="0.8"/>
-      </svg>
-      <div class="gauge-label" id="partner-label">0.0&deg;</div>
-    </div>
     <div class="pedal-indicator" id="partner-pedal-down">&#9660;</div>
   </div>
   <div id="pedal-bar">
@@ -4760,7 +4930,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.ec1bcc3 | 07-25-2026 23:50</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d2a7c7e | 08-09-2026 19:09</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
