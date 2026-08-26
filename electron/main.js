@@ -608,7 +608,10 @@ function createWindow() {
 
   mainWindow.setMenu(null);
   // Load via custom protocol (no network socket → no Windows Firewall prompt)
-  mainWindow.loadURL('tandemonium://app/index.html');
+  // Tourist Mode (#333) dev toggle: `TANDEM_TOURIST=1 npm start` streams Google
+  // Photorealistic 3D Tiles instead of the procedural road.
+  const _touristQuery = process.env.TANDEM_TOURIST ? '?mode=tourist' : '';
+  mainWindow.loadURL('tandemonium://app/index.html' + _touristQuery);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -634,9 +637,23 @@ app.whenReady().then(async () => {
   // Access-Control-Allow-Origin back to match the actual page origin so the
   // browser's CORS check passes.
   const API_MATCH = /workers\.dev|jimandi\.love/;
+  // Tourist Mode (#333): the Google Map Tiles API key is restricted to the
+  // jimandi.love HTTP referrer, but Electron's page origin is tandemonium://app.
+  // Send a matching Referer on tile requests so the restricted key is accepted
+  // in the desktop app (the web build at jimandi.love matches naturally).
+  // maps.googleapis.com is included for the Maps JavaScript API, which Tourist
+  // Mode loads to reach ElevationService when anchoring a ?lat/?lon ride. Same
+  // restricted key, so it needs the same Referer or the lookup is rejected and
+  // the anchor silently degrades to the blind-guess fallback.
+  const TILES_MATCH = /(?:tile|maps)\.googleapis\.com/;
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     if (API_MATCH.test(details.url)) {
       details.requestHeaders['Origin'] = 'https://tandemonium.jimandi.love';
+    }
+    if (TILES_MATCH.test(details.url)) {
+      // Use a subdomain referer so it matches a `*.jimandi.love` key restriction
+      // (the apex `jimandi.love` does NOT satisfy the wildcard).
+      details.requestHeaders['Referer'] = 'https://tandemonium.jimandi.love/';
     }
     callback({ requestHeaders: details.requestHeaders });
   });

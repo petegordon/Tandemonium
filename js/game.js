@@ -25,6 +25,8 @@ import { FrontViewCamera } from './front-view-camera.js';
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
+import { TouristWorld } from './tourist-world.js';
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin } from './tourist-config.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
@@ -230,11 +232,31 @@ class Game {
     setHapticSources([this.input]);
     this.pedalCtrl = new PedalController(this.input);
     this.balanceCtrl = new BalanceController(this.input);
-    this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+    // Tourist Mode (#333): stream a real-world location from Google
+    // Photorealistic 3D Tiles instead of the procedural road. The bike,
+    // camera, physics and loop are reused unchanged; only the world source
+    // swaps. The bike's roadPath is null so TouristWorld owns vertical
+    // placement via ground-following raycasts.
+    this.isTourist = isTouristMode();
     // Riders model (goose captain + stoker) when Show Riders is on, else the
-    // plain frame. See the flag read above.
-    this.bike = new BikeModel(this.scene, this._showRiders ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH);
-    this.bike.roadPath = this.world.roadPath;
+    // plain frame. Applied in both worlds so Tourist Mode shows the riders too.
+    const bikeModelPath = this._showRiders ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH;
+    if (this.isTourist) {
+      const apiKey = getMapsApiKey();
+      if (!apiKey) {
+        console.error('[Tourist Mode] No Google Map Tiles API key found. ' +
+          'Run `npm run gen-tourist-key` (reads .env), or pass ?key=YOUR_KEY, ' +
+          'or set localStorage "tourist_maps_key".');
+      }
+      this.world = new TouristWorld(this.scene, this.camera, this.renderer, { apiKey });
+      this.bike = new BikeModel(this.scene, bikeModelPath);
+      this.bike.roadPath = null;
+      this.world.setBike(this.bike);
+    } else {
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+      this.bike = new BikeModel(this.scene, bikeModelPath);
+      this.bike.roadPath = this.world.roadPath;
+    }
     this.chaseCamera = new ChaseCamera(this.camera);
     // Picture-in-picture front-facing "selfie cam" — only with the riders model
     // (it exists to show off their lean).
@@ -4129,7 +4151,9 @@ class Game {
 
     // Race progress + contribution tracking
     if (this.raceManager) {
-      const timerEnabled = !this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false;
+      // Tourist Mode (#333): free-roam — no race timer / timeout.
+      const timerEnabled = !this.isTourist &&
+        (!this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false);
       const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled ? dt : 0);
       if (raceEvent) {
         if (raceEvent.event === 'timeout' && timerEnabled) { this._onTimerExpired(); return; }
@@ -6311,6 +6335,12 @@ class Game {
 // ============================================================
 // BOOT
 // ============================================================
+// Tourist Mode with a ?lat/?lon location needs its anchor height resolved from
+// the ground elevation BEFORE the world is built (the ReorientationPlugin takes
+// the anchor at construction). Gated on isTouristMode() so the normal boot path
+// stays fully synchronous — top-level await would otherwise defer it a tick.
+if (isTouristMode()) await resolveTouristOrigin();
+
 const game = new Game();
 window._game = game;
 window.perfProbe = perfProbe;
