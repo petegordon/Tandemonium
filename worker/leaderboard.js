@@ -26,6 +26,13 @@ export default {
         if (limited) return limited;
         return handleGoogleAuth(request, env, corsOrigin);
       }
+      // Redirect-mode sign-in: a top-level form POST from Google, not a fetch,
+      // so it answers with a 303 back to the dashboard rather than JSON.
+      if (path === '/auth/google/redirect' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleGoogleAuthRedirect(request, env);
+      }
       if (path === '/auth/steam' && request.method === 'POST') {
         const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
@@ -155,12 +162,22 @@ async function handleGoogleAuth(request, env, corsOrigin) {
 
   writeMetric(env, 'auth_google');
 
+  const { userId, name, picture, email } = await upsertGoogleUser(env, payload);
+
+  // Create server JWT (include email for dashboard access control)
+  const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET);
+
+  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture } }, 200, corsOrigin);
+}
+
+// Shared by the popup flow (/auth/google) and the redirect flow
+// (/auth/google/redirect), which differ only in how the credential arrives.
+async function upsertGoogleUser(env, payload) {
   const googleId = payload.sub;
   const name = payload.name || 'Player';
   const picture = payload.picture || null;
   const email = payload.email || null;
 
-  // Upsert user
   const existing = await env.DB.prepare(
     'SELECT id FROM users WHERE provider = ? AND provider_id = ?'
   ).bind('google', googleId).first();
@@ -178,10 +195,77 @@ async function handleGoogleAuth(request, env, corsOrigin) {
     userId = ins.meta.last_row_id;
   }
 
-  // Create server JWT (include email for dashboard access control)
-  const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET);
+  return { userId, name, picture, email };
+}
 
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture } }, 200, corsOrigin);
+// ── Redirect-mode sign-in ────────────────────────────────────────────────
+// On iOS every browser is WebKit, and ITP breaks the popup flow's postMessage
+// of the credential back to the opener: you pick an account and nothing ever
+// returns. Redirect mode avoids the cross-window hop entirely — Google POSTs
+// the credential here as a normal form submit, and we bounce back to the
+// dashboard with a session token. Requires this URL to be registered as an
+// Authorized redirect URI on the OAuth client.
+function dashboardUrl(env) {
+  return env.DASHBOARD_URL || ((env.CORS_ORIGIN || '').replace(/\/$/, '') + '/dashboard/');
+}
+
+function readCookie(request, name) {
+  const header = request.headers.get('Cookie') || '';
+  for (const part of header.split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return v.join('=');
+  }
+  return null;
+}
+
+function redirectToDashboard(env, fragment) {
+  return new Response(null, {
+    status: 303,
+    headers: { Location: dashboardUrl(env) + '#' + fragment, 'Cache-Control': 'no-store' },
+  });
+}
+
+async function handleGoogleAuthRedirect(request, env) {
+  const fail = (msg) => redirectToDashboard(env, 'dash_error=' + encodeURIComponent(msg));
+
+  if (!env.GOOGLE_CLIENT_ID || !env.JWT_SECRET) {
+    return fail('Google sign-in is not configured on the worker (GOOGLE_CLIENT_ID or JWT_SECRET unset)');
+  }
+
+  let form;
+  try {
+    form = await request.formData();
+  } catch {
+    return fail('Malformed sign-in response from Google');
+  }
+
+  // Google's documented double-submit CSRF check: the token in the body must
+  // match the one in the cookie it set on the same request.
+  const bodyCsrf = form.get('g_csrf_token');
+  const cookieCsrf = readCookie(request, 'g_csrf_token');
+  if (!bodyCsrf || !cookieCsrf || bodyCsrf !== cookieCsrf) {
+    return fail('Sign-in could not be verified (CSRF token missing or mismatched). ' +
+      'This usually means cookies are blocked for accounts.google.com.');
+  }
+
+  const credential = form.get('credential');
+  if (!credential) return fail('Google did not return a credential');
+
+  let payload;
+  try {
+    payload = await verifyGoogleIdToken(credential, env.GOOGLE_CLIENT_ID);
+  } catch (e) {
+    return fail(e.message);
+  }
+
+  writeMetric(env, 'auth_google_redirect');
+
+  const { userId, name, picture, email } = await upsertGoogleUser(env, payload);
+  // Shorter-lived than the popup flow's token: this one rides back in a URL
+  // fragment, so it lands in browser history.
+  const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET, 8 * 3600);
+
+  return redirectToDashboard(env, 'dash_token=' + encodeURIComponent(jwt));
 }
 
 async function handleSteamAuth(request, env, corsOrigin) {

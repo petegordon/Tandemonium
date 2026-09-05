@@ -165,6 +165,52 @@ function withTimeout(promise, ms, label) {
 }
 
 const GOOGLE_CLIENT_ID = '640682648249-dp1dou0mmpkm6m697oakbe9odabt1dui.apps.googleusercontent.com';
+const REDIRECT_LOGIN_URI = API_BASE + '/auth/google/redirect';
+
+// On iOS every browser — Chrome and Edge included — is WebKit, and ITP breaks
+// the popup flow's postMessage of the credential back to the opener: you pick
+// an account and nothing ever comes back. Redirect mode has no cross-window
+// hop, so it works there. Sticky once chosen, so a browser that needed it
+// keeps using it.
+function isWebKitMobile() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function useRedirectMode() {
+  try { if (localStorage.getItem('dash_force_redirect') === '1') return true; } catch (e) {}
+  return isWebKitMobile();
+}
+function forceRedirectMode() {
+  try { localStorage.setItem('dash_force_redirect', '1'); } catch (e) {}
+  location.reload();
+}
+
+// Redirect mode hands the session back in the URL fragment (never sent to a
+// server, unlike a query string). Consume it and scrub it from the address bar
+// so it doesn't linger in history or get shared by copy-paste.
+let redirectErrored = false;
+function consumeRedirectResult() {
+  const hash = location.hash.replace(/^#/, '');
+  if (!hash) return false;
+  const params = new URLSearchParams(hash);
+  const token = params.get('dash_token');
+  const error = params.get('dash_error');
+  if (!token && !error) return false;
+
+  history.replaceState(null, '', location.pathname + location.search);
+  if (token) {
+    dashToken = token;
+    sessionStorage.setItem('dash_token', token);
+    return true;
+  }
+  // Leave any stored session alone — a failed re-auth shouldn't log you out —
+  // but the error must stand rather than being replaced by the saved-session
+  // probe quietly succeeding underneath it.
+  redirectErrored = true;
+  showAuthError(error, 'returned by /auth/google/redirect');
+  showRedirectButton();
+  return false;
+}
 
 // Set when the Google button is clicked; cleared once a credential arrives.
 // A popup that opens, takes the account choice and never calls back leaves
@@ -177,7 +223,14 @@ function gsiReady() {
 }
 
 function initGSI() {
-  google.accounts.id.initialize({
+  const redirect = useRedirectMode();
+
+  google.accounts.id.initialize(redirect ? {
+    client_id: GOOGLE_CLIENT_ID,
+    ux_mode: 'redirect',
+    login_uri: REDIRECT_LOGIN_URI,
+    itp_support: true,
+  } : {
     client_id: GOOGLE_CLIENT_ID,
     callback: onGoogleSignIn,
     auto_select: true,
@@ -192,11 +245,17 @@ function initGSI() {
     type: 'standard', theme: 'filled_black', size: 'large', text: 'sign_in_with',
   });
 
+  if (redirect) {
+    // Nothing to watchdog: the page navigates away and comes back with a
+    // token in the fragment, so a failure surfaces as dash_error instead.
+    setAuthStatus('Ready. Choosing an account will send you to Google and back.');
+    return;
+  }
+
   // The rendered button is a cross-origin iframe, so we can't hook its click
   // directly — but a pointerdown anywhere on it is close enough to start the
   // watchdog that catches "popup never returns".
   container.addEventListener('pointerdown', armSignInWatchdog, true);
-
   setAuthStatus('Ready. Choose your Google account to continue.');
 }
 
@@ -208,13 +267,13 @@ function armSignInWatchdog() {
     if (!signInStartedAt) return; // credential arrived; nothing to report
     setAuthStatus('');
     showAuthError(
-      'Google never returned a sign-in to this page. The popup opened, but the ' +
-      'credential was not delivered back — so the dashboard was never told who ' +
-      'you are. In Chrome this is almost always one of: this site is not listed ' +
-      'as an Authorized JavaScript origin on the OAuth client, or third-party ' +
-      'cookies are blocked for accounts.google.com. Click "Diagnose" below for ' +
-      "Google's own reason.",
+      'Google never returned a sign-in to this page. The popup opened and took ' +
+      'your account, but the credential was not delivered back — so the dashboard ' +
+      'was never told who you are. This is what blocked third-party cookies for ' +
+      'accounts.google.com looks like. The redirect flow below avoids the popup ' +
+      'entirely and works even when cookies are restricted.',
       'No credential callback within 60s of ' + location.origin);
+    showRedirectButton();
     showDiagnoseButton();
   }, 60000);
 }
@@ -222,6 +281,9 @@ function armSignInWatchdog() {
 // Google's script is a common silent casualty of ad/tracker blockers and
 // locked-down networks: it fails to load, no button appears, nothing errors.
 window.addEventListener('DOMContentLoaded', () => {
+  // Coming back from redirect-mode sign-in: the token is already consumed
+  // from the fragment, so go straight in.
+  if (cameFromRedirect) { showDashboard(); return; }
   if (dashToken) return; // the saved-session probe handles this case
   const deadline = Date.now() + 8000;
   (function waitForGSI() {
@@ -285,17 +347,28 @@ function diagnoseSignIn() {
   });
 }
 
-// showAuthError() replaces the gate's contents, which removes the diagnose
-// button — put it back so a second attempt is always one click away.
-function showDiagnoseButton() {
+// showAuthError() replaces the gate's contents, which removes these buttons —
+// put them back so the next attempt is always one click away.
+function addGateButton(id, label, onclick, primary) {
   const gate = document.getElementById('auth-gate');
-  if (document.getElementById('auth-diagnose')) return;
+  if (document.getElementById(id)) return;
   const btn = document.createElement('button');
-  btn.id = 'auth-diagnose';
-  btn.textContent = 'Ask Google why';
-  btn.style.cssText = 'margin:12px 0 0 8px;padding:8px 16px;background:#333;color:#ccc;border:1px solid #555;border-radius:6px;cursor:pointer;';
-  btn.onclick = diagnoseSignIn;
+  btn.id = id;
+  btn.textContent = label;
+  btn.style.cssText = 'margin:12px 4px 0;padding:8px 16px;border-radius:6px;cursor:pointer;' +
+    (primary ? 'background:#2563eb;color:#fff;border:1px solid #2563eb;'
+             : 'background:#333;color:#ccc;border:1px solid #555;');
+  btn.onclick = onclick;
   gate.appendChild(btn);
+}
+
+function showDiagnoseButton() {
+  addGateButton('auth-diagnose', 'Ask Google why', diagnoseSignIn, false);
+}
+
+// The escape hatch from a popup that never returns.
+function showRedirectButton() {
+  addGateButton('auth-redirect', 'Sign in without the popup', forceRedirectMode, true);
 }
 
 // Clear the token and drop Google's auto-select so "Try again" can actually
@@ -358,11 +431,16 @@ function showDashboard() {
   loadAll();
 }
 
+// Must run before the probe below: a token arriving from redirect-mode
+// sign-in supersedes whatever is in sessionStorage, and letting the probe
+// validate a stale token first could reload the fresh one away.
+const cameFromRedirect = consumeRedirectResult();
+
 // Auto-login if we have a stored token — verify it still works.
 // Only an auth rejection clears the token: a 429 from the read limiter or a
 // worker 500 used to sign you out here, and with Google auto-select on that
 // turned into an endless sign-in → reject → reload loop.
-if (dashToken) {
+if (dashToken && !cameFromRedirect && !redirectErrored) {
   setAuthStatus('Checking your saved session…');
   withTimeout(fetch(API + '/overview?days=1', { headers: { 'Authorization': 'Bearer ' + dashToken } }),
     15000, 'GET /overview')

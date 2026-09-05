@@ -13,6 +13,8 @@ CORS_ORIGIN = "https://tandemonium.jimandi.love"
 # emails. Add an address here (or override with `wrangler secret put
 # DASHBOARD_EMAILS`) rather than editing the allow-list in leaderboard.js.
 DASHBOARD_EMAILS = "pete@usersfirst.com,pete@petegordon.com"
+# Where /auth/google/redirect sends the browser back to after sign-in.
+DASHBOARD_URL = "https://tandemonium.jimandi.love/dashboard/"
 # Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
 
 [[analytics_engine_datasets]]
