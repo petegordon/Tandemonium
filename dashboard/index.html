@@ -4,7 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tandemonium Analytics</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<!-- defer: as a blocking head script, a slow or blocked jsdelivr left the page
+     blank with nothing rendered at all — including the sign-in button. Charts
+     are only drawn after an API round-trip, so deferring is safe, and
+     makeChart() degrades to a placeholder if it never arrives. -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4" defer></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e0e0e0; padding: 20px; }
@@ -55,15 +59,24 @@
 <h1>Tandemonium Analytics</h1>
 <div class="subtitle">Steam Next Fest Dashboard</div>
 
-<!-- Auth gate: shown when not signed in -->
+<!-- Auth gate: shown when not signed in.
+     data-use_fedcm_for_prompt / data-itp_support: without these, Google's
+     prompt is silently suppressed in browsers that block third-party cookies
+     (Chrome's phase-out, Safari ITP) — it "tries" and no callback ever
+     arrives, which is indistinguishable from a hang. -->
 <div id="auth-gate" style="text-align:center;padding:60px 20px;">
   <p style="color:#888;margin-bottom:20px;">Sign in with an authorized Google account to view the dashboard.</p>
   <div id="g_id_onload"
        data-client_id="640682648249-dp1dou0mmpkm6m697oakbe9odabt1dui.apps.googleusercontent.com"
        data-callback="onGoogleSignIn"
-       data-auto_select="true">
+       data-auto_select="true"
+       data-use_fedcm_for_prompt="true"
+       data-itp_support="true">
   </div>
   <div class="g_id_signin" data-type="standard" data-size="large" data-theme="filled_black" data-text="sign_in_with"></div>
+  <!-- Populated by the watchdog below: says what stage sign-in reached, so a
+       stall is never a blank screen. -->
+  <p id="auth-status" style="color:#666;font-size:0.85em;margin-top:16px;min-height:1.2em;"></p>
 </div>
 
 <!-- Dashboard controls: shown when signed in -->
@@ -135,6 +148,38 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function setAuthStatus(msg) {
+  const el = document.getElementById('auth-status');
+  if (el) el.textContent = msg || '';
+  if (msg) console.log('[dash-auth]', msg);
+}
+
+// Nothing below may wait forever. A sign-in that stalls with no message is
+// the hardest state to debug, so every stage either finishes or says why not.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(label + ' timed out after ' + (ms / 1000) + 's')), ms)),
+  ]);
+}
+
+// Google's script is a common silent casualty of ad/tracker blockers and
+// locked-down networks: it fails to load, no button appears, nothing errors.
+window.addEventListener('DOMContentLoaded', () => {
+  if (dashToken) return; // not on the gate
+  setTimeout(() => {
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
+      showAuthError(
+        "Google's sign-in library did not load, so the sign-in button can't work. " +
+        'This is usually a tracker/ad blocker, a privacy extension, or a network ' +
+        'that blocks accounts.google.com. Try again in a private window with ' +
+        'extensions disabled, or on another network.',
+        'https://accounts.google.com/gsi/client did not initialize within 8s');
+    }
+  }, 8000);
+});
+
 // Clear the token and drop Google's auto-select so "Try again" can actually
 // pick a different account rather than silently re-submitting the rejected one.
 function hardReset() {
@@ -145,14 +190,18 @@ function hardReset() {
 }
 
 async function onGoogleSignIn(response) {
+  // Reaching here at all means Google handed back a credential — worth saying,
+  // because a stall before this point is a Google problem and a stall after it
+  // is ours, and the two need completely different fixes.
+  setAuthStatus('Google sign-in accepted — exchanging it with the analytics API…');
+
   let r;
   try {
-    // Exchange Google credential for server JWT
-    r = await fetch(API_BASE + '/auth/google', {
+    r = await withTimeout(fetch(API_BASE + '/auth/google', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ credential: response.credential }),
-    });
+    }), 15000, 'POST /auth/google');
   } catch (e) {
     showAuthError('Could not reach the analytics API. Check your connection, then try again.',
       API_BASE + '/auth/google — ' + e.message);
@@ -194,7 +243,9 @@ function showDashboard() {
 // worker 500 used to sign you out here, and with Google auto-select on that
 // turned into an endless sign-in → reject → reload loop.
 if (dashToken) {
-  fetch(API + '/overview?days=1', { headers: { 'Authorization': 'Bearer ' + dashToken } })
+  setAuthStatus('Checking your saved session…');
+  withTimeout(fetch(API + '/overview?days=1', { headers: { 'Authorization': 'Bearer ' + dashToken } }),
+    15000, 'GET /overview')
     .then(async r => {
       if (r.ok) { showDashboard(); return; }
       const data = await r.json().catch(() => ({}));
@@ -242,7 +293,7 @@ async function fetchJSON(route) {
     if (ex.uids && ex.uids.length) url += '&exclude_uids=' + encodeURIComponent(ex.uids.join(','));
   }
 
-  const r = await fetch(url, { headers });
+  const r = await withTimeout(fetch(url, { headers }), 20000, route);
   // 401 = stale token, worth a fresh sign-in. 403 = this account isn't allowed,
   // so reloading into Google again would just loop — say so and stay put.
   if (r.status === 401) { hardReset(); throw new Error('Session expired'); }
@@ -271,6 +322,14 @@ const COLORS = {
 function makeChart(id, type, labels, datasets, opts = {}) {
   const ctx = document.getElementById(id);
   if (!ctx) return;
+  if (typeof Chart === 'undefined') {
+    // Chart.js blocked or still loading — the numbers above it are the real
+    // content, so lose the graph rather than the whole dashboard.
+    ctx.replaceWith(Object.assign(document.createElement('div'), {
+      className: 'empty', textContent: 'Chart library unavailable',
+    }));
+    return;
+  }
   charts[id] = new Chart(ctx, {
     type,
     data: { labels, datasets },
