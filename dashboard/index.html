@@ -60,23 +60,23 @@
 <div class="subtitle">Steam Next Fest Dashboard</div>
 
 <!-- Auth gate: shown when not signed in.
-     data-use_fedcm_for_prompt / data-itp_support: without these, Google's
-     prompt is silently suppressed in browsers that block third-party cookies
-     (Chrome's phase-out, Safari ITP) — it "tries" and no callback ever
-     arrives, which is indistinguishable from a hang. -->
+
+     Built with the GIS *JavaScript* API rather than the declarative
+     g_id_onload/g_id_signin markup. The declarative form has no error channel
+     at all: when Google can't deliver the credential back to the page, the
+     popup just closes and the callback never fires — the reported "it tries
+     but never completes". initialize()+prompt() give us notification moments
+     that name the reason (unregistered_origin, suppressed_by_user, …), so the
+     failure is visible instead of silent. -->
 <div id="auth-gate" style="text-align:center;padding:60px 20px;">
   <p style="color:#888;margin-bottom:20px;">Sign in with an authorized Google account to view the dashboard.</p>
-  <div id="g_id_onload"
-       data-client_id="640682648249-dp1dou0mmpkm6m697oakbe9odabt1dui.apps.googleusercontent.com"
-       data-callback="onGoogleSignIn"
-       data-auto_select="true"
-       data-use_fedcm_for_prompt="true"
-       data-itp_support="true">
-  </div>
-  <div class="g_id_signin" data-type="standard" data-size="large" data-theme="filled_black" data-text="sign_in_with"></div>
-  <!-- Populated by the watchdog below: says what stage sign-in reached, so a
-       stall is never a blank screen. -->
+  <div id="gsi-button" style="display:flex;justify-content:center;"></div>
+  <!-- Says what stage sign-in reached, so a stall is never a blank screen. -->
   <p id="auth-status" style="color:#666;font-size:0.85em;margin-top:16px;min-height:1.2em;"></p>
+  <button id="auth-diagnose" onclick="diagnoseSignIn()"
+          style="margin-top:4px;padding:6px 14px;background:#333;color:#ccc;border:1px solid #555;border-radius:6px;cursor:pointer;font-size:0.8em;">
+    Sign-in stuck? Diagnose
+  </button>
 </div>
 
 <!-- Dashboard controls: shown when signed in -->
@@ -164,21 +164,139 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+const GOOGLE_CLIENT_ID = '640682648249-dp1dou0mmpkm6m697oakbe9odabt1dui.apps.googleusercontent.com';
+
+// Set when the Google button is clicked; cleared once a credential arrives.
+// A popup that opens, takes the account choice and never calls back leaves
+// this set — that is the signature of the reported hang.
+let signInStartedAt = 0;
+let signInWatchdog = null;
+
+function gsiReady() {
+  return typeof google !== 'undefined' && google.accounts && google.accounts.id;
+}
+
+function initGSI() {
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: onGoogleSignIn,
+    auto_select: true,
+    // Both matter in Chrome since the third-party-cookie phase-out: without
+    // them the prompt is suppressed and no callback ever arrives.
+    use_fedcm_for_prompt: true,
+    itp_support: true,
+  });
+
+  const container = document.getElementById('gsi-button');
+  google.accounts.id.renderButton(container, {
+    type: 'standard', theme: 'filled_black', size: 'large', text: 'sign_in_with',
+  });
+
+  // The rendered button is a cross-origin iframe, so we can't hook its click
+  // directly — but a pointerdown anywhere on it is close enough to start the
+  // watchdog that catches "popup never returns".
+  container.addEventListener('pointerdown', armSignInWatchdog, true);
+
+  setAuthStatus('Ready. Choose your Google account to continue.');
+}
+
+function armSignInWatchdog() {
+  signInStartedAt = Date.now();
+  setAuthStatus('Waiting for Google to return your sign-in…');
+  clearTimeout(signInWatchdog);
+  signInWatchdog = setTimeout(() => {
+    if (!signInStartedAt) return; // credential arrived; nothing to report
+    setAuthStatus('');
+    showAuthError(
+      'Google never returned a sign-in to this page. The popup opened, but the ' +
+      'credential was not delivered back — so the dashboard was never told who ' +
+      'you are. In Chrome this is almost always one of: this site is not listed ' +
+      'as an Authorized JavaScript origin on the OAuth client, or third-party ' +
+      'cookies are blocked for accounts.google.com. Click "Diagnose" below for ' +
+      "Google's own reason.",
+      'No credential callback within 60s of ' + location.origin);
+    showDiagnoseButton();
+  }, 60000);
+}
+
 // Google's script is a common silent casualty of ad/tracker blockers and
 // locked-down networks: it fails to load, no button appears, nothing errors.
 window.addEventListener('DOMContentLoaded', () => {
-  if (dashToken) return; // not on the gate
-  setTimeout(() => {
-    if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
+  if (dashToken) return; // the saved-session probe handles this case
+  const deadline = Date.now() + 8000;
+  (function waitForGSI() {
+    if (gsiReady()) { initGSI(); return; }
+    if (Date.now() > deadline) {
       showAuthError(
         "Google's sign-in library did not load, so the sign-in button can't work. " +
         'This is usually a tracker/ad blocker, a privacy extension, or a network ' +
         'that blocks accounts.google.com. Try again in a private window with ' +
         'extensions disabled, or on another network.',
         'https://accounts.google.com/gsi/client did not initialize within 8s');
+      return;
     }
-  }, 8000);
+    setTimeout(waitForGSI, 200);
+  })();
 });
+
+// Ask Google why nothing happened. The notification moment carries reasons the
+// silent popup never surfaces — `unregistered_origin` in particular means this
+// site is missing from the OAuth client's Authorized JavaScript origins.
+function diagnoseSignIn() {
+  if (!gsiReady()) {
+    showAuthError("Google's sign-in library isn't loaded, so there is nothing to diagnose. " +
+      'Check for a blocker on accounts.google.com.', null);
+    return;
+  }
+  setAuthStatus('Asking Google why sign-in did not complete…');
+  try { google.accounts.id.disableAutoSelect(); } catch (e) {}
+  google.accounts.id.prompt((n) => {
+    const reasons = [];
+    const read = (has, get) => {
+      try { if (typeof n[has] === 'function' && n[has]()) reasons.push(has + ': ' + n[get]()); }
+      catch (e) { /* several of these are unavailable under FedCM */ }
+    };
+    read('isNotDisplayed', 'getNotDisplayedReason');
+    read('isSkippedMoment', 'getSkippedReason');
+    read('isDismissedMoment', 'getDismissedReason');
+    const detail = reasons.join(' · ') || 'Google reported no specific reason';
+    console.log('[dash-auth] prompt moment:', detail, n);
+
+    if (/unregistered_origin/.test(detail)) {
+      showAuthError(
+        location.origin + ' is not an Authorized JavaScript origin on the Google ' +
+        'OAuth client, so Google refuses to hand a credential back to this page. ' +
+        'Add it under APIs & Services → Credentials → the OAuth 2.0 Client ID → ' +
+        'Authorized JavaScript origins.', detail);
+    } else if (/secure_http_required/.test(detail)) {
+      showAuthError('Google requires HTTPS for sign-in and this page is not served over it.', detail);
+    } else if (/opt_out_or_no_session/.test(detail)) {
+      showAuthError("You're not signed in to Google in this browser, or you've opted out of " +
+        'One Tap for this site. Sign in to your Google account in another tab, then retry.', detail);
+    } else if (/suppressed_by_user/.test(detail)) {
+      showAuthError('Google has suppressed the sign-in prompt for this site because it was ' +
+        'dismissed repeatedly. Clear cookies for accounts.google.com, or try a private window.', detail);
+    } else {
+      showAuthError('Google did not report a specific reason. The most common remaining causes ' +
+        'are blocked third-party cookies for accounts.google.com, or a browser extension ' +
+        'interfering with the sign-in popup. Try a private window with extensions off.', detail);
+    }
+    showDiagnoseButton();
+  });
+}
+
+// showAuthError() replaces the gate's contents, which removes the diagnose
+// button — put it back so a second attempt is always one click away.
+function showDiagnoseButton() {
+  const gate = document.getElementById('auth-gate');
+  if (document.getElementById('auth-diagnose')) return;
+  const btn = document.createElement('button');
+  btn.id = 'auth-diagnose';
+  btn.textContent = 'Ask Google why';
+  btn.style.cssText = 'margin:12px 0 0 8px;padding:8px 16px;background:#333;color:#ccc;border:1px solid #555;border-radius:6px;cursor:pointer;';
+  btn.onclick = diagnoseSignIn;
+  gate.appendChild(btn);
+}
 
 // Clear the token and drop Google's auto-select so "Try again" can actually
 // pick a different account rather than silently re-submitting the rejected one.
@@ -193,6 +311,8 @@ async function onGoogleSignIn(response) {
   // Reaching here at all means Google handed back a credential — worth saying,
   // because a stall before this point is a Google problem and a stall after it
   // is ours, and the two need completely different fixes.
+  signInStartedAt = 0;
+  clearTimeout(signInWatchdog);
   setAuthStatus('Google sign-in accepted — exchanging it with the analytics API…');
 
   let r;
