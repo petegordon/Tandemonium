@@ -136,6 +136,15 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const { credential } = body;
   if (!credential) return jsonResponse({ error: 'Missing credential' }, 400, corsOrigin);
 
+  // An unset GOOGLE_CLIENT_ID makes every valid token fail the audience check,
+  // which reads as "your account was rejected" — name the real cause instead.
+  if (!env.GOOGLE_CLIENT_ID) {
+    return jsonResponse({ error: 'Google sign-in not configured (GOOGLE_CLIENT_ID unset on the worker)' }, 503, corsOrigin);
+  }
+  if (!env.JWT_SECRET) {
+    return jsonResponse({ error: 'Google sign-in not configured (JWT_SECRET unset on the worker)' }, 503, corsOrigin);
+  }
+
   // Cryptographically verify the Google ID token (RS256 JWT)
   let payload;
   try {
@@ -1516,26 +1525,45 @@ async function withAuth(request, env, corsOrigin, handler) {
   return handler(request, env, corsOrigin, userId);
 }
 
-// Dashboard auth: verify JWT + check email against allow-list
-const DASHBOARD_EMAILS = [
+// Dashboard auth: verify JWT + check email against allow-list.
+// The list comes from the DASHBOARD_EMAILS var (comma-separated) so access can
+// be granted without a code change; DEFAULT_DASHBOARD_EMAILS is the fallback.
+const DEFAULT_DASHBOARD_EMAILS = [
   'pete@usersfirst.com',
   'pete@petegordon.com',
 ];
 
+function dashboardEmails(env) {
+  const configured = ((env && env.DASHBOARD_EMAILS) || '')
+    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  return configured.length ? configured : DEFAULT_DASHBOARD_EMAILS;
+}
+
+// Every rejection carries a `reason` so the dashboard can tell "sign in again"
+// apart from "this account will never work" — signing out and retrying on the
+// latter just loops back through Google forever.
 async function withDashboardAuth(request, env, corsOrigin, handler) {
   const auth = request.headers.get('Authorization');
   if (!auth || !auth.startsWith('Bearer ')) {
-    return jsonResponse({ error: 'Unauthorized — sign in required' }, 401, corsOrigin);
+    return jsonResponse({ error: 'Unauthorized — sign in required', reason: 'no_token' }, 401, corsOrigin);
   }
   const token = auth.slice(7);
   let payload;
   try {
     payload = await verifyJWT(token, env.JWT_SECRET);
-  } catch {
-    return jsonResponse({ error: 'Invalid or expired token' }, 401, corsOrigin);
+  } catch (e) {
+    return jsonResponse({ error: 'Invalid or expired token', reason: 'bad_token', detail: e.message }, 401, corsOrigin);
   }
-  if (!payload.email || !DASHBOARD_EMAILS.includes(payload.email.toLowerCase())) {
-    return jsonResponse({ error: 'Access denied — not authorized for dashboard' }, 403, corsOrigin);
+  if (!payload.email) {
+    // Token predates the email claim, or Google withheld it — a fresh sign-in fixes it.
+    return jsonResponse({ error: 'Token has no email claim — sign in again', reason: 'no_email' }, 401, corsOrigin);
+  }
+  if (!dashboardEmails(env).includes(payload.email.toLowerCase())) {
+    return jsonResponse({
+      error: `Access denied — ${payload.email} is not on the dashboard allow-list`,
+      reason: 'not_allowed',
+      email: payload.email,
+    }, 403, corsOrigin);
   }
   return handler(request, env, corsOrigin, payload.sub);
 }
@@ -1553,12 +1581,26 @@ async function getUserFromRequest(request, env) {
 }
 
 // Simple JWT implementation using Web Crypto
+
+// btoa/atob are Latin-1 only, so a Google display name with an accent or emoji
+// would throw on sign-in. Round-trip JSON through UTF-8 bytes instead. ASCII
+// encodes identically, so tokens issued before this still verify.
+function b64urlEncodeBytes(bytes) {
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+function b64urlEncodeJSON(obj) {
+  return b64urlEncodeBytes(new TextEncoder().encode(JSON.stringify(obj)));
+}
+function b64urlDecodeJSON(str) {
+  return JSON.parse(new TextDecoder().decode(base64UrlDecode(str)));
+}
+
 async function createJWT(payload, secret, ttlSeconds) {
   const now = Math.floor(Date.now() / 1000);
-  const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-  const body = btoa(JSON.stringify({ ...payload, iat: now, exp: now + (ttlSeconds || 86400 * 30) }))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const header = b64urlEncodeJSON({ alg: 'HS256', typ: 'JWT' });
+  const body = b64urlEncodeJSON({ ...payload, iat: now, exp: now + (ttlSeconds || 86400 * 30) });
   const data = `${header}.${body}`;
 
   const key = await crypto.subtle.importKey(
@@ -1566,8 +1608,7 @@ async function createJWT(payload, secret, ttlSeconds) {
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
   );
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
-  const sigStr = btoa(String.fromCharCode(...new Uint8Array(sig)))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const sigStr = b64urlEncodeBytes(new Uint8Array(sig));
 
   return `${data}.${sigStr}`;
 }
@@ -1582,11 +1623,11 @@ async function verifyJWT(token, secret) {
   );
 
   const data = `${parts[0]}.${parts[1]}`;
-  const sig = Uint8Array.from(atob(parts[2].replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  const sig = base64UrlDecode(parts[2]);
   const valid = await crypto.subtle.verify('HMAC', key, sig, new TextEncoder().encode(data));
   if (!valid) throw new Error('Invalid signature');
 
-  const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+  const payload = b64urlDecodeJSON(parts[1]);
   if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) throw new Error('Token expired');
 
   return payload;

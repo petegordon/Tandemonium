@@ -116,30 +116,67 @@ let autoTimer = null;
 let dashToken = sessionStorage.getItem('dash_token');
 
 // ── Google Sign-In ──
+
+// Show why sign-in failed instead of one catch-all "access denied" — a rejected
+// account, an expired token, a worker misconfiguration and an unreachable API
+// all used to look identical here, which made this impossible to diagnose.
+function showAuthError(message, detail) {
+  const gate = document.getElementById('auth-gate');
+  gate.innerHTML =
+    '<p style="color:#f87171;font-weight:600;">Can\'t sign in to the dashboard</p>' +
+    '<p style="color:#aaa;margin-top:8px;max-width:520px;margin-left:auto;margin-right:auto;">' +
+      escapeHtml(message) + '</p>' +
+    (detail ? '<p style="color:#666;font-size:0.8em;margin-top:6px;">' + escapeHtml(detail) + '</p>' : '') +
+    '<button onclick="hardReset()" style="margin-top:12px;padding:8px 16px;background:#333;color:#fff;border:1px solid #555;border-radius:6px;cursor:pointer;">Try again</button>';
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Clear the token and drop Google's auto-select so "Try again" can actually
+// pick a different account rather than silently re-submitting the rejected one.
+function hardReset() {
+  dashToken = null;
+  sessionStorage.removeItem('dash_token');
+  try { google.accounts.id.disableAutoSelect(); } catch (e) {}
+  location.reload();
+}
+
 async function onGoogleSignIn(response) {
+  let r;
   try {
     // Exchange Google credential for server JWT
-    const r = await fetch(API_BASE + '/auth/google', {
+    r = await fetch(API_BASE + '/auth/google', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ credential: response.credential }),
     });
-    if (!r.ok) throw new Error('Auth failed: ' + r.status);
-    const data = await r.json();
-    dashToken = data.token;
-    sessionStorage.setItem('dash_token', dashToken);
-    showDashboard();
   } catch (e) {
-    document.getElementById('auth-gate').innerHTML =
-      '<p style="color:#f87171;">Access denied. Use an authorized Google account.</p>' +
-      '<button onclick="location.reload()" style="margin-top:12px;padding:8px 16px;background:#333;color:#fff;border:1px solid #555;border-radius:6px;cursor:pointer;">Try again</button>';
+    showAuthError('Could not reach the analytics API. Check your connection, then try again.',
+      API_BASE + '/auth/google — ' + e.message);
+    return;
   }
+
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    showAuthError(data.error || 'The server rejected the Google sign-in.',
+      'POST /auth/google returned ' + r.status);
+    return;
+  }
+  if (!data.token) {
+    showAuthError('The server did not return a session token.', 'POST /auth/google returned 200 with no token');
+    return;
+  }
+
+  dashToken = data.token;
+  sessionStorage.setItem('dash_token', dashToken);
+  showDashboard();
 }
 
 function signOut() {
-  dashToken = null;
-  sessionStorage.removeItem('dash_token');
-  location.reload();
+  hardReset();
 }
 
 function showDashboard() {
@@ -152,11 +189,30 @@ function showDashboard() {
   loadAll();
 }
 
-// Auto-login if we have a stored token — verify it still works
+// Auto-login if we have a stored token — verify it still works.
+// Only an auth rejection clears the token: a 429 from the read limiter or a
+// worker 500 used to sign you out here, and with Google auto-select on that
+// turned into an endless sign-in → reject → reload loop.
 if (dashToken) {
   fetch(API + '/overview?days=1', { headers: { 'Authorization': 'Bearer ' + dashToken } })
-    .then(r => { if (r.ok) showDashboard(); else signOut(); })
-    .catch(() => signOut());
+    .then(async r => {
+      if (r.ok) { showDashboard(); return; }
+      const data = await r.json().catch(() => ({}));
+      if (r.status === 403) {
+        // The account will never be allowed — stop, don't re-prompt Google.
+        dashToken = null;
+        sessionStorage.removeItem('dash_token');
+        try { google.accounts.id.disableAutoSelect(); } catch (e) {}
+        showAuthError(data.error || 'This Google account is not authorized for the dashboard.',
+          'GET /overview returned 403');
+      } else if (r.status === 401) {
+        hardReset(); // stale/expired token — a fresh sign-in should work
+      } else {
+        showAuthError('The analytics API returned an error. Your sign-in is still valid — try again.',
+          'GET /overview returned ' + r.status);
+      }
+    })
+    .catch(e => showAuthError('Could not reach the analytics API.', e.message));
 }
 
 function getDays() { return document.getElementById('days').value; }
@@ -187,7 +243,13 @@ async function fetchJSON(route) {
   }
 
   const r = await fetch(url, { headers });
-  if (r.status === 401 || r.status === 403) { signOut(); throw new Error('Session expired'); }
+  // 401 = stale token, worth a fresh sign-in. 403 = this account isn't allowed,
+  // so reloading into Google again would just loop — say so and stay put.
+  if (r.status === 401) { hardReset(); throw new Error('Session expired'); }
+  if (r.status === 403) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.error || 'Not authorized for the dashboard');
+  }
   if (!r.ok) throw new Error(`${route}: ${r.status}`);
   return r.json();
 }

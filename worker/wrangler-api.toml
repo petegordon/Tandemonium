@@ -9,6 +9,10 @@ database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
 
 [vars]
 CORS_ORIGIN = "https://tandemonium.jimandi.love"
+# Who may read /api/analytics/dashboard/* — comma-separated Google account
+# emails. Add an address here (or override with `wrangler secret put
+# DASHBOARD_EMAILS`) rather than editing the allow-list in leaderboard.js.
+DASHBOARD_EMAILS = "pete@usersfirst.com,pete@petegordon.com"
 # Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
 
 [[analytics_engine_datasets]]
