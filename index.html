@@ -4443,6 +4443,9 @@ ON</button>
       <button class="qm-item" id="qm-recenter">
         <span class="qm-icon">&#x1F3AF;</span><span class="qm-label">RECENTER TILT</span><span class="qm-state"></span>
       </button>
+      <button class="qm-item" id="qm-controllers">
+        <span class="qm-icon">&#x1F3AE;</span><span class="qm-label">CONTROLLERS</span><span class="qm-state"></span>
+      </button>
       <button class="qm-item" id="qm-reset">
         <span class="qm-icon">&#x21BA;</span><span class="qm-label">RESET</span><span class="qm-state"></span>
       </button>
@@ -4470,6 +4473,9 @@ ON</button>
 
 <!-- Crash flash -->
 <div id="crash-overlay"></div>
+
+<!-- Controller overlay tiles (C / quick menu) — filled by js/controller-overlay-hud.js -->
+<div id="controller-overlay" hidden></div>
 
 <!-- Versus split-screen center divider (visible only with body.mode-versus) -->
 <div id="versus-divider"></div>
@@ -4930,7 +4936,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d2a7c7e | 08-09-2026 19:09</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.8c7d00c | 09-07-2026 15:04</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
