@@ -3721,17 +3721,26 @@ export class Lobby {
         if (state.hasGamepad && gpNameEl) {
           gpNameEl.textContent = state.gpName || 'CONTROLLER';
         }
-        // Controller-specific action button hint
+        // Controller-specific action button hint. A pad that is paired but has
+        // never sent a report can't answer a button press, so say that instead
+        // of telling the player to press something that cannot work.
         if (state.hasGamepad && gpHintEl) {
-          if (state.gpIndex !== null || state.slotId || state.steamHandle) {
-            // Gamepad API visible — P2 can press their own action button
-            const actionBtn = this._getActionButtonLabel(state.gpRawId);
-            gpHintEl.innerHTML = 'Press <strong>' + actionBtn + '</strong> to join';
+          const actionBtn = this._getActionButtonLabel(state.gpRawId);
+          if (state.hidLive && !state.hidLive.streaming) {
+            gpHintEl.innerHTML = 'Paired, but sending no input yet — click here to join';
           } else {
-            // WebHID-only — P1 navigates and selects the button
-            gpHintEl.innerHTML = 'Select to join as Player 2';
+            gpHintEl.innerHTML = 'Press <strong>' + actionBtn + '</strong> to join, or click here';
           }
         }
+
+        // One line per state change, into tandemonium-diag.log: which source
+        // found the pad and whether it is actually sending.
+        const live = state.hidLive;
+        this._diag('[local] P2 candidate: ' + (state.hasGamepad
+          ? `${state.gpName} via ${state.via || 'gamepad-api'} gpIndex=${state.gpIndex}` +
+            ` slot=${state.slotId || '-'} steam=${state.steamHandle || '-'}` +
+            (live ? ` streaming=${live.streaming} everPressed=${live.everPressed} lastReport=${live.msSinceReport ?? 'never'}ms` : ' (no hid entry)')
+          : `none (keyboard=${state.hasKeyboard}, p1=${state.p1GpName || '-'})`));
         // "2nd controller detected!" label
         if (detectedEl) {
           detectedEl.style.display = state.hasGamepad ? '' : 'none';
@@ -3780,18 +3789,30 @@ export class Lobby {
           const c = (this.input._steamInputSnapshot || []).find((e) => e.handle === state.steamHandle);
           gp = c ? this._steamEntryToPollGp(c) : null;
         }
-        if (!gp && this.controllerManager) {
-          // Either the Gamepad API path didn't resolve, or state.hidDevice
-          // is the only signal. Try the P2 slot's synthetic — populated by
-          // the HID pool's parsed reports even before slot claim.
-          const slotP2 = this.controllerManager.getSlot('P2');
-          gp = slotP2?.synthetic || null;
-          // Pool entries (unclaimed) also carry a synthetic we can read.
-          if (!gp && state.hidDevice) {
-            for (const entry of this.controllerManager._hidPool.values()) {
-              if (entry.device === state.hidDevice) { gp = entry.synthetic; break; }
+        // Found over WebHID: read THAT device's own synthetic, populated from
+        // its parsed reports even before any slot claims it. Match by identity
+        // first, then by vid:pid — navigator.hid.getDevices() can hand back a
+        // different handle object for the same physical device.
+        if (!gp && state.hidDevice && this.controllerManager) {
+          const want = state.hidDevice;
+          let entry = this.controllerManager._hidPool.get(want);
+          if (!entry) {
+            for (const e of this.controllerManager._hidPool.values()) {
+              if (e.device === want) { entry = e; break; }
             }
           }
+          if (!entry) {
+            for (const e of this.controllerManager._hidPool.values()) {
+              if (e.device.vendorId === want.vendorId && e.device.productId === want.productId) { entry = e; break; }
+            }
+          }
+          gp = entry ? entry.synthetic : null;
+        }
+        // Last resort: the P2 slot's synthetic. Deliberately AFTER the detected
+        // device — P2 can be holding a different controller entirely, and
+        // reading it here would poll the wrong pad forever.
+        if (!gp && this.controllerManager) {
+          gp = this.controllerManager.getSlot('P2')?.synthetic || null;
         }
       }
       if (gp) {
@@ -3811,6 +3832,11 @@ export class Lobby {
 
           // A-button (cross/B/A — standard gamepad index 0) commit
           const aPressed = !!(gp.buttons[0] && gp.buttons[0].pressed);
+          if (anyPressed) {
+            const pressed = [];
+            for (let i = 0; i < gp.buttons.length; i++) if (gp.buttons[i] && gp.buttons[i].pressed) pressed.push(i);
+            this._diag(`[local] P2 poll: pressed=[${pressed.join(',')}] join=${aPressed}`);
+          }
           if (aPressed && !this._localP2APrev) {
             console.log('P2 action button pressed — joining as gamepad', state.gpIndex, state.slotId || '', state.steamHandle || '');
             this._localP2APrev = true;
@@ -3952,6 +3978,8 @@ export class Lobby {
           gpIndex: s.gamepadIndex ?? null,
           slotId: s.id,
           hidDevice: hid ? hid.device : null,
+          hidLive: this._hidLiveness(hid),
+          via: 'seat',
           gpName: this._prettyGamepadName(raw),
           gpRawId: s.controllerLabel || raw,
           p1GpName,
@@ -3968,6 +3996,8 @@ export class Lobby {
           hasKeyboard: keyboardAvailable,
           gpIndex: null,
           hidDevice: d,
+          hidLive: this._hidLiveness(pooled),
+          via: 'pool',
           gpName: this._prettyGamepadName(d.productName || (reg && reg.name) || 'Controller'),
           gpRawId: d.productName || '',
           p1GpName,
@@ -4017,6 +4047,8 @@ export class Lobby {
           hasKeyboard: keyboardAvailable,
           gpIndex: null,
           hidDevice: d,
+          hidLive: this._hidLiveness(mgr && mgr._hidPool ? mgr._hidPool.get(d) : null),
+          via: 'approved-hid',
           gpName: name,
           gpRawId: d.productName || '',
           p1GpName,
@@ -4111,6 +4143,30 @@ export class Lobby {
     try { api.setHeldHidDevices(mgr.heldHidDescriptors()); } catch (e) { /* not fatal */ }
   }
 
+  /**
+   * Is a pooled/seated HID entry actually SENDING? A device can be granted,
+   * pooled and correctly named from its vid:pid while never streaming a single
+   * input report — it then shows up as a detected controller whose buttons
+   * never change, which looks exactly like "the join button is broken".
+   */
+  _hidLiveness(entry) {
+    if (!entry) return null;
+    return {
+      streaming: (entry.hidActiveSince || 0) > 0,
+      everPressed: !!entry._everPressed,
+      msSinceReport: entry.lastRawReportAt ? Math.round(performance.now() - entry.lastRawReportAt) : null,
+    };
+  }
+
+  /** One line into tandemonium-diag.log (Electron only); repeats suppressed. */
+  _diag(msg) {
+    if (this._lastDiagLine === msg) return;
+    this._lastDiagLine = msg;
+    console.log(msg);
+    const api = (typeof window !== 'undefined' && window.electronApp) || null;
+    if (api && typeof api.diag === 'function') { try { api.diag(msg); } catch (e) { /* not fatal */ } }
+  }
+
   _localP2SteamCandidate() {
     const p1 = this.input;
     if (!p1 || !p1._steamInputActive) return null;
@@ -4131,6 +4187,9 @@ export class Lobby {
    *   already holds it, and/or the Steam Input handle to pin P2 to
    */
   _onLocalJoinClick(sourceType, gamepadSlot, hidDevice = null, opts = {}) {
+    this._lastDiagLine = null; // this is an event, not a state — always log it
+    this._diag(`[local] JOIN fired: type=${sourceType} gpIndex=${gamepadSlot} ` +
+      `hid=${hidDevice ? (hidDevice.productName || 'device') : '-'} slot=${opts.slotId || '-'} steam=${opts.steamHandle || '-'}`);
     // Guard: if the monitor hasn't seen a P2 path, bail.
     if (sourceType !== 'gamepad' && sourceType !== 'keyboard') return;
     // Record that local JOIN RIDE won the race vs. any pending online stoker.
@@ -4204,6 +4263,10 @@ export class Lobby {
       this._localP2Type = 'keyboard';
     }
     this._pendingMode = 'local';
+    this._lastDiagLine = null;
+    this._diag(`[local] JOIN seated: P2 on ${this._localP2Type}` +
+      (this._localP2InputManager && this._localP2InputManager._slot ? ` slot=${this._localP2InputManager._slot.id}` : ' slot=none') +
+      ' — advancing to level select');
     // Skip the room step; local co-op doesn't need social video prep.
     this._showStep(this.levelStep);
   }
