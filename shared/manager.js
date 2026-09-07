@@ -70,6 +70,16 @@ const DEFAULTS = {
   // Gamepad pad to its WebHID handle. The claiming press often lands on the two
   // faces a frame or two apart, so a same-frame match misses it.
   foldWindowMs: 350,
+  // Host veto over Gamepad-API pads: `(gamepad) => boolean`, consulted before
+  // ANY Gamepad-API claim (boot claim, activity claim, explicit seat claim).
+  // Return false to keep a pad out of every seat. The motivating case is a
+  // Steam launch, where Steam re-emits a controller it captured as a generic
+  // virtual XInput pad: with a Steam Controller already live over WebHID,
+  // that XInput device is the SAME physical pad, and seating it cross-drives
+  // two seats from one controller. The host knows which pads are twins
+  // (Steam's getControllerForGamepadIndex); the manager just honours the veto.
+  // null = every pad is eligible.
+  padFilter: null,
   // Per-player DualSense lightbar colors (1-indexed by slot ordinal).
   // Override via `new ControllerManager({ playerColors: { 1: {...}, ... } })`.
   playerColors: {
@@ -548,6 +558,13 @@ export class ControllerManager {
 
   getSlot(id) { return this._slotById[id] || null; }
 
+  /** Host veto (opts.padFilter) — a pad it rejects is never claimed. */
+  _padAllowed(gp) {
+    const f = this.opts.padFilter;
+    if (typeof f !== 'function') return true;
+    try { return !!f(gp); } catch { return true; }
+  }
+
   /**
    * Pooled entries worth listing as controllers — hides latent fan-out sibling
    * interfaces (idle Steam Puck receiver slots). See isPresentableEntry. Used by
@@ -607,6 +624,7 @@ export class ControllerManager {
     for (const gp of pads) {
       if (!gp) continue;
       if (claimedIndices.has(gp.index)) continue;
+      if (!this._padAllowed(gp)) continue;
       const stickMag = Math.max(
         Math.abs(gp.axes[0] || 0),
         Math.abs(gp.axes[1] || 0),
@@ -644,6 +662,7 @@ export class ControllerManager {
     const slot = this.getSlot(slotId);
     if (!slot || slot.state !== 'empty' || slot._awaitingSilence || !gp) return false;
     if (this.slots.some((s) => s.gamepadIndex != null && s.gamepadIndex === gp.index)) return false;
+    if (!this._padAllowed(gp)) return false;
     const info = ControllerRegistry.identifyFromGamepadId(gp.id);
     slot.claim(gp, {
       controllerTypeHint: info?.controllerProfile || info?.protocol || null,
@@ -1096,6 +1115,7 @@ export class ControllerManager {
     for (const gp of pads) {
       if (!gp) continue;
       if (claimedIndices.has(gp.index)) continue;
+      if (!this._padAllowed(gp)) continue;
       const releasedAt = this._recentlyReleasedByIndex.get(gp.index);
       if (releasedAt != null && (now - releasedAt) < this.opts.reclaimCooldownMs) continue;
       const prevAxes = this._prevAxesByIndex.get(gp.index);

@@ -428,12 +428,41 @@ function tickSteamInput() {
   return out;
 }
 
+// XInput-slot identity link (#362). In Steam's emulation mode
+// getConnectedControllers() can return NOTHING while Steam still re-emits each
+// captured pad as a virtual XInput device — the renderer then sees generic
+// "Xbox 360 Controller" pads with no way to tell a DualSense from the Steam
+// Controller's own twin. getControllerForGamepadIndex(i) DOES resolve those
+// slots to live handles (observed on hardware), and getInputTypeForHandle
+// names the pad behind each. Probed every tick, pushed alongside the snapshot.
+let steamXInputMap = [];
+let _diagXInputKey = '';
+function probeSteamXInputSlots() {
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    let handle = null;
+    try { handle = steam.input.getControllerForGamepadIndex(i); } catch (e) { continue; }
+    if (handle == null || handle === 0n || handle === 0) continue;
+    let type = 'Unknown';
+    try { type = String(steam.input.getInputTypeForHandle(handle)); } catch (e) {}
+    out.push({ index: i, handle: handle.toString(), type });
+  }
+  const key = out.map((e) => `${e.index}:${e.type}:${e.handle}`).join('|');
+  if (key !== _diagXInputKey) {
+    _diagXInputKey = key;
+    _diagLog(`[SteamInput diag] XInput slots: ${key || '(none)'}`);
+  }
+  return out;
+}
+
 function startSteamInputTickLoop() {
   if (steamInputTimer || !steamInputReady) return;
   steamInputTimer = setInterval(() => {
     steamInputSnapshot = tickSteamInput();
+    steamXInputMap = probeSteamXInputSlots();
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('steam:input:tick', steamInputSnapshot);
+      mainWindow.webContents.send('steam:input:xinput', steamXInputMap);
     }
   }, 16);
 }
@@ -445,6 +474,7 @@ function startSteamInputTickLoop() {
 ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
 ipcMain.handle('steam:input:poll', () => steamInputSnapshot);
+ipcMain.handle('steam:input:xinputMap', () => steamXInputMap);
 
 // Full-diagnostic dump for the in-game Steam Input test page. Queries Steam
 // on demand for every piece of state we can read (handles, controllers,
