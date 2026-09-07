@@ -1,0 +1,3776 @@
+{
+  "bike_orange": {
+    "Cylinder035_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder024_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder006_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder009_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "tyre_rear_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath005_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder012_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder019_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath009_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder020_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder021_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath011_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder023_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube002_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder017_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath001_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath002_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath003_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath006_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder013_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder001_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "rear_wheel_joint_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder011_cycle_0": {
+      "color": "#fd892b",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder016_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    }
+  },
+  "bike_magenta": {
+    "Cylinder035_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder024_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder006_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder009_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "tyre_rear_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath005_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder012_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder019_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath009_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder020_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder021_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath011_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder023_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube002_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder017_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath001_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath002_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath003_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath006_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder013_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder001_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "rear_wheel_joint_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder011_cycle_0": {
+      "color": "#ff61f2",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder016_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    }
+  },
+  "bike_red": {
+    "Cylinder035_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder024_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder006_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder009_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "tyre_rear_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath005_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder012_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder019_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath009_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder020_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder021_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath011_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder023_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube002_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder017_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath001_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath002_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath003_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath006_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder013_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder001_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "rear_wheel_joint_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder011_cycle_0": {
+      "color": "#ff0000",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder016_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    }
+  },
+  "bike_blue": {
+    "Cylinder035_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder024_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder006_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder009_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "tyre_rear_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath005_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder012_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder019_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath009_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder020_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder021_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath011_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder023_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube002_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder017_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath001_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath002_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath003_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath006_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder013_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder001_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "rear_wheel_joint_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder011_cycle_0": {
+      "color": "#0000ff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder016_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    }
+  },
+  "bike_green": {
+    "Cylinder035_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder024_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder006_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder009_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "tyre_rear_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath005_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder012_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder019_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath009_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder020_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder021_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath011_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder023_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube002_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder017_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath001_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath002_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath003_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath006_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder013_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder001_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "rear_wheel_joint_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder011_cycle_0": {
+      "color": "#00ff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder016_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    }
+  },
+  "bike_yellow": {
+    "Cylinder035_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder024_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder006_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder009_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "tyre_rear_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath005_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder012_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder019_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath009_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "seat001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder020_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder021_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath011_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder010_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder023_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Circle001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cube002_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder017_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Tee_Joint001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath001_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath002_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath003_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath006_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "NurbsPath007_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "NurbsPath008_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder014_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear004_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder013_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder015_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Gear001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_rod_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "pedal_low003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "chain_rod_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "wainframe_joint_low001_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder001_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "rear_wheel_joint_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "rear_wheel_joint_2_low002_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder011_cycle_0": {
+      "color": "#ffff00",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2,
+      "disabledTextures": [
+        "map"
+      ]
+    },
+    "Cylinder003_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    },
+    "Cylinder016_cycle_0": {
+      "color": "#ffffff",
+      "emissive": "#ffffff",
+      "metalness": 1,
+      "roughness": 1,
+      "opacity": 1,
+      "wireframe": false,
+      "side": 2
+    }
+  }
+}
