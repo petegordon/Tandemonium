@@ -593,17 +593,26 @@ ipcMain.handle('steam:storeStats', () => {
   return !!steam;
 });
 
-// ── WebHID device picker state (see the select-hid-device handler) ──
-// hidExcludeList: vid:pid pairs the renderer already holds (pooled or seated),
-// pushed before it calls requestDevice so the picker hands back something NEW.
-// hidAlreadyPicked: deviceIds handed out this session, so repeated requests
-// walk through the attached controllers instead of returning the same one.
-let hidExcludeList = [];
+// ── WebHID pairing (see the select-hid-device handler) ──
+// Which attached device should a requestDevice() grant? One wrong answer —
+// "the first one" — makes pairing a SECOND controller impossible, because
+// every prompt re-grants the pad we already hold. The policy lives in
+// @usersfirst/controller-core (pickNewHidDevice), vendored under shared/, so
+// the game and the lab's overlay app decide identically. The core is ESM and
+// this file is CommonJS, hence the dynamic import; resolved once at startup.
+let pickNewHidDevice = null;
+const { pathToFileURL } = require('url');
+import(pathToFileURL(path.join(__dirname, '..', 'shared', 'controller-inventory.js')).href)
+  .then((m) => { pickNewHidDevice = m.pickNewHidDevice; _diagLog('[hid] pick policy loaded from shared/controller-inventory.js'); })
+  .catch((err) => _diagLog(`[hid] pick policy unavailable (${err.message}) — falling back to first un-granted device`));
+
+// What the renderer already holds (ControllerManager.heldHidDescriptors()),
+// pushed over 'hid:held' before it prompts. Plus the deviceIds we have handed
+// out this session, which break ties so repeated prompts walk the controllers.
+let heldHidDevices = [];
 const hidAlreadyPicked = new Set();
-ipcMain.on('hid:exclude', (_event, list) => {
-  hidExcludeList = Array.isArray(list)
-    ? list.filter((x) => x && Number.isInteger(x.vendorId) && Number.isInteger(x.productId))
-    : [];
+ipcMain.on('hid:held', (_event, list) => {
+  heldHidDevices = Array.isArray(list) ? list.filter(Boolean) : [];
 });
 
 ipcMain.handle('app:toggleDevTools', () => {
@@ -731,24 +740,18 @@ app.whenReady().then(async () => {
     _diagLog(`[hid] picker: ${list.length} device(s): ` +
       (list.map((d) => `${hex(d.vendorId)}:${hex(d.productId)}${d.name ? ' ' + d.name : ''}`).join(', ') || '(none)'));
     if (!list.length) { try { callback(''); } catch (e) {} return; }
-    // Pick a device the renderer does NOT already have.
-    //
-    // This used to be an unconditional deviceList[0], which made pairing a
-    // SECOND controller impossible: every requestDevice() re-granted the same
-    // pad, so with a Steam Controller already paired, a DualSense could never
-    // be approved and local co-op never saw a second controller. Two tiers:
-    //   1. not already pooled by the renderer (vid:pid, pushed via hid:exclude)
-    //      and not handed out earlier this session;
-    //   2. just not handed out earlier this session — which is what lets a
-    //      genuine SECOND pad of the same vid:pid through.
-    // Falls back to the first device (single-controller case).
-    const excluded = (d) => hidExcludeList.some((x) => x.vendorId === d.vendorId && x.productId === d.productId);
-    const chosen = list.find((d) => !hidAlreadyPicked.has(d.deviceId) && !excluded(d))
-                || list.find((d) => !hidAlreadyPicked.has(d.deviceId))
-                || list[0];
+    // Shared policy: serials prove which units we already hold, and per-model
+    // counts cover the rest — so two identical pads (two DualSenses, a second
+    // Steam Controller body) still pair, which a flat vid:pid exclusion would
+    // refuse. `reason` says WHY this device won; it is the difference between
+    // "nothing new is attached" and "we picked the wrong one".
+    const picked = pickNewHidDevice
+      ? pickNewHidDevice(list, { held: heldHidDevices, grantedIds: hidAlreadyPicked })
+      : { device: list.find((d) => !hidAlreadyPicked.has(d.deviceId)) || list[0], reason: 'fallback: policy unavailable' };
+    const chosen = picked.device;
     hidAlreadyPicked.add(chosen.deviceId);
-    _diagLog(`[hid] picker: selected ${hex(chosen.vendorId)}:${hex(chosen.productId)}` +
-      `${chosen.name ? ' ' + chosen.name : ''} (excluded ${hidExcludeList.length}, picked ${hidAlreadyPicked.size})`);
+    _diagLog(`[hid] picker: granting ${hex(chosen.vendorId)}:${hex(chosen.productId)}` +
+      `${chosen.name ? ' ' + chosen.name : ''} — ${picked.reason} (held ${heldHidDevices.length}, granted ${hidAlreadyPicked.size})`);
     try { callback(chosen.deviceId); } catch (e) { /* callback already used */ }
   });
 
