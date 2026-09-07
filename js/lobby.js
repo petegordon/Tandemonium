@@ -1027,6 +1027,38 @@ export class Lobby {
           { slotId: state.slotId, steamHandle: state.steamHandle });
       });
     }
+    // "CONNECT A CONTROLLER": the missing pairing path. A pad that Chromium's
+    // Gamepad API can't see (a Steam Controller Puck; a DualSense over BT in
+    // 0x31 mode) only reaches the game once WebHID has been GRANTED for it,
+    // and the only requestDevice() in the game was the P1 gyro toggle — so a
+    // second controller could never be approved and never showed up to join.
+    // requestDevice needs transient user activation, which this click has.
+    const btnConnectHid = document.getElementById('btn-local-connect-hid');
+    if (btnConnectHid) {
+      btnConnectHid.addEventListener('click', async () => {
+        const hintEl = document.getElementById('btn-local-connect-hid-hint');
+        if (!this.controllerManager || !navigator.hid) return;
+        if (btnConnectHid.disabled) return;
+        btnConnectHid.disabled = true;
+        if (hintEl) hintEl.textContent = 'Searching for a controller…';
+        this._publishHidExclude();
+        try {
+          const device = await this.controllerManager.connectHidForSlot('P2', { prompt: true });
+          if (hintEl) {
+            hintEl.textContent = device
+              ? `Paired ${device.productName || 'controller'}`
+              : 'No new controller found — turn it on, then try again';
+          }
+          console.log('[local] P2 HID connect →', device ? (device.productName || 'device') : 'nothing new');
+        } catch (err) {
+          console.warn('[local] P2 HID connect failed:', err);
+          if (hintEl) hintEl.textContent = 'Pairing failed — try again';
+        } finally {
+          btnConnectHid.disabled = false;
+        }
+      });
+    }
+
     const btnJoinKb = document.getElementById('btn-local-join-kb');
     if (btnJoinKb) {
       btnJoinKb.addEventListener('click', () => {
@@ -1953,6 +1985,7 @@ export class Lobby {
       // (hid-bound) will flip motion UI state via the subscriber in
       // _runDesktopGamepadDetection.
       if (this.controllerManager) {
+        this._publishHidExclude();
         this.controllerManager.connectHidForSlot('P1').catch((err) => {
           console.warn('Gyro connect failed:', err);
         });
@@ -3619,6 +3652,7 @@ export class Lobby {
     if (isMobile) return; // Local MP is desktop-only.
     const btnGp = document.getElementById('btn-local-join-gp');
     const btnKb = document.getElementById('btn-local-join-kb');
+    const btnConnect = document.getElementById('btn-local-connect-hid');
     const gpNameEl = document.getElementById('btn-local-join-gp-name');
     const gpHintEl = document.getElementById('btn-local-join-gp-hint');
     const joinSection = document.getElementById('local-join-section');
@@ -3670,13 +3704,18 @@ export class Lobby {
 
       // Dirty-check the visible state before touching the DOM (avoids layout
       // churn every frame when nothing has changed).
-      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.slotId || ''}|${state.steamHandle || ''}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}`;
+      // No second pad visible yet, but WebHID could still pair one — offer it.
+      // This is the state a Steam-launched session lands in with a Puck + a
+      // DualSense: only one of them has ever been granted.
+      const canPairHid = !state.hasGamepad && !!navigator.hid;
+      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.slotId || ''}|${state.steamHandle || ''}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}|${canPairHid}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
         // Show/hide the entire join section based on whether any P2 path exists
         if (joinSection) {
-          joinSection.style.display = state.available ? '' : 'none';
+          joinSection.style.display = (state.available || canPairHid) ? '' : 'none';
         }
+        if (btnConnect) btnConnect.style.display = canPairHid ? '' : 'none';
         btnGp.style.display = state.hasGamepad ? '' : 'none';
         btnKb.style.display = state.hasKeyboard ? '' : 'none';
         if (state.hasGamepad && gpNameEl) {
@@ -4057,6 +4096,25 @@ export class Lobby {
    * family (its Steam-side twin can lead the snapshot while WebHID holds it).
    * null when Steam has nothing spare.
    */
+  /**
+   * Tell the Electron WebHID picker which devices we ALREADY hold (pooled or
+   * seated), so a requestDevice() meant to pair a second controller doesn't
+   * hand back the one we have. No-op outside Electron. Call immediately
+   * before any connectHidForSlot() that may prompt.
+   */
+  _publishHidExclude() {
+    const api = (typeof window !== 'undefined' && window.electronApp) || null;
+    if (!api || typeof api.setHidExcludeList !== 'function') return;
+    const mgr = this.controllerManager;
+    const seen = new Map();
+    const add = (d) => { if (d) seen.set(`${d.vendorId}:${d.productId}`, { vendorId: d.vendorId, productId: d.productId }); };
+    if (mgr) {
+      if (mgr._hidPool) for (const e of mgr._hidPool.values()) add(e.device);
+      for (const sl of mgr.slots || []) if (sl._hidEntry) add(sl._hidEntry.device);
+    }
+    try { api.setHidExcludeList([...seen.values()]); } catch (e) { /* not fatal */ }
+  }
+
   _localP2SteamCandidate() {
     const p1 = this.input;
     if (!p1 || !p1._steamInputActive) return null;

@@ -593,6 +593,19 @@ ipcMain.handle('steam:storeStats', () => {
   return !!steam;
 });
 
+// ── WebHID device picker state (see the select-hid-device handler) ──
+// hidExcludeList: vid:pid pairs the renderer already holds (pooled or seated),
+// pushed before it calls requestDevice so the picker hands back something NEW.
+// hidAlreadyPicked: deviceIds handed out this session, so repeated requests
+// walk through the attached controllers instead of returning the same one.
+let hidExcludeList = [];
+const hidAlreadyPicked = new Set();
+ipcMain.on('hid:exclude', (_event, list) => {
+  hidExcludeList = Array.isArray(list)
+    ? list.filter((x) => x && Number.isInteger(x.vendorId) && Number.isInteger(x.productId))
+    : [];
+});
+
 ipcMain.handle('app:toggleDevTools', () => {
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.toggleDevTools();
@@ -713,11 +726,30 @@ app.whenReady().then(async () => {
   // Auto-select first matching HID device (skip the browser picker dialog)
   mainWindow.webContents.session.on('select-hid-device', (event, details, callback) => {
     event.preventDefault();
-    if (details.deviceList && details.deviceList.length > 0) {
-      callback(details.deviceList[0].deviceId);
-    } else {
-      callback('');
-    }
+    const list = (details && details.deviceList) || [];
+    const hex = (n) => (n == null ? '????' : n.toString(16).padStart(4, '0'));
+    _diagLog(`[hid] picker: ${list.length} device(s): ` +
+      (list.map((d) => `${hex(d.vendorId)}:${hex(d.productId)}${d.name ? ' ' + d.name : ''}`).join(', ') || '(none)'));
+    if (!list.length) { try { callback(''); } catch (e) {} return; }
+    // Pick a device the renderer does NOT already have.
+    //
+    // This used to be an unconditional deviceList[0], which made pairing a
+    // SECOND controller impossible: every requestDevice() re-granted the same
+    // pad, so with a Steam Controller already paired, a DualSense could never
+    // be approved and local co-op never saw a second controller. Two tiers:
+    //   1. not already pooled by the renderer (vid:pid, pushed via hid:exclude)
+    //      and not handed out earlier this session;
+    //   2. just not handed out earlier this session — which is what lets a
+    //      genuine SECOND pad of the same vid:pid through.
+    // Falls back to the first device (single-controller case).
+    const excluded = (d) => hidExcludeList.some((x) => x.vendorId === d.vendorId && x.productId === d.productId);
+    const chosen = list.find((d) => !hidAlreadyPicked.has(d.deviceId) && !excluded(d))
+                || list.find((d) => !hidAlreadyPicked.has(d.deviceId))
+                || list[0];
+    hidAlreadyPicked.add(chosen.deviceId);
+    _diagLog(`[hid] picker: selected ${hex(chosen.vendorId)}:${hex(chosen.productId)}` +
+      `${chosen.name ? ' ' + chosen.name : ''} (excluded ${hidExcludeList.length}, picked ${hidAlreadyPicked.size})`);
+    try { callback(chosen.deviceId); } catch (e) { /* callback already used */ }
   });
 
   // F11 fullscreen toggle

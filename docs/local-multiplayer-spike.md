@@ -312,3 +312,34 @@ All initial open questions have been resolved during design review (see §0). Re
 **Do Stage 1 first as a half-day spike-in-code** (behind `?localmp=1`) before committing to the full feature. If Stage 1 feels good with two real gamepads on your desk, Stages 2–3 are low-risk follow-ups and the whole thing ships in under a week.
 
 If Stage 1 reveals something I missed — e.g., a hidden `InputManager` global or a physics path that assumes network-sourced stoker input — we'll know *before* touching the lobby, analytics, or achievements.
+
+---
+
+## Pairing a second controller (WebHID) — added 2026-09-07
+
+A pad Chromium's Gamepad API cannot see only reaches the game once **WebHID has
+been granted for it**. Two common cases: a Steam Controller Puck (vendor-defined
+HID, never a Gamepad-API device) and a DualSense over Bluetooth in 0x31 mode.
+Under a Steam launch you can also have a pad that Steam captured but does not
+re-emit, which the game sees only through Steam Input.
+
+Two bugs made a second controller impossible to add, both fixed together:
+
+1. **The Electron picker always returned `deviceList[0]`.** `requestDevice()`
+   therefore re-granted the pad we already had, every time. It now prefers a
+   device the renderer does not already hold (vid:pid pushed over `hid:exclude`
+   before the call) and, failing that, one not handed out earlier this session —
+   which is what lets a genuine second pad of the same vid:pid through. Every
+   pick is written to `tandemonium-diag.log` under `[hid] picker:`.
+2. **Nothing ever asked for a second device.** The only `requestDevice()` in the
+   game was the P1 gyro toggle. The host page (RIDE TOGETHER → CAPTAIN) now
+   shows **CONNECT A CONTROLLER** whenever no second pad is visible and WebHID
+   exists; the click is the user gesture `requestDevice()` requires. Once
+   granted, the pad lands in the manager's pool, the 🎮 JOIN AS PLAYER 2 button
+   appears, and joining seats it with its own gyro fusion.
+
+Detection order for the second pad is in `_detectLocalP2State`: a Gamepad-API
+pad that isn't P1's → a manager seat already claimed by another pad → a live
+unclaimed pad in the WebHID pool → a Steam-captured controller P1 isn't using →
+approved-but-unpooled HID devices. Idle Puck receiver interfaces and the Steam
+XInput twin of P1's own controller are excluded throughout.
