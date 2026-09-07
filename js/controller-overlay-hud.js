@@ -15,7 +15,7 @@
 //
 // Placement (docs/controller-overlay.md has the reasoning + alternatives):
 //   solo / online          one tile, lower-right (your own pad — always slot P1)
-//   local co-op            P1 lower-left, P2 lower-right
+//   local co-op            P1 lower-right (same corner as solo), P2 lower-left
 //   versus (split screen)  team A's riders in the lower-LEFT of the LEFT half,
 //                          team B's riders in the lower-RIGHT of the RIGHT half,
 //                          captain outermost and stoker beside it, in the team
@@ -131,7 +131,28 @@ export function steamTypeIdentity(type) {
 }
 
 /**
- * Who is this seat's pad, really? { name, profile, key }.
+ * The slot's WebHID entry, but only if it is a real controller: a fan-out
+ * receiver interface (Steam Puck) that has never streamed is an idle sibling,
+ * not the pad in the player's hands — never let it name or model a seat.
+ */
+export function liveHidEntry(slot) {
+  const entry = slot && slot._hidEntry;
+  if (!entry) return null;
+  const fanout = !!(entry.driver && entry.driver.constructor && entry.driver.constructor.needsSiblingFanout);
+  return (fanout && !(entry.hidActiveSince > 0)) ? null : entry;
+}
+
+/** Same rule InputManager._slotFusionIsLive applies before it trusts WebHID. */
+export function slotFusionLive(slot) {
+  return !!(slot && slot.fusion && liveHidEntry(slot));
+}
+
+// What fed the tile — shown after the pad's name so a photo of the tile says
+// which source won ("DualSense · Steam" vs "· WebHID" vs "· Pad").
+const SOURCE_LABEL = { hid: 'WebHID', steam: 'Steam', pad: 'Pad', none: '' };
+
+/**
+ * Who is this seat's pad, really? { name, profile, key, source }.
  *
  * Under Steam every captured pad reaches Chromium as Steam's virtual XInput
  * device, so a DualSense's `gamepad.id` literally says "Xbox 360 Controller".
@@ -148,24 +169,25 @@ export function steamTypeIdentity(type) {
  */
 export function slotIdentity(slot, steamEntry = null) {
   const label = (slot && slot.controllerLabel) || '';
-  const device = slot && slot._hidEntry ? slot._hidEntry.device : null;
+  const hid = liveHidEntry(slot);
+  const device = hid ? hid.device : null;
   const vp = device ? `${device.vendorId}:${device.productId}` : '';
   const steamType = steamEntry ? String(steamEntry.type ?? '') : '';
   const key = `${label}|${vp}|${steamType}`;
   let entry = null;
   if (device) entry = ControllerRegistry.getEntry(device.vendorId, device.productId);
-  if (!entry && slot && slot.driver && slot.driver.entry) entry = slot.driver.entry;
+  if (!entry && hid && hid.driver && hid.driver.entry) entry = hid.driver.entry;
   if (entry) {
-    return { key, name: entry.name, profile: entry.controllerProfile || entry.protocol || null };
+    return { key, source: 'hid', name: entry.name, profile: entry.controllerProfile || entry.protocol || null };
   }
   if (steamEntry) {
     const st = steamTypeIdentity(steamEntry.type);
-    if (st.profile) return { key, ...st };
+    if (st.profile) return { key, source: 'steam', ...st };
   }
   const info = ControllerRegistry.identifyFromGamepadId(label);
-  if (info) return { key, name: info.driverName || shortLabel(label), profile: info.controllerProfile || null };
-  if (steamEntry) return { key, ...steamTypeIdentity(steamEntry.type) };
-  return { key, name: device ? (device.productName || shortLabel(label)) : shortLabel(label), profile: null };
+  if (info) return { key, source: 'pad', name: info.driverName || shortLabel(label), profile: info.controllerProfile || null };
+  if (steamEntry) return { key, source: 'steam', ...steamTypeIdentity(steamEntry.type) };
+  return { key, source: label ? 'pad' : 'none', name: device ? (device.productName || shortLabel(label)) : shortLabel(label), profile: null };
 }
 
 /**
@@ -176,7 +198,7 @@ export function slotIdentity(slot, steamEntry = null) {
  */
 export function steamEntryFor(input, slot) {
   if (!input || !input._steamInputActive) return null;
-  if (slot && slot.fusion) return null;
+  if (slotFusionLive(slot)) return null;
   if (typeof input._selectedSteamEntry !== 'function') return null;
   return input._selectedSteamEntry() || null;
 }
@@ -309,10 +331,11 @@ export class ControllerOverlayHud {
     }
 
     if (ctx.mode === 'local') {
-      entries.push(this._playerEntry('P1', slotOf('P1'), 'bl', ctx.input));
+      // P1 keeps the solo corner (lower-right); P2 takes the lower-left.
+      entries.push(this._playerEntry('P1', slotOf('P1'), 'br', ctx.input));
       const p2 = (ctx.inputP2 && ctx.inputP2._slot) || slotOf('P2');
       const p2Keyboard = ctx.localP2Type === 'keyboard';
-      entries.push(this._playerEntry('P2', p2Keyboard ? null : p2, 'br', p2Keyboard ? null : ctx.inputP2));
+      entries.push(this._playerEntry('P2', p2Keyboard ? null : p2, 'bl', p2Keyboard ? null : ctx.inputP2));
       return entries;
     }
 
@@ -616,7 +639,8 @@ class Tile {
     const id = slotIdentity(slot, steam);
     if (id.key !== this._identityKey) {
       this._identityKey = id.key;
-      this.subEl.textContent = id.name;
+      const src = SOURCE_LABEL[id.source] || '';
+      this.subEl.textContent = src ? `${id.name} · ${src}` : id.name;
       const type = this._profileFor();
       if (type !== this.profile) { this.profile = type; this.overlay.setControllerType(type); }
     }
@@ -633,7 +657,7 @@ class Tile {
     // displayOrientation is the recentred / yaw-returned pose (what the lab
     // overlay shows and what steering reads), so RECENTER TILT levels the
     // tile too; older fusions without it fall back to the raw integration.
-    let f = (slot && slot.state === 'claimed') ? slot.fusion : null;
+    let f = (slot && slot.state === 'claimed' && slotFusionLive(slot)) ? slot.fusion : null;
     if (!f && steam && input && input._steamFusions) f = input._steamFusions.get(steam.handle) || null;
     const q = (f && !f.calibrating) ? (f.displayOrientation || f.orientation || null) : null;
     this.overlay.update(gp, q);

@@ -23,7 +23,7 @@ in-game glue is `js/controller-overlay-hud.js`.
 | Situation | Layout |
 |---|---|
 | Solo, online captain, online stoker | One tile, **lower-right** (your own pad — always slot P1). |
-| Local co-op | **P1 lower-left, P2 lower-right**, in the player colours (green / coral). |
+| Local co-op | **P1 lower-right** (the same corner as solo), **P2 lower-left**, in the player colours (green / coral). |
 | Versus (split screen) | **Team A's riders in the lower-left of the left half, Team B's riders in the lower-right of the right half.** Captain outermost, stoker beside it, tinted in the team colour. |
 | Lobby | Every claimed slot, lower-right, P1 outermost — the "which pad is which" identify view (#241). |
 
@@ -39,6 +39,12 @@ Steam owns the pad exclusively and Electron surfaces no Gamepad-API device at
 all, the seat has no slot; the tile is then driven from the InputManager's
 synthetic Steam Input gamepad (the bound actions) and its per-handle motion
 fusion, so the model still moves and still tilts with the gyro.
+
+Each tile's sub-title names the pad **and the source that fed it** — `DualSense ·
+Steam`, `Sony DualSense · WebHID`, `Xbox Wireless (BT) · Pad` — so a photo of
+the tile says which arbitration won. An idle Steam Puck receiver interface
+(a fan-out sibling that has never streamed) is never treated as a controller,
+for identity or for gyro.
 
 Tiles never cover what the ride already draws in a corner: they lift above the
 pedal bar and slide sideways past the front-view selfie cam and the partner

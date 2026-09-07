@@ -60,6 +60,7 @@
     <button data-scenario="versus">Versus</button>
     <button data-scenario="lobby">Lobby (4 pads)</button>
     <button data-scenario="steam">Steam Input only</button>
+    <button data-scenario="steam-p2">Puck P1 + DualSense P2 (Steam)</button>
     <span style="margin-left:12px">Obstacles:</span>
     <button data-obstacle="frontview">Front view</button>
     <button data-obstacle="pip">Partner PiP</button>
@@ -156,6 +157,48 @@ const steamInput = {
   },
 };
 const idleInput = { _steamInputActive: false, _steamFusions: new Map(), _selectedSteamEntry: () => null };
+
+// ── The laptop case: P1 = Steam Controller over WebHID (one streaming Puck
+// interface), P2 = DualSense that Steam captured. P2's slot claimed Steam's
+// virtual XInput pad AND got an IDLE Puck sibling attached as its HID entry
+// (a fusion that never integrates). The snapshot lists the Steam Controller's
+// Steam-side twin first, then the DualSense; the lobby pins P2 to the
+// DualSense handle. The tile must call P2 a DualSense fed by Steam — never a
+// second Steam Controller — and P1 a Steam Controller fed by WebHID.
+const puckDriver = { constructor: { needsSiblingFanout: true }, entry: null };
+const puckLive = { device: { vendorId: 0x28de, productId: 0x1304, productName: 'Steam Controller Puck' }, driver: puckDriver, hidActiveSince: 1 };
+const puckIdle = { device: { vendorId: 0x28de, productId: 0x1304, productName: 'Steam Controller Puck' }, driver: puckDriver, hidActiveSince: 0 };
+const puckOrientation = new THREE.Quaternion();
+const p1PuckFusion = { calibrating: false, displayOrientation: puckOrientation };
+const deadFusion = { calibrating: true, displayOrientation: new THREE.Quaternion() };
+const steamSnapshotP2 = () => {
+  const ph = performance.now() / 1000;
+  const digital = (k) => ({ Confirm: Math.sin(ph * 3 + k) > 0.7, Cancel: false, PedalLeft: Math.sin(ph * 2 + k) > 0, PedalRight: Math.sin(ph * 2 + k) <= 0,
+    MenuUp: false, MenuDown: false, MenuLeft: false, MenuRight: false, Pause: false });
+  return [
+    { handle: 'sc', type: '14', steerX: 0, steerY: 0, active: false, digital: digital(0), motion: null },
+    { handle: 'ds', type: '13', steerX: Math.cos(ph) * 0.8, steerY: 0, active: true, digital: digital(1), motion: { rotQuat: [0, 0, 0, 1], accel: [0, 0, 1], rotVel: [0, 0, 0] } },
+  ];
+};
+const p2SteamInput = {
+  _steamInputActive: true,
+  steamInputHandle: 'ds',                    // what the lobby pins at JOIN RIDE
+  _steamFusions: new Map([['ds', { calibrating: false, orientation: steamOrientation, displayOrientation: steamOrientation }]]),
+  _selectedSteamEntry() {
+    const snap = steamSnapshotP2();
+    return this.steamInputHandle !== null ? (snap.find((c) => c.handle === this.steamInputHandle) || null) : snap[0];
+  },
+  _buildSteamInputGamepad() {
+    const c = this._selectedSteamEntry(); if (!c) return null; const d = c.digital;
+    const btn = (p) => ({ pressed: !!p, touched: !!p, value: p ? 1 : 0 });
+    return { id: `DualSense via Steam Input (${c.type} Vendor: 054c Product: 0ce6)`, index: -1, mapping: 'standard', connected: true,
+      buttons: [btn(d.Confirm), btn(d.Cancel), btn(0), btn(0), btn(d.PedalLeft), btn(d.PedalRight), btn(d.PedalLeft), btn(d.PedalRight),
+        btn(0), btn(d.Pause), btn(0), btn(0), btn(d.MenuUp), btn(d.MenuDown), btn(d.MenuLeft), btn(d.MenuRight), btn(0), btn(0)],
+      axes: [c.steerX, c.steerY, 0, 0], _isSyntheticSteamInput: true };
+  },
+};
+const xinputPad = makePad(5, 'Xbox 360 Controller (XInput STANDARD GAMEPAD)');
+pads[5] = xinputPad;
 function animateSteamGyro(t) {
   // roll the fake orientation about Z so the model visibly tilts
   const a = Math.sin(t / 700) * 0.35;
@@ -167,6 +210,7 @@ const ctx = { state: 'playing', mode: 'solo', manager, versusRigs: null, input: 
 const scenarios = {
   solo:   () => { ctx.state = 'playing'; ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
   steam:  () => { ctx.state = 'playing'; ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
+  'steam-p2': () => { ctx.state = 'playing'; ctx.mode = 'local'; ctx.versusRigs = null; ctx.inputP2 = p2SteamInput; ctx.localP2Type = 'gamepad'; },
   local:  () => { ctx.state = 'playing'; ctx.mode = 'local'; ctx.versusRigs = null; ctx.inputP2 = { _slot: manager.getSlot('P2') }; ctx.localP2Type = 'gamepad'; },
   lobby:  () => { ctx.state = 'lobby';   ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
   versus: () => {
@@ -186,9 +230,17 @@ function setScenario(name) {
   scenario = scenarios[name] ? name : 'solo';
   scenarios[scenario]();
   // Steam-only: P1's slot is EMPTY and its InputManager reads Steam Input.
-  const p1 = manager.getSlot('P1');
+  const p1 = manager.getSlot('P1'), p2 = manager.getSlot('P2');
+  // Reset the seats the special scenarios rewire.
+  p1._hidEntry = null; p1.fusion = null; p2._hidEntry = { device: { vendorId: 0x054c, productId: 0x0ce6, productName: 'DualSense Wireless Controller' } }; p2.fusion = null;
+  if (p1.state === 'empty') p1.claim(pads[0]);
+  if (p2.state === 'empty' || p2.gamepadIndex !== 1) p2.claim(pads[1]);
+  ctx.input = idleInput;
   if (scenario === 'steam') { p1.release(); ctx.input = steamInput; }
-  else { if (p1.state === 'empty') p1.claim(pads[0]); ctx.input = idleInput; }
+  if (scenario === 'steam-p2') {
+    p1.claim({ index: -1, id: 'HID::Steam Controller Puck Vendor: 28de Product: 1304' }); p1._hidEntry = puckLive; p1.fusion = p1PuckFusion;
+    p2.claim(xinputPad); p2._hidEntry = puckIdle; p2.fusion = deadFusion;
+  }
   document.body.classList.toggle('mode-versus', scenario === 'versus');
   document.querySelectorAll('[data-scenario]').forEach((b) => b.classList.toggle('on', b.dataset.scenario === scenario));
   layoutObstacles();
@@ -256,6 +308,7 @@ function loop(t) {
   requestAnimationFrame(loop);
   animatePads(t);
   animateSteamGyro(t);
+  puckOrientation.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.cos(t / 900) * 0.3);
   hud.update(ctx);
   if (Math.floor(t / 250) !== Math.floor((t - 16) / 250)) {
     status.textContent = window.__tiles().map((x) => `${x.label} ${x.seat} ${x.kind} ${x.anchor} ${x.profile || '-'} model=${x.hasModel} ` +
