@@ -19,11 +19,13 @@
 
 export class QuickMenu {
   /**
-   * @param {object} [recenter]  the one entry with no button behind it:
+   * @param {object} [recenter]  an entry with no button behind it:
    *   { available(): boolean, run(): void } — tilt recentring, which lost its
    *   on-screen affordance along with the YOU lean gauge.
+   * @param {object} [controllers]  the other one: { isOn(): boolean, run(): void }
+   *   — the controller overlay toggle (live 3D tiles of each rider's pad).
    */
-  constructor(recenter) {
+  constructor(recenter, controllers) {
     this.btn = document.getElementById('quick-menu-btn');
     this.overlay = document.getElementById('quick-menu-overlay');
     this.sheet = document.getElementById('quick-menu-sheet');
@@ -40,6 +42,7 @@ export class QuickMenu {
     this.musicBtn = document.getElementById('music-btn');
 
     this.recenter = recenter || null;
+    this.controllers = controllers || null;
     this.open = false;
 
     this.btn.addEventListener('click', () => this.toggle());
@@ -69,6 +72,15 @@ export class QuickMenu {
       recenterEl.addEventListener('click', () => {
         if (this.recenter) this.recenter.run();
         this.close();
+      });
+    }
+
+    // A toggle like safety/speed: stays open so the new ON/OFF is visible.
+    const controllersEl = document.getElementById('qm-controllers');
+    if (controllersEl) {
+      controllersEl.addEventListener('click', () => {
+        if (this.controllers) this.controllers.run();
+        this.sync();
       });
     }
   }
@@ -129,6 +141,10 @@ export class QuickMenu {
 
     // Recentring only means anything to a rider steering by tilt or gyro.
     this._show('qm-recenter', !!(this.recenter && this.recenter.available()));
+
+    // Controller overlay: available whenever the game wired it (every mode).
+    this._show('qm-controllers', !!this.controllers);
+    this._setState('qm-controllers', !!(this.controllers && this.controllers.isOn()));
 
     // The recorder shows #share-btn only while a clip is actually buffering.
     const clipReady = this.shareBtn && this.shareBtn.style.display !== 'none';

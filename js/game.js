@@ -22,6 +22,7 @@ import { BikeModel } from './bike-model.js';
 import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
+import { ControllerOverlayHud, getControllerOverlayPref } from './controller-overlay-hud.js';
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
@@ -225,6 +226,12 @@ class Game {
 
     // Components
     this.input = new InputManager({ slot: this.controllerManager.getSlot('P1') });
+
+    // Controller overlay — live 3D tiles of each rider's pad (C, or the quick
+    // menu's CONTROLLERS entry). Reads the same slots the InputManagers do; the
+    // saved preference is applied here without being re-written.
+    this.controllerHud = new ControllerOverlayHud();
+    this.controllerHud.setEnabled(getControllerOverlayPref(), { persist: false });
     // Default haptic target: P1's InputManager. Updated in _onLocalReady
     // to include P2's InputManager so both players rumble on shared events.
     setHapticSources([this.input]);
@@ -618,6 +625,9 @@ class Game {
     this.quickMenu = new QuickMenu({
       available: () => this.input.motionEnabled || this.input.gyroConnected,
       run: () => this._recalibrateTilt(),
+    }, {
+      isOn: () => this.controllerHud.isOn(),
+      run: () => this.controllerHud.toggle(),
     });
 
     // Volume changes from lobby slider
@@ -666,10 +676,15 @@ class Game {
       document.addEventListener('click', startMusic, true);
     }
 
-    // Keyboard shortcuts for music: M = toggle mute, Shift+M = volume slider
+    // Keyboard shortcuts: M = toggle mute, Shift+M = volume slider,
+    // C = controller overlay (live 3D tiles of each rider's pad)
     window.addEventListener('keydown', (e) => {
       const tag = document.activeElement && document.activeElement.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
+        this.controllerHud.toggle();
+        return;
+      }
       if (e.code === 'KeyM') {
         if (e.shiftKey) {
           // Shift+M: toggle volume picker in lobby
@@ -4053,6 +4068,20 @@ class Game {
       // Not shown in Versus (split-screen) — that integration is a follow-up.
       this.frontView.hide();
       this.frontView.reset();
+    }
+
+    // Controller overlay tiles — fed the same slots the riders just steered
+    // from. After the front view, so the tiles can dodge wherever it landed.
+    if (this.controllerHud.enabled) {
+      this.controllerHud.update({
+        state: this.state,
+        mode: this.mode,
+        manager: this.controllerManager,
+        versusRigs: this.versusRigs,
+        inputP2: this.inputP2,
+        localP2Type: this._localP2Type,
+        pads,
+      });
     }
 
     // Sp3 — feed bike velocity to the procedural motion loop every frame.

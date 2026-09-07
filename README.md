@@ -22,6 +22,7 @@ Open `http://localhost:8888` in your browser.
 
 - **Solo**: Click SOLO RIDE — pedal with Up/Down arrows, lean with A/D (or tilt on mobile)
 - **Front view**: A small window in the lower-right shows a front-facing "selfie cam" of the bike as you ride. Toggle it with `V`.
+- **Controllers**: Press `C` (or CONTROLLERS in the in-ride quick menu) to see each rider's controller as a live 3D model in a bottom corner — buttons, sticks, triggers and gyro, straight from the same input the game is steering with. One tile lower-right in solo; P1 lower-left / P2 lower-right in local co-op; each team's pads under their own half in versus. See [`docs/controller-overlay.md`](docs/controller-overlay.md).
 - **Multiplayer**: Click RIDE TOGETHER — one player creates a room, the other joins with the room code
 
 ## Multiplayer

@@ -29,6 +29,46 @@ function labDir() {
 function srcDir(lab = labDir()) { return path.join(lab, 'packages', 'core', 'src'); }
 function sharedDir() { return path.join(repoRoot(), 'shared'); }
 
+// ── @usersfirst/controller-visualizer ──
+// The 3D controller renderer (packages/visualizer) is vendored alongside the
+// core, under shared/visualizer/: its src/*.js plus ONLY the GLB models that
+// controller-profiles.js actually references (the lab also carries unsplit
+// source models and region maps that no profile loads — several MB we don't
+// want in the web build). The in-game overlay passes
+// `assetBase: 'shared/visualizer/'` so the profiles' page-relative
+// `assets/controllers/<name>.glb` paths resolve under the vendored tree.
+const VISUALIZER_SUBDIR = 'visualizer';
+
+function visualizerPkgDir(lab = labDir()) { return path.join(lab, 'packages', 'visualizer'); }
+function visualizerSrcDir(lab = labDir()) { return path.join(visualizerPkgDir(lab), 'src'); }
+function visualizerSharedDir() { return path.join(sharedDir(), VISUALIZER_SUBDIR); }
+
+/**
+ * Relative (POSIX) paths of the visualizer files we vendor, relative to the
+ * lab's packages/visualizer/ (source) and to shared/visualizer/ (dest): every
+ * src/*.js, plus each `model: 'assets/controllers/…'` path found in
+ * src/controller-profiles.js. Discovered, not hardcoded, so a new profile (and
+ * its GLB) is vendored automatically on the next sync.
+ */
+function vendoredVisualizerFiles(lab = labDir()) {
+  const src = visualizerSrcDir(lab);
+  const files = [];
+  for (const e of fs.readdirSync(src)) if (e.endsWith('.js')) files.push('src/' + e);
+  const profiles = fs.readFileSync(path.join(src, 'controller-profiles.js'), 'utf8');
+  const seen = new Set();
+  for (const m of profiles.matchAll(/model:\s*['"]([^'"]+)['"]/g)) {
+    if (!seen.has(m[1])) { seen.add(m[1]); files.push(m[1]); }
+  }
+  return files;
+}
+
+/** controller-visualizer package version from the lab, or null. */
+function visualizerVersion(lab = labDir()) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(visualizerPkgDir(lab), 'package.json'), 'utf8')).version || null;
+  } catch { return null; }
+}
+
 /**
  * Relative paths (POSIX) of the files we vendor from the lab src: every
  * drivers/*.js plus every top-level *.js. Both are DISCOVERED (not a hardcoded
@@ -62,4 +102,7 @@ function labGit(lab = labDir()) {
   return { commit, ref };
 }
 
-module.exports = { TOP_LEVEL, STAMP, repoRoot, labDir, srcDir, sharedDir, vendoredFiles, labVersion, labGit };
+module.exports = {
+  TOP_LEVEL, STAMP, repoRoot, labDir, srcDir, sharedDir, vendoredFiles, labVersion, labGit,
+  VISUALIZER_SUBDIR, visualizerPkgDir, visualizerSrcDir, visualizerSharedDir, vendoredVisualizerFiles, visualizerVersion,
+};

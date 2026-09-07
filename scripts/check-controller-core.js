@@ -4,7 +4,8 @@
 // ============================================================
 //
 // Fails (exit 1) if the vendored shared/ has diverged from the pinned
-// @usersfirst/controller-core source — i.e. someone hand-edited shared/
+// @usersfirst/controller-core (and shared/visualizer/ from
+// @usersfirst/controller-visualizer) source — i.e. someone hand-edited shared/
 // instead of editing the lab + re-syncing, or shared/ is stale vs the lab
 // checkout. Non-mutating (compares in place). Requires the lab to be present
 // (sibling checkout or $CONTROLLER_LAB_DIR); skips with a notice if absent so
@@ -47,12 +48,46 @@ for (const rel of actual) {
   if (!expected.includes(rel)) problems.push(`stale (not in lab): shared/${rel}`);
 }
 
-// 3. Provenance stamp version must match the lab's controller-core version.
+// 3. Visualizer (shared/visualizer/): every vendored src module + referenced
+//    GLB must exist and be byte-identical, and nothing stale may linger.
+const vizPkg = L.visualizerPkgDir();
+const vizShared = L.visualizerSharedDir();
+const vizExpected = fs.existsSync(vizPkg) ? L.vendoredVisualizerFiles() : [];
+for (const rel of vizExpected) {
+  const dest = path.join(vizShared, rel);
+  if (!fs.existsSync(dest)) { problems.push(`missing in shared/visualizer/: ${rel}`); continue; }
+  if (!fs.readFileSync(path.join(vizPkg, rel)).equals(fs.readFileSync(dest))) {
+    problems.push(`differs from lab: shared/visualizer/${rel}`);
+  }
+}
+if (fs.existsSync(vizShared)) {
+  const walk = (dir, prefix, out) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = prefix ? prefix + '/' + e.name : e.name;
+      if (e.isDirectory()) walk(path.join(dir, e.name), rel, out);
+      else out.push(rel);
+    }
+    return out;
+  };
+  for (const rel of walk(vizShared, '', [])) {
+    if (!vizExpected.includes(rel)) problems.push(`stale (not in lab): shared/visualizer/${rel}`);
+  }
+}
+
+// 4. Provenance stamp versions must match the lab's package versions.
 const labVer = L.labVersion();
-let stampVer = null;
-try { stampVer = JSON.parse(fs.readFileSync(path.join(shared, L.STAMP), 'utf8')).version; } catch { /* missing */ }
+const labVizVer = L.visualizerVersion();
+let stampVer = null, stampVizVer = null;
+try {
+  const stamp = JSON.parse(fs.readFileSync(path.join(shared, L.STAMP), 'utf8'));
+  stampVer = stamp.version;
+  stampVizVer = stamp.visualizer ? stamp.visualizer.version : null;
+} catch { /* missing */ }
 if (stampVer !== labVer) {
   problems.push(`version stamp is ${stampVer || '(none)'} but lab is ${labVer || '(unknown)'}`);
+}
+if (stampVizVer !== labVizVer) {
+  problems.push(`visualizer version stamp is ${stampVizVer || '(none)'} but lab is ${labVizVer || '(unknown)'}`);
 }
 
 if (problems.length) {
@@ -61,4 +96,4 @@ if (problems.length) {
   console.error('\nFix: check the lab out at the intended tag, then `npm run sync-controller-core` and commit shared/.');
   process.exit(1);
 }
-console.log(`✓ shared/ matches controller-core@${labVer} (stamp ${stampVer})`);
+console.log(`✓ shared/ matches controller-core@${labVer} + controller-visualizer@${labVizVer} (stamp ${stampVer})`);
