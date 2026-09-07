@@ -100,13 +100,43 @@ function ensureStyle() {
   document.head.appendChild(el);
 }
 
-/** Short human name for a pad: the registry's driver name, else the Gamepad
- *  id with the "(Vendor: … Product: …)" / "(STANDARD GAMEPAD …)" tail dropped. */
-export function controllerDisplayName(label) {
-  if (!label) return '';
+/** Gamepad id with the "(Vendor: … Product: …)" / "(STANDARD GAMEPAD …)" tail dropped. */
+function shortLabel(label) {
+  return String(label || '').replace(/\s*\(.*$/, '').trim().slice(0, 28) || 'Controller';
+}
+
+/**
+ * Who is this slot, really? { name, profile, key }.
+ *
+ * The bound WebHID device wins over the Gamepad-API id. Under Steam every
+ * captured pad reaches Chromium as Steam's virtual XInput device, so a
+ * DualSense's `gamepad.id` literally says "Xbox 360 Controller" — while the
+ * slot's HID entry (where its gyro comes from) still carries the real
+ * vendor:product. Order: HID device → driver's registry entry → gamepad id →
+ * id sniffing. `key` changes whenever any input to the decision changes, so
+ * a tile can re-resolve when the HID binding arrives after the claim.
+ */
+export function slotIdentity(slot) {
+  const label = (slot && slot.controllerLabel) || '';
+  const device = slot && slot._hidEntry ? slot._hidEntry.device : null;
+  const vp = device ? `${device.vendorId}:${device.productId}` : '';
+  const key = `${label}|${vp}`;
+  let entry = null;
+  if (device) entry = ControllerRegistry.getEntry(device.vendorId, device.productId);
+  if (!entry && slot && slot.driver && slot.driver.entry) entry = slot.driver.entry;
+  if (entry) {
+    return { key, name: entry.name, profile: entry.controllerProfile || entry.protocol || null };
+  }
   const info = ControllerRegistry.identifyFromGamepadId(label);
-  if (info && info.driverName) return info.driverName;
-  return label.replace(/\s*\(.*$/, '').trim().slice(0, 28) || 'Controller';
+  if (info) return { key, name: info.driverName || shortLabel(label), profile: info.controllerProfile || null };
+  return { key, name: device ? (device.productName || shortLabel(label)) : shortLabel(label), profile: null };
+}
+
+/** Short human name for a slot's pad (see slotIdentity). */
+export function controllerDisplayName(slotOrLabel) {
+  if (!slotOrLabel) return '';
+  if (typeof slotOrLabel === 'string') return slotIdentity({ controllerLabel: slotOrLabel }).name;
+  return slotIdentity(slotOrLabel).name;
 }
 
 export class ControllerOverlayHud {
@@ -402,7 +432,7 @@ class Tile {
     this._creating = false;
     this._seq = 0;
     this._unsub = null;
-    this._nameLabel = null;    // controllerLabel the sub-title was derived from
+    this._identityKey = null;  // slotIdentity().key the title + profile were derived from
     this._size = { width: 0, height: 0 };
     this._disposed = false;
 
@@ -446,7 +476,7 @@ class Tile {
   _bindSlot(slot) {
     if (this._unsub) { this._unsub(); this._unsub = null; }
     this.slot = slot || null;
-    this._nameLabel = null;
+    this._identityKey = null;
     if (!slot) { this._destroyOverlay(); return; }
     // Report-level extras that never reach the Gamepad shape: the touchpad
     // finger(s) and the Steam Controller's capacitive grips.
@@ -459,9 +489,8 @@ class Tile {
 
   _profileFor() {
     const viz = this.hud._viz;
-    const label = (this.slot && this.slot.controllerLabel) || '';
-    const info = ControllerRegistry.identifyFromGamepadId(label);
-    let type = (info && info.controllerProfile) || viz.detectControllerType(label);
+    const id = slotIdentity(this.slot);
+    let type = id.profile || viz.detectControllerType((this.slot && this.slot.controllerLabel) || '');
     if (!viz.PROFILES[type]) type = 'dualsense';
     return type;
   }
@@ -508,9 +537,12 @@ class Tile {
       if (this.hud._viz && !this._creating && this._size.width > 0) this._createOverlay();
       return;
     }
-    if (slot.controllerLabel !== this._nameLabel) {
-      this._nameLabel = slot.controllerLabel;
-      this.subEl.textContent = controllerDisplayName(slot.controllerLabel);
+    // Re-resolve name + model whenever the slot's identity inputs change —
+    // a re-claim with a different pad, or the HID binding arriving late.
+    const id = slotIdentity(slot);
+    if (id.key !== this._identityKey) {
+      this._identityKey = id.key;
+      this.subEl.textContent = id.name;
       const type = this._profileFor();
       if (type !== this.profile) { this.profile = type; this.overlay.setControllerType(type); }
     }

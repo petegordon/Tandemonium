@@ -33,12 +33,15 @@ mkdirSync(OUT, { recursive: true });
 const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
 await new Promise((r) => setTimeout(r, 800));
 
+// P2 in the harness is the Steam case: an XInput gamepad id with a real
+// DualSense bound over WebHID — it must resolve to the DualSense, not Xbox.
+const P2 = { profile: 'dualsense', name: 'Sony DualSense' };
 const SCENARIOS = {
-  solo:   { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad' }] },
-  local:  { tiles: [{ label: 'P1', anchor: 'bl', kind: 'gamepad' }, { label: 'P2', anchor: 'br', kind: 'gamepad' }] },
-  lobby:  { tiles: [{ label: 'P1', anchor: 'br' }, { label: 'P2', anchor: 'br' }, { label: 'P3', anchor: 'br' }, { label: 'P4', anchor: 'br' }] },
+  solo:   { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'dualsense' }] },
+  local:  { tiles: [{ label: 'P1', anchor: 'bl', kind: 'gamepad' }, { label: 'P2', anchor: 'br', kind: 'gamepad', ...P2 }] },
+  lobby:  { tiles: [{ label: 'P1', anchor: 'br' }, { label: 'P2', anchor: 'br', ...P2 }, { label: 'P3', anchor: 'br', profile: 'switch-pro' }, { label: 'P4', anchor: 'br', profile: 'steam-controller' }] },
   versus: { tiles: [
-    { label: 'TEAM BLUE', seat: 'P1', anchor: 'bl', kind: 'gamepad' }, { label: 'TEAM BLUE', seat: 'P2', anchor: 'bl', kind: 'gamepad' },
+    { label: 'TEAM BLUE', seat: 'P1', anchor: 'bl', kind: 'gamepad' }, { label: 'TEAM BLUE', seat: 'P2', anchor: 'bl', kind: 'gamepad', ...P2 },
     { label: 'TEAM RED', seat: 'P3', anchor: 'br', kind: 'gamepad' },  { label: 'TEAM RED', seat: 'KEYBOARD', anchor: 'br', kind: 'keyboard' },
   ] },
 };
@@ -77,6 +80,8 @@ try {
       note(t.anchor === ex.anchor, `${name}: ${ex.label} ${ex.seat || ''} anchored ${t.anchor} (expected ${ex.anchor})`);
       if (ex.kind) note(t.kind === ex.kind, `${name}: ${ex.label} ${ex.seat || ''} kind ${t.kind}`);
       if (t.kind === 'gamepad') note(t.hasModel, `${name}: ${ex.label} ${ex.seat || ''} loaded model (${t.profile})`);
+      if (ex.profile) note(t.profile === ex.profile, `${name}: ${ex.label} ${ex.seat || ''} profile ${t.profile} (expected ${ex.profile})`);
+      if (ex.name) note(t.name === ex.name, `${name}: ${ex.label} ${ex.seat || ''} named "${t.name}" (expected "${ex.name}")`);
     }
     for (const set of OBSTACLE_SETS) {
       for (const k of ['frontview', 'pip', 'pedals']) await page.evaluate(([k, on]) => window.__setObstacle(k, on), [k, set.includes(k)]);

@@ -112,7 +112,7 @@ function animatePads(t) {
 
 // ── Fake slots: the tiny Slot surface the HUD touches ──
 class FakeSlot {
-  constructor(id) { this.id = id; this.state = 'empty'; this.gamepadIndex = null; this.controllerLabel = null; this.fusion = null; this._l = []; }
+  constructor(id) { this.id = id; this.state = 'empty'; this.gamepadIndex = null; this.controllerLabel = null; this.fusion = null; this._hidEntry = null; this._l = []; }
   on(fn) { this._l.push(fn); return () => { this._l = this._l.filter((f) => f !== fn); }; }
   claim(pad) { this.state = 'claimed'; this.gamepadIndex = pad.index; this.controllerLabel = pad.id; }
   release() { this.state = 'empty'; this.gamepadIndex = null; this.controllerLabel = null; }
@@ -121,6 +121,10 @@ class FakeSlot {
 const manager = { slots: ['P1', 'P2', 'P3', 'P4'].map((id) => new FakeSlot(id)) };
 manager.getSlot = (id) => manager.slots.find((s) => s.id === id) || null;
 manager.slots.forEach((s, i) => s.claim(pads[i]));
+// P2 is the Steam case: Steam's virtual XInput pad is what the Gamepad API
+// sees (so the id says "Xbox 360"), but the slot's WebHID binding is the real
+// DualSense — the tile must name and model it as a DualSense.
+manager.getSlot('P2')._hidEntry = { device: { vendorId: 0x054c, productId: 0x0ce6, productName: 'DualSense Wireless Controller' } };
 
 // ── Scenarios → the ctx the game passes each frame ──
 const ctx = { state: 'playing', mode: 'solo', manager, versusRigs: null, inputP2: null, localP2Type: null, pads };
@@ -187,6 +191,7 @@ window.__tiles = () => [...hud.tiles.values()].map((t) => {
   const r = t.el.getBoundingClientRect(); // what is actually on screen, not the computed target
   return {
     label: t.entry.label, seat: t.entry.seat, kind: t.entry.kind, anchor: t.entry.anchor,
+    name: t.subEl.textContent,
     rect: { left: r.left, top: r.top, width: r.width, height: r.height },
     profile: t.profile, hasModel: !!(t.overlay && t.overlay.model), creating: t._creating,
   };
