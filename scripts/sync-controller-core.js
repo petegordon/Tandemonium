@@ -63,6 +63,15 @@ for (const rel of L.vendoredVisualizerFiles()) {
   fs.copyFileSync(path.join(vizPkg, rel), dest);
 }
 
+// Mark shared/ as ESM. The repo root is CommonJS (electron/main.js, scripts/*),
+// so without this Node parses these files as CommonJS first and reparses them
+// as ESM only after that fails — which the main process hits when it imports
+// the HID pick policy. Not a vendored file, so the drift check ignores it.
+fs.writeFileSync(path.join(shared, 'package.json'), JSON.stringify({
+  '//': 'Marks the vendored @usersfirst/controller-core sources as ES modules. The repo root is CommonJS (electron/main.js, scripts/*), so without this Node parses these files as CommonJS first and only reparses them as ESM after that fails. Written by scripts/sync-controller-core.js; not part of the vendored file set, so the drift check ignores it.',
+  type: 'module',
+}, null, 2) + '\n');
+
 // Provenance stamp.
 const version = L.labVersion();
 const visualizerVersion = L.visualizerVersion();

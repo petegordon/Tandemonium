@@ -326,11 +326,16 @@ re-emit, which the game sees only through Steam Input.
 Two bugs made a second controller impossible to add, both fixed together:
 
 1. **The Electron picker always returned `deviceList[0]`.** `requestDevice()`
-   therefore re-granted the pad we already had, every time. It now prefers a
-   device the renderer does not already hold (vid:pid pushed over `hid:exclude`
-   before the call) and, failing that, one not handed out earlier this session —
-   which is what lets a genuine second pad of the same vid:pid through. Every
-   pick is written to `tandemonium-diag.log` under `[hid] picker:`.
+   therefore re-granted the pad we already had, every time. The choice now comes
+   from the lab core's `pickNewHidDevice` (`@usersfirst/controller-core` 0.5.0,
+   vendored under `shared/`), which the lab's own overlay app uses too. It ranks
+   by evidence: a serial we do not hold proves a device is new; failing that, a
+   model we hold none of is new; failing that, more units of a model attached
+   than we hold means a spare exists — which is what keeps **two identical pads**
+   pairable, where a flat vid:pid exclusion would refuse the second. The
+   renderer publishes what it holds via `ControllerManager.heldHidDescriptors()`
+   over the `hid:held` channel before prompting. Every grant is written to
+   `tandemonium-diag.log` under `[hid] picker:`, with the reason it won.
 2. **Nothing ever asked for a second device.** The only `requestDevice()` in the
    game was the P1 gyro toggle. The host page (RIDE TOGETHER → CAPTAIN) now
    shows **CONNECT A CONTROLLER** whenever no second pad is visible and WebHID

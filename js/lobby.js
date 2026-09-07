@@ -1041,7 +1041,7 @@ export class Lobby {
         if (btnConnectHid.disabled) return;
         btnConnectHid.disabled = true;
         if (hintEl) hintEl.textContent = 'Searching for a controller…';
-        this._publishHidExclude();
+        this._publishHeldHidDevices();
         try {
           const device = await this.controllerManager.connectHidForSlot('P2', { prompt: true });
           if (hintEl) {
@@ -1985,7 +1985,7 @@ export class Lobby {
       // (hid-bound) will flip motion UI state via the subscriber in
       // _runDesktopGamepadDetection.
       if (this.controllerManager) {
-        this._publishHidExclude();
+        this._publishHeldHidDevices();
         this.controllerManager.connectHidForSlot('P1').catch((err) => {
           console.warn('Gyro connect failed:', err);
         });
@@ -4099,20 +4099,16 @@ export class Lobby {
   /**
    * Tell the Electron WebHID picker which devices we ALREADY hold (pooled or
    * seated), so a requestDevice() meant to pair a second controller doesn't
-   * hand back the one we have. No-op outside Electron. Call immediately
-   * before any connectHidForSlot() that may prompt.
+   * hand back the one we have. The manager answers what it holds; main runs
+   * the core's pickNewHidDevice over it. No-op outside Electron. Call
+   * immediately before any connectHidForSlot() that may prompt.
    */
-  _publishHidExclude() {
+  _publishHeldHidDevices() {
     const api = (typeof window !== 'undefined' && window.electronApp) || null;
-    if (!api || typeof api.setHidExcludeList !== 'function') return;
+    if (!api || typeof api.setHeldHidDevices !== 'function') return;
     const mgr = this.controllerManager;
-    const seen = new Map();
-    const add = (d) => { if (d) seen.set(`${d.vendorId}:${d.productId}`, { vendorId: d.vendorId, productId: d.productId }); };
-    if (mgr) {
-      if (mgr._hidPool) for (const e of mgr._hidPool.values()) add(e.device);
-      for (const sl of mgr.slots || []) if (sl._hidEntry) add(sl._hidEntry.device);
-    }
-    try { api.setHidExcludeList([...seen.values()]); } catch (e) { /* not fatal */ }
+    if (!mgr || typeof mgr.heldHidDescriptors !== 'function') return;
+    try { api.setHeldHidDevices(mgr.heldHidDescriptors()); } catch (e) { /* not fatal */ }
   }
 
   _localP2SteamCandidate() {

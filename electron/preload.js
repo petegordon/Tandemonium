@@ -17,10 +17,11 @@ window.addEventListener('unhandledrejection', (ev) => {
 
 contextBridge.exposeInMainWorld('electronApp', {
   toggleDevTools: () => ipcRenderer.invoke('app:toggleDevTools'),
-  // Devices the renderer already has (pooled or seated), as {vendorId, productId}.
-  // The main-process WebHID picker skips these so a requestDevice() aimed at
-  // pairing a SECOND controller doesn't hand back the one we already hold.
-  setHidExcludeList: (list) => ipcRenderer.send('hid:exclude', list),
+  // Devices the renderer already holds, from ControllerManager.heldHidDescriptors().
+  // The main-process picker feeds these to the core's pickNewHidDevice so a
+  // requestDevice() aimed at pairing a SECOND controller grants one we do NOT
+  // have. Same channel and shape as the lab's overlay app.
+  setHeldHidDevices: (list) => ipcRenderer.send('hid:held', list),
 });
 
 // Steam Input snapshot: pushed from main at ~60Hz via 'steam:input:tick'.
