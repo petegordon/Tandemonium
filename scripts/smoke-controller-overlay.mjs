@@ -35,14 +35,21 @@ await new Promise((r) => setTimeout(r, 800));
 
 // P2 in the harness is the Steam case: an XInput gamepad id with a real
 // DualSense bound over WebHID — it must resolve to the DualSense, not Xbox.
-const P2 = { profile: 'dualsense', name: 'Sony DualSense' };
+const P2 = { profile: 'dualsense', name: 'Sony DualSense · WebHID' };
 const SCENARIOS = {
   solo:   { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'dualsense' }] },
   // Steam owns the DualSense exclusively: no slot at all, identity + buttons +
   // gyro come from the seat's InputManager. Must be a DualSense tile, not a
   // keyboard placeholder.
-  steam:  { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'dualsense', name: 'DualSense' }] },
-  local:  { tiles: [{ label: 'P1', anchor: 'bl', kind: 'gamepad' }, { label: 'P2', anchor: 'br', kind: 'gamepad', ...P2 }] },
+  steam:  { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'dualsense', name: 'DualSense · Steam' }] },
+  local:  { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad' }, { label: 'P2', anchor: 'bl', kind: 'gamepad', ...P2 }] },
+  // The laptop case: P1 Steam Controller over WebHID, P2 DualSense captured by
+  // Steam with an idle Puck sibling wrongly attached to its slot. P2 must be a
+  // DualSense fed by Steam; P1 a Steam Controller fed by WebHID.
+  'steam-p2': { tiles: [
+    { label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'steam-controller', name: 'Steam Controller 2026 (via Puck) · WebHID' },
+    { label: 'P2', anchor: 'bl', kind: 'gamepad', profile: 'dualsense', name: 'DualSense · Steam' },
+  ] },
   lobby:  { tiles: [{ label: 'P1', anchor: 'br' }, { label: 'P2', anchor: 'br', ...P2 }, { label: 'P3', anchor: 'br', profile: 'switch-pro' }, { label: 'P4', anchor: 'br', profile: 'steam-controller' }] },
   versus: { tiles: [
     { label: 'TEAM BLUE', seat: 'P1', anchor: 'bl', kind: 'gamepad' }, { label: 'TEAM BLUE', seat: 'P2', anchor: 'bl', kind: 'gamepad', ...P2 },

@@ -39,7 +39,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { InputManager } from './input-manager.js';
+import { InputManager, isSteamFamilyType } from './input-manager.js';
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
@@ -47,6 +47,7 @@ import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { isPresentableEntry } from '../shared/manager.js';
 import { FocusController } from './nav/focus-controller.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
@@ -3874,10 +3875,23 @@ export class Lobby {
     // Uses a cached device list refreshed every 2 seconds to avoid async
     // calls in the per-frame monitor loop.
     if (this.input && this.input.gyroDevice && this._cachedHIDDevices) {
+      const mgr = this.controllerManager;
       for (const d of this._cachedHIDDevices) {
         if (d === this.input.gyroDevice) continue; // skip P1
         const entry = ControllerRegistry.getEntry(d.vendorId, d.productId);
         if (!entry) continue;
+        if (mgr) {
+          // Already seated (any slot) → not a second controller.
+          if ((mgr.slots || []).some((sl) => sl._hidEntry && sl._hidEntry.device === d)) continue;
+          // A Steam Puck exposes several same-vid:pid interfaces and only the
+          // one a body streams on is a controller. When P1 rides the Puck, the
+          // idle sibling receivers are still "approved devices" here — offering
+          // one as P2 seats a phantom whose fusion never integrates (no gyro,
+          // and the seat labelled as a second Steam Controller). Same filter
+          // the controller lists use.
+          const pooled = mgr._hidPool ? mgr._hidPool.get(d) : null;
+          if (pooled && !isPresentableEntry(pooled)) continue;
+        }
         const name = this._prettyGamepadName(d.productName || entry.name);
         return {
           available: true,
@@ -3991,6 +4005,28 @@ export class Lobby {
       // as soon as the slot's fusion finishes calibrating.
       if (this.motionActive || hidDevice) {
         this._localP2InputManager.motionEnabled = true;
+      }
+
+      // Steam Input: pin P2 to a captured controller P1 is NOT using. An
+      // unbound InputManager reads the FIRST snapshot entry, which is P1's
+      // pad whenever Steam captured both (and, when P1 rides a Steam
+      // Controller over WebHID, its Steam-side twin can still lead the
+      // list) — so P2's gyro and buttons came from the wrong controller.
+      // Same handle-binding the versus join screen does for every seat.
+      const snap = (this.input && this.input._steamInputSnapshot) || [];
+      if (snap.length) {
+        const p1 = this.input;
+        const p1Steam = (p1._steamInputActive && !p1._slotFusionIsLive()) ? p1._selectedSteamEntry() : null;
+        const p1Proto = p1._slot?.driver?.entry?.protocol || '';
+        const p1IsSteamPad = p1Proto === 'steam-controller' || (p1Steam && isSteamFamilyType(p1Steam.type));
+        const candidates = snap.filter((c) =>
+          !(p1Steam && c.handle === p1Steam.handle) &&
+          !(p1IsSteamPad && isSteamFamilyType(c.type)));
+        const pick = candidates[0] || null;
+        if (pick) {
+          this._localP2InputManager.steamInputHandle = pick.handle;
+          console.log(`[local] P2 pinned to Steam Input handle ${pick.handle} (type ${pick.type}); P1 ${p1Steam ? 'steam ' + p1Steam.handle : p1Proto || 'gamepad/keyboard'}`);
+        }
       }
     } else {
       // Keyboard P2: no slot needed.
