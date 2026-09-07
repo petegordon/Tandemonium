@@ -39,7 +39,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { InputManager, isSteamFamilyType } from './input-manager.js';
+import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS } from './race-config.js';
 import { AuthManager } from './auth.js';
@@ -3842,6 +3842,9 @@ export class Lobby {
     let unclaimedGpName = null;
     for (let i = 0; i < gamepads.length; i++) {
       if (gamepads[i] && i !== p1GpIndex) {
+        // Steam's XInput twin of P1's WebHID Steam Controller is the same
+        // physical pad (#362) — never offer it as a second player.
+        if (isSteamTwinPad(gamepads[i])) continue;
         unclaimedGpIndex = i;
         unclaimedGpName = this._prettyGamepadName(gamepads[i].id);
         break;
@@ -3898,6 +3901,7 @@ export class Lobby {
       for (const s of mgr.slots || []) {
         if (s === p1Slot || s.state === 'empty') continue;
         if (s.gamepadIndex != null && s.gamepadIndex === p1GpIndex) continue;
+        if (s.gamepadIndex != null && isSteamTwinPad(gamepads[s.gamepadIndex])) continue;
         const hid = s._hidEntry || null;
         if (hid && !isPresentableEntry(hid)) continue;
         const reg = hid ? ControllerRegistry.getEntry(hid.device.vendorId, hid.device.productId) : null;

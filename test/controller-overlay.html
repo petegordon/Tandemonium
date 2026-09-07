@@ -61,6 +61,7 @@
     <button data-scenario="lobby">Lobby (4 pads)</button>
     <button data-scenario="steam">Steam Input only</button>
     <button data-scenario="steam-p2">Puck P1 + DualSense P2 (Steam)</button>
+    <button data-scenario="steam-xinput">Puck P1 + DualSense P2 (XInput only)</button>
     <span style="margin-left:12px">Obstacles:</span>
     <button data-obstacle="frontview">Front view</button>
     <button data-obstacle="pip">Partner PiP</button>
@@ -87,7 +88,7 @@ import { TEAM_COLORS } from '../js/versus/team-rig.js';
 // ── Fake pads: standard-mapping shape, self-animating so every tile moves ──
 const IDS = {
   P1: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)',
-  P2: 'Xbox 360 Controller (XInput STANDARD GAMEPAD)',
+  P2: 'Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b12)',
   P3: 'Pro Controller (STANDARD GAMEPAD Vendor: 057e Product: 2009)',
   P4: 'Steam Controller (STANDARD GAMEPAD Vendor: 28de Product: 1304)',
 };
@@ -199,6 +200,17 @@ const p2SteamInput = {
 };
 const xinputPad = makePad(5, 'Xbox 360 Controller (XInput STANDARD GAMEPAD)');
 pads[5] = xinputPad;
+
+// ── Emulation mode (#362): Steam's snapshot is EMPTY, but it re-emits every
+// captured pad as a virtual XInput device — two identical "Xbox 360" pads: the
+// Steam Controller's twin (XInput slot 0) and the DualSense (slot 1). Only
+// getControllerForGamepadIndex tells them apart; main.js pushes that map.
+const xinputTwin = makePad(4, 'Xbox 360 Controller (XInput STANDARD GAMEPAD)');
+pads[4] = xinputTwin;
+const fakeSteamXInput = { input: { getLatest: () => [], getXInputMap: () => [
+  { index: 0, handle: 'h-sc', type: '14' },
+  { index: 1, handle: 'h-ds', type: '13' },
+] } };
 function animateSteamGyro(t) {
   // roll the fake orientation about Z so the model visibly tilts
   const a = Math.sin(t / 700) * 0.35;
@@ -211,6 +223,7 @@ const scenarios = {
   solo:   () => { ctx.state = 'playing'; ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
   steam:  () => { ctx.state = 'playing'; ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
   'steam-p2': () => { ctx.state = 'playing'; ctx.mode = 'local'; ctx.versusRigs = null; ctx.inputP2 = p2SteamInput; ctx.localP2Type = 'gamepad'; },
+  'steam-xinput': () => { ctx.state = 'playing'; ctx.mode = 'local'; ctx.versusRigs = null; ctx.inputP2 = idleInput; ctx.localP2Type = 'gamepad'; },
   local:  () => { ctx.state = 'playing'; ctx.mode = 'local'; ctx.versusRigs = null; ctx.inputP2 = { _slot: manager.getSlot('P2') }; ctx.localP2Type = 'gamepad'; },
   lobby:  () => { ctx.state = 'lobby';   ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
   versus: () => {
@@ -240,6 +253,11 @@ function setScenario(name) {
   if (scenario === 'steam-p2') {
     p1.claim({ index: -1, id: 'HID::Steam Controller Puck Vendor: 28de Product: 1304' }); p1._hidEntry = puckLive; p1.fusion = p1PuckFusion;
     p2.claim(xinputPad); p2._hidEntry = puckIdle; p2.fusion = deadFusion;
+  }
+  window.steam = scenario === 'steam-xinput' ? fakeSteamXInput : undefined;
+  if (scenario === 'steam-xinput') {
+    p1.claim({ index: -1, id: 'HID::Steam Controller Puck Vendor: 28de Product: 1304' }); p1._hidEntry = puckLive; p1.fusion = p1PuckFusion;
+    p2.claim(xinputPad); p2._hidEntry = null; p2.fusion = null;   // the DualSense: 2nd XInput pad, nothing else
   }
   document.body.classList.toggle('mode-versus', scenario === 'versus');
   document.querySelectorAll('[data-scenario]').forEach((b) => b.classList.toggle('on', b.dataset.scenario === scenario));

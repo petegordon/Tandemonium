@@ -46,6 +46,12 @@ const SCENARIOS = {
   // The laptop case: P1 Steam Controller over WebHID, P2 DualSense captured by
   // Steam with an idle Puck sibling wrongly attached to its slot. P2 must be a
   // DualSense fed by Steam; P1 a Steam Controller fed by WebHID.
+  // Emulation mode: empty Steam snapshot, two identical XInput pads; the
+  // XInput-slot map names the DualSense (slot 1) — never "Xbox".
+  'steam-xinput': { tiles: [
+    { label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'steam-controller', name: 'Steam Controller 2026 (via Puck) · WebHID' },
+    { label: 'P2', anchor: 'bl', kind: 'gamepad', profile: 'dualsense', name: 'DualSense · Steam' },
+  ] },
   'steam-p2': { tiles: [
     { label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'steam-controller', name: 'Steam Controller 2026 (via Puck) · WebHID' },
     { label: 'P2', anchor: 'bl', kind: 'gamepad', profile: 'dualsense', name: 'DualSense · Steam' },

@@ -26,6 +26,12 @@ let _steamInputLatest = [];
 ipcRenderer.on('steam:input:tick', (_event, snapshot) => {
   _steamInputLatest = snapshot || [];
 });
+// XInput slot → Steam handle/type (#362): which physical pad sits behind each
+// virtual XInput device Steam emits. Same push cadence as the snapshot.
+let _steamXInputMap = [];
+ipcRenderer.on('steam:input:xinput', (_event, map) => {
+  _steamXInputMap = map || [];
+});
 
 contextBridge.exposeInMainWorld('steam', {
   isAvailable: () => ipcRenderer.invoke('steam:isAvailable'),
@@ -39,6 +45,7 @@ contextBridge.exposeInMainWorld('steam', {
   input: {
     isAvailable: () => ipcRenderer.invoke('steam:input:isAvailable'),
     getLatest: () => _steamInputLatest,
+    getXInputMap: () => _steamXInputMap,
     getFullDiag: () => ipcRenderer.invoke('steam:input:fullDiag'),
   },
 });

@@ -96,6 +96,51 @@ function steamControllerLiveOnWebHid() {
   return false;
 }
 
+// ── Steam virtual XInput pads (#362) ──
+// Under Steam every captured controller reaches Chromium as a generic
+// "Xbox 360 Controller (XInput STANDARD GAMEPAD)". main.js probes Steam's
+// getControllerForGamepadIndex each tick, so for the i-th XInput pad we can
+// ask Steam which physical controller it is. Chromium hands XInput pads
+// ascending Gamepad indices in enumeration order, so the k-th XInput pad by
+// Gamepad index is the k-th occupied XInput slot.
+const XINPUT_ID = /xinput/i;
+export function isXInputPadId(id) { return XINPUT_ID.test(String(id || '')); }
+
+/** Steam's controller type ('13' = PS5, '14' = Steam Controller, …) behind a
+ *  virtual XInput pad, or null when unknown / not under Steam. */
+export function steamTypeForGamepad(gp, padsOverride = null) {
+  if (!gp || !isXInputPadId(gp.id)) return null;
+  const steamApi = (typeof window !== 'undefined' && window.steam && window.steam.input) ? window.steam.input : null;
+  const map = steamApi && typeof steamApi.getXInputMap === 'function' ? (steamApi.getXInputMap() || []) : [];
+  if (!map.length) return null;
+  const pads = padsOverride || (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+  const xinputPads = [];
+  for (const p of pads) if (p && isXInputPadId(p.id)) xinputPads.push(p);
+  xinputPads.sort((a, b) => a.index - b.index);
+  const k = xinputPads.findIndex((p) => p.index === gp.index);
+  if (k < 0) return null;
+  const slots = [...map].sort((a, b) => a.index - b.index);
+  // Rank-matching is only sound when every XInput pad Chromium sees is one
+  // Steam emitted. A real Xbox pad that Steam is NOT capturing is XInput too
+  // and would shift the ranks — refuse to guess rather than mislabel.
+  if (xinputPads.length !== slots.length) return null;
+  return slots[k] ? String(slots[k].type) : null;
+}
+
+/**
+ * Is this Gamepad-API pad the Steam-side twin of a Steam Controller we are
+ * already reading over WebHID? Seating it would drive two seats from one
+ * controller. True only when Steam names it as Steam-family AND a Steam
+ * Controller is live on WebHID — if WebHID does not hold one, the XInput pad
+ * is that controller's only presence and must stay eligible.
+ */
+export function isSteamTwinPad(gp) {
+  if (!gp || !isXInputPadId(gp.id)) return false;
+  if (!steamControllerLiveOnWebHid()) return false;
+  const t = steamTypeForGamepad(gp);
+  return t != null && isSteamFamilyType(t);
+}
+
 /**
  * DualSense input-source preference (Auto / Steam Input / WebHID) — see
  * project_dualsense_input_source_toggle.md. Read once at boot, applied to
