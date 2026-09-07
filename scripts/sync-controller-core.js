@@ -5,10 +5,12 @@
 //
 // `shared/` is a VENDORED copy of @usersfirst/controller-core
 // (packages/core/src) from the tandemonium-controller-lab repo — the single
-// source of truth for all controller drivers. This refreshes shared/ from the
-// lab and writes a provenance stamp (CONTROLLER_CORE_VERSION.json) recording
-// which version/commit produced it. `npm run check:controller-core` then
-// guards against drift.
+// source of truth for all controller drivers — plus, under shared/visualizer/,
+// @usersfirst/controller-visualizer (packages/visualizer: the 3D controller
+// renderer behind the in-game controller overlay, and the GLB models its
+// profiles load). This refreshes shared/ from the lab and writes a provenance
+// stamp (CONTROLLER_CORE_VERSION.json) recording which version/commit produced
+// it. `npm run check:controller-core` then guards against drift.
 //
 // Dependency mechanism (item #4): vendored + git-tag-pinned. Tandemonium ships
 // with no bundler — the web build (GitHub Pages) rsyncs the repo and serves raw
@@ -50,17 +52,30 @@ for (const rel of L.vendoredFiles(src)) {
 fs.rmSync(path.join(shared, 'controllers'), { recursive: true, force: true });
 fs.rmSync(path.join(shared, 'controller-manager.js'), { force: true });
 
+// Visualizer: same wipe-and-copy, into shared/visualizer/. Wiping first means a
+// GLB a profile no longer references (or a renamed src module) doesn't linger.
+const vizPkg = L.visualizerPkgDir();
+const vizShared = L.visualizerSharedDir();
+fs.rmSync(vizShared, { recursive: true, force: true });
+for (const rel of L.vendoredVisualizerFiles()) {
+  const dest = path.join(vizShared, rel);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(path.join(vizPkg, rel), dest);
+}
+
 // Provenance stamp.
 const version = L.labVersion();
+const visualizerVersion = L.visualizerVersion();
 const { commit, ref } = L.labGit();
 const stamp = {
   package: '@usersfirst/controller-core',
   version,
+  visualizer: { package: '@usersfirst/controller-visualizer', version: visualizerVersion },
   sourceCommit: commit,
   sourceRef: ref,
   syncedAt: new Date().toISOString().slice(0, 10),
 };
 fs.writeFileSync(path.join(shared, L.STAMP), JSON.stringify(stamp, null, 2) + '\n');
 
-console.log(`Synced controller-core@${version || '?'} (${ref || commit || 'unknown'}) → shared/`);
+console.log(`Synced controller-core@${version || '?'} + controller-visualizer@${visualizerVersion || '?'} (${ref || commit || 'unknown'}) → shared/`);
 console.log('Verify with: npm run check:controller-core   (then git add shared/ && commit)');
