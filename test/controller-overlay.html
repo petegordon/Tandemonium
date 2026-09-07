@@ -59,6 +59,7 @@
     <button data-scenario="local">Local co-op</button>
     <button data-scenario="versus">Versus</button>
     <button data-scenario="lobby">Lobby (4 pads)</button>
+    <button data-scenario="steam">Steam Input only</button>
     <span style="margin-left:12px">Obstacles:</span>
     <button data-obstacle="frontview">Front view</button>
     <button data-obstacle="pip">Partner PiP</button>
@@ -78,6 +79,7 @@
   <div id="controller-overlay" hidden></div>
 
 <script type="module">
+import * as THREE from 'three';
 import { ControllerOverlayHud } from '../js/controller-overlay-hud.js';
 import { TEAM_COLORS } from '../js/versus/team-rig.js';
 
@@ -112,7 +114,7 @@ function animatePads(t) {
 
 // ── Fake slots: the tiny Slot surface the HUD touches ──
 class FakeSlot {
-  constructor(id) { this.id = id; this.state = 'empty'; this.gamepadIndex = null; this.controllerLabel = null; this.fusion = null; this._l = []; }
+  constructor(id) { this.id = id; this.state = 'empty'; this.gamepadIndex = null; this.controllerLabel = null; this.fusion = null; this._hidEntry = null; this._l = []; }
   on(fn) { this._l.push(fn); return () => { this._l = this._l.filter((f) => f !== fn); }; }
   claim(pad) { this.state = 'claimed'; this.gamepadIndex = pad.index; this.controllerLabel = pad.id; }
   release() { this.state = 'empty'; this.gamepadIndex = null; this.controllerLabel = null; }
@@ -121,11 +123,50 @@ class FakeSlot {
 const manager = { slots: ['P1', 'P2', 'P3', 'P4'].map((id) => new FakeSlot(id)) };
 manager.getSlot = (id) => manager.slots.find((s) => s.id === id) || null;
 manager.slots.forEach((s, i) => s.claim(pads[i]));
+// P2 is the Steam case: Steam's virtual XInput pad is what the Gamepad API
+// sees (so the id says "Xbox 360"), but the slot's WebHID binding is the real
+// DualSense — the tile must name and model it as a DualSense.
+manager.getSlot('P2')._hidEntry = { device: { vendorId: 0x054c, productId: 0x0ce6, productName: 'DualSense Wireless Controller' } };
+
+// ── Fake InputManager on Steam Input: what a DualSense looks like when Steam
+// owns it exclusively in the packaged build — NO slot (Electron surfaces no
+// Gamepad-API device), buttons from the bound actions, gyro from the
+// per-handle fusion fed by getMotionData. Type arrives as the enum string.
+// A real THREE.Quaternion, like SensorFusion's — Three's slerp reads the
+// private _x/_y/_z/_w fields, so a plain {x,y,z,w} would go NaN and hide
+// the model (which the smoke test's finite-quaternion check would catch).
+const steamOrientation = new THREE.Quaternion();
+const steamInput = {
+  _steamInputActive: true,
+  _steamFusions: new Map([['h1', { calibrating: false, orientation: steamOrientation }]]),
+  _selectedSteamEntry() {
+    const ph = performance.now() / 1000;
+    return { handle: 'h1', type: '13', steerX: Math.sin(ph) * 0.8, steerY: 0, active: true,
+      digital: { Confirm: Math.sin(ph * 3) > 0.7, Cancel: false, PedalLeft: Math.sin(ph * 2) > 0, PedalRight: Math.sin(ph * 2) <= 0,
+        MenuUp: false, MenuDown: false, MenuLeft: false, MenuRight: false, Pause: false },
+      motion: { rotQuat: [0, 0, 0, 1], accel: [0, 0, 1], rotVel: [0, 0, 0] } };
+  },
+  _buildSteamInputGamepad() {
+    const c = this._selectedSteamEntry(); const d = c.digital;
+    const btn = (p) => ({ pressed: !!p, touched: !!p, value: p ? 1 : 0 });
+    return { id: `DualSense via Steam Input (${c.type} Vendor: 054c Product: 0ce6)`, index: -1, mapping: 'standard', connected: true,
+      buttons: [btn(d.Confirm), btn(d.Cancel), btn(0), btn(0), btn(d.PedalLeft), btn(d.PedalRight), btn(d.PedalLeft), btn(d.PedalRight),
+        btn(0), btn(d.Pause), btn(0), btn(0), btn(d.MenuUp), btn(d.MenuDown), btn(d.MenuLeft), btn(d.MenuRight), btn(0), btn(0)],
+      axes: [c.steerX, c.steerY, 0, 0], _isSyntheticSteamInput: true };
+  },
+};
+const idleInput = { _steamInputActive: false, _steamFusions: new Map(), _selectedSteamEntry: () => null };
+function animateSteamGyro(t) {
+  // roll the fake orientation about Z so the model visibly tilts
+  const a = Math.sin(t / 700) * 0.35;
+  steamOrientation.setFromAxisAngle(new THREE.Vector3(0, 0, 1), a);
+}
 
 // ── Scenarios → the ctx the game passes each frame ──
-const ctx = { state: 'playing', mode: 'solo', manager, versusRigs: null, inputP2: null, localP2Type: null, pads };
+const ctx = { state: 'playing', mode: 'solo', manager, versusRigs: null, input: idleInput, inputP2: null, localP2Type: null, pads };
 const scenarios = {
   solo:   () => { ctx.state = 'playing'; ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
+  steam:  () => { ctx.state = 'playing'; ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
   local:  () => { ctx.state = 'playing'; ctx.mode = 'local'; ctx.versusRigs = null; ctx.inputP2 = { _slot: manager.getSlot('P2') }; ctx.localP2Type = 'gamepad'; },
   lobby:  () => { ctx.state = 'lobby';   ctx.mode = 'solo'; ctx.versusRigs = null; ctx.inputP2 = null; ctx.localP2Type = null; },
   versus: () => {
@@ -144,6 +185,10 @@ let scenario = new URLSearchParams(location.search).get('scenario') || 'solo';
 function setScenario(name) {
   scenario = scenarios[name] ? name : 'solo';
   scenarios[scenario]();
+  // Steam-only: P1's slot is EMPTY and its InputManager reads Steam Input.
+  const p1 = manager.getSlot('P1');
+  if (scenario === 'steam') { p1.release(); ctx.input = steamInput; }
+  else { if (p1.state === 'empty') p1.claim(pads[0]); ctx.input = idleInput; }
   document.body.classList.toggle('mode-versus', scenario === 'versus');
   document.querySelectorAll('[data-scenario]').forEach((b) => b.classList.toggle('on', b.dataset.scenario === scenario));
   layoutObstacles();
@@ -187,6 +232,9 @@ window.__tiles = () => [...hud.tiles.values()].map((t) => {
   const r = t.el.getBoundingClientRect(); // what is actually on screen, not the computed target
   return {
     label: t.entry.label, seat: t.entry.seat, kind: t.entry.kind, anchor: t.entry.anchor,
+    name: t.subEl.textContent,
+    // NaN here = the model has been rotated off into nowhere (bad quaternion input)
+    finiteQuat: !t.overlay || !t.overlay.bodyGroup || Number.isFinite(t.overlay.bodyGroup.quaternion.w),
     rect: { left: r.left, top: r.top, width: r.width, height: r.height },
     profile: t.profile, hasModel: !!(t.overlay && t.overlay.model), creating: t._creating,
   };
@@ -207,6 +255,7 @@ const status = document.getElementById('status');
 function loop(t) {
   requestAnimationFrame(loop);
   animatePads(t);
+  animateSteamGyro(t);
   hud.update(ctx);
   if (Math.floor(t / 250) !== Math.floor((t - 16) / 250)) {
     status.textContent = window.__tiles().map((x) => `${x.label} ${x.seat} ${x.kind} ${x.anchor} ${x.profile || '-'} model=${x.hasModel} ` +
