@@ -615,6 +615,14 @@ ipcMain.on('hid:held', (_event, list) => {
   heldHidDevices = Array.isArray(list) ? list.filter(Boolean) : [];
 });
 
+// Renderer diagnostics → the same log file as the main-process ones. preload
+// has always SENT on this channel (uncaught errors, rejections) but nothing
+// listened, so every renderer error was dropped. Renderer code can also log
+// deliberately via window.electronApp.diag().
+ipcMain.on('renderer:diag', (_event, msg) => {
+  if (typeof msg === 'string' && msg) _diagLog(msg.slice(0, 4000));
+});
+
 ipcMain.handle('app:toggleDevTools', () => {
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.toggleDevTools();

@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('electronApp', {
   // requestDevice() aimed at pairing a SECOND controller grants one we do NOT
   // have. Same channel and shape as the lab's overlay app.
   setHeldHidDevices: (list) => ipcRenderer.send('hid:held', list),
+  // Write a line into tandemonium-diag.log. For the states that only occur on
+  // a real machine with real controllers, where DevTools isn't practical.
+  diag: (msg) => ipcRenderer.send('renderer:diag', String(msg)),
 });
 
 // Steam Input snapshot: pushed from main at ~60Hz via 'steam:input:tick'.
