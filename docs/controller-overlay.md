@@ -27,6 +27,19 @@ in-game glue is `js/controller-overlay-hud.js`.
 | Versus (split screen) | **Team A's riders in the lower-left of the left half, Team B's riders in the lower-right of the right half.** Captain outermost, stoker beside it, tinted in the team colour. |
 | Lobby | Every claimed slot, lower-right, P1 outermost — the "which pad is which" identify view (#241). |
 
+### Under Steam
+
+Steam re-emits every controller it captures as a virtual XInput device, so the
+Gamepad API id of a DualSense literally reads "Xbox 360 Controller". The tile
+therefore identifies a pad the way the game arbitrates input, WebHID first:
+the slot's bound HID device (vendor:product in the registry) → the driver's
+registry entry → **Steam Input's controller type** (when the seat's
+InputManager is steering from Steam) → the gamepad id → id sniffing. When
+Steam owns the pad exclusively and Electron surfaces no Gamepad-API device at
+all, the seat has no slot; the tile is then driven from the InputManager's
+synthetic Steam Input gamepad (the bound actions) and its per-handle motion
+fusion, so the model still moves and still tilts with the gyro.
+
 Tiles never cover what the ride already draws in a corner: they lift above the
 pedal bar and slide sideways past the front-view selfie cam and the partner
 webcam PiP, re-measuring a few times a second and on resize.

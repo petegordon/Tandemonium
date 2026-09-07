@@ -4078,6 +4078,7 @@ class Game {
         mode: this.mode,
         manager: this.controllerManager,
         versusRigs: this.versusRigs,
+        input: this.input,
         inputP2: this.inputP2,
         localP2Type: this._localP2Type,
         pads,

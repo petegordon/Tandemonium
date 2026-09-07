@@ -38,6 +38,10 @@ await new Promise((r) => setTimeout(r, 800));
 const P2 = { profile: 'dualsense', name: 'Sony DualSense' };
 const SCENARIOS = {
   solo:   { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'dualsense' }] },
+  // Steam owns the DualSense exclusively: no slot at all, identity + buttons +
+  // gyro come from the seat's InputManager. Must be a DualSense tile, not a
+  // keyboard placeholder.
+  steam:  { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'dualsense', name: 'DualSense' }] },
   local:  { tiles: [{ label: 'P1', anchor: 'bl', kind: 'gamepad' }, { label: 'P2', anchor: 'br', kind: 'gamepad', ...P2 }] },
   lobby:  { tiles: [{ label: 'P1', anchor: 'br' }, { label: 'P2', anchor: 'br', ...P2 }, { label: 'P3', anchor: 'br', profile: 'switch-pro' }, { label: 'P4', anchor: 'br', profile: 'steam-controller' }] },
   versus: { tiles: [
@@ -80,8 +84,13 @@ try {
       note(t.anchor === ex.anchor, `${name}: ${ex.label} ${ex.seat || ''} anchored ${t.anchor} (expected ${ex.anchor})`);
       if (ex.kind) note(t.kind === ex.kind, `${name}: ${ex.label} ${ex.seat || ''} kind ${t.kind}`);
       if (t.kind === 'gamepad') note(t.hasModel, `${name}: ${ex.label} ${ex.seat || ''} loaded model (${t.profile})`);
+      if (t.kind === 'gamepad') note(t.finiteQuat, `${name}: ${ex.label} ${ex.seat || ''} body orientation is finite`);
       if (ex.profile) note(t.profile === ex.profile, `${name}: ${ex.label} ${ex.seat || ''} profile ${t.profile} (expected ${ex.profile})`);
       if (ex.name) note(t.name === ex.name, `${name}: ${ex.label} ${ex.seat || ''} named "${t.name}" (expected "${ex.name}")`);
+    }
+    await page.waitForTimeout(600);
+    for (const t of await page.evaluate(() => window.__tiles())) {
+      if (t.kind === 'gamepad') note(t.finiteQuat, `${name}: ${t.label} ${t.seat || ''} orientation still finite after animating`);
     }
     for (const set of OBSTACLE_SETS) {
       for (const k of ['frontview', 'pip', 'pedals']) await page.evaluate(([k, on]) => window.__setObstacle(k, on), [k, set.includes(k)]);
