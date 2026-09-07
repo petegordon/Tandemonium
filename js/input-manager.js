@@ -63,7 +63,7 @@ if (typeof window !== 'undefined') {
 // forms: 1 = SteamController, 14 = SteamDeckController, which is what the 2026
 // Puck reports as.
 const STEAM_FAMILY_TYPE_IDS = new Set(['1', '14']);
-function isSteamFamilyType(type) {
+export function isSteamFamilyType(type) {
   const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
   return STEAM_FAMILY_TYPE_IDS.has(t) || /^steam/i.test(t);
 }
@@ -311,6 +311,22 @@ export class InputManager {
       : this._steamInputSnapshot.some((c) => c.handle === this.steamInputHandle);
   }
   get gamepadIndex() { return this._slot?.gamepadIndex ?? null; }
+  /**
+   * Does the attached slot have a WebHID fusion that can actually steer?
+   * A fan-out receiver interface (Steam Puck) that has never streamed a
+   * report carries a fusion object that will never integrate anything — it
+   * must not count, or a seat bound to an idle Puck sibling would sit on the
+   * dead WebHID path while Steam Input (which does have the pad) is ignored.
+   * Non-fan-out entries count as soon as they are bound: real pads stream
+   * within tens of ms, and a transient "not yet" here would auto-arm motion.
+   */
+  _slotFusionIsLive() {
+    const slot = this._slot;
+    if (!slot || !slot.fusion) return false;
+    const entry = slot._hidEntry;
+    const fanout = !!(entry && entry.driver && entry.driver.constructor && entry.driver.constructor.needsSiblingFanout);
+    return fanout ? entry.hidActiveSince > 0 : true;
+  }
   // Steam Input counts as a gyro source — it owns Steer for any captured pad
   // and replaces the WebHID fusion path. The lobby reads this to decide
   // whether to surface the gyro toggle.
@@ -817,7 +833,7 @@ export class InputManager {
     // while WebHID holds the device (two owners starve the HID interface). Steam
     // motion is the fallback for when Steam Input owns the pad exclusively (the
     // real packaged build, where WebHID can't open the Steam Controller).
-    if (this._steamInputActive && !this._slot?.fusion) {
+    if (this._steamInputActive && !this._slotFusionIsLive()) {
       // One-shot auto-arm on first capture, mirroring the fusion-calibration
       // arm. After this, the user's lobby motion toggle controls the channel.
       if (!hadSteamInput && !this.motionEnabled) {
