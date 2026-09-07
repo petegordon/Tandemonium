@@ -23,6 +23,7 @@ import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
 import { ControllerOverlayHud, getControllerOverlayPref } from './controller-overlay-hud.js';
+import { isSteamTwinPad } from './input-manager.js';
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
@@ -208,7 +209,12 @@ class Game {
     // P1 = slot[0] … P4 = slot[3]. Shared with the Lobby so join detection
     // in the lobby and in-race input read from the same source of truth.
     // P3/P4 exist for versus mode; solo/co-op paths only ever touch P1/P2.
-    this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2', 'P3', 'P4'] });
+    // padFilter: never seat the Steam-side XInput twin of a Steam Controller
+    // we already read over WebHID (#362) — one controller, one seat.
+    this.controllerManager = new ControllerManager({
+      slotIds: ['P1', 'P2', 'P3', 'P4'],
+      padFilter: (gp) => !isSteamTwinPad(gp),
+    });
     // Let InputManager see the WebHID pool so it can tell when a pad in the
     // Steam Input snapshot is already streaming over WebHID (#347).
     setControllerManager(this.controllerManager);

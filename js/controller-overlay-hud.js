@@ -33,6 +33,7 @@
 // lazy-create / dispose the lab's multi-controller overlay uses.
 
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { steamTypeForGamepad } from './input-manager.js';
 
 export const CONTROLLER_OVERLAY_PREF = 'tandemonium_controller_overlay';
 
@@ -167,12 +168,16 @@ const SOURCE_LABEL = { hid: 'WebHID', steam: 'Steam', pad: 'Pad', none: '' };
  * @param {Object|null} [steamEntry] the InputManager's Steam Input snapshot
  *   entry, ONLY when that manager is actually reading Steam for this seat
  */
-export function slotIdentity(slot, steamEntry = null) {
+export function slotIdentity(slot, steamEntry = null, pad = null, pads = null) {
   const label = (slot && slot.controllerLabel) || '';
   const hid = liveHidEntry(slot);
   const device = hid ? hid.device : null;
   const vp = device ? `${device.vendorId}:${device.productId}` : '';
-  const steamType = steamEntry ? String(steamEntry.type ?? '') : '';
+  // A virtual XInput pad under Steam: ask Steam which controller sits in that
+  // XInput slot (#362) — the only way to tell a DualSense from the Steam
+  // Controller's own twin when the Steam snapshot is empty (emulation mode).
+  const xinputType = pad ? steamTypeForGamepad(pad, pads) : null;
+  const steamType = steamEntry ? String(steamEntry.type ?? '') : (xinputType || '');
   const key = `${label}|${vp}|${steamType}`;
   let entry = null;
   if (device) entry = ControllerRegistry.getEntry(device.vendorId, device.productId);
@@ -182,6 +187,10 @@ export function slotIdentity(slot, steamEntry = null) {
   }
   if (steamEntry) {
     const st = steamTypeIdentity(steamEntry.type);
+    if (st.profile) return { key, source: 'steam', ...st };
+  }
+  if (xinputType) {
+    const st = steamTypeIdentity(xinputType);
     if (st.profile) return { key, source: 'steam', ...st };
   }
   const info = ControllerRegistry.identifyFromGamepadId(label);
@@ -577,9 +586,9 @@ class Tile {
     });
   }
 
-  _profileFor() {
+  _profileFor(pad = null, pads = null) {
     const viz = this.hud._viz;
-    const id = slotIdentity(this.slot, steamEntryFor(this.input, this.slot));
+    const id = slotIdentity(this.slot, steamEntryFor(this.input, this.slot), pad, pads);
     let type = id.profile || viz.detectControllerType((this.slot && this.slot.controllerLabel) || '');
     if (!viz.PROFILES[type]) type = 'dualsense';
     return type;
@@ -636,12 +645,13 @@ class Tile {
     // Re-resolve name + model whenever the identity inputs change — a
     // re-claim with a different pad, a HID binding or Steam capture arriving
     // after the claim.
-    const id = slotIdentity(slot, steam);
+    const realPad = (slot && slot.gamepadIndex != null) ? (pads[slot.gamepadIndex] || null) : null;
+    const id = slotIdentity(slot, steam, realPad, pads);
     if (id.key !== this._identityKey) {
       this._identityKey = id.key;
       const src = SOURCE_LABEL[id.source] || '';
       this.subEl.textContent = src ? `${id.name} · ${src}` : id.name;
-      const type = this._profileFor();
+      const type = this._profileFor(realPad, pads);
       if (type !== this.profile) { this.profile = type; this.overlay.setControllerType(type); }
     }
 
