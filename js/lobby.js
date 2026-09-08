@@ -3707,8 +3707,9 @@ export class Lobby {
       // No second pad visible yet, but WebHID could still pair one — offer it.
       // This is the state a Steam-launched session lands in with a Puck + a
       // DualSense: only one of them has ever been granted.
-      const canPairHid = !state.hasGamepad && !!navigator.hid;
-      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.slotId || ''}|${state.steamHandle || ''}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}|${canPairHid}`;
+      const canPairHid = (!state.hasGamepad || state.gpSilent ||
+        (state.hidLive && !state.hidLive.streaming)) && !!navigator.hid;
+      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.slotId || ''}|${state.steamHandle || ''}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}|${canPairHid}|${!!state.gpSilent}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
         // Show/hide the entire join section based on whether any P2 path exists
@@ -3721,17 +3722,27 @@ export class Lobby {
         if (state.hasGamepad && gpNameEl) {
           gpNameEl.textContent = state.gpName || 'CONTROLLER';
         }
-        // Controller-specific action button hint
+        // Controller-specific action button hint. A pad that is paired but has
+        // never sent a report can't answer a button press, so say that instead
+        // of telling the player to press something that cannot work.
         if (state.hasGamepad && gpHintEl) {
-          if (state.gpIndex !== null || state.slotId || state.steamHandle) {
-            // Gamepad API visible — P2 can press their own action button
-            const actionBtn = this._getActionButtonLabel(state.gpRawId);
-            gpHintEl.innerHTML = 'Press <strong>' + actionBtn + '</strong> to join';
+          const actionBtn = this._getActionButtonLabel(state.gpRawId);
+          const silent = state.gpSilent || (state.hidLive && !state.hidLive.streaming);
+          if (silent) {
+            gpHintEl.innerHTML = 'No input from this controller yet — click here to join';
           } else {
-            // WebHID-only — P1 navigates and selects the button
-            gpHintEl.innerHTML = 'Select to join as Player 2';
+            gpHintEl.innerHTML = 'Press <strong>' + actionBtn + '</strong> (or any button) to join, or click here';
           }
         }
+
+        // One line per state change, into tandemonium-diag.log: which source
+        // found the pad and whether it is actually sending.
+        const live = state.hidLive;
+        this._diag('[local] P2 candidate: ' + (state.hasGamepad
+          ? `${state.gpName} via ${state.via || 'gamepad-api'} gpIndex=${state.gpIndex}` +
+            ` slot=${state.slotId || '-'} steam=${state.steamHandle || '-'}` +
+            (live ? ` streaming=${live.streaming} everPressed=${live.everPressed} lastReport=${live.msSinceReport ?? 'never'}ms` : ' (no hid entry)')
+          : `none (keyboard=${state.hasKeyboard}, p1=${state.p1GpName || '-'})`), 'candidate');
         // "2nd controller detected!" label
         if (detectedEl) {
           detectedEl.style.display = state.hasGamepad ? '' : 'none';
@@ -3780,18 +3791,30 @@ export class Lobby {
           const c = (this.input._steamInputSnapshot || []).find((e) => e.handle === state.steamHandle);
           gp = c ? this._steamEntryToPollGp(c) : null;
         }
-        if (!gp && this.controllerManager) {
-          // Either the Gamepad API path didn't resolve, or state.hidDevice
-          // is the only signal. Try the P2 slot's synthetic — populated by
-          // the HID pool's parsed reports even before slot claim.
-          const slotP2 = this.controllerManager.getSlot('P2');
-          gp = slotP2?.synthetic || null;
-          // Pool entries (unclaimed) also carry a synthetic we can read.
-          if (!gp && state.hidDevice) {
-            for (const entry of this.controllerManager._hidPool.values()) {
-              if (entry.device === state.hidDevice) { gp = entry.synthetic; break; }
+        // Found over WebHID: read THAT device's own synthetic, populated from
+        // its parsed reports even before any slot claims it. Match by identity
+        // first, then by vid:pid — navigator.hid.getDevices() can hand back a
+        // different handle object for the same physical device.
+        if (!gp && state.hidDevice && this.controllerManager) {
+          const want = state.hidDevice;
+          let entry = this.controllerManager._hidPool.get(want);
+          if (!entry) {
+            for (const e of this.controllerManager._hidPool.values()) {
+              if (e.device === want) { entry = e; break; }
             }
           }
+          if (!entry) {
+            for (const e of this.controllerManager._hidPool.values()) {
+              if (e.device.vendorId === want.vendorId && e.device.productId === want.productId) { entry = e; break; }
+            }
+          }
+          gp = entry ? entry.synthetic : null;
+        }
+        // Last resort: the P2 slot's synthetic. Deliberately AFTER the detected
+        // device — P2 can be holding a different controller entirely, and
+        // reading it here would poll the wrong pad forever.
+        if (!gp && this.controllerManager) {
+          gp = this.controllerManager.getSlot('P2')?.synthetic || null;
         }
       }
       if (gp) {
@@ -3809,8 +3832,17 @@ export class Lobby {
           }
           this._localP2AnyPrev = anyPressed;
 
-          // A-button (cross/B/A — standard gamepad index 0) commit
-          const aPressed = !!(gp.buttons[0] && gp.buttons[0].pressed);
+          // Commit on ANY button. ✕ is index 0 only under Chromium's standard
+          // mapping; a pad it doesn't recognise reports raw HID order, where
+          // ✕ can be index 1 — and then the button the UI told the player to
+          // press did nothing. Anyone pressing a button on the join screen
+          // means to join, so take any of them.
+          const aPressed = anyPressed;
+          if (anyPressed) {
+            const pressed = [];
+            for (let i = 0; i < gp.buttons.length; i++) if (gp.buttons[i] && gp.buttons[i].pressed) pressed.push(i);
+            this._diag(`[local] P2 poll: pressed=[${pressed.join(',')}] mapping=${gp.mapping || '(non-standard)'} → joining`, 'poll');
+          }
           if (aPressed && !this._localP2APrev) {
             console.log('P2 action button pressed — joining as gamepad', state.gpIndex, state.slotId || '', state.steamHandle || '');
             this._localP2APrev = true;
@@ -3877,18 +3909,36 @@ export class Lobby {
 
     // Find the first attached gamepad that isn't P1's (note: the array can be
     // sparse with holes at un-activated slots, so filter for truthy entries).
+    // Prefer a pad that is actually DELIVERING INPUT. The first non-P1 entry
+    // is not good enough: Chromium keeps stale post-reconnect ghosts, and a
+    // pad Steam has taken for its Desktop layout reports the right name while
+    // its buttons go to the mouse instead of to us. Both show the right name
+    // and never report a press, so the join can never fire.
+    const now = performance.now();
+    this._trackPadActivity(gamepads, now);
     let unclaimedGpIndex = null;
     let unclaimedGpName = null;
+    let bestRank = 99;
     for (let i = 0; i < gamepads.length; i++) {
-      if (gamepads[i] && i !== p1GpIndex) {
-        // Steam's XInput twin of P1's WebHID Steam Controller is the same
-        // physical pad (#362) — never offer it as a second player.
-        if (isSteamTwinPad(gamepads[i])) continue;
+      const gp = gamepads[i];
+      if (!gp || i === p1GpIndex) continue;
+      // Steam's XInput twin of P1's WebHID Steam Controller is the same
+      // physical pad (#362) — never offer it as a second player.
+      if (isSteamTwinPad(gp)) continue;
+      const stickMag = Math.max(
+        Math.abs(gp.axes[0] || 0), Math.abs(gp.axes[1] || 0),
+        Math.abs(gp.axes[2] || 0), Math.abs(gp.axes[3] || 0));
+      // 0 = has delivered input; 1 = quiet but plausible; 2 = quiet AND sticks
+      // pinned off-centre, the classic ghost signature.
+      const rank = this._padHasInput(i) ? 0 : (stickMag > 0.5 ? 2 : 1);
+      if (rank < bestRank) {
+        bestRank = rank;
         unclaimedGpIndex = i;
-        unclaimedGpName = this._prettyGamepadName(gamepads[i].id);
-        break;
+        unclaimedGpName = this._prettyGamepadName(gp.id);
+        if (rank === 0) break;
       }
     }
+    this._diag('[local] pads: ' + this._padTable(gamepads), 'pads');
     // Debug: log gamepad state once when it changes (avoids per-frame spam)
     const debugKey = `p1=${p1GpIndex} unclaimed=${unclaimedGpIndex} slots=${gamepads.length}`;
     if (debugKey !== this._lastGpDebugKey) {
@@ -3913,18 +3963,23 @@ export class Lobby {
       ? this._prettyGamepadName(this.input._gpName)
       : null;
 
-    if (unclaimedGpIndex !== null) {
-      const rawGp = gamepads[unclaimedGpIndex];
-      return {
-        available: true,
-        hasGamepad: true,
-        hasKeyboard: keyboardAvailable,
-        gpIndex: unclaimedGpIndex,
-        gpName: unclaimedGpName,
-        gpRawId: rawGp ? rawGp.id : null,
-        p1GpName,
-      };
-    }
+    // A Gamepad-API candidate that has delivered input wins outright. One that
+    // has not is held back until the WebHID/Steam sources have had their turn —
+    // a pad we can actually read beats one that only looks right — and is
+    // returned at the end if nothing better exists, flagged as silent so the
+    // page offers pairing instead of a button that cannot answer.
+    const gpCandidate = unclaimedGpIndex === null ? null : {
+      available: true,
+      hasGamepad: true,
+      hasKeyboard: keyboardAvailable,
+      gpIndex: unclaimedGpIndex,
+      gpName: unclaimedGpName,
+      gpRawId: gamepads[unclaimedGpIndex] ? gamepads[unclaimedGpIndex].id : null,
+      via: 'gamepad-api',
+      gpSilent: !this._padHasInput(unclaimedGpIndex) && this._padSilentFor(unclaimedGpIndex, now) > 3000,
+      p1GpName,
+    };
+    if (gpCandidate && !gpCandidate.gpSilent) return gpCandidate;
 
     // The second pad may not be on the Gamepad API at all, and P1 may not be
     // on WebHID — a DualSense that Steam re-emits as an XInput pad can hold
@@ -3952,6 +4007,8 @@ export class Lobby {
           gpIndex: s.gamepadIndex ?? null,
           slotId: s.id,
           hidDevice: hid ? hid.device : null,
+          hidLive: this._hidLiveness(hid),
+          via: 'seat',
           gpName: this._prettyGamepadName(raw),
           gpRawId: s.controllerLabel || raw,
           p1GpName,
@@ -3968,6 +4025,8 @@ export class Lobby {
           hasKeyboard: keyboardAvailable,
           gpIndex: null,
           hidDevice: d,
+          hidLive: this._hidLiveness(pooled),
+          via: 'pool',
           gpName: this._prettyGamepadName(d.productName || (reg && reg.name) || 'Controller'),
           gpRawId: d.productName || '',
           p1GpName,
@@ -4017,12 +4076,16 @@ export class Lobby {
           hasKeyboard: keyboardAvailable,
           gpIndex: null,
           hidDevice: d,
+          hidLive: this._hidLiveness(mgr && mgr._hidPool ? mgr._hidPool.get(d) : null),
+          via: 'approved-hid',
           gpName: name,
           gpRawId: d.productName || '',
           p1GpName,
         };
       }
     }
+    // Nothing better turned up — offer the silent pad, honestly labelled.
+    if (gpCandidate) return gpCandidate;
     if (keyboardAvailable) {
       return {
         available: true,
@@ -4111,6 +4174,115 @@ export class Lobby {
     try { api.setHeldHidDevices(mgr.heldHidDescriptors()); } catch (e) { /* not fatal */ }
   }
 
+  /**
+   * Watch every Gamepad-API pad for signs of life. Chromium keeps stale
+   * entries after a Bluetooth reconnect that are indistinguishable from a live
+   * pad at rest — same id, same button count, buttons that never move. The
+   * ControllerManager already refuses to claim those blind (stuck-stick skip,
+   * activity-based claim); the host page's "first pad that isn't P1" rule had
+   * no such guard and would happily offer a dead entry as Player 2, which
+   * looks exactly like a join button that ignores you.
+   *
+   * What counts is INPUT — a button pressed, or a stick that actually moved.
+   * `timestamp` alone does not: Chromium bumps it whenever it refreshes a pad,
+   * so a controller Steam has taken for its Desktop layout (buttons translated
+   * to mouse clicks and never delivered as gamepad buttons) ticks along
+   * happily while reporting nothing usable. Judging liveness by timestamp
+   * called that pad healthy and hid the WebHID pairing route that would have
+   * fixed it. Stick MAGNITUDE doesn't count either — a ghost's axes are pinned
+   * but constant, so only a CHANGE is evidence.
+   *
+   * The converse still isn't true — an untouched live pad shows nothing — so
+   * this ranks candidates and offers alternatives, never excludes.
+   */
+  _trackPadActivity(gamepads, now) {
+    if (!this._padWatch) this._padWatch = new Map();
+    const AXIS_DELTA = 0.15; // past stick jitter and drift
+    const seen = new Set();
+    for (let i = 0; i < gamepads.length; i++) {
+      const gp = gamepads[i];
+      if (!gp) continue;
+      seen.add(i);
+      let pressed = '';
+      for (let b = 0; b < gp.buttons.length; b++) if (gp.buttons[b] && gp.buttons[b].pressed) pressed += b + ',';
+      const axes = (gp.axes || []).map((a) => a || 0);
+      let rec = this._padWatch.get(i);
+      if (!rec) {
+        rec = { ts: gp.timestamp, pressed, axes, since: now, inputAt: 0, tickedAt: 0 };
+        this._padWatch.set(i, rec);
+      }
+      if (rec.ts !== gp.timestamp) { rec.ts = gp.timestamp; rec.tickedAt = now; }
+      let moved = pressed !== '' || pressed !== rec.pressed;
+      if (!moved) {
+        for (let a = 0; a < axes.length; a++) {
+          if (Math.abs(axes[a] - (rec.axes[a] || 0)) > AXIS_DELTA) { moved = true; break; }
+        }
+      }
+      rec.pressed = pressed;
+      rec.axes = axes;
+      if (moved) rec.inputAt = now;
+    }
+    for (const i of [...this._padWatch.keys()]) if (!seen.has(i)) this._padWatch.delete(i);
+  }
+
+  /** Has this pad delivered any real input (button or stick) since we started? */
+  _padHasInput(index) {
+    const rec = this._padWatch && this._padWatch.get(index);
+    return !!(rec && rec.inputAt > 0);
+  }
+
+  /** How long we have watched this pad without a single usable input (ms). */
+  _padSilentFor(index, now) {
+    const rec = this._padWatch && this._padWatch.get(index);
+    if (!rec) return 0;
+    return now - (rec.inputAt || rec.since);
+  }
+
+  /** Compact pad table for the diag log — what Chromium actually reports. */
+  _padTable(gamepads) {
+    const parts = [];
+    for (let i = 0; i < gamepads.length; i++) {
+      const gp = gamepads[i];
+      if (!gp) continue;
+      const rec = this._padWatch && this._padWatch.get(i);
+      // input: real button/stick activity. ticking: Chromium is refreshing the
+      // pad. ticking without input is the signature of a pad something else
+      // (Steam's Desktop layout) has taken over.
+      parts.push(`[${i}] ${this._prettyGamepadName(gp.id)} input=${this._padHasInput(i)}` +
+        ` ticking=${!!(rec && rec.tickedAt)} pressed=[${rec ? rec.pressed.replace(/,$/, '') : ''}]`);
+    }
+    return parts.length ? parts.join(' | ') : '(no pads)';
+  }
+
+  /**
+   * Is a pooled/seated HID entry actually SENDING? A device can be granted,
+   * pooled and correctly named from its vid:pid while never streaming a single
+   * input report — it then shows up as a detected controller whose buttons
+   * never change, which looks exactly like "the join button is broken".
+   */
+  _hidLiveness(entry) {
+    if (!entry) return null;
+    return {
+      streaming: (entry.hidActiveSince || 0) > 0,
+      everPressed: !!entry._everPressed,
+      msSinceReport: entry.lastRawReportAt ? Math.round(performance.now() - entry.lastRawReportAt) : null,
+    };
+  }
+
+  /**
+   * One line into tandemonium-diag.log (Electron only). Repeats are suppressed
+   * PER KIND, so two lines that alternate — a per-frame state line and an
+   * occasional event line — don't keep re-triggering each other.
+   */
+  _diag(msg, kind = msg) {
+    if (!this._lastDiagLine) this._lastDiagLine = new Map();
+    if (this._lastDiagLine.get(kind) === msg) return;
+    this._lastDiagLine.set(kind, msg);
+    console.log(msg);
+    const api = (typeof window !== 'undefined' && window.electronApp) || null;
+    if (api && typeof api.diag === 'function') { try { api.diag(msg); } catch (e) { /* not fatal */ } }
+  }
+
   _localP2SteamCandidate() {
     const p1 = this.input;
     if (!p1 || !p1._steamInputActive) return null;
@@ -4131,6 +4303,8 @@ export class Lobby {
    *   already holds it, and/or the Steam Input handle to pin P2 to
    */
   _onLocalJoinClick(sourceType, gamepadSlot, hidDevice = null, opts = {}) {
+    this._diag(`[local] JOIN fired: type=${sourceType} gpIndex=${gamepadSlot} ` +
+      `hid=${hidDevice ? (hidDevice.productName || 'device') : '-'} slot=${opts.slotId || '-'} steam=${opts.steamHandle || '-'}`, 'join-fired');
     // Guard: if the monitor hasn't seen a P2 path, bail.
     if (sourceType !== 'gamepad' && sourceType !== 'keyboard') return;
     // Record that local JOIN RIDE won the race vs. any pending online stoker.
@@ -4204,6 +4378,9 @@ export class Lobby {
       this._localP2Type = 'keyboard';
     }
     this._pendingMode = 'local';
+    this._diag(`[local] JOIN seated: P2 on ${this._localP2Type}` +
+      (this._localP2InputManager && this._localP2InputManager._slot ? ` slot=${this._localP2InputManager._slot.id}` : ' slot=none') +
+      ' — advancing to level select', 'join-seated');
     // Skip the room step; local co-op doesn't need social video prep.
     this._showStep(this.levelStep);
   }
