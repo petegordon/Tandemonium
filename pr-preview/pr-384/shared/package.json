@@ -1,4 +1,0 @@
-{
-  "//": "Marks the vendored @usersfirst/controller-core sources as ES modules. The repo root is CommonJS (electron/main.js, scripts/*), so without this Node parses these files as CommonJS first and only reparses them as ESM after that fails. Written by scripts/sync-controller-core.js; not part of the vendored file set, so the drift check ignores it.",
-  "type": "module"
-}
