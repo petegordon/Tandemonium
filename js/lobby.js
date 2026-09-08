@@ -876,6 +876,11 @@ export class Lobby {
         if (diffSel) { diffSel.style.opacity = ''; diffSel.style.pointerEvents = ''; }
         this._showStep(this.roomStep);
       } else {
+        // Local co-op: backing out abandons the setup, so give P2's seat back.
+        // The online room was already destroyed when they joined, so there is
+        // no half-live host page to return to — a fresh RIDE TOGETHER makes a
+        // new room and a clean join.
+        if (this._pendingMode === 'local') this._leaveLocalP2('back from level select');
         this._showStep(this.modeStep);
       }
     });
@@ -889,6 +894,7 @@ export class Lobby {
       // still offer to rejoin this room within the 5-min window. Only an
       // explicit "New Room" (rejoin prompt / stale-room timer) clears. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
+      this._leaveLocalP2('back from host page');
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
       this._showStep(this.roleStep);
@@ -3664,6 +3670,9 @@ export class Lobby {
     this._localP2APrev = false;
     this._localP2AnyPrev = false;
     this._localP2FlashTimer = null;
+    // Re-render on entry rather than trusting the cached key from last time:
+    // the buttons' visibility is DOM state that survives leaving the page.
+    this._localLastJoinState = null;
 
     // Briefly flash btnGp's border so the second player gets visual
     // confirmation that the system sees their button press. Covers the
@@ -4290,6 +4299,31 @@ export class Lobby {
     console.log(msg);
     const api = (typeof window !== 'undefined' && window.electronApp) || null;
     if (api && typeof api.diag === 'function') { try { api.diag(msg); } catch (e) { /* not fatal */ } }
+  }
+
+  /**
+   * Undo a local co-op join: release Player 2's seat back to the pool and drop
+   * the InputManager built for it.
+   *
+   * Joining had no reverse. Backing out of level select dropped to the mode
+   * screen with the seat still claimed, `_localP2InputManager` still set and
+   * `_pendingMode` still 'local' — invisible state that then made a second
+   * join behave differently from the first, with nothing on screen to explain
+   * why. Versus already does this per seat (releaseSlotToPool on leave); local
+   * co-op is the same idea for its single guest seat.
+   */
+  _leaveLocalP2(reason) {
+    const im = this._localP2InputManager;
+    const slot = im && im._slot;
+    if (slot && slot.id !== 'P1' && this.controllerManager) {
+      this.controllerManager.releaseSlotToPool(slot.id);
+    }
+    if (im) this._diag(`[local] P2 left (${reason}): released ${slot ? slot.id : 'no slot'}`, 'leave');
+    this._localP2InputManager = null;
+    this._localP2Type = null;
+    if (this._pendingMode === 'local') this._pendingMode = null;
+    // Force the host page to re-render its join UI next time it is shown.
+    this._localLastJoinState = null;
   }
 
   /** The Steam Input entry Player 1 is steering from, or null. */
