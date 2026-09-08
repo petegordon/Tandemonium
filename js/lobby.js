@@ -4006,6 +4006,7 @@ export class Lobby {
         if (s.gamepadIndex != null && isSteamTwinPad(gamepads[s.gamepadIndex])) continue;
         const hid = s._hidEntry || null;
         if (hid && !isPresentableEntry(hid)) continue;
+        if (this._isP1HidEntry(hid, p1Slot)) continue;
         const reg = hid ? ControllerRegistry.getEntry(hid.device.vendorId, hid.device.productId) : null;
         const raw = hid ? (hid.device.productName || (reg && reg.name) || 'Controller') : (s.controllerLabel || 'Controller');
         return {
@@ -4023,7 +4024,7 @@ export class Lobby {
         };
       }
       // 2. A live, unclaimed WebHID pad still in the pool.
-      const pooled = mgr.presentablePoolEntries().find((e) => !p1Slot || e !== p1Slot._hidEntry);
+      const pooled = mgr.presentablePoolEntries().find((e) => !this._isP1HidEntry(e, p1Slot));
       if (pooled) {
         const d = pooled.device;
         const reg = ControllerRegistry.getEntry(d.vendorId, d.productId);
@@ -4291,13 +4292,55 @@ export class Lobby {
     if (api && typeof api.diag === 'function') { try { api.diag(msg); } catch (e) { /* not fatal */ } }
   }
 
+  /** The Steam Input entry Player 1 is steering from, or null. */
+  _p1SteamEntry() {
+    const p1 = this.input;
+    if (!p1 || !p1._steamInputActive) return null;
+    if (typeof p1._slotFusionIsLive === 'function' && p1._slotFusionIsLive()) return null;
+    return typeof p1._selectedSteamEntry === 'function' ? p1._selectedSteamEntry() : null;
+  }
+
+  /** Is Player 1 riding a Steam-family pad (Steam Controller / Deck)? */
+  _p1IsSteamPad() {
+    const p1 = this.input;
+    const proto = (p1 && p1._slot && p1._slot.driver && p1._slot.driver.entry && p1._slot.driver.entry.protocol) || '';
+    if (proto === 'steam-controller') return true;
+    const steam = this._p1SteamEntry();
+    return !!(steam && isSteamFamilyType(steam.type));
+  }
+
+  /**
+   * Does this pooled HID entry belong to the controller Player 1 is riding?
+   *
+   * Comparing entry objects is not enough. When P1 steers through Steam Input
+   * its ControllerManager slot holds no HID entry at all, so the Steam
+   * Controller's own streaming Puck interface sits in the pool looking
+   * unclaimed — and gets offered as Player 2. Worse, it IS a live WebHID
+   * device, so the page concludes P2 is sorted and hides the pairing button
+   * that would have fixed things. That is the "it appeared and then went away
+   * after a couple of seconds" report: before the silence threshold the
+   * Gamepad-API pad answered, after it this did.
+   *
+   * When P1 DOES hold a slot entry, only that exact device is excluded — a
+   * second body streaming on another interface of the same Puck is a genuine
+   * second controller and must stay available.
+   */
+  _isP1HidEntry(entry, p1Slot) {
+    if (!entry) return false;
+    const p1Entry = p1Slot && p1Slot._hidEntry;
+    if (p1Entry) return entry === p1Entry || entry.device === p1Entry.device;
+    // No slot entry to compare against: attribute a fan-out (multi-receiver)
+    // interface to P1 when P1 is riding that family of pad.
+    const fanout = !!(entry.driver && entry.driver.constructor && entry.driver.constructor.needsSiblingFanout);
+    return fanout && this._p1IsSteamPad();
+  }
+
   _localP2SteamCandidate() {
     const p1 = this.input;
     if (!p1 || !p1._steamInputActive) return null;
     const snap = p1._steamInputSnapshot || [];
-    const p1Steam = (typeof p1._slotFusionIsLive === 'function' && !p1._slotFusionIsLive()) ? p1._selectedSteamEntry() : null;
-    const p1Proto = (p1._slot && p1._slot.driver && p1._slot.driver.entry && p1._slot.driver.entry.protocol) || '';
-    const p1IsSteamPad = p1Proto === 'steam-controller' || !!(p1Steam && isSteamFamilyType(p1Steam.type));
+    const p1Steam = this._p1SteamEntry();
+    const p1IsSteamPad = this._p1IsSteamPad();
     return snap.find((c) =>
       !(p1Steam && c.handle === p1Steam.handle) &&
       !(p1IsSteamPad && isSteamFamilyType(c.type))) || null;
