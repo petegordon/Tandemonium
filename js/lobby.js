@@ -3707,8 +3707,15 @@ export class Lobby {
       // No second pad visible yet, but WebHID could still pair one — offer it.
       // This is the state a Steam-launched session lands in with a Puck + a
       // DualSense: only one of them has ever been granted.
-      const canPairHid = (!state.hasGamepad || state.gpSilent ||
-        (state.hidLive && !state.hidLive.streaming)) && !!navigator.hid;
+      // Offer pairing unless Player 2 is ALREADY on a live WebHID pad. Gating
+      // it on "no pad found" or "the pad looks dead" made the one route that
+      // works in the awkward cases appear only after a timeout, or not at all
+      // — you cannot find a button that is conditional on the diagnosis being
+      // right. A Gamepad-API pad is never the finished article anyway: gyro
+      // steering needs WebHID, so pairing is a real upgrade even when the
+      // buttons do work.
+      const p2OnWebHid = !!(state.hidLive && state.hidLive.streaming);
+      const canPairHid = !!navigator.hid && !p2OnWebHid;
       const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.slotId || ''}|${state.steamHandle || ''}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}|${canPairHid}|${!!state.gpSilent}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
