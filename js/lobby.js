@@ -3749,7 +3749,8 @@ export class Lobby {
           ? `${state.gpName} via ${state.via || 'gamepad-api'} gpIndex=${state.gpIndex}` +
             ` slot=${state.slotId || '-'} steam=${state.steamHandle || '-'}` +
             (live ? ` streaming=${live.streaming} everPressed=${live.everPressed} lastReport=${live.msSinceReport ?? 'never'}ms` : ' (no hid entry)')
-          : `none (keyboard=${state.hasKeyboard}, p1=${state.p1GpName || '-'})`), 'candidate');
+          : `none (keyboard=${state.hasKeyboard}, p1=${state.p1GpName || '-'})`) +
+          ` | silent=${!!state.gpSilent} pairButton=${canPairHid ? 'shown' : 'hidden'}`, 'candidate');
         // "2nd controller detected!" label
         if (detectedEl) {
           detectedEl.style.display = state.hasGamepad ? '' : 'none';
