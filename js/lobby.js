@@ -4399,7 +4399,14 @@ export class Lobby {
     });
     // Tear down the online MP attempt so the TNDM-XXXX room stops accepting
     // remote stokers. Any in-flight online connection gets rejected.
+    //
+    // Drop it from Recent Rooms too. The room is gone the moment local co-op
+    // claims it, so leaving it there means the next RIDE TOGETHER opens the
+    // rejoin prompt offering a room that cannot be rejoined — and, since that
+    // prompt is modal, it looks like RIDE TOGETHER stopped going to the
+    // join/room screen at all.
     if (this.net) {
+      try { if (this.net.roomCode) this._roomStore.clear(this.net.roomCode); } catch (e) {}
       try { this.net.destroy(); } catch (e) {}
       this.net = null;
     }
