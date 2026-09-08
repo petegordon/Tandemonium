@@ -3909,11 +3909,11 @@ export class Lobby {
 
     // Find the first attached gamepad that isn't P1's (note: the array can be
     // sparse with holes at un-activated slots, so filter for truthy entries).
-    // Prefer a pad that is actually SENDING. Taking the first non-P1 entry
-    // offered Chromium's stale post-reconnect ghosts as Player 2 — the pad
-    // showed the right name and never reported a press, so the join could
-    // never fire. Ranked, not filtered: an untouched live pad looks the same
-    // as a ghost until it moves, so a quiet pad is still offered, just last.
+    // Prefer a pad that is actually DELIVERING INPUT. The first non-P1 entry
+    // is not good enough: Chromium keeps stale post-reconnect ghosts, and a
+    // pad Steam has taken for its Desktop layout reports the right name while
+    // its buttons go to the mouse instead of to us. Both show the right name
+    // and never report a press, so the join can never fire.
     const now = performance.now();
     this._trackPadActivity(gamepads, now);
     let unclaimedGpIndex = null;
@@ -3928,9 +3928,9 @@ export class Lobby {
       const stickMag = Math.max(
         Math.abs(gp.axes[0] || 0), Math.abs(gp.axes[1] || 0),
         Math.abs(gp.axes[2] || 0), Math.abs(gp.axes[3] || 0));
-      // 0 = has moved since we started watching; 1 = quiet but plausible;
-      // 2 = quiet AND sticks pinned off-centre, the classic ghost signature.
-      const rank = this._padMoving(i) ? 0 : (stickMag > 0.5 ? 2 : 1);
+      // 0 = has delivered input; 1 = quiet but plausible; 2 = quiet AND sticks
+      // pinned off-centre, the classic ghost signature.
+      const rank = this._padHasInput(i) ? 0 : (stickMag > 0.5 ? 2 : 1);
       if (rank < bestRank) {
         bestRank = rank;
         unclaimedGpIndex = i;
@@ -3963,23 +3963,23 @@ export class Lobby {
       ? this._prettyGamepadName(this.input._gpName)
       : null;
 
-    if (unclaimedGpIndex !== null) {
-      const rawGp = gamepads[unclaimedGpIndex];
-      return {
-        available: true,
-        hasGamepad: true,
-        hasKeyboard: keyboardAvailable,
-        gpIndex: unclaimedGpIndex,
-        gpName: unclaimedGpName,
-        gpRawId: rawGp ? rawGp.id : null,
-        via: 'gamepad-api',
-        // Silent for a few seconds of watching: either untouched, or one of
-        // Chromium's ghosts. Either way the player should be offered the
-        // WebHID pairing route rather than left pressing a dead button.
-        gpSilent: !this._padMoving(unclaimedGpIndex) && this._padSilentFor(unclaimedGpIndex, now) > 3000,
-        p1GpName,
-      };
-    }
+    // A Gamepad-API candidate that has delivered input wins outright. One that
+    // has not is held back until the WebHID/Steam sources have had their turn —
+    // a pad we can actually read beats one that only looks right — and is
+    // returned at the end if nothing better exists, flagged as silent so the
+    // page offers pairing instead of a button that cannot answer.
+    const gpCandidate = unclaimedGpIndex === null ? null : {
+      available: true,
+      hasGamepad: true,
+      hasKeyboard: keyboardAvailable,
+      gpIndex: unclaimedGpIndex,
+      gpName: unclaimedGpName,
+      gpRawId: gamepads[unclaimedGpIndex] ? gamepads[unclaimedGpIndex].id : null,
+      via: 'gamepad-api',
+      gpSilent: !this._padHasInput(unclaimedGpIndex) && this._padSilentFor(unclaimedGpIndex, now) > 3000,
+      p1GpName,
+    };
+    if (gpCandidate && !gpCandidate.gpSilent) return gpCandidate;
 
     // The second pad may not be on the Gamepad API at all, and P1 may not be
     // on WebHID — a DualSense that Steam re-emits as an XInput pad can hold
@@ -4084,6 +4084,8 @@ export class Lobby {
         };
       }
     }
+    // Nothing better turned up — offer the silent pad, honestly labelled.
+    if (gpCandidate) return gpCandidate;
     if (keyboardAvailable) {
       return {
         available: true,
@@ -4181,13 +4183,21 @@ export class Lobby {
    * no such guard and would happily offer a dead entry as Player 2, which
    * looks exactly like a join button that ignores you.
    *
-   * `timestamp` is the signal: Chromium bumps it whenever it refreshes a pad's
-   * state. A pad that has changed since we started watching is alive. The
-   * converse is NOT true — an untouched live pad may sit still — so this only
-   * ever ranks candidates, never excludes them.
+   * What counts is INPUT — a button pressed, or a stick that actually moved.
+   * `timestamp` alone does not: Chromium bumps it whenever it refreshes a pad,
+   * so a controller Steam has taken for its Desktop layout (buttons translated
+   * to mouse clicks and never delivered as gamepad buttons) ticks along
+   * happily while reporting nothing usable. Judging liveness by timestamp
+   * called that pad healthy and hid the WebHID pairing route that would have
+   * fixed it. Stick MAGNITUDE doesn't count either — a ghost's axes are pinned
+   * but constant, so only a CHANGE is evidence.
+   *
+   * The converse still isn't true — an untouched live pad shows nothing — so
+   * this ranks candidates and offers alternatives, never excludes.
    */
   _trackPadActivity(gamepads, now) {
     if (!this._padWatch) this._padWatch = new Map();
+    const AXIS_DELTA = 0.15; // past stick jitter and drift
     const seen = new Set();
     for (let i = 0; i < gamepads.length; i++) {
       const gp = gamepads[i];
@@ -4195,39 +4205,51 @@ export class Lobby {
       seen.add(i);
       let pressed = '';
       for (let b = 0; b < gp.buttons.length; b++) if (gp.buttons[b] && gp.buttons[b].pressed) pressed += b + ',';
-      const rec = this._padWatch.get(i);
+      const axes = (gp.axes || []).map((a) => a || 0);
+      let rec = this._padWatch.get(i);
       if (!rec) {
-        this._padWatch.set(i, { ts: gp.timestamp, pressed, since: now, movedAt: 0 });
-      } else if (rec.ts !== gp.timestamp || rec.pressed !== pressed) {
-        rec.ts = gp.timestamp;
-        rec.pressed = pressed;
-        rec.movedAt = now;
+        rec = { ts: gp.timestamp, pressed, axes, since: now, inputAt: 0, tickedAt: 0 };
+        this._padWatch.set(i, rec);
       }
+      if (rec.ts !== gp.timestamp) { rec.ts = gp.timestamp; rec.tickedAt = now; }
+      let moved = pressed !== '' || pressed !== rec.pressed;
+      if (!moved) {
+        for (let a = 0; a < axes.length; a++) {
+          if (Math.abs(axes[a] - (rec.axes[a] || 0)) > AXIS_DELTA) { moved = true; break; }
+        }
+      }
+      rec.pressed = pressed;
+      rec.axes = axes;
+      if (moved) rec.inputAt = now;
     }
     for (const i of [...this._padWatch.keys()]) if (!seen.has(i)) this._padWatch.delete(i);
   }
 
-  /** Has this pad shown any change since we started watching it? */
-  _padMoving(index) {
+  /** Has this pad delivered any real input (button or stick) since we started? */
+  _padHasInput(index) {
     const rec = this._padWatch && this._padWatch.get(index);
-    return !!(rec && rec.movedAt > 0);
+    return !!(rec && rec.inputAt > 0);
   }
 
-  /** How long we have been watching this pad without seeing anything (ms). */
+  /** How long we have watched this pad without a single usable input (ms). */
   _padSilentFor(index, now) {
     const rec = this._padWatch && this._padWatch.get(index);
     if (!rec) return 0;
-    return now - (rec.movedAt || rec.since);
+    return now - (rec.inputAt || rec.since);
   }
 
-  /** Compact pad table for the diag log — what Chromium is actually reporting. */
+  /** Compact pad table for the diag log — what Chromium actually reports. */
   _padTable(gamepads) {
     const parts = [];
     for (let i = 0; i < gamepads.length; i++) {
       const gp = gamepads[i];
       if (!gp) continue;
       const rec = this._padWatch && this._padWatch.get(i);
-      parts.push(`[${i}] ${this._prettyGamepadName(gp.id)} moving=${this._padMoving(i)} pressed=[${rec ? rec.pressed.replace(/,$/, '') : ''}]`);
+      // input: real button/stick activity. ticking: Chromium is refreshing the
+      // pad. ticking without input is the signature of a pad something else
+      // (Steam's Desktop layout) has taken over.
+      parts.push(`[${i}] ${this._prettyGamepadName(gp.id)} input=${this._padHasInput(i)}` +
+        ` ticking=${!!(rec && rec.tickedAt)} pressed=[${rec ? rec.pressed.replace(/,$/, '') : ''}]`);
     }
     return parts.length ? parts.join(' | ') : '(no pads)';
   }
