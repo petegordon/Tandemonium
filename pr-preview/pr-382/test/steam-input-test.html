@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Steam Input — Live Diagnostic</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: #0e1418; color: #d8dde2;
+    font: 13px 'SF Mono', Menlo, Consolas, monospace;
+    padding: 12px; box-sizing: border-box;
+  }
+  h1 { margin: 0 0 4px; font-size: 16px; color: #88ddff; }
+  h2 { margin: 16px 0 4px; font-size: 14px; color: #6cf; border-bottom: 1px solid #233; padding-bottom: 2px; }
+  .hint { color: #888; font-size: 12px; margin-bottom: 12px; }
+  .panels { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; }
+  .panel { background: #121b22; border: 1px solid #1f2a32; border-radius: 6px; padding: 10px; overflow: auto; max-height: 80vh; }
+  .row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+  .row span:first-child { color: #9aa; }
+  .row span:last-child { color: #fff; text-align: right; word-break: break-all; }
+  .ok { color: #4ec973 !important; }
+  .err { color: #ff7a6c !important; }
+  .warn { color: #f7c873 !important; }
+  pre { background: #0a1015; border-radius: 4px; padding: 6px 8px; white-space: pre-wrap; margin: 4px 0; font-size: 12px; color: #b8c1c8; }
+  .btn-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: 6px; }
+  .btn { background: #1c2730; border: 1px solid #2a3742; padding: 4px 0; text-align: center; border-radius: 3px; font-size: 11px; color: #aab; }
+  .btn.on { background: #2d6b3f; border-color: #4ec973; color: #d6ffd6; }
+  .axis { display: inline-block; padding: 1px 6px; background: #1c2730; border-radius: 3px; margin-right: 4px; font-size: 11px; }
+  .axis.live { background: #2d4f6b; color: #cce8ff; }
+  #back {
+    position: fixed; top: 12px; right: 12px;
+    background: #234; border: 1px solid #456; color: #fff;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer; font-family: inherit;
+  }
+  #back:hover { background: #345; }
+  .summary { background: #142028; padding: 8px; border-radius: 4px; margin-bottom: 8px; font-size: 12px; }
+  .summary.ok { background: #1a2e1f; }
+  .summary.err { background: #3a1f1f; }
+</style>
+</head>
+<body>
+<button id="back">← Lobby</button>
+<h1>Steam Input — Live Diagnostic</h1>
+<div class="hint">Polling every 100ms. Press buttons / move sticks / tilt the controller — values update live. Origins show which physical input is mapped to each action; empty = no binding wired.</div>
+
+<div id="summary" class="summary">waiting for first poll…</div>
+
+<div class="panels">
+
+  <div class="panel">
+    <h2>Steam Input</h2>
+    <div id="steam-input-state"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Gamepad API (navigator.getGamepads)</h2>
+    <div id="gamepad-api-state"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Last 8 polls — raw JSON</h2>
+    <pre id="raw"></pre>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function rowHtml(label, value, cls = '') {
+  return `<div class="row"><span>${label}</span><span class="${cls}">${escape(value)}</span></div>`;
+}
+function escape(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+const ORIGIN_ENUM = {
+  // Subset — Steam returns numeric EInputActionOrigin values; common PS5 ones
+  // (full enum is long, this is enough to interpret what we see)
+  '0': 'None',
+  // PS5 origins start at 167 per ISteamInput.h
+};
+function originLabel(originRaw) {
+  // We're passed strings (mapped to String() in main). Just show the raw value
+  // — interpretation can come later if we need it.
+  return String(originRaw);
+}
+
+async function poll() {
+  let diag = null;
+  try { diag = await window.steam.input.getFullDiag(); }
+  catch (e) { $('steam-input-state').innerHTML = `<div class="err">getFullDiag() threw: ${escape(e.message)}</div>`; return; }
+
+  // ── Steam Input panel ──
+  let html = '';
+  html += rowHtml('SDK ready', diag.ready, diag.ready ? 'ok' : 'err');
+  html += rowHtml('Action set handle', diag.setHandle, diag.setHandle !== '0' ? 'ok' : 'err');
+  html += rowHtml('Steer analog handle', diag.steerHandle, diag.steerHandle !== '0' ? 'ok' : 'err');
+  html += rowHtml('Session config', diag.sessionConfig, '');
+  html += '<h2>Digital handles</h2>';
+  for (const [name, h] of Object.entries(diag.digitalHandles || {})) {
+    html += rowHtml(name, h, h !== '0' ? 'ok' : 'err');
+  }
+  html += '<h2>Gamepad index probe</h2>';
+  for (const p of diag.gamepadIndexProbe || []) {
+    html += rowHtml(`slot ${p.index}`, p.handle, p.handle !== '0' && p.handle !== 'err' ? 'ok' : '');
+  }
+  html += '<h2>Connected controllers</h2>';
+  if (!diag.controllers.length) {
+    html += '<div class="err">none — getConnectedControllers() returned []</div>';
+  }
+  for (const c of diag.controllers) {
+    html += `<div style="border:1px solid #2a3742; border-radius:4px; padding:8px; margin:6px 0;">`;
+    html += rowHtml('handle', c.handle);
+    html += rowHtml('type', c.type, '');
+    html += rowHtml('current set', c.currentSet, c.currentSet === diag.setHandle ? 'ok' : 'warn');
+    if (c.steer) {
+      const live = (Math.abs(c.steer.x || 0) > 0.05 || Math.abs(c.steer.y || 0) > 0.05);
+      html += rowHtml('Steer', `x=${(c.steer.x || 0).toFixed(3)} y=${(c.steer.y || 0).toFixed(3)} active=${c.steer.active}`, live ? 'ok' : '');
+      html += rowHtml('Steer origins', JSON.stringify(c.origins.steer || []), (c.origins.steer || []).length ? 'ok' : 'err');
+    }
+    html += '<h2 style="font-size:12px; margin-top:8px;">Digital actions</h2>';
+    html += '<div class="btn-grid">';
+    for (const name of Object.keys(c.digital)) {
+      const d = c.digital[name];
+      const pressed = d && d.state;
+      html += `<div class="btn ${pressed ? 'on' : ''}">${name}${d && !d.active ? '*' : ''}</div>`;
+    }
+    html += '</div>';
+    html += '<details style="margin-top:6px;"><summary style="cursor:pointer;color:#9aa;">action origins (physical bindings)</summary>';
+    for (const name of Object.keys(c.origins.digital || {})) {
+      const origins = c.origins.digital[name];
+      html += rowHtml(name, JSON.stringify(origins), origins.length ? 'ok' : 'err');
+    }
+    html += '</details>';
+    if (c.motion) {
+      html += '<h2 style="font-size:12px;">Motion data</h2>';
+      if (c.motion.err) {
+        html += rowHtml('error', c.motion.err, 'err');
+      } else {
+        html += rowHtml('rotQuat', c.motion.rotQuat.map(v => v.toFixed(3)).join(', '));
+        html += rowHtml('accel',   c.motion.accel.map(v => v.toFixed(3)).join(', '));
+        html += rowHtml('rotVel',  c.motion.rotVel.map(v => v.toFixed(3)).join(', '));
+      }
+    }
+    html += '</div>';
+  }
+  $('steam-input-state').innerHTML = html;
+
+  // ── Gamepad API panel ──
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  let gp = '';
+  let any = false;
+  for (let i = 0; i < pads.length; i++) {
+    const p = pads[i];
+    if (!p) continue;
+    any = true;
+    gp += `<div style="border:1px solid #2a3742; border-radius:4px; padding:8px; margin:6px 0;">`;
+    gp += rowHtml(`slot ${i}`, p.id);
+    gp += rowHtml('mapping', p.mapping || '(none)');
+    gp += rowHtml('connected', p.connected, p.connected ? 'ok' : '');
+    gp += '<div>axes: ';
+    for (let a = 0; a < p.axes.length; a++) {
+      const v = p.axes[a];
+      gp += `<span class="axis ${Math.abs(v) > 0.05 ? 'live' : ''}">${a}:${v.toFixed(2)}</span>`;
+    }
+    gp += '</div>';
+    gp += '<div class="btn-grid" style="margin-top:6px;">';
+    for (let b = 0; b < p.buttons.length; b++) {
+      const btn = p.buttons[b];
+      gp += `<div class="btn ${btn.pressed ? 'on' : ''}">${b}</div>`;
+    }
+    gp += '</div>';
+    gp += '</div>';
+  }
+  if (!any) gp = '<div class="err">navigator.getGamepads() returned no connected pads</div>';
+  gp += '<h2 style="font-size:13px;margin-top:12px;">gamepadconnected / disconnected events</h2>';
+  if (gpEventLog.length === 0) {
+    gp += '<div class="warn">no events fired yet (try unplug+replug the controller — Chromium needs the connect event to see Steam virtual pads)</div>';
+  } else {
+    gp += '<pre style="font-size:11px;">' + escape(gpEventLog.join('\n')) + '</pre>';
+  }
+  $('gamepad-api-state').innerHTML = gp;
+
+  // ── Summary banner ──
+  const sumParts = [];
+  sumParts.push(`Steam Input ready: ${diag.ready ? '✓' : '✗'}`);
+  sumParts.push(`captured pads: ${diag.controllers.length}`);
+  sumParts.push(`Gamepad API pads: ${pads.filter(Boolean).length}`);
+  const anyOriginsBound = diag.controllers.some(c =>
+    (c.origins.steer || []).length > 0 ||
+    Object.values(c.origins.digital || {}).some(arr => arr.length > 0)
+  );
+  sumParts.push(`any action origins bound: ${anyOriginsBound ? '✓' : '✗'}`);
+  const sumEl = $('summary');
+  sumEl.textContent = sumParts.join('  |  ');
+  sumEl.className = 'summary ' + (anyOriginsBound || pads.filter(Boolean).length > 0 ? 'ok' : 'err');
+
+  // ── Raw JSON ring buffer ──
+  rawBuffer.push({ t: new Date().toISOString().slice(11, 23), diag, padsCount: pads.filter(Boolean).length });
+  if (rawBuffer.length > 8) rawBuffer.shift();
+  $('raw').textContent = rawBuffer.map(r => `${r.t} (${r.padsCount} pads, ${r.diag.controllers.length} controllers)\n${JSON.stringify(r.diag, null, 2)}`).join('\n\n---\n\n');
+}
+
+const rawBuffer = [];
+const gpEventLog = [];
+window.addEventListener('gamepadconnected', (e) => {
+  gpEventLog.push(`${new Date().toISOString().slice(11,23)} CONNECTED idx=${e.gamepad.index} id=${e.gamepad.id} mapping=${e.gamepad.mapping}`);
+  if (gpEventLog.length > 10) gpEventLog.shift();
+});
+window.addEventListener('gamepaddisconnected', (e) => {
+  gpEventLog.push(`${new Date().toISOString().slice(11,23)} DISCONNECTED idx=${e.gamepad.index} id=${e.gamepad.id}`);
+  if (gpEventLog.length > 10) gpEventLog.shift();
+});
+$('back').addEventListener('click', () => { window.location.href = '../index.html'; });
+// Some Chromium versions require user activation OR a click before
+// navigator.getGamepads() returns connected pads. Add a "Force gamepad scan"
+// button that the user can click to satisfy that requirement explicitly.
+const forceBtn = document.createElement('button');
+forceBtn.textContent = '🎯 Force gamepad scan (click to satisfy Chromium user-activation)';
+forceBtn.style.cssText = 'position:fixed; top:12px; left:200px; background:#234; border:1px solid #456; color:#fff; padding:6px 12px; border-radius:4px; cursor:pointer; font-family:inherit;';
+forceBtn.addEventListener('click', () => {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  alert('navigator.getGamepads() after click returned ' + (pads.filter(Boolean).length) + ' connected pad(s):\n' +
+    pads.filter(Boolean).map(p => `${p.index}: ${p.id} (mapping=${p.mapping})`).join('\n'));
+});
+document.body.appendChild(forceBtn);
+setInterval(poll, 100);
+poll();
+</script>
+</body>
+</html>
