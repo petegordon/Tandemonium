@@ -11,6 +11,17 @@ import * as records from './records.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
+import {
+  planDisruptions, disruptionAt, telegraphText, beatWindowFor, KIND, GUST_FORCE
+} from './disruptions.js';
+import { BEAT_WINDOW_S } from './pedal-scoring.js';
+
+/** E-2 · what the banner says while an event is actually happening. */
+const ACTIVE_TEXT = {
+  gust: '💨 HOLD IT',
+  goose: '🦢 COAST!',
+  cobbles: '🪨 COBBLES'
+};
 import { makePlacementSalt } from './daily-seed.js';
 import {
   recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
@@ -1952,6 +1963,9 @@ class Game {
 
     // D-4: record this ride's line, and put out the ghost of the best one.
     this._startGhost(level);
+
+    // E-2: plan what the road is going to do to this pair.
+    this._startDisruptions(level, difficultyName);
     if (this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
 
     // Tutorial: place all items from all phases so they're visible ahead
@@ -2896,6 +2910,116 @@ class Game {
     if (!this._ghostRecorder) return null;
     const track = this._ghostRecorder.finish();
     return isNewBest && track.count > 1 ? track : null;
+  }
+
+  // ============================================================
+  // E-2 · DISRUPTIONS — the road does something to the pair
+  // ============================================================
+  //
+  // A co-op ride with a steady rhythm and nothing to interrupt it gives two
+  // people nothing to coordinate about after the first minute: they find the
+  // beat and then hold it in silence. Overcooked splits the kitchen; this
+  // splits the rhythm.
+  //
+  // The schedule is seeded from the road (js/disruptions.js, pure and tested),
+  // so both clients plan the identical events with no network traffic — the
+  // captain simulates, and the stoker's banner is driven by the distance that
+  // already arrives in the state packet.
+
+  /** Plan this ride's disruptions. Called once, at countdown. */
+  _startDisruptions(level, difficultyName) {
+    this._disruptions = planDisruptions({
+      seed: level.seed ?? this.world.roadSeed,
+      distance: level.distance,
+      difficulty: difficultyName,
+      checkpoints: this.raceManager ? this.raceManager.checkpoints : []
+    });
+    this._activeDisruption = null;
+    this._disruptionEndsAt = 0;
+    this._coastRequiredUntil = 0;
+    if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
+    if (this.hud.updateDisruption) this.hud.updateDisruption(null);
+  }
+
+  /**
+   * Per frame: work out what the road is doing, tell the rider, and apply it.
+   * Distance-driven rather than time-driven, so a slow pair and a fast pair
+   * meet the same gust at the same tree.
+   */
+  _updateDisruptions(dt) {
+    if (!this._disruptions || this._disruptions.length === 0) return;
+    if (this.state !== 'playing' || !this.bike) return;
+
+    const d = this.bike.distanceTraveled;
+    const active = disruptionAt(this._disruptions, d, (e) => {
+      // An event's length is in seconds; convert at the speed it started at,
+      // with a floor so a stopped bike does not sit inside a gust forever.
+      const speed = Math.max(3, this._disruptionStartSpeed || this.bike.speed || 6);
+      return e.atM + e.duration * speed;
+    });
+
+    // Banner
+    if (this.hud.updateDisruption) {
+      this.hud.updateDisruption(active ? {
+        phase: active.phase,
+        text: active.phase === 'telegraph'
+          ? telegraphText(active.event.kind)
+          : ACTIVE_TEXT[active.event.kind] || telegraphText(active.event.kind)
+      } : null);
+    }
+
+    const started = active && active.phase === 'active' &&
+      (!this._activeDisruption || this._activeDisruption.event !== active.event);
+    if (started) {
+      this._disruptionStartSpeed = this.bike.speed;
+      this._onDisruptionStart(active.event);
+    }
+    if (!active && this._activeDisruption) this._onDisruptionEnd();
+    this._activeDisruption = active && active.phase === 'active' ? active : null;
+
+    // Apply whatever is running.
+    if (this._activeDisruption) {
+      const kind = this._activeDisruption.event.kind;
+      if (kind === KIND.GUST) {
+        // A crosswind the pair has to correct together: their lean inputs
+        // average, so agreeing is the only way out of it.
+        this.bike.leanVelocity += (this._gustDirection || 1) * GUST_FORCE * dt;
+      } else if (kind === KIND.GOOSE) {
+        // Handled in the pedal path: a tap during the coast window costs speed.
+        this._coastRequiredUntil = performance.now() + 200;
+      }
+    }
+
+    // Cobbles tighten the beat window; A-2's default returns the moment it ends.
+    if (this.sharedPedal) {
+      this.sharedPedal.beatWindow = beatWindowFor(this._activeDisruption, BEAT_WINDOW_S);
+    }
+  }
+
+  _onDisruptionStart(event) {
+    // Which way the wind blows is seeded off the position, so both clients
+    // agree without sending anything.
+    this._gustDirection = (Math.floor(event.atM) % 2 === 0) ? 1 : -1;
+    if (this.audioEngine) {
+      if (event.kind === KIND.GUST) this.audioEngine.tone(140, 0.6, { type: 'sawtooth', gain: 0.09 });
+      else if (event.kind === KIND.GOOSE) this.audioEngine.honkBurst(1);
+      else this.audioEngine.tone(90, 0.35, { type: 'square', gain: 0.07 });
+    }
+    hapticBump();
+    try { analytics.trackRideEvent('disruption', event.atM, { kind: event.kind }); } catch {}
+  }
+
+  _onDisruptionEnd() {
+    this._coastRequiredUntil = 0;
+    if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
+  }
+
+  /**
+   * E-2 · the goose crossing: pedalling through it costs you. Called from the
+   * tap path so it applies to whichever seat tapped.
+   */
+  _isCoastRequired() {
+    return this._coastRequiredUntil > 0 && performance.now() < this._coastRequiredUntil;
   }
 
   // ============================================================
@@ -5190,7 +5314,8 @@ class Game {
     this._updateCoachCard(dt);
     this._drainPendingGyroCalibration();
     this._updateGhost(dt);
-    this._updatePing(dt);        // E-3
+    this._updatePing(dt);         // E-3
+    this._updateDisruptions(dt);  // E-2
 
     // Background motion adaptation (skip when level config disables it)
     const adaptLevel = this.lobby.selectedLevel;
@@ -5295,7 +5420,8 @@ class Game {
     this._updateCoachCard(dt);
     this._drainPendingGyroCalibration();
     this._updateGhost(dt);
-    this._updatePing(dt);        // E-3
+    this._updatePing(dt);         // E-3
+    this._updateDisruptions(dt);  // E-2
 
     // Tutorial: handle crash/completion internally instead of game-over screen
     if (this._tutorialActive) {
@@ -5494,6 +5620,15 @@ class Game {
   _playPedalTaps(ctrl) {
     const events = ctrl && ctrl.tapEvents;
     if (!events || events.length === 0) return;
+
+    // E-2 · the goose crossing: doing nothing, in time, together. A tap during
+    // the coast window scrubs speed and honks — the goose was right there.
+    if (events.length && this._isCoastRequired()) {
+      this.bike.speed *= 0.75;
+      if (this.audioEngine) this.audioEngine.honkBurst(1);
+      hapticBump();
+      this._coastBrokenThisRide = (this._coastBrokenThisRide || 0) + 1;
+    }
 
     for (const ev of events) {
       // A-6: the first real stroke releases the first-segment clock and feeds
@@ -6166,8 +6301,9 @@ class Game {
     remoteData.remoteLastFoot = this._remoteLastFoot;
     remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
-    this._updateLookahead(dt);   // E-1 · the road only the stoker can see
-    this._updatePing(dt);        // E-3 · the sprint call and emotes
+    this._updateLookahead(dt);    // E-1 · the road only the stoker can see
+    this._updatePing(dt);         // E-3
+    this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner · the sprint call and emotes
     const stokerLean = this.balanceCtrl.update().leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     // Independent rider torsos on the stoker's screen too: captain leans by the

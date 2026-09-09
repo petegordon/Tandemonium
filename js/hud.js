@@ -159,6 +159,23 @@ export class HUD {
   }
 
   /**
+   * E-2 · the road's three-second warning, and the event itself.
+   * Null hides it.
+   */
+  updateDisruption(active) {
+    const el = this._disruptEl || (this._disruptEl = document.getElementById('disruption-banner'));
+    if (!el) return;
+    const text = active ? active.text : null;
+    const now = !!(active && active.phase === 'active');
+    if (text === this._prevDisruptText && now === this._prevDisruptNow) return;
+    this._prevDisruptText = text;
+    this._prevDisruptNow = now;
+    el.textContent = text || '';
+    el.classList.toggle('show', !!text);
+    el.classList.toggle('now', now);
+  }
+
+  /**
    * E-3 · the sprint call and the emote bubbles.
    *
    * Both riders see the same thing at the same time: that is the whole point —

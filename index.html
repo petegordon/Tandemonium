@@ -207,6 +207,27 @@
   .pair-panel-title { font-size: 13px; font-weight: 800; color: #fff; }
   .pair-panel-line { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 2px; }
   .pair-panel-best { margin-top: 4px; font-size: 12px; font-weight: 800; color: #ffd23f; }
+  /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
+  #disruption-banner {
+    position: fixed;
+    top: 22%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 16px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.6);
+    color: #ffd23f;
+    font-size: clamp(14px, 3.6vw, 20px);
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 58;
+  }
+  #disruption-banner.show { opacity: 1; }
+  #disruption-banner.now { color: #ff7a5a; }
   /* E-3 · the touch vocabulary row. */
   #ping-row {
     display: none;
@@ -4944,6 +4965,9 @@ ON</button>
   </div>
   <div id="coach-steer-line">Steer: <b>A</b> / <b>D</b></div>
 </div>
+
+<!-- E-2 · the road is about to do something. Both riders see this. -->
+<div id="disruption-banner"></div>
 
 <!-- E-3 · the sprint call and the emote bubbles. Both riders see both. -->
 <div id="ping-call"></div>
