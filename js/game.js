@@ -9,7 +9,10 @@ import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
 import { makePlacementSalt } from './daily-seed.js';
-import { recordPractice, browserStore } from './daily-ride.js';
+import {
+  recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
+  buildShareStrip, browserStore
+} from './daily-ride.js';
 import { getLevelById, LEVELS, getInstructions, getMedals } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
@@ -431,6 +434,14 @@ class Game {
     // Lobby / Room button
     this._lobbyBtn = document.getElementById('lobby-btn');
     this._lobbyBtn.addEventListener('click', () => {
+      // D-2: leaving a ranked run mid-ride spends it, as a DNF. Otherwise a bad
+      // start could be abandoned for a re-roll, and "one run per day" would
+      // mean "as many runs as it takes to like the first checkpoint".
+      if (this._rankedRunActive && this.state === 'playing') {
+        const ok = confirm('End your ranked run? It counts as unfinished for today.');
+        if (!ok) return;
+        this._recordRankedDnf();
+      }
       if (analytics.getCurrentRideId()) {
         analytics.endRide({
           completed: false,
@@ -447,6 +458,10 @@ class Game {
 
     // B-5 · end-screen calls to action (wishlist / send a link).
     this._wireCtaButtons();
+    // D-3 · share the day's result.
+    for (const which of ['victory', 'gameover']) {
+      this._onTap('btn-daily-share-' + which, () => this._shareDailyResult(which));
+    }
 
     // Try Again from disconnect overlay
     this._onTap('btn-try-reconnect', () => {
@@ -799,6 +814,14 @@ class Game {
     const invite = document.getElementById('btn-invite-' + which);
     const shown = [];
 
+    // D-3: the share button only exists when there is a strip to share.
+    const share = document.getElementById('btn-daily-share-' + which);
+    if (share) {
+      const has = !!this._dailyStripText;
+      share.style.display = has ? '' : 'none';
+      if (has) shown.push(share);
+    }
+
     if (wishlist) {
       const show = this._canWishlist;
       wishlist.style.display = show ? '' : 'none';
@@ -1044,6 +1067,14 @@ class Game {
       }
       // Handle tilt status from partner (motion availability only — NOT a
       // steering-capability signal; a desktop partner steers without tilt).
+      // D-2: the captain chose practice or ranked for the pair. The countdown
+      // event is a bare byte, so the mode needs its own message; the stoker
+      // stores the pair result too, so it has to know.
+      if (profile && profile.type === 'dailyMode') {
+        this._rankedRunActive = profile.mode === 'ranked';
+        if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
+        return;
+      }
       if (profile && profile.type === 'tiltStatus') {
         this._partnerHasTilt = profile.hasTilt;
         if (this._onPartnerTiltStatus) this._onPartnerTiltStatus(profile.hasTilt);
@@ -1088,6 +1119,8 @@ class Game {
       }
       // Capture partner server ID for score attribution
       if (profile.serverId) this._partnerServerId = profile.serverId;
+      // D-5: and their name, for the pair streak and the share strip.
+      if (profile.name) this._partnerName = profile.name;
       // Partner bike color for arch indicator
       if (profile.bikeColor) {
         this._partnerBikeColor = profile.bikeColor;
@@ -1701,7 +1734,10 @@ class Game {
     // Apply difficulty preset and create DDA manager
     const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
     applyDifficulty(difficultyName);
-    this.ddaManager = new DDAManager(difficultyName);
+    // D-2: no dynamic difficulty on a ranked run. Everyone rides the same road
+    // under the same rules, or the times mean nothing. Every ddaManager call
+    // site is already null-guarded (grep: `this.ddaManager &&`).
+    this.ddaManager = this._rankedRunActive ? null : new DDAManager(difficultyName);
     this._assistWeight = 0;
 
     // Apply auto-speed from difficulty preset (Chill/Tutorial cruise automatically)
@@ -1822,6 +1858,14 @@ class Game {
       flavorNum.textContent = '3';
       flavorNum.className = 'tick-3 pop';
     }
+    // D-2 · is this the day's ranked run? The lobby asked; the demo never does
+    // (practice only there), and a stoker takes whatever the captain chose.
+    this._rankedRunActive = !!(level.isDaily && this.lobby._dailyMode === 'ranked' && !this._isDemo);
+    if (this._rankedRunActive && this.mode === 'captain' && this.net) {
+      // The countdown event is a bare byte, so the mode needs its own message.
+      this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
+    }
+
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this.balanceCtrl.resetSteerFrames();
@@ -1867,6 +1911,10 @@ class Game {
     // B-3: read this ride's best once, so checkpoint splits have something to
     // compare against without touching localStorage mid-ride.
     this._loadBestForRide();
+
+    // D-3: no stale strip from a previous ride on a different road.
+    this._dailyStripText = null;
+    if (this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
 
     // Tutorial: place all items from all phases so they're visible ahead
     if (level.isTutorial && this._tutorialActive) {
@@ -2616,11 +2664,36 @@ class Game {
       html += '<div class="victory-stat">' + earned + chase + '</div>';
     }
 
-    // C-2 · Today's Road counts its own rides, so the card can say what you
-    // have done today. Practice only in the demo: unlimited runs, normal rules.
-    if (!fromRemote && level.isDaily && level.key) {
-      recordPractice(browserStore(), level.key, summary.timeMs);
-      try { analytics.trackEvent('daily_finish', { key: level.key, time_ms: summary.timeMs }); } catch {}
+    // C-2 / D-2 · Today's Road counts its own rides, so the card can say what
+    // you have done today, and the day's ranked run is spent here if this was
+    // one. The stoker's screen shows the captain's numbers but writes nothing
+    // from them — except the pair result, which is genuinely both riders'.
+    if (level.isDaily && level.key) {
+      const store = browserStore();
+      const dailyMode = this._dailyRunMode();
+      if (this._rankedRunActive) {
+        recordRanked(store, level.key, dailyMode, {
+          timeMs: summary.timeMs,
+          distance: summary.distance,
+          collectibles: summary.collectibles,
+          collectiblesTotal: summary.collectiblesTotal,
+          crashes: summary.crashes,
+          safety: this.safetyMode,
+          sync: this.sharedPedal ? this.sharedPedal.offsetScore : null,
+          partner: this._partnerKey()
+        });
+      } else if (!fromRemote) {
+        recordPractice(store, level.key, summary.timeMs);
+      }
+      if (dailyMode === 'pair' && this._partnerKey()) {
+        recordPartner(store, level.key, this._partnerKey());
+      }
+      try {
+        analytics.trackEvent('daily_finish', {
+          key: level.key, mode: dailyMode, ranked: this._rankedRunActive,
+          time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes
+        });
+      } catch {}
     }
 
     try {
@@ -2631,6 +2704,108 @@ class Game {
     } catch {}
 
     return html;
+  }
+
+  /** D-2 · spend the day's ranked run as an unfinished attempt. */
+  _recordRankedDnf() {
+    const level = this.lobby.selectedLevel;
+    if (!level || !level.isDaily || !level.key) return;
+    recordRanked(browserStore(), level.key, this._dailyRunMode(), {
+      dnf: true,
+      distance: this.bike ? this.bike.distanceTraveled : 0,
+      crashes: this.raceManager ? this.raceManager.crashCount : 0,
+      safety: this.safetyMode,
+      partner: this._partnerKey()
+    });
+    this._rankedRunActive = false;
+    try {
+      analytics.trackEvent('daily_finish', {
+        key: level.key, mode: this._dailyRunMode(), ranked: true, dnf: true,
+        distance: this.bike ? Math.round(this.bike.distanceTraveled) : 0
+      });
+    } catch {}
+  }
+
+  /** D-2 · 'solo' or 'pair' — the two independent ranked runs per day. */
+  _dailyRunMode() {
+    return (this.mode === 'solo') ? 'solo' : 'pair';
+  }
+
+  /**
+   * D-5 · a stable handle for the person on the other seat, for pair streaks.
+   * The server user id when both are signed in, otherwise the display name —
+   * good enough for a local streak, and D-7/D-9 replace it server-side.
+   */
+  _partnerKey() {
+    if (this._partnerServerId) return String(this._partnerServerId);
+    if (this._partnerName) return 'name:' + this._partnerName;
+    if (this.mode === 'local') return 'local:p2';
+    return null;
+  }
+
+  /**
+   * D-3 · the strip that leaves the game.
+   *
+   * Wordle's grid says how it went without saying what the answer was, and a
+   * daily road has the same thing to protect: a strip that leaked where the
+   * obstacles are would spoil the day for whoever it was sent to. Built by a
+   * pure, tested function; this method only gathers the numbers.
+   */
+  _buildDailyStripHtml(summary, level) {
+    if (!level.isDaily || !level.key || this._isDemo) return '';
+    const store = browserStore();
+    const mode = this._dailyRunMode();
+    const partnerKey = this._partnerKey();
+    const streak = mode === 'pair' && partnerKey
+      ? computePairStreak(store, partnerKey, level.key).current
+      : computeStreak(store, level.key).current;
+
+    const thresholds = getMedals(level.id, this.lobby.selectedDifficulty);
+    this._dailyStripText = buildShareStrip({
+      key: level.key,
+      mode,
+      timeMs: summary.timeMs,
+      dnf: !!summary.dnf,
+      distance: summary.distance,
+      raceDistance: summary.raceDistance || level.distance,
+      medal: records.medalFor(summary.timeMs, thresholds),
+      collectibles: summary.collectibles,
+      collectiblesTotal: summary.collectiblesTotal,
+      crashes: summary.crashes,
+      sync: this.sharedPedal ? Math.round(this.sharedPedal.offsetScore * 100) : undefined,
+      safety: this.safetyMode,
+      practice: !this._rankedRunActive,
+      streak,
+      partnerName: mode === 'pair' ? this._partnerName : null
+    }, { origin: location.origin });
+
+    const escaped = this._dailyStripText
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div id="daily-strip">${escaped}</div>`;
+  }
+
+  /** D-3 · share the clip if there is one, else the strip. */
+  async _shareDailyResult(where) {
+    const text = this._dailyStripText;
+    if (!text) return;
+    let method = 'copy';
+    try {
+      const clip = this.recorder && this.recorder._clipBlob;
+      if (clip && navigator.canShare && navigator.canShare({ files: [new File([clip], 'ride.mp4', { type: clip.type })] })) {
+        // The persona's channel is video: offer the clip first, with the strip
+        // as its caption.
+        await navigator.share({ files: [new File([clip], 'tandemonium.mp4', { type: clip.type })], text });
+        method = 'clip';
+      } else if (navigator.share && isMobile) {
+        await navigator.share({ text });
+        method = 'share';
+      } else {
+        await navigator.clipboard.writeText(text);
+        const btn = document.getElementById('btn-daily-share-' + where);
+        if (btn) { btn.textContent = 'COPIED'; setTimeout(() => { btn.textContent = '📋 SHARE RESULT'; }, 1600); }
+      }
+      try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method, where }); } catch {}
+    } catch { /* the user dismissed the share sheet; that is not an error */ }
   }
 
   /**
@@ -3017,6 +3192,8 @@ class Game {
       // B-3 \u00B7 the ride you just did, measured against the rides you have done
       // before. This is the whole reason to press START RIDE a second time.
       html += this._buildRecordHtml(summary, fromRemote);
+      // D-3 · and, on Today's Road, the thing you can send to someone.
+      html += this._buildDailyStripHtml(summary, level);
       if (summary.restarts > 0) {
         html += '<div class="victory-stat">\uD83C\uDFC1 Restarts: <strong>' + summary.restarts + '</strong></div>';
       }

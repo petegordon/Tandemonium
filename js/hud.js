@@ -146,6 +146,16 @@ export class HUD {
     this._splitDeltaTimer = setTimeout(() => { el.className = ''; }, 1500);
   }
 
+  /**
+   * D-2 · say when a ride counts. A ranked run looks exactly like a practice
+   * run from the saddle, and finding out afterwards that the one that counted
+   * was the one you were not trying on would be miserable.
+   */
+  setRankedBadge(on) {
+    const el = this._rankedBadgeEl || (this._rankedBadgeEl = document.getElementById('ranked-badge'));
+    if (el) el.classList.toggle('show', !!on);
+  }
+
   /** B-2 · edge-darkening crash vignette; `k` is 0..1. */
   _setCrashVignette(k) {
     const edge = (k * 0.55).toFixed(3);

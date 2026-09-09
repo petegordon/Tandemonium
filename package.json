@@ -25,7 +25,8 @@
     "smoke:seed": "node scripts/smoke-seed-plumbing.mjs",
     "smoke:ctas": "node scripts/smoke-demo-ctas.mjs",
     "smoke:daily": "node scripts/smoke-todays-road.mjs",
-    "check:dashboard-sql": "node scripts/check-dashboard-sql.mjs"
+    "check:dashboard-sql": "node scripts/check-dashboard-sql.mjs",
+    "smoke:ranked": "node scripts/smoke-ranked-run.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

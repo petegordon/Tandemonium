@@ -43,7 +43,10 @@ import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed } from './daily-seed.js';
-import { resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE } from './daily-ride.js';
+import {
+  resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
+  rankedResult, computeStreak, formatDayLabel, formatClock
+} from './daily-ride.js';
 import * as records from './records.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -985,8 +988,31 @@ export class Lobby {
       this._showRoomLevelsStep();
     });
 
+    // D-2 · Today's Road asks one question before the ride: practice, or the
+    // day's ranked run? The chooser intercepts START RIDE and calls it back.
+    for (const [id, mode] of [['btn-daily-ranked', 'ranked'], ['btn-daily-practice', 'practice']]) {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        this._dailyMode = mode;
+        document.getElementById('daily-mode-overlay').classList.remove('visible');
+        this._startRide();
+      });
+    }
+    const cancelBtn = document.getElementById('btn-daily-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => {
+      document.getElementById('daily-mode-overlay').classList.remove('visible');
+    });
+
     // Levels step: START RIDE button — works for solo, multiplayer, and local co-op
     document.getElementById('btn-start-ride').addEventListener('click', () => {
+      // D-2: on Today's Road, ask first — unless this is the demo, which is
+      // practice-only, or the chooser has already been answered.
+      if (this._shouldAskDailyMode()) { this._showDailyModeChooser(); return; }
+      this._startRide();
+    });
+
+    this._startRide = () => {
       if (this._pendingMode === 'multiplayer') {
         if (this._roomRole !== 'captain') return;
         // Send start ride to partner — block if not connected
@@ -1022,7 +1048,7 @@ export class Lobby {
         this._hideLobby();
         this.onSolo();
       }
-    });
+    };
 
     // JOIN RIDE buttons on the host page: one per P2 path. Each button
     // unambiguously commits to a specific device — no auto-picking when
@@ -1174,6 +1200,68 @@ export class Lobby {
     if (medal) line += ' · ' + records.MEDAL_ICON[medal];
     if (thresholds && next) line += ' · ' + records.MEDAL_ICON[next] + ' at ' + records.formatTime(thresholds[next]);
     return line;
+  }
+
+  /**
+   * D-2 · the demo build is practice-only. Mirrors game._isDemo (the game owns
+   * the Steam-side flag; this is the query-string half, which is what the demo
+   * launch URL carries).
+   */
+  get isDemoBuild() {
+    if (this.__isDemo !== undefined) return this.__isDemo;
+    let demo = false;
+    try { demo = new URLSearchParams(location.search).get('demo') === '1'; } catch {}
+    if (!demo && typeof window !== 'undefined' && window.tandemoniumSteam) {
+      demo = !!window.tandemoniumSteam.isDemo;
+    }
+    this.__isDemo = demo;
+    return demo;
+  }
+
+  /**
+   * D-2 · should the practice/ranked chooser appear?
+   *
+   * Only on Today's Road, only in the web build, and only for the person who
+   * decides: in a room the captain chooses for the pair and the stoker rides
+   * whatever was chosen.
+   */
+  _shouldAskDailyMode() {
+    if (!this.selectedLevel || !this.selectedLevel.isDaily) return false;
+    if (this.isDemoBuild) return false;                 // demo is practice-only
+    if (this._pendingMode === 'multiplayer' && this._roomRole !== 'captain') return false;
+    return true;
+  }
+
+  /** D-2 · the chooser itself. RANKED is disabled once the day's run is used. */
+  _showDailyModeChooser() {
+    const overlay = document.getElementById('daily-mode-overlay');
+    if (!overlay) { this._dailyMode = 'practice'; this._startRide(); return; }
+
+    const key = this.selectedLevel.key || dailyKey();
+    const mode = this._pendingMode === 'multiplayer' || this._pendingMode === 'local' ? 'pair' : 'solo';
+    const store = browserStore();
+    const done = rankedResult(store, key, mode);
+
+    const sub = document.getElementById('daily-mode-sub');
+    if (sub) {
+      const streak = computeStreak(store, key);
+      const streakText = streak.current >= 2 ? ` · 🔥 ${streak.current}` : '';
+      sub.textContent = `${formatDayLabel(key)} · ${mode === 'pair' ? 'riding as a pair' : 'riding solo'}${streakText}`;
+    }
+
+    const rankedBtn = document.getElementById('btn-daily-ranked');
+    const hint = document.getElementById('daily-ranked-hint');
+    if (rankedBtn) {
+      rankedBtn.disabled = !!done;
+      if (hint) {
+        hint.textContent = done
+          ? (done.dnf ? 'Done for today — ended early.' : `Done for today — ${formatClock(done.timeMs)}.`)
+          : 'One per day. Crashes are fine; ending early is not.';
+      }
+    }
+
+    overlay.classList.add('visible');
+    analytics.trackEvent('daily_chooser', { key, mode, ranked_available: !done });
   }
 
   /** B-3 · re-render the record line on every visible level card. */
