@@ -977,6 +977,7 @@ class Game {
 
     // A-4: tell the HUD which seat this screen is and that sync applies.
     this.hud.setSeat(mode === 'stoker' ? 'stoker' : 'captain', true);
+    this.hud.setPingHint(this._pingHintText());   // E-3
     this.hud.resetCoopCoaching(!this._coopCoachSeen);
     this._coopCoachSeen = true;
 
@@ -1282,6 +1283,7 @@ class Game {
 
     // A-4: local co-op shows the sync row too — one screen, both seats.
     this.hud.setSeat('captain', true);
+    this.hud.setPingHint(this._pingHintText());   // E-3
     this.hud.resetCoopCoaching(!this._coopCoachSeen);
     this._coopCoachSeen = true;
 
@@ -3293,6 +3295,21 @@ class Game {
         this._sendEmote(EMOTES[Number(btn.dataset.emote)]);
       });
     });
+  }
+
+  /**
+   * E-3 · how to tell THIS player about the sprint call.
+   *
+   * Touch already has a labelled SPRINT button on screen, so it needs no words.
+   * Everyone else gets the key they are actually holding — "press Space" is
+   * useless to somebody on a controller, and a hint nobody can act on is worse
+   * than silence.
+   */
+  _pingHintText() {
+    const method = this._coachInputMethod();
+    if (method === 'touch') return null;
+    if (method === 'gamepad') return 'Tap X to call a sprint · hold X + d-pad to talk';
+    return 'Press SPACE to call a sprint · 1-4 to talk';
   }
 
   /** Is a ping meaningful right now? Solo has nobody to say it to. */

@@ -346,7 +346,17 @@ export class HUD {
       }
     }
 
-    // Coaching line: the rule, in words, until the pair proves they have it.
+    // Coaching line, in two stages.
+    //
+    //   1. the rule, until the pair proves they have it;
+    //   2. then ONCE, how to call a sprint.
+    //
+    // Stage 2 exists because a review found the sprint call and the emotes were
+    // completely undiscoverable: nothing anywhere told a player the button
+    // existed, so E-3 would have produced nothing at a playtest. It is taught
+    // after the rhythm rather than with it — a sprint means nothing to a pair
+    // who cannot yet pedal together, and two instructions at once is none.
+    //
     // Never at the same time as the A-6 coach card — they occupy the same slot
     // above the pedals and say overlapping things. The card goes first: it
     // explains which buttons pedal at all, which comes before rhythm.
@@ -360,10 +370,20 @@ export class HUD {
     if (this.coopCoach && !this._coachDone) {
       if (this._coachPerfects >= 5) {
         this._coachDone = true;
-        this.coopCoach.classList.remove('show');
+        // Stage 2: they have the rhythm — now tell them what else they can do.
+        if (this._pingHint && !this._pingHintShown) {
+          this._pingHintShown = true;
+          this._pingHintTimer = 5;
+          this.coopCoach.textContent = this._pingHint;
+        } else {
+          this.coopCoach.classList.remove('show');
+        }
       } else {
         this.coopCoach.classList.add('show');
       }
+    } else if (this._pingHintTimer > 0) {
+      this._pingHintTimer -= dt;
+      if (this._pingHintTimer <= 0) this.coopCoach.classList.remove('show');
     }
   }
 
@@ -371,7 +391,18 @@ export class HUD {
   resetCoopCoaching(showCoach) {
     this._coachPerfects = 0;
     this._coachDone = !showCoach;
-    if (!showCoach && this.coopCoach) this.coopCoach.classList.remove('show');
+    if (this.coopCoach) {
+      this.coopCoach.textContent = 'Match your partner’s beat with the opposite foot';
+      if (!showCoach) this.coopCoach.classList.remove('show');
+    }
+  }
+
+  /**
+   * E-3 · what to say, once, about the sprint call. Input-specific, because
+   * "press Space" is useless to somebody holding a controller.
+   */
+  setPingHint(text) {
+    this._pingHint = text || null;
   }
 
   updateProgress(distanceTraveled, raceDistance, passedCheckpoints) {

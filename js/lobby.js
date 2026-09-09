@@ -1437,6 +1437,12 @@ export class Lobby {
     // Level unlock requirements: Castle requires finishing Grandma's House
     const LEVEL_UNLOCK = { castle: 'home_sweet' };
 
+    // C-4 · the demo ships Tutorial, Grandma's and Today's Road. The Castle
+    // stays shut and points at the store instead of at an achievement the
+    // player could earn in the next three minutes: a demo that hands over its
+    // second level has nothing left to sell.
+    const demoLocked = this.isDemoBuild ? new Set(['castle']) : new Set();
+
     // Check if gyro is active but uncalibrated (show recommendation, don't lock)
     const needsTuning = this._needsMotionTuning();
 
@@ -1449,7 +1455,9 @@ export class Lobby {
     levels.forEach(level => {
       const isTutorial = level.isTutorial;
       const requiredAch = LEVEL_UNLOCK[level.id];
-      const locked = !isTutorial && requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
+      const demoGated = demoLocked.has(level.id);
+      const locked = demoGated ||
+        (!isTutorial && requiredAch && !this._achievements.getEarnedIds().includes(requiredAch));
 
       const card = document.createElement('button');
       card.className = 'level-card' + (locked ? ' level-locked' : '') + (isTutorial ? ' level-card-tutorial' : '');
@@ -1461,7 +1469,10 @@ export class Lobby {
             '<span class="level-card-icon">&#x1F512;</span>' +
             '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">Complete Grandma\'s House to unlock</div>';
+          '<div class="level-card-desc">' +
+            (demoGated ? 'In the full game &mdash; wishlist on Steam'
+                       : 'Complete Grandma\'s House to unlock') +
+          '</div>';
         card.disabled = true;
       } else {
         // Tutorial description adapts to calibration state
