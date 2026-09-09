@@ -30,7 +30,8 @@
     "smoke:ghost": "node scripts/smoke-ghost.mjs",
     "smoke:lookahead": "node scripts/smoke-lookahead.mjs",
     "smoke:ping": "node scripts/smoke-sync-ping.mjs",
-    "smoke:disruptions": "node scripts/smoke-disruptions.mjs"
+    "smoke:disruptions": "node scripts/smoke-disruptions.mjs",
+    "gen-tourist-key": "node scripts/gen-tourist-key.js"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

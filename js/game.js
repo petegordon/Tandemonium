@@ -48,6 +48,15 @@ import { isSteamTwinPad } from './input-manager.js';
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
+// E-4 · Tourist Mode is NOT imported statically.
+//
+// js/tourist-world.js pulls 3d-tiles-renderer from a CDN. A static import here
+// would make that CDN a boot dependency for every player in every mode — if it
+// is blocked or slow, nobody rides, which is precisely the silent dead end A-7
+// exists to prevent. It is loaded on demand instead, only when ?mode=tourist
+// asks for it, and a failure to load degrades to the normal world with a
+// message rather than a blank screen.
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin } from './tourist-config.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
@@ -264,11 +273,35 @@ class Game {
     setHapticSources([this.input]);
     this.pedalCtrl = new PedalController(this.input);
     this.balanceCtrl = new BalanceController(this.input);
-    this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+    // Tourist Mode (#333): stream a real-world location from Google
+    // Photorealistic 3D Tiles instead of the procedural road. The bike,
+    // camera, physics and loop are reused unchanged; only the world source
+    // swaps. The bike's roadPath is null so TouristWorld owns vertical
+    // placement via ground-following raycasts.
+    this.isTourist = isTouristMode();
+    this._touristPending = false;
     // Riders model (goose captain + stoker) when Show Riders is on, else the
-    // plain frame. See the flag read above.
-    this.bike = new BikeModel(this.scene, this._showRiders ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH);
-    this.bike.roadPath = this.world.roadPath;
+    // plain frame. Applied in both worlds so Tourist Mode shows the riders too.
+    const bikeModelPath = this._showRiders ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH;
+    if (this.isTourist) {
+      const apiKey = getMapsApiKey();
+      if (!apiKey) {
+        console.error('[Tourist Mode] No Google Map Tiles API key found. ' +
+          'Run `npm run gen-tourist-key` (reads .env), or pass ?key=YOUR_KEY, ' +
+          'or set localStorage "tourist_maps_key".');
+      }
+      // Start on the procedural world so the game is up and playable, then
+      // swap when the tiles module arrives (E-4).
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+      this.bike = new BikeModel(this.scene, bikeModelPath);
+      this.bike.roadPath = this.world.roadPath;
+      this._touristPending = true;
+      this._loadTouristWorld(apiKey);
+    } else {
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+      this.bike = new BikeModel(this.scene, bikeModelPath);
+      this.bike.roadPath = this.world.roadPath;
+    }
     this.chaseCamera = new ChaseCamera(this.camera);
     // Picture-in-picture front-facing "selfie cam" — only with the riders model
     // (it exists to show off their lean).
@@ -2912,6 +2945,38 @@ class Game {
     return isNewBest && track.count > 1 ? track : null;
   }
 
+  /**
+   * E-4 · load Tourist Mode on demand.
+   *
+   * The tiles renderer is a CDN module and the tiles themselves are a metered
+   * Google service, so neither belongs on the boot path of a game that is
+   * usually not in Tourist Mode. If it fails — blocked CDN, missing key, no
+   * billing — the player keeps the procedural world and is told why, rather
+   * than staring at a blank screen.
+   */
+  async _loadTouristWorld(apiKey) {
+    try {
+      const { TouristWorld } = await import('./tourist-world.js');
+      const tourist = new TouristWorld(this.scene, this.camera, this.renderer, { apiKey });
+      // Retire the procedural world before the tiles take over vertical
+      // placement, or two grounds fight over the bike.
+      if (this.world && this.world.roadChunks) this.world.roadChunks.dispose();
+      this.world = tourist;
+      this.bike.roadPath = null;
+      this.world.setBike(this.bike);
+      this._touristPending = false;
+      try { analytics.trackEvent('tourist_world_ready'); } catch {}
+    } catch (err) {
+      this._touristPending = false;
+      this.isTourist = false;
+      console.error('[Tourist Mode] could not load the tiles renderer — ' +
+        'staying on the procedural world.', err);
+      const el = document.getElementById('tourist-credits');
+      if (el) el.textContent = 'Tourist Mode unavailable — riding the usual road instead.';
+      try { analytics.trackEvent('tourist_world_failed', { message: String(err && err.message).slice(0, 120) }); } catch {}
+    }
+  }
+
   // ============================================================
   // E-2 · DISRUPTIONS — the road does something to the pair
   // ============================================================
@@ -5294,7 +5359,9 @@ class Game {
 
     // Race progress + contribution tracking
     if (this.raceManager) {
-      const timerEnabled = !this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false;
+      // Tourist Mode (#333): free-roam — no race timer / timeout.
+      const timerEnabled = !this.isTourist &&
+        (!this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false);
       const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled ? dt : 0);
       if (raceEvent) {
         if (raceEvent.event === 'timeout' && timerEnabled) { this._onTimerExpired(); return; }
@@ -7710,6 +7777,12 @@ class Game {
 // ============================================================
 // BOOT
 // ============================================================
+// Tourist Mode with a ?lat/?lon location needs its anchor height resolved from
+// the ground elevation BEFORE the world is built (the ReorientationPlugin takes
+// the anchor at construction). Gated on isTouristMode() so the normal boot path
+// stays fully synchronous — top-level await would otherwise defer it a tick.
+if (isTouristMode()) await resolveTouristOrigin();
+
 const game = new Game();
 window._game = game;
 window.perfProbe = perfProbe;
