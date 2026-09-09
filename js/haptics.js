@@ -153,6 +153,31 @@ export function hapticBump(sources = null) {
   _gamepadRumble(0.5, 0.25, 120, sources);
 }
 
+/**
+ * A-3 · one pedal stroke. Fires several times a second for a whole ride, so it
+ * is deliberately the lightest event in this file: a short tick you feel in the
+ * hands rather than a buzz. `wrong` is longer and heavier so a mistake is
+ * unmistakable without looking. `perfect` is not made stronger than a normal
+ * tap — the sound carries the reward, and doubling the rumble on every beat of
+ * a good co-op ride would be exhausting.
+ *
+ * In co-op with per-seat controllers, pass that seat's sources so only the
+ * rider who tapped feels it.
+ */
+export function hapticPedal(kind = 'solo', sources = null) {
+  if (kind === 'wrong') {
+    if (canVibrate) navigator.vibrate(35);
+    _gamepadRumble(0.5, 0.2, 90, sources);
+    return;
+  }
+  if (kind === 'fight') {
+    if (canVibrate) navigator.vibrate([25, 20, 25]);
+    _gamepadRumble(0.7, 0.3, 120, sources);
+    return;
+  }
+  _gamepadRumble(0.15, 0.35, 40, sources);
+}
+
 export function hapticCheckpoint(sources = null) {
   if (canVibrate) navigator.vibrate(50);
   _gamepadRumble(0.2, 0.3, 50, sources);

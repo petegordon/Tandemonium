@@ -25,6 +25,18 @@ export const MOTIF = {
   G5: 783.99,
 };
 
+/**
+ * Pitch of a pedal tick, Hz, from the rider's cadence in taps per second.
+ * Rising pitch with cadence is what makes speed audible: 180 Hz at a lazy
+ * 0.5 Hz stroke up to 320 Hz at a hard 2 Hz stroke, clamped at both ends.
+ * Pure — unit tested in test/unit/audio-tap.test.mjs.
+ */
+export function tapPitch(cadenceHz) {
+  const c = Number.isFinite(cadenceHz) ? cadenceHz : 1;
+  const t = Math.max(0, Math.min(1, (c - 0.5) / 1.5));
+  return 180 + t * 140;
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -480,6 +492,41 @@ export class AudioEngine {
     noise.connect(nFilt).connect(nGain).connect(this.sfxBus);
     noise.start(now);
     noise.stop(now + 0.06);
+  }
+
+  // ── Pedal taps (A-3) ─────────────────────────────────────────────────────
+  //
+  // Every stroke is heard, so cadence is audible and a mistake is obvious
+  // without reading the HUD. Short and quiet by design: this fires up to a few
+  // times a second for the whole ride, so it has to sit under the bike bed
+  // rather than on top of it.
+  //
+  //   'perfect' — click + a fifth above: the pair is on the beat (co-op)
+  //   'solo'    — click: a normal stroke
+  //   'wrong'   — dull low thud: you repeated your own foot
+  //   'fight'   — clatter: you and your partner grabbed the same crank arm
+  //
+  // Routed through sfxBus like every other cue, so mute works and the clip
+  // recorder captures the ticks.
+  pedalTap(kind = 'solo', cadenceHz = 1) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+
+    if (kind === 'wrong') {
+      this.tone(90, 0.09, { type: 'sine', gain: 0.12, attack: 0.004 });
+      return;
+    }
+    if (kind === 'fight') {
+      this.crash(0.18);   // the clatter, well under a real crash
+      return;
+    }
+
+    const f = tapPitch(cadenceHz);
+    this.tone(f, 0.04, { type: 'triangle', gain: 0.085, attack: 0.003 });
+    if (kind === 'perfect') {
+      // A fifth above, quieter — two riders, one chord.
+      this.tone(f * 1.5, 0.045, { type: 'sine', gain: 0.055, attack: 0.004 });
+    }
   }
 
   // Noise-based crash impact with a low-frequency thump. Replaces the old

@@ -34,7 +34,7 @@ import { GameRecorder } from './game-recorder.js';
 import { QuickMenu } from './quick-menu.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { AudioEngine, MOTIF } from './audio-engine.js';
-import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, setHapticSources } from './haptics.js';
+import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
@@ -4152,6 +4152,7 @@ class Game {
     const pedalResult = this._calibSuppressPedals
       ? { acceleration: 0, braking: false, wobble: 0, crankAngle: this.pedalCtrl.crankAngle || 0 }
       : this.pedalCtrl.update(dt);
+    this._playPedalTaps(this.pedalCtrl);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
 
     // Sync balance assist to bike model
@@ -4233,6 +4234,7 @@ class Game {
 
     // Use shared pedal controller
     const pedalResult = this.sharedPedal.update(dt);
+    this._playPedalTaps(this.sharedPedal);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
     this.bike._balanceAssist = this._assistWeight;
 
@@ -4405,6 +4407,36 @@ class Game {
     if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
       this._recordCrash('balance');
     }
+  }
+
+  /**
+   * A-3 · one call site for how a pedal stroke lands: sound, rumble, camera.
+   * Both pedal controllers publish `tapEvents` for the frame with the same
+   * shape, so solo, online co-op and local co-op all come through here.
+   * The crank itself is driven by crankAngle inside BikeModel.
+   *
+   * Kept out of hud.js on purpose — the HUD does its own edge detection for
+   * pixels; audio should not depend on a HUD frame having run.
+   */
+  _playPedalTaps(ctrl) {
+    const events = ctrl && ctrl.tapEvents;
+    if (!events || events.length === 0) return;
+
+    for (const ev of events) {
+      const cadence = ev.gap > 0.05 && ev.gap < 4 ? 1 / ev.gap : 1;
+      if (this.audioEngine) this.audioEngine.pedalTap(ev.kind, cadence);
+
+      // Rumble only the seat that tapped when the seats have their own pads.
+      let sources = null;
+      if (this.inputP2 && ev.seat === 'stoker') sources = [this.inputP2];
+      else if (this.inputP2 && ev.seat === 'captain') sources = [this.input];
+      hapticPedal(ev.kind, sources);
+
+      if (this.chaseCamera && this.chaseCamera.pedalBob) {
+        this.chaseCamera.pedalBob(ev.kind === 'wrong' || ev.kind === 'fight' ? 2 : 1);
+      }
+    }
+    events.length = 0;
   }
 
   /** Advance collectibles + obstacles; trigger _onCollect for any picked up this frame. */

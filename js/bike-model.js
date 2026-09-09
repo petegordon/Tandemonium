@@ -47,6 +47,14 @@ export class BikeModel {
     this.distanceTraveled = 0;
     this.crankAngle = 0;
 
+    // A-3 · the crank follows YOUR taps. crankAngle jumps a quarter turn per
+    // tap (pedal controllers own it); the display angle chases it fast enough
+    // to read as a kick, and falls back to a slow speed-driven idle spin while
+    // coasting so the crank-to-wheel ratio still looks plausible.
+    this._crankDisplay = 0;
+    this._crankTarget = 0;
+    this._crankLastTapAt = 0;
+
     // Fall state
     this.fallen = false;
     this.fallTimer = 0;
@@ -664,13 +672,7 @@ export class BikeModel {
       }
     }
 
-    // Pedal crank animation
-    if (this.speed > 0.01) {
-      const pedalSpin = this.speed * dt * 1.5;
-      for (const node of this.pedalNodes) {
-        node.rotation.z += pedalSpin;
-      }
-    }
+    this._updateCrank(dt);
 
     this._applyTransform(dt);
   }
@@ -739,16 +741,32 @@ export class BikeModel {
       }
     }
 
-    // Pedal crank
-    if (this.speed > 0.01) {
-      const dt = 1 / 60;
-      const pedalSpin = this.speed * dt * 1.5;
-      for (const node of this.pedalNodes) {
-        node.rotation.z += pedalSpin;
-      }
-    }
+    this._updateCrank(1 / 60);
 
     this._applyTransform(1 / 60);
+  }
+
+  // A-3 · drive the visible cranks from crankAngle, not from speed.
+  _updateCrank(dt) {
+    if (!this.pedalNodes || this.pedalNodes.length === 0) return;
+    const now = performance.now() / 1000;
+
+    if (this.crankAngle !== this._crankTarget) {
+      this._crankTarget = this.crankAngle;
+      this._crankLastTapAt = now;
+    } else if (this.speed > 0.01 && now - this._crankLastTapAt > 1.5) {
+      // Coasting: keep it turning with the wheels rather than freezing.
+      this._crankTarget += this.speed * dt * 1.5;
+    }
+
+    // >= 20 rad/s means a quarter turn lands in about 80 ms: a kick, not a drift.
+    const step = Math.min(1, 20 * dt);
+    this._crankDisplay += (this._crankTarget - this._crankDisplay) * step;
+
+    for (const node of this.pedalNodes) {
+      if (node.userData._crankBase === undefined) node.userData._crankBase = node.rotation.z;
+      node.rotation.z = node.userData._crankBase + this._crankDisplay;
+    }
   }
 
   _applyTransform(dt) {

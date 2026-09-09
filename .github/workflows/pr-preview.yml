@@ -34,6 +34,15 @@ jobs:
         if: github.event.action != 'closed'
         run: npm test
 
+      # A-3 · the game has no build step, so a broken import only shows up when
+      # someone opens the page. This opens it.
+      - name: Lobby smoke test
+        if: github.event.action != 'closed'
+        run: |
+          npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund
+          npx puppeteer browsers install chrome
+          npm run smoke
+
       - name: Stage deploy files
         if: github.event.action != 'closed'
         run: |

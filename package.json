@@ -15,7 +15,8 @@
     "make": "electron-forge make --platform win32 --arch x64",
     "steamtest": "electron tools/steam-controller-test/main.js",
     "gamepadtest": "electron tools/gamepad-test/main.js",
-    "test": "node --test \"test/unit/*.test.mjs\""
+    "test": "node --test \"test/unit/*.test.mjs\"",
+    "smoke": "node scripts/smoke-lobby.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

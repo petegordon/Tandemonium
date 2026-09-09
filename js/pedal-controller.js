@@ -14,6 +14,12 @@ export class PedalController {
     this.wasCorrect = false;
     this.wasWrong = false;
 
+    // A-3 · taps played this frame, for audio/haptics/camera. Same shape as
+    // SharedPedalController.tapEvents so game.js has one call site for both.
+    // Solo strokes are 'solo'; there is no partner to be perfect with.
+    this.tapEvents = [];
+    this.lastTapKind = null;
+
     // Stats tracking
     this.stats = { totalTaps: 0, correctTaps: 0, wrongTaps: 0, totalPower: 0 };
   }
@@ -36,6 +42,7 @@ export class PedalController {
     if (leftJust || rightJust) {
       this.wasCorrect = false;
       this.wasWrong = false;
+      this.tapEvents.length = 0;
     }
 
     if (braking) {
@@ -63,6 +70,8 @@ export class PedalController {
         wobble = 0.5;
       }
       this.stats.totalPower += acceleration;
+      this.lastTapKind = this.lastPedal === 'left' ? 'wrong' : 'solo';
+      this.tapEvents.push({ kind: this.lastTapKind, seat: 'captain', foot: 'left', time: now, gap });
       this.lastPedal = 'left';
       this.lastPedalTime = now;
       this.crankAngle += Math.PI / 2;
@@ -86,6 +95,8 @@ export class PedalController {
         wobble = 0.5;
       }
       this.stats.totalPower += acceleration;
+      this.lastTapKind = this.lastPedal === 'right' ? 'wrong' : 'solo';
+      this.tapEvents.push({ kind: this.lastTapKind, seat: 'captain', foot: 'right', time: now, gap });
       this.lastPedal = 'right';
       this.lastPedalTime = now;
       this.crankAngle += Math.PI / 2;

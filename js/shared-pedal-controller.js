@@ -83,7 +83,7 @@ export class SharedPedalController {
       pStats.totalTaps++;
       this.lastTapKind = kind;
       this.lastTapSeat = tap.source;
-      this.tapEvents.push({ kind, seat: tap.source, foot: tap.foot, time: tap.time });
+      this.tapEvents.push({ kind, seat: tap.source, foot: tap.foot, time: tap.time, gap });
 
       if (kind === 'fight') {
         // Both riders shoving the same crank arm at the same moment: the crank
