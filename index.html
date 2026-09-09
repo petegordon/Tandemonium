@@ -241,7 +241,7 @@
   /* E-7 · the distance, on screen for the whole ride. */
   #tourist-goal {
     position: fixed;
-    top: 60px;
+    top: 92px;
     left: 50%;
     transform: translateX(-50%);
     display: none;
@@ -260,7 +260,7 @@
   /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
   #disruption-banner {
     position: fixed;
-    top: 22%;
+    top: 18%;
     left: 50%;
     transform: translateX(-50%);
     padding: 6px 16px;
@@ -307,7 +307,7 @@
   /* E-3 · "3-2-1 SPRINT!" — the one thing both riders agree to do at once. */
   #ping-call {
     position: fixed;
-    top: 32%;
+    top: 40%;
     left: 50%;
     transform: translate(-50%, -50%);
     font-size: clamp(28px, 8vw, 60px);
@@ -325,8 +325,8 @@
   /* Emote bubbles: small, brief, and stacked no more than two deep. */
   #ping-bubbles {
     position: fixed;
-    top: 118px;
-    right: 14px;
+    top: 96px;
+    right: 12px;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -352,11 +352,11 @@
      it is the thing the stoker is watching instead of the road. */
   #lookahead {
     position: fixed;
-    top: 96px;
-    left: 50%;
-    transform: translateX(-50%);
+    top: 50%;
+    left: 10px;
+    transform: translateY(-50%);
     display: none;
-    width: min(210px, 60vw);
+    width: min(120px, 30vw);
     padding: 6px 8px 8px;
     border-radius: 10px;
     background: rgba(0,0,0,0.5);
@@ -395,9 +395,23 @@
     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
   }
   /* D-2 · the in-ride "this one counts" badge. */
+  /* HUD ZONES (review pass). Everything added in phases A-E was placed
+     "top-centre" independently and ended up in a heap: eight overlapping
+     elements on desktop, six on a phone. The screen is now divided:
+
+       top strip      0 - 90px    #hud-top (speed, sync row, ping row)
+       under strip    92px        #ranked-badge (small, persistent, centred)
+       left edge      centred     #lookahead (a vertical lane map belongs at a side)
+       right edge     96px+       #ping-bubbles, then #split-delta
+       centre 18%                 #disruption-banner (urgent, transient)
+       centre 30%                 #split-delta flash
+       centre 36%                 #ping-call (the big 3-2-1)
+       above pedals               #coach-card / #coop-coach (never both)
+
+     Verified by scripts/smoke-hud-layout.mjs, which fails on any overlap. */
   #ranked-badge {
     position: fixed;
-    top: 64px;
+    top: 92px;
     left: 50%;
     transform: translateX(-50%);
     display: none;
@@ -518,10 +532,12 @@
   #split-delta.ahead { color: #3ad46e; }
   #split-delta.behind { color: #ff7a5a; }
   /* A-6 · first-ride coach card. */
+  /* The coach card explains the PEDALS, so it belongs next to them rather
+     than at the top of the screen where it fought with everything else. */
   #coach-card {
     position: fixed;
     left: 50%;
-    top: 84px;
+    bottom: 30%;
     transform: translateX(-50%);
     display: none;
     flex-direction: column;

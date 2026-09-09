@@ -204,16 +204,30 @@ export function recordRanked(store, key, mode, run) {
 // A streak is a promise that the game will be here tomorrow, and a reason to
 // keep it. It is also the easiest mechanic in games to make cruel, so:
 //
-//   - the personal streak counts DAYS with any finish on Today's Road, and a
-//     missed day spends a FREEZE (two per calendar month). Duolingo's streak
-//     freeze cut churn 21%, and the reason is not subtle: the day someone
-//     breaks a long streak is the day they stop opening the app;
+//   - the personal streak counts DAYS with any finish on Today's Road, and up
+//     to MAX_BRIDGED_GAPS missed days are bridged rather than breaking it.
+//     Duolingo's streak freeze cut churn 21%, and the reason is not subtle:
+//     the day someone breaks a long streak is the day they stop opening the
+//     app. Note what this is NOT: there is no freeze balance to spend, hoard
+//     or buy. The streak is recomputed from the ride history every time it is
+//     read, and at most two one-day gaps inside the run you are currently
+//     holding are forgiven. That is simpler than a currency, it cannot drift
+//     out of step with the rides that actually happened, and it cannot
+//     resurrect a streak that has been dead for a fortnight;
 //   - the pair streak counts WEEKS, not days, in which two people rode together
 //     at least once. Two adults with jobs do not ride a tandem every evening.
 //     C-1's median-days-between-a-pair's-rides exists to check this choice
 //     against reality.
 
-export const FREEZES_PER_MONTH = 2;
+/**
+ * How many one-day gaps are forgiven inside the streak you are currently
+ * holding. Two: enough to cover a bad week without making the streak
+ * meaningless.
+ */
+export const MAX_BRIDGED_GAPS = 2;
+
+/** @deprecated the old name, kept so nothing breaks mid-refactor. */
+export const FREEZES_PER_MONTH = MAX_BRIDGED_GAPS;
 
 /** Whole days between two 'YYYY-MM-DD' keys. */
 export function daysBetween(a, b) {
@@ -246,14 +260,13 @@ export function computeStreak(store, todayKey, opts = {}) {
     .filter(k => !k.startsWith('__') && hasFinish(all[k]))
     .sort()
     .reverse();
-  const granted = opts.freezes ?? FREEZES_PER_MONTH;
+  const granted = opts.freezes ?? MAX_BRIDGED_GAPS;
   if (ridden.length === 0) {
     return { current: 0, best: 0, freezesLeft: granted, usedFreeze: false };
   }
 
-  const month = todayKey.slice(0, 7);
-  const spent = (all.__freezes && all.__freezes[month]) || 0;
-  let freezesLeft = Math.max(0, granted - spent);
+  // Pure: this is read on every card render, so it must never write anything.
+  let freezesLeft = granted;
   let usedFreeze = false;
 
   const gapToNewest = daysBetween(ridden[0], todayKey);
@@ -307,15 +320,6 @@ export function recordPartner(store, key, partnerKey) {
   if (!entry.partners.includes(partnerKey)) entry.partners.push(partnerKey);
   all[key] = entry;
   writeAll(store, prune(all, key));
-}
-
-/** Spend a freeze in the month containing `todayKey`. */
-export function spendFreeze(store, todayKey) {
-  const all = readAll(store);
-  const month = todayKey.slice(0, 7);
-  all.__freezes = all.__freezes || {};
-  all.__freezes[month] = (all.__freezes[month] || 0) + 1;
-  writeAll(store, all);
 }
 
 function hasFinish(entry) {

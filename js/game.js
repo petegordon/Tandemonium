@@ -933,6 +933,9 @@ class Game {
   _onSolo() {
     this.mode = 'solo';
     this.hud.setSeat('captain', false);   // A-4: no sync row when riding alone
+    this.isTourist = false;               // E-7: a normal solo ride, not a route
+    this._touristRoute = null;
+    this._hideTouristGoal();
     this.bike.applyPreset(this.lobby.selectedPreset);
     this._lobbyBtn.textContent = 'LOBBY';
 
@@ -1338,6 +1341,13 @@ class Game {
     this.net = null;
     this._versusTeams = teams;
     this._lobbyBtn.textContent = 'LOBBY';
+    // A-4/E-1/E-7: versus has its own HUD. Without clearing these, a co-op or
+    // tourist ride earlier in the session would leave the sync row, the
+    // look-ahead panel or the distance readout on screen over a versus race.
+    this.hud.setSeat('captain', false);
+    this.hud.updateLookahead(null);
+    this._touristRoute = null;
+    this._hideTouristGoal();
     this._loadSavedTuning();
     // The join screen suspended activity-claims so it could be the sole
     // claimer; rosters are locked now, so restore normal behavior (spare
@@ -1941,7 +1951,17 @@ class Game {
     }
     // D-2 · is this the day's ranked run? The lobby asked; the demo never does
     // (practice only there), and a stoker takes whatever the captain chose.
-    this._rankedRunActive = !!(level.isDaily && this.lobby._dailyMode === 'ranked' && !this._isDemo);
+    // The chooser sets _dailyMode per ride and it is CONSUMED here: without
+    // clearing it, every later Today's Road ride in the session would claim to
+    // be ranked, show the badge, and try to spend a run that is already gone.
+    // The stoker never chooses: its value arrives in the captain's `dailyMode`
+    // message, which can land either side of the countdown event, so this must
+    // not overwrite it.
+    if (this.mode !== 'stoker') {
+      const chosenMode = this.lobby._dailyMode;
+      this.lobby._dailyMode = null;
+      this._rankedRunActive = !!(level.isDaily && chosenMode === 'ranked' && !this._isDemo);
+    }
     if (this._rankedRunActive && this.mode === 'captain' && this.net) {
       // The countdown event is a bare byte, so the mode needs its own message.
       this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
@@ -2363,6 +2383,21 @@ class Game {
       this.raceManager.restartCount++;
       this.raceManager.resetSegmentTimer(checkpointD);
     }
+
+    // B-3: splits are indexed by checkpoint, so a restart has to drop the ones
+    // that are about to be ridden again. Without this the list keeps growing
+    // and every later split is compared against the wrong checkpoint.
+    if (this._rideSplits) {
+      const passed = this.raceManager ? this.raceManager.passedCheckpoints.size : 0;
+      this._rideSplits.length = Math.min(this._rideSplits.length, passed);
+    }
+    // D-4: a ride with a restart in it no longer has one continuous line, so
+    // it does not leave a ghost behind. The TIME still counts — restarts cost
+    // seconds, and beating your best with one is a real result — but a ghost
+    // stitched across a rewind would teach a line nobody rode.
+    this._ghostTrackValid = false;
+    this._ghostElapsed = 0;
+    if (this._ghostPlayer) this._ghostPlayer.reset();
 
     // DDA: apply invisible adjustments on restart
     if (this.ddaManager && this.mode !== 'stoker') {
@@ -2833,6 +2868,7 @@ class Game {
   _startGhost(level) {
     this._ghostRecorder = this._ghostRecorder || new GhostRecorder();
     this._ghostRecorder.reset();
+    this._ghostTrackValid = true;
     this._ghostPlayer = null;
     this._ghostElapsed = 0;
 
@@ -2942,7 +2978,7 @@ class Game {
 
   /** Finish: keep the line if this ride was a new best. */
   _finishGhostRecording(isNewBest) {
-    if (!this._ghostRecorder) return null;
+    if (!this._ghostRecorder || this._ghostTrackValid === false) return null;
     const track = this._ghostRecorder.finish();
     return isNewBest && track.count > 1 ? track : null;
   }
@@ -2972,6 +3008,28 @@ class Game {
     // The ride is the ridable part of the route; the REAL distance is what the
     // HUD says, because that number is the entire feature.
     this._touristGoalM = plan.route.ridableM;
+
+    // A tourist ride needs a LEVEL, because every piece of ride machinery —
+    // the race manager, the finish, the records, the disruption schedule —
+    // reads one. Without this the ride silently inherits whatever was selected
+    // last (Grandma's), which means a 250 m finish, a segment timer that times
+    // you out on the way to Denver, and a personal best written against the
+    // wrong road. It is a pseudo-level: no timer, one checkpoint at the end,
+    // and a distance that IS the destination.
+    this.lobby.selectedLevel = {
+      id: 'tourist',
+      name: plan.to.label || 'Their door',
+      distance: Math.max(50, Math.round(plan.route.ridableM)),
+      checkpointInterval: Math.max(50, Math.round(plan.route.ridableM)),
+      collectibles: 'none',
+      icon: '📍',
+      description: plan.headline,
+      isTourist: true,
+      timerEnabled: false,      // there is no losing a ride to someone you love
+      treeCollision: false,
+      motionAdaptation: false
+    };
+    this.lobby.selectedDifficulty = 'chill';   // arriving is the point, not the challenge
 
     const apiKey = getMapsApiKey();
     this._touristPending = true;
@@ -3022,48 +3080,34 @@ class Game {
       el.innerHTML = text;
     }
 
-    // Arrival. There is no race manager on a tourist ride — the destination is
-    // the whole win condition.
-    if (!this._touristArrived && left <= 0 && this.state === 'playing') {
-      this._touristArrived = true;
-      this._onTouristArrived(ridden);
-    }
+    // Arrival is the ordinary finish: the pseudo-level's distance IS the
+    // destination, so the race manager fires the normal finish cinematic and
+    // victory screen. No parallel win path to keep in step with the real one.
   }
 
-  /** E-7 · they arrived. */
-  _onTouristArrived(riddenM) {
+  /**
+   * E-7 · they arrived. Called from the ordinary victory screen, which already
+   * does the cinematic, the chime and the buttons — this only says what the
+   * ride was about and builds the thing they can send to the person it was
+   * about. One win path, not two to keep in step.
+   *
+   * @returns {string} extra HTML for the victory stats block
+   */
+  _touristVictoryHtml(riddenM) {
     const plan = this._touristRoute;
-    this.state = 'victory';
-    hapticFinish();
-    this._playChime(MOTIF.C5, 0.3);
-    setTimeout(() => this._playChime(MOTIF.E5, 0.3), 140);
-    setTimeout(() => this._playChime(MOTIF.G5, 0.6), 280);
+    if (!plan) return '';
 
-    const overlay = document.getElementById('victory-overlay');
     const title = document.getElementById('victory-title');
     const dest = document.getElementById('victory-destination');
-    const stats = document.getElementById('victory-stats');
     if (title) title.textContent = 'YOU MADE IT TO THEM!';
     if (dest) dest.textContent = '📍 ' + (plan.to.label || 'their door');
-    if (stats) {
-      stats.innerHTML =
-        '<div class="victory-stat">' + this._escapeHtml(plan.headline) + '</div>' +
-        (plan.route.capped
-          ? '<div class="victory-stat">' + this._escapeHtml(skipLabel(plan.route)) + '</div>'
-          : '') +
-        '<div class="victory-stat">🚴 You rode <strong>' + formatDistance(riddenM) + '</strong></div>';
-    }
-    if (overlay) overlay.classList.add('visible');
 
-    // E-7 · the strip, so the ride can be sent to the person it was about.
     this._dailyStripText = [
       `Tandemonium · ${plan.headline}`,
       `📍 ${plan.from.label} → ${plan.to.label}`,
       `🚴 ${formatDistance(riddenM)} ridden${plan.route.capped ? ' · ' + skipLabel(plan.route) : ''}`,
       location.origin + '/'
     ].join('\n');
-    const ctas = this._updateCtaButtons('victory');
-    this._setOverlayButtons([document.getElementById('btn-victory-lobby'), ...ctas]);
 
     try {
       analytics.trackEvent('tourist_arrived', {
@@ -3072,6 +3116,11 @@ class Game {
         capped: plan.route.capped
       });
     } catch {}
+
+    return '<div class="victory-stat">' + this._escapeHtml(plan.headline) + '</div>' +
+      (plan.route.capped
+        ? '<div class="victory-stat">' + this._escapeHtml(skipLabel(plan.route)) + '</div>'
+        : '');
   }
 
   /**
@@ -3171,8 +3220,12 @@ class Game {
     if (!active && this._activeDisruption) this._onDisruptionEnd();
     this._activeDisruption = active && active.phase === 'active' ? active : null;
 
-    // Apply whatever is running.
-    if (this._activeDisruption) {
+    // Apply whatever is running — but only on the side that owns the physics.
+    // The stoker's bike is overwritten by the captain's state every frame, so
+    // pushing its lean here would fight the network for no effect. The stoker
+    // still sees the banner above; it is the captain's gust that moves them.
+    const authoritative = this.mode !== 'stoker';
+    if (this._activeDisruption && authoritative) {
       const kind = this._activeDisruption.event.kind;
       if (kind === KIND.GUST) {
         // A crosswind the pair has to correct together: their lean inputs
@@ -3953,6 +4006,8 @@ class Game {
       html += this._buildRecordHtml(summary, fromRemote);
       // D-3 · and, on Today's Road, the thing you can send to someone.
       html += this._buildDailyStripHtml(summary, level);
+      // E-7 · on a tourist ride, what the ride was about.
+      if (this._touristRoute) html += this._touristVictoryHtml(summary.distance);
       if (summary.restarts > 0) {
         html += '<div class="victory-stat">\uD83C\uDFC1 Restarts: <strong>' + summary.restarts + '</strong></div>';
       }
@@ -6521,7 +6576,7 @@ class Game {
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     this._updateLookahead(dt);    // E-1 · the road only the stoker can see
     this._updatePing(dt);         // E-3
-    this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner · the sprint call and emotes
+    this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
     const stokerLean = this.balanceCtrl.update().leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     // Independent rider torsos on the stoker's screen too: captain leans by the

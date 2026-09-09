@@ -32,7 +32,8 @@
     "smoke:ping": "node scripts/smoke-sync-ping.mjs",
     "smoke:disruptions": "node scripts/smoke-disruptions.mjs",
     "gen-tourist-key": "node scripts/gen-tourist-key.js",
-    "smoke:tourist": "node scripts/smoke-tourist-route.mjs"
+    "smoke:tourist": "node scripts/smoke-tourist-route.mjs",
+    "smoke:layout": "node scripts/smoke-hud-layout.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

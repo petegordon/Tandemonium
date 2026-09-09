@@ -2,6 +2,9 @@
 // RACE CONFIG — level definitions
 // ============================================================
 
+// Medal thresholds are derived from the difficulty presets' time budgets (B-3).
+import { DIFFICULTY_PRESETS } from './config.js';
+
 export const LEVELS = [
   {
     id: 'tutorial',
@@ -109,29 +112,48 @@ export function getInstructions(difficultyName) {
 // SOURCE: these are provisional. A-1 (the analytics baseline) is meant to set
 // them from the real finish-time distribution — p10 / p35 / p65 per
 // level × difficulty — but it is blocked on `wrangler login`, so nothing has
-// been read from the live data yet. Until then they are derived from the
-// design targets: a clean ride at the preset's cruising speed is the SILVER
-// time, gold is that ride with no wasted metres, bronze is a ride that
-// finishes with mistakes in it.
+// been read from the live data yet.
 //
-// Rule of thumb used: base = distance / expected pace, where expected pace is
-// 4.2 m/s on chill, 4.8 on adventurous, 5.6 on daredevil (auto-speed cruise is
-// 3 m/s; a pedalling pair beats it comfortably). gold = base, silver = base
-// x 1.25, bronze = base x 1.6.
+// Until then they are derived from THE GAME'S OWN CLOCK rather than from an
+// independent guess at pace. The segment timer already encodes what the design
+// considers a reasonable ride: 60 s per 250 m, scaled by the preset's
+// timeMultiplier. So the medals are fractions of the time the game itself
+// allows:
 //
-// WHEN A-1 RUNS: replace these with the measured percentiles and change this
-// comment to cite docs/analytics-baseline-2026-09.md. Do not tune them by
-// feel — the whole point of a medal is that it means the same thing to
-// everyone.
-const PACE = { tutorial: 3.6, chill: 4.2, adventurous: 4.8, daredevil: 5.6 };
+//   bronze = 90% of the clock — you finished, comfortably inside it
+//   silver = 72%
+//   gold   = 55%
+//
+// This matters more than it looks. The first version of this table derived
+// medals from a guessed pace, and the result was that BRONZE WAS UNREACHABLE on
+// five of nine level/difficulty combinations: the segment timer expired before
+// a rider could finish that slowly. A medal nobody can earn is worse than no
+// medal — it is a permanently greyed-out target telling the player they are bad
+// at something the game refuses to let them do. Deriving from the clock makes
+// that impossible by construction, and the unit test asserts it.
+//
+// WHEN A-1 RUNS: replace these with the measured percentiles, cite
+// docs/analytics-baseline-2026-09.md here, and KEEP the reachability test. Do
+// not tune them by feel — the point of a medal is that it means the same thing
+// to everyone.
+const MEDAL_FRACTION = { gold: 0.55, silver: 0.72, bronze: 0.90 };
 
-function medalsFor(distanceM, difficulty) {
-  const pace = PACE[difficulty] || PACE.adventurous;
-  const base = (distanceM / pace) * 1000;
+/** The total time the segment timer allows for a whole clean run. */
+export function timerBudgetMs(level, difficulty) {
+  const preset = DIFFICULTY_PRESETS[difficulty] || DIFFICULTY_PRESETS.adventurous;
+  const interval = level.checkpointInterval || level.distance;
+  const perSegment = Math.max(10, (interval / 250) * 60) * (preset.timeMultiplier || 1);
+  const segments = Math.max(1, Math.ceil(level.distance / interval));
+  // + the A-6 first-segment bonus, which every ride gets.
+  return (perSegment * segments + 8) * 1000;
+}
+
+function medalsFor(level, difficulty) {
+  const budget = timerBudgetMs(level, difficulty);
   return {
-    gold: Math.round(base),
-    silver: Math.round(base * 1.25),
-    bronze: Math.round(base * 1.6)
+    gold: Math.round(budget * MEDAL_FRACTION.gold),
+    silver: Math.round(budget * MEDAL_FRACTION.silver),
+    bronze: Math.round(budget * MEDAL_FRACTION.bronze)
   };
 }
 
@@ -142,5 +164,5 @@ function medalsFor(distanceM, difficulty) {
 export function getMedals(levelId, difficulty) {
   const level = getLevelById(levelId);
   if (!level || level.isTutorial || level.timerEnabled === false) return null;
-  return medalsFor(level.distance, difficulty || 'adventurous');
+  return medalsFor(level, difficulty || 'adventurous');
 }

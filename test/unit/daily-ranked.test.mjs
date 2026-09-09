@@ -3,8 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   rankedDone, rankedResult, recordRanked, recordPractice,
-  computeStreak, computePairStreak, recordPartner, spendFreeze,
-  buildShareStrip, isoWeek, daysBetween, FREEZES_PER_MONTH
+  computeStreak, computePairStreak, recordPartner,
+  buildShareStrip, isoWeek, daysBetween, MAX_BRIDGED_GAPS
 } from '../../js/daily-ride.js';
 
 function memStore() {
@@ -86,9 +86,9 @@ test('a missed day spends a freeze instead of breaking the streak', () => {
   const s = memStore();
   for (const d of ['2026-09-05', '2026-09-06', '2026-09-08']) recordPractice(s, d, 100000);
   const st = computeStreak(s, '2026-09-08');
-  assert.equal(st.current, 3, 'the 7th was missed and frozen over');
+  assert.equal(st.current, 3, 'the 7th was missed and bridged');
   assert.equal(st.usedFreeze, true);
-  assert.equal(st.freezesLeft, FREEZES_PER_MONTH - 1);
+  assert.equal(st.freezesLeft, MAX_BRIDGED_GAPS - 1);
 });
 
 test('two missed days in a row break it, and the best is kept', () => {
@@ -108,20 +108,30 @@ test('freezes run out', () => {
   assert.equal(st.current, 3);
 });
 
-test('a spent freeze is remembered across sessions', () => {
+test('reading the streak never changes it', () => {
+  // This is read on every level-card render. If it wrote anything — a spent
+  // freeze, say — the number would drift every time the player looked at it.
   const s = memStore();
-  recordPractice(s, '2026-09-08', 100000);
-  spendFreeze(s, '2026-09-08');
-  spendFreeze(s, '2026-09-08');
-  assert.equal(computeStreak(s, '2026-09-08').freezesLeft, 0);
-  // A new month gets its own allowance.
-  recordPractice(s, '2026-10-01', 100000);
-  assert.equal(computeStreak(s, '2026-10-01').freezesLeft, FREEZES_PER_MONTH);
+  for (const d of ['2026-09-05', '2026-09-06', '2026-09-08']) recordPractice(s, d, 100000);
+  const raw = s.get('tandemonium_daily');
+  const a = computeStreak(s, '2026-09-08');
+  const b = computeStreak(s, '2026-09-08');
+  assert.deepEqual(a, b, 'two reads must agree');
+  assert.equal(s.get('tandemonium_daily'), raw, 'and neither may write');
 });
 
-test('a player with no rides has no streak and full freezes', () => {
+test('bridging cannot resurrect a streak that has been dead for weeks', () => {
+  const s = memStore();
+  for (let d = 1; d <= 10; d++) {
+    recordPractice(s, '2026-09-' + String(d).padStart(2, '0'), 100000);
+  }
+  assert.equal(computeStreak(s, '2026-09-25').current, 0,
+    'two bridged gaps must not reach back across a fortnight');
+});
+
+test('a player with no rides has no streak and nothing bridged', () => {
   const st = computeStreak(memStore(), '2026-09-08');
-  assert.deepEqual(st, { current: 0, best: 0, freezesLeft: FREEZES_PER_MONTH, usedFreeze: false });
+  assert.deepEqual(st, { current: 0, best: 0, freezesLeft: MAX_BRIDGED_GAPS, usedFreeze: false });
 });
 
 test('the pair streak counts weeks, not days', () => {

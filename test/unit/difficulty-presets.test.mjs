@@ -85,3 +85,24 @@ test('the tutorial has no medals', async () => {
   const { getMedals } = await import('../../js/race-config.js');
   assert.equal(getMedals('tutorial', 'chill'), null);
 });
+
+// B-3 (review) · a medal nobody can earn is worse than no medal. The first
+// version of the table derived medals from a guessed pace, and bronze came out
+// UNREACHABLE on five of nine level/difficulty combinations — the segment timer
+// expired before a rider could finish that slowly. This is the invariant that
+// makes that impossible; keep it when A-1 replaces the numbers with measured
+// percentiles.
+test('every medal is reachable within the time the game itself allows', async () => {
+  const { getMedals, timerBudgetMs, LEVELS } = await import('../../js/race-config.js');
+  for (const level of LEVELS) {
+    for (const difficulty of ['chill', 'adventurous', 'daredevil']) {
+      const m = getMedals(level.id, difficulty);
+      if (!m) continue;
+      const budget = timerBudgetMs(level, difficulty);
+      assert.ok(m.bronze <= budget,
+        `${level.id}/${difficulty}: bronze ${(m.bronze / 1000).toFixed(0)}s but the timer only allows ${(budget / 1000).toFixed(0)}s`);
+      assert.ok(m.gold < m.silver && m.silver < m.bronze, `${level.id}/${difficulty}: out of order`);
+      assert.ok(m.gold > 15000, `${level.id}/${difficulty}: gold is not a real ride`);
+    }
+  }
+});

@@ -347,6 +347,16 @@ export class HUD {
     }
 
     // Coaching line: the rule, in words, until the pair proves they have it.
+    // Never at the same time as the A-6 coach card — they occupy the same slot
+    // above the pedals and say overlapping things. The card goes first: it
+    // explains which buttons pedal at all, which comes before rhythm.
+    const cardUp = this._coachCardEl === undefined
+      ? (this._coachCardEl = document.getElementById('coach-card'))
+      : this._coachCardEl;
+    if (cardUp && cardUp.classList.contains('show')) {
+      this.coopCoach.classList.remove('show');
+      return;
+    }
     if (this.coopCoach && !this._coachDone) {
       if (this._coachPerfects >= 5) {
         this._coachDone = true;

@@ -73,14 +73,20 @@ const flow = await page.evaluate(async () => {
 });
 console.log('with a key:', JSON.stringify(flow, null, 1));
 
-// 3. The ride itself: goal readout counts down, arrival fires the victory screen.
+// 3. The ride itself: it gets its OWN level (not whatever was selected last),
+//    the goal readout counts down, and arrival is the ordinary finish — the
+//    pseudo-level's distance IS the destination, so there is one win path.
 const ride = await page.evaluate(async () => {
   const g = window._game;
   const { planRoute } = await import('./js/tourist-route.js');
-  const plan = planRoute({ lat: 39.9612, lon: -82.9988, label: 'A' }, { lat: 39.9784, lon: -83.0043, label: 'B' });
-  g._touristRoute = plan;
-  g._touristGoalM = plan.route.ridableM;
-  g._touristArrived = false;
+  const plan = planRoute({ lat: 39.9612, lon: -82.9988, label: 'Home' },
+                         { lat: 39.9784, lon: -83.0043, label: 'Theirs' });
+
+  // Something else was selected first: the tourist ride must not inherit it.
+  g.lobby.selectedLevel = { id: 'grandma', name: "Grandma's", distance: 250, checkpointInterval: 62 };
+  await g._onTouristReady({ plan });
+
+  const level = g.lobby.selectedLevel;
   g.state = 'playing';
   g._showTouristGoal();
 
@@ -92,13 +98,18 @@ const ride = await page.evaluate(async () => {
   g._updateTouristGoal();
   const halfway = document.getElementById('tourist-goal').textContent;
 
-  g.bike.distanceTraveled = plan.route.ridableM + 1;
-  g._updateTouristGoal();
+  // The victory screen's tourist block, as _showVictory calls it.
+  const html = g._touristVictoryHtml(plan.route.ridableM);
+
   return {
     atStart, halfway,
-    arrived: g._touristArrived,
-    state: g.state,
+    levelId: level.id,
+    levelIsTourist: !!level.isTourist,
+    timerEnabled: level.timerEnabled,
+    finishesAtDestination: Math.abs(level.distance - plan.route.ridableM) < 2,
     title: document.getElementById('victory-title').textContent,
+    dest: document.getElementById('victory-destination').textContent,
+    html,
     strip: g._dailyStripText
   };
 });
@@ -108,7 +119,9 @@ const ok = !hidden.visible && flow.shown && flow.stepShown && flow.savedOk
   && /1,8\d\d km/.test(flow.headline) && flow.capped && flow.ridableKm === 5
   && flow.prefilled.from === 'Columbus, OH' && /RIDE IT AGAIN/.test(flow.prefilled.button)
   && /to go/.test(ride.atStart) && ride.atStart !== ride.halfway
-  && ride.arrived && ride.state === 'victory' && /MADE IT/.test(ride.title)
+  && ride.levelId === 'tourist' && ride.levelIsTourist && ride.timerEnabled === false
+  && ride.finishesAtDestination
+  && /MADE IT TO THEM/.test(ride.title) && /Theirs/.test(ride.dest)
   && /Ride the distance between you/.test(ride.strip);
 console.log(ok ? '✔ hidden without a key; plans, remembers, counts down, and arrives with a shareable result'
                : '✖ tourist flow wrong');
