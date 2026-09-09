@@ -184,6 +184,13 @@ npm run smoke:records        # personal bests reach the level card
 npm run smoke:seed           # world reseeding is deterministic and leak-free
 npm run smoke:daily          # Today's Road is the same road for everyone
 npm run smoke:ctas           # end-screen wishlist / invite visibility rules
+npm run smoke:ranked         # one ranked run per day; the demo never asks
+npm run smoke:ghost          # the ghost rides its recorded line
+npm run smoke:lookahead      # the stoker sees road the captain cannot
+npm run smoke:ping           # sprint call, sync multiplier, emotes
+npm run smoke:disruptions    # warned before it acts, released after
+npm run smoke:tourist        # two addresses -> a ride (no Google needed)
+npm run smoke:layout         # every HUD overlay at once, and no overlaps
 npm run check:dashboard-sql  # the dashboard SQL, against a real SQLite
 npm run audit:first30        # cold-load numbers per device profile (#263)
 ```

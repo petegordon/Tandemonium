@@ -105,3 +105,23 @@ test('the next medal up is what the screen should point at', () => {
   assert.equal(nextMedal('silver'), 'gold');
   assert.equal(nextMedal('gold'), null);
 });
+
+// D-4 (review) · the ghost-track budget has to actually evict, or the store
+// grows until a save silently fails and the player loses every best they have.
+test('ghost tracks are evicted before records are', async () => {
+  const { MAX_TRACKS } = await import('../../js/records.js');
+  const store = {};
+  const track = { hz: 5, count: 2, data: [0, 0, 0, 1, 0, 0] };
+  for (let i = 0; i < MAX_TRACKS + 4; i++) {
+    store['k' + i] = {
+      timeMs: 1000, splits: [], collectibles: 0, crashes: 0,
+      date: new Date(2026, 0, 1 + i).toISOString(), track
+    };
+  }
+  trim(store);
+  const withTracks = Object.values(store).filter(r => r.track).length;
+  assert.equal(withTracks, MAX_TRACKS, 'too many tracks kept');
+  assert.equal(Object.keys(store).length, MAX_TRACKS + 4, 'the RECORDS must all survive');
+  assert.equal(store.k0.track, undefined, 'the oldest track went first');
+  assert.equal(store.k0.timeMs, 1000, 'but its time is still there');
+});

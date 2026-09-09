@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildLookahead, laneOf, warningSeconds, seatSeesLookahead,
-  LOOKAHEAD_M, LANE_EDGE, CAPTAIN_VIEW_M
+  LOOKAHEAD_M, LANE_EDGE, LANES, CAPTAIN_VIEW_M
 } from '../../js/lookahead.js';
 
 const obstacle = (d, lat = 0) => ({ absoluteD: d, lateralOffset: lat });
@@ -92,4 +92,15 @@ test('an empty road is an empty strip, not a crash', () => {
 test('items with no distance are skipped rather than trusted', () => {
   const strip = buildLookahead({ obstacles: [{ lateralOffset: 0 }, obstacle(110)] }, 100);
   assert.equal(strip.length, 1);
+});
+
+// The panel has exactly LANES columns in the DOM, so laneOf must never return
+// an index outside them — an off-by-one here silently drops a hazard.
+test('every possible lateral offset lands in a lane that exists', () => {
+  for (let lat = -8; lat <= 8; lat += 0.05) {
+    const lane = laneOf(lat);
+    assert.ok(Number.isInteger(lane) && lane >= 0 && lane < LANES,
+      `lateral ${lat.toFixed(2)} -> lane ${lane}, outside the ${LANES} lanes drawn`);
+  }
+  assert.equal(laneOf(NaN), 1, 'nonsense sits in the middle rather than vanishing');
 });

@@ -226,8 +226,6 @@ export function recordRanked(store, key, mode, run) {
  */
 export const MAX_BRIDGED_GAPS = 2;
 
-/** @deprecated the old name, kept so nothing breaks mid-refactor. */
-export const FREEZES_PER_MONTH = MAX_BRIDGED_GAPS;
 
 /** Whole days between two 'YYYY-MM-DD' keys. */
 export function daysBetween(a, b) {
