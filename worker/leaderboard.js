@@ -749,8 +749,9 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
 
   await env.DB.prepare(
     `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
-     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address,
+     device_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     body.id,
     body.started_at || new Date().toISOString(),
@@ -765,7 +766,9 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
     body.platform || 'browser',
     body.screen_width || null,
     body.screen_height || null,
-    clientIP || null
+    clientIP || null,
+    // A-9: anonymous per-browser id. Old clients don't send it; that is fine.
+    typeof body.device_id === 'string' && body.device_id.length <= 64 ? body.device_id : null
   ).run();
 
   writeMetric(env, 'analytics_session');

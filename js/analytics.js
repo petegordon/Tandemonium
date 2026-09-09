@@ -1,6 +1,20 @@
 // ============================================================
 // ANALYTICS — fire-and-forget event tracking
 // ============================================================
+//
+// Identity, in three layers:
+//   sessionId  — one per tab, in sessionStorage. What every event is keyed to.
+//   device_id  — one per browser profile, in localStorage (A-9). Anonymous and
+//                never shown to players; it is the only way to tell "the same
+//                person came back tomorrow" from "a new player arrived", which
+//                is what makes D1/D7 retention measurable for signed-out users.
+//   google_uid — only for signed-in players.
+//
+// Helper vocabulary used by the current work (add here, don't invent names at
+// the call site):
+//   trackEvent('crash_recover', { ms, cause })    how long a crash cost
+//   trackConversion('wishlist_click', where)      demo -> store page
+//   trackConversion('invite_click', where)        "send a link" on an end screen
 
 const API_BASE = 'https://tandemonium-api.pete-872.workers.dev/api/analytics';
 const IS_ELECTRON = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron');
@@ -23,6 +37,27 @@ let flushTimer = null;
 
 // ---- Session Management ----
 
+/**
+ * A-9 · a stable anonymous id for this browser profile.
+ *
+ * Falls back to the session id when localStorage is unavailable (private mode,
+ * blocked site data) so the payload shape never changes and nothing throws —
+ * those sessions simply look like one-visit devices, which is the truth as far
+ * as we can know it.
+ */
+export function getDeviceId() {
+  try {
+    let id = localStorage.getItem('tandemonium_device_id');
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem('tandemonium_device_id', id);
+    }
+    return id;
+  } catch {
+    return getSessionId();
+  }
+}
+
 export function initSession(opts) {
   if (DISABLED) return null;
   sessionId = crypto.randomUUID();
@@ -35,6 +70,7 @@ export function initSession(opts) {
     id: sessionId,
     started_at: new Date().toISOString(),
     ...opts,
+    device_id: getDeviceId(),
     user_agent: navigator.userAgent,
   });
 
@@ -183,6 +219,21 @@ export function trackRoomUpdate(code, data) {
 }
 
 // ---- Conversion Tracking ----
+
+/** A-9 · how long a crash actually cost the rider (B-2 reads this). */
+export function trackCrashRecover(ms, cause) {
+  trackEvent('crash_recover', { ms: Math.round(ms), cause: cause || 'unknown' });
+}
+
+/** A-9 · demo -> Steam page. `where` is the screen it was clicked from. */
+export function trackWishlistClick(where) {
+  trackConversion('wishlist_click', where);
+}
+
+/** A-9 · "send a link" on an end screen — the co-op invite funnel. */
+export function trackInviteClick(where) {
+  trackConversion('invite_click', where);
+}
 
 export function trackConversion(action, context, url = null) {
   beacon(`${API_BASE}/conversion`, {
