@@ -3,6 +3,7 @@
 // ============================================================
 
 import { isMobile } from './config.js';
+import { formatDelta } from './records.js';
 
 export class HUD {
   constructor(input) {
@@ -109,6 +110,20 @@ export class HUD {
       this.progressWrap.appendChild(marker);
       this._checkpointEls.push(marker);
     }
+  }
+
+  /**
+   * B-3 · flash the split delta at a checkpoint. Green when you are ahead of
+   * your best, red when behind; shown only when a best exists, so a first ride
+   * is never told it is losing to nothing.
+   */
+  showSplitDelta(deltaMs) {
+    const el = this._splitDeltaEl || (this._splitDeltaEl = document.getElementById('split-delta'));
+    if (!el) return;
+    el.textContent = formatDelta(deltaMs);
+    el.className = 'show ' + (deltaMs <= 0 ? 'ahead' : 'behind');
+    clearTimeout(this._splitDeltaTimer);
+    this._splitDeltaTimer = setTimeout(() => { el.className = ''; }, 1500);
   }
 
   /** B-2 · edge-darkening crash vignette; `k` is 0..1. */

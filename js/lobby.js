@@ -41,7 +41,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
-import { LEVELS } from './race-config.js';
+import { LEVELS, getMedals } from './race-config.js';
+import * as records from './records.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay } from './achievements.js';
@@ -684,6 +685,12 @@ export class Lobby {
     const prevStep = this._currentStep;
     this._currentStep = step;
 
+    // B-3: cards are built once at boot, but bests change every ride — refresh
+    // the record lines whenever a level list comes back into view.
+    if (step === this.levelStep || step === this.versusStep || step === this.roomStep) {
+      this._refreshRecordLines();
+    }
+
     // Local-MP JOIN RIDE monitor: run only while the captain host page is visible.
     if (step === this.hostStep) {
       this._startLocalJoinMonitor();
@@ -1140,6 +1147,42 @@ export class Lobby {
    * @param {HTMLElement} opts.backBtn         — back button for this step
    * @param {HTMLElement} opts.step            — step element for _stepItems registration
    */
+  /**
+   * B-3 · the one line on a level card that gives a reason to ride it again.
+   * Reads the local record store for the currently selected difficulty and
+   * whichever mode this card list belongs to.
+   */
+  _recordLine(level, mode) {
+    if (level.isTutorial || level.timerEnabled === false) return '';
+    const cardMode = mode === 'versus' ? 'versus' : (mode === 'solo' || !mode ? 'solo' : 'coop');
+    const store = records.load();
+    const best = records.getBest(store, records.key(level.id, this.selectedDifficulty, cardMode));
+    const thresholds = getMedals(level.id, this.selectedDifficulty);
+    if (!best) {
+      return thresholds
+        ? 'No ride yet · ' + records.MEDAL_ICON.gold + ' at ' + records.formatTime(thresholds.gold)
+        : 'No ride yet';
+    }
+    const medal = records.medalFor(best.timeMs, thresholds);
+    const next = records.nextMedal(medal);
+    let line = 'Best ' + records.formatTime(best.timeMs);
+    if (medal) line += ' · ' + records.MEDAL_ICON[medal];
+    if (thresholds && next) line += ' · ' + records.MEDAL_ICON[next] + ' at ' + records.formatTime(thresholds[next]);
+    return line;
+  }
+
+  /** B-3 · re-render the record line on every visible level card. */
+  _refreshRecordLines() {
+    document.querySelectorAll('.level-card').forEach(card => {
+      const line = card.querySelector('.level-card-record');
+      if (!line) return;
+      const level = LEVELS.find(l => l.id === card.dataset.levelId);
+      if (!level) return;
+      const inVersus = !!card.closest('#versus-level-list, [id*="versus"]');
+      line.textContent = this._recordLine(level, inVersus ? 'versus' : (this.net ? 'coop' : 'solo'));
+    });
+  }
+
   _buildLevelCardsShared({ container, isClickable, mode, showTutorial, startBtn, backBtn, step }) {
     container.innerHTML = '';
     const buttons = [];
@@ -1179,7 +1222,11 @@ export class Lobby {
             '<span class="level-card-icon">' + level.icon + '</span>' +
             '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">' + desc + '</div>';
+          '<div class="level-card-desc">' + desc + '</div>' +
+          // B-3: your best on this road, and the medal you are chasing. Says
+          // "No ride yet" rather than nothing, so the line is a promise on the
+          // first visit instead of an absence.
+          '<div class="level-card-record">' + this._recordLine(level, mode) + '</div>';
 
         if (isClickable) {
           card.addEventListener('click', () => {
@@ -1340,6 +1387,9 @@ export class Lobby {
           document.querySelectorAll('.difficulty-btn[data-difficulty="' + btn.dataset.difficulty + '"]')
             .forEach(b => b.classList.add('selected'));
           this.selectedDifficulty = btn.dataset.difficulty;
+          // B-3: bests and medals are per difficulty, so the card lines have to
+          // follow the choice the player just made.
+          this._refreshRecordLines();
           // Sync difficulty to partner in multiplayer
           if (this.net && this.net.connected) {
             this.net.sendProfile(RoomProtocol.difficultySync(btn.dataset.difficulty));

@@ -64,3 +64,24 @@ test('every preset has instruction text, and only the crashable ones threaten', 
 test('an unknown difficulty still gets text', () => {
   assert.equal(getInstructions('nope'), DIFFICULTY_INSTRUCTIONS.adventurous);
 });
+
+// B-3 · medal thresholds have to be ordered and achievable.
+test('medals get harder in the right direction', async () => {
+  const { getMedals } = await import('../../js/race-config.js');
+  for (const difficulty of ['chill', 'adventurous', 'daredevil']) {
+    const m = getMedals('grandma', difficulty);
+    assert.ok(m.gold < m.silver, `${difficulty}: gold must be faster than silver`);
+    assert.ok(m.silver < m.bronze, `${difficulty}: silver must be faster than bronze`);
+    assert.ok(m.gold > 20000, `${difficulty}: gold at ${m.gold} ms is not a real ride`);
+  }
+});
+
+test('a harder difficulty demands a faster ride', async () => {
+  const { getMedals } = await import('../../js/race-config.js');
+  assert.ok(getMedals('grandma', 'daredevil').gold < getMedals('grandma', 'chill').gold);
+});
+
+test('the tutorial has no medals', async () => {
+  const { getMedals } = await import('../../js/race-config.js');
+  assert.equal(getMedals('tutorial', 'chill'), null);
+});

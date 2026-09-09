@@ -7,7 +7,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
-import { getLevelById, LEVELS, getInstructions } from './race-config.js';
+import * as records from './records.js';
+import { getLevelById, LEVELS, getInstructions, getMedals } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
@@ -1754,6 +1755,10 @@ class Game {
     // A-6: name the controls for whoever is holding whatever they are holding.
     this._maybeShowCoachCard(level);
 
+    // B-3: read this ride's best once, so checkpoint splits have something to
+    // compare against without touching localStorage mid-ride.
+    this._loadBestForRide();
+
     // Tutorial: place all items from all phases so they're visible ahead
     if (level.isTutorial && this._tutorialActive) {
       this._initAllTutorialItems();
@@ -2444,10 +2449,106 @@ class Game {
     }
   }
 
+  /**
+   * B-3 · the record block on the victory screen.
+   *
+   * Writes the run to the local store (that is the side effect; it belongs
+   * here because the run is only "done" once the victory screen exists) and
+   * returns the HTML for what it meant: a new best, or how far off, plus the
+   * medal earned and the next one to chase.
+   *
+   * The stoker's screen shows the captain's authoritative numbers but does not
+   * write a record from them — both sides riding the same bike would otherwise
+   * each claim the same time as their own solo best.
+   */
+  _buildRecordHtml(summary, fromRemote) {
+    const k = this._recordKey();
+    if (!k || !summary || !summary.timeMs) return '';
+    const level = this.lobby.selectedLevel;
+    if (level && (level.isTutorial || level.timerEnabled === false)) return '';
+
+    const store = this._recordStore || records.load();
+    const previous = records.getBest(store, k);
+    let result = { isNewBest: false, delta: previous ? summary.timeMs - previous.timeMs : null };
+
+    if (!fromRemote) {
+      result = records.recordRun(store, k, {
+        timeMs: summary.timeMs,
+        splits: this._rideSplits || [],
+        collectibles: summary.collectibles,
+        crashes: summary.crashes
+      });
+      records.save(store);
+      this._recordStore = store;
+    }
+
+    const thresholds = getMedals(level.id, this.lobby.selectedDifficulty);
+    const medal = records.medalFor(summary.timeMs, thresholds);
+    const next = records.nextMedal(medal);
+
+    let html = '';
+    if (result.isNewBest && previous) {
+      html += '<div class="victory-stat victory-perfect">⭐ NEW BEST! ' +
+        records.formatDelta(result.delta) + 's ⭐</div>';
+    } else if (result.isNewBest) {
+      html += '<div class="victory-stat victory-perfect">⭐ FIRST RIDE ON THIS ROAD ⭐</div>';
+    } else if (previous) {
+      html += '<div class="victory-stat">🏅 Best <strong>' + records.formatTime(previous.timeMs) +
+        '</strong> · you ' + records.formatTime(summary.timeMs) +
+        ' (' + records.formatDelta(result.delta) + ')</div>';
+    }
+
+    if (thresholds) {
+      const earned = medal ? records.MEDAL_ICON[medal] + ' ' + medal.toUpperCase() : 'no medal yet';
+      const chase = next ? ' · ' + records.MEDAL_ICON[next] + ' at ' + records.formatTime(thresholds[next]) : '';
+      html += '<div class="victory-stat">' + earned + chase + '</div>';
+    }
+
+    try {
+      analytics.trackEvent('run_recorded', {
+        key: k, time_ms: summary.timeMs, new_best: result.isNewBest,
+        delta_ms: result.delta, medal
+      });
+    } catch {}
+
+    return html;
+  }
+
+  /**
+   * B-3 · which record does this ride count against? Modes are kept apart
+   * because one person steering is a different game from two.
+   */
+  _recordKey() {
+    const level = this.lobby.selectedLevel;
+    if (!level) return null;
+    const mode = this.mode === 'versus' ? 'versus'
+      : (this.mode === 'solo' ? 'solo' : 'coop');
+    return records.key(level.id, this.lobby.selectedDifficulty || 'adventurous', mode);
+  }
+
+  /** The best for this ride's key, read once at the start of the ride. */
+  _loadBestForRide() {
+    this._recordStore = records.load();
+    const k = this._recordKey();
+    this._rideBest = k ? records.getBest(this._recordStore, k) : null;
+    this._rideSplits = [];
+  }
+
   _handleRaceEvent(raceEvent) {
     if (raceEvent.event === 'checkpoint') {
       this._showCheckpointFlash();
       hapticCheckpoint();
+
+      // B-3 · split against your best. This is the whole point of a second
+      // ride on the same road: at every checkpoint you know whether you are
+      // ahead of the person you were last time.
+      if (this.raceManager) {
+        const elapsed = this.raceManager.getElapsedMs();
+        const index = this._rideSplits.length;
+        this._rideSplits.push(Math.round(elapsed));
+        const delta = records.splitDelta(this._rideBest, index, elapsed);
+        if (delta !== null) this.hud.showSplitDelta(delta);
+      }
 
       // Analytics: checkpoint ride event
       analytics.trackRideEvent('checkpoint', raceEvent.distance, {
@@ -2788,6 +2889,9 @@ class Game {
       } else {
         html += '<div class="victory-stat victory-perfect">\u2B50 No Crashes! \u2B50</div>';
       }
+      // B-3 \u00B7 the ride you just did, measured against the rides you have done
+      // before. This is the whole reason to press START RIDE a second time.
+      html += this._buildRecordHtml(summary, fromRemote);
       if (summary.restarts > 0) {
         html += '<div class="victory-stat">\uD83C\uDFC1 Restarts: <strong>' + summary.restarts + '</strong></div>';
       }
