@@ -43,7 +43,34 @@ const ACHIEVEMENTS = [
 
   // Contribution
   { id: 'team_player',  name: 'Team Player',       icon: '\uD83E\uDD1C', condition: s => s.isMultiplayer && s.safePct >= 80 }, // 🤜
+
+  // ── F-1 · the loops this game is actually about ──────────────────────────
+  //
+  // Nineteen achievements existed and seven of them were "finish Grandma's on
+  // a particular bike colour" — a completion checklist for a player who wants
+  // to exhaust content, which is the anti-persona. These six reward what the
+  // plan built: coming back, riding the shared road, and riding it with the
+  // same person.
+  { id: 'daily_first',     name: "Today's Road",       icon: '\uD83D\uDCC5', condition: s => s.dailyRanked === true },   // 📅
+  { id: 'daily_streak_7',  name: 'A Week of Roads',    icon: '\uD83D\uDD25', condition: s => s.dailyStreak >= 7 },       // 🔥
+  { id: 'daily_streak_30', name: 'A Month of Roads',   icon: '\u2604\uFE0F', condition: s => s.dailyStreak >= 30 },      // ☄️
+  { id: 'pair_10_rides',   name: 'Regulars',           icon: '\uD83D\uDC6B', condition: s => s.pairRides >= 10 },        // 👫
+  { id: 'pair_100km',      name: 'A Hundred Together', icon: '\uD83D\uDEE3\uFE0F', condition: s => s.pairDistanceKm >= 100 }, // 🛣️
+  { id: 'distance_between_us', name: 'The Distance Between Us', icon: '\uD83D\uDCCD', condition: s => s.touristFinished === true }, // 📍 (Phase E)
 ];
+
+/**
+ * F-1 · the seven per-bike-colour Grandma's achievements are retired from the
+ * VISIBLE list. The ids stay in ACHIEVEMENTS so anyone who earned one keeps it
+ * and Steam still recognises it — they are simply no longer presented as
+ * something to go and do. They rewarded riding the same 250 m seven times to
+ * see seven colours, which is the completion loop this plan exists to stop
+ * being the whole game.
+ */
+const RETIRED_IDS = new Set([
+  'grandma_default', 'grandma_orange', 'grandma_magenta', 'grandma_red',
+  'grandma_blue', 'grandma_green', 'grandma_yellow'
+]);
 
 const STORAGE_KEY = 'tandemonium_achievements';
 const STATS_KEY = 'tandemonium_achievement_stats';
@@ -195,12 +222,17 @@ export class AchievementManager {
   }
 
   getAllDefinitions() {
-    return ACHIEVEMENTS.map(a => ({
-      id: a.id,
-      name: a.name,
-      icon: a.icon,
-      earned: this._earned.has(a.id)
-    }));
+    // F-1: retired achievements are shown only to the people who already have
+    // them — earned things never disappear, but nobody new is pointed at them.
+    return ACHIEVEMENTS
+      .filter(a => !RETIRED_IDS.has(a.id) || this._earned.has(a.id))
+      .map(a => ({
+        id: a.id,
+        name: a.name,
+        icon: a.icon,
+        earned: this._earned.has(a.id),
+        retired: RETIRED_IDS.has(a.id)
+      }));
   }
 
   /** Push all earned achievements to Steam profile (catches web/mobile unlocks). */

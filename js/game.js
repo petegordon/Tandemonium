@@ -2910,6 +2910,8 @@ class Game {
     let pair = null;
     try { pair = await auth.fetchPair(partner); } catch { return; }
     if (!pair) return;
+    // F-1 reads these on the next finish (pair_10_rides, pair_100km).
+    this._lastPairSummary = pair;
 
     const level = this.lobby.selectedLevel;
     const previousBest = pair.best && level ? pair.best[level.id] : null;
@@ -3202,6 +3204,23 @@ class Game {
       })() : 0,
       syncDuration: 0,
     };
+
+    // F-1 · the loops the plan built. Read from the local stores, so they work
+    // signed out; the pair numbers come from the server panel when there is one.
+    if (level.isDaily && level.key) {
+      const store = browserStore();
+      state.dailyRanked = this._rankedRunActive;
+      const mode = this._dailyRunMode();
+      const partnerKey = this._partnerKey();
+      state.dailyStreak = mode === 'pair' && partnerKey
+        ? computePairStreak(store, partnerKey, level.key).current
+        : computeStreak(store, level.key).current;
+    }
+    if (this._lastPairSummary) {
+      state.pairRides = this._lastPairSummary.rides || 0;
+      state.pairDistanceKm = (this._lastPairSummary.distance || 0) / 1000;
+    }
+
     const newlyEarned = this.achievements.check(state);
     newlyEarned.forEach(a => {
       showAchievementToast(a);
