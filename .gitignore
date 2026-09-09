@@ -3,6 +3,7 @@ vendor/
 desktop/
 out/
 .env
+js/tourist-key.local.js
 .DS_Store
 
 tandemonium-octalysis-v3.jsx
