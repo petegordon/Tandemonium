@@ -30,6 +30,13 @@ jobs:
         with:
           node-version: 24
 
+      # Both gates below import js/ modules that pull in `three` (road-seed
+      # exercises js/road-path.js), so dependencies have to be installed before
+      # the first gate runs — not midway through, as they used to be.
+      - name: Install dependencies
+        if: github.event.action != 'closed'
+        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund
+
       - name: Unit tests
         if: github.event.action != 'closed'
         run: npm test
@@ -39,7 +46,6 @@ jobs:
       - name: Lobby smoke test
         if: github.event.action != 'closed'
         run: |
-          npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund
           npx puppeteer browsers install chrome
           npm run smoke
 
