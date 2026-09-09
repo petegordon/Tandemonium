@@ -22,7 +22,8 @@
     "smoke:ride": "node scripts/smoke-first-ride.mjs",
     "smoke:crash": "node scripts/smoke-crash-beat.mjs",
     "smoke:records": "node scripts/smoke-records.mjs",
-    "smoke:seed": "node scripts/smoke-seed-plumbing.mjs"
+    "smoke:seed": "node scripts/smoke-seed-plumbing.mjs",
+    "smoke:ctas": "node scripts/smoke-demo-ctas.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

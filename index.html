@@ -195,6 +195,16 @@
     z-index: 55;
   }
   #coop-coach.show { opacity: 1; }
+  /* B-5 · end-screen calls to action. Distinct from the ride buttons above
+     them so they read as "what next", not "play again". */
+  .cta-btn {
+    margin-top: 6px;
+    background: rgba(103, 193, 245, 0.16);
+    border-color: rgba(103, 193, 245, 0.5);
+    color: #bfe6ff;
+    font-size: 13px;
+  }
+  .cta-btn:hover { background: rgba(103, 193, 245, 0.28); }
   /* B-4 · the two speed sources the game never showed you. */
   #boost-ribbon {
     position: fixed;
@@ -5620,6 +5630,10 @@ ON</button>
     <button class="lobby-btn" id="btn-skip-checkpoint" style="margin-top:10px;display:none;">SKIP CHECKPOINT</button>
     <button class="lobby-btn" id="btn-gameover-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
     <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">END RIDE TOGETHER</button>
+    <!-- B-5 · the two things a demo player should be able to do next. Shown by
+         _updateCtaButtons(); hidden in the full Steam build. -->
+    <button class="lobby-btn cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</button>
+    <button class="lobby-btn cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</button>
   </div>
 </div>
 
@@ -5638,6 +5652,9 @@ ON</button>
     <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
     <button class="lobby-btn" id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</button>
     <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">END RIDE TOGETHER</button>
+    <!-- B-5 · see the game-over overlay. -->
+    <button class="lobby-btn cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</button>
+    <button class="lobby-btn cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</button>
   </div>
 </div>
 

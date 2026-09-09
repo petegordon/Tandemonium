@@ -444,6 +444,9 @@ class Game {
       }
     });
 
+    // B-5 · end-screen calls to action (wishlist / send a link).
+    this._wireCtaButtons();
+
     // Try Again from disconnect overlay
     this._onTap('btn-try-reconnect', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
@@ -747,8 +750,87 @@ class Game {
   // ============================================================
 
   /** True when the player is in demo mode — disabled during playtest. */
+  /**
+   * B-5 · is this the demo build?
+   *
+   * Two ways in, both cheap: `?demo=1` (which is what the Steam demo's launch
+   * URL and the web demo link carry), or an explicit flag from the Electron
+   * preload if the Steam side ever exposes the demo app id. steam/ is not
+   * touched here — the plan forbids it, and the query flag is enough.
+   */
   get _isDemo() {
-    return false;
+    if (this.__isDemo !== undefined) return this.__isDemo;
+    let demo = false;
+    try {
+      demo = new URLSearchParams(location.search).get('demo') === '1';
+    } catch { /* non-browser context */ }
+    if (!demo && typeof window !== 'undefined' && window.tandemoniumSteam) {
+      demo = !!window.tandemoniumSteam.isDemo;
+    }
+    this.__isDemo = demo;
+    return demo;
+  }
+
+  /**
+   * B-5 · is this a build where wishlisting means anything?
+   *
+   * The web build and the demo: yes — 68-88% of Next Fest wishlists come from
+   * people who never play the demo, and the ones who DO play should be able to
+   * act on it from the screen they are already looking at. The full Steam
+   * build: no, they already bought it.
+   */
+  get _canWishlist() {
+    if (this._isDemo) return true;
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isElectron = ua.includes('Electron');
+    return !isElectron;    // plain web build
+  }
+
+  /**
+   * B-5 · put the two next actions on an end screen: wishlist, and send your
+   * partner a link. The invite is solo-only — in co-op the partner is already
+   * here.
+   *
+   * @returns {HTMLElement[]} the buttons that were shown, for gamepad focus
+   */
+  _updateCtaButtons(which) {
+    const wishlist = document.getElementById('btn-wishlist-' + which);
+    const invite = document.getElementById('btn-invite-' + which);
+    const shown = [];
+
+    if (wishlist) {
+      const show = this._canWishlist;
+      wishlist.style.display = show ? '' : 'none';
+      if (show) shown.push(wishlist);
+    }
+    if (invite) {
+      const show = this.mode === 'solo' && !this._tutorialActive;
+      invite.style.display = show ? '' : 'none';
+      if (show) shown.push(invite);
+    }
+    return shown;
+  }
+
+  /** B-5 · one wiring point for both end screens' CTA buttons. */
+  _wireCtaButtons() {
+    const STORE_URL = 'https://store.steampowered.com/app/4482940/Tandemonium/';
+    for (const which of ['victory', 'gameover']) {
+      this._onTap('btn-wishlist-' + which, () => {
+        try { analytics.trackWishlistClick(which); } catch {}
+        window.open(STORE_URL, '_blank', 'noopener');
+      });
+      this._onTap('btn-invite-' + which, () => {
+        try { analytics.trackInviteClick(which); } catch {}
+        // Use the lobby's own room flow — creating a room anywhere else would
+        // be a second implementation of the thing most likely to break.
+        this._returnToLobby();
+        const captainBtn = document.getElementById('btn-captain');
+        if (this.lobby && this.lobby._showStep && this.lobby.modeStep) {
+          this.lobby._pendingMode = 'multiplayer';
+        }
+        if (captainBtn) captainBtn.click();
+      });
+    }
   }
 
   _onSolo() {
@@ -2397,7 +2479,10 @@ class Game {
     if (lobbyBtn) lobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
     const skipBtn = document.getElementById('btn-skip-checkpoint');
-    const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn, document.getElementById('btn-gameover-lobby')]
+    // B-5: wishlist + send-a-link, after the ride buttons.
+    const gameoverCtas = this._updateCtaButtons('gameover');
+    const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn,
+      document.getElementById('btn-gameover-lobby'), ...gameoverCtas]
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
 
@@ -3056,8 +3141,11 @@ class Game {
     const victoryLobbyBtn = document.getElementById('btn-victory-lobby');
     if (victoryLobbyBtn) victoryLobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
+    // B-5: wishlist + send-a-link, after the ride buttons.
+    const victoryCtas = this._updateCtaButtons('victory');
+
     // Gamepad navigation for victory buttons
-    const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby')];
+    const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby'), ...victoryCtas];
     // Include "next level" if visible, and default-focus it
     if (hasNext) {
       victoryBtns.splice(1, 0, nextBtn);
@@ -3163,7 +3251,8 @@ class Game {
   _hideVictory() {
     document.getElementById('victory-overlay').classList.remove('visible');
     // Clear stale pointer-events cooldown on victory buttons
-    for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby']) {
+    for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby',
+                      'btn-wishlist-victory', 'btn-invite-victory']) {
       const el = document.getElementById(id);
       if (el) el.style.pointerEvents = '';
     }
