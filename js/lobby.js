@@ -42,6 +42,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS, getMedals } from './race-config.js';
+import { makePlacementSalt } from './daily-seed.js';
 import * as records from './records.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
@@ -993,7 +994,10 @@ export class Lobby {
           if (statusEl) statusEl.textContent = 'Reconnecting to partner...';
           return;
         }
-        this.net.sendProfile(RoomProtocol.startRide());
+        // B-4: the captain picks the run's placement salt and ships it with
+        // the start message, so both riders meet the same pylons.
+        this._placementSalt = makePlacementSalt();
+        this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, this.selectedLevel?.seed ?? null));
         this._transitionToGame();
       } else if (this._pendingMode === 'local') {
         // Local same-screen co-op: hand off the pre-constructed P2 InputManager
@@ -3620,7 +3624,12 @@ export class Lobby {
       // Stoker: captain clicked PLAY GAME → go to levels step
       this._showRoomLevelsStep();
     } else if (profile.type === ROOM_MSG.START_RIDE) {
-      // Stoker: captain started the ride
+      // Stoker: captain started the ride. Take the captain's placement salt and
+      // world seed — they are authoritative for what the road contains (B-4).
+      this._placementSalt = profile.placementSalt || 0;
+      if (typeof profile.worldSeed === 'number' && this.selectedLevel) {
+        this.selectedLevel = { ...this.selectedLevel, seed: profile.worldSeed };
+      }
       this._transitionToGame();
     }
   }

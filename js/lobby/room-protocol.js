@@ -34,8 +34,16 @@ export const RoomProtocol = {
   /** Captain advanced the room to level selection. */
   playGame: () => ({ type: ROOM_MSG.PLAY_GAME }),
 
-  /** Captain started the ride — both peers transition to the game. */
-  startRide: () => ({ type: ROOM_MSG.START_RIDE }),
+  /**
+   * Captain started the ride — both peers transition to the game.
+   *
+   * B-4: carries the run's placement salt (and, for a seeded level, the world
+   * seed) so both clients build the same items. The captain is authoritative;
+   * a stoker that receives nothing falls back to legacy placement, which is
+   * what an older build already does.
+   */
+  startRide: (placementSalt = 0, worldSeed = null) =>
+    ({ type: ROOM_MSG.START_RIDE, placementSalt, worldSeed }),
 
   /** A player's bike preset (so the partner renders the right bike). */
   bikeSync: (presetKey) => ({ type: ROOM_MSG.BIKE_SYNC, presetKey }),

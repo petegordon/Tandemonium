@@ -113,6 +113,26 @@ export class HUD {
   }
 
   /**
+   * B-4 · show the two speed sources the game has always had and never told
+   * anyone about: the collectible boost, and the compacted middle of the road.
+   * Called every frame from update().
+   */
+  _updateSpeedSignals(bike) {
+    const boostEl = this._boostEl || (this._boostEl = document.getElementById('boost-ribbon'));
+    const glowEl = this._glowEl || (this._glowEl = document.getElementById('center-strip-glow'));
+    const boosting = !!(bike && bike.boostTimer > 0);
+    if (boostEl && boosting !== this._prevBoosting) {
+      this._prevBoosting = boosting;
+      boostEl.classList.toggle('show', boosting);
+    }
+    const onStrip = !!(bike && bike.onCenterStrip && !bike.fallen);
+    if (glowEl && onStrip !== this._prevOnStrip) {
+      this._prevOnStrip = onStrip;
+      glowEl.classList.toggle('show', onStrip);
+    }
+  }
+
+  /**
    * B-3 · flash the split delta at a checkpoint. Green when you are ahead of
    * your best, red when behind; shown only when a best exists, so a first ride
    * is never told it is losing to nothing.
@@ -360,6 +380,7 @@ export class HUD {
 
   update(bike, input, pedalCtrl, dt, remoteData) {
     this._updateSync(pedalCtrl, dt);
+    this._updateSpeedSignals(bike);
     const kmh = Math.round(bike.speed * 3.6);
     const maxKmh = 58;
 

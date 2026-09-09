@@ -8,6 +8,7 @@ import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RE
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
+import { makePlacementSalt } from './daily-seed.js';
 import { getLevelById, LEVELS, getInstructions, getMedals } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
@@ -1703,6 +1704,27 @@ class Game {
 
     // Create race manager + contribution tracker + collectibles from selected level
     const level = this.lobby.selectedLevel;
+
+    // B-4 · the world this ride happens in.
+    //
+    // The seed comes from the level (Today's Road carries one); everything else
+    // stays on the legacy world, byte for byte. The placement salt varies WHERE
+    // items sit within that world from run to run, so the second lap of
+    // Grandma's is not the identical pylon at 88 m — except in the tutorial,
+    // which has to stay predictable while someone is learning.
+    //
+    // In online co-op the captain chose both and sent them with startRide; the
+    // lobby has already stored them. Solo and local co-op choose here.
+    if (this.mode !== 'captain' && this.mode !== 'stoker') {
+      this._placementSalt = level.isTutorial ? 0 : makePlacementSalt();
+    } else {
+      this._placementSalt = level.isTutorial ? 0 : (this.lobby._placementSalt || 0);
+    }
+    if (this.world.reseed(level.seed ?? undefined)) {
+      // The road moved under the bike: re-point it and put it back on the line.
+      this.bike.roadPath = this.world.roadPath;
+      this.bike.fullReset();
+    }
     // Show level icon + flavor text + countdown number
     const flavorIcon = document.getElementById('countdown-flavor-icon');
     const flavorText = document.getElementById('countdown-flavor-text');
@@ -1719,12 +1741,12 @@ class Game {
     if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
-    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
+    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName, this._placementSalt);
     if (this.obstacleManager) this.obstacleManager.destroy();
-    this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
+    this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName, this._placementSalt);
     // Roadside geese (#363) — decorative verge scenery, no collision response.
     if (this.geeseManager) this.geeseManager.dispose();
-    this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine);
+    this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine, this._placementSalt);
 
     // Wire up collectibles total for analytics
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
@@ -2596,8 +2618,11 @@ class Game {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
     this.bike.boostTimer = 3; // 3-second speed boost
+    // B-4: the boost was silent apart from a pickup beep, so it read as "you
+    // collected a thing" rather than "you are now faster". Pitch up.
     this._playBeep(1200, 0.1);
     setTimeout(() => this._playBeep(1600, 0.08), 80);
+    setTimeout(() => this._playBeep(2000, 0.12), 160);
 
     // Analytics: collectible ride event
     analytics.trackRideEvent('collectible', this.bike.distanceTraveled, {

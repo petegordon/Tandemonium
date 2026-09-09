@@ -127,6 +127,8 @@ const STATE_IDLE = 0;
 const STATE_FLYING = 1;
 
 // Seeded PRNG — identical placement across clients (versus) and reloads.
+import { itemSeed, SALT } from './daily-seed.js';
+
 function makeRng(seed) {
   let s = seed;
   return () => {
@@ -348,12 +350,13 @@ export class GeeseManager {
    * @param {THREE.Camera} camera billboard target (versus re-faces per pass)
    * @param {object} [audio]   AudioEngine; honks are skipped when absent
    */
-  constructor(scene, roadPath, level, camera, audio) {
+  constructor(scene, roadPath, level, camera, audio, placementSalt = 0) {
     this.scene = scene;
     this.roadPath = roadPath;
     this.level = level;
     this.camera = camera;
     this.audio = audio || null;
+    this.placementSalt = placementSalt || 0;   // B-4, see ObstacleManager
     this.enabled = true;
 
     this._loopLen = roadPath.loopLength;
@@ -498,7 +501,9 @@ export class GeeseManager {
   // ---- placement ------------------------------------------------------
 
   _placeGeese() {
-    const rng = makeRng(Math.floor((this.level?.distance || 1000) * 7) + 991);
+    // B-4: see ObstacleManager._placeItems for the seeding rules.
+    const rng = makeRng(itemSeed(this.level, SALT.geese, this.placementSalt,
+      Math.floor((this.level?.distance || 1000) * 7) + 991));
     const dist = this.level?.distance || 1000;
     // Clustered, not evenly spread — a gaggle you can aim at beats a
     // uniform sprinkle, and gives the trailer a denser burst.

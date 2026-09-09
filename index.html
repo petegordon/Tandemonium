@@ -195,6 +195,39 @@
     z-index: 55;
   }
   #coop-coach.show { opacity: 1; }
+  /* B-4 · the two speed sources the game never showed you. */
+  #boost-ribbon {
+    position: fixed;
+    left: 50%;
+    top: 18%;
+    transform: translateX(-50%);
+    padding: 5px 16px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #ffd23f, #ff8a3f);
+    color: #201a00;
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 57;
+  }
+  #boost-ribbon.show { opacity: 1; }
+  /* A faint glow along the bottom of the screen while the wheels are on the
+     compacted middle of the road. Deliberately quiet: it is a nudge, not an
+     instruction. */
+  #center-strip-glow {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 90px;
+    background: linear-gradient(to top, rgba(255,225,140,0.16), rgba(255,225,140,0));
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s;
+    z-index: 8;
+  }
+  #center-strip-glow.show { opacity: 1; }
   /* B-3 · split delta at a checkpoint: are you ahead of yourself? */
   #split-delta {
     position: fixed;
@@ -4686,6 +4719,10 @@ ON</button>
   </div>
   <div id="coach-steer-line">Steer: <b>A</b> / <b>D</b></div>
 </div>
+
+<!-- B-4 · signal the two hidden speed sources. -->
+<div id="center-strip-glow"></div>
+<div id="boost-ribbon">BOOST!</div>
 
 <!-- B-3 · checkpoint split against your best. -->
 <div id="split-delta"></div>

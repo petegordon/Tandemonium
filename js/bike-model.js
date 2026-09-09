@@ -518,9 +518,12 @@ export class BikeModel {
     const frictionRamp = Math.min(1, this.speed / 4); // full friction at ~4 m/s (~14 km/h)
     this.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
 
-    // Center-strip bonus: compacted dirt in the middle 20% of road is faster
+    // Center-strip bonus: compacted dirt in the middle 20% of road is faster.
+    // B-4: this has always been here and has never been visible, so nobody has
+    // ever chosen to ride the middle. `onCenterStrip` lets the HUD say so.
     const centerDist = Math.abs(this._lateralOffset);
-    if (centerDist < 0.5 && this.speed > 0.5) {
+    this.onCenterStrip = centerDist < 0.5 && this.speed > 0.5;
+    if (this.onCenterStrip) {
       this.speed *= (1 + 0.3 * (1 - centerDist / 0.5) * dt); // gentle boost
     }
 

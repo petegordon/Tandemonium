@@ -21,7 +21,8 @@
     "audit:first30": "node scripts/audit-first-30s.mjs",
     "smoke:ride": "node scripts/smoke-first-ride.mjs",
     "smoke:crash": "node scripts/smoke-crash-beat.mjs",
-    "smoke:records": "node scripts/smoke-records.mjs"
+    "smoke:records": "node scripts/smoke-records.mjs",
+    "smoke:seed": "node scripts/smoke-seed-plumbing.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",
