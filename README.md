@@ -165,7 +165,28 @@ The free tier includes:
 
 This is more than enough for casual use. Each multiplayer session uses ~20 WebSocket messages/second per player.
 
+## Roadmap
+
+See [`docs/value-and-appeal-plan.md`](docs/value-and-appeal-plan.md) — the demo is
+cut 2026-11-30, Steam Next Fest is February 2027. **A surface freeze is in effect
+for its duration:** no new bike colours, achievements, controller drivers or
+ambient scenery until the demo is tagged. Tracking issue: #386.
+
 ## Testing
+
+```bash
+npm test                     # unit tests (node --test)
+npm run smoke                # does the game still load? (headless Chrome)
+npm run smoke:boot           # the unsupported-browser and stuck-boot screens
+npm run smoke:ride           # a real first ride: grace, coach card, movement
+npm run smoke:crash          # crash beat: resume twice, help on the third
+npm run smoke:records        # personal bests reach the level card
+npm run smoke:seed           # world reseeding is deterministic and leak-free
+npm run smoke:daily          # Today's Road is the same road for everyone
+npm run smoke:ctas           # end-screen wishlist / invite visibility rules
+npm run check:dashboard-sql  # the dashboard SQL, against a real SQLite
+npm run audit:first30        # cold-load numbers per device profile (#263)
+```
 
 Multiplayer demo and test scripts are in `test_multiplayer/`. They use [Puppeteer](https://pptr.dev/) to automate two browser windows.
 
