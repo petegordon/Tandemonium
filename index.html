@@ -195,6 +195,18 @@
     z-index: 55;
   }
   #coop-coach.show { opacity: 1; }
+  /* D-8 · the "Us" panel on the victory screen. */
+  #pair-panel {
+    margin: 8px auto 0;
+    padding: 8px 12px;
+    max-width: 320px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.07);
+    text-align: center;
+  }
+  .pair-panel-title { font-size: 13px; font-weight: 800; color: #fff; }
+  .pair-panel-line { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 2px; }
+  .pair-panel-best { margin-top: 4px; font-size: 12px; font-weight: 800; color: #ffd23f; }
   /* D-2 · the in-ride "this one counts" badge. */
   #ranked-badge {
     position: fixed;
@@ -5747,6 +5759,8 @@ ON</button>
     <p id="victory-destination"></p>
     <div id="victory-stats"></div>
   </div>
+  <!-- D-8 · what the two of you have done together. -->
+  <div id="pair-panel" style="display:none;"></div>
   <div id="victory-buttons">
     <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
     <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>

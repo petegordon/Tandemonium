@@ -245,3 +245,15 @@ export function applySteeringFeel(feel) {
   TUNE.gyroSensitivity = Math.min(60, Math.max(15, TUNING_BASE.gyroSensitivity * senScale));
   TUNE.gyroResponseCurve = Math.min(2.0, Math.max(1.0, TUNING_BASE.gyroResponseCurve + rcShift));
 }
+
+// ============================================================
+// D-6 · Feature flag: the partners board
+// ============================================================
+//
+// The server-side daily board (worker /daily) ships dark. It only ever shows
+// the caller and people they have ridden with, so it cannot look like an empty
+// global leaderboard — but it still has nothing useful to say until enough
+// people are riding Today's Road, and a feature that says nothing teaches
+// players to stop looking. Turn this on after two weeks of daily_* data show
+// real players, and after the migration has been applied.
+export const DAILY_BOARD_ENABLED = false;

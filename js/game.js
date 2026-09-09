@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
@@ -1133,6 +1133,9 @@ class Game {
       if (profile.serverId) this._partnerServerId = profile.serverId;
       // D-5: and their name, for the pair streak and the share strip.
       if (profile.name) this._partnerName = profile.name;
+      // D-9: and their anonymous device id, so a guest partner still builds a
+      // shared history with a signed-in rider.
+      if (profile.deviceId) this._partnerDeviceId = profile.deviceId;
       // Partner bike color for arch indicator
       if (profile.bikeColor) {
         this._partnerBikeColor = profile.bikeColor;
@@ -2875,6 +2878,90 @@ class Game {
     return isNewBest && track.count > 1 ? track : null;
   }
 
+  /** Minimal escaping for a partner-supplied display name. */
+  _escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /**
+   * D-8 · "Us" — what these two riders have done together.
+   *
+   * The persona's job-to-be-done is a ritual with ONE specific person, and
+   * until the pairs table existed the software forgot that person the moment
+   * the room closed. This is the smallest honest version: rides, distance, the
+   * pair's best on this level, and whether the ride that just finished beat it.
+   *
+   * Guests are included via their device id (D-9), so the friend who never
+   * signs in is not invisible — they just cannot see the panel from their own
+   * side until they do.
+   */
+  async _renderPairPanel(summary) {
+    const el = document.getElementById('pair-panel');
+    if (!el) return;
+    el.style.display = 'none';
+
+    const auth = this.lobby.auth;
+    const partner = this._partnerServerId ||
+      (this._partnerDeviceId ? 'guest:' + this._partnerDeviceId : null);
+    if (!auth || !auth.isLoggedIn() || !partner || this.mode === 'solo') return;
+
+    let pair = null;
+    try { pair = await auth.fetchPair(partner); } catch { return; }
+    if (!pair) return;
+
+    const level = this.lobby.selectedLevel;
+    const previousBest = pair.best && level ? pair.best[level.id] : null;
+    const beat = previousBest && summary && summary.timeMs < previousBest;
+    const name = this._partnerName || 'your partner';
+    const km = (pair.distance || 0) / 1000;
+
+    el.innerHTML =
+      '<div class="pair-panel-title">You &amp; ' + this._escapeHtml(name) + '</div>' +
+      '<div class="pair-panel-line">' +
+        (pair.rides || 0) + ' ride' + (pair.rides === 1 ? '' : 's') + ' together' +
+        (km >= 0.1 ? ' · ' + km.toFixed(1) + ' km' : '') +
+        (previousBest ? ' · best ' + records.formatTime(previousBest) : '') +
+        (pair.daily_streak >= 2 ? ' · 🔥 ' + pair.daily_streak : '') +
+      '</div>' +
+      (beat ? '<div class="pair-panel-best">⭐ NEW PAIR BEST</div>' : '');
+    el.style.display = 'block';
+
+    try { analytics.trackEvent('pair_panel_view', { rides: pair.rides, beat: !!beat }); } catch {}
+  }
+
+  /**
+   * D-6 · send the day's ranked run to the server, once. A 409 means this
+   * account has already ridden today in this mode, which is not an error —
+   * it is the rule working.
+   */
+  async _submitDailyRanked(summary) {
+    const level = this.lobby.selectedLevel;
+    const auth = this.lobby.auth;
+    if (!level || !level.isDaily || !this._rankedRunActive) return;
+    if (!auth || !auth.isLoggedIn()) return;      // a local result is still kept
+    if (!DAILY_BOARD_ENABLED) return;
+
+    try {
+      const res = await auth.submitDaily({
+        dayKey: level.key,
+        mode: this._dailyRunMode(),
+        timeMs: summary.timeMs,
+        dnf: !!summary.dnf,
+        distance: summary.distance,
+        collectibles: summary.collectibles,
+        crashes: summary.crashes,
+        safetyUsed: this.safetyMode,
+        syncPct: this.sharedPedal ? Math.round(this.sharedPedal.offsetScore * 100) : null,
+        partnerUserId: this._partnerServerId || null
+      });
+      if (res && res.alreadyRidden) {
+        analytics.trackEvent('daily_submit_duplicate', { key: level.key });
+      }
+    } catch { /* the ride is already recorded locally; the server can wait */ }
+  }
+
   /** D-2 · 'solo' or 'pair' — the two independent ranked runs per day. */
   _dailyRunMode() {
     return (this.mode === 'solo') ? 'solo' : 'pair';
@@ -3162,6 +3249,10 @@ class Game {
     }
     // Anonymous players have no name — show a friendly label to the partner. (#312)
     if (!profile.name) profile.name = GUEST_NAME;
+    // D-9: the anonymous per-browser id, so a signed-in partner can build a
+    // pair record with this rider even if they never sign in. It is the same
+    // id analytics already uses; it identifies a browser, not a person.
+    try { profile.deviceId = analytics.getDeviceId(); } catch {}
     profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
     this.net.sendProfile(profile);
   }
@@ -3458,6 +3549,9 @@ class Game {
 
     // Auto-submit score if logged in
     this._submitScore();
+    // D-6 / D-8: the day's ranked result, and what the two of you have done.
+    this._submitDailyRanked(summary);
+    this._renderPairPanel(summary);
 
     // Show NEXT LEVEL button if there's a next level
     const nextBtn = document.getElementById('btn-next-level');
@@ -3565,6 +3659,16 @@ class Game {
         const partnerRole = myRole === 'captain' ? 'stoker' : 'captain';
         contrib[myRole].userId = myServerId;
         contrib[partnerRole].userId = this._partnerServerId;
+        // D-9: a partner who never signs in still counts as a partner. Their
+        // device id keys the pair record, and the server migrates it to their
+        // account if they ever do sign in — so the friend who "just plays on
+        // your phone" stops being invisible to the game.
+        if (!contrib[partnerRole].userId && this._partnerDeviceId) {
+          contrib[partnerRole].guestDeviceId = this._partnerDeviceId;
+        }
+        if (!contrib[myRole].userId) {
+          contrib[myRole].guestDeviceId = analytics.getDeviceId();
+        }
         data.contributions = { captain: contrib.captain, stoker: contrib.stoker };
       } else {
         // Solo OR local MP — attribute to the local user. contribution-tracker
