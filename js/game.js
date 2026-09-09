@@ -9,6 +9,7 @@ import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
+import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { makePlacementSalt } from './daily-seed.js';
 import {
   recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
@@ -2878,6 +2879,44 @@ class Game {
     return isNewBest && track.count > 1 ? track : null;
   }
 
+  /**
+   * E-1 · feed the stoker's road-ahead panel.
+   *
+   * The stoker builds the same world from the same seed (B-4), so the items are
+   * already here — nothing is sent over the wire. Only the distance is remote,
+   * and that already arrives in the state packet.
+   *
+   * Runs at 10 Hz, not per frame: this is a thing to read and say out loud.
+   */
+  _updateLookahead(dt) {
+    if (!seatSeesLookahead(this.mode)) {
+      if (this._lookaheadWasOn) { this.hud.updateLookahead(null); this._lookaheadWasOn = false; }
+      return;
+    }
+    this._lookaheadTimer = (this._lookaheadTimer || 0) - dt;
+    if (this._lookaheadTimer > 0) return;
+    this._lookaheadTimer = 0.1;
+
+    const level = this.lobby.selectedLevel;
+    // Off on Chill and in the tutorial: the panel is a job, and neither of
+    // those rides is asking the stoker to do a job.
+    if (level && level.isTutorial) { this.hud.updateLookahead(null); return; }
+    if ((this.lobby.selectedDifficulty || 'adventurous') === 'chill') {
+      this.hud.updateLookahead(null);
+      this._lookaheadWasOn = false;
+      return;
+    }
+
+    const from = (this.bike ? this.bike.distanceTraveled : 0) + CAPTAIN_VIEW_M;
+    const items = buildLookahead({
+      obstacles: this.obstacleManager ? this.obstacleManager._items : null,
+      collectibles: this.collectibleManager ? this.collectibleManager._items : null,
+      geese: this.geeseManager ? this.geeseManager._items : null
+    }, from, LOOKAHEAD_M);
+    this.hud.updateLookahead(items);
+    this._lookaheadWasOn = true;
+  }
+
   /** Minimal escaping for a partner-supplied display name. */
   _escapeHtml(s) {
     return String(s == null ? '' : s)
@@ -3844,6 +3883,8 @@ class Game {
   _returnToLobby() {
     if (this._coachVisible) this._dismissCoachCard();
     this._hideGhost();   // D-4: no ghost hanging around the empty road
+    this.hud.updateLookahead(null);   // E-1
+    this._lookaheadWasOn = false;
     // Clean up tutorial state if active
     if (this._tutorialActive) {
       this._tutorialActive = false;
@@ -5961,6 +6002,7 @@ class Game {
     remoteData.remoteLastFoot = this._remoteLastFoot;
     remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
+    this._updateLookahead(dt);   // E-1 · the road only the stoker can see
     const stokerLean = this.balanceCtrl.update().leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     // Independent rider torsos on the stoker's screen too: captain leans by the

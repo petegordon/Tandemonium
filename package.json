@@ -27,7 +27,8 @@
     "smoke:daily": "node scripts/smoke-todays-road.mjs",
     "check:dashboard-sql": "node scripts/check-dashboard-sql.mjs",
     "smoke:ranked": "node scripts/smoke-ranked-run.mjs",
-    "smoke:ghost": "node scripts/smoke-ghost.mjs"
+    "smoke:ghost": "node scripts/smoke-ghost.mjs",
+    "smoke:lookahead": "node scripts/smoke-lookahead.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

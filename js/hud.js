@@ -4,6 +4,7 @@
 
 import { isMobile } from './config.js';
 import { formatDelta } from './records.js';
+import { LOOKAHEAD_M } from './lookahead.js';
 
 export class HUD {
   constructor(input) {
@@ -154,6 +155,46 @@ export class HUD {
   setRankedBadge(on) {
     const el = this._rankedBadgeEl || (this._rankedBadgeEl = document.getElementById('ranked-badge'));
     if (el) el.classList.toggle('show', !!on);
+  }
+
+  /**
+   * E-1 · draw the stoker's road-ahead panel.
+   *
+   * Called at 10 Hz, not per frame: the panel is a thing to read and call out,
+   * and a lane map that jitters every frame is harder to read, not easier.
+   *
+   * @param {Array} items from buildLookahead(), or null to hide the panel
+   */
+  updateLookahead(items) {
+    const el = this._lookaheadEl || (this._lookaheadEl = document.getElementById('lookahead'));
+    if (!el) return;
+    if (!items) {
+      if (this._lookaheadOn) { this._lookaheadOn = false; el.classList.remove('visible'); }
+      return;
+    }
+    if (!this._lookaheadOn) { this._lookaheadOn = true; el.classList.add('visible'); }
+
+    this._lookaheadLanes = this._lookaheadLanes ||
+      Array.from(el.querySelectorAll('.lookahead-lane'));
+
+    // Cheap change detection: the panel only redraws when what it says changes.
+    const signature = items.map(i => i.kind[0] + i.lane + Math.round(i.distance / 2)).join('|');
+    if (signature === this._lookaheadSig) return;
+    this._lookaheadSig = signature;
+
+    const ICON = { obstacle: '⚠️', present: '🎁', goose: '🦢' };
+    for (const lane of this._lookaheadLanes) lane.innerHTML = '';
+    for (const item of items) {
+      const lane = this._lookaheadLanes[item.lane];
+      if (!lane) continue;
+      const dot = document.createElement('span');
+      dot.className = 'lookahead-item';
+      dot.textContent = ICON[item.kind] || '•';
+      // Nearest at the bottom: the panel reads like the road coming towards you.
+      dot.style.top = (100 - (item.distance / LOOKAHEAD_M) * 100).toFixed(1) + '%';
+      dot.style.opacity = (0.45 + 0.55 * item.urgency).toFixed(2);
+      lane.appendChild(dot);
+    }
   }
 
   /** B-2 · edge-darkening crash vignette; `k` is 0..1. */

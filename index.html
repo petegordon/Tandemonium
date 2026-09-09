@@ -207,6 +207,52 @@
   .pair-panel-title { font-size: 13px; font-weight: 800; color: #fff; }
   .pair-panel-line { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 2px; }
   .pair-panel-best { margin-top: 4px; font-size: 12px; font-weight: 800; color: #ffd23f; }
+  /* E-1 · the stoker's look-ahead. Sits top-centre, above the strip, because
+     it is the thing the stoker is watching instead of the road. */
+  #lookahead {
+    position: fixed;
+    top: 96px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    width: min(210px, 60vw);
+    padding: 6px 8px 8px;
+    border-radius: 10px;
+    background: rgba(0,0,0,0.5);
+    pointer-events: none;
+    z-index: 56;
+  }
+  #lookahead.visible { display: block; }
+  #lookahead-title {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-align: center;
+    color: rgba(255,255,255,0.55);
+    margin-bottom: 4px;
+  }
+  #lookahead-track {
+    position: relative;
+    display: flex;
+    gap: 3px;
+    height: 76px;
+  }
+  .lookahead-lane {
+    position: relative;
+    flex: 1;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.07);
+  }
+  /* The centre lane is the fast line (B-4), so it reads slightly brighter. */
+  .lookahead-lane[data-lane="1"] { background: rgba(255,225,140,0.10); }
+  .lookahead-item {
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 13px;
+    line-height: 1;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
+  }
   /* D-2 · the in-ride "this one counts" badge. */
   #ranked-badge {
     position: fixed;
@@ -4818,6 +4864,18 @@ ON</button>
     <span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span>
   </div>
   <div id="coach-steer-line">Steer: <b>A</b> / <b>D</b></div>
+</div>
+
+<!-- E-1 · the stoker's road-ahead panel. Only ever rendered on the stoker's
+     screen in online co-op: it is the one thing in the game the captain
+     cannot see, and that asymmetry is the point. -->
+<div id="lookahead">
+  <div id="lookahead-title">ROAD AHEAD &mdash; CALL IT</div>
+  <div id="lookahead-track">
+    <div class="lookahead-lane" data-lane="0"></div>
+    <div class="lookahead-lane" data-lane="1"></div>
+    <div class="lookahead-lane" data-lane="2"></div>
+  </div>
 </div>
 
 <!-- D-2 · this ride counts. -->
