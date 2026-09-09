@@ -57,6 +57,7 @@ import { World } from './world.js';
 // asks for it, and a failure to load degrades to the normal world with a
 // message rather than a blank screen.
 import { isTouristMode, getMapsApiKey, resolveTouristOrigin } from './tourist-config.js';
+import { formatDistance, skipLabel } from './tourist-route.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { Lobby } from './lobby.js';
@@ -684,6 +685,7 @@ class Game {
       onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
       onLocalReady: (opts) => this._onLocalReady(opts),
       onVersusReady: (opts) => this._onVersusReady(opts),
+      onTouristReady: (opts) => this._onTouristReady(opts),   // E-6
       input: this.input,
       controllerManager: this.controllerManager,
     });
@@ -2945,6 +2947,133 @@ class Game {
     return isNewBest && track.count > 1 ? track : null;
   }
 
+  // ============================================================
+  // E-6 / E-7 · RIDE THE DISTANCE BETWEEN YOU
+  // ============================================================
+  //
+  // Two addresses, a real distance, and a destination to reach. Everything
+  // else in this game is a made-up road; this is the one mode that is about
+  // something the two players already feel, which is why the plan calls it the
+  // post-launch headline.
+  //
+  // The maths is in js/tourist-route.js (pure, tested). Here: start the ride,
+  // keep the distance on screen, and end it when they arrive.
+
+  /** E-6 · the lobby handed over a planned route. */
+  async _onTouristReady({ plan }) {
+    if (!plan) return;
+    this.mode = 'solo';
+    this.isTourist = true;
+    this._touristRoute = plan;
+    this._touristArrived = false;
+    this.hud.setSeat('captain', false);
+    this._lobbyBtn.textContent = 'LOBBY';
+
+    // The ride is the ridable part of the route; the REAL distance is what the
+    // HUD says, because that number is the entire feature.
+    this._touristGoalM = plan.route.ridableM;
+
+    const apiKey = getMapsApiKey();
+    this._touristPending = true;
+    this._showTouristGoal();
+    await this._loadTouristWorld(apiKey);
+
+    if (this.world && this.world.setRoute) {
+      this.world.setRoute(plan);
+    } else if (this.world && this.world.setOrigin) {
+      // The v1 tiles world rides free-form around one anchor; start at the
+      // player's own end of the line, which is the half that means something.
+      this.world.setOrigin(plan.from);
+    }
+
+    this.state = 'instructions';
+    this._updateInstructionsText();
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  /** E-7 · the sentence, and how much of it is left. */
+  _showTouristGoal() {
+    const el = document.getElementById('tourist-goal');
+    if (!el || !this._touristRoute) return;
+    el.classList.add('visible');
+    this._updateTouristGoal();
+  }
+
+  _hideTouristGoal() {
+    const el = document.getElementById('tourist-goal');
+    if (el) el.classList.remove('visible');
+  }
+
+  /**
+   * Per frame (cheap, and only while a tourist ride is running): how far there
+   * is between the two of them, and how much of the ridable part is left.
+   */
+  _updateTouristGoal() {
+    if (!this._touristRoute) return;
+    const el = document.getElementById('tourist-goal');
+    if (!el) return;
+    const ridden = this.bike ? this.bike.distanceTraveled : 0;
+    const left = Math.max(0, this._touristGoalM - ridden);
+    const text = this._touristRoute.headline +
+      ' · <span class="tourist-togo">' + formatDistance(left) + ' to go</span>';
+    if (text !== this._prevTouristGoalText) {
+      this._prevTouristGoalText = text;
+      el.innerHTML = text;
+    }
+
+    // Arrival. There is no race manager on a tourist ride — the destination is
+    // the whole win condition.
+    if (!this._touristArrived && left <= 0 && this.state === 'playing') {
+      this._touristArrived = true;
+      this._onTouristArrived(ridden);
+    }
+  }
+
+  /** E-7 · they arrived. */
+  _onTouristArrived(riddenM) {
+    const plan = this._touristRoute;
+    this.state = 'victory';
+    hapticFinish();
+    this._playChime(MOTIF.C5, 0.3);
+    setTimeout(() => this._playChime(MOTIF.E5, 0.3), 140);
+    setTimeout(() => this._playChime(MOTIF.G5, 0.6), 280);
+
+    const overlay = document.getElementById('victory-overlay');
+    const title = document.getElementById('victory-title');
+    const dest = document.getElementById('victory-destination');
+    const stats = document.getElementById('victory-stats');
+    if (title) title.textContent = 'YOU MADE IT TO THEM!';
+    if (dest) dest.textContent = '📍 ' + (plan.to.label || 'their door');
+    if (stats) {
+      stats.innerHTML =
+        '<div class="victory-stat">' + this._escapeHtml(plan.headline) + '</div>' +
+        (plan.route.capped
+          ? '<div class="victory-stat">' + this._escapeHtml(skipLabel(plan.route)) + '</div>'
+          : '') +
+        '<div class="victory-stat">🚴 You rode <strong>' + formatDistance(riddenM) + '</strong></div>';
+    }
+    if (overlay) overlay.classList.add('visible');
+
+    // E-7 · the strip, so the ride can be sent to the person it was about.
+    this._dailyStripText = [
+      `Tandemonium · ${plan.headline}`,
+      `📍 ${plan.from.label} → ${plan.to.label}`,
+      `🚴 ${formatDistance(riddenM)} ridden${plan.route.capped ? ' · ' + skipLabel(plan.route) : ''}`,
+      location.origin + '/'
+    ].join('\n');
+    const ctas = this._updateCtaButtons('victory');
+    this._setOverlayButtons([document.getElementById('btn-victory-lobby'), ...ctas]);
+
+    try {
+      analytics.trackEvent('tourist_arrived', {
+        km: Math.round(plan.realM / 1000),
+        ridden_m: Math.round(riddenM),
+        capped: plan.route.capped
+      });
+    } catch {}
+  }
+
   /**
    * E-4 · load Tourist Mode on demand.
    *
@@ -4213,6 +4342,8 @@ class Game {
   _returnToLobby() {
     if (this._coachVisible) this._dismissCoachCard();
     this._hideGhost();   // D-4: no ghost hanging around the empty road
+    this._hideTouristGoal();   // E-7
+    this._touristRoute = null;
     this.hud.updateLookahead(null);   // E-1
     this._lookaheadWasOn = false;
     // Clean up tutorial state if active
@@ -5383,6 +5514,7 @@ class Game {
     this._updateGhost(dt);
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2
+    if (this._touristRoute) this._updateTouristGoal();   // E-7
 
     // Background motion adaptation (skip when level config disables it)
     const adaptLevel = this.lobby.selectedLevel;
@@ -5489,6 +5621,7 @@ class Game {
     this._updateGhost(dt);
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2
+    if (this._touristRoute) this._updateTouristGoal();   // E-7
 
     // Tutorial: handle crash/completion internally instead of game-over screen
     if (this._tutorialActive) {

@@ -207,6 +207,56 @@
   .pair-panel-title { font-size: 13px; font-weight: 800; color: #fff; }
   .pair-panel-line { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 2px; }
   .pair-panel-best { margin-top: 4px; font-size: 12px; font-weight: 800; color: #ffd23f; }
+  /* E-6 · the two-address form. */
+  #tourist-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(340px, 86vw);
+    margin: 0 auto;
+  }
+  .tourist-input {
+    padding: 10px 12px;
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.07);
+    color: #fff;
+    font-size: 15px;
+  }
+  .tourist-input::placeholder { color: rgba(255,255,255,0.35); }
+  .tourist-error {
+    min-height: 15px;
+    font-size: 12px;
+    color: #ff8a7a;
+    text-align: center;
+  }
+  .tourist-preview {
+    min-height: 34px;
+    font-size: 13px;
+    line-height: 1.35;
+    color: rgba(255,255,255,0.8);
+    text-align: center;
+  }
+  .tourist-preview strong { color: #ffd23f; }
+  /* E-7 · the distance, on screen for the whole ride. */
+  #tourist-goal {
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.45);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 55;
+  }
+  #tourist-goal.visible { display: block; }
+  #tourist-goal .tourist-togo { color: #ffd23f; }
   /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
   #disruption-banner {
     position: fixed;
@@ -4966,6 +5016,9 @@ ON</button>
   <div id="coach-steer-line">Steer: <b>A</b> / <b>D</b></div>
 </div>
 
+<!-- E-7 · how far there is between you, and how much of it is left. -->
+<div id="tourist-goal"></div>
+
 <!-- E-2 · the road is about to do something. Both riders see this. -->
 <div id="disruption-banner"></div>
 
@@ -5376,7 +5429,30 @@ ON</button>
           <div class="lobby-mode-buttons">
             <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
             <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
+            <!-- E-6 · the one mode that is about the thing the players feel.
+                 Hidden unless a Maps key is present: without one it can only
+                 disappoint. -->
+            <button class="lobby-btn" id="btn-tourist" style="display:none;">&#128205; RIDE THE DISTANCE BETWEEN YOU</button>
           </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════
+             SCREEN: Tourist route (#lobby-tourist)  — E-6
+             Two addresses become a ride over real photogrammetry.
+             Back: #lobby-mode
+             ════════════════════════════════════════════════════ -->
+        <div id="lobby-tourist" class="lobby-step" style="display:none;">
+          <p class="lobby-prompt">Where are you two?</p>
+          <div id="tourist-form">
+            <input id="tourist-from" class="tourist-input" type="text"
+                   placeholder="Your address or city" autocomplete="off" spellcheck="false">
+            <input id="tourist-to" class="tourist-input" type="text"
+                   placeholder="Their address or city" autocomplete="off" spellcheck="false">
+            <div id="tourist-error" class="tourist-error"></div>
+            <div id="tourist-preview" class="tourist-preview"></div>
+            <button class="lobby-btn lobby-btn-accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</button>
+          </div>
+          <button class="lobby-back" id="btn-back-tourist">&larr; Back</button>
         </div>
 
         <!-- ════════════════════════════════════════════════════

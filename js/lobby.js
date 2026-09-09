@@ -43,6 +43,8 @@ import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed } from './daily-seed.js';
+import { planRoute, skipLabel, isValidPoint } from './tourist-route.js';
+import { getMapsApiKey, geocodeAddress } from './tourist-config.js';
 import {
   resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
   rankedResult, computeStreak, formatDayLabel, formatClock
@@ -124,8 +126,9 @@ const HOLIDAY_BIKES = {
 };
 
 export class Lobby {
-  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, input, controllerManager }) {
+  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, input, controllerManager }) {
     this.onSolo = onSolo;
+    this.onTouristReady = onTouristReady || (() => {});   // E-6
     this.onMultiplayerReady = onMultiplayerReady;
     this.onLocalReady = onLocalReady;
     this.onVersusReady = onVersusReady;
@@ -179,6 +182,7 @@ export class Lobby {
     this.joinStep = document.getElementById('lobby-join');
     this.roomStep = document.getElementById('lobby-room');
     this.versusStep = document.getElementById('lobby-versus');
+    this.touristStep = document.getElementById('lobby-tourist');   // E-6
     this._roomRole = null; // 'captain' | 'stoker'
 
     // Permission toggle buttons
@@ -683,7 +687,9 @@ export class Lobby {
       const backHint = document.getElementById('gamepad-back-hint');
       if (backHint) { backHint.style.display = ''; backHint.style.visibility = ''; }
     }
-    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep, this.versusStep]
+    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep,
+     this.versusStep, this.touristStep]
+      .filter(Boolean)
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
@@ -870,6 +876,7 @@ export class Lobby {
     // Level selection: build cards and handle clicks
     this._buildLevelCards();
     this._setupDifficultySelector();
+    this._initTouristEntry();   // E-6 · "ride the distance between you"
 
     document.getElementById('btn-back-level').addEventListener('click', () => {
       if (this._pendingMode === 'versus') {
@@ -1262,6 +1269,153 @@ export class Lobby {
 
     overlay.classList.add('visible');
     analytics.trackEvent('daily_chooser', { key, mode, ranked_available: !done });
+  }
+
+  // ============================================================
+  // E-6 / E-8 · "Ride the distance between you"
+  // ============================================================
+  //
+  // Two addresses become a ride over real photogrammetry. This is the only
+  // feature in the plan that is *about* the thing the persona actually feels:
+  // the distance is the point, and the number on screen is the story.
+  //
+  // The route maths is pure and tested (js/tourist-route.js). This is the
+  // form, the geocoding calls, and remembering the pair's last route so the
+  // second ride is one button (E-8).
+
+  /** E-8 · the last route this browser rode, or null. */
+  _loadSavedRoute() {
+    try {
+      const raw = localStorage.getItem('tandemonium_tourist_route');
+      const saved = raw ? JSON.parse(raw) : null;
+      return saved && isValidPoint(saved.from) && isValidPoint(saved.to) ? saved : null;
+    } catch { return null; }
+  }
+
+  _saveRoute(from, to) {
+    try {
+      localStorage.setItem('tandemonium_tourist_route', JSON.stringify({ from, to, at: Date.now() }));
+    } catch { /* private mode: the ride still works, it is just not remembered */ }
+  }
+
+  /**
+   * Show the Tourist entry at all only when it can actually work. Without a
+   * Maps key the mode can only disappoint, and an entry point that fails is
+   * worse than no entry point — that is the #350 lesson.
+   */
+  _initTouristEntry() {
+    const btn = document.getElementById('btn-tourist');
+    if (!btn) return;
+    if (!getMapsApiKey()) return;              // stays hidden
+    btn.style.display = '';
+    btn.addEventListener('click', () => {
+      this._pendingMode = 'tourist';
+      this._showStep(this.touristStep);
+      this._prefillTouristForm();
+      analytics.trackEvent('tourist_open');
+    });
+
+    const back = document.getElementById('btn-back-tourist');
+    if (back) back.addEventListener('click', () => this._showStep(this.modeStep));
+
+    const from = document.getElementById('tourist-from');
+    const to = document.getElementById('tourist-to');
+    const go = document.getElementById('btn-tourist-ride');
+    const onEdit = () => {
+      const ready = from.value.trim().length > 2 && to.value.trim().length > 2;
+      go.disabled = !ready;
+      go.textContent = 'PLAN THE RIDE';
+      this._touristPlan = null;
+    };
+    from.addEventListener('input', onEdit);
+    to.addEventListener('input', onEdit);
+    go.addEventListener('click', () => this._planTouristRide());
+  }
+
+  /** E-8 · offer the last route back, so a repeat ride is one button. */
+  _prefillTouristForm() {
+    const saved = this._loadSavedRoute();
+    const preview = document.getElementById('tourist-preview');
+    const go = document.getElementById('btn-tourist-ride');
+    if (!saved) {
+      if (preview) preview.textContent = '';
+      return;
+    }
+    document.getElementById('tourist-from').value = saved.from.label || '';
+    document.getElementById('tourist-to').value = saved.to.label || '';
+    if (go) go.disabled = false;
+    const plan = planRoute(saved.from, saved.to);
+    if (preview) {
+      preview.innerHTML = 'Again? <strong>' + this._escape(saved.from.label) + '</strong> to <strong>' +
+        this._escape(saved.to.label) + '</strong><br>' + this._escape(plan.headline);
+    }
+    this._touristPlan = plan;
+    if (go) go.textContent = 'RIDE IT AGAIN';
+  }
+
+  /**
+   * Geocode both ends, show what the ride will be, and — on the second press —
+   * start it. Two presses on purpose: the distance is the reveal, and riding
+   * straight past it would throw away the best moment this mode has.
+   */
+  async _planTouristRide() {
+    const go = document.getElementById('btn-tourist-ride');
+    const errorEl = document.getElementById('tourist-error');
+    const preview = document.getElementById('tourist-preview');
+    const fromText = document.getElementById('tourist-from').value;
+    const toText = document.getElementById('tourist-to').value;
+
+    // Second press with a plan already on screen: ride it.
+    if (this._touristPlan) {
+      this._startTouristRide(this._touristPlan);
+      return;
+    }
+
+    errorEl.textContent = '';
+    go.disabled = true;
+    go.textContent = 'FINDING…';
+
+    try {
+      const [from, to] = await Promise.all([
+        geocodeAddress(fromText),
+        geocodeAddress(toText)
+      ]);
+      if (!isValidPoint(from) || !isValidPoint(to)) throw new Error('could not place one of those');
+
+      const plan = planRoute(from, to);
+      this._touristPlan = plan;
+      preview.innerHTML = '<strong>' + this._escape(from.label) + '</strong><br>to <strong>' +
+        this._escape(to.label) + '</strong><br>' + this._escape(plan.headline) +
+        (plan.route.capped
+          ? '<br><span style="opacity:0.7">' + this._escape(skipLabel(plan.route)) +
+            ' — you ride the first and last 2.5 km</span>'
+          : '');
+      go.disabled = false;
+      go.textContent = 'RIDE IT';
+      this._saveRoute(from, to);
+      analytics.trackEvent('tourist_route_planned', {
+        km: Math.round(plan.realM / 1000), capped: plan.route.capped
+      });
+    } catch (err) {
+      // Inline, never a console exception: a mistyped address is the most
+      // ordinary thing that can happen on this screen.
+      errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
+      go.disabled = false;
+      go.textContent = 'PLAN THE RIDE';
+      analytics.trackEvent('tourist_route_failed');
+    }
+  }
+
+  _startTouristRide(plan) {
+    this._hideLobby();
+    this.onTouristReady({ plan });
+    analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000) });
+  }
+
+  /** Escape a geocoder-supplied label before it goes anywhere near innerHTML. */
+  _escape(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   /** B-3 · re-render the record line on every visible level card. */

@@ -109,12 +109,46 @@ function loadMapsJs(apiKey) {
     window[CB] = () => { delete window[CB]; resolve(); };
     const script = document.createElement('script');
     script.async = true;
+    // E-6 adds geocoding: the two-address route needs it, and loading both
+    // libraries in one script keeps it to a single injection.
     script.src = `${MAPS_JS_URL}?key=${encodeURIComponent(apiKey)}` +
-      `&loading=async&libraries=elevation&callback=${CB}`;
+      `&loading=async&libraries=elevation,geocoding&callback=${CB}`;
     script.onerror = () => reject(new Error('Maps JS API script failed to load'));
     document.head.appendChild(script);
   });
   return _mapsJsPromise;
+}
+
+/**
+ * E-6 · turn an address into a point.
+ *
+ * Uses the Maps JavaScript Geocoder, not the Geocoding web service, for the
+ * same reason the elevation lookup does: the web service sends no CORS headers
+ * and ignores HTTP-referrer restrictions, which is exactly how this key is
+ * locked down. The Geocoding API must be enabled on the key alongside Map
+ * Tiles, Maps JavaScript and Elevation — see docs/tourist-mode.md.
+ *
+ * @param {string} address free text, as typed
+ * @returns {Promise<{lat, lon, label}>}
+ * @throws  when the address cannot be found, so the caller can say so inline
+ */
+export async function geocodeAddress(address, apiKey = getMapsApiKey()) {
+  const query = String(address || '').trim();
+  if (!query) throw new Error('empty address');
+  if (!apiKey) throw new Error('no Maps API key available');
+
+  await loadMapsJs(apiKey);
+  const { Geocoder } = await google.maps.importLibrary('geocoding');
+  const { results } = await new Geocoder().geocode({ address: query });
+  const best = results && results[0];
+  if (!best || !best.geometry || !best.geometry.location) {
+    throw new Error(`could not find "${query}"`);
+  }
+  return {
+    lat: best.geometry.location.lat(),
+    lon: best.geometry.location.lng(),
+    label: best.formatted_address || query
+  };
 }
 
 /** Ground elevation in metres above sea level, via the Maps JS ElevationService. */
