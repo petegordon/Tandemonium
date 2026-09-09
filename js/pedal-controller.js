@@ -38,11 +38,13 @@ export class PedalController {
     let acceleration = 0;
     let wobble = 0;
 
+    // tapEvents describes THIS frame only — see SharedPedalController.
+    this.tapEvents.length = 0;
+
     // Only reset wrong/correct flags on a new tap (so they persist while held)
     if (leftJust || rightJust) {
       this.wasCorrect = false;
       this.wasWrong = false;
-      this.tapEvents.length = 0;
     }
 
     if (braking) {

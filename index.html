@@ -110,6 +110,94 @@
     background: #fff;
     transition: width 0.15s, background 0.2s;
   }
+  /* A-4 · co-op sync row: seat chips either side of a sync bar. */
+  #sync-row {
+    display: none;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+  }
+  #sync-row.visible { display: flex; }
+  #sync-bar-wrap {
+    flex: 1;
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #sync-bar-fill {
+    height: 100%;
+    width: 50%;
+    border-radius: 2px;
+    background: hsl(60, 90%, 55%);
+    transition: width 0.2s, background 0.25s;
+  }
+  .seat-chip {
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    padding: 3px 4px;
+    border-radius: 3px;
+    color: rgba(255,255,255,0.55);
+    background: rgba(255,255,255,0.09);
+    transition: background 0.12s, color 0.12s;
+  }
+  .seat-chip.perfect { background: rgba(60,220,120,0.85); color: #06240f; }
+  .seat-chip.solo    { background: rgba(255,200,60,0.8);  color: #2a1c00; }
+  .seat-chip.wrong   { background: rgba(255,80,80,0.9);   color: #2a0000; }
+  /* A-4 · crank fight stamp + first-ride coaching line. */
+  #crank-fight-stamp {
+    position: fixed;
+    top: 38%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: clamp(22px, 6vw, 44px);
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: #ff5a5a;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.6);
+    pointer-events: none;
+    opacity: 0;
+    z-index: 60;
+  }
+  #crank-fight-stamp.show { animation: crank-fight-shake 0.6s ease-out; }
+  #crank-fight-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0;
+    color: rgba(255,255,255,0.9);
+  }
+  @keyframes crank-fight-shake {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+    12%  { opacity: 1; transform: translate(-52%, -50%) scale(1.05); }
+    28%  { transform: translate(-48%, -50%) scale(1); }
+    44%  { transform: translate(-51%, -50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+  }
+  #coop-coach {
+    position: fixed;
+    left: 50%;
+    bottom: 22%;
+    transform: translateX(-50%);
+    max-width: 88vw;
+    padding: 7px 13px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 55;
+  }
+  #coop-coach.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    #crank-fight-stamp.show { animation: none; opacity: 1; }
+  }
   #distance-display,
   #elapsed-display {
     display: inline-block;
@@ -4346,6 +4434,13 @@
       </div>
     </div>
     <div id="speed-bar-wrap"><div id="speed-bar-fill"></div></div>
+    <!-- A-4 · co-op sync. Hidden in solo. The bar is offsetScore; the chips flash
+         per seat so the blame is visible without ever printing "S missed". -->
+    <div id="sync-row">
+      <span class="seat-chip" id="seat-chip-captain">C</span>
+      <div id="sync-bar-wrap"><div id="sync-bar-fill"></div></div>
+      <span class="seat-chip" id="seat-chip-stoker">S</span>
+    </div>
     <div id="contribution-bar">
       <div id="contrib-captain"></div>
       <div id="contrib-stoker"></div>
@@ -4455,6 +4550,10 @@ ON</button>
     </div>
   </div>
 </div>
+
+<!-- A-4 · co-op feedback that must sit above the 3D canvas, not in the strip. -->
+<div id="crank-fight-stamp">CRANK FIGHT!<span id="crank-fight-hint">Same foot, same moment — alternate!</span></div>
+<div id="coop-coach">Match your partner’s beat with the opposite foot</div>
 
 <!-- Bottom HUD: gauge bar + pedal buttons -->
 <div id="bottom-hud">

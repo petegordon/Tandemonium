@@ -62,13 +62,17 @@ export class SharedPedalController {
     let acceleration = 0;
     let wobble = 0;
 
+    // tapEvents describes THIS frame only: audio (game.js) and the HUD both
+    // read it after update() runs in the same frame, so it is cleared here at
+    // the top of every frame rather than only when new taps arrive.
+    this.tapEvents.length = 0;
+
     // Only reset flags when there are new taps (so they persist while held)
     if (this._pendingTaps.length > 0) {
       this.wasCorrect = false;
       this.wasWrong = false;
       this.wasBrake = false;
       this.wasInPhase = false;
-      this.tapEvents.length = 0;
     }
 
     // Process taps one at a time

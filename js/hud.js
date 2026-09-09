@@ -24,6 +24,28 @@ export class HUD {
     this._lastRemoteFootValue = null;
     this._pedalFlashTimer = 0;
 
+    // A-4 · co-op sync display. Hidden entirely in solo.
+    this.syncRow = document.getElementById('sync-row');
+    this.syncBarFill = document.getElementById('sync-bar-fill');
+    this.seatChips = {
+      captain: document.getElementById('seat-chip-captain'),
+      stoker: document.getElementById('seat-chip-stoker')
+    };
+    this.crankFightStamp = document.getElementById('crank-fight-stamp');
+    this.crankFightHint = document.getElementById('crank-fight-hint');
+    this.coopCoach = document.getElementById('coop-coach');
+    this._chipTimers = { captain: 0, stoker: 0 };
+    this._prevSyncPct = -1;
+    this._prevSyncHue = -1;
+    this._fightStampTimer = 0;
+    this._fightHintsShown = 0;      // hint text only the first two times per session
+    this._coachPerfects = 0;
+    this._coachDone = false;
+    this._coopActive = false;
+    this._coopForced = false;
+    this._selfSeat = 'captain';
+    this._remoteSyncScore = null;
+
     // Stoker self-flash: instant feedback on own pedal taps
     this._ownFlashTimer = 0;
     this._ownFlashFoot = null;
@@ -87,6 +109,115 @@ export class HUD {
       this.progressWrap.appendChild(marker);
       this._checkpointEls.push(marker);
     }
+  }
+
+  /**
+   * A-4 · make the pair legible.
+   *
+   * The sync bar is offsetScore, red -> amber -> green. The seat chips flash
+   * per tap in that seat's own colour, so a rider can see WHO fell off the beat
+   * without the game ever printing "S missed" at them. CRANK FIGHT! is stamped
+   * on the shared mistake, with the fix spelled out the first two times.
+   *
+   * Everything here is a no-op in solo: `pedalCtrl.stats.captain` only exists on
+   * the shared (co-op) controller.
+   */
+  /**
+   * Ride start: which seat is this screen, and is this a co-op ride at all?
+   * The stoker runs a local (solo) pedal controller for its own feel, so the
+   * HUD cannot infer co-op from the controller shape on that side.
+   */
+  setSeat(seat, isCoop) {
+    this._selfSeat = seat || 'captain';
+    this._coopForced = !!isCoop;
+    this._remoteSyncScore = null;
+  }
+
+  /** Stoker side: the captain's authoritative sync score, off the wire. */
+  setRemoteSync(score) {
+    if (typeof score === 'number') this._remoteSyncScore = score;
+  }
+
+  _updateSync(pedalCtrl, dt) {
+    const shared = !!(pedalCtrl && pedalCtrl.stats && pedalCtrl.stats.stoker);
+    const coop = shared || this._coopForced;
+    if (coop !== this._coopActive) {
+      this._coopActive = coop;
+      if (this.syncRow) this.syncRow.classList.toggle('visible', coop);
+      if (!coop && this.coopCoach) this.coopCoach.classList.remove('show');
+    }
+    if (!coop) return;
+
+    // Sync bar. The captain computes it; the stoker receives it in the state
+    // packet, so both screens show the same number.
+    const raw = shared ? (pedalCtrl.offsetScore ?? 0.5) : (this._remoteSyncScore ?? 0.5);
+    const score = Math.max(0, Math.min(1, raw));
+    const pct = Math.round(score * 100);
+    if (pct !== this._prevSyncPct) {
+      this._prevSyncPct = pct;
+      if (this.syncBarFill) this.syncBarFill.style.width = pct + '%';
+    }
+    const hue = Math.round(score * 120);          // 0 red -> 120 green
+    if (hue !== this._prevSyncHue) {
+      this._prevSyncHue = hue;
+      if (this.syncBarFill) this.syncBarFill.style.background = `hsl(${hue}, 90%, 55%)`;
+    }
+
+    // Seat chips + the fight stamp, driven by this frame's taps.
+    const events = (pedalCtrl && pedalCtrl.tapEvents) || [];
+    for (const ev of events) {
+      // On the stoker's screen the local controller labels every tap 'captain'
+      // because it only knows about one rider — that rider is this one.
+      const seat = shared ? ev.seat : this._selfSeat;
+      const chip = this.seatChips[seat];
+      if (chip) {
+        chip.classList.remove('perfect', 'solo', 'wrong');
+        chip.classList.add(ev.kind === 'fight' ? 'wrong' : ev.kind);
+        this._chipTimers[seat] = 0.35;
+      }
+      if (ev.kind === 'perfect') this._coachPerfects++;
+    }
+    for (const seat of ['captain', 'stoker']) {
+      if (this._chipTimers[seat] > 0) {
+        this._chipTimers[seat] -= dt;
+        if (this._chipTimers[seat] <= 0 && this.seatChips[seat]) {
+          this.seatChips[seat].classList.remove('perfect', 'solo', 'wrong');
+        }
+      }
+    }
+
+    if (pedalCtrl && pedalCtrl.wasBrake && this._fightStampTimer <= 0 && this.crankFightStamp) {
+      this._fightStampTimer = 0.6;
+      this._fightHintsShown++;
+      if (this.crankFightHint) {
+        this.crankFightHint.style.display = this._fightHintsShown <= 2 ? 'block' : 'none';
+      }
+      this.crankFightStamp.classList.remove('show');
+      void this.crankFightStamp.offsetWidth;   // restart the animation
+      this.crankFightStamp.classList.add('show');
+    } else if (this._fightStampTimer > 0) {
+      this._fightStampTimer -= dt;
+      if (this._fightStampTimer <= 0 && this.crankFightStamp) {
+        this.crankFightStamp.classList.remove('show');
+      }
+    }
+
+    // Coaching line: the rule, in words, until the pair proves they have it.
+    if (this.coopCoach && !this._coachDone) {
+      if (this._coachPerfects >= 5) {
+        this._coachDone = true;
+        this.coopCoach.classList.remove('show');
+      } else {
+        this.coopCoach.classList.add('show');
+      }
+    }
+  }
+
+  /** Called at ride start: the coaching line is per session, not per ride. */
+  resetCoopCoaching(showCoach) {
+    this._coachPerfects = 0;
+    this._coachDone = !showCoach;
+    if (!showCoach && this.coopCoach) this.coopCoach.classList.remove('show');
   }
 
   updateProgress(distanceTraveled, raceDistance, passedCheckpoints) {
@@ -193,6 +324,7 @@ export class HUD {
   }
 
   update(bike, input, pedalCtrl, dt, remoteData) {
+    this._updateSync(pedalCtrl, dt);
     const kmh = Math.round(bike.speed * 3.6);
     const maxKmh = 58;
 

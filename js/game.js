@@ -746,6 +746,7 @@ class Game {
 
   _onSolo() {
     this.mode = 'solo';
+    this.hud.setSeat('captain', false);   // A-4: no sync row when riding alone
     this.bike.applyPreset(this.lobby.selectedPreset);
     this._lobbyBtn.textContent = 'LOBBY';
 
@@ -784,6 +785,11 @@ class Game {
     // Setup shared pedal controller
     this.sharedPedal = new SharedPedalController();
 
+    // A-4: tell the HUD which seat this screen is and that sync applies.
+    this.hud.setSeat(mode === 'stoker' ? 'stoker' : 'captain', true);
+    this.hud.resetCoopCoaching(!this._coopCoachSeen);
+    this._coopCoachSeen = true;
+
     // Setup remote bike state for stoker
     if (mode === 'stoker') {
       this.remoteBikeState = new RemoteBikeState();
@@ -807,6 +813,8 @@ class Game {
         if (state.timerRemaining !== undefined && this.raceManager) {
           this.raceManager.segmentTimeRemaining = state.timerRemaining;
         }
+        // A-4: the captain owns the sync score; mirror it on this screen.
+        if (state.syncScore !== undefined) this.hud.setRemoteSync(state.syncScore);
       }
     };
 
@@ -1060,6 +1068,11 @@ class Game {
 
     // Shared pedal controller: P1 taps as 'captain', P2 taps as 'stoker'.
     this.sharedPedal = new SharedPedalController();
+
+    // A-4: local co-op shows the sync row too — one screen, both seats.
+    this.hud.setSeat('captain', true);
+    this.hud.resetCoopCoaching(!this._coopCoachSeen);
+    this._coopCoachSeen = true;
 
     // If P2 is keyboard, P1 must release its keyboard subscription so random
     // typing doesn't double-fire into both players.
@@ -4301,7 +4314,9 @@ class Game {
     if (this._stateSendTimer >= this._stateSendInterval && this.net && this.net.connected) {
       this._stateSendTimer = 0;
       const timerRemaining = this.raceManager ? this.raceManager.segmentTimeRemaining : -1;
-      this.net.sendState(this.bike, timerRemaining);
+      // A-4: ship the captain's authoritative sync score so the stoker's bar
+      // shows the same number (one byte on the 60 Hz path).
+      this.net.sendState(this.bike, timerRemaining, this.sharedPedal ? this.sharedPedal.offsetScore : -1);
       this.net.sendLean(captainLean);
     }
 
@@ -4436,7 +4451,8 @@ class Game {
         this.chaseCamera.pedalBob(ev.kind === 'wrong' || ev.kind === 'fight' ? 2 : 1);
       }
     }
-    events.length = 0;
+    // Do NOT clear: the HUD reads the same list later in this frame. The
+    // controllers clear it at the top of their next update().
   }
 
   /** Advance collectibles + obstacles; trigger _onCollect for any picked up this frame. */
