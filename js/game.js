@@ -1675,6 +1675,24 @@ class Game {
     // after 10s of trigger silence.
     if (this.inputP2) this.inputP2._markActive();
 
+    // A-7 (#216) · the first ride pulls, the second is smooth.
+    //
+    // The calibration above only runs for inputs whose gyro is ALREADY
+    // streaming. P2's HID connection is fire-and-forget at claim time, so on
+    // the first ride of a session the countdown routinely starts before the
+    // slot reports data: gyroConnected is false, calibration is skipped, and
+    // the gyro joins mid-ride carrying a bias baked while the pad was being
+    // picked up — which is the janky pull. On the second ride the connection
+    // is already warm, so it never reproduces for the person testing it.
+    //
+    // Track who still owes a calibration and do it the moment their gyro
+    // starts talking, up to the first few seconds of the ride.
+    this._pendingGyroCalib = [];
+    for (const src of [this.input, this.inputP2]) {
+      if (src && src.motionEnabled && !src.gyroConnected) this._pendingGyroCalib.push(src);
+    }
+    this._pendingGyroCalibUntil = performance.now() + 8000;
+
     const statusEl = document.getElementById('status');
     statusEl.textContent = '';
     this._lastCountNum = 3;
@@ -4212,6 +4230,7 @@ class Game {
     // Achievements
     this._checkAchievements(dt);
     this._updateCoachCard(dt);
+    this._drainPendingGyroCalibration();
 
     // Background motion adaptation (skip when level config disables it)
     const adaptLevel = this.lobby.selectedLevel;
@@ -4314,6 +4333,7 @@ class Game {
     // Achievements
     this._checkAchievements(dt);
     this._updateCoachCard(dt);
+    this._drainPendingGyroCalibration();
 
     // Tutorial: handle crash/completion internally instead of game-over screen
     if (this._tutorialActive) {
@@ -4449,6 +4469,26 @@ class Game {
       const line = text.lines[i];
       if (line) { paras[i].textContent = line; paras[i].style.display = ''; }
       else paras[i].style.display = 'none';
+    }
+  }
+
+  /**
+   * A-7 (#216) · calibrate a gyro that only started streaming after the
+   * countdown began. Cheap: an empty array after the first second or two of a
+   * ride, and it stops looking entirely once the window closes.
+   */
+  _drainPendingGyroCalibration() {
+    const pending = this._pendingGyroCalib;
+    if (!pending || pending.length === 0) return;
+    if (performance.now() > this._pendingGyroCalibUntil) { this._pendingGyroCalib = []; return; }
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const src = pending[i];
+      if (!src || !src.gyroConnected) continue;
+      src.recenterGyro();
+      src.calibrateGyro();
+      src.startTiltCalibration();
+      pending.splice(i, 1);
+      try { analytics.trackEvent('late_gyro_calibration', { seat: src === this.input ? 'p1' : 'p2' }); } catch {}
     }
   }
 

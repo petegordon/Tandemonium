@@ -16,7 +16,10 @@
     "steamtest": "electron tools/steam-controller-test/main.js",
     "gamepadtest": "electron tools/gamepad-test/main.js",
     "test": "node --test \"test/unit/*.test.mjs\"",
-    "smoke": "node scripts/smoke-lobby.mjs"
+    "smoke": "node scripts/smoke-lobby.mjs",
+    "smoke:boot": "node scripts/smoke-boot-failure.mjs",
+    "audit:first30": "node scripts/audit-first-30s.mjs",
+    "smoke:ride": "node scripts/smoke-first-ride.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

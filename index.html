@@ -1749,6 +1749,63 @@
     0%, 100% { opacity: 0.6; }
     50% { opacity: 1; }
   }
+  /* A-7 (#162) · boot progress bar under the loading label. */
+  #boot-progress {
+    width: 200px;
+    height: 4px;
+    margin: 14px auto 0;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.15);
+    overflow: hidden;
+  }
+  #boot-progress-fill {
+    width: 0%;
+    height: 100%;
+    border-radius: 2px;
+    background: #fff;
+    transition: width 0.35s ease-out;
+  }
+  /* A-7 (#350) · unsupported / stuck-boot screen. */
+  #boot-fail {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #10131a;
+    color: #fff;
+    z-index: 100000;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  #boot-fail.show { display: flex; }
+  #boot-fail-card { max-width: 480px; text-align: center; }
+  #boot-fail-card h2 { font-size: 22px; margin: 0 0 12px; }
+  #boot-fail-card p { font-size: 15px; line-height: 1.5; margin: 0 0 10px; color: rgba(255,255,255,0.85); }
+  #boot-fail-hint { color: rgba(255,255,255,0.6) !important; font-size: 13px !important; }
+  #boot-fail-retry {
+    margin-top: 10px;
+    padding: 10px 20px;
+    font-size: 15px;
+    font-weight: 700;
+    border: 0;
+    border-radius: 10px;
+    background: #ffd23f;
+    color: #201a00;
+    cursor: pointer;
+  }
+  #boot-fail-diag {
+    margin-top: 18px;
+    padding: 10px;
+    max-height: 140px;
+    overflow: auto;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.55);
+    font-size: 11px;
+    text-align: left;
+    white-space: pre-wrap;
+  }
   #tap-to-start.fade-out {
     opacity: 0;
     transition: opacity 0.4s;
@@ -4673,9 +4730,171 @@ ON</button>
 <!-- Tap/Press to Start overlay -->
 <div id="tap-to-start">
   <div class="tap-to-start-content">
+    <!-- Label is rewritten by the boot script: "Loading Tandemonium…" while the
+         modules load, "Click to start" on a desktop browser (#263). -->
     <p id="tap-to-start-text">Tap to Start</p>
+    <!-- A-7 (#162) · a real loading indicator. Static markup so it is visible
+         before any module runs — which is also what makes #350's dead end
+         detectable: if the bar never fills, boot never happened. -->
+    <div id="boot-progress"><div id="boot-progress-fill"></div></div>
   </div>
 </div>
+
+<!-- A-7 (#350) · the screen an unsupported or stuck device sees instead of a
+     silent, unresponsive "Tap to Start". Written by the classic boot script
+     below, so it works even when the ES-module graph never executes. -->
+<div id="boot-fail">
+  <div id="boot-fail-card">
+    <h2 id="boot-fail-title">This browser can&rsquo;t run Tandemonium</h2>
+    <p id="boot-fail-body"></p>
+    <p id="boot-fail-hint">Try Chrome, Edge or Safari 16.4+, or update your phone&rsquo;s software. On a desktop browser it should just work.</p>
+    <button id="boot-fail-retry">Try again</button>
+    <pre id="boot-fail-diag"></pre>
+  </div>
+</div>
+<script>
+// ============================================================
+// A-7 (#350, #162) · BOOT PREFLIGHT, PROGRESS AND WATCHDOG
+// ============================================================
+//
+// Deliberately a CLASSIC script: everything below has to keep working on a
+// browser where the ES-module graph never executes, which is exactly the
+// iPhone-8 case that produced a silent, unresponsive "Tap to Start" with no
+// error and no signal (#350). It also drives the loading indicator (#162).
+//
+//   1. Preflight  — import maps, ES modules and WebGL. Any missing => say so.
+//   2. Progress   — a bar that advances on real boot milestones.
+//   3. Watchdog   — no window._game after 12 s => the same friendly screen.
+//   4. Error trap — an uncaught boot error routes to the same screen.
+//
+// Failures ping analytics directly (fetch + keepalive, no module import) so we
+// can SEE how often devices bounce off instead of guessing.
+(function() {
+  var BOOT_TIMEOUT_MS = 12000;
+  var API = 'https://tandemonium-api.pete-872.workers.dev/api/analytics';
+  var booted = false;
+  var reported = false;
+  window.__bootStart = Date.now();
+
+  function missingFeatures() {
+    var missing = [];
+    try {
+      if (!('noModule' in HTMLScriptElement.prototype)) missing.push('ES modules');
+      if (!(HTMLScriptElement.supports && HTMLScriptElement.supports('importmap'))) missing.push('import maps');
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) missing.push('WebGL');
+    } catch (e) {
+      missing.push('graphics');
+    }
+    return missing;
+  }
+
+  function report(reason, detail) {
+    if (reported) return;
+    reported = true;
+    try {
+      fetch(API + '/event/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        keepalive: true,
+        body: JSON.stringify({ events: [{
+          session_id: null,
+          event_type: 'boot_failed',
+          event_data: {
+            reason: reason,
+            detail: String(detail || '').slice(0, 300),
+            ua: navigator.userAgent.slice(0, 300),
+            ms: Date.now() - window.__bootStart
+          },
+          created_at: new Date().toISOString(),
+          page: 'boot'
+        }] })
+      }).catch(function () {});
+    } catch (e) { /* reporting must never be the thing that breaks */ }
+  }
+
+  function showFailure(reason, detail) {
+    if (booted) return;
+    var panel = document.getElementById('boot-fail');
+    if (!panel) return;
+    var missing = missingFeatures();
+    var titleEl = document.getElementById('boot-fail-title');
+    var bodyEl = document.getElementById('boot-fail-body');
+    var diagEl = document.getElementById('boot-fail-diag');
+    if (missing.length) {
+      if (titleEl) titleEl.textContent = "This browser can't run Tandemonium";
+      if (bodyEl) bodyEl.textContent = 'It is missing: ' + missing.join(', ') + '.';
+    } else {
+      if (titleEl) titleEl.textContent = 'Tandemonium failed to start';
+      if (bodyEl) bodyEl.textContent = 'The game did not finish loading on this device.';
+    }
+    if (diagEl) {
+      diagEl.textContent = [
+        'reason: ' + reason,
+        detail ? 'detail: ' + String(detail).slice(0, 200) : null,
+        'missing: ' + (missing.join(', ') || 'nothing detected'),
+        'ms: ' + (Date.now() - window.__bootStart),
+        navigator.userAgent
+      ].filter(Boolean).join(String.fromCharCode(10));
+    }
+    panel.classList.add('show');
+    report(reason, detail);
+  }
+
+  var retry = document.getElementById('boot-fail-retry');
+  if (retry) retry.addEventListener('click', function () { location.reload(); });
+
+  // ── 1. Preflight ───────────────────────────────────────────────────────
+  var missing = missingFeatures();
+  if (missing.length) {
+    showFailure('preflight', missing.join(', '));
+    return;   // no point starting the watchdog; the modules cannot run
+  }
+
+  // ── 2. Progress ────────────────────────────────────────────────────────
+  var fill = document.getElementById('boot-progress-fill');
+  var pct = 0;
+  function setProgress(p) {
+    pct = Math.max(pct, p);
+    if (fill) fill.style.width = pct + '%';
+  }
+  setProgress(12);
+  document.addEventListener('DOMContentLoaded', function () { setProgress(45); });
+  window.addEventListener('load', function () { setProgress(70); });
+  // A slow creep so a long asset load never looks frozen; it never reaches the
+  // end on its own — only a real boot does that.
+  var creep = setInterval(function () { setProgress(Math.min(pct + 2, 88)); }, 600);
+
+  // ── 3. Watchdog ────────────────────────────────────────────────────────
+  var poll = setInterval(function () {
+    if (!window._game) return;
+    booted = true;
+    clearInterval(poll);
+    clearInterval(creep);
+    setProgress(100);
+  }, 100);
+
+  setTimeout(function () {
+    if (booted) return;
+    clearInterval(poll);
+    clearInterval(creep);
+    showFailure('watchdog', 'no window._game after ' + BOOT_TIMEOUT_MS + 'ms');
+  }, BOOT_TIMEOUT_MS);
+
+  // ── 4. Error trap ──────────────────────────────────────────────────────
+  window.addEventListener('error', function (e) {
+    if (booted) return;
+    var msg = e && (e.message || (e.error && e.error.message)) || 'unknown error';
+    showFailure('error', msg);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    if (booted) return;
+    showFailure('rejection', e && e.reason && (e.reason.message || e.reason));
+  });
+})();
+</script>
+
 <script>
 (function() {
   var ua = navigator.userAgent;
@@ -4687,9 +4906,14 @@ ON</button>
   // mobile auto-dismisses once the Lobby loads (the tap-gate is obsolete — iOS
   // motion permission is requested from a real gesture at ride start). Desktop
   // *browsers* keep the click-to-start prompt (they need the click to dismiss).
+  var textEl = document.getElementById('tap-to-start-text');
   if (isDesktop || isMobile) {
-    var textEl = document.getElementById('tap-to-start-text');
-    if (textEl) textEl.textContent = 'Loading…';
+    // #162: name the thing that is loading, and keep the progress bar visible.
+    if (textEl) textEl.textContent = 'Loading Tandemonium…';
+  } else if (textEl && !navigator.maxTouchPoints) {
+    // #263: a desktop browser has no touchscreen — "Tap to Start" is the wrong
+    // word, and the click is only there to unlock audio. Say what to do.
+    textEl.textContent = 'Click to start';
   }
   if (isDesktop) {
     // Poll for gamepad input to dismiss the overlay
