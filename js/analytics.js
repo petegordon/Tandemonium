@@ -35,6 +35,33 @@ let eventBuffer = [];
 let rideEventBuffer = [];
 let flushTimer = null;
 
+/**
+ * A UUID that survives an insecure context.
+ *
+ * crypto.randomUUID is [SecureContext]-only, so it is simply undefined when the
+ * page is served over plain http — which is how a phone reaches the site when it
+ * follows an http:// link, and is what boot-blocked the game on iOS. Anonymous
+ * analytics identity must never be the thing that stops the game starting, so
+ * fall back to getRandomValues, and then to Math.random, before giving up.
+ */
+function uuid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const b = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(b);
+  } else {
+    for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  }
+  b[6] = (b[6] & 0x0f) | 0x40;  // version 4
+  b[8] = (b[8] & 0x3f) | 0x80;  // variant 1
+  const h = [...b].map(x => x.toString(16).padStart(2, '0'));
+  return h.slice(0, 4).join('') + '-' + h.slice(4, 6).join('') + '-' +
+         h.slice(6, 8).join('') + '-' + h.slice(8, 10).join('') + '-' +
+         h.slice(10, 16).join('');
+}
+
 // ---- Session Management ----
 
 /**
@@ -49,7 +76,7 @@ export function getDeviceId() {
   try {
     let id = localStorage.getItem('tandemonium_device_id');
     if (!id) {
-      id = crypto.randomUUID();
+      id = uuid();
       localStorage.setItem('tandemonium_device_id', id);
     }
     return id;
@@ -60,7 +87,7 @@ export function getDeviceId() {
 
 export function initSession(opts) {
   if (DISABLED) return null;
-  sessionId = crypto.randomUUID();
+  sessionId = uuid();
   sessionStorage.setItem('tandemonium_session_id', sessionId);
   currentInputMethod = opts.input_method || null;
 
@@ -150,7 +177,7 @@ export function setController(name, connection) {
 // ---- Ride Tracking ----
 
 export function startRide(opts) {
-  currentRideId = crypto.randomUUID();
+  currentRideId = uuid();
 
   beacon(`${API_BASE}/ride`, {
     id: currentRideId,

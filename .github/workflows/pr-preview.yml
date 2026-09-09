@@ -48,6 +48,9 @@ jobs:
         run: |
           npx puppeteer browsers install chrome
           npm run smoke
+          # ...and again over an insecure context, which is how a phone reaches
+          # the site from an http:// link. crypto.randomUUID is undefined there.
+          npm run smoke:insecure
 
       - name: Stage deploy files
         if: github.event.action != 'closed'

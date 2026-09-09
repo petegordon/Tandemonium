@@ -17,6 +17,10 @@ const _inFreeWindow = _demoMode ? false : _FW.some(([s, e]) => { const n = Date.
 const _hasFreeplay = _demoMode ? false : await (async () => {
   const code = new URLSearchParams(window.location.search).get('code');
   if (!code) return false;
+  // crypto.subtle is [SecureContext]-only, like crypto.randomUUID: over plain
+  // http it is undefined. This runs in a top-level await, so a throw here is a
+  // hard boot failure for every importer of this module — deny the code instead.
+  if (typeof crypto === 'undefined' || !crypto.subtle) return false;
   const buf = await crypto.subtle.digest('SHA-256',
     new TextEncoder().encode(code));
   const hex = [...new Uint8Array(buf)]

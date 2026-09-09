@@ -12,6 +12,7 @@
 //
 //   node scripts/smoke-lobby.mjs            # lobby only
 //   node scripts/smoke-lobby.mjs --ride     # also start a solo ride
+//   node scripts/smoke-lobby.mjs --insecure # serve over an insecure context
 //
 // Screenshots land in out/smoke/ when --shot is passed.
 
@@ -25,6 +26,14 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.SMOKE_PORT || 8901);
 const WANT_RIDE = process.argv.includes('--ride');
 const WANT_SHOT = process.argv.includes('--shot');
+// A page served over plain http from anything but localhost is NOT a secure
+// context, and the SecureContext-only APIs — crypto.randomUUID, crypto.subtle —
+// are undefined rather than merely restricted. That is how a phone reaches the
+// site from an http:// link, and an unguarded call there is a hard boot failure.
+// 127.0.0.1 is always treated as trustworthy, so reproducing it needs a real
+// hostname mapped back to loopback.
+const INSECURE = process.argv.includes('--insecure');
+const HOST = INSECURE ? 'tandemonium.test' : '127.0.0.1';
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
@@ -44,11 +53,12 @@ const server = http.createServer((req, res) => {
     fs.createReadStream(file).pipe(res);
   });
 });
-await new Promise(r => server.listen(PORT, '127.0.0.1', r));
+await new Promise(r => server.listen(PORT, INSECURE ? '0.0.0.0' : '127.0.0.1', r));
 
 const browser = await puppeteer.launch({
   headless: 'new',
-  args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio']
+  args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio',
+    ...(INSECURE ? ['--host-resolver-rules=MAP ' + HOST + ' 127.0.0.1'] : [])]
 });
 const page = await browser.newPage();
 await page.setViewport({ width: 1280, height: 900 });
@@ -64,7 +74,7 @@ const LOCAL = [
 await page.setRequestInterception(true);
 page.on('request', (req) => {
   const reqUrl = req.url();
-  if (reqUrl.startsWith(`http://127.0.0.1:${PORT}`)) return req.continue();
+  if (reqUrl.startsWith(`http://${HOST}:${PORT}`)) return req.continue();
   for (const [re, target] of LOCAL) {
     const m = reqUrl.match(re);
     if (m) {
@@ -98,7 +108,7 @@ page.on('pageerror', (err) => {
   if (!ignored(text)) errors.push(`pageerror: ${text}`);
 });
 
-const url = `http://127.0.0.1:${PORT}/index.html`;
+const url = `http://${HOST}:${PORT}/index.html`;
 console.log(`→ ${url}`);
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 

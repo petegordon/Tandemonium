@@ -17,6 +17,7 @@
     "gamepadtest": "electron tools/gamepad-test/main.js",
     "test": "node --test \"test/unit/*.test.mjs\"",
     "smoke": "node scripts/smoke-lobby.mjs",
+    "smoke:insecure": "node scripts/smoke-lobby.mjs --insecure",
     "smoke:boot": "node scripts/smoke-boot-failure.mjs",
     "audit:first30": "node scripts/audit-first-30s.mjs",
     "smoke:ride": "node scripts/smoke-first-ride.mjs",
