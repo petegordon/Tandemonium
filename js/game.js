@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager } from './race-manager.js';
-import { getLevelById, LEVELS } from './race-config.js';
+import { getLevelById, LEVELS, getInstructions } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
@@ -382,13 +382,17 @@ class Game {
     // Victory overlay input cooldown
     this._overlayCooldownUntil = 0;
 
-    // Safety mode (on by default)
+    // Safety mode. The starting value now comes from the difficulty preset
+    // (A-5): on for tutorial and chill, off for adventurous and daredevil, so
+    // the instructions can tell the truth about whether you can fall. Once the
+    // player touches the button, their choice sticks for the session.
     this.safetyMode = true;
+    this._safetyTouched = false;
     this.safetyBtn = document.getElementById('safety-btn');
     this.safetyBtn.addEventListener('click', () => {
       this.safetyMode = !this.safetyMode;
-      this.safetyBtn.className = 'side-btn ' + (this.safetyMode ? 'safety-on' : 'safety-off');
-      this.safetyBtn.textContent = 'SAFETY\n' + (this.safetyMode ? 'ON' : 'OFF');
+      this._safetyTouched = true;
+      this._updateSafetyBtn();
     });
 
     // Speed mode (off by default)
@@ -760,6 +764,7 @@ class Game {
     }
 
     this.state = 'instructions';
+    this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
   }
@@ -1043,6 +1048,7 @@ class Game {
 
     // Show instructions
     this.state = 'instructions';
+    this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
   }
@@ -1113,6 +1119,7 @@ class Game {
 
     // Show instructions (tap to start)
     this.state = 'instructions';
+    this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
   }
@@ -1209,6 +1216,7 @@ class Game {
 
     document.body.classList.add('mode-versus');
     this.state = 'instructions';
+    this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
   }
@@ -1614,6 +1622,9 @@ class Game {
       this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
       this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
     }
+
+    // A-5: safety follows the difficulty unless the player has said otherwise.
+    this._applySafetyDefault();
 
     // Reset background adaptation state for fresh ride
     this._adaptState = null;
@@ -4418,6 +4429,45 @@ class Game {
   // ============================================================
 
   /** Record a balance-caused crash (fell from lean, not from collision). */
+  /**
+   * A-5 · write the pre-ride instructions for the difficulty about to be
+   * ridden. Every preset used to claim you could crash, including the two
+   * where the safety clamp makes that impossible.
+   */
+  _updateInstructionsText() {
+    if (!this.instructionsEl) return;
+    const name = (this.lobby && this.lobby.selectedDifficulty) || 'adventurous';
+    const text = getInstructions(this.mode === 'versus' ? 'adventurous' : name);
+    const paras = this.instructionsEl.querySelectorAll('p:not(.tap-hint)');
+    for (let i = 0; i < paras.length; i++) {
+      const line = text.lines[i];
+      if (line) { paras[i].textContent = line; paras[i].style.display = ''; }
+      else paras[i].style.display = 'none';
+    }
+  }
+
+  /** A-5 · reflect this.safetyMode on the SAFETY button (and the quick menu). */
+  _updateSafetyBtn() {
+    if (!this.safetyBtn) return;
+    this.safetyBtn.className = 'side-btn ' + (this.safetyMode ? 'safety-on' : 'safety-off');
+    this.safetyBtn.textContent = 'SAFETY\n' + (this.safetyMode ? 'ON' : 'OFF');
+    if (this.quickMenu && this.quickMenu.sync) this.quickMenu.sync();
+  }
+
+  /**
+   * A-5 · safety starts where the chosen difficulty says it should.
+   *
+   * Tutorial and Chill keep the ±1.0 lean clamp so a first-timer cannot fall
+   * off the bike; Adventurous and Daredevil start with it off, which is what
+   * makes their instruction text ("lean too far and you'll go down") true.
+   * A player who has pressed SAFETY this session keeps their own choice.
+   */
+  _applySafetyDefault() {
+    if (this._safetyTouched) { this._updateSafetyBtn(); return; }
+    if (TUNE.safetyDefault != null) this.safetyMode = !!TUNE.safetyDefault;
+    this._updateSafetyBtn();
+  }
+
   _recordBalanceCrashIfNew(wasFallen) {
     if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
       this._recordCrash('balance');

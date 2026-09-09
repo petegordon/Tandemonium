@@ -122,8 +122,25 @@ export const BALANCE_DEFAULTS = { ...SHARED_PHYSICS, ...PLATFORM_TILT_DEFAULTS }
 export const TUNE = { ...BALANCE_DEFAULTS };
 
 // Difficulty presets
+//
+// A-5 · honest tension. Safety mode clamps lean to ±1.0, so a preset whose
+// crashThreshold sits above 1.0 CANNOT fall while safety is on. That was true
+// of every preset, on by default, while the screen said "Don't lean too far or
+// you'll crash!". Now:
+//
+//   safetyDefault true  (tutorial, chill) — cannot fall, by design. The edge is
+//                       still felt: past |lean| > 0.8 the bike wobbles (see
+//                       EDGE_BAND in bike-model) so the player learns where it is.
+//   safetyDefault false (adventurous, daredevil) — falls, and warns first. The
+//                       thresholds below are chosen so the danger wobble starts
+//                       well before the fall: crashThreshold x dangerOnset is
+//                       the lean where the warning begins.
+//
+// These are starting values. B-1 (the GDEX playtest) retunes them against real
+// crash-per-ride numbers.
 export const DIFFICULTY_PRESETS = {
   tutorial: {
+    safetyDefault: true,        // cannot fall — this is where people learn
     crashThreshold: 2.2,        // ~126° — nearly impossible to reach
     gravityForce: 1.0,          // very weak topple force
     wobbleMultiplier: 0.0,      // NO random wobble
@@ -137,6 +154,7 @@ export const DIFFICULTY_PRESETS = {
     autoSpeed: true,            // bike rolls forward automatically
   },
   chill: {
+    safetyDefault: true,        // cannot fall; the wobble band teaches the edge
     crashThreshold: 2.2,        // same as tutorial — nearly impossible to crash
     gravityForce: 1.0,          // very weak topple force
     wobbleMultiplier: 0.0,      // no random wobble
@@ -150,27 +168,29 @@ export const DIFFICULTY_PRESETS = {
     autoSpeed: true,            // steady cruise speed for smooth, stable riding
   },
   adventurous: {
-    crashThreshold: 2.0,        // forgiving but crashable
+    safetyDefault: false,       // A-5: this is the difficulty that can fall
+    crashThreshold: 1.4,        // falls at ~80° of lean
     gravityForce: 1.2,          // slightly more topple than chill
     wobbleMultiplier: 0.1,      // very light wobble
-    dangerOnset: 0.75,          // moderate warning
+    dangerOnset: 0.65,          // warning from |lean| 0.91 — about 1.5 s of notice
     timeMultiplier: 1.0,
     maxSpeed: 14,               // moderate speed
     scoreMultiplier: 1.0,
     autoCorrection: true,       // still has auto-correction
-    autoCorrectionStrength: 5.0, // strong — bike helps a lot
+    autoCorrectionStrength: 4.0, // helps, but no longer does the riding for you
     pedalLeanKickScale: 0.1,    // barely noticeable pedal kicks
   },
   daredevil: {
-    crashThreshold: 1.8,        // tighter but still forgiving
+    safetyDefault: false,
+    crashThreshold: 1.2,        // falls at ~69° of lean
     gravityForce: 1.5,          // moderate topple force
     wobbleMultiplier: 0.3,      // light wobble
-    dangerOnset: 0.60,          // earlier danger warning
+    dangerOnset: 0.55,          // warning from |lean| 0.66
     timeMultiplier: 0.9,
     maxSpeed: 19,
     scoreMultiplier: 1.5,
     autoCorrection: true,       // still has auto-correction
-    autoCorrectionStrength: 3.0, // gentle help
+    autoCorrectionStrength: 2.5, // barely there — you are riding this one
     pedalLeanKickScale: 0.3,    // light pedal kicks
   },
 };

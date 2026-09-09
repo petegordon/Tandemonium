@@ -4612,8 +4612,11 @@ ON</button>
 <!-- Instructions overlay (hidden initially — lobby shows first) -->
 <div id="instructions" class="hidden">
   <h1>Tandemonium</h1>
-  <p>Alternate LEFT/RIGHT pedals to ride.<br>Tilt your phone, use A/D keys, or a gamepad to steer.</p>
-  <p>Don't lean too far or you'll crash!</p>
+  <!-- A-5 · filled per difficulty by _updateInstructionsText(); the third line
+       only appears on the presets that can actually fall. -->
+  <p>Alternate the LEFT and RIGHT pedals to ride.</p>
+  <p>Lean to steer.</p>
+  <p style="display:none"></p>
   <p class="tap-hint">Tap anywhere to start</p>
 </div>
 

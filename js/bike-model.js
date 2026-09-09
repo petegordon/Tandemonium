@@ -8,6 +8,9 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
 
+// A-5 · where the safety clamp starts to be felt. The clamp itself is at ±1.0.
+export const EDGE_BAND_START = 0.8;
+
 // The riders GLB ships Draco-compressed geometry to keep it small; the plain
 // frame GLB isn't compressed, so the decoder is only fetched when a Draco mesh
 // is actually encountered. Version-matched to the CDN three build. Shared across
@@ -556,6 +559,19 @@ export class BikeModel {
     if (dangerRatio > dangerOnset) {
       const intensity = (dangerRatio - dangerOnset) / (1 - dangerOnset); // 0→1 from onset to crash
       dangerWobble = intensity * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
+    }
+
+    // A-5 · the edge band. On the presets that cannot fall (tutorial, chill —
+    // and on any preset while SAFETY is on) the lean is clamped at ±1.0, so
+    // the danger wobble above never fires and the rider never learns that an
+    // edge exists. Past 0.8 the bike shivers at 30% amplitude: you can feel
+    // the limit without ever being punished by it.
+    if (safetyMode && Math.abs(this.lean) > EDGE_BAND_START) {
+      const edge = Math.min(1, (Math.abs(this.lean) - EDGE_BAND_START) / (1.0 - EDGE_BAND_START));
+      dangerWobble += edge * 0.3 * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
+      this._edgeIntensity = edge;
+    } else {
+      this._edgeIntensity = 0;
     }
 
     // Grass wobble: rough terrain when off-road (scaled by wobbleMultiplier)
