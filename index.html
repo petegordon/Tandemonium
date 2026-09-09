@@ -1666,11 +1666,14 @@
     50% { box-shadow: 0 4px 0 rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 16px rgba(255,255,255,0.15); }
   }
 
-  /* ── Crash flash overlay ── */
+  /* ── Crash flash overlay ──
+     B-2: a vignette that darkens the edges rather than a full red wash. The
+     wash read as "you have been ejected from the game"; a crash is a beat in
+     the ride, and you can still see the road you are about to get back on. */
   #crash-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(255,0,0,0);
+    background: radial-gradient(ellipse at center, rgba(255,40,40,0) 35%, rgba(180,0,0,0) 100%);
     pointer-events: none;
     z-index: 9;
     transition: none;

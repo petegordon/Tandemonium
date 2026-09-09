@@ -56,6 +56,10 @@ export const EVT_GAMEOVER    = 0x05;
 export const EVT_CHECKPOINT  = 0x06;
 export const EVT_FINISH      = 0x07;
 export const EVT_RETURN_ROOM = 0x08;
+// B-2 · a reset that lands in the short post-crash countdown, so both riders
+// get back on the road at the same moment. A partner on an older build sees
+// EVT_RESET semantics for anything it does not know, so this is additive.
+export const EVT_RESET_QUICK = 0x09;
 
 export const MSG_COLLECT     = 0x06;
 export const MSG_PROFILE     = 0x07;

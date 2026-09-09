@@ -476,6 +476,13 @@ export class BikeModel {
 
     if (this.fallen) {
       this.fallTimer -= dt;
+      this.fallElapsed = (this.fallElapsed || 0) + dt;
+      // B-2 · the tumble: ease over to the fallen side in 0.4 s with a small
+      // bounce at the end, instead of snapping flat on the impact frame.
+      const t = Math.min(1, this.fallElapsed / 0.4);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const bounce = t >= 1 ? Math.sin((this.fallElapsed - 0.4) * 18) * 0.05 * Math.max(0, 1 - (this.fallElapsed - 0.4) * 3) : 0;
+      this.lean = (this._fallLeanTarget || 0) * eased + bounce;
       if (this.fallTimer <= 0) this._reset();
       this._applyTransform(dt);
       return;
@@ -809,11 +816,15 @@ export class BikeModel {
     this._updateRiderLean(dt);
   }
 
+  // B-2 · how long the bike lies on its side. A crash should read as a beat in
+  // the ride, not an interruption of it: 2.0 s of lying still (then a modal, then
+  // a 3 s countdown) was 6-9 s of dead air for one mistake.
   _fall() {
     this.fallen = true;
-    this.fallTimer = 2.0;
+    this.fallTimer = 1.2;
+    this.fallElapsed = 0;
     this.speed = 0;
-    this.lean = Math.sign(this.lean) * Math.PI / 2.2;
+    this._fallLeanTarget = Math.sign(this.lean || 1) * Math.PI / 2.2;
     this.leanVelocity = 0;
     const terrainY = this.roadPath
       ? this.roadPath.getHeightAtWorld(this.position.x, this.position.z, this.roadD)

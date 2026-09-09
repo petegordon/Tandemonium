@@ -111,17 +111,14 @@ export class HUD {
     }
   }
 
-  /**
-   * A-4 · make the pair legible.
-   *
-   * The sync bar is offsetScore, red -> amber -> green. The seat chips flash
-   * per tap in that seat's own colour, so a rider can see WHO fell off the beat
-   * without the game ever printing "S missed" at them. CRANK FIGHT! is stamped
-   * on the shared mistake, with the fix spelled out the first two times.
-   *
-   * Everything here is a no-op in solo: `pedalCtrl.stats.captain` only exists on
-   * the shared (co-op) controller.
-   */
+  /** B-2 · edge-darkening crash vignette; `k` is 0..1. */
+  _setCrashVignette(k) {
+    const edge = (k * 0.55).toFixed(3);
+    const mid = (k * 0.12).toFixed(3);
+    this.crashOverlay.style.background =
+      `radial-gradient(ellipse at center, rgba(255,40,40,${mid}) 35%, rgba(120,0,0,${edge}) 100%)`;
+  }
+
   /**
    * Ride start: which seat is this screen, and is this a co-op ride at all?
    * The stoker runs a local (solo) pedal controller for its own feel, so the
@@ -138,6 +135,17 @@ export class HUD {
     if (typeof score === 'number') this._remoteSyncScore = score;
   }
 
+  /**
+   * A-4 · make the pair legible.
+   *
+   * The sync bar is offsetScore, red -> amber -> green. The seat chips flash
+   * per tap in that seat's own colour, so a rider can see WHO fell off the beat
+   * without the game ever printing "S missed" at them. CRANK FIGHT! is stamped
+   * on the shared mistake, with the fix spelled out the first two times.
+   *
+   * A no-op in solo: `pedalCtrl.stats.stoker` only exists on the shared
+   * (co-op) controller, and setSeat() marks the co-op modes explicitly.
+   */
   _updateSync(pedalCtrl, dt) {
     const shared = !!(pedalCtrl && pedalCtrl.stats && pedalCtrl.stats.stoker);
     const coop = shared || this._coopForced;
@@ -473,19 +481,19 @@ export class HUD {
       if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'none';
     }
 
-    // Crash flash
+    // Crash vignette (B-2). Fades over ~1 s, which is the whole length of the
+    // fall now, so the screen is clear again before the bike stands up.
     if (bike.fallen && this.crashFlash === 0) {
       this.crashFlash = 1;
-      this.crashOverlay.style.background = 'rgba(255, 0, 0, 0.35)';
+      this._setCrashVignette(1);
     }
     if (this.crashFlash > 0) {
-      this.crashFlash -= dt * 0.5;
+      this.crashFlash -= dt * 1.0;
       if (this.crashFlash <= 0) {
         this.crashFlash = 0;
-        this.crashOverlay.style.background = 'rgba(255, 0, 0, 0)';
+        this._setCrashVignette(0);
       } else {
-        const alpha = (this.crashFlash * 0.35).toFixed(3);
-        this.crashOverlay.style.background = 'rgba(255, 0, 0, ' + alpha + ')';
+        this._setCrashVignette(this.crashFlash);
       }
     }
   }

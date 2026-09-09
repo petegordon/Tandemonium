@@ -4,8 +4,9 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
+import { decideAfterCrash, countCrash } from './crash-policy.js';
 import { getLevelById, LEVELS, getInstructions } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
@@ -855,7 +856,8 @@ class Game {
             flavorNum.className = '';
           }
         }, 1000);
-      } else if (eventType === EVT_RESET) {
+      } else if (eventType === EVT_RESET || eventType === EVT_RESET_QUICK) {
+        this._quickCountdown = (eventType === EVT_RESET_QUICK);
         this._hideGameOver();
         this._hideVictory();
         // Clear TOO SLOW overlay if showing
@@ -867,6 +869,7 @@ class Game {
           this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
         }
         this._resetGame(true);
+        this._quickCountdown = false;
       } else if (eventType === EVT_GAMEOVER) {
         // Idempotent: captain may retry-send GAMEOVER for reliability.
         if (this.state === 'playing') this._showGameOver(true);
@@ -2169,8 +2172,10 @@ class Game {
 
     // Captain always broadcasts reset so stoker also resets.
     // Stoker receiving EVT_RESET calls _resetGame(fromRemote=true) which won't re-send.
+    // B-2: the quick variant tells the stoker to use the 1.5 s countdown too, so
+    // both riders are back on the road on the same beat.
     if (this.net && this.mode === 'captain') {
-      this.net.sendEvent(EVT_RESET);
+      this.net.sendEvent(this._quickCountdown ? EVT_RESET_QUICK : EVT_RESET);
     }
 
     if (checkpointD > 0) {
@@ -2182,19 +2187,25 @@ class Game {
 
   _resumeCountdown() {
     this.state = 'countdown';
-    this.countdownTimer = 3.0;
+    // B-2: getting back on after a crash is a 1.5 s beat, not another full
+    // three-count. A restart the player asked for keeps the 3 s version.
+    // 1.2 s here + the 1.2 s the bike spends on its side = 2.4 s from impact to
+    // riding, inside the 2.5 s the plan asks for. (The plan's own 1.5 s would
+    // have summed to 2.7 s.)
+    const quick = !!this._quickCountdown;
+    this.countdownTimer = quick ? 1.2 : 3.0;
     this.instructionsEl.classList.add('hidden');
 
     const statusEl = document.getElementById('status');
     statusEl.textContent = '';
     statusEl.style.fontSize = '';
-    this._lastCountNum = 3;
+    this._lastCountNum = quick ? 2 : 3;
 
-    // Show animated countdown "3" in flavor overlay (same as _startCountdown)
+    // Show animated countdown in flavor overlay (same as _startCountdown)
     const flavorNum = document.getElementById('countdown-flavor-num');
     if (flavorNum) {
-      flavorNum.textContent = '3';
-      flavorNum.className = 'tick-3 pop';
+      flavorNum.textContent = quick ? '2' : '3';
+      flavorNum.className = (quick ? 'tick-2' : 'tick-3') + ' pop';
     }
 
     // Re-show the segment timer (hidden by _onTimerExpired / _showGameOver)
@@ -3925,7 +3936,66 @@ class Game {
     this._fpsMaxDt = 0;
   }
 
+  // ============================================================
+  // B-2 · CRASH IS A BEAT, NOT A MENU
+  // ============================================================
+  //
+  // A crash used to cost 6-9 seconds: 2 s on the ground, a modal to read and
+  // click through, then a full 3 s countdown. That is a punishment for a game
+  // whose comedy IS the falling over. Now: tumble, honks, ~1.2 s down, then a
+  // 1.5 s countdown straight back onto the road. No modal.
+  //
+  // The modal is still the right answer when the ride is actually over or the
+  // player is actually stuck, so it is kept for:
+  //   - the timer running out, or the player pressing END RIDE
+  //   - a ranked run (Phase D), where a crash ends the attempt
+  //   - the THIRD crash in the same segment: at that point the player is stuck,
+  //     not unlucky, and the existing DDA assist offer is worth showing.
+
+  /**
+   * Called the frame the bike finishes falling. The rule itself lives in
+   * js/crash-policy.js so it can be tested; this method is the wiring.
+   */
+  _onCrashRecovered() {
+    const segmentKey = this.raceManager ? this.raceManager.passedCheckpoints.size : 0;
+    this._crashState = countCrash(this._crashState || { segmentKey: -1, crashes: 0 }, segmentKey);
+    const decision = decideAfterCrash({
+      crashesThisSegment: this._crashState.crashes,
+      rankedRun: !!this._rankedRunActive        // Phase D sets this
+    });
+
+    if (decision.action === 'modal') {
+      this._showGameOver();
+      return;
+    }
+
+    // Quick recovery. _resetGame already handles checkpoint restore, DDA,
+    // collectibles and the EVT_RESET message to the stoker; the only change is
+    // the shorter countdown it lands in.
+    if (this._crashRecoverStartedAt) {
+      const ms = performance.now() - this._crashRecoverStartedAt;
+      try { analytics.trackCrashRecover(ms, this._lastCrashCauseForStats || 'balance'); } catch {}
+      this._crashRecoverStartedAt = 0;
+    }
+    if (this.raceManager) this.raceManager.crashCount++;
+    this._quickCountdown = true;
+    this._resetGame();
+    this._quickCountdown = false;
+  }
+
   _recordCrash(cause, bike = this.bike) {
+    // B-2: start the clock on the recovery the moment of impact, so
+    // crash_recover measures what the player actually waits through, and let
+    // the geese enjoy themselves.
+    this._crashRecoverStartedAt = performance.now();
+    this._lastCrashCauseForStats = cause;
+    if (this.audioEngine) {
+      // Balance crashes have no impact sound of their own (tree and obstacle hits
+      // play one at the collision site), so give this one a thump too.
+      if (cause === 'balance') this._playCrash(0.9);
+      this.audioEngine.honkBurst(2 + (Math.random() < 0.35 ? 1 : 0));
+    }
+
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
     if (bike) {
@@ -4243,8 +4313,8 @@ class Game {
       this._updateTutorial(dt);
       // Skip normal game-over on crash during tutorial
     } else {
-      // Show game over after crash recovery
-      if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
+      // B-2: a crash is a beat, not a menu — see _onCrashRecovered.
+      if (wasFallen && !this.bike.fallen) { this._onCrashRecovered(); return; }
     }
 
     this.grassParticles.update(this.bike, dt);
@@ -4339,8 +4409,8 @@ class Game {
     if (this._tutorialActive) {
       this._updateTutorial(dt);
     } else {
-      // Show game over after crash recovery
-      if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
+      // B-2: a crash is a beat, not a menu — see _onCrashRecovered.
+      if (wasFallen && !this.bike.fallen) { this._onCrashRecovered(); return; }
     }
 
     this.grassParticles.update(this.bike, dt);
@@ -4612,8 +4682,10 @@ class Game {
   _updateWorldAndCamera(dt) {
     this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
-    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
-      this.chaseCamera.shakeAmount = 0.15;
+    // B-2: the shake belongs to the impact, so key it off time SINCE the fall
+    // rather than a threshold on the (now shorter) countdown to standing up.
+    if (this.bike.fallen && this.bike.fallElapsed < 0.35) {
+      this.chaseCamera.shakeAmount = 0.35;
     }
   }
 
@@ -4677,7 +4749,7 @@ class Game {
 
     for (const rig of rigs) {
       rig.chaseCamera.update(rig.bike, dt, this.world.roadPath);
-      if (rig.bike.fallen && rig.bike.fallTimer > 1.8) {
+      if (rig.bike.fallen && rig.bike.fallElapsed < 0.35) {
         rig.chaseCamera.shakeAmount = 0.15;
       }
       rig.grassParticles.update(rig.bike, dt);
@@ -5949,7 +6021,8 @@ class Game {
     }
 
     // Crash check
-    if (this.bike.fallen && this.bike.fallTimer > 1.2 && !this._tutCrashPending) {
+    // B-2: fires on the frame the fall starts (fallTimer is 1.2 s now).
+    if (this.bike.fallen && this.bike.fallElapsed < 0.2 && !this._tutCrashPending) {
       this._tutCrashPending = true;
       this._tutorialCrash(tp);
       return;

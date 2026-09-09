@@ -19,7 +19,8 @@
     "smoke": "node scripts/smoke-lobby.mjs",
     "smoke:boot": "node scripts/smoke-boot-failure.mjs",
     "audit:first30": "node scripts/audit-first-30s.mjs",
-    "smoke:ride": "node scripts/smoke-first-ride.mjs"
+    "smoke:ride": "node scripts/smoke-first-ride.mjs",
+    "smoke:crash": "node scripts/smoke-crash-beat.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

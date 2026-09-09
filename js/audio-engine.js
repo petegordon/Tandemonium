@@ -494,6 +494,19 @@ export class AudioEngine {
     noise.stop(now + 0.06);
   }
 
+  /**
+   * B-2 · the pile-on. Geese find a fallen tandem hilarious; two or three
+   * honks half a beat apart is the whole joke, and it is what turns the crash
+   * from a penalty screen into the funniest moment in the ride.
+   */
+  honkBurst(count = 2) {
+    if (!this.ctx) return;
+    for (let i = 0; i < count; i++) {
+      const delay = i * (90 + Math.random() * 120);
+      setTimeout(() => this.gooseHonk(0.42 + Math.random() * 0.16), delay);
+    }
+  }
+
   // ── Pedal taps (A-3) ─────────────────────────────────────────────────────
   //
   // Every stroke is heard, so cadence is audible and a mistake is obvious
