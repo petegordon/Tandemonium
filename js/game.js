@@ -10,6 +10,7 @@ import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
+import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
 import { makePlacementSalt } from './daily-seed.js';
 import {
   recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
@@ -460,6 +461,8 @@ class Game {
 
     // B-5 · end-screen calls to action (wishlist / send a link).
     this._wireCtaButtons();
+    // E-3 · the touch sprint/emote row.
+    this._wirePingRow();
     // D-3 · share the day's result.
     for (const which of ['victory', 'gameover']) {
       this._onTap('btn-daily-share-' + which, () => this._shareDailyResult(which));
@@ -728,6 +731,17 @@ class Game {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
         this.controllerHud.toggle();
+        return;
+      }
+      // E-3 · Space calls a sprint; 1-4 send the four emotes. Chosen because
+      // both hands are already on the arrow keys and A/D, and Space is the one
+      // key a keyboard player will find without being told.
+      if (e.code === 'Space' && !e.repeat) {
+        this._callSprint();
+        return;
+      }
+      if (!e.repeat && ['Digit1', 'Digit2', 'Digit3', 'Digit4'].includes(e.code)) {
+        this._sendEmote(EMOTES[Number(e.code.slice(-1)) - 1]);
         return;
       }
       if (e.code === 'KeyM') {
@@ -1086,6 +1100,11 @@ class Game {
       if (profile && profile.type === 'dailyMode') {
         this._rankedRunActive = profile.mode === 'ranked';
         if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
+        return;
+      }
+      // E-3: a sprint call or an emote from the other seat.
+      if (profile && profile.type === 'ping') {
+        this._receivePing(profile);
         return;
       }
       if (profile && profile.type === 'tiltStatus') {
@@ -2879,6 +2898,128 @@ class Game {
     return isNewBest && track.count > 1 ? track : null;
   }
 
+  // ============================================================
+  // E-3 · SYNC PING — a vocabulary for two people on one bike
+  // ============================================================
+  //
+  // A large share of this game's sessions are a laptop and a phone with no call
+  // open, and the two riders may be in different cities. Portal 2 shipped a
+  // ping tool for exactly this reason. Here it is one button for "now,
+  // together" and four emotes for everything else.
+  //
+  // The rules live in js/sync-ping.js (pure, tested). This is the wiring:
+  // input, the wire, and the two consumers (HUD and the sync bar).
+
+  /** E-3 · touch has no spare button, so the vocabulary gets its own row. */
+  _wirePingRow() {
+    const row = document.getElementById('ping-row');
+    if (!row) return;
+    const sprint = document.getElementById('btn-ping-sprint');
+    if (sprint) sprint.addEventListener('click', (e) => { e.preventDefault(); this._callSprint(); });
+    row.querySelectorAll('[data-emote]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this._sendEmote(EMOTES[Number(btn.dataset.emote)]);
+      });
+    });
+  }
+
+  /** Is a ping meaningful right now? Solo has nobody to say it to. */
+  _pingActive() {
+    return this.state === 'playing' && this.mode !== 'solo' && this.mode !== 'versus';
+  }
+
+  /** Which seat is this screen, for attributing a call. */
+  _pingSeat() {
+    return this.mode === 'stoker' ? 'stoker' : 'captain';
+  }
+
+  /** Call a sprint locally and tell the other seat. */
+  _callSprint() {
+    if (!this._pingActive()) return;
+    const next = callSprint(this._pingState, this._pingSeat());
+    if (next === this._pingState) return;      // refused: cooling down, or already running
+    this._pingState = next;
+    this._sendPing({ kind: 'sprint' });
+    // Paint on the press rather than on the next frame: a call that appears a
+    // frame late feels like a button that did not take.
+    this.hud.updatePing(this._pingState);
+    this._playBeep(700, 0.08);
+    try { analytics.trackEvent('sync_ping', { kind: 'sprint', seat: this._pingSeat() }); } catch {}
+  }
+
+  /** Send an emote locally and to the other seat. */
+  _sendEmote(emote) {
+    if (!this._pingActive()) return;
+    const next = addEmote(this._pingState, emote, this._pingSeat());
+    if (next === this._pingState) return;
+    this._pingState = next;
+    this._sendPing({ kind: 'emote', emote });
+    this.hud.updatePing(this._pingState);
+    try { analytics.trackEvent('sync_ping', { kind: 'emote', emote, seat: this._pingSeat() }); } catch {}
+  }
+
+  /**
+   * Both directions use the typed profile channel: it already exists, it is
+   * reliable, and a ping is a handful of bytes a few times a ride — nothing
+   * that belongs on the 60 Hz state path.
+   */
+  _sendPing(payload) {
+    if (!this.net) return;                     // local co-op: one screen, no wire
+    try {
+      this.net.sendProfile({ type: 'ping', seat: this._pingSeat(), ...payload });
+    } catch { /* a missed ping is a missed word, not a broken ride */ }
+  }
+
+  /** A ping arrived from the other seat. */
+  _receivePing(profile) {
+    if (!profile) return;
+    const seat = profile.seat === 'stoker' ? 'stoker' : 'captain';
+    if (profile.kind === 'sprint') {
+      const next = callSprint(this._pingState, seat);
+      if (next !== this._pingState) {
+        this._pingState = next;
+        this._playBeep(700, 0.08);
+      }
+    } else if (profile.kind === 'emote') {
+      this._pingState = addEmote(this._pingState, profile.emote, seat);
+    }
+    this.hud.updatePing(this._pingState);
+  }
+
+  /** Per frame: advance the countdown, beep the numbers, update the HUD. */
+  _updatePing(dt) {
+    if (!this._pingState) this._pingState = createPingState();
+    if (!this._pingActive()) {
+      if (this._pingWasOn) {
+        this.hud.updatePing(null);
+        const row = document.getElementById('ping-row');
+        if (row) row.classList.remove('visible');
+        this._pingWasOn = false;
+      }
+      return;
+    }
+    const { state, started, ended, tick } = tickPing(this._pingState, dt);
+    this._pingState = state;
+
+    if (tick !== null) this._playBeep(600, 0.07);
+    if (started) {
+      this._playBeep(1000, 0.18);
+      hapticCheckpoint();
+    }
+    if (ended) this._playBeep(400, 0.1);
+
+    // The sprint's whole reward: paired beats build the bar twice as fast.
+    if (this.sharedPedal) this.sharedPedal.syncMultiplier = syncMultiplier(state);
+
+    this.hud.updatePing(state);
+    if (!this._pingWasOn) {
+      const row = document.getElementById('ping-row');
+      if (row) row.classList.toggle('visible', isMobile);
+    }
+    this._pingWasOn = true;
+  }
+
   /**
    * E-1 · feed the stoker's road-ahead panel.
    *
@@ -4577,6 +4718,27 @@ class Game {
     // L3 (button 10) — quick gyro recenter
     const l3 = gp.buttons[10] && gp.buttons[10].pressed;
 
+    // E-3 · X is the talk button: tap it to call a sprint, or hold it and flick
+    // the d-pad to send an emote. The d-pad's four normal jobs (safety, speed,
+    // reset, lobby) are untouched — they simply do not fire while X is held,
+    // so one spare button buys the whole vocabulary with no conflicts.
+    const x = gp.buttons[2] && gp.buttons[2].pressed;
+    if (x && !this._gpPrevX) this._emoteSentThisHold = false;   // fresh press
+    if (x) {
+      const emote = (up && !this._dpadPrevUp) ? EMOTES[0]
+        : (down && !this._dpadPrevDown) ? EMOTES[1]
+        : (left && !this._dpadPrevLeft) ? EMOTES[2]
+        : (right && !this._dpadPrevRight) ? EMOTES[3] : null;
+      if (emote) { this._sendEmote(emote); this._emoteSentThisHold = true; }
+      this._gpPrevX = x;
+      this._dpadPrevUp = up; this._dpadPrevDown = down;
+      this._dpadPrevLeft = left; this._dpadPrevRight = right;
+      return;
+    }
+    // Released without having sent an emote: that was a sprint call.
+    if (this._gpPrevX && !this._emoteSentThisHold) this._callSprint();
+    this._gpPrevX = x;
+
     if (up && !this._dpadPrevUp) this.safetyBtn.click();
     if (down && !this._dpadPrevDown) this.speedBtn.click();
     if (right && !this._dpadPrevRight) document.getElementById('reset-btn').click();
@@ -5028,6 +5190,7 @@ class Game {
     this._updateCoachCard(dt);
     this._drainPendingGyroCalibration();
     this._updateGhost(dt);
+    this._updatePing(dt);        // E-3
 
     // Background motion adaptation (skip when level config disables it)
     const adaptLevel = this.lobby.selectedLevel;
@@ -5132,6 +5295,7 @@ class Game {
     this._updateCoachCard(dt);
     this._drainPendingGyroCalibration();
     this._updateGhost(dt);
+    this._updatePing(dt);        // E-3
 
     // Tutorial: handle crash/completion internally instead of game-over screen
     if (this._tutorialActive) {
@@ -6003,6 +6167,7 @@ class Game {
     remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     this._updateLookahead(dt);   // E-1 · the road only the stoker can see
+    this._updatePing(dt);        // E-3 · the sprint call and emotes
     const stokerLean = this.balanceCtrl.update().leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     // Independent rider torsos on the stoker's screen too: captain leans by the

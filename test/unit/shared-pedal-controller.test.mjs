@@ -114,3 +114,29 @@ test('tapEvents describe the last frame for the HUD and audio', () => {
   assert.equal(ctrl.tapEvents[0].seat, 'stoker');
   assert.equal(ctrl.lastTapKind, 'perfect');
 });
+
+test('E-3 · a called sprint builds the sync bar faster', () => {
+  // Two beats, not six: a steady pair saturates the bar near 1.0 within a few
+  // seconds either way, and the point being tested is the RATE.
+  const plain = ride({ beats: 2, pair: true });
+  const sprinting = new SharedPedalController();
+  sprinting.syncMultiplier = 2;
+  let t = 0, capFoot = 'up', stoFoot = 'down';
+  for (let i = 0; i < 2; i++) {
+    at(t, () => sprinting.receiveTap('captain', capFoot));
+    sprinting.update(0.016);
+    at(t + 0.1, () => sprinting.receiveTap('stoker', stoFoot));
+    sprinting.update(0.016);
+    sprinting.update(0.4);
+    capFoot = capFoot === 'up' ? 'down' : 'up';
+    stoFoot = stoFoot === 'up' ? 'down' : 'up';
+    t += 0.5;
+  }
+  assert.ok(sprinting.offsetScore > plain.ctrl.offsetScore,
+    `sprint ${sprinting.offsetScore.toFixed(3)} should beat ${plain.ctrl.offsetScore.toFixed(3)}`);
+});
+
+test('E-3 · without a sprint the multiplier is inert', () => {
+  const ctrl = new SharedPedalController();
+  assert.equal(ctrl.syncMultiplier, 1);
+});

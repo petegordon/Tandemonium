@@ -207,6 +207,76 @@
   .pair-panel-title { font-size: 13px; font-weight: 800; color: #fff; }
   .pair-panel-line { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 2px; }
   .pair-panel-best { margin-top: 4px; font-size: 12px; font-weight: 800; color: #ffd23f; }
+  /* E-3 · the touch vocabulary row. */
+  #ping-row {
+    display: none;
+    gap: 4px;
+    margin-top: 5px;
+  }
+  #ping-row.visible { display: flex; }
+  .ping-btn {
+    flex: 1;
+    padding: 5px 0;
+    border: 0;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .ping-btn.ping-sprint {
+    flex: 1.6;
+    background: rgba(255,210,63,0.85);
+    color: #201a00;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 1px;
+  }
+  .ping-btn:disabled { opacity: 0.4; }
+  /* E-3 · "3-2-1 SPRINT!" — the one thing both riders agree to do at once. */
+  #ping-call {
+    position: fixed;
+    top: 32%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: clamp(28px, 8vw, 60px);
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #ffd23f;
+    text-shadow: 0 3px 16px rgba(0,0,0,0.65);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s;
+    z-index: 59;
+  }
+  #ping-call.show { opacity: 1; }
+  #ping-call.go { color: #3ad46e; }
+  /* Emote bubbles: small, brief, and stacked no more than two deep. */
+  #ping-bubbles {
+    position: fixed;
+    top: 118px;
+    right: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-end;
+    pointer-events: none;
+    z-index: 58;
+  }
+  .ping-bubble {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.55);
+    font-size: 16px;
+    line-height: 1.2;
+  }
+  .ping-bubble .ping-seat {
+    font-size: 9px;
+    font-weight: 800;
+    color: rgba(255,255,255,0.55);
+    margin-right: 3px;
+    vertical-align: middle;
+  }
   /* E-1 · the stoker's look-ahead. Sits top-centre, above the strip, because
      it is the thing the stoker is watching instead of the road. */
   #lookahead {
@@ -4740,6 +4810,15 @@
       <div id="sync-bar-wrap"><div id="sync-bar-fill"></div></div>
       <span class="seat-chip" id="seat-chip-stoker">S</span>
     </div>
+    <!-- E-3 · touch has no spare button, so the vocabulary gets its own row.
+         Shown only on touch devices in co-op. -->
+    <div id="ping-row">
+      <button class="ping-btn ping-sprint" id="btn-ping-sprint">SPRINT</button>
+      <button class="ping-btn" data-emote="0">&#128077;</button>
+      <button class="ping-btn" data-emote="1">&#129760;</button>
+      <button class="ping-btn" data-emote="2">&#128034;</button>
+      <button class="ping-btn" data-emote="3">&#128293;</button>
+    </div>
     <div id="contribution-bar">
       <div id="contrib-captain"></div>
       <div id="contrib-stoker"></div>
@@ -4865,6 +4944,10 @@ ON</button>
   </div>
   <div id="coach-steer-line">Steer: <b>A</b> / <b>D</b></div>
 </div>
+
+<!-- E-3 · the sprint call and the emote bubbles. Both riders see both. -->
+<div id="ping-call"></div>
+<div id="ping-bubbles"></div>
 
 <!-- E-1 · the stoker's road-ahead panel. Only ever rendered on the stoker's
      screen in online co-op: it is the one thing in the game the captain

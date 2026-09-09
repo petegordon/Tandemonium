@@ -5,6 +5,7 @@
 import { isMobile } from './config.js';
 import { formatDelta } from './records.js';
 import { LOOKAHEAD_M } from './lookahead.js';
+import { pingLabel } from './sync-ping.js';
 
 export class HUD {
   constructor(input) {
@@ -155,6 +156,38 @@ export class HUD {
   setRankedBadge(on) {
     const el = this._rankedBadgeEl || (this._rankedBadgeEl = document.getElementById('ranked-badge'));
     if (el) el.classList.toggle('show', !!on);
+  }
+
+  /**
+   * E-3 · the sprint call and the emote bubbles.
+   *
+   * Both riders see the same thing at the same time: that is the whole point —
+   * a sprint one rider knows about is just a rider going faster.
+   */
+  updatePing(state) {
+    const callEl = this._pingCallEl || (this._pingCallEl = document.getElementById('ping-call'));
+    const bubbleEl = this._pingBubblesEl || (this._pingBubblesEl = document.getElementById('ping-bubbles'));
+    if (!callEl || !bubbleEl) return;
+
+    const label = state ? pingLabel(state) : null;
+    if (label !== this._prevPingLabel) {
+      this._prevPingLabel = label;
+      callEl.textContent = label || '';
+      callEl.classList.toggle('show', !!label);
+      callEl.classList.toggle('go', label === 'SPRINT!');
+    }
+
+    const sig = state ? state.bubbles.map(b => b.seat + b.emote).join('|') : '';
+    if (sig !== this._prevBubbleSig) {
+      this._prevBubbleSig = sig;
+      bubbleEl.innerHTML = '';
+      for (const b of (state ? state.bubbles : [])) {
+        const el = document.createElement('div');
+        el.className = 'ping-bubble';
+        el.innerHTML = '<span class="ping-seat">' + (b.seat === 'stoker' ? 'S' : 'C') + '</span>' + b.emote;
+        bubbleEl.appendChild(el);
+      }
+    }
   }
 
   /**

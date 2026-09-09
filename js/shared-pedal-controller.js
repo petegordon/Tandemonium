@@ -34,6 +34,10 @@ export class SharedPedalController {
     // Running offset quality score (0-1)
     this.offsetScore = 0.5;
 
+    // E-3 · doubled while a called sprint is running, so "now, together" is
+    // worth something rather than being a noise both riders make.
+    this.syncMultiplier = 1;
+
     // Kind of the last tap processed ('perfect' | 'solo' | 'wrong' | 'fight'),
     // and which seat played it — A-3 (audio/haptics) and A-4 (seat chips) read
     // these; they are cleared by the consumer, not here.
@@ -119,7 +123,7 @@ export class SharedPedalController {
         pStats.perfectTaps++;
         const partnerStats = this.stats[pair && pair.source === 'captain' ? 'captain' : 'stoker'];
         if (pair && partnerStats) partnerStats.perfectTaps++;
-        this.offsetScore = Math.min(1, this.offsetScore + 0.1);
+        this.offsetScore = Math.min(1, this.offsetScore + 0.1 * (this.syncMultiplier || 1));
         const startBoost = this._scoring.captainLastFoot === null && this._scoring.stokerLastFoot === null ? 0.3 : 0;
         const cadence = gap > 0 && gap < 0.8 ? (0.8 - gap) * 0.4 : 0;
         const offsetBonus = this.offsetScore * 0.15;
