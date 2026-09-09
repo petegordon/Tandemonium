@@ -14,6 +14,10 @@ const ACHIEVEMENTS = [
   { id: 'speed_demon',  name: 'Speed Demon',      icon: '\u26A1',       condition: s => s.speed >= 13.9 },      // ⚡ (50 km/h)
 
   // Sync (multiplayer)
+  // A-2: reachable by cooperation now. Each paired beat adds +0.10 to offsetScore
+  // against 5%/s decay, so two riders answering each other's beat at ~1 beat/s
+  // cross 0.9 in about ten seconds. Under the old rule this was only reachable
+  // when one player pedalled alone while the other coasted.
   { id: 'perfect_sync', name: 'Perfect Sync',     icon: '\uD83E\uDD1D', condition: s => s.offsetScore > 0.9 && s.syncDuration >= 10 }, // 🤝
 
   // Collection
