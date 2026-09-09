@@ -34,6 +34,21 @@ export const LEVELS = [
     checkpointInterval: 125,
     icon: '\uD83C\uDFF0',        // 🏰
     description: 'The King awaits! Collect gems on the road to glory!'
+  },
+  {
+    // C-2 · Today's Road. The seed is NOT stored here: it is resolved at
+    // selection time by js/daily-ride.js, so this object never carries a stale
+    // date from whenever the page happened to load.
+    id: 'daily',
+    name: "Today's Road",
+    distance: 500,
+    collectibles: 'presents',
+    checkpointInterval: 125,
+    icon: '📅',        // 📅
+    description: 'A new road every day. Same for everyone.',
+    isDaily: true,
+    fixedDifficulty: 'adventurous',
+    treeCollision: true
   }
 ];
 

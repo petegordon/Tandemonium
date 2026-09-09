@@ -25,8 +25,15 @@ export const ROOM_MSG = {
 };
 
 export const RoomProtocol = {
-  /** Captain picked a level (mirrored to the stoker's display). */
-  levelSync: (levelId) => ({ type: ROOM_MSG.LEVEL_SYNC, levelId }),
+  /**
+   * Captain picked a level (mirrored to the stoker's display).
+   *
+   * C-2: `extra` carries Today's Road identity ({ key, seed }). The captain's
+   * clock is authoritative — a stoker on the other side of the 09:00 UTC
+   * rollover must ride the captain's road, not a road of their own.
+   */
+  levelSync: (levelId, extra = null) =>
+    extra ? { type: ROOM_MSG.LEVEL_SYNC, levelId, ...extra } : { type: ROOM_MSG.LEVEL_SYNC, levelId },
 
   /** Captain picked a difficulty. */
   difficultySync: (difficulty) => ({ type: ROOM_MSG.DIFFICULTY_SYNC, difficulty }),

@@ -42,11 +42,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS, getMedals } from './race-config.js';
-import { makePlacementSalt } from './daily-seed.js';
+import { makePlacementSalt, dailyKey, dailySeed } from './daily-seed.js';
+import { resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE } from './daily-ride.js';
 import * as records from './records.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
-import { AchievementManager, updateBadgeDisplay } from './achievements.js';
+import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
@@ -1197,7 +1198,11 @@ export class Lobby {
     // Check if gyro is active but uncalibrated (show recommendation, don't lock)
     const needsTuning = this._needsMotionTuning();
 
-    const levels = showTutorial ? LEVELS : LEVELS.filter(l => !l.isTutorial);
+    // C-2: Today's Road is not in the VERSUS list — versus has its own rules
+    // (two teams, one screen) and a shared daily result means nothing there.
+    const isVersus = mode === 'versus';
+    const levels = LEVELS.filter(l =>
+      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily));
 
     levels.forEach(level => {
       const isTutorial = level.isTutorial;
@@ -1218,9 +1223,17 @@ export class Lobby {
         card.disabled = true;
       } else {
         // Tutorial description adapts to calibration state
-        const desc = isTutorial && needsTuning
+        let desc = isTutorial && needsTuning
           ? '\u2B50 Recommended for calibration'
           : level.description;
+        // C-2: Today's Road says which day it is, what you have done on it, and
+        // when the next road arrives \u2014 a daily thing nobody knows is daily is
+        // just a level.
+        if (level.isDaily) {
+          const key = dailyKey();
+          desc = dailyDescription(dailyStatus(browserStore(), key), key) +
+            '<br><span class="level-card-daily-rule">' + DAILY_RULES_LINE + '</span>';
+        }
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">' + level.icon + '</span>' +
@@ -1234,15 +1247,28 @@ export class Lobby {
 
         if (isClickable) {
           card.addEventListener('click', () => {
-            this.selectedLevel = level;
+            // C-2: Today's Road resolves its identity at the moment it is picked
+            // — the day key and seed come from the clock now, not from whenever
+            // this page was loaded (someone may have left it open overnight).
+            this.selectedLevel = level.isDaily
+              ? resolveDailyLevel(level, { key: dailyKey(), seed: dailySeed() })
+              : level;
             this._forceWizard = isTutorial;
             this._updateDifficultyVisibility(level.id);
             container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
             if (startBtn) startBtn.disabled = false;
             analytics.trackEvent('level_select', { level: level.id, difficulty: this.selectedDifficulty });
+            if (level.isDaily) {
+              analytics.trackEvent('daily_open', { key: this.selectedLevel.key });
+            }
             if (this.net && this.net.connected) {
-              this.net.sendProfile(RoomProtocol.levelSync(level.id));
+              // C-2: the captain's day key and seed are authoritative — a stoker
+              // whose clock is on the other side of the 09:00 UTC rollover must
+              // still ride the captain's road, not a different one.
+              this.net.sendProfile(RoomProtocol.levelSync(level.id, level.isDaily
+                ? { key: this.selectedLevel.key, seed: this.selectedLevel.seed }
+                : null));
             }
           });
         } else {
@@ -1354,7 +1380,21 @@ export class Lobby {
    */
   _updateDifficultyVisibility(levelId) {
     const isTutorial = levelId === 'tutorial';
+    // C-2: Today's Road is one road at one difficulty for everyone — a shared
+    // road that each player tunes to taste is not a shared road.
+    const daily = LEVELS.find(l => l.id === levelId && l.isDaily);
+    const forced = isTutorial ? 'chill' : (daily ? daily.fixedDifficulty : null);
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
+    if (forced && !isTutorial) {
+      diffBtns.forEach(b => {
+        b.disabled = true;
+        b.classList.add('diff-disabled');
+        b.classList.toggle('selected', b.dataset.difficulty === forced);
+      });
+      this.selectedDifficulty = forced;
+      this._refreshRecordLines();
+      return;
+    }
     diffBtns.forEach(btn => {
       const diff = btn.dataset.difficulty;
       if (isTutorial && diff !== 'chill') {
@@ -2858,10 +2898,46 @@ export class Lobby {
     });
   }
 
+  /**
+   * C-2 · `?daily=YYYY-MM-DD` opens the lobby on Today's Road.
+   *
+   * The date in the link is only used to decide whether the link has expired:
+   * a road is only playable on its own day (everyone rides the same one, and a
+   * result on yesterday's road is not comparable with anyone's). An expired
+   * link lands on today's road with a toast saying so, rather than an error.
+   */
+  _checkDailyLink() {
+    let param = null;
+    try { param = new URLSearchParams(window.location.search).get('daily'); } catch { return; }
+    if (!param) return;
+
+    const today = dailyKey();
+    const expired = param !== today;
+    const level = LEVELS.find(l => l.isDaily);
+    if (!level) return;
+
+    this._pendingMode = 'solo';
+    this.selectedLevel = resolveDailyLevel(level, { key: today, seed: dailySeed() });
+    this._updateDifficultyVisibility('daily');
+    this._showStep(this.levelStep);
+    this._refreshRecordLines();
+    const card = document.querySelector('.level-card[data-level-id="daily"]');
+    if (card) {
+      document.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      const startBtn = document.getElementById('btn-start-ride');
+      if (startBtn) startBtn.disabled = false;
+    }
+    if (expired) {
+      showInfoToast('📅', 'That road has expired', 'Here’s today’s road instead.');
+    }
+    analytics.trackEvent('daily_link', { key: param, expired });
+  }
+
   async _checkAutoJoin() {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
-    if (!roomParam) return;
+    if (!roomParam) { this._checkDailyLink(); return; }
 
     history.replaceState(null, '', window.location.pathname);
     const code = roomParam.toUpperCase();
@@ -3591,7 +3667,13 @@ export class Lobby {
       // Partner changed bike — no label update needed (keep role-only labels)
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
-      this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
+      const picked = LEVELS.find(l => l.id === profile.levelId);
+      // C-2: for Today's Road, take the captain's key and seed rather than
+      // reading this device's clock — otherwise a stoker on the far side of
+      // the 09:00 UTC rollover would ride a different road with the same name.
+      this.selectedLevel = picked && picked.isDaily
+        ? resolveDailyLevel(picked, { key: profile.key, seed: profile.seed })
+        : (picked || this.selectedLevel);
       // Track if captain selected tutorial — stoker needs _forceWizard too
       this._forceWizard = (profile.levelId === 'tutorial');
       const container = document.getElementById('level-cards');

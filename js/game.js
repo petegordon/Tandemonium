@@ -9,6 +9,7 @@ import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
 import { makePlacementSalt } from './daily-seed.js';
+import { recordPractice, browserStore } from './daily-ride.js';
 import { getLevelById, LEVELS, getInstructions, getMedals } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
@@ -1797,10 +1798,14 @@ class Game {
     //
     // In online co-op the captain chose both and sent them with startRide; the
     // lobby has already stored them. Solo and local co-op choose here.
+    // Today's Road takes NO placement salt: everyone in the world must meet the
+    // same pylons in the same places, or it is not a shared road. The tutorial
+    // takes none either — it stays predictable while someone is learning.
+    const noSalt = level.isTutorial || level.isDaily;
     if (this.mode !== 'captain' && this.mode !== 'stoker') {
-      this._placementSalt = level.isTutorial ? 0 : makePlacementSalt();
+      this._placementSalt = noSalt ? 0 : makePlacementSalt();
     } else {
-      this._placementSalt = level.isTutorial ? 0 : (this.lobby._placementSalt || 0);
+      this._placementSalt = noSalt ? 0 : (this.lobby._placementSalt || 0);
     }
     if (this.world.reseed(level.seed ?? undefined)) {
       // The road moved under the bike: re-point it and put it back on the line.
@@ -2611,6 +2616,13 @@ class Game {
       html += '<div class="victory-stat">' + earned + chase + '</div>';
     }
 
+    // C-2 · Today's Road counts its own rides, so the card can say what you
+    // have done today. Practice only in the demo: unlimited runs, normal rules.
+    if (!fromRemote && level.isDaily && level.key) {
+      recordPractice(browserStore(), level.key, summary.timeMs);
+      try { analytics.trackEvent('daily_finish', { key: level.key, time_ms: summary.timeMs }); } catch {}
+    }
+
     try {
       analytics.trackEvent('run_recorded', {
         key: k, time_ms: summary.timeMs, new_best: result.isNewBest,
@@ -2630,7 +2642,10 @@ class Game {
     if (!level) return null;
     const mode = this.mode === 'versus' ? 'versus'
       : (this.mode === 'solo' ? 'solo' : 'coop');
-    return records.key(level.id, this.lobby.selectedDifficulty || 'adventurous', mode);
+    // C-2: Today's Road is a different road every day, so its record key
+    // carries the day — yesterday's best is not a target for today's road.
+    const levelId = level.isDaily && level.key ? `daily:${level.key}` : level.id;
+    return records.key(levelId, this.lobby.selectedDifficulty || 'adventurous', mode);
   }
 
   /** The best for this ride's key, read once at the start of the ride. */
