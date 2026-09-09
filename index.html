@@ -6095,6 +6095,11 @@ ON</button>
       <button class="opt-btn" id="opt-fps-off">Off</button>
     </div>
     <div class="options-note">Frame-rate readout, all modes — applies immediately</div>
+    <!-- E-5 · the front door to Tourist Mode. Hidden unless a Maps key is
+         present; see _initOptionsOverlay. -->
+    <div class="label" id="opt-tourist-label" style="display:none;">Explore (beta)</div>
+    <button id="options-tourist-btn" style="display:none;">&#128205; Ride real terrain</button>
+    <div class="options-note" id="opt-tourist-note" style="display:none;">Streams Google Photorealistic 3D Tiles &mdash; needs a connection</div>
     <button id="options-perf-btn">Run Perf Test</button>
     <div id="options-perf-result"></div>
     <button id="options-devtools-btn">Tools</button>

@@ -4696,6 +4696,24 @@ class Game {
   }
 
   _initOptionsOverlay() {
+    // E-5 · Tourist Mode's front door. Shown only when a Maps key is present:
+    // an entry point that cannot work is worse than none (the #350 lesson).
+    const touristBtn = document.getElementById('options-tourist-btn');
+    if (touristBtn && getMapsApiKey()) {
+      for (const id of ['opt-tourist-label', 'options-tourist-btn', 'opt-tourist-note']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      }
+      touristBtn.addEventListener('click', () => {
+        try { analytics.trackEvent('tourist_open', { from: 'options' }); } catch {}
+        // The default origin (Scioto Mile) — no addresses needed, which is the
+        // point of this entry: one click to see what the mode even is.
+        const url = new URL(location.href);
+        url.searchParams.set('mode', 'tourist');
+        location.href = url.toString();
+      });
+    }
+
     const overlay = document.getElementById('options-overlay');
     const closeBtn = document.getElementById('options-close-btn');
     const highBtn = document.getElementById('opt-high');

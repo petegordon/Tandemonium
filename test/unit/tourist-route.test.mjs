@@ -133,3 +133,16 @@ test('the headline is the whole pitch, in one line', () => {
   assert.equal(headlineFor(1209000), 'Ride the distance between you: 1,209 km');
   assert.equal(headlineFor(1920), 'Ride the distance between you: 1.9 km');
 });
+
+// E-5 · the billing bound. Tiles are metered, so this constant is the
+// difference between a fun mode and an open-ended invoice.
+test('the free-roam radius is bounded, and a route budgets its own length', async () => {
+  const { TOURIST_MAX_RADIUS_M } = await import('../../js/tourist-config.js');
+  assert.ok(TOURIST_MAX_RADIUS_M > 0 && TOURIST_MAX_RADIUS_M <= 5000,
+    `a ${TOURIST_MAX_RADIUS_M} m radius is not a bound`);
+  // A capped route rides 5 km, so its budget must cover that and no more than
+  // a margin — otherwise the cap in capRoute() would not actually cap billing.
+  const plan = planRoute(COLUMBUS, DENVER);
+  const budget = plan.route.ridableM + 500;
+  assert.ok(budget <= CAP_HALF_M * 2 + 1000, `budget of ${budget} m is too generous`);
+});

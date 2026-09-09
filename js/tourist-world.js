@@ -23,7 +23,7 @@ import {
   ReorientationPlugin,
 } from '3d-tiles-renderer/plugins';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { getTouristOrigin, TOURIST_TUNE } from './tourist-config.js';
+import { getTouristOrigin, TOURIST_TUNE, TOURIST_MAX_RADIUS_M } from './tourist-config.js';
 import { isMobile } from './config.js';
 
 const DEG2RAD = Math.PI / 180;
@@ -162,6 +162,50 @@ export class TouristWorld {
   }
 
   /** Give the world the bike so it can place/pitch it on the streamed ground. */
+  /**
+   * E-5/E-6 · how far this ride is allowed to roam. A planned route sets its
+   * own budget (its length plus a margin); free-roam gets the default.
+   */
+  setMaxRadius(metres) {
+    this._maxRadiusM = Math.max(500, metres || TOURIST_MAX_RADIUS_M);
+  }
+
+  /** E-6 · a planned A-to-B ride: budget the radius for its actual length. */
+  setRoute(plan) {
+    this._route = plan;
+    this.setMaxRadius((plan && plan.route ? plan.route.ridableM : 0) + 500);
+  }
+
+  /** Turn the bike around at the edge of the budget, and say why. */
+  _enforceRadius(bikePos) {
+    if (!bikePos || !this._bike) return;
+    const limit = this._maxRadiusM || TOURIST_MAX_RADIUS_M;
+    const dist = Math.hypot(bikePos.x, bikePos.z);
+    if (dist <= limit) {
+      if (this._atEdge) { this._atEdge = false; this._setEdgeMessage(''); }
+      return;
+    }
+    if (!this._atEdge) {
+      this._atEdge = true;
+      this._setEdgeMessage('You have reached the edge of the streamed area — turning around.');
+    }
+    // Point the bike back at the anchor and nudge it inside the boundary, so it
+    // cannot sit on the edge requesting new tiles every frame.
+    this._bike.heading = Math.atan2(-bikePos.x, -bikePos.z);
+    const pull = (dist - limit) + 1;
+    bikePos.x -= (bikePos.x / dist) * pull;
+    bikePos.z -= (bikePos.z / dist) * pull;
+    if (this._bike.speed > 4) this._bike.speed = 4;
+  }
+
+  _setEdgeMessage(text) {
+    const el = document.getElementById('tourist-credits');
+    if (el && (text || this._edgeMessageShown)) {
+      el.textContent = text || '';
+      this._edgeMessageShown = !!text;
+    }
+  }
+
   setBike(bike) {
     this._bike = bike;
   }
@@ -247,6 +291,11 @@ export class TouristWorld {
    * corrected Y is what the camera follows.
    */
   update(bikePos, bikeD, dt) {
+    // E-5 · billing bound. Tiles are metered per request, so a rider heading in
+    // a straight line forever is an open-ended invoice. Turn them around at the
+    // edge with a message rather than letting them stream the planet.
+    this._enforceRadius(bikePos);
+
     // Fix #1 — hold tile streaming until the bike GLB has decoded (mobile only;
     // desktop opens the gate at construction). A time cap makes sure tiles still
     // start even if the bike load stalls, so the ride is never permanently blank.

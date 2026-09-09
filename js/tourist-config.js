@@ -66,6 +66,22 @@ export const TOURIST_ORIGIN = {
 export const TOURIST_CUSTOM_HEIGHT = 1500;
 
 /**
+ * E-5 · BILLING BOUND. How far from the anchor the bike may ride before it is
+ * turned around, in metres.
+ *
+ * Photorealistic 3D Tiles are metered per request, and a rider who wanders in
+ * a straight line streams new tiles for as long as they keep going. This is a
+ * hard stop on how much of the planet one session can bill for. It is not a
+ * gameplay limit that anyone will notice on a normal ride — 3 km is a long way
+ * on a bike — and it is the difference between a fun mode and an open-ended
+ * invoice.
+ *
+ * A route ride (E-6) raises this to cover its own planned distance plus a
+ * margin, because that distance is deliberate and known in advance.
+ */
+export const TOURIST_MAX_RADIUS_M = 3000;
+
+/**
  * How far ABOVE the looked-up ground elevation to place the anchor, in metres.
  *
  * Sized to swallow two errors at once:

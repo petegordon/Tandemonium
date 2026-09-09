@@ -171,3 +171,64 @@ destabilizing the existing game's rendering.
 Horizontal building collision, OpenStreetMap road awareness / speed field,
 presents & cones & Grandma's house on real streets, multiplayer tourist rides.
 See issue #333.
+
+---
+
+## Ride the distance between you (E-6 … E-8)
+
+The v1 above is free-roam around one anchor. The plan's headline feature is the
+pair version: **two addresses become a ride from one to the other**.
+
+Lobby → **📍 RIDE THE DISTANCE BETWEEN YOU** → two addresses → the game
+geocodes both, shows the real distance ("Ride the distance between you:
+1,873 km"), and rides it.
+
+- The route is a **straight great-circle line**, not road-routed. The bike flies
+  over photogrammetry, so real roads do not matter — and a straight line keeps
+  tile usage predictable, which is a billing property, not an aesthetic one.
+- **Under 5 km:** the whole distance is the ride.
+- **Over 5 km:** you ride the **first 2.5 km and the last 2.5 km** with the
+  middle skipped ("✂️ 1,865 km skipped"). You leave your street and you arrive
+  at theirs, which is the part that means anything. The HUD keeps saying the
+  **real** distance throughout — that number is the entire feature.
+- The pair's last route is remembered, so the second ride is one button.
+- Route maths lives in `js/tourist-route.js`, is pure, and is unit tested
+  against known real-world distances.
+
+### Extra key permission
+
+Geocoding uses the **Maps JavaScript Geocoder**, so the key needs the
+**Geocoding API** enabled and allowed under API restrictions, alongside Map
+Tiles, Maps JavaScript and Elevation. Same reason as the elevation lookup: the
+Geocoding *web service* sends no CORS headers and ignores referrer
+restrictions, which is exactly how this key is locked down.
+
+## Billing bound (E-5)
+
+Photorealistic 3D Tiles are **metered per request**. A rider heading in a
+straight line forever streams new tiles for as long as they keep going, so:
+
+- `TOURIST_MAX_RADIUS_M` (3 km, `js/tourist-config.js`) is a hard limit on how
+  far from the anchor a free-roam ride may go. At the edge the bike is turned
+  around with an on-screen message rather than being allowed to stream the
+  planet.
+- A **planned route** sets its own budget: its ridable length plus 500 m. Since
+  the route is itself capped at 5 km, a single ride can never bill for more
+  than that.
+
+**Before turning the Options entry on for the public**, set a budget alert in
+Google Cloud for the Map Tiles / Maps JavaScript / Geocoding APIs. The code
+bounds how much *one ride* can request; only a budget alert bounds how much
+*everyone* can.
+
+## Where the entry points are
+
+| Entry | Where | Notes |
+|---|---|---|
+| `?mode=tourist` | URL | free-roam at the default origin |
+| **Explore (beta)** | Options panel | same thing, one click |
+| **📍 Ride the distance between you** | lobby mode screen | the two-address ride |
+
+All three are **hidden unless a Maps key is present**. Without a key the mode
+can only disappoint, and an entry point that fails is worse than no entry point
+— that is the lesson of #350.
