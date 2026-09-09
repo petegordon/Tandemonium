@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
-import { RaceManager } from './race-manager.js';
+import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { getLevelById, LEVELS, getInstructions } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
@@ -1724,11 +1724,14 @@ class Game {
     this.hud.initTimer();
     // Show initial segment budget during countdown
     const firstTarget = this.raceManager.checkpoints.length > 0 ? this.raceManager.checkpoints[0] : this.raceManager.raceDistance;
-    const initialBudget = this.raceManager._segmentBudget(firstTarget);
+    const initialBudget = this.raceManager._segmentBudget(firstTarget) + FIRST_SEGMENT_BONUS_S;
     this.hud.updateTimer(initialBudget, initialBudget);
     this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
     this.hud.showGeese();
     this.world.setRaceMarkers(level, this.camera);
+
+    // A-6: name the controls for whoever is holding whatever they are holding.
+    this._maybeShowCoachCard(level);
 
     // Tutorial: place all items from all phases so they're visible ahead
     if (level.isTutorial && this._tutorialActive) {
@@ -2179,7 +2182,7 @@ class Game {
     // Re-show the segment timer (hidden by _onTimerExpired / _showGameOver)
     if (this.raceManager) {
       this.hud.initTimer();
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
 
     this._playBeep(400, 0.15);
@@ -3126,6 +3129,7 @@ class Game {
   }
 
   _returnToLobby() {
+    if (this._coachVisible) this._dismissCoachCard();
     // Clean up tutorial state if active
     if (this._tutorialActive) {
       this._tutorialActive = false;
@@ -4197,7 +4201,7 @@ class Game {
         this._handleRaceEvent(raceEvent);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
     if (this.contributionTracker) {
       this.contributionTracker.update(dt, this.bike, balanceResult.leanInput, 0, this.pedalCtrl.stats);
@@ -4207,6 +4211,7 @@ class Game {
 
     // Achievements
     this._checkAchievements(dt);
+    this._updateCoachCard(dt);
 
     // Background motion adaptation (skip when level config disables it)
     const adaptLevel = this.lobby.selectedLevel;
@@ -4292,7 +4297,7 @@ class Game {
         this._handleRaceEvent(raceEvent);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
     if (this.contributionTracker) {
       this.contributionTracker.update(dt, this.bike, captainLean, this.remoteLean, this.sharedPedal.stats);
@@ -4308,6 +4313,7 @@ class Game {
 
     // Achievements
     this._checkAchievements(dt);
+    this._updateCoachCard(dt);
 
     // Tutorial: handle crash/completion internally instead of game-over screen
     if (this._tutorialActive) {
@@ -4488,6 +4494,15 @@ class Game {
     if (!events || events.length === 0) return;
 
     for (const ev of events) {
+      // A-6: the first real stroke releases the first-segment clock and feeds
+      // the coach card's dot meter.
+      if (ev.kind !== 'wrong' && ev.kind !== 'fight') {
+        if (this.raceManager && this.raceManager.timerHeld) this.raceManager.noteFirstPedal();
+        this._coachGoodTaps = (this._coachGoodTaps || 0) + 1;
+      } else {
+        this._coachWrongFlash = true;
+      }
+
       const cadence = ev.gap > 0.05 && ev.gap < 4 ? 1 / ev.gap : 1;
       if (this.audioEngine) this.audioEngine.pedalTap(ev.kind, cadence);
 
@@ -5113,7 +5128,7 @@ class Game {
         setTimeout(() => this._playBeep(150, 0.2), 300);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
 
     // Tutorial coaching UI for stoker (phase prompts, dodge arrows, collect indicators)
@@ -5269,6 +5284,113 @@ class Game {
     const auth = this.lobby && this.lobby.auth;
     const userId = auth && auth.isLoggedIn() && auth.getUser() ? auth.getUser().id : null;
     return userId ? TUNING_KEY_PREFIX + '_' + userId : TUNING_KEY_PREFIX;
+  }
+
+  // ============================================================
+  // A-6 · FIRST-RIDE COACH CARD (non-motion inputs)
+  // ============================================================
+  //
+  // Motion players get the tilt tutorial (_shouldRunTutorial below). Keyboard,
+  // gamepad and touch players got nothing at all — they were dropped onto a
+  // bike with a running clock and left to work out that the two arrow keys
+  // alternate. This card names the controls for whatever they are actually
+  // holding and shows a five-dot meter that fills as they get it right.
+  //
+  // Shown on the first ride of a session on Tutorial and Grandma's, dismissed
+  // after five good taps or twenty seconds, and remembered per input method so
+  // it never appears twice for the same hands.
+
+  _coachKeyFor(method) {
+    return 'tandemonium_coach_seen_' + (method || 'keyboard');
+  }
+
+  _coachInputMethod() {
+    // Prefer what the player is actually using right now over the analytics
+    // session-level value, which may still say 'keyboard' on a pad.
+    if (isMobile) return 'touch';
+    if (this.input && this.input.gamepadConnected) return 'gamepad';
+    const m = analytics.getInputMethod && analytics.getInputMethod();
+    return m === 'motion' ? 'motion' : (m || 'keyboard');
+  }
+
+  _maybeShowCoachCard(level) {
+    this._coachEl = this._coachEl || document.getElementById('coach-card');
+    this._coachDots = this._coachDots || Array.from(document.querySelectorAll('.coach-dot'));
+    this._coachGoodTaps = 0;
+    this._coachWrongFlash = false;
+    this._coachTimer = 0;
+    this._coachVisible = false;
+    if (!this._coachEl) return;
+    this._coachEl.classList.remove('show');
+
+    if (this.mode === 'versus') return;
+    const levelId = level && level.id;
+    if (levelId !== 'tutorial' && levelId !== 'grandma') return;
+
+    const method = this._coachInputMethod();
+    if (method === 'motion') return;              // the tilt tutorial covers these
+    try {
+      if (localStorage.getItem(this._coachKeyFor(method))) return;
+    } catch { /* private mode: show it, it is only 20 seconds */ }
+
+    const pedal = {
+      keyboard: 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>',
+      gamepad:  'Pedal: alternate <b>LB</b> and <b>RB</b> (or <b>LT</b>/<b>RT</b>)',
+      touch:    'Pedal: tap the <b>left</b> and <b>right</b> halves in turn'
+    }[method] || 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>';
+    const steer = {
+      keyboard: 'Steer: <b>A</b> / <b>D</b>',
+      gamepad:  'Steer: left stick, or tilt the pad',
+      touch:    'Steer: tilt your phone'
+    }[method] || 'Steer: <b>A</b> / <b>D</b>';
+
+    const pedalEl = document.getElementById('coach-pedal-line');
+    const steerEl = document.getElementById('coach-steer-line');
+    if (pedalEl) pedalEl.innerHTML = pedal;
+    if (steerEl) steerEl.innerHTML = steer;
+    for (const d of this._coachDots) d.className = 'coach-dot';
+
+    this._coachEl.classList.add('show');
+    this._coachVisible = true;
+    this._coachMethod = method;
+    try { analytics.trackEvent('coach_card_shown', { method, level: levelId }); } catch {}
+  }
+
+  /** Per-frame: fill the dots, and put the card away once it has done its job. */
+  _updateCoachCard(dt) {
+    if (!this._coachVisible) return;
+    this._coachTimer += dt;
+
+    const filled = Math.min(5, this._coachGoodTaps || 0);
+    for (let i = 0; i < this._coachDots.length; i++) {
+      const d = this._coachDots[i];
+      const want = i < filled ? 'coach-dot filled' : 'coach-dot';
+      if (d.className !== want) d.className = want;
+    }
+    if (this._coachWrongFlash) {
+      this._coachWrongFlash = false;
+      const next = this._coachDots[filled] || this._coachDots[4];
+      if (next) {
+        next.className = 'coach-dot wrong';
+        setTimeout(() => { if (next.className === 'coach-dot wrong') next.className = 'coach-dot'; }, 250);
+      }
+    }
+
+    if (filled >= 5 || this._coachTimer >= 20) this._dismissCoachCard();
+  }
+
+  _dismissCoachCard() {
+    if (!this._coachVisible) return;
+    this._coachVisible = false;
+    if (this._coachEl) this._coachEl.classList.remove('show');
+    try { localStorage.setItem(this._coachKeyFor(this._coachMethod), '1'); } catch {}
+    try {
+      analytics.trackEvent('coach_card_done', {
+        method: this._coachMethod,
+        taps: this._coachGoodTaps || 0,
+        seconds: Math.round(this._coachTimer)
+      });
+    } catch {}
   }
 
   _shouldRunTutorial() {

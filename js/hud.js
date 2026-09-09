@@ -245,7 +245,19 @@ export class HUD {
     this.elapsedEl.textContent = '\u23F1 0s';
   }
 
-  updateTimer(remaining, total) {
+  updateTimer(remaining, total, held = false) {
+    // A-6: during the first-segment grace the clock is not running, and saying
+    // so is kinder than showing a number that refuses to move.
+    if (held) {
+      if (this._prevTimerText !== 'held') {
+        this._prevTimerText = 'held';
+        this.timerEl.textContent = '⏱ —';
+        this.timerEl.className = '';
+      }
+      this.countdownOverlay.classList.remove('visible');
+      return;
+    }
+    this._prevTimerText = null;
     const secs = Math.max(0, Math.ceil(remaining));
     this.timerEl.textContent = '\u23F1 ' + secs + 's';
     if (remaining <= 5) {
