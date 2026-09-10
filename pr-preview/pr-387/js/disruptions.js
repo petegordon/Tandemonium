@@ -36,6 +36,20 @@ export const TELEGRAPH_S = 3.0;
 export const COBBLES_WINDOW_S = 0.15;
 
 /**
+ * How long a cobbled stretch is, in METRES.
+ *
+ * The other two disruptions are moments — a gust blows, a goose crosses — so
+ * their length is a duration. Cobbles is a piece of road, and a piece of road
+ * has a length: the same stones however fast you take them. This also lets the
+ * surface be laid down at the start of the ride and seen from far back.
+ */
+export const COBBLES_LENGTH_M = 32;
+
+/** How hard the cobbles shake the bike, and how much speed they scrub per second. */
+export const COBBLES_SHAKE = 4.0;
+export const COBBLES_DRAG = 0.22;
+
+/**
  * Sideways push during a gust, in lean units per second.
  *
  * This was 0.55, which simulated out to a peak lean of about 6 degrees — under
@@ -176,7 +190,7 @@ export function telegraphText(kind) {
   return {
     [KIND.GUST]: '💨 GUST AHEAD',
     [KIND.GOOSE]: '🦢 GOOSE CROSSING — COAST!',
-    [KIND.COBBLES]: '🪨 COBBLES — TIGHTEN UP'
+    [KIND.COBBLES]: '🪨 ROUGH ROAD AHEAD — COBBLES'
   }[kind] || '';
 }
 

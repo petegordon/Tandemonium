@@ -13,7 +13,7 @@ import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from '
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
 import {
   planDisruptions, disruptionAt, telegraphText, beatWindowFor, KIND, GUST_FORCE,
-  gustEnvelope
+  gustEnvelope, COBBLES_LENGTH_M
 } from './disruptions.js';
 import { BEAT_WINDOW_S } from './pedal-scoring.js';
 
@@ -21,7 +21,7 @@ import { BEAT_WINDOW_S } from './pedal-scoring.js';
 const ACTIVE_TEXT = {
   gust: '💨 HOLD IT',
   goose: '🦢 COAST!',
-  cobbles: '🪨 COBBLES'
+  cobbles: '🪨 ROUGH ROAD'
 };
 import { makePlacementSalt } from './daily-seed.js';
 import {
@@ -62,12 +62,13 @@ import { formatDistance, skipLabel } from './tourist-route.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { GustVisual } from './gust-visual.js';
+import { CobblesVisual } from './cobbles-visual.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { QuickMenu } from './quick-menu.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { AudioEngine, MOTIF } from './audio-engine.js';
-import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, setHapticSources } from './haptics.js';
+import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
@@ -317,6 +318,8 @@ class Game {
     this.grassParticles = new GrassParticles(this.scene);
     // E-2 · the wind you can see during a gust.
     this.gustVisual = new GustVisual(this.scene);
+    // E-2 · cobbled stretches, laid at the start of the ride so you see them coming.
+    this.cobblesVisual = new CobblesVisual(this.scene);
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
     this.recorder = new GameRecorder(this.renderer.domElement, this.input);
@@ -2421,6 +2424,8 @@ class Game {
 
     this.grassParticles.clear();
     if (this.gustVisual) this.gustVisual.clear();
+    if (this.cobblesVisual) this.cobblesVisual.clear();
+    if (this.bike) this.bike._roughness = 0;
     if (this.geeseManager) this.geeseManager.clear();
     this._stokerWasFallen = false;
     this._remoteFinishStats = null;
@@ -3189,6 +3194,17 @@ class Game {
     this._coastRequiredUntil = 0;
     if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
     if (this.hud.updateDisruption) this.hud.updateDisruption(null);
+    this._cobbleHapticAt = 0;
+    if (this.bike) this.bike._roughness = 0;
+
+    // Lay every cobbled stretch now. They are part of the road for the whole
+    // ride, visible from far back — the banner only confirms what you can see.
+    if (this.cobblesVisual) {
+      this.cobblesVisual.build(this.world && this.world.roadPath,
+        this._disruptions
+          .filter(e => e.kind === KIND.COBBLES)
+          .map(e => ({ startD: e.atM, endD: e.atM + COBBLES_LENGTH_M })));
+    }
   }
 
   /**
@@ -3197,13 +3213,16 @@ class Game {
    * meet the same gust at the same tree.
    */
   _updateDisruptions(dt) {
-    if (!this._disruptions || this._disruptions.length === 0) return;
-    if (this.state !== 'playing' || !this.bike) return;
+    if (!this._disruptions || this._disruptions.length === 0) { this._clearDisruptionEffects(); return; }
+    if (this.state !== 'playing' || !this.bike) { this._clearDisruptionEffects(); return; }
 
     const d = this.bike.distanceTraveled;
     const active = disruptionAt(this._disruptions, d, (e) => {
-      // An event's length is in seconds; convert at the speed it started at,
-      // with a floor so a stopped bike does not sit inside a gust forever.
+      // Cobbles is a piece of road, so its extent is a fixed length in metres.
+      // The other two are moments: convert their seconds at the speed they
+      // started at, with a floor so a stopped bike does not sit inside a gust
+      // for ever.
+      if (e.kind === KIND.COBBLES) return e.atM + COBBLES_LENGTH_M;
       const speed = Math.max(3, this._disruptionStartSpeed || this.bike.speed || 6);
       return e.atM + e.duration * speed;
     });
@@ -3246,6 +3265,27 @@ class Game {
       }
     }
 
+    // E-2 · cobbles is a surface, not a threshold. The stones shake the bike and
+    // scrub speed for as long as you are on them — which is the whole mechanic
+    // in solo, where the tightened beat window below has no partner to apply to.
+    const onCobbles = !!this._activeDisruption &&
+      this._activeDisruption.event.kind === KIND.COBBLES;
+    this.bike._roughness = onCobbles && authoritative ? 1 : 0;
+    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(onCobbles);
+    if (onCobbles) {
+      // The camera rides the surface too — a rattle you can see, not just a
+      // number in the physics. Scaled by speed: crawling over stones is not the
+      // same as hitting them at pace.
+      if (this.chaseCamera && this.chaseCamera.roughRoad) {
+        this.chaseCamera.roughRoad(0.45 + Math.min(1, this.bike.speed / 12) * 0.55);
+      }
+      const now = performance.now();
+      if (now - (this._cobbleHapticAt || 0) > 160) {
+        this._cobbleHapticAt = now;
+        hapticCobbles();
+      }
+    }
+
     // The wind you can see. Driven for every seat, including the stoker, whose
     // bike is not simulated here but whose screen should still show the storm.
     if (this.gustVisual) {
@@ -3277,8 +3317,24 @@ class Game {
   }
 
   _onDisruptionEnd() {
+    this._clearDisruptionEffects();
+  }
+
+  /**
+   * Put every ongoing effect back to neutral.
+   *
+   * Cobbles and the gust act continuously, so leaving one has to actively stop
+   * it. The guards at the top of _updateDisruptions bail out before any of that
+   * runs — crossing the finish line mid-cobbles used to leave the rumble
+   * playing and the bike rough — so they call this on the way out.
+   */
+  _clearDisruptionEffects() {
     this._coastRequiredUntil = 0;
     if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
+    if (this.bike) this.bike._roughness = 0;
+    if (this.gustVisual) this.gustVisual.setWind(this._gustDirection || 1, 0);
+    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(false);
+    if (this.hud && this.hud.updateDisruption) this.hud.updateDisruption(null);
   }
 
   /**
