@@ -96,6 +96,14 @@
     font-weight: 600;
     color: rgba(255,255,255,0.5);
   }
+  /* Road gradient. Amber climbing, blue-green descending, and absent on the
+     flat so it reads as an event rather than another permanent number. */
+  #grade-row { font-size: 13px; font-weight: 700; }
+  #grade-arrow { font-size: 11px; }
+  #grade-row.up   { color: #ffb347; }
+  #grade-row.down { color: #7fd4ff; }
+  #grade-value { min-width: 3ch; text-align: right; display: inline-block; }
+
   #speed-bar-wrap {
     width: 100%;
     height: 3px;
@@ -4870,6 +4878,11 @@
       <div class="hud-stat visible" id="speed-row">
         <span id="speed-value">0</span>
         <span id="speed-unit">km/h</span>
+      </div>
+      <!-- The road climbs and drops up to 4 m and the chase camera hides it:
+           the bike slows on a hill and nothing on screen says why. This says. -->
+      <div class="hud-stat" id="grade-row">
+        <span id="grade-arrow">&#x25B2;</span><span id="grade-value">0%</span>
       </div>
       <div class="hud-stat visible" id="distance-row">
         <span id="distance-display">0 m</span>

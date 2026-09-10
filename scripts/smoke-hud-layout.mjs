@@ -44,6 +44,9 @@ async function check(label, viewport) {
     document.getElementById('split-delta').textContent = '+1.3';
     document.getElementById('split-delta').className = 'show behind';
     document.getElementById('ping-row').classList.add('visible');
+    // The gradient chip is part of the worst case: every stat visible at once.
+    document.getElementById('grade-row').classList.add('visible','up');
+    document.getElementById('grade-value').textContent = '12%';
 
     const ids = ['hud-top','coach-card','lookahead','disruption-banner','ping-call','ping-bubbles',
                  'ranked-badge','split-delta','pedal-bar','sync-row','ping-row','coop-coach'];

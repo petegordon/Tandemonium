@@ -13,6 +13,10 @@ export class HUD {
     this.speedValueEl = document.getElementById('speed-value');
     this.speedBarFill = document.getElementById('speed-bar-fill');
     this.distanceEl = document.getElementById('distance-display');
+    this.gradeRowEl = document.getElementById('grade-row');
+    this.gradeArrowEl = document.getElementById('grade-arrow');
+    this.gradeValueEl = document.getElementById('grade-value');
+    this._smoothGrade = 0;
     this.elapsedEl = document.getElementById('elapsed-display');
     this.raceManager = null;
     this.statusEl = document.getElementById('status');
@@ -111,6 +115,49 @@ export class HUD {
       marker.dataset.distance = d;
       this.progressWrap.appendChild(marker);
       this._checkpointEls.push(marker);
+    }
+  }
+
+  /**
+   * The road gradient, in percent.
+   *
+   * The road climbs and drops as much as 4 m, and the slope term in the bike
+   * physics scrubs real speed for it — but the chase camera keeps the horizon
+   * where it was, so a rider grinding up a 12% hill sees the speed fall and has
+   * no way at all to learn that a hill is why. This is the readout that closes
+   * that loop: amber climbing, blue descending, nothing on the flat.
+   *
+   * Smoothed, because the raw slope over a 2 m window twitches at speed and a
+   * number that twitches is a number nobody reads.
+   */
+  _updateGrade(bike, dt) {
+    if (!this.gradeRowEl) return;
+    const raw = (bike && bike.roadPath)
+      ? bike.roadPath.getSlopeAtDistance(bike.roadD)
+      : 0;
+    const k = Math.min(1, (dt || 0.016) * 4);
+    this._smoothGrade += (raw - this._smoothGrade) * k;
+
+    const pct = Math.round(this._smoothGrade * 100);
+    // A 2% band around flat: below that the hill is not what is happening.
+    const show = Math.abs(pct) >= 2;
+    if (show !== this._prevGradeShown) {
+      this._prevGradeShown = show;
+      this.gradeRowEl.classList.toggle('visible', show);
+    }
+    if (!show) return;
+
+    const up = pct > 0;
+    if (up !== this._prevGradeUp) {
+      this._prevGradeUp = up;
+      this.gradeArrowEl.textContent = up ? '▲' : '▼';
+      this.gradeRowEl.classList.toggle('up', up);
+      this.gradeRowEl.classList.toggle('down', !up);
+    }
+    const text = Math.abs(pct) + '%';
+    if (text !== this._prevGradeText) {
+      this._prevGradeText = text;
+      this.gradeValueEl.textContent = text;
     }
   }
 
@@ -523,6 +570,7 @@ export class HUD {
   update(bike, input, pedalCtrl, dt, remoteData) {
     this._updateSync(pedalCtrl, dt);
     this._updateSpeedSignals(bike);
+    this._updateGrade(bike, dt);
     const kmh = Math.round(bike.speed * 3.6);
     const maxKmh = 58;
 
