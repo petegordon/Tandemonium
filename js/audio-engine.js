@@ -67,6 +67,7 @@ export class AudioEngine {
     this._recorderDest = null;
     this._noiseBuf = null;
     this._bike = null;
+    this._onCobbles = false;
     this._duckTarget = 1.0;
     this._lastBikeUpdate = 0;
   }
@@ -679,18 +680,43 @@ export class AudioEngine {
     chainGain.gain.value = 0;
     chainOsc.connect(chainFilt).connect(chainGain).connect(this.bikeBus);
 
+    // Cobbles (E-2): a fourth layer that only opens up on the stones. Two bands
+    // of the same noise — a low body you feel and a hard rattle you hear — so
+    // the surface reads as stone rather than as more off-road hiss. It is built
+    // with the rest of the bed so stopBike() tears it down with everything else;
+    // leaving filters connected to bikeBus across races froze iOS WebKit (#277).
+    const cobbleSrc = ctx.createBufferSource();
+    cobbleSrc.buffer = this._getNoiseBuffer();
+    cobbleSrc.loop = true;
+    const cobbleFilt = ctx.createBiquadFilter();
+    cobbleFilt.type = 'bandpass';
+    cobbleFilt.frequency.value = 190;
+    cobbleFilt.Q.value = 0.7;
+    const cobbleGain = ctx.createGain();
+    cobbleGain.gain.value = 0;
+    cobbleSrc.connect(cobbleFilt).connect(cobbleGain).connect(this.bikeBus);
+
+    const rattleFilt = ctx.createBiquadFilter();
+    rattleFilt.type = 'bandpass';
+    rattleFilt.frequency.value = 900;
+    rattleFilt.Q.value = 1.4;
+    const rattleGain = ctx.createGain();
+    rattleGain.gain.value = 0;
+    cobbleSrc.connect(rattleFilt).connect(rattleGain).connect(this.bikeBus);
+
     windSrc.start();
     tireSrc.start();
     chainOsc.start();
+    cobbleSrc.start();
 
     // Track every node so stopBike() can fully tear down the graph.
     // Without holding refs to the filters, they were leaked-connected to
     // bikeBus across races and accumulated on iOS WebKit (browser freeze
     // while audio kept playing — main thread starved by node graph).
     this._bike = {
-      windSrc, tireSrc, chainOsc,
-      windFilt, tireFilt, chainFilt,
-      windGain, tireGain, chainGain,
+      windSrc, tireSrc, chainOsc, cobbleSrc,
+      windFilt, tireFilt, chainFilt, cobbleFilt, rattleFilt,
+      windGain, tireGain, chainGain, cobbleGain, rattleGain,
     };
 
     // Fade the bus in; individual sources stay at 0 until speed rises.
@@ -698,6 +724,18 @@ export class AudioEngine {
     this.bikeBus.gain.cancelScheduledValues(now);
     this.bikeBus.gain.setValueAtTime(this.bikeBus.gain.value, now);
     this.bikeBus.gain.linearRampToValueAtTime(1.0, now + 0.2);
+  }
+
+  /**
+   * E-2 · are we on the stones? Opens the cobble layer of the bike bed.
+   * Level follows speed in updateBike(), so slow cobbles mutter and fast
+   * cobbles roar. Safe to call every frame with the same value.
+   */
+  setCobbles(on) {
+    this._onCobbles = !!on;
+    if (!this.ctx || !this._bike) return;
+    // Ramp handled in updateBike so it stays on one throttled automation path.
+    this._lastBikeUpdate = 0;
   }
 
   stopBike() {
@@ -709,23 +747,30 @@ export class AudioEngine {
     this.bikeBus.gain.linearRampToValueAtTime(0, now + 0.3);
     const b = this._bike;
     this._bike = null;
+    this._onCobbles = false;   // a new ride starts off the stones
     setTimeout(() => {
       // Stop sources first so they're eligible for auto-release.
       try { b.windSrc.stop();  } catch (e) {}
       try { b.tireSrc.stop();  } catch (e) {}
       try { b.chainOsc.stop(); } catch (e) {}
+      try { b.cobbleSrc.stop(); } catch (e) {}
       // Explicitly disconnect every node from the graph. Sources auto-GC
       // after stop(), but BiquadFilter / GainNode are kept alive by their
       // outgoing connection to bikeBus until disconnect() is called.
       try { b.windSrc.disconnect();  } catch (e) {}
       try { b.tireSrc.disconnect();  } catch (e) {}
       try { b.chainOsc.disconnect(); } catch (e) {}
+      try { b.cobbleSrc.disconnect(); } catch (e) {}
       try { b.windFilt.disconnect();  } catch (e) {}
       try { b.tireFilt.disconnect();  } catch (e) {}
       try { b.chainFilt.disconnect(); } catch (e) {}
+      try { b.cobbleFilt.disconnect(); } catch (e) {}
+      try { b.rattleFilt.disconnect(); } catch (e) {}
       try { b.windGain.disconnect();  } catch (e) {}
       try { b.tireGain.disconnect();  } catch (e) {}
       try { b.chainGain.disconnect(); } catch (e) {}
+      try { b.cobbleGain.disconnect(); } catch (e) {}
+      try { b.rattleGain.disconnect(); } catch (e) {}
     }, 400);
   }
 
@@ -754,5 +799,10 @@ export class AudioEngine {
     b.tireGain.gain.setTargetAtTime(tire, now, tc);
     b.chainGain.gain.setTargetAtTime(chain, now, tc);
     b.chainOsc.frequency.setTargetAtTime(chainHz, now, tc);
+
+    // Cobbles: silent off the stones, and louder the faster you take them.
+    const rough = this._onCobbles && !fallen ? (0.35 + norm * 0.65) : 0;
+    b.cobbleGain.gain.setTargetAtTime(rough * 0.30, now, tc);
+    b.rattleGain.gain.setTargetAtTime(rough * 0.13, now, tc);
   }
 }

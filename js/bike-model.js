@@ -3,6 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { COBBLES_SHAKE, COBBLES_DRAG } from './disruptions.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
@@ -46,6 +47,7 @@ export class BikeModel {
     this.heading = 0;
     this.lean = 0;
     this.leanVelocity = 0;
+    this._roughness = 0;   // E-2 cobbles, 0..1
     this.speed = 0;
     this.distanceTraveled = 0;
     this.crankAngle = 0;
@@ -593,8 +595,21 @@ export class BikeModel {
         (Math.sin(t * 13.7) * 0.5 + Math.sin(t * 23.1) * 0.3 + (Math.random() - 0.5) * 0.4);
     }
 
+    // E-2 · cobbles. A rough surface shakes the bike and scrubs speed, so the
+    // stretch is something you ride differently rather than a number that
+    // changes out of sight. `_roughness` is 0..1, set by the disruption path.
+    let cobbleShake = 0;
+    if (this._roughness > 0) {
+      cobbleShake = this._roughness * COBBLES_SHAKE *
+        // A low lurch under a fast rattle. A purely high-frequency force is
+        // swallowed by the damping term and moves the bike barely a degree.
+        (Math.sin(t * 9.1) * 0.6 + Math.sin(t * 31.3) * 0.3 + (Math.random() - 0.5) * 0.7);
+      this.speed *= (1 - COBBLES_DRAG * this._roughness * dt);
+    }
+
     this.leanVelocity += (gravity + playerLean + gyro + damping +
-      pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble) * dt;
+      pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble +
+      cobbleShake) * dt;
     this.lean += this.leanVelocity * dt;
 
     // Balance assist: proportional restoring force toward upright

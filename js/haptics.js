@@ -178,6 +178,16 @@ export function hapticPedal(kind = 'solo', sources = null) {
   _gamepadRumble(0.15, 0.35, 40, sources);
 }
 
+/**
+ * E-2 · cobbles. Called repeatedly while the bike is on the stones, so this has
+ * to be the lightest thing in the file: a short tick, not a bump. The rumble
+ * carries the surface; anything heavier over four seconds is unpleasant.
+ */
+export function hapticCobbles(sources = null) {
+  if (canVibrate) navigator.vibrate(18);
+  _gamepadRumble(0.22, 0.5, 70, sources);
+}
+
 export function hapticCheckpoint(sources = null) {
   if (canVibrate) navigator.vibrate(50);
   _gamepadRumble(0.2, 0.3, 50, sources);

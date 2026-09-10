@@ -40,6 +40,19 @@ export class ChaseCamera {
     this._bobAmp = 0.015 * strength;
   }
 
+  /**
+   * E-2 · sustained shake while the bike is on a rough surface (cobbles).
+   *
+   * Reuses the existing decaying shake rather than adding a second channel, so
+   * it composes with the speed shake instead of fighting it. Called every frame
+   * the bike is on the stones; the decay takes it away by itself afterwards.
+   */
+  roughRoad(intensity = 1) {
+    if (this._reduceMotion) return;
+    if (!(intensity > 0)) return;
+    this.shakeAmount = Math.max(this.shakeAmount, 0.16 * Math.min(1, intensity));
+  }
+
   update(bike, dt, roadPath) {
     const fwd = this._fwd;
     fwd.set(Math.sin(bike.heading), 0, Math.cos(bike.heading));
