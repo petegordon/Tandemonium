@@ -27,14 +27,32 @@ export const MOTIF = {
 
 /**
  * Pitch of a pedal tick, Hz, from the rider's cadence in taps per second.
- * Rising pitch with cadence is what makes speed audible: 180 Hz at a lazy
- * 0.5 Hz stroke up to 320 Hz at a hard 2 Hz stroke, clamped at both ends.
+ *
+ * Rising pitch with cadence is what makes speed audible. The mapping is
+ * logarithmic in BOTH axes, because pitch is perceived that way: a doubling of
+ * cadence is the same musical interval wherever you are in the range.
+ *
+ * The range is 0.5-8 taps/sec, not 0.5-2. A thumb on a phone alternates far
+ * faster than a hand on a keyboard, and the old linear 0.5-2 Hz mapping sat at
+ * its ceiling for the whole ride on mobile — every stroke the same pitch, so
+ * the cue carried no information at exactly the cadence it was meant to report.
+ * The bottom of the curve is unchanged in feel (0.5 Hz is still 180 Hz, 2 Hz is
+ * still ~317 Hz), so a keyboard rider hears what they always heard.
+ *
  * Pure — unit tested in test/unit/audio-tap.test.mjs.
  */
+const TAP_CADENCE_MIN = 0.5;   // taps/sec — a lazy stroke
+const TAP_CADENCE_MAX = 8;     // taps/sec — two thumbs going flat out
+const TAP_PITCH_MIN = 180;     // Hz
+const TAP_PITCH_MAX = 560;     // Hz
+
 export function tapPitch(cadenceHz) {
   const c = Number.isFinite(cadenceHz) ? cadenceHz : 1;
-  const t = Math.max(0, Math.min(1, (c - 0.5) / 1.5));
-  return 180 + t * 140;
+  const clamped = Math.max(TAP_CADENCE_MIN, Math.min(TAP_CADENCE_MAX, c));
+  // Position within the range measured in octaves of cadence, not in raw Hz.
+  const t = Math.log2(clamped / TAP_CADENCE_MIN) /
+            Math.log2(TAP_CADENCE_MAX / TAP_CADENCE_MIN);
+  return TAP_PITCH_MIN * Math.pow(TAP_PITCH_MAX / TAP_PITCH_MIN, t);
 }
 
 export class AudioEngine {
@@ -166,6 +184,28 @@ export class AudioEngine {
     const g = ctx.createGain();
     osc.type = type;
     osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(gain, now + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    osc.connect(g).connect(this.sfxBus);
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+  }
+
+  // Like tone(), but the pitch slides from `from` to `to` across the note. A
+  // falling slide reads as "wrong" on any speaker, which a single low frequency
+  // does not — see pedalTap('wrong').
+  toneSlide(from, to, duration, opts = {}) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.resume();
+    const { type = 'sine', gain = 0.14, attack = 0.006 } = opts;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, now);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), now + duration);
     g.gain.setValueAtTime(0.0001, now);
     g.gain.exponentialRampToValueAtTime(gain, now + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
@@ -516,7 +556,7 @@ export class AudioEngine {
   //
   //   'perfect' — click + a fifth above: the pair is on the beat (co-op)
   //   'solo'    — click: a normal stroke
-  //   'wrong'   — dull low thud: you repeated your own foot
+  //   'wrong'   — a falling tone: you repeated your own foot
   //   'fight'   — clatter: you and your partner grabbed the same crank arm
   //
   // Routed through sfxBus like every other cue, so mute works and the clip
@@ -526,7 +566,16 @@ export class AudioEngine {
     if (!ctx) return;
 
     if (kind === 'wrong') {
-      this.tone(90, 0.09, { type: 'sine', gain: 0.12, attack: 0.004 });
+      // A falling two-tone, not a 90 Hz thud. The thud read as "dull and wrong"
+      // on desktop speakers but sat below what a phone can physically produce,
+      // so on mobile the one cue that tells you you repeated a foot was close to
+      // silent. A downward slide carries "wrong" on any speaker, and 300->190 Hz
+      // is comfortably inside a handset's range while still sitting well under
+      // the bright click of a good stroke.
+      this.toneSlide(300, 190, 0.13, { type: 'sine', gain: 0.13, attack: 0.004 });
+      // Keep the sub-thump underneath for anyone on headphones or desktop, where
+      // it does reproduce and is what gives the cue its weight.
+      this.tone(90, 0.09, { type: 'sine', gain: 0.09, attack: 0.004 });
       return;
     }
     if (kind === 'fight') {
