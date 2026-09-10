@@ -96,6 +96,14 @@
     font-weight: 600;
     color: rgba(255,255,255,0.5);
   }
+  /* Road gradient. Amber climbing, blue-green descending, and absent on the
+     flat so it reads as an event rather than another permanent number. */
+  #grade-row { font-size: 13px; font-weight: 700; }
+  #grade-arrow { font-size: 11px; }
+  #grade-row.up   { color: #ffb347; }
+  #grade-row.down { color: #7fd4ff; }
+  #grade-value { min-width: 3ch; text-align: right; display: inline-block; }
+
   #speed-bar-wrap {
     width: 100%;
     height: 3px;
@@ -4871,6 +4879,11 @@
         <span id="speed-value">0</span>
         <span id="speed-unit">km/h</span>
       </div>
+      <!-- The road climbs and drops up to 4 m and the chase camera hides it:
+           the bike slows on a hill and nothing on screen says why. This says. -->
+      <div class="hud-stat" id="grade-row">
+        <span id="grade-arrow">&#x25B2;</span><span id="grade-value">0%</span>
+      </div>
       <div class="hud-stat visible" id="distance-row">
         <span id="distance-display">0 m</span>
       </div>
@@ -5763,7 +5776,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.a885b40 | 09-09-2026 23:06 (PR #387)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.2f498b1 | 09-10-2026 09:34 (PR #387)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

@@ -109,7 +109,12 @@ export class RaceManager {
       }
     }
     const segDist = segEnd - segStart;
-    this.segmentTimeTotal = this._segmentBudget(segDist);
+    // The first segment carries the A-6 bonus whenever it is ridden, not only
+    // the first time. A rider who crashes at 120 m and is put back on the start
+    // line has the same 125 m to ride as they did on the countdown, and taking
+    // the bonus away made every retry harder than the attempt that failed.
+    const bonus = segStart === 0 ? FIRST_SEGMENT_BONUS_S : 0;
+    this.segmentTimeTotal = this._segmentBudget(segDist) + bonus;
     this.segmentTimeRemaining = this.segmentTimeTotal;
   }
 

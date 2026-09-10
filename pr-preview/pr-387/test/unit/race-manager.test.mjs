@@ -66,3 +66,55 @@ test('later segments have no grace', () => {
   rm.update(63, 1.0);
   assert.ok(rm.segmentTimeRemaining < total);
 });
+
+// ── the retry that was harder than the attempt it replaced ────────────────
+//
+// A crash or a timeout before the first checkpoint puts the bike back on the
+// start line. The clock has to go back with it. It did not: resetSegmentTimer
+// was only called when a checkpoint had been passed, and when it was called it
+// left out the first-segment bonus — so the rider got 30 s to ride the 125 m
+// they had just been given 38 s for, and a second crash made the ride
+// arithmetically impossible to finish.
+const dailyLevel = { id: 'daily', name: "Today's Road", distance: 500, checkpointInterval: 125 };
+
+test('restarting the first segment restores the budget it started with', () => {
+  const rm = new RaceManager(dailyLevel);
+  rm.start();
+  const atCountdown = rm.segmentTimeTotal;
+
+  // Ride most of it, then crash.
+  rm.update(110, 0);
+  rm.segmentTimeRemaining = 4;
+
+  rm.resetSegmentTimer(0);
+  assert.equal(rm.segmentTimeTotal, atCountdown,
+    'the same 125 m must be worth the same seconds every time it is ridden');
+  assert.equal(rm.segmentTimeRemaining, atCountdown);
+});
+
+test('a later segment restarts on its own budget, with no first-segment bonus', () => {
+  const rm = new RaceManager(dailyLevel);
+  rm.start();
+  const first = rm.update(125, 0);
+  assert.equal(first.event, 'checkpoint');
+
+  rm.segmentTimeRemaining = 2;
+  rm.resetSegmentTimer(125);
+  assert.equal(rm.segmentTimeTotal, rm._segmentBudget(125),
+    'the bonus belongs to the segment people lose to confusion, not to all of them');
+});
+
+test('the budget for a restart never shrinks below what the rider first had', () => {
+  // The property, stated once: for any segment, restarting it gives you no less
+  // time than you were given the first time you were sent into it.
+  const rm = new RaceManager(dailyLevel);
+  rm.start();
+  let opening = rm.segmentTimeTotal;
+  for (const cp of [...rm.checkpoints, dailyLevel.distance]) {
+    rm.resetSegmentTimer(cp - dailyLevel.checkpointInterval);
+    assert.ok(rm.segmentTimeTotal >= opening - 1e-9,
+      `restarting the segment ending at ${cp} m lost time`);
+    const ev = rm.update(cp, 0);
+    if (ev && ev.event === 'checkpoint') opening = rm.segmentTimeTotal;
+  }
+});
