@@ -12,7 +12,8 @@ import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
 import {
-  planDisruptions, disruptionAt, telegraphText, beatWindowFor, KIND, GUST_FORCE
+  planDisruptions, disruptionAt, telegraphText, beatWindowFor, KIND, GUST_FORCE,
+  gustEnvelope
 } from './disruptions.js';
 import { BEAT_WINDOW_S } from './pedal-scoring.js';
 
@@ -60,6 +61,7 @@ import { isTouristMode, getMapsApiKey, resolveTouristOrigin } from './tourist-co
 import { formatDistance, skipLabel } from './tourist-route.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
+import { GustVisual } from './gust-visual.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { QuickMenu } from './quick-menu.js';
@@ -313,6 +315,8 @@ class Game {
     this.fpsMeter = new FpsMeter();
     this.fpsMeter.setVisible(getShowFps());
     this.grassParticles = new GrassParticles(this.scene);
+    // E-2 · the wind you can see during a gust.
+    this.gustVisual = new GustVisual(this.scene);
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
     this.recorder = new GameRecorder(this.renderer.domElement, this.input);
@@ -2416,6 +2420,7 @@ class Game {
     }
 
     this.grassParticles.clear();
+    if (this.gustVisual) this.gustVisual.clear();
     if (this.geeseManager) this.geeseManager.clear();
     this._stokerWasFallen = false;
     this._remoteFinishStats = null;
@@ -3231,12 +3236,25 @@ class Game {
       const kind = this._activeDisruption.event.kind;
       if (kind === KIND.GUST) {
         // A crosswind the pair has to correct together: their lean inputs
-        // average, so agreeing is the only way out of it.
-        this.bike.leanVelocity += (this._gustDirection || 1) * GUST_FORCE * dt;
+        // average, so agreeing is the only way out of it. Shaped by the
+        // envelope so it arrives and passes rather than switching on.
+        const env = gustEnvelope(this._activeDisruption.progress);
+        this.bike.leanVelocity += (this._gustDirection || 1) * GUST_FORCE * env * dt;
       } else if (kind === KIND.GOOSE) {
         // Handled in the pedal path: a tap during the coast window costs speed.
         this._coastRequiredUntil = performance.now() + 200;
       }
+    }
+
+    // The wind you can see. Driven for every seat, including the stoker, whose
+    // bike is not simulated here but whose screen should still show the storm.
+    if (this.gustVisual) {
+      const gusting = this._activeDisruption &&
+        this._activeDisruption.event.kind === KIND.GUST;
+      this.gustVisual.setWind(
+        this._gustDirection || 1,
+        gusting ? gustEnvelope(this._activeDisruption.progress) : 0
+      );
     }
 
     // Cobbles tighten the beat window; A-2's default returns the moment it ends.
@@ -3888,6 +3906,7 @@ class Game {
     }
     if (this.grassParticles) {
       this.grassParticles.update(this.bike, slowDt);
+      if (this.gustVisual) this.gustVisual.update(this.bike, slowDt);
     }
 
     // Camera moves at real time so the cinematic timing is consistent
@@ -5622,6 +5641,7 @@ class Game {
     }
 
     this.grassParticles.update(this.bike, dt);
+    if (this.gustVisual) this.gustVisual.update(this.bike, dt);
     this._hapticOffRoadCheck();
     this._updateWorldAndCamera(dt);
 
@@ -5722,6 +5742,7 @@ class Game {
     }
 
     this.grassParticles.update(this.bike, dt);
+    if (this.gustVisual) this.gustVisual.update(this.bike, dt);
     this._hapticOffRoadCheck();
 
     // Send state + lean to stoker at 20Hz
@@ -6525,6 +6546,7 @@ class Game {
     this._stokerWasFallen = this.bike.fallen;
 
     this.grassParticles.update(this.bike, dt);
+    if (this.gustVisual) this.gustVisual.update(this.bike, dt);
     this._hapticOffRoadCheck();
 
     // Send lean to captain at 20Hz

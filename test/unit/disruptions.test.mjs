@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import {
   planDisruptions, disruptionAt, telegraphText, beatWindowFor,
   KIND, DURATION, TELEGRAPH_S, COBBLES_WINDOW_S,
-  COUNT_BY_DIFFICULTY, START_CLEARANCE_M, CHECKPOINT_CLEARANCE_M
+  COUNT_BY_DIFFICULTY, START_CLEARANCE_M, CHECKPOINT_CLEARANCE_M,
+  GUST_FORCE, gustEnvelope
 } from '../../js/disruptions.js';
 
 const ride = (over = {}) => ({
@@ -116,4 +117,56 @@ test('only the three kinds we built ever appear', () => {
     for (const e of planDisruptions(ride({ seed, difficulty: 'daredevil' }))) kinds.add(e.kind);
   }
   assert.deepEqual([...kinds].sort(), Object.values(KIND).sort());
+});
+
+// E-2 · the gust has to be a shove that arrives and passes, and it has to be
+// big enough to feel. It was 0.55 lean-units/sec — about 6 degrees of lean,
+// under 8% of the crash threshold and roughly the size of a phone's tilt
+// deadzone. The banner said HOLD IT and there was nothing to hold.
+test('the gust is strong enough to have to correct against', () => {
+  assert.ok(GUST_FORCE >= 2.5, 'a gust under 2.5 is inside the input noise floor');
+  assert.ok(GUST_FORCE <= 5, 'a gust over 5 stops being recoverable');
+});
+
+test('the gust ramps in and out rather than switching on', () => {
+  assert.equal(gustEnvelope(0), 0);
+  assert.equal(gustEnvelope(1), 0);
+  assert.equal(gustEnvelope(0.5), 1, 'full strength through the middle');
+  // Rising through the attack, falling through the release.
+  assert.ok(gustEnvelope(0.05) < gustEnvelope(0.12));
+  assert.ok(gustEnvelope(0.8) > gustEnvelope(0.95));
+});
+
+test('the envelope is bounded and never negative', () => {
+  for (let p = -0.5; p <= 1.5; p += 0.01) {
+    const v = gustEnvelope(p);
+    assert.ok(v >= 0 && v <= 1, `envelope(${p.toFixed(2)}) = ${v}`);
+  }
+  assert.equal(gustEnvelope(NaN), 0);
+  assert.equal(gustEnvelope(undefined), 0);
+});
+
+// The bug this fixes: a flat 40 m checkpoint clearance is wider than half the
+// gap on a short course. Grandma's Cottage is 250 m with a checkpoint every
+// 62 m, so every candidate position clashed, every event was dropped, and that
+// level had no disruptions at all — on every seed.
+test('a short course with close checkpoints still gets disruptions', () => {
+  const checkpoints = [62, 124, 186, 248];
+  let empty = 0;
+  for (let seed = 1; seed <= 200; seed++) {
+    const ev = planDisruptions({ seed, distance: 250, difficulty: 'adventurous', checkpoints });
+    if (ev.length === 0) empty++;
+  }
+  assert.equal(empty, 0, `${empty}/200 seeds produced a ride with nothing in it`);
+});
+
+test('events still keep clear of checkpoints', () => {
+  const checkpoints = [125, 250, 375];
+  for (let seed = 1; seed <= 200; seed++) {
+    for (const e of planDisruptions({ seed, distance: 500, difficulty: 'daredevil', checkpoints })) {
+      for (const cp of checkpoints) {
+        assert.ok(Math.abs(cp - e.atM) >= 20, `${e.kind}@${e.atM} sits on checkpoint ${cp}`);
+      }
+    }
+  }
 });

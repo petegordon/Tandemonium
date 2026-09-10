@@ -35,8 +35,34 @@ export const TELEGRAPH_S = 3.0;
 /** The tightened beat window during cobbles. */
 export const COBBLES_WINDOW_S = 0.15;
 
-/** Sideways push during a gust, in lean units per second. */
-export const GUST_FORCE = 0.55;
+/**
+ * Sideways push during a gust, in lean units per second.
+ *
+ * This was 0.55, which simulated out to a peak lean of about 6 degrees — under
+ * 8% of the crash threshold, and roughly the size of the tilt deadzone on a
+ * phone. The banner said HOLD IT and there was nothing to hold. At 3.5 the same
+ * two seconds reach about 26 degrees on adventurous: you have to correct, and
+ * you have time to.
+ */
+export const GUST_FORCE = 3.5;
+
+/**
+ * The gust's shape over its own duration, as fractions of it.
+ *
+ * A step function reads as the bike being teleported sideways. Ramping in over
+ * the first fifth and out over the last third makes it a shove that arrives and
+ * passes, which is both fairer to correct against and what wind does.
+ */
+export const GUST_ATTACK = 0.18;
+export const GUST_RELEASE = 0.30;
+
+/** Gust strength at `progress` (0..1) through the event. Pure — tested. */
+export function gustEnvelope(progress) {
+  const p = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
+  if (p < GUST_ATTACK) return p / GUST_ATTACK;
+  if (p > 1 - GUST_RELEASE) return Math.max(0, (1 - p) / GUST_RELEASE);
+  return 1;
+}
 
 /** How many events each difficulty gets. Chill gets none: it is the preset
  *  that promises nothing will happen to you. */
@@ -97,12 +123,31 @@ export function planDisruptions({ seed, distance, difficulty, checkpoints = [] }
   return events.sort((a, b) => a.atM - b.atM);
 }
 
-/** Push an event away from a checkpoint, or drop it if there is nowhere to go. */
+/**
+ * Push an event away from a checkpoint, or drop it if there is nowhere to go.
+ *
+ * The clearance adapts to how close together the checkpoints actually are.
+ * A flat 40 m is wider than half the gap on a short course — Grandma's Cottage
+ * is 250 m with a checkpoint every 62 m — so EVERY position clashed, every
+ * event was dropped, and that level silently had no disruptions at all on any
+ * seed. Never claim more than a third of the gap.
+ */
+function clearanceFor(checkpoints) {
+  if (checkpoints.length < 2) return CHECKPOINT_CLEARANCE_M;
+  let minGap = Infinity;
+  for (let i = 1; i < checkpoints.length; i++) {
+    minGap = Math.min(minGap, Math.abs(checkpoints[i] - checkpoints[i - 1]));
+  }
+  if (!Number.isFinite(minGap)) return CHECKPOINT_CLEARANCE_M;
+  return Math.min(CHECKPOINT_CLEARANCE_M, minGap / 3);
+}
+
 function nudgeClearOfCheckpoints(atM, checkpoints, distance) {
+  const clearance = clearanceFor(checkpoints);
   for (let attempt = 0; attempt < 4; attempt++) {
-    const clash = checkpoints.find(cp => Math.abs(cp - atM) < CHECKPOINT_CLEARANCE_M);
+    const clash = checkpoints.find(cp => Math.abs(cp - atM) < clearance);
     if (!clash) return atM;
-    atM = clash + CHECKPOINT_CLEARANCE_M + 5;
+    atM = clash + clearance + 5;
     if (atM > distance - 20) return null;
   }
   return null;
@@ -125,6 +170,7 @@ export function disruptionAt(events, distanceM, activeUntilM) {
   return null;
 }
 
+/** The banner text for a telegraphed event. */
 /** The banner text for a telegraphed event. */
 export function telegraphText(kind) {
   return {
