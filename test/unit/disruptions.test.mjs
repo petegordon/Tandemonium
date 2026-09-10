@@ -170,3 +170,33 @@ test('events still keep clear of checkpoints', () => {
     }
   }
 });
+
+test('a ride shows as many different things as it has room for', () => {
+  // Adventurous gets two events. Picking each independently from three kinds
+  // meant a third of rides drew the same one twice — Today's Road drew gust,
+  // gust, so nobody riding it could meet the cobbles at all. Whatever else the
+  // schedule does, it must not hide a feature behind a coin flip.
+  for (let seed = 1; seed <= 400; seed++) {
+    for (const [difficulty, want] of [['adventurous', 2], ['daredevil', 3]]) {
+      const events = planDisruptions({ seed, distance: 500, difficulty, checkpoints: [125, 250, 375] });
+      if (events.length < want) continue;   // one was dropped for a checkpoint
+      const kinds = events.map(e => e.kind);
+      assert.equal(new Set(kinds).size, kinds.length,
+        `seed ${seed} on ${difficulty} repeated a kind: ${kinds.join(', ')}`);
+    }
+  }
+});
+
+test('across many roads every kind still turns up about as often as the others', () => {
+  const seen = { gust: 0, goose: 0, cobbles: 0 };
+  for (let seed = 1; seed <= 600; seed++) {
+    for (const e of planDisruptions({ seed, distance: 500, difficulty: 'adventurous', checkpoints: [125, 250, 375] })) {
+      seen[e.kind]++;
+    }
+  }
+  const counts = Object.values(seen);
+  const total = counts.reduce((a, b) => a + b, 0);
+  for (const [kind, n] of Object.entries(seen)) {
+    assert.ok(n > total * 0.25, `${kind} only appeared ${n} times in ${total}`);
+  }
+});

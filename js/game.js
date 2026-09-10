@@ -13,7 +13,7 @@ import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from '
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
 import {
   planDisruptions, disruptionAt, telegraphText, beatWindowFor, KIND, GUST_FORCE,
-  gustEnvelope, COBBLES_LENGTH_M
+  gustEnvelope, COBBLES_LENGTH_M, TELEGRAPH_S, DURATION
 } from './disruptions.js';
 import { BEAT_WINDOW_S } from './pedal-scoring.js';
 
@@ -3196,6 +3196,7 @@ class Game {
       difficulty: difficultyName,
       checkpoints: this.raceManager ? this.raceManager.checkpoints : []
     });
+    this._disruptions = this._overrideDisruptions(this._disruptions, level);
     this._activeDisruption = null;
     this._disruptionEndsAt = 0;
     this._coastRequiredUntil = 0;
@@ -3212,6 +3213,46 @@ class Game {
           .filter(e => e.kind === KIND.COBBLES)
           .map(e => ({ startD: e.atM, endD: e.atM + COBBLES_LENGTH_M })));
     }
+  }
+
+  /**
+   * ?disrupt= — put the disruptions where someone testing them can reach them.
+   *
+   * A planned ride spaces two events over 500 m and keeps them 40 m clear of
+   * every checkpoint, so on Today's Road BOTH always land past the first one.
+   * That is right for playing and useless for checking whether the cobbles
+   * sound like cobbles: you have to ride a clean 125 m first, every attempt.
+   *
+   *   ?disrupt=cobbles   one cobbled stretch at 70 m, nothing else
+   *   ?disrupt=gust      one gust at 70 m
+   *   ?disrupt=goose     one goose at 70 m
+   *   ?disrupt=all       all three, 70 m apart, in that order
+   *
+   * Off unless the parameter is present, so it cannot reach a player.
+   */
+  _overrideDisruptions(planned, level) {
+    let want;
+    try {
+      want = new URLSearchParams(window.location.search).get('disrupt');
+    } catch { return planned; }
+    if (!want) return planned;
+
+    const first = 70;
+    const spacing = 70;
+    const kinds = want === 'all'
+      ? [KIND.COBBLES, KIND.GUST, KIND.GOOSE]
+      : [want].filter(k => Object.values(KIND).includes(k));
+    if (kinds.length === 0) return planned;
+
+    const max = (level && level.distance ? level.distance : 500) - 20;
+    return kinds
+      .map((kind, i) => ({ kind, atM: first + i * spacing }))
+      .filter(e => e.atM < max)
+      .map(e => ({
+        ...e,
+        telegraphM: Math.max(0, e.atM - TELEGRAPH_S * 8),
+        duration: DURATION[e.kind]
+      }));
   }
 
   /**

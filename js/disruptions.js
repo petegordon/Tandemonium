@@ -86,12 +86,35 @@ export const COUNT_BY_DIFFICULTY = { tutorial: 0, chill: 0, adventurous: 2, dare
 export const START_CLEARANCE_M = 60;
 export const CHECKPOINT_CLEARANCE_M = 40;
 
+/** Fisher-Yates, so the order is seeded and the draw takes each kind once. */
+function shuffled(list, rng) {
+  const out = list.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/**
+ * The schedule's RNG, warmed before use.
+ *
+ * This LCG's FIRST output carries the seed's low bits almost unchanged, and
+ * the seeds handed to it are consecutive-ish derivations of a day key, so that
+ * first draw is not close to uniform: over 2000 roads it split 861/453/686
+ * across three buckets instead of 667 each. Every choice this module makes was
+ * downstream of it. Two throwaway draws are enough to decorrelate it.
+ */
+const RNG_WARMUP = 2;
+
 function makeRng(seed) {
   let s = (seed >>> 0) || 1;
-  return () => {
+  const next = () => {
     s = (s * 1664525 + 1013904223) >>> 0;
     return s / 4294967296;
   };
+  for (let i = 0; i < RNG_WARMUP; i++) next();
+  return next;
 }
 
 /**
@@ -113,7 +136,17 @@ export function planDisruptions({ seed, distance, difficulty, checkpoints = [] }
   if (!count || !(distance > 0)) return [];
 
   const rng = makeRng(deriveSeed(seed || 1, SALT.disruptions));
-  const kinds = [KIND.GUST, KIND.GOOSE, KIND.COBBLES];
+
+  // Draw the kinds WITHOUT replacement.
+  //
+  // Each event used to pick independently from the three, so a ride could draw
+  // the same one twice — and adventurous only gets two. Today's Road drew gust,
+  // gust: the cobbles and the goose were built, tested and shipped, and nobody
+  // riding today would ever have met either of them. A third of adventurous
+  // rides had that hole in them. Shuffling instead means a ride shows as many
+  // different things as it has room for, and only repeats once it has run out
+  // of new ones (daredevil, at three, sees each exactly once).
+  const kinds = shuffled([KIND.GUST, KIND.GOOSE, KIND.COBBLES], rng);
 
   // Space the events evenly through the ride and jitter within each slot, so
   // they never bunch and never all land in the same place every time.
@@ -123,7 +156,7 @@ export function planDisruptions({ seed, distance, difficulty, checkpoints = [] }
 
   const events = [];
   for (let i = 0; i < count; i++) {
-    const kind = kinds[Math.floor(rng() * kinds.length)];
+    const kind = kinds[i % kinds.length];
     let atM = START_CLEARANCE_M + slot * i + slot * (0.2 + rng() * 0.6);
     atM = nudgeClearOfCheckpoints(atM, checkpoints, distance);
     if (atM === null) continue;
