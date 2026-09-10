@@ -5930,7 +5930,12 @@ class Game {
         this._coachWrongFlash = true;
       }
 
-      const cadence = ev.gap > 0.05 && ev.gap < 4 ? 1 / ev.gap : 1;
+      // A gap under 50 ms is a fast roll, not a bad reading. This used to fall
+      // back to cadence 1 — the middle of the range — so tapping FASTER made
+      // the pitch drop. Hand the real rate over and let tapPitch() clamp it, so
+      // the curve only ever rises. A gap of 4 s+ is a first stroke or a return
+      // from coasting, where there is no rate to report yet.
+      const cadence = ev.gap > 0 && ev.gap < 4 ? 1 / ev.gap : 1;
       if (this.audioEngine) this.audioEngine.pedalTap(ev.kind, cadence);
 
       // Rumble only the seat that tapped when the seats have their own pads.
