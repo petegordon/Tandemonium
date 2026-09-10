@@ -37,6 +37,15 @@ export default {
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
+      // D-6 / D-7 · the pair, and the day's ranked results of people you have
+      // actually ridden with. There is no global daily board (decision 5).
+      if (path === '/pair') return withAuth(request, env, corsOrigin, handlePair);
+      if (path === '/daily' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.SCORE_LIMITER || env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, handleDailySubmit);
+      }
+      if (path === '/daily') return withAuth(request, env, corsOrigin, handleDailyBoard);
       if (path === '/relay-token' && request.method === 'POST') return withAuth(request, env, corsOrigin, issueRelayToken);
 
       // Public routes (rate limited by IP)
@@ -351,6 +360,29 @@ async function submitScore(request, env, corsOrigin, userId) {
     await env.DB.batch(batchStmts);
   }
 
+  // D-7 · fold this ride into the pair's history when two riders can be
+  // identified. Both signed-in gives two account ids; a signed-in captain with
+  // a guest stoker gives an account id and 'guest:<device_id>' (D-9), so the
+  // record still accumulates and is migrated if that guest ever signs in.
+  if (contributions) {
+    const riders = [];
+    for (const [role, stats] of Object.entries(contributions)) {
+      if (role === 'solo') continue;
+      if (stats.userId) riders.push(String(stats.userId));
+      else if (stats.guestDeviceId) riders.push('guest:' + stats.guestDeviceId);
+    }
+    if (riders.length === 2) {
+      try {
+        await upsertPairRide(env, riders[0], riders[1], {
+          levelId, timeMs, distance, dayKey: body.dailyKey || null
+        });
+      } catch (err) {
+        // A pair row is a nicety; a score submission must not fail over it.
+        console.error('pairs upsert failed', err);
+      }
+    }
+  }
+
   // Check if personal best
   const best = await env.DB.prepare(
     'SELECT MIN(time_ms) as best_time FROM scores WHERE user_id = ? AND level_id = ? AND distance >= ?'
@@ -360,6 +392,258 @@ async function submitScore(request, env, corsOrigin, userId) {
     scoreId,
     isNewBest: !best || timeMs <= best.best_time
   }, 200, corsOrigin);
+}
+
+// ============================================================
+// D-6 / D-7 / D-9 · pairs and the partners board
+// ============================================================
+//
+// The pair is the unit this game is actually about. These endpoints are what
+// let it survive the room closing.
+//
+// Design notes that are easy to get wrong later:
+//
+//   - a pair key is UNORDERED. `pairKey(a, b)` sorts, so who was captain never
+//     produces a second row;
+//   - keys are TEXT. A signed-in account is its numeric id as a string; a
+//     guest is 'guest:<device_id>' (D-9), so a captain still builds a history
+//     with the friend who never signs in, and that history is migrated to
+//     their account if they ever do;
+//   - the daily board returns the caller and the people they have ridden with,
+//     and nobody else. There is no global daily leaderboard, on purpose: a
+//     stranger's time is not a target for this audience.
+
+/** Unordered, TEXT-keyed pair. */
+function pairKey(a, b) {
+  const x = String(a);
+  const y = String(b);
+  return x < y ? [x, y] : [y, x];
+}
+
+/**
+ * D-7 · fold one finished shared ride into the pair's history.
+ * Called from the score submit path when two riders are identifiable.
+ */
+async function upsertPairRide(env, a, b, { levelId, timeMs, distance, dayKey }) {
+  if (!a || !b || String(a) === String(b)) return;
+  const [lo, hi] = pairKey(a, b);
+
+  const existing = await env.DB.prepare(
+    'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
+  ).bind(lo, hi).first();
+
+  let best = {};
+  try { best = existing && existing.best_json ? JSON.parse(existing.best_json) : {}; } catch { best = {}; }
+  if (levelId && typeof timeMs === 'number' && timeMs > 0) {
+    if (!best[levelId] || timeMs < best[levelId]) best[levelId] = timeMs;
+  }
+
+  // The pair's daily streak counts CONSECUTIVE DAYS here only when the ride was
+  // on Today's Road; ordinary rides update everything else and leave it alone.
+  let streak = existing ? existing.daily_streak : 0;
+  let bestStreak = existing ? existing.daily_best_streak : 0;
+  let lastKey = existing ? existing.daily_last_key : null;
+  if (dayKey) {
+    if (lastKey === dayKey) {
+      // already counted today
+    } else if (lastKey && dayGap(lastKey, dayKey) === 1) {
+      streak += 1;
+    } else {
+      streak = 1;
+    }
+    bestStreak = Math.max(bestStreak || 0, streak);
+    lastKey = dayKey;
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO pairs (user_lo, user_hi, rides, distance, best_json, last_ride,
+                        daily_streak, daily_best_streak, daily_last_key)
+     VALUES (?, ?, 1, ?, ?, datetime('now'), ?, ?, ?)
+     ON CONFLICT(user_lo, user_hi) DO UPDATE SET
+       rides = rides + 1,
+       distance = distance + excluded.distance,
+       best_json = excluded.best_json,
+       last_ride = excluded.last_ride,
+       daily_streak = excluded.daily_streak,
+       daily_best_streak = excluded.daily_best_streak,
+       daily_last_key = excluded.daily_last_key`
+  ).bind(lo, hi, distance || 0, JSON.stringify(best), streak, bestStreak, lastKey).run();
+}
+
+function dayGap(a, b) {
+  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
+}
+
+/** D-8 · GET /pair?with=<userId|guest:id> — what the two of you have done. */
+async function handlePair(request, env, corsOrigin, userId) {
+  const url = new URL(request.url);
+  const other = url.searchParams.get('with');
+  if (!other) return jsonResponse({ error: 'Missing ?with' }, 400, corsOrigin);
+
+  const [lo, hi] = pairKey(userId, other);
+  const row = await env.DB.prepare(
+    'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
+  ).bind(lo, hi).first();
+
+  if (!row) {
+    return jsonResponse({ pair: null, rides: 0, distance: 0, best: {}, daily_streak: 0 }, 200, corsOrigin);
+  }
+  let best = {};
+  try { best = row.best_json ? JSON.parse(row.best_json) : {}; } catch { best = {}; }
+  return jsonResponse({
+    pair: [row.user_lo, row.user_hi],
+    rides: row.rides,
+    distance: row.distance,
+    best,
+    last_ride: row.last_ride,
+    daily_streak: row.daily_streak,
+    daily_best_streak: row.daily_best_streak
+  }, 200, corsOrigin);
+}
+
+/**
+ * D-6 · POST /daily — record the day's ranked run, once.
+ * A second submission for the same (user, day, mode) is a 409, not an update:
+ * that refusal is the whole of "one run per day".
+ */
+async function handleDailySubmit(request, env, corsOrigin, userId) {
+  const body = await request.json();
+  const { dayKey, mode, timeMs, dnf, distance, collectibles, crashes, safetyUsed, syncPct, partnerUserId } = body;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) {
+    return jsonResponse({ error: 'Bad day key' }, 400, corsOrigin);
+  }
+  if (mode !== 'solo' && mode !== 'pair') {
+    return jsonResponse({ error: 'Bad mode' }, 400, corsOrigin);
+  }
+  // Today or yesterday only — a client whose clock is a week out is not
+  // submitting a result anyone can compare against.
+  const today = dailyKeyUTC();
+  if (dayKey !== today && dayGap(dayKey, today) !== 1) {
+    return jsonResponse({ error: 'Stale day key' }, 400, corsOrigin);
+  }
+  if (!dnf && !(timeMs >= 30000 && timeMs <= 900000)) {
+    return jsonResponse({ error: 'Implausible time' }, 400, corsOrigin);
+  }
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO daily_results
+       (user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
+      distance || 0, collectibles || 0, crashes || 0, safetyUsed ? 1 : 0,
+      typeof syncPct === 'number' ? Math.round(syncPct) : null,
+      partnerUserId || null
+    ).run();
+  } catch (e) {
+    if (/UNIQUE/i.test(String(e && e.message))) {
+      return jsonResponse({ error: 'Already ridden today' }, 409, corsOrigin);
+    }
+    throw e;
+  }
+
+  writeMetric(env, 'daily_submit', mode);
+  return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+/**
+ * D-6 · GET /daily?key=YYYY-MM-DD — you, and the people you have ridden with.
+ *
+ * Never returns a stranger. The join is against `pairs`, so "someone I have
+ * ridden with" means exactly that, and a player who has never ridden with
+ * anyone sees only themselves — which reads as "ride with someone", not as a
+ * dead game.
+ */
+async function handleDailyBoard(request, env, corsOrigin, userId) {
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key') || dailyKeyUTC();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+    return jsonResponse({ error: 'Bad day key' }, 400, corsOrigin);
+  }
+
+  const me = String(userId);
+  const rows = await env.DB.prepare(
+    `SELECT d.user_id, d.mode, d.time_ms, d.dnf, d.distance, d.collectibles,
+            d.crashes, d.safety_used, d.sync_pct, u.display_name, u.avatar_url
+     FROM daily_results d
+     JOIN users u ON u.id = d.user_id
+     WHERE d.day_key = ?
+       AND (
+         d.user_id = ?
+         OR EXISTS (
+           SELECT 1 FROM pairs p
+           WHERE (p.user_lo = ? AND p.user_hi = CAST(d.user_id AS TEXT))
+              OR (p.user_hi = ? AND p.user_lo = CAST(d.user_id AS TEXT))
+         )
+       )
+     ORDER BY d.dnf ASC, d.time_ms ASC`
+  ).bind(key, userId, me, me).all();
+
+  return jsonResponse({
+    key,
+    results: rows.results || [],
+    note: 'You and the people you have ridden with. There is no global daily board.'
+  }, 200, corsOrigin);
+}
+
+/** The day key the server considers current (09:00 UTC rollover). */
+function dailyKeyUTC(now = Date.now()) {
+  return new Date(now - 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * D-9 · when a guest signs in, the history they built as a guest becomes
+ * theirs. Called from the auth success path with the device id the client has
+ * been carrying.
+ */
+async function mergeGuestPairs(env, deviceId, userId) {
+  if (!deviceId || !userId) return;
+  const guestKey = 'guest:' + deviceId;
+  const real = String(userId);
+
+  const rows = await env.DB.prepare(
+    'SELECT * FROM pairs WHERE user_lo = ? OR user_hi = ?'
+  ).bind(guestKey, guestKey).all();
+
+  for (const row of rows.results || []) {
+    const other = row.user_lo === guestKey ? row.user_hi : row.user_lo;
+    if (other === real) continue;                       // riding with yourself
+    const [lo, hi] = pairKey(real, other);
+
+    const target = await env.DB.prepare(
+      'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
+    ).bind(lo, hi).first();
+
+    if (!target) {
+      await env.DB.prepare(
+        `INSERT INTO pairs (user_lo, user_hi, rides, distance, best_json, last_ride,
+                            daily_streak, daily_best_streak, daily_last_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(lo, hi, row.rides, row.distance, row.best_json, row.last_ride,
+             row.daily_streak, row.daily_best_streak, row.daily_last_key).run();
+    } else {
+      // Both rows exist: add the rides together and keep the better times.
+      let a = {}, b = {};
+      try { a = target.best_json ? JSON.parse(target.best_json) : {}; } catch {}
+      try { b = row.best_json ? JSON.parse(row.best_json) : {}; } catch {}
+      for (const [level, t] of Object.entries(b)) {
+        if (!a[level] || t < a[level]) a[level] = t;
+      }
+      await env.DB.prepare(
+        `UPDATE pairs SET rides = rides + ?, distance = distance + ?, best_json = ?,
+                          last_ride = MAX(COALESCE(last_ride, ''), COALESCE(?, '')),
+                          daily_best_streak = MAX(daily_best_streak, ?)
+         WHERE user_lo = ? AND user_hi = ?`
+      ).bind(row.rides, row.distance, JSON.stringify(a), row.last_ride,
+             row.daily_best_streak, lo, hi).run();
+    }
+
+    await env.DB.prepare(
+      'DELETE FROM pairs WHERE user_lo = ? AND user_hi = ?'
+    ).bind(row.user_lo, row.user_hi).run();
+  }
 }
 
 // ============================================================
@@ -749,8 +1033,9 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
 
   await env.DB.prepare(
     `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
-     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address,
+     device_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     body.id,
     body.started_at || new Date().toISOString(),
@@ -765,7 +1050,9 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
     body.platform || 'browser',
     body.screen_width || null,
     body.screen_height || null,
-    clientIP || null
+    clientIP || null,
+    // A-9: anonymous per-browser id. Old clients don't send it; that is fine.
+    typeof body.device_id === 'string' && body.device_id.length <= 64 ? body.device_id : null
   ).run();
 
   writeMetric(env, 'analytics_session');
@@ -1044,6 +1331,10 @@ async function handleDashboard(route, url, env, corsOrigin) {
     devices: () => dashDevices(env, since, ex),
     dda: () => dashDDA(env, since, ex),
     overview: () => dashOverview(env, since, ex),
+    // C-1 · the three questions the pipeline was never asked.
+    retention: () => dashRetention(env, since, ex),
+    dropoff: () => dashDropoff(env, since, ex),
+    pairs: () => dashPairs(env, since, ex),
   };
 
   // Also expose a 'dev_ips' route so the dashboard can show known developer IPs
@@ -1105,6 +1396,191 @@ function excludedSessionSubquery(ex) {
   return {
     clause: ` AND session_id NOT IN (SELECT id FROM sessions WHERE ${conds.join(' OR ')})`,
     binds,
+  };
+}
+
+// ============================================================
+// C-1 · Retention, drop-off, pairs
+// ============================================================
+//
+// The analytics pipeline has been collecting since it was built and has never
+// been asked a question. These three routes answer the three that decide
+// whether any of this work paid off:
+//
+//   retention — do people come back tomorrow? in a week?
+//   dropoff   — where do rides end, and how long does a crash cost?
+//   pairs     — do two specific people ride together more than once?
+//
+// Retention needs the A-9 device_id: before it, every visit from the same
+// browser looked like a new person, so D1/D7 was unmeasurable for anyone not
+// signed in — which is most players. Rows before the migration have a NULL
+// device_id and are excluded rather than guessed at; the response says how
+// many, so a low number is never mistaken for a low retention rate.
+
+async function dashRetention(env, since, ex) {
+  const sf = sessionFilter(ex, 's');
+
+  // Cohort = the day a device was first seen (in the window). d1/d7 = the
+  // share of that cohort with any later session on the following day, or
+  // within the following seven days.
+  const rows = await env.DB.prepare(
+    `WITH d AS (
+       SELECT device_id, DATE(started_at) AS day
+       FROM sessions s
+       WHERE started_at >= ? AND device_id IS NOT NULL${sf.clause}
+       GROUP BY device_id, day
+     ),
+     first_seen AS (
+       SELECT device_id, MIN(day) AS cohort FROM d GROUP BY device_id
+     )
+     SELECT f.cohort AS day,
+            COUNT(DISTINCT f.device_id) AS n,
+            COUNT(DISTINCT CASE WHEN julianday(d.day) - julianday(f.cohort) = 1
+                                THEN f.device_id END) AS d1,
+            COUNT(DISTINCT CASE WHEN julianday(d.day) - julianday(f.cohort) BETWEEN 1 AND 7
+                                THEN f.device_id END) AS d7
+     FROM first_seen f
+     LEFT JOIN d ON d.device_id = f.device_id
+     GROUP BY f.cohort
+     ORDER BY f.cohort DESC`
+  ).bind(since, ...sf.binds).all();
+
+  const cohorts = (rows.results || []).map(r => ({
+    day: r.day,
+    n: r.n,
+    d1: r.n ? +(r.d1 / r.n).toFixed(3) : 0,
+    d7: r.n ? +(r.d7 / r.n).toFixed(3) : 0
+  }));
+
+  // Overall, weighted by cohort size, ignoring cohorts too recent to have had
+  // their chance (a cohort from yesterday cannot have a d7).
+  const sum = (list, k) => list.reduce((a, c) => a + c[k], 0);
+  const d1Pool = cohorts.filter(c => c.day < todayUTC(-1));
+  const d7Pool = cohorts.filter(c => c.day < todayUTC(-7));
+  const weighted = (pool, k) => {
+    const total = sum(pool, 'n');
+    return total ? +(pool.reduce((a, c) => a + c[k] * c.n, 0) / total).toFixed(3) : null;
+  };
+
+  // How much of the data can even answer this question?
+  const coverage = await env.DB.prepare(
+    `SELECT COUNT(*) AS total,
+            COUNT(CASE WHEN device_id IS NOT NULL THEN 1 END) AS with_device
+     FROM sessions s WHERE started_at >= ?${sf.clause}`
+  ).bind(since, ...sf.binds).first();
+
+  return {
+    cohorts,
+    overall: { d1: weighted(d1Pool, 'd1'), d7: weighted(d7Pool, 'd7') },
+    coverage: {
+      sessions: coverage ? coverage.total : 0,
+      with_device_id: coverage ? coverage.with_device : 0,
+      note: 'Sessions before the device_id migration are excluded, not guessed at.'
+    }
+  };
+}
+
+/** ISO day, `offsetDays` from today, in UTC. */
+function todayUTC(offsetDays = 0) {
+  return new Date(Date.now() + offsetDays * 86400000).toISOString().slice(0, 10);
+}
+
+async function dashDropoff(env, since, ex) {
+  const esq = excludedSessionSubquery(ex);
+
+  const byLevel = await env.DB.prepare(
+    `SELECT level, difficulty, completed,
+            COALESCE(abandon_reason, '-') AS abandon_reason,
+            COUNT(*) AS n,
+            CAST(AVG(duration_ms) AS INTEGER) AS avg_ms,
+            CAST(AVG(distance) AS INTEGER) AS avg_distance
+     FROM rides WHERE started_at >= ?${esq.clause}
+     GROUP BY level, difficulty, completed, abandon_reason
+     ORDER BY n DESC`
+  ).bind(since, ...esq.binds).all();
+
+  // Where do abandoned rides die? 30-second buckets, and by checkpoint.
+  const buckets = await env.DB.prepare(
+    `SELECT (duration_ms / 30000) AS bucket_30s, COUNT(*) AS n
+     FROM rides
+     WHERE started_at >= ? AND completed = 0 AND duration_ms IS NOT NULL${esq.clause}
+     GROUP BY bucket_30s ORDER BY bucket_30s`
+  ).bind(since, ...esq.binds).all();
+
+  const byCheckpoint = await env.DB.prepare(
+    `SELECT checkpoints_passed, COUNT(*) AS n
+     FROM rides WHERE started_at >= ? AND completed = 0${esq.clause}
+     GROUP BY checkpoints_passed ORDER BY checkpoints_passed`
+  ).bind(since, ...esq.binds).all();
+
+  // First ride of a session: the demo's key number.
+  const firstRide = await env.DB.prepare(
+    `WITH firsts AS (
+       SELECT id, session_id, completed, duration_ms,
+              ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY started_at) AS rn
+       FROM rides WHERE started_at >= ?${esq.clause}
+     )
+     SELECT COUNT(*) AS n, SUM(completed) AS completed,
+            CAST(AVG(duration_ms) AS INTEGER) AS avg_ms
+     FROM firsts WHERE rn = 1`
+  ).bind(since, ...esq.binds).first();
+
+  // B-2's promise, measured: how long does a crash actually cost?
+  const recover = await env.DB.prepare(
+    `SELECT COUNT(*) AS n,
+            CAST(AVG(CAST(json_extract(event_data, '$.ms') AS INTEGER)) AS INTEGER) AS avg_ms
+     FROM events
+     WHERE created_at >= ? AND event_type = 'crash_recover'${esq.clause}`
+  ).bind(since, ...esq.binds).first();
+
+  return {
+    by_level: byLevel.results || [],
+    abandoned_duration_30s_buckets: buckets.results || [],
+    abandoned_by_checkpoint: byCheckpoint.results || [],
+    first_ride: firstRide || null,
+    crash_recover: recover || null
+  };
+}
+
+async function dashPairs(env, since, ex) {
+  // An unordered pair of signed-in accounts that finished a ride together.
+  // Ordering the ids in the key is what makes "Sam and Jo" one pair rather
+  // than two, regardless of who was captain.
+  const rows = await env.DB.prepare(
+    `WITH pairs AS (
+       SELECT MIN(a.player_user_id) AS lo, MAX(a.player_user_id) AS hi,
+              a.score_id, s.created_at
+       FROM score_contributions a
+       JOIN scores s ON s.id = a.score_id
+       WHERE a.player_user_id IS NOT NULL AND s.created_at >= ?
+       GROUP BY a.score_id
+       HAVING COUNT(DISTINCT a.player_user_id) = 2
+     )
+     SELECT lo, hi, COUNT(*) AS rides,
+            MIN(created_at) AS first_ride, MAX(created_at) AS last_ride
+     FROM pairs GROUP BY lo, hi ORDER BY rides DESC`
+  ).bind(since).all();
+
+  const pairs = rows.results || [];
+  const repeat = pairs.filter(p => p.rides >= 2);
+
+  // Median gap in days between a pair's first and last ride, over their rides.
+  // This is what decides whether the pair streak in D-5 is daily or weekly:
+  // if two people who ride together do it every nine days, a daily streak is a
+  // punishment.
+  const gaps = repeat
+    .map(p => (Date.parse(p.last_ride) - Date.parse(p.first_ride)) / 86400000 / Math.max(1, p.rides - 1))
+    .filter(n => Number.isFinite(n))
+    .sort((a, b) => a - b);
+  const median = gaps.length ? +gaps[Math.floor(gaps.length / 2)].toFixed(1) : null;
+
+  return {
+    pairs: pairs.slice(0, 100),
+    total_pairs: pairs.length,
+    repeat_pairs: repeat.length,
+    repeat_share: pairs.length ? +(repeat.length / pairs.length).toFixed(3) : 0,
+    median_days_between_rides: median,
+    note: 'Signed-in accounts only. Guest pairs are invisible here until D-9.'
   };
 }
 

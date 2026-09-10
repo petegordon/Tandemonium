@@ -9,10 +9,15 @@
 // (byte-for-byte identical to the previous inline encoder/decoder).
 //
 // Message layout (little-endian), keyed by a 1-byte type tag (MSG_*):
-//   STATE  (46B): [type][x f32][y f32][z f32][heading f32][lean f32]
+//   STATE  (48B): [type][x f32][y f32][z f32][heading f32][lean f32]
 //                 [leanVelocity f32][speed f32][crankAngle f32]
 //                 [distanceTraveled f32][roadD f32][flags u8][timer f32]
-//                 — legacy 42B messages omit the trailing timer field.
+//                 [sync u8]
+//                 — legacy 46B messages omit the trailing sync byte, and
+//                   legacy 42B messages omit the timer as well. Both still
+//                   decode; older clients ignore the extra byte.
+//                   sync = round(offsetScore * 200), so the stoker's sync bar
+//                   (A-4) reads the captain's authoritative score.
 //   LEAN   (5B):  [type][lean f32]
 //   PEDAL  (2B):  [type][0x01 down | 0x00 up]
 //   EVENT  (2B):  [type][eventByte]
@@ -28,7 +33,7 @@ export class BikeCodec {
     // Pre-allocated send buffers — STATE/LEAN are on the ~60Hz send path, so
     // we reuse one buffer each instead of allocating per send. The returned
     // view is sent synchronously by the transport, so reuse next frame is safe.
-    this._stateBuf = new ArrayBuffer(46);
+    this._stateBuf = new ArrayBuffer(48);
     this._stateView = new DataView(this._stateBuf);
     this._stateBytes = new Uint8Array(this._stateBuf);
     this._leanBuf = new ArrayBuffer(5);
@@ -36,8 +41,8 @@ export class BikeCodec {
     this._leanBytes = new Uint8Array(this._leanBuf);
   }
 
-  /** Encode bike physics + timer into the shared 46-byte STATE buffer. */
-  encodeState(bike, timerRemaining) {
+  /** Encode bike physics + timer + co-op sync into the 48-byte STATE buffer. */
+  encodeState(bike, timerRemaining, syncScore = -1) {
     const view = this._stateView;
     view.setUint8(0, MSG_STATE);
     view.setFloat32(1, bike.position.x, true);
@@ -55,6 +60,9 @@ export class BikeCodec {
     if (bike._braking) flags |= 2;
     view.setUint8(41, flags);
     view.setFloat32(42, timerRemaining >= 0 ? timerRemaining : -1, true);
+    // 0 means "no co-op sync" (solo); 1..201 maps offsetScore 0..1.
+    view.setUint8(46, syncScore >= 0 ? Math.round(Math.min(1, syncScore) * 200) + 1 : 0);
+    view.setUint8(47, 0);   // reserved: keeps the buffer 4-byte friendly
     return this._stateBytes;
   }
 
@@ -77,6 +85,11 @@ export class BikeCodec {
     // Timer field added in 46-byte messages; absent in legacy 42-byte messages.
     if (bytes.byteLength >= 46) {
       state.timerRemaining = view.getFloat32(42, true);
+    }
+    // Co-op sync byte added in 48-byte messages (A-4).
+    if (bytes.byteLength >= 47) {
+      const raw = view.getUint8(46);
+      if (raw > 0) state.syncScore = (raw - 1) / 200;
     }
     return state;
   }

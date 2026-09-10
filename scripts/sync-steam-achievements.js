@@ -67,6 +67,16 @@ function describeCondition(id) {
     perfect_1k: "Finish Grandma's House with no crashes or restarts",
     perfect_5k: 'Finish Castle with no crashes or restarts',
     team_player: '80%+ safe riding in multiplayer',
+    // F-1 · the loops the value & appeal plan built. The seven grandma_* entries
+    // above are retired from the in-game list but stay here: a Steam
+    // achievement that already exists must not be deleted out from under the
+    // people who earned it.
+    daily_first: "Ride Today's Road",
+    daily_streak_7: "Ride Today's Road seven days running",
+    daily_streak_30: "Ride Today's Road thirty days running",
+    pair_10_rides: 'Ride ten times with the same partner',
+    pair_100km: 'Ride 100 km with the same partner',
+    distance_between_us: 'Ride the distance between you and someone else',
   };
   return descriptions[id] || id;
 }

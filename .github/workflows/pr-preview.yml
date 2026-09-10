@@ -23,13 +23,46 @@ jobs:
         # git repo, or pr-preview-action fails with "not in a git directory".
         uses: actions/checkout@v4
 
+      # A-0 · unit tests gate the preview deploy.
+      - name: Set up Node
+        if: github.event.action != 'closed'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Both gates below import js/ modules that pull in `three` (road-seed
+      # exercises js/road-path.js), so dependencies have to be installed before
+      # the first gate runs — not midway through, as they used to be.
+      - name: Install dependencies
+        if: github.event.action != 'closed'
+        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund
+
+      - name: Unit tests
+        if: github.event.action != 'closed'
+        run: npm test
+
+      # A-3 · the game has no build step, so a broken import only shows up when
+      # someone opens the page. This opens it.
+      - name: Lobby smoke test
+        if: github.event.action != 'closed'
+        run: |
+          npx puppeteer browsers install chrome
+          npm run smoke
+          # ...and again over an insecure context, which is how a phone reaches
+          # the site from an http:// link. crypto.randomUUID is undefined there.
+          npm run smoke:insecure
+
       - name: Stage deploy files
         if: github.event.action != 'closed'
         run: |
           mkdir -p _site
-          rsync -a --exclude='.git' --exclude='.github' --exclude='node_modules' \
-                   --exclude='out' --exclude='desktop' --exclude='electron' \
-                   --exclude='scripts' --exclude='.env' \
+          # Exclude .gitignore: it would be published into pr-preview/pr-N/ and
+          # its `js/tourist-key.local.js` rule makes the gh-pages `git add` skip
+          # the key file we inject below. Nothing it ignores needs publishing —
+          # it's all already excluded here.
+          rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' \
+                   --exclude='node_modules' --exclude='out' --exclude='desktop' \
+                   --exclude='electron' --exclude='scripts' --exclude='.env' \
                    ./ _site/
           # Inject <base> tag so relative asset paths resolve from the repo root,
           # not from the /pr-preview/pr-N/ subdirectory
@@ -42,6 +75,19 @@ jobs:
           VERSION="v.$HASH | $DATE (PR #${{ github.event.number }})"
           # Delimiter '@' (not '#') — the version contains '#' from the PR number.
           sed -i -E "s@id=\"lobby-version\">[^<]*@id=\"lobby-version\">${VERSION}@" _site/index.html
+
+      # Tourist Mode (#333) reads window.__TOURIST_MAPS_KEY__ from the gitignored
+      # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).
+      # That file never enters git, so recreate it here from the GOOGLE_MAPS_API_KEY
+      # secret — mirrors scripts/gen-tourist-key.js. The Map Tiles key is client-
+      # side by design; keep it locked to the tandemonium.jimandi.love referrer +
+      # Map Tiles API in Google Cloud so publishing it here is safe.
+      - name: Inject Tourist Maps key
+        if: github.event.action != 'closed'
+        env:
+          TOURIST_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          node -e 'require("fs").writeFileSync("_site/js/tourist-key.local.js", "window.__TOURIST_MAPS_KEY__ = " + JSON.stringify(process.env.TOURIST_MAPS_KEY || "") + ";\n")'
 
       - name: Deploy PR Preview
         uses: rossjrw/pr-preview-action@v1

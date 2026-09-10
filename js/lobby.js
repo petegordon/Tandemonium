@@ -41,10 +41,18 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
-import { LEVELS } from './race-config.js';
+import { LEVELS, getMedals } from './race-config.js';
+import { makePlacementSalt, dailyKey, dailySeed } from './daily-seed.js';
+import { planRoute, skipLabel, isValidPoint } from './tourist-route.js';
+import { getMapsApiKey, geocodeAddress } from './tourist-config.js';
+import {
+  resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
+  rankedResult, computeStreak, formatDayLabel, formatClock
+} from './daily-ride.js';
+import * as records from './records.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
-import { AchievementManager, updateBadgeDisplay } from './achievements.js';
+import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
@@ -118,8 +126,9 @@ const HOLIDAY_BIKES = {
 };
 
 export class Lobby {
-  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, input, controllerManager }) {
+  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, input, controllerManager }) {
     this.onSolo = onSolo;
+    this.onTouristReady = onTouristReady || (() => {});   // E-6
     this.onMultiplayerReady = onMultiplayerReady;
     this.onLocalReady = onLocalReady;
     this.onVersusReady = onVersusReady;
@@ -173,6 +182,7 @@ export class Lobby {
     this.joinStep = document.getElementById('lobby-join');
     this.roomStep = document.getElementById('lobby-room');
     this.versusStep = document.getElementById('lobby-versus');
+    this.touristStep = document.getElementById('lobby-tourist');   // E-6
     this._roomRole = null; // 'captain' | 'stoker'
 
     // Permission toggle buttons
@@ -677,12 +687,20 @@ export class Lobby {
       const backHint = document.getElementById('gamepad-back-hint');
       if (backHint) { backHint.style.display = ''; backHint.style.visibility = ''; }
     }
-    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep, this.versusStep]
+    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep,
+     this.versusStep, this.touristStep]
+      .filter(Boolean)
       .forEach(s => s.style.display = 'none');
     step.style.display = 'flex';
     this._clearFocusHighlight();
     const prevStep = this._currentStep;
     this._currentStep = step;
+
+    // B-3: cards are built once at boot, but bests change every ride — refresh
+    // the record lines whenever a level list comes back into view.
+    if (step === this.levelStep || step === this.versusStep || step === this.roomStep) {
+      this._refreshRecordLines();
+    }
 
     // Local-MP JOIN RIDE monitor: run only while the captain host page is visible.
     if (step === this.hostStep) {
@@ -858,6 +876,7 @@ export class Lobby {
     // Level selection: build cards and handle clicks
     this._buildLevelCards();
     this._setupDifficultySelector();
+    this._initTouristEntry();   // E-6 · "ride the distance between you"
 
     document.getElementById('btn-back-level').addEventListener('click', () => {
       if (this._pendingMode === 'versus') {
@@ -982,8 +1001,31 @@ export class Lobby {
       this._showRoomLevelsStep();
     });
 
+    // D-2 · Today's Road asks one question before the ride: practice, or the
+    // day's ranked run? The chooser intercepts START RIDE and calls it back.
+    for (const [id, mode] of [['btn-daily-ranked', 'ranked'], ['btn-daily-practice', 'practice']]) {
+      const btn = document.getElementById(id);
+      if (btn) btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        this._dailyMode = mode;
+        document.getElementById('daily-mode-overlay').classList.remove('visible');
+        this._startRide();
+      });
+    }
+    const cancelBtn = document.getElementById('btn-daily-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => {
+      document.getElementById('daily-mode-overlay').classList.remove('visible');
+    });
+
     // Levels step: START RIDE button — works for solo, multiplayer, and local co-op
     document.getElementById('btn-start-ride').addEventListener('click', () => {
+      // D-2: on Today's Road, ask first — unless this is the demo, which is
+      // practice-only, or the chooser has already been answered.
+      if (this._shouldAskDailyMode()) { this._showDailyModeChooser(); return; }
+      this._startRide();
+    });
+
+    this._startRide = () => {
       if (this._pendingMode === 'multiplayer') {
         if (this._roomRole !== 'captain') return;
         // Send start ride to partner — block if not connected
@@ -992,7 +1034,10 @@ export class Lobby {
           if (statusEl) statusEl.textContent = 'Reconnecting to partner...';
           return;
         }
-        this.net.sendProfile(RoomProtocol.startRide());
+        // B-4: the captain picks the run's placement salt and ships it with
+        // the start message, so both riders meet the same pylons.
+        this._placementSalt = makePlacementSalt();
+        this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, this.selectedLevel?.seed ?? null));
         this._transitionToGame();
       } else if (this._pendingMode === 'local') {
         // Local same-screen co-op: hand off the pre-constructed P2 InputManager
@@ -1016,7 +1061,7 @@ export class Lobby {
         this._hideLobby();
         this.onSolo();
       }
-    });
+    };
 
     // JOIN RIDE buttons on the host page: one per P2 path. Each button
     // unambiguously commits to a specific device — no auto-picking when
@@ -1178,6 +1223,251 @@ export class Lobby {
    * @param {HTMLElement} opts.backBtn         — back button for this step
    * @param {HTMLElement} opts.step            — step element for _stepItems registration
    */
+  /**
+   * B-3 · the one line on a level card that gives a reason to ride it again.
+   * Reads the local record store for the currently selected difficulty and
+   * whichever mode this card list belongs to.
+   */
+  _recordLine(level, mode) {
+    if (level.isTutorial || level.timerEnabled === false) return '';
+    const cardMode = mode === 'versus' ? 'versus' : (mode === 'solo' || !mode ? 'solo' : 'coop');
+    const store = records.load();
+    const best = records.getBest(store, records.key(level.id, this.selectedDifficulty, cardMode));
+    const thresholds = getMedals(level.id, this.selectedDifficulty);
+    if (!best) {
+      return thresholds
+        ? 'No ride yet · ' + records.MEDAL_ICON.gold + ' at ' + records.formatTime(thresholds.gold)
+        : 'No ride yet';
+    }
+    const medal = records.medalFor(best.timeMs, thresholds);
+    const next = records.nextMedal(medal);
+    let line = 'Best ' + records.formatTime(best.timeMs);
+    if (medal) line += ' · ' + records.MEDAL_ICON[medal];
+    if (thresholds && next) line += ' · ' + records.MEDAL_ICON[next] + ' at ' + records.formatTime(thresholds[next]);
+    return line;
+  }
+
+  /**
+   * D-2 · the demo build is practice-only. Mirrors game._isDemo (the game owns
+   * the Steam-side flag; this is the query-string half, which is what the demo
+   * launch URL carries).
+   */
+  get isDemoBuild() {
+    if (this.__isDemo !== undefined) return this.__isDemo;
+    let demo = false;
+    try { demo = new URLSearchParams(location.search).get('demo') === '1'; } catch {}
+    if (!demo && typeof window !== 'undefined' && window.tandemoniumSteam) {
+      demo = !!window.tandemoniumSteam.isDemo;
+    }
+    this.__isDemo = demo;
+    return demo;
+  }
+
+  /**
+   * D-2 · should the practice/ranked chooser appear?
+   *
+   * Only on Today's Road, only in the web build, and only for the person who
+   * decides: in a room the captain chooses for the pair and the stoker rides
+   * whatever was chosen.
+   */
+  _shouldAskDailyMode() {
+    if (!this.selectedLevel || !this.selectedLevel.isDaily) return false;
+    if (this.isDemoBuild) return false;                 // demo is practice-only
+    if (this._pendingMode === 'multiplayer' && this._roomRole !== 'captain') return false;
+    return true;
+  }
+
+  /** D-2 · the chooser itself. RANKED is disabled once the day's run is used. */
+  _showDailyModeChooser() {
+    const overlay = document.getElementById('daily-mode-overlay');
+    if (!overlay) { this._dailyMode = 'practice'; this._startRide(); return; }
+
+    const key = this.selectedLevel.key || dailyKey();
+    const mode = this._pendingMode === 'multiplayer' || this._pendingMode === 'local' ? 'pair' : 'solo';
+    const store = browserStore();
+    const done = rankedResult(store, key, mode);
+
+    const sub = document.getElementById('daily-mode-sub');
+    if (sub) {
+      const streak = computeStreak(store, key);
+      const streakText = streak.current >= 2 ? ` · 🔥 ${streak.current}` : '';
+      sub.textContent = `${formatDayLabel(key)} · ${mode === 'pair' ? 'riding as a pair' : 'riding solo'}${streakText}`;
+    }
+
+    const rankedBtn = document.getElementById('btn-daily-ranked');
+    const hint = document.getElementById('daily-ranked-hint');
+    if (rankedBtn) {
+      rankedBtn.disabled = !!done;
+      if (hint) {
+        hint.textContent = done
+          ? (done.dnf ? 'Done for today — ended early.' : `Done for today — ${formatClock(done.timeMs)}.`)
+          : 'One per day. Crashes are fine; ending early is not.';
+      }
+    }
+
+    overlay.classList.add('visible');
+    analytics.trackEvent('daily_chooser', { key, mode, ranked_available: !done });
+  }
+
+  // ============================================================
+  // E-6 / E-8 · "Ride the distance between you"
+  // ============================================================
+  //
+  // Two addresses become a ride over real photogrammetry. This is the only
+  // feature in the plan that is *about* the thing the persona actually feels:
+  // the distance is the point, and the number on screen is the story.
+  //
+  // The route maths is pure and tested (js/tourist-route.js). This is the
+  // form, the geocoding calls, and remembering the pair's last route so the
+  // second ride is one button (E-8).
+
+  /** E-8 · the last route this browser rode, or null. */
+  _loadSavedRoute() {
+    try {
+      const raw = localStorage.getItem('tandemonium_tourist_route');
+      const saved = raw ? JSON.parse(raw) : null;
+      return saved && isValidPoint(saved.from) && isValidPoint(saved.to) ? saved : null;
+    } catch { return null; }
+  }
+
+  _saveRoute(from, to) {
+    try {
+      localStorage.setItem('tandemonium_tourist_route', JSON.stringify({ from, to, at: Date.now() }));
+    } catch { /* private mode: the ride still works, it is just not remembered */ }
+  }
+
+  /**
+   * Show the Tourist entry at all only when it can actually work. Without a
+   * Maps key the mode can only disappoint, and an entry point that fails is
+   * worse than no entry point — that is the #350 lesson.
+   */
+  _initTouristEntry() {
+    const btn = document.getElementById('btn-tourist');
+    if (!btn) return;
+    if (!getMapsApiKey()) return;              // stays hidden
+    btn.style.display = '';
+    btn.addEventListener('click', () => {
+      this._pendingMode = 'tourist';
+      this._showStep(this.touristStep);
+      this._prefillTouristForm();
+      analytics.trackEvent('tourist_open');
+    });
+
+    const back = document.getElementById('btn-back-tourist');
+    if (back) back.addEventListener('click', () => this._showStep(this.modeStep));
+
+    const from = document.getElementById('tourist-from');
+    const to = document.getElementById('tourist-to');
+    const go = document.getElementById('btn-tourist-ride');
+    const onEdit = () => {
+      const ready = from.value.trim().length > 2 && to.value.trim().length > 2;
+      go.disabled = !ready;
+      go.textContent = 'PLAN THE RIDE';
+      this._touristPlan = null;
+    };
+    from.addEventListener('input', onEdit);
+    to.addEventListener('input', onEdit);
+    go.addEventListener('click', () => this._planTouristRide());
+  }
+
+  /** E-8 · offer the last route back, so a repeat ride is one button. */
+  _prefillTouristForm() {
+    const saved = this._loadSavedRoute();
+    const preview = document.getElementById('tourist-preview');
+    const go = document.getElementById('btn-tourist-ride');
+    if (!saved) {
+      if (preview) preview.textContent = '';
+      return;
+    }
+    document.getElementById('tourist-from').value = saved.from.label || '';
+    document.getElementById('tourist-to').value = saved.to.label || '';
+    if (go) go.disabled = false;
+    const plan = planRoute(saved.from, saved.to);
+    if (preview) {
+      preview.innerHTML = 'Again? <strong>' + this._escape(saved.from.label) + '</strong> to <strong>' +
+        this._escape(saved.to.label) + '</strong><br>' + this._escape(plan.headline);
+    }
+    this._touristPlan = plan;
+    if (go) go.textContent = 'RIDE IT AGAIN';
+  }
+
+  /**
+   * Geocode both ends, show what the ride will be, and — on the second press —
+   * start it. Two presses on purpose: the distance is the reveal, and riding
+   * straight past it would throw away the best moment this mode has.
+   */
+  async _planTouristRide() {
+    const go = document.getElementById('btn-tourist-ride');
+    const errorEl = document.getElementById('tourist-error');
+    const preview = document.getElementById('tourist-preview');
+    const fromText = document.getElementById('tourist-from').value;
+    const toText = document.getElementById('tourist-to').value;
+
+    // Second press with a plan already on screen: ride it.
+    if (this._touristPlan) {
+      this._startTouristRide(this._touristPlan);
+      return;
+    }
+
+    errorEl.textContent = '';
+    go.disabled = true;
+    go.textContent = 'FINDING…';
+
+    try {
+      const [from, to] = await Promise.all([
+        geocodeAddress(fromText),
+        geocodeAddress(toText)
+      ]);
+      if (!isValidPoint(from) || !isValidPoint(to)) throw new Error('could not place one of those');
+
+      const plan = planRoute(from, to);
+      this._touristPlan = plan;
+      preview.innerHTML = '<strong>' + this._escape(from.label) + '</strong><br>to <strong>' +
+        this._escape(to.label) + '</strong><br>' + this._escape(plan.headline) +
+        (plan.route.capped
+          ? '<br><span style="opacity:0.7">' + this._escape(skipLabel(plan.route)) +
+            ' — you ride the first and last 2.5 km</span>'
+          : '');
+      go.disabled = false;
+      go.textContent = 'RIDE IT';
+      this._saveRoute(from, to);
+      analytics.trackEvent('tourist_route_planned', {
+        km: Math.round(plan.realM / 1000), capped: plan.route.capped
+      });
+    } catch (err) {
+      // Inline, never a console exception: a mistyped address is the most
+      // ordinary thing that can happen on this screen.
+      errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
+      go.disabled = false;
+      go.textContent = 'PLAN THE RIDE';
+      analytics.trackEvent('tourist_route_failed');
+    }
+  }
+
+  _startTouristRide(plan) {
+    this._hideLobby();
+    this.onTouristReady({ plan });
+    analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000) });
+  }
+
+  /** Escape a geocoder-supplied label before it goes anywhere near innerHTML. */
+  _escape(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /** B-3 · re-render the record line on every visible level card. */
+  _refreshRecordLines() {
+    document.querySelectorAll('.level-card').forEach(card => {
+      const line = card.querySelector('.level-card-record');
+      if (!line) return;
+      const level = LEVELS.find(l => l.id === card.dataset.levelId);
+      if (!level) return;
+      const inVersus = !!card.closest('#versus-level-list, [id*="versus"]');
+      line.textContent = this._recordLine(level, inVersus ? 'versus' : (this.net ? 'coop' : 'solo'));
+    });
+  }
+
   _buildLevelCardsShared({ container, isClickable, mode, showTutorial, startBtn, backBtn, step }) {
     container.innerHTML = '';
     const buttons = [];
@@ -1185,15 +1475,27 @@ export class Lobby {
     // Level unlock requirements: Castle requires finishing Grandma's House
     const LEVEL_UNLOCK = { castle: 'home_sweet' };
 
+    // C-4 · the demo ships Tutorial, Grandma's and Today's Road. The Castle
+    // stays shut and points at the store instead of at an achievement the
+    // player could earn in the next three minutes: a demo that hands over its
+    // second level has nothing left to sell.
+    const demoLocked = this.isDemoBuild ? new Set(['castle']) : new Set();
+
     // Check if gyro is active but uncalibrated (show recommendation, don't lock)
     const needsTuning = this._needsMotionTuning();
 
-    const levels = showTutorial ? LEVELS : LEVELS.filter(l => !l.isTutorial);
+    // C-2: Today's Road is not in the VERSUS list — versus has its own rules
+    // (two teams, one screen) and a shared daily result means nothing there.
+    const isVersus = mode === 'versus';
+    const levels = LEVELS.filter(l =>
+      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily));
 
     levels.forEach(level => {
       const isTutorial = level.isTutorial;
       const requiredAch = LEVEL_UNLOCK[level.id];
-      const locked = !isTutorial && requiredAch && !this._achievements.getEarnedIds().includes(requiredAch);
+      const demoGated = demoLocked.has(level.id);
+      const locked = demoGated ||
+        (!isTutorial && requiredAch && !this._achievements.getEarnedIds().includes(requiredAch));
 
       const card = document.createElement('button');
       card.className = 'level-card' + (locked ? ' level-locked' : '') + (isTutorial ? ' level-card-tutorial' : '');
@@ -1205,31 +1507,59 @@ export class Lobby {
             '<span class="level-card-icon">&#x1F512;</span>' +
             '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">Complete Grandma\'s House to unlock</div>';
+          '<div class="level-card-desc">' +
+            (demoGated ? 'In the full game &mdash; wishlist on Steam'
+                       : 'Complete Grandma\'s House to unlock') +
+          '</div>';
         card.disabled = true;
       } else {
         // Tutorial description adapts to calibration state
-        const desc = isTutorial && needsTuning
+        let desc = isTutorial && needsTuning
           ? '\u2B50 Recommended for calibration'
           : level.description;
+        // C-2: Today's Road says which day it is, what you have done on it, and
+        // when the next road arrives \u2014 a daily thing nobody knows is daily is
+        // just a level.
+        if (level.isDaily) {
+          const key = dailyKey();
+          desc = dailyDescription(dailyStatus(browserStore(), key), key) +
+            '<br><span class="level-card-daily-rule">' + DAILY_RULES_LINE + '</span>';
+        }
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">' + level.icon + '</span>' +
             '<span class="level-card-name">' + level.name + '</span>' +
           '</div>' +
-          '<div class="level-card-desc">' + desc + '</div>';
+          '<div class="level-card-desc">' + desc + '</div>' +
+          // B-3: your best on this road, and the medal you are chasing. Says
+          // "No ride yet" rather than nothing, so the line is a promise on the
+          // first visit instead of an absence.
+          '<div class="level-card-record">' + this._recordLine(level, mode) + '</div>';
 
         if (isClickable) {
           card.addEventListener('click', () => {
-            this.selectedLevel = level;
+            // C-2: Today's Road resolves its identity at the moment it is picked
+            // — the day key and seed come from the clock now, not from whenever
+            // this page was loaded (someone may have left it open overnight).
+            this.selectedLevel = level.isDaily
+              ? resolveDailyLevel(level, { key: dailyKey(), seed: dailySeed() })
+              : level;
             this._forceWizard = isTutorial;
             this._updateDifficultyVisibility(level.id);
             container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
             if (startBtn) startBtn.disabled = false;
             analytics.trackEvent('level_select', { level: level.id, difficulty: this.selectedDifficulty });
+            if (level.isDaily) {
+              analytics.trackEvent('daily_open', { key: this.selectedLevel.key });
+            }
             if (this.net && this.net.connected) {
-              this.net.sendProfile(RoomProtocol.levelSync(level.id));
+              // C-2: the captain's day key and seed are authoritative — a stoker
+              // whose clock is on the other side of the 09:00 UTC rollover must
+              // still ride the captain's road, not a different one.
+              this.net.sendProfile(RoomProtocol.levelSync(level.id, level.isDaily
+                ? { key: this.selectedLevel.key, seed: this.selectedLevel.seed }
+                : null));
             }
           });
         } else {
@@ -1341,7 +1671,21 @@ export class Lobby {
    */
   _updateDifficultyVisibility(levelId) {
     const isTutorial = levelId === 'tutorial';
+    // C-2: Today's Road is one road at one difficulty for everyone — a shared
+    // road that each player tunes to taste is not a shared road.
+    const daily = LEVELS.find(l => l.id === levelId && l.isDaily);
+    const forced = isTutorial ? 'chill' : (daily ? daily.fixedDifficulty : null);
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
+    if (forced && !isTutorial) {
+      diffBtns.forEach(b => {
+        b.disabled = true;
+        b.classList.add('diff-disabled');
+        b.classList.toggle('selected', b.dataset.difficulty === forced);
+      });
+      this.selectedDifficulty = forced;
+      this._refreshRecordLines();
+      return;
+    }
     diffBtns.forEach(btn => {
       const diff = btn.dataset.difficulty;
       if (isTutorial && diff !== 'chill') {
@@ -1378,6 +1722,9 @@ export class Lobby {
           document.querySelectorAll('.difficulty-btn[data-difficulty="' + btn.dataset.difficulty + '"]')
             .forEach(b => b.classList.add('selected'));
           this.selectedDifficulty = btn.dataset.difficulty;
+          // B-3: bests and medals are per difficulty, so the card lines have to
+          // follow the choice the player just made.
+          this._refreshRecordLines();
           // Sync difficulty to partner in multiplayer
           if (this.net && this.net.connected) {
             this.net.sendProfile(RoomProtocol.difficultySync(btn.dataset.difficulty));
@@ -2843,10 +3190,46 @@ export class Lobby {
     });
   }
 
+  /**
+   * C-2 · `?daily=YYYY-MM-DD` opens the lobby on Today's Road.
+   *
+   * The date in the link is only used to decide whether the link has expired:
+   * a road is only playable on its own day (everyone rides the same one, and a
+   * result on yesterday's road is not comparable with anyone's). An expired
+   * link lands on today's road with a toast saying so, rather than an error.
+   */
+  _checkDailyLink() {
+    let param = null;
+    try { param = new URLSearchParams(window.location.search).get('daily'); } catch { return; }
+    if (!param) return;
+
+    const today = dailyKey();
+    const expired = param !== today;
+    const level = LEVELS.find(l => l.isDaily);
+    if (!level) return;
+
+    this._pendingMode = 'solo';
+    this.selectedLevel = resolveDailyLevel(level, { key: today, seed: dailySeed() });
+    this._updateDifficultyVisibility('daily');
+    this._showStep(this.levelStep);
+    this._refreshRecordLines();
+    const card = document.querySelector('.level-card[data-level-id="daily"]');
+    if (card) {
+      document.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      const startBtn = document.getElementById('btn-start-ride');
+      if (startBtn) startBtn.disabled = false;
+    }
+    if (expired) {
+      showInfoToast('📅', 'That road has expired', 'Here’s today’s road instead.');
+    }
+    analytics.trackEvent('daily_link', { key: param, expired });
+  }
+
   async _checkAutoJoin() {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
-    if (!roomParam) return;
+    if (!roomParam) { this._checkDailyLink(); return; }
 
     history.replaceState(null, '', window.location.pathname);
     const code = roomParam.toUpperCase();
@@ -3576,7 +3959,13 @@ export class Lobby {
       // Partner changed bike — no label update needed (keep role-only labels)
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
-      this.selectedLevel = LEVELS.find(l => l.id === profile.levelId) || this.selectedLevel;
+      const picked = LEVELS.find(l => l.id === profile.levelId);
+      // C-2: for Today's Road, take the captain's key and seed rather than
+      // reading this device's clock — otherwise a stoker on the far side of
+      // the 09:00 UTC rollover would ride a different road with the same name.
+      this.selectedLevel = picked && picked.isDaily
+        ? resolveDailyLevel(picked, { key: profile.key, seed: profile.seed })
+        : (picked || this.selectedLevel);
       // Track if captain selected tutorial — stoker needs _forceWizard too
       this._forceWizard = (profile.levelId === 'tutorial');
       const container = document.getElementById('level-cards');
@@ -3609,7 +3998,12 @@ export class Lobby {
       // Stoker: captain clicked PLAY GAME → go to levels step
       this._showRoomLevelsStep();
     } else if (profile.type === ROOM_MSG.START_RIDE) {
-      // Stoker: captain started the ride
+      // Stoker: captain started the ride. Take the captain's placement salt and
+      // world seed — they are authoritative for what the road contains (B-4).
+      this._placementSalt = profile.placementSalt || 0;
+      if (typeof profile.worldSeed === 'number' && this.selectedLevel) {
+        this.selectedLevel = { ...this.selectedLevel, seed: profile.worldSeed };
+      }
       this._transitionToGame();
     }
   }

@@ -20,7 +20,7 @@ npx serve -l 8888
 
 Open `http://localhost:8888` in your browser.
 
-- **Solo**: Click SOLO RIDE — pedal with Up/Down arrows, lean with A/D (or tilt on mobile)
+- **Solo**: Click SOLO RIDE — pedal by alternating Left/Right arrows (LB/RB or LT/RT on a gamepad; the two screen halves on touch), lean with A/D (or tilt on mobile)
 - **Front view**: A small window in the lower-right shows a front-facing "selfie cam" of the bike as you ride. Toggle it with `V`.
 - **Controllers**: Press `C` (or CONTROLLERS in the in-ride quick menu) to see each rider's controller as a live 3D model in a bottom corner — buttons, sticks, triggers and gyro, straight from the same input the game is steering with. One tile lower-right in solo; P1 lower-right / P2 lower-left in local co-op; each team's pads under their own half in versus. See [`docs/controller-overlay.md`](docs/controller-overlay.md).
 - **Multiplayer**: Click RIDE TOGETHER — one player creates a room, the other joins with the room code
@@ -37,14 +37,20 @@ Two players connect via [PeerJS](https://peerjs.com/) (WebRTC data channels) for
 
 ### Offset Pedaling
 
-Both players use the same Up/Down two-button pedaling as solo mode. The coordination challenge is **offset pedaling** — a real tandem bicycle has a shared crank with pedals 180° apart. When the front rider's right foot goes down, the back rider's left foot goes up.
+Both players use the same two-button pedaling as solo mode. The coordination challenge is **offset pedaling** — a real tandem bicycle has a shared crank with pedals 180° apart. When the front rider's right foot goes down, the back rider's left foot goes up.
+
+The rule, in one line: **match your partner's beat with the opposite foot.** Scoring
+is a 250 ms beat window (`js/pedal-scoring.js`, unit tested):
 
 | Outcome | Condition | Effect |
 |---------|-----------|--------|
-| Perfect offset | Your foot is opposite partner's last foot | Max power + offset bonus |
-| In-phase | Your foot matches partner's last foot | Reduced power, small wobble |
+| Perfect | Partner tapped the opposite foot within 250 ms | Max power + offset bonus, for BOTH taps |
+| Solo | No partner tap in the window | Full base power, no offset bonus |
 | Wrong foot | You repeated your own last foot | Wobble + power penalty |
-| Crank fight | Both press same foot simultaneously | Brake-like, big wobble |
+| Crank fight | Both press the same foot inside the window | Brake-like, big wobble |
+
+A pair on the beat is strictly faster than one rider carrying the other, and
+riding alone is never punished.
 
 ### Network Protocol
 
@@ -159,7 +165,35 @@ The free tier includes:
 
 This is more than enough for casual use. Each multiplayer session uses ~20 WebSocket messages/second per player.
 
+## Roadmap
+
+See [`docs/value-and-appeal-plan.md`](docs/value-and-appeal-plan.md) — the demo is
+cut 2026-11-30, Steam Next Fest is February 2027. **A surface freeze is in effect
+for its duration:** no new bike colours, achievements, controller drivers or
+ambient scenery until the demo is tagged. Tracking issue: #386.
+
 ## Testing
+
+```bash
+npm test                     # unit tests (node --test)
+npm run smoke                # does the game still load? (headless Chrome)
+npm run smoke:boot           # the unsupported-browser and stuck-boot screens
+npm run smoke:ride           # a real first ride: grace, coach card, movement
+npm run smoke:crash          # crash beat: resume twice, help on the third
+npm run smoke:records        # personal bests reach the level card
+npm run smoke:seed           # world reseeding is deterministic and leak-free
+npm run smoke:daily          # Today's Road is the same road for everyone
+npm run smoke:ctas           # end-screen wishlist / invite visibility rules
+npm run smoke:ranked         # one ranked run per day; the demo never asks
+npm run smoke:ghost          # the ghost rides its recorded line
+npm run smoke:lookahead      # the stoker sees road the captain cannot
+npm run smoke:ping           # sprint call, sync multiplier, emotes
+npm run smoke:disruptions    # warned before it acts, released after
+npm run smoke:tourist        # two addresses -> a ride (no Google needed)
+npm run smoke:layout         # every HUD overlay at once, and no overlaps
+npm run check:dashboard-sql  # the dashboard SQL, against a real SQLite
+npm run audit:first30        # cold-load numbers per device profile (#263)
+```
 
 Multiplayer demo and test scripts are in `test_multiplayer/`. They use [Puppeteer](https://pptr.dev/) to automate two browser windows.
 

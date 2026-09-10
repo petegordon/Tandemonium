@@ -96,6 +96,14 @@
     font-weight: 600;
     color: rgba(255,255,255,0.5);
   }
+  /* Road gradient. Amber climbing, blue-green descending, and absent on the
+     flat so it reads as an event rather than another permanent number. */
+  #grade-row { font-size: 13px; font-weight: 700; }
+  #grade-arrow { font-size: 11px; }
+  #grade-row.up   { color: #ffb347; }
+  #grade-row.down { color: #7fd4ff; }
+  #grade-value { min-width: 3ch; text-align: right; display: inline-block; }
+
   #speed-bar-wrap {
     width: 100%;
     height: 3px;
@@ -109,6 +117,471 @@
     border-radius: 2px;
     background: #fff;
     transition: width 0.15s, background 0.2s;
+  }
+  /* A-4 · co-op sync row: seat chips either side of a sync bar. */
+  #sync-row {
+    display: none;
+    align-items: center;
+    gap: 5px;
+    margin-top: 4px;
+  }
+  #sync-row.visible { display: flex; }
+  #sync-bar-wrap {
+    flex: 1;
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #sync-bar-fill {
+    height: 100%;
+    width: 50%;
+    border-radius: 2px;
+    background: hsl(60, 90%, 55%);
+    transition: width 0.2s, background 0.25s;
+  }
+  .seat-chip {
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    padding: 3px 4px;
+    border-radius: 3px;
+    color: rgba(255,255,255,0.55);
+    background: rgba(255,255,255,0.09);
+    transition: background 0.12s, color 0.12s;
+  }
+  .seat-chip.perfect { background: rgba(60,220,120,0.85); color: #06240f; }
+  .seat-chip.solo    { background: rgba(255,200,60,0.8);  color: #2a1c00; }
+  .seat-chip.wrong   { background: rgba(255,80,80,0.9);   color: #2a0000; }
+  /* A-4 · crank fight stamp + first-ride coaching line. */
+  #crank-fight-stamp {
+    position: fixed;
+    top: 38%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: clamp(22px, 6vw, 44px);
+    font-weight: 900;
+    letter-spacing: 1px;
+    color: #ff5a5a;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.6);
+    pointer-events: none;
+    opacity: 0;
+    z-index: 60;
+  }
+  #crank-fight-stamp.show { animation: crank-fight-shake 0.6s ease-out; }
+  #crank-fight-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0;
+    color: rgba(255,255,255,0.9);
+  }
+  @keyframes crank-fight-shake {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+    12%  { opacity: 1; transform: translate(-52%, -50%) scale(1.05); }
+    28%  { transform: translate(-48%, -50%) scale(1); }
+    44%  { transform: translate(-51%, -50%) scale(1); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+  }
+  #coop-coach {
+    position: fixed;
+    left: 50%;
+    bottom: 22%;
+    transform: translateX(-50%);
+    max-width: 88vw;
+    padding: 7px 13px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 55;
+  }
+  #coop-coach.show { opacity: 1; }
+  /* D-8 · the "Us" panel on the victory screen. */
+  #pair-panel {
+    margin: 8px auto 0;
+    padding: 8px 12px;
+    max-width: 320px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.07);
+    text-align: center;
+  }
+  .pair-panel-title { font-size: 13px; font-weight: 800; color: #fff; }
+  .pair-panel-line { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 2px; }
+  .pair-panel-best { margin-top: 4px; font-size: 12px; font-weight: 800; color: #ffd23f; }
+  /* E-6 · the two-address form. */
+  #tourist-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(340px, 86vw);
+    margin: 0 auto;
+  }
+  .tourist-input {
+    padding: 10px 12px;
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.07);
+    color: #fff;
+    font-size: 15px;
+  }
+  .tourist-input::placeholder { color: rgba(255,255,255,0.35); }
+  .tourist-error {
+    min-height: 15px;
+    font-size: 12px;
+    color: #ff8a7a;
+    text-align: center;
+  }
+  .tourist-preview {
+    min-height: 34px;
+    font-size: 13px;
+    line-height: 1.35;
+    color: rgba(255,255,255,0.8);
+    text-align: center;
+  }
+  .tourist-preview strong { color: #ffd23f; }
+  /* E-7 · the distance, on screen for the whole ride. */
+  #tourist-goal {
+    position: fixed;
+    top: 92px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.45);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 55;
+  }
+  #tourist-goal.visible { display: block; }
+  #tourist-goal .tourist-togo { color: #ffd23f; }
+  /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
+  #disruption-banner {
+    position: fixed;
+    top: 18%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 16px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.6);
+    color: #ffd23f;
+    font-size: clamp(14px, 3.6vw, 20px);
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 58;
+  }
+  #disruption-banner.show { opacity: 1; }
+  #disruption-banner.now { color: #ff7a5a; }
+  /* E-3 · the touch vocabulary row. */
+  #ping-row {
+    display: none;
+    gap: 4px;
+    margin-top: 5px;
+  }
+  #ping-row.visible { display: flex; }
+  .ping-btn {
+    flex: 1;
+    padding: 5px 0;
+    border: 0;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .ping-btn.ping-sprint {
+    flex: 1.6;
+    background: rgba(255,210,63,0.85);
+    color: #201a00;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 1px;
+  }
+  .ping-btn:disabled { opacity: 0.4; }
+  /* E-3 · "3-2-1 SPRINT!" — the one thing both riders agree to do at once. */
+  #ping-call {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: clamp(28px, 8vw, 60px);
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #ffd23f;
+    text-shadow: 0 3px 16px rgba(0,0,0,0.65);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s;
+    z-index: 59;
+  }
+  #ping-call.show { opacity: 1; }
+  #ping-call.go { color: #3ad46e; }
+  /* Emote bubbles: small, brief, and stacked no more than two deep. */
+  #ping-bubbles {
+    position: fixed;
+    top: 96px;
+    right: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-end;
+    pointer-events: none;
+    z-index: 58;
+  }
+  .ping-bubble {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.55);
+    font-size: 16px;
+    line-height: 1.2;
+  }
+  .ping-bubble .ping-seat {
+    font-size: 9px;
+    font-weight: 800;
+    color: rgba(255,255,255,0.55);
+    margin-right: 3px;
+    vertical-align: middle;
+  }
+  /* E-1 · the stoker's look-ahead. Sits top-centre, above the strip, because
+     it is the thing the stoker is watching instead of the road. */
+  #lookahead {
+    position: fixed;
+    top: 50%;
+    left: 10px;
+    transform: translateY(-50%);
+    display: none;
+    width: min(120px, 30vw);
+    padding: 6px 8px 8px;
+    border-radius: 10px;
+    background: rgba(0,0,0,0.5);
+    pointer-events: none;
+    z-index: 56;
+  }
+  #lookahead.visible { display: block; }
+  #lookahead-title {
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-align: center;
+    color: rgba(255,255,255,0.55);
+    margin-bottom: 4px;
+  }
+  #lookahead-track {
+    position: relative;
+    display: flex;
+    gap: 3px;
+    height: 76px;
+  }
+  .lookahead-lane {
+    position: relative;
+    flex: 1;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.07);
+  }
+  /* The centre lane is the fast line (B-4), so it reads slightly brighter. */
+  .lookahead-lane[data-lane="1"] { background: rgba(255,225,140,0.10); }
+  .lookahead-item {
+    position: absolute;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 13px;
+    line-height: 1;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
+  }
+  /* D-2 · the in-ride "this one counts" badge. */
+  /* HUD ZONES (review pass). Everything added in phases A-E was placed
+     "top-centre" independently and ended up in a heap: eight overlapping
+     elements on desktop, six on a phone. The screen is now divided:
+
+       top strip      0 - 90px    #hud-top (speed, sync row, ping row)
+       under strip    92px        #ranked-badge (small, persistent, centred)
+       left edge      centred     #lookahead (a vertical lane map belongs at a side)
+       right edge     96px+       #ping-bubbles, then #split-delta
+       centre 18%                 #disruption-banner (urgent, transient)
+       centre 30%                 #split-delta flash
+       centre 36%                 #ping-call (the big 3-2-1)
+       above pedals               #coach-card / #coop-coach (never both)
+
+     Verified by scripts/smoke-hud-layout.mjs, which fails on any overlap. */
+  #ranked-badge {
+    position: fixed;
+    top: 92px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: rgba(255,210,63,0.9);
+    color: #201a00;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    pointer-events: none;
+    z-index: 56;
+  }
+  #ranked-badge.show { display: block; }
+  /* D-2 · practice / ranked chooser. */
+  #daily-mode-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(8,10,14,0.88);
+    z-index: 120;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #daily-mode-overlay.visible { display: flex; }
+  #daily-mode-box {
+    width: 100%;
+    max-width: 340px;
+    text-align: center;
+  }
+  #daily-mode-box h2 { margin: 0 0 4px; font-size: 20px; color: #fff; }
+  #daily-mode-sub { margin: 0 0 16px; font-size: 12px; color: rgba(255,255,255,0.6); }
+  #daily-mode-box .lobby-btn { width: 100%; margin-top: 8px; }
+  #daily-mode-box .lobby-btn:disabled { opacity: 0.45; cursor: default; }
+  .daily-mode-hint {
+    display: block;
+    margin-top: 3px;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: rgba(255,255,255,0.5);
+  }
+  /* D-3 · the shareable result strip. */
+  #daily-strip {
+    margin: 10px auto 0;
+    padding: 8px 10px;
+    max-width: 320px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.9);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre;
+    text-align: left;
+    overflow-x: auto;
+  }
+  /* B-5 · end-screen calls to action. Distinct from the ride buttons above
+     them so they read as "what next", not "play again". */
+  .cta-btn {
+    margin-top: 6px;
+    background: rgba(103, 193, 245, 0.16);
+    border-color: rgba(103, 193, 245, 0.5);
+    color: #bfe6ff;
+    font-size: 13px;
+  }
+  .cta-btn:hover { background: rgba(103, 193, 245, 0.28); }
+  /* B-4 · the two speed sources the game never showed you. */
+  #boost-ribbon {
+    position: fixed;
+    left: 50%;
+    top: 18%;
+    transform: translateX(-50%);
+    padding: 5px 16px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #ffd23f, #ff8a3f);
+    color: #201a00;
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 57;
+  }
+  #boost-ribbon.show { opacity: 1; }
+  /* A faint glow along the bottom of the screen while the wheels are on the
+     compacted middle of the road. Deliberately quiet: it is a nudge, not an
+     instruction. */
+  #center-strip-glow {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 90px;
+    background: linear-gradient(to top, rgba(255,225,140,0.16), rgba(255,225,140,0));
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s;
+    z-index: 8;
+  }
+  #center-strip-glow.show { opacity: 1; }
+  /* B-3 · split delta at a checkpoint: are you ahead of yourself? */
+  #split-delta {
+    position: fixed;
+    left: 50%;
+    top: 26%;
+    transform: translateX(-50%);
+    font-size: clamp(20px, 5vw, 34px);
+    font-weight: 900;
+    letter-spacing: 0.5px;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.55);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 57;
+  }
+  #split-delta.show { opacity: 1; }
+  #split-delta.ahead { color: #3ad46e; }
+  #split-delta.behind { color: #ff7a5a; }
+  /* A-6 · first-ride coach card. */
+  /* The coach card explains the PEDALS, so it belongs next to them rather
+     than at the top of the screen where it fought with everything else. */
+  #coach-card {
+    position: fixed;
+    left: 50%;
+    bottom: 30%;
+    transform: translateX(-50%);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    border-radius: 14px;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    pointer-events: none;
+    z-index: 58;
+  }
+  #coach-card.show { display: flex; }
+  #coach-card b {
+    display: inline-block;
+    min-width: 20px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.16);
+  }
+  #coach-steer-line { font-size: 12px; color: rgba(255,255,255,0.75); }
+  #coach-dots { display: flex; gap: 6px; }
+  .coach-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.22);
+    transition: background 0.15s;
+  }
+  .coach-dot.filled { background: #3ad46e; }
+  .coach-dot.wrong  { background: #ff5a5a; }
+  @media (prefers-reduced-motion: reduce) {
+    #crank-fight-stamp.show { animation: none; opacity: 1; }
   }
   #distance-display,
   #elapsed-display {
@@ -940,6 +1413,24 @@
     margin-top: 1px;
     padding-left: 0;
   }
+  /* C-2 · Today's Road: a distinct edge so it reads as its own thing, and a
+     quiet second line explaining the rule. */
+  .level-card[data-level-id="daily"] {
+    border-color: rgba(255, 210, 63, 0.55);
+  }
+  .level-card-daily-rule {
+    display: block;
+    margin-top: 1px;
+    font-size: 9px;
+    color: rgba(255,255,255,0.32);
+  }
+  /* B-3 · "Best 2:41 · 🥈 · 🥇 at 2:20" under the level description. */
+  .level-card-record {
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.62);
+    margin-top: 2px;
+  }
   .level-card-distance {
     font-size: 11px;
     font-weight: 600;
@@ -1539,11 +2030,14 @@
     50% { box-shadow: 0 4px 0 rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.4), 0 2px 16px rgba(255,255,255,0.15); }
   }
 
-  /* ── Crash flash overlay ── */
+  /* ── Crash flash overlay ──
+     B-2: a vignette that darkens the edges rather than a full red wash. The
+     wash read as "you have been ejected from the game"; a crash is a beat in
+     the ride, and you can still see the road you are about to get back on. */
   #crash-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(255,0,0,0);
+    background: radial-gradient(ellipse at center, rgba(255,40,40,0) 35%, rgba(180,0,0,0) 100%);
     pointer-events: none;
     z-index: 9;
     transition: none;
@@ -1621,6 +2115,63 @@
   @keyframes tapPulse {
     0%, 100% { opacity: 0.6; }
     50% { opacity: 1; }
+  }
+  /* A-7 (#162) · boot progress bar under the loading label. */
+  #boot-progress {
+    width: 200px;
+    height: 4px;
+    margin: 14px auto 0;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.15);
+    overflow: hidden;
+  }
+  #boot-progress-fill {
+    width: 0%;
+    height: 100%;
+    border-radius: 2px;
+    background: #fff;
+    transition: width 0.35s ease-out;
+  }
+  /* A-7 (#350) · unsupported / stuck-boot screen. */
+  #boot-fail {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #10131a;
+    color: #fff;
+    z-index: 100000;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  #boot-fail.show { display: flex; }
+  #boot-fail-card { max-width: 480px; text-align: center; }
+  #boot-fail-card h2 { font-size: 22px; margin: 0 0 12px; }
+  #boot-fail-card p { font-size: 15px; line-height: 1.5; margin: 0 0 10px; color: rgba(255,255,255,0.85); }
+  #boot-fail-hint { color: rgba(255,255,255,0.6) !important; font-size: 13px !important; }
+  #boot-fail-retry {
+    margin-top: 10px;
+    padding: 10px 20px;
+    font-size: 15px;
+    font-weight: 700;
+    border: 0;
+    border-radius: 10px;
+    background: #ffd23f;
+    color: #201a00;
+    cursor: pointer;
+  }
+  #boot-fail-diag {
+    margin-top: 18px;
+    padding: 10px;
+    max-height: 140px;
+    overflow: auto;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.55);
+    font-size: 11px;
+    text-align: left;
+    white-space: pre-wrap;
   }
   #tap-to-start.fade-out {
     opacity: 0;
@@ -3885,6 +4436,7 @@
     .level-card-icon { font-size: calc(22 * var(--ls)); }
     .level-card-name { font-size: calc(12 * var(--ls)); }
     .level-card-desc { font-size: calc(9 * var(--ls)); padding-left: 0; }
+    .level-card-record { font-size: calc(9 * var(--ls)); }
     .level-card-distance { font-size: calc(8 * var(--ls)); }
 
     /* Difficulty selector */
@@ -4327,6 +4879,11 @@
         <span id="speed-value">0</span>
         <span id="speed-unit">km/h</span>
       </div>
+      <!-- The road climbs and drops up to 4 m and the chase camera hides it:
+           the bike slows on a hill and nothing on screen says why. This says. -->
+      <div class="hud-stat" id="grade-row">
+        <span id="grade-arrow">&#x25B2;</span><span id="grade-value">0%</span>
+      </div>
       <div class="hud-stat visible" id="distance-row">
         <span id="distance-display">0 m</span>
       </div>
@@ -4346,6 +4903,22 @@
       </div>
     </div>
     <div id="speed-bar-wrap"><div id="speed-bar-fill"></div></div>
+    <!-- A-4 · co-op sync. Hidden in solo. The bar is offsetScore; the chips flash
+         per seat so the blame is visible without ever printing "S missed". -->
+    <div id="sync-row">
+      <span class="seat-chip" id="seat-chip-captain">C</span>
+      <div id="sync-bar-wrap"><div id="sync-bar-fill"></div></div>
+      <span class="seat-chip" id="seat-chip-stoker">S</span>
+    </div>
+    <!-- E-3 · touch has no spare button, so the vocabulary gets its own row.
+         Shown only on touch devices in co-op. -->
+    <div id="ping-row">
+      <button class="ping-btn ping-sprint" id="btn-ping-sprint">SPRINT</button>
+      <button class="ping-btn" data-emote="0">&#128077;</button>
+      <button class="ping-btn" data-emote="1">&#129760;</button>
+      <button class="ping-btn" data-emote="2">&#128034;</button>
+      <button class="ping-btn" data-emote="3">&#128293;</button>
+    </div>
     <div id="contribution-bar">
       <div id="contrib-captain"></div>
       <div id="contrib-stoker"></div>
@@ -4446,6 +5019,11 @@ ON</button>
       <button class="qm-item" id="qm-controllers">
         <span class="qm-icon">&#x1F3AE;</span><span class="qm-label">CONTROLLERS</span><span class="qm-state"></span>
       </button>
+      <!-- D-4 · the ghost of your best ride. Off is a real preference: some
+           people find being chased by themselves stressful rather than fun. -->
+      <button class="qm-item" id="qm-ghost">
+        <span class="qm-icon">&#x1F47B;</span><span class="qm-label">GHOST</span><span class="qm-state"></span>
+      </button>
       <button class="qm-item" id="qm-reset">
         <span class="qm-icon">&#x21BA;</span><span class="qm-label">RESET</span><span class="qm-state"></span>
       </button>
@@ -4455,6 +5033,70 @@ ON</button>
     </div>
   </div>
 </div>
+
+<!-- A-6 · first-ride coach card. Motion players get the existing tilt tutorial;
+     everyone else got nothing at all until now. Dismisses itself after five
+     good taps or twenty seconds, and never returns for that input method. -->
+<div id="coach-card">
+  <div id="coach-pedal-line">Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b></div>
+  <div id="coach-dots">
+    <span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span>
+  </div>
+  <div id="coach-steer-line">Steer: <b>A</b> / <b>D</b></div>
+</div>
+
+<!-- E-7 · how far there is between you, and how much of it is left. -->
+<div id="tourist-goal"></div>
+
+<!-- E-2 · the road is about to do something. Both riders see this. -->
+<div id="disruption-banner"></div>
+
+<!-- E-3 · the sprint call and the emote bubbles. Both riders see both. -->
+<div id="ping-call"></div>
+<div id="ping-bubbles"></div>
+
+<!-- E-1 · the stoker's road-ahead panel. Only ever rendered on the stoker's
+     screen in online co-op: it is the one thing in the game the captain
+     cannot see, and that asymmetry is the point. -->
+<div id="lookahead">
+  <div id="lookahead-title">ROAD AHEAD &mdash; CALL IT</div>
+  <div id="lookahead-track">
+    <div class="lookahead-lane" data-lane="0"></div>
+    <div class="lookahead-lane" data-lane="1"></div>
+    <div class="lookahead-lane" data-lane="2"></div>
+  </div>
+</div>
+
+<!-- D-2 · this ride counts. -->
+<div id="ranked-badge">RANKED RUN</div>
+
+<!-- D-2 · Practice or a ranked run, on Today's Road only. Shown by the lobby
+     before START RIDE takes effect. The demo build never shows this: it is
+     practice-only there (see game._isDemo). -->
+<div id="daily-mode-overlay">
+  <div id="daily-mode-box">
+    <h2 id="daily-mode-title">Today&rsquo;s Road</h2>
+    <p id="daily-mode-sub"></p>
+    <button class="lobby-btn lobby-btn-accent" id="btn-daily-ranked">RANKED RUN
+      <span class="daily-mode-hint" id="daily-ranked-hint">One per day. Crashes are fine; ending early is not.</span>
+    </button>
+    <button class="lobby-btn" id="btn-daily-practice">PRACTICE
+      <span class="daily-mode-hint">Unlimited. Nothing recorded but your best.</span>
+    </button>
+    <button class="lobby-btn" id="btn-daily-cancel">&larr; Back</button>
+  </div>
+</div>
+
+<!-- B-4 · signal the two hidden speed sources. -->
+<div id="center-strip-glow"></div>
+<div id="boost-ribbon">BOOST!</div>
+
+<!-- B-3 · checkpoint split against your best. -->
+<div id="split-delta"></div>
+
+<!-- A-4 · co-op feedback that must sit above the 3D canvas, not in the strip. -->
+<div id="crank-fight-stamp">CRANK FIGHT!<span id="crank-fight-hint">Same foot, same moment — alternate!</span></div>
+<div id="coop-coach">Match your partner’s beat with the opposite foot</div>
 
 <!-- Bottom HUD: gauge bar + pedal buttons -->
 <div id="bottom-hud">
@@ -4513,17 +5155,182 @@ ON</button>
 <!-- Instructions overlay (hidden initially — lobby shows first) -->
 <div id="instructions" class="hidden">
   <h1>Tandemonium</h1>
-  <p>Alternate LEFT/RIGHT pedals to ride.<br>Tilt your phone, use A/D keys, or a gamepad to steer.</p>
-  <p>Don't lean too far or you'll crash!</p>
+  <!-- A-5 · filled per difficulty by _updateInstructionsText(); the third line
+       only appears on the presets that can actually fall. -->
+  <p>Alternate the LEFT and RIGHT pedals to ride.</p>
+  <p>Lean to steer.</p>
+  <p style="display:none"></p>
   <p class="tap-hint">Tap anywhere to start</p>
 </div>
 
 <!-- Tap/Press to Start overlay -->
 <div id="tap-to-start">
   <div class="tap-to-start-content">
+    <!-- Label is rewritten by the boot script: "Loading Tandemonium…" while the
+         modules load, "Click to start" on a desktop browser (#263). -->
     <p id="tap-to-start-text">Tap to Start</p>
+    <!-- A-7 (#162) · a real loading indicator. Static markup so it is visible
+         before any module runs — which is also what makes #350's dead end
+         detectable: if the bar never fills, boot never happened. -->
+    <div id="boot-progress"><div id="boot-progress-fill"></div></div>
   </div>
 </div>
+
+<!-- A-7 (#350) · the screen an unsupported or stuck device sees instead of a
+     silent, unresponsive "Tap to Start". Written by the classic boot script
+     below, so it works even when the ES-module graph never executes. -->
+<div id="boot-fail">
+  <div id="boot-fail-card">
+    <h2 id="boot-fail-title">This browser can&rsquo;t run Tandemonium</h2>
+    <p id="boot-fail-body"></p>
+    <p id="boot-fail-hint">Try Chrome, Edge or Safari 16.4+, or update your phone&rsquo;s software. On a desktop browser it should just work.</p>
+    <button id="boot-fail-retry">Try again</button>
+    <pre id="boot-fail-diag"></pre>
+  </div>
+</div>
+<script>
+// ============================================================
+// A-7 (#350, #162) · BOOT PREFLIGHT, PROGRESS AND WATCHDOG
+// ============================================================
+//
+// Deliberately a CLASSIC script: everything below has to keep working on a
+// browser where the ES-module graph never executes, which is exactly the
+// iPhone-8 case that produced a silent, unresponsive "Tap to Start" with no
+// error and no signal (#350). It also drives the loading indicator (#162).
+//
+//   1. Preflight  — import maps, ES modules and WebGL. Any missing => say so.
+//   2. Progress   — a bar that advances on real boot milestones.
+//   3. Watchdog   — no window._game after 12 s => the same friendly screen.
+//   4. Error trap — an uncaught boot error routes to the same screen.
+//
+// Failures ping analytics directly (fetch + keepalive, no module import) so we
+// can SEE how often devices bounce off instead of guessing.
+(function() {
+  var BOOT_TIMEOUT_MS = 12000;
+  var API = 'https://tandemonium-api.pete-872.workers.dev/api/analytics';
+  var booted = false;
+  var reported = false;
+  window.__bootStart = Date.now();
+
+  function missingFeatures() {
+    var missing = [];
+    try {
+      if (!('noModule' in HTMLScriptElement.prototype)) missing.push('ES modules');
+      if (!(HTMLScriptElement.supports && HTMLScriptElement.supports('importmap'))) missing.push('import maps');
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) missing.push('WebGL');
+    } catch (e) {
+      missing.push('graphics');
+    }
+    return missing;
+  }
+
+  function report(reason, detail) {
+    if (reported) return;
+    reported = true;
+    try {
+      fetch(API + '/event/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        keepalive: true,
+        body: JSON.stringify({ events: [{
+          session_id: null,
+          event_type: 'boot_failed',
+          event_data: {
+            reason: reason,
+            detail: String(detail || '').slice(0, 300),
+            ua: navigator.userAgent.slice(0, 300),
+            ms: Date.now() - window.__bootStart
+          },
+          created_at: new Date().toISOString(),
+          page: 'boot'
+        }] })
+      }).catch(function () {});
+    } catch (e) { /* reporting must never be the thing that breaks */ }
+  }
+
+  function showFailure(reason, detail) {
+    if (booted) return;
+    var panel = document.getElementById('boot-fail');
+    if (!panel) return;
+    var missing = missingFeatures();
+    var titleEl = document.getElementById('boot-fail-title');
+    var bodyEl = document.getElementById('boot-fail-body');
+    var diagEl = document.getElementById('boot-fail-diag');
+    if (missing.length) {
+      if (titleEl) titleEl.textContent = "This browser can't run Tandemonium";
+      if (bodyEl) bodyEl.textContent = 'It is missing: ' + missing.join(', ') + '.';
+    } else {
+      if (titleEl) titleEl.textContent = 'Tandemonium failed to start';
+      if (bodyEl) bodyEl.textContent = 'The game did not finish loading on this device.';
+    }
+    if (diagEl) {
+      diagEl.textContent = [
+        'reason: ' + reason,
+        detail ? 'detail: ' + String(detail).slice(0, 200) : null,
+        'missing: ' + (missing.join(', ') || 'nothing detected'),
+        'ms: ' + (Date.now() - window.__bootStart),
+        navigator.userAgent
+      ].filter(Boolean).join(String.fromCharCode(10));
+    }
+    panel.classList.add('show');
+    report(reason, detail);
+  }
+
+  var retry = document.getElementById('boot-fail-retry');
+  if (retry) retry.addEventListener('click', function () { location.reload(); });
+
+  // ── 1. Preflight ───────────────────────────────────────────────────────
+  var missing = missingFeatures();
+  if (missing.length) {
+    showFailure('preflight', missing.join(', '));
+    return;   // no point starting the watchdog; the modules cannot run
+  }
+
+  // ── 2. Progress ────────────────────────────────────────────────────────
+  var fill = document.getElementById('boot-progress-fill');
+  var pct = 0;
+  function setProgress(p) {
+    pct = Math.max(pct, p);
+    if (fill) fill.style.width = pct + '%';
+  }
+  setProgress(12);
+  document.addEventListener('DOMContentLoaded', function () { setProgress(45); });
+  window.addEventListener('load', function () { setProgress(70); });
+  // A slow creep so a long asset load never looks frozen; it never reaches the
+  // end on its own — only a real boot does that.
+  var creep = setInterval(function () { setProgress(Math.min(pct + 2, 88)); }, 600);
+
+  // ── 3. Watchdog ────────────────────────────────────────────────────────
+  var poll = setInterval(function () {
+    if (!window._game) return;
+    booted = true;
+    clearInterval(poll);
+    clearInterval(creep);
+    setProgress(100);
+  }, 100);
+
+  setTimeout(function () {
+    if (booted) return;
+    clearInterval(poll);
+    clearInterval(creep);
+    showFailure('watchdog', 'no window._game after ' + BOOT_TIMEOUT_MS + 'ms');
+  }, BOOT_TIMEOUT_MS);
+
+  // ── 4. Error trap ──────────────────────────────────────────────────────
+  window.addEventListener('error', function (e) {
+    if (booted) return;
+    var msg = e && (e.message || (e.error && e.error.message)) || 'unknown error';
+    showFailure('error', msg);
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    if (booted) return;
+    showFailure('rejection', e && e.reason && (e.reason.message || e.reason));
+  });
+})();
+</script>
+
 <script>
 (function() {
   var ua = navigator.userAgent;
@@ -4535,9 +5342,14 @@ ON</button>
   // mobile auto-dismisses once the Lobby loads (the tap-gate is obsolete — iOS
   // motion permission is requested from a real gesture at ride start). Desktop
   // *browsers* keep the click-to-start prompt (they need the click to dismiss).
+  var textEl = document.getElementById('tap-to-start-text');
   if (isDesktop || isMobile) {
-    var textEl = document.getElementById('tap-to-start-text');
-    if (textEl) textEl.textContent = 'Loading…';
+    // #162: name the thing that is loading, and keep the progress bar visible.
+    if (textEl) textEl.textContent = 'Loading Tandemonium…';
+  } else if (textEl && !navigator.maxTouchPoints) {
+    // #263: a desktop browser has no touchscreen — "Tap to Start" is the wrong
+    // word, and the click is only there to unlock audio. Say what to do.
+    textEl.textContent = 'Click to start';
   }
   if (isDesktop) {
     // Poll for gamepad input to dismiss the overlay
@@ -4646,7 +5458,30 @@ ON</button>
           <div class="lobby-mode-buttons">
             <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
             <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
+            <!-- E-6 · the one mode that is about the thing the players feel.
+                 Hidden unless a Maps key is present: without one it can only
+                 disappoint. -->
+            <button class="lobby-btn" id="btn-tourist" style="display:none;">&#128205; RIDE THE DISTANCE BETWEEN YOU</button>
           </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════
+             SCREEN: Tourist route (#lobby-tourist)  — E-6
+             Two addresses become a ride over real photogrammetry.
+             Back: #lobby-mode
+             ════════════════════════════════════════════════════ -->
+        <div id="lobby-tourist" class="lobby-step" style="display:none;">
+          <p class="lobby-prompt">Where are you two?</p>
+          <div id="tourist-form">
+            <input id="tourist-from" class="tourist-input" type="text"
+                   placeholder="Your address or city" autocomplete="off" spellcheck="false">
+            <input id="tourist-to" class="tourist-input" type="text"
+                   placeholder="Their address or city" autocomplete="off" spellcheck="false">
+            <div id="tourist-error" class="tourist-error"></div>
+            <div id="tourist-preview" class="tourist-preview"></div>
+            <button class="lobby-btn lobby-btn-accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</button>
+          </div>
+          <button class="lobby-back" id="btn-back-tourist">&larr; Back</button>
         </div>
 
         <!-- ════════════════════════════════════════════════════
@@ -5180,6 +6015,12 @@ ON</button>
     <button class="lobby-btn" id="btn-skip-checkpoint" style="margin-top:10px;display:none;">SKIP CHECKPOINT</button>
     <button class="lobby-btn" id="btn-gameover-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
     <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">END RIDE TOGETHER</button>
+    <!-- B-5 · the two things a demo player should be able to do next. Shown by
+         _updateCtaButtons(); hidden in the full Steam build. -->
+    <!-- D-3 · see the victory overlay. -->
+    <button class="lobby-btn cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</button>
+    <button class="lobby-btn cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</button>
+    <button class="lobby-btn cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</button>
   </div>
 </div>
 
@@ -5193,11 +6034,18 @@ ON</button>
     <p id="victory-destination"></p>
     <div id="victory-stats"></div>
   </div>
+  <!-- D-8 · what the two of you have done together. -->
+  <div id="pair-panel" style="display:none;"></div>
   <div id="victory-buttons">
     <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
     <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
     <button class="lobby-btn" id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</button>
     <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">END RIDE TOGETHER</button>
+    <!-- B-5 · see the game-over overlay. -->
+    <!-- D-3 · share the day's result (Today's Road only). -->
+    <button class="lobby-btn cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</button>
+    <button class="lobby-btn cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</button>
+    <button class="lobby-btn cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</button>
   </div>
 </div>
 
@@ -5281,6 +6129,11 @@ ON</button>
       <button class="opt-btn" id="opt-fps-off">Off</button>
     </div>
     <div class="options-note">Frame-rate readout, all modes — applies immediately</div>
+    <!-- E-5 · the front door to Tourist Mode. Hidden unless a Maps key is
+         present; see _initOptionsOverlay. -->
+    <div class="label" id="opt-tourist-label" style="display:none;">Explore (beta)</div>
+    <button id="options-tourist-btn" style="display:none;">&#128205; Ride real terrain</button>
+    <div class="options-note" id="opt-tourist-note" style="display:none;">Streams Google Photorealistic 3D Tiles &mdash; needs a connection</div>
     <button id="options-perf-btn">Run Perf Test</button>
     <div id="options-perf-result"></div>
     <button id="options-devtools-btn">Tools</button>
@@ -5300,7 +6153,10 @@ ON</button>
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
-    "mp4-muxer": "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs"
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
+    "mp4-muxer": "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs",
+    "3d-tiles-renderer": "https://esm.sh/3d-tiles-renderer@0.3.46?external=three",
+    "3d-tiles-renderer/plugins": "https://esm.sh/3d-tiles-renderer@0.3.46/plugins?external=three"
   }
 }
 </script>
@@ -5317,6 +6173,14 @@ document.addEventListener('touchmove', function(e) {
   if (e.touches.length > 1) e.preventDefault();
 }, { passive: false });
 </script>
+
+<!-- Tourist Mode (#333): Google Map Tiles API key, injected from .env via
+     `npm run gen-tourist-key`. Gitignored; a 404 here is harmless when the
+     file isn't generated (the key can also come from ?key= or localStorage). -->
+<script src="js/tourist-key.local.js"></script>
+
+<!-- Tourist Mode: required Google attribution overlay (populated when tiles stream). -->
+<div id="tourist-credits" style="position:fixed;left:8px;bottom:6px;z-index:50;max-width:60vw;color:#fff;font:11px/1.3 system-ui,sans-serif;text-shadow:0 1px 2px rgba(0,0,0,.8);pointer-events:none;"></div>
 
 <script type="module" src="js/game.js"></script>
 

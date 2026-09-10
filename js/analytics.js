@@ -1,6 +1,20 @@
 // ============================================================
 // ANALYTICS — fire-and-forget event tracking
 // ============================================================
+//
+// Identity, in three layers:
+//   sessionId  — one per tab, in sessionStorage. What every event is keyed to.
+//   device_id  — one per browser profile, in localStorage (A-9). Anonymous and
+//                never shown to players; it is the only way to tell "the same
+//                person came back tomorrow" from "a new player arrived", which
+//                is what makes D1/D7 retention measurable for signed-out users.
+//   google_uid — only for signed-in players.
+//
+// Helper vocabulary used by the current work (add here, don't invent names at
+// the call site):
+//   trackEvent('crash_recover', { ms, cause })    how long a crash cost
+//   trackConversion('wishlist_click', where)      demo -> store page
+//   trackConversion('invite_click', where)        "send a link" on an end screen
 
 const API_BASE = 'https://tandemonium-api.pete-872.workers.dev/api/analytics';
 const IS_ELECTRON = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron');
@@ -21,11 +35,59 @@ let eventBuffer = [];
 let rideEventBuffer = [];
 let flushTimer = null;
 
+/**
+ * A UUID that survives an insecure context.
+ *
+ * crypto.randomUUID is [SecureContext]-only, so it is simply undefined when the
+ * page is served over plain http — which is how a phone reaches the site when it
+ * follows an http:// link, and is what boot-blocked the game on iOS. Anonymous
+ * analytics identity must never be the thing that stops the game starting, so
+ * fall back to getRandomValues, and then to Math.random, before giving up.
+ */
+function uuid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const b = new Uint8Array(16);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(b);
+  } else {
+    for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  }
+  b[6] = (b[6] & 0x0f) | 0x40;  // version 4
+  b[8] = (b[8] & 0x3f) | 0x80;  // variant 1
+  const h = [...b].map(x => x.toString(16).padStart(2, '0'));
+  return h.slice(0, 4).join('') + '-' + h.slice(4, 6).join('') + '-' +
+         h.slice(6, 8).join('') + '-' + h.slice(8, 10).join('') + '-' +
+         h.slice(10, 16).join('');
+}
+
 // ---- Session Management ----
+
+/**
+ * A-9 · a stable anonymous id for this browser profile.
+ *
+ * Falls back to the session id when localStorage is unavailable (private mode,
+ * blocked site data) so the payload shape never changes and nothing throws —
+ * those sessions simply look like one-visit devices, which is the truth as far
+ * as we can know it.
+ */
+export function getDeviceId() {
+  try {
+    let id = localStorage.getItem('tandemonium_device_id');
+    if (!id) {
+      id = uuid();
+      localStorage.setItem('tandemonium_device_id', id);
+    }
+    return id;
+  } catch {
+    return getSessionId();
+  }
+}
 
 export function initSession(opts) {
   if (DISABLED) return null;
-  sessionId = crypto.randomUUID();
+  sessionId = uuid();
   sessionStorage.setItem('tandemonium_session_id', sessionId);
   currentInputMethod = opts.input_method || null;
 
@@ -35,6 +97,7 @@ export function initSession(opts) {
     id: sessionId,
     started_at: new Date().toISOString(),
     ...opts,
+    device_id: getDeviceId(),
     user_agent: navigator.userAgent,
   });
 
@@ -114,7 +177,7 @@ export function setController(name, connection) {
 // ---- Ride Tracking ----
 
 export function startRide(opts) {
-  currentRideId = crypto.randomUUID();
+  currentRideId = uuid();
 
   beacon(`${API_BASE}/ride`, {
     id: currentRideId,
@@ -183,6 +246,21 @@ export function trackRoomUpdate(code, data) {
 }
 
 // ---- Conversion Tracking ----
+
+/** A-9 · how long a crash actually cost the rider (B-2 reads this). */
+export function trackCrashRecover(ms, cause) {
+  trackEvent('crash_recover', { ms: Math.round(ms), cause: cause || 'unknown' });
+}
+
+/** A-9 · demo -> Steam page. `where` is the screen it was clicked from. */
+export function trackWishlistClick(where) {
+  trackConversion('wishlist_click', where);
+}
+
+/** A-9 · "send a link" on an end screen — the co-op invite funnel. */
+export function trackInviteClick(where) {
+  trackConversion('invite_click', where);
+}
 
 export function trackConversion(action, context, url = null) {
   beacon(`${API_BASE}/conversion`, {

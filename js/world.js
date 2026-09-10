@@ -7,10 +7,19 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RoadPath } from './road-path.js';
 import { RoadChunkManager } from './road-chunks.js';
 import { isMobile } from './config.js';
+import { deriveSeed, SALT } from './daily-seed.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS_FULL = 120;    // ~4.2-unit vertex spacing — covers visible road/tree range
 const GROUND_SEGS_LOW = 60;      // reduced for low-end devices
+
+// How far the ground is sunk beneath the road surface, and over what lateral
+// distance it comes back up. The road mesh is 9 m wide, so the full drop is
+// hidden under it and the ramp is finished before the grass is anything the
+// rider looks at.
+const ROAD_CLEARANCE_DROP = 0.30;   // metres, at the road centre
+const ROAD_CLEARANCE_INNER = 5;     // full drop out to here
+const ROAD_CLEARANCE_OUTER = 16;    // back to flat by here
 const TREE_POOL_SIZE = 400;
 const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
@@ -58,6 +67,33 @@ const chromakeyFragment = `
 `;
 
 export class World {
+  /**
+   * The world every existing level is built from. B-4 made the seed a
+   * parameter; 42 must keep producing the exact road, trees, clouds and
+   * balloons players already know, so it is special-cased to the original
+   * literals rather than run through the derivation.
+   */
+  static DEFAULT_ROAD_SEED = 42;
+
+  /**
+   * The four seeds a world needs, from one integer.
+   *
+   * The legacy case is explicit on purpose: `deriveSeed(42, …)` would produce
+   * perfectly good seeds that are NOT 42/137/271/53, and every tree in the
+   * game would move. Do not try to be clever here.
+   */
+  static seedsFor(seed) {
+    if (seed === World.DEFAULT_ROAD_SEED || seed == null) {
+      return { road: 42, trees: 137, clouds: 271, balloons: 53 };
+    }
+    return {
+      road: deriveSeed(seed, SALT.road),
+      trees: deriveSeed(seed, SALT.trees),
+      clouds: deriveSeed(seed, SALT.clouds),
+      balloons: deriveSeed(seed, SALT.balloons)
+    };
+  }
+
   constructor(scene, options = {}) {
     this.scene = scene;
     this._lowEnd = !!options.lowEnd;
@@ -66,8 +102,12 @@ export class World {
     this._showRiders = !!options.showRiders;
     this.tileSize = 4;
 
-    // Road path (deterministic)
-    this.roadPath = new RoadPath(42);
+    // Road path (deterministic). The seed the whole world is built from —
+    // B-4 made this a parameter so a shared "Today's Road" can exist. The
+    // default is the legacy world, byte for byte.
+    this.roadSeed = options.roadSeed ?? World.DEFAULT_ROAD_SEED;
+    const seeds = World.seedsFor(this.roadSeed);
+    this.roadPath = new RoadPath(seeds.road);
 
     // Road chunks
     this.roadChunks = new RoadChunkManager(scene, this.roadPath);
@@ -77,7 +117,8 @@ export class World {
     this._lastSnapZ = NaN;
 
     // Tree PRNG — separate seed so road path changes don't affect trees
-    this._treeRngState = 137;
+    this._treeRngState = seeds.trees;
+    this._treeSeedBase = seeds.trees;
     this._treeSeededRandom = () => {
       this._treeRngState = (this._treeRngState * 9301 + 49297) % 233280;
       return this._treeRngState / 233280;
@@ -95,7 +136,8 @@ export class World {
     this._cloudSpacing = 10;
 
     // Cloud PRNG — separate seed
-    this._cloudRngState = 271;
+    this._cloudRngState = seeds.clouds;
+    this._cloudSeedBase = seeds.clouds;
     this._cloudSeededRandom = () => {
       this._cloudRngState = (this._cloudRngState * 9301 + 49297) % 233280;
       return this._cloudRngState / 233280;
@@ -103,7 +145,8 @@ export class World {
 
     // Hot air balloons
     this._balloons = [];
-    this._balloonRngState = 53;
+    this._balloonRngState = seeds.balloons;
+    this._balloonSeedBase = seeds.balloons;
     this._balloonSeededRandom = () => {
       this._balloonRngState = (this._balloonRngState * 9301 + 49297) % 233280;
       return this._balloonRngState / 233280;
@@ -527,7 +570,7 @@ export class World {
     // Remove old balloons
     for (const b of this._balloons) this.scene.remove(b.group);
     this._balloons = [];
-    this._balloonRngState = 53; // reset seed for determinism
+    this._balloonRngState = this._balloonSeedBase ?? 53; // reset seed for determinism
 
     const bikeColor = new THREE.Color(hexColor);
     const white = new THREE.Color(0xffffff);
@@ -649,24 +692,45 @@ export class World {
     const posAttr = floor.geometry.attributes.position;
     const count = posAttr.count;
 
-    // Pre-sample road elevations into a 1D height profile.
-    // Single dot-product projection per vertex + array lookup — no iterative refinement,
-    // no convergence issues on tight curves, ~160x fewer getPointAtDistance calls.
+    // Pre-sample the road corridor — position, forward vector and height — so
+    // each ground vertex can be projected onto the ROAD rather than onto one
+    // straight line drawn through the bike.
+    //
+    // The old version took a single dot product against the bike's own forward
+    // vector. On a straight road that is exact; on a curving one the chord
+    // falls ever further behind the arc, so a vertex 50 m up the road was
+    // given the height of the road 4-6 m short of it. Where the road climbs or
+    // drops 3 m in 40 m — which this one does, repeatedly — that put the grass
+    // up to 1.8 m ABOVE the road surface and painted it over the road ahead.
+    // Two Newton steps against the local tangent fix it for the cost of two
+    // array lookups per vertex.
     const profileHalf = 270;
     const profileStep = 2;
     const profileStartD = bikeD - profileHalf;
     const profileEndD = bikeD + profileHalf;
     const profileCount = Math.ceil((profileEndD - profileStartD) / profileStep) + 1;
 
-    // Reuse typed array across frames
+    // Reuse typed arrays across frames
     if (!this._heightProfile || this._heightProfile.length < profileCount) {
       this._heightProfile = new Float32Array(profileCount);
+      this._profileX = new Float32Array(profileCount);
+      this._profileZ = new Float32Array(profileCount);
+      this._profileFX = new Float32Array(profileCount);
+      this._profileFZ = new Float32Array(profileCount);
     }
     const hp = this._heightProfile;
+    const px = this._profileX, pz = this._profileZ;
+    const pfx = this._profileFX, pfz = this._profileFZ;
     for (let i = 0; i < profileCount; i++) {
-      hp[i] = this.roadPath.getPointAtDistance(profileStartD + i * profileStep).y;
+      const pt = this.roadPath.getPointAtDistance(profileStartD + i * profileStep);
+      hp[i] = pt.y;
+      px[i] = pt.x;
+      pz[i] = pt.z;
+      pfx[i] = Math.sin(pt.heading);
+      pfz[i] = Math.cos(pt.heading);
     }
 
+    const lastIdx = profileCount - 2;
     const bikePt = this.roadPath.getPointAtDistance(bikeD);
     const fwdX = Math.sin(bikePt.heading);
     const fwdZ = Math.cos(bikePt.heading);
@@ -678,18 +742,44 @@ export class World {
       const worldX = snapX + gx;
       const worldZ = snapZ - gy;
 
-      // Project vertex offset onto road forward direction to get estimated road distance
+      // First guess: project onto the bike's forward direction.
       const dx = worldX - bikePt.x;
       const dz = worldZ - bikePt.z;
-      const estD = bikeD + dx * fwdX + dz * fwdZ;
+      let estD = bikeD + dx * fwdX + dz * fwdZ;
 
-      // Look up height from pre-sampled profile with linear interpolation
-      const profileIdx = (estD - profileStartD) / profileStep;
-      const idx0 = Math.max(0, Math.min(profileCount - 2, Math.floor(profileIdx)));
-      const frac = Math.max(0, Math.min(1, profileIdx - idx0));
+      // Two Newton steps: slide along the road's OWN tangent at the current
+      // guess until the offset to the vertex is purely lateral.
+      let idx0 = 0, frac = 0;
+      for (let step = 0; step < 3; step++) {
+        const fIdx = (estD - profileStartD) / profileStep;
+        idx0 = fIdx < 0 ? 0 : (fIdx > lastIdx ? lastIdx : Math.floor(fIdx));
+        frac = fIdx - idx0;
+        frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
+        if (step === 2) break;   // last pass only resolves the index
+        const rx = px[idx0] + (px[idx0 + 1] - px[idx0]) * frac;
+        const rz = pz[idx0] + (pz[idx0 + 1] - pz[idx0]) * frac;
+        const tx = pfx[idx0] + (pfx[idx0 + 1] - pfx[idx0]) * frac;
+        const tz = pfz[idx0] + (pfz[idx0 + 1] - pfz[idx0]) * frac;
+        const inv = 1 / Math.max(0.001, Math.sqrt(tx * tx + tz * tz));
+        estD += ((worldX - rx) * tx + (worldZ - rz) * tz) * inv;
+      }
+
       const h = hp[idx0] + (hp[idx0 + 1] - hp[idx0]) * frac;
 
-      posAttr.setZ(i, h - 0.02);
+      // Sink the ground under and beside the road. The road mesh is 9 m wide
+      // and hides the first few metres of this, so the dip is invisible; what
+      // it buys is that no residual error in the grid — which is 4 m coarse
+      // against a road sampled every metre — can lift a grass seam through the
+      // surface at a grazing angle, which is the whole of what an uphill view
+      // is made of.
+      const rx = px[idx0] + (px[idx0 + 1] - px[idx0]) * frac;
+      const rz = pz[idx0] + (pz[idx0 + 1] - pz[idx0]) * frac;
+      const ldx = worldX - rx, ldz = worldZ - rz;
+      const lat = Math.sqrt(ldx * ldx + ldz * ldz);
+      const t = lat <= ROAD_CLEARANCE_INNER ? 1
+              : lat >= ROAD_CLEARANCE_OUTER ? 0
+              : 1 - (lat - ROAD_CLEARANCE_INNER) / (ROAD_CLEARANCE_OUTER - ROAD_CLEARANCE_INNER);
+      posAttr.setZ(i, h - 0.02 - ROAD_CLEARANCE_DROP * t * t * (3 - 2 * t));
     }
 
     posAttr.needsUpdate = true;
@@ -1095,6 +1185,61 @@ export class World {
     const tex = new THREE.CanvasTexture(canvas);
     this._cachedCloudSpriteTex = tex;
     return tex;
+  }
+
+  /**
+   * B-4 · rebuild the world from a different seed.
+   *
+   * A no-op when the seed is unchanged, which is the common case: a restart or
+   * a checkpoint rewind must NOT rebuild the road (it would hitch a frame and
+   * throw away the chunk cache for nothing).
+   *
+   * The ground bump field is deliberately left alone: it is cosmetic, it is the
+   * expensive half of a rebuild, and nobody can tell one bump field from
+   * another. Everything the player can navigate by — road, trees, clouds,
+   * balloons — is rebuilt.
+   */
+  reseed(seed) {
+    const next = seed ?? World.DEFAULT_ROAD_SEED;
+    if (next === this.roadSeed) return false;
+
+    const seeds = World.seedsFor(next);
+    this.roadSeed = next;
+
+    // Road: dispose the chunk meshes before dropping the path they were built
+    // against, or the geometries leak (this runs on iOS, where that matters).
+    this.roadChunks.dispose();
+    this.roadPath = new RoadPath(seeds.road);
+    this.roadChunks = new RoadChunkManager(this.scene, this.roadPath);
+
+    // Trees: return every slot to the pool and start placing again from 0.
+    for (const slot of this._treePool) {
+      slot.active = false;
+      if (slot.mesh) slot.mesh.visible = false;
+    }
+    this._treeNextD = 0;
+    this._treeRngState = seeds.trees;
+    this._treeSeedBase = seeds.trees;
+
+    // Clouds: same.
+    for (const slot of this._cloudPool || []) {
+      slot.active = false;
+      if (slot.mesh) slot.mesh.visible = false;
+    }
+    this._cloudNextD = 0;
+    this._cloudRngState = seeds.clouds;
+    this._cloudSeedBase = seeds.clouds;
+
+    // Balloons are rebuilt by setBalloonColor(), which re-seeds from the base.
+    this._balloonRngState = seeds.balloons;
+    this._balloonSeedBase = seeds.balloons;
+
+    // Ground deformation cache is keyed on position; force a recompute.
+    this._lastSnapX = NaN;
+    this._lastSnapZ = NaN;
+
+    this.clearRaceMarkers();
+    return true;
   }
 
   clearRaceMarkers() {

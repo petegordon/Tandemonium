@@ -4,9 +4,31 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
-import { RaceManager } from './race-manager.js';
-import { getLevelById, LEVELS } from './race-config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
+import { decideAfterCrash, countCrash } from './crash-policy.js';
+import * as records from './records.js';
+import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
+import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
+import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
+import {
+  planDisruptions, disruptionAt, telegraphText, beatWindowFor, KIND, GUST_FORCE,
+  gustEnvelope, COBBLES_LENGTH_M, TELEGRAPH_S, DURATION
+} from './disruptions.js';
+import { BEAT_WINDOW_S } from './pedal-scoring.js';
+
+/** E-2 · what the banner says while an event is actually happening. */
+const ACTIVE_TEXT = {
+  gust: '💨 HOLD IT',
+  goose: '🦢 COAST!',
+  cobbles: '🪨 ROUGH ROAD'
+};
+import { makePlacementSalt } from './daily-seed.js';
+import {
+  recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
+  buildShareStrip, browserStore
+} from './daily-ride.js';
+import { getLevelById, LEVELS, getInstructions, getMedals } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
@@ -27,14 +49,26 @@ import { isSteamTwinPad } from './input-manager.js';
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
+// E-4 · Tourist Mode is NOT imported statically.
+//
+// js/tourist-world.js pulls 3d-tiles-renderer from a CDN. A static import here
+// would make that CDN a boot dependency for every player in every mode — if it
+// is blocked or slow, nobody rides, which is precisely the silent dead end A-7
+// exists to prevent. It is loaded on demand instead, only when ?mode=tourist
+// asks for it, and a failure to load degrades to the normal world with a
+// message rather than a blank screen.
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin } from './tourist-config.js';
+import { formatDistance, skipLabel } from './tourist-route.js';
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
+import { GustVisual } from './gust-visual.js';
+import { CobblesVisual } from './cobbles-visual.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder } from './game-recorder.js';
 import { QuickMenu } from './quick-menu.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { AudioEngine, MOTIF } from './audio-engine.js';
-import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, setHapticSources } from './haptics.js';
+import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
@@ -243,11 +277,35 @@ class Game {
     setHapticSources([this.input]);
     this.pedalCtrl = new PedalController(this.input);
     this.balanceCtrl = new BalanceController(this.input);
-    this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+    // Tourist Mode (#333): stream a real-world location from Google
+    // Photorealistic 3D Tiles instead of the procedural road. The bike,
+    // camera, physics and loop are reused unchanged; only the world source
+    // swaps. The bike's roadPath is null so TouristWorld owns vertical
+    // placement via ground-following raycasts.
+    this.isTourist = isTouristMode();
+    this._touristPending = false;
     // Riders model (goose captain + stoker) when Show Riders is on, else the
-    // plain frame. See the flag read above.
-    this.bike = new BikeModel(this.scene, this._showRiders ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH);
-    this.bike.roadPath = this.world.roadPath;
+    // plain frame. Applied in both worlds so Tourist Mode shows the riders too.
+    const bikeModelPath = this._showRiders ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH;
+    if (this.isTourist) {
+      const apiKey = getMapsApiKey();
+      if (!apiKey) {
+        console.error('[Tourist Mode] No Google Map Tiles API key found. ' +
+          'Run `npm run gen-tourist-key` (reads .env), or pass ?key=YOUR_KEY, ' +
+          'or set localStorage "tourist_maps_key".');
+      }
+      // Start on the procedural world so the game is up and playable, then
+      // swap when the tiles module arrives (E-4).
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+      this.bike = new BikeModel(this.scene, bikeModelPath);
+      this.bike.roadPath = this.world.roadPath;
+      this._touristPending = true;
+      this._loadTouristWorld(apiKey);
+    } else {
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+      this.bike = new BikeModel(this.scene, bikeModelPath);
+      this.bike.roadPath = this.world.roadPath;
+    }
     this.chaseCamera = new ChaseCamera(this.camera);
     // Picture-in-picture front-facing "selfie cam" — only with the riders model
     // (it exists to show off their lean).
@@ -258,6 +316,10 @@ class Game {
     this.fpsMeter = new FpsMeter();
     this.fpsMeter.setVisible(getShowFps());
     this.grassParticles = new GrassParticles(this.scene);
+    // E-2 · the wind you can see during a gust.
+    this.gustVisual = new GustVisual(this.scene);
+    // E-2 · cobbled stretches, laid at the start of the ride so you see them coming.
+    this.cobblesVisual = new CobblesVisual(this.scene);
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
     this.recorder = new GameRecorder(this.renderer.domElement, this.input);
@@ -382,13 +444,17 @@ class Game {
     // Victory overlay input cooldown
     this._overlayCooldownUntil = 0;
 
-    // Safety mode (on by default)
+    // Safety mode. The starting value now comes from the difficulty preset
+    // (A-5): on for tutorial and chill, off for adventurous and daredevil, so
+    // the instructions can tell the truth about whether you can fall. Once the
+    // player touches the button, their choice sticks for the session.
     this.safetyMode = true;
+    this._safetyTouched = false;
     this.safetyBtn = document.getElementById('safety-btn');
     this.safetyBtn.addEventListener('click', () => {
       this.safetyMode = !this.safetyMode;
-      this.safetyBtn.className = 'side-btn ' + (this.safetyMode ? 'safety-on' : 'safety-off');
-      this.safetyBtn.textContent = 'SAFETY\n' + (this.safetyMode ? 'ON' : 'OFF');
+      this._safetyTouched = true;
+      this._updateSafetyBtn();
     });
 
     // Speed mode (off by default)
@@ -423,6 +489,14 @@ class Game {
     // Lobby / Room button
     this._lobbyBtn = document.getElementById('lobby-btn');
     this._lobbyBtn.addEventListener('click', () => {
+      // D-2: leaving a ranked run mid-ride spends it, as a DNF. Otherwise a bad
+      // start could be abandoned for a re-roll, and "one run per day" would
+      // mean "as many runs as it takes to like the first checkpoint".
+      if (this._rankedRunActive && this.state === 'playing') {
+        const ok = confirm('End your ranked run? It counts as unfinished for today.');
+        if (!ok) return;
+        this._recordRankedDnf();
+      }
       if (analytics.getCurrentRideId()) {
         analytics.endRide({
           completed: false,
@@ -436,6 +510,15 @@ class Game {
         this._returnToLobby();
       }
     });
+
+    // B-5 · end-screen calls to action (wishlist / send a link).
+    this._wireCtaButtons();
+    // E-3 · the touch sprint/emote row.
+    this._wirePingRow();
+    // D-3 · share the day's result.
+    for (const which of ['victory', 'gameover']) {
+      this._onTap('btn-daily-share-' + which, () => this._shareDailyResult(which));
+    }
 
     // Try Again from disconnect overlay
     this._onTap('btn-try-reconnect', () => {
@@ -609,6 +692,7 @@ class Game {
       onMultiplayerReady: (net, mode) => this._onMultiplayerReady(net, mode),
       onLocalReady: (opts) => this._onLocalReady(opts),
       onVersusReady: (opts) => this._onVersusReady(opts),
+      onTouristReady: (opts) => this._onTouristReady(opts),   // E-6
       input: this.input,
       controllerManager: this.controllerManager,
     });
@@ -634,7 +718,18 @@ class Game {
     }, {
       isOn: () => this.controllerHud.isOn(),
       run: () => this.controllerHud.toggle(),
+    }, {
+      // D-4 · the ghost. Only offered when there is a best to ride against.
+      available: () => !!this._ghostPlayer || !!this._ghostOff,
+      isOn: () => !this._ghostOff,
+      run: () => {
+        this._ghostOff = !this._ghostOff;
+        if (this._ghostOff) this._hideGhost();
+        else this._startGhost(this.lobby.selectedLevel || {});
+        try { localStorage.setItem('tandemonium_ghost_off', this._ghostOff ? '1' : ''); } catch {}
+      },
     });
+    try { this._ghostOff = !!localStorage.getItem('tandemonium_ghost_off'); } catch { this._ghostOff = false; }
 
     // Volume changes from lobby slider
     this.lobby.onVolumeChanged = (vol) => {
@@ -691,6 +786,17 @@ class Game {
         this.controllerHud.toggle();
         return;
       }
+      // E-3 · Space calls a sprint; 1-4 send the four emotes. Chosen because
+      // both hands are already on the arrow keys and A/D, and Space is the one
+      // key a keyboard player will find without being told.
+      if (e.code === 'Space' && !e.repeat) {
+        this._callSprint();
+        return;
+      }
+      if (!e.repeat && ['Digit1', 'Digit2', 'Digit3', 'Digit4'].includes(e.code)) {
+        this._sendEmote(EMOTES[Number(e.code.slice(-1)) - 1]);
+        return;
+      }
       if (e.code === 'KeyM') {
         if (e.shiftKey) {
           // Shift+M: toggle volume picker in lobby
@@ -740,12 +846,103 @@ class Game {
   // ============================================================
 
   /** True when the player is in demo mode — disabled during playtest. */
+  /**
+   * B-5 · is this the demo build?
+   *
+   * Two ways in, both cheap: `?demo=1` (which is what the Steam demo's launch
+   * URL and the web demo link carry), or an explicit flag from the Electron
+   * preload if the Steam side ever exposes the demo app id. steam/ is not
+   * touched here — the plan forbids it, and the query flag is enough.
+   */
   get _isDemo() {
-    return false;
+    if (this.__isDemo !== undefined) return this.__isDemo;
+    let demo = false;
+    try {
+      demo = new URLSearchParams(location.search).get('demo') === '1';
+    } catch { /* non-browser context */ }
+    if (!demo && typeof window !== 'undefined' && window.tandemoniumSteam) {
+      demo = !!window.tandemoniumSteam.isDemo;
+    }
+    this.__isDemo = demo;
+    return demo;
+  }
+
+  /**
+   * B-5 · is this a build where wishlisting means anything?
+   *
+   * The web build and the demo: yes — 68-88% of Next Fest wishlists come from
+   * people who never play the demo, and the ones who DO play should be able to
+   * act on it from the screen they are already looking at. The full Steam
+   * build: no, they already bought it.
+   */
+  get _canWishlist() {
+    if (this._isDemo) return true;
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+    const isElectron = ua.includes('Electron');
+    return !isElectron;    // plain web build
+  }
+
+  /**
+   * B-5 · put the two next actions on an end screen: wishlist, and send your
+   * partner a link. The invite is solo-only — in co-op the partner is already
+   * here.
+   *
+   * @returns {HTMLElement[]} the buttons that were shown, for gamepad focus
+   */
+  _updateCtaButtons(which) {
+    const wishlist = document.getElementById('btn-wishlist-' + which);
+    const invite = document.getElementById('btn-invite-' + which);
+    const shown = [];
+
+    // D-3: the share button only exists when there is a strip to share.
+    const share = document.getElementById('btn-daily-share-' + which);
+    if (share) {
+      const has = !!this._dailyStripText;
+      share.style.display = has ? '' : 'none';
+      if (has) shown.push(share);
+    }
+
+    if (wishlist) {
+      const show = this._canWishlist;
+      wishlist.style.display = show ? '' : 'none';
+      if (show) shown.push(wishlist);
+    }
+    if (invite) {
+      const show = this.mode === 'solo' && !this._tutorialActive;
+      invite.style.display = show ? '' : 'none';
+      if (show) shown.push(invite);
+    }
+    return shown;
+  }
+
+  /** B-5 · one wiring point for both end screens' CTA buttons. */
+  _wireCtaButtons() {
+    const STORE_URL = 'https://store.steampowered.com/app/4482940/Tandemonium/';
+    for (const which of ['victory', 'gameover']) {
+      this._onTap('btn-wishlist-' + which, () => {
+        try { analytics.trackWishlistClick(which); } catch {}
+        window.open(STORE_URL, '_blank', 'noopener');
+      });
+      this._onTap('btn-invite-' + which, () => {
+        try { analytics.trackInviteClick(which); } catch {}
+        // Use the lobby's own room flow — creating a room anywhere else would
+        // be a second implementation of the thing most likely to break.
+        this._returnToLobby();
+        const captainBtn = document.getElementById('btn-captain');
+        if (this.lobby && this.lobby._showStep && this.lobby.modeStep) {
+          this.lobby._pendingMode = 'multiplayer';
+        }
+        if (captainBtn) captainBtn.click();
+      });
+    }
   }
 
   _onSolo() {
     this.mode = 'solo';
+    this.hud.setSeat('captain', false);   // A-4: no sync row when riding alone
+    this.isTourist = false;               // E-7: a normal solo ride, not a route
+    this._touristRoute = null;
+    this._hideTouristGoal();
     this.bike.applyPreset(this.lobby.selectedPreset);
     this._lobbyBtn.textContent = 'LOBBY';
 
@@ -759,6 +956,7 @@ class Game {
     }
 
     this.state = 'instructions';
+    this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
   }
@@ -784,6 +982,12 @@ class Game {
     // Setup shared pedal controller
     this.sharedPedal = new SharedPedalController();
 
+    // A-4: tell the HUD which seat this screen is and that sync applies.
+    this.hud.setSeat(mode === 'stoker' ? 'stoker' : 'captain', true);
+    this.hud.setPingHint(this._pingHintText());   // E-3
+    this.hud.resetCoopCoaching(!this._coopCoachSeen);
+    this._coopCoachSeen = true;
+
     // Setup remote bike state for stoker
     if (mode === 'stoker') {
       this.remoteBikeState = new RemoteBikeState();
@@ -807,6 +1011,8 @@ class Game {
         if (state.timerRemaining !== undefined && this.raceManager) {
           this.raceManager.segmentTimeRemaining = state.timerRemaining;
         }
+        // A-4: the captain owns the sync score; mirror it on this screen.
+        if (state.syncScore !== undefined) this.hud.setRemoteSync(state.syncScore);
       }
     };
 
@@ -842,7 +1048,8 @@ class Game {
             flavorNum.className = '';
           }
         }, 1000);
-      } else if (eventType === EVT_RESET) {
+      } else if (eventType === EVT_RESET || eventType === EVT_RESET_QUICK) {
+        this._quickCountdown = (eventType === EVT_RESET_QUICK);
         this._hideGameOver();
         this._hideVictory();
         // Clear TOO SLOW overlay if showing
@@ -854,6 +1061,7 @@ class Game {
           this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
         }
         this._resetGame(true);
+        this._quickCountdown = false;
       } else if (eventType === EVT_GAMEOVER) {
         // Idempotent: captain may retry-send GAMEOVER for reliability.
         if (this.state === 'playing') this._showGameOver(true);
@@ -943,6 +1151,19 @@ class Game {
       }
       // Handle tilt status from partner (motion availability only — NOT a
       // steering-capability signal; a desktop partner steers without tilt).
+      // D-2: the captain chose practice or ranked for the pair. The countdown
+      // event is a bare byte, so the mode needs its own message; the stoker
+      // stores the pair result too, so it has to know.
+      if (profile && profile.type === 'dailyMode') {
+        this._rankedRunActive = profile.mode === 'ranked';
+        if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
+        return;
+      }
+      // E-3: a sprint call or an emote from the other seat.
+      if (profile && profile.type === 'ping') {
+        this._receivePing(profile);
+        return;
+      }
       if (profile && profile.type === 'tiltStatus') {
         this._partnerHasTilt = profile.hasTilt;
         if (this._onPartnerTiltStatus) this._onPartnerTiltStatus(profile.hasTilt);
@@ -987,6 +1208,11 @@ class Game {
       }
       // Capture partner server ID for score attribution
       if (profile.serverId) this._partnerServerId = profile.serverId;
+      // D-5: and their name, for the pair streak and the share strip.
+      if (profile.name) this._partnerName = profile.name;
+      // D-9: and their anonymous device id, so a guest partner still builds a
+      // shared history with a signed-in rider.
+      if (profile.deviceId) this._partnerDeviceId = profile.deviceId;
       // Partner bike color for arch indicator
       if (profile.bikeColor) {
         this._partnerBikeColor = profile.bikeColor;
@@ -1035,6 +1261,7 @@ class Game {
 
     // Show instructions
     this.state = 'instructions';
+    this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
   }
@@ -1060,6 +1287,12 @@ class Game {
 
     // Shared pedal controller: P1 taps as 'captain', P2 taps as 'stoker'.
     this.sharedPedal = new SharedPedalController();
+
+    // A-4: local co-op shows the sync row too — one screen, both seats.
+    this.hud.setSeat('captain', true);
+    this.hud.setPingHint(this._pingHintText());   // E-3
+    this.hud.resetCoopCoaching(!this._coopCoachSeen);
+    this._coopCoachSeen = true;
 
     // If P2 is keyboard, P1 must release its keyboard subscription so random
     // typing doesn't double-fire into both players.
@@ -1100,6 +1333,7 @@ class Game {
 
     // Show instructions (tap to start)
     this.state = 'instructions';
+    this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
   }
@@ -1116,6 +1350,13 @@ class Game {
     this.net = null;
     this._versusTeams = teams;
     this._lobbyBtn.textContent = 'LOBBY';
+    // A-4/E-1/E-7: versus has its own HUD. Without clearing these, a co-op or
+    // tourist ride earlier in the session would leave the sync row, the
+    // look-ahead panel or the distance readout on screen over a versus race.
+    this.hud.setSeat('captain', false);
+    this.hud.updateLookahead(null);
+    this._touristRoute = null;
+    this._hideTouristGoal();
     this._loadSavedTuning();
     // The join screen suspended activity-claims so it could be the sole
     // claimer; rosters are locked now, so restore normal behavior (spare
@@ -1196,6 +1437,7 @@ class Game {
 
     document.body.classList.add('mode-versus');
     this.state = 'instructions';
+    this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
   }
@@ -1592,7 +1834,10 @@ class Game {
     // Apply difficulty preset and create DDA manager
     const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
     applyDifficulty(difficultyName);
-    this.ddaManager = new DDAManager(difficultyName);
+    // D-2: no dynamic difficulty on a ranked run. Everyone rides the same road
+    // under the same rules, or the times mean nothing. Every ddaManager call
+    // site is already null-guarded (grep: `this.ddaManager &&`).
+    this.ddaManager = this._rankedRunActive ? null : new DDAManager(difficultyName);
     this._assistWeight = 0;
 
     // Apply auto-speed from difficulty preset (Chill/Tutorial cruise automatically)
@@ -1601,6 +1846,9 @@ class Game {
       this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
       this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
     }
+
+    // A-5: safety follows the difficulty unless the player has said otherwise.
+    this._applySafetyDefault();
 
     // Reset background adaptation state for fresh ride
     this._adaptState = null;
@@ -1651,12 +1899,55 @@ class Game {
     // after 10s of trigger silence.
     if (this.inputP2) this.inputP2._markActive();
 
+    // A-7 (#216) · the first ride pulls, the second is smooth.
+    //
+    // The calibration above only runs for inputs whose gyro is ALREADY
+    // streaming. P2's HID connection is fire-and-forget at claim time, so on
+    // the first ride of a session the countdown routinely starts before the
+    // slot reports data: gyroConnected is false, calibration is skipped, and
+    // the gyro joins mid-ride carrying a bias baked while the pad was being
+    // picked up — which is the janky pull. On the second ride the connection
+    // is already warm, so it never reproduces for the person testing it.
+    //
+    // Track who still owes a calibration and do it the moment their gyro
+    // starts talking, up to the first few seconds of the ride.
+    this._pendingGyroCalib = [];
+    for (const src of [this.input, this.inputP2]) {
+      if (src && src.motionEnabled && !src.gyroConnected) this._pendingGyroCalib.push(src);
+    }
+    this._pendingGyroCalibUntil = performance.now() + 8000;
+
     const statusEl = document.getElementById('status');
     statusEl.textContent = '';
     this._lastCountNum = 3;
 
     // Create race manager + contribution tracker + collectibles from selected level
     const level = this.lobby.selectedLevel;
+
+    // B-4 · the world this ride happens in.
+    //
+    // The seed comes from the level (Today's Road carries one); everything else
+    // stays on the legacy world, byte for byte. The placement salt varies WHERE
+    // items sit within that world from run to run, so the second lap of
+    // Grandma's is not the identical pylon at 88 m — except in the tutorial,
+    // which has to stay predictable while someone is learning.
+    //
+    // In online co-op the captain chose both and sent them with startRide; the
+    // lobby has already stored them. Solo and local co-op choose here.
+    // Today's Road takes NO placement salt: everyone in the world must meet the
+    // same pylons in the same places, or it is not a shared road. The tutorial
+    // takes none either — it stays predictable while someone is learning.
+    const noSalt = level.isTutorial || level.isDaily;
+    if (this.mode !== 'captain' && this.mode !== 'stoker') {
+      this._placementSalt = noSalt ? 0 : makePlacementSalt();
+    } else {
+      this._placementSalt = noSalt ? 0 : (this.lobby._placementSalt || 0);
+    }
+    if (this.world.reseed(level.seed ?? undefined)) {
+      // The road moved under the bike: re-point it and put it back on the line.
+      this.bike.roadPath = this.world.roadPath;
+      this.bike.fullReset();
+    }
     // Show level icon + flavor text + countdown number
     const flavorIcon = document.getElementById('countdown-flavor-icon');
     const flavorText = document.getElementById('countdown-flavor-text');
@@ -1667,18 +1958,36 @@ class Game {
       flavorNum.textContent = '3';
       flavorNum.className = 'tick-3 pop';
     }
+    // D-2 · is this the day's ranked run? The lobby asked; the demo never does
+    // (practice only there), and a stoker takes whatever the captain chose.
+    // The chooser sets _dailyMode per ride and it is CONSUMED here: without
+    // clearing it, every later Today's Road ride in the session would claim to
+    // be ranked, show the badge, and try to spend a run that is already gone.
+    // The stoker never chooses: its value arrives in the captain's `dailyMode`
+    // message, which can land either side of the countdown event, so this must
+    // not overwrite it.
+    if (this.mode !== 'stoker') {
+      const chosenMode = this.lobby._dailyMode;
+      this.lobby._dailyMode = null;
+      this._rankedRunActive = !!(level.isDaily && chosenMode === 'ranked' && !this._isDemo);
+    }
+    if (this._rankedRunActive && this.mode === 'captain' && this.net) {
+      // The countdown event is a bare byte, so the mode needs its own message.
+      this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
+    }
+
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this.balanceCtrl.resetSteerFrames();
     if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
     if (this.collectibleManager) this.collectibleManager.destroy();
-    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
+    this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName, this._placementSalt);
     if (this.obstacleManager) this.obstacleManager.destroy();
-    this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName);
+    this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName, this._placementSalt);
     // Roadside geese (#363) — decorative verge scenery, no collision response.
     if (this.geeseManager) this.geeseManager.dispose();
-    this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine);
+    this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine, this._placementSalt);
 
     // Wire up collectibles total for analytics
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
@@ -1700,11 +2009,28 @@ class Game {
     this.hud.initTimer();
     // Show initial segment budget during countdown
     const firstTarget = this.raceManager.checkpoints.length > 0 ? this.raceManager.checkpoints[0] : this.raceManager.raceDistance;
-    const initialBudget = this.raceManager._segmentBudget(firstTarget);
+    const initialBudget = this.raceManager._segmentBudget(firstTarget) + FIRST_SEGMENT_BONUS_S;
     this.hud.updateTimer(initialBudget, initialBudget);
     this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
     this.hud.showGeese();
     this.world.setRaceMarkers(level, this.camera);
+
+    // A-6: name the controls for whoever is holding whatever they are holding.
+    this._maybeShowCoachCard(level);
+
+    // B-3: read this ride's best once, so checkpoint splits have something to
+    // compare against without touching localStorage mid-ride.
+    this._loadBestForRide();
+
+    // D-3: no stale strip from a previous ride on a different road.
+    this._dailyStripText = null;
+
+    // D-4: record this ride's line, and put out the ghost of the best one.
+    this._startGhost(level);
+
+    // E-2: plan what the road is going to do to this pair.
+    this._startDisruptions(level, difficultyName);
+    if (this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
 
     // Tutorial: place all items from all phases so they're visible ahead
     if (level.isTutorial && this._tutorialActive) {
@@ -2061,11 +2387,33 @@ class Game {
       this.bike.fullReset();
     }
 
-    // Reset segment timer for current segment on checkpoint restart
-    if (this.raceManager && checkpointD > 0) {
-      this.raceManager.restartCount++;
+    // Refill the segment clock for whatever segment is about to be ridden.
+    //
+    // This used to be skipped when checkpointD was 0 — i.e. on every crash and
+    // every timeout BEFORE the first checkpoint, which is exactly where a rider
+    // who is struggling spends their time. The bike went back to the start line
+    // and the clock did not, so a crash at 110 m with nine seconds left put you
+    // on the start line with nine seconds to ride 125 m. The second crash was
+    // unrecoverable by arithmetic, and the ride could not be finished at all.
+    if (this.raceManager) {
+      if (checkpointD > 0) this.raceManager.restartCount++;
       this.raceManager.resetSegmentTimer(checkpointD);
     }
+
+    // B-3: splits are indexed by checkpoint, so a restart has to drop the ones
+    // that are about to be ridden again. Without this the list keeps growing
+    // and every later split is compared against the wrong checkpoint.
+    if (this._rideSplits) {
+      const passed = this.raceManager ? this.raceManager.passedCheckpoints.size : 0;
+      this._rideSplits.length = Math.min(this._rideSplits.length, passed);
+    }
+    // D-4: a ride with a restart in it no longer has one continuous line, so
+    // it does not leave a ghost behind. The TIME still counts — restarts cost
+    // seconds, and beating your best with one is a real result — but a ghost
+    // stitched across a rewind would teach a line nobody rode.
+    this._ghostTrackValid = false;
+    this._ghostElapsed = 0;
+    if (this._ghostPlayer) this._ghostPlayer.reset();
 
     // DDA: apply invisible adjustments on restart
     if (this.ddaManager && this.mode !== 'stoker') {
@@ -2082,6 +2430,9 @@ class Game {
     }
 
     this.grassParticles.clear();
+    if (this.gustVisual) this.gustVisual.clear();
+    if (this.cobblesVisual) this.cobblesVisual.clear();
+    if (this.bike) this.bike._roughness = 0;
     if (this.geeseManager) this.geeseManager.clear();
     this._stokerWasFallen = false;
     this._remoteFinishStats = null;
@@ -2124,8 +2475,10 @@ class Game {
 
     // Captain always broadcasts reset so stoker also resets.
     // Stoker receiving EVT_RESET calls _resetGame(fromRemote=true) which won't re-send.
+    // B-2: the quick variant tells the stoker to use the 1.5 s countdown too, so
+    // both riders are back on the road on the same beat.
     if (this.net && this.mode === 'captain') {
-      this.net.sendEvent(EVT_RESET);
+      this.net.sendEvent(this._quickCountdown ? EVT_RESET_QUICK : EVT_RESET);
     }
 
     if (checkpointD > 0) {
@@ -2137,25 +2490,31 @@ class Game {
 
   _resumeCountdown() {
     this.state = 'countdown';
-    this.countdownTimer = 3.0;
+    // B-2: getting back on after a crash is a 1.5 s beat, not another full
+    // three-count. A restart the player asked for keeps the 3 s version.
+    // 1.2 s here + the 1.2 s the bike spends on its side = 2.4 s from impact to
+    // riding, inside the 2.5 s the plan asks for. (The plan's own 1.5 s would
+    // have summed to 2.7 s.)
+    const quick = !!this._quickCountdown;
+    this.countdownTimer = quick ? 1.2 : 3.0;
     this.instructionsEl.classList.add('hidden');
 
     const statusEl = document.getElementById('status');
     statusEl.textContent = '';
     statusEl.style.fontSize = '';
-    this._lastCountNum = 3;
+    this._lastCountNum = quick ? 2 : 3;
 
-    // Show animated countdown "3" in flavor overlay (same as _startCountdown)
+    // Show animated countdown in flavor overlay (same as _startCountdown)
     const flavorNum = document.getElementById('countdown-flavor-num');
     if (flavorNum) {
-      flavorNum.textContent = '3';
-      flavorNum.className = 'tick-3 pop';
+      flavorNum.textContent = quick ? '2' : '3';
+      flavorNum.className = (quick ? 'tick-2' : 'tick-3') + ' pop';
     }
 
     // Re-show the segment timer (hidden by _onTimerExpired / _showGameOver)
     if (this.raceManager) {
       this.hud.initTimer();
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
 
     this._playBeep(400, 0.15);
@@ -2314,7 +2673,10 @@ class Game {
     if (lobbyBtn) lobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
     const skipBtn = document.getElementById('btn-skip-checkpoint');
-    const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn, document.getElementById('btn-gameover-lobby')]
+    // B-5: wishlist + send-a-link, after the ride buttons.
+    const gameoverCtas = this._updateCtaButtons('gameover');
+    const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn,
+      document.getElementById('btn-gameover-lobby'), ...gameoverCtas]
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
 
@@ -2388,10 +2750,1032 @@ class Game {
     }
   }
 
+  /**
+   * B-3 · the record block on the victory screen.
+   *
+   * Writes the run to the local store (that is the side effect; it belongs
+   * here because the run is only "done" once the victory screen exists) and
+   * returns the HTML for what it meant: a new best, or how far off, plus the
+   * medal earned and the next one to chase.
+   *
+   * The stoker's screen shows the captain's authoritative numbers but does not
+   * write a record from them — both sides riding the same bike would otherwise
+   * each claim the same time as their own solo best.
+   */
+  _buildRecordHtml(summary, fromRemote) {
+    const k = this._recordKey();
+    if (!k || !summary || !summary.timeMs) return '';
+    const level = this.lobby.selectedLevel;
+    if (level && (level.isTutorial || level.timerEnabled === false)) return '';
+
+    const store = this._recordStore || records.load();
+    const previous = records.getBest(store, k);
+    let result = { isNewBest: false, delta: previous ? summary.timeMs - previous.timeMs : null };
+
+    if (!fromRemote) {
+      // D-4: a new best keeps its line, so the next ride has something to chase.
+      const provisional = records.getBest(store, k);
+      const isNewBest = !provisional || summary.timeMs < provisional.timeMs;
+      result = records.recordRun(store, k, {
+        timeMs: summary.timeMs,
+        splits: this._rideSplits || [],
+        collectibles: summary.collectibles,
+        crashes: summary.crashes,
+        track: this._finishGhostRecording(isNewBest)
+      });
+      records.save(store);
+      this._recordStore = store;
+    }
+
+    const thresholds = getMedals(level.id, this.lobby.selectedDifficulty);
+    const medal = records.medalFor(summary.timeMs, thresholds);
+    const next = records.nextMedal(medal);
+
+    let html = '';
+    if (result.isNewBest && previous) {
+      html += '<div class="victory-stat victory-perfect">⭐ NEW BEST! ' +
+        records.formatDelta(result.delta) + 's ⭐</div>';
+    } else if (result.isNewBest) {
+      html += '<div class="victory-stat victory-perfect">⭐ FIRST RIDE ON THIS ROAD ⭐</div>';
+    } else if (previous) {
+      html += '<div class="victory-stat">🏅 Best <strong>' + records.formatTime(previous.timeMs) +
+        '</strong> · you ' + records.formatTime(summary.timeMs) +
+        ' (' + records.formatDelta(result.delta) + ')</div>';
+    }
+
+    if (thresholds) {
+      const earned = medal ? records.MEDAL_ICON[medal] + ' ' + medal.toUpperCase() : 'no medal yet';
+      const chase = next ? ' · ' + records.MEDAL_ICON[next] + ' at ' + records.formatTime(thresholds[next]) : '';
+      html += '<div class="victory-stat">' + earned + chase + '</div>';
+    }
+
+    // C-2 / D-2 · Today's Road counts its own rides, so the card can say what
+    // you have done today, and the day's ranked run is spent here if this was
+    // one. The stoker's screen shows the captain's numbers but writes nothing
+    // from them — except the pair result, which is genuinely both riders'.
+    if (level.isDaily && level.key) {
+      const store = browserStore();
+      const dailyMode = this._dailyRunMode();
+      if (this._rankedRunActive) {
+        recordRanked(store, level.key, dailyMode, {
+          timeMs: summary.timeMs,
+          distance: summary.distance,
+          collectibles: summary.collectibles,
+          collectiblesTotal: summary.collectiblesTotal,
+          crashes: summary.crashes,
+          safety: this.safetyMode,
+          sync: this.sharedPedal ? this.sharedPedal.offsetScore : null,
+          partner: this._partnerKey()
+        });
+      } else if (!fromRemote) {
+        recordPractice(store, level.key, summary.timeMs);
+      }
+      if (dailyMode === 'pair' && this._partnerKey()) {
+        recordPartner(store, level.key, this._partnerKey());
+      }
+      try {
+        analytics.trackEvent('daily_finish', {
+          key: level.key, mode: dailyMode, ranked: this._rankedRunActive,
+          time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes
+        });
+      } catch {}
+    }
+
+    try {
+      analytics.trackEvent('run_recorded', {
+        key: k, time_ms: summary.timeMs, new_best: result.isNewBest,
+        delta_ms: result.delta, medal
+      });
+    } catch {}
+
+    return html;
+  }
+
+  /** D-2 · spend the day's ranked run as an unfinished attempt. */
+  _recordRankedDnf() {
+    const level = this.lobby.selectedLevel;
+    if (!level || !level.isDaily || !level.key) return;
+    recordRanked(browserStore(), level.key, this._dailyRunMode(), {
+      dnf: true,
+      distance: this.bike ? this.bike.distanceTraveled : 0,
+      crashes: this.raceManager ? this.raceManager.crashCount : 0,
+      safety: this.safetyMode,
+      partner: this._partnerKey()
+    });
+    this._rankedRunActive = false;
+    try {
+      analytics.trackEvent('daily_finish', {
+        key: level.key, mode: this._dailyRunMode(), ranked: true, dnf: true,
+        distance: this.bike ? Math.round(this.bike.distanceTraveled) : 0
+      });
+    } catch {}
+  }
+
+  // ============================================================
+  // D-4 · GHOSTS — the rider you were yesterday
+  // ============================================================
+  //
+  // A best time is a number; a ghost is an opponent. It is also the cheapest
+  // teaching tool the game can have: a first-timer who cannot describe what
+  // they are doing wrong can still see a better line down the road.
+  //
+  // The recording and interpolation are in js/ghost.js (pure, tested). What is
+  // here is the bike: a clone of the loaded model, no physics, no collisions,
+  // 40% opaque, driven straight from the track's road distance.
+
+  /** Start recording this ride, and load a ghost to ride against. */
+  _startGhost(level) {
+    this._ghostRecorder = this._ghostRecorder || new GhostRecorder();
+    this._ghostRecorder.reset();
+    this._ghostTrackValid = true;
+    this._ghostPlayer = null;
+    this._ghostElapsed = 0;
+
+    if (!this._ghostEnabled()) { this._hideGhost(); return; }
+
+    const track = records.getTrack(this._recordStore || records.load(), this._recordKey());
+    if (!track || !track.count) { this._hideGhost(); return; }
+
+    this._ghostPlayer = new GhostPlayer(track);
+    this._ensureGhostMesh();
+    if (this._ghostGroup) this._ghostGroup.visible = true;
+  }
+
+  /**
+   * Ghosts are off when the player asked for less motion, and off on a machine
+   * that is already struggling — a second bike is cheap, but not free, and the
+   * frame rate is the thing the ride actually depends on.
+   */
+  _ghostEnabled() {
+    if (this._ghostOff) return false;
+    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+    const fps = this._getFpsStats ? this._getFpsStats() : null;
+    if (fps && fps.avg_fps && fps.avg_fps < 40) return false;
+    return true;
+  }
+
+  /** Build the ghost bike once, by cloning the one already in the scene. */
+  _ensureGhostMesh() {
+    if (this._ghostBike || !this.bike || !this.bike.modelLoaded) return;
+    try {
+      this._ghostBike = new BikeModel(this.scene, null, this.bike);
+      this._ghostGroup = this._ghostBike.group;
+      this._ghostBike.roadPath = this.world.roadPath;
+      this._ghostGroup.traverse((child) => {
+        if (!child.material) return;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        child.material = mats.map((m) => {
+          const ghost = m.clone();
+          ghost.transparent = true;
+          ghost.opacity = 0.4;
+          ghost.depthWrite = false;      // no z-fighting with the real bike
+          if (ghost.color) ghost.color.multiplyScalar(0.6);
+          return ghost;
+        });
+        if (child.material.length === 1) child.material = child.material[0];
+      });
+    } catch (err) {
+      // A ghost is a nicety. If the clone fails, the ride continues.
+      console.warn('ghost: could not build the mesh', err);
+      this._ghostBike = null;
+      this._ghostGroup = null;
+    }
+  }
+
+  _hideGhost() {
+    if (this._ghostGroup) this._ghostGroup.visible = false;
+  }
+
+  /**
+   * Per frame: record where we are, and move the ghost to where it was.
+   * Cheap on purpose — two array reads and a transform, no physics.
+   */
+  _updateGhost(dt) {
+    if (this.state !== 'playing' || !this.bike) return;
+
+    // Record. The clock is the race clock, so a rewind rewinds the recording
+    // too rather than smearing the ghost across a restart.
+    if (this._ghostRecorder && this.raceManager && !this.raceManager.timerHeld) {
+      this._ghostRecorder.sample(dt, {
+        roadD: this.bike.distanceTraveled,
+        lateral: this.bike._lateralOffset || 0,
+        lean: this.bike.lean
+      });
+    }
+
+    // Play back.
+    if (!this._ghostPlayer || !this._ghostBike || !this._ghostGroup) return;
+    this._ghostElapsed += dt;
+    const s = this._ghostPlayer.at(this._ghostElapsed);
+    if (!s) return;
+    if (s.finished) { this._ghostGroup.visible = false; return; }
+
+    const path = this.world.roadPath;
+    if (!path) return;
+    const pt = path.getPointAtDistance(s.roadD % path.loopLength);
+    const rightX = Math.cos(pt.heading);
+    const rightZ = -Math.sin(pt.heading);
+    this._ghostGroup.position.set(
+      pt.x + rightX * s.lateral,
+      pt.y,
+      pt.z + rightZ * s.lateral
+    );
+    this._ghostGroup.rotation.set(0, pt.heading, s.lean);
+  }
+
+  /**
+   * D-4 · at a checkpoint, how far ahead or behind the ghost is. Replaces the
+   * B-3 split delta when a ghost is riding, because "you are 1.3 s behind that
+   * bike over there" is a more useful sentence than "+1.3".
+   */
+  _ghostDeltaNow() {
+    if (!this._ghostPlayer || !this.raceManager) return null;
+    const d = ghostDeltaAt(this._ghostPlayer.track, this.bike.distanceTraveled,
+      this.raceManager.getElapsedMs() / 1000);
+    return d === null ? null : Math.round(d * 1000);
+  }
+
+  /** Finish: keep the line if this ride was a new best. */
+  _finishGhostRecording(isNewBest) {
+    if (!this._ghostRecorder || this._ghostTrackValid === false) return null;
+    const track = this._ghostRecorder.finish();
+    return isNewBest && track.count > 1 ? track : null;
+  }
+
+  // ============================================================
+  // E-6 / E-7 · RIDE THE DISTANCE BETWEEN YOU
+  // ============================================================
+  //
+  // Two addresses, a real distance, and a destination to reach. Everything
+  // else in this game is a made-up road; this is the one mode that is about
+  // something the two players already feel, which is why the plan calls it the
+  // post-launch headline.
+  //
+  // The maths is in js/tourist-route.js (pure, tested). Here: start the ride,
+  // keep the distance on screen, and end it when they arrive.
+
+  /** E-6 · the lobby handed over a planned route. */
+  async _onTouristReady({ plan }) {
+    if (!plan) return;
+    this.mode = 'solo';
+    this.isTourist = true;
+    this._touristRoute = plan;
+    this._touristArrived = false;
+    this.hud.setSeat('captain', false);
+    this._lobbyBtn.textContent = 'LOBBY';
+
+    // The ride is the ridable part of the route; the REAL distance is what the
+    // HUD says, because that number is the entire feature.
+    this._touristGoalM = plan.route.ridableM;
+
+    // A tourist ride needs a LEVEL, because every piece of ride machinery —
+    // the race manager, the finish, the records, the disruption schedule —
+    // reads one. Without this the ride silently inherits whatever was selected
+    // last (Grandma's), which means a 250 m finish, a segment timer that times
+    // you out on the way to Denver, and a personal best written against the
+    // wrong road. It is a pseudo-level: no timer, one checkpoint at the end,
+    // and a distance that IS the destination.
+    this.lobby.selectedLevel = {
+      id: 'tourist',
+      name: plan.to.label || 'Their door',
+      distance: Math.max(50, Math.round(plan.route.ridableM)),
+      checkpointInterval: Math.max(50, Math.round(plan.route.ridableM)),
+      collectibles: 'none',
+      icon: '📍',
+      description: plan.headline,
+      isTourist: true,
+      timerEnabled: false,      // there is no losing a ride to someone you love
+      treeCollision: false,
+      motionAdaptation: false
+    };
+    this.lobby.selectedDifficulty = 'chill';   // arriving is the point, not the challenge
+
+    const apiKey = getMapsApiKey();
+    this._touristPending = true;
+    this._showTouristGoal();
+    await this._loadTouristWorld(apiKey);
+
+    if (this.world && this.world.setRoute) {
+      this.world.setRoute(plan);
+    } else if (this.world && this.world.setOrigin) {
+      // The v1 tiles world rides free-form around one anchor; start at the
+      // player's own end of the line, which is the half that means something.
+      this.world.setOrigin(plan.from);
+    }
+
+    this.state = 'instructions';
+    this._updateInstructionsText();
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  /** E-7 · the sentence, and how much of it is left. */
+  _showTouristGoal() {
+    const el = document.getElementById('tourist-goal');
+    if (!el || !this._touristRoute) return;
+    el.classList.add('visible');
+    this._updateTouristGoal();
+  }
+
+  _hideTouristGoal() {
+    const el = document.getElementById('tourist-goal');
+    if (el) el.classList.remove('visible');
+  }
+
+  /**
+   * Per frame (cheap, and only while a tourist ride is running): how far there
+   * is between the two of them, and how much of the ridable part is left.
+   */
+  _updateTouristGoal() {
+    if (!this._touristRoute) return;
+    const el = document.getElementById('tourist-goal');
+    if (!el) return;
+    const ridden = this.bike ? this.bike.distanceTraveled : 0;
+    const left = Math.max(0, this._touristGoalM - ridden);
+    const text = this._touristRoute.headline +
+      ' · <span class="tourist-togo">' + formatDistance(left) + ' to go</span>';
+    if (text !== this._prevTouristGoalText) {
+      this._prevTouristGoalText = text;
+      el.innerHTML = text;
+    }
+
+    // Arrival is the ordinary finish: the pseudo-level's distance IS the
+    // destination, so the race manager fires the normal finish cinematic and
+    // victory screen. No parallel win path to keep in step with the real one.
+  }
+
+  /**
+   * E-7 · they arrived. Called from the ordinary victory screen, which already
+   * does the cinematic, the chime and the buttons — this only says what the
+   * ride was about and builds the thing they can send to the person it was
+   * about. One win path, not two to keep in step.
+   *
+   * @returns {string} extra HTML for the victory stats block
+   */
+  _touristVictoryHtml(riddenM) {
+    const plan = this._touristRoute;
+    if (!plan) return '';
+
+    const title = document.getElementById('victory-title');
+    const dest = document.getElementById('victory-destination');
+    if (title) title.textContent = 'YOU MADE IT TO THEM!';
+    if (dest) dest.textContent = '📍 ' + (plan.to.label || 'their door');
+
+    this._dailyStripText = [
+      `Tandemonium · ${plan.headline}`,
+      `📍 ${plan.from.label} → ${plan.to.label}`,
+      `🚴 ${formatDistance(riddenM)} ridden${plan.route.capped ? ' · ' + skipLabel(plan.route) : ''}`,
+      location.origin + '/'
+    ].join('\n');
+
+    try {
+      analytics.trackEvent('tourist_arrived', {
+        km: Math.round(plan.realM / 1000),
+        ridden_m: Math.round(riddenM),
+        capped: plan.route.capped
+      });
+    } catch {}
+
+    return '<div class="victory-stat">' + this._escapeHtml(plan.headline) + '</div>' +
+      (plan.route.capped
+        ? '<div class="victory-stat">' + this._escapeHtml(skipLabel(plan.route)) + '</div>'
+        : '');
+  }
+
+  /**
+   * E-4 · load Tourist Mode on demand.
+   *
+   * The tiles renderer is a CDN module and the tiles themselves are a metered
+   * Google service, so neither belongs on the boot path of a game that is
+   * usually not in Tourist Mode. If it fails — blocked CDN, missing key, no
+   * billing — the player keeps the procedural world and is told why, rather
+   * than staring at a blank screen.
+   */
+  async _loadTouristWorld(apiKey) {
+    try {
+      const { TouristWorld } = await import('./tourist-world.js');
+      const tourist = new TouristWorld(this.scene, this.camera, this.renderer, { apiKey });
+      // Retire the procedural world before the tiles take over vertical
+      // placement, or two grounds fight over the bike.
+      if (this.world && this.world.roadChunks) this.world.roadChunks.dispose();
+      this.world = tourist;
+      this.bike.roadPath = null;
+      this.world.setBike(this.bike);
+      this._touristPending = false;
+      try { analytics.trackEvent('tourist_world_ready'); } catch {}
+    } catch (err) {
+      this._touristPending = false;
+      this.isTourist = false;
+      console.error('[Tourist Mode] could not load the tiles renderer — ' +
+        'staying on the procedural world.', err);
+      const el = document.getElementById('tourist-credits');
+      if (el) el.textContent = 'Tourist Mode unavailable — riding the usual road instead.';
+      try { analytics.trackEvent('tourist_world_failed', { message: String(err && err.message).slice(0, 120) }); } catch {}
+    }
+  }
+
+  // ============================================================
+  // E-2 · DISRUPTIONS — the road does something to the pair
+  // ============================================================
+  //
+  // A co-op ride with a steady rhythm and nothing to interrupt it gives two
+  // people nothing to coordinate about after the first minute: they find the
+  // beat and then hold it in silence. Overcooked splits the kitchen; this
+  // splits the rhythm.
+  //
+  // The schedule is seeded from the road (js/disruptions.js, pure and tested),
+  // so both clients plan the identical events with no network traffic — the
+  // captain simulates, and the stoker's banner is driven by the distance that
+  // already arrives in the state packet.
+
+  /** Plan this ride's disruptions. Called once, at countdown. */
+  _startDisruptions(level, difficultyName) {
+    this._disruptions = planDisruptions({
+      seed: level.seed ?? this.world.roadSeed,
+      distance: level.distance,
+      difficulty: difficultyName,
+      checkpoints: this.raceManager ? this.raceManager.checkpoints : []
+    });
+    this._disruptions = this._overrideDisruptions(this._disruptions, level);
+    this._activeDisruption = null;
+    this._disruptionEndsAt = 0;
+    this._coastRequiredUntil = 0;
+    if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
+    if (this.hud.updateDisruption) this.hud.updateDisruption(null);
+    this._cobbleHapticAt = 0;
+    if (this.bike) this.bike._roughness = 0;
+
+    // Lay every cobbled stretch now. They are part of the road for the whole
+    // ride, visible from far back — the banner only confirms what you can see.
+    if (this.cobblesVisual) {
+      this.cobblesVisual.build(this.world && this.world.roadPath,
+        this._disruptions
+          .filter(e => e.kind === KIND.COBBLES)
+          .map(e => ({ startD: e.atM, endD: e.atM + COBBLES_LENGTH_M })));
+    }
+  }
+
+  /**
+   * ?disrupt= — put the disruptions where someone testing them can reach them.
+   *
+   * A planned ride spaces two events over 500 m and keeps them 40 m clear of
+   * every checkpoint, so on Today's Road BOTH always land past the first one.
+   * That is right for playing and useless for checking whether the cobbles
+   * sound like cobbles: you have to ride a clean 125 m first, every attempt.
+   *
+   *   ?disrupt=cobbles   one cobbled stretch at 70 m, nothing else
+   *   ?disrupt=gust      one gust at 70 m
+   *   ?disrupt=goose     one goose at 70 m
+   *   ?disrupt=all       all three, 70 m apart, in that order
+   *
+   * Off unless the parameter is present, so it cannot reach a player.
+   */
+  _overrideDisruptions(planned, level) {
+    let want;
+    try {
+      want = new URLSearchParams(window.location.search).get('disrupt');
+    } catch { return planned; }
+    if (!want) return planned;
+
+    const first = 70;
+    const spacing = 70;
+    const kinds = want === 'all'
+      ? [KIND.COBBLES, KIND.GUST, KIND.GOOSE]
+      : [want].filter(k => Object.values(KIND).includes(k));
+    if (kinds.length === 0) return planned;
+
+    const max = (level && level.distance ? level.distance : 500) - 20;
+    return kinds
+      .map((kind, i) => ({ kind, atM: first + i * spacing }))
+      .filter(e => e.atM < max)
+      .map(e => ({
+        ...e,
+        telegraphM: Math.max(0, e.atM - TELEGRAPH_S * 8),
+        duration: DURATION[e.kind]
+      }));
+  }
+
+  /**
+   * Per frame: work out what the road is doing, tell the rider, and apply it.
+   * Distance-driven rather than time-driven, so a slow pair and a fast pair
+   * meet the same gust at the same tree.
+   */
+  _updateDisruptions(dt) {
+    if (!this._disruptions || this._disruptions.length === 0) { this._clearDisruptionEffects(); return; }
+    if (this.state !== 'playing' || !this.bike) { this._clearDisruptionEffects(); return; }
+
+    const d = this.bike.distanceTraveled;
+    const active = disruptionAt(this._disruptions, d, (e) => {
+      // Cobbles is a piece of road, so its extent is a fixed length in metres.
+      // The other two are moments: convert their seconds at the speed they
+      // started at, with a floor so a stopped bike does not sit inside a gust
+      // for ever.
+      if (e.kind === KIND.COBBLES) return e.atM + COBBLES_LENGTH_M;
+      const speed = Math.max(3, this._disruptionStartSpeed || this.bike.speed || 6);
+      return e.atM + e.duration * speed;
+    });
+
+    // Banner
+    if (this.hud.updateDisruption) {
+      this.hud.updateDisruption(active ? {
+        phase: active.phase,
+        text: active.phase === 'telegraph'
+          ? telegraphText(active.event.kind)
+          : ACTIVE_TEXT[active.event.kind] || telegraphText(active.event.kind)
+      } : null);
+    }
+
+    const started = active && active.phase === 'active' &&
+      (!this._activeDisruption || this._activeDisruption.event !== active.event);
+    if (started) {
+      this._disruptionStartSpeed = this.bike.speed;
+      this._onDisruptionStart(active.event);
+    }
+    if (!active && this._activeDisruption) this._onDisruptionEnd();
+    this._activeDisruption = active && active.phase === 'active' ? active : null;
+
+    // Apply whatever is running — but only on the side that owns the physics.
+    // The stoker's bike is overwritten by the captain's state every frame, so
+    // pushing its lean here would fight the network for no effect. The stoker
+    // still sees the banner above; it is the captain's gust that moves them.
+    const authoritative = this.mode !== 'stoker';
+    if (this._activeDisruption && authoritative) {
+      const kind = this._activeDisruption.event.kind;
+      if (kind === KIND.GUST) {
+        // A crosswind the pair has to correct together: their lean inputs
+        // average, so agreeing is the only way out of it. Shaped by the
+        // envelope so it arrives and passes rather than switching on.
+        const env = gustEnvelope(this._activeDisruption.progress);
+        this.bike.leanVelocity += (this._gustDirection || 1) * GUST_FORCE * env * dt;
+      } else if (kind === KIND.GOOSE) {
+        // Handled in the pedal path: a tap during the coast window costs speed.
+        this._coastRequiredUntil = performance.now() + 200;
+      }
+    }
+
+    // E-2 · cobbles is a surface, not a threshold. The stones shake the bike and
+    // scrub speed for as long as you are on them — which is the whole mechanic
+    // in solo, where the tightened beat window below has no partner to apply to.
+    const onCobbles = !!this._activeDisruption &&
+      this._activeDisruption.event.kind === KIND.COBBLES;
+    this.bike._roughness = onCobbles && authoritative ? 1 : 0;
+    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(onCobbles);
+    if (onCobbles) {
+      // The camera rides the surface too — a rattle you can see, not just a
+      // number in the physics. Scaled by speed: crawling over stones is not the
+      // same as hitting them at pace.
+      if (this.chaseCamera && this.chaseCamera.roughRoad) {
+        this.chaseCamera.roughRoad(0.45 + Math.min(1, this.bike.speed / 12) * 0.55);
+      }
+      const now = performance.now();
+      if (now - (this._cobbleHapticAt || 0) > 160) {
+        this._cobbleHapticAt = now;
+        hapticCobbles();
+      }
+    }
+
+    // The wind you can see. Driven for every seat, including the stoker, whose
+    // bike is not simulated here but whose screen should still show the storm.
+    if (this.gustVisual) {
+      const gusting = this._activeDisruption &&
+        this._activeDisruption.event.kind === KIND.GUST;
+      this.gustVisual.setWind(
+        this._gustDirection || 1,
+        gusting ? gustEnvelope(this._activeDisruption.progress) : 0
+      );
+    }
+
+    // Cobbles tighten the beat window; A-2's default returns the moment it ends.
+    if (this.sharedPedal) {
+      this.sharedPedal.beatWindow = beatWindowFor(this._activeDisruption, BEAT_WINDOW_S);
+    }
+  }
+
+  _onDisruptionStart(event) {
+    // Which way the wind blows is seeded off the position, so both clients
+    // agree without sending anything.
+    this._gustDirection = (Math.floor(event.atM) % 2 === 0) ? 1 : -1;
+    if (this.audioEngine) {
+      if (event.kind === KIND.GUST) this.audioEngine.tone(140, 0.6, { type: 'sawtooth', gain: 0.09 });
+      else if (event.kind === KIND.GOOSE) this.audioEngine.honkBurst(1);
+      else this.audioEngine.tone(90, 0.35, { type: 'square', gain: 0.07 });
+    }
+    hapticBump();
+    try { analytics.trackRideEvent('disruption', event.atM, { kind: event.kind }); } catch {}
+  }
+
+  _onDisruptionEnd() {
+    this._clearDisruptionEffects();
+  }
+
+  /**
+   * Put every ongoing effect back to neutral.
+   *
+   * Cobbles and the gust act continuously, so leaving one has to actively stop
+   * it. The guards at the top of _updateDisruptions bail out before any of that
+   * runs — crossing the finish line mid-cobbles used to leave the rumble
+   * playing and the bike rough — so they call this on the way out.
+   */
+  _clearDisruptionEffects() {
+    this._coastRequiredUntil = 0;
+    if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
+    if (this.bike) this.bike._roughness = 0;
+    if (this.gustVisual) this.gustVisual.setWind(this._gustDirection || 1, 0);
+    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(false);
+    if (this.hud && this.hud.updateDisruption) this.hud.updateDisruption(null);
+  }
+
+  /**
+   * E-2 · the goose crossing: pedalling through it costs you. Called from the
+   * tap path so it applies to whichever seat tapped.
+   */
+  _isCoastRequired() {
+    return this._coastRequiredUntil > 0 && performance.now() < this._coastRequiredUntil;
+  }
+
+  // ============================================================
+  // E-3 · SYNC PING — a vocabulary for two people on one bike
+  // ============================================================
+  //
+  // A large share of this game's sessions are a laptop and a phone with no call
+  // open, and the two riders may be in different cities. Portal 2 shipped a
+  // ping tool for exactly this reason. Here it is one button for "now,
+  // together" and four emotes for everything else.
+  //
+  // The rules live in js/sync-ping.js (pure, tested). This is the wiring:
+  // input, the wire, and the two consumers (HUD and the sync bar).
+
+  /** E-3 · touch has no spare button, so the vocabulary gets its own row. */
+  _wirePingRow() {
+    const row = document.getElementById('ping-row');
+    if (!row) return;
+    const sprint = document.getElementById('btn-ping-sprint');
+    if (sprint) sprint.addEventListener('click', (e) => { e.preventDefault(); this._callSprint(); });
+    row.querySelectorAll('[data-emote]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this._sendEmote(EMOTES[Number(btn.dataset.emote)]);
+      });
+    });
+  }
+
+  /**
+   * E-3 · how to tell THIS player about the sprint call.
+   *
+   * Touch already has a labelled SPRINT button on screen, so it needs no words.
+   * Everyone else gets the key they are actually holding — "press Space" is
+   * useless to somebody on a controller, and a hint nobody can act on is worse
+   * than silence.
+   */
+  _pingHintText() {
+    const method = this._coachInputMethod();
+    if (method === 'touch') return null;
+    if (method === 'gamepad') return 'Tap X to call a sprint · hold X + d-pad to talk';
+    return 'Press SPACE to call a sprint · 1-4 to talk';
+  }
+
+  /** Is a ping meaningful right now? Solo has nobody to say it to. */
+  _pingActive() {
+    return this.state === 'playing' && this.mode !== 'solo' && this.mode !== 'versus';
+  }
+
+  /** Which seat is this screen, for attributing a call. */
+  _pingSeat() {
+    return this.mode === 'stoker' ? 'stoker' : 'captain';
+  }
+
+  /** Call a sprint locally and tell the other seat. */
+  _callSprint() {
+    if (!this._pingActive()) return;
+    const next = callSprint(this._pingState, this._pingSeat());
+    if (next === this._pingState) return;      // refused: cooling down, or already running
+    this._pingState = next;
+    this._sendPing({ kind: 'sprint' });
+    // Paint on the press rather than on the next frame: a call that appears a
+    // frame late feels like a button that did not take.
+    this.hud.updatePing(this._pingState);
+    this._playBeep(700, 0.08);
+    try { analytics.trackEvent('sync_ping', { kind: 'sprint', seat: this._pingSeat() }); } catch {}
+  }
+
+  /** Send an emote locally and to the other seat. */
+  _sendEmote(emote) {
+    if (!this._pingActive()) return;
+    const next = addEmote(this._pingState, emote, this._pingSeat());
+    if (next === this._pingState) return;
+    this._pingState = next;
+    this._sendPing({ kind: 'emote', emote });
+    this.hud.updatePing(this._pingState);
+    try { analytics.trackEvent('sync_ping', { kind: 'emote', emote, seat: this._pingSeat() }); } catch {}
+  }
+
+  /**
+   * Both directions use the typed profile channel: it already exists, it is
+   * reliable, and a ping is a handful of bytes a few times a ride — nothing
+   * that belongs on the 60 Hz state path.
+   */
+  _sendPing(payload) {
+    if (!this.net) return;                     // local co-op: one screen, no wire
+    try {
+      this.net.sendProfile({ type: 'ping', seat: this._pingSeat(), ...payload });
+    } catch { /* a missed ping is a missed word, not a broken ride */ }
+  }
+
+  /** A ping arrived from the other seat. */
+  _receivePing(profile) {
+    if (!profile) return;
+    const seat = profile.seat === 'stoker' ? 'stoker' : 'captain';
+    if (profile.kind === 'sprint') {
+      const next = callSprint(this._pingState, seat);
+      if (next !== this._pingState) {
+        this._pingState = next;
+        this._playBeep(700, 0.08);
+      }
+    } else if (profile.kind === 'emote') {
+      this._pingState = addEmote(this._pingState, profile.emote, seat);
+    }
+    this.hud.updatePing(this._pingState);
+  }
+
+  /** Per frame: advance the countdown, beep the numbers, update the HUD. */
+  _updatePing(dt) {
+    if (!this._pingState) this._pingState = createPingState();
+    if (!this._pingActive()) {
+      if (this._pingWasOn) {
+        this.hud.updatePing(null);
+        const row = document.getElementById('ping-row');
+        if (row) row.classList.remove('visible');
+        this._pingWasOn = false;
+      }
+      return;
+    }
+    const { state, started, ended, tick } = tickPing(this._pingState, dt);
+    this._pingState = state;
+
+    if (tick !== null) this._playBeep(600, 0.07);
+    if (started) {
+      this._playBeep(1000, 0.18);
+      hapticCheckpoint();
+    }
+    if (ended) this._playBeep(400, 0.1);
+
+    // The sprint's whole reward: paired beats build the bar twice as fast.
+    if (this.sharedPedal) this.sharedPedal.syncMultiplier = syncMultiplier(state);
+
+    this.hud.updatePing(state);
+    if (!this._pingWasOn) {
+      const row = document.getElementById('ping-row');
+      if (row) row.classList.toggle('visible', isMobile);
+    }
+    this._pingWasOn = true;
+  }
+
+  /**
+   * E-1 · feed the stoker's road-ahead panel.
+   *
+   * The stoker builds the same world from the same seed (B-4), so the items are
+   * already here — nothing is sent over the wire. Only the distance is remote,
+   * and that already arrives in the state packet.
+   *
+   * Runs at 10 Hz, not per frame: this is a thing to read and say out loud.
+   */
+  _updateLookahead(dt) {
+    if (!seatSeesLookahead(this.mode)) {
+      if (this._lookaheadWasOn) { this.hud.updateLookahead(null); this._lookaheadWasOn = false; }
+      return;
+    }
+    this._lookaheadTimer = (this._lookaheadTimer || 0) - dt;
+    if (this._lookaheadTimer > 0) return;
+    this._lookaheadTimer = 0.1;
+
+    const level = this.lobby.selectedLevel;
+    // Off on Chill and in the tutorial: the panel is a job, and neither of
+    // those rides is asking the stoker to do a job.
+    if (level && level.isTutorial) { this.hud.updateLookahead(null); return; }
+    if ((this.lobby.selectedDifficulty || 'adventurous') === 'chill') {
+      this.hud.updateLookahead(null);
+      this._lookaheadWasOn = false;
+      return;
+    }
+
+    const from = (this.bike ? this.bike.distanceTraveled : 0) + CAPTAIN_VIEW_M;
+    const items = buildLookahead({
+      obstacles: this.obstacleManager ? this.obstacleManager._items : null,
+      collectibles: this.collectibleManager ? this.collectibleManager._items : null,
+      geese: this.geeseManager ? this.geeseManager._items : null
+    }, from, LOOKAHEAD_M);
+    this.hud.updateLookahead(items);
+    this._lookaheadWasOn = true;
+  }
+
+  /** Minimal escaping for a partner-supplied display name. */
+  _escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /**
+   * D-8 · "Us" — what these two riders have done together.
+   *
+   * The persona's job-to-be-done is a ritual with ONE specific person, and
+   * until the pairs table existed the software forgot that person the moment
+   * the room closed. This is the smallest honest version: rides, distance, the
+   * pair's best on this level, and whether the ride that just finished beat it.
+   *
+   * Guests are included via their device id (D-9), so the friend who never
+   * signs in is not invisible — they just cannot see the panel from their own
+   * side until they do.
+   */
+  async _renderPairPanel(summary) {
+    const el = document.getElementById('pair-panel');
+    if (!el) return;
+    el.style.display = 'none';
+
+    const auth = this.lobby.auth;
+    const partner = this._partnerServerId ||
+      (this._partnerDeviceId ? 'guest:' + this._partnerDeviceId : null);
+    if (!auth || !auth.isLoggedIn() || !partner || this.mode === 'solo') return;
+
+    let pair = null;
+    try { pair = await auth.fetchPair(partner); } catch { return; }
+    if (!pair) return;
+    // F-1 reads these on the next finish (pair_10_rides, pair_100km).
+    this._lastPairSummary = pair;
+
+    const level = this.lobby.selectedLevel;
+    const previousBest = pair.best && level ? pair.best[level.id] : null;
+    const beat = previousBest && summary && summary.timeMs < previousBest;
+    const name = this._partnerName || 'your partner';
+    const km = (pair.distance || 0) / 1000;
+
+    el.innerHTML =
+      '<div class="pair-panel-title">You &amp; ' + this._escapeHtml(name) + '</div>' +
+      '<div class="pair-panel-line">' +
+        (pair.rides || 0) + ' ride' + (pair.rides === 1 ? '' : 's') + ' together' +
+        (km >= 0.1 ? ' · ' + km.toFixed(1) + ' km' : '') +
+        (previousBest ? ' · best ' + records.formatTime(previousBest) : '') +
+        (pair.daily_streak >= 2 ? ' · 🔥 ' + pair.daily_streak : '') +
+      '</div>' +
+      (beat ? '<div class="pair-panel-best">⭐ NEW PAIR BEST</div>' : '');
+    el.style.display = 'block';
+
+    try { analytics.trackEvent('pair_panel_view', { rides: pair.rides, beat: !!beat }); } catch {}
+  }
+
+  /**
+   * D-6 · send the day's ranked run to the server, once. A 409 means this
+   * account has already ridden today in this mode, which is not an error —
+   * it is the rule working.
+   */
+  async _submitDailyRanked(summary) {
+    const level = this.lobby.selectedLevel;
+    const auth = this.lobby.auth;
+    if (!level || !level.isDaily || !this._rankedRunActive) return;
+    if (!auth || !auth.isLoggedIn()) return;      // a local result is still kept
+    if (!DAILY_BOARD_ENABLED) return;
+
+    try {
+      const res = await auth.submitDaily({
+        dayKey: level.key,
+        mode: this._dailyRunMode(),
+        timeMs: summary.timeMs,
+        dnf: !!summary.dnf,
+        distance: summary.distance,
+        collectibles: summary.collectibles,
+        crashes: summary.crashes,
+        safetyUsed: this.safetyMode,
+        syncPct: this.sharedPedal ? Math.round(this.sharedPedal.offsetScore * 100) : null,
+        partnerUserId: this._partnerServerId || null
+      });
+      if (res && res.alreadyRidden) {
+        analytics.trackEvent('daily_submit_duplicate', { key: level.key });
+      }
+    } catch { /* the ride is already recorded locally; the server can wait */ }
+  }
+
+  /** D-2 · 'solo' or 'pair' — the two independent ranked runs per day. */
+  _dailyRunMode() {
+    return (this.mode === 'solo') ? 'solo' : 'pair';
+  }
+
+  /**
+   * D-5 · a stable handle for the person on the other seat, for pair streaks.
+   * The server user id when both are signed in, otherwise the display name —
+   * good enough for a local streak, and D-7/D-9 replace it server-side.
+   */
+  _partnerKey() {
+    if (this._partnerServerId) return String(this._partnerServerId);
+    if (this._partnerName) return 'name:' + this._partnerName;
+    if (this.mode === 'local') return 'local:p2';
+    return null;
+  }
+
+  /**
+   * D-3 · the strip that leaves the game.
+   *
+   * Wordle's grid says how it went without saying what the answer was, and a
+   * daily road has the same thing to protect: a strip that leaked where the
+   * obstacles are would spoil the day for whoever it was sent to. Built by a
+   * pure, tested function; this method only gathers the numbers.
+   */
+  _buildDailyStripHtml(summary, level) {
+    if (!level.isDaily || !level.key || this._isDemo) return '';
+    const store = browserStore();
+    const mode = this._dailyRunMode();
+    const partnerKey = this._partnerKey();
+    const streak = mode === 'pair' && partnerKey
+      ? computePairStreak(store, partnerKey, level.key).current
+      : computeStreak(store, level.key).current;
+
+    const thresholds = getMedals(level.id, this.lobby.selectedDifficulty);
+    this._dailyStripText = buildShareStrip({
+      key: level.key,
+      mode,
+      timeMs: summary.timeMs,
+      dnf: !!summary.dnf,
+      distance: summary.distance,
+      raceDistance: summary.raceDistance || level.distance,
+      medal: records.medalFor(summary.timeMs, thresholds),
+      collectibles: summary.collectibles,
+      collectiblesTotal: summary.collectiblesTotal,
+      crashes: summary.crashes,
+      sync: this.sharedPedal ? Math.round(this.sharedPedal.offsetScore * 100) : undefined,
+      safety: this.safetyMode,
+      practice: !this._rankedRunActive,
+      streak,
+      partnerName: mode === 'pair' ? this._partnerName : null
+    }, { origin: location.origin });
+
+    const escaped = this._dailyStripText
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div id="daily-strip">${escaped}</div>`;
+  }
+
+  /** D-3 · share the clip if there is one, else the strip. */
+  async _shareDailyResult(where) {
+    const text = this._dailyStripText;
+    if (!text) return;
+    let method = 'copy';
+    try {
+      const clip = this.recorder && this.recorder._clipBlob;
+      if (clip && navigator.canShare && navigator.canShare({ files: [new File([clip], 'ride.mp4', { type: clip.type })] })) {
+        // The persona's channel is video: offer the clip first, with the strip
+        // as its caption.
+        await navigator.share({ files: [new File([clip], 'tandemonium.mp4', { type: clip.type })], text });
+        method = 'clip';
+      } else if (navigator.share && isMobile) {
+        await navigator.share({ text });
+        method = 'share';
+      } else {
+        await navigator.clipboard.writeText(text);
+        const btn = document.getElementById('btn-daily-share-' + where);
+        if (btn) { btn.textContent = 'COPIED'; setTimeout(() => { btn.textContent = '📋 SHARE RESULT'; }, 1600); }
+      }
+      try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method, where }); } catch {}
+    } catch { /* the user dismissed the share sheet; that is not an error */ }
+  }
+
+  /**
+   * B-3 · which record does this ride count against? Modes are kept apart
+   * because one person steering is a different game from two.
+   */
+  _recordKey() {
+    const level = this.lobby.selectedLevel;
+    if (!level) return null;
+    const mode = this.mode === 'versus' ? 'versus'
+      : (this.mode === 'solo' ? 'solo' : 'coop');
+    // C-2: Today's Road is a different road every day, so its record key
+    // carries the day — yesterday's best is not a target for today's road.
+    const levelId = level.isDaily && level.key ? `daily:${level.key}` : level.id;
+    return records.key(levelId, this.lobby.selectedDifficulty || 'adventurous', mode);
+  }
+
+  /** The best for this ride's key, read once at the start of the ride. */
+  _loadBestForRide() {
+    this._recordStore = records.load();
+    const k = this._recordKey();
+    this._rideBest = k ? records.getBest(this._recordStore, k) : null;
+    this._rideSplits = [];
+  }
+
   _handleRaceEvent(raceEvent) {
     if (raceEvent.event === 'checkpoint') {
       this._showCheckpointFlash();
       hapticCheckpoint();
+
+      // B-3 · split against your best. This is the whole point of a second
+      // ride on the same road: at every checkpoint you know whether you are
+      // ahead of the person you were last time.
+      if (this.raceManager) {
+        const elapsed = this.raceManager.getElapsedMs();
+        const index = this._rideSplits.length;
+        this._rideSplits.push(Math.round(elapsed));
+        // D-4: against the ghost when one is riding — "you are 1.3 s behind
+        // that bike" beats "+1.3" — otherwise against the stored split.
+        const delta = this._ghostDeltaNow() ?? records.splitDelta(this._rideBest, index, elapsed);
+        if (delta !== null) this.hud.showSplitDelta(delta);
+      }
 
       // Analytics: checkpoint ride event
       analytics.trackRideEvent('checkpoint', raceEvent.distance, {
@@ -2439,8 +3823,11 @@ class Game {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
     this.bike.boostTimer = 3; // 3-second speed boost
+    // B-4: the boost was silent apart from a pickup beep, so it read as "you
+    // collected a thing" rather than "you are now faster". Pitch up.
     this._playBeep(1200, 0.1);
     setTimeout(() => this._playBeep(1600, 0.08), 80);
+    setTimeout(() => this._playBeep(2000, 0.12), 160);
 
     // Analytics: collectible ride event
     analytics.trackRideEvent('collectible', this.bike.distanceTraveled, {
@@ -2507,6 +3894,23 @@ class Game {
       })() : 0,
       syncDuration: 0,
     };
+
+    // F-1 · the loops the plan built. Read from the local stores, so they work
+    // signed out; the pair numbers come from the server panel when there is one.
+    if (level.isDaily && level.key) {
+      const store = browserStore();
+      state.dailyRanked = this._rankedRunActive;
+      const mode = this._dailyRunMode();
+      const partnerKey = this._partnerKey();
+      state.dailyStreak = mode === 'pair' && partnerKey
+        ? computePairStreak(store, partnerKey, level.key).current
+        : computeStreak(store, level.key).current;
+    }
+    if (this._lastPairSummary) {
+      state.pairRides = this._lastPairSummary.rides || 0;
+      state.pairDistanceKm = (this._lastPairSummary.distance || 0) / 1000;
+    }
+
     const newlyEarned = this.achievements.check(state);
     newlyEarned.forEach(a => {
       showAchievementToast(a);
@@ -2554,6 +3958,10 @@ class Game {
     }
     // Anonymous players have no name — show a friendly label to the partner. (#312)
     if (!profile.name) profile.name = GUEST_NAME;
+    // D-9: the anonymous per-browser id, so a signed-in partner can build a
+    // pair record with this rider even if they never sign in. It is the same
+    // id analytics already uses; it identifies a browser, not a person.
+    try { profile.deviceId = analytics.getDeviceId(); } catch {}
     profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
     this.net.sendProfile(profile);
   }
@@ -2602,6 +4010,7 @@ class Game {
     }
     if (this.grassParticles) {
       this.grassParticles.update(this.bike, slowDt);
+      if (this.gustVisual) this.gustVisual.update(this.bike, slowDt);
     }
 
     // Camera moves at real time so the cinematic timing is consistent
@@ -2732,6 +4141,13 @@ class Game {
       } else {
         html += '<div class="victory-stat victory-perfect">\u2B50 No Crashes! \u2B50</div>';
       }
+      // B-3 \u00B7 the ride you just did, measured against the rides you have done
+      // before. This is the whole reason to press START RIDE a second time.
+      html += this._buildRecordHtml(summary, fromRemote);
+      // D-3 · and, on Today's Road, the thing you can send to someone.
+      html += this._buildDailyStripHtml(summary, level);
+      // E-7 · on a tourist ride, what the ride was about.
+      if (this._touristRoute) html += this._touristVictoryHtml(summary.distance);
       if (summary.restarts > 0) {
         html += '<div class="victory-stat">\uD83C\uDFC1 Restarts: <strong>' + summary.restarts + '</strong></div>';
       }
@@ -2845,6 +4261,9 @@ class Game {
 
     // Auto-submit score if logged in
     this._submitScore();
+    // D-6 / D-8: the day's ranked result, and what the two of you have done.
+    this._submitDailyRanked(summary);
+    this._renderPairPanel(summary);
 
     // Show NEXT LEVEL button if there's a next level
     const nextBtn = document.getElementById('btn-next-level');
@@ -2871,8 +4290,11 @@ class Game {
     const victoryLobbyBtn = document.getElementById('btn-victory-lobby');
     if (victoryLobbyBtn) victoryLobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
+    // B-5: wishlist + send-a-link, after the ride buttons.
+    const victoryCtas = this._updateCtaButtons('victory');
+
     // Gamepad navigation for victory buttons
-    const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby')];
+    const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby'), ...victoryCtas];
     // Include "next level" if visible, and default-focus it
     if (hasNext) {
       victoryBtns.splice(1, 0, nextBtn);
@@ -2949,6 +4371,16 @@ class Game {
         const partnerRole = myRole === 'captain' ? 'stoker' : 'captain';
         contrib[myRole].userId = myServerId;
         contrib[partnerRole].userId = this._partnerServerId;
+        // D-9: a partner who never signs in still counts as a partner. Their
+        // device id keys the pair record, and the server migrates it to their
+        // account if they ever do sign in — so the friend who "just plays on
+        // your phone" stops being invisible to the game.
+        if (!contrib[partnerRole].userId && this._partnerDeviceId) {
+          contrib[partnerRole].guestDeviceId = this._partnerDeviceId;
+        }
+        if (!contrib[myRole].userId) {
+          contrib[myRole].guestDeviceId = analytics.getDeviceId();
+        }
         data.contributions = { captain: contrib.captain, stoker: contrib.stoker };
       } else {
         // Solo OR local MP — attribute to the local user. contribution-tracker
@@ -2978,7 +4410,8 @@ class Game {
   _hideVictory() {
     document.getElementById('victory-overlay').classList.remove('visible');
     // Clear stale pointer-events cooldown on victory buttons
-    for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby']) {
+    for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby',
+                      'btn-wishlist-victory', 'btn-invite-victory']) {
       const el = document.getElementById(id);
       if (el) el.style.pointerEvents = '';
     }
@@ -3102,6 +4535,12 @@ class Game {
   }
 
   _returnToLobby() {
+    if (this._coachVisible) this._dismissCoachCard();
+    this._hideGhost();   // D-4: no ghost hanging around the empty road
+    this._hideTouristGoal();   // E-7
+    this._touristRoute = null;
+    this.hud.updateLookahead(null);   // E-1
+    this._lookaheadWasOn = false;
     // Clean up tutorial state if active
     if (this._tutorialActive) {
       this._tutorialActive = false;
@@ -3452,6 +4891,24 @@ class Game {
   }
 
   _initOptionsOverlay() {
+    // E-5 · Tourist Mode's front door. Shown only when a Maps key is present:
+    // an entry point that cannot work is worse than none (the #350 lesson).
+    const touristBtn = document.getElementById('options-tourist-btn');
+    if (touristBtn && getMapsApiKey()) {
+      for (const id of ['opt-tourist-label', 'options-tourist-btn', 'opt-tourist-note']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      }
+      touristBtn.addEventListener('click', () => {
+        try { analytics.trackEvent('tourist_open', { from: 'options' }); } catch {}
+        // The default origin (Scioto Mile) — no addresses needed, which is the
+        // point of this entry: one click to see what the mode even is.
+        const url = new URL(location.href);
+        url.searchParams.set('mode', 'tourist');
+        location.href = url.toString();
+      });
+    }
+
     const overlay = document.getElementById('options-overlay');
     const closeBtn = document.getElementById('options-close-btn');
     const highBtn = document.getElementById('opt-high');
@@ -3794,6 +5251,27 @@ class Game {
     // L3 (button 10) — quick gyro recenter
     const l3 = gp.buttons[10] && gp.buttons[10].pressed;
 
+    // E-3 · X is the talk button: tap it to call a sprint, or hold it and flick
+    // the d-pad to send an emote. The d-pad's four normal jobs (safety, speed,
+    // reset, lobby) are untouched — they simply do not fire while X is held,
+    // so one spare button buys the whole vocabulary with no conflicts.
+    const x = gp.buttons[2] && gp.buttons[2].pressed;
+    if (x && !this._gpPrevX) this._emoteSentThisHold = false;   // fresh press
+    if (x) {
+      const emote = (up && !this._dpadPrevUp) ? EMOTES[0]
+        : (down && !this._dpadPrevDown) ? EMOTES[1]
+        : (left && !this._dpadPrevLeft) ? EMOTES[2]
+        : (right && !this._dpadPrevRight) ? EMOTES[3] : null;
+      if (emote) { this._sendEmote(emote); this._emoteSentThisHold = true; }
+      this._gpPrevX = x;
+      this._dpadPrevUp = up; this._dpadPrevDown = down;
+      this._dpadPrevLeft = left; this._dpadPrevRight = right;
+      return;
+    }
+    // Released without having sent an emote: that was a sprint call.
+    if (this._gpPrevX && !this._emoteSentThisHold) this._callSprint();
+    this._gpPrevX = x;
+
     if (up && !this._dpadPrevUp) this.safetyBtn.click();
     if (down && !this._dpadPrevDown) this.speedBtn.click();
     if (right && !this._dpadPrevRight) document.getElementById('reset-btn').click();
@@ -3879,7 +5357,66 @@ class Game {
     this._fpsMaxDt = 0;
   }
 
+  // ============================================================
+  // B-2 · CRASH IS A BEAT, NOT A MENU
+  // ============================================================
+  //
+  // A crash used to cost 6-9 seconds: 2 s on the ground, a modal to read and
+  // click through, then a full 3 s countdown. That is a punishment for a game
+  // whose comedy IS the falling over. Now: tumble, honks, ~1.2 s down, then a
+  // 1.5 s countdown straight back onto the road. No modal.
+  //
+  // The modal is still the right answer when the ride is actually over or the
+  // player is actually stuck, so it is kept for:
+  //   - the timer running out, or the player pressing END RIDE
+  //   - a ranked run (Phase D), where a crash ends the attempt
+  //   - the THIRD crash in the same segment: at that point the player is stuck,
+  //     not unlucky, and the existing DDA assist offer is worth showing.
+
+  /**
+   * Called the frame the bike finishes falling. The rule itself lives in
+   * js/crash-policy.js so it can be tested; this method is the wiring.
+   */
+  _onCrashRecovered() {
+    const segmentKey = this.raceManager ? this.raceManager.passedCheckpoints.size : 0;
+    this._crashState = countCrash(this._crashState || { segmentKey: -1, crashes: 0 }, segmentKey);
+    const decision = decideAfterCrash({
+      crashesThisSegment: this._crashState.crashes,
+      rankedRun: !!this._rankedRunActive        // Phase D sets this
+    });
+
+    if (decision.action === 'modal') {
+      this._showGameOver();
+      return;
+    }
+
+    // Quick recovery. _resetGame already handles checkpoint restore, DDA,
+    // collectibles and the EVT_RESET message to the stoker; the only change is
+    // the shorter countdown it lands in.
+    if (this._crashRecoverStartedAt) {
+      const ms = performance.now() - this._crashRecoverStartedAt;
+      try { analytics.trackCrashRecover(ms, this._lastCrashCauseForStats || 'balance'); } catch {}
+      this._crashRecoverStartedAt = 0;
+    }
+    if (this.raceManager) this.raceManager.crashCount++;
+    this._quickCountdown = true;
+    this._resetGame();
+    this._quickCountdown = false;
+  }
+
   _recordCrash(cause, bike = this.bike) {
+    // B-2: start the clock on the recovery the moment of impact, so
+    // crash_recover measures what the player actually waits through, and let
+    // the geese enjoy themselves.
+    this._crashRecoverStartedAt = performance.now();
+    this._lastCrashCauseForStats = cause;
+    if (this.audioEngine) {
+      // Balance crashes have no impact sound of their own (tree and obstacle hits
+      // play one at the collision site), so give this one a thump too.
+      if (cause === 'balance') this._playCrash(0.9);
+      this.audioEngine.honkBurst(2 + (Math.random() < 0.35 ? 1 : 0));
+    }
+
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
     if (bike) {
@@ -4152,6 +5689,7 @@ class Game {
     const pedalResult = this._calibSuppressPedals
       ? { acceleration: 0, braking: false, wobble: 0, crankAngle: this.pedalCtrl.crankAngle || 0 }
       : this.pedalCtrl.update(dt);
+    this._playPedalTaps(this.pedalCtrl);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
 
     // Sync balance assist to bike model
@@ -4165,14 +5703,16 @@ class Game {
 
     // Race progress + contribution tracking
     if (this.raceManager) {
-      const timerEnabled = !this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false;
+      // Tourist Mode (#333): free-roam — no race timer / timeout.
+      const timerEnabled = !this.isTourist &&
+        (!this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false);
       const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled ? dt : 0);
       if (raceEvent) {
         if (raceEvent.event === 'timeout' && timerEnabled) { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
     if (this.contributionTracker) {
       this.contributionTracker.update(dt, this.bike, balanceResult.leanInput, 0, this.pedalCtrl.stats);
@@ -4182,6 +5722,12 @@ class Game {
 
     // Achievements
     this._checkAchievements(dt);
+    this._updateCoachCard(dt);
+    this._drainPendingGyroCalibration();
+    this._updateGhost(dt);
+    this._updatePing(dt);         // E-3
+    this._updateDisruptions(dt);  // E-2
+    if (this._touristRoute) this._updateTouristGoal();   // E-7
 
     // Background motion adaptation (skip when level config disables it)
     const adaptLevel = this.lobby.selectedLevel;
@@ -4194,11 +5740,12 @@ class Game {
       this._updateTutorial(dt);
       // Skip normal game-over on crash during tutorial
     } else {
-      // Show game over after crash recovery
-      if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
+      // B-2: a crash is a beat, not a menu — see _onCrashRecovered.
+      if (wasFallen && !this.bike.fallen) { this._onCrashRecovered(); return; }
     }
 
     this.grassParticles.update(this.bike, dt);
+    if (this.gustVisual) this.gustVisual.update(this.bike, dt);
     this._hapticOffRoadCheck();
     this._updateWorldAndCamera(dt);
 
@@ -4233,6 +5780,7 @@ class Game {
 
     // Use shared pedal controller
     const pedalResult = this.sharedPedal.update(dt);
+    this._playPedalTaps(this.sharedPedal);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
     this.bike._balanceAssist = this._assistWeight;
 
@@ -4266,7 +5814,7 @@ class Game {
         this._handleRaceEvent(raceEvent);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
     if (this.contributionTracker) {
       this.contributionTracker.update(dt, this.bike, captainLean, this.remoteLean, this.sharedPedal.stats);
@@ -4282,16 +5830,23 @@ class Game {
 
     // Achievements
     this._checkAchievements(dt);
+    this._updateCoachCard(dt);
+    this._drainPendingGyroCalibration();
+    this._updateGhost(dt);
+    this._updatePing(dt);         // E-3
+    this._updateDisruptions(dt);  // E-2
+    if (this._touristRoute) this._updateTouristGoal();   // E-7
 
     // Tutorial: handle crash/completion internally instead of game-over screen
     if (this._tutorialActive) {
       this._updateTutorial(dt);
     } else {
-      // Show game over after crash recovery
-      if (wasFallen && !this.bike.fallen) { this._showGameOver(); return; }
+      // B-2: a crash is a beat, not a menu — see _onCrashRecovered.
+      if (wasFallen && !this.bike.fallen) { this._onCrashRecovered(); return; }
     }
 
     this.grassParticles.update(this.bike, dt);
+    if (this.gustVisual) this.gustVisual.update(this.bike, dt);
     this._hapticOffRoadCheck();
 
     // Send state + lean to stoker at 20Hz
@@ -4299,7 +5854,9 @@ class Game {
     if (this._stateSendTimer >= this._stateSendInterval && this.net && this.net.connected) {
       this._stateSendTimer = 0;
       const timerRemaining = this.raceManager ? this.raceManager.segmentTimeRemaining : -1;
-      this.net.sendState(this.bike, timerRemaining);
+      // A-4: ship the captain's authoritative sync score so the stoker's bar
+      // shows the same number (one byte on the 60 Hz path).
+      this.net.sendState(this.bike, timerRemaining, this.sharedPedal ? this.sharedPedal.offsetScore : -1);
       this.net.sendLean(captainLean);
     }
 
@@ -4401,10 +5958,123 @@ class Game {
   // ============================================================
 
   /** Record a balance-caused crash (fell from lean, not from collision). */
+  /**
+   * A-5 · write the pre-ride instructions for the difficulty about to be
+   * ridden. Every preset used to claim you could crash, including the two
+   * where the safety clamp makes that impossible.
+   */
+  _updateInstructionsText() {
+    if (!this.instructionsEl) return;
+    const name = (this.lobby && this.lobby.selectedDifficulty) || 'adventurous';
+    const text = getInstructions(this.mode === 'versus' ? 'adventurous' : name);
+    const paras = this.instructionsEl.querySelectorAll('p:not(.tap-hint)');
+    for (let i = 0; i < paras.length; i++) {
+      const line = text.lines[i];
+      if (line) { paras[i].textContent = line; paras[i].style.display = ''; }
+      else paras[i].style.display = 'none';
+    }
+  }
+
+  /**
+   * A-7 (#216) · calibrate a gyro that only started streaming after the
+   * countdown began. Cheap: an empty array after the first second or two of a
+   * ride, and it stops looking entirely once the window closes.
+   */
+  _drainPendingGyroCalibration() {
+    const pending = this._pendingGyroCalib;
+    if (!pending || pending.length === 0) return;
+    if (performance.now() > this._pendingGyroCalibUntil) { this._pendingGyroCalib = []; return; }
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const src = pending[i];
+      if (!src || !src.gyroConnected) continue;
+      src.recenterGyro();
+      src.calibrateGyro();
+      src.startTiltCalibration();
+      pending.splice(i, 1);
+      try { analytics.trackEvent('late_gyro_calibration', { seat: src === this.input ? 'p1' : 'p2' }); } catch {}
+    }
+  }
+
+  /** A-5 · reflect this.safetyMode on the SAFETY button (and the quick menu). */
+  _updateSafetyBtn() {
+    if (!this.safetyBtn) return;
+    this.safetyBtn.className = 'side-btn ' + (this.safetyMode ? 'safety-on' : 'safety-off');
+    this.safetyBtn.textContent = 'SAFETY\n' + (this.safetyMode ? 'ON' : 'OFF');
+    if (this.quickMenu && this.quickMenu.sync) this.quickMenu.sync();
+  }
+
+  /**
+   * A-5 · safety starts where the chosen difficulty says it should.
+   *
+   * Tutorial and Chill keep the ±1.0 lean clamp so a first-timer cannot fall
+   * off the bike; Adventurous and Daredevil start with it off, which is what
+   * makes their instruction text ("lean too far and you'll go down") true.
+   * A player who has pressed SAFETY this session keeps their own choice.
+   */
+  _applySafetyDefault() {
+    if (this._safetyTouched) { this._updateSafetyBtn(); return; }
+    if (TUNE.safetyDefault != null) this.safetyMode = !!TUNE.safetyDefault;
+    this._updateSafetyBtn();
+  }
+
   _recordBalanceCrashIfNew(wasFallen) {
     if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
       this._recordCrash('balance');
     }
+  }
+
+  /**
+   * A-3 · one call site for how a pedal stroke lands: sound, rumble, camera.
+   * Both pedal controllers publish `tapEvents` for the frame with the same
+   * shape, so solo, online co-op and local co-op all come through here.
+   * The crank itself is driven by crankAngle inside BikeModel.
+   *
+   * Kept out of hud.js on purpose — the HUD does its own edge detection for
+   * pixels; audio should not depend on a HUD frame having run.
+   */
+  _playPedalTaps(ctrl) {
+    const events = ctrl && ctrl.tapEvents;
+    if (!events || events.length === 0) return;
+
+    // E-2 · the goose crossing: doing nothing, in time, together. A tap during
+    // the coast window scrubs speed and honks — the goose was right there.
+    if (events.length && this._isCoastRequired()) {
+      this.bike.speed *= 0.75;
+      if (this.audioEngine) this.audioEngine.honkBurst(1);
+      hapticBump();
+      this._coastBrokenThisRide = (this._coastBrokenThisRide || 0) + 1;
+    }
+
+    for (const ev of events) {
+      // A-6: the first real stroke releases the first-segment clock and feeds
+      // the coach card's dot meter.
+      if (ev.kind !== 'wrong' && ev.kind !== 'fight') {
+        if (this.raceManager && this.raceManager.timerHeld) this.raceManager.noteFirstPedal();
+        this._coachGoodTaps = (this._coachGoodTaps || 0) + 1;
+      } else {
+        this._coachWrongFlash = true;
+      }
+
+      // A gap under 50 ms is a fast roll, not a bad reading. This used to fall
+      // back to cadence 1 — the middle of the range — so tapping FASTER made
+      // the pitch drop. Hand the real rate over and let tapPitch() clamp it, so
+      // the curve only ever rises. A gap of 4 s+ is a first stroke or a return
+      // from coasting, where there is no rate to report yet.
+      const cadence = ev.gap > 0 && ev.gap < 4 ? 1 / ev.gap : 1;
+      if (this.audioEngine) this.audioEngine.pedalTap(ev.kind, cadence);
+
+      // Rumble only the seat that tapped when the seats have their own pads.
+      let sources = null;
+      if (this.inputP2 && ev.seat === 'stoker') sources = [this.inputP2];
+      else if (this.inputP2 && ev.seat === 'captain') sources = [this.input];
+      hapticPedal(ev.kind, sources);
+
+      if (this.chaseCamera && this.chaseCamera.pedalBob) {
+        this.chaseCamera.pedalBob(ev.kind === 'wrong' || ev.kind === 'fight' ? 2 : 1);
+      }
+    }
+    // Do NOT clear: the HUD reads the same list later in this frame. The
+    // controllers clear it at the top of their next update().
   }
 
   /** Advance collectibles + obstacles; trigger _onCollect for any picked up this frame. */
@@ -4459,8 +6129,10 @@ class Game {
   _updateWorldAndCamera(dt) {
     this.world.update(this.bike.position, this.bike.roadD, dt);
     this.chaseCamera.update(this.bike, dt, this.world.roadPath);
-    if (this.bike.fallen && this.bike.fallTimer > 1.8) {
-      this.chaseCamera.shakeAmount = 0.15;
+    // B-2: the shake belongs to the impact, so key it off time SINCE the fall
+    // rather than a threshold on the (now shorter) countdown to standing up.
+    if (this.bike.fallen && this.bike.fallElapsed < 0.35) {
+      this.chaseCamera.shakeAmount = 0.35;
     }
   }
 
@@ -4524,7 +6196,7 @@ class Game {
 
     for (const rig of rigs) {
       rig.chaseCamera.update(rig.bike, dt, this.world.roadPath);
-      if (rig.bike.fallen && rig.bike.fallTimer > 1.8) {
+      if (rig.bike.fallen && rig.bike.fallElapsed < 0.35) {
         rig.chaseCamera.shakeAmount = 0.15;
       }
       rig.grassParticles.update(rig.bike, dt);
@@ -4978,6 +6650,7 @@ class Game {
     this._stokerWasFallen = this.bike.fallen;
 
     this.grassParticles.update(this.bike, dt);
+    if (this.gustVisual) this.gustVisual.update(this.bike, dt);
     this._hapticOffRoadCheck();
 
     // Send lean to captain at 20Hz
@@ -5015,7 +6688,7 @@ class Game {
         setTimeout(() => this._playBeep(150, 0.2), 300);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal);
+      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
 
     // Tutorial coaching UI for stoker (phase prompts, dodge arrows, collect indicators)
@@ -5049,6 +6722,9 @@ class Game {
     remoteData.remoteLastFoot = this._remoteLastFoot;
     remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
+    this._updateLookahead(dt);    // E-1 · the road only the stoker can see
+    this._updatePing(dt);         // E-3
+    this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
     const stokerLean = this.balanceCtrl.update().leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     // Independent rider torsos on the stoker's screen too: captain leans by the
@@ -5171,6 +6847,113 @@ class Game {
     const auth = this.lobby && this.lobby.auth;
     const userId = auth && auth.isLoggedIn() && auth.getUser() ? auth.getUser().id : null;
     return userId ? TUNING_KEY_PREFIX + '_' + userId : TUNING_KEY_PREFIX;
+  }
+
+  // ============================================================
+  // A-6 · FIRST-RIDE COACH CARD (non-motion inputs)
+  // ============================================================
+  //
+  // Motion players get the tilt tutorial (_shouldRunTutorial below). Keyboard,
+  // gamepad and touch players got nothing at all — they were dropped onto a
+  // bike with a running clock and left to work out that the two arrow keys
+  // alternate. This card names the controls for whatever they are actually
+  // holding and shows a five-dot meter that fills as they get it right.
+  //
+  // Shown on the first ride of a session on Tutorial and Grandma's, dismissed
+  // after five good taps or twenty seconds, and remembered per input method so
+  // it never appears twice for the same hands.
+
+  _coachKeyFor(method) {
+    return 'tandemonium_coach_seen_' + (method || 'keyboard');
+  }
+
+  _coachInputMethod() {
+    // Prefer what the player is actually using right now over the analytics
+    // session-level value, which may still say 'keyboard' on a pad.
+    if (isMobile) return 'touch';
+    if (this.input && this.input.gamepadConnected) return 'gamepad';
+    const m = analytics.getInputMethod && analytics.getInputMethod();
+    return m === 'motion' ? 'motion' : (m || 'keyboard');
+  }
+
+  _maybeShowCoachCard(level) {
+    this._coachEl = this._coachEl || document.getElementById('coach-card');
+    this._coachDots = this._coachDots || Array.from(document.querySelectorAll('.coach-dot'));
+    this._coachGoodTaps = 0;
+    this._coachWrongFlash = false;
+    this._coachTimer = 0;
+    this._coachVisible = false;
+    if (!this._coachEl) return;
+    this._coachEl.classList.remove('show');
+
+    if (this.mode === 'versus') return;
+    const levelId = level && level.id;
+    if (levelId !== 'tutorial' && levelId !== 'grandma') return;
+
+    const method = this._coachInputMethod();
+    if (method === 'motion') return;              // the tilt tutorial covers these
+    try {
+      if (localStorage.getItem(this._coachKeyFor(method))) return;
+    } catch { /* private mode: show it, it is only 20 seconds */ }
+
+    const pedal = {
+      keyboard: 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>',
+      gamepad:  'Pedal: alternate <b>LB</b> and <b>RB</b> (or <b>LT</b>/<b>RT</b>)',
+      touch:    'Pedal: tap the <b>left</b> and <b>right</b> halves in turn'
+    }[method] || 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>';
+    const steer = {
+      keyboard: 'Steer: <b>A</b> / <b>D</b>',
+      gamepad:  'Steer: left stick, or tilt the pad',
+      touch:    'Steer: tilt your phone'
+    }[method] || 'Steer: <b>A</b> / <b>D</b>';
+
+    const pedalEl = document.getElementById('coach-pedal-line');
+    const steerEl = document.getElementById('coach-steer-line');
+    if (pedalEl) pedalEl.innerHTML = pedal;
+    if (steerEl) steerEl.innerHTML = steer;
+    for (const d of this._coachDots) d.className = 'coach-dot';
+
+    this._coachEl.classList.add('show');
+    this._coachVisible = true;
+    this._coachMethod = method;
+    try { analytics.trackEvent('coach_card_shown', { method, level: levelId }); } catch {}
+  }
+
+  /** Per-frame: fill the dots, and put the card away once it has done its job. */
+  _updateCoachCard(dt) {
+    if (!this._coachVisible) return;
+    this._coachTimer += dt;
+
+    const filled = Math.min(5, this._coachGoodTaps || 0);
+    for (let i = 0; i < this._coachDots.length; i++) {
+      const d = this._coachDots[i];
+      const want = i < filled ? 'coach-dot filled' : 'coach-dot';
+      if (d.className !== want) d.className = want;
+    }
+    if (this._coachWrongFlash) {
+      this._coachWrongFlash = false;
+      const next = this._coachDots[filled] || this._coachDots[4];
+      if (next) {
+        next.className = 'coach-dot wrong';
+        setTimeout(() => { if (next.className === 'coach-dot wrong') next.className = 'coach-dot'; }, 250);
+      }
+    }
+
+    if (filled >= 5 || this._coachTimer >= 20) this._dismissCoachCard();
+  }
+
+  _dismissCoachCard() {
+    if (!this._coachVisible) return;
+    this._coachVisible = false;
+    if (this._coachEl) this._coachEl.classList.remove('show');
+    try { localStorage.setItem(this._coachKeyFor(this._coachMethod), '1'); } catch {}
+    try {
+      analytics.trackEvent('coach_card_done', {
+        method: this._coachMethod,
+        taps: this._coachGoodTaps || 0,
+        seconds: Math.round(this._coachTimer)
+      });
+    } catch {}
   }
 
   _shouldRunTutorial() {
@@ -5689,7 +7472,8 @@ class Game {
     }
 
     // Crash check
-    if (this.bike.fallen && this.bike.fallTimer > 1.2 && !this._tutCrashPending) {
+    // B-2: fires on the frame the fall starts (fallTimer is 1.2 s now).
+    if (this.bike.fallen && this.bike.fallElapsed < 0.2 && !this._tutCrashPending) {
       this._tutCrashPending = true;
       this._tutorialCrash(tp);
       return;
@@ -6347,6 +8131,12 @@ class Game {
 // ============================================================
 // BOOT
 // ============================================================
+// Tourist Mode with a ?lat/?lon location needs its anchor height resolved from
+// the ground elevation BEFORE the world is built (the ReorientationPlugin takes
+// the anchor at construction). Gated on isTouristMode() so the normal boot path
+// stays fully synchronous — top-level await would otherwise defer it a tick.
+if (isTouristMode()) await resolveTouristOrigin();
+
 const game = new Game();
 window._game = game;
 window.perfProbe = perfProbe;

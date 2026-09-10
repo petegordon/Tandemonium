@@ -3,10 +3,14 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { COBBLES_SHAKE, COBBLES_DRAG } from './disruptions.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { BIKE_MODEL_PATH, TUNE } from './config.js';
+
+// A-5 · where the safety clamp starts to be felt. The clamp itself is at ±1.0.
+export const EDGE_BAND_START = 0.8;
 
 // The riders GLB ships Draco-compressed geometry to keep it small; the plain
 // frame GLB isn't compressed, so the decoder is only fetched when a Draco mesh
@@ -43,9 +47,18 @@ export class BikeModel {
     this.heading = 0;
     this.lean = 0;
     this.leanVelocity = 0;
+    this._roughness = 0;   // E-2 cobbles, 0..1
     this.speed = 0;
     this.distanceTraveled = 0;
     this.crankAngle = 0;
+
+    // A-3 · the crank follows YOUR taps. crankAngle jumps a quarter turn per
+    // tap (pedal controllers own it); the display angle chases it fast enough
+    // to read as a kick, and falls back to a slow speed-driven idle spin while
+    // coasting so the crank-to-wheel ratio still looks plausible.
+    this._crankDisplay = 0;
+    this._crankTarget = 0;
+    this._crankLastTapAt = 0;
 
     // Fall state
     this.fallen = false;
@@ -465,6 +478,13 @@ export class BikeModel {
 
     if (this.fallen) {
       this.fallTimer -= dt;
+      this.fallElapsed = (this.fallElapsed || 0) + dt;
+      // B-2 · the tumble: ease over to the fallen side in 0.4 s with a small
+      // bounce at the end, instead of snapping flat on the impact frame.
+      const t = Math.min(1, this.fallElapsed / 0.4);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const bounce = t >= 1 ? Math.sin((this.fallElapsed - 0.4) * 18) * 0.05 * Math.max(0, 1 - (this.fallElapsed - 0.4) * 3) : 0;
+      this.lean = (this._fallLeanTarget || 0) * eased + bounce;
       if (this.fallTimer <= 0) this._reset();
       this._applyTransform(dt);
       return;
@@ -500,9 +520,12 @@ export class BikeModel {
     const frictionRamp = Math.min(1, this.speed / 4); // full friction at ~4 m/s (~14 km/h)
     this.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
 
-    // Center-strip bonus: compacted dirt in the middle 20% of road is faster
+    // Center-strip bonus: compacted dirt in the middle 20% of road is faster.
+    // B-4: this has always been here and has never been visible, so nobody has
+    // ever chosen to ride the middle. `onCenterStrip` lets the HUD say so.
     const centerDist = Math.abs(this._lateralOffset);
-    if (centerDist < 0.5 && this.speed > 0.5) {
+    this.onCenterStrip = centerDist < 0.5 && this.speed > 0.5;
+    if (this.onCenterStrip) {
       this.speed *= (1 + 0.3 * (1 - centerDist / 0.5) * dt); // gentle boost
     }
 
@@ -550,6 +573,19 @@ export class BikeModel {
       dangerWobble = intensity * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
     }
 
+    // A-5 · the edge band. On the presets that cannot fall (tutorial, chill —
+    // and on any preset while SAFETY is on) the lean is clamped at ±1.0, so
+    // the danger wobble above never fires and the rider never learns that an
+    // edge exists. Past 0.8 the bike shivers at 30% amplitude: you can feel
+    // the limit without ever being punished by it.
+    if (safetyMode && Math.abs(this.lean) > EDGE_BAND_START) {
+      const edge = Math.min(1, (Math.abs(this.lean) - EDGE_BAND_START) / (1.0 - EDGE_BAND_START));
+      dangerWobble += edge * 0.3 * (Math.sin(t * 11) * 0.4 + Math.sin(t * 17) * 0.25);
+      this._edgeIntensity = edge;
+    } else {
+      this._edgeIntensity = 0;
+    }
+
     // Grass wobble: rough terrain when off-road (scaled by wobbleMultiplier)
     let grassWobble = 0;
     const offRoad = Math.max(0, Math.abs(this._lateralOffset) - 2.5);
@@ -559,8 +595,21 @@ export class BikeModel {
         (Math.sin(t * 13.7) * 0.5 + Math.sin(t * 23.1) * 0.3 + (Math.random() - 0.5) * 0.4);
     }
 
+    // E-2 · cobbles. A rough surface shakes the bike and scrubs speed, so the
+    // stretch is something you ride differently rather than a number that
+    // changes out of sight. `_roughness` is 0..1, set by the disruption path.
+    let cobbleShake = 0;
+    if (this._roughness > 0) {
+      cobbleShake = this._roughness * COBBLES_SHAKE *
+        // A low lurch under a fast rattle. A purely high-frequency force is
+        // swallowed by the damping term and moves the bike barely a degree.
+        (Math.sin(t * 9.1) * 0.6 + Math.sin(t * 31.3) * 0.3 + (Math.random() - 0.5) * 0.7);
+      this.speed *= (1 - COBBLES_DRAG * this._roughness * dt);
+    }
+
     this.leanVelocity += (gravity + playerLean + gyro + damping +
-      pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble) * dt;
+      pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble +
+      cobbleShake) * dt;
     this.lean += this.leanVelocity * dt;
 
     // Balance assist: proportional restoring force toward upright
@@ -664,13 +713,7 @@ export class BikeModel {
       }
     }
 
-    // Pedal crank animation
-    if (this.speed > 0.01) {
-      const pedalSpin = this.speed * dt * 1.5;
-      for (const node of this.pedalNodes) {
-        node.rotation.z += pedalSpin;
-      }
-    }
+    this._updateCrank(dt);
 
     this._applyTransform(dt);
   }
@@ -739,16 +782,32 @@ export class BikeModel {
       }
     }
 
-    // Pedal crank
-    if (this.speed > 0.01) {
-      const dt = 1 / 60;
-      const pedalSpin = this.speed * dt * 1.5;
-      for (const node of this.pedalNodes) {
-        node.rotation.z += pedalSpin;
-      }
-    }
+    this._updateCrank(1 / 60);
 
     this._applyTransform(1 / 60);
+  }
+
+  // A-3 · drive the visible cranks from crankAngle, not from speed.
+  _updateCrank(dt) {
+    if (!this.pedalNodes || this.pedalNodes.length === 0) return;
+    const now = performance.now() / 1000;
+
+    if (this.crankAngle !== this._crankTarget) {
+      this._crankTarget = this.crankAngle;
+      this._crankLastTapAt = now;
+    } else if (this.speed > 0.01 && now - this._crankLastTapAt > 1.5) {
+      // Coasting: keep it turning with the wheels rather than freezing.
+      this._crankTarget += this.speed * dt * 1.5;
+    }
+
+    // >= 20 rad/s means a quarter turn lands in about 80 ms: a kick, not a drift.
+    const step = Math.min(1, 20 * dt);
+    this._crankDisplay += (this._crankTarget - this._crankDisplay) * step;
+
+    for (const node of this.pedalNodes) {
+      if (node.userData._crankBase === undefined) node.userData._crankBase = node.rotation.z;
+      node.rotation.z = node.userData._crankBase + this._crankDisplay;
+    }
   }
 
   _applyTransform(dt) {
@@ -775,11 +834,15 @@ export class BikeModel {
     this._updateRiderLean(dt);
   }
 
+  // B-2 · how long the bike lies on its side. A crash should read as a beat in
+  // the ride, not an interruption of it: 2.0 s of lying still (then a modal, then
+  // a 3 s countdown) was 6-9 s of dead air for one mistake.
   _fall() {
     this.fallen = true;
-    this.fallTimer = 2.0;
+    this.fallTimer = 1.2;
+    this.fallElapsed = 0;
     this.speed = 0;
-    this.lean = Math.sign(this.lean) * Math.PI / 2.2;
+    this._fallLeanTarget = Math.sign(this.lean || 1) * Math.PI / 2.2;
     this.leanVelocity = 0;
     const terrainY = this.roadPath
       ? this.roadPath.getHeightAtWorld(this.position.x, this.position.z, this.roadD)

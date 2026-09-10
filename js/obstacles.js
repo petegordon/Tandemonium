@@ -10,6 +10,8 @@ const VISIBLE_AHEAD = 200;
 const VISIBLE_BEHIND = 40;
 
 // Seeded PRNG for deterministic placement
+import { itemSeed, SALT } from './daily-seed.js';
+
 function makeRng(seed) {
   let s = seed;
   return () => {
@@ -58,12 +60,15 @@ const chromakeyFragment = `
 `;
 
 export class ObstacleManager {
-  constructor(scene, roadPath, level, camera, difficulty) {
+  constructor(scene, roadPath, level, camera, difficulty, placementSalt = 0) {
     this.scene = scene;
     this.roadPath = roadPath;
     this.level = level;
     this.camera = camera;
     this.difficulty = difficulty || 'chill';
+    // B-4: varies WHERE items sit from run to run without moving the road.
+    // 0 = legacy placement.
+    this.placementSalt = placementSalt || 0;
     this._pool = [];
     this._items = []; // { absoluteD, roadD, lateralOffset, poolIdx }
     this._loopLen = roadPath.loopLength;
@@ -161,8 +166,13 @@ export class ObstacleManager {
 
   _placeItems() {
     if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
-    // Use a different seed than collectibles so they don't overlap
-    const rng = makeRng(this.level.id.charCodeAt(0) * 2000 + 13);
+    // Use a different seed than collectibles so they don't overlap.
+    // B-4: a seeded level (Today's Road) derives from its own seed, and a
+    // placement salt varies WHERE the items go from run to run without moving
+    // the road — so a second lap of Grandma's is not the identical pylon at
+    // 88 m. Unsalted, unseeded levels are byte-identical to before.
+    const rng = makeRng(itemSeed(this.level, SALT.obstacles, this.placementSalt,
+      this.level.id.charCodeAt(0) * 2000 + 13));
     // Difficulty scales spacing: more obstacles on harder difficulties
     const diffSpacing = { chill: 35, adventurous: 22, daredevil: 15 };
     const baseSpacing = diffSpacing[this.difficulty] || 35;
