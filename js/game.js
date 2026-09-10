@@ -2387,9 +2387,16 @@ class Game {
       this.bike.fullReset();
     }
 
-    // Reset segment timer for current segment on checkpoint restart
-    if (this.raceManager && checkpointD > 0) {
-      this.raceManager.restartCount++;
+    // Refill the segment clock for whatever segment is about to be ridden.
+    //
+    // This used to be skipped when checkpointD was 0 — i.e. on every crash and
+    // every timeout BEFORE the first checkpoint, which is exactly where a rider
+    // who is struggling spends their time. The bike went back to the start line
+    // and the clock did not, so a crash at 110 m with nine seconds left put you
+    // on the start line with nine seconds to ride 125 m. The second crash was
+    // unrecoverable by arithmetic, and the ride could not be finished at all.
+    if (this.raceManager) {
+      if (checkpointD > 0) this.raceManager.restartCount++;
       this.raceManager.resetSegmentTimer(checkpointD);
     }
 
