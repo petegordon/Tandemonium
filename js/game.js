@@ -2060,6 +2060,12 @@ class Game {
       checkpointD = Math.max(...this.raceManager.passedCheckpoints);
     }
 
+    // Stand knocked pylons back up and drop their wreckage, together — a
+    // retry must face the same road as the attempt that killed you, and a
+    // restored cone standing beside its own debris is worse than either.
+    if (this.obstacleManager) this.obstacleManager.restoreKnocked();
+    if (this.physicsFx) this.physicsFx.clear();
+
     if (checkpointD > 0) {
       this.bike.resetToDistance(checkpointD);
     } else {

@@ -152,6 +152,26 @@ const STRIKE_RADIUS = 1.2;
 const STRIKE_MAX_AGE = 0.8;
 const STRIKE_MAX_HEIGHT = 2.2;
 
+// ── The goose with its head down ──
+//
+// Two playtests in a row reported not being able to see any difference, and the
+// airborne clip above is why: it is a narrow window on a small sprite that is
+// already mid-escape, so at best it looks like the flee it replaced.
+//
+// The moment that actually reads is being hit FROM STANDING — and the flee
+// tuning made that impossible, because every goose flushes at 1.8–3.0m and the
+// bike only closes 0.27m per frame.
+//
+// So grazing birds stop being clairvoyant. A goose with its head down in the
+// grass genuinely doesn't see you coming, and holds until you are almost on
+// top of it — inside STRIKE_RADIUS, so the bike ploughs it instead of flushing
+// it. Alert, walking birds are untouched and still flush early exactly as
+// tuned, which keeps the "most are never touched" design intact: you have to
+// leave the racing line and aim at a head-down bird to get one.
+//
+// PAUSE_CHANCE is 0.45, so roughly half a gaggle is grazing at any moment.
+const GRAZING_FLEE_SCALE = 0.35;
+
 // Seeded PRNG — identical placement across clients (versus) and reloads.
 function makeRng(seed) {
   let s = seed;
@@ -661,7 +681,14 @@ export class GeeseManager {
           const dx = b.x - item._worldX;
           const dz = b.z - item._worldZ;
           const d2 = dx * dx + dz * dz;
-          const r = FLEE_RADIUS * item.boldness;
+          // Head down in the grass → it never sees you, so it gets ploughed
+          // rather than flushed. Checked before the flee test, because the
+          // whole point is that contact wins the race against the escape.
+          if (d2 < STRIKE_RADIUS * STRIKE_RADIUS
+              && this._tryStrike(item, bikes, motion, true)) break;
+
+          const r = FLEE_RADIUS * item.boldness
+            * (item.walking ? 1 : GRAZING_FLEE_SCALE);
           if (d2 < r * r) {
             this._startle(item, dx, dz, Math.sqrt(d2), bi);
             break;
@@ -810,7 +837,7 @@ export class GeeseManager {
    * Clip a goose that's airborne but hasn't cleared the bars yet.
    * @returns {boolean} true if physics took it
    */
-  _tryStrike(item, bikes, motion) {
+  _tryStrike(item, bikes, motion, grounded = false) {
     if (!this.physicsFx || !this.physicsFx.ready) return false;
     if (item.poolIdx < 0) return false;
 
@@ -824,23 +851,37 @@ export class GeeseManager {
       const dx = b.x - item._worldX;
       const dz = b.z - item._worldZ;
       if (dx * dx + dz * dz > STRIKE_RADIUS * STRIKE_RADIUS) continue;
-      if (item._worldY - b.y > STRIKE_MAX_HEIGHT) continue; // already overhead
+      if (!grounded && item._worldY - b.y > STRIKE_MAX_HEIGHT) continue; // overhead
 
       const mesh = this._pool[item.poolIdx].mesh;
+      // A bird hit square on the ground takes the full blow; one clipped on the
+      // way up has already carried some of it away.
+      const force = grounded ? 1.6 : 1.0;
       const handle = this.physicsFx.strikeGoose(
         mesh,
-        { x: item._worldX, y: item._worldY, z: item._worldZ },
-        mv.heading, mv.speed, item.roadD,
+        // Lift a grounded bird to body height first — its origin sits on the
+        // grass, and launching from there buries it in its own ground patch.
+        { x: item._worldX, y: item._worldY + (grounded ? GOOSE_HALF : 0), z: item._worldZ },
+        mv.heading, mv.speed * force, item.roadD,
         (obj, final) => this._settleStruck(item, final),
       );
       if (!handle) return false;
 
+      if (grounded) {
+        // _startle would normally have counted this one; we went round it.
+        if (bi >= 0 && bi < this._disrupted.length) this._disrupted[bi]++;
+        // It never chose a flight pose, so give it one now — otherwise it
+        // tumbles wearing its standing drawing.
+        item.view = VIEW_SIDE;
+        item.flapOffset = Math.random() * FLAP_FRAMES;
+        item._worldY += GOOSE_HALF;
+      }
       item.state = STATE_STRUCK;
       item.age = 0;
       item._struck = handle;
       // A proper faceful, not the five-feather flush of a startle.
       this._emitFeathers(item._worldX, item._worldY, item._worldZ,
-        10 + Math.floor(Math.random() * 6));
+        (grounded ? 16 : 10) + Math.floor(Math.random() * 6));
       // Unthrottled, unlike the flush honk: there is only ever one of these,
       // and it is the whole point of the moment.
       if (this.audio && typeof this.audio.gooseHonk === 'function') {

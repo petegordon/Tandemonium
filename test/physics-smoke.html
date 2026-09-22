@@ -311,11 +311,51 @@ async function main() {
     check('a second camera re-faces independently',
       Math.abs(flying.quaternion.angleTo(q2)) > 1e-3);
 
-    // And it must deregister on expiry, or faceCamera walks dead handles.
+    // Debris now lingers ~25s so a knocked cone is still lying there when you
+    // ride back past it, rather than blinking out a few seconds later.
     fx.update(4.0);
+    check('knocked prop is still around seconds later',
+      fx._billboards.length === 1, `n=${fx._billboards.length}`);
+    // But it must eventually deregister, or faceCamera walks dead handles.
+    for (let i = 0; i < 30; i++) fx.update(1.0);
     check('expired prop deregisters from the re-face list',
       fx._billboards.length === 0, `n=${fx._billboards.length}`);
     fx.dispose();
+  }
+
+  // ── knocked pylons come back on a restart ──
+  //
+  // Regression: knockOut set _hidden permanently, so a cone you hit was gone
+  // for the rest of the ride — the checkpoint retry faced an easier road than
+  // the attempt that killed you, and the cone simply vanished.
+  {
+    try {
+      const { ObstacleManager } = await import('../js/obstacles.js');
+      const roadPath = {
+        loopLength: 1000,
+        getPointAtDistance: (d) => ({ x: d, y: 0, z: 0, heading: 0 }),
+      };
+      const om = new ObstacleManager(scene, roadPath, { id: 'grandma', distance: 400 }, null, 'chill');
+      const item = om._items[0];
+      check('obstacle manager placed items', !!item, `n=${om._items.length}`);
+      if (item) {
+        item.poolIdx = 0;
+        om._pool[0].itemIdx = 0;
+        const mesh = om.knockOut(item);
+        check('knockOut hands back the pooled mesh', !!mesh);
+        check('knocked pylon is hidden', item._hidden === true);
+        check('knocked pylon released its pool slot', item.poolIdx === -1);
+        om.restoreKnocked();
+        check('restoreKnocked stands it back up', item._hidden === false);
+        check('restoreKnocked empties its list', om._knocked.length === 0);
+        // Second restore must be a no-op, not a crash.
+        om.restoreKnocked();
+        check('restoreKnocked is idempotent', item._hidden === false);
+      }
+      om.destroy();
+    } catch (err) {
+      check('pylon knock/restore round-trip', false, String(err));
+    }
   }
 
   // ── the edited game modules still resolve ──
