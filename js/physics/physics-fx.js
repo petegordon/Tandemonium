@@ -70,6 +70,12 @@ export class PhysicsFx {
     this.enabled = true;
     this._world = null;
     this._loading = false;
+    // Billboard debris the game must re-face every frame. Pooled billboards
+    // get this from their manager's update loop; a knocked pylon has left its
+    // pool, so nothing would touch it and it would hang in space at whatever
+    // orientation it was cloned with — going edge-on, and invisible, the
+    // moment the camera moved past it. See faceCamera().
+    this._billboards = [];
   }
 
   /** Live only once the WASM has landed AND the flag is on. */
@@ -84,18 +90,52 @@ export class PhysicsFx {
   warm() {
     if (!this.enabled || this._world || this._loading) return;
     this._loading = true;
+    const t0 = performance.now();
     ensureRapier().then((RAPIER) => {
       this._loading = false;
       // A ride can end while the megabyte is in flight; don't build a world
       // for a scene that's already gone.
-      if (!RAPIER || !this.enabled || !this.scene) return;
+      if (!RAPIER || !this.enabled || !this.scene) {
+        console.info('[physics] crash physics OFF —',
+          !RAPIER ? 'Rapier unavailable' : 'ride ended before it loaded');
+        return;
+      }
       this._world = new DebrisWorld(RAPIER, this.scene);
+      // Deliberately logged. This layer fails silently by design, which makes
+      // "is it even on?" unanswerable from the outside — and that is exactly
+      // the question anyone evaluating it asks first.
+      console.info(`[physics] crash physics ON (Rapier ${RAPIER.version()}, `
+        + `${Math.round(performance.now() - t0)}ms)`);
     });
   }
 
   /** Advance the sidecar. Free when nothing is live. */
   update(dt) {
     if (this._world) this._world.step(dt);
+  }
+
+  /**
+   * Re-face billboard debris and apply its simulated roll.
+   *
+   * Must be called every frame, once per rendering camera — the same contract
+   * as ObstacleManager.faceCamera and GeeseManager.faceCamera, and for the same
+   * reason: a camera-facing plane that stops being re-faced turns edge-on and
+   * disappears. Without this a knocked pylon does not spin at all; it slides
+   * through its arc at a frozen orientation, which is the difference between
+   * "I knocked that flying" and "I didn't notice anything".
+   *
+   * Geese are NOT handled here — they re-face inside their own render pass,
+   * where the flap texture and mirror are chosen (see GeeseManager._struckRoll).
+   */
+  faceCamera(camera) {
+    if (!camera || this._billboards.length === 0) return;
+    for (const h of this._billboards) {
+      if (!h.object3d) continue;
+      h.object3d.quaternion.copy(camera.quaternion);
+      const roll = billboardRoll(h.quat, camera);
+      if (roll !== null) h.roll = roll;
+      if (h.roll) h.object3d.rotateZ(h.roll);
+    }
   }
 
   _groundAt(x, z, hintD) {
@@ -147,7 +187,10 @@ export class PhysicsFx {
       colliderOffset: { x: 0, y: 0.55, z: 0 },
       position: { x: pos.x, y: pos.y, z: pos.z },
       quaternion: bike.group.quaternion,
-      linvel: { x: fx * speed, y: 0.4, z: fz * speed },
+      // Carry only part of the speed forward. You crashed INTO something, and
+      // a bike that keeps its full 12m/s sails 24m down the road looking
+      // launched rather than dropped. The rest goes into the tumble.
+      linvel: { x: fx * speed * 0.55, y: 1.1, z: fz * speed * 0.55 },
       angvel: { x: fx * roll, y: (Math.random() - 0.5) * spin, z: fz * roll },
       groundY: this._groundAt(pos.x, pos.z, bike.roadD),
       // Outlives the ~2s fallTimer on purpose: the game releases this on
@@ -156,6 +199,9 @@ export class PhysicsFx {
       lifetime: 8,
       restitution: 0.12,
       friction: 1.1,
+      // Scrubs hard once it's down, so it slides to a stop within the ~2s
+      // fallTimer instead of still travelling when the reset yanks it back.
+      linearDamping: 0.55,
       angularDamping: 0.9,
       onExpire: () => { bike.transformOverride = false; },
     });
@@ -209,7 +255,8 @@ export class PhysicsFx {
     // real traffic cone does, and reads better than a realistic one.
     const launch = Math.max(4, speed * 1.15);
 
-    const handle = this._world.spawn({
+    let handle;
+    handle = this._world.spawn({
       object3d: mesh,
       halfExtents: { x: 0.22, y: 0.3, z: 0.22 },
       colliderOffset: { x: 0, y: 0.3, z: 0 },
@@ -232,6 +279,8 @@ export class PhysicsFx {
       // camera. See the header.
       driveRotation: false,
       onExpire: (obj) => {
+        const i = this._billboards.indexOf(handle);
+        if (i >= 0) this._billboards.splice(i, 1);
         this.scene.remove(obj);
       },
     });
@@ -239,7 +288,8 @@ export class PhysicsFx {
       this.scene.remove(mesh);
       return false;
     }
-    handle.camera = null;
+    handle.roll = 0;
+    this._billboards.push(handle);
     return handle;
   }
 
@@ -298,7 +348,8 @@ export class PhysicsFx {
 
   /** Drop everything mid-ride (reset, level change, mode switch). */
   clear() {
-    if (this._world) this._world.clear();
+    if (this._world) this._world.clear();   // onExpire drains _billboards
+    this._billboards.length = 0;
   }
 
   /** End of ride: free the world and its WASM memory. */
@@ -307,6 +358,7 @@ export class PhysicsFx {
       this._world.dispose();
       this._world = null;
     }
+    this._billboards.length = 0;
     this.scene = null;
     this.roadPath = null;
   }

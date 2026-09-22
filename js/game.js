@@ -4512,8 +4512,13 @@ class Game {
   /** Advance collectibles + obstacles; trigger _onCollect for any picked up this frame. */
   _updateItems(dt) {
     // Step the sidecar first: the geese read their struck birds' transforms
-    // back off the meshes it drives.
-    if (this.physicsFx) this.physicsFx.update(dt);
+    // back off the meshes it drives. Then re-face its billboard debris, or a
+    // knocked pylon hangs at a frozen orientation and turns edge-on as you
+    // ride past it.
+    if (this.physicsFx) {
+      this.physicsFx.update(dt);
+      this.physicsFx.faceCamera(this.camera);
+    }
     if (this.collectibleManager) {
       const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
       if (collected.length > 0) {
@@ -5029,6 +5034,7 @@ class Game {
       if (this.collectibleManager) this.collectibleManager.faceCamera(rig.camera);
       if (this.obstacleManager) this.obstacleManager.faceCamera(rig.camera);
       if (this.geeseManager) this.geeseManager.faceCamera(rig.camera);
+      if (this.physicsFx) this.physicsFx.faceCamera(rig.camera);
 
       this.renderer.render(this.scene, rig.camera);
     }
