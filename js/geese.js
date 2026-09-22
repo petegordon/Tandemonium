@@ -26,6 +26,7 @@
 
 import * as THREE from 'three';
 import { isMobile } from './config.js';
+import { billboardRoll } from './physics/physics-fx.js';
 
 // Pool has to cover everything on screen at once: the visible window holds
 // roughly (VISIBLE_AHEAD + VISIBLE_BEHIND) / GROUP_GAP groups, and airborne
@@ -125,6 +126,27 @@ const LEASH = 2.6;             // metres from spawn before steering back
 
 const STATE_IDLE = 0;
 const STATE_FLYING = 1;
+// Rapier owns this one's motion for a moment (issue #388). It still holds its
+// pool slot and still recycles through STATE_FLYING, so nothing downstream
+// needs to know the state exists.
+const STATE_STRUCK = 2;
+
+// ── Clipping one on the way up ──
+//
+// A goose is never struck standing: FLEE_RADIUS is 1.8-3.0m depending on
+// boldness, and at top speed the bike closes 0.27m in a frame, so every goose
+// is airborne before contact is possible. That is the design and it stays.
+//
+// What the scripted flee can't give you is the one you catch mid-launch — a
+// bold bird that held until 1.8m, with ~0.13s to clear a bike doing 14m/s. It
+// is off the ground but still at bar height, and you clip it. That beat is
+// rare, earned by riding the verge hard, and it is the only moment in the game
+// where a solver is telling you something a keyframe couldn't.
+const STRIKE_RADIUS = 0.85;
+// Past this it has cleared the bars; anything later would be a goose being
+// yanked backwards out of a clean escape.
+const STRIKE_MAX_AGE = 0.55;
+const STRIKE_MAX_HEIGHT = 1.7;
 
 // Seeded PRNG — identical placement across clients (versus) and reloads.
 function makeRng(seed) {
@@ -365,6 +387,14 @@ export class GeeseManager {
     // solo only ever uses index 0, but versus already passes multiple anchors,
     // so per-bike attribution is free here and avoids a rewrite later (#364).
     this._disrupted = [0, 0, 0, 0];
+    // Set by the game when the physics sidecar is available (issue #388).
+    // Null means every strike path below is skipped and the geese behave
+    // exactly as they did before.
+    this.physicsFx = null;
+    // Per-bike position from last frame, so a strike can be given the bike's
+    // real direction and speed. Derived here rather than added to update()'s
+    // signature — solo, co-op and versus all already pass positions.
+    this._prevBike = [];
 
     // [pose][stride] — stride 0 is the standing (planted-feet) variant, so a
     // grazing goose isn't mid-step. Poses x strides is 3 x 5 small canvases.
@@ -547,6 +577,10 @@ export class GeeseManager {
           pose: 0,          // 0..GROUND_FRAMES-1, eased toward poseTarget
           poseTarget: 0,
           _worldX: 0, _worldY: 0, _worldZ: 0,
+          // Set only while STATE_STRUCK: the live Rapier handle, and the last
+          // readable screen-space roll (held when the projection degenerates).
+          _struck: null,
+          _roll: 0,
         });
       }
       d += GROUP_GAP_MIN + rng() * GROUP_GAP_VAR;
@@ -580,6 +614,8 @@ export class GeeseManager {
       ? bikePositions
       : (bikePositions ? [bikePositions] : []);
 
+    const motion = this._bikeMotion(bikes, dt);
+
     // Release pool slots for items that left the window. Airborne geese keep
     // their slot regardless: absoluteD is their ground position and never
     // moves, so a goose startled just ahead falls out of the window ~2s after
@@ -588,7 +624,7 @@ export class GeeseManager {
     for (const slot of this._pool) {
       if (slot.itemIdx < 0) continue;
       const item = this._items[slot.itemIdx];
-      if (item && item.state === STATE_FLYING) continue;
+      if (item && (item.state === STATE_FLYING || item.state === STATE_STRUCK)) continue;
       if (!item || !this._nearAny(item.absoluteD, anchorDs)) {
         slot.mesh.visible = false;
         slot.itemIdx = -1;
@@ -603,7 +639,7 @@ export class GeeseManager {
       // Airborne geese keep integrating even once their ground position leaves
       // the window — they hold a pool slot until they land or time out, and
       // skipping them here would freeze them in mid-air instead.
-      if (item.state !== STATE_FLYING && !this._nearAny(item.absoluteD, anchorDs)) continue;
+      if (item.state === STATE_IDLE && !this._nearAny(item.absoluteD, anchorDs)) continue;
 
       if (item.state === STATE_IDLE) {
         this._wander(item, dt);
@@ -627,6 +663,17 @@ export class GeeseManager {
             break;
           }
         }
+      } else if (item.state === STATE_STRUCK) {
+        // Rapier owns the transform. Mirror it back onto the item so the
+        // handoff to flight, the recycle test and the pool bookkeeping all
+        // still see a goose at a real place in the world.
+        item.age += dt;
+        if (item.poolIdx >= 0) {
+          const m = this._pool[item.poolIdx].mesh;
+          item._worldX = m.position.x;
+          item._worldY = m.position.y;
+          item._worldZ = m.position.z;
+        }
       } else {
         item.age += dt;
         if (item.age < BURST_TIME) {
@@ -645,6 +692,10 @@ export class GeeseManager {
         item._worldX += item.vx * dt;
         item._worldY += item.vy * dt;
         item._worldZ += item.vz * dt;
+
+        // Still low and still close: this is the one you caught on the way up.
+        if (item.age < STRIKE_MAX_AGE) this._tryStrike(item, bikes, motion);
+
         if (item.age > GOOSE_LIFE) {
           // Recycle: drop it far ahead so a long ride keeps finding geese.
           item.state = STATE_IDLE;
@@ -692,8 +743,14 @@ export class GeeseManager {
         const tex = this._texIdle[pf][sf];
         if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
       } else {
-        slot.mesh.position.set(item._worldX, item._worldY, item._worldZ);
-        const [view, flip] = this._poseForVelocity(this.camera, item);
+        // A struck goose's position belongs to the debris sim; its view and
+        // mirror stay as the last airborne frame chose them, because the
+        // velocity _poseForVelocity reads is no longer the one moving it.
+        const struck = item.state === STATE_STRUCK;
+        if (!struck) slot.mesh.position.set(item._worldX, item._worldY, item._worldZ);
+        const [view, flip] = struck
+          ? [item.view, item.flip]
+          : this._poseForVelocity(this.camera, item);
         item.view = view;
         item.flip = flip;
         const f = Math.floor(item.age * FLAP_HZ + item.flapOffset) % FLAP_FRAMES;
@@ -707,8 +764,128 @@ export class GeeseManager {
       // burst: a startled bird tips as it leaves the ground, then levels off.
       // Carrying the spin the whole way makes it read as a thrown object.
       if (item.state === STATE_FLYING) slot.mesh.rotateZ(this._tiltFor(item));
+      else if (item.state === STATE_STRUCK) {
+        slot.mesh.rotateZ(this._struckRoll(item, this.camera));
+      }
       slot.mesh.visible = true;
     }
+  }
+
+  /**
+   * Per-bike heading and speed, differenced frame to frame.
+   *
+   * update() is only handed positions, and a strike needs to know which way
+   * the bike was going and how fast. Differencing the position it already gets
+   * keeps the signature — and therefore every solo, co-op and versus call
+   * site — untouched.
+   */
+  _bikeMotion(bikes, dt) {
+    const out = [];
+    for (let i = 0; i < bikes.length; i++) {
+      const b = bikes[i];
+      if (!b) { out.push(null); continue; }
+      const prev = this._prevBike[i];
+      if (prev && dt > 0) {
+        const vx = (b.x - prev.x) / dt;
+        const vz = (b.z - prev.z) / dt;
+        const speed = Math.hypot(vx, vz);
+        // Bike forward is (sin h, cos h) — see _resolveVersusBikeContact.
+        out.push(speed > 0.01
+          ? { heading: Math.atan2(vx, vz), speed }
+          : { heading: 0, speed: 0 });
+      } else {
+        out.push(null);
+      }
+      if (prev) { prev.x = b.x; prev.z = b.z; }
+      else this._prevBike[i] = { x: b.x, z: b.z };
+    }
+    return out;
+  }
+
+  /**
+   * Clip a goose that's airborne but hasn't cleared the bars yet.
+   * @returns {boolean} true if physics took it
+   */
+  _tryStrike(item, bikes, motion) {
+    if (!this.physicsFx || !this.physicsFx.ready) return false;
+    if (item.poolIdx < 0) return false;
+
+    for (let bi = 0; bi < bikes.length; bi++) {
+      const b = bikes[bi];
+      const mv = motion[bi];
+      // A bike barely moving hasn't got the energy to throw a bird anywhere,
+      // and launching one off a trackstand looks like a bug.
+      if (!b || !mv || mv.speed < 3) continue;
+
+      const dx = b.x - item._worldX;
+      const dz = b.z - item._worldZ;
+      if (dx * dx + dz * dz > STRIKE_RADIUS * STRIKE_RADIUS) continue;
+      if (item._worldY - b.y > STRIKE_MAX_HEIGHT) continue; // already overhead
+
+      const mesh = this._pool[item.poolIdx].mesh;
+      const handle = this.physicsFx.strikeGoose(
+        mesh,
+        { x: item._worldX, y: item._worldY, z: item._worldZ },
+        mv.heading, mv.speed, item.roadD,
+        (obj, final) => this._settleStruck(item, final),
+      );
+      if (!handle) return false;
+
+      item.state = STATE_STRUCK;
+      item.age = 0;
+      item._struck = handle;
+      // A proper faceful, not the five-feather flush of a startle.
+      this._emitFeathers(item._worldX, item._worldY, item._worldZ,
+        10 + Math.floor(Math.random() * 6));
+      // Unthrottled, unlike the flush honk: there is only ever one of these,
+      // and it is the whole point of the moment.
+      if (this.audio && typeof this.audio.gooseHonk === 'function') {
+        this.audio.gooseHonk();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /** Tumble over: pick the bird up and put it back into normal flight. */
+  _settleStruck(item, final) {
+    item._struck = null;
+    if (item.state !== STATE_STRUCK) return;
+
+    if (final) {
+      item._worldX = final.position.x;
+      item._worldY = final.position.y;
+      item._worldZ = final.position.z;
+      // Continue the throw rather than contradict it.
+      item.vx = final.linvel.x;
+      item.vz = final.linvel.z;
+    }
+    const sp = Math.hypot(item.vx, item.vz);
+    if (sp < 1.5) {
+      // It came to rest. Give it a direction, or it takes off vertically like
+      // a helicopter instead of scrambling away.
+      const a = Math.random() * Math.PI * 2;
+      item.vx = Math.cos(a) * 3.5;
+      item.vz = Math.sin(a) * 3.5;
+    }
+    item.vy = 3.2;
+    item.state = STATE_FLYING;
+    // Straight to the beat-away phase: the ballistic pop already happened,
+    // courtesy of the bike.
+    item.age = BURST_TIME;
+    item.flapOffset = Math.random() * FLAP_FRAMES;
+  }
+
+  /**
+   * Screen-space roll of a tumbling goose, from the body's real rotation.
+   * Held at its last value when the projection degenerates — see
+   * billboardRoll.
+   */
+  _struckRoll(item, camera) {
+    if (!camera || !item._struck) return item._roll || 0;
+    const r = billboardRoll(item._struck.quat, camera);
+    if (r !== null) item._roll = r;
+    return item._roll || 0;
   }
 
   /**
@@ -902,6 +1079,10 @@ export class GeeseManager {
         // backwards when it's wrong.
         slot.mesh.scale.x = this._poseForVelocity(camera, item)[1];
         slot.mesh.rotateZ(this._tiltFor(item));
+      } else if (item && item.state === STATE_STRUCK) {
+        // Recomputed per pass: the roll is a projection into THIS camera's
+        // screen plane, so the two viewports genuinely differ.
+        slot.mesh.rotateZ(this._struckRoll(item, camera));
       }
     }
   }
@@ -913,6 +1094,12 @@ export class GeeseManager {
       slot.itemIdx = -1;
     }
     for (const item of this._items) {
+      // Retire the body first: its onExpire writes flight state back onto the
+      // item, and doing it after the reset below would undo the reset.
+      if (item._struck) {
+        if (this.physicsFx) this.physicsFx.releaseHandle(item._struck);
+        item._struck = null;
+      }
       item.state = STATE_IDLE;
       item.poolIdx = -1;
       item.age = 0;

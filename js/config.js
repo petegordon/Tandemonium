@@ -40,6 +40,26 @@ export function getShowFps() {
   catch (e) { return false; }
 }
 
+/**
+ * "Physics FX" setting — the Rapier-driven crash tumble, knocked pylons and
+ * goose strikes (issue #388). Purely visual: the sidecar drives transforms of
+ * transient props and never touches lean, speed, position or anything the
+ * netcode serialises, so this is safe to differ between the two players in a
+ * multiplayer ride.
+ *
+ * Default ON for desktop, OFF on mobile — Rapier is ~1MB of WASM on top of a
+ * solver cost, and that isn't a phone's problem to carry for garnish. Either
+ * default can be overridden explicitly.
+ */
+export function getPhysicsFx() {
+  try {
+    const v = localStorage.getItem('tandemonium_physics_fx');
+    if (v === 'on') return true;
+    if (v === 'off') return false;
+  } catch (e) { /* localStorage unavailable — fall through to the default */ }
+  return !isMobile;
+}
+
 // Protocol message types
 export const MSG_PEDAL     = 0x01;
 export const MSG_STATE     = 0x02;

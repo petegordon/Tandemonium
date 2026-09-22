@@ -4,13 +4,14 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, getPhysicsFx, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { RaceManager } from './race-manager.js';
 import { getLevelById, LEVELS } from './race-config.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
+import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { FocusController } from './nav/focus-controller.js';
@@ -1679,6 +1680,9 @@ class Game {
     // Roadside geese (#363) — decorative verge scenery, no collision response.
     if (this.geeseManager) this.geeseManager.dispose();
     this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine);
+    // Optional visual physics (issue #388) — crash tumble, knocked pylons,
+    // goose strikes. Starts the WASM fetch here so it overlaps the countdown.
+    this._setupPhysicsFx([this.bike]);
 
     // Wire up collectibles total for analytics
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
@@ -1871,6 +1875,7 @@ class Game {
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
     if (this.geeseManager) this.geeseManager.dispose();
     this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, this.audioEngine);
+    this._setupPhysicsFx(this.versusRigs.map((r) => r.bike));
     for (const rig of this.versusRigs) {
       rig.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
     }
@@ -3125,6 +3130,7 @@ class Game {
     this.contributionTracker = null;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
+    this._teardownPhysicsFx();
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
     this.hud.hideGeese();
@@ -3268,6 +3274,7 @@ class Game {
     this.contributionTracker = null;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
+    this._teardownPhysicsFx();
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
     this.hud.hideGeese();
@@ -3505,6 +3512,11 @@ class Game {
     if (fpsOnBtn)  fpsOnBtn.addEventListener('click',  () => this._setShowFps(true));
     if (fpsOffBtn) fpsOffBtn.addEventListener('click', () => this._setShowFps(false));
 
+    const physOnBtn  = document.getElementById('opt-physics-on');
+    const physOffBtn = document.getElementById('opt-physics-off');
+    if (physOnBtn)  physOnBtn.addEventListener('click',  () => this._setPhysicsFx(true));
+    if (physOffBtn) physOffBtn.addEventListener('click', () => this._setPhysicsFx(false));
+
     if (isElectron) {
       browserDevBtn.addEventListener('click', async () => {
         const opened = await window.electronApp.toggleDevTools();
@@ -3538,6 +3550,27 @@ class Game {
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
     this._updateOptionsFpsUI();
+    this._updateOptionsPhysicsUI();
+  }
+
+  /**
+   * Crash Physics toggle (issue #388). Deliberately takes effect on the NEXT
+   * ride rather than immediately: the sidecar is built during the countdown
+   * and tearing its world down underneath a bike that's mid-tumble would
+   * strand the visual group where the solver last left it.
+   */
+  _setPhysicsFx(on) {
+    try { localStorage.setItem('tandemonium_physics_fx', on ? 'on' : 'off'); } catch (e) {}
+    this._updateOptionsPhysicsUI();
+  }
+
+  _updateOptionsPhysicsUI() {
+    const on = getPhysicsFx();
+    const onBtn  = document.getElementById('opt-physics-on');
+    const offBtn = document.getElementById('opt-physics-off');
+    if (!onBtn) return;
+    onBtn.classList.toggle('active', on);
+    offBtn.classList.toggle('active', !on);
   }
 
   _setShowFps(on) {
@@ -3731,6 +3764,8 @@ class Game {
       document.getElementById('opt-riders-off'),
       document.getElementById('opt-fps-on'),
       document.getElementById('opt-fps-off'),
+      document.getElementById('opt-physics-on'),
+      document.getElementById('opt-physics-off'),
       document.getElementById('options-perf-btn'),
       document.getElementById('options-devtools-btn'),
       document.getElementById('options-browserdev-btn'),
@@ -3740,6 +3775,7 @@ class Game {
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
     this._updateOptionsFpsUI();
+    this._updateOptionsPhysicsUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
   }
 
@@ -3896,14 +3932,78 @@ class Game {
   // Default args keep the solo/co-op call sites byte-identical in behavior;
   // versus passes each rig's bike/camera plus that team's inputs so only
   // the crashing team's controllers rumble.
+  /**
+   * Stand up the optional physics sidecar for this ride (issue #388).
+   *
+   * Purely visual — crash tumbles, knocked pylons, goose strikes. Nothing it
+   * produces is read back into handling or written to the wire, so a player
+   * running with it on and a partner running with it off stay in perfect sync.
+   *
+   * @param {BikeModel[]} bikes every bike whose crash should tumble
+   */
+  _setupPhysicsFx(bikes) {
+    this._teardownPhysicsFx();
+    if (!getPhysicsFx() || !this.world || !this.world.roadPath) return;
+
+    this.physicsFx = new PhysicsFx(this.scene, this.world.roadPath);
+    // Start the ~1MB WASM fetch now, during the countdown, so the first crash
+    // of a session isn't the thing waiting on it. If it hasn't landed by then,
+    // that crash simply uses the canned fall.
+    this.physicsFx.warm();
+    if (this.geeseManager) this.geeseManager.physicsFx = this.physicsFx;
+
+    this._physicsBikes = bikes.filter(Boolean);
+    for (const bike of this._physicsBikes) {
+      bike.onFall = (b) => { if (this.physicsFx) this.physicsFx.crashTumble(b); };
+      bike.onReset = (b) => { if (this.physicsFx) this.physicsFx.releaseCrash(b); };
+    }
+  }
+
+  /** Tear the sidecar down and give every bike its own transform back. */
+  _teardownPhysicsFx() {
+    for (const bike of this._physicsBikes || []) {
+      bike.onFall = null;
+      bike.onReset = null;
+      bike.transformOverride = false;
+      bike._tumbleHandle = null;
+    }
+    this._physicsBikes = [];
+    if (this.geeseManager) this.geeseManager.physicsFx = null;
+    if (this.physicsFx) {
+      this.physicsFx.dispose();
+      this.physicsFx = null;
+    }
+  }
+
+  /**
+   * Send a struck pylon tumbling. Must run BEFORE bike._fall(), which zeroes
+   * the speed the launch is scaled from.
+   *
+   * No-ops unless the sidecar is live — the pylon is only retired from its pool
+   * when there is something to replace it with, so with physics off it stays
+   * standing exactly as it does today.
+   */
+  _knockPylon(item, bike) {
+    if (!this.physicsFx || !this.physicsFx.ready || !this.obstacleManager) return;
+    const mesh = this.obstacleManager.knockOut(item);
+    if (!mesh) return;
+    this.physicsFx.knockProp(
+      mesh,
+      { x: item._worldX, y: item._worldY, z: item._worldZ },
+      bike.heading, bike.speed, item.roadD,
+    );
+  }
+
   _checkTreeCollision(bike = this.bike, chaseCam = this.chaseCamera, hapticTargets = null) {
     if (bike.fallen || bike.speed < 0.5) return;
     // Skip tree collision when level config disables it — only pylons matter
     const level = this.lobby.selectedLevel;
     if (level && level.treeCollision === false) {
       // Still check pylon collision
-      if (this.obstacleManager && this.obstacleManager.checkCollision(bike.position)) {
+      const pylon = this.obstacleManager && this.obstacleManager.checkCollision(bike.position);
+      if (pylon) {
         this._recordCrash('obstacle', bike);
+        this._knockPylon(pylon, bike);
         bike._fall();
         chaseCam.shakeAmount = 0.25;
         this._playCrash(1.0);
@@ -3923,8 +4023,10 @@ class Game {
       return;
     }
     // Pylon obstacle collision
-    if (this.obstacleManager && this.obstacleManager.checkCollision(bike.position)) {
+    const pylon = this.obstacleManager && this.obstacleManager.checkCollision(bike.position);
+    if (pylon) {
       this._recordCrash('obstacle', bike);
+      this._knockPylon(pylon, bike);
       bike._fall();
       chaseCam.shakeAmount = 0.25;
       this._playCrash(1.0);
@@ -4409,6 +4511,9 @@ class Game {
 
   /** Advance collectibles + obstacles; trigger _onCollect for any picked up this frame. */
   _updateItems(dt) {
+    // Step the sidecar first: the geese read their struck birds' transforms
+    // back off the meshes it drives.
+    if (this.physicsFx) this.physicsFx.update(dt);
     if (this.collectibleManager) {
       const collected = this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
       if (collected.length > 0) {
@@ -4510,6 +4615,7 @@ class Game {
         if (counts[i] > 0) this._onVersusCollect(rigs[i], counts[i]);
       }
     }
+    if (this.physicsFx) this.physicsFx.update(dt);
     if (this.obstacleManager) {
       this.obstacleManager.updateVersus(dt, rigs.map((r) => r.bike.distanceTraveled));
     }

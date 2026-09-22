@@ -53,6 +53,22 @@ export class BikeModel {
     this._braking = false;
     this.boostTimer = 0;
 
+    // Optional crash-tumble hooks (issue #388). The physics sidecar is wired in
+    // by the game, not imported here — this model stays a pure arcade balance
+    // model that knows nothing about Rapier, and plays identically when the
+    // hooks are left null.
+    //
+    // onFall fires at the TOP of _fall(), before the canned crash pose
+    // overwrites lean/speed, so a listener can still read the attitude and
+    // velocity the bike crashed at. While transformOverride is set, this model
+    // stops writing group.position/quaternion and something else drives them;
+    // every other piece of state carries on exactly as before, so the netcode,
+    // the HUD, the race logic and the cameras never see a difference.
+    this.onFall = null;
+    this.onReset = null;
+    this.transformOverride = false;
+    this._tumbleHandle = null;
+
     // Balance assist (0 = off, 0-1 = graduated assist strength)
     this._balanceAssist = 0;
 
@@ -752,6 +768,13 @@ export class BikeModel {
   }
 
   _applyTransform(dt) {
+    // Something else owns the group's transform this frame (the crash tumble).
+    // The riders still get posed — freezing them mid-sway looks like a dropped
+    // frame, not a crash.
+    if (this.transformOverride) {
+      this._updateRiderLean(dt);
+      return;
+    }
     this.group.position.copy(this.position);
     this._tmpQYaw.setFromAxisAngle(this._tmpAxisY, this.heading);
     this._tmpQLean.setFromAxisAngle(this._tmpAxisZ, this.lean);
@@ -776,6 +799,9 @@ export class BikeModel {
   }
 
   _fall() {
+    // Before the canned pose lands — the listener needs the speed and lean the
+    // bike actually crashed at, and the next four lines destroy both.
+    if (this.onFall) this.onFall(this);
     this.fallen = true;
     this.fallTimer = 2.0;
     this.speed = 0;
@@ -788,6 +814,9 @@ export class BikeModel {
   }
 
   _reset() {
+    // Hand the visual group back before restoring the upright pose, or the
+    // tumble keeps driving it and the reset is invisible.
+    if (this.onReset) this.onReset(this);
     this.fallen = false;
     this.lean = 0;
     this.leanVelocity = 0;
@@ -803,6 +832,7 @@ export class BikeModel {
   }
 
   resetToDistance(distance) {
+    if (this.onReset) this.onReset(this);
     this.fallen = false;
     this.lean = 0;
     this.leanVelocity = 0;
