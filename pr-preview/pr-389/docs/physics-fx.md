@@ -129,19 +129,43 @@ top speed, **a goose can never be struck standing** — it is always airborne
 first. That is the original design and the reason contact never had to be
 handled.
 
-What the scripted flee can't give you is the bird you clip *on the way up*: a
-bold one that held until 1.8m, with ~0.13s to clear a bike doing 14m/s, off the
-ground but still at bar height. `STRIKE_RADIUS` / `STRIKE_MAX_AGE` /
-`STRIKE_MAX_HEIGHT` bound that window. They started at 0.85m / 0.55s / 1.7m,
-which was arithmetically reachable but so tight that a playtest riding the verge
-through whole gaggles never triggered it once; they are now 1.2m / 0.8s / 2.2m.
-A moment nobody sees is the same as a moment that isn't there. A struck goose enters `STATE_STRUCK`,
-keeps its pool slot, tumbles for ~1.15s, then recovers into the existing
-`STATE_FLYING` lifecycle from wherever it landed — so pooling, recycling and the
-disruption tally are all untouched.
+There are two strike cases.
+
+**Clipped on the way up** — a bold bird that held until 1.8m, off the ground but
+still at bar height, bounded by `STRIKE_RADIUS` / `STRIKE_MAX_AGE` /
+`STRIKE_MAX_HEIGHT`. This is the subtle one, and on its own it was not enough:
+two playtests in a row reported seeing no difference, because a narrow window on
+a small sprite already mid-escape looks much like the flee it replaced.
+
+**Ploughed from standing** — the one that actually reads, and it was impossible
+until `GRAZING_FLEE_SCALE`. A goose with its head down in the grass doesn't see
+you coming, so grazing birds hold to ~0.6–1.0m instead of 1.8–3.0m, which puts
+them inside `STRIKE_RADIUS` — the strike is tested *before* the flee on the same
+distance, so contact wins. They take 1.6× the launch and a bigger faceful of
+feathers. Alert, walking birds are untouched and still flush early exactly as
+tuned, so "most are never touched" still holds: you have to leave the racing
+line and aim at a head-down bird. `PAUSE_CHANCE` is 0.45, so roughly half a
+gaggle is grazing at any moment.
+
+Either way the goose enters `STATE_STRUCK`, keeps its pool slot, tumbles for
+~1.15s, then recovers into the existing `STATE_FLYING` lifecycle from wherever
+it landed — so pooling, recycling and the disruption tally are all untouched.
 
 The bike's heading and speed are differenced from the positions `update()`
 already receives (`_bikeMotion`), so no call-site signature changed.
+
+## Knocked pylons persist, and come back on a restart
+
+A struck pylon leaves its pool and its debris lingers ~25s, so the cone is still
+lying there when you pick yourself up and ride past it. Rapier sleeps the body
+once it settles, so the tail of that costs nothing, and by the time it expires it
+is a couple of hundred metres behind.
+
+`knockOut` records the item, and `ObstacleManager.restoreKnocked()` stands every
+knocked pylon back up on a restart or checkpoint retry — called together with
+`PhysicsFx.clear()`, because a restored cone standing beside its own wreckage is
+worse than either. Without this the cone was gone for the rest of the ride and
+the retry faced an easier road than the attempt that killed you.
 
 ## Is it actually on?
 

@@ -272,7 +272,12 @@ export class PhysicsFx {
         z: (Math.random() - 0.5) * 12,
       },
       groundY: this._groundAt(position.x, position.z, hintD),
-      lifetime: 3.5,
+      // Long enough that the cone is still lying there when you pick yourself
+      // up and ride past it — a knocked pylon blinking out of existence a
+      // few seconds later is worse than never having moved. Rapier sleeps the
+      // body once it settles, so the tail of this costs nothing. By the time
+      // it does expire it is a couple of hundred metres behind.
+      lifetime: 25,
       restitution: 0.42,
       friction: 0.55,
       // A billboard: the solver owns the arc, the caller keeps it facing the
