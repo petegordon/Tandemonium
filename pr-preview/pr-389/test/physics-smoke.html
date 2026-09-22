@@ -266,6 +266,58 @@ async function main() {
     check('dispose() releases the world', w.world === null);
   }
 
+  // ── knocked props are re-faced AND rolled ──
+  //
+  // Regression: the first cut spawned the pylon clone with driveRotation:false
+  // and then nothing ever touched its orientation, because it had left the pool
+  // that re-faces billboards. It slid through its arc frozen, turning edge-on
+  // as the camera passed — indistinguishable from the feature not being there.
+  {
+    const fx = new PhysicsFx(scene, null);
+    fx._world = new DebrisWorld(RAPIER, scene);
+    const mesh = obj();
+    mesh.material = { opacity: 1 };
+    const h = fx.knockProp(mesh, { x: 0, y: 0.5, z: 0 }, 0, 12, 0);
+    check('knockProp returns a handle when ready', !!h);
+    // knockProp drives a CLONE — the pooled original stays with its manager.
+    const flying = h.object3d;
+    check('knockProp drives a clone, not the pooled mesh', flying !== mesh);
+
+    const cam = new THREE.PerspectiveCamera(70, 1, 0.1, 500);
+    cam.position.set(0, 3, 10);
+    cam.lookAt(0, 0, 0);
+    cam.updateMatrixWorld(true);
+
+    fx.update(0.25);
+    fx.faceCamera(cam);
+    const q1 = flying.quaternion.clone();
+    check('knocked prop is re-faced (no longer identity)',
+      Math.abs(q1.w - 1) > 1e-6, `w=${q1.w.toFixed(4)}`);
+
+    // Stepping on must keep changing the roll — a spinning body reads as
+    // spinning only if the projection is re-evaluated each frame.
+    fx.update(0.25);
+    fx.faceCamera(cam);
+    const q2 = flying.quaternion.clone();
+    check('knocked prop keeps rolling as it spins',
+      Math.abs(q1.angleTo(q2)) > 1e-3, `delta=${q1.angleTo(q2).toFixed(4)}`);
+
+    // A second camera must get its own projection (split-screen).
+    const cam2 = new THREE.PerspectiveCamera(70, 1, 0.1, 500);
+    cam2.position.set(10, 3, 0);
+    cam2.lookAt(0, 0, 0);
+    cam2.updateMatrixWorld(true);
+    fx.faceCamera(cam2);
+    check('a second camera re-faces independently',
+      Math.abs(flying.quaternion.angleTo(q2)) > 1e-3);
+
+    // And it must deregister on expiry, or faceCamera walks dead handles.
+    fx.update(4.0);
+    check('expired prop deregisters from the re-face list',
+      fx._billboards.length === 0, `n=${fx._billboards.length}`);
+    fx.dispose();
+  }
+
   // ── the edited game modules still resolve ──
   //
   // geese.js now imports physics-fx.js, which imports three and

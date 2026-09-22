@@ -92,6 +92,17 @@ as it does today, and takes its roll from `billboardRoll()` — the body's genui
 rotation projected into that camera's screen plane. Split-screen recomputes it
 per pass, so the two viewports legitimately differ.
 
+**Something must re-face that debris every frame.** Pooled billboards get this
+from their manager's update loop, but a knocked pylon has *left* its pool, so
+nothing would touch it. The first cut missed this: the pylon slid through its
+whole arc at a frozen orientation, not spinning at all and turning edge-on as
+the camera rode past — indistinguishable from the feature being switched off,
+and that is exactly how it was reported from the first playtest. Hence
+`PhysicsFx.faceCamera(camera)`, called once per rendering camera alongside
+`ObstacleManager.faceCamera` and `GeeseManager.faceCamera`. Geese are excluded:
+they re-face inside their own render pass, where the flap texture and mirror are
+chosen.
+
 This is why "the geese are generated images, not 3D models" was never an
 obstacle: a rigid body drives a transform and doesn't care what is drawn at it.
 
@@ -121,13 +132,32 @@ handled.
 What the scripted flee can't give you is the bird you clip *on the way up*: a
 bold one that held until 1.8m, with ~0.13s to clear a bike doing 14m/s, off the
 ground but still at bar height. `STRIKE_RADIUS` / `STRIKE_MAX_AGE` /
-`STRIKE_MAX_HEIGHT` bound that window. A struck goose enters `STATE_STRUCK`,
+`STRIKE_MAX_HEIGHT` bound that window. They started at 0.85m / 0.55s / 1.7m,
+which was arithmetically reachable but so tight that a playtest riding the verge
+through whole gaggles never triggered it once; they are now 1.2m / 0.8s / 2.2m.
+A moment nobody sees is the same as a moment that isn't there. A struck goose enters `STATE_STRUCK`,
 keeps its pool slot, tumbles for ~1.15s, then recovers into the existing
 `STATE_FLYING` lifecycle from wherever it landed — so pooling, recycling and the
 disruption tally are all untouched.
 
 The bike's heading and speed are differenced from the positions `update()`
 already receives (`_bikeMotion`), so no call-site signature changed.
+
+## Is it actually on?
+
+The layer fails silently by design, which makes that question unanswerable from
+the outside — so it answers it in the console on every ride:
+
+```
+[physics] crash physics ON (Rapier 0.20.0, 412ms)
+[physics] crash physics OFF — Rapier unavailable
+```
+
+Two things switch it off without any error at all:
+
+- **Mobile.** `getPhysicsFx()` defaults to `!isMobile`, and `isMobile` is true for
+  `navigator.maxTouchPoints > 1` — so a touchscreen laptop counts as mobile too.
+- **The Options toggle**, once set either way, wins over the default.
 
 ## Known limitations
 

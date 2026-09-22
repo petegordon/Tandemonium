@@ -142,11 +142,15 @@ const STATE_STRUCK = 2;
 // is off the ground but still at bar height, and you clip it. That beat is
 // rare, earned by riding the verge hard, and it is the only moment in the game
 // where a solver is telling you something a keyframe couldn't.
-const STRIKE_RADIUS = 0.85;
+// Tuned up from 0.85/0.55/1.7 after a playtest where it never fired once. The
+// original window was arithmetically reachable but so tight that riding the
+// verge through a whole gaggle at speed could miss every bird — a moment nobody
+// sees is the same as a moment that isn't there.
+const STRIKE_RADIUS = 1.2;
 // Past this it has cleared the bars; anything later would be a goose being
 // yanked backwards out of a clean escape.
-const STRIKE_MAX_AGE = 0.55;
-const STRIKE_MAX_HEIGHT = 1.7;
+const STRIKE_MAX_AGE = 0.8;
+const STRIKE_MAX_HEIGHT = 2.2;
 
 // Seeded PRNG — identical placement across clients (versus) and reloads.
 function makeRng(seed) {
