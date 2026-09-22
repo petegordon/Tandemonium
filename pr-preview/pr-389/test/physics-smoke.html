@@ -337,6 +337,24 @@ async function main() {
       check('config exposes getPhysicsFx', typeof config.getPhysicsFx === 'function');
       check('getPhysicsFx returns a boolean', typeof config.getPhysicsFx() === 'boolean',
         String(config.getPhysicsFx()));
+
+      // The default follows the resolved quality tier, NOT the form factor.
+      // Keying it off isMobile silently disabled the whole feature for most of
+      // this game's players — that regression is worth a test.
+      try { localStorage.removeItem('tandemonium_physics_fx'); } catch (e) { /* ignore */ }
+      check('defaults ON for a normal-quality device',
+        config.getPhysicsFx(false) === true);
+      check('defaults OFF only for the low-quality tier',
+        config.getPhysicsFx(true) === false);
+      try {
+        localStorage.setItem('tandemonium_physics_fx', 'on');
+        check('an explicit ON overrides the low tier', config.getPhysicsFx(true) === true);
+        localStorage.setItem('tandemonium_physics_fx', 'off');
+        check('an explicit OFF overrides a good device', config.getPhysicsFx(false) === false);
+        localStorage.removeItem('tandemonium_physics_fx');
+      } catch (e) {
+        check('localStorage override is testable', false, String(e));
+      }
     } catch (err) {
       check('edited game modules resolve', false, String(err));
     }

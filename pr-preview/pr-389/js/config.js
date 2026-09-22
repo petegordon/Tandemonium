@@ -47,17 +47,31 @@ export function getShowFps() {
  * netcode serialises, so this is safe to differ between the two players in a
  * multiplayer ride.
  *
- * Default ON for desktop, OFF on mobile — Rapier is ~1MB of WASM on top of a
- * solver cost, and that isn't a phone's problem to carry for garnish. Either
- * default can be overridden explicitly.
+ * The default follows the RESOLVED QUALITY TIER, not the form factor. It was
+ * originally `!isMobile`, which was wrong for this game: Tandemonium is
+ * mobile-first — tilt steering, QR join, phones on handlebars — so keying off
+ * `isMobile` switched the whole feature off for most of the people it was
+ * built for, silently, with no way to tell. (It also caught touchscreen
+ * laptops, since isMobile is true for maxTouchPoints > 1.)
+ *
+ * A mid-range phone runs this fine: the sidecar is capped at 24 bodies, is
+ * usually simulating one or two, and costs nothing at all when nothing is
+ * tumbling. The real cost is the one-off ~1MB WASM fetch, which is small next
+ * to the 7MB bike GLB the same ride already pays for, and is deferred to the
+ * countdown. What genuinely can't afford it is a weak device — and the game
+ * already decides that, once, in Game's quality resolution.
+ *
+ * @param {boolean} [lowQuality] the resolved low-quality tier (Game._lowQuality),
+ *   which already folds in the user's Options choice, the ?quality= param and
+ *   hardware detection.
  */
-export function getPhysicsFx() {
+export function getPhysicsFx(lowQuality = false) {
   try {
     const v = localStorage.getItem('tandemonium_physics_fx');
     if (v === 'on') return true;
     if (v === 'off') return false;
   } catch (e) { /* localStorage unavailable — fall through to the default */ }
-  return !isMobile;
+  return !lowQuality;
 }
 
 // Protocol message types
