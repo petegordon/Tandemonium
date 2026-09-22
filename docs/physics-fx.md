@@ -65,7 +65,7 @@ away) closes most of the gap.
 | Loads lazily | `ensureRapier()` — nothing fetched until the first `warm()` |
 | Fails open | Every entry point returns `false`/`null` and the game plays as before |
 | Budgeted | One world, fixed 1/60 timestep, 24-body cap, per-body lifetime, auto-dispose |
-| Opt-out | `getPhysicsFx()`; Options → Crash Physics. Off by default on mobile |
+| Opt-out | `getPhysicsFx(lowQuality)`; Options → Crash Physics. Off by default only on the low-quality tier |
 
 Because none of it reaches the wire, two players in a multiplayer ride can
 disagree about this setting with no desync.
@@ -155,9 +155,19 @@ the outside — so it answers it in the console on every ride:
 
 Two things switch it off without any error at all:
 
-- **Mobile.** `getPhysicsFx()` defaults to `!isMobile`, and `isMobile` is true for
-  `navigator.maxTouchPoints > 1` — so a touchscreen laptop counts as mobile too.
+- **The low-quality tier.** `getPhysicsFx(lowQuality)` defaults to `!lowQuality`,
+  reusing Game's existing resolution (Options choice > `?quality=` > hardware
+  detection).
 - **The Options toggle**, once set either way, wins over the default.
+
+> This default was originally `!isMobile`, which was simply wrong for this game.
+> Tandemonium is mobile-first — tilt steering, QR join, a phone on the bars — so
+> keying off the form factor switched the feature off for most of the people it
+> was built for, silently and with no way to tell. The first playtest was on a
+> phone and saw nothing at all, which is exactly what that default guaranteed.
+> A mid-range phone runs the sidecar fine: 24 bodies capped, usually one or two
+> live, free when nothing is tumbling, and the one-off ~1MB fetch is small
+> beside the 7MB bike GLB the same ride already pays for.
 
 ## Known limitations
 

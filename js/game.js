@@ -3565,7 +3565,7 @@ class Game {
   }
 
   _updateOptionsPhysicsUI() {
-    const on = getPhysicsFx();
+    const on = getPhysicsFx(this._lowQuality);
     const onBtn  = document.getElementById('opt-physics-on');
     const offBtn = document.getElementById('opt-physics-off');
     if (!onBtn) return;
@@ -3943,7 +3943,7 @@ class Game {
    */
   _setupPhysicsFx(bikes) {
     this._teardownPhysicsFx();
-    if (!getPhysicsFx() || !this.world || !this.world.roadPath) return;
+    if (!getPhysicsFx(this._lowQuality) || !this.world || !this.world.roadPath) return;
 
     this.physicsFx = new PhysicsFx(this.scene, this.world.roadPath);
     // Start the ~1MB WASM fetch now, during the countdown, so the first crash
