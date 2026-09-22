@@ -5,25 +5,56 @@ goose strikes. Issue [#388](https://github.com/petegordon/Tandemonium/issues/388
 
 ## Why this is a sidecar and not the physics engine
 
-Tandemonium's ride feel is a hand-tuned 1-D inverted pendulum on a spline
-(`js/bike-model.js`, the balance block around `TUNE.gravityForce`). Position
-isn't simulated at all — the bike rides `roadD` + `_lateralOffset` against
-`RoadPath`. Every term in that model (`autoCorrection`, `_balanceAssist`,
-low-speed wobble, danger-zone wobble, grass wobble) exists to make the bike feel
-good rather than to be correct, and a solver would fight all of them.
+Tandemonium's ride feel is a hand-tuned 1-D inverted pendulum (`js/bike-model.js`,
+the balance block around `TUNE.gravityForce`). Every term in it —
+`autoCorrection`, `_balanceAssist`, low-speed wobble, danger-zone wobble, grass
+wobble — exists to make the bike feel good rather than to be correct, and a
+solver would fight all of them.
 
-Collisions are distance checks with a binary outcome (`bike._fall()`). There is
-no stacking, no contact resolution and no momentum transfer — which is exactly
-the work a physics engine exists to do, so there was none of it to hand over.
+Be precise about what *is* simulated, because it is easy to get this wrong.
+Position and heading are free:
 
-What a solver *is* good for is transient debris nobody wants to hand-animate.
-That is all this does.
+```js
+this.heading   += turnRate * dt;                                // from lean
+this.position.x += Math.sin(this.heading) * this.speed * dt;
+this.position.z += Math.cos(this.heading) * this.speed * dt;
+```
 
-**Bike-vs-bike contact in versus is deliberately NOT part of this.** It is
-already implemented by hand in `Game._resolveVersusBikeContact` — three-circle
-sweep, penetration resolution, closing-speed scaling, lean impulse, speed
-scrub, audio, haptics, cooldown — and porting it to Rapier would add WASM weight
-and regression risk to working code for a worse arcade lean kick.
+`RoadPath` does not drive the bike. `getClosestRoadInfo` *measures* where the
+bike ended up — deriving `roadD` and `_lateralOffset` — and supplies terrain
+height. So in XZ the bike is already a free body with a constrained
+orientation; it is only roll that is bespoke.
+
+What a solver is unambiguously good for, and all this layer does, is transient
+debris nobody wants to hand-animate: collisions with scenery are distance checks
+with a binary outcome (`bike._fall()`), with no stacking, no contact resolution
+and no momentum transfer to hand over.
+
+**Bike-vs-bike contact in versus is not part of this — but it is the one
+remaining candidate with a real case.** It is already implemented by hand in
+`Game._resolveVersusBikeContact` (three-circle sweep, penetration resolution,
+closing-speed scaling, lean impulse, speed scrub, audio, haptics, cooldown), and
+because bike position and heading are free variables, a solver could genuinely
+own it. Three things the hand-rolled version cannot do:
+
+- **Yaw from the contact point.** The sweep finds the closest circle pair and
+  then discards which pair it was, keeping only the normal. So clipping someone's
+  rear wheel with your front produces the same response as a side-by-side rub.
+  Real contact points would swing you.
+- **Sustained-contact friction.** Continuous grinding currently only keeps the
+  bikes separated — "no repeated impulses" — so leaning on someone through a
+  corner costs nothing after the first frame.
+- **Momentum exchange.** Both bikes get the same impulse magnitude and the same
+  speed scrub regardless of their relative speed or direction.
+
+What holds it back is not cost — once this layer exists, the WASM is already
+paid for — but that **it is the one effect that cannot fail open.** Debris and
+tumbles can no-op to nothing; bikes must never pass through each other. So a
+Rapier version has to keep `_resolveVersusBikeContact` as its fallback, leaving
+two contact implementations that have to feel identical. That is a real
+maintenance hazard, and it is worth first testing whether contact-point yaw
+alone (a few lines, using the `ta` offset the sweep already computes and throws
+away) closes most of the gap.
 
 ## Rules the design holds to
 
