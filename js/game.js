@@ -152,7 +152,7 @@ class Game {
       this._lowQuality = false;
     }
 
-    // "Show Riders" (Options, default off) gates the whole riders experience:
+    // "Show Riders" (Options; default on for desktop, off on phones) gates the whole riders experience:
     // the goose model + front selfie-cam AND the richer lighting/tone-mapping
     // tuned for them. Off = the base game exactly as before. Read at boot;
     // toggling in Options re-applies everything live (_applyShowRiders).
@@ -431,7 +431,8 @@ class Game {
     // device-lost recovery block registered right after renderer creation.)
 
     // FPS tracking for analytics
-    this._fpsFrameTimes = [];  // rolling buffer of frame durations (seconds)
+    this._fpsDtSum = 0;        // sum of frame durations this ride (seconds)
+    this._fpsFrameCount = 0;   // frames sampled this ride
     this._fpsMinDt = Infinity; // shortest frame time seen during ride
     this._fpsMaxDt = 0;        // longest frame time seen during ride
 
@@ -1007,7 +1008,9 @@ class Game {
 
     this.net.onStateReceived = (state) => {
       if (this.mode === 'stoker' && this.remoteBikeState) {
-        this.remoteBikeState.pushState(state);
+        // A stale packet (it can arrive late on the unordered fast channel)
+        // must not roll the timer or sync bar back either.
+        if (!this.remoteBikeState.pushState(state)) return;
         // Use captain's authoritative timer to prevent drift
         if (state.timerRemaining !== undefined && this.raceManager) {
           this.raceManager.segmentTimeRemaining = state.timerRemaining;
@@ -1097,10 +1100,21 @@ class Game {
       }
     };
 
-    // P2P upgrade: both sides initiate media call now that PeerJS is available
+    // P2P upgrade: the captain places the media call and the stoker answers
+    // (answers are two-way, so both get video). Having both sides call at once
+    // made each incoming call close the other's outgoing one, renegotiating
+    // mid-ride (issue #390). The stoker only calls as a late fallback if no
+    // partner video has arrived — the same stagger the lobby uses.
     this.net.onP2PUpgrade = () => {
       this._mediaRetryCount = 0;
-      this._initiateMediaCall();
+      clearTimeout(this._mediaRetryTimeout);
+      if (this.mode === 'captain') {
+        this._initiateMediaCall();
+      } else {
+        this._mediaRetryTimeout = setTimeout(() => {
+          if (!this.recorder.partnerActive) this._initiateMediaCall();
+        }, 6000);
+      }
       analytics.trackEvent('room_p2p_upgrade', { succeeded: true });
       if (this.net.roomCode) {
         analytics.trackRoomUpdate(this.net.roomCode, { p2p_upgrade_succeeded: 1 });
@@ -4255,6 +4269,20 @@ class Game {
         avg_fps: fpsStats.avg_fps,
         min_fps: fpsStats.min_fps,
       });
+      // What was actually on for this ride, so fps reports can be split by
+      // cause (issue #390) — the rides table has no columns for these.
+      analytics.trackEvent('ride_perf', {
+        mode: this.mode,
+        avg_fps: fpsStats.avg_fps,
+        min_fps: fpsStats.min_fps,
+        pixel_ratio: this.renderer.getPixelRatio(),
+        low_quality: this._lowQuality ? 1 : 0,
+        show_riders: this._showRiders ? 1 : 0,
+        recording: this.recorder && this.recorder.buffering ? 1 : 0,
+        transport: this.net ? this.net.transport : null,
+        fast_channel: this.net && this.net._fastPeerSeen ? 1 : 0,
+        playout_ms: this.remoteBikeState ? Math.round(this.remoteBikeState.delayMs) : null,
+      });
       this._resetFpsStats();
       analytics.setPage(this.mode !== 'solo' ? 'mp_results' : 'solo_results');
 
@@ -5384,9 +5412,8 @@ class Game {
   // ============================================================
 
   _getFpsStats() {
-    const frames = this._fpsFrameTimes;
-    if (frames.length === 0) return { avg_fps: null, min_fps: null };
-    const avgDt = frames.reduce((s, d) => s + d, 0) / frames.length;
+    if (this._fpsFrameCount === 0) return { avg_fps: null, min_fps: null };
+    const avgDt = this._fpsDtSum / this._fpsFrameCount;
     return {
       avg_fps: Math.round(1 / avgDt),
       min_fps: this._fpsMaxDt > 0 ? Math.round(1 / this._fpsMaxDt) : null,
@@ -5394,7 +5421,8 @@ class Game {
   }
 
   _resetFpsStats() {
-    this._fpsFrameTimes = [];
+    this._fpsDtSum = 0;
+    this._fpsFrameCount = 0;
     this._fpsMinDt = Infinity;
     this._fpsMaxDt = 0;
   }
@@ -5639,17 +5667,22 @@ class Game {
       return;
     }
 
-    const dt = Math.min((timestamp - this.lastTime) / 1000, 0.05);
+    const rawDt = (timestamp - this.lastTime) / 1000;
+    const dt = Math.min(rawDt, 0.05);
     this.lastTime = timestamp;
 
     const roadPath = this.world.roadPath;
 
     if (this.state === 'playing') {
-      // FPS sampling — track frame times during gameplay only
-      if (dt > 0) {
-        this._fpsFrameTimes.push(dt);
-        if (dt < this._fpsMinDt) this._fpsMinDt = dt;
-        if (dt > this._fpsMaxDt) this._fpsMaxDt = dt;
+      // FPS sampling — track frame times during gameplay only. Uses the
+      // unclamped frame time (the 0.05 physics clamp capped reported fps at
+      // ≥20, hiding the worst phone lag — #390); gaps over 1s are tab/app
+      // pauses, not frames.
+      if (rawDt > 0 && rawDt < 1) {
+        this._fpsDtSum += rawDt;
+        this._fpsFrameCount++;
+        if (rawDt < this._fpsMinDt) this._fpsMinDt = rawDt;
+        if (rawDt > this._fpsMaxDt) this._fpsMaxDt = rawDt;
       }
 
       // D-pad actions (safety/speed/reset/lobby) — singleton-bike shortcuts,
@@ -5957,10 +5990,14 @@ class Game {
     if (this.gustVisual) this.gustVisual.update(this.bike, dt);
     this._hapticOffRoadCheck();
 
-    // Send state + lean to stoker at 20Hz
+    // Send state + lean to stoker at 30Hz. Carry the remainder rather than
+    // zeroing it, so the stoker gets an even cadence instead of an irregular
+    // every-2-or-3-frames one (its interpolation turns that into hitching);
+    // drop any backlog after a stall instead of bursting to catch up.
     this._stateSendTimer += dt;
     if (this._stateSendTimer >= this._stateSendInterval && this.net && this.net.connected) {
-      this._stateSendTimer = 0;
+      this._stateSendTimer -= this._stateSendInterval;
+      if (this._stateSendTimer >= this._stateSendInterval) this._stateSendTimer = 0;
       const timerRemaining = this.raceManager ? this.raceManager.segmentTimeRemaining : -1;
       // A-4: ship the captain's authoritative sync score so the stoker's bar
       // shows the same number (one byte on the 60 Hz path).
@@ -6771,10 +6808,11 @@ class Game {
     if (this.gustVisual) this.gustVisual.update(this.bike, dt);
     this._hapticOffRoadCheck();
 
-    // Send lean to captain at 20Hz
+    // Send lean to captain at 30Hz (even cadence — see the captain's state send)
     this._leanSendTimer += dt;
     if (this._leanSendTimer >= this._leanSendInterval && this.net && this.net.connected) {
-      this._leanSendTimer = 0;
+      this._leanSendTimer -= this._leanSendInterval;
+      if (this._leanSendTimer >= this._leanSendInterval) this._leanSendTimer = 0;
       const balanceResult = this.balanceCtrl.update();
       this.net.sendLean(balanceResult.leanInput);
     }

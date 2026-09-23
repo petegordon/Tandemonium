@@ -388,6 +388,19 @@ function makeGooseTexture(mode, frame = 0, view = VIEW_SIDE, stride = -1) {
   return tex;
 }
 
+/**
+ * Swap a sprite frame onto a material. Every goose texture is built the same
+ * way (same colorSpace/filters), so replacing one map with another keeps the
+ * same shader program — needsUpdate would only trigger a pointless program
+ * cache check per frame change. It's needed only when USE_MAP itself toggles,
+ * i.e. the map goes null <-> non-null (#390).
+ */
+function _setMap(mat, tex) {
+  const hadMap = mat.map !== null;
+  mat.map = tex;
+  if (hadMap !== (tex !== null)) mat.needsUpdate = true;
+}
+
 export class GeeseManager {
   /**
    * @param {THREE.Scene} scene
@@ -433,6 +446,10 @@ export class GeeseManager {
     }
     // [view][frame] — 3 views x 4 flap frames, plus a per-goose horizontal
     // flip at render time, giving 6 apparent headings from 3 drawings.
+    // Reused return value for _poseForVelocity — called per goose per frame,
+    // and every caller consumes it immediately.
+    this._poseScratch = [0, 0];
+
     this._texFly = [];
     for (let v = 0; v < VIEW_COUNT; v++) {
       const frames = [];
@@ -777,7 +794,7 @@ export class GeeseManager {
           ? 1 + (Math.floor(t * STRIDE_HZ + item.phase) % STRIDE_FRAMES)
           : 0;
         const tex = this._texIdle[pf][sf];
-        if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
+        if (slot.mat.map !== tex) _setMap(slot.mat, tex);
       } else {
         // A struck goose's position belongs to the debris sim; its view and
         // mirror stay as the last airborne frame chose them, because the
@@ -791,7 +808,7 @@ export class GeeseManager {
         item.flip = flip;
         const f = Math.floor(item.age * FLAP_HZ + item.flapOffset) % FLAP_FRAMES;
         const tex = this._texFly[view][f];
-        if (slot.mat.map !== tex) { slot.mat.map = tex; slot.mat.needsUpdate = true; }
+        if (slot.mat.map !== tex) _setMap(slot.mat, tex);
         slot.mesh.scale.x = flip;
       }
       if (this.camera) slot.mesh.quaternion.copy(this.camera.quaternion);
@@ -965,12 +982,14 @@ export class GeeseManager {
    * chase camera swings, so a goose crossing the view should rotate through
    * the views as it goes.
    *
-   * @returns {[number, number]} [view, flip]
+   * @returns {[number, number]} [view, flip] — a shared scratch array,
+   *   overwritten on the next call; read/destructure it immediately.
    */
   _poseForVelocity(camera, item) {
     const vx = item.vx, vz = item.vz;
     const sp = Math.hypot(vx, vz);
-    if (!camera || sp < 0.05) return [item.view, item.flip];
+    const out = this._poseScratch;
+    if (!camera || sp < 0.05) { out[0] = item.view; out[1] = item.flip; return out; }
     const dx = vx / sp, dz = vz / sp;
     const e = camera.matrixWorld.elements;
     // three.js cameras look down -Z, so forward is the negated third column.
@@ -982,7 +1001,8 @@ export class GeeseManager {
     // Hold the previous mirror through the edge-on crossing, or it flickers
     // as the sign passes through zero.
     const flip = Math.abs(side) < 0.10 ? item.flip : (side > 0 ? 1 : -1);
-    return [view, flip];
+    out[0] = view; out[1] = flip;
+    return out;
   }
 
   _flipForHeading(camera, item) {

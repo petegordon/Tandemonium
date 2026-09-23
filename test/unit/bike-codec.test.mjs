@@ -48,3 +48,36 @@ test('the extremes of the sync range survive the byte', () => {
   assert.equal(codec.decodeState(codec.encodeState(bike, 1, 0).slice()).syncScore, 0);
   assert.equal(codec.decodeState(codec.encodeState(bike, 1, 1).slice()).syncScore, 1);
 });
+
+// #390 · the send time rides after the sync byte so the stoker can run a
+// jitter buffer on the captain's clock and order packets off the unordered
+// fast channel.
+test('state carries the send time after the sync byte', () => {
+  const codec = new BikeCodec();
+  const bytes = codec.encodeState(bike, 12.5, 0.5);
+  assert.equal(bytes.byteLength, 52);
+  const out = codec.decodeState(bytes.slice());
+  const now = Math.floor(performance.now());
+  assert.ok(Math.abs(out.sendTime - now) < 1000, `sendTime ${out.sendTime} vs ${now}`);
+  assert.ok(Math.abs(out.syncScore - 0.5) < 0.01);
+});
+
+test('a legacy 48-byte packet decodes its sync but has no send time', () => {
+  const codec = new BikeCodec();
+  const out = codec.decodeState(codec.encodeState(bike, 5, 0.25).slice(0, 48));
+  assert.ok(Math.abs(out.syncScore - 0.25) < 0.01);
+  assert.equal(out.sendTime, undefined);
+});
+
+test('lean carries a send time; a legacy 5-byte lean has none', () => {
+  const codec = new BikeCodec();
+  const bytes = codec.encodeLean(0.3).slice();
+  assert.equal(bytes.byteLength, 9);
+  assert.ok(Math.abs(codec.decodeLean(bytes) - 0.3) < 1e-6);
+  assert.equal(typeof codec.decodeLeanTime(bytes), 'number');
+  assert.equal(codec.decodeLeanTime(bytes.slice(0, 5)), undefined);
+  let got = null;
+  assert.equal(codec.dispatch(bytes.slice(0, 5), { onLean: (v, t) => { got = [v, t]; } }), true);
+  assert.ok(Math.abs(got[0] - 0.3) < 1e-6);
+  assert.equal(got[1], undefined);
+});

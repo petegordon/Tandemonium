@@ -96,6 +96,22 @@ export class HUD {
     this._prevDistText = '';
     this._prevStatusText = '';
     this._prevStatusColor = '';
+    // More write-on-change caches for the per-frame paths below: iPhone
+    // Safari pays a style recalc for every DOM write, even same-value ones,
+    // and the front-view PiP then forces layout on top of it (#390).
+    this._resetFrameCaches();
+  }
+
+  /** Forget last-written values so the next update() rewrites everything.
+   *  Called from the init paths that write these elements directly. */
+  _resetFrameCaches() {
+    this._prevProgressPct = -1;
+    this._prevPassedCount = -1;
+    this._prevTimerText = null;
+    this._prevTimerClass = null;
+    this._prevElapsedText = null;
+    this._prevTouchLClass = null;
+    this._prevTouchRClass = null;
   }
 
   initProgress(level) {
@@ -116,6 +132,8 @@ export class HUD {
       this.progressWrap.appendChild(marker);
       this._checkpointEls.push(marker);
     }
+    this._prevProgressPct = -1;
+    this._prevPassedCount = -1;
   }
 
   /**
@@ -453,16 +471,25 @@ export class HUD {
   }
 
   updateProgress(distanceTraveled, raceDistance, passedCheckpoints) {
-    const pct = Math.min(100, (distanceTraveled / raceDistance) * 100);
-    this.progressFill.style.width = pct + '%';
-    this.progressBike.style.left = pct + '%';
+    // Quantized to 0.1% (well under a pixel) so the bar isn't rewritten
+    // every frame while riding.
+    const pct = Math.round(Math.min(100, (distanceTraveled / raceDistance) * 100) * 10) / 10;
+    if (pct !== this._prevProgressPct) {
+      this._prevProgressPct = pct;
+      this.progressFill.style.width = pct + '%';
+      this.progressBike.style.left = pct + '%';
+    }
 
-    // Mark passed checkpoints
-    this._checkpointEls.forEach(el => {
-      if (passedCheckpoints && passedCheckpoints.has(Number(el.dataset.distance))) {
-        el.classList.add('passed');
-      }
-    });
+    // Mark passed checkpoints — only rescan when the passed set changes.
+    const passedCount = passedCheckpoints ? passedCheckpoints.size : 0;
+    if (passedCount !== this._prevPassedCount) {
+      this._prevPassedCount = passedCount;
+      this._checkpointEls.forEach(el => {
+        if (passedCheckpoints && passedCheckpoints.has(Number(el.dataset.distance))) {
+          el.classList.add('passed');
+        }
+      });
+    }
   }
 
   hideProgress() {
@@ -475,6 +502,9 @@ export class HUD {
     this.timerEl.className = '';
     this.timerEl.textContent = '';
     this.elapsedEl.textContent = '\u23F1 0s';
+    this._prevTimerText = '';
+    this._prevTimerClass = '';
+    this._prevElapsedText = '\u23F1 0s';
   }
 
   updateTimer(remaining, total, held = false) {
@@ -491,15 +521,19 @@ export class HUD {
     }
     this._prevTimerText = null;
     const secs = Math.max(0, Math.ceil(remaining));
-    this.timerEl.textContent = '\u23F1 ' + secs + 's';
-    if (remaining <= 5) {
-      this.timerEl.className = 'danger';
-    } else if (remaining <= 10) {
-      this.timerEl.className = 'warning';
-    } else if (remaining <= 15) {
-      this.timerEl.className = 'normal';
-    } else {
-      this.timerEl.className = '';
+    const timerText = '\u23F1 ' + secs + 's';
+    if (timerText !== this._prevTimerText) {
+      this._prevTimerText = timerText;
+      this.timerEl.textContent = timerText;
+    }
+    const timerClass = remaining <= 5 ? 'danger'
+      : remaining <= 10 ? 'warning'
+      : remaining <= 15 ? 'normal'
+      : '';
+    // Rewriting className every frame would also restart the danger pulse.
+    if (timerClass !== this._prevTimerClass) {
+      this._prevTimerClass = timerClass;
+      this.timerEl.className = timerClass;
     }
 
     // Center countdown overlay for final 3 seconds
@@ -527,6 +561,7 @@ export class HUD {
     this.countdownNumber.textContent = '';
     this._lastCountdownSec = -1;
     this.elapsedEl.textContent = '';
+    this._prevElapsedText = '';
   }
 
   showCollectibles(level, total) {
@@ -600,7 +635,11 @@ export class HUD {
 
     // Total elapsed time
     if (this.raceManager && this.raceManager.startTime > 0) {
-      this.elapsedEl.textContent = '\u23F1 ' + this.raceManager.getElapsedFormatted();
+      const elapsedText = '\u23F1 ' + this.raceManager.getElapsedFormatted();
+      if (elapsedText !== this._prevElapsedText) {
+        this._prevElapsedText = elapsedText;
+        this.elapsedEl.textContent = elapsedText;
+      }
     }
 
     const leftHeld = input.isPressed('ArrowLeft');
@@ -622,13 +661,12 @@ export class HUD {
         if (rightHeld) rClass += (pedalCtrl.wasWrong ? ' wrong' : ' pressed');
       }
 
-      this.touchLeftEl.className = lClass;
-      this.touchRightEl.className = rClass;
-
       // Idle pulse when stopped and buttons are neutral
       const isIdle = bike.speed < 0.3 && !leftHeld && !rightHeld;
-      this.touchLeftEl.classList.toggle('idle-pulse', isIdle);
-      this.touchRightEl.classList.toggle('idle-pulse', isIdle);
+      if (isIdle) {
+        lClass += ' idle-pulse';
+        rClass += ' idle-pulse';
+      }
 
       // Stoker self-flash: instant visual confirmation of own pedal taps.
       // SharedPedalController.wasCorrect/wasWrong fire on ANY tap (captain OR
@@ -648,13 +686,21 @@ export class HUD {
       }
       if (this._ownFlashTimer > 0) {
         this._ownFlashTimer -= dt;
-        const cls = this._ownFlashWrong ? 'tap-flash-wrong' : 'tap-flash';
-        const el = this._ownFlashFoot === 'left' ? this.touchLeftEl : this.touchRightEl;
-        if (el) el.classList.add(cls);
-        if (this._ownFlashTimer <= 0) {
-          this.touchLeftEl.classList.remove('tap-flash', 'tap-flash-wrong');
-          this.touchRightEl.classList.remove('tap-flash', 'tap-flash-wrong');
+        if (this._ownFlashTimer > 0) {
+          const cls = this._ownFlashWrong ? ' tap-flash-wrong' : ' tap-flash';
+          if (this._ownFlashFoot === 'left') lClass += cls;
+          else rClass += cls;
         }
+      }
+
+      // Full class string built above; write only when it changes (#390).
+      if (lClass !== this._prevTouchLClass) {
+        this._prevTouchLClass = lClass;
+        this.touchLeftEl.className = lClass;
+      }
+      if (rClass !== this._prevTouchRClass) {
+        this._prevTouchRClass = rClass;
+        this.touchRightEl.className = rClass;
       }
     }
 
@@ -680,8 +726,10 @@ export class HUD {
 
     // Partner pedal indicators
     if (remoteData) {
-      if (this.partnerPedalUp) this.partnerPedalUp.style.display = 'flex';
-      if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'flex';
+      // Compared against the inline value (a plain string read, no layout)
+      // rather than a cache, because game.js also sets these directly.
+      if (this.partnerPedalUp && this.partnerPedalUp.style.display !== 'flex') this.partnerPedalUp.style.display = 'flex';
+      if (this.partnerPedalDown && this.partnerPedalDown.style.display !== 'flex') this.partnerPedalDown.style.display = 'flex';
 
       // Pedal flash: detect new taps, red for wrong (same foot repeated)
       if (remoteData.remoteLastTapTime && remoteData.remoteLastTapTime !== this._lastRemoteTapTime) {
@@ -703,8 +751,8 @@ export class HUD {
         }
       }
     } else {
-      if (this.partnerPedalUp) this.partnerPedalUp.style.display = 'none';
-      if (this.partnerPedalDown) this.partnerPedalDown.style.display = 'none';
+      if (this.partnerPedalUp && this.partnerPedalUp.style.display !== 'none') this.partnerPedalUp.style.display = 'none';
+      if (this.partnerPedalDown && this.partnerPedalDown.style.display !== 'none') this.partnerPedalDown.style.display = 'none';
     }
 
     // Crash vignette (B-2). Fades over ~1 s, which is the whole length of the

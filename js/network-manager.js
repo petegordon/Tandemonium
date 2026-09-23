@@ -34,11 +34,24 @@ export class NetworkManager extends RoomTransport {
       onState:   (s) => { if (this.onStateReceived) this.onStateReceived(s); },
       onPedal:   (foot) => { if (this.onPedalReceived) this.onPedalReceived(this.role === 'captain' ? 'stoker' : 'captain', foot); },
       onEvent:   (b) => { if (this.onEventReceived) this.onEventReceived(b); },
-      onLean:    (v) => { if (this.onLeanReceived) this.onLeanReceived(v); },
+      onLean:    (v, t) => {
+        // LEAN rides the unordered fast channel: ignore one older than the
+        // last we applied (t is undefined from pre-sendTime builds).
+        if (t !== undefined) {
+          if (this._lastLeanTime !== null) {
+            const diff = (t - this._lastLeanTime) | 0;
+            if (diff <= 0 && diff > -5000) return;
+          }
+          this._lastLeanTime = t;
+        }
+        if (this.onLeanReceived) this.onLeanReceived(v);
+      },
       onProfile: (p) => { if (this.onProfileReceived) this.onProfileReceived(p); },
     };
     // Wire the transport's opaque inbound frames into the game protocol.
     this.onMessage = (bytes) => this._codec.dispatch(bytes, this._msgHandlers);
+
+    this._lastLeanTime = null; // send time (ms, u32) of the last applied LEAN
 
     // Pending retries for sendEventReliable (eventByte → setTimeout id list).
     this._reliableEventTimers = [];
@@ -48,12 +61,14 @@ export class NetworkManager extends RoomTransport {
     this._send(this._codec.encodePedal(foot));
   }
 
+  // STATE and LEAN are latest-wins streams (30Hz) — send them on the
+  // transport's unordered fast lane when available (issue #390).
   sendLean(leanValue) {
-    this._send(this._codec.encodeLean(leanValue));
+    this._sendFast(this._codec.encodeLean(leanValue));
   }
 
   sendState(bike, timerRemaining, syncScore = -1) {
-    this._send(this._codec.encodeState(bike, timerRemaining, syncScore));
+    this._sendFast(this._codec.encodeState(bike, timerRemaining, syncScore));
   }
 
   sendEvent(eventType) {
