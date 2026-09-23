@@ -71,6 +71,10 @@ export class ObstacleManager {
     this.placementSalt = placementSalt || 0;
     this._pool = [];
     this._items = []; // { absoluteD, roadD, lateralOffset, poolIdx }
+    // Pylons knocked out of the pool by the debris sim. Kept so a restart can
+    // stand them back up — a checkpoint retry must face the same road, not an
+    // easier one with the hazards you already hit missing. See restoreKnocked.
+    this._knocked = [];
     this._loopLen = roadPath.loopLength;
 
     // Create shared video element for the pylon animation
@@ -309,6 +313,15 @@ export class ObstacleManager {
     }
   }
 
+  /**
+   * The pylon the bike is currently inside, if any.
+   *
+   * Returns the ITEM rather than a bare true so the caller can knock it over
+   * (see knockOut). Every existing call site uses this in a boolean test, and
+   * an item object is truthy, so that behaviour is unchanged.
+   *
+   * @returns {object|null} the struck item, or null
+   */
   checkCollision(bikePosition) {
     for (const item of this._items) {
       if (item._hidden) continue;
@@ -316,10 +329,33 @@ export class ObstacleManager {
       const dx = bikePosition.x - item._worldX;
       const dz = bikePosition.z - item._worldZ;
       if (dx * dx + dz * dz < HIT_RADIUS * HIT_RADIUS) {
-        return true;
+        return item;
       }
     }
-    return false;
+    return null;
+  }
+
+  /**
+   * Retire a struck pylon and hand back its billboard for the debris sim.
+   *
+   * The pool slot is released immediately — the returned mesh is the POOLED
+   * one, so the caller must clone it rather than hand it to the simulation
+   * directly, or the next pylon down the road will yank it back mid-flight.
+   *
+   * @returns {THREE.Mesh|null} the pooled billboard to copy, or null if the
+   *   item wasn't being rendered (too far away to have a slot)
+   */
+  knockOut(item) {
+    if (!item || item._hidden) return null;
+    item._hidden = true;
+    this._knocked.push(item);
+    if (item.poolIdx < 0) return null;
+    const slot = this._pool[item.poolIdx];
+    slot.mesh.visible = false;
+    slot.shadow.visible = false;
+    slot.itemIdx = -1;
+    item.poolIdx = -1;
+    return slot.mesh;
   }
 
   /**
@@ -376,6 +412,21 @@ export class ObstacleManager {
       delete item._bikeLateralAtPass;
       delete item._passEvaluated;
     }
+  }
+
+  /**
+   * Stand every knocked-over pylon back up.
+   *
+   * Called on a restart or checkpoint retry. Without it a knocked pylon is gone
+   * for the rest of the ride: the retry is quietly easier than the attempt that
+   * killed you, and the road you already rode is missing a cone.
+   *
+   * The caller must also drop the debris (PhysicsFx.clear) in the same breath,
+   * or the restored pylon stands up next to its own wreckage.
+   */
+  restoreKnocked() {
+    for (const item of this._knocked) item._hidden = false;
+    this._knocked.length = 0;
   }
 
   /** Hide obstacles in a distance range (for skipping completed tutorial phases). */
