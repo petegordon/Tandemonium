@@ -481,9 +481,17 @@ async function handlePair(request, env, corsOrigin, userId) {
   if (!other) return jsonResponse({ error: 'Missing ?with' }, 400, corsOrigin);
 
   const [lo, hi] = pairKey(userId, other);
-  const row = await env.DB.prepare(
-    'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
-  ).bind(lo, hi).first();
+  let row;
+  try {
+    row = await env.DB.prepare(
+      'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
+    ).bind(lo, hi).first();
+  } catch (e) {
+    // Migration 0009 (pairs) is applied by hand after the worker deploys;
+    // until then there is simply no history to show.
+    if (!/no such table: pairs/.test(String(e && e.message))) throw e;
+    row = null;
+  }
 
   if (!row) {
     return jsonResponse({ pair: null, rides: 0, distance: 0, best: {}, daily_streak: 0 }, 200, corsOrigin);
@@ -1031,12 +1039,7 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
     return jsonResponse({ error: 'Invalid session id' }, 400, corsOrigin);
   }
 
-  await env.DB.prepare(
-    `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
-     is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address,
-     device_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
+  const baseValues = [
     body.id,
     body.started_at || new Date().toISOString(),
     body.device_type || null,
@@ -1051,9 +1054,28 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
     body.screen_width || null,
     body.screen_height || null,
     clientIP || null,
-    // A-9: anonymous per-browser id. Old clients don't send it; that is fine.
-    typeof body.device_id === 'string' && body.device_id.length <= 64 ? body.device_id : null
-  ).run();
+  ];
+  // A-9: anonymous per-browser id. Old clients don't send it; that is fine.
+  const deviceId = typeof body.device_id === 'string' && body.device_id.length <= 64 ? body.device_id : null;
+
+  try {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
+       is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address,
+       device_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(...baseValues, deviceId).run();
+  } catch (e) {
+    // Worker deploys on push; migration 0008 is applied by hand. Until it is,
+    // the column doesn't exist — record the session without it rather than
+    // losing every session (the pre-A-9 behaviour).
+    if (!/device_id/.test(String(e && e.message))) throw e;
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
+       is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(...baseValues).run();
+  }
 
   writeMetric(env, 'analytics_session');
   return jsonResponse({ success: true }, 200, corsOrigin);
@@ -1332,7 +1354,17 @@ async function handleDashboard(route, url, env, corsOrigin) {
     dda: () => dashDDA(env, since, ex),
     overview: () => dashOverview(env, since, ex),
     // C-1 · the three questions the pipeline was never asked.
-    retention: () => dashRetention(env, since, ex),
+    retention: () => dashRetention(env, since, ex).catch(e => {
+      // Needs migration 0008 (sessions.device_id). Until it's applied, answer
+      // with an empty cohort list instead of a 500 — the dashboard loads its
+      // panels with Promise.all, so one failing panel blanks the whole page.
+      if (!/device_id/.test(String(e && e.message))) throw e;
+      return {
+        cohorts: [],
+        overall: { d1: null, d7: null },
+        coverage: { sessions: 0, with_device_id: 0, note: 'Retention needs migration 0008 (sessions.device_id) — not applied yet.' }
+      };
+    }),
     dropoff: () => dashDropoff(env, since, ex),
     pairs: () => dashPairs(env, since, ex),
   };
