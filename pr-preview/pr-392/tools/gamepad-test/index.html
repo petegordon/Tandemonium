@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Gamepad API Test (isolated)</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px;
+    font-family: -apple-system, Segoe UI, sans-serif;
+    background: #111; color: #eee;
+    font-size: 14px;
+  }
+  h1 { margin: 0 0 6px; font-size: 20px; }
+  .sub { color: #888; margin-bottom: 16px; }
+  .focus-banner {
+    padding: 14px 18px;
+    font-size: 18px;
+    font-weight: 600;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .ok      { background: #1d3a1d; color: #6cd97e; }
+  .bad     { background: #3a1d1d; color: #ff7e6c; }
+  .neutral { background: #2a2a2a; color: #ddd; }
+  .checks {
+    background: #1a1a1a;
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+  }
+  .checks li { margin: 4px 0; list-style: none; }
+  .check-ok  { color: #6cd97e; }
+  .check-bad { color: #ff7e6c; }
+  button {
+    background: #355; color: #fff;
+    border: 1px solid #466;
+    padding: 10px 18px; border-radius: 4px;
+    font-size: 14px; cursor: pointer;
+    margin-right: 8px;
+  }
+  button:hover { background: #466; }
+  .pad-row {
+    background: #1a1a1a;
+    border-left: 4px solid #6cd97e;
+    padding: 10px 14px;
+    margin: 8px 0;
+    border-radius: 0 4px 4px 0;
+  }
+  .pad-empty { color: #777; font-style: italic; padding: 10px 0; }
+  code {
+    font-family: ui-monospace, Consolas, monospace;
+    background: #000; padding: 1px 5px; border-radius: 2px;
+    color: #cda;
+  }
+  .axes, .buttons {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+    margin: 4px 0;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 11px;
+  }
+  .ax, .btn {
+    background: #0a0a0a;
+    padding: 4px 6px;
+    border-radius: 2px;
+    text-align: center;
+    border: 1px solid #222;
+  }
+  .btn.pressed { background: #6cd97e; color: #000; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Gamepad API Test (isolated)</h1>
+<div class="sub">No Steamworks. No HID. Just <code>navigator.getGamepads()</code> polled at 60 Hz.</div>
+
+<div id="focus-banner" class="focus-banner neutral">Window focus: checking...</div>
+
+<div class="checks">
+  <div style="margin-bottom:6px;font-weight:600;">Chromium Gamepad API needs all three before it returns pad data:</div>
+  <ul style="margin:0;padding:0;">
+    <li id="chk-gesture"  class="check-bad">○ Click anywhere in this window to satisfy the user-gesture requirement.</li>
+    <li id="chk-focus"    class="check-bad">○ Keep this window focused while pressing the controller.</li>
+    <li id="chk-input"    class="check-bad">○ Press any button on the controller — first input event wakes the API.</li>
+  </ul>
+</div>
+
+<button id="gesture-btn">Click me (satisfies user gesture)</button>
+<span id="gesture-status" style="color:#888;"></span>
+
+<h2 style="margin-top:24px;font-size:16px;">navigator.getGamepads() — live</h2>
+<div id="pads"><div class="pad-empty">Waiting for pad input...</div></div>
+
+<h2 style="margin-top:24px;font-size:16px;">Events log</h2>
+<pre id="events" style="background:#0a0a0a;padding:10px;border-radius:4px;max-height:160px;overflow-y:auto;font-size:11px;color:#cda;">(none yet)</pre>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let gestureSeen = false;
+  let eventLog = [];
+  function logEvent(msg) {
+    eventLog.unshift(`[${new Date().toISOString().slice(11,23)}] ${msg}`);
+    eventLog = eventLog.slice(0, 30);
+    $('events').textContent = eventLog.join('\n') || '(none yet)';
+  }
+
+  window.addEventListener('click', () => {
+    if (!gestureSeen) { gestureSeen = true; logEvent('user gesture: click captured'); }
+  }, { capture: true });
+  window.addEventListener('keydown', () => {
+    if (!gestureSeen) { gestureSeen = true; logEvent('user gesture: keydown captured'); }
+  }, { capture: true });
+  $('gesture-btn').addEventListener('click', () => {
+    $('gesture-status').textContent = 'gesture captured ✓';
+    setTimeout(() => $('gesture-status').textContent = '', 1500);
+  });
+
+  window.addEventListener('gamepadconnected', e => {
+    logEvent(`gamepadconnected: index=${e.gamepad.index} id="${e.gamepad.id}" mapping="${e.gamepad.mapping}"`);
+  });
+  window.addEventListener('gamepaddisconnected', e => {
+    logEvent(`gamepaddisconnected: index=${e.gamepad.index} id="${e.gamepad.id}"`);
+  });
+  window.addEventListener('focus', () => logEvent('window focus gained'));
+  window.addEventListener('blur',  () => logEvent('window focus lost'));
+
+  let sawAnyInput = false;
+  function tick() {
+    const focused = document.hasFocus();
+    const banner = $('focus-banner');
+    banner.textContent = `Window focus: ${focused ? '✓ FOCUSED' : '✗ NOT FOCUSED (Chromium will ignore pad input)'}`;
+    banner.className = 'focus-banner ' + (focused ? 'ok' : 'bad');
+
+    $('chk-gesture').className = gestureSeen ? 'check-ok' : 'check-bad';
+    $('chk-gesture').textContent = (gestureSeen ? '✓' : '○') + ' Click anywhere in this window to satisfy the user-gesture requirement.';
+    $('chk-focus').className = focused ? 'check-ok' : 'check-bad';
+    $('chk-focus').textContent = (focused ? '✓' : '○') + ' Keep this window focused while pressing the controller.';
+    $('chk-input').className = sawAnyInput ? 'check-ok' : 'check-bad';
+    $('chk-input').textContent = (sawAnyInput ? '✓' : '○') + ' Press any button on the controller — first input event wakes the API.';
+
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const rows = [];
+    for (let i = 0; i < pads.length; i++) {
+      const p = pads[i];
+      if (!p) continue;
+      sawAnyInput = true;
+      const axes = p.axes.map((a, ai) => `<div class="ax">a${ai}<br>${a.toFixed(2)}</div>`).join('');
+      const buttons = p.buttons.map((b, bi) => `<div class="btn ${b.pressed ? 'pressed' : ''}">b${bi}<br>${b.value.toFixed(2)}</div>`).join('');
+      rows.push(`
+        <div class="pad-row">
+          <div><b>index ${p.index}</b> &middot; <code>${p.id}</code></div>
+          <div>mapping <code>${p.mapping || '(none)'}</code> &middot; connected <code>${p.connected}</code> &middot; timestamp <code>${p.timestamp.toFixed(0)}</code></div>
+          <div style="margin-top:6px;">Axes (${p.axes.length}):</div>
+          <div class="axes">${axes}</div>
+          <div style="margin-top:6px;">Buttons (${p.buttons.length}):</div>
+          <div class="buttons">${buttons}</div>
+        </div>
+      `);
+    }
+    $('pads').innerHTML = rows.length
+      ? rows.join('')
+      : '<div class="pad-empty">No pads visible yet. If all three checks above are green and this is still empty, the OS-level driver layer isn\'t exposing the pad to Chromium.</div>';
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+</script>
+</body>
+</html>
