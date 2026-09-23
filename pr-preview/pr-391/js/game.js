@@ -2460,6 +2460,9 @@ class Game {
     if (this.bike) this.bike._roughness = 0;
     if (this.geeseManager) this.geeseManager.clear();
     this._stokerWasFallen = false;
+    // Don't replay the captain's pre-reset (crashed) snapshots after the
+    // countdown — see RemoteBikeState.flush().
+    if (this.remoteBikeState) this.remoteBikeState.flush();
     this._remoteFinishStats = null;
 
     // Clear TOO SLOW overlay if stuck

@@ -109,3 +109,16 @@ test('pushState reports whether the packet was kept', () => {
   assert.equal(rbs.pushState(snap(133)), true);
   assert.equal(rbs.pushState(snap(116)), false);
 });
+
+test('flush drops pre-reset snapshots but still rejects late pre-reset packets', () => {
+  clock = 1000;
+  const rbs = new RemoteBikeState();
+  const fallen = (t) => Object.assign(snap(t), { flags: 1 });
+  rbs.pushState(fallen(100));
+  rbs.pushState(fallen(133));
+  rbs.flush();
+  assert.equal(rbs.getInterpolated(), null, 'nothing to replay after a reset');
+  assert.equal(rbs.pushState(fallen(120)), false, 'a late pre-reset packet stays stale');
+  assert.equal(rbs.pushState(snap(2000)), true);
+  assert.equal(rbs.getInterpolated().flags & 1, 0, 'first frame back is upright');
+});
