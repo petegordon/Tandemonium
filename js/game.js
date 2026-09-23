@@ -117,7 +117,7 @@ class Game {
       this._lowQuality = false;
     }
 
-    // "Show Riders" (Options, default off) gates the whole riders experience:
+    // "Show Riders" (Options; default on for desktop, off on phones) gates the whole riders experience:
     // the goose model + front selfie-cam AND the richer lighting/tone-mapping
     // tuned for them. Off = the base game exactly as before. Read at boot;
     // toggling in Options re-applies everything live (_applyShowRiders).
@@ -4294,10 +4294,14 @@ class Game {
     this.grassParticles.update(this.bike, dt);
     this._hapticOffRoadCheck();
 
-    // Send state + lean to stoker at 20Hz
+    // Send state + lean to stoker at 30Hz. Carry the remainder rather than
+    // zeroing it, so the stoker gets an even cadence instead of an irregular
+    // every-2-or-3-frames one (its interpolation turns that into hitching);
+    // drop any backlog after a stall instead of bursting to catch up.
     this._stateSendTimer += dt;
     if (this._stateSendTimer >= this._stateSendInterval && this.net && this.net.connected) {
-      this._stateSendTimer = 0;
+      this._stateSendTimer -= this._stateSendInterval;
+      if (this._stateSendTimer >= this._stateSendInterval) this._stateSendTimer = 0;
       const timerRemaining = this.raceManager ? this.raceManager.segmentTimeRemaining : -1;
       this.net.sendState(this.bike, timerRemaining);
       this.net.sendLean(captainLean);
@@ -4980,10 +4984,11 @@ class Game {
     this.grassParticles.update(this.bike, dt);
     this._hapticOffRoadCheck();
 
-    // Send lean to captain at 20Hz
+    // Send lean to captain at 30Hz (even cadence — see the captain's state send)
     this._leanSendTimer += dt;
     if (this._leanSendTimer >= this._leanSendInterval && this.net && this.net.connected) {
-      this._leanSendTimer = 0;
+      this._leanSendTimer -= this._leanSendInterval;
+      if (this._leanSendTimer >= this._leanSendInterval) this._leanSendTimer = 0;
       const balanceResult = this.balanceCtrl.update();
       this.net.sendLean(balanceResult.leanInput);
     }

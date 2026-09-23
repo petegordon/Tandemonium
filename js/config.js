@@ -22,13 +22,18 @@ export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
 /**
  * "Show Riders" setting — when on, the in-game bike is the Canadian-goose
  * riders model (with torso lean + the front-facing selfie cam); when off, the
- * plain frame. ON by default (opt-out): only an explicit 'off' disables it, so
- * a fresh install shows the geese riders. Read at boot (see Game constructor);
- * the Options dialog persists it and it applies on next launch.
+ * plain frame. With no saved choice it's ON for desktop and OFF on phones:
+ * the ~500K-triangle skinned riders, the selfie cam's second full scene render
+ * and the PBR lighting made phone rides lag badly (issue #390). An explicit
+ * 'on' / 'off' from Options always wins. Read at boot (see Game constructor).
  */
 export function getShowRiders() {
-  try { return localStorage.getItem('tandemonium_show_riders') !== 'off'; }
-  catch (e) { return true; }
+  try {
+    const pref = localStorage.getItem('tandemonium_show_riders');
+    if (pref === 'on') return true;
+    if (pref === 'off') return false;
+  } catch (e) {}
+  return !isMobile;
 }
 
 /**
