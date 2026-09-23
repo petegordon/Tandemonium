@@ -4315,6 +4315,33 @@
       outline-offset: calc(3 * var(--ls));
     }
   }
+
+  /* ── Touch devices: no backdrop blur over the live canvas (#390) ──
+     Every blurred panel sitting on the WebGL canvas makes iOS Safari re-run
+     the blur each frame the scene redraws, which is every frame mid-ride.
+     Drop the blur on phones/tablets and nudge the tint darker so the panels
+     still read against a bright sky. Desktop keeps the frosted look. State
+     variants (.pressed, :active, …) are more specific and still win. */
+  @media (hover: none) and (pointer: coarse) {
+    #hud-dashboard,
+    #quick-menu-btn,
+    #quick-menu-overlay,
+    .pedal-touch,
+    #share-btn,
+    #music-btn,
+    .achievement-toast,
+    .info-toast {
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    #hud-dashboard { background: rgba(0,0,0,0.58); }
+    #quick-menu-btn { background: rgba(0,0,0,0.58); }
+    #quick-menu-overlay { background: rgba(0,0,0,0.75); }
+    .pedal-touch {
+      background: linear-gradient(to bottom, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.14) 100%);
+    }
+    #share-btn, #music-btn { background: rgba(0,0,0,0.55); }
+  }
 </style>
 </head>
 <body>
