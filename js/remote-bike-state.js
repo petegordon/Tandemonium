@@ -66,6 +66,19 @@ export class RemoteBikeState {
     this._delay = INITIAL_DELAY;
   }
 
+  /**
+   * Drop buffered snapshots on a ride reset, keeping the sender-clock
+   * high-water mark and clock estimates. The captain sends nothing during the
+   * countdown, so without this the stoker's first frame back in play would
+   * replay the pre-reset crash (fallen) snapshots — which trips the stoker's
+   * "fallen → upright" game-over backup and strands it on game over while the
+   * captain rides on. Keeping _lastSenderMs means a late pre-reset packet
+   * (possible on the unordered fast channel) is still rejected as stale.
+   */
+  flush() {
+    this._buf.length = 0;
+  }
+
   /** Buffer a received STATE. Returns false if it was stale/duplicate and dropped. */
   pushState(state) {
     const now = performance.now() / 1000;
