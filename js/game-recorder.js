@@ -10,6 +10,9 @@ import { FocusController } from './nav/focus-controller.js';
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+// iOS clip resolution cap (long side, px) for the composite + H.264 encode.
+const WC_MAX_LONG_SIDE = 1280;
+
 // Detect low-end devices by benchmarking the exact operation that's expensive:
 // drawing a busy WebGL canvas into a 2D canvas (forces GPU pipeline flush +
 // GPU→CPU readback).  A trivial gl.clear() doesn't stress the pipeline — we
@@ -419,13 +422,15 @@ export class GameRecorder {
     }
   }
 
+  _wcFrameDue() {
+    return performance.now() - this._wcLastFrameTime >= 1000 / this._wcTargetFps;
+  }
+
   _feedWebCodecsFrame() {
     if (!this._wcEncoder || this._wcEncoder.state !== 'configured') return;
 
-    const now = performance.now();
-    const interval = 1000 / this._wcTargetFps;
-    if (now - this._wcLastFrameTime < interval) return;
-    this._wcLastFrameTime = now;
+    if (!this._wcFrameDue()) return;
+    this._wcLastFrameTime = performance.now();
 
     try {
       const timestamp = this._wcFrameIndex * (1_000_000 / this._wcTargetFps); // microseconds
@@ -491,8 +496,16 @@ export class GameRecorder {
   _syncCanvasSize() {
     let w = this.gameCanvas.width;
     let h = this.gameCanvas.height;
-    // H.264 requires even dimensions — round down if needed
-    if (this._useWebCodecs) { w &= ~1; h &= ~1; }
+    if (this._useWebCodecs) {
+      // iOS: composite + encode at no more than 1280px on the long side. A
+      // full-res phone canvas (~840x1824 at DPR 2) made the per-frame copy and
+      // the H.264 encode a large share of the frame budget (issue #390).
+      const scale = Math.min(1, WC_MAX_LONG_SIDE / Math.max(w, h));
+      w = Math.round(w * scale);
+      h = Math.round(h * scale);
+      // H.264 requires even dimensions — round down if needed
+      w &= ~1; h &= ~1;
+    }
     this.compCanvas.width = w;
     this.compCanvas.height = h;
   }
@@ -776,6 +789,10 @@ export class GameRecorder {
 
   composite(state) {
     if (!this.buffering) return;
+    // iOS (WebCodecs): the composite canvas is only read when a frame is fed
+    // to the encoder (20fps), so skip the full-canvas copy + HUD redraw on the
+    // frames in between instead of paying for it at the render rate.
+    if (this._useWebCodecs && !this._wcFrameDue()) return;
 
     const ctx = this.compCtx;
     const w = this.compCanvas.width;

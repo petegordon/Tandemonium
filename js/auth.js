@@ -297,6 +297,47 @@ export class AuthManager {
     return res.ok ? res.json() : null;
   }
 
+  /**
+   * D-8 · what these two riders have done together: rides, distance, best
+   * time per level, and their streak. `withId` is a user id, or a
+   * 'guest:<device_id>' key for a partner who has not signed in (D-9).
+   */
+  async fetchPair(withId) {
+    if (!this.token || !withId) return null;
+    const res = await fetch(`${API_BASE}/pair?with=${encodeURIComponent(withId)}`, {
+      headers: { 'Authorization': `Bearer ${this.token}` },
+    });
+    return res.ok ? res.json() : null;
+  }
+
+  /**
+   * D-6 · today's ranked results for this player and the people they have
+   * ridden with. The server never returns a stranger.
+   */
+  async fetchDailyBoard(dayKey) {
+    if (!this.token) return null;
+    const q = dayKey ? `?key=${encodeURIComponent(dayKey)}` : '';
+    const res = await fetch(`${API_BASE}/daily${q}`, {
+      headers: { 'Authorization': `Bearer ${this.token}` },
+    });
+    return res.ok ? res.json() : null;
+  }
+
+  /** D-6 · submit the day's ranked run. 409 means it is already used. */
+  async submitDaily(data) {
+    if (!this.token) return null;
+    const res = await fetch(`${API_BASE}/daily`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.token}`,
+      },
+      body: JSON.stringify(data),
+    });
+    if (res.status === 409) return { alreadyRidden: true };
+    return res.ok ? res.json() : null;
+  }
+
   async getPartners() {
     if (!this.token) return { partners: [] };
     const res = await fetch(`${API_BASE}/partners`, {

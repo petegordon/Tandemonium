@@ -10,6 +10,8 @@ const VISIBLE_AHEAD = 200;
 const VISIBLE_BEHIND = 60;
 
 // Seeded PRNG for deterministic placement
+import { itemSeed, SALT } from './daily-seed.js';
+
 function makeRng(seed) {
   let s = seed;
   return () => {
@@ -128,12 +130,13 @@ const THEMES = {
 };
 
 export class CollectibleManager {
-  constructor(scene, roadPath, level, camera, difficulty) {
+  constructor(scene, roadPath, level, camera, difficulty, placementSalt = 0) {
     this.scene = scene;
     this.roadPath = roadPath;
     this.level = level;
     this.camera = camera;
     this.difficulty = difficulty || 'chill';
+    this.placementSalt = placementSalt || 0;   // B-4, see ObstacleManager
     this.collected = 0;
     this._pool = [];
     this._items = []; // { roadD, lateralOffset, collected, poolIdx, absoluteD }
@@ -160,7 +163,9 @@ export class CollectibleManager {
 
   _placeItems() {
     if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
-    const rng = makeRng(this.level.id.charCodeAt(0) * 1000 + 7);
+    // B-4: see ObstacleManager._placeItems for the seeding rules.
+    const rng = makeRng(itemSeed(this.level, SALT.collectibles, this.placementSalt,
+      this.level.id.charCodeAt(0) * 1000 + 7));
     // Difficulty scales spacing: more presents on harder difficulties
     const diffSpacing = { chill: 25, adventurous: 20, daredevil: 15 };
     const baseSpacing = diffSpacing[this.difficulty] || 25;
