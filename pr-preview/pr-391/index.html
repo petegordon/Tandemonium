@@ -4315,6 +4315,33 @@
       outline-offset: calc(3 * var(--ls));
     }
   }
+
+  /* ── Touch devices: no backdrop blur over the live canvas (#390) ──
+     Every blurred panel sitting on the WebGL canvas makes iOS Safari re-run
+     the blur each frame the scene redraws, which is every frame mid-ride.
+     Drop the blur on phones/tablets and nudge the tint darker so the panels
+     still read against a bright sky. Desktop keeps the frosted look. State
+     variants (.pressed, :active, …) are more specific and still win. */
+  @media (hover: none) and (pointer: coarse) {
+    #hud-dashboard,
+    #quick-menu-btn,
+    #quick-menu-overlay,
+    .pedal-touch,
+    #share-btn,
+    #music-btn,
+    .achievement-toast,
+    .info-toast {
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    #hud-dashboard { background: rgba(0,0,0,0.58); }
+    #quick-menu-btn { background: rgba(0,0,0,0.58); }
+    #quick-menu-overlay { background: rgba(0,0,0,0.75); }
+    .pedal-touch {
+      background: linear-gradient(to bottom, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.14) 100%);
+    }
+    #share-btn, #music-btn { background: rgba(0,0,0,0.55); }
+  }
 </style>
 </head>
 <body>
@@ -4941,7 +4968,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.de586b3 | 09-22-2026 20:20 (PR #391)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.db85314 | 09-22-2026 20:35 (PR #391)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

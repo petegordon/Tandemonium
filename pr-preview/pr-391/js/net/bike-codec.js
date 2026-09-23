@@ -9,11 +9,18 @@
 // (byte-for-byte identical to the previous inline encoder/decoder).
 //
 // Message layout (little-endian), keyed by a 1-byte type tag (MSG_*):
-//   STATE  (46B): [type][x f32][y f32][z f32][heading f32][lean f32]
+//   STATE  (50B): [type][x f32][y f32][z f32][heading f32][lean f32]
 //                 [leanVelocity f32][speed f32][crankAngle f32]
 //                 [distanceTraveled f32][roadD f32][flags u8][timer f32]
-//                 — legacy 42B messages omit the trailing timer field.
-//   LEAN   (5B):  [type][lean f32]
+//                 [sendTime u32]
+//                 — legacy 46B messages omit sendTime, 42B also the timer.
+//   LEAN   (9B):  [type][lean f32][sendTime u32]
+//                 — legacy 5B messages omit sendTime.
+//
+// sendTime is the sender's performance.now() in whole ms (mod 2^32). It lets
+// the receiver order packets on the unordered fast channel and run a jitter
+// buffer against the sender's clock (issue #390). Older builds read only the
+// prefix they know, so the longer messages stay compatible both ways.
 //   PEDAL  (2B):  [type][0x01 down | 0x00 up]
 //   EVENT  (2B):  [type][eventByte]
 //   PROFILE(var): [type][utf-8 JSON…]
@@ -23,20 +30,25 @@
 
 import { MSG_PEDAL, MSG_STATE, MSG_EVENT, MSG_LEAN, MSG_PROFILE } from '../config.js';
 
+// Sender clock for STATE/LEAN sendTime: whole ms, wrapped to u32.
+function _sendTimeMs() {
+  return Math.floor(performance.now()) >>> 0;
+}
+
 export class BikeCodec {
   constructor() {
     // Pre-allocated send buffers — STATE/LEAN are on the ~60Hz send path, so
     // we reuse one buffer each instead of allocating per send. The returned
     // view is sent synchronously by the transport, so reuse next frame is safe.
-    this._stateBuf = new ArrayBuffer(46);
+    this._stateBuf = new ArrayBuffer(50);
     this._stateView = new DataView(this._stateBuf);
     this._stateBytes = new Uint8Array(this._stateBuf);
-    this._leanBuf = new ArrayBuffer(5);
+    this._leanBuf = new ArrayBuffer(9);
     this._leanView = new DataView(this._leanBuf);
     this._leanBytes = new Uint8Array(this._leanBuf);
   }
 
-  /** Encode bike physics + timer into the shared 46-byte STATE buffer. */
+  /** Encode bike physics + timer + send time into the shared 50-byte STATE buffer. */
   encodeState(bike, timerRemaining) {
     const view = this._stateView;
     view.setUint8(0, MSG_STATE);
@@ -55,10 +67,11 @@ export class BikeCodec {
     if (bike._braking) flags |= 2;
     view.setUint8(41, flags);
     view.setFloat32(42, timerRemaining >= 0 ? timerRemaining : -1, true);
+    view.setUint32(46, _sendTimeMs(), true);
     return this._stateBytes;
   }
 
-  /** Decode a STATE message. Tolerates legacy 42-byte (timer-less) messages. */
+  /** Decode a STATE message. Tolerates legacy 46-byte (no sendTime) and 42-byte (timer-less) messages. */
   decodeState(bytes) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const state = {
@@ -78,14 +91,19 @@ export class BikeCodec {
     if (bytes.byteLength >= 46) {
       state.timerRemaining = view.getFloat32(42, true);
     }
+    // sendTime added in 50-byte messages; undefined for older senders.
+    if (bytes.byteLength >= 50) {
+      state.sendTime = view.getUint32(46, true);
+    }
     return state;
   }
 
-  /** Encode lean into the shared 5-byte LEAN buffer. */
+  /** Encode lean + send time into the shared 9-byte LEAN buffer. */
   encodeLean(leanValue) {
     const view = this._leanView;
     view.setUint8(0, MSG_LEAN);
     view.setFloat32(1, leanValue, true);
+    view.setUint32(5, _sendTimeMs(), true);
     return this._leanBytes;
   }
 
@@ -93,6 +111,13 @@ export class BikeCodec {
   decodeLean(bytes) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     return view.getFloat32(1, true);
+  }
+
+  /** LEAN send time (ms, u32), or undefined for a legacy 5-byte message. */
+  decodeLeanTime(bytes) {
+    if (bytes.byteLength < 9) return undefined;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return view.getUint32(5, true);
   }
 
   /** Encode a pedal up/down event (fresh 2-byte buffer). */
@@ -149,7 +174,7 @@ export class BikeCodec {
         if (bytes.length >= 2 && h.onEvent) h.onEvent(bytes[1]);
         return true;
       case MSG_LEAN:
-        if (bytes.length >= 5 && h.onLean) h.onLean(this.decodeLean(bytes));
+        if (bytes.length >= 5 && h.onLean) h.onLean(this.decodeLean(bytes), this.decodeLeanTime(bytes));
         return true;
       case MSG_PROFILE:
         try { if (h.onProfile) h.onProfile(this.decodeProfile(bytes)); } catch (e) { /* malformed */ }
