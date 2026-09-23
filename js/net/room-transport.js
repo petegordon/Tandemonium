@@ -16,6 +16,17 @@ import {
   TURN_CREDENTIALS_URL, PEERJS_HOST, PEERJS_PORT, PEERJS_PATH, PEERJS_SECURE
 } from '../config.js';
 
+// Fast lane for high-rate, latest-wins traffic (bike STATE / LEAN). A second
+// data channel on the same RTCPeerConnection, unordered with no retransmits,
+// so one lost packet never holds up the ones behind it the way the reliable,
+// ordered PeerJS channel does (issue #390). Both sides create it with the same
+// pre-agreed id (negotiated: no signaling needed). It's only used once the
+// partner has proved it speaks it (any message received on it), so a peer on
+// an older build keeps getting everything on the main channel.
+const FAST_CHANNEL_ID = 1000;       // clear of PeerJS's auto-assigned ids
+const FAST_CHANNEL_HELLO = new Uint8Array([MSG_HEARTBEAT, 0x03]);
+const FAST_CHANNEL_MAX_BUFFERED = 16 * 1024; // bytes queued before we fall back
+
 const PEERJS_CONFIG = {
   host: PEERJS_HOST,
   port: PEERJS_PORT,
@@ -64,6 +75,9 @@ export class RoomTransport {
     this._relayDidOpen = false; // tracks if relay WS ever opened (false = auth rejection)
     this._p2pUpgradeTimeout = null;
     this._p2pUpgradeRetryTimeout = null;
+    this._fastChannel = null;       // RTCDataChannel (unordered, no retransmits)
+    this._fastPeerSeen = false;     // partner has sent on it → safe to use
+    this._fastHelloInterval = null;
 
     // WebRTC quality stats
     this._statsInterval = null;
@@ -151,6 +165,7 @@ export class RoomTransport {
       // Instead, reset in the heartbeat ACK handler after a verified round-trip.
 
       this._startHeartbeat();
+      this._openFastChannel(conn);
       if (this.onConnected) this.onConnected();
     });
 
@@ -161,6 +176,7 @@ export class RoomTransport {
     conn.on('close', () => {
       // Ignore close events from stale connections
       if (conn !== this._activeConn) return;
+      this._closeFastChannel();
       this._handleDisconnect();
     });
 
@@ -237,6 +253,67 @@ export class RoomTransport {
     if (since < 3000 && this.connected) return; // healthy
     console.log('NET: idle recovery (' + reason + '), heartbeat age=' + Math.round(since) + 'ms');
     try { this.retryConnection(); } catch (e) { console.warn('NET: retry on resume failed:', e); }
+  }
+
+  // Latest-wins traffic: the unordered fast channel when the partner speaks
+  // it, otherwise the normal path. Messages sent here may be dropped or
+  // arrive out of order — receivers order them by their send time.
+  _sendFast(data) {
+    const ch = this._fastChannel;
+    if (this.transport === 'p2p' && this._fastPeerSeen && ch &&
+        ch.readyState === 'open' && ch.bufferedAmount < FAST_CHANNEL_MAX_BUFFERED) {
+      try { ch.send(data); return; } catch (e) { /* fall through */ }
+    }
+    this._send(data);
+  }
+
+  _openFastChannel(conn) {
+    this._closeFastChannel();
+    const pc = conn && conn.peerConnection;
+    if (!pc || typeof pc.createDataChannel !== 'function') return;
+    let ch;
+    try {
+      ch = pc.createDataChannel('tndm-fast', {
+        negotiated: true, id: FAST_CHANNEL_ID, ordered: false, maxRetransmits: 0
+      });
+    } catch (e) {
+      console.warn('NET: fast channel unavailable:', e);
+      return;
+    }
+    ch.binaryType = 'arraybuffer';
+    this._fastChannel = ch;
+    this._fastPeerSeen = false;
+    const hello = () => {
+      if (ch.readyState === 'open') { try { ch.send(FAST_CHANNEL_HELLO); } catch (e) {} }
+    };
+    ch.onopen = hello;
+    ch.onmessage = (e) => {
+      if (ch !== this._fastChannel) return;
+      if (!this._fastPeerSeen) {
+        this._fastPeerSeen = true;
+        hello(); // make sure the partner hears us too, then stop announcing
+        clearInterval(this._fastHelloInterval);
+        this._fastHelloInterval = null;
+        console.log('NET: fast channel active');
+      }
+      const bytes = new Uint8Array(e.data);
+      if (bytes.length && bytes[0] === MSG_HEARTBEAT) return; // hello only
+      this._handleMessage(bytes);
+    };
+    ch.onclose = () => {
+      if (ch === this._fastChannel) this._fastPeerSeen = false;
+    };
+    // Keep announcing until the partner answers (an older build never will).
+    this._fastHelloInterval = setInterval(hello, 1000);
+  }
+
+  _closeFastChannel() {
+    clearInterval(this._fastHelloInterval);
+    this._fastHelloInterval = null;
+    const ch = this._fastChannel;
+    this._fastChannel = null;
+    this._fastPeerSeen = false;
+    if (ch) { try { ch.close(); } catch (e) {} }
   }
 
   _send(data) {
@@ -494,6 +571,7 @@ export class RoomTransport {
     if (this.peer) {
       this._activeConn = null; // prevent close handler from triggering disconnect
       this.conn = null;
+      this._closeFastChannel();
       try { this.peer.destroy(); } catch (e) {}
       this.peer = null;
     }
@@ -558,6 +636,7 @@ export class RoomTransport {
       this._startStatsPolling();
       // Start relay keepalive to keep it as hot standby
       this._startRelayKeepalive();
+      this._openFastChannel(conn);
       // Notify listeners (game.js uses this to start media calls)
       if (this.onP2PUpgrade) this.onP2PUpgrade();
     });
@@ -570,6 +649,7 @@ export class RoomTransport {
       if (conn !== this._activeConn) return;
       // P2P dropped — fall back to relay silently if relay is alive
       this._stopStatsPolling();
+      this._closeFastChannel();
       if (this._relayWs && this._relayWs.readyState === WebSocket.OPEN) {
         console.log('NET: P2P dropped, falling back to relay');
         this.transport = 'relay';
@@ -590,6 +670,7 @@ export class RoomTransport {
     this._p2pUpgradeRetryTimeout = setTimeout(() => {
       if (this.connected && this.transport !== 'p2p') {
         // Clean up old peer before retrying
+        this._closeFastChannel();
         if (this.peer) { try { this.peer.destroy(); } catch (e) {} this.peer = null; }
         this._attemptP2PUpgrade();
       }
@@ -652,6 +733,7 @@ export class RoomTransport {
     clearTimeout(this._p2pUpgradeTimeout);
     clearTimeout(this._p2pUpgradeRetryTimeout);
     this._stopRelayKeepalive();
+    this._closeFastChannel();
     // Detach resume listeners
     if (typeof document !== 'undefined' && this._onVisibilityChange) {
       document.removeEventListener('visibilitychange', this._onVisibilityChange);
