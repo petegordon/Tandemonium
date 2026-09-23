@@ -38,9 +38,22 @@ export class FrontViewCamera {
     this._fwd = new THREE.Vector3();
     this._initialized = false;
 
+    // Last measured PiP rect + when it was measured. _computeRect() forces a
+    // synchronous layout (getComputedStyle/getBoundingClientRect) right after
+    // the HUD has written to the DOM, which on iPhone Safari costs a full
+    // style/layout pass every frame (#390). render() reuses this cached rect
+    // and only re-measures on a throttle or on resize/orientation change.
+    this._rect = null;
+    this._measuredAt = -Infinity;
+    this._remeasureMs = 250;
+    // Last values written to the DOM frame, so steady frames write nothing.
+    this._applied = { size: -1, cssLeft: NaN, cssTop: NaN };
+
     this._buildFrame();
     this._onResize();
-    window.addEventListener('resize', () => this._onResize());
+    this._resizeHandler = () => this._onResize();
+    window.addEventListener('resize', this._resizeHandler);
+    window.addEventListener('orientationchange', this._resizeHandler);
   }
 
   // ----- DOM frame --------------------------------------------------
@@ -125,14 +138,22 @@ export class FrontViewCamera {
 
   _applyRectToFrame(r) {
     if (!this.frame) return;
-    this.frame.style.width = r.size + 'px';
-    this.frame.style.height = r.size + 'px';
-    this.frame.style.left = r.cssLeft + 'px';
-    this.frame.style.top = r.cssTop + 'px';
+    // Write-on-change: this runs every frame, and even same-value style
+    // writes dirty style on Safari (#390).
+    const a = this._applied;
+    const st = this.frame.style;
+    if (a.size !== r.size) {
+      st.width = r.size + 'px';
+      st.height = r.size + 'px';
+      a.size = r.size;
+    }
+    if (a.cssLeft !== r.cssLeft) { st.left = r.cssLeft + 'px'; a.cssLeft = r.cssLeft; }
+    if (a.cssTop !== r.cssTop) { st.top = r.cssTop + 'px'; a.cssTop = r.cssTop; }
   }
 
   _onResize() {
     this._rect = this._computeRect();
+    this._measuredAt = performance.now();
     this._applyRectToFrame(this._rect);
   }
 
@@ -213,10 +234,15 @@ export class FrontViewCamera {
 
     const w = window.innerWidth;
     const h = window.innerHeight;
-    // Recompute live so the PiP tracks the partner webcam appearing/leaving
-    // (and any resize) mid-ride. Reads happen before the DOM-frame writes below.
-    const r = this._computeRect();
-    this._rect = r;
+    // Re-measure on a throttle so the PiP still tracks the partner webcam
+    // appearing/leaving mid-ride (resize/orientation re-measure immediately),
+    // but steady-state frames do no layout reads (#390).
+    const now = performance.now();
+    if (!this._rect || now - this._measuredAt >= this._remeasureMs) {
+      this._rect = this._computeRect();
+      this._measuredAt = now;
+    }
+    const r = this._rect;
 
     // WebGL viewport origin is bottom-left; derive from the CSS top-left rect.
     const x = Math.round(r.cssLeft);
@@ -257,6 +283,9 @@ export class FrontViewCamera {
     const cssTop = h - size - margin;
     const r = { size, cssLeft, cssTop };
     this._rect = r;
+    // Not a live measurement — force render() to re-measure if the same
+    // instance is later used full-screen.
+    this._measuredAt = -Infinity;
 
     const x = Math.round(cssLeft);
     const y = Math.round(h - cssTop - size);
@@ -279,6 +308,8 @@ export class FrontViewCamera {
 
   /** Tear down the DOM frame (e.g. leaving versus). */
   dispose() {
+    window.removeEventListener('resize', this._resizeHandler);
+    window.removeEventListener('orientationchange', this._resizeHandler);
     if (this.frame && this.frame.parentNode) this.frame.parentNode.removeChild(this.frame);
     this.frame = null;
   }

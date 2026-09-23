@@ -288,9 +288,22 @@ export class RoadPath {
     let bestD = hintD !== undefined ? this._wrapD(hintD) : Math.max(0, worldZ) % L;
     let bestDist = Infinity;
 
-    // Coarse search (wraps naturally via getPointAtDistance)
+    // Coarse search (wraps naturally via getPointAtDistance).
+    //
+    // The window is measured from a FIXED centre. It used to be measured from
+    // `bestD`, which the loop reassigns as it finds better candidates — so the
+    // window walked instead of scanning, and could stride far outside its own
+    // radius. The road is a closed 1200 m loop whose closure spline passes
+    // within ~27 m of the first 50 m of the ride, so on a bike 30 m from the
+    // start the walk stepped across the seam and latched onto the INCOMING
+    // leg, ~90 m short of where the rider actually was. Everything downstream
+    // reads progress from here: the ride distance collapsed to zero, the
+    // checkpoint the rider had just ridden under never registered, and the
+    // segment timer ran out. Seed-dependent — the old hard-coded road never
+    // showed it, and 16 of the next 30 daily roads did.
+    const searchCenter = bestD;
     for (let offset = -searchRadius; offset <= searchRadius; offset += searchStep) {
-      const d = this._wrapD(bestD + offset);
+      const d = this._wrapD(searchCenter + offset);
       const pt = this.getPointAtDistance(d);
       const dx = worldX - pt.x;
       const dz = worldZ - pt.z;
@@ -301,9 +314,10 @@ export class RoadPath {
       }
     }
 
-    // Fine search
+    // Fine search — same fixed-centre rule as the coarse pass.
+    const fineCenter = bestD;
     for (let offset = -searchStep; offset <= searchStep; offset += SAMPLE_STEP) {
-      const d = this._wrapD(bestD + offset);
+      const d = this._wrapD(fineCenter + offset);
       const pt = this.getPointAtDistance(d);
       const dx = worldX - pt.x;
       const dz = worldZ - pt.z;

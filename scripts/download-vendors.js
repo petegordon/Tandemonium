@@ -17,6 +17,15 @@ const DOWNLOADS = [
     url: 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',
     dest: 'peerjs.min.js',
   },
+  {
+    // Optional visual physics (issue #388). ~2.9MB — it is the biggest thing
+    // here by an order of magnitude, because the WASM is inlined as base64.
+    // Desktop loads this local copy in preference to the CDN so a packaged
+    // build keeps its crash tumbles offline. Version-locked to the URL in
+    // js/physics/rapier-runtime.js; change both together.
+    url: 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.20.0/dist/rapier.mjs',
+    dest: 'rapier.mjs',
+  },
 ];
 
 function fetch(url) {
