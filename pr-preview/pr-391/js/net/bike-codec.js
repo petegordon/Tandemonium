@@ -9,18 +9,21 @@
 // (byte-for-byte identical to the previous inline encoder/decoder).
 //
 // Message layout (little-endian), keyed by a 1-byte type tag (MSG_*):
-//   STATE  (50B): [type][x f32][y f32][z f32][heading f32][lean f32]
+//   STATE  (52B): [type][x f32][y f32][z f32][heading f32][lean f32]
 //                 [leanVelocity f32][speed f32][crankAngle f32]
 //                 [distanceTraveled f32][roadD f32][flags u8][timer f32]
-//                 [sendTime u32]
-//                 — legacy 46B messages omit sendTime, 42B also the timer.
+//                 [sync u8][reserved u8][sendTime u32]
+//                 — legacy 48B messages omit sendTime, 46B also the sync
+//                   byte, and 42B also the timer. All still decode; older
+//                   clients read only the prefix they know.
+//                   sync = round(offsetScore * 200), so the stoker's sync bar
+//                   (A-4) reads the captain's authoritative score.
 //   LEAN   (9B):  [type][lean f32][sendTime u32]
 //                 — legacy 5B messages omit sendTime.
 //
 // sendTime is the sender's performance.now() in whole ms (mod 2^32). It lets
 // the receiver order packets on the unordered fast channel and run a jitter
-// buffer against the sender's clock (issue #390). Older builds read only the
-// prefix they know, so the longer messages stay compatible both ways.
+// buffer against the sender's clock (issue #390).
 //   PEDAL  (2B):  [type][0x01 down | 0x00 up]
 //   EVENT  (2B):  [type][eventByte]
 //   PROFILE(var): [type][utf-8 JSON…]
@@ -40,7 +43,7 @@ export class BikeCodec {
     // Pre-allocated send buffers — STATE/LEAN are on the ~60Hz send path, so
     // we reuse one buffer each instead of allocating per send. The returned
     // view is sent synchronously by the transport, so reuse next frame is safe.
-    this._stateBuf = new ArrayBuffer(50);
+    this._stateBuf = new ArrayBuffer(52);
     this._stateView = new DataView(this._stateBuf);
     this._stateBytes = new Uint8Array(this._stateBuf);
     this._leanBuf = new ArrayBuffer(9);
@@ -48,8 +51,8 @@ export class BikeCodec {
     this._leanBytes = new Uint8Array(this._leanBuf);
   }
 
-  /** Encode bike physics + timer + send time into the shared 50-byte STATE buffer. */
-  encodeState(bike, timerRemaining) {
+  /** Encode bike physics + timer + co-op sync + send time into the 52-byte STATE buffer. */
+  encodeState(bike, timerRemaining, syncScore = -1) {
     const view = this._stateView;
     view.setUint8(0, MSG_STATE);
     view.setFloat32(1, bike.position.x, true);
@@ -67,11 +70,14 @@ export class BikeCodec {
     if (bike._braking) flags |= 2;
     view.setUint8(41, flags);
     view.setFloat32(42, timerRemaining >= 0 ? timerRemaining : -1, true);
-    view.setUint32(46, _sendTimeMs(), true);
+    // 0 means "no co-op sync" (solo); 1..201 maps offsetScore 0..1.
+    view.setUint8(46, syncScore >= 0 ? Math.round(Math.min(1, syncScore) * 200) + 1 : 0);
+    view.setUint8(47, 0);   // reserved: keeps sendTime 4-byte aligned
+    view.setUint32(48, _sendTimeMs(), true);
     return this._stateBytes;
   }
 
-  /** Decode a STATE message. Tolerates legacy 46-byte (no sendTime) and 42-byte (timer-less) messages. */
+  /** Decode a STATE message. Tolerates legacy 48-byte (no sendTime), 46-byte (no sync) and 42-byte (timer-less) messages. */
   decodeState(bytes) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const state = {
@@ -91,9 +97,14 @@ export class BikeCodec {
     if (bytes.byteLength >= 46) {
       state.timerRemaining = view.getFloat32(42, true);
     }
-    // sendTime added in 50-byte messages; undefined for older senders.
-    if (bytes.byteLength >= 50) {
-      state.sendTime = view.getUint32(46, true);
+    // Co-op sync byte added in 48-byte messages (A-4).
+    if (bytes.byteLength >= 47) {
+      const raw = view.getUint8(46);
+      if (raw > 0) state.syncScore = (raw - 1) / 200;
+    }
+    // sendTime added in 52-byte messages; undefined for older senders.
+    if (bytes.byteLength >= 52) {
+      state.sendTime = view.getUint32(48, true);
     }
     return state;
   }

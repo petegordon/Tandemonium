@@ -5,6 +5,7 @@
 | # | Domain | Key Concern | Key Files |
 |---|--------|-------------|-----------|
 | 1 | Bike Physics & Balance | Tilt, lean, gravity, pedaling, crank, camera | `bike-model.js`, `balance-controller.js`, `pedal-controller.js`, `chase-camera.js`, `front-view-camera.js` |
+| 1b | Visual Physics (optional) | Rapier sidecar: crash tumble, prop debris, goose strikes — never touches handling | `js/physics/*`, [`docs/physics-fx.md`](docs/physics-fx.md) |
 | 2 | Race Management | Checkpoints, timers, scoring, finish | `race-manager.js` |
 | 3 | Levels & Routes | Road generation, level configs, terrain | `race-config.js`, `road-path.js`, `road-chunks.js` |
 | 4 | World Content | Obstacles, collectibles, billboards, scenery, trees, particles, audio | `world.js`, `obstacles.js`, `collectibles.js`, `grass-particles.js`, `assets/*.mp3` |

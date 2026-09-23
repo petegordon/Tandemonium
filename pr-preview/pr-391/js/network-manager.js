@@ -67,8 +67,8 @@ export class NetworkManager extends RoomTransport {
     this._sendFast(this._codec.encodeLean(leanValue));
   }
 
-  sendState(bike, timerRemaining) {
-    this._sendFast(this._codec.encodeState(bike, timerRemaining));
+  sendState(bike, timerRemaining, syncScore = -1) {
+    this._sendFast(this._codec.encodeState(bike, timerRemaining, syncScore));
   }
 
   sendEvent(eventType) {

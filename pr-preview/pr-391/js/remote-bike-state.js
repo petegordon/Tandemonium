@@ -66,6 +66,7 @@ export class RemoteBikeState {
     this._delay = INITIAL_DELAY;
   }
 
+  /** Buffer a received STATE. Returns false if it was stale/duplicate and dropped. */
   pushState(state) {
     const now = performance.now() / 1000;
 
@@ -76,7 +77,7 @@ export class RemoteBikeState {
         t = state.sendTime / 1000;
       } else {
         const diffMs = (state.sendTime - this._lastSenderMs) | 0; // signed, wrap-safe
-        if (diffMs <= 0 && diffMs > -CLOCK_RESET_MS) return;      // late or duplicate
+        if (diffMs <= 0 && diffMs > -CLOCK_RESET_MS) return false; // late or duplicate
         if (diffMs <= -CLOCK_RESET_MS || diffMs > CLOCK_RESET_MS) {
           this.reset();                                          // captain's clock restarted
           t = state.sendTime / 1000;
@@ -87,7 +88,7 @@ export class RemoteBikeState {
       this._lastSenderMs = state.sendTime;
     } else {
       t = now; // legacy sender: arrival time is all we have
-      if (this._buf.length && t <= this._lastSenderT) return;
+      if (this._buf.length && t <= this._lastSenderT) return false;
     }
 
     if (this._buf.length) {
@@ -111,6 +112,7 @@ export class RemoteBikeState {
     state.t = t;
     this._buf.push(state);
     if (this._buf.length > MAX_SNAPSHOTS) this._buf.shift();
+    return true;
   }
 
   getInterpolated() {

@@ -25,6 +25,36 @@ export const MOTIF = {
   G5: 783.99,
 };
 
+/**
+ * Pitch of a pedal tick, Hz, from the rider's cadence in taps per second.
+ *
+ * Rising pitch with cadence is what makes speed audible. The mapping is
+ * logarithmic in BOTH axes, because pitch is perceived that way: a doubling of
+ * cadence is the same musical interval wherever you are in the range.
+ *
+ * The range is 0.5-8 taps/sec, not 0.5-2. A thumb on a phone alternates far
+ * faster than a hand on a keyboard, and the old linear 0.5-2 Hz mapping sat at
+ * its ceiling for the whole ride on mobile — every stroke the same pitch, so
+ * the cue carried no information at exactly the cadence it was meant to report.
+ * The bottom of the curve is unchanged in feel (0.5 Hz is still 180 Hz, 2 Hz is
+ * still ~317 Hz), so a keyboard rider hears what they always heard.
+ *
+ * Pure — unit tested in test/unit/audio-tap.test.mjs.
+ */
+const TAP_CADENCE_MIN = 0.5;   // taps/sec — a lazy stroke
+const TAP_CADENCE_MAX = 8;     // taps/sec — two thumbs going flat out
+const TAP_PITCH_MIN = 180;     // Hz
+const TAP_PITCH_MAX = 560;     // Hz
+
+export function tapPitch(cadenceHz) {
+  const c = Number.isFinite(cadenceHz) ? cadenceHz : 1;
+  const clamped = Math.max(TAP_CADENCE_MIN, Math.min(TAP_CADENCE_MAX, c));
+  // Position within the range measured in octaves of cadence, not in raw Hz.
+  const t = Math.log2(clamped / TAP_CADENCE_MIN) /
+            Math.log2(TAP_CADENCE_MAX / TAP_CADENCE_MIN);
+  return TAP_PITCH_MIN * Math.pow(TAP_PITCH_MAX / TAP_PITCH_MIN, t);
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -37,6 +67,7 @@ export class AudioEngine {
     this._recorderDest = null;
     this._noiseBuf = null;
     this._bike = null;
+    this._onCobbles = false;
     this._duckTarget = 1.0;
     this._lastBikeUpdate = 0;
   }
@@ -154,6 +185,28 @@ export class AudioEngine {
     const g = ctx.createGain();
     osc.type = type;
     osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(gain, now + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    osc.connect(g).connect(this.sfxBus);
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+  }
+
+  // Like tone(), but the pitch slides from `from` to `to` across the note. A
+  // falling slide reads as "wrong" on any speaker, which a single low frequency
+  // does not — see pedalTap('wrong').
+  toneSlide(from, to, duration, opts = {}) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    this.resume();
+    const { type = 'sine', gain = 0.14, attack = 0.006 } = opts;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, now);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, to), now + duration);
     g.gain.setValueAtTime(0.0001, now);
     g.gain.exponentialRampToValueAtTime(gain, now + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
@@ -482,6 +535,63 @@ export class AudioEngine {
     noise.stop(now + 0.06);
   }
 
+  /**
+   * B-2 · the pile-on. Geese find a fallen tandem hilarious; two or three
+   * honks half a beat apart is the whole joke, and it is what turns the crash
+   * from a penalty screen into the funniest moment in the ride.
+   */
+  honkBurst(count = 2) {
+    if (!this.ctx) return;
+    for (let i = 0; i < count; i++) {
+      const delay = i * (90 + Math.random() * 120);
+      setTimeout(() => this.gooseHonk(0.42 + Math.random() * 0.16), delay);
+    }
+  }
+
+  // ── Pedal taps (A-3) ─────────────────────────────────────────────────────
+  //
+  // Every stroke is heard, so cadence is audible and a mistake is obvious
+  // without reading the HUD. Short and quiet by design: this fires up to a few
+  // times a second for the whole ride, so it has to sit under the bike bed
+  // rather than on top of it.
+  //
+  //   'perfect' — click + a fifth above: the pair is on the beat (co-op)
+  //   'solo'    — click: a normal stroke
+  //   'wrong'   — a falling tone: you repeated your own foot
+  //   'fight'   — clatter: you and your partner grabbed the same crank arm
+  //
+  // Routed through sfxBus like every other cue, so mute works and the clip
+  // recorder captures the ticks.
+  pedalTap(kind = 'solo', cadenceHz = 1) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+
+    if (kind === 'wrong') {
+      // A falling two-tone, not a 90 Hz thud. The thud read as "dull and wrong"
+      // on desktop speakers but sat below what a phone can physically produce,
+      // so on mobile the one cue that tells you you repeated a foot was close to
+      // silent. A downward slide carries "wrong" on any speaker, and 300->190 Hz
+      // is comfortably inside a handset's range while still sitting well under
+      // the bright click of a good stroke.
+      this.toneSlide(300, 190, 0.13, { type: 'sine', gain: 0.13, attack: 0.004 });
+      // Keep the sub-thump underneath for anyone on headphones or desktop, where
+      // it does reproduce and is what gives the cue its weight.
+      this.tone(90, 0.09, { type: 'sine', gain: 0.09, attack: 0.004 });
+      return;
+    }
+    if (kind === 'fight') {
+      this.crash(0.18);   // the clatter, well under a real crash
+      return;
+    }
+
+    const f = tapPitch(cadenceHz);
+    this.tone(f, 0.04, { type: 'triangle', gain: 0.085, attack: 0.003 });
+    if (kind === 'perfect') {
+      // A fifth above, quieter — two riders, one chord.
+      this.tone(f * 1.5, 0.045, { type: 'sine', gain: 0.055, attack: 0.004 });
+    }
+  }
+
   // Noise-based crash impact with a low-frequency thump. Replaces the old
   // double-beep crash cue with something that actually reads as an impact.
   crash(intensity = 1) {
@@ -570,18 +680,43 @@ export class AudioEngine {
     chainGain.gain.value = 0;
     chainOsc.connect(chainFilt).connect(chainGain).connect(this.bikeBus);
 
+    // Cobbles (E-2): a fourth layer that only opens up on the stones. Two bands
+    // of the same noise — a low body you feel and a hard rattle you hear — so
+    // the surface reads as stone rather than as more off-road hiss. It is built
+    // with the rest of the bed so stopBike() tears it down with everything else;
+    // leaving filters connected to bikeBus across races froze iOS WebKit (#277).
+    const cobbleSrc = ctx.createBufferSource();
+    cobbleSrc.buffer = this._getNoiseBuffer();
+    cobbleSrc.loop = true;
+    const cobbleFilt = ctx.createBiquadFilter();
+    cobbleFilt.type = 'bandpass';
+    cobbleFilt.frequency.value = 190;
+    cobbleFilt.Q.value = 0.7;
+    const cobbleGain = ctx.createGain();
+    cobbleGain.gain.value = 0;
+    cobbleSrc.connect(cobbleFilt).connect(cobbleGain).connect(this.bikeBus);
+
+    const rattleFilt = ctx.createBiquadFilter();
+    rattleFilt.type = 'bandpass';
+    rattleFilt.frequency.value = 900;
+    rattleFilt.Q.value = 1.4;
+    const rattleGain = ctx.createGain();
+    rattleGain.gain.value = 0;
+    cobbleSrc.connect(rattleFilt).connect(rattleGain).connect(this.bikeBus);
+
     windSrc.start();
     tireSrc.start();
     chainOsc.start();
+    cobbleSrc.start();
 
     // Track every node so stopBike() can fully tear down the graph.
     // Without holding refs to the filters, they were leaked-connected to
     // bikeBus across races and accumulated on iOS WebKit (browser freeze
     // while audio kept playing — main thread starved by node graph).
     this._bike = {
-      windSrc, tireSrc, chainOsc,
-      windFilt, tireFilt, chainFilt,
-      windGain, tireGain, chainGain,
+      windSrc, tireSrc, chainOsc, cobbleSrc,
+      windFilt, tireFilt, chainFilt, cobbleFilt, rattleFilt,
+      windGain, tireGain, chainGain, cobbleGain, rattleGain,
     };
 
     // Fade the bus in; individual sources stay at 0 until speed rises.
@@ -589,6 +724,18 @@ export class AudioEngine {
     this.bikeBus.gain.cancelScheduledValues(now);
     this.bikeBus.gain.setValueAtTime(this.bikeBus.gain.value, now);
     this.bikeBus.gain.linearRampToValueAtTime(1.0, now + 0.2);
+  }
+
+  /**
+   * E-2 · are we on the stones? Opens the cobble layer of the bike bed.
+   * Level follows speed in updateBike(), so slow cobbles mutter and fast
+   * cobbles roar. Safe to call every frame with the same value.
+   */
+  setCobbles(on) {
+    this._onCobbles = !!on;
+    if (!this.ctx || !this._bike) return;
+    // Ramp handled in updateBike so it stays on one throttled automation path.
+    this._lastBikeUpdate = 0;
   }
 
   stopBike() {
@@ -600,23 +747,30 @@ export class AudioEngine {
     this.bikeBus.gain.linearRampToValueAtTime(0, now + 0.3);
     const b = this._bike;
     this._bike = null;
+    this._onCobbles = false;   // a new ride starts off the stones
     setTimeout(() => {
       // Stop sources first so they're eligible for auto-release.
       try { b.windSrc.stop();  } catch (e) {}
       try { b.tireSrc.stop();  } catch (e) {}
       try { b.chainOsc.stop(); } catch (e) {}
+      try { b.cobbleSrc.stop(); } catch (e) {}
       // Explicitly disconnect every node from the graph. Sources auto-GC
       // after stop(), but BiquadFilter / GainNode are kept alive by their
       // outgoing connection to bikeBus until disconnect() is called.
       try { b.windSrc.disconnect();  } catch (e) {}
       try { b.tireSrc.disconnect();  } catch (e) {}
       try { b.chainOsc.disconnect(); } catch (e) {}
+      try { b.cobbleSrc.disconnect(); } catch (e) {}
       try { b.windFilt.disconnect();  } catch (e) {}
       try { b.tireFilt.disconnect();  } catch (e) {}
       try { b.chainFilt.disconnect(); } catch (e) {}
+      try { b.cobbleFilt.disconnect(); } catch (e) {}
+      try { b.rattleFilt.disconnect(); } catch (e) {}
       try { b.windGain.disconnect();  } catch (e) {}
       try { b.tireGain.disconnect();  } catch (e) {}
       try { b.chainGain.disconnect(); } catch (e) {}
+      try { b.cobbleGain.disconnect(); } catch (e) {}
+      try { b.rattleGain.disconnect(); } catch (e) {}
     }, 400);
   }
 
@@ -645,5 +799,10 @@ export class AudioEngine {
     b.tireGain.gain.setTargetAtTime(tire, now, tc);
     b.chainGain.gain.setTargetAtTime(chain, now, tc);
     b.chainOsc.frequency.setTargetAtTime(chainHz, now, tc);
+
+    // Cobbles: silent off the stones, and louder the faster you take them.
+    const rough = this._onCobbles && !fallen ? (0.35 + norm * 0.65) : 0;
+    b.cobbleGain.gain.setTargetAtTime(rough * 0.30, now, tc);
+    b.rattleGain.gain.setTargetAtTime(rough * 0.13, now, tc);
   }
 }

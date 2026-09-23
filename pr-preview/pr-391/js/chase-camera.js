@@ -12,6 +12,14 @@ export class ChaseCamera {
     this.shakeAmount = 0;
     this.initialized = false;
 
+    // A-3 · a tiny vertical kick per pedal stroke, so the effort is visible in
+    // the frame and not just in the speed readout. 1.5 cm over 60 ms — below
+    // conscious notice on its own, unmistakable when it stops.
+    this._bobT = 0;
+    this._bobAmp = 0;
+    this._reduceMotion = typeof matchMedia === 'function' &&
+      matchMedia('(prefers-reduced-motion: reduce)').matches;
+
     // Offsets: Y = height, Z = behind(-)/ahead(+)
     this.offsetSlow = new THREE.Vector3(0, 6, -5);
     this.lookSlow = new THREE.Vector3(0, 0.5, 1);
@@ -23,6 +31,26 @@ export class ChaseCamera {
     this._desiredPos = new THREE.Vector3();
     this._desiredLook = new THREE.Vector3();
     this._shake = new THREE.Vector3();
+  }
+
+  /** One pedal stroke. `strength` 1 = normal tap, 2 = a wrong-foot lurch. */
+  pedalBob(strength = 1) {
+    if (this._reduceMotion) return;
+    this._bobT = 0.06;
+    this._bobAmp = 0.015 * strength;
+  }
+
+  /**
+   * E-2 · sustained shake while the bike is on a rough surface (cobbles).
+   *
+   * Reuses the existing decaying shake rather than adding a second channel, so
+   * it composes with the speed shake instead of fighting it. Called every frame
+   * the bike is on the stones; the decay takes it away by itself afterwards.
+   */
+  roughRoad(intensity = 1) {
+    if (this._reduceMotion) return;
+    if (!(intensity > 0)) return;
+    this.shakeAmount = Math.max(this.shakeAmount, 0.16 * Math.min(1, intensity));
   }
 
   update(bike, dt, roadPath) {
@@ -83,7 +111,16 @@ export class ChaseCamera {
       shake.set(0, 0, 0);
     }
 
+    // Pedal bob (A-3): half a sine over the impulse window.
+    let bobY = 0;
+    if (this._bobT > 0) {
+      const progress = 1 - this._bobT / 0.06;
+      bobY = -this._bobAmp * Math.sin(Math.PI * progress);
+      this._bobT = Math.max(0, this._bobT - dt);
+    }
+
     this.camera.position.copy(this.currentPos).add(shake);
+    this.camera.position.y += bobY;
     this.camera.lookAt(this.currentLook);
   }
 }
