@@ -593,6 +593,36 @@ ipcMain.handle('steam:storeStats', () => {
   return !!steam;
 });
 
+// ── WebHID pairing (see the select-hid-device handler) ──
+// Which attached device should a requestDevice() grant? One wrong answer —
+// "the first one" — makes pairing a SECOND controller impossible, because
+// every prompt re-grants the pad we already hold. The policy lives in
+// @usersfirst/controller-core (pickNewHidDevice), vendored under shared/, so
+// the game and the lab's overlay app decide identically. The core is ESM and
+// this file is CommonJS, hence the dynamic import; resolved once at startup.
+let pickNewHidDevice = null;
+const { pathToFileURL } = require('url');
+import(pathToFileURL(path.join(__dirname, '..', 'shared', 'controller-inventory.js')).href)
+  .then((m) => { pickNewHidDevice = m.pickNewHidDevice; _diagLog('[hid] pick policy loaded from shared/controller-inventory.js'); })
+  .catch((err) => _diagLog(`[hid] pick policy unavailable (${err.message}) — falling back to first un-granted device`));
+
+// What the renderer already holds (ControllerManager.heldHidDescriptors()),
+// pushed over 'hid:held' before it prompts. Plus the deviceIds we have handed
+// out this session, which break ties so repeated prompts walk the controllers.
+let heldHidDevices = [];
+const hidAlreadyPicked = new Set();
+ipcMain.on('hid:held', (_event, list) => {
+  heldHidDevices = Array.isArray(list) ? list.filter(Boolean) : [];
+});
+
+// Renderer diagnostics → the same log file as the main-process ones. preload
+// has always SENT on this channel (uncaught errors, rejections) but nothing
+// listened, so every renderer error was dropped. Renderer code can also log
+// deliberately via window.electronApp.diag().
+ipcMain.on('renderer:diag', (_event, msg) => {
+  if (typeof msg === 'string' && msg) _diagLog(msg.slice(0, 4000));
+});
+
 ipcMain.handle('app:toggleDevTools', () => {
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.toggleDevTools();
@@ -730,11 +760,24 @@ app.whenReady().then(async () => {
   // Auto-select first matching HID device (skip the browser picker dialog)
   mainWindow.webContents.session.on('select-hid-device', (event, details, callback) => {
     event.preventDefault();
-    if (details.deviceList && details.deviceList.length > 0) {
-      callback(details.deviceList[0].deviceId);
-    } else {
-      callback('');
-    }
+    const list = (details && details.deviceList) || [];
+    const hex = (n) => (n == null ? '????' : n.toString(16).padStart(4, '0'));
+    _diagLog(`[hid] picker: ${list.length} device(s): ` +
+      (list.map((d) => `${hex(d.vendorId)}:${hex(d.productId)}${d.name ? ' ' + d.name : ''}`).join(', ') || '(none)'));
+    if (!list.length) { try { callback(''); } catch (e) {} return; }
+    // Shared policy: serials prove which units we already hold, and per-model
+    // counts cover the rest — so two identical pads (two DualSenses, a second
+    // Steam Controller body) still pair, which a flat vid:pid exclusion would
+    // refuse. `reason` says WHY this device won; it is the difference between
+    // "nothing new is attached" and "we picked the wrong one".
+    const picked = pickNewHidDevice
+      ? pickNewHidDevice(list, { held: heldHidDevices, grantedIds: hidAlreadyPicked })
+      : { device: list.find((d) => !hidAlreadyPicked.has(d.deviceId)) || list[0], reason: 'fallback: policy unavailable' };
+    const chosen = picked.device;
+    hidAlreadyPicked.add(chosen.deviceId);
+    _diagLog(`[hid] picker: granting ${hex(chosen.vendorId)}:${hex(chosen.productId)}` +
+      `${chosen.name ? ' ' + chosen.name : ''} — ${picked.reason} (held ${heldHidDevices.length}, granted ${hidAlreadyPicked.size})`);
+    try { callback(chosen.deviceId); } catch (e) { /* callback already used */ }
   });
 
   // F11 fullscreen toggle

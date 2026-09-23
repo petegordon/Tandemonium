@@ -41,6 +41,7 @@ export { analyzeImuStep } from './imu-analysis.js';
 
 export {
   ControllerInventory,
+  pickNewHidDevice,
   normalizeDescriptor,
   identityKey,
   capabilitiesFor,

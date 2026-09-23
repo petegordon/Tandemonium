@@ -571,6 +571,29 @@ export class ControllerManager {
    * the overlay / multi / lobby "controllers" lists so the filter lives in one
    * place instead of being re-implemented per app.
    */
+  /**
+   * Descriptors for every HID device this manager already holds — pooled or
+   * seated — in the shape `pickNewHidDevice({ held })` expects. Hand this to
+   * the host's device picker before prompting, so the grant lands on a
+   * controller the app does NOT already have. (A renderer's WebHID cannot read
+   * serialNumber; the picker copes via per-model counts.)
+   */
+  heldHidDescriptors() {
+    const byDevice = new Map();
+    const add = (d) => {
+      if (!d || byDevice.has(d)) return;
+      byDevice.set(d, {
+        vendorId: d.vendorId,
+        productId: d.productId,
+        productName: d.productName || null,
+        serialNumber: d.serialNumber || null,
+      });
+    };
+    for (const e of this._hidPool.values()) add(e.device);
+    for (const s of this.slots) if (s._hidEntry) add(s._hidEntry.device);
+    return [...byDevice.values()];
+  }
+
   presentablePoolEntries() {
     return [...this._hidPool.values()].filter(isPresentableEntry);
   }

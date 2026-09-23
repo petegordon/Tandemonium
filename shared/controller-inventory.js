@@ -71,6 +71,95 @@ export function identityKey(n) {
   return 'unknown';
 }
 
+// ── Which device should an OS HID picker hand back? ──
+//
+// A host that pairs controllers over WebHID (Electron's `select-hid-device`,
+// or any picker it drives) has to answer one question: of the devices attached
+// right now, which one is the user trying to ADD? Answering it wrong is not a
+// cosmetic bug — handing back a device the app already holds makes pairing a
+// SECOND controller impossible, because every request re-grants the first one.
+//
+// Two facts make this decidable without guessing:
+//   • the picker list carries `serialNumber` (over Bluetooth, the unit's MAC)
+//     even though a renderer's WebHID cannot read it — a serial the app does
+//     not hold PROVES the device is new;
+//   • when serials are absent, COUNTS still decide it: if more units of a
+//     model are attached than the app holds, at least one of them is spare.
+// Counting is what makes two identical pads work — two DualSenses, or a second
+// Steam Controller body — where a flat vid:pid exclusion would refuse to pair
+// the second one.
+const HID_PICK_RANK = {
+  0: 'new device',
+  1: 'spare unit of a model already held',
+  2: 'model already held (cannot tell units apart)',
+  3: 'already held (serial matches)',
+};
+
+/** Model-level key: identityKey without the per-unit serial. */
+function modelKey(n) {
+  if (n.vendorId != null && n.productId != null) return `vidpid:${hex4(n.vendorId)}:${hex4(n.productId)}`;
+  if (n.productName) return `name:${String(n.productName).toLowerCase()}`;
+  return 'unknown';
+}
+
+/**
+ * Choose which device to grant from an OS HID picker list.
+ *
+ * @param {Array<{deviceId?, vendorId, productId, productName?, name?, serialNumber?}>} devices
+ *   the picker's candidates (Electron's `details.deviceList`, or equivalent)
+ * @param {object} [opts]
+ * @param {Array<object>} [opts.held] descriptors the app ALREADY has — pooled or
+ *   seated. `ControllerManager.heldHidDescriptors()` produces these. Serials are
+ *   optional: a renderer cannot read them, and the counts still work without.
+ * @param {Iterable<string>} [opts.grantedIds] deviceIds this host has already
+ *   handed out this session. Used only to break ties within a rank, so repeated
+ *   requests walk through the attached controllers instead of repeating one.
+ * @returns {{device: object|null, reason: string}} the choice and why — hosts
+ *   should log the reason; it is the difference between "nothing new is
+ *   attached" and "we picked the wrong one".
+ */
+export function pickNewHidDevice(devices, { held = [], grantedIds = [] } = {}) {
+  const list = (devices || []).filter(Boolean);
+  if (!list.length) return { device: null, reason: 'no devices offered' };
+
+  const granted = new Set(grantedIds || []);
+  const heldNorm = (held || []).filter(Boolean).map((h) => normalizeDescriptor(h));
+  const heldSerials = new Set(heldNorm.map((n) => n.serialNumber).filter(Boolean));
+  const heldByModel = new Map();
+  for (const n of heldNorm) heldByModel.set(modelKey(n), (heldByModel.get(modelKey(n)) || 0) + 1);
+
+  const norm = new Map();
+  const seenByModel = new Map();
+  for (const d of list) {
+    const n = normalizeDescriptor({
+      vendorId: d.vendorId, productId: d.productId,
+      productName: d.productName || d.name || null,
+      serialNumber: d.serialNumber || null,
+    });
+    norm.set(d, n);
+    seenByModel.set(modelKey(n), (seenByModel.get(modelKey(n)) || 0) + 1);
+  }
+
+  const rank = (d) => {
+    const n = norm.get(d);
+    if (n.serialNumber) return heldSerials.has(n.serialNumber) ? 3 : 0;
+    const k = modelKey(n);
+    const heldCount = heldByModel.get(k) || 0;
+    if (heldCount === 0) return 0;
+    return (seenByModel.get(k) || 0) > heldCount ? 1 : 2;
+  };
+
+  const scored = list.map((d, i) => ({ d, i, rank: rank(d), repeat: granted.has(d.deviceId) ? 1 : 0 }));
+  scored.sort((a, b) => (a.rank - b.rank) || (a.repeat - b.repeat) || (a.i - b.i));
+  const best = scored[0];
+  const n = norm.get(best.d);
+  const label = n.productName || modelKey(n);
+  return {
+    device: best.d,
+    reason: `${label}: ${HID_PICK_RANK[best.rank]}${best.repeat ? ', already granted this session' : ''}`,
+  };
+}
+
 /**
  * Capability snapshot for a dictionary entry. Counts come from the entry
  * when present (devices.js `trackpadCount` / `haptics`) and fall back to
