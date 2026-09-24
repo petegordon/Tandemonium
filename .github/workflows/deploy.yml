@@ -8,11 +8,14 @@ on:
 permissions:
   contents: write
 
-# Serialize ALL gh-pages writes (this deploy + every PR-preview deploy/cleanup)
-# under one queue so they can't push concurrently and reject each other as
-# non-fast-forward. cancel-in-progress:false → queue, never drop a deploy. (#319)
+# Own queue, NOT the gh-pages-write group the PR previews use. A concurrency
+# group holds only one pending run, so sharing it let a burst of preview runs
+# (e.g. closing PRs after a merge) evict the waiting main deploy — the Sept 8
+# and Sept 22 deploys were silently cancelled that way. Here only a newer main
+# deploy can replace a pending one. The cost: a preview may push to gh-pages at
+# the same moment, so the deploy step below retries once. (#319)
 concurrency:
-  group: gh-pages-write
+  group: gh-pages-main
   cancel-in-progress: false
 
 jobs:
@@ -79,6 +82,10 @@ jobs:
           fi
 
       - name: Deploy to gh-pages branch
+        id: deploy
+        # A preview push landing mid-deploy rejects this one (non-fast-forward).
+        # Don't fail yet — the retry below re-reads gh-pages and tries again.
+        continue-on-error: true
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -86,5 +93,27 @@ jobs:
           publish_branch: gh-pages
           # No exclude_assets for pr-preview: we now restore it INTO _site (see
           # the preserve step), so it must be published rather than excluded.
+          keep_files: true
+          cname: tandemonium.jimandi.love
+
+      # Re-read the previews after the racing preview push so the retry
+      # republishes its new pr-preview/ content instead of reverting it.
+      - name: Refresh PR previews for retry
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          sleep 20
+          rm -rf _site/pr-preview
+          git fetch origin gh-pages --depth=1 || true
+          if git ls-tree -d origin/gh-pages pr-preview 2>/dev/null | grep -q pr-preview; then
+            git archive origin/gh-pages pr-preview | tar -x -C _site || echo "WARNING: failed to preserve pr-preview"
+          fi
+
+      - name: Deploy to gh-pages branch (retry)
+        if: steps.deploy.outcome == 'failure'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_site
+          publish_branch: gh-pages
           keep_files: true
           cname: tandemonium.jimandi.love
