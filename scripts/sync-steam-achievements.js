@@ -7,7 +7,7 @@
  * scrapes current achievements, then deletes/adds to match code.
  *
  * Usage:
- *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--no-delete] [--debug]
+ *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--no-delete] [--allow-empty] [--debug]
  *
  * Default appId: 4510250 (playtest). Use 4482940 for main game.
  */
@@ -92,6 +92,27 @@ function waitForEnter() {
   });
 }
 
+// ── Wait for the achievements table to finish rendering ──────────
+// "Achievement Configuration" appears before the rows do. Scraping at that
+// moment read 0 rows and the sync re-added all 25 as duplicates (Sept 2026),
+// so wait until the row count holds steady across several polls.
+async function waitForTable(page, { timeout = 30000, interval = 1500, stablePolls = 3 } = {}) {
+  const start = Date.now();
+  let last = -1, stable = 0;
+  while (Date.now() - start < timeout) {
+    await sleep(interval);
+    const n = await page.evaluate(() =>
+      document.querySelectorAll('tr[id] input[value="Delete"]').length
+    ).catch(() => -1);
+    stable = (n === last && n >= 0) ? stable + 1 : 0;
+    last = n;
+    // A non-empty table settles fast; an empty one might still be loading, so
+    // it has to hold for the whole timeout before we believe it.
+    if (n > 0 && stable >= stablePolls) return n;
+  }
+  return last;
+}
+
 // ── Scrape current achievements from Steamworks ──────────────────
 async function scrapeAchievements(page) {
   // First dump the table structure for debugging
@@ -140,7 +161,9 @@ async function scrapeAchievements(page) {
       const displayName = secondLines[0] || '';
 
       if (apiName && apiName !== 'API Name') {
-        achievements.push({ apiName, displayName });
+        // row.id is Steam's stat/bit id (e.g. "a20_3") — unique even when two
+        // rows share an API name, so deletes can target one row exactly.
+        achievements.push({ apiName, displayName, rowId: row.id || null });
       }
     }
     return achievements;
@@ -186,30 +209,28 @@ async function dumpFormDebug(page, label) {
 }
 
 // ── Delete an achievement by clicking its Delete button ──────────
-async function deleteAchievement(page, apiName) {
+// Targets the row by its Steam row id, never by API name: with duplicates
+// present, "first row with this name" is the ORIGINAL — the one players'
+// unlocks are attached to.
+async function deleteAchievement(page, rowId, apiName) {
+  if (!rowId) return false;
+
   // Handle the confirmation dialog
   page.once('dialog', async dialog => {
     await dialog.accept();
   });
 
-  const deleted = await page.evaluate((name) => {
-    const rows = document.querySelectorAll('tr');
-    for (const row of rows) {
-      const firstCell = row.querySelector('td');
-      if (!firstCell) continue;
-      const cellText = firstCell.textContent.trim();
-      const apiMatch = cellText.match(/^([A-Z][A-Z0-9_]+)/);
-      if (apiMatch && apiMatch[1] === name) {
-        const deleteBtn = Array.from(row.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
-          .find(el => (el.textContent || el.value || '').trim() === 'Delete');
-        if (deleteBtn) {
-          deleteBtn.click();
-          return true;
-        }
-      }
-    }
-    return false;
-  }, apiName);
+  const deleted = await page.evaluate((id, name) => {
+    const row = document.getElementById(id);
+    if (!row) return false;
+    const firstCell = row.querySelector('td');
+    if (!firstCell || firstCell.textContent.trim().split('\n')[0].trim() !== name) return false;
+    const deleteBtn = Array.from(row.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
+      .find(el => (el.textContent || el.value || '').trim() === 'Delete');
+    if (!deleteBtn) return false;
+    deleteBtn.click();
+    return true;
+  }, rowId, apiName);
 
   if (deleted) {
     await sleep(2000);
@@ -381,13 +402,14 @@ async function main() {
       console.log(`Read app ID ${appId} from steam_appid.txt`);
     } catch (e) {
       console.error('No app ID provided and steam_appid.txt not found.');
-      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--debug] [--no-delete]');
+      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--debug] [--no-delete] [--allow-empty]');
       process.exit(1);
     }
   }
   const url = `https://partner.steamgames.com/apps/achievements/${appId}`;
   const dryRun = process.argv.includes('--dry-run');
   const skipDelete = process.argv.includes('--no-delete');
+  const allowEmpty = process.argv.includes('--allow-empty');
 
   console.log('=== Steam Achievement Sync ===');
   console.log(`App ID: ${appId}`);
@@ -481,6 +503,8 @@ async function main() {
   }
 
   // Scrape current achievements
+  console.log('Waiting for the achievements table to load...');
+  await waitForTable(page);
   console.log('Scraping current achievements from Steamworks...');
   await dumpFormDebug(page, 'initial page');
   const steamAchievements = await scrapeAchievements(page);
@@ -489,6 +513,28 @@ async function main() {
     console.log(`  ${a.apiName} — "${a.displayName}"`);
   }
   console.log('');
+
+  // An empty read is far more likely to be a page that hasn't rendered than an
+  // app with no achievements — and acting on it re-adds everything as
+  // duplicates. Only proceed on an explicitly empty app.
+  if (steamAchievements.length === 0 && codeAchievements.length > 0 && !allowEmpty) {
+    console.error('Read 0 achievements from Steamworks — the table probably had not loaded.');
+    console.error('Nothing changed. Re-run, or pass --allow-empty if this app really has none yet.');
+    await browser.close();
+    process.exit(1);
+  }
+
+  // Duplicate API names on Steamworks mean something already went wrong; the
+  // name-keyed plan below can't reason about them safely.
+  const seen = new Map();
+  for (const a of steamAchievements) seen.set(a.apiName, (seen.get(a.apiName) || 0) + 1);
+  const dupes = [...seen].filter(([, n]) => n > 1).map(([name]) => name);
+  if (dupes.length > 0) {
+    console.error(`Steamworks has duplicate API names: ${dupes.join(', ')}`);
+    console.error('Nothing changed. Remove the extra rows by hand (keep the lowest id — the original) and re-run.');
+    await browser.close();
+    process.exit(1);
+  }
 
   // Compare
   const codeSet = new Map(codeAchievements.map(a => [a.apiName, a]));
@@ -544,13 +590,13 @@ async function main() {
   if (!skipDelete && deleteList.length > 0) {
     console.log('Deleting achievements...');
     for (const a of deleteList) {
-      process.stdout.write(`  Deleting ${a.apiName}...`);
-      const ok = await deleteAchievement(page, a.apiName);
+      process.stdout.write(`  Deleting ${a.apiName} (${a.rowId})...`);
+      const ok = await deleteAchievement(page, a.rowId, a.apiName);
       console.log(ok ? ' done' : ' FAILED');
     }
     // Reload page after deletes
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    await sleep(1000);
+    await waitForTable(page);
     console.log('');
   }
 
@@ -558,6 +604,13 @@ async function main() {
   if (addList.length > 0) {
     console.log('Adding achievements...');
     for (const a of addList) {
+      // Re-check against the live table right before each add: never create
+      // a second row with an API name that already exists.
+      const live = await scrapeAchievements(page);
+      if (live.some(x => x.apiName === a.apiName)) {
+        console.log(`  Skipping ${a.apiName} — already on Steamworks`);
+        continue;
+      }
       process.stdout.write(`  Adding ${a.apiName}...\n`);
       const ok = await addAchievement(page, a);
       console.log(ok ? '  done' : '  FAILED');
@@ -568,15 +621,24 @@ async function main() {
   // Final scrape to verify
   console.log('Verifying...');
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-  await sleep(2000);
+  await waitForTable(page);
   const finalAchievements = await scrapeAchievements(page);
   console.log(`Steamworks now has ${finalAchievements.length} achievements.`);
   console.log(`Code expects ${codeAchievements.length} achievements.`);
 
-  if (finalAchievements.length === codeAchievements.length) {
+  // Compare by name, not count — a count can match while names are wrong.
+  const finalNames = finalAchievements.map(a => a.apiName);
+  const missing = codeAchievements.filter(a => !finalNames.includes(a.apiName)).map(a => a.apiName);
+  const extra = finalNames.filter(n => !codeSet.has(n));
+  const doubled = finalNames.filter((n, i) => finalNames.indexOf(n) !== i);
+  if (missing.length) console.log(`  Missing:    ${missing.join(', ')}`);
+  if (extra.length) console.log(`  Not in code: ${extra.join(', ')}`);
+  if (doubled.length) console.log(`  DUPLICATED: ${[...new Set(doubled)].join(', ')}`);
+
+  if (!missing.length && !doubled.length && (skipDelete || !extra.length)) {
     console.log('SYNC COMPLETE!');
   } else {
-    console.log('WARNING: Count mismatch — review in the browser.');
+    console.log('WARNING: Steamworks does not match the code — review in the browser.');
     console.log('Press ENTER to close the browser...');
     await waitForEnter();
   }
