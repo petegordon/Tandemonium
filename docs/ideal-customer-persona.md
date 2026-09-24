@@ -13,7 +13,9 @@ A single, standardized persona document for the player we are building Tandemoni
 | **Tagline** | *"Send me the link — I'll join from my phone."* |
 | **Photo / vibe** | Late-20s to mid-30s, laptop open on the kitchen table, phone propped against a coffee mug, on a voice call with their partner/sibling/best friend who is on their *own* device in another room — or another city. Two screens, two players, one bike. |
 
-> **Important:** Tandemonium is **online multiplayer, one-screen-per-player** (PeerJS P2P with Cloudflare relay fallback). There is no local split-screen or shared-controller mode, and the persona is deliberately built around that strength — not around couch co-op.
+> **Important:** Tandemonium's primary mode is **online multiplayer, one-screen-per-player** (PeerJS P2P with Cloudflare relay fallback), and the persona is built around that strength: the ritual with one specific person who is somewhere else.
+>
+> **Corrected 2026-09 (C-3):** the game *does* now have local co-op (two controllers, one screen) and VERSUS (local split-screen 1v1/1v2/2v2 team racing). They are **secondary modes**, not the pitch — but the doc used to state flatly that they do not exist, which contradicted the lobby a player is looking at, and led to marketing copy that told couch players to go away. The honest framing: online is the reason this game exists; local is what happens when the person is in the room.
 
 ---
 
@@ -136,7 +138,9 @@ Short, testable value props ordered by priority:
 4. **"Pedal in sync. Or don't. It's funnier when you don't."**
 5. **"Laptop here. Phone there. Same bike."**
 
-Avoid: "couch co-op" / "2nd controller" / "grab a friend on the couch" framing — the game does not support local multiplayer. Also avoid hardcore-gamer, competitive/esports, or "skill-based" framing.
+Lead with the remote-pair framing — that is the fantasy the game is built for. Do
+not *deny* couch co-op (it works, and VERSUS is local-only); just don't lead
+with it. Avoid hardcore-gamer, competitive/esports, or "skill-based" framing.
 
 ---
 
@@ -147,7 +151,10 @@ Avoid: "couch co-op" / "2nd controller" / "grab a friend on the couch" framing �
 - **Lone-wolf completionists** who never touch multiplayer — they can enjoy solo mode, but they are not the ICP.
 - **Free-to-play mobile whales** expecting gacha/loot systems.
 - **Kids under ~8** without a parent co-playing (reading / coordination curve).
-- **Couch-co-op-only buyers** who want two controllers on one screen — Tandemonium is online-only, one-screen-per-player. If they don't have a remote play partner and aren't willing to hand a phone to the person next to them, this is not for them.
+*(Removed 2026-09, C-3: "couch-co-op-only buyers" used to be listed here as an
+anti-persona. Local co-op and VERSUS exist; turning away the people who
+already have someone in the room was never a strategy, it was a description of
+a missing feature.)*
 
 ---
 
@@ -180,3 +187,39 @@ This document uses a standardized B2C persona template combining:
 - **Anti-persona** (product discovery best practice)
 
 Update this file when a playtest, survey, or analytics cohort materially changes who is actually buying and recommending Tandemonium.
+
+---
+
+## 15. Retention thesis (added 2026-09, C-3)
+
+The thesis this document was missing, from `docs/value-and-appeal-plan.md` §1.3.
+It is stated here because everything above describes *who* — this describes what
+has to be true of the game before any of it lands.
+
+**The verb first, then cadence, then the pair, then the world.**
+
+1. **The verb.** Pedalling has to feel like pedalling and the game has to tell
+   the truth about it. Until A-2…A-6 shipped, a genuinely alternating pair
+   scored worse than one person carrying, a stroke made no sound and moved
+   nothing on screen, no difficulty could actually crash while claiming it
+   could, and a first-timer lost time to a clock that started before they
+   understood the controls. No amount of retention machinery survives a verb
+   that does not feel good — a daily challenge on top of a bad ride is a daily
+   reminder not to come back.
+2. **Cadence.** A reason to open the game *today* specifically: Today's Road,
+   the same 500 m for everyone until 09:00 UTC, and a personal best to beat.
+3. **The pair.** The relationship modelled in the software: shared history,
+   pair bests, "who did you ride with", streaks that forgive a missed day.
+   Casey's job-to-be-done is a ritual with **one specific person**; the game
+   currently forgets that person the moment the room closes.
+4. **The world.** Tourist Mode — "ride the distance between you" — as the
+   post-launch headline, not the demo.
+
+**What this means for the metrics in §13:** *Repeat-pair sessions* is the number
+that proves the JTBD, and until C-1 shipped it was not measurable at all. D1/D7
+were unmeasurable for signed-out players until A-9 gave sessions a device id.
+Targets stay as written; the instrumentation to check them now exists.
+
+**Roadmap:** `docs/value-and-appeal-plan.md`. A surface freeze is in effect for
+its duration — no new bike colours, achievements, controller drivers or ambient
+scenery until the demo is cut (2026-11-30).

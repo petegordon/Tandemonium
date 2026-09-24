@@ -232,13 +232,18 @@ async function loadAll() {
   destroyCharts();
 
   try {
-    const [overview, daily, funnel, rides, crashes, conversions, network, devices, dda] = await Promise.all([
+    // C-1: retention / dropoff / pairs are the three questions this pipeline
+    // was built for and never asked.
+    const [overview, daily, funnel, rides, crashes, conversions, network, devices, dda,
+           retention, dropoff, pairs] = await Promise.all([
       fetchJSON('overview'), fetchJSON('daily'), fetchJSON('funnel'),
       fetchJSON('rides'), fetchJSON('crashes'), fetchJSON('conversions'),
       fetchJSON('network'), fetchJSON('devices'), fetchJSON('dda'),
+      fetchJSON('retention'), fetchJSON('dropoff'), fetchJSON('pairs'),
     ]);
 
-    renderDashboard(overview, daily, funnel, rides, crashes, conversions, network, devices, dda);
+    renderDashboard(overview, daily, funnel, rides, crashes, conversions, network, devices, dda,
+                    retention, dropoff, pairs);
     document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
   } catch (e) {
     document.getElementById('status').textContent = 'Error: ' + e.message;
@@ -247,7 +252,8 @@ async function loadAll() {
   btn.disabled = false;
 }
 
-function renderDashboard(overview, daily, funnel, rides, crashes, conversions, network, devices, dda) {
+function renderDashboard(overview, daily, funnel, rides, crashes, conversions, network, devices, dda,
+                         retention, dropoff, pairs) {
   const o = overview;
   const totalSessions = o.sessions?.total || 0;
   const totalRides = o.rides?.total || 0;
@@ -270,6 +276,35 @@ function renderDashboard(overview, daily, funnel, rides, crashes, conversions, n
         <div class="sub">${fmt(stokersJoined)} joined (${pct(stokersJoined, roomsCreated)}%)</div></div>
       <div class="kpi"><div class="value">${fmt(o.rides?.tutorials || 0)}</div><div class="label">Tutorials</div></div>
       <div class="kpi"><div class="value">${fmt(o.conversions?.replays || 0)}</div><div class="label">Replays</div></div>
+    </div>
+
+    <!-- C-1 · Retention, drop-off, pairs -->
+    <div class="section">
+      <h2>Retention</h2>
+      <div class="card">
+        ${renderRetention(retention)}
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Where rides end</h2>
+      <div class="grid-2">
+        <div class="card"><h3>First ride of a session</h3>${renderFirstRide(dropoff)}</div>
+        <div class="card"><h3>Crash recovery</h3>${renderCrashRecover(dropoff)}</div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h3>Rides by level and outcome</h3>
+        ${renderTable(dropoff?.by_level, ['level','difficulty','completed','abandon_reason','n','avg_ms','avg_distance'])}
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h3>Abandoned rides, by checkpoints passed</h3>
+        ${renderTable(dropoff?.abandoned_by_checkpoint, ['checkpoints_passed','n'])}
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Pairs</h2>
+      <div class="card">${renderPairs(pairs)}</div>
     </div>
 
     <!-- Daily chart -->
@@ -700,6 +735,82 @@ document.getElementById('auto-refresh').addEventListener('change', (e) => {
 if (localStorage.getItem('dash_exclude_on') === '1') {
   document.getElementById('exclude-dev').checked = true;
 }
+
+// ── C-1 render helpers ────────────────────────────────────────────────────
+// Plain tables on purpose: a number you can read beats a chart you have to
+// interpret, and there is no chart library on this page for these.
+
+function renderRetention(r) {
+  if (!r || !r.cohorts) return '<p class="muted">No data.</p>';
+  const o = r.overall || {};
+  const cov = r.coverage || {};
+  const pctOr = (v) => v === null || v === undefined ? '—' : (v * 100).toFixed(1) + '%';
+  const rows = r.cohorts.slice(0, 21).map(c =>
+    `<tr><td>${c.day}</td><td>${c.n}</td><td>${(c.d1 * 100).toFixed(1)}%</td><td>${(c.d7 * 100).toFixed(1)}%</td></tr>`
+  ).join('');
+  return `
+    <div class="kpis" style="margin-bottom:10px">
+      <div class="kpi"><div class="value">${pctOr(o.d1)}</div><div class="label">D1</div></div>
+      <div class="kpi"><div class="value">${pctOr(o.d7)}</div><div class="label">D7</div></div>
+      <div class="kpi"><div class="value">${cov.with_device_id || 0}/${cov.sessions || 0}</div>
+        <div class="label">Sessions with a device id</div>
+        <div class="sub">older sessions are excluded, not guessed at</div></div>
+    </div>
+    <table><thead><tr><th>Cohort (first seen)</th><th>Devices</th><th>D1</th><th>D7</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4" class="muted">No cohorts yet.</td></tr>'}</tbody></table>`;
+}
+
+function renderFirstRide(d) {
+  const f = d && d.first_ride;
+  if (!f || !f.n) return '<p class="muted">No data.</p>';
+  const rate = f.n ? ((f.completed / f.n) * 100).toFixed(1) : '0';
+  return `<div class="kpis">
+    <div class="kpi"><div class="value">${rate}%</div><div class="label">completed</div>
+      <div class="sub">of ${f.n} first rides</div></div>
+    <div class="kpi"><div class="value">${Math.round((f.avg_ms || 0) / 1000)}s</div>
+      <div class="label">average length</div></div>
+  </div>`;
+}
+
+function renderCrashRecover(d) {
+  const c = d && d.crash_recover;
+  if (!c || !c.n) return '<p class="muted">No crash_recover events yet (B-2 ships them).</p>';
+  return `<div class="kpis">
+    <div class="kpi"><div class="value">${((c.avg_ms || 0) / 1000).toFixed(2)}s</div>
+      <div class="label">average impact → riding</div>
+      <div class="sub">${c.n} crashes · target ≤ 2.5s</div></div>
+  </div>`;
+}
+
+function renderPairs(p) {
+  if (!p) return '<p class="muted">No data.</p>';
+  const rows = (p.pairs || []).slice(0, 25).map(x =>
+    `<tr><td>${x.lo} + ${x.hi}</td><td>${x.rides}</td><td>${(x.first_ride || '').slice(0, 10)}</td><td>${(x.last_ride || '').slice(0, 10)}</td></tr>`
+  ).join('');
+  return `
+    <div class="kpis" style="margin-bottom:10px">
+      <div class="kpi"><div class="value">${p.total_pairs || 0}</div><div class="label">Pairs</div></div>
+      <div class="kpi"><div class="value">${p.repeat_pairs || 0}</div><div class="label">Rode together again</div>
+        <div class="sub">${((p.repeat_share || 0) * 100).toFixed(0)}% of pairs</div></div>
+      <div class="kpi"><div class="value">${p.median_days_between_rides ?? '—'}</div>
+        <div class="label">Median days between a pair's rides</div>
+        <div class="sub">decides daily vs weekly pair streak (D-5)</div></div>
+    </div>
+    <p class="muted">${p.note || ''}</p>
+    <table><thead><tr><th>Pair</th><th>Rides</th><th>First</th><th>Last</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4" class="muted">No pairs yet.</td></tr>'}</tbody></table>`;
+}
+
+/** Generic table for an array of flat rows. */
+function renderTable(rows, cols) {
+  if (!rows || rows.length === 0) return '<p class="muted">No data.</p>';
+  const head = cols.map(c => `<th>${c.replace(/_/g, ' ')}</th>`).join('');
+  const body = rows.slice(0, 40).map(r =>
+    '<tr>' + cols.map(c => `<td>${r[c] ?? '—'}</td>`).join('') + '</tr>'
+  ).join('');
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
 </script>
 </body>
 </html>

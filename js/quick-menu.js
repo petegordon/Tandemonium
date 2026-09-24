@@ -24,8 +24,11 @@ export class QuickMenu {
    *   on-screen affordance along with the YOU lean gauge.
    * @param {object} [controllers]  the other one: { isOn(): boolean, run(): void }
    *   — the controller overlay toggle (live 3D tiles of each rider's pad).
+   * @param {object} [ghost]  D-4's ghost toggle:
+   *   { available(): boolean, isOn(): boolean, run(): void }. Hidden entirely
+   *   when there is no recorded best to ride against.
    */
-  constructor(recenter, controllers) {
+  constructor(recenter, controllers, ghost) {
     this.btn = document.getElementById('quick-menu-btn');
     this.overlay = document.getElementById('quick-menu-overlay');
     this.sheet = document.getElementById('quick-menu-sheet');
@@ -43,6 +46,7 @@ export class QuickMenu {
 
     this.recenter = recenter || null;
     this.controllers = controllers || null;
+    this.ghost = ghost || null;
     this.open = false;
 
     this.btn.addEventListener('click', () => this.toggle());
@@ -80,6 +84,15 @@ export class QuickMenu {
     if (controllersEl) {
       controllersEl.addEventListener('click', () => {
         if (this.controllers) this.controllers.run();
+        this.sync();
+      });
+    }
+
+    // D-4 · the ghost of your best ride.
+    const ghostEl = document.getElementById('qm-ghost');
+    if (ghostEl) {
+      ghostEl.addEventListener('click', () => {
+        if (this.ghost) this.ghost.run();
         this.sync();
       });
     }
@@ -145,6 +158,8 @@ export class QuickMenu {
     // Controller overlay: available whenever the game wired it (every mode).
     this._show('qm-controllers', !!this.controllers);
     this._setState('qm-controllers', !!(this.controllers && this.controllers.isOn()));
+    this._show('qm-ghost', !!(this.ghost && this.ghost.available && this.ghost.available()));
+    this._setState('qm-ghost', !!(this.ghost && this.ghost.isOn()));
 
     // The recorder shows #share-btn only while a clip is actually buffering.
     const clipReady = this.shareBtn && this.shareBtn.style.display !== 'none';
