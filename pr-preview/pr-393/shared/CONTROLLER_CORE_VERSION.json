@@ -1,0 +1,11 @@
+{
+  "package": "@usersfirst/controller-core",
+  "version": "0.5.0",
+  "visualizer": {
+    "package": "@usersfirst/controller-visualizer",
+    "version": "0.0.0"
+  },
+  "sourceCommit": "499ccd7",
+  "sourceRef": "499ccd7",
+  "syncedAt": "2026-09-07"
+}
