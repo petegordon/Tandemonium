@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import {
   UPGRADES, upgradeCost, slingStats, addPull, launchSpeed, MIN_PULL, coastDecel,
   stageGoal, stageBonus, scoreRun, emptySave, loadSave, writeSave, applyRun,
-  buyUpgrade, planCoinTrails, GATE_SPACING, COINS_PER_TRAIL, STORAGE_KEY
+  buyUpgrade, planCoinTrails, COINS_PER_TRAIL, STORAGE_KEY,
+  aimDistance, runDistance, dragPull, SLING_POST_D, SLING_REST_D, SLING_PULL_BACK
 } from '../../js/slingshot.js';
 
 const memStore = () => {
@@ -58,7 +59,7 @@ test('coasting drag grows with speed and the centre strip rolls easier', () => {
 });
 
 test('a fresh full pull on a flat road coasts short of stage 1, as intended', () => {
-  // Numerical coast with no pedaling, gates or slope.
+  // Numerical coast with no pedaling or slope.
   const s = slingStats({});
   let v = launchSpeed(s, 1), d = 0;
   const dt = 1 / 60;
@@ -75,25 +76,25 @@ test('stage goals rise and continue past the table', () => {
   assert.equal(stageBonus(3), 150);
 });
 
-test('score: distance, gates, coins, no record bonus on the first run', () => {
-  const r = scoreRun({ distance: 253.9, gatesPassed: 2, coins: 7 }, emptySave());
+test('score: distance, coins, no record bonus on the first run', () => {
+  const r = scoreRun({ distance: 253.9, coins: 7 }, emptySave());
   assert.equal(r.distance, 253);
   assert.equal(r.distPay, 50);
-  assert.equal(r.gatePay, 20);
   assert.equal(r.coinPay, 35);
   assert.equal(r.recordPay, 0);
   assert.equal(r.isRecord, true);
-  assert.equal(r.total, 105);
+  assert.equal(r.total, 85);
+  assert.equal(r.gatePay, undefined, 'no checkpoints, no checkpoint pay');
 });
 
 test('score: record bonus, stage bonus and the coin multiplier', () => {
   const save = { ...emptySave(), best: 200, runs: 3, stage: 2, lv: { magnet: 2 } };
-  const r = scoreRun({ distance: 600, gatesPassed: 5, coins: 0, stageCleared: true }, save);
+  const r = scoreRun({ distance: 600, coins: 0, stageCleared: true }, save);
   assert.equal(r.recordPay, 100);
   assert.equal(r.stagePay, 100);
-  assert.equal(r.subtotal, 120 + 50 + 0 + 100 + 100);
+  assert.equal(r.subtotal, 120 + 0 + 100 + 100);
   assert.equal(r.multiplier, 1.5);
-  assert.equal(r.total, Math.floor(370 * 1.5));
+  assert.equal(r.total, Math.floor(320 * 1.5));
 });
 
 test('a short run is not a record and pays no record bonus', () => {
@@ -140,15 +141,44 @@ test('save round-trips and survives garbage', () => {
   assert.deepEqual(g.lv, { sling: 10 });
 });
 
-test('coin trails: whole trails, deterministic, clear of the gates, on the road', () => {
-  const a = planCoinTrails(1200, 7);
-  assert.deepEqual(a, planCoinTrails(1200, 7));
+test('coin trails: whole trails, deterministic, on the road, after the start', () => {
+  const a = planCoinTrails(1200, 7, { start: 65 });
+  assert.deepEqual(a, planCoinTrails(1200, 7, { start: 65 }));
   assert.ok(a.length > 0 && a.length % COINS_PER_TRAIL === 0);
   for (const c of a) {
-    const toGate = Math.min(c.d % GATE_SPACING, GATE_SPACING - (c.d % GATE_SPACING));
-    assert.ok(toGate >= 12, `coin at ${c.d} is ${toGate} m from a gate`);
+    assert.ok(c.d >= 65, `coin at ${c.d} is before the start`);
     assert.ok(Math.abs(c.offset) <= 1.8);
     assert.ok(c.d < 1200);
   }
   assert.notDeepEqual(a, planCoinTrails(1200, 8));
+});
+
+test('the slingshot: the bike rests past the fork and pulls back behind it', () => {
+  assert.ok(SLING_REST_D > SLING_POST_D, 'rear wheel in the pouch, bike ahead of the fork');
+  assert.equal(aimDistance(0), SLING_REST_D);
+  assert.equal(aimDistance(1), SLING_REST_D - SLING_PULL_BACK);
+  assert.ok(aimDistance(1) > 0, 'a full pull stays on the road, not across the loop seam');
+  assert.equal(aimDistance(9), aimDistance(1), 'clamped');
+  assert.ok(aimDistance(0.5) < aimDistance(0.2), 'more pull, further back');
+});
+
+test('run distance is measured from the rest point, never negative', () => {
+  assert.equal(runDistance(SLING_REST_D), 0);
+  assert.equal(runDistance(SLING_REST_D + 100), 100);
+  assert.equal(runDistance(1), 0, 'a bike still drawn back has flown nowhere');
+  assert.equal(runDistance(undefined), 0);
+});
+
+test('no checkpoint upgrade is sold any more', () => {
+  assert.equal(UPGRADES.find(u => u.id === 'gate'), undefined);
+  assert.equal(slingStats({}).gateBoost, undefined);
+});
+
+test('drag pull: down the screen pulls back, from wherever the pull already was', () => {
+  const H = 1000; // full pull = 300 px
+  assert.equal(dragPull(0, 0, H), 0);
+  assert.equal(dragPull(0, 150, H), 0.5);
+  assert.equal(dragPull(0, 900, H), 1, 'clamped');
+  assert.equal(dragPull(0.4, 150, H), 0.9, 'adds to a pedaled pull');
+  assert.equal(dragPull(0.2, -80, H), 0.2, 'dragging up never pushes forward');
 });

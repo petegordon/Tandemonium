@@ -10,6 +10,7 @@ import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
 import * as sling from './slingshot.js';
 import * as slingUI from './slingshot-ui.js';
+import { SlingshotRig } from './slingshot-rig.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
@@ -2254,7 +2255,11 @@ class Game {
 
   _updateCountdown(dt) {
     this.countdownTimer -= dt;
-    if (this.isSlingshot) this._updateSlingPull(dt);
+    // Slingshot: no numbers — the aim phase holds here until the riders let go.
+    if (this.isSlingshot && this._slingRun && !this._slingRun.launched) {
+      if (!this._updateSlingAim(dt)) return;
+      this.countdownTimer = 0;
+    }
     const flavorNum = document.getElementById('countdown-flavor-num');
 
     if (this.countdownTimer <= 0) {
@@ -2396,6 +2401,8 @@ class Game {
   // ============================================================
 
   _resetGame(fromRemote = false, fromBeginning = false) {
+    // Slingshot: every reset is back into the slingshot, never to a checkpoint.
+    if (this.isSlingshot) { this._resetToSling(); return; }
     // Analytics: track reset/restart
     analytics.trackRideEvent('reset', this.bike ? this.bike.distanceTraveled : 0, {
       from_beginning: fromBeginning,
@@ -3111,13 +3118,16 @@ class Game {
   // SLINGSHOT MODE — launch for distance, earn Chaos Coins, upgrade
   // ============================================================
   //
-  // A solo pseudo-level, like Tourist: the stage goal is the finish line, the
-  // gates are checkpoints and the Chaos Coins are collectibles, so the race
-  // manager, HUD, markers and finish cinematic all run unchanged. What differs:
-  // the countdown winds the slingshot (pedal to pull), GO launches the bike,
-  // pedaling is rationed to a stroke budget, the bike coasts on low drag, and
-  // the run ends when it stalls, crashes or reaches the goal. Scoring and the
-  // economy live in js/slingshot.js, the DOM in js/slingshot-ui.js.
+  // A solo pseudo-level, like Tourist: the stage goal is the finish line and
+  // the Chaos Coins are collectibles, so the race manager, HUD and finish
+  // cinematic run unchanged. There are no checkpoints. What differs:
+  // - a real slingshot (js/slingshot-rig.js) stands on the start line; the
+  //   countdown is replaced by an aim phase where every pedal stroke draws the
+  //   bike back, and pressing both pedals (or holding a full pull) lets go;
+  // - pedaling after launch is rationed to a stroke budget, and the bike
+  //   coasts on low drag until it stalls, crashes or reaches the goal;
+  // - any reset puts the bike back in the slingshot for a fresh launch.
+  // Scoring and the economy live in js/slingshot.js, the DOM in js/slingshot-ui.js.
 
   _slingStore() {
     if (!this._slingStoreRef) this._slingStoreRef = sling.browserStore();
@@ -3130,6 +3140,7 @@ class Game {
     this.quickMenu.setVisible(false);
     slingUI.hideResults();
     slingUI.hideHud();
+    slingUI.hidePull();
     const render = (focusIdx) => {
       const buttons = slingUI.renderGarage(this._slingSave, {
         onBuy: (id) => {
@@ -3167,14 +3178,17 @@ class Game {
     this._lobbyBtn.textContent = 'LOBBY';
     this._loadSavedTuning();
 
+    // Road distances are measured from the start line; the run is measured
+    // from the slingshot's rest point, so the finish sits that much further on.
+    const finishD = sling.stageGoal(save.stage) + sling.SLING_REST_D;
     this.lobby.selectedLevel = {
       id: 'slingshot',
       name: `Slingshot · Stage ${save.stage}`,
-      distance: sling.stageGoal(save.stage),
-      checkpointInterval: sling.GATE_SPACING,
+      distance: finishD,
+      checkpointInterval: finishD,   // the only "checkpoint" is the finish: no gates
       collectibles: 'coins',
       icon: '🎯',
-      description: 'Pull back, let go, and see how far the two of you roll.',
+      description: 'Drag down or pedal to pull back · let go to launch',
       isSlingshot: true,
       timerEnabled: false,       // the run ends when the bike stops, not on a clock
       motionAdaptation: false
@@ -3183,7 +3197,7 @@ class Game {
     this.lobby.selectedDifficulty = save.stage >= 4 ? 'adventurous' : 'chill';
 
     // The first launch goes through the instructions tap (motion permission,
-    // audio unlock); after that, straight into the wind-up.
+    // audio unlock); after that, straight back into the slingshot.
     if (this._slingPrimed) { this._startCountdown(); return; }
     this._slingPrimed = true;
     this.state = 'instructions';
@@ -3197,18 +3211,31 @@ class Game {
     const stats = sling.slingStats(this._slingSave.lv);
     this._slingStats = stats;
     this._slingRun = {
-      pull: 0, launched: false, strokesLeft: stats.strokes,
-      coins: 0, gatesPassed: 0, topSpeed: 0, stillT: 0,
+      pull: 0, fullT: 0, launched: false, releaseHeld: false, dragReleased: false,
+      strokesLeft: stats.strokes, coins: 0, topSpeed: 0, stillT: 0,
       crashDistance: null, over: false,
     };
-    this.countdownTimer = 4.0;          // one more second to wind the bands
+    // No countdown: the aim phase waits for the riders to let go.
+    this.countdownTimer = Infinity;
+    const flavorNum = document.getElementById('countdown-flavor-num');
+    if (flavorNum) { flavorNum.textContent = ''; flavorNum.className = ''; }
     this.autoSpeed = false;             // cruise control would never let it stall
+    this._slingDrag = null;
+    this._initSlingDrag();
     this.bike.coast = {
       decel: (v, onStrip) => sling.coastDecel(stats, v, onStrip),
       maxSpeed: SLING_MAX_SPEED,
     };
+
+    // The slingshot itself, rebuilt with the road it stands on.
+    if (this._slingRig) this._slingRig.dispose();
+    this._slingRig = new SlingshotRig(this.scene, this.world.roadPath);
+    this.bike.resetToDistance(sling.aimDistance(0));
+    this._slingRig.hold(this.bike);
+
     // Chaos Coins come in trails, not the level's scattered pickups.
-    this.collectibleManager.replaceItems(sling.planCoinTrails(level.distance, (Math.random() * 1e6) | 0));
+    this.collectibleManager.replaceItems(sling.planCoinTrails(level.distance, (Math.random() * 1e6) | 0,
+      { start: sling.SLING_REST_D + 60 }));
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
     this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
     this.hud.hideTimer();
@@ -3216,33 +3243,98 @@ class Game {
     this._updateSlingHud();
   }
 
-  /** Countdown frames: every pedal stroke pulls the bands further back. */
-  _updateSlingPull(dt) {
+  /**
+   * Aim frames: every pedal stroke draws the bike further back into the bands.
+   * Both pedals together let go; so does holding a full pull. True on release.
+   */
+  _updateSlingAim(dt) {
     const run = this._slingRun;
-    if (!run || run.launched) return;
+    const drag = this._slingDrag && this._slingDrag.active ? this._slingDrag : null;
     const r = this.pedalCtrl.update(dt);
     this._playPedalTaps(this.pedalCtrl);
     const before = run.pull;
-    run.pull = sling.addPull(run.pull, r.acceleration);
+    if (drag) {
+      // A finger on the bands: the drag sets the pull; pedaling still adds.
+      drag.base = sling.addPull(drag.base, r.acceleration);
+      run.pull = sling.dragPull(drag.base, drag.dy, window.innerHeight);
+    } else {
+      run.pull = sling.addPull(run.pull, r.acceleration);
+    }
     if (run.pull >= 1 && before < 1) this._playChime(880, 0.2);
+    // A held drag is the riders aiming, not dithering: no auto-release under it.
+    run.fullT = run.pull >= 1 && !drag ? run.fullT + dt : 0;
+    if (run.pull !== before) {
+      this.bike.resetToDistance(sling.aimDistance(run.pull));
+      this._slingRig.hold(this.bike);
+    }
     slingUI.showPull(run.pull);
+    if (run.dragReleased || r.braking || run.fullT >= sling.AUTO_RELEASE_S) {
+      // Still holding both pedals as the bike leaves: that is not a brake.
+      run.releaseHeld = !!r.braking;
+      return true;
+    }
+    return false;
   }
 
-  /** GO: let go of the bands. */
+  _slingAiming() {
+    return this.isSlingshot && this.state === 'countdown' && this._slingRun && !this._slingRun.launched;
+  }
+
+  /**
+   * Touch / mouse: press anywhere on the road, drag DOWN to draw the bands
+   * back, lift to let go. A drag only counts past a few pixels, so tapping the
+   * on-screen pedals (which also pulls) never fires the slingshot by accident.
+   */
+  _initSlingDrag() {
+    if (this._slingDragWired) return;
+    this._slingDragWired = true;
+    const DEAD_ZONE_PX = 12;
+    window.addEventListener('pointerdown', (e) => {
+      if (!this._slingAiming()) return;
+      if (e.target && e.target.closest && e.target.closest('button, a, input, #quick-menu-overlay, #quick-menu-btn')) return;
+      this._slingDrag = { id: e.pointerId, y0: e.clientY, dy: 0, base: this._slingRun.pull, active: false };
+    });
+    window.addEventListener('pointermove', (e) => {
+      const d = this._slingDrag;
+      if (!d || e.pointerId !== d.id || !this._slingAiming()) return;
+      d.dy = Math.max(0, e.clientY - d.y0);
+      if (!d.active && d.dy > DEAD_ZONE_PX) d.active = true;
+      if (d.active && e.cancelable) e.preventDefault();
+    }, { passive: false });
+    const end = (e) => {
+      const d = this._slingDrag;
+      if (!d || e.pointerId !== d.id) return;
+      this._slingDrag = null;
+      if (!d.active || !this._slingAiming()) return;
+      // Let go. A drag that ended back where it started is a cancel, not a shot.
+      if (e.type === 'pointerup' && this._slingRun.pull > 0.08) this._slingRun.dragReleased = true;
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  }
+
+  /** Let go of the bands. */
   _launchSling() {
     const run = this._slingRun;
     if (!run || run.launched) return;
     run.launched = true;
     this.bike.speed = sling.launchSpeed(this._slingStats, run.pull);
+    if (this._slingRig) this._slingRig.release();
     slingUI.hidePull();
     hapticCheckpoint();
+    this._playChime(1320, 0.15);
     analytics.trackEvent('slingshot_launch', { pull: Math.round(run.pull * 100), stage: this._slingSave.stage });
   }
 
   /** Ration pedaling to the stroke budget; stronger legs push harder. */
   _slingPedal(r) {
     const run = this._slingRun;
-    if (!run || !run.launched || !(r.acceleration > 0)) return r;
+    if (!run || !run.launched) return r;
+    if (run.releaseHeld) {
+      if (r.braking) return { ...r, braking: false };
+      run.releaseHeld = false;
+    }
+    if (!(r.acceleration > 0)) return r;
     if (run.strokesLeft <= 0) return { ...r, acceleration: 0 };
     run.strokesLeft--;
     return { ...r, acceleration: r.acceleration * this._slingStats.pedalMult };
@@ -3252,6 +3344,7 @@ class Game {
   _updateSlingRun(dt) {
     const run = this._slingRun;
     if (!run || run.over) return true;
+    if (this._slingRig) this._slingRig.update(dt);
     const b = this.bike;
     run.topSpeed = Math.max(run.topSpeed, b.speed);
     if (b.fallen && run.crashDistance == null) run.crashDistance = b.distanceTraveled;
@@ -3271,25 +3364,45 @@ class Game {
     slingUI.updateHud({
       coins: run.coins,
       strokesLeft: run.strokesLeft,
-      distance: this.bike.distanceTraveled,
-      goal: this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0,
+      distance: sling.runDistance(this.bike.distanceTraveled),
+      goal: sling.stageGoal(this._slingSave.stage),
     });
   }
 
-  _onSlingGate() {
+  /**
+   * Every reset in the mode (quick menu, D-pad, results) puts the bike back in
+   * the slingshot. A run still rolling is abandoned, unpaid.
+   */
+  _resetToSling() {
     const run = this._slingRun;
-    if (!run) return;
-    run.gatesPassed++;
-    this.bike.speed += this._slingStats.gateBoost;
+    if (run && run.launched && !run.over) {
+      run.over = true;
+      analytics.endRide({
+        completed: false,
+        abandon_reason: 'slingshot_reset',
+        distance: sling.runDistance(this.bike.distanceTraveled),
+      });
+    }
+    if (this._finishCinematic) {
+      this._finishCinematic.cleanup();
+      this._finishCinematic = null;
+      if (this.chaseCamera) this.chaseCamera.initialized = false;
+    }
+    this._clearOverlayButtons();
+    slingUI.hideResults();
+    slingUI.hideGarage();
+    if (this.obstacleManager) this.obstacleManager.restoreKnocked();
+    if (this.physicsFx) this.physicsFx.clear();
+    this._startCountdown();
   }
 
   _endSlingRun(cause) {
     const run = this._slingRun;
     if (!run || run.over) return;
     run.over = true;
-    const distance = cause === 'crash' && run.crashDistance != null
-      ? run.crashDistance : this.bike.distanceTraveled;
-    const runData = { distance, gatesPassed: run.gatesPassed, coins: run.coins, stageCleared: cause === 'goal' };
+    const distance = sling.runDistance(cause === 'crash' && run.crashDistance != null
+      ? run.crashDistance : this.bike.distanceTraveled);
+    const runData = { distance, coins: run.coins, stageCleared: cause === 'goal' };
     const score = sling.scoreRun(runData, this._slingSave);
     this._slingSave = sling.applyRun(this._slingSave, runData, score);
     sling.writeSave(this._slingStore(), this._slingSave);
@@ -3298,7 +3411,6 @@ class Game {
       completed: cause === 'goal',
       abandon_reason: cause === 'goal' ? undefined : `slingshot_${cause}`,
       distance: score.distance,
-      checkpoints_passed: run.gatesPassed,
     });
 
     this.state = 'slingResults';
@@ -3322,6 +3434,7 @@ class Game {
   _leaveSlingMode() {
     this.isSlingshot = false;
     this._slingRun = null;
+    if (this._slingRig) { this._slingRig.dispose(); this._slingRig = null; }
     if (this.bike) this.bike.coast = null;
     slingUI.hideGarage();
     slingUI.hideResults();
@@ -4023,7 +4136,6 @@ class Game {
     if (raceEvent.event === 'checkpoint') {
       this._showCheckpointFlash();
       hapticCheckpoint();
-      if (this.isSlingshot) this._onSlingGate();
 
       // B-3 · split against your best. This is the whole point of a second
       // ride on the same road: at every checkpoint you know whether you are

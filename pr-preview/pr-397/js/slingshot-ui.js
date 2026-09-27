@@ -35,9 +35,9 @@ export function renderGarage(save, { onBuy, onLaunch, onLobby }) {
   root.appendChild(el('div', 'sling-sub',
     `Stage ${save.stage}: reach <b>${fmt(stageGoal(save.stage))} m</b>` +
     ` · best ${fmt(save.best)} m · ×${stats.coinMult.toFixed(2)} coins<br>` +
-    'Pedal together on the line to pull the bands back. After launch you get a few ' +
-    'strokes of pedaling, then you coast. Steer through the gold gates for a boost, ' +
-    'sweep the Chaos Coins and do not crash.'));
+    'Pedal together to pull the slingshot back, then press both pedals to let go. ' +
+    'After launch you get a few strokes of pedaling, then you coast. Sweep the ' +
+    'Chaos Coins, do not crash, and reset any time to go back to the slingshot.'));
 
   const launch = el('button', 'lobby-btn lobby-btn-accent', 'LAUNCH!');
   launch.addEventListener('click', onLaunch);
@@ -96,7 +96,6 @@ export function renderResults({ cause, score, run, save, stageCleared }, { onAga
   const rows = el('div', 'sling-rows');
   const row = (label, v, cls = 'row') => rows.appendChild(el('div', cls, `<span>${label}</span><span>${v}</span>`));
   row('Distance', `${COIN} ${fmt(score.distPay)}`);
-  row(`Checkpoints (${run.gatesPassed})`, `${COIN} ${fmt(score.gatePay)}`);
   row(`Chaos Coins (${run.coins})`, `${COIN} ${fmt(score.coinPay)}`);
   if (score.recordPay) row('Record bonus', `${COIN} ${fmt(score.recordPay)}`);
   if (score.stagePay) row('Stage bonus', `${COIN} ${fmt(score.stagePay)}`);
