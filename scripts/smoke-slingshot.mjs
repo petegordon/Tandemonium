@@ -246,7 +246,34 @@ await waitState('slingResults', 60000);
 const jp = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins }));
 check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /×2/.test(jp.rows) && jp.coins > walletBefore, `the jackpot ends the run at double pay ("${jp.title}", +${jp.coins - walletBefore})`);
 
-// 13. Lobby cleans up
+// 13. Twenty relaunches on the same stage re-arm the ride instead of
+// rebuilding it, and leak nothing into the scene or the heap.
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
+await waitState('slingAim', 60000);
+const loopStart = await page.evaluate(() => {
+  const g = window._game;
+  window.__rebuilds = 0;
+  const orig = g._startCountdown.bind(g);
+  g._startCountdown = (...a) => { window.__rebuilds++; return orig(...a); };
+  return { children: g.scene.children.length, heap: performance.memory ? performance.memory.usedJSHeapSize : 0 };
+});
+for (let i = 0; i < 20; i++) {
+  await page.evaluate(() => { const g = window._game; g._slingRun.pull = 0.5; g._slingGo(); });
+  await waitState('playing', 60000);
+  await page.evaluate(() => window._game._resetGame());
+  await waitState('slingAim', 60000);
+}
+const loopEnd = await page.evaluate(() => ({
+  children: window._game.scene.children.length,
+  heap: performance.memory ? performance.memory.usedJSHeapSize : 0,
+  rebuilds: window.__rebuilds,
+}));
+const heapMB = (loopEnd.heap - loopStart.heap) / 1048576;
+check(loopEnd.rebuilds === 0, `20 relaunches re-armed the ride, never rebuilt it (${loopEnd.rebuilds} rebuilds)`);
+check(loopEnd.children === loopStart.children, `no scene leak over 20 launches (${loopStart.children} → ${loopEnd.children} objects)`);
+check(heapMB < 25, `heap grew ${heapMB.toFixed(1)} MB over 20 launches (< 25)`);
+
+// 14. Lobby cleans up
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /lobby/i.test(b.textContent)).click());
 await new Promise(r => setTimeout(r, 1000));
 const clean = await page.evaluate(() => ({

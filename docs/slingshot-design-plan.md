@@ -16,7 +16,14 @@ pedals are still there — not certain what they would be used for."*
   - Each stage has a fixed course. Gate 1 at 45 m has coins, a hay bale (−40% speed) and a clear lane. Gate 2 at 110 m adds a JACKPOT billboard (flat bonus, then the run pays ×2) from stage 2.
   - Upgrades are gentler, and goals are 300 / 420 / 540 / 660 / 780 / 900 / 1050 m, all inside one lap.
   - The unit-tested progression simulation takes a 0.8-skill player 2-2-2-2-2-3-3 launches per stage. A maxed bike clears 1,050 m even riding the edge.
-- Next: Phase 2 (a SlingshotMode controller), then Phase 3 (feel).
+- **End-of-ride signal (Pete).** A flag and a "315 m" sign spring up where the bike stopped. A tally counts the metres up, then the coins they pay, then the results.
+- **Phase 3 is done.** The bands thin and run hot as they stretch. There's a ratchet creak, haptic ticks at 25/50/75/100%, a grab ring on the idle pouch and a finger readout. Release gives a crack, a camera jolt and a puff of dust.
+- **Phase 2 is done, deliberately as a mixin rather than a separate controller object.**
+  - The whole mode moved into `js/slingshot-mode.js` (571 lines out of `game.js`). It is installed onto Game's prototype, so the methods keep running as Game methods.
+  - A true controller would have meant rewriting every `this.x` as `this.game.x` for little gain.
+  - Call sites now ask `_rideSystemOn(name)` against one table, `SLING_SYSTEMS_OFF`, instead of checking `isSlingshot`.
+  - Relaunching on the same stage re-arms the ride (race, bike, course, slingshot) instead of rebuilding the world. Smoke: 20 relaunches, 0 rebuilds, scene 703 → 703 objects, flat heap.
+  - T7 (the crash latch) is fixed.
 
 This plan is built from three independent adversarial reviews: **game feel / loop**,
 **mobile input / camera**, and **technical fit / risk**. It also uses numbers measured

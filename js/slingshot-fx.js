@@ -58,8 +58,13 @@ export class SparkleBurst {
     }
   }
 
-  dispose() {
+  /** Drop every burst still in the air (a relaunch mid-burst). */
+  clear() {
     while (this.bursts.length) this._drop(this.bursts.length - 1);
+  }
+
+  dispose() {
+    this.clear();
     this._tex.dispose();
   }
 

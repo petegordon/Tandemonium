@@ -323,3 +323,11 @@ test('progression: a maxed bike clears the last goal even riding the edge', () =
   const d = predictCoast(slingStats(max), 1, 'edge');
   assert.ok(d >= STAGE_GOALS[STAGE_GOALS.length - 1], `maxed edge roll ${d.toFixed(0)} m`);
 });
+
+test('the systems table: what a normal ride runs that this mode does not', async () => {
+  const { SLING_SYSTEMS_OFF } = await import('../../js/slingshot.js');
+  for (const name of ['achievements', 'ghost', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']) {
+    assert.ok(SLING_SYSTEMS_OFF.has(name), `${name} should be off in Slingshot`);
+  }
+  assert.equal(SLING_SYSTEMS_OFF.has('collectibles'), false, 'coins are the point');
+});
