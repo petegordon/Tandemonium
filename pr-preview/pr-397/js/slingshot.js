@@ -146,8 +146,9 @@ export function surfaceAt(centerDist) {
   return 'grass';
 }
 
-/** Deceleration (m/s²) while rolling at v on a surface. */
-export function coastDecel(stats, v, surface = 'dirt') {
+/** Deceleration (m/s²) while rolling at v on a surface — or flying (air drag only). */
+export function coastDecel(stats, v, surface = 'dirt', airborne = false) {
+  if (airborne) return stats.drag * v * v;
   const rr = SURFACE_RR[surface] != null ? SURFACE_RR[surface] : 1;
   return 9.8 * stats.crr * rr + stats.drag * v * v;
 }
@@ -227,7 +228,7 @@ export function planCourse(stage, distance) {
     for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
     return l;
   };
-  const coins = [], hay = [];
+  const coins = [], hay = [], ramps = [];
   let jackpot = null;
   const fan = (d, offset) => { for (let i = 0; i < COINS_PER_TRAIL; i++) coins.push({ d: d - 6 + i * TRAIL_STEP, offset }); };
 
@@ -240,9 +241,35 @@ export function planCourse(stage, distance) {
   hay.push({ d: g2, offset: h2 });
   if (stage >= 2) jackpot = { d: g2 + 8, offset: j2 };
 
+  // Ramps: one 7 m short of gate 2's hay bale, in its lane — fast enough
+  // (~12 m/s) and you sail over it, too slow and you land in it — then one
+  // every 110–170 m down the road, each in a random lane.
+  ramps.push({ d: g2 - 7, offset: h2 });
+  for (let d = g2 + 90; d < distance - 40; d += 110 + rng() * 60) ramps.push({ d, offset: LANES[Math.floor(rng() * 3)] });
+
   coins.push(...planCoinTrails(distance, 31 * stage + 7, { start: g2 + 40 }));
-  return { coins, hay, jackpot };
+  // No coin trail sits on a ramp.
+  const clear = coins.filter(c => !ramps.some(r => Math.abs(c.d - r.d) < 4 && Math.abs(c.offset - r.offset) < 1.2));
+  return { coins: clear, hay, ramps, jackpot };
 }
+
+// ---- Air ----------------------------------------------------
+
+/** Vertical speed off a ramp: faster bikes fly higher, within reason. */
+export function rampLaunch(speed) {
+  return Math.min(8, 2 + 0.3 * Math.max(0, speed || 0));
+}
+
+/** Seconds in the air for a launch at vy on flat ground. */
+export function airTime(vy) {
+  return (2 * Math.max(0, vy)) / 9.8;
+}
+
+/** A landing after this long in the air is Big Air, and pays. */
+export const BIG_AIR_S = 0.8;
+export const BIG_AIR_PAY = 10;
+/** Clear this height and you sail over a hay bale instead of into it. */
+export const HAY_CLEAR_H = 1.2;
 
 // ---- Scoring ------------------------------------------------
 
@@ -274,10 +301,11 @@ export function scoreRun(run, save) {
     ? Math.floor((distance - best) / PAY.recordDivisor) : 0;
   const stagePay = run.stageCleared ? stageBonus(save.stage) : 0;
   const jackpotPay = run.jackpot ? jackpotBonus(save.stage) : 0;
-  const subtotal = distPay + coinPay + recordPay + stagePay + jackpotPay;
+  const airPay = (run.bigAirs || 0) * BIG_AIR_PAY;
+  const subtotal = distPay + coinPay + recordPay + stagePay + jackpotPay + airPay;
   const multiplier = stats.coinMult * (run.jackpot ? 2 : 1);
   const total = Math.floor(subtotal * multiplier);
-  return { distance, distPay, coinPay, recordPay, stagePay, jackpotPay, subtotal,
+  return { distance, distPay, coinPay, recordPay, stagePay, jackpotPay, airPay, subtotal,
            multiplier, total, isRecord };
 }
 

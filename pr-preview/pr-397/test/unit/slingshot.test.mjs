@@ -331,3 +331,35 @@ test('the systems table: what a normal ride runs that this mode does not', async
   }
   assert.equal(SLING_SYSTEMS_OFF.has('collectibles'), false, 'coins are the point');
 });
+
+test('air: ramps launch faster bikes higher, and a long flight is Big Air', async () => {
+  const S = await import('../../js/slingshot.js');
+  assert.ok(S.rampLaunch(12) > S.rampLaunch(6));
+  assert.ok(S.rampLaunch(100) <= 8, 'capped');
+  assert.ok(S.airTime(S.rampLaunch(12)) >= S.BIG_AIR_S, 'a good launch is big air');
+  assert.ok(S.airTime(S.rampLaunch(4)) < S.BIG_AIR_S, 'a crawl off a ramp is a hop');
+  const st = S.slingStats({});
+  assert.ok(S.coastDecel(st, 10, 'grass', true) < S.coastDecel(st, 10, 'strip', false), 'no rolling drag in the air');
+  // Clearing the hay 7 m past the ramp needs real speed.
+  const heightAt = (v, dx) => { const vy = S.rampLaunch(v), t = dx / v; return vy * t - 4.9 * t * t; };
+  assert.ok(heightAt(12, 7) > S.HAY_CLEAR_H, 'fast: over the bale');
+  assert.ok(heightAt(8, 7) < S.HAY_CLEAR_H, 'slow: into it');
+  const r = S.scoreRun({ distance: 100, bigAirs: 2 }, S.emptySave());
+  assert.equal(r.airPay, 2 * S.BIG_AIR_PAY);
+});
+
+test('course: ramps in lanes, one set up to jump gate 2\'s bale, none under a coin', async () => {
+  const S = await import('../../js/slingshot.js');
+  for (let st = 1; st <= 7; st++) {
+    const goal = S.stageGoal(st) + S.SLING_REST_D;
+    const c = S.planCourse(st, goal);
+    assert.ok(c.ramps.length >= 1);
+    for (const r of c.ramps) {
+      assert.ok(S.LANES.includes(r.offset) && r.d < goal);
+      assert.ok(!c.coins.some(x => Math.abs(x.d - r.d) < 4 && Math.abs(x.offset - r.offset) < 1.2), 'no coin on a ramp');
+    }
+    const jump = c.ramps[0], bale = c.hay[1];
+    assert.equal(jump.offset, bale.offset);
+    assert.equal(Math.round(bale.d - jump.d), 7);
+  }
+});

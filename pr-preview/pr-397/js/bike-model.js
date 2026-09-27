@@ -71,6 +71,10 @@ export class BikeModel {
     // drag, so a launched bike coasts and the surface costs a little per second
     // instead of a share of the speed.
     this.coast = null;
+    // Airborne (Slingshot ramps): { vy, h, t } while off the ground, else null.
+    // Height rides on top of the road; gravity brings it back; nothing else
+    // in the game sets it, so every other ride stays road-locked.
+    this.air = null;
 
     // Optional crash-tumble hooks (issue #388). The physics sidecar is wired in
     // by the game, not imported here — this model stays a pure arcade balance
@@ -544,7 +548,7 @@ export class BikeModel {
 
     if (this.coast) {
       // Slingshot: rolling + air drag, with the rolling part set by the surface.
-      this.speed = Math.max(0, this.speed - this.coast.decel(this.speed, centerDist) * dt);
+      this.speed = Math.max(0, this.speed - this.coast.decel(this.speed, centerDist, !!this.air) * dt);
     } else {
       // Friction — reduced at low speeds so startup isn't brutally hard
       const frictionBase = 0.6;
@@ -718,11 +722,22 @@ export class BikeModel {
         this._rearWheelOffset = rearDx * rearRightX + rearDz * rearRightZ;
 
         this.position.y = this.roadPath.getPointAtDistance(this.roadD).y;
+        if (this.air) {
+          this.air.vy -= 9.8 * dt;
+          this.air.h += this.air.vy * dt;
+          this.air.t += dt;
+          if (this.air.h <= 0) {                 // touchdown
+            this.lastAirTime = this.air.t;
+            this.air = null;
+          } else {
+            this.position.y += this.air.h;
+          }
+        }
       }
     }
 
     // Fall detection
-    if (Math.abs(this.lean) > (TUNE.crashThreshold || 1.35)) {
+    if (!this.air && Math.abs(this.lean) > (TUNE.crashThreshold || 1.35)) {
       this._fall();
     }
 
@@ -888,7 +903,14 @@ export class BikeModel {
     this.position.y = terrainY - 0.15;
   }
 
+  /** Leave the ground at vertical speed vy (m/s). */
+  launchAir(vy) {
+    this.air = { vy, h: 0.01, t: 0 };
+    this.lastAirTime = 0;
+  }
+
   _reset() {
+    this.air = null;
     // Hand the visual group back before restoring the upright pose, or the
     // tumble keeps driving it and the reset is invisible.
     if (this.onReset) this.onReset(this);
@@ -907,6 +929,7 @@ export class BikeModel {
   }
 
   resetToDistance(distance) {
+    this.air = null;
     if (this.onReset) this.onReset(this);
     this.fallen = false;
     this.lean = 0;
