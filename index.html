@@ -309,6 +309,13 @@
     opacity: 0; transition: opacity 0.25s;
   }
   #sling-toast.visible { opacity: 1; }
+  #sling-finger {
+    position: fixed; transform: translate(-50%, -100%); display: none;
+    padding: 3px 9px; border-radius: 999px; background: rgba(0,0,0,0.55);
+    color: #ffd23f; font-weight: 900; font-size: 14px; white-space: nowrap;
+    pointer-events: none; z-index: 58;
+  }
+  #sling-finger.visible { display: block; }
   #sling-tally {
     position: fixed; left: 50%; top: 30%; transform: translateX(-50%);
     display: none; text-align: center; color: #fff; pointer-events: none; z-index: 58;
@@ -5179,6 +5186,7 @@ ON</button>
 <!-- Slingshot mode · the pull meter while the riders wind the bands. -->
 <div id="sling-pull"><div class="sling-hint">Pull back &middot; aim &middot; let go</div><div class="bar"><i></i></div><div class="sling-predict"></div></div>
 <div id="sling-toast"></div>
+<div id="sling-finger"></div>
 
 <!-- E-2 · the road is about to do something. Both riders see this. -->
 <div id="disruption-banner"></div>

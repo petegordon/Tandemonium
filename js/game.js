@@ -3366,13 +3366,35 @@ class Game {
     }
 
     if (!aim) aim = { pull: 0, side: 0 };
+    if (this._slingRig) this._slingRig.tickAim(dt, aim.pull);
     if (aim.pull !== run.pull || aim.side !== run.side) {
+      this._slingFeel(run.pull, aim.pull);
       if (aim.pull >= 1 && run.pull < 1) this._playChime(880, 0.2);
       run.pull = aim.pull;
       run.side = aim.side;
       this._poseSlingBike(run.pull, run.side);
     }
+    const d = this._slingDrag && this._slingDrag.active ? this._slingDrag : null;
+    if (d && run.pull > 0) {
+      const predicted = sling.predictCoast(this._slingStats, run.pull, 'dirt');
+      slingUI.showFinger(d.x0 + d.dx, d.y0 + d.dy, run.pull, predicted);
+    } else {
+      slingUI.hideFinger();
+    }
     if (fire && run.pull >= sling.MIN_LAUNCH_PULL) this._slingGo();
+  }
+
+  /**
+   * Pull feel: a ratchet creak every 10% of draw, rising in pitch, and a
+   * haptic tick (phone vibrate + controller rumble) at 25/50/75/100%.
+   */
+  _slingFeel(from, to) {
+    if (to <= from) return;
+    if (Math.floor(to * 10) > Math.floor(from * 10)) this._playBeep(160 + 380 * to, 0.035);
+    if (Math.floor(to * 4) > Math.floor(from * 4)) {
+      try { if (navigator.vibrate) navigator.vibrate(to >= 1 ? 30 : 12); } catch (_) { /* not allowed */ }
+      hapticBump();
+    }
   }
 
   /**
@@ -3440,7 +3462,17 @@ class Game {
     if (!run || run.launched) return;
     run.launched = true;
     this.bike.speed = sling.launchSpeed(this._slingStats, run.pull);
+    // The snap: a crack of rubber, a jolt of the camera, dust off the pouch.
+    const pouch = this._slingRig ? this._slingRig.pouch.position.clone() : null;
     if (this._slingRig) this._slingRig.release();
+    slingUI.hideFinger();
+    this._playBeep(2200, 0.03);
+    setTimeout(() => this._playBeep(140, 0.12), 25);
+    if (this.chaseCamera) this.chaseCamera.shakeAmount = 0.25 + 0.35 * run.pull;
+    if (pouch) {
+      if (!this._slingFx) this._slingFx = new SparkleBurst(this.scene);
+      this._slingFx.burst(pouch, { color: 0xb89a6a, size: 0.6, additive: false });
+    }
     slingUI.hidePull();
     slingUI.markLearned();
     hapticCheckpoint();
@@ -3601,6 +3633,7 @@ class Game {
     if (this._slingProps) { this._slingProps.dispose(); this._slingProps = null; }
     if (this._slingFlag) { this._slingFlag.dispose(); this._slingFlag = null; }
     slingUI.hideTally();
+    slingUI.hideFinger();
     if (this._slingBaseFov != null && this.camera.fov !== this._slingBaseFov) {
       this.camera.fov = this._slingBaseFov;
       this.camera.updateProjectionMatrix();

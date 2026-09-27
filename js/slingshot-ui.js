@@ -174,6 +174,18 @@ export function showPull(pull, { predicted = 0, best = 0 } = {}) {
 
 export function hidePull() { $('sling-pull').classList.remove('visible'); }
 
+/** Power readout floating ~90 px above the dragging finger, out from under the thumb. */
+export function showFinger(x, y, pull, predicted) {
+  const f = $('sling-finger');
+  if (!f) return;
+  f.textContent = `${Math.round(pull * 100)}% · ≈ ${fmt(predicted)} m`;
+  f.style.left = `${Math.round(x)}px`;
+  f.style.top = `${Math.round(Math.max(8, y - 90))}px`;
+  f.classList.add('visible');
+}
+
+export function hideFinger() { const f = $('sling-finger'); if (f) f.classList.remove('visible'); }
+
 /** After the first launch the words go; the meter stays. */
 export function markLearned() { $('sling-pull').classList.add('learned'); }
 
