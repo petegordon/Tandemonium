@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'aed9461',pr:397,time:'09-27-2026 01:57'}</script><base href="/pr-preview/pr-397/">
+<head><script>window.__BUILD={sha:'dde4c9f',pr:397,time:'09-27-2026 02:03'}</script><base href="/pr-preview/pr-397/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
@@ -309,6 +309,13 @@
     opacity: 0; transition: opacity 0.25s;
   }
   #sling-toast.visible { opacity: 1; }
+  #sling-finger {
+    position: fixed; transform: translate(-50%, -100%); display: none;
+    padding: 3px 9px; border-radius: 999px; background: rgba(0,0,0,0.55);
+    color: #ffd23f; font-weight: 900; font-size: 14px; white-space: nowrap;
+    pointer-events: none; z-index: 58;
+  }
+  #sling-finger.visible { display: block; }
   #sling-tally {
     position: fixed; left: 50%; top: 30%; transform: translateX(-50%);
     display: none; text-align: center; color: #fff; pointer-events: none; z-index: 58;
@@ -5179,6 +5186,7 @@ ON</button>
 <!-- Slingshot mode · the pull meter while the riders wind the bands. -->
 <div id="sling-pull"><div class="sling-hint">Pull back &middot; aim &middot; let go</div><div class="bar"><i></i></div><div class="sling-predict"></div></div>
 <div id="sling-toast"></div>
+<div id="sling-finger"></div>
 
 <!-- E-2 · the road is about to do something. Both riders see this. -->
 <div id="disruption-banner"></div>
@@ -5908,7 +5916,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.aed9461 | 09-27-2026 01:57 (PR #397)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.dde4c9f | 09-27-2026 02:03 (PR #397)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

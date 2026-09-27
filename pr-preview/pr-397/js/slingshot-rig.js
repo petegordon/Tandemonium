@@ -61,6 +61,9 @@ export class SlingshotRig {
     }
 
     const bandMat = this._mat(new THREE.MeshLambertMaterial({ color: BAND }));
+    this._bandMat = bandMat;
+    this._bandCold = new THREE.Color(BAND);
+    this._bandHot = new THREE.Color(0xff9f1a);     // stretched rubber runs hot
     const bandGeo = this._geo(new THREE.CylinderGeometry(0.06, 0.06, 1, 6));
     this.bands = this.tips.map(() => {
       const m = new THREE.Mesh(bandGeo, bandMat);
@@ -73,6 +76,15 @@ export class SlingshotRig {
     );
     this.pouch.rotation.y = pt.heading;
     this.group.add(this.pouch);
+
+    // "Grab me": a ring that pulses around the pouch until the first pull.
+    const ringGeo = this._geo(new THREE.RingGeometry(0.75, 0.95, 32));
+    ringGeo.rotateX(-Math.PI / 2);
+    this.grabRing = new THREE.Mesh(ringGeo, this._mat(new THREE.MeshBasicMaterial({
+      color: 0xffd23f, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide,
+    })));
+    this.group.add(this.grabRing);
+    this._t = 0;
 
     this._pouchRest = this._center.clone().add(new THREE.Vector3(0, BAND_Y, 0));
     this._setPouch(this._pouchRest);
@@ -150,6 +162,20 @@ export class SlingshotRig {
     return { pos, look, fov };
   }
 
+  /** Per aim frame: the grab ring pulses while the bands are slack. */
+  tickAim(dt, pull) {
+    this._t += dt;
+    const idle = pull <= 0.001;
+    this.grabRing.visible = idle;
+    if (idle) {
+      const k = 0.5 + 0.5 * Math.sin(this._t * 4);
+      this.grabRing.position.copy(this.pouch.position);
+      this.grabRing.position.y -= 0.7;
+      this.grabRing.scale.setScalar(1 + 0.25 * k);
+      this.grabRing.material.opacity = 0.35 + 0.5 * (1 - k);
+    }
+  }
+
   /** Let go: the pouch springs forward from where it was held. */
   release() {
     this._released = true;
@@ -157,6 +183,7 @@ export class SlingshotRig {
     this._releaseFrom.copy(this.pouch.position);
     this.guide.visible = false;
     this.guideOff.visible = false;
+    this.grabRing.visible = false;
   }
 
   /** Back to slack, ready for the next pull. */
@@ -187,7 +214,19 @@ export class SlingshotRig {
 
   _setPouch(p) {
     this.pouch.position.copy(p);
-    this.tips.forEach((tip, i) => this._placeBetween(this.bands[i], tip, p));
+    this.tips.forEach((tip, i) => {
+      const band = this.bands[i];
+      this._placeBetween(band, tip, p);
+      // Rubber thins as it stretches (volume-ish: radius ∝ 1/√stretch) …
+      const rest = this._restBandLen || (this._restBandLen = tip.distanceTo(this._pouchRest || p));
+      const thin = Math.max(0.45, Math.min(1, Math.sqrt(rest / Math.max(0.01, tip.distanceTo(p)))));
+      band.scale.x = band.scale.z = thin;
+    });
+    // … and runs hotter the harder it is drawn.
+    if (this._bandMat && this._restBandLen) {
+      const stretch = Math.min(1, Math.max(0, (this.tips[0].distanceTo(p) / this._restBandLen - 1) / 0.6));
+      this._bandMat.color.copy(this._bandCold).lerp(this._bandHot, stretch);
+    }
   }
 
   /** Stretch a unit-height, Y-aligned cylinder between two points. */

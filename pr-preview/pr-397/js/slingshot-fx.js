@@ -21,8 +21,8 @@ export class SparkleBurst {
     })();
   }
 
-  /** Throw a burst of sparkles out from a world position. */
-  burst(pos) {
+  /** Throw a burst out from a world position: gold sparkles by default, or dust. */
+  burst(pos, { color = 0xffe27a, size = 0.45, additive = true } = {}) {
     const geo = new THREE.BufferGeometry();
     const p = new Float32Array(PARTICLES * 3);
     const v = [];
@@ -33,8 +33,8 @@ export class SparkleBurst {
     }
     geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
     const mat = new THREE.PointsMaterial({
-      map: this._tex, size: 0.45, transparent: true, depthWrite: false,
-      blending: THREE.AdditiveBlending, color: 0xffe27a,
+      map: this._tex, size, transparent: true, depthWrite: false,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending, color,
     });
     const points = new THREE.Points(geo, mat);
     this.scene.add(points);
