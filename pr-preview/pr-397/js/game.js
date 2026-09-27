@@ -13,7 +13,7 @@ import * as sling from './slingshot.js';
 import * as slingUI from './slingshot-ui.js';
 import { SlingshotRig } from './slingshot-rig.js';
 import { SlingshotProps, HAY_KEEP } from './slingshot-props.js';
-import { SparkleBurst } from './slingshot-fx.js';
+import { SparkleBurst, DistanceFlag } from './slingshot-fx.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
@@ -680,7 +680,7 @@ class Game {
     });
 
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'slingAim' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults' | 'slingGarage' | 'slingResults'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'slingAim' | 'slingTally' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults' | 'slingGarage' | 'slingResults'
     this._finishCinematic = null;
     this.countdownTimer = 0;
     this._lastCountNum = 3;
@@ -3239,6 +3239,8 @@ class Game {
       maxSpeed: SLING_MAX_SPEED,
     };
 
+    if (this._slingFlag) { this._slingFlag.dispose(); this._slingFlag = null; }
+    slingUI.hideTally();
     // The slingshot itself, rebuilt with the road it stands on.
     if (this._slingRig) this._slingRig.dispose();
     this._slingRig = new SlingshotRig(this.scene, this.world.roadPath);
@@ -3519,6 +3521,7 @@ class Game {
     this._clearOverlayButtons();
     slingUI.hideResults();
     slingUI.hideGarage();
+    slingUI.hideTally();
     if (this.obstacleManager) this.obstacleManager.restoreKnocked();
     if (this.physicsFx) this.physicsFx.clear();
     this._startCountdown();
@@ -3540,12 +3543,37 @@ class Game {
       stage: this._slingSave.stage, record: score.isRecord,
     });
 
-    this.state = 'slingResults';
+    // The end-of-ride signal: plant a flag where the bike stopped, count the
+    // metres up, turn them into the coins they pay — then the full results.
+    this.state = 'slingTally';
     this.quickMenu.setVisible(false);
     this.hud.hideTimer();
     this.audioEngine.stopBike();
+    this._lastCrashCause = null;     // the crash latch is only cleared by the game-over modal
     slingUI.hideHud();
     slingUI.hidePull();
+    if (this._slingFlag) this._slingFlag.dispose();
+    this._slingFlag = new DistanceFlag(this.scene, this.bike.position, this.bike.heading, `${score.distance} m`);
+    const label = { jackpot: 'JACKPOT!', goal: 'STAGE GOAL!', crash: 'CRASH!' }[cause] || '';
+    slingUI.showTally(
+      { distance: score.distance, coins: Math.floor(score.distPay * score.multiplier), label },
+      {
+        onTick: (kind) => (kind === 'coin' ? this._playBeep(1500, 0.05) : this._playBeep(700, 0.03)),
+        onDone: () => this._showSlingResults(cause, score, runData, run),
+      });
+  }
+
+  /** Per frame while the tally counts: the flag springs up, the sparkles settle. */
+  _updateSlingTally(dt) {
+    if (this._slingFlag) this._slingFlag.update(dt);
+    if (this._slingFx) this._slingFx.update(dt);
+    if (this._slingRig) this._slingRig.update(dt);
+  }
+
+  _showSlingResults(cause, score, runData, run) {
+    if (this.state !== 'slingTally') return;
+    slingUI.hideTally();
+    this.state = 'slingResults';
     const buttons = slingUI.renderResults(
       { cause, score, run: { ...runData, topSpeed: run.topSpeed }, save: this._slingSave, stageCleared: runData.stageCleared },
       {
@@ -3571,6 +3599,8 @@ class Game {
     this._slingRun = null;
     if (this._slingRig) { this._slingRig.dispose(); this._slingRig = null; }
     if (this._slingProps) { this._slingProps.dispose(); this._slingProps = null; }
+    if (this._slingFlag) { this._slingFlag.dispose(); this._slingFlag = null; }
+    slingUI.hideTally();
     if (this._slingBaseFov != null && this.camera.fov !== this._slingBaseFov) {
       this.camera.fov = this._slingBaseFov;
       this.camera.updateProjectionMatrix();
@@ -6211,6 +6241,7 @@ class Game {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
       if (this.state === 'slingAim') this._updateSlingAimState(dt);
+      if (this.state === 'slingTally') this._updateSlingTally(dt);
       if (this.state === 'gameover' || this.state === 'victory' || this.state === 'versusResults' ||
           this.state === 'slingGarage' || this.state === 'slingResults' ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();

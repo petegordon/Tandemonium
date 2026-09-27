@@ -113,6 +113,9 @@ export function renderResults({ cause, score, run, save, stageCleared }, { onAga
   const lobby = mk('LOBBY', 'lobby-btn', onLobby);
   root.appendChild(box);
   root.classList.add('visible');
+  // The tap that skipped the tally must not land on LAUNCH AGAIN.
+  root.style.pointerEvents = 'none';
+  setTimeout(() => { root.style.pointerEvents = ''; }, 400);
   return [again, garage, lobby];
 }
 
@@ -183,4 +186,62 @@ export function toast(text) {
   t.classList.add('visible');
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => t.classList.remove('visible'), 1100);
+}
+
+// ---- End of the ride: the distance, then the coins it earns ---------------
+
+let _tally = null;
+
+/**
+ * The end-of-ride signal: the metres count up, then turn into the Chaos
+ * Coins they pay. `onTick(kind)` fires as the numbers roll ('m' / 'coin') for
+ * sound; `onDone` fires once, after ~2.5 s or on a tap/click/key.
+ */
+export function showTally({ distance, coins, label = '' }, { onTick = () => {}, onDone = () => {} } = {}) {
+  hideTally();
+  const root = $('sling-tally');
+  root.innerHTML =
+    (label ? `<div class="tally-label">${label}</div>` : '') +
+    '<div class="tally-dist"><span class="tally-m">0</span> m</div>' +
+    `<div class="tally-coins">+<span class="tally-c">0</span> ${COIN}</div>` +
+    '<div class="tally-skip">tap to continue</div>';
+  root.classList.add('visible');
+  const mEl = root.querySelector('.tally-m'), cEl = root.querySelector('.tally-c'), coinRow = root.querySelector('.tally-coins');
+  const DIST_S = 1.1, COIN_S = 0.7, HOLD_S = 0.7;
+  const t0 = performance.now();
+  let lastM = -1, lastC = -1, done = false, raf = 0;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    cancelAnimationFrame(raf);
+    window.removeEventListener('pointerdown', finish, true);
+    window.removeEventListener('keydown', finish, true);
+    onDone();
+  };
+  const ease = (x) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
+  const frame = () => {
+    const t = (performance.now() - t0) / 1000;
+    const m = Math.round(distance * ease(t / DIST_S));
+    if (m !== lastM) { mEl.textContent = fmt(m); if (Math.floor(m / 25) !== Math.floor(lastM / 25)) onTick('m'); lastM = m; }
+    if (t >= DIST_S) {
+      coinRow.classList.add('shown');
+      const c = Math.round(coins * ease((t - DIST_S) / COIN_S));
+      if (c !== lastC) { cEl.textContent = fmt(c); if (Math.floor(c / 10) !== Math.floor(lastC / 10)) onTick('coin'); lastC = c; }
+    }
+    if (t >= DIST_S + COIN_S + HOLD_S) { finish(); return; }
+    raf = requestAnimationFrame(frame);
+  };
+  raf = requestAnimationFrame(frame);
+  // A tap skips to the results, which carry the same totals (and more).
+  setTimeout(() => {
+    window.addEventListener('pointerdown', finish, true);
+    window.addEventListener('keydown', finish, true);
+  }, 300);
+  _tally = { finish };
+}
+
+export function hideTally() {
+  const root = $('sling-tally');
+  if (root) root.classList.remove('visible');
+  _tally = null;
 }
