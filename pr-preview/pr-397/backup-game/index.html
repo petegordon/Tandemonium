@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="screen-orientation" content="landscape">
+    <title>Tandemonium - Tandem Bike Physics Game</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            overflow: hidden;
+            background: #000;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        canvas { display: block; }
+
+        /* Force landscape overlay */
+        #rotate-device {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #111;
+            z-index: 9999;
+            color: white;
+            font-family: 'Courier New', monospace;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 30px;
+        }
+        #rotate-device .phone-icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+            animation: rotate-hint 2s ease-in-out infinite;
+        }
+        #rotate-device p { font-size: 18px; }
+        @keyframes rotate-hint {
+            0%, 100% { transform: rotate(0deg); }
+            50% { transform: rotate(90deg); }
+        }
+        @media screen and (orientation: portrait) and (max-width: 900px) {
+            #rotate-device { display: flex !important; }
+        }
+
+        #hud {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            padding: 10px 15px;
+            font-family: 'Courier New', monospace;
+            color: white;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #speed, #distance {
+            font-size: 18px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            margin-bottom: 3px;
+        }
+
+        #pedal-indicator {
+            display: flex;
+            gap: 10px;
+            margin-top: 6px;
+        }
+
+        /* Hide desktop pedal indicator on mobile */
+        .is-mobile #pedal-indicator { display: none; }
+
+        .pedal-key {
+            width: 50px;
+            height: 40px;
+            border: 2px solid rgba(255,255,255,0.5);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: bold;
+            background: rgba(0,0,0,0.4);
+            transition: background 0.1s, border-color 0.1s;
+        }
+
+        .pedal-key.active {
+            background: rgba(0, 200, 0, 0.6);
+            border-color: #0f0;
+        }
+
+        .pedal-key.wrong {
+            background: rgba(200, 0, 0, 0.6);
+            border-color: #f00;
+        }
+
+        .pedal-key.brake {
+            background: rgba(200, 200, 0, 0.6);
+            border-color: #ff0;
+        }
+
+        #status {
+            position: fixed;
+            bottom: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff4444;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 10;
+            text-align: center;
+        }
+        .is-mobile #status { bottom: 30%; font-size: 20px; }
+
+        #instructions {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            color: white;
+            text-align: center;
+            z-index: 20;
+            cursor: pointer;
+            transition: opacity 0.8s;
+        }
+
+        #instructions .card {
+            background: rgba(0,0,0,0.75);
+            padding: 25px 35px;
+            border-radius: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            pointer-events: none;
+        }
+
+        #instructions h1 {
+            font-size: 32px;
+            margin-bottom: 8px;
+            color: #4CAF50;
+        }
+
+        #instructions .subtitle {
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 15px;
+        }
+
+        #instructions p {
+            font-size: 14px;
+            margin: 6px 0;
+            line-height: 1.5;
+        }
+
+        #instructions .key {
+            display: inline-block;
+            background: rgba(255,255,255,0.15);
+            padding: 2px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.3);
+            font-size: 13px;
+        }
+
+        #instructions .start-hint {
+            margin-top: 15px;
+            color: #8f8;
+            animation: pulse 1.5s infinite;
+        }
+
+        #instructions .desktop-controls { display: block; }
+        #instructions .mobile-controls { display: none; }
+        .is-mobile #instructions .desktop-controls { display: none; }
+        .is-mobile #instructions .mobile-controls { display: block; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #gauges {
+            position: fixed;
+            top: 10px;
+            right: 15px;
+            display: flex;
+            flex-direction: row;
+            gap: 8px;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .gauge {
+            position: relative;
+            width: 80px;
+            height: 80px;
+        }
+        .is-mobile .gauge {
+            width: 70px; height: 70px;
+        }
+        .is-mobile #gauges { right: 10px; top: 8px; }
+
+        #phone-gauge {
+            pointer-events: none;
+        }
+        .is-mobile #phone-gauge {
+            pointer-events: auto;
+            cursor: pointer;
+        }
+
+        .gauge svg {
+            width: 100%;
+            height: 100%;
+            filter: drop-shadow(0 0 6px rgba(0,0,0,0.6));
+        }
+
+        .gauge-label {
+            position: absolute;
+            bottom: -16px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+            white-space: nowrap;
+        }
+
+        .gauge-title {
+            position: absolute;
+            bottom: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 9px;
+            color: rgba(255,255,255,0.5);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            white-space: nowrap;
+        }
+
+        #calibrate-hint {
+            display: none;
+            position: absolute;
+            bottom: -40px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 9px;
+            color: rgba(255,255,255,0.6);
+            white-space: nowrap;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+        }
+        .is-mobile #calibrate-hint { display: block; }
+
+        #calibrate-flash {
+            display: none;
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            font-weight: bold;
+            color: #4f4;
+            text-shadow: 0 0 8px rgba(0,255,0,0.6);
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 11;
+        }
+
+        #crash-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 0, 0, 0);
+            pointer-events: none;
+            z-index: 5;
+            transition: background 0.1s;
+        }
+
+        /* ===== COUNTDOWN ===== */
+        #countdown-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 25;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+        #countdown-overlay.active { display: flex; }
+
+        #countdown-number {
+            font-family: 'Courier New', monospace;
+            font-size: 180px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 40px rgba(0,200,255,0.8), 0 0 80px rgba(0,200,255,0.4);
+            animation: countdown-pop 0.6s ease-out;
+        }
+        #countdown-number.go {
+            color: #4f4;
+            text-shadow: 0 0 40px rgba(0,255,100,0.8), 0 0 80px rgba(0,255,100,0.4);
+        }
+
+        #countdown-label {
+            font-family: 'Courier New', monospace;
+            font-size: 22px;
+            color: rgba(255,255,255,0.5);
+            margin-top: 10px;
+            letter-spacing: 6px;
+            text-transform: uppercase;
+        }
+
+        @keyframes countdown-pop {
+            0% { transform: scale(2.5); opacity: 0; }
+            40% { opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* ===== RESET BUTTON ===== */
+        #reset-btn {
+            position: fixed;
+            bottom: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.7);
+            background: rgba(0,0,0,0.4);
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 8px;
+            padding: 8px 20px;
+            cursor: pointer;
+            z-index: 10;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #reset-btn:active {
+            background: rgba(255,255,255,0.2);
+            border-color: rgba(255,255,255,0.6);
+        }
+        .is-mobile #reset-btn {
+            bottom: auto;
+            top: 10px;
+            left: auto;
+            right: calc(50% + 40px);
+            transform: none;
+            font-size: 11px;
+            padding: 5px 12px;
+        }
+
+        /* ===== SAFETY MODE BUTTON ===== */
+        #safety-btn {
+            position: fixed;
+            bottom: 12px;
+            right: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            font-weight: bold;
+            color: #fff;
+            background: rgba(0,160,0,0.6);
+            border: 2px solid rgba(0,200,0,0.7);
+            border-radius: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            z-index: 10;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #safety-btn:active {
+            opacity: 0.7;
+        }
+        #safety-btn.off {
+            background: rgba(160,0,0,0.5);
+            border-color: rgba(200,0,0,0.6);
+        }
+        .is-mobile #safety-btn {
+            bottom: auto;
+            top: 70px;
+            right: auto;
+            left: 10px;
+            font-size: 11px;
+            padding: 5px 10px;
+        }
+
+        /* ===== AUTO-SPEED BUTTON ===== */
+        #speed-btn {
+            position: fixed;
+            bottom: 12px;
+            right: 130px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            font-weight: bold;
+            color: #fff;
+            background: rgba(0,0,160,0.6);
+            border: 2px solid rgba(0,0,200,0.7);
+            border-radius: 8px;
+            padding: 8px 14px;
+            cursor: pointer;
+            z-index: 10;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #speed-btn:active { opacity: 0.7; }
+        #speed-btn.off {
+            background: rgba(100,100,100,0.4);
+            border-color: rgba(150,150,150,0.5);
+        }
+        .is-mobile #speed-btn {
+            bottom: auto;
+            top: 95px;
+            right: auto;
+            left: 10px;
+            font-size: 11px;
+            padding: 5px 10px;
+        }
+
+        /* ===== MOBILE TOUCH BUTTONS ===== */
+        #touch-controls {
+            display: none;
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            height: 35vh;
+            z-index: 15;
+            pointer-events: none;
+        }
+        .is-mobile #touch-controls { display: flex; }
+
+        .touch-pedal {
+            position: absolute;
+            bottom: 10px;
+            width: 38vw;
+            height: 30vh;
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            font-size: 28px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.7);
+            pointer-events: auto;
+            -webkit-tap-highlight-color: transparent;
+            transition: background 0.08s, border-color 0.08s;
+        }
+
+        .touch-pedal-left {
+            left: 10px;
+            background: rgba(50, 120, 255, 0.2);
+            border: 3px solid rgba(50, 120, 255, 0.4);
+        }
+        .touch-pedal-left.pressed {
+            background: rgba(50, 200, 50, 0.5);
+            border-color: rgba(50, 255, 50, 0.7);
+        }
+        .touch-pedal-left.wrong {
+            background: rgba(200, 50, 50, 0.5);
+            border-color: rgba(255, 50, 50, 0.7);
+        }
+        .touch-pedal-left.brake {
+            background: rgba(200, 200, 0, 0.5);
+            border-color: rgba(255, 255, 0, 0.7);
+        }
+
+        .touch-pedal-right {
+            right: 10px;
+            background: rgba(255, 80, 50, 0.2);
+            border: 3px solid rgba(255, 80, 50, 0.4);
+        }
+        .touch-pedal-right.pressed {
+            background: rgba(50, 200, 50, 0.5);
+            border-color: rgba(50, 255, 50, 0.7);
+        }
+        .touch-pedal-right.wrong {
+            background: rgba(200, 50, 50, 0.5);
+            border-color: rgba(255, 50, 50, 0.7);
+        }
+        .touch-pedal-right.brake {
+            background: rgba(200, 200, 0, 0.5);
+            border-color: rgba(255, 255, 0, 0.7);
+        }
+
+        .touch-pedal .pedal-label {
+            font-size: 16px;
+            opacity: 0.6;
+            position: absolute;
+            bottom: 12px;
+        }
+        /* ===== DEBUG CONSOLE ===== */
+        #debug-btn {
+            position: fixed;
+            bottom: 12px;
+            left: calc(50% + 60px);
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.7);
+            background: rgba(0,0,0,0.4);
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 8px;
+            padding: 8px 20px;
+            cursor: pointer;
+            z-index: 101;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .is-mobile #debug-btn {
+            bottom: auto;
+            top: 10px;
+            left: calc(50% + 40px);
+            font-size: 11px;
+            padding: 5px 12px;
+        }
+        #debug-console {
+            display: none;
+            position: fixed;
+            bottom: 45px;
+            left: 10px;
+            right: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(0,0,0,0.9);
+            border: 1px solid rgba(0,255,0,0.4);
+            border-radius: 6px;
+            padding: 6px 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            line-height: 1.4;
+            color: #0f0;
+            z-index: 100;
+            pointer-events: none;
+        }
+        #debug-console.visible { display: block; }
+
+        /* ===== LOBBY ===== */
+        #lobby {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            color: white;
+            text-align: center;
+            z-index: 30;
+            background: rgba(0,0,0,0.85);
+        }
+        #lobby .card {
+            background: rgba(0,0,0,0.75);
+            padding: 25px 35px;
+            border-radius: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            max-width: 400px;
+        }
+        #lobby h1 { font-size: 32px; margin-bottom: 8px; color: #4CAF50; }
+        #lobby .subtitle { font-size: 13px; color: #aaa; margin-bottom: 4px; }
+        .lobby-version {
+            color: rgba(255,255,255,0.3);
+            font-size: 10px;
+            margin-bottom: 12px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .lobby-step { margin-top: 15px; }
+        .lobby-prompt { font-size: 14px; color: #ccc; margin-bottom: 10px; }
+        .lobby-hint { font-size: 11px; color: #888; margin-top: 8px; }
+
+        .lobby-btn {
+            display: inline-block;
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            font-weight: bold;
+            color: #fff;
+            background: rgba(255,255,255,0.1);
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 10px;
+            padding: 14px 28px;
+            margin: 6px;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .lobby-btn:hover { background: rgba(255,255,255,0.2); border-color: rgba(255,255,255,0.6); }
+        .lobby-btn:active { background: rgba(255,255,255,0.25); }
+        .lobby-btn-accent {
+            background: rgba(76,175,80,0.3);
+            border-color: rgba(76,175,80,0.7);
+        }
+        .lobby-btn-accent:hover { background: rgba(76,175,80,0.5); }
+
+        .role-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+        .role-btn {
+            width: 140px;
+            padding: 16px 10px;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        .role-icon { font-size: 28px; display: block; margin-bottom: 6px; }
+        .role-desc { font-size: 11px; color: #aaa; font-weight: normal; }
+
+        .lobby-back {
+            display: block;
+            margin: 12px auto 0;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #888;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px 8px;
+        }
+        .lobby-back:hover { color: #ccc; }
+
+        .room-code {
+            font-size: 42px;
+            font-weight: bold;
+            letter-spacing: 6px;
+            color: #4CAF50;
+            text-shadow: 0 0 20px rgba(76,175,80,0.5);
+            margin: 10px 0;
+        }
+        .room-code-input {
+            font-family: 'Courier New', monospace;
+            font-size: 28px;
+            font-weight: bold;
+            text-align: center;
+            letter-spacing: 4px;
+            color: #fff;
+            background: rgba(255,255,255,0.1);
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 8px;
+            padding: 10px 16px;
+            width: 220px;
+            outline: none;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+        .room-code-input:focus { border-color: #4CAF50; }
+        .room-code-prefix {
+            font-family: 'Courier New', monospace;
+            font-size: 28px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.5);
+            letter-spacing: 4px;
+            padding: 10px 0 10px 12px;
+            background: rgba(255,255,255,0.1);
+            border: 2px solid rgba(255,255,255,0.4);
+            border-right: none;
+            border-radius: 8px 0 0 8px;
+        }
+        .room-code-short {
+            width: 130px;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .conn-status {
+            font-size: 13px;
+            color: #aaa;
+            margin-top: 10px;
+            min-height: 20px;
+            animation: pulse 1.5s infinite;
+        }
+        .conn-status.connected { color: #4CAF50; animation: none; }
+        .conn-status.error { color: #ff4444; animation: none; }
+
+        /* ===== MULTIPLAYER PEDAL BUTTON ===== */
+        #mp-pedal-controls {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            height: 35vh;
+            z-index: 15;
+            pointer-events: none;
+        }
+        .mp-pedal-btn {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60vw;
+            max-width: 400px;
+            height: 28vh;
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            font-family: 'Courier New', monospace;
+            font-size: 32px;
+            font-weight: bold;
+            color: rgba(255,255,255,0.8);
+            background: rgba(76,175,80,0.2);
+            border: 3px solid rgba(76,175,80,0.5);
+            pointer-events: auto;
+            -webkit-tap-highlight-color: transparent;
+            transition: background 0.08s, border-color 0.08s;
+            cursor: pointer;
+        }
+        .mp-pedal-btn.pressed {
+            background: rgba(50,200,50,0.5);
+            border-color: rgba(50,255,50,0.7);
+        }
+        .mp-pedal-btn.wrong {
+            background: rgba(200,50,50,0.5);
+            border-color: rgba(255,50,50,0.7);
+        }
+        .mp-pedal-btn.brake {
+            background: rgba(200,200,0,0.5);
+            border-color: rgba(255,255,0,0.7);
+        }
+        .mp-pedal-btn .pedal-label {
+            font-size: 14px;
+            opacity: 0.6;
+            margin-top: 6px;
+        }
+
+        /* ===== DISCONNECT OVERLAY ===== */
+        #disconnect-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 40;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .disconnect-box {
+            font-family: 'Courier New', monospace;
+            text-align: center;
+            color: white;
+            padding: 30px;
+        }
+        .disconnect-box p {
+            font-size: 22px;
+            font-weight: bold;
+            color: #ff6644;
+            margin-bottom: 20px;
+        }
+
+        /* ===== CONNECTION BADGE ===== */
+        #conn-badge {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: rgba(255,255,255,0.6);
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 12px;
+            padding: 3px 10px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #conn-badge #conn-type { color: #4CAF50; font-weight: bold; margin-right: 6px; }
+
+        /* ===== MULTIPLAYER ROLE LABEL ON HUD ===== */
+        .role-label-hud {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .role-label-hud.captain { color: #3388dd; }
+        .role-label-hud.stoker { color: #dd3344; }
+
+        /* In multiplayer: keep Up/Down touch buttons visible, hide old single PEDAL button */
+        .mp-mode #mp-pedal-controls { display: none !important; }
+    </style>
+</head>
+<body>
+    <!-- Force landscape on mobile -->
+    <div id="rotate-device">
+        <div class="phone-icon">&#x1F4F1;</div>
+        <p>Please rotate your device to<br><strong>LANDSCAPE</strong> mode</p>
+    </div>
+
+    <div id="hud">
+        <div id="speed">Speed: 0 km/h</div>
+        <div id="distance">Distance: 0 m</div>
+        <div id="pedal-indicator">
+            <div class="pedal-key" id="pedal-l">&uarr;</div>
+            <div class="pedal-key" id="pedal-r">&darr;</div>
+        </div>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="gauges">
+        <!-- Phone tilt gauge (raw device input) — hidden on desktop -->
+        <div id="phone-gauge" class="gauge">
+            <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="55" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+                <!-- Green safe zone: ±45° from horizontal on both sides -->
+                <path d="M 60 60 L 98.9 21.1 A 55 55 0 0 1 98.9 98.9 L 60 60" fill="rgba(0,180,0,0.2)" />
+                <path d="M 60 60 L 21.1 98.9 A 55 55 0 0 1 21.1 21.1 L 60 60" fill="rgba(0,180,0,0.2)" />
+                <line x1="60" y1="6" x2="60" y2="16" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                <g id="phone-needle" transform="rotate(0, 60, 60)">
+                    <line x1="15" y1="60" x2="50" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="70" y1="60" x2="105" y2="60" stroke="#fa3" stroke-width="3" stroke-linecap="round"/>
+                    <circle cx="60" cy="60" r="4" fill="none" stroke="#fa3" stroke-width="2"/>
+                    <line x1="56" y1="60" x2="50" y2="60" stroke="#fa3" stroke-width="2"/>
+                    <line x1="64" y1="60" x2="70" y2="60" stroke="#fa3" stroke-width="2"/>
+                    <line x1="60" y1="56" x2="60" y2="52" stroke="#fa3" stroke-width="2"/>
+                </g>
+                <polygon points="60,8 56,15 64,15" fill="#fff" opacity="0.8"/>
+            </svg>
+            <div id="phone-label" class="gauge-label">0.0&deg;</div>
+            <div class="gauge-title">PHONE</div>
+            <div id="calibrate-hint">TAP TO CALIBRATE</div>
+            <div id="calibrate-flash">CALIBRATED!</div>
+        </div>
+
+        <!-- Bike lean gauge -->
+        <div id="bike-gauge" class="gauge">
+            <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="55" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="2"/>
+                <path d="M 60 60 L 12.2 83.5 A 55 55 0 0 1 5 60 L 60 60" fill="rgba(255,50,50,0.25)" />
+                <path d="M 60 60 L 115 60 A 55 55 0 0 1 107.8 83.5 L 60 60" fill="rgba(255,50,50,0.25)" />
+                <line x1="60" y1="6" x2="60" y2="16" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                <line x1="28" y1="18.5" x2="33.5" y2="27" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+                <line x1="92" y1="18.5" x2="86.5" y2="27" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+                <line x1="10" y1="45" x2="20" y2="48" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+                <line x1="110" y1="45" x2="100" y2="48" stroke="rgba(255,50,50,0.5)" stroke-width="1"/>
+                <g id="bike-needle" transform="rotate(0, 60, 60)">
+                    <line x1="15" y1="60" x2="50" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="70" y1="60" x2="105" y2="60" stroke="#4af" stroke-width="3" stroke-linecap="round"/>
+                    <circle cx="60" cy="60" r="4" fill="none" stroke="#4af" stroke-width="2"/>
+                    <line x1="56" y1="60" x2="50" y2="60" stroke="#4af" stroke-width="2"/>
+                    <line x1="64" y1="60" x2="70" y2="60" stroke="#4af" stroke-width="2"/>
+                    <line x1="60" y1="56" x2="60" y2="52" stroke="#4af" stroke-width="2"/>
+                </g>
+                <polygon points="60,8 56,15 64,15" fill="#fff" opacity="0.8"/>
+            </svg>
+            <div id="bike-label" class="gauge-label">0.0&deg;</div>
+            <div class="gauge-title">BIKE</div>
+        </div>
+    </div>
+
+    <button id="debug-btn">DEBUG</button>
+    <div id="debug-console"></div>
+    <div id="crash-overlay"></div>
+
+    <!-- Countdown overlay -->
+    <div id="countdown-overlay">
+        <div id="countdown-number">3</div>
+        <div id="countdown-label">Get Ready</div>
+    </div>
+
+    <!-- Reset button -->
+    <button id="reset-btn">RESET</button>
+
+    <!-- Safety mode toggle -->
+    <button id="safety-btn">SAFETY: ON</button>
+
+    <!-- Auto-speed toggle -->
+    <button id="speed-btn" class="off">SPEED: OFF</button>
+
+    <!-- Mobile touch pedal buttons -->
+    <div id="touch-controls">
+        <div class="touch-pedal touch-pedal-left" id="touch-left">
+            &uarr;
+            <span class="pedal-label">UP PEDAL</span>
+        </div>
+        <div class="touch-pedal touch-pedal-right" id="touch-right">
+            &darr;
+            <span class="pedal-label">DOWN PEDAL</span>
+        </div>
+    </div>
+
+    <!-- Lobby screen (before instructions) -->
+    <div id="lobby">
+        <div class="card">
+            <h1>TANDEMONIUM</h1>
+            <p class="subtitle">A Tandem Bicycle Physics Game</p>
+            <p class="lobby-version" id="lobby-version">v.7fd2d9b | 02-19-2026 18:47</p>
+
+            <!-- Step 1: Mode selection -->
+            <div id="lobby-mode" class="lobby-step">
+                <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
+                <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
+            </div>
+
+            <!-- Step 2: Role selection -->
+            <div id="lobby-role" class="lobby-step" style="display:none;">
+                <p class="lobby-prompt">Choose your seat:</p>
+                <div class="role-buttons">
+                    <button class="lobby-btn role-btn" id="btn-captain">
+                        <span class="role-icon" style="color:#3388dd;">&#x1F6A2;</span>
+                        START A RIDE<br><span class="role-desc">Captain &middot; Front seat<br>Lean + Pedal</span>
+                    </button>
+                    <button class="lobby-btn role-btn" id="btn-stoker">
+                        <span class="role-icon" style="color:#dd3344;">&#x1F525;</span>
+                        JOIN A RIDE<br><span class="role-desc">Stoker &middot; Back seat<br>Lean + Pedal</span>
+                    </button>
+                </div>
+                <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
+            </div>
+
+            <!-- Step 3a: Captain waiting room -->
+            <div id="lobby-host" class="lobby-step" style="display:none;">
+                <p class="lobby-prompt">Your room code:</p>
+                <div id="room-code-display" class="room-code">----</div>
+                <p class="lobby-hint">Share this code with your partner</p>
+                <div id="host-status" class="conn-status">Waiting for partner...</div>
+                <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
+            </div>
+
+            <!-- Step 3b: Stoker join room -->
+            <div id="lobby-join" class="lobby-step" style="display:none;">
+                <p class="lobby-prompt">Enter room code:</p>
+                <div style="display:flex;align-items:center;justify-content:center;gap:0;margin-bottom:12px;">
+                    <span class="room-code-prefix">TNDM-</span>
+                    <input type="text" id="room-code-input" class="room-code-input room-code-short" maxlength="4" placeholder="XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+                </div>
+                <button class="lobby-btn lobby-btn-accent" id="btn-join">JOIN</button>
+                <div id="join-status" class="conn-status"></div>
+                <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="instructions" style="display:none;">
+        <div class="card">
+            <h1>TANDEMONIUM</h1>
+            <p class="subtitle">A Tandem Bicycle Physics Game</p>
+            <div class="desktop-controls">
+                <p><span class="key">&uarr;</span> <span class="key">&darr;</span> Alternate to pedal</p>
+                <p><span class="key">&uarr;</span>+<span class="key">&darr;</span> Hold both to brake</p>
+                <p><span class="key">A</span> <span class="key">D</span> Lean left / right for balance</p>
+                <p class="start-hint">Tap anywhere to start!</p>
+            </div>
+            <div class="mobile-controls">
+                <p>Tap <strong>&uarr;</strong> and <strong>&darr;</strong> buttons to pedal</p>
+                <p>Hold <strong>both</strong> to brake</p>
+                <p><strong>Tilt your device</strong> to balance!</p>
+                <p class="start-hint">Tap anywhere to start!</p>
+            </div>
+            <!-- Multiplayer instructions (hidden in solo) -->
+            <div class="mp-controls" style="display:none;">
+                <p id="mp-role-label" class="role-label-hud"></p>
+                <p><strong>Both riders lean</strong> — tilt to balance together (or fight!)</p>
+                <p><span class="key">&uarr;</span> <span class="key">&darr;</span> Pedal with <strong>offset</strong> — when you press Up, partner presses Down!</p>
+                <p><strong>Good offset</strong> = max power &middot; <strong>Same foot</strong> = wobble</p>
+                <p class="start-hint">Tap anywhere to start!</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Multiplayer single pedal button (replaces L/R in multiplayer) -->
+    <div id="mp-pedal-controls" style="display:none;">
+        <div class="mp-pedal-btn" id="mp-pedal">
+            PEDAL
+            <span class="pedal-label">TAP IN RHYTHM</span>
+        </div>
+    </div>
+
+    <!-- Disconnect overlay -->
+    <div id="disconnect-overlay" style="display:none;">
+        <div class="disconnect-box">
+            <p id="disconnect-msg">Partner disconnected</p>
+            <button class="lobby-btn" id="btn-reconnect" style="display:none;">Reconnecting...</button>
+            <button class="lobby-btn" id="btn-return-lobby">Return to Lobby</button>
+        </div>
+    </div>
+
+    <!-- Connection status badge -->
+    <div id="conn-badge" style="display:none;">
+        <span id="conn-type">P2P</span>
+        <span id="conn-ping">--ms</span>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
