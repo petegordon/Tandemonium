@@ -4,9 +4,10 @@
 //
 // The two riders wind a giant slingshot by pedaling on the start line, get
 // flung down the road, pedal until their legs give out, then coast (steering
-// only) until the bike rolls to a stop or crashes. Every run pays Chaos Coins:
-// distance, checkpoint gates, coins picked up on the road, a record bonus and a
-// stage-goal bonus, all times the coin multiplier. Coins buy garage upgrades,
+// only) until the bike rolls to a stop or crashes. There are no checkpoints:
+// a run is one launch, and a reset puts the bike back in the slingshot. Every
+// run pays Chaos Coins: distance, coins picked up on the road, a record bonus
+// and a stage-goal bonus, all times the coin multiplier. Coins buy garage upgrades,
 // which make the next launch go further. (After Car Evolve and the Tandem
 // Launch prototype.)
 //
@@ -21,7 +22,6 @@ export const UPGRADES = [
   { id: 'aero',    name: 'Aero frame',      desc: 'Less wind drag at speed',            max: 10, base: 50, icon: '💨' },
   { id: 'legs',    name: 'Pedal power',     desc: 'Every stroke pushes harder',         max: 10, base: 45, icon: '🦵' },
   { id: 'stamina', name: 'Stamina',         desc: 'More strokes before the legs give',  max: 10, base: 40, icon: '🥤' },
-  { id: 'gate',    name: 'Checkpoint boost', desc: 'Bigger kick from each gate',        max: 10, base: 45, icon: '🚩' },
   { id: 'magnet',  name: 'Coin multiplier', desc: 'Every run pays more Chaos Coins',    max: 8,  base: 60, icon: '🪙' },
 ];
 
@@ -43,12 +43,45 @@ export function slingStats(lv = {}) {
     drag: 0.004 * Math.pow(0.87, L('aero')),          // aero drag (× v²)
     pedalMult: 1 + L('legs') * 0.15,                  // scales each stroke
     strokes: 12 + L('stamina') * 4,                   // strokes before coasting
-    gateBoost: 1.5 + L('gate') * 0.6,                 // m/s added per gate
     coinMult: 1 + L('magnet') * 0.25,                 // payout multiplier
   };
 }
 
 // ---- Launch -------------------------------------------------
+
+// The slingshot stands on the start line: its fork at SLING_POST_D, the bike
+// resting with its rear wheel in the pouch at SLING_REST_D. Pulling draws the
+// bike back up to SLING_PULL_BACK metres. Distance is scored from the rest
+// point, so the pull itself never counts.
+export const SLING_POST_D = 3;
+export const SLING_REST_D = 5.2;       // post + half the 4.4 m bike
+export const SLING_PULL_BACK = 3.5;
+
+/** Road distance of the bike's centre while the bands are drawn to `pull`. */
+export function aimDistance(pull) {
+  const p = Math.max(0, Math.min(1, pull || 0));
+  return SLING_REST_D - p * SLING_PULL_BACK;
+}
+
+/** Metres flown from the slingshot, given the bike's distanceTraveled. */
+export function runDistance(distanceTraveled) {
+  return Math.max(0, (distanceTraveled || 0) - SLING_REST_D);
+}
+
+/** A drag down this fraction of the screen height is a full pull. */
+export const DRAG_FULL_FRACTION = 0.3;
+
+/**
+ * Touch/mouse pull: `base` is the pull when the finger went down (pedaling
+ * may add to it), `dy` how far it has been dragged down in pixels.
+ */
+export function dragPull(base, dy, screenHeight) {
+  const range = Math.max(1, (screenHeight || 800) * DRAG_FULL_FRACTION);
+  return Math.max(0, Math.min(1, (base || 0) + Math.max(0, dy || 0) / range));
+}
+
+/** After a full pull, let go by itself if nobody does. */
+export const AUTO_RELEASE_S = 1.5;
 
 /** Pedal "acceleration" (the pedal controller's units) needed for a full pull. */
 export const FULL_PULL_WORK = 6;
@@ -89,11 +122,8 @@ export function stageBonus(stage) {
 
 // ---- Course -------------------------------------------------
 
-/** Checkpoint spacing. Divides the 1200 m road loop, so gates line up every lap. */
-export const GATE_SPACING = 120;
 export const COINS_PER_TRAIL = 5;
 const TRAIL_STEP = 3;          // metres between coins in a trail
-const GATE_CLEARANCE = 12;     // no coins this close to a gate
 
 function lcg(seed) {
   let s = (Math.abs(Math.floor(seed)) % 233280) || 1;
@@ -111,12 +141,6 @@ export function planCoinTrails(distance, seed = 1, { start = 60, halfWidth = 1.8
   let d = start;
   while (d + COINS_PER_TRAIL * TRAIL_STEP < distance) {
     const trailLen = (COINS_PER_TRAIL - 1) * TRAIL_STEP;
-    const nextGate = Math.ceil(d / GATE_SPACING) * GATE_SPACING;
-    const prevGate = nextGate - GATE_SPACING;
-    if (d - prevGate < GATE_CLEARANCE || nextGate - (d + trailLen) < GATE_CLEARANCE) {
-      d = nextGate + GATE_CLEARANCE;
-      continue;
-    }
     const offset = (rng() * 2 - 1) * halfWidth;
     for (let i = 0; i < COINS_PER_TRAIL; i++) out.push({ d: d + i * TRAIL_STEP, offset });
     d += trailLen + 45 + rng() * 45;
@@ -128,14 +152,13 @@ export function planCoinTrails(distance, seed = 1, { start = 60, halfWidth = 1.8
 
 export const PAY = {
   metresPerCoin: 5,     // 1 Chaos Coin per 5 m
-  perGate: 10,
   perCoin: 5,
   recordDivisor: 4,     // 1 coin per 4 m beyond the old best
 };
 
 /**
  * One run's payout.
- * run:  { distance, gatesPassed, coins, stageCleared }
+ * run:  { distance, coins, stageCleared }   (distance from the slingshot)
  * save: { best, runs, stage, lv }
  */
 export function scoreRun(run, save) {
@@ -143,16 +166,15 @@ export function scoreRun(run, save) {
   const best = save.best || 0;
   const stats = slingStats(save.lv);
   const distPay = Math.floor(distance / PAY.metresPerCoin);
-  const gatePay = (run.gatesPassed || 0) * PAY.perGate;
   const coinPay = (run.coins || 0) * PAY.perCoin;
   const isRecord = distance > best;
   // No record bonus for the very first run: every distance "beats" zero.
   const recordPay = isRecord && (save.runs || 0) > 0
     ? Math.floor((distance - best) / PAY.recordDivisor) : 0;
   const stagePay = run.stageCleared ? stageBonus(save.stage) : 0;
-  const subtotal = distPay + gatePay + coinPay + recordPay + stagePay;
+  const subtotal = distPay + coinPay + recordPay + stagePay;
   const total = Math.floor(subtotal * stats.coinMult);
-  return { distance, distPay, gatePay, coinPay, recordPay, stagePay, subtotal,
+  return { distance, distPay, coinPay, recordPay, stagePay, subtotal,
            multiplier: stats.coinMult, total, isRecord };
 }
 
