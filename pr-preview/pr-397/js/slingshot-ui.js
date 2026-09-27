@@ -121,11 +121,31 @@ export function hideResults() { $('sling-results').classList.remove('visible'); 
 // ---- In-ride ------------------------------------------------
 
 let _hudText = '';
+/** A Chaos Coin was grabbed: bump the counter and float the payout up from it. */
+export function coinPop(amount) {
+  const c = document.querySelector('#sling-hud .sling-coins');
+  if (c) { c.classList.remove('pop'); void c.offsetWidth; c.classList.add('pop'); }
+  const f = document.createElement('div');
+  f.className = 'sling-coin-float';
+  f.textContent = `+${amount} ${COIN}`;
+  document.body.appendChild(f);
+  setTimeout(() => f.remove(), 900);
+}
+
 export function updateHud({ coins, distance, goal }) {
   const hud = $('sling-hud');
-  const text = `<span class="sling-coins">${COIN} ${coins}</span>` +
-    `<span>🏁 ${fmt(Math.max(0, goal - distance))} m to go</span>`;
-  if (text !== _hudText) { hud.innerHTML = text; _hudText = text; }
+  // Built once, then only the text changes — rebuilding the spans would cut
+  // the coin counter's pop animation off on the frame it starts.
+  if (!hud.querySelector('.sling-coins')) {
+    hud.innerHTML = '<span class="sling-coins"></span><span class="sling-togo"></span>';
+  }
+  const text = `${COIN} ${coins}|🏁 ${fmt(Math.max(0, goal - distance))} m to go`;
+  if (text !== _hudText) {
+    const [c, g] = text.split('|');
+    hud.querySelector('.sling-coins').textContent = c;
+    hud.querySelector('.sling-togo').textContent = g;
+    _hudText = text;
+  }
   hud.classList.add('visible');
 }
 
