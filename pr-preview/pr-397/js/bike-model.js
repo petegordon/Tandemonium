@@ -66,8 +66,10 @@ export class BikeModel {
     this._braking = false;
     this.boostTimer = 0;
 
-    // Slingshot mode: when set, { decel(v, onStrip) → m/s², maxSpeed } replaces
-    // the arcade friction and centre-strip push so a launched bike coasts.
+    // Slingshot mode: when set, { decel(v, centerDist) → m/s², maxSpeed }
+    // replaces the arcade friction, the centre-strip push and the edge/grass
+    // drag, so a launched bike coasts and the surface costs a little per second
+    // instead of a share of the speed.
     this.coast = null;
 
     // Optional crash-tumble hooks (issue #388). The physics sidecar is wired in
@@ -541,8 +543,8 @@ export class BikeModel {
     this.onCenterStrip = centerDist < 0.5 && this.speed > 0.5;
 
     if (this.coast) {
-      // Slingshot: rolling + air drag only; the strip means less rolling drag.
-      this.speed = Math.max(0, this.speed - this.coast.decel(this.speed, this.onCenterStrip) * dt);
+      // Slingshot: rolling + air drag, with the rolling part set by the surface.
+      this.speed = Math.max(0, this.speed - this.coast.decel(this.speed, centerDist) * dt);
     } else {
       // Friction — reduced at low speeds so startup isn't brutally hard
       const frictionBase = 0.6;
@@ -556,14 +558,14 @@ export class BikeModel {
     }
 
     // Road-edge drag: drifting toward the edges of the dirt path slows you
-    if (centerDist > 0.5 && centerDist <= 2.5 && this.speed > 0) {
+    if (!this.coast && centerDist > 0.5 && centerDist <= 2.5 && this.speed > 0) {
       const edgeFrac = (centerDist - 0.5) / 2.0; // 0→1 across road width
       this.speed *= (1 - edgeFrac * 0.8 * dt);    // moderate drag near edges
     }
 
     // Grass drag: off-road surface slows you down significantly
     const offRoadDrag = Math.max(0, centerDist - 2.5);
-    if (offRoadDrag > 0 && this.speed > 0) {
+    if (!this.coast && offRoadDrag > 0 && this.speed > 0) {
       const dragIntensity = Math.min(offRoadDrag / 3, 1); // 0→1 over 3 units
       this.speed *= (1 - dragIntensity * 1.5 * dt);       // strong off-road friction
     }
