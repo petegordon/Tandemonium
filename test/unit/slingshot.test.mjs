@@ -2,11 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  UPGRADES, upgradeCost, slingStats, launchSpeed, coastDecel,
-  stageGoal, stageBonus, scoreRun, emptySave, loadSave, writeSave, applyRun,
-  buyUpgrade, planCoinTrails, COINS_PER_TRAIL, STORAGE_KEY, SAVE_VERSION, spentOn, RETIRED_UPGRADES,
-  runDistance, dragToAim, aimPose, MIN_LAUNCH_PULL,
-  SLING_POST_D, SLING_REST_D, SLING_PULL_BACK, SLING_MAX_LATERAL, SLING_MAX_AIM
+  UPGRADES, upgradeCost, slingStats, launchSpeed, coastDecel, surfaceAt, SURFACE_RR, predictCoast,
+  stageGoal, stageBonus, STAGE_GOALS, scoreRun, emptySave, loadSave, writeSave, applyRun,
+  buyUpgrade, planCoinTrails, planCourse, LANES, COINS_PER_TRAIL, STORAGE_KEY, SAVE_VERSION, spentOn, RETIRED_UPGRADES,
+  runDistance, dragToAim, aimPose, roadExitDistance, MIN_LAUNCH_PULL, jackpotBonus,
+  SLING_POST_D, SLING_REST_D, SLING_PULL_BACK, SLING_MAX_LATERAL, SLING_MAX_AIM, ROAD_HALF_WIDTH
 } from '../../js/slingshot.js';
 
 const memStore = () => {
@@ -45,39 +45,63 @@ test('launch speed is the pull: none for no pull, launchMax for a full one', () 
   assert.ok(MIN_LAUNCH_PULL > 0 && MIN_LAUNCH_PULL < 0.3, 'a flick is a cancel, a real pull fires');
 });
 
-test('coasting drag grows with speed and the centre strip rolls easier', () => {
+test('coasting drag grows with speed, and the surface sets the rolling part', () => {
   const s = slingStats({});
   assert.ok(coastDecel(s, 20) > coastDecel(s, 5));
-  assert.ok(coastDecel(s, 10, true) < coastDecel(s, 10, false));
-  assert.ok(coastDecel(s, 0) > 0, 'a rolling bike always stops eventually');
+  assert.ok(coastDecel(s, 10, 'strip') < coastDecel(s, 10, 'dirt'));
+  assert.ok(coastDecel(s, 10, 'dirt') < coastDecel(s, 10, 'edge'));
+  assert.ok(coastDecel(s, 10, 'edge') < coastDecel(s, 10, 'grass'));
+  assert.ok(coastDecel(s, 0, 'strip') > 0, 'a rolling bike always stops eventually');
+  assert.equal(surfaceAt(0.2), 'strip');
+  assert.equal(surfaceAt(-1.6), 'dirt', 'a lane is ordinary dirt');
+  assert.equal(surfaceAt(2.3), 'edge');
+  assert.equal(surfaceAt(-3), 'grass');
+  assert.deepEqual(Object.keys(SURFACE_RR).sort(), ['dirt', 'edge', 'grass', 'strip']);
 });
 
-test('a fresh full pull on a flat road coasts short of stage 1, as intended', () => {
-  // Numerical coast with no pedaling or slope.
-  const s = slingStats({});
-  let v = launchSpeed(s, 1), d = 0;
-  const dt = 1 / 60;
-  while (v > 0.05) { v = Math.max(0, v - coastDecel(s, v) * dt); d += v * dt; }
-  assert.ok(d > 60 && d < stageGoal(1), `coasted ${d.toFixed(0)} m`);
+test('farther: a fresh full pull rolls more than twice what it used to', () => {
+  // The first build coasted 162 m on dirt from a fresh full pull.
+  const fresh = predictCoast(slingStats({}), 1, 'dirt');
+  assert.ok(fresh > 2 * 162, `rolled ${fresh.toFixed(0)} m`);
+  assert.ok(predictCoast(slingStats({}), 1, 'strip') > fresh, 'the centre strip rolls further');
+  assert.ok(predictCoast(slingStats({}), 0.5, 'dirt') < fresh, 'a half pull rolls less');
 });
 
-test('stage goals rise and continue past the table', () => {
+test('steering is cheap: sweeping a coin trail on the edge costs under 10 m', () => {
+  // Same launch twice; the second spends 12 m on the edge surface at 45 m out.
+  const roll = (edgeFrom, edgeTo) => {
+    const st = slingStats({});
+    let v = launchSpeed(st, 1), d = 0; const dt = 1 / 120;
+    while (v > 0.3) {
+      const surf = d >= edgeFrom && d < edgeTo ? 'edge' : 'dirt';
+      v = Math.max(0, v - coastDecel(st, v, surf) * dt); d += v * dt;
+    }
+    return d;
+  };
+  const cost = roll(Infinity, Infinity) - roll(45, 57);
+  assert.ok(cost > 0 && cost <= 10, `the detour cost ${cost.toFixed(1)} m`);
+  // …and the 5 coins pay far more than that distance would have.
+  assert.ok(COINS_PER_TRAIL * 5 > cost / 2, 'coins are worth the swerve');
+});
+
+test('stage goals rise, fit inside one lap of the road, and hold at the last', () => {
   assert.equal(stageGoal(1), 300);
   assert.equal(stageGoal(0), 300, 'clamped to stage 1');
   let prev = 0;
-  for (let n = 1; n < 12; n++) { assert.ok(stageGoal(n) > prev); prev = stageGoal(n); }
-  assert.equal(stageGoal(8) - stageGoal(7), 1200);
+  for (let n = 1; n <= STAGE_GOALS.length; n++) { assert.ok(stageGoal(n) > prev); prev = stageGoal(n); }
+  assert.equal(stageGoal(STAGE_GOALS.length + 5), STAGE_GOALS[STAGE_GOALS.length - 1]);
+  for (const g of STAGE_GOALS) assert.ok(g + SLING_REST_D < 1200, `goal ${g} m would lap into the slingshot`);
   assert.equal(stageBonus(3), 150);
 });
 
 test('score: distance, coins, no record bonus on the first run', () => {
   const r = scoreRun({ distance: 253.9, coins: 7 }, emptySave());
   assert.equal(r.distance, 253);
-  assert.equal(r.distPay, 50);
+  assert.equal(r.distPay, 126);
   assert.equal(r.coinPay, 35);
   assert.equal(r.recordPay, 0);
   assert.equal(r.isRecord, true);
-  assert.equal(r.total, 85);
+  assert.equal(r.total, 161);
   assert.equal(r.gatePay, undefined, 'no checkpoints, no checkpoint pay');
 });
 
@@ -86,9 +110,20 @@ test('score: record bonus, stage bonus and the coin multiplier', () => {
   const r = scoreRun({ distance: 600, coins: 0, stageCleared: true }, save);
   assert.equal(r.recordPay, 100);
   assert.equal(r.stagePay, 100);
-  assert.equal(r.subtotal, 120 + 0 + 100 + 100);
+  assert.equal(r.subtotal, 300 + 0 + 100 + 100);
   assert.equal(r.multiplier, 1.5);
-  assert.equal(r.total, Math.floor(320 * 1.5));
+  assert.equal(r.total, Math.floor(500 * 1.5));
+});
+
+test('the jackpot: a flat bonus, then the whole run pays double', () => {
+  const save = { ...emptySave(), stage: 3 };
+  const r = scoreRun({ distance: 120, coins: 5, jackpot: true }, save);
+  assert.equal(r.jackpotPay, jackpotBonus(3));
+  assert.equal(r.multiplier, 2);
+  assert.equal(r.total, (60 + 25 + 250) * 2);
+  // A good jackpot beats rolling on to the stage-1 distance.
+  const rolled = scoreRun({ distance: 300 }, save).total;
+  assert.ok(r.total > rolled, `jackpot ${r.total} vs rolling ${rolled}`);
 });
 
 test('a short run is not a record and pays no record bonus', () => {
@@ -210,4 +245,81 @@ test('an old save gets its coins back for upgrades that no longer exist', () => 
   writeSave(store, s);
   assert.equal(loadSave(store).coins, s.coins);
   assert.deepEqual(Object.keys(RETIRED_UPGRADES).sort(), ['gate', 'legs', 'stamina']);
+});
+
+test('aim: every drag stays on the road for at least 40 m unsteered', () => {
+  for (let side = -1; side <= 1.0001; side += 0.25) {
+    for (const pull of [0.2, 0.6, 1]) {
+      const pose = aimPose(pull, side);
+      const exit = roadExitDistance(pose.lateral, pose.angle);
+      assert.ok(exit >= 40, `pull ${pull} side ${side.toFixed(2)} leaves the road at ${exit.toFixed(1)} m`);
+    }
+  }
+  assert.equal(roadExitDistance(0, 0), Infinity, 'dead straight never leaves');
+  assert.equal(roadExitDistance(ROAD_HALF_WIDTH + 0.1, 0), 0, 'already off');
+});
+
+test('aim: a full swing reaches the far lane by the first gate (45 m)', () => {
+  const pose = aimPose(1, -1);
+  const at45 = pose.lateral + (45 + SLING_REST_D - pose.d) * Math.tan(pose.angle);
+  assert.ok(at45 >= 1.2, `only reached ${at45.toFixed(2)} m across`);
+  const straight = aimPose(1, 0);
+  assert.equal(straight.lateral + 45 * Math.tan(straight.angle), 0, 'no swing, centre lane');
+  assert.ok(Math.abs(aimPose(0.3, -1).angle) < Math.abs(aimPose(1, -1).angle), 'aim grows with the pull');
+});
+
+test('course: fixed per stage, lanes that make a choice, jackpot from stage 2', () => {
+  const goal = stageGoal(3) + SLING_REST_D;
+  assert.deepEqual(planCourse(3, goal), planCourse(3, goal), 'the same layout every launch');
+  assert.notDeepEqual(planCourse(3, goal), planCourse(4, goal), 'a different layout per stage');
+  for (let st = 1; st <= 7; st++) {
+    const g = stageGoal(st) + SLING_REST_D;
+    const c = planCourse(st, g);
+    assert.equal(c.hay.length, 2);
+    const gate1Coins = c.coins.filter(x => x.d < SLING_REST_D + 60);
+    assert.equal(gate1Coins.length, COINS_PER_TRAIL);
+    assert.notEqual(gate1Coins[0].offset, c.hay[0].offset, 'coins and hay never share a lane');
+    for (const h of c.hay) assert.ok(LANES.includes(h.offset));
+    for (const x of c.coins) { assert.ok(x.d < g, 'every coin before the goal'); assert.ok(Math.abs(x.offset) <= 1.8); }
+    if (st === 1) assert.equal(c.jackpot, null, 'stage 1 teaches the lanes first');
+    else {
+      assert.ok(c.jackpot && LANES.includes(c.jackpot.offset));
+      assert.notEqual(c.jackpot.offset, c.hay[1].offset);
+    }
+  }
+});
+
+/** A player who gets `skill` of the ideal distance and buys the cheapest upgrade they can. */
+function simulate(skill, coinsPerRun = 5, maxRuns = 300) {
+  let save = emptySave(); const perStage = []; let n = 0;
+  for (let r = 0; r < maxRuns && save.stage <= STAGE_GOALS.length; r++) {
+    const reach = predictCoast(slingStats(save.lv), 1, 'dirt') * skill;
+    const goal = stageGoal(save.stage);
+    const run = { distance: Math.min(reach, goal), coins: coinsPerRun, stageCleared: reach >= goal };
+    save = applyRun(save, run, scoreRun(run, save)); n++;
+    if (run.stageCleared) { perStage.push(n); n = 0; }
+    for (;;) {
+      const opts = UPGRADES.filter(u => (save.lv[u.id] || 0) < u.max)
+        .map(u => ({ u, c: upgradeCost(u, save.lv[u.id] || 0) })).sort((a, b) => a.c - b.c);
+      if (!opts.length || opts[0].c > save.coins) break;
+      save = buyUpgrade(save, opts[0].u.id).save;
+    }
+  }
+  return perStage;
+}
+
+test('progression: a decent player clears every stage in 1-4 launches, and it takes a while', () => {
+  const runs = simulate(0.8);
+  assert.equal(runs.length, STAGE_GOALS.length, `only cleared ${runs.length} stages: ${runs.join(' ')}`);
+  for (const [i, n] of runs.entries()) assert.ok(n >= 1 && n <= 4, `stage ${i + 1} took ${n} launches`);
+  assert.ok(runs.reduce((a, b) => a + b, 0) >= 12, `too quick: ${runs.join(' ')}`);
+  // The first launch pays for the first upgrade.
+  const first = scoreRun({ distance: predictCoast(slingStats({}), 1, 'dirt') * 0.8, coins: 0 }, emptySave()).total;
+  assert.ok(first >= Math.min(...UPGRADES.map(u => upgradeCost(u, 0))));
+});
+
+test('progression: a maxed bike clears the last goal even riding the edge', () => {
+  const max = Object.fromEntries(UPGRADES.map(u => [u.id, u.max]));
+  const d = predictCoast(slingStats(max), 1, 'edge');
+  assert.ok(d >= STAGE_GOALS[STAGE_GOALS.length - 1], `maxed edge roll ${d.toFixed(0)} m`);
 });

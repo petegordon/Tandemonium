@@ -106,7 +106,7 @@ const still = await pose();
 check(still.state === 'slingAim' && still.pull === 0, 'pedaling does nothing, and nothing launches it but a drag');
 
 // 4. Drag back and to the left: the bands stretch, the bike moves left and aims right
-await drag(-250, 240, false);
+await drag(-340, 240, false);   // a full swing (side = 1)
 await new Promise(r => setTimeout(r, 1500));
 const held = await pose();
 const rig = await page.evaluate(() => {
@@ -114,7 +114,13 @@ const rig = await page.evaluate(() => {
   return { pouchBack: rel.dot(r._fwd), guide: r.guide.visible };
 });
 check(held.pull > 0.75 && held.d < 3, `dragging back pulls the bike back (pull ${held.pull.toFixed(2)}, bike at ${held.d.toFixed(2)} m, pouch ${rig.pouchBack.toFixed(1)} m behind the fork)`);
-check(held.lateral < -0.8 && held.angle > 0.2 && rig.guide, `dragging left shifts it left (${held.lateral.toFixed(2)} m) and aims it right (${(held.angle * 57.3).toFixed(0)}°), guide shown`);
+check(held.lateral < -0.8 && held.angle > 0.03 && rig.guide, `dragging left shifts it left (${held.lateral.toFixed(2)} m) and aims it right (${(held.angle * 57.3).toFixed(1)}°), guide shown`);
+const preview = await page.evaluate(() => ({
+  text: document.querySelector('#sling-pull .sling-predict').textContent,
+  red: window._game._slingRig.guideOff.visible,
+}));
+check(/≈ \d+ m/.test(preview.text), `the pull shows how far it will roll ("${preview.text}")`);
+check(preview.red, 'a full swing shows red where the straight line would leave the road');
 check(held.state === 'slingAim', 'holding the drag holds the shot');
 await shot('2-aim');
 await page.mouse.up();
@@ -174,7 +180,36 @@ const r3 = await page.evaluate(() => ({ title: document.querySelector('#sling-re
 check(/goal/i.test(r3.title) && r3.stage === 2, `reaching the goal clears the stage ("${r3.title}", now stage ${r3.stage})`);
 await shot('5-goal');
 
-// 10. Lobby cleans up
+// 10. Stage 2 has a jackpot. First a hay bale: it slows the bike, the run goes on.
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
+await waitState('slingAim', 60000);
+await drag(0, 300, true);
+await waitState('playing', 120000);
+// Put the bike just short of an object, in its lane, rolling at 10 m/s.
+const rollInto = (kind) => page.evaluate((kind) => {
+  const g = window._game, b = g.bike, it = g._slingProps.items.find(i => i.kind === kind);
+  b.resetToDistance(it.d - 3);
+  const h = b.heading;                       // the props' lateral convention: (cos h, −sin h)
+  b.position.x += Math.cos(h) * it.offset;
+  b.position.z -= Math.sin(h) * it.offset;
+  b._applyTransform();
+  b.speed = 10;
+  g._slingRun.stillT = 0;
+  return { d: it.d, offset: it.offset };
+}, kind);
+await rollInto('hay');
+await page.waitForFunction(() => window._game._slingProps.items.some(i => i.kind === 'hay' && i.hit), { timeout: 60000, polling: 50 });
+const hay = await page.evaluate(() => ({ speed: window._game.bike.speed, state: window._game.state, toast: document.getElementById('sling-toast').textContent }));
+check(hay.state === 'playing' && hay.speed < 7 && /hay/i.test(hay.toast), `a hay bale bleeds speed (${hay.speed.toFixed(1)} m/s) and the run goes on`);
+
+// 11. …then the jackpot billboard: the run ends at double pay.
+const walletBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins);
+await rollInto('jackpot');
+await waitState('slingResults', 60000);
+const jp = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins }));
+check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /×2/.test(jp.rows) && jp.coins > walletBefore, `the jackpot ends the run at double pay ("${jp.title}", +${jp.coins - walletBefore})`);
+
+// 12. Lobby cleans up
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /lobby/i.test(b.textContent)).click());
 await new Promise(r => setTimeout(r, 1000));
 const clean = await page.evaluate(() => ({

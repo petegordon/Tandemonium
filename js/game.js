@@ -12,6 +12,7 @@ import './build-badge.js';   // preview builds: which commit is on screen
 import * as sling from './slingshot.js';
 import * as slingUI from './slingshot-ui.js';
 import { SlingshotRig } from './slingshot-rig.js';
+import { SlingshotProps, HAY_KEEP } from './slingshot-props.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
@@ -3232,7 +3233,7 @@ class Game {
     this._slingPadA = true;             // a held A from the garage is not a fire
     this._initSlingDrag();
     this.bike.coast = {
-      decel: (v, onStrip) => sling.coastDecel(stats, v, onStrip),
+      decel: (v, centerDist) => sling.coastDecel(stats, v, sling.surfaceAt(centerDist)),
       maxSpeed: SLING_MAX_SPEED,
     };
 
@@ -3242,9 +3243,14 @@ class Game {
     this._poseSlingBike(0, 0);
     this._placeSlingCamera();
 
-    // Chaos Coins come in trails, not the level's scattered pickups.
-    this.collectibleManager.replaceItems(sling.planCoinTrails(level.distance, (Math.random() * 1e6) | 0,
-      { start: sling.SLING_REST_D + 60 }));
+    // The stage's fixed course: lanes of coins, hay bales and (from stage 2) the
+    // jackpot billboard. It replaces the level's scattered pickups and the
+    // random cones — nothing in the way should be a surprise crash.
+    const course = sling.planCourse(this._slingSave.stage, level.distance);
+    this.collectibleManager.replaceItems(course.coins);
+    if (this.obstacleManager) this.obstacleManager.replaceItems([]);
+    if (this._slingProps) this._slingProps.dispose();
+    this._slingProps = new SlingshotProps(this.scene, this.world.roadPath, course);
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
     this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
     this.hud.hideTimer();
@@ -3265,7 +3271,12 @@ class Game {
     b.position.z += Math.sin(h) * pose.lateral;
     b.heading = h - pose.angle;
     b._applyTransform();
-    this._slingRig.hold(b, pull);
+    // The preview: how far this pull rolls (on dirt, steering to stay on the
+    // road), and where the aimed line leaves the road if nobody steers.
+    const predicted = sling.predictCoast(this._slingStats, pull, 'dirt');
+    const exitAt = sling.roadExitDistance(pose.lateral, pose.angle);
+    this._slingRig.hold(b, pull, { length: Math.min(60, 3 + predicted * 0.15), exitAt });
+    slingUI.showPull(pull, { predicted, best: this._slingSave.best });
   }
 
   /**
@@ -3354,7 +3365,6 @@ class Game {
       run.side = aim.side;
       this._poseSlingBike(run.pull, run.side);
     }
-    slingUI.showPull(run.pull);
     if (fire && run.pull >= sling.MIN_LAUNCH_PULL) this._slingGo();
   }
 
@@ -3447,6 +3457,21 @@ class Game {
     const b = this.bike;
     run.topSpeed = Math.max(run.topSpeed, b.speed);
     if (b.fallen && run.crashDistance == null) run.crashDistance = b.distanceTraveled;
+    if (this._slingProps && !b.fallen) {
+      for (const hit of this._slingProps.update(b.distanceTraveled, b._lateralOffset || 0)) {
+        if (hit.kind === 'hay') {
+          b.speed *= HAY_KEEP;
+          this._playBeep(220, 0.12);
+          slingUI.toast('Hay bale!');
+        } else if (hit.kind === 'jackpot') {
+          run.jackpot = true;
+          hapticCheckpoint();
+          this._playChime(1760, 0.3);
+          this._endSlingRun('jackpot');
+          return true;
+        }
+      }
+    }
     if (!b.fallen && b.speed < 0.3) {
       run.stillT += dt;
       if (run.stillT > 1.2) { this._endSlingRun('stall'); return true; }
@@ -3499,7 +3524,7 @@ class Game {
     run.over = true;
     const distance = sling.runDistance(cause === 'crash' && run.crashDistance != null
       ? run.crashDistance : this.bike.distanceTraveled);
-    const runData = { distance, coins: run.coins, stageCleared: cause === 'goal' };
+    const runData = { distance, coins: run.coins, stageCleared: cause === 'goal', jackpot: !!run.jackpot };
     const score = sling.scoreRun(runData, this._slingSave);
     this._slingSave = sling.applyRun(this._slingSave, runData, score);
     sling.writeSave(this._slingStore(), this._slingSave);
@@ -3537,6 +3562,7 @@ class Game {
     this._slingPrevLobby = null;
     this._slingRun = null;
     if (this._slingRig) { this._slingRig.dispose(); this._slingRig = null; }
+    if (this._slingProps) { this._slingProps.dispose(); this._slingProps = null; }
     if (this._slingBaseFov != null && this.camera.fov !== this._slingBaseFov) {
       this.camera.fov = this._slingBaseFov;
       this.camera.updateProjectionMatrix();

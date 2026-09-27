@@ -79,6 +79,7 @@ const CAUSE = {
   stall: 'You rolled to a stop',
   crash: 'Chaos! You crashed',
   goal: 'Stage goal reached!',
+  jackpot: 'JACKPOT! Double pay',
 };
 
 /** One launch's payout. Returns [again, garage, lobby]. */
@@ -99,6 +100,7 @@ export function renderResults({ cause, score, run, save, stageCleared }, { onAga
   row(`Chaos Coins (${run.coins})`, `${COIN} ${fmt(score.coinPay)}`);
   if (score.recordPay) row('Record bonus', `${COIN} ${fmt(score.recordPay)}`);
   if (score.stagePay) row('Stage bonus', `${COIN} ${fmt(score.stagePay)}`);
+  if (score.jackpotPay) row('Jackpot', `${COIN} ${fmt(score.jackpotPay)}`);
   if (score.multiplier !== 1) row('Multiplier', `×${score.multiplier.toFixed(2)}`);
   row('Earned', `${COIN} ${fmt(score.total)}`, 'row total');
   root.appendChild(rows);
@@ -132,11 +134,19 @@ export function hideHud() {
   _hudText = '';
 }
 
-export function showPull(pull) {
+let _predictText = null;
+/** The pull meter, and while pulling, how far this launch should roll. */
+export function showPull(pull, { predicted = 0, best = 0 } = {}) {
   const p = $('sling-pull');
   p.classList.add('visible');
   p.classList.toggle('pulling', pull > 0);   // the words are for before you touch it
   p.querySelector('i').style.width = `${Math.round(pull * 100)}%`;
+  const text = pull > 0 ? `≈ ${fmt(predicted)} m${best ? ` · best ${fmt(best)} m` : ''}` : '';
+  if (text !== _predictText) {
+    const el = p.querySelector('.sling-predict');
+    if (el) el.textContent = text;
+    _predictText = text;
+  }
 }
 
 export function hidePull() { $('sling-pull').classList.remove('visible'); }

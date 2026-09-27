@@ -38,9 +38,9 @@ export function upgradeCost(upgrade, level) {
 export function slingStats(lv = {}) {
   const L = id => lv[id] || 0;
   return {
-    launchMax: 14 + L('sling') * 2,                   // m/s at a full pull
-    crr: 0.03 * Math.pow(0.86, L('wheels')),          // rolling resistance (× g)
-    drag: 0.004 * Math.pow(0.87, L('aero')),          // aero drag (× v²)
+    launchMax: 14 + L('sling') * 1.2,                 // m/s at a full pull
+    crr: 0.02 * Math.pow(0.93, L('wheels')),          // rolling resistance (× g) on dirt
+    drag: 0.001 * Math.pow(0.93, L('aero')),          // aero drag (× v²)
     coinMult: 1 + L('magnet') * 0.25,                 // payout multiplier
   };
 }
@@ -55,7 +55,11 @@ export const SLING_POST_D = 3;
 export const SLING_REST_D = 5.2;       // post + half the 4.4 m bike
 export const SLING_PULL_BACK = 3.5;
 export const SLING_MAX_LATERAL = 1.4;  // metres the pouch can be pulled aside
-export const SLING_MAX_AIM = 0.35;     // radians (~20°) off the road's line
+// A nudge, not a swerve: at full pull and full side the bike crosses to the
+// far lane about 40 m out and stays on the road beyond that (steering does the
+// rest). 20° sent it into the grass within 11 m.
+export const SLING_MAX_AIM = 0.07;     // radians (~4°) off the road's line
+export const ROAD_HALF_WIDTH = 2.5;
 
 /** A drag of this fraction of the screen height is a full pull… */
 export const DRAG_FULL_FRACTION = 0.3;
@@ -78,9 +82,10 @@ export function dragToAim(dx, dy, screenW, screenH) {
 
 /**
  * Where the bike sits in the drawn slingshot and where it will fly.
- * d: road distance of the bike's centre; lateral: metres right of the centre
- * line (it follows the finger); angle: heading offset in radians, +right. Like
- * a real slingshot it flies back through the forks, so pulled left → aims right.
+ * d: road distance of the bike's centre; lateral: metres to the rider's right
+ * (it follows the finger); angle: heading offset in radians toward the rider's
+ * right. Like a real slingshot it flies back through the forks, so pulled
+ * left → aims right. Both grow with the pull: a lazy pull is a straight shot.
  */
 export function aimPose(pull, side) {
   const p = clamp(pull || 0, 0, 1);
@@ -88,8 +93,21 @@ export function aimPose(pull, side) {
   return {
     d: SLING_REST_D - p * SLING_PULL_BACK,
     lateral: s * SLING_MAX_LATERAL * p,
-    angle: -s * SLING_MAX_AIM,
+    angle: -s * SLING_MAX_AIM * p,
   };
+}
+
+/**
+ * Metres of straight flight before a bike starting `lateral` from the centre
+ * line on heading offset `angle` leaves the road (Infinity if it never does).
+ * The first 80 m of the road are straight, which is all the aim reaches.
+ */
+export function roadExitDistance(lateral, angle, halfWidth = ROAD_HALF_WIDTH) {
+  const slope = Math.tan(angle || 0);
+  if (Math.abs(lateral) >= halfWidth) return 0;
+  if (Math.abs(slope) < 1e-9) return Infinity;
+  const edge = slope > 0 ? halfWidth : -halfWidth;
+  return (edge - lateral) / slope;
 }
 
 /** Metres flown from the slingshot, given the bike's distanceTraveled. */
@@ -101,21 +119,53 @@ export function launchSpeed(stats, pull) {
   return stats.launchMax * clamp(pull || 0, 0, 1);
 }
 
-/** Deceleration (m/s²) while rolling at v. `onStrip` is the packed centre line. */
-export function coastDecel(stats, v, onStrip = false) {
-  const crr = stats.crr * (onStrip ? 0.6 : 1);
-  return 9.8 * crr + stats.drag * v * v;
+// ---- Rolling ------------------------------------------------
+
+/**
+ * Rolling resistance by surface, relative to dirt. Additive, not a speed
+ * multiplier: the normal ride's edge/grass drag shaved a share of the speed
+ * every second, so any line off the centre threw most of a run away and
+ * "never steer" was the only strategy. Now steering costs a little, not all.
+ */
+export const SURFACE_RR = { strip: 0.6, dirt: 1, edge: 1.5, grass: 4 };
+
+/** Surface under the bike from its distance to the centre line (metres). */
+export function surfaceAt(centerDist) {
+  const c = Math.abs(centerDist || 0);
+  if (c < 0.5) return 'strip';
+  if (c < 2.0) return 'dirt';
+  if (c <= ROAD_HALF_WIDTH) return 'edge';
+  return 'grass';
+}
+
+/** Deceleration (m/s²) while rolling at v on a surface. */
+export function coastDecel(stats, v, surface = 'dirt') {
+  const rr = SURFACE_RR[surface] != null ? SURFACE_RR[surface] : 1;
+  return 9.8 * stats.crr * rr + stats.drag * v * v;
+}
+
+/** Metres a launch at `pull` rolls on one surface before stopping. */
+export function predictCoast(stats, pull, surface = 'dirt') {
+  let v = launchSpeed(stats, pull), d = 0;
+  const dt = 1 / 30;
+  for (let i = 0; i < 30 * 600 && v > 0.3; i++) {
+    v = Math.max(0, v - coastDecel(stats, v, surface) * dt);
+    d += v * dt;
+  }
+  return d;
 }
 
 // ---- Stages (Car Evolve's distance goals) --------------------
 
-const STAGE_GOALS = [300, 600, 900, 1200, 1800, 2400, 3600];
+// Every goal fits inside one lap of the 1200 m loop road (the finish past the
+// rest point must not wrap round into the slingshot). Tuned by the progression
+// simulation in test/unit/slingshot.test.mjs: 2–4 launches per stage.
+export const STAGE_GOALS = [300, 420, 540, 660, 780, 900, 1050];
 
-/** Distance goal for stage n (1-based). Past the table, +1200 m per stage. */
+/** Distance goal for stage n (1-based). The last goal repeats past the table. */
 export function stageGoal(stage) {
   const n = Math.max(1, Math.floor(stage || 1));
-  if (n <= STAGE_GOALS.length) return STAGE_GOALS[n - 1];
-  return STAGE_GOALS[STAGE_GOALS.length - 1] + (n - STAGE_GOALS.length) * 1200;
+  return STAGE_GOALS[Math.min(n, STAGE_GOALS.length) - 1];
 }
 
 export function stageBonus(stage) {
@@ -150,17 +200,58 @@ export function planCoinTrails(distance, seed = 1, { start = 60, halfWidth = 1.8
   return out;
 }
 
+/** Three lanes, in the road's own lateral convention (the collectibles'). */
+export const LANES = [-1.6, 0, 1.6];
+
+/**
+ * The stage's fixed layout — the same every launch, so a stage is something
+ * you learn. Distances are road distances (rest point included).
+ *  - Gate 1 (~45 m, where the aim can reach any lane): one lane of coins, one
+ *    hay bale, one clear lane.
+ *  - Gate 2 (~110 m, reached by steering): coins, hay, and from stage 2 the
+ *    JACKPOT billboard — hit it and the run ends at double pay.
+ *  - Then coin trails all the way to the goal.
+ */
+export function planCourse(stage, distance) {
+  const rng = lcg(7919 * Math.max(1, Math.floor(stage || 1)) + 13);
+  const pickLanes = () => {
+    const l = LANES.slice();
+    for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
+    return l;
+  };
+  const coins = [], hay = [];
+  let jackpot = null;
+  const fan = (d, offset) => { for (let i = 0; i < COINS_PER_TRAIL; i++) coins.push({ d: d - 6 + i * TRAIL_STEP, offset }); };
+
+  const g1 = SLING_REST_D + 45, [c1, h1] = pickLanes();
+  fan(g1, c1);
+  hay.push({ d: g1, offset: h1 });
+
+  const g2 = SLING_REST_D + 110, [c2, h2, j2] = pickLanes();
+  fan(g2, c2);
+  hay.push({ d: g2, offset: h2 });
+  if (stage >= 2) jackpot = { d: g2 + 8, offset: j2 };
+
+  coins.push(...planCoinTrails(distance, 31 * stage + 7, { start: g2 + 40 }));
+  return { coins, hay, jackpot };
+}
+
 // ---- Scoring ------------------------------------------------
 
 export const PAY = {
-  metresPerCoin: 5,     // 1 Chaos Coin per 5 m
+  metresPerCoin: 2,     // 1 Chaos Coin per 2 m
   perCoin: 5,
   recordDivisor: 4,     // 1 coin per 4 m beyond the old best
 };
 
+/** The jackpot billboard: a flat bonus, then the whole run pays double. */
+export function jackpotBonus(stage) {
+  return 100 + 50 * Math.max(1, Math.floor(stage || 1));
+}
+
 /**
  * One run's payout.
- * run:  { distance, coins, stageCleared }   (distance from the slingshot)
+ * run:  { distance, coins, stageCleared, jackpot }   (distance from the slingshot)
  * save: { best, runs, stage, lv }
  */
 export function scoreRun(run, save) {
@@ -174,10 +265,12 @@ export function scoreRun(run, save) {
   const recordPay = isRecord && (save.runs || 0) > 0
     ? Math.floor((distance - best) / PAY.recordDivisor) : 0;
   const stagePay = run.stageCleared ? stageBonus(save.stage) : 0;
-  const subtotal = distPay + coinPay + recordPay + stagePay;
-  const total = Math.floor(subtotal * stats.coinMult);
-  return { distance, distPay, coinPay, recordPay, stagePay, subtotal,
-           multiplier: stats.coinMult, total, isRecord };
+  const jackpotPay = run.jackpot ? jackpotBonus(save.stage) : 0;
+  const subtotal = distPay + coinPay + recordPay + stagePay + jackpotPay;
+  const multiplier = stats.coinMult * (run.jackpot ? 2 : 1);
+  const total = Math.floor(subtotal * multiplier);
+  return { distance, distPay, coinPay, recordPay, stagePay, jackpotPay, subtotal,
+           multiplier, total, isRecord };
 }
 
 // ---- Save ---------------------------------------------------

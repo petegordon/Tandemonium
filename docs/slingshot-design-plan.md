@@ -9,7 +9,14 @@ pedals are still there — not certain what they would be used for."*
 - **Phase 0 is done.** `npm run smoke:slingshot-aim` checks it on phones (portrait 390×844 and landscape 844×390, real touch).
 - Phase 0's pixel checks caught a bug the earlier smoke could not: **the whole aim was mirrored**. Dragging left moved the bike right on screen and aimed it left. My "road right" vector was screen-left from behind the bike, and the old smoke measured with the same wrong convention. It is fixed, and asserted in screen pixels.
 - In landscape, the stock vertical FOV made the slingshot a speck (69 px of aim travel). The aim camera now narrows the FOV to frame the forks (257 px), then eases back after launch.
-- Next: Phase 1.
+- **Phase 1 is done.** Pete asked for the shot to go farther and keep going while he steers left and right.
+  - Coasting now uses additive surface drag in `SURFACE_RR`: strip ×0.6, dirt ×1, edge ×1.5, grass ×4.
+  - A fresh full pull rolls **346 m on dirt (was 162 m)** and 490 m on the strip. A 12 m swerve onto the edge for coins costs under 10 m.
+  - Aim is ±4°, scaled by pull. The guide shows the predicted distance ("≈ 346 m · best") and turns red past the road edge.
+  - Each stage has a fixed course. Gate 1 at 45 m has coins, a hay bale (−40% speed) and a clear lane. Gate 2 at 110 m adds a JACKPOT billboard (flat bonus, then the run pays ×2) from stage 2.
+  - Upgrades are gentler, and goals are 300 / 420 / 540 / 660 / 780 / 900 / 1050 m, all inside one lap.
+  - The unit-tested progression simulation takes a 0.8-skill player 2-2-2-2-2-3-3 launches per stage. A maxed bike clears 1,050 m even riding the edge.
+- Next: Phase 2 (a SlingshotMode controller), then Phase 3 (feel).
 
 This plan is built from three independent adversarial reviews: **game feel / loop**,
 **mobile input / camera**, and **technical fit / risk**. It also uses numbers measured

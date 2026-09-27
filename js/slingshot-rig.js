@@ -86,6 +86,12 @@ export class SlingshotRig {
     })));
     this.guide.visible = false;
     this.group.add(this.guide);
+    // …and its continuation past the road edge, in red: that line ends in grass.
+    this.guideOff = new THREE.Mesh(guideGeo, this._mat(new THREE.MeshBasicMaterial({
+      color: 0xff4a3c, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide,
+    })));
+    this.guideOff.visible = false;
+    this.group.add(this.guideOff);
     scene.add(this.group);
   }
 
@@ -93,7 +99,7 @@ export class SlingshotRig {
    * While aiming: the pouch sits behind the bike's rear wheel along the bike's
    * own heading, and the guide points where it will fly.
    */
-  hold(bike, pull = 0) {
+  hold(bike, pull = 0, preview = null) {
     this._released = false;
     const fwd = new THREE.Vector3(Math.sin(bike.heading), 0, Math.cos(bike.heading));
     const p = bike.position.clone().addScaledVector(fwd, -REAR_OFFSET);
@@ -101,12 +107,22 @@ export class SlingshotRig {
     this._setPouch(p);
     this.pouch.rotation.y = bike.heading;
 
-    this.guide.visible = pull > 0.02;
-    if (this.guide.visible) {
-      this.guide.position.copy(bike.position).addScaledVector(fwd, REAR_OFFSET + 0.2);
-      this.guide.position.y = bike.position.y + 0.06;
-      this.guide.rotation.y = bike.heading;
-      this.guide.scale.z = 3 + 22 * pull;
+    // The preview: where this pull and aim send the bike. `length` is how far
+    // to draw (metres ahead of the bike's nose), `exitAt` where the straight
+    // line leaves the road; past it the strip turns red.
+    const show = pull > 0.02;
+    const nose = REAR_OFFSET + 0.2;
+    const length = preview ? preview.length : 3 + 22 * pull;
+    const exitAt = preview && Number.isFinite(preview.exitAt) ? Math.max(0, preview.exitAt - nose) : Infinity;
+    const onRoad = Math.min(length, exitAt);
+    this.guide.visible = show && onRoad > 0.05;
+    this.guideOff.visible = show && length > exitAt;
+    for (const [strip, from, len] of [[this.guide, 0, onRoad], [this.guideOff, exitAt, length - exitAt]]) {
+      if (!strip.visible) continue;
+      strip.position.copy(bike.position).addScaledVector(fwd, nose + from);
+      strip.position.y = bike.position.y + 0.06;
+      strip.rotation.y = bike.heading;
+      strip.scale.z = Math.max(0.05, len);
     }
   }
 
@@ -140,12 +156,14 @@ export class SlingshotRig {
     this._releaseT = 0;
     this._releaseFrom.copy(this.pouch.position);
     this.guide.visible = false;
+    this.guideOff.visible = false;
   }
 
   /** Back to slack, ready for the next pull. */
   reset() {
     this._released = false;
     this.guide.visible = false;
+    this.guideOff.visible = false;
     this._setPouch(this._pouchRest);
   }
 
