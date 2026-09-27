@@ -276,13 +276,41 @@
   #sling-hud.visible { display: flex; }
   #sling-hud .sling-coins { color: #ffd23f; }
   body.sling-mode #pedal-bar { display: none !important; }   /* no pedaling in this mode */
+  /* Top of the screen, out from under the thumb that is dragging. */
   #sling-pull {
-    position: fixed; left: 50%; bottom: 5%; transform: translateX(-50%);
-    width: min(320px, 80vw); display: none; text-align: center; color: #fff;
-    font-weight: 800; letter-spacing: 1px; pointer-events: none; z-index: 56;
+    position: fixed; left: 50%; top: 128px; transform: translateX(-50%);
+    width: min(280px, 72vw); display: none; text-align: center; color: #fff;
+    font-size: 13px; font-weight: 800; letter-spacing: 0.5px; pointer-events: none; z-index: 56;
     text-shadow: 0 2px 6px rgba(0,0,0,0.6);
   }
   #sling-pull.visible { display: block; }
+  /* Short landscape screens: the aim camera frames the bike up to the top, so
+     the hint moves to the left edge, beside the fork. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #sling-pull { top: 50%; left: 12px; transform: translateY(-50%); width: 170px; text-align: left; }
+  }
+  #sling-pull .sling-hint { transition: opacity 0.6s; }
+  #sling-pull.pulling .sling-hint { opacity: 0; }
+  #sling-pull.learned .sling-hint { opacity: 0; height: 0; overflow: hidden; }
+  #sling-toast {
+    position: fixed; left: 50%; top: 40%; transform: translateX(-50%);
+    padding: 6px 14px; border-radius: 999px; background: rgba(0,0,0,0.6);
+    color: #fff; font-weight: 800; font-size: 14px; pointer-events: none; z-index: 57;
+    opacity: 0; transition: opacity 0.25s;
+  }
+  #sling-toast.visible { opacity: 1; }
+  /* Preview builds only (js/build-badge.js): which commit is on screen. */
+  #build-badge {
+    position: fixed; left: 6px; bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+    font: 600 10px/1 ui-monospace, monospace; color: rgba(255,255,255,0.75);
+    background: rgba(0,0,0,0.35); padding: 2px 5px; border-radius: 4px;
+    pointer-events: none; z-index: 9999;
+  }
+  #build-stale {
+    position: fixed; left: 50%; top: calc(8px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+    padding: 8px 14px; border: 0; border-radius: 999px; background: #ffd23f; color: #000;
+    font-weight: 800; font-size: 13px; z-index: 10000; cursor: pointer;
+  }
   #sling-pull .bar { height: 14px; margin-top: 6px; border-radius: 7px; background: rgba(0,0,0,0.5); overflow: hidden; border: 2px solid rgba(255,255,255,0.7); }
   #sling-pull .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ffd23f, #ff5a3c); }
   #sling-garage, #sling-results {
@@ -5127,7 +5155,8 @@ ON</button>
 <!-- Slingshot mode · coins this run and distance to the stage goal. -->
 <div id="sling-hud"></div>
 <!-- Slingshot mode · the pull meter while the riders wind the bands. -->
-<div id="sling-pull">DRAG BACK TO PULL &middot; LEFT / RIGHT TO AIM<br><small>let go to launch</small><div class="bar"><i></i></div></div>
+<div id="sling-pull"><div class="sling-hint">Pull back &middot; aim &middot; let go</div><div class="bar"><i></i></div></div>
+<div id="sling-toast"></div>
 
 <!-- E-2 · the road is about to do something. Both riders see this. -->
 <div id="disruption-banner"></div>
@@ -5542,7 +5571,6 @@ ON</button>
             <!-- E-6 · the one mode that is about the thing the players feel.
                  Hidden unless a Maps key is present: without one it can only
                  disappoint. -->
-            <button class="lobby-btn" id="btn-slingshot">&#127919; SLINGSHOT</button>
             <button class="lobby-btn" id="btn-tourist" style="display:none;">&#128205; RIDE THE DISTANCE BETWEEN YOU</button>
           </div>
         </div>

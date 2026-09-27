@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   UPGRADES, upgradeCost, slingStats, launchSpeed, coastDecel,
   stageGoal, stageBonus, scoreRun, emptySave, loadSave, writeSave, applyRun,
-  buyUpgrade, planCoinTrails, COINS_PER_TRAIL, STORAGE_KEY,
+  buyUpgrade, planCoinTrails, COINS_PER_TRAIL, STORAGE_KEY, SAVE_VERSION, spentOn, RETIRED_UPGRADES,
   runDistance, dragToAim, aimPose, MIN_LAUNCH_PULL,
   SLING_POST_D, SLING_REST_D, SLING_PULL_BACK, SLING_MAX_LATERAL, SLING_MAX_AIM
 } from '../../js/slingshot.js';
@@ -123,7 +123,7 @@ test('buying: spends coins, refuses when poor or maxed', () => {
 
 test('save round-trips and survives garbage', () => {
   const store = memStore();
-  const s = { coins: 42, best: 310, runs: 5, stage: 2, lv: { sling: 3 } };
+  const s = { v: 2, coins: 42, best: 310, runs: 5, stage: 2, lv: { sling: 3 } };
   writeSave(store, s);
   assert.deepEqual(loadSave(store), s);
   store.set(STORAGE_KEY, '{nope');
@@ -194,4 +194,20 @@ test('no pedaling upgrades: the slingshot is the only push', () => {
   const st = slingStats({ legs: 5, stamina: 5 });
   assert.equal(st.strokes, undefined);
   assert.equal(st.pedalMult, undefined);
+});
+
+test('an old save gets its coins back for upgrades that no longer exist', () => {
+  const store = memStore();
+  // A tester on an earlier build bought Pedal power 2, Stamina 1, Checkpoint boost 3.
+  writeSave(store, { coins: 7, best: 120, runs: 4, stage: 1, lv: { sling: 1, legs: 2, stamina: 1, gate: 3 } });
+  const s = loadSave(store);
+  const refund = spentOn(45, 2) + spentOn(40, 1) + spentOn(45, 3);
+  assert.equal(refund, 45 + 70 + 40 + 45 + 70 + 110);
+  assert.equal(s.coins, 7 + refund);
+  assert.deepEqual(s.lv, { sling: 1 }, 'retired upgrades are gone, live ones kept');
+  assert.equal(s.v, SAVE_VERSION);
+  // Saving and loading again must not refund twice.
+  writeSave(store, s);
+  assert.equal(loadSave(store).coins, s.coins);
+  assert.deepEqual(Object.keys(RETIRED_UPGRADES).sort(), ['gate', 'legs', 'stamina']);
 });

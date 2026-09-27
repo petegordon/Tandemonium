@@ -4,6 +4,13 @@
 feedback: "The touch drag pull back works, but there is no aim left and right? And the
 pedals are still there — not certain what they would be used for."*
 
+**Status (2026-09-26):**
+- Pete accepted defaults D1–D6 and asked for Slingshot to move **under SOLO** in the lobby. It is now a card in the Solo level list, hidden in the demo build.
+- **Phase 0 is done.** `npm run smoke:slingshot-aim` checks it on phones (portrait 390×844 and landscape 844×390, real touch).
+- Phase 0's pixel checks caught a bug the earlier smoke could not: **the whole aim was mirrored**. Dragging left moved the bike right on screen and aimed it left. My "road right" vector was screen-left from behind the bike, and the old smoke measured with the same wrong convention. It is fixed, and asserted in screen pixels.
+- In landscape, the stock vertical FOV made the slingshot a speck (69 px of aim travel). The aim camera now narrows the FOV to frame the forks (257 px), then eases back after launch.
+- Next: Phase 1.
+
 This plan is built from three independent adversarial reviews: **game feel / loop**,
 **mobile input / camera**, and **technical fit / risk**. It also uses numbers measured
 from the code in this branch. Every claim below was either reproduced (emulated iPhone

@@ -182,8 +182,24 @@ export function scoreRun(run, save) {
 
 // ---- Save ---------------------------------------------------
 
+export const SAVE_VERSION = 2;
+
 export function emptySave() {
-  return { coins: 0, best: 0, runs: 0, stage: 1, lv: {} };
+  return { v: SAVE_VERSION, coins: 0, best: 0, runs: 0, stage: 1, lv: {} };
+}
+
+/**
+ * Upgrades that existed in earlier builds and were removed (pedaling and the
+ * checkpoint gates left the mode). Their base prices, so a save that bought
+ * them gets every coin back instead of silently losing it.
+ */
+export const RETIRED_UPGRADES = { legs: 45, stamina: 40, gate: 45 };
+
+/** Coins spent taking an upgrade with this base price from 0 to `level`. */
+export function spentOn(base, level) {
+  let total = 0;
+  for (let l = 0; l < level; l++) total += upgradeCost({ base }, l);
+  return total;
 }
 
 function sanitize(o) {
@@ -198,6 +214,10 @@ function sanitize(o) {
     for (const u of UPGRADES) {
       const v = Math.floor(num(o.lv[u.id], 0));
       if (v > 0) s.lv[u.id] = Math.min(u.max, v);
+    }
+    for (const [id, base] of Object.entries(RETIRED_UPGRADES)) {
+      const v = Math.floor(num(o.lv[id], 0));
+      if (v > 0) s.coins += spentOn(base, Math.min(10, v));
     }
   }
   return s;

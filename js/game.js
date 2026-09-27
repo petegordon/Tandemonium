@@ -8,6 +8,7 @@ import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RE
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
+import './build-badge.js';   // preview builds: which commit is on screen
 import * as sling from './slingshot.js';
 import * as slingUI from './slingshot-ui.js';
 import { SlingshotRig } from './slingshot-rig.js';
@@ -677,7 +678,7 @@ class Game {
     });
 
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults' | 'slingGarage' | 'slingResults'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'slingAim' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults' | 'slingGarage' | 'slingResults'
     this._finishCinematic = null;
     this.countdownTimer = 0;
     this._lastCountNum = 3;
@@ -1859,7 +1860,7 @@ class Game {
     // D-2: no dynamic difficulty on a ranked run. Everyone rides the same road
     // under the same rules, or the times mean nothing. Every ddaManager call
     // site is already null-guarded (grep: `this.ddaManager &&`).
-    this.ddaManager = this._rankedRunActive ? null : new DDAManager(difficultyName);
+    this.ddaManager = (this._rankedRunActive || this.isSlingshot) ? null : new DDAManager(difficultyName);
     this._assistWeight = 0;
 
     // Apply auto-speed from difficulty preset (Chill/Tutorial cruise automatically)
@@ -2018,8 +2019,9 @@ class Game {
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
 
     // Analytics: start ride tracking (only if no ride is already active —
-    // _startCountdown is also called on restart-from-beginning after early crashes)
-    if (!analytics.getCurrentRideId()) {
+    // _startCountdown is also called on restart-from-beginning after early crashes).
+    // Slingshot reports its own launch/result events instead of a ride per launch.
+    if (!analytics.getCurrentRideId() && !this.isSlingshot) {
       analytics.setPage('ride');
       analytics.startRide({
         level: level.id,
@@ -2042,7 +2044,7 @@ class Game {
     if (this.isSlingshot) this._setupSlingRun(level);
 
     // A-6: name the controls for whoever is holding whatever they are holding.
-    this._maybeShowCoachCard(level);
+    if (!this.isSlingshot) this._maybeShowCoachCard(level);
 
     // B-3: read this ride's best once, so checkpoint splits have something to
     // compare against without touching localStorage mid-ride.
@@ -2052,10 +2054,12 @@ class Game {
     this._dailyStripText = null;
 
     // D-4: record this ride's line, and put out the ghost of the best one.
-    this._startGhost(level);
+    if (this.isSlingshot) { this._hideGhost(); this._ghostPlayer = null; }
+    else this._startGhost(level);
 
     // E-2: plan what the road is going to do to this pair.
-    this._startDisruptions(level, difficultyName);
+    if (this.isSlingshot) this._disruptions = [];
+    else this._startDisruptions(level, difficultyName);
     if (this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
 
     // Tutorial: place all items from all phases so they're visible ahead
@@ -2255,11 +2259,6 @@ class Game {
 
   _updateCountdown(dt) {
     this.countdownTimer -= dt;
-    // Slingshot: no numbers — the aim phase holds here until the riders let go.
-    if (this.isSlingshot && this._slingRun && !this._slingRun.launched) {
-      if (!this._updateSlingAim()) return;
-      this.countdownTimer = 0;
-    }
     const flavorNum = document.getElementById('countdown-flavor-num');
 
     if (this.countdownTimer <= 0) {
@@ -2278,7 +2277,6 @@ class Game {
       }
       this._playBeep(800, 0.4);
       if (this.raceManager) this.raceManager.start();
-      if (this.isSlingshot) this._launchSling();
       if (this.mode === 'versus' && this.versusRigs) {
         for (const rig of this.versusRigs) {
           if (rig.raceManager) rig.raceManager.start();
@@ -3122,8 +3120,11 @@ class Game {
   // the Chaos Coins are collectibles, so the race manager, HUD and finish
   // cinematic run unchanged. There are no checkpoints. What differs:
   // - a real slingshot (js/slingshot-rig.js) holds the bike on the start line
-  //   instead of a countdown: touch/click and drag back to stretch the bands,
-  //   left/right to shift and aim, let go to fire;
+  //   instead of a countdown, in its own 'slingAim' state with a fixed camera:
+  //   drag back to stretch the bands, left/right to shift and aim, let go to
+  //   fire (keyboard and gamepad too);
+  // - the ride systems that don't belong (achievements, ghost, disruptions,
+  //   DDA, coach card, cruise control, per-ride analytics) stay off;
   // - no pedaling: after launch the riders only steer, and the bike coasts on
   //   low drag until it stalls, crashes or reaches the goal;
   // - any reset puts the bike back in the slingshot for a fresh launch.
@@ -3169,6 +3170,11 @@ class Game {
     slingUI.hideResults();
     const save = this._slingSave || sling.loadSave(this._slingStore());
     this._slingSave = save;
+    // Remember what the lobby had selected, so leaving the mode gives it back
+    // instead of leaving the pseudo-level and a forced difficulty behind.
+    if (!this._slingPrevLobby && !(this.lobby.selectedLevel && this.lobby.selectedLevel.isSlingshot)) {
+      this._slingPrevLobby = { level: this.lobby.selectedLevel, difficulty: this.lobby.selectedDifficulty };
+    }
     this.mode = 'solo';
     this.isSlingshot = true;
     document.body.classList.add('sling-mode');   // hides the pedal pads
@@ -3189,7 +3195,7 @@ class Game {
       checkpointInterval: finishD,   // the only "checkpoint" is the finish: no gates
       collectibles: 'coins',
       icon: '🎯',
-      description: 'Drag back to pull · left/right to aim · let go to launch',
+      description: '',
       isSlingshot: true,
       timerEnabled: false,       // the run ends when the bike stops, not on a clock
       motionAdaptation: false
@@ -3197,14 +3203,13 @@ class Game {
     // Early stages keep the road forgiving; later ones bring the obstacles.
     this.lobby.selectedDifficulty = save.stage >= 4 ? 'adventurous' : 'chill';
 
-    // The first launch goes through the instructions tap (motion permission,
-    // audio unlock); after that, straight back into the slingshot.
-    if (this._slingPrimed) { this._startCountdown(); return; }
-    this._slingPrimed = true;
-    this.state = 'instructions';
-    this._updateInstructionsText();
-    this.instructionsEl.classList.remove('hidden');
-    this._setupStartHandler();
+    // No instructions screen: the drag is the instruction. The LAUNCH tap is
+    // still a user gesture, so ask for tilt (steering after launch) here.
+    if (this.input.needsMotionPermission) {
+      Promise.resolve(this.input.requestMotionPermission()).catch(() => {});
+    }
+    this.instructionsEl.classList.add('hidden');
+    this._startCountdown();
   }
 
   /** Called from _startCountdown once the race machinery for the level exists. */
@@ -3215,12 +3220,16 @@ class Game {
       pull: 0, side: 0, launched: false, dragReleased: false,
       coins: 0, topSpeed: 0, stillT: 0, crashDistance: null, over: false,
     };
-    // No countdown: the bike waits in the slingshot until it is let go.
-    this.countdownTimer = Infinity;
-    const flavorNum = document.getElementById('countdown-flavor-num');
-    if (flavorNum) { flavorNum.textContent = ''; flavorNum.className = ''; }
+    // Not a countdown: the aim phase is its own state, with its own camera.
+    this.state = 'slingAim';
+    for (const id of ['countdown-flavor-icon', 'countdown-flavor-text', 'countdown-flavor-num']) {
+      const el = document.getElementById(id);
+      if (el) { el.textContent = ''; el.className = ''; }
+    }
     this.autoSpeed = false;             // cruise control would never let it stall
     this._slingDrag = null;
+    this._slingKb = { pull: 0, side: 0, held: false };
+    this._slingPadA = true;             // a held A from the garage is not a fire
     this._initSlingDrag();
     this.bike.coast = {
       decel: (v, onStrip) => sling.coastDecel(stats, v, onStrip),
@@ -3231,6 +3240,7 @@ class Game {
     if (this._slingRig) this._slingRig.dispose();
     this._slingRig = new SlingshotRig(this.scene, this.world.roadPath);
     this._poseSlingBike(0, 0);
+    this._placeSlingCamera();
 
     // Chaos Coins come in trails, not the level's scattered pickups.
     this.collectibleManager.replaceItems(sling.planCoinTrails(level.distance, (Math.random() * 1e6) | 0,
@@ -3248,21 +3258,96 @@ class Game {
     const b = this.bike;
     b.resetToDistance(pose.d);
     const h = b.heading;
-    b.position.x += Math.cos(h) * pose.lateral;    // road-right is (cos h, -sin h)
-    b.position.z -= Math.sin(h) * pose.lateral;
-    b.heading = h + pose.angle;
+    // Forward is (sin h, cos h). Seen from behind, the rider's RIGHT (screen
+    // right) is (-cos h, sin h), and turning right DEcreases the heading.
+    // (Getting this backwards mirrored the whole aim on screen.)
+    b.position.x -= Math.cos(h) * pose.lateral;
+    b.position.z += Math.sin(h) * pose.lateral;
+    b.heading = h - pose.angle;
     b._applyTransform();
     this._slingRig.hold(b, pull);
   }
 
-  /** Aim frames: the drag sets the pull and the aim. True when it is let go. */
-  _updateSlingAim() {
+  /**
+   * The aim camera: fixed behind the slingshot on the ROAD's line, so the
+   * forks, the stretched bands and the bike's aim all read on screen. (The
+   * chase camera follows the bike's heading, which cancels the aim out.)
+   */
+  _placeSlingCamera() {
+    if (!this._slingRig) return;
+    if (this._slingBaseFov == null) this._slingBaseFov = this.camera.fov;
+    const { pos, look, fov } = this._slingRig.cameraPose(this.camera.aspect);
+    const want = fov || this._slingBaseFov;
+    if (this.camera.fov !== want) { this.camera.fov = want; this.camera.updateProjectionMatrix(); }
+    this.camera.position.copy(pos);
+    this.camera.lookAt(look);
+    this._slingLook = look;
+  }
+
+  /** After launch, ease a landscape aim zoom back to the game's own FOV. */
+  _easeSlingFov(dt) {
+    const base = this._slingBaseFov;
+    if (base == null || this.camera.fov === base) return;
+    const next = this.camera.fov + (base - this.camera.fov) * Math.min(1, dt * 4);
+    this.camera.fov = Math.abs(next - base) < 0.05 ? base : next;
+    this.camera.updateProjectionMatrix();
+  }
+
+  _slingAiming() {
+    return this.isSlingshot && this.state === 'slingAim' && this._slingRun && !this._slingRun.launched;
+  }
+
+  /**
+   * One aim, three inputs. Touch/mouse: drag back to pull, sideways to aim,
+   * lift to fire. Keyboard: hold ↓/S to draw (full in 1.2 s), ←/→ or A/D to
+   * aim, release ↓/S to fire, Esc to cancel. Gamepad: left stick is the pouch
+   * (down = pull, sideways = aim), A fires. With nothing held the bands go slack.
+   */
+  _updateSlingAimState(dt) {
     const run = this._slingRun;
+    if (!run || run.launched) return;
+    let aim = null;
+    let fire = run.dragReleased;
+
+    // Touch / mouse
     const drag = this._slingDrag && this._slingDrag.active ? this._slingDrag : null;
-    const aim = drag
-      ? sling.dragToAim(drag.dx, drag.dy, window.innerWidth, window.innerHeight)
-      : { pull: 0, side: 0 };                     // nobody holding it: the bands go slack
-    if (run.dragReleased) return true;
+    if (drag) aim = sling.dragToAim(drag.dx, drag.dy, window.innerWidth, window.innerHeight);
+    if (fire) aim = { pull: run.pull, side: run.side };
+
+    // Keyboard
+    const k = (this.input && this.input.keys) || {};
+    const kb = this._slingKb;
+    if (k.Escape && kb.held) { kb.held = false; kb.pull = 0; slingUI.toast('Cancelled'); }
+    if (!aim) {
+      const pullKey = !!(k.ArrowDown || k.KeyS);
+      if (k.ArrowLeft || k.KeyA) kb.side = Math.max(-1, kb.side - dt);
+      if (k.ArrowRight || k.KeyD) kb.side = Math.min(1, kb.side + dt);
+      if (pullKey) { kb.held = true; kb.pull = Math.min(1, kb.pull + dt / 1.2); }
+      if (kb.held) {
+        aim = { pull: kb.pull, side: kb.side };
+        if (!pullKey) {                     // let go of the key: fire (or cancel)
+          kb.held = false;
+          if (kb.pull >= sling.MIN_LAUNCH_PULL) fire = true;
+          else aim = { pull: 0, side: 0 };
+          kb.pull = 0;
+        }
+      }
+    }
+
+    // Gamepad / Steam Deck
+    const gp = !aim && this.input && this.input.getGamepadState ? this.input.getGamepadState() : null;
+    if (gp) {
+      const DZ = 0.15;
+      const ax = gp.axes[0] || 0, ay = gp.axes[1] || 0;
+      const pull = ay > DZ ? Math.min(1, (ay - DZ) / 0.8) : 0;
+      const side = Math.abs(ax) > DZ ? Math.max(-1, Math.min(1, ax)) : 0;
+      const a = !!(gp.buttons[0] && gp.buttons[0].pressed);
+      if (pull > 0 || side !== 0) aim = { pull, side };
+      if (a && !this._slingPadA && pull >= sling.MIN_LAUNCH_PULL) fire = true;
+      this._slingPadA = a;
+    }
+
+    if (!aim) aim = { pull: 0, side: 0 };
     if (aim.pull !== run.pull || aim.side !== run.side) {
       if (aim.pull >= 1 && run.pull < 1) this._playChime(880, 0.2);
       run.pull = aim.pull;
@@ -3270,26 +3355,27 @@ class Game {
       this._poseSlingBike(run.pull, run.side);
     }
     slingUI.showPull(run.pull);
-    return false;
-  }
-
-  _slingAiming() {
-    return this.isSlingshot && this.state === 'countdown' && this._slingRun && !this._slingRun.launched;
+    if (fire && run.pull >= sling.MIN_LAUNCH_PULL) this._slingGo();
   }
 
   /**
-   * Touch / mouse: press anywhere, drag back (down the screen) to stretch the
-   * bands, left/right to shift and aim the bike, lift to let go. A drag that
-   * barely moved, or ends without enough pull, is a cancel, not a shot.
+   * Touch / mouse: press anywhere (not a button, not a screen edge), drag
+   * back to stretch the bands, left/right to shift and aim the bike, lift to
+   * let go. A drag that ends without enough pull is a cancel, not a shot; a
+   * system gesture that steals the finger (pointercancel) says so.
    */
   _initSlingDrag() {
     if (this._slingDragWired) return;
     this._slingDragWired = true;
     const DEAD_ZONE_PX = 12;
+    const EDGE_PX = 24;                   // iOS back-swipe / Android edge gestures
     window.addEventListener('pointerdown', (e) => {
       if (!this._slingAiming() || this._slingDrag) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.clientX < EDGE_PX || e.clientX > window.innerWidth - EDGE_PX) return;
       if (e.target && e.target.closest && e.target.closest('button, a, input, #quick-menu-overlay, #quick-menu-btn')) return;
       this._slingDrag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, active: false };
+      try { if (e.target && e.target.setPointerCapture) e.target.setPointerCapture(e.pointerId); } catch (_) { /* not capturable */ }
     });
     window.addEventListener('pointermove', (e) => {
       const d = this._slingDrag;
@@ -3299,13 +3385,15 @@ class Game {
       if (!d.active && Math.hypot(d.dx, d.dy) > DEAD_ZONE_PX) d.active = true;
       if (d.active && e.cancelable) e.preventDefault();
     }, { passive: false });
+    window.addEventListener('contextmenu', (e) => { if (this._slingAiming()) e.preventDefault(); });
     const end = (e) => {
       const d = this._slingDrag;
       if (!d || e.pointerId !== d.id) return;
       this._slingDrag = null;
       if (!d.active || !this._slingAiming()) return;
+      if (e.type === 'pointercancel') { slingUI.toast('Cancelled'); return; }
       const aim = sling.dragToAim(d.dx, d.dy, window.innerWidth, window.innerHeight);
-      if (e.type === 'pointerup' && aim.pull >= sling.MIN_LAUNCH_PULL) {
+      if (aim.pull >= sling.MIN_LAUNCH_PULL) {
         // Freeze the aim the finger let go at, then fire on the next frame.
         const run = this._slingRun;
         run.pull = aim.pull;
@@ -3318,6 +3406,17 @@ class Game {
     window.addEventListener('pointercancel', end);
   }
 
+  /** Fire: start the ride and hand the aim camera to the chase camera. */
+  _slingGo() {
+    this.state = 'playing';
+    if (this.raceManager) this.raceManager.start();
+    // Seed the chase camera from the aim pose, so launch is a blend, not a cut.
+    this.chaseCamera.currentPos.copy(this.camera.position);
+    if (this._slingLook) this.chaseCamera.currentLook.copy(this._slingLook);
+    this.chaseCamera.initialized = true;
+    this._launchSling();
+  }
+
   /** Let go of the bands: the bike flies the way it is aimed. */
   _launchSling() {
     const run = this._slingRun;
@@ -3326,6 +3425,7 @@ class Game {
     this.bike.speed = sling.launchSpeed(this._slingStats, run.pull);
     if (this._slingRig) this._slingRig.release();
     slingUI.hidePull();
+    slingUI.markLearned();
     hapticCheckpoint();
     this._playChime(1320, 0.15);
     analytics.trackEvent('slingshot_launch', {
@@ -3343,6 +3443,7 @@ class Game {
     const run = this._slingRun;
     if (!run || run.over) return true;
     if (this._slingRig) this._slingRig.update(dt);
+    this._easeSlingFov(dt);
     const b = this.bike;
     run.topSpeed = Math.max(run.topSpeed, b.speed);
     if (b.fallen && run.crashDistance == null) run.crashDistance = b.distanceTraveled;
@@ -3374,10 +3475,9 @@ class Game {
     const run = this._slingRun;
     if (run && run.launched && !run.over) {
       run.over = true;
-      analytics.endRide({
-        completed: false,
-        abandon_reason: 'slingshot_reset',
-        distance: sling.runDistance(this.bike.distanceTraveled),
+      analytics.trackEvent('slingshot_result', {
+        cause: 'reset', distance: Math.round(sling.runDistance(this.bike.distanceTraveled)),
+        coins: run.coins, stage: this._slingSave.stage, earned: 0,
       });
     }
     if (this._finishCinematic) {
@@ -3404,10 +3504,9 @@ class Game {
     this._slingSave = sling.applyRun(this._slingSave, runData, score);
     sling.writeSave(this._slingStore(), this._slingSave);
 
-    analytics.endRide({
-      completed: cause === 'goal',
-      abandon_reason: cause === 'goal' ? undefined : `slingshot_${cause}`,
-      distance: score.distance,
+    analytics.trackEvent('slingshot_result', {
+      cause, distance: score.distance, coins: run.coins, earned: score.total,
+      stage: this._slingSave.stage, record: score.isRecord,
     });
 
     this.state = 'slingResults';
@@ -3431,8 +3530,17 @@ class Game {
   _leaveSlingMode() {
     this.isSlingshot = false;
     document.body.classList.remove('sling-mode');
+    if (this._slingPrevLobby && this.lobby.selectedLevel && this.lobby.selectedLevel.isSlingshot) {
+      this.lobby.selectedLevel = this._slingPrevLobby.level;
+      this.lobby.selectedDifficulty = this._slingPrevLobby.difficulty;
+    }
+    this._slingPrevLobby = null;
     this._slingRun = null;
     if (this._slingRig) { this._slingRig.dispose(); this._slingRig = null; }
+    if (this._slingBaseFov != null && this.camera.fov !== this._slingBaseFov) {
+      this.camera.fov = this._slingBaseFov;
+      this.camera.updateProjectionMatrix();
+    }
     if (this.bike) this.bike.coast = null;
     slingUI.hideGarage();
     slingUI.hideResults();
@@ -6062,6 +6170,7 @@ class Game {
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
+      if (this.state === 'slingAim') this._updateSlingAimState(dt);
       if (this.state === 'gameover' || this.state === 'victory' || this.state === 'versusResults' ||
           this.state === 'slingGarage' || this.state === 'slingResults' ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
@@ -6084,7 +6193,8 @@ class Game {
         this._renderVersusViews();
       } else {
         this.world.update(this.bike.position, this.bike.roadD, dt);
-        this.chaseCamera.update(this.bike, dt, roadPath);
+        if (this.state === 'slingAim') this._placeSlingCamera();
+        else this.chaseCamera.update(this.bike, dt, roadPath);
         if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
 
         this.renderer.render(this.scene, this.camera);
@@ -6190,7 +6300,7 @@ class Game {
     this.bike._balanceAssist = this._assistWeight;
 
     const wasFallen = this.bike.fallen;
-    this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.isSlingshot ? false : this.autoSpeed);
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
@@ -6216,10 +6326,10 @@ class Game {
     if (this.isSlingshot && this.state === 'playing' && this._updateSlingRun(dt)) return;
 
     // Achievements
-    this._checkAchievements(dt);
+    if (!this.isSlingshot) this._checkAchievements(dt);
     this._updateCoachCard(dt);
     this._drainPendingGyroCalibration();
-    this._updateGhost(dt);
+    if (!this.isSlingshot) this._updateGhost(dt);
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2
     if (this._touristRoute) this._updateTouristGoal();   // E-7

@@ -45,9 +45,13 @@ await page.click('#tap-to-start').catch(() => {});
 await new Promise(r => setTimeout(r, 500));
 
 // 1. Lobby button → garage
-await page.evaluate(() => document.getElementById('btn-slingshot').click());
+// Slingshot lives under SOLO now, not on the root menu.
+check(await page.evaluate(() => !document.getElementById('btn-slingshot')), 'no Slingshot button on the root menu');
+await page.evaluate(() => document.getElementById('btn-solo').click());
+await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card-slingshot'), { timeout: 20000 });
+await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
 await waitState('slingGarage', 10000);
-check(await page.evaluate(() => document.getElementById('sling-garage').classList.contains('visible')), 'lobby button opens the garage');
+check(await page.evaluate(() => document.getElementById('sling-garage').classList.contains('visible')), 'Solo → Slingshot card opens the garage');
 await shot('1-garage');
 
 // 2. Buy the slingshot upgrade (40 coins)
@@ -55,13 +59,9 @@ await page.evaluate(() => document.querySelectorAll('#sling-garage .sling-up')[0
 const afterBuy = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')));
 check(afterBuy.coins === 60 && afterBuy.lv.sling === 1, `buying spends coins and saves (coins ${afterBuy.coins}, sling L${afterBuy.lv.sling})`);
 
-// 3. Launch → instructions → the bike waits in the slingshot
+// 3. Launch → straight into the slingshot (no instructions screen, no countdown)
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button')).find(b => /launch/i.test(b.textContent)).click());
-await page.waitForFunction(() => ['instructions', 'countdown'].includes(window._game.state), { timeout: 60000 });
-if (await page.evaluate(() => window._game.state === 'instructions')) {
-  await page.evaluate(() => window._game._startCountdown());
-}
-await waitState('countdown', 60000);
+await waitState('slingAim', 60000);
 // Pedal strokes, fed straight to the pedal controller (headless is ~1-2 fps).
 await page.evaluate(() => {
   const g = window._game; const orig = g.pedalCtrl.update.bind(g.pedalCtrl);
@@ -73,8 +73,9 @@ const pedal = (acceleration, braking = false) => page.evaluate((a, b) => window.
 const pose = () => page.evaluate(() => {
   const g = window._game, b = g.bike, rp = g.world.roadPath;
   const pt = rp.getPointAtDistance(b.roadD);
-  const lateral = (b.position.x - pt.x) * Math.cos(pt.heading) - (b.position.z - pt.z) * Math.sin(pt.heading);
-  return { d: b.distanceTraveled, lateral, angle: b.heading - pt.heading, pull: g._slingRun.pull, state: g.state, speed: b.speed };
+  // Rider-right (screen right from behind) is (-cos h, sin h); turning right lowers the heading.
+  const lateral = -(b.position.x - pt.x) * Math.cos(pt.heading) + (b.position.z - pt.z) * Math.sin(pt.heading);
+  return { d: b.distanceTraveled, lateral, angle: pt.heading - b.heading, pull: g._slingRun.pull, state: g.state, speed: b.speed };
 });
 // Drag from the middle of the screen by (dx, dy); optionally let go.
 async function drag(dx, dy, letGo) {
@@ -102,7 +103,7 @@ check(Math.abs(rest.d - 5.2) < 0.01 && Math.abs(rest.lateral) < 0.05, `the bike 
 await pedal(3); await pedal(3); await pedal(0, true);
 await new Promise(r => setTimeout(r, 4000));
 const still = await pose();
-check(still.state === 'countdown' && still.pull === 0, 'pedaling does nothing, and nothing launches it but a drag');
+check(still.state === 'slingAim' && still.pull === 0, 'pedaling does nothing, and nothing launches it but a drag');
 
 // 4. Drag back and to the left: the bands stretch, the bike moves left and aims right
 await drag(-250, 240, false);
@@ -114,7 +115,7 @@ const rig = await page.evaluate(() => {
 });
 check(held.pull > 0.75 && held.d < 3, `dragging back pulls the bike back (pull ${held.pull.toFixed(2)}, bike at ${held.d.toFixed(2)} m, pouch ${rig.pouchBack.toFixed(1)} m behind the fork)`);
 check(held.lateral < -0.8 && held.angle > 0.2 && rig.guide, `dragging left shifts it left (${held.lateral.toFixed(2)} m) and aims it right (${(held.angle * 57.3).toFixed(0)}°), guide shown`);
-check(held.state === 'countdown', 'holding the drag holds the shot');
+check(held.state === 'slingAim', 'holding the drag holds the shot');
 await shot('2-aim');
 await page.mouse.up();
 await waitState('playing', 60000);
@@ -130,7 +131,7 @@ await shot('3-riding');
 // 5. Reset mid-run → back into the slingshot, unpaid
 const runsBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')).runs);
 await page.evaluate(() => window._game._resetGame());
-await waitState('countdown', 60000);
+await waitState('slingAim', 60000);
 const back = await pose();
 const runsAfter = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')).runs);
 check(Math.abs(back.d - 5.2) < 0.01 && Math.abs(back.lateral) < 0.05 && back.pull === 0 && runsAfter === runsBefore, `reset puts the bike back in the slingshot (at ${back.d.toFixed(2)} m, run not paid)`);
@@ -140,7 +141,7 @@ await page.mouse.move(640, 300); await page.mouse.down();
 await page.mouse.move(640, 330, { steps: 3 }); await page.mouse.up();
 await new Promise(r => setTimeout(r, 1500));
 const flick = await pose();
-check(flick.state === 'countdown' && flick.pull === 0 && Math.abs(flick.d - 5.2) < 0.01, 'a tiny drag cancels and the bands go slack');
+check(flick.state === 'slingAim' && flick.pull === 0 && Math.abs(flick.d - 5.2) < 0.01, 'a tiny drag cancels and the bands go slack');
 
 // 7. Straight shot, then a stall → results with a payout
 await drag(0, 300, true);
@@ -153,7 +154,7 @@ await shot('4-results');
 
 // 8. Launch again → straight back into the slingshot → crash ends the run
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
-await waitState('countdown', 60000);
+await waitState('slingAim', 60000);
 check(Math.abs((await pose()).d - 5.2) < 0.01, 'launch again goes straight back to the slingshot');
 await drag(0, 300, true);
 await waitState('playing', 120000);
@@ -164,7 +165,7 @@ check(/crash/i.test(r2.title) && r2.runs === 2, `a crash ends the run ("${r2.tit
 
 // 9. Reach the stage goal → stage cleared
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
-await waitState('countdown', 60000);
+await waitState('slingAim', 60000);
 await drag(0, 300, true);
 await waitState('playing', 120000);
 await page.evaluate(() => { const g = window._game; g.bike.distanceTraveled = g.lobby.selectedLevel.distance - 0.5; g.bike.speed = 15; });
