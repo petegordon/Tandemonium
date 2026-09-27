@@ -8,6 +8,8 @@ import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RE
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
+import * as sling from './slingshot.js';
+import * as slingUI from './slingshot-ui.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
@@ -88,6 +90,8 @@ const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 // reconnect + the partner force-reconnects on unlock), so debouncing the
 // presentation avoids a jarring freeze-flash for blips. See #320.
 const RECONNECT_GRACE_MS = 2000;
+// Slingshot mode: a fully upgraded sling launches at ~33 m/s; normal rides cap near 19.
+const SLING_MAX_SPEED = 34;
 
 // Tutorial phase boundaries — sequential layout so all phases are visible ahead
 const TUTORIAL_PHASES = {
@@ -672,7 +676,7 @@ class Game {
     });
 
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults' | 'slingGarage' | 'slingResults'
     this._finishCinematic = null;
     this.countdownTimer = 0;
     this._lastCountNum = 3;
@@ -695,6 +699,7 @@ class Game {
       onLocalReady: (opts) => this._onLocalReady(opts),
       onVersusReady: (opts) => this._onVersusReady(opts),
       onTouristReady: (opts) => this._onTouristReady(opts),   // E-6
+      onSlingshotReady: () => this._openSlingGarage(),
       input: this.input,
       controllerManager: this.controllerManager,
     });
@@ -945,6 +950,7 @@ class Game {
     this.isTourist = false;               // E-7: a normal solo ride, not a route
     this._touristRoute = null;
     this._hideTouristGoal();
+    this._leaveSlingMode();
     this.bike.applyPreset(this.lobby.selectedPreset);
     this._lobbyBtn.textContent = 'LOBBY';
 
@@ -2032,6 +2038,7 @@ class Game {
     this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
     this.hud.showGeese();
     this.world.setRaceMarkers(level, this.camera);
+    if (this.isSlingshot) this._setupSlingRun(level);
 
     // A-6: name the controls for whoever is holding whatever they are holding.
     this._maybeShowCoachCard(level);
@@ -2247,6 +2254,7 @@ class Game {
 
   _updateCountdown(dt) {
     this.countdownTimer -= dt;
+    if (this.isSlingshot) this._updateSlingPull(dt);
     const flavorNum = document.getElementById('countdown-flavor-num');
 
     if (this.countdownTimer <= 0) {
@@ -2265,6 +2273,7 @@ class Game {
       }
       this._playBeep(800, 0.4);
       if (this.raceManager) this.raceManager.start();
+      if (this.isSlingshot) this._launchSling();
       if (this.mode === 'versus' && this.versusRigs) {
         for (const rig of this.versusRigs) {
           if (rig.raceManager) rig.raceManager.start();
@@ -3046,6 +3055,7 @@ class Game {
   async _onTouristReady({ plan }) {
     if (!plan) return;
     this.mode = 'solo';
+    this._leaveSlingMode();
     this.isTourist = true;
     this._touristRoute = plan;
     this._touristArrived = false;
@@ -3095,6 +3105,228 @@ class Game {
     this._updateInstructionsText();
     this.instructionsEl.classList.remove('hidden');
     this._setupStartHandler();
+  }
+
+  // ============================================================
+  // SLINGSHOT MODE — launch for distance, earn Chaos Coins, upgrade
+  // ============================================================
+  //
+  // A solo pseudo-level, like Tourist: the stage goal is the finish line, the
+  // gates are checkpoints and the Chaos Coins are collectibles, so the race
+  // manager, HUD, markers and finish cinematic all run unchanged. What differs:
+  // the countdown winds the slingshot (pedal to pull), GO launches the bike,
+  // pedaling is rationed to a stroke budget, the bike coasts on low drag, and
+  // the run ends when it stalls, crashes or reaches the goal. Scoring and the
+  // economy live in js/slingshot.js, the DOM in js/slingshot-ui.js.
+
+  _slingStore() {
+    if (!this._slingStoreRef) this._slingStoreRef = sling.browserStore();
+    return this._slingStoreRef;
+  }
+
+  _openSlingGarage(focus = 0) {
+    this._slingSave = sling.loadSave(this._slingStore());
+    this.state = 'slingGarage';
+    this.quickMenu.setVisible(false);
+    slingUI.hideResults();
+    slingUI.hideHud();
+    const render = (focusIdx) => {
+      const buttons = slingUI.renderGarage(this._slingSave, {
+        onBuy: (id) => {
+          const r = sling.buyUpgrade(this._slingSave, id);
+          if (!r.ok) return;
+          this._slingSave = r.save;
+          sling.writeSave(this._slingStore(), r.save);
+          this._playBeep(1200, 0.08);
+          setTimeout(() => this._playBeep(1600, 0.1), 70);
+          analytics.trackEvent('slingshot_upgrade', { id, level: r.save.lv[id] });
+          // Keep focus on the row just bought (launch button is index 0).
+          render(1 + sling.UPGRADES.findIndex(u => u.id === id));
+        },
+        onLaunch: () => this._startSlingRun(),
+        onLobby: () => { this._clearOverlayButtons(); this._returnToLobby(); },
+      });
+      this._setOverlayButtons(buttons, focusIdx);
+    };
+    render(focus);
+    this._overlayCooldownUntil = performance.now() + 400;
+  }
+
+  _startSlingRun() {
+    this._clearOverlayButtons();
+    slingUI.hideGarage();
+    slingUI.hideResults();
+    const save = this._slingSave || sling.loadSave(this._slingStore());
+    this._slingSave = save;
+    this.mode = 'solo';
+    this.isSlingshot = true;
+    this.isTourist = false;
+    this._touristRoute = null;
+    this.hud.setSeat('captain', false);
+    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._lobbyBtn.textContent = 'LOBBY';
+    this._loadSavedTuning();
+
+    this.lobby.selectedLevel = {
+      id: 'slingshot',
+      name: `Slingshot · Stage ${save.stage}`,
+      distance: sling.stageGoal(save.stage),
+      checkpointInterval: sling.GATE_SPACING,
+      collectibles: 'coins',
+      icon: '🎯',
+      description: 'Pull back, let go, and see how far the two of you roll.',
+      isSlingshot: true,
+      timerEnabled: false,       // the run ends when the bike stops, not on a clock
+      motionAdaptation: false
+    };
+    // Early stages keep the road forgiving; later ones bring the obstacles.
+    this.lobby.selectedDifficulty = save.stage >= 4 ? 'adventurous' : 'chill';
+
+    // The first launch goes through the instructions tap (motion permission,
+    // audio unlock); after that, straight into the wind-up.
+    if (this._slingPrimed) { this._startCountdown(); return; }
+    this._slingPrimed = true;
+    this.state = 'instructions';
+    this._updateInstructionsText();
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  /** Called from _startCountdown once the race machinery for the level exists. */
+  _setupSlingRun(level) {
+    const stats = sling.slingStats(this._slingSave.lv);
+    this._slingStats = stats;
+    this._slingRun = {
+      pull: 0, launched: false, strokesLeft: stats.strokes,
+      coins: 0, gatesPassed: 0, topSpeed: 0, stillT: 0,
+      crashDistance: null, over: false,
+    };
+    this.countdownTimer = 4.0;          // one more second to wind the bands
+    this.autoSpeed = false;             // cruise control would never let it stall
+    this.bike.coast = {
+      decel: (v, onStrip) => sling.coastDecel(stats, v, onStrip),
+      maxSpeed: SLING_MAX_SPEED,
+    };
+    // Chaos Coins come in trails, not the level's scattered pickups.
+    this.collectibleManager.replaceItems(sling.planCoinTrails(level.distance, (Math.random() * 1e6) | 0));
+    this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
+    this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
+    this.hud.hideTimer();
+    slingUI.showPull(0);
+    this._updateSlingHud();
+  }
+
+  /** Countdown frames: every pedal stroke pulls the bands further back. */
+  _updateSlingPull(dt) {
+    const run = this._slingRun;
+    if (!run || run.launched) return;
+    const r = this.pedalCtrl.update(dt);
+    this._playPedalTaps(this.pedalCtrl);
+    const before = run.pull;
+    run.pull = sling.addPull(run.pull, r.acceleration);
+    if (run.pull >= 1 && before < 1) this._playChime(880, 0.2);
+    slingUI.showPull(run.pull);
+  }
+
+  /** GO: let go of the bands. */
+  _launchSling() {
+    const run = this._slingRun;
+    if (!run || run.launched) return;
+    run.launched = true;
+    this.bike.speed = sling.launchSpeed(this._slingStats, run.pull);
+    slingUI.hidePull();
+    hapticCheckpoint();
+    analytics.trackEvent('slingshot_launch', { pull: Math.round(run.pull * 100), stage: this._slingSave.stage });
+  }
+
+  /** Ration pedaling to the stroke budget; stronger legs push harder. */
+  _slingPedal(r) {
+    const run = this._slingRun;
+    if (!run || !run.launched || !(r.acceleration > 0)) return r;
+    if (run.strokesLeft <= 0) return { ...r, acceleration: 0 };
+    run.strokesLeft--;
+    return { ...r, acceleration: r.acceleration * this._slingStats.pedalMult };
+  }
+
+  /** Per ride frame. Returns true when the run ended this frame. */
+  _updateSlingRun(dt) {
+    const run = this._slingRun;
+    if (!run || run.over) return true;
+    const b = this.bike;
+    run.topSpeed = Math.max(run.topSpeed, b.speed);
+    if (b.fallen && run.crashDistance == null) run.crashDistance = b.distanceTraveled;
+    if (!b.fallen && b.speed < 0.3) {
+      run.stillT += dt;
+      if (run.stillT > 1.2) { this._endSlingRun('stall'); return true; }
+    } else {
+      run.stillT = 0;
+    }
+    this._updateSlingHud();
+    return false;
+  }
+
+  _updateSlingHud() {
+    const run = this._slingRun;
+    if (!run) return;
+    slingUI.updateHud({
+      coins: run.coins,
+      strokesLeft: run.strokesLeft,
+      distance: this.bike.distanceTraveled,
+      goal: this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0,
+    });
+  }
+
+  _onSlingGate() {
+    const run = this._slingRun;
+    if (!run) return;
+    run.gatesPassed++;
+    this.bike.speed += this._slingStats.gateBoost;
+  }
+
+  _endSlingRun(cause) {
+    const run = this._slingRun;
+    if (!run || run.over) return;
+    run.over = true;
+    const distance = cause === 'crash' && run.crashDistance != null
+      ? run.crashDistance : this.bike.distanceTraveled;
+    const runData = { distance, gatesPassed: run.gatesPassed, coins: run.coins, stageCleared: cause === 'goal' };
+    const score = sling.scoreRun(runData, this._slingSave);
+    this._slingSave = sling.applyRun(this._slingSave, runData, score);
+    sling.writeSave(this._slingStore(), this._slingSave);
+
+    analytics.endRide({
+      completed: cause === 'goal',
+      abandon_reason: cause === 'goal' ? undefined : `slingshot_${cause}`,
+      distance: score.distance,
+      checkpoints_passed: run.gatesPassed,
+    });
+
+    this.state = 'slingResults';
+    this.quickMenu.setVisible(false);
+    this.hud.hideTimer();
+    this.audioEngine.stopBike();
+    slingUI.hideHud();
+    slingUI.hidePull();
+    const buttons = slingUI.renderResults(
+      { cause, score, run: { ...runData, topSpeed: run.topSpeed }, save: this._slingSave, stageCleared: runData.stageCleared },
+      {
+        onAgain: () => this._startSlingRun(),
+        onGarage: () => this._openSlingGarage(),
+        onLobby: () => { this._clearOverlayButtons(); this._returnToLobby(); },
+      });
+    this._setOverlayButtons(buttons);
+    this._overlayCooldownUntil = performance.now() + 1200;
+  }
+
+  /** Every exit from the mode: lobby, a normal solo ride, Tourist. */
+  _leaveSlingMode() {
+    this.isSlingshot = false;
+    this._slingRun = null;
+    if (this.bike) this.bike.coast = null;
+    slingUI.hideGarage();
+    slingUI.hideResults();
+    slingUI.hideHud();
+    slingUI.hidePull();
   }
 
   /** E-7 · the sentence, and how much of it is left. */
@@ -3791,6 +4023,7 @@ class Game {
     if (raceEvent.event === 'checkpoint') {
       this._showCheckpointFlash();
       hapticCheckpoint();
+      if (this.isSlingshot) this._onSlingGate();
 
       // B-3 · split against your best. This is the whole point of a second
       // ride on the same road: at every checkpoint you know whether you are
@@ -3850,7 +4083,9 @@ class Game {
   _onCollect(count) {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
-    this.bike.boostTimer = 3; // 3-second speed boost
+    // Slingshot: Chaos Coins are money, not a boost; the gates are the boost.
+    if (this.isSlingshot && this._slingRun) this._slingRun.coins += count;
+    else this.bike.boostTimer = 3; // 3-second speed boost
     // B-4: the boost was silent apart from a pickup beep, so it read as "you
     // collected a thing" rather than "you are now faster". Pitch up.
     this._playBeep(1200, 0.1);
@@ -4058,6 +4293,8 @@ class Game {
   }
 
   _showVictory(fromRemote = false) {
+    // Slingshot: reaching the stage goal pays out on its own results screen.
+    if (this.isSlingshot) { this._endSlingRun('goal'); return; }
     this.state = 'victory';
     this.hud.hideTimer();
     // The quick menu sits above the result overlays, so retire it with the ride.
@@ -4581,6 +4818,7 @@ class Game {
     this._hideGhost();   // D-4: no ghost hanging around the empty road
     this._hideTouristGoal();   // E-7
     this._touristRoute = null;
+    this._leaveSlingMode();
     this.hud.updateLookahead(null);   // E-1
     this._lookaheadWasOn = false;
     // Clean up tutorial state if active
@@ -5715,6 +5953,7 @@ class Game {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
       if (this.state === 'gameover' || this.state === 'victory' || this.state === 'versusResults' ||
+          this.state === 'slingGarage' || this.state === 'slingResults' ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
       if (this.mode === 'versus' && this.versusRigs) {
         // Versus non-playing states (instructions/countdown/results) still
@@ -5830,9 +6069,10 @@ class Game {
     this.input.bikeSpeed = this.bike.speed;
     this.input.bikeMaxSpeed = TUNE.maxSpeed || 19;
 
-    const pedalResult = this._calibSuppressPedals
+    let pedalResult = this._calibSuppressPedals
       ? { acceleration: 0, braking: false, wobble: 0, crankAngle: this.pedalCtrl.crankAngle || 0 }
       : this.pedalCtrl.update(dt);
+    if (this.isSlingshot) pedalResult = this._slingPedal(pedalResult);
     this._playPedalTaps(this.pedalCtrl);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
 
@@ -5863,6 +6103,7 @@ class Game {
     }
 
     this._updateItems(dt);
+    if (this.isSlingshot && this.state === 'playing' && this._updateSlingRun(dt)) return;
 
     // Achievements
     this._checkAchievements(dt);
@@ -5884,6 +6125,8 @@ class Game {
       this._updateTutorial(dt);
       // Skip normal game-over on crash during tutorial
     } else {
+      // Slingshot: the tumble is the end of the launch.
+      if (this.isSlingshot && wasFallen && !this.bike.fallen) { this._endSlingRun('crash'); return; }
       // B-2: a crash is a beat, not a menu — see _onCrashRecovered.
       if (wasFallen && !this.bike.fallen) { this._onCrashRecovered(); return; }
     }

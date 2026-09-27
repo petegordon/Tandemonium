@@ -35,7 +35,8 @@
     "smoke:disruptions": "node scripts/smoke-disruptions.mjs",
     "gen-tourist-key": "node scripts/gen-tourist-key.js",
     "smoke:tourist": "node scripts/smoke-tourist-route.mjs",
-    "smoke:layout": "node scripts/smoke-hud-layout.mjs"
+    "smoke:layout": "node scripts/smoke-hud-layout.mjs",
+    "smoke:slingshot": "node scripts/smoke-slingshot.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

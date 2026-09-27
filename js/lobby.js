@@ -126,8 +126,9 @@ const HOLIDAY_BIKES = {
 };
 
 export class Lobby {
-  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, input, controllerManager }) {
+  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, onSlingshotReady, input, controllerManager }) {
     this.onSolo = onSolo;
+    this.onSlingshotReady = onSlingshotReady || (() => {});
     this.onTouristReady = onTouristReady || (() => {});   // E-6
     this.onMultiplayerReady = onMultiplayerReady;
     this.onLocalReady = onLocalReady;
@@ -288,7 +289,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo')],
+      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-slingshot')],
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
@@ -876,6 +877,7 @@ export class Lobby {
     // Level selection: build cards and handle clicks
     this._buildLevelCards();
     this._setupDifficultySelector();
+    this._initSlingshotEntry();
     this._initTouristEntry();   // E-6 · "ride the distance between you"
 
     document.getElementById('btn-back-level').addEventListener('click', () => {
@@ -1341,6 +1343,18 @@ export class Lobby {
    * Maps key the mode can only disappoint, and an entry point that fails is
    * worse than no entry point — that is the #350 lesson.
    */
+  /** Slingshot mode: straight to the garage; game.js owns everything after. */
+  _initSlingshotEntry() {
+    const btn = document.getElementById('btn-slingshot');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      this._pendingMode = 'slingshot';
+      this._hideLobby();
+      this.onSlingshotReady();
+      analytics.trackEvent('slingshot_open');
+    });
+  }
+
   _initTouristEntry() {
     const btn = document.getElementById('btn-tourist');
     if (!btn) return;

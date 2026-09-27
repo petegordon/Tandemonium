@@ -126,6 +126,15 @@ const THEMES = {
         return { geo, mat };
       });
     }
+  },
+  // Slingshot mode's Chaos Coins: gold discs stood on edge so the spin shows the face.
+  coins: {
+    build(scene) {
+      const geo = new THREE.CylinderGeometry(0.38, 0.38, 0.08, 20);
+      geo.rotateX(Math.PI / 2);
+      const mat = new THREE.MeshPhongMaterial({ color: 0xffc629, emissive: 0x4a3000, shininess: 120, specular: 0xffffcc });
+      return [{ geo, mat }, { geo, mat }, { geo, mat }];
+    }
   }
 };
 

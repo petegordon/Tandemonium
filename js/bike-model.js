@@ -66,6 +66,10 @@ export class BikeModel {
     this._braking = false;
     this.boostTimer = 0;
 
+    // Slingshot mode: when set, { decel(v, onStrip) → m/s², maxSpeed } replaces
+    // the arcade friction and centre-strip push so a launched bike coasts.
+    this.coast = null;
+
     // Optional crash-tumble hooks (issue #388). The physics sidecar is wired in
     // by the game, not imported here — this model stays a pure arcade balance
     // model that knows nothing about Rapier, and plays identically when the
@@ -530,18 +534,24 @@ export class BikeModel {
       this.speed += 4.0 * dt; // sustained push
     }
 
-    // Friction — reduced at low speeds so startup isn't brutally hard
-    const frictionBase = 0.6;
-    const frictionMin = 0.15;
-    const frictionRamp = Math.min(1, this.speed / 4); // full friction at ~4 m/s (~14 km/h)
-    this.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
-
     // Center-strip bonus: compacted dirt in the middle 20% of road is faster.
     // B-4: this has always been here and has never been visible, so nobody has
     // ever chosen to ride the middle. `onCenterStrip` lets the HUD say so.
     const centerDist = Math.abs(this._lateralOffset);
     this.onCenterStrip = centerDist < 0.5 && this.speed > 0.5;
-    if (this.onCenterStrip) {
+
+    if (this.coast) {
+      // Slingshot: rolling + air drag only; the strip means less rolling drag.
+      this.speed = Math.max(0, this.speed - this.coast.decel(this.speed, this.onCenterStrip) * dt);
+    } else {
+      // Friction — reduced at low speeds so startup isn't brutally hard
+      const frictionBase = 0.6;
+      const frictionMin = 0.15;
+      const frictionRamp = Math.min(1, this.speed / 4); // full friction at ~4 m/s (~14 km/h)
+      this.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
+    }
+
+    if (this.onCenterStrip && !this.coast) {
       this.speed *= (1 + 0.3 * (1 - centerDist / 0.5) * dt); // gentle boost
     }
 
@@ -558,7 +568,7 @@ export class BikeModel {
       this.speed *= (1 - dragIntensity * 1.5 * dt);       // strong off-road friction
     }
 
-    this.maxSpeed = TUNE.maxSpeed || 16;
+    this.maxSpeed = (this.coast && this.coast.maxSpeed) || TUNE.maxSpeed || 16;
     this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
 
     // Balance physics (portrait-tuned: softer response, more damping)
