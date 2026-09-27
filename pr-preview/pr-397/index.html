@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'9aac3c5',pr:397,time:'09-27-2026 02:33'}</script><base href="/pr-preview/pr-397/">
+<head><script>window.__BUILD={sha:'72b3834',pr:397,time:'09-27-2026 03:04'}</script><base href="/pr-preview/pr-397/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
@@ -284,7 +284,10 @@
     animation: sling-coin-float 0.9s ease-out forwards;
   }
   @keyframes sling-coin-float { from { opacity: 1; transform: translate(-50%, 0) scale(1.2); } to { opacity: 0; transform: translate(-50%, -40px) scale(1); } }
-  body.sling-mode #pedal-bar { display: none !important; }   /* no pedaling in this mode */
+  body.sling-mode #pedal-bar { display: none !important; }   /* no pedaling in this mode… */
+  body.sling-mode.sling-coop-aim #pedal-bar { display: flex !important; }   /* …except the stoker winding the bands */
+  .sling-coop-toggle small { display: block; font-size: 11px; font-weight: 600; opacity: 0.8; margin-top: 2px; }
+  .sling-coop-toggle.on { border-color: #ffd23f; color: #ffd23f; }
   /* Top of the screen, out from under the thumb that is dragging. */
   #sling-pull {
     position: fixed; left: 50%; top: 128px; transform: translateX(-50%);
@@ -5916,7 +5919,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.9aac3c5 | 09-27-2026 02:33 (PR #397)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.72b3834 | 09-27-2026 03:04 (PR #397)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

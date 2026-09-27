@@ -29,6 +29,15 @@ pedals are still there — not certain what they would be used for."*
   - Wooden ramps sit in lanes. One is 7 m before gate 2's hay bale in the same lane: at about 10.3 m/s or faster you sail over it, slower and you land in it. More ramps follow every 110–170 m.
   - Landing after 0.8 s or more in the air is **Big Air**, worth +10 coins, with a toast, sparkles and a camera jolt.
   - The launch field (a wide runout past the forks) waits for Pete to say the toss is fun on the road.
+- **Phase 5 is done (co-op launch, on one device).**
+  - The garage has a TWO RIDERS toggle, which is saved.
+  - The captain drags sideways to aim (or A/D, or the left stick). The stoker pedals to wind the bands, using the touch pedal pads, ←/→, or LB/RB and the triggers. The bands creep forward if the pedalling stops for 0.6 s.
+  - The captain lets go to fire (or Space, or A). If the stoker's last stroke was within 150 ms of the release, it is a **perfect launch, +15%**. The release time is stamped in the pointer-up handler so frame lag can't spoil a real sync.
+  - Pedal pads show only while winding. Pedalling stays out of the flight (Pete: pedals are the co-op job only).
+  - Not built:
+    - the stoker banking the lean in the air;
+    - two separate gamepads (it needs the 'local' two-input plumbing);
+    - online co-op.
 
 This plan is built from three independent adversarial reviews: **game feel / loop**,
 **mobile input / camera**, and **technical fit / risk**. It also uses numbers measured
