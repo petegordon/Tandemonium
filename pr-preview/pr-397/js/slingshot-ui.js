@@ -135,7 +135,22 @@ export function hideHud() {
 export function showPull(pull) {
   const p = $('sling-pull');
   p.classList.add('visible');
+  p.classList.toggle('pulling', pull > 0);   // the words are for before you touch it
   p.querySelector('i').style.width = `${Math.round(pull * 100)}%`;
 }
 
 export function hidePull() { $('sling-pull').classList.remove('visible'); }
+
+/** After the first launch the words go; the meter stays. */
+export function markLearned() { $('sling-pull').classList.add('learned'); }
+
+let _toastTimer = null;
+/** A short centred message (e.g. a cancelled pull). */
+export function toast(text) {
+  const t = $('sling-toast');
+  if (!t) return;
+  t.textContent = text;
+  t.classList.add('visible');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => t.classList.remove('visible'), 1100);
+}

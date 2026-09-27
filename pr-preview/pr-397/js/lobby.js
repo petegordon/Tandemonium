@@ -289,7 +289,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-slingshot')],
+      [document.getElementById('btn-together'), document.getElementById('btn-solo')],
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
@@ -877,7 +877,6 @@ export class Lobby {
     // Level selection: build cards and handle clicks
     this._buildLevelCards();
     this._setupDifficultySelector();
-    this._initSlingshotEntry();
     this._initTouristEntry();   // E-6 · "ride the distance between you"
 
     document.getElementById('btn-back-level').addEventListener('click', () => {
@@ -1343,18 +1342,6 @@ export class Lobby {
    * Maps key the mode can only disappoint, and an entry point that fails is
    * worse than no entry point — that is the #350 lesson.
    */
-  /** Slingshot mode: straight to the garage; game.js owns everything after. */
-  _initSlingshotEntry() {
-    const btn = document.getElementById('btn-slingshot');
-    if (!btn) return;
-    btn.addEventListener('click', () => {
-      this._pendingMode = 'slingshot';
-      this._hideLobby();
-      this.onSlingshotReady();
-      analytics.trackEvent('slingshot_open');
-    });
-  }
-
   _initTouristEntry() {
     const btn = document.getElementById('btn-tourist');
     if (!btn) return;
@@ -1586,16 +1573,38 @@ export class Lobby {
       if (!locked) buttons.push(card);
     });
 
+    // Slingshot lives under SOLO: a mode, not a level, so its card skips the
+    // difficulty/START RIDE flow and opens the garage directly. Not in the demo.
+    if (mode === 'solo' && isClickable && !this.isDemoBuild) {
+      const card = document.createElement('button');
+      card.className = 'level-card level-card-slingshot';
+      card.dataset.levelId = 'slingshot';
+      card.innerHTML =
+        '<div class="level-card-top">' +
+          '<span class="level-card-icon">&#127919;</span>' +
+          '<span class="level-card-name">Slingshot</span>' +
+        '</div>' +
+        '<div class="level-card-desc">Pull back, aim, let go. Earn Chaos Coins and upgrade.</div>';
+      card.addEventListener('click', () => {
+        this._pendingMode = 'slingshot';
+        this._hideLobby();
+        this.onSlingshotReady();
+        analytics.trackEvent('slingshot_open');
+      });
+      container.appendChild(card);
+      buttons.push(card);
+    }
+
     // Default selection: restore previous or pick first unlocked non-tutorial level
     if (isClickable) {
       let defaultCard = null;
       if (this.selectedLevel) {
         // Restore previous selection
-        defaultCard = container.querySelector('.level-card[data-level-id="' + this.selectedLevel.id + '"]:not(.level-locked)');
+        defaultCard = container.querySelector('.level-card[data-level-id="' + this.selectedLevel.id + '"]:not(.level-locked):not(.level-card-slingshot)');
       }
       if (!defaultCard) {
         // Pick first unlocked non-tutorial level (Grandma's)
-        defaultCard = container.querySelector('.level-card:not(.level-locked):not(.level-card-tutorial)');
+        defaultCard = container.querySelector('.level-card:not(.level-locked):not(.level-card-tutorial):not(.level-card-slingshot)');
       }
       if (defaultCard) {
         defaultCard.classList.add('selected');

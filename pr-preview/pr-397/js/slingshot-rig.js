@@ -110,6 +110,30 @@ export class SlingshotRig {
     }
   }
 
+  /**
+   * The aim camera: on the road's centre line behind the slingshot, pitched
+   * down at it, so both forks, the pouch and the bike's full sideways travel
+   * fit a portrait phone (horizontal half-FOV ≈ 18°; forks at ±3.1 m are
+   * ≈ 14.5° off-axis from 12 m back).
+   */
+  cameraPose(aspect = 0.5) {
+    const pos = this._center.clone().addScaledVector(this._fwd, -12);
+    pos.y += 4.5;
+    if (aspect <= 1) {
+      const look = this._center.clone().addScaledVector(this._fwd, 11);
+      look.y += 0.5;
+      return { pos, look, fov: null };           // portrait: the game's own FOV fits
+    }
+    // Landscape: the stock vertical FOV makes the horizontal view ~113° wide
+    // and the slingshot a speck. Frame ±0.4 m per metre of depth across the
+    // screen instead (the forks fill ~70% of the width), and aim lower so the
+    // pouch at full pull stays in the shorter vertical view.
+    const look = this._center.clone().addScaledVector(this._fwd, 4);
+    look.y += 0.5;
+    const fov = 2 * Math.atan(0.4 / aspect) * 180 / Math.PI;
+    return { pos, look, fov };
+  }
+
   /** Let go: the pouch springs forward from where it was held. */
   release() {
     this._released = true;
