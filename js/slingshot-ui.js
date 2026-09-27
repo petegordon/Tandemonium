@@ -35,9 +35,9 @@ export function renderGarage(save, { onBuy, onLaunch, onLobby }) {
   root.appendChild(el('div', 'sling-sub',
     `Stage ${save.stage}: reach <b>${fmt(stageGoal(save.stage))} m</b>` +
     ` · best ${fmt(save.best)} m · ×${stats.coinMult.toFixed(2)} coins<br>` +
-    'Pedal together to pull the slingshot back, then press both pedals to let go. ' +
-    'After launch you get a few strokes of pedaling, then you coast. Sweep the ' +
-    'Chaos Coins, do not crash, and reset any time to go back to the slingshot.'));
+    'Touch and drag back to stretch the slingshot, left or right to aim, and let go. ' +
+    'Then steer: sweep the Chaos Coins, do not crash, and reset any time to go ' +
+    'back to the slingshot.'));
 
   const launch = el('button', 'lobby-btn lobby-btn-accent', 'LAUNCH!');
   launch.addEventListener('click', onLaunch);
@@ -119,12 +119,9 @@ export function hideResults() { $('sling-results').classList.remove('visible'); 
 // ---- In-ride ------------------------------------------------
 
 let _hudText = '';
-export function updateHud({ coins, strokesLeft, distance, goal }) {
+export function updateHud({ coins, distance, goal }) {
   const hud = $('sling-hud');
-  const legs = strokesLeft > 0
-    ? `<span class="sling-legs">🦵 ${strokesLeft}</span>`
-    : '<span class="sling-legs spent">🦵 coasting</span>';
-  const text = `<span class="sling-coins">${COIN} ${coins}</span>${legs}` +
+  const text = `<span class="sling-coins">${COIN} ${coins}</span>` +
     `<span>🏁 ${fmt(Math.max(0, goal - distance))} m to go</span>`;
   if (text !== _hudText) { hud.innerHTML = text; _hudText = text; }
   hud.classList.add('visible');
