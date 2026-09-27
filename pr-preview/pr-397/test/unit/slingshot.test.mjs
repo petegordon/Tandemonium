@@ -2,10 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  UPGRADES, upgradeCost, slingStats, addPull, launchSpeed, MIN_PULL, coastDecel,
+  UPGRADES, upgradeCost, slingStats, launchSpeed, coastDecel,
   stageGoal, stageBonus, scoreRun, emptySave, loadSave, writeSave, applyRun,
   buyUpgrade, planCoinTrails, COINS_PER_TRAIL, STORAGE_KEY,
-  aimDistance, runDistance, dragPull, SLING_POST_D, SLING_REST_D, SLING_PULL_BACK
+  runDistance, dragToAim, aimPose, MIN_LAUNCH_PULL,
+  SLING_POST_D, SLING_REST_D, SLING_PULL_BACK, SLING_MAX_LATERAL, SLING_MAX_AIM
 } from '../../js/slingshot.js';
 
 const memStore = () => {
@@ -35,20 +36,13 @@ test('upgrades make the bike launch harder and roll further', () => {
   assert.equal(s5.coinMult, 2);
 });
 
-test('pull accumulates pedal work, clamps to 1, and ignores non-positive input', () => {
-  let p = 0;
-  p = addPull(p, 3);
-  assert.equal(p, 0.5);
-  assert.equal(addPull(p, 0), p);
-  assert.equal(addPull(p, -1), p);
-  assert.equal(addPull(p, 100), 1);
-});
-
-test('even an unpulled sling launches; a full pull hits launchMax', () => {
+test('launch speed is the pull: none for no pull, launchMax for a full one', () => {
   const s = slingStats({});
-  assert.equal(launchSpeed(s, 0), s.launchMax * MIN_PULL);
+  assert.equal(launchSpeed(s, 0), 0);
+  assert.equal(launchSpeed(s, 0.5), s.launchMax / 2);
   assert.equal(launchSpeed(s, 1), s.launchMax);
   assert.equal(launchSpeed(s, 5), s.launchMax, 'clamped');
+  assert.ok(MIN_LAUNCH_PULL > 0 && MIN_LAUNCH_PULL < 0.3, 'a flick is a cancel, a real pull fires');
 });
 
 test('coasting drag grows with speed and the centre strip rolls easier', () => {
@@ -155,11 +149,22 @@ test('coin trails: whole trails, deterministic, on the road, after the start', (
 
 test('the slingshot: the bike rests past the fork and pulls back behind it', () => {
   assert.ok(SLING_REST_D > SLING_POST_D, 'rear wheel in the pouch, bike ahead of the fork');
-  assert.equal(aimDistance(0), SLING_REST_D);
-  assert.equal(aimDistance(1), SLING_REST_D - SLING_PULL_BACK);
-  assert.ok(aimDistance(1) > 0, 'a full pull stays on the road, not across the loop seam');
-  assert.equal(aimDistance(9), aimDistance(1), 'clamped');
-  assert.ok(aimDistance(0.5) < aimDistance(0.2), 'more pull, further back');
+  assert.deepEqual(aimPose(0, 0), { d: SLING_REST_D, lateral: 0, angle: -0 });
+  assert.equal(aimPose(1, 0).d, SLING_REST_D - SLING_PULL_BACK);
+  assert.ok(aimPose(1, 0).d > 0, 'a full pull stays on the road, not across the loop seam');
+  assert.equal(aimPose(9, 0).d, aimPose(1, 0).d, 'clamped');
+  assert.ok(aimPose(0.5, 0).d < aimPose(0.2, 0).d, 'more pull, further back');
+});
+
+test('aim: the bike follows the finger aside and flies back through the forks', () => {
+  const left = aimPose(1, -1);
+  assert.equal(left.lateral, -SLING_MAX_LATERAL, 'dragged left, the bike sits left');
+  assert.equal(left.angle, SLING_MAX_AIM, 'and aims right, through the gap');
+  const right = aimPose(1, 1);
+  assert.equal(right.lateral, SLING_MAX_LATERAL);
+  assert.equal(right.angle, -SLING_MAX_AIM);
+  assert.equal(aimPose(0, -1).lateral === 0, true, 'no pull, no sideways stretch');
+  assert.ok(Math.abs(aimPose(1, 0.5).angle) < SLING_MAX_AIM);
 });
 
 test('run distance is measured from the rest point, never negative', () => {
@@ -174,11 +179,19 @@ test('no checkpoint upgrade is sold any more', () => {
   assert.equal(slingStats({}).gateBoost, undefined);
 });
 
-test('drag pull: down the screen pulls back, from wherever the pull already was', () => {
-  const H = 1000; // full pull = 300 px
-  assert.equal(dragPull(0, 0, H), 0);
-  assert.equal(dragPull(0, 150, H), 0.5);
-  assert.equal(dragPull(0, 900, H), 1, 'clamped');
-  assert.equal(dragPull(0.4, 150, H), 0.9, 'adds to a pedaled pull');
-  assert.equal(dragPull(0.2, -80, H), 0.2, 'dragging up never pushes forward');
+test('drag to aim: back (down the screen) pulls, sideways aims, both clamped', () => {
+  const W = 1000, H = 1000; // full pull = 300 px down, full side = 250 px across
+  assert.deepEqual(dragToAim(0, 0, W, H), { pull: 0, side: 0 });
+  assert.equal(dragToAim(0, 150, W, H).pull, 0.5);
+  assert.equal(dragToAim(0, 900, W, H).pull, 1, 'clamped');
+  assert.equal(dragToAim(0, -80, W, H).pull, 0, 'dragging forward never pushes');
+  assert.equal(dragToAim(-125, 300, W, H).side, -0.5);
+  assert.equal(dragToAim(900, 300, W, H).side, 1, 'clamped');
+});
+
+test('no pedaling upgrades: the slingshot is the only push', () => {
+  for (const id of ['legs', 'stamina']) assert.equal(UPGRADES.find(u => u.id === id), undefined);
+  const st = slingStats({ legs: 5, stamina: 5 });
+  assert.equal(st.strokes, undefined);
+  assert.equal(st.pedalMult, undefined);
 });

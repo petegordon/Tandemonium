@@ -2,14 +2,16 @@
 // SLINGSHOT — launch-for-distance mode: economy, upgrades, scoring
 // ============================================================
 //
-// The two riders wind a giant slingshot by pedaling on the start line, get
-// flung down the road, pedal until their legs give out, then coast (steering
-// only) until the bike rolls to a stop or crashes. There are no checkpoints:
-// a run is one launch, and a reset puts the bike back in the slingshot. Every
+// A giant slingshot holds the bike on the start line. Touch (or click) and
+// drag back to stretch the bands; drag left/right to shift the bike in the
+// pouch and swing its aim; let go and it flies toward the gap between the
+// forks. After that the riders only steer — no pedaling in this mode — and
+// the bike coasts until it rolls to a stop, crashes or reaches the stage goal.
+// There are no checkpoints; a reset puts the bike back in the slingshot. Every
 // run pays Chaos Coins: distance, coins picked up on the road, a record bonus
-// and a stage-goal bonus, all times the coin multiplier. Coins buy garage upgrades,
-// which make the next launch go further. (After Car Evolve and the Tandem
-// Launch prototype.)
+// and a stage-goal bonus, all times the coin multiplier. Coins buy garage
+// upgrades, which make the next launch go further. (After Car Evolve and the
+// Tandem Launch prototype.)
 //
 // Pure and DOM-free like records.js / daily-ride.js: the save lives behind an
 // injectable {get,set} store so the tests run in Node. game.js only glues it in.
@@ -20,8 +22,6 @@ export const UPGRADES = [
   { id: 'sling',   name: 'Slingshot',       desc: 'Thicker bands, faster launch',       max: 10, base: 40, icon: '🎯' },
   { id: 'wheels',  name: 'Wheels',          desc: 'Smoother tyres, less rolling drag',  max: 10, base: 35, icon: '🛞' },
   { id: 'aero',    name: 'Aero frame',      desc: 'Less wind drag at speed',            max: 10, base: 50, icon: '💨' },
-  { id: 'legs',    name: 'Pedal power',     desc: 'Every stroke pushes harder',         max: 10, base: 45, icon: '🦵' },
-  { id: 'stamina', name: 'Stamina',         desc: 'More strokes before the legs give',  max: 10, base: 40, icon: '🥤' },
   { id: 'magnet',  name: 'Coin multiplier', desc: 'Every run pays more Chaos Coins',    max: 8,  base: 60, icon: '🪙' },
 ];
 
@@ -38,29 +38,58 @@ export function upgradeCost(upgrade, level) {
 export function slingStats(lv = {}) {
   const L = id => lv[id] || 0;
   return {
-    launchMax: 11 + L('sling') * 2.2,                 // m/s at a full pull
+    launchMax: 14 + L('sling') * 2,                   // m/s at a full pull
     crr: 0.03 * Math.pow(0.86, L('wheels')),          // rolling resistance (× g)
     drag: 0.004 * Math.pow(0.87, L('aero')),          // aero drag (× v²)
-    pedalMult: 1 + L('legs') * 0.15,                  // scales each stroke
-    strokes: 12 + L('stamina') * 4,                   // strokes before coasting
     coinMult: 1 + L('magnet') * 0.25,                 // payout multiplier
   };
 }
 
-// ---- Launch -------------------------------------------------
+// ---- The slingshot ------------------------------------------
 
-// The slingshot stands on the start line: its fork at SLING_POST_D, the bike
-// resting with its rear wheel in the pouch at SLING_REST_D. Pulling draws the
-// bike back up to SLING_PULL_BACK metres. Distance is scored from the rest
-// point, so the pull itself never counts.
+// The fork stands at SLING_POST_D; the bike rests with its rear wheel in the
+// pouch at SLING_REST_D. Dragging back draws it up to SLING_PULL_BACK metres
+// behind that and up to SLING_MAX_LATERAL to either side. Distance is scored
+// from the rest point, so the pull itself never counts.
 export const SLING_POST_D = 3;
 export const SLING_REST_D = 5.2;       // post + half the 4.4 m bike
 export const SLING_PULL_BACK = 3.5;
+export const SLING_MAX_LATERAL = 1.4;  // metres the pouch can be pulled aside
+export const SLING_MAX_AIM = 0.35;     // radians (~20°) off the road's line
 
-/** Road distance of the bike's centre while the bands are drawn to `pull`. */
-export function aimDistance(pull) {
-  const p = Math.max(0, Math.min(1, pull || 0));
-  return SLING_REST_D - p * SLING_PULL_BACK;
+/** A drag of this fraction of the screen height is a full pull… */
+export const DRAG_FULL_FRACTION = 0.3;
+/** …and this fraction of the screen width is a full swing to one side. */
+export const DRAG_SIDE_FRACTION = 0.25;
+/** Below this pull, letting go is a cancel, not a launch. */
+export const MIN_LAUNCH_PULL = 0.15;
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * A drag (pixels from where the finger went down, +y = toward the player)
+ * → { pull 0..1, side -1..1 }. `side` is where the finger went: -1 left.
+ */
+export function dragToAim(dx, dy, screenW, screenH) {
+  const pull = clamp((dy || 0) / Math.max(1, (screenH || 800) * DRAG_FULL_FRACTION), 0, 1);
+  const side = clamp((dx || 0) / Math.max(1, (screenW || 1280) * DRAG_SIDE_FRACTION), -1, 1);
+  return { pull, side };
+}
+
+/**
+ * Where the bike sits in the drawn slingshot and where it will fly.
+ * d: road distance of the bike's centre; lateral: metres right of the centre
+ * line (it follows the finger); angle: heading offset in radians, +right. Like
+ * a real slingshot it flies back through the forks, so pulled left → aims right.
+ */
+export function aimPose(pull, side) {
+  const p = clamp(pull || 0, 0, 1);
+  const s = clamp(side || 0, -1, 1);
+  return {
+    d: SLING_REST_D - p * SLING_PULL_BACK,
+    lateral: s * SLING_MAX_LATERAL * p,
+    angle: -s * SLING_MAX_AIM,
+  };
 }
 
 /** Metres flown from the slingshot, given the bike's distanceTraveled. */
@@ -68,35 +97,8 @@ export function runDistance(distanceTraveled) {
   return Math.max(0, (distanceTraveled || 0) - SLING_REST_D);
 }
 
-/** A drag down this fraction of the screen height is a full pull. */
-export const DRAG_FULL_FRACTION = 0.3;
-
-/**
- * Touch/mouse pull: `base` is the pull when the finger went down (pedaling
- * may add to it), `dy` how far it has been dragged down in pixels.
- */
-export function dragPull(base, dy, screenHeight) {
-  const range = Math.max(1, (screenHeight || 800) * DRAG_FULL_FRACTION);
-  return Math.max(0, Math.min(1, (base || 0) + Math.max(0, dy || 0) / range));
-}
-
-/** After a full pull, let go by itself if nobody does. */
-export const AUTO_RELEASE_S = 1.5;
-
-/** Pedal "acceleration" (the pedal controller's units) needed for a full pull. */
-export const FULL_PULL_WORK = 6;
-/** Even a lazy pull flings the bike: the floor matches the prototype. */
-export const MIN_PULL = 0.3;
-
-/** Add a frame's pedal work to the pull; returns the new pull in [0, 1]. */
-export function addPull(pull, pedalAcceleration) {
-  if (!(pedalAcceleration > 0)) return pull;
-  return Math.min(1, pull + pedalAcceleration / FULL_PULL_WORK);
-}
-
 export function launchSpeed(stats, pull) {
-  const p = Math.max(0, Math.min(1, pull || 0));
-  return stats.launchMax * (MIN_PULL + (1 - MIN_PULL) * p);
+  return stats.launchMax * clamp(pull || 0, 0, 1);
 }
 
 /** Deceleration (m/s²) while rolling at v. `onStrip` is the packed centre line. */

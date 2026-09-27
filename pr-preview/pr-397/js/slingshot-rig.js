@@ -3,10 +3,10 @@
 // ============================================================
 //
 // Two wooden Y-forks straddle the road at SLING_POST_D. Two rubber bands run
-// from the fork tips to a leather pouch behind the bike's rear wheel. While
-// the riders pedal, the bike (and the pouch) is drawn back and the bands
-// stretch; on release the pouch whips forward past the fork and wobbles to
-// rest while the bike flies off down the road.
+// from the fork tips to a leather pouch behind the bike's rear wheel. As the
+// player drags, the bike (and the pouch) is drawn back and aside, the bands
+// stretch, and a guide on the road shows where it will fly; on release the
+// pouch whips forward past the fork and wobbles to rest while the bike flies.
 
 import * as THREE from 'three';
 import { SLING_POST_D } from './slingshot.js';
@@ -76,15 +76,38 @@ export class SlingshotRig {
 
     this._pouchRest = this._center.clone().add(new THREE.Vector3(0, BAND_Y, 0));
     this._setPouch(this._pouchRest);
+
+    // Aim guide: a flat strip on the road ahead of the bike, longer with more pull.
+    const guideGeo = this._geo(new THREE.PlaneGeometry(0.35, 1));
+    guideGeo.rotateX(-Math.PI / 2);        // lie flat; length runs along local Z
+    guideGeo.translate(0, 0, 0.5);         // grow forward from its origin
+    this.guide = new THREE.Mesh(guideGeo, this._mat(new THREE.MeshBasicMaterial({
+      color: 0xffd23f, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide,
+    })));
+    this.guide.visible = false;
+    this.group.add(this.guide);
     scene.add(this.group);
   }
 
-  /** While aiming: the pouch sits behind the bike's rear wheel. */
-  hold(bike) {
+  /**
+   * While aiming: the pouch sits behind the bike's rear wheel along the bike's
+   * own heading, and the guide points where it will fly.
+   */
+  hold(bike, pull = 0) {
     this._released = false;
-    const p = bike.position.clone().addScaledVector(this._fwd, -REAR_OFFSET);
+    const fwd = new THREE.Vector3(Math.sin(bike.heading), 0, Math.cos(bike.heading));
+    const p = bike.position.clone().addScaledVector(fwd, -REAR_OFFSET);
     p.y = bike.position.y + BAND_Y;
     this._setPouch(p);
+    this.pouch.rotation.y = bike.heading;
+
+    this.guide.visible = pull > 0.02;
+    if (this.guide.visible) {
+      this.guide.position.copy(bike.position).addScaledVector(fwd, REAR_OFFSET + 0.2);
+      this.guide.position.y = bike.position.y + 0.06;
+      this.guide.rotation.y = bike.heading;
+      this.guide.scale.z = 3 + 22 * pull;
+    }
   }
 
   /** Let go: the pouch springs forward from where it was held. */
@@ -92,11 +115,13 @@ export class SlingshotRig {
     this._released = true;
     this._releaseT = 0;
     this._releaseFrom.copy(this.pouch.position);
+    this.guide.visible = false;
   }
 
   /** Back to slack, ready for the next pull. */
   reset() {
     this._released = false;
+    this.guide.visible = false;
     this._setPouch(this._pouchRest);
   }
 
