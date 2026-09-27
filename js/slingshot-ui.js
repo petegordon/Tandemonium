@@ -26,7 +26,7 @@ function pips(level, max) {
  * The garage. `onBuy(id)` re-renders on success; `onLaunch` / `onLobby` leave.
  * Returns buttons in focus order: launch first, then upgrades, then lobby.
  */
-export function renderGarage(save, { onBuy, onLaunch, onLobby }) {
+export function renderGarage(save, { onBuy, onLaunch, onLobby, onToggleCoop }) {
   const root = $('sling-garage');
   root.innerHTML = '';
   const stats = slingStats(save.lv);
@@ -43,10 +43,17 @@ export function renderGarage(save, { onBuy, onLaunch, onLobby }) {
   launch.addEventListener('click', onLaunch);
   const top = el('div', 'sling-buttons');
   top.appendChild(launch);
+  // Two riders, one bike: the captain aims, the stoker pedals the bands back.
+  const coop = el('button', 'lobby-btn sling-coop-toggle' + (save.coop ? ' on' : ''),
+    `👥 TWO RIDERS: ${save.coop ? 'ON' : 'OFF'}<small>${save.coop
+      ? 'Captain drags to aim · Stoker pedals to pull · let go in sync for +15%'
+      : 'One aims, one pedals the slingshot back'}</small>`);
+  coop.addEventListener('click', () => onToggleCoop && onToggleCoop());
+  top.appendChild(coop);
   root.appendChild(top);
 
   const list = el('div', 'sling-list');
-  const buttons = [launch];
+  const buttons = [launch, coop];
   for (const u of UPGRADES) {
     const lvl = save.lv[u.id] || 0;
     const maxed = lvl >= u.max;

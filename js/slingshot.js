@@ -339,6 +339,7 @@ function sanitize(o) {
   s.best = Math.floor(num(o.best, 0));
   s.runs = Math.floor(num(o.runs, 0));
   s.stage = Math.max(1, Math.floor(num(o.stage, 1)));
+  if (o.coop === true) s.coop = true;          // two riders: one aims, one pedals
   if (o.lv && typeof o.lv === 'object') {
     for (const u of UPGRADES) {
       const v = Math.floor(num(o.lv[u.id], 0));
@@ -393,4 +394,37 @@ export function browserStore() {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } },
   };
+}
+
+// ---- Co-op launch (two riders, one bike) ----------------------------------
+//
+// The captain drags to aim; the stoker pedals to wind the bands back. The
+// captain lets go to fire, and if the stoker's last stroke landed within
+// PERFECT_WINDOW_MS of the release, the two of them were in sync: +15%.
+
+export const COOP = {
+  FULL_PULL_WORK: 6,        // pedal-controller acceleration units for a full draw
+  PERFECT_WINDOW_MS: 150,
+  PERFECT_BONUS: 0.15,
+  CREEP_AFTER_S: 0.6,       // stop pedalling this long and the bands creep forward…
+  CREEP_PER_S: 0.12,        // …this much pull per second
+};
+
+/** One frame of the stoker's winding. Returns the new pull in [0, 1]. */
+export function coopPull(pull, strokeAccel, sinceStrokeS, dt) {
+  let p = pull || 0;
+  if (strokeAccel > 0) p += strokeAccel / COOP.FULL_PULL_WORK;
+  else if (sinceStrokeS > COOP.CREEP_AFTER_S) p -= COOP.CREEP_PER_S * dt;
+  if (p > 0.999) p = 1;                      // six sixths is a full draw, not 0.9999…
+  return Math.max(0, Math.min(1, p));
+}
+
+/** In sync? The stoker's last stroke within the window of the captain's release. */
+export function isPerfectLaunch(lastStrokeMs, releaseMs) {
+  if (lastStrokeMs == null || releaseMs == null) return false;
+  return Math.abs(releaseMs - lastStrokeMs) <= COOP.PERFECT_WINDOW_MS;
+}
+
+export function coopLaunchSpeed(stats, pull, perfect) {
+  return launchSpeed(stats, pull) * (perfect ? 1 + COOP.PERFECT_BONUS : 1);
 }

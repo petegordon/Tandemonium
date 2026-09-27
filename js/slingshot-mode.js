@@ -78,9 +78,16 @@ class SlingshotMode {
           setTimeout(() => this._playBeep(1600, 0.1), 70);
           analytics.trackEvent('slingshot_upgrade', { id, level: r.save.lv[id] });
           // Keep focus on the row just bought (launch button is index 0).
-          render(1 + sling.UPGRADES.findIndex(u => u.id === id));
+          render(2 + sling.UPGRADES.findIndex(u => u.id === id));
         },
         onLaunch: () => this._startSlingRun(),
+        onToggleCoop: () => {
+          this._slingSave = { ...this._slingSave, coop: !this._slingSave.coop };
+          if (!this._slingSave.coop) delete this._slingSave.coop;
+          sling.writeSave(this._slingStore(), this._slingSave);
+          analytics.trackEvent('slingshot_coop', { on: !!this._slingSave.coop });
+          render(1);
+        },
         onLobby: () => { this._clearOverlayButtons(); this._returnToLobby(); },
       });
       this._setOverlayButtons(buttons, focusIdx);
@@ -167,8 +174,15 @@ class SlingshotMode {
     this._slingArmedFor = level.distance;   // this ride is built for this goal
     this._slingRun = {
       pull: 0, side: 0, launched: false, dragReleased: false, bigAirs: 0, wasAir: false,
+      coop: !!this._slingSave.coop, lastStrokeAt: null, sinceStroke: 99, perfect: false,
       coins: 0, topSpeed: 0, stillT: 0, crashDistance: null, over: false,
     };
+    // Co-op: the stoker's pedal pads come back, for winding the bands only.
+    document.body.classList.toggle('sling-coop-aim', !!this._slingSave.coop);
+    const hint = document.querySelector('#sling-pull .sling-hint');
+    if (hint) hint.textContent = this._slingSave.coop
+      ? 'Captain: drag to aim · Stoker: pedal to pull · let go together'
+      : 'Pull back · aim · let go';
     // Not a countdown: the aim phase is its own state, with its own camera.
     this.state = 'slingAim';
     for (const id of ['countdown-flavor-icon', 'countdown-flavor-text', 'countdown-flavor-num']) {
@@ -274,6 +288,8 @@ class SlingshotMode {
     let aim = null;
     let fire = run.dragReleased;
 
+    if (run.coop) return this._updateCoopAim(dt);
+
     // Touch / mouse
     const drag = this._slingDrag && this._slingDrag.active ? this._slingDrag : null;
     if (drag) aim = sling.dragToAim(drag.dx, drag.dy, window.innerWidth, window.innerHeight);
@@ -332,6 +348,58 @@ class SlingshotMode {
   }
 
   /**
+   * Co-op aim. Stoker: the pedals wind the bands (the pedal controller, so
+   * touch pads, ←/→ and LB/RB/triggers all work). Captain: the drag's
+   * sideways part aims (or A/D, or the left stick) and letting go fires (or
+   * Space, or A). In sync — the stoker's last stroke within 150 ms of the
+   * release — is a perfect launch.
+   */
+  _updateCoopAim(dt) {
+    const run = this._slingRun;
+    const r = this.pedalCtrl.update(dt);
+    this._playPedalTaps(this.pedalCtrl);
+    run.sinceStroke += dt;
+    if (r.acceleration > 0) { run.lastStrokeAt = performance.now(); run.sinceStroke = 0; }
+    const pull = sling.coopPull(run.pull, r.acceleration, run.sinceStroke, dt);
+
+    let side = run.side;
+    const drag = this._slingDrag && this._slingDrag.active ? this._slingDrag : null;
+    if (drag) side = sling.dragToAim(drag.dx, 0, window.innerWidth, window.innerHeight).side;
+    const k = (this.input && this.input.keys) || {};
+    if (k.KeyA) side = Math.max(-1, side - dt);
+    if (k.KeyD) side = Math.min(1, side + dt);
+    let fire = run.dragReleased || (!!k.Space && !this._slingSpace);
+    this._slingSpace = !!k.Space;
+    const gp = this.input && this.input.getGamepadState ? this.input.getGamepadState() : null;
+    if (gp) {
+      const ax = gp.axes[0] || 0;
+      if (Math.abs(ax) > 0.15) side = Math.max(-1, Math.min(1, ax));
+      const a = !!(gp.buttons[0] && gp.buttons[0].pressed);
+      if (a && !this._slingPadA) fire = true;
+      this._slingPadA = a;
+    }
+    run.dragReleased = false;
+
+    if (this._slingRig) this._slingRig.tickAim(dt, pull);
+    if (pull !== run.pull || side !== run.side) {
+      this._slingFeel(run.pull, pull);
+      if (pull >= 1 && run.pull < 1) this._playChime(880, 0.2);
+      run.pull = pull;
+      run.side = side;
+      this._poseSlingBike(run.pull, run.side);
+    }
+    if (drag && run.pull > 0) {
+      slingUI.showFinger(drag.x0 + drag.dx, drag.y0 + drag.dy, run.pull, sling.predictCoast(this._slingStats, run.pull, 'dirt'));
+    } else {
+      slingUI.hideFinger();
+    }
+    if (fire && run.pull >= sling.MIN_LAUNCH_PULL) {
+      run.perfect = sling.isPerfectLaunch(run.lastStrokeAt, run.releaseAt != null ? run.releaseAt : performance.now());
+      this._slingGo();
+    }
+  }
+
+  /**
    * Pull feel: a ratchet creak every 10% of draw, rising in pitch, and a
    * haptic tick (phone vibrate + controller rumble) at 25/50/75/100%.
    */
@@ -378,6 +446,9 @@ class SlingshotMode {
       this._slingDrag = null;
       if (!d.active || !this._slingAiming()) return;
       if (e.type === 'pointercancel') { slingUI.toast('Cancelled'); return; }
+      // Co-op: stamp the release now, not at the next rendered frame — frame
+      // lag must not cost a pair their 150 ms sync window.
+      if (this._slingRun.coop) { this._slingRun.releaseAt = performance.now(); this._slingRun.dragReleased = true; return; }
       const aim = sling.dragToAim(d.dx, d.dy, window.innerWidth, window.innerHeight);
       if (aim.pull >= sling.MIN_LAUNCH_PULL) {
         // Freeze the aim the finger let go at, then fire on the next frame.
@@ -408,7 +479,9 @@ class SlingshotMode {
     const run = this._slingRun;
     if (!run || run.launched) return;
     run.launched = true;
-    this.bike.speed = sling.launchSpeed(this._slingStats, run.pull);
+    this.bike.speed = sling.coopLaunchSpeed(this._slingStats, run.pull, run.coop && run.perfect);
+    if (run.coop && run.perfect) slingUI.toast('PERFECT LAUNCH! +15%');
+    document.body.classList.remove('sling-coop-aim');   // pedals are for winding only
     // The snap: a crack of rubber, a jolt of the camera, dust off the pouch.
     const pouch = this._slingRig ? this._slingRig.pouch.position.clone() : null;
     if (this._slingRig) this._slingRig.release();
@@ -587,6 +660,7 @@ class SlingshotMode {
   _leaveSlingMode() {
     this.isSlingshot = false;
     this._slingArmedFor = null;
+    document.body.classList.remove('sling-coop-aim');
     document.body.classList.remove('sling-mode');
     this.hud.suppressRidePrompts = false;
     if (this._slingFx) { this._slingFx.dispose(); this._slingFx = null; }
