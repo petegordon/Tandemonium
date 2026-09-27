@@ -13,6 +13,7 @@ import * as sling from './slingshot.js';
 import * as slingUI from './slingshot-ui.js';
 import { SlingshotRig } from './slingshot-rig.js';
 import { SlingshotProps, HAY_KEEP } from './slingshot-props.js';
+import { SparkleBurst } from './slingshot-fx.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
@@ -3179,6 +3180,7 @@ class Game {
     this.mode = 'solo';
     this.isSlingshot = true;
     document.body.classList.add('sling-mode');   // hides the pedal pads
+    this.hud.suppressRidePrompts = true;         // no "Tap pedals to ride!"
     this.isTourist = false;
     this._touristRoute = null;
     this.hud.setSeat('captain', false);
@@ -3317,6 +3319,9 @@ class Game {
   _updateSlingAimState(dt) {
     const run = this._slingRun;
     if (!run || run.launched) return;
+    // Place and animate the course's coins while aiming, so the lanes can be
+    // read before the shot. (The nearest are ~40 m out: nothing is collected.)
+    if (this.collectibleManager) this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     let aim = null;
     let fire = run.dragReleased;
 
@@ -3453,6 +3458,7 @@ class Game {
     const run = this._slingRun;
     if (!run || run.over) return true;
     if (this._slingRig) this._slingRig.update(dt);
+    if (this._slingFx) this._slingFx.update(dt);
     this._easeSlingFov(dt);
     const b = this.bike;
     run.topSpeed = Math.max(run.topSpeed, b.speed);
@@ -3555,6 +3561,8 @@ class Game {
   _leaveSlingMode() {
     this.isSlingshot = false;
     document.body.classList.remove('sling-mode');
+    this.hud.suppressRidePrompts = false;
+    if (this._slingFx) { this._slingFx.dispose(); this._slingFx = null; }
     if (this._slingPrevLobby && this.lobby.selectedLevel && this.lobby.selectedLevel.isSlingshot) {
       this.lobby.selectedLevel = this._slingPrevLobby.level;
       this.lobby.selectedDifficulty = this._slingPrevLobby.difficulty;
@@ -4328,7 +4336,13 @@ class Game {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
     // Slingshot: Chaos Coins are money, not a boost; the gates are the boost.
-    if (this.isSlingshot && this._slingRun) this._slingRun.coins += count;
+    if (this.isSlingshot && this._slingRun) {
+      this._slingRun.coins += count;
+      if (!this._slingFx) this._slingFx = new SparkleBurst(this.scene);
+      const b = this.bike, h = b.heading;
+      this._slingFx.burst({ x: b.position.x + Math.sin(h) * 1.5, y: b.position.y + 1.1, z: b.position.z + Math.cos(h) * 1.5 });
+      slingUI.coinPop(count * sling.PAY.perCoin);
+    }
     else this.bike.boostTimer = 3; // 3-second speed boost
     // B-4: the boost was silent apart from a pickup beep, so it read as "you
     // collected a thing" rather than "you are now faster". Pitch up.

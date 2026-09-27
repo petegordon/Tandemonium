@@ -274,7 +274,16 @@
     pointer-events: none; z-index: 55;
   }
   #sling-hud.visible { display: flex; }
-  #sling-hud .sling-coins { color: #ffd23f; }
+  #sling-hud .sling-coins { color: #ffd23f; font-size: 17px; display: inline-block; }
+  #sling-hud .sling-coins.pop { animation: sling-coin-pop 0.45s ease-out; }
+  @keyframes sling-coin-pop { 0% { transform: scale(1); } 35% { transform: scale(1.7); text-shadow: 0 0 12px #ffd23f; } 100% { transform: scale(1); } }
+  .sling-coin-float {
+    position: fixed; left: 50%; top: 118px; transform: translateX(-50%);
+    color: #ffd23f; font-weight: 900; font-size: 20px; pointer-events: none; z-index: 57;
+    text-shadow: 0 0 10px rgba(255,210,63,0.8), 0 2px 4px rgba(0,0,0,0.6);
+    animation: sling-coin-float 0.9s ease-out forwards;
+  }
+  @keyframes sling-coin-float { from { opacity: 1; transform: translate(-50%, 0) scale(1.2); } to { opacity: 0; transform: translate(-50%, -40px) scale(1); } }
   body.sling-mode #pedal-bar { display: none !important; }   /* no pedaling in this mode */
   /* Top of the screen, out from under the thumb that is dragging. */
   #sling-pull {

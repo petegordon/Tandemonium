@@ -127,16 +127,71 @@ const THEMES = {
       });
     }
   },
-  // Slingshot mode's Chaos Coins: gold discs stood on edge so the spin shows the face.
+  // Slingshot mode's Chaos Coins: big glossy gold discs stood on edge so the
+  // spin flashes the face, each with a soft halo and twinkling star sparkles
+  // that orbit with the spin — they have to read from the chase camera.
   coins: {
     build(scene) {
-      const geo = new THREE.CylinderGeometry(0.38, 0.38, 0.08, 20);
+      const geo = new THREE.CylinderGeometry(0.55, 0.55, 0.1, 28);
       geo.rotateX(Math.PI / 2);
-      const mat = new THREE.MeshPhongMaterial({ color: 0xffc629, emissive: 0x4a3000, shininess: 120, specular: 0xffffcc });
+      const mat = new THREE.MeshPhongMaterial({
+        color: 0xffd23f, emissive: 0x9a6400, shininess: 220, specular: 0xffffff,
+      });
       return [{ geo, mat }, { geo, mat }, { geo, mat }];
+    },
+    decorate(mesh) {
+      const halo = new THREE.Sprite(coinSparkleMaterials().halo);
+      halo.scale.set(1.9, 1.9, 1);
+      halo.userData.halo = true;
+      mesh.add(halo);
+      for (let k = 0; k < 3; k++) {
+        const star = new THREE.Sprite(coinSparkleMaterials().star);
+        const a = (k / 3) * Math.PI * 2;
+        star.position.set(Math.cos(a) * 0.6, Math.sin(a) * 0.6, 0.1);
+        star.userData.phase = k * 2.1;
+        mesh.add(star);
+      }
+    },
+    animate(mesh, t, i) {
+      for (const c of mesh.children) {
+        if (c.userData.halo) { const h = 1.7 + Math.sin(t * 3 + i) * 0.25; c.scale.set(h, h, 1); continue; }
+        // A twinkle is a quick flare then nothing: max(0, sin)^3.
+        const tw = Math.pow(Math.max(0, Math.sin(t * 5 + i * 1.3 + c.userData.phase)), 3);
+        const sc = 0.05 + 0.55 * tw;
+        c.scale.set(sc, sc, 1);
+      }
     }
   }
 };
+
+// Shared sparkle textures/materials for the coins theme (built once).
+let _coinSparkle = null;
+function coinSparkleMaterials() {
+  if (_coinSparkle) return _coinSparkle;
+  const canvas = (draw) => { const c = document.createElement('canvas'); c.width = c.height = 64; draw(c.getContext('2d')); return new THREE.CanvasTexture(c); };
+  const haloTex = canvas((g) => {
+    const r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    r.addColorStop(0, 'rgba(255,236,150,0.9)'); r.addColorStop(0.35, 'rgba(255,210,63,0.45)'); r.addColorStop(1, 'rgba(255,200,40,0)');
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64);
+  });
+  const starTex = canvas((g) => {
+    const r = g.createRadialGradient(32, 32, 0, 32, 32, 30);
+    r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.25, 'rgba(255,245,200,0.9)'); r.addColorStop(1, 'rgba(255,220,120,0)');
+    g.fillStyle = r;
+    g.beginPath();                                   // a four-point star
+    for (let k = 0; k < 8; k++) {
+      const a = k * Math.PI / 4, rad = k % 2 === 0 ? 31 : 6;
+      g.lineTo(32 + Math.cos(a) * rad, 32 + Math.sin(a) * rad);
+    }
+    g.closePath(); g.fill();
+  });
+  const add = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending };
+  _coinSparkle = {
+    halo: new THREE.SpriteMaterial({ map: haloTex, opacity: 0.55, ...add }),
+    star: new THREE.SpriteMaterial({ map: starTex, ...add }),
+  };
+  return _coinSparkle;
+}
 
 export class CollectibleManager {
   constructor(scene, roadPath, level, camera, difficulty, placementSalt = 0) {
@@ -154,6 +209,7 @@ export class CollectibleManager {
     // Build themed meshes
     const theme = THEMES[level.collectibles] || THEMES.presents;
     this._variants = theme.build(scene);
+    this._animate = theme.animate || null;
     this._billboard = !!theme.billboard;
 
     // Create mesh pool
@@ -162,6 +218,7 @@ export class CollectibleManager {
       const mesh = new THREE.Mesh(variant.geo, variant.mat);
       mesh.castShadow = !this._billboard;
       mesh.visible = false;
+      if (theme.decorate) theme.decorate(mesh);
       scene.add(mesh);
       this._pool.push({ mesh, itemIdx: -1 });
     }
@@ -354,6 +411,7 @@ export class CollectibleManager {
       } else {
         slot.mesh.rotation.y = t * 1.5 + i;
       }
+      if (this._animate) this._animate(slot.mesh, t, i);
       slot.mesh.visible = true;
     }
 

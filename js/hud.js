@@ -707,7 +707,9 @@ export class HUD {
     // Status text (only when not controlled by countdown)
     let statusText = '';
     let statusColor = '';
-    if (bike.fallen) {
+    if (this.suppressRidePrompts) {
+      // Slingshot: no pedals, and a crash ends the run rather than resetting.
+    } else if (bike.fallen) {
       statusText = 'CRASHED! Resetting...';
       statusColor = '#ff4444';
     } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {

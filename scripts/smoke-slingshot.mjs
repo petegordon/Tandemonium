@@ -100,6 +100,11 @@ check(aim.pedalsHidden, 'no pedal pads in this mode');
 check(aim.checkpoints === 0 && aim.flavor === '', 'no checkpoints and no countdown');
 const rest = await pose();
 check(Math.abs(rest.d - 5.2) < 0.01 && Math.abs(rest.lateral) < 0.05, `the bike rests in the slingshot (${rest.d.toFixed(2)} m, centred)`);
+const aimCoins = await page.evaluate(() => {
+  const shown = window._game.collectibleManager._pool.filter(s => s.mesh.visible);
+  return { shown: shown.length, sparkles: shown.length ? shown[0].mesh.children.length : 0 };
+});
+check(aimCoins.shown >= 5 && aimCoins.sparkles >= 4, `the coins are out while aiming (${aimCoins.shown} shown, ${aimCoins.sparkles} halo/sparkles each)`);
 await pedal(3); await pedal(3); await pedal(0, true);
 await new Promise(r => setTimeout(r, 4000));
 const still = await pose();
@@ -156,6 +161,8 @@ await page.evaluate(() => { const g = window._game; g._slingRun.coins = 3; g.bik
 await waitState('slingResults', 60000);
 const r1 = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, save: JSON.parse(localStorage.getItem('tandemonium_slingshot')) }));
 check(/stop/i.test(r1.title) && r1.save.runs === 1 && r1.save.coins > 60, `stalling ends the run and pays out ("${r1.title}", wallet ${r1.save.coins})`);
+const status = await page.evaluate(() => document.getElementById('status').textContent);
+check(!/pedal|resetting/i.test(status), `no "tap pedals" prompt when the bike stops ("${status}")`);
 await shot('4-results');
 
 // 8. Launch again → straight back into the slingshot → crash ends the run
@@ -202,14 +209,27 @@ await page.waitForFunction(() => window._game._slingProps.items.some(i => i.kind
 const hay = await page.evaluate(() => ({ speed: window._game.bike.speed, state: window._game.state, toast: document.getElementById('sling-toast').textContent }));
 check(hay.state === 'playing' && hay.speed < 7 && /hay/i.test(hay.toast), `a hay bale bleeds speed (${hay.speed.toFixed(1)} m/s) and the run goes on`);
 
-// 11. …then the jackpot billboard: the run ends at double pay.
+// 11. A real roll through the first coin fan: each coin counts, bursts and pops.
+const fan = await page.evaluate(() => {
+  const g = window._game, b = g.bike, it = g.collectibleManager._items.slice(0, 5);
+  b.resetToDistance(it[0].absoluteD - 3);
+  const h = b.heading; b.position.x += Math.cos(h) * it[0].lateralOffset; b.position.z -= Math.sin(h) * it[0].lateralOffset;
+  b._applyTransform(); b.speed = 8; g._slingRun.stillT = 0;
+  return { before: g._slingRun.coins, fresh: it.filter(i => !i.collected).length, end: it[4].absoluteD };
+});
+await page.waitForFunction((end) => window._game.bike.distanceTraveled > end + 2 || window._game.state !== 'playing', { timeout: 240000, polling: 100 }, fan.end);
+const got = await page.evaluate(() => ({ all: window._game.collectibleManager._items.slice(0, 5).every(i => i.collected), coins: window._game._slingRun.coins, hud: document.querySelector('#sling-hud .sling-coins').textContent, fx: !!window._game._slingFx }));
+check(fan.fresh > 0 && got.all && got.coins - fan.before === fan.fresh && got.hud.includes(String(got.coins)) && got.fx,
+  `rolling through a coin fan collects every coin in it (+${got.coins - fan.before}, HUD "${got.hud}"), with a sparkle burst`);
+
+// 12. …then the jackpot billboard: the run ends at double pay.
 const walletBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins);
 await rollInto('jackpot');
 await waitState('slingResults', 60000);
 const jp = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins }));
 check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /×2/.test(jp.rows) && jp.coins > walletBefore, `the jackpot ends the run at double pay ("${jp.title}", +${jp.coins - walletBefore})`);
 
-// 12. Lobby cleans up
+// 13. Lobby cleans up
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /lobby/i.test(b.textContent)).click());
 await new Promise(r => setTimeout(r, 1000));
 const clean = await page.evaluate(() => ({
