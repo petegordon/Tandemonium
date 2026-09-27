@@ -101,6 +101,7 @@ export function renderResults({ cause, score, run, save, stageCleared }, { onAga
   if (score.recordPay) row('Record bonus', `${COIN} ${fmt(score.recordPay)}`);
   if (score.stagePay) row('Stage bonus', `${COIN} ${fmt(score.stagePay)}`);
   if (score.jackpotPay) row('Jackpot', `${COIN} ${fmt(score.jackpotPay)}`);
+  if (score.airPay) row(`Big air (${run.bigAirs})`, `${COIN} ${fmt(score.airPay)}`);
   if (score.multiplier !== 1) row('Multiplier', `×${score.multiplier.toFixed(2)}`);
   row('Earned', `${COIN} ${fmt(score.total)}`, 'row total');
   root.appendChild(rows);

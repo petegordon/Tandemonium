@@ -210,17 +210,17 @@ await waitState('slingAim', 60000);
 await drag(0, 300, true);
 await waitState('playing', 120000);
 // Put the bike just short of an object, in its lane, rolling at 10 m/s.
-const rollInto = (kind) => page.evaluate((kind) => {
+const rollInto = (kind, speed = 10) => page.evaluate(({ kind, speed }) => {
   const g = window._game, b = g.bike, it = g._slingProps.items.find(i => i.kind === kind);
   b.resetToDistance(it.d - 3);
   const h = b.heading;                       // the props' lateral convention: (cos h, −sin h)
   b.position.x += Math.cos(h) * it.offset;
   b.position.z -= Math.sin(h) * it.offset;
   b._applyTransform();
-  b.speed = 10;
+  b.speed = speed;
   g._slingRun.stillT = 0;
   return { d: it.d, offset: it.offset };
-}, kind);
+}, { kind, speed });
 await rollInto('hay');
 await page.waitForFunction(() => window._game._slingProps.items.some(i => i.kind === 'hay' && i.hit), { timeout: 60000, polling: 50 });
 const hay = await page.evaluate(() => ({ speed: window._game.bike.speed, state: window._game.state, toast: document.getElementById('sling-toast').textContent }));
@@ -239,14 +239,29 @@ const got = await page.evaluate(() => ({ all: window._game.collectibleManager._i
 check(fan.fresh > 0 && got.all && got.coins - fan.before === fan.fresh && got.hud.includes(String(got.coins)) && got.fx,
   `rolling through a coin fan collects every coin in it (+${got.coins - fan.before}, HUD "${got.hud}"), with a sparkle burst`);
 
-// 12. …then the jackpot billboard: the run ends at double pay.
+// 12. A ramp at speed: the bike takes off, sails over gate 2's hay bale, and a
+// long flight lands as Big Air.
+const bigBefore = await page.evaluate(() => window._game._slingRun.bigAirs);
+await rollInto('ramp', 13);
+await page.waitForFunction(() => !!window._game.bike.air, { timeout: 60000, polling: 50 });
+if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '6-air.png') });
+await page.waitForFunction(() => { const a = window._game.bike.air; if (a) window.__peak = Math.max(window.__peak || 0, a.h); return !a; }, { timeout: 120000, polling: 30 });
+const air = await page.evaluate(() => {
+  const g = window._game, hay = g._slingProps.items.filter(i => i.kind === 'hay')[1];
+  return { bigAirs: g._slingRun.bigAirs, t: g.bike.lastAirTime, peak: window.__peak, cleared: !!(hay && hay.cleared), state: g.state };
+});
+check(air.state === 'playing' && air.t >= 0.8 && air.bigAirs === bigBefore + 1,
+  `a ramp launches the bike (${air.t.toFixed(2)} s up, peak ${air.peak.toFixed(1)} m) and lands Big Air`);
+check(air.cleared, 'flying off the ramp sails clean over the hay bale behind it');
+
+// 13. …then the jackpot billboard: the run ends at double pay.
 const walletBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins);
 await rollInto('jackpot');
 await waitState('slingResults', 60000);
 const jp = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins }));
-check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /×2/.test(jp.rows) && jp.coins > walletBefore, `the jackpot ends the run at double pay ("${jp.title}", +${jp.coins - walletBefore})`);
+check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /Big air/.test(jp.rows) && /×2/.test(jp.rows) && jp.coins > walletBefore, `the jackpot ends the run at double pay ("${jp.title}", +${jp.coins - walletBefore})`);
 
-// 13. Twenty relaunches on the same stage re-arm the ride instead of
+// 14. Twenty relaunches on the same stage re-arm the ride instead of
 // rebuilding it, and leak nothing into the scene or the heap.
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
@@ -273,7 +288,7 @@ check(loopEnd.rebuilds === 0, `20 relaunches re-armed the ride, never rebuilt it
 check(loopEnd.children === loopStart.children, `no scene leak over 20 launches (${loopStart.children} → ${loopEnd.children} objects)`);
 check(heapMB < 25, `heap grew ${heapMB.toFixed(1)} MB over 20 launches (< 25)`);
 
-// 14. Lobby cleans up
+// 15. Lobby cleans up
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /lobby/i.test(b.textContent)).click());
 await new Promise(r => setTimeout(r, 1000));
 const clean = await page.evaluate(() => ({

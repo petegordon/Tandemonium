@@ -24,6 +24,11 @@ pedals are still there — not certain what they would be used for."*
   - Call sites now ask `_rideSystemOn(name)` against one table, `SLING_SYSTEMS_OFF`, instead of checking `isSlingshot`.
   - Relaunching on the same stage re-arms the ride (race, bike, course, slingshot) instead of rebuilding the world. Smoke: 20 relaunches, 0 rebuilds, scene 703 → 703 objects, flat heap.
   - T7 (the crash latch) is fixed.
+- **Phase 4 is done (ramps and air); the optional launch field is not built.**
+  - `bike.air` is an airborne state: gravity, touchdown, no lean crash in the air, and air drag only. Only Slingshot sets it, so every other ride stays locked to the road.
+  - Wooden ramps sit in lanes. One is 7 m before gate 2's hay bale in the same lane: at about 10.3 m/s or faster you sail over it, slower and you land in it. More ramps follow every 110–170 m.
+  - Landing after 0.8 s or more in the air is **Big Air**, worth +10 coins, with a toast, sparkles and a camera jolt.
+  - The launch field (a wide runout past the forks) waits for Pete to say the toss is fun on the road.
 
 This plan is built from three independent adversarial reviews: **game feel / loop**,
 **mobile input / camera**, and **technical fit / risk**. It also uses numbers measured

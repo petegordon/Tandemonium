@@ -166,7 +166,7 @@ class SlingshotMode {
     this._slingStats = stats;
     this._slingArmedFor = level.distance;   // this ride is built for this goal
     this._slingRun = {
-      pull: 0, side: 0, launched: false, dragReleased: false,
+      pull: 0, side: 0, launched: false, dragReleased: false, bigAirs: 0, wasAir: false,
       coins: 0, topSpeed: 0, stillT: 0, crashDistance: null, over: false,
     };
     // Not a countdown: the aim phase is its own state, with its own camera.
@@ -181,7 +181,7 @@ class SlingshotMode {
     this._slingPadA = true;             // a held A from the garage is not a fire
     this._initSlingDrag();
     this.bike.coast = {
-      decel: (v, centerDist) => sling.coastDecel(stats, v, sling.surfaceAt(centerDist)),
+      decel: (v, centerDist, airborne) => sling.coastDecel(stats, v, sling.surfaceAt(centerDist), airborne),
       maxSpeed: SLING_MAX_SPEED,
     };
 
@@ -445,8 +445,12 @@ class SlingshotMode {
     run.topSpeed = Math.max(run.topSpeed, b.speed);
     if (b.fallen && run.crashDistance == null) run.crashDistance = b.distanceTraveled;
     if (this._slingProps && !b.fallen) {
-      for (const hit of this._slingProps.update(b.distanceTraveled, b._lateralOffset || 0)) {
-        if (hit.kind === 'hay') {
+      for (const hit of this._slingProps.update(b.distanceTraveled, b._lateralOffset || 0, b.air ? b.air.h : 0)) {
+        if (hit.kind === 'ramp') {
+          b.launchAir(sling.rampLaunch(b.speed));
+          this._playBeep(520, 0.08);
+          setTimeout(() => this._playBeep(880, 0.1), 60);
+        } else if (hit.kind === 'hay') {
           b.speed *= HAY_KEEP;
           this._playBeep(220, 0.12);
           slingUI.toast('Hay bale!');
@@ -459,7 +463,21 @@ class SlingshotMode {
         }
       }
     }
-    if (!b.fallen && b.speed < 0.3) {
+    // Touchdown: long enough in the air is Big Air, and pays.
+    if (run.wasAir && !b.air) {
+      const t = b.lastAirTime || 0;
+      if (t >= sling.BIG_AIR_S) {
+        run.bigAirs++;
+        slingUI.toast(`Big air! ${t.toFixed(1)} s · +${sling.BIG_AIR_PAY} 🪙`);
+        if (!this._slingFx) this._slingFx = new SparkleBurst(this.scene);
+        this._slingFx.burst({ x: b.position.x, y: b.position.y + 0.8, z: b.position.z });
+        this._playChime(1320, 0.2);
+      }
+      if (this.chaseCamera) this.chaseCamera.shakeAmount = Math.max(this.chaseCamera.shakeAmount, 0.3);
+      hapticBump();
+    }
+    run.wasAir = !!b.air;
+    if (!b.fallen && !b.air && b.speed < 0.3) {
       run.stillT += dt;
       if (run.stillT > 1.2) { this._endSlingRun('stall'); return true; }
     } else {
@@ -513,7 +531,7 @@ class SlingshotMode {
     run.over = true;
     const distance = sling.runDistance(cause === 'crash' && run.crashDistance != null
       ? run.crashDistance : this.bike.distanceTraveled);
-    const runData = { distance, coins: run.coins, stageCleared: cause === 'goal', jackpot: !!run.jackpot };
+    const runData = { distance, coins: run.coins, stageCleared: cause === 'goal', jackpot: !!run.jackpot, bigAirs: run.bigAirs };
     const score = sling.scoreRun(runData, this._slingSave);
     this._slingSave = sling.applyRun(this._slingSave, runData, score);
     sling.writeSave(this._slingStore(), this._slingSave);
