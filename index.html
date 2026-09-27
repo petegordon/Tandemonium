@@ -309,6 +309,18 @@
     opacity: 0; transition: opacity 0.25s;
   }
   #sling-toast.visible { opacity: 1; }
+  #sling-tally {
+    position: fixed; left: 50%; top: 30%; transform: translateX(-50%);
+    display: none; text-align: center; color: #fff; pointer-events: none; z-index: 58;
+    text-shadow: 0 3px 10px rgba(0,0,0,0.7);
+  }
+  #sling-tally.visible { display: block; animation: sling-tally-in 0.3s ease-out; }
+  @keyframes sling-tally-in { from { opacity: 0; transform: translate(-50%, 16px) scale(0.9); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+  #sling-tally .tally-label { font-size: 20px; font-weight: 900; color: #ff8a3c; letter-spacing: 2px; }
+  #sling-tally .tally-dist { font-size: 64px; font-weight: 900; line-height: 1; }
+  #sling-tally .tally-coins { font-size: 34px; font-weight: 900; color: #ffd23f; opacity: 0; transition: opacity 0.2s; }
+  #sling-tally .tally-coins.shown { opacity: 1; }
+  #sling-tally .tally-skip { margin-top: 10px; font-size: 12px; opacity: 0.7; }
   /* Preview builds only (js/build-badge.js): which commit is on screen. */
   #build-badge {
     position: fixed; left: 6px; bottom: calc(4px + env(safe-area-inset-bottom, 0px));
@@ -6173,6 +6185,8 @@ ON</button>
 <div id="sling-garage"></div>
 <!-- Slingshot mode · one launch's payout. -->
 <div id="sling-results"></div>
+<!-- Slingshot mode · the end-of-ride signal: distance, then the coins it pays. -->
+<div id="sling-tally"></div>
 
 <!-- Demo end overlay (solo demo checkpoint limit reached) -->
 <div id="demo-end-overlay" style="display:none;">
