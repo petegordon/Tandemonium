@@ -364,35 +364,6 @@ test('course: ramps in lanes, one set up to jump gate 2\'s bale, none under a co
   }
 });
 
-test('co-op: the stoker winds the bands, they creep back if the pedalling stops', async () => {
-  const S = await import('../../js/slingshot.js');
-  let p = 0;
-  for (let i = 0; i < 6; i++) p = S.coopPull(p, 1, 0, 1 / 60);
-  assert.equal(p, 1, 'six strong strokes is a full draw');
-  assert.equal(S.coopPull(0.5, 0, 0.2, 1), 0.5, 'a short pause holds');
-  assert.ok(S.coopPull(0.5, 0, 2, 1) < 0.5, 'a long pause creeps forward');
-  assert.equal(S.coopPull(0.01, 0, 5, 1), 0, 'never below slack');
-});
-
-test('co-op: in sync is a perfect launch, +15%', async () => {
-  const S = await import('../../js/slingshot.js');
-  assert.equal(S.isPerfectLaunch(1000, 1100), true);
-  assert.equal(S.isPerfectLaunch(1000, 1151), false);
-  assert.equal(S.isPerfectLaunch(null, 1000), false, 'no stroke, no sync');
-  const st = S.slingStats({});
-  assert.equal(S.coopLaunchSpeed(st, 1, true), st.launchMax * 1.15);
-  assert.equal(S.coopLaunchSpeed(st, 1, false), st.launchMax);
-});
-
-test('co-op preference survives a save, and is absent unless chosen', async () => {
-  const S = await import('../../js/slingshot.js');
-  const store = memStore();
-  S.writeSave(store, { ...S.emptySave(), coop: true });
-  assert.equal(S.loadSave(store).coop, true);
-  S.writeSave(store, { ...S.emptySave(), coop: 'yes' });
-  assert.equal('coop' in S.loadSave(store), false);
-});
-
 test('stick: pulled back and let go fires with the aim held before the snap', async () => {
   const S = await import('../../js/slingshot.js');
   const h = [];

@@ -288,45 +288,7 @@ check(loopEnd.rebuilds === 0, `20 relaunches re-armed the ride, never rebuilt it
 check(loopEnd.children === loopStart.children, `no scene leak over 20 launches (${loopStart.children} → ${loopEnd.children} objects)`);
 check(heapMB < 25, `heap grew ${heapMB.toFixed(1)} MB over 20 launches (< 25)`);
 
-// 15. Co-op: two riders. The captain drags to aim, the stoker pedals the
-// bands back (pedal pads return for this), and letting go in sync with the
-// stoker's last stroke is a perfect launch (+15%).
-await page.evaluate(() => window._game._openSlingGarage());
-await waitState('slingGarage', 20000);
-await page.evaluate(() => document.querySelector('#sling-garage .sling-coop-toggle').click());
-const coopOn = await page.evaluate(() => ({ saved: JSON.parse(localStorage.getItem('tandemonium_slingshot')).coop, label: document.querySelector('#sling-garage .sling-coop-toggle').textContent }));
-check(coopOn.saved === true && /ON/.test(coopOn.label), 'the garage turns on Two Riders, and remembers it');
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button')).find(b => /launch/i.test(b.textContent)).click());
-await waitState('slingAim', 60000);
-const pads = await page.evaluate(() => getComputedStyle(document.getElementById('pedal-bar')).display);
-check(pads !== 'none', `the stoker's pedal pads are back while aiming (display: ${pads})`);
-// The stoker winds: six strokes, one per frame.
-for (let i = 0; i < 6; i++) await pedal(1.2);
-await page.waitForFunction(() => window._game._slingRun.pull >= 1, { timeout: 60000, polling: 50 });
-check(true, 'six pedal strokes wind the bands to a full draw');
-// The captain aims with a sideways drag (its vertical part does nothing here).
-await page.mouse.move(640, 300); await page.mouse.down();
-await page.mouse.move(560, 300, { steps: 2 }); await page.mouse.move(420, 300, { steps: 3 });
-await page.waitForFunction(() => window._game._slingRun.side < -0.5, { timeout: 60000, polling: 50 });
-// The stoker's last stroke lands and the captain lets go in the same
-// instant — done in-page, since each CDP round-trip here costs ~130 ms.
-await page.evaluate(() => {
-  const g = window._game;
-  g._slingRun.lastStrokeAt = performance.now();
-  window.dispatchEvent(new PointerEvent('pointerup', { pointerId: g._slingDrag.id, bubbles: true }));
-});
-await page.mouse.up();                       // the real button; the drag is already over
-await waitState('playing', 60000);
-const coopLaunch = await page.evaluate(() => ({
-  speed: window._game.bike.speed, max: window._game._slingStats.launchMax,
-  perfect: window._game._slingRun.perfect, toast: document.getElementById('sling-toast').textContent,
-  pads: getComputedStyle(document.getElementById('pedal-bar')).display,
-}));
-check(coopLaunch.perfect && /perfect/i.test(coopLaunch.toast) && coopLaunch.speed > coopLaunch.max * 1.1,
-  `letting go in sync is a perfect launch (${coopLaunch.speed.toFixed(1)} m/s vs ${coopLaunch.max.toFixed(1)} max)`);
-check(coopLaunch.pads === 'none', 'the pedal pads go away again once the bike is flying');
-
-// 16. Lobby cleans up
+// 15. Lobby cleans up
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /lobby/i.test(b.textContent)).click());
 await new Promise(r => setTimeout(r, 1000));
 const clean = await page.evaluate(() => ({

@@ -284,10 +284,7 @@
     animation: sling-coin-float 0.9s ease-out forwards;
   }
   @keyframes sling-coin-float { from { opacity: 1; transform: translate(-50%, 0) scale(1.2); } to { opacity: 0; transform: translate(-50%, -40px) scale(1); } }
-  body.sling-mode #pedal-bar { display: none !important; }   /* no pedaling in this mode… */
-  body.sling-mode.sling-coop-aim #pedal-bar { display: flex !important; }   /* …except the stoker winding the bands */
-  .sling-coop-toggle small { display: block; font-size: 11px; font-weight: 600; opacity: 0.8; margin-top: 2px; }
-  .sling-coop-toggle.on { border-color: #ffd23f; color: #ffd23f; }
+  body.sling-mode #pedal-bar { display: none !important; }   /* no pedaling in this mode */
   /* Top of the screen, out from under the thumb that is dragging. */
   #sling-pull {
     position: fixed; left: 50%; top: 128px; transform: translateX(-50%);

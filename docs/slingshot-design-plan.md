@@ -29,15 +29,6 @@ pedals are still there — not certain what they would be used for."*
   - Wooden ramps sit in lanes. One is 7 m before gate 2's hay bale in the same lane: at about 10.3 m/s or faster you sail over it, slower and you land in it. More ramps follow every 110–170 m.
   - Landing after 0.8 s or more in the air is **Big Air**, worth +10 coins, with a toast, sparkles and a camera jolt.
   - The launch field (a wide runout past the forks) waits for Pete to say the toss is fun on the road.
-- **Phase 5 is done (co-op launch, on one device).**
-  - The garage has a TWO RIDERS toggle, which is saved.
-  - The captain drags sideways to aim (or A/D, or the left stick). The stoker pedals to wind the bands, using the touch pedal pads, ←/→, or LB/RB and the triggers. The bands creep forward if the pedalling stops for 0.6 s.
-  - The captain lets go to fire (or Space, or A). If the stoker's last stroke was within 150 ms of the release, it is a **perfect launch, +15%**. The release time is stamped in the pointer-up handler so frame lag can't spoil a real sync.
-  - Pedal pads show only while winding. Pedalling stays out of the flight (Pete: pedals are the co-op job only).
-  - Not built:
-    - the stoker banking the lean in the air;
-    - two separate gamepads (it needs the 'local' two-input plumbing);
-    - online co-op.
 
 This plan is built from three independent adversarial reviews: **game feel / loop**,
 **mobile input / camera**, and **technical fit / risk**. It also uses numbers measured
@@ -123,7 +114,7 @@ Each has a recommended default; the plan below assumes the default unless you sa
 | D3 | What's the payoff: distance, spectacle, or both? | **Distance gates the stage; spectacle pays.** Spectacle means coins, air and jackpot targets. |
 | D4 | Does this ship in the **Nov 30 demo**? | **No, post-demo side mode**, hidden behind a flag, unless a co-op launch (Phase 5) lands in time. |
 | D5 | How long should a run take, and how many runs to clear a stage? | **15–25 s per run; 2–4 runs per stage.** |
-| D6 | Pedals return later as a **co-op** job, or never? | **Later, as co-op only** (Phase 5): one rider aims, the other powers the pull. Out of v1. |
+| D6 | Pedals return later as a **co-op** job, or never? | **Later, as co-op only** (Phase 5): one rider aims, the other powers the pull. Out of v1. *(Pete, 2026-09-28: co-op slingshot is his to design — Phase 5 is a proposal, not planned work.)* |
 
 ---
 
@@ -210,7 +201,15 @@ The goal: stop patching the race pipeline.
 - Big-air payouts.
 - Optionally, the **launch field** (D2): a wide runout past the forks with fixed stage layouts.
 
-### Phase 5 — Together *(≈2 days after Phase 2)*
+### Phase 5 — Together *(PROPOSAL ONLY — not Pete's design; not in the game)*
+
+> **Status (2026-09-28):** A prototype of this phase was built (commit
+> 72b3834) and then **removed at Pete's request**: two-rider slingshot is a
+> new way to play, and Pete has not designed it. Accepting the plan's
+> defaults (D1–D6) was not a design sign-off for it. What follows is the
+> implementer's proposal, kept only as input for when Pete designs co-op
+> slingshot himself. Pedals stay out of Slingshot until then.
+
 
 - Local two-player launch: **captain aims, stoker pulls.** Release is shared: both let go within 150 ms for a *perfect launch* (+15%).
 - In flight, the stoker banks the lean for air.
