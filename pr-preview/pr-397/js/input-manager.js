@@ -799,6 +799,10 @@ export class InputManager {
       }
     }
 
+    // Phone tilt gain (TUNE.mobileTiltGain): the same tilt steers this fraction
+    // as much. Controller gyro keeps its own tuning.
+    if (!isGyro) lean *= (TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1);
+
     // Velocity-dependent sensitivity: scale down lean at high speed for stability
     const speedFrac = Math.min(this.bikeSpeed / this.bikeMaxSpeed, 1.0);
     const velocityScale = 1.0 - speedFrac * 0.4; // 1.0 at rest → 0.6 at max speed
