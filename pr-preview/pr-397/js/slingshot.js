@@ -339,7 +339,6 @@ function sanitize(o) {
   s.best = Math.floor(num(o.best, 0));
   s.runs = Math.floor(num(o.runs, 0));
   s.stage = Math.max(1, Math.floor(num(o.stage, 1)));
-  if (o.coop === true) s.coop = true;          // two riders: one aims, one pedals
   if (o.lv && typeof o.lv === 'object') {
     for (const u of UPGRADES) {
       const v = Math.floor(num(o.lv[u.id], 0));
@@ -396,79 +395,37 @@ export function browserStore() {
   };
 }
 
-// ---- Co-op launch (two riders, one bike) ----------------------------------
-//
-// The captain drags to aim; the stoker pedals to wind the bands back. The
-// captain lets go to fire, and if the stoker's last stroke landed within
-// PERFECT_WINDOW_MS of the release, the two of them were in sync: +15%.
-
-export const COOP = {
-  FULL_PULL_WORK: 6,        // pedal-controller acceleration units for a full draw
-  PERFECT_WINDOW_MS: 150,
-  PERFECT_BONUS: 0.15,
-  CREEP_AFTER_S: 0.6,       // stop pedalling this long and the bands creep forward…
-  CREEP_PER_S: 0.12,        // …this much pull per second
-};
-
-/** One frame of the stoker's winding. Returns the new pull in [0, 1]. */
-export function coopPull(pull, strokeAccel, sinceStrokeS, dt) {
-  let p = pull || 0;
-  if (strokeAccel > 0) p += strokeAccel / COOP.FULL_PULL_WORK;
-  else if (sinceStrokeS > COOP.CREEP_AFTER_S) p -= COOP.CREEP_PER_S * dt;
-  if (p > 0.999) p = 1;                      // six sixths is a full draw, not 0.9999…
-  return Math.max(0, Math.min(1, p));
-}
-
-/** In sync? The stoker's last stroke within the window of the captain's release. */
-export function isPerfectLaunch(lastStrokeMs, releaseMs) {
-  if (lastStrokeMs == null || releaseMs == null) return false;
-  return Math.abs(releaseMs - lastStrokeMs) <= COOP.PERFECT_WINDOW_MS;
-}
-
-export function coopLaunchSpeed(stats, pull, perfect) {
-  return launchSpeed(stats, pull) * (perfect ? 1 + COOP.PERFECT_BONUS : 1);
-}
-
 // ---- Stick let-go (left stick as the pouch) -------------------------------
 //
-// Pull the left stick back to draw, sideways to aim, and let go: a released
-// stick snaps back to centre within a few frames, so a fast drop from a real
-// pull to near-centre is a release and fires with the aim held just BEFORE
-// the snap (not the half-returned one). Easing the stick back slowly is the
-// player changing their mind: the bands go slack, nothing fires.
+// Pull the left stick back (down) to draw, sideways to aim, and let go. No
+// timing: the shot is the strongest pull reached, with the aim held there
+// (aiming while holding near full draw updates it), and it flies when the
+// stick is back home — however fast or slow it gets there. To shoot softer,
+// pull back less.
 
 export const STICK = {
-  RELEASE_BELOW: 0.12,     // pull under this = the stick is home
-  WINDOW_MS: 150,          // a snap back this fast is a release…
-  WINDOW_SAMPLES: 2,       // …or this few frames (slow devices / headless)
-  KEEP: 12,                // samples of history kept
+  HOME_BELOW: 0.12,        // pull under this = the stick is back at centre
+  NEAR_PEAK: 0.1,          // aiming within this of the strongest pull still counts
 };
 
-/** Record this frame's stick pull/aim. Returns the (trimmed) history. */
-export function stickSample(history, t, pull, side) {
-  history.push({ t, pull, side });
-  if (history.length > STICK.KEEP) history.splice(0, history.length - STICK.KEEP);
-  return history;
+/** A fresh tracker for one pull. */
+export function stickTracker() {
+  return { peak: 0, side: 0 };
 }
 
 /**
- * Was the stick just let go? If the newest sample is home and a recent one
- * (within the window) was a real pull, returns that pre-release {pull, side}
- * — the shot. Otherwise null. Clears the history once the stick is home, so a
- * stale pull can never fire later.
+ * Feed this frame's stick pull/aim. Returns the shot {pull, side} on the
+ * frame the stick comes home after a real pull, else null. The tracker resets
+ * once the stick is home, so a pull can only fire once.
  */
-export function stickLetGo(history) {
-  const n = history.length;
-  if (n < 2) return null;
-  const last = history[n - 1];
-  if (last.pull >= STICK.RELEASE_BELOW) return null;
-  let peak = null;
-  for (let i = n - 2; i >= 0; i--) {
-    const s = history[i];
-    const recent = (last.t - s.t) <= STICK.WINDOW_MS || (n - 1 - i) <= STICK.WINDOW_SAMPLES;
-    if (!recent) break;
-    if (!peak || s.pull > peak.pull) peak = s;
+export function stickUpdate(tracker, pull, side) {
+  if (pull >= STICK.HOME_BELOW) {
+    if (pull > tracker.peak) tracker.peak = pull;
+    if (pull >= tracker.peak - STICK.NEAR_PEAK) tracker.side = side;
+    return null;
   }
-  history.length = 0;
-  return peak && peak.pull >= MIN_LAUNCH_PULL ? { pull: peak.pull, side: peak.side } : null;
+  const shot = tracker.peak >= MIN_LAUNCH_PULL ? { pull: tracker.peak, side: tracker.side } : null;
+  tracker.peak = 0;
+  tracker.side = 0;
+  return shot;
 }
