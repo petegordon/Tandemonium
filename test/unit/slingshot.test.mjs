@@ -392,3 +392,45 @@ test('co-op preference survives a save, and is absent unless chosen', async () =
   S.writeSave(store, { ...S.emptySave(), coop: 'yes' });
   assert.equal('coop' in S.loadSave(store), false);
 });
+
+test('stick: pulled back and let go fires with the aim held before the snap', async () => {
+  const S = await import('../../js/slingshot.js');
+  const h = [];
+  // Held at full pull, aimed left, for a while (60 fps)…
+  for (let t = 0; t <= 500; t += 16) S.stickSample(h, t, 1, -0.7);
+  // …then released: the stick springs home in ~3 frames.
+  S.stickSample(h, 516, 0.6, -0.4);
+  S.stickSample(h, 532, 0.2, -0.1);
+  S.stickSample(h, 548, 0, 0);
+  const shot = S.stickLetGo(h);
+  assert.deepEqual(shot, { pull: 1, side: -0.7 }, 'the held pose, not the half-returned one');
+  assert.equal(h.length, 0, 'history cleared: it cannot fire twice');
+});
+
+test('stick: easing it back slowly is a cancel, not a shot', async () => {
+  const S = await import('../../js/slingshot.js');
+  const h = [];
+  for (let t = 0, p = 1; p >= 0; t += 16, p -= 0.04) S.stickSample(h, t, Math.max(0, p), 0);
+  S.stickSample(h, 1000, 0, 0);
+  assert.equal(S.stickLetGo(h), null);
+});
+
+test('stick: a slow device still counts a snap across two frames', async () => {
+  const S = await import('../../js/slingshot.js');
+  const h = [];
+  S.stickSample(h, 0, 0.9, 0.3);
+  S.stickSample(h, 700, 0.9, 0.3);        // ~1.5 fps
+  S.stickSample(h, 1400, 0, 0);
+  assert.deepEqual(S.stickLetGo(h), { pull: 0.9, side: 0.3 });
+});
+
+test('stick: a flick under the launch pull, or a stick still held, never fires', async () => {
+  const S = await import('../../js/slingshot.js');
+  const h = [];
+  S.stickSample(h, 0, S.MIN_LAUNCH_PULL - 0.05, 0);
+  S.stickSample(h, 16, 0, 0);
+  assert.equal(S.stickLetGo(h), null, 'too small a pull');
+  S.stickSample(h, 32, 0.8, 0);
+  S.stickSample(h, 48, 0.8, 0);
+  assert.equal(S.stickLetGo(h), null, 'still held back');
+});

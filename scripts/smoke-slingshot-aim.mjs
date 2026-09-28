@@ -186,6 +186,27 @@ async function suite(label, vp) {
   const padFired = await waitState('playing', 60000).then(() => true, () => false);
   await page.evaluate(() => { window.__pad.buttons[0] = { pressed: false, value: 0 }; window.__pad.axes = [0, 0]; });
   check(padHeld.pull > 0.9 && padFired, `gamepad: stick down draws (pull ${padHeld.pull.toFixed(2)}), A fires`);
+
+  // Left stick as the pouch: pull back (and aside), then just let it go.
+  await toSlingshot(false);
+  await page.evaluate(() => { window.__pad.axes = [0.6, 1]; });
+  await new Promise(r => setTimeout(r, 1800));
+  const stickHeld = await measure();
+  const stickAim = await page.evaluate(() => ({ side: window._game._slingRun.side }));
+  await page.evaluate(() => { window.__pad.axes = [0, 0]; });            // let go
+  const stickFired = await waitState('playing', 60000).then(() => true, () => false);
+  const stickShot = await page.evaluate(() => ({ side: window._game._slingRun.side, pull: window._game._slingRun.pull, speed: window._game.bike.speed, max: window._game._slingStats.launchMax }));
+  check(stickHeld.pull > 0.9 && stickFired && stickShot.pull > 0.9 && Math.abs(stickShot.side - stickAim.side) < 0.01 && stickShot.speed > stickShot.max * 0.85,
+    `left stick: pull back, let go → fires with the held aim (pull ${stickShot.pull.toFixed(2)}, side ${stickShot.side.toFixed(2)}, ${stickShot.speed.toFixed(1)} m/s)`);
+
+  // Easing the stick back slowly is a change of mind, not a shot.
+  await toSlingshot(false);
+  for (const ay of [1, 0.65, 0.4, 0.262, 0]) {               // pull 1 → 0.6 → 0.31 → 0.14 → home
+    await page.evaluate((ay) => { window.__pad.axes = [0, ay]; }, ay);
+    await new Promise(r => setTimeout(r, 2200));             // several frames at each step
+  }
+  const eased = await measure();
+  check(eased.state === 'slingAim' && eased.pull === 0, 'left stick: easing it back slowly cancels (bands slack, no launch)');
   await page.evaluate(() => { delete window._game.input.getGamepadState; });
 }
 
