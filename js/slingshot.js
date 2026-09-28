@@ -397,44 +397,35 @@ export function browserStore() {
 
 // ---- Stick let-go (left stick as the pouch) -------------------------------
 //
-// Pull the left stick back to draw, sideways to aim, and let go: a released
-// stick snaps back to centre within a few frames, so a fast drop from a real
-// pull to near-centre is a release and fires with the aim held just BEFORE
-// the snap (not the half-returned one). Easing the stick back slowly is the
-// player changing their mind: the bands go slack, nothing fires.
+// Pull the left stick back (down) to draw, sideways to aim, and let go. No
+// timing: the shot is the strongest pull reached, with the aim held there
+// (aiming while holding near full draw updates it), and it flies when the
+// stick is back home — however fast or slow it gets there. To shoot softer,
+// pull back less.
 
 export const STICK = {
-  RELEASE_BELOW: 0.12,     // pull under this = the stick is home
-  WINDOW_MS: 150,          // a snap back this fast is a release…
-  WINDOW_SAMPLES: 2,       // …or this few frames (slow devices / headless)
-  KEEP: 12,                // samples of history kept
+  HOME_BELOW: 0.12,        // pull under this = the stick is back at centre
+  NEAR_PEAK: 0.1,          // aiming within this of the strongest pull still counts
 };
 
-/** Record this frame's stick pull/aim. Returns the (trimmed) history. */
-export function stickSample(history, t, pull, side) {
-  history.push({ t, pull, side });
-  if (history.length > STICK.KEEP) history.splice(0, history.length - STICK.KEEP);
-  return history;
+/** A fresh tracker for one pull. */
+export function stickTracker() {
+  return { peak: 0, side: 0 };
 }
 
 /**
- * Was the stick just let go? If the newest sample is home and a recent one
- * (within the window) was a real pull, returns that pre-release {pull, side}
- * — the shot. Otherwise null. Clears the history once the stick is home, so a
- * stale pull can never fire later.
+ * Feed this frame's stick pull/aim. Returns the shot {pull, side} on the
+ * frame the stick comes home after a real pull, else null. The tracker resets
+ * once the stick is home, so a pull can only fire once.
  */
-export function stickLetGo(history) {
-  const n = history.length;
-  if (n < 2) return null;
-  const last = history[n - 1];
-  if (last.pull >= STICK.RELEASE_BELOW) return null;
-  let peak = null;
-  for (let i = n - 2; i >= 0; i--) {
-    const s = history[i];
-    const recent = (last.t - s.t) <= STICK.WINDOW_MS || (n - 1 - i) <= STICK.WINDOW_SAMPLES;
-    if (!recent) break;
-    if (!peak || s.pull > peak.pull) peak = s;
+export function stickUpdate(tracker, pull, side) {
+  if (pull >= STICK.HOME_BELOW) {
+    if (pull > tracker.peak) tracker.peak = pull;
+    if (pull >= tracker.peak - STICK.NEAR_PEAK) tracker.side = side;
+    return null;
   }
-  history.length = 0;
-  return peak && peak.pull >= MIN_LAUNCH_PULL ? { pull: peak.pull, side: peak.side } : null;
+  const shot = tracker.peak >= MIN_LAUNCH_PULL ? { pull: tracker.peak, side: tracker.side } : null;
+  tracker.peak = 0;
+  tracker.side = 0;
+  return shot;
 }

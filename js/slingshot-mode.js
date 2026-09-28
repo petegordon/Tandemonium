@@ -179,7 +179,7 @@ class SlingshotMode {
     this._slingDrag = null;
     this._slingKb = { pull: 0, side: 0, held: false };
     this._slingPadA = true;             // a held A from the garage is not a fire
-    this._slingStickHist = [];          // left-stick samples, for the let-go
+    this._slingStick = sling.stickTracker();   // left stick: strongest pull + its aim
     this._initSlingDrag();
     this.bike.coast = {
       decel: (v, centerDist, airborne) => sling.coastDecel(stats, v, sling.surfaceAt(centerDist), airborne),
@@ -264,8 +264,8 @@ class SlingshotMode {
    * One aim, three inputs. Touch/mouse: drag back to pull, sideways to aim,
    * lift to fire. Keyboard: hold ↓/S to draw (full in 1.2 s), ←/→ or A/D to
    * aim, release ↓/S to fire, Esc to cancel. Gamepad: left stick is the pouch
-   * (down = pull, sideways = aim) — let it go to fire, or press A while holding;
-   * easing it back slowly cancels. With nothing held the bands go slack.
+   * (down = pull, sideways = aim) — let it go to fire with the strongest
+   * pull reached, or press A while holding. With nothing held the bands go slack.
    */
   _updateSlingAimState(dt) {
     const run = this._slingRun;
@@ -313,13 +313,11 @@ class SlingshotMode {
       // Fire by pressing A while holding the pull…
       if (a && !this._slingPadA && pull >= sling.MIN_LAUNCH_PULL) fire = true;
       this._slingPadA = a;
-      // …or just let the stick go: it snaps home and the shot flies with the
-      // aim held a moment before (js/slingshot.js · stickLetGo).
-      sling.stickSample(this._slingStickHist, performance.now(), pull, side);
-      if (!fire) {
-        const shot = sling.stickLetGo(this._slingStickHist);
-        if (shot) { aim = shot; fire = true; }
-      }
+      // …or just let the stick go: when it's back home the shot flies with
+      // the strongest pull reached and the aim held there (js/slingshot.js ·
+      // stickUpdate). No timing.
+      const shot = sling.stickUpdate(this._slingStick, pull, side);
+      if (shot && !fire) { aim = shot; fire = true; }
     }
 
     if (!aim) aim = { pull: 0, side: 0 };

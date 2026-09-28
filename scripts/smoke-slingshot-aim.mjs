@@ -199,14 +199,15 @@ async function suite(label, vp) {
   check(stickHeld.pull > 0.9 && stickFired && stickShot.pull > 0.9 && Math.abs(stickShot.side - stickAim.side) < 0.01 && stickShot.speed > stickShot.max * 0.85,
     `left stick: pull back, let go → fires with the held aim (pull ${stickShot.pull.toFixed(2)}, side ${stickShot.side.toFixed(2)}, ${stickShot.speed.toFixed(1)} m/s)`);
 
-  // Easing the stick back slowly is a change of mind, not a shot.
+  // No timer: pull back halfway, ease it home slowly — it still fires, softer.
   await toSlingshot(false);
-  for (const ay of [1, 0.65, 0.4, 0.262, 0]) {               // pull 1 → 0.6 → 0.31 → 0.14 → home
+  for (const ay of [0.55, 0.4, 0.25, 0]) {                  // pull 0.5 → 0.31 → 0.13 → home
     await page.evaluate((ay) => { window.__pad.axes = [0, ay]; }, ay);
-    await new Promise(r => setTimeout(r, 2200));             // several frames at each step
+    await new Promise(r => setTimeout(r, 2200));            // several frames at each step
   }
-  const eased = await measure();
-  check(eased.state === 'slingAim' && eased.pull === 0, 'left stick: easing it back slowly cancels (bands slack, no launch)');
+  const soft = await waitState('playing', 60000).then(() => true, () => false);
+  const softShot = await page.evaluate(() => ({ pull: window._game._slingRun.pull }));
+  check(soft && Math.abs(softShot.pull - 0.5) < 0.02, `left stick: a half pull eased home slowly still fires, softer (pull ${softShot.pull.toFixed(2)})`);
   await page.evaluate(() => { delete window._game.input.getGamepadState; });
 }
 

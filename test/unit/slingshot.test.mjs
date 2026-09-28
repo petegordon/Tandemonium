@@ -364,44 +364,38 @@ test('course: ramps in lanes, one set up to jump gate 2\'s bale, none under a co
   }
 });
 
-test('stick: pulled back and let go fires with the aim held before the snap', async () => {
+test('stick: pull back, aim, let go — fires with the strongest pull and its aim', async () => {
   const S = await import('../../js/slingshot.js');
-  const h = [];
-  // Held at full pull, aimed left, for a while (60 fps)…
-  for (let t = 0; t <= 500; t += 16) S.stickSample(h, t, 1, -0.7);
-  // …then released: the stick springs home in ~3 frames.
-  S.stickSample(h, 516, 0.6, -0.4);
-  S.stickSample(h, 532, 0.2, -0.1);
-  S.stickSample(h, 548, 0, 0);
-  const shot = S.stickLetGo(h);
-  assert.deepEqual(shot, { pull: 1, side: -0.7 }, 'the held pose, not the half-returned one');
-  assert.equal(h.length, 0, 'history cleared: it cannot fire twice');
+  const t = S.stickTracker();
+  for (const p of [0.3, 0.7, 1]) assert.equal(S.stickUpdate(t, p, -0.2), null, 'pulling back');
+  assert.equal(S.stickUpdate(t, 1, -0.7), null, 'aiming while held');
+  // Let go: the stick passes back through smaller pulls on its way home.
+  assert.equal(S.stickUpdate(t, 0.6, -0.4), null);
+  assert.equal(S.stickUpdate(t, 0.2, -0.1), null);
+  assert.deepEqual(S.stickUpdate(t, 0, 0), { pull: 1, side: -0.7 });
+  assert.equal(S.stickUpdate(t, 0, 0), null, 'fires once');
 });
 
-test('stick: easing it back slowly is a cancel, not a shot', async () => {
+test('stick: no timer — a slow return home fires just the same', async () => {
   const S = await import('../../js/slingshot.js');
-  const h = [];
-  for (let t = 0, p = 1; p >= 0; t += 16, p -= 0.04) S.stickSample(h, t, Math.max(0, p), 0);
-  S.stickSample(h, 1000, 0, 0);
-  assert.equal(S.stickLetGo(h), null);
+  const t = S.stickTracker();
+  S.stickUpdate(t, 0.9, 0.3);
+  for (let p = 0.88; p > 0.12; p -= 0.01) S.stickUpdate(t, p, 0.3);   // eased back over many frames, aim kept
+  assert.deepEqual(S.stickUpdate(t, 0, 0), { pull: 0.9, side: 0.3 });
 });
 
-test('stick: a slow device still counts a snap across two frames', async () => {
+test('stick: pull back less for a softer shot', async () => {
   const S = await import('../../js/slingshot.js');
-  const h = [];
-  S.stickSample(h, 0, 0.9, 0.3);
-  S.stickSample(h, 700, 0.9, 0.3);        // ~1.5 fps
-  S.stickSample(h, 1400, 0, 0);
-  assert.deepEqual(S.stickLetGo(h), { pull: 0.9, side: 0.3 });
+  const t = S.stickTracker();
+  S.stickUpdate(t, 0.5, 0);
+  assert.deepEqual(S.stickUpdate(t, 0, 0), { pull: 0.5, side: 0 });
 });
 
 test('stick: a flick under the launch pull, or a stick still held, never fires', async () => {
   const S = await import('../../js/slingshot.js');
-  const h = [];
-  S.stickSample(h, 0, S.MIN_LAUNCH_PULL - 0.05, 0);
-  S.stickSample(h, 16, 0, 0);
-  assert.equal(S.stickLetGo(h), null, 'too small a pull');
-  S.stickSample(h, 32, 0.8, 0);
-  S.stickSample(h, 48, 0.8, 0);
-  assert.equal(S.stickLetGo(h), null, 'still held back');
+  const t = S.stickTracker();
+  S.stickUpdate(t, S.MIN_LAUNCH_PULL - 0.02, 0);
+  assert.equal(S.stickUpdate(t, 0, 0), null, 'too small a pull');
+  S.stickUpdate(t, 0.8, 0);
+  assert.equal(S.stickUpdate(t, 0.8, 0), null, 'still held back');
 });
