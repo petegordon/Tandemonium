@@ -497,7 +497,10 @@ export class BikeModel {
       // Coop provides each rider's own lean; solo provides only the aggregate
       // leanInput, in which case the captain leans with it and the stoker (who
       // has no second input in solo) stays upright.
-      const cap = (balanceResult.captainLean != null) ? balanceResult.captainLean : balanceResult.leanInput;
+      // visualLean: the rider's own tilt before the steering gain, so the look
+      // matches the player's body even when the steering is gentler.
+      const cap = (balanceResult.captainLean != null) ? balanceResult.captainLean
+        : (balanceResult.visualLean != null ? balanceResult.visualLean : balanceResult.leanInput);
       const sto = (balanceResult.stokerLean != null) ? balanceResult.stokerLean : 0;
       this.setRiderLeans(cap, sto);
     }

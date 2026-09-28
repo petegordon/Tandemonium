@@ -5962,7 +5962,8 @@ class Game {
 
     // Independent rider torsos: captain leans by his own gyro, stoker by hers,
     // while the bike tilts by the merged aggregate above (leanInput).
-    balanceResult.captainLean = captainLean;
+    // (The captain's own torso uses the look-only lean, before the tilt gain.)
+    balanceResult.captainLean = balanceResult.visualLean != null ? balanceResult.visualLean : captainLean;
     balanceResult.stokerLean = this.remoteLean;
 
     const wasFallen = this.bike.fallen;
@@ -6908,12 +6909,13 @@ class Game {
     this._updateLookahead(dt);    // E-1 · the road only the stoker can see
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
-    const stokerLean = this.balanceCtrl.update().leanInput;
+    const stokerBalance = this.balanceCtrl.update();
+    const stokerLean = stokerBalance.leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     // Independent rider torsos on the stoker's screen too: captain leans by the
     // lean he broadcasts (this.remoteLean), the stoker by her own local lean.
     // applyRemoteState() poses the riders from these targets next frame.
-    this.bike.setRiderLeans(this.remoteLean, stokerLean);
+    this.bike.setRiderLeans(this.remoteLean, stokerBalance.visualLean != null ? stokerBalance.visualLean : stokerLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl, remoteData));
   }
