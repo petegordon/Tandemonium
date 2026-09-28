@@ -428,3 +428,47 @@ export function isPerfectLaunch(lastStrokeMs, releaseMs) {
 export function coopLaunchSpeed(stats, pull, perfect) {
   return launchSpeed(stats, pull) * (perfect ? 1 + COOP.PERFECT_BONUS : 1);
 }
+
+// ---- Stick let-go (left stick as the pouch) -------------------------------
+//
+// Pull the left stick back to draw, sideways to aim, and let go: a released
+// stick snaps back to centre within a few frames, so a fast drop from a real
+// pull to near-centre is a release and fires with the aim held just BEFORE
+// the snap (not the half-returned one). Easing the stick back slowly is the
+// player changing their mind: the bands go slack, nothing fires.
+
+export const STICK = {
+  RELEASE_BELOW: 0.12,     // pull under this = the stick is home
+  WINDOW_MS: 150,          // a snap back this fast is a release…
+  WINDOW_SAMPLES: 2,       // …or this few frames (slow devices / headless)
+  KEEP: 12,                // samples of history kept
+};
+
+/** Record this frame's stick pull/aim. Returns the (trimmed) history. */
+export function stickSample(history, t, pull, side) {
+  history.push({ t, pull, side });
+  if (history.length > STICK.KEEP) history.splice(0, history.length - STICK.KEEP);
+  return history;
+}
+
+/**
+ * Was the stick just let go? If the newest sample is home and a recent one
+ * (within the window) was a real pull, returns that pre-release {pull, side}
+ * — the shot. Otherwise null. Clears the history once the stick is home, so a
+ * stale pull can never fire later.
+ */
+export function stickLetGo(history) {
+  const n = history.length;
+  if (n < 2) return null;
+  const last = history[n - 1];
+  if (last.pull >= STICK.RELEASE_BELOW) return null;
+  let peak = null;
+  for (let i = n - 2; i >= 0; i--) {
+    const s = history[i];
+    const recent = (last.t - s.t) <= STICK.WINDOW_MS || (n - 1 - i) <= STICK.WINDOW_SAMPLES;
+    if (!recent) break;
+    if (!peak || s.pull > peak.pull) peak = s;
+  }
+  history.length = 0;
+  return peak && peak.pull >= MIN_LAUNCH_PULL ? { pull: peak.pull, side: peak.side } : null;
+}

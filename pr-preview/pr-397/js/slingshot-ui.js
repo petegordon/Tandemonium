@@ -35,7 +35,8 @@ export function renderGarage(save, { onBuy, onLaunch, onLobby, onToggleCoop }) {
   root.appendChild(el('div', 'sling-sub',
     `Stage ${save.stage}: reach <b>${fmt(stageGoal(save.stage))} m</b>` +
     ` · best ${fmt(save.best)} m · ×${stats.coinMult.toFixed(2)} coins<br>` +
-    'Touch and drag back to stretch the slingshot, left or right to aim, and let go. ' +
+    'Touch and drag back (or pull the left stick back) to stretch the slingshot, ' +
+    'left or right to aim, and let go. ' +
     'Then steer: sweep the Chaos Coins, do not crash, and reset any time to go ' +
     'back to the slingshot.'));
 
