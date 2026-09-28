@@ -42,14 +42,23 @@ test('a gust spawns streaks and shows them', () => {
 test('the streaks blow the way the bike is pushed', () => {
   // heading 0 means forward is +z, so the lateral axis is x. A gust with
   // dir=+1 must carry dust in the opposite x sense to dir=-1.
+  // Seeded: streaks spawn at random spots, and an unlucky batch of new spawns
+  // could swamp the drift of the mean — a rare flake that failed a CI run.
   const drift = (dir) => {
-    const gv = new GustVisual(fakeScene());
-    gv.setWind(dir, 1);
-    gv.update(fakeBike(), 1 / 60);
-    const start = meanHeadX(gv);
-    gv.setWind(dir, 1);
-    for (let i = 0; i < 12; i++) gv.update(fakeBike(), 1 / 60);
-    return meanHeadX(gv) - start;
+    const realRandom = Math.random;
+    let s = 12345;
+    Math.random = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+    try {
+      const gv = new GustVisual(fakeScene());
+      gv.setWind(dir, 1);
+      gv.update(fakeBike(), 1 / 60);
+      const start = meanHeadX(gv);
+      gv.setWind(dir, 1);
+      for (let i = 0; i < 12; i++) gv.update(fakeBike(), 1 / 60);
+      return meanHeadX(gv) - start;
+    } finally {
+      Math.random = realRandom;
+    }
   };
   const right = drift(1);
   const left = drift(-1);

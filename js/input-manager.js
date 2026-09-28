@@ -207,6 +207,7 @@ export class InputManager {
     this._leftTapped = false;   // buffered tap: survives until consumeTaps()
     this._rightTapped = false;
     this.motionLean = 0;
+    this.motionLeanVisual = 0;
     this.motionEnabled = false;
     this.motionReady = false;
     this.onMotionEnabled = null; // callback when motionEnabled first becomes true
@@ -799,6 +800,10 @@ export class InputManager {
       }
     }
 
+    // Phone tilt gain (TUNE.mobileTiltGain): the same tilt steers this fraction
+    // as much. Controller gyro keeps its own tuning.
+    if (!isGyro) lean *= (TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1);
+
     // Velocity-dependent sensitivity: scale down lean at high speed for stability
     const speedFrac = Math.min(this.bikeSpeed / this.bikeMaxSpeed, 1.0);
     const velocityScale = 1.0 - speedFrac * 0.4; // 1.0 at rest → 0.6 at max speed
@@ -819,6 +824,10 @@ export class InputManager {
 
     this._smoothedLean += (lean - this._smoothedLean) * smoothK;
     this.motionLean = this._smoothedLean;
+    // Every step after the gain (velocity scale, EMA) is linear, so dividing it
+    // back out gives exactly the lean the ungained tilt would have produced.
+    const gain = !isGyro && TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1;
+    this.motionLeanVisual = gain > 0 ? Math.max(-1, Math.min(1, this._smoothedLean / gain)) : this._smoothedLean;
   }
 
   /**
@@ -911,6 +920,7 @@ export class InputManager {
       // Fallback — bound Steer analog action. No real roll angle: Steam only
       // exposes the post-mapping vector on this path.
       this.motionLean = primary.steerX;
+      this.motionLeanVisual = primary.steerX;
       this._smoothedLean = primary.steerX;
       this._prevLeanRaw = primary.steerX;
       this._gyroRollAccum = -primary.steerX * 90;
@@ -1202,6 +1212,7 @@ export class InputManager {
     this._gyroRollAccum = 0;
     this._smoothedLean = 0;
     this.motionLean = 0;
+    this.motionLeanVisual = 0;
     // Re-seed drift compensation so the freshly-set center isn't immediately
     // yanked by a stale long-term average.
     this._driftEma = null;
@@ -1213,6 +1224,7 @@ export class InputManager {
     this._smoothedLean = 0;
     this._prevLeanRaw = 0;
     this.motionLean = 0;
+    this.motionLeanVisual = 0;
     if (this.gyroConnected && this._accelRoll != null) {
       this.motionOffset = -this._accelRoll;
     }
@@ -1225,6 +1237,15 @@ export class InputManager {
 
   getMotionLean() {
     return this.motionEnabled ? this.motionLean : 0;
+  }
+
+  /**
+   * The same lean without TUNE.mobileTiltGain: what the player is physically
+   * doing. The riders' body lean shows this, so a gentler steering gain
+   * doesn't make the geese look stiff. Physics uses getMotionLean().
+   */
+  getMotionLeanVisual() {
+    return this.motionEnabled ? this.motionLeanVisual : 0;
   }
 
   /** Stamp this controller as "in use right now". */

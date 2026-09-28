@@ -565,7 +565,7 @@ export class HUD {
   }
 
   showCollectibles(level, total) {
-    const icons = { presents: '\uD83C\uDF81', gems: '\uD83D\uDC8E' }; // 🎁 💎
+    const icons = { presents: '\uD83C\uDF81', gems: '\uD83D\uDC8E', coins: '\uD83E\uDE99' }; // 🪙 🎁 💎
     // Kept as a field too: GameRecorder redraws this strip into saved clips.
     this.collectibleIconChar = icons[level.collectibles] || '\u2B50';
     this.collectibleIcon.textContent = this.collectibleIconChar;
@@ -707,7 +707,9 @@ export class HUD {
     // Status text (only when not controlled by countdown)
     let statusText = '';
     let statusColor = '';
-    if (bike.fallen) {
+    if (this.suppressRidePrompts) {
+      // Slingshot: no pedals, and a crash ends the run rather than resetting.
+    } else if (bike.fallen) {
       statusText = 'CRASHED! Resetting...';
       statusColor = '#ff4444';
     } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {

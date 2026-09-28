@@ -134,6 +134,11 @@ const SHARED_PHYSICS = {
   gyroResponseCurve: 1.5,
   steeringFeel: 0.5,
   gyroAccelCorrection: 0.02,
+  // Phone tilt steering gain: the lean a given tilt produces is scaled by
+  // this after the deadzone/response curve. 1 = the original feel; 0.25 =
+  // a quarter as sensitive (requested for a phone player who found tilt too
+  // twitchy). Phone tilt only — controller gyro (WebHID/Steam) is unchanged.
+  mobileTiltGain: 0.25,
   // Shared physics
   leanForce: 12,
   gravityForce: 2.5,

@@ -8,6 +8,8 @@ import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RE
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
+import './build-badge.js';   // preview builds: which commit is on screen
+import { installSlingshotMode } from './slingshot-mode.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
@@ -672,7 +674,7 @@ class Game {
     });
 
     // Game state
-    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults'
+    this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'slingAim' | 'slingTally' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults' | 'slingGarage' | 'slingResults'
     this._finishCinematic = null;
     this.countdownTimer = 0;
     this._lastCountNum = 3;
@@ -695,6 +697,7 @@ class Game {
       onLocalReady: (opts) => this._onLocalReady(opts),
       onVersusReady: (opts) => this._onVersusReady(opts),
       onTouristReady: (opts) => this._onTouristReady(opts),   // E-6
+      onSlingshotReady: () => this._openSlingGarage(),
       input: this.input,
       controllerManager: this.controllerManager,
     });
@@ -945,6 +948,7 @@ class Game {
     this.isTourist = false;               // E-7: a normal solo ride, not a route
     this._touristRoute = null;
     this._hideTouristGoal();
+    this._leaveSlingMode();
     this.bike.applyPreset(this.lobby.selectedPreset);
     this._lobbyBtn.textContent = 'LOBBY';
 
@@ -1852,7 +1856,7 @@ class Game {
     // D-2: no dynamic difficulty on a ranked run. Everyone rides the same road
     // under the same rules, or the times mean nothing. Every ddaManager call
     // site is already null-guarded (grep: `this.ddaManager &&`).
-    this.ddaManager = this._rankedRunActive ? null : new DDAManager(difficultyName);
+    this.ddaManager = (this._rankedRunActive || !this._rideSystemOn('dda')) ? null : new DDAManager(difficultyName);
     this._assistWeight = 0;
 
     // Apply auto-speed from difficulty preset (Chill/Tutorial cruise automatically)
@@ -2011,8 +2015,9 @@ class Game {
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
 
     // Analytics: start ride tracking (only if no ride is already active —
-    // _startCountdown is also called on restart-from-beginning after early crashes)
-    if (!analytics.getCurrentRideId()) {
+    // _startCountdown is also called on restart-from-beginning after early crashes).
+    // Slingshot reports its own launch/result events instead of a ride per launch.
+    if (!analytics.getCurrentRideId() && this._rideSystemOn('rideAnalytics')) {
       analytics.setPage('ride');
       analytics.startRide({
         level: level.id,
@@ -2032,9 +2037,10 @@ class Game {
     this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
     this.hud.showGeese();
     this.world.setRaceMarkers(level, this.camera);
+    if (this.isSlingshot) this._setupSlingRun(level);
 
     // A-6: name the controls for whoever is holding whatever they are holding.
-    this._maybeShowCoachCard(level);
+    if (this._rideSystemOn('coach')) this._maybeShowCoachCard(level);
 
     // B-3: read this ride's best once, so checkpoint splits have something to
     // compare against without touching localStorage mid-ride.
@@ -2044,10 +2050,12 @@ class Game {
     this._dailyStripText = null;
 
     // D-4: record this ride's line, and put out the ghost of the best one.
-    this._startGhost(level);
+    if (this._rideSystemOn('ghost')) this._startGhost(level);
+    else { this._hideGhost(); this._ghostPlayer = null; }
 
     // E-2: plan what the road is going to do to this pair.
-    this._startDisruptions(level, difficultyName);
+    if (this._rideSystemOn('disruptions')) this._startDisruptions(level, difficultyName);
+    else this._disruptions = [];
     if (this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
 
     // Tutorial: place all items from all phases so they're visible ahead
@@ -2387,6 +2395,8 @@ class Game {
   // ============================================================
 
   _resetGame(fromRemote = false, fromBeginning = false) {
+    // Slingshot: every reset is back into the slingshot, never to a checkpoint.
+    if (this.isSlingshot) { this._resetToSling(); return; }
     // Analytics: track reset/restart
     analytics.trackRideEvent('reset', this.bike ? this.bike.distanceTraveled : 0, {
       from_beginning: fromBeginning,
@@ -3046,6 +3056,7 @@ class Game {
   async _onTouristReady({ plan }) {
     if (!plan) return;
     this.mode = 'solo';
+    this._leaveSlingMode();
     this.isTourist = true;
     this._touristRoute = plan;
     this._touristArrived = false;
@@ -3850,7 +3861,9 @@ class Game {
   _onCollect(count) {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
-    this.bike.boostTimer = 3; // 3-second speed boost
+    // Slingshot: Chaos Coins are money, not a boost; the gates are the boost.
+    if (this.isSlingshot && this._slingRun) this._onSlingCoin(count);
+    else this.bike.boostTimer = 3; // 3-second speed boost
     // B-4: the boost was silent apart from a pickup beep, so it read as "you
     // collected a thing" rather than "you are now faster". Pitch up.
     this._playBeep(1200, 0.1);
@@ -4058,6 +4071,8 @@ class Game {
   }
 
   _showVictory(fromRemote = false) {
+    // Slingshot: reaching the stage goal pays out on its own results screen.
+    if (this.isSlingshot) { this._endSlingRun('goal'); return; }
     this.state = 'victory';
     this.hud.hideTimer();
     // The quick menu sits above the result overlays, so retire it with the ride.
@@ -4581,6 +4596,7 @@ class Game {
     this._hideGhost();   // D-4: no ghost hanging around the empty road
     this._hideTouristGoal();   // E-7
     this._touristRoute = null;
+    this._leaveSlingMode();
     this.hud.updateLookahead(null);   // E-1
     this._lookaheadWasOn = false;
     // Clean up tutorial state if active
@@ -5714,7 +5730,10 @@ class Game {
     } else {
       // Lobby / countdown / instructions / victory / gameover: render static scene
       if (this.state === 'countdown') this._updateCountdown(dt);
+      if (this.state === 'slingAim') this._updateSlingAimState(dt);
+      if (this.state === 'slingTally') this._updateSlingTally(dt);
       if (this.state === 'gameover' || this.state === 'victory' || this.state === 'versusResults' ||
+          this.state === 'slingGarage' || this.state === 'slingResults' ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
       if (this.mode === 'versus' && this.versusRigs) {
         // Versus non-playing states (instructions/countdown/results) still
@@ -5735,7 +5754,8 @@ class Game {
         this._renderVersusViews();
       } else {
         this.world.update(this.bike.position, this.bike.roadD, dt);
-        this.chaseCamera.update(this.bike, dt, roadPath);
+        if (this.state === 'slingAim') this._placeSlingCamera();
+        else this.chaseCamera.update(this.bike, dt, roadPath);
         if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
 
         this.renderer.render(this.scene, this.camera);
@@ -5830,17 +5850,18 @@ class Game {
     this.input.bikeSpeed = this.bike.speed;
     this.input.bikeMaxSpeed = TUNE.maxSpeed || 19;
 
-    const pedalResult = this._calibSuppressPedals
+    let pedalResult = this._calibSuppressPedals
       ? { acceleration: 0, braking: false, wobble: 0, crankAngle: this.pedalCtrl.crankAngle || 0 }
       : this.pedalCtrl.update(dt);
-    this._playPedalTaps(this.pedalCtrl);
+    if (this.isSlingshot) pedalResult = this._slingPedal(pedalResult);
+    else this._playPedalTaps(this.pedalCtrl);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
 
     // Sync balance assist to bike model
     this.bike._balanceAssist = this._assistWeight;
 
     const wasFallen = this.bike.fallen;
-    this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this._rideSystemOn('cruise') ? this.autoSpeed : false);
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
@@ -5863,12 +5884,13 @@ class Game {
     }
 
     this._updateItems(dt);
+    if (this.isSlingshot && this.state === 'playing' && this._updateSlingRun(dt)) return;
 
     // Achievements
-    this._checkAchievements(dt);
+    if (this._rideSystemOn('achievements')) this._checkAchievements(dt);
     this._updateCoachCard(dt);
     this._drainPendingGyroCalibration();
-    this._updateGhost(dt);
+    if (this._rideSystemOn('ghost')) this._updateGhost(dt);
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2
     if (this._touristRoute) this._updateTouristGoal();   // E-7
@@ -5884,6 +5906,8 @@ class Game {
       this._updateTutorial(dt);
       // Skip normal game-over on crash during tutorial
     } else {
+      // Slingshot: the tumble is the end of the launch.
+      if (this.isSlingshot && wasFallen && !this.bike.fallen) { this._endSlingRun('crash'); return; }
       // B-2: a crash is a beat, not a menu — see _onCrashRecovered.
       if (wasFallen && !this.bike.fallen) { this._onCrashRecovered(); return; }
     }
@@ -5938,7 +5962,8 @@ class Game {
 
     // Independent rider torsos: captain leans by his own gyro, stoker by hers,
     // while the bike tilts by the merged aggregate above (leanInput).
-    balanceResult.captainLean = captainLean;
+    // (The captain's own torso uses the look-only lean, before the tilt gain.)
+    balanceResult.captainLean = balanceResult.visualLean != null ? balanceResult.visualLean : captainLean;
     balanceResult.stokerLean = this.remoteLean;
 
     const wasFallen = this.bike.fallen;
@@ -6884,12 +6909,13 @@ class Game {
     this._updateLookahead(dt);    // E-1 · the road only the stoker can see
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
-    const stokerLean = this.balanceCtrl.update().leanInput;
+    const stokerBalance = this.balanceCtrl.update();
+    const stokerLean = stokerBalance.leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
     // Independent rider torsos on the stoker's screen too: captain leans by the
     // lean he broadcasts (this.remoteLean), the stoker by her own local lean.
     // applyRemoteState() poses the riders from these targets next frame.
-    this.bike.setRiderLeans(this.remoteLean, stokerLean);
+    this.bike.setRiderLeans(this.remoteLean, stokerBalance.visualLean != null ? stokerBalance.visualLean : stokerLean);
     this.renderer.render(this.scene, this.camera);
     this.recorder.composite(this._buildRecordState(this.pedalCtrl, remoteData));
   }
@@ -8296,6 +8322,7 @@ class Game {
 // stays fully synchronous — top-level await would otherwise defer it a tick.
 if (isTouristMode()) await resolveTouristOrigin();
 
+installSlingshotMode(Game);   // js/slingshot-mode.js
 const game = new Game();
 window._game = game;
 window.perfProbe = perfProbe;

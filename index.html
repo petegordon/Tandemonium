@@ -265,6 +265,112 @@
   }
   #tourist-goal.visible { display: block; }
   #tourist-goal .tourist-togo { color: #ffd23f; }
+  /* Slingshot mode · in-ride strip, garage and results. */
+  #sling-hud {
+    position: fixed; top: 92px; left: 50%; transform: translateX(-50%);
+    display: none; gap: 10px; align-items: center;
+    padding: 4px 12px; border-radius: 999px; background: rgba(0,0,0,0.5);
+    color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap;
+    pointer-events: none; z-index: 55;
+  }
+  #sling-hud.visible { display: flex; }
+  #sling-hud .sling-coins { color: #ffd23f; font-size: 17px; display: inline-block; }
+  #sling-hud .sling-coins.pop { animation: sling-coin-pop 0.45s ease-out; }
+  @keyframes sling-coin-pop { 0% { transform: scale(1); } 35% { transform: scale(1.7); text-shadow: 0 0 12px #ffd23f; } 100% { transform: scale(1); } }
+  .sling-coin-float {
+    position: fixed; left: 50%; top: 118px; transform: translateX(-50%);
+    color: #ffd23f; font-weight: 900; font-size: 20px; pointer-events: none; z-index: 57;
+    text-shadow: 0 0 10px rgba(255,210,63,0.8), 0 2px 4px rgba(0,0,0,0.6);
+    animation: sling-coin-float 0.9s ease-out forwards;
+  }
+  @keyframes sling-coin-float { from { opacity: 1; transform: translate(-50%, 0) scale(1.2); } to { opacity: 0; transform: translate(-50%, -40px) scale(1); } }
+  body.sling-mode #pedal-bar { display: none !important; }   /* no pedaling in this mode */
+  /* Top of the screen, out from under the thumb that is dragging. */
+  #sling-pull {
+    position: fixed; left: 50%; top: 128px; transform: translateX(-50%);
+    width: min(280px, 72vw); display: none; text-align: center; color: #fff;
+    font-size: 13px; font-weight: 800; letter-spacing: 0.5px; pointer-events: none; z-index: 56;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.6);
+  }
+  #sling-pull.visible { display: block; }
+  /* Short landscape screens: the aim camera frames the bike up to the top, so
+     the hint moves to the left edge, beside the fork. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #sling-pull { top: 50%; left: 12px; transform: translateY(-50%); width: 170px; text-align: left; }
+  }
+  #sling-pull .sling-hint { transition: opacity 0.6s; }
+  #sling-pull.pulling .sling-hint { opacity: 0; }
+  #sling-pull .sling-predict { margin-top: 4px; font-size: 13px; color: #ffd23f; min-height: 1em; }
+  #sling-pull.learned .sling-hint { opacity: 0; height: 0; overflow: hidden; }
+  #sling-toast {
+    position: fixed; left: 50%; top: 40%; transform: translateX(-50%);
+    padding: 6px 14px; border-radius: 999px; background: rgba(0,0,0,0.6);
+    color: #fff; font-weight: 800; font-size: 14px; pointer-events: none; z-index: 57;
+    opacity: 0; transition: opacity 0.25s;
+  }
+  #sling-toast.visible { opacity: 1; }
+  #sling-finger {
+    position: fixed; transform: translate(-50%, -100%); display: none;
+    padding: 3px 9px; border-radius: 999px; background: rgba(0,0,0,0.55);
+    color: #ffd23f; font-weight: 900; font-size: 14px; white-space: nowrap;
+    pointer-events: none; z-index: 58;
+  }
+  #sling-finger.visible { display: block; }
+  #sling-tally {
+    position: fixed; left: 50%; top: 30%; transform: translateX(-50%);
+    display: none; text-align: center; color: #fff; pointer-events: none; z-index: 58;
+    text-shadow: 0 3px 10px rgba(0,0,0,0.7);
+  }
+  #sling-tally.visible { display: block; animation: sling-tally-in 0.3s ease-out; }
+  @keyframes sling-tally-in { from { opacity: 0; transform: translate(-50%, 16px) scale(0.9); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+  #sling-tally .tally-label { font-size: 20px; font-weight: 900; color: #ff8a3c; letter-spacing: 2px; }
+  #sling-tally .tally-dist { font-size: 64px; font-weight: 900; line-height: 1; }
+  #sling-tally .tally-coins { font-size: 34px; font-weight: 900; color: #ffd23f; opacity: 0; transition: opacity 0.2s; }
+  #sling-tally .tally-coins.shown { opacity: 1; }
+  #sling-tally .tally-skip { margin-top: 10px; font-size: 12px; opacity: 0.7; }
+  /* Preview builds only (js/build-badge.js): which commit is on screen. */
+  #build-badge {
+    position: fixed; left: 6px; bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+    font: 600 10px/1 ui-monospace, monospace; color: rgba(255,255,255,0.75);
+    background: rgba(0,0,0,0.35); padding: 2px 5px; border-radius: 4px;
+    pointer-events: none; z-index: 9999;
+  }
+  #build-stale {
+    position: fixed; left: 50%; top: calc(8px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+    padding: 8px 14px; border: 0; border-radius: 999px; background: #ffd23f; color: #000;
+    font-weight: 800; font-size: 13px; z-index: 10000; cursor: pointer;
+  }
+  #sling-pull .bar { height: 14px; margin-top: 6px; border-radius: 7px; background: rgba(0,0,0,0.5); overflow: hidden; border: 2px solid rgba(255,255,255,0.7); }
+  #sling-pull .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ffd23f, #ff5a3c); }
+  #sling-garage, #sling-results {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none;
+    flex-direction: column; align-items: center; justify-content: flex-start;
+    z-index: 60; padding: 16px; overflow-y: auto; color: #fff; text-align: center;
+  }
+  #sling-garage.visible, #sling-results.visible { display: flex; }
+  #sling-garage h2, #sling-results h2 { font-size: 24px; margin: 6px 0 2px; color: #ffd23f; }
+  .sling-wallet { font-size: 18px; font-weight: 800; color: #ffd23f; margin-bottom: 4px; }
+  .sling-sub { font-size: 13px; color: rgba(255,255,255,0.75); margin-bottom: 10px; max-width: 420px; }
+  .sling-list { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 420px; margin-bottom: 12px; }
+  .sling-up {
+    display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
+    padding: 8px 10px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.06); color: #fff; font: inherit; cursor: pointer;
+  }
+  .sling-up:focus, .sling-up.gamepad-focus { outline: none; border-color: #ffd23f; }
+  .sling-up[disabled] { opacity: 0.45; cursor: default; }
+  .sling-up .ico { font-size: 22px; }
+  .sling-up .txt { flex: 1; }
+  .sling-up .txt b { display: block; font-size: 14px; }
+  .sling-up .txt small { font-size: 11px; color: rgba(255,255,255,0.65); }
+  .sling-up .pips { font-size: 10px; letter-spacing: 1px; color: #ffd23f; }
+  .sling-up .price { font-weight: 800; color: #ffd23f; white-space: nowrap; }
+  .sling-rows { width: 100%; max-width: 300px; margin: 8px 0 12px; }
+  .sling-rows .row { display: flex; justify-content: space-between; font-size: 14px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  .sling-rows .row.total { font-weight: 800; color: #ffd23f; border-bottom: none; font-size: 16px; }
+  .sling-big { font-size: 40px; font-weight: 800; }
+  .sling-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #44ff66; color: #000; font-size: 12px; font-weight: 800; margin: 2px; }
+  .sling-buttons { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 300px; margin: 6px 0 12px; }
   /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
   #disruption-banner {
     position: fixed;
@@ -5075,6 +5181,13 @@ ON</button>
 <!-- E-7 · how far there is between you, and how much of it is left. -->
 <div id="tourist-goal"></div>
 
+<!-- Slingshot mode · coins this run and distance to the stage goal. -->
+<div id="sling-hud"></div>
+<!-- Slingshot mode · the pull meter while the riders wind the bands. -->
+<div id="sling-pull"><div class="sling-hint">Pull back &middot; aim &middot; let go</div><div class="bar"><i></i></div><div class="sling-predict"></div></div>
+<div id="sling-toast"></div>
+<div id="sling-finger"></div>
+
 <!-- E-2 · the road is about to do something. Both riders see this. -->
 <div id="disruption-banner"></div>
 
@@ -6075,6 +6188,13 @@ ON</button>
     <button class="lobby-btn cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</button>
   </div>
 </div>
+
+<!-- Slingshot mode · spend Chaos Coins between launches. Filled by js/slingshot-ui.js. -->
+<div id="sling-garage"></div>
+<!-- Slingshot mode · one launch's payout. -->
+<div id="sling-results"></div>
+<!-- Slingshot mode · the end-of-ride signal: distance, then the coins it pays. -->
+<div id="sling-tally"></div>
 
 <!-- Demo end overlay (solo demo checkpoint limit reached) -->
 <div id="demo-end-overlay" style="display:none;">
