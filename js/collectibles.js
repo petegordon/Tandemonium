@@ -117,16 +117,6 @@ const THEMES = {
     },
     _video: null // stored on destroy
   },
-  gems: {
-    build(scene) {
-      const geo = new THREE.OctahedronGeometry(0.35, 0);
-      const colors = [0x4444ff, 0xaa44dd, 0x22cc66];
-      return colors.map(c => {
-        const mat = new THREE.MeshPhongMaterial({ color: c, emissive: 0x111122, shininess: 80 });
-        return { geo, mat };
-      });
-    }
-  },
   // Slingshot mode's Chaos Coins: big glossy gold discs stood on edge so the
   // spin flashes the face, each with a soft halo and twinkling star sparkles
   // that orbit with the spin — they have to read from the chase camera.

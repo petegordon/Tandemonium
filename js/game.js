@@ -4115,7 +4115,7 @@ class Game {
     }
 
     if (summary) {
-      const collectIcon = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81'; // 💎 or 🎁
+      const collectIcon = '\uD83C\uDF81'; // 🎁
       const distStr = summary.distance >= 1000 ? (summary.distance / 1000).toFixed(2) + ' km' : summary.distance + ' m';
 
       // Build left and right column stats

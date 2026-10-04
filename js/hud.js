@@ -565,7 +565,7 @@ export class HUD {
   }
 
   showCollectibles(level, total) {
-    const icons = { presents: '\uD83C\uDF81', gems: '\uD83D\uDC8E', coins: '\uD83E\uDE99' }; // 🪙 🎁 💎
+    const icons = { presents: '\uD83C\uDF81', coins: '\uD83E\uDE99' }; // 🎁 🪙
     // Kept as a field too: GameRecorder redraws this strip into saved clips.
     this.collectibleIconChar = icons[level.collectibles] || '\u2B50';
     this.collectibleIcon.textContent = this.collectibleIconChar;

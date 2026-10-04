@@ -68,7 +68,7 @@ db.prepare(`INSERT INTO rides (id, session_id, level, role, difficulty, input_me
   .run('r2', 's3', 'grandma', 'solo', 'chill', 'keyboard', day(1), 1, 175000, 250, 4, null);
 db.prepare(`INSERT INTO rides (id, session_id, level, role, difficulty, input_method, started_at, completed, duration_ms, distance, checkpoints_passed, abandon_reason)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-  .run('r3', 's5', 'castle', 'solo', 'adventurous', 'gamepad', day(1), 0, 45000, 120, 1, 'lobby_button');
+  .run('r3', 's5', 'daily', 'solo', 'adventurous', 'gamepad', day(1), 0, 45000, 120, 1, 'lobby_button');
 
 // crash_recover events (B-2's promise, measured)
 for (const ms of [2100, 2400, 2600]) {
@@ -235,7 +235,7 @@ function upsertPair(lo, hi, { distance = 0, best = {}, streak = 0, bestStreak = 
 // D-9: a guest pair exists alongside, and merges into the account.
 {
   const [lo, hi] = pairKey(1, 'guest:dev-A');
-  upsertPair(lo, hi, { distance: 300, best: { castle: 200000 } });
+  upsertPair(lo, hi, { distance: 300, best: { daily: 200000 } });
   check('a guest pair is its own row', db.prepare('SELECT COUNT(*) AS n FROM pairs').get(), { n: 2 });
 
   // The guest signs in as user 3: their row becomes (1,3).

@@ -56,7 +56,6 @@ function describeCondition(id) {
     collector: 'Collect 10 items',
     hoarder: 'Collect every item in a level',
     home_sweet: "Finish Grandma's House",
-    royal: 'Finish Castle',
     grandma_default: "Finish Grandma's House on the default bike",
     grandma_orange: "Finish Grandma's House on the orange bike",
     grandma_magenta: "Finish Grandma's House on the magenta bike",
@@ -65,7 +64,6 @@ function describeCondition(id) {
     grandma_green: "Finish Grandma's House on the green bike",
     grandma_yellow: "Finish Grandma's House on the yellow bike",
     perfect_1k: "Finish Grandma's House with no crashes or restarts",
-    perfect_5k: 'Finish Castle with no crashes or restarts',
     team_player: '80%+ safe riding in multiplayer',
     // F-1 · the loops the value & appeal plan built. The seven grandma_* entries
     // above are retired from the in-game list but stay here: a Steam
