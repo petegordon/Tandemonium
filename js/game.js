@@ -21,7 +21,6 @@ import { BEAT_WINDOW_S } from './pedal-scoring.js';
 /** E-2 · what the banner says while an event is actually happening. */
 const ACTIVE_TEXT = {
   gust: '💨 HOLD IT',
-  goose: '🦢 COAST!',
   cobbles: '🪨 ROUGH ROAD'
 };
 import { makePlacementSalt } from './daily-seed.js';
@@ -3073,7 +3072,6 @@ class Game {
     this._disruptions = this._overrideDisruptions(this._disruptions, level);
     this._activeDisruption = null;
     this._disruptionEndsAt = 0;
-    this._coastRequiredUntil = 0;
     if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
     if (this.hud.updateDisruption) this.hud.updateDisruption(null);
     this._cobbleHapticAt = 0;
@@ -3099,8 +3097,7 @@ class Game {
    *
    *   ?disrupt=cobbles   one cobbled stretch at 70 m, nothing else
    *   ?disrupt=gust      one gust at 70 m
-   *   ?disrupt=goose     one goose at 70 m
-   *   ?disrupt=all       all three, 70 m apart, in that order
+   *   ?disrupt=all       both, 70 m apart, in that order
    *
    * Off unless the parameter is present, so it cannot reach a player.
    */
@@ -3114,7 +3111,7 @@ class Game {
     const first = 70;
     const spacing = 70;
     const kinds = want === 'all'
-      ? [KIND.COBBLES, KIND.GUST, KIND.GOOSE]
+      ? [KIND.COBBLES, KIND.GUST]
       : [want].filter(k => Object.values(KIND).includes(k));
     if (kinds.length === 0) return planned;
 
@@ -3181,9 +3178,6 @@ class Game {
         // envelope so it arrives and passes rather than switching on.
         const env = gustEnvelope(this._activeDisruption.progress);
         this.bike.leanVelocity += (this._gustDirection || 1) * GUST_FORCE * env * dt;
-      } else if (kind === KIND.GOOSE) {
-        // Handled in the pedal path: a tap during the coast window costs speed.
-        this._coastRequiredUntil = performance.now() + 200;
       }
     }
 
@@ -3231,7 +3225,6 @@ class Game {
     this._gustDirection = (Math.floor(event.atM) % 2 === 0) ? 1 : -1;
     if (this.audioEngine) {
       if (event.kind === KIND.GUST) this.audioEngine.tone(140, 0.6, { type: 'sawtooth', gain: 0.09 });
-      else if (event.kind === KIND.GOOSE) this.audioEngine.honkBurst(1);
       else this.audioEngine.tone(90, 0.35, { type: 'square', gain: 0.07 });
     }
     hapticBump();
@@ -3251,20 +3244,11 @@ class Game {
    * playing and the bike rough — so they call this on the way out.
    */
   _clearDisruptionEffects() {
-    this._coastRequiredUntil = 0;
     if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
     if (this.bike) this.bike._roughness = 0;
     if (this.gustVisual) this.gustVisual.setWind(this._gustDirection || 1, 0);
     if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(false);
     if (this.hud && this.hud.updateDisruption) this.hud.updateDisruption(null);
-  }
-
-  /**
-   * E-2 · the goose crossing: pedalling through it costs you. Called from the
-   * tap path so it applies to whichever seat tapped.
-   */
-  _isCoastRequired() {
-    return this._coastRequiredUntil > 0 && performance.now() < this._coastRequiredUntil;
   }
 
   // ============================================================
@@ -6038,15 +6022,6 @@ class Game {
   _playPedalTaps(ctrl) {
     const events = ctrl && ctrl.tapEvents;
     if (!events || events.length === 0) return;
-
-    // E-2 · the goose crossing: doing nothing, in time, together. A tap during
-    // the coast window scrubs speed and honks — the goose was right there.
-    if (events.length && this._isCoastRequired()) {
-      this.bike.speed *= 0.75;
-      if (this.audioEngine) this.audioEngine.honkBurst(1);
-      hapticBump();
-      this._coastBrokenThisRide = (this._coastBrokenThisRide || 0) + 1;
-    }
 
     for (const ev of events) {
       // A-6: the first real stroke releases the first-segment clock and feeds
