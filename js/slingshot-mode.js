@@ -31,7 +31,7 @@ class SlingshotMode {
   //   instead of a countdown, in its own 'slingAim' state with a fixed camera:
   //   drag back to stretch the bands, left/right to shift and aim, let go to
   //   fire (keyboard and gamepad too);
-  // - the ride systems that don't belong (achievements, ghost, disruptions,
+  // - the ride systems that don't belong (achievements, disruptions,
   //   DDA, coach card, cruise control, per-ride analytics) stay off;
   // - no pedaling: after launch the riders only steer, and the bike coasts on
   //   low drag until it stalls, crashes or reaches the goal;

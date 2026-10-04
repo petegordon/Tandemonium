@@ -285,7 +285,7 @@ async function submitScore(request, env, corsOrigin, userId) {
   }
 
   // Validate level ID
-  const VALID_LEVELS = ['grandma', 'castle'];
+  const VALID_LEVELS = ['grandma'];
   if (!VALID_LEVELS.includes(levelId)) {
     return jsonResponse({ error: 'Invalid level' }, 400, corsOrigin);
   }

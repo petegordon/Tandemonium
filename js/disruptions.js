@@ -11,9 +11,6 @@
 //
 //   GUST     a crosswind shoves the lean for two seconds. Both riders have to
 //            correct, and their corrections average, so they have to agree.
-//   GOOSE    one crosses the road: no pedalling for 1.5 s or you clip it. A
-//            coast is the hardest thing to do together, because doing nothing
-//            in time is still doing something in time.
 //   COBBLES  the beat window tightens from 250 ms to 150 ms for four seconds.
 //            The rhythm they have is suddenly not good enough.
 //
@@ -21,13 +18,16 @@
 // events with no network traffic at all, and every event is telegraphed three
 // seconds ahead — a disruption you could not see coming is not a challenge,
 // it is noise.
+//
+// (A third kind, the GOOSE crossing — coast for 1.5 s — was removed in #400.
+// The roadside geese in js/geese.js are scenery and are unaffected.)
 
 import { deriveSeed, SALT } from './daily-seed.js';
 
-export const KIND = { GUST: 'gust', GOOSE: 'goose', COBBLES: 'cobbles' };
+export const KIND = { GUST: 'gust', COBBLES: 'cobbles' };
 
 /** How long each kind lasts once it starts, in seconds. */
-export const DURATION = { gust: 2.0, goose: 1.5, cobbles: 4.0 };
+export const DURATION = { gust: 2.0, cobbles: 4.0 };
 
 /** How much warning the rider gets. */
 export const TELEGRAPH_S = 3.0;
@@ -38,8 +38,7 @@ export const COBBLES_WINDOW_S = 0.15;
 /**
  * How long a cobbled stretch is, in METRES.
  *
- * The other two disruptions are moments — a gust blows, a goose crosses — so
- * their length is a duration. Cobbles is a piece of road, and a piece of road
+ * A gust is a moment, so its length is a duration. Cobbles is a piece of road, and a piece of road
  * has a length: the same stones however fast you take them. This also lets the
  * surface be laid down at the start of the ride and seen from far back.
  */
@@ -139,14 +138,13 @@ export function planDisruptions({ seed, distance, difficulty, checkpoints = [] }
 
   // Draw the kinds WITHOUT replacement.
   //
-  // Each event used to pick independently from the three, so a ride could draw
-  // the same one twice — and adventurous only gets two. Today's Road drew gust,
-  // gust: the cobbles and the goose were built, tested and shipped, and nobody
-  // riding today would ever have met either of them. A third of adventurous
-  // rides had that hole in them. Shuffling instead means a ride shows as many
-  // different things as it has room for, and only repeats once it has run out
-  // of new ones (daredevil, at three, sees each exactly once).
-  const kinds = shuffled([KIND.GUST, KIND.GOOSE, KIND.COBBLES], rng);
+  // Each event used to pick independently, so a ride could draw the same one
+  // twice — and adventurous only gets two. Today's Road drew gust, gust, and
+  // nobody riding it that day could meet the cobbles at all. Shuffling instead
+  // means a ride shows as many different things as it has room for, and only
+  // repeats once it has run out of new ones (adventurous, at two, sees each
+  // exactly once; daredevil's third repeats the first).
+  const kinds = shuffled([KIND.GUST, KIND.COBBLES], rng);
 
   // Space the events evenly through the ride and jitter within each slot, so
   // they never bunch and never all land in the same place every time.
@@ -218,11 +216,9 @@ export function disruptionAt(events, distanceM, activeUntilM) {
 }
 
 /** The banner text for a telegraphed event. */
-/** The banner text for a telegraphed event. */
 export function telegraphText(kind) {
   return {
     [KIND.GUST]: '💨 GUST AHEAD',
-    [KIND.GOOSE]: '🦢 GOOSE CROSSING — COAST!',
     [KIND.COBBLES]: '🪨 ROUGH ROAD AHEAD — COBBLES'
   }[kind] || '';
 }

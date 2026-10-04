@@ -26,7 +26,7 @@ test('the retired colour achievements are still defined, not deleted', () => {
 test('the Steam sync script describes every achievement', () => {
   const sync = fs.readFileSync(new URL('../../scripts/sync-steam-achievements.js', import.meta.url), 'utf8');
   const ids = [...src.matchAll(/\{\s*id: '([^']+)'/g)].map(m => m[1]);
-  assert.ok(ids.length >= 25, `only found ${ids.length} achievements`);
+  assert.ok(ids.length >= 23, `only found ${ids.length} achievements`);
   for (const id of ids) {
     assert.ok(sync.includes(id + ':'), `${id} has no Steam description`);
   }

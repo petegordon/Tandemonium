@@ -30,15 +30,6 @@ export const LEVELS = [
     description: 'Grandma called — she needs her presents!'
   },
   {
-    id: 'castle',
-    name: 'The Castle',
-    distance: 500,
-    collectibles: 'gems',
-    checkpointInterval: 125,
-    icon: '\uD83C\uDFF0',        // 🏰
-    description: 'The King awaits! Collect gems on the road to glory!'
-  },
-  {
     // C-2 · Today's Road. The seed is NOT stored here: it is resolved at
     // selection time by js/daily-ride.js, so this object never carries a stale
     // date from whenever the page happened to load.

@@ -1504,14 +1504,13 @@ export class Lobby {
     container.innerHTML = '';
     const buttons = [];
 
-    // Level unlock requirements: Castle requires finishing Grandma's House
-    const LEVEL_UNLOCK = { castle: 'home_sweet' };
+    // Level unlock requirements: { levelId: achievementId }. None today —
+    // the Castle (the only locked level) was removed in #400.
+    const LEVEL_UNLOCK = {};
 
-    // C-4 · the demo ships Tutorial, Grandma's and Today's Road. The Castle
-    // stays shut and points at the store instead of at an achievement the
-    // player could earn in the next three minutes: a demo that hands over its
-    // second level has nothing left to sell.
-    const demoLocked = this.isDemoBuild ? new Set(['castle']) : new Set();
+    // C-4 · levels the demo shows locked, pointing at the store. Empty since
+    // the Castle was removed (#400).
+    const demoLocked = new Set();
 
     // Check if gyro is active but uncalibrated (show recommendation, don't lock)
     const needsTuning = this._needsMotionTuning();
@@ -2886,7 +2885,7 @@ export class Lobby {
   }
 
   _renderEntries(entries, level, myId) {
-    const collectibleEmoji = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81';
+    const collectibleEmoji = '\uD83C\uDF81';
 
     return entries.map((e, i) => {
       const isYou = myId && e.user_id === myId;
