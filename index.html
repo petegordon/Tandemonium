@@ -2509,6 +2509,26 @@
     opacity: 0.35;
     border-color: rgba(255,255,255,0.08);
   }
+  /* #401: sections, counter progress, hidden + full-game-only badges */
+  .lb-ach-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.75);
+    text-align: left;
+    margin: 6px 4px 6px;
+  }
+  .lb-ach-section-count {
+    font-weight: 400;
+    color: rgba(255,255,255,0.45);
+  }
+  .lb-ach-progress {
+    font-size: 8px;
+    color: rgba(255,220,120,0.9);
+    margin-top: 2px;
+  }
+  .lb-ach-item.locked:has(.lb-ach-progress) { opacity: 0.6; }
+  .lb-ach-item.secret .lb-ach-name { font-style: italic; }
+  .lb-ach-item.demo-locked { border-style: dashed; }
   .lb-ach-count {
     font-size: 11px;
     color: rgba(255,255,255,0.5);
