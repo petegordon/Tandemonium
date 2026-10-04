@@ -41,7 +41,8 @@
     "smoke:slingshot": "node scripts/smoke-slingshot.mjs",
     "smoke:slingshot-aim": "node scripts/smoke-slingshot-aim.mjs",
     "smoke:edition": "node scripts/smoke-edition.mjs",
-    "smoke:economy": "node scripts/smoke-economy.mjs"
+    "smoke:economy": "node scripts/smoke-economy.mjs",
+    "smoke:achievements": "node scripts/smoke-achievements.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

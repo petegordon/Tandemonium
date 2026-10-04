@@ -255,6 +255,37 @@ export function planCoinTrails(distance, seed = 1, { start = 60, halfWidth = 1.8
   return out;
 }
 
+/**
+ * How many whole trails a run swept (#401 Full Trail): runs of COINS_PER_TRAIL
+ * coins on one line, TRAIL_STEP apart, every one collected. items: the
+ * CollectibleManager's items in course order ({ absoluteD, lateralOffset, collected }).
+ * A trail the ramp filter cut short never counts.
+ */
+export function completedTrails(items) {
+  let full = 0, i = 0;
+  const list = Array.isArray(items) ? items : [];
+  while (i < list.length) {
+    let j = i + 1;
+    while (j < list.length &&
+      Math.abs(list[j].lateralOffset - list[i].lateralOffset) < 1e-6 &&
+      Math.abs(list[j].absoluteD - list[j - 1].absoluteD - TRAIL_STEP) < 0.01) j++;
+    const run = list.slice(i, j);
+    if (run.length === COINS_PER_TRAIL && run.every(c => c.collected)) full++;
+    i = j;
+  }
+  return full;
+}
+
+/** #401 Straight Shooter: this far from the slingshot without steering. */
+export const STRAIGHT_SHOT_M = 300;
+/** Lean input below this is a resting stick or a drifting gyro, not steering. */
+export const STEER_DEADZONE = 0.25;
+
+/** distance: the run's; steerAt: run distance at the first steer, or null. */
+export function isStraightShot(distance, steerAt) {
+  return distance >= STRAIGHT_SHOT_M && (steerAt == null || steerAt >= STRAIGHT_SHOT_M);
+}
+
 /** Three lanes, in the road's own lateral convention (the collectibles'). */
 export const LANES = [-1.6, 0, 1.6];
 
