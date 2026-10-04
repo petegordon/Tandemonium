@@ -348,6 +348,9 @@ export class Lobby {
     this._stepBack.set(this.hostStep, document.getElementById('btn-back-role-host'));
     this._stepBack.set(this.joinStep, document.getElementById('btn-back-role-join'));
     this._stepBack.set(this.versusStep, document.getElementById('btn-back-versus'));
+    // #400: Tourist's inline Back is hidden by .lobby-step .lobby-back like every
+    // step's; registering it drives the fixed bottom Back (and gamepad B).
+    this._stepBack.set(this.touristStep, document.getElementById('btn-back-tourist'));
 
     // Fixed back button (non-gamepad, stays at bottom of steps column)
     this._fixedBackBtn = document.getElementById('lobby-fixed-back');
@@ -718,6 +721,7 @@ export class Lobby {
     if (step === this.levelStep || step === this.versusStep || step === this.roomStep) {
       this._refreshRecordLines();
     }
+    if (step === this.levelStep) this._refreshTouristCard();
 
     // Local-MP JOIN RIDE monitor: run only while the captain host page is visible.
     if (step === this.hostStep) {
@@ -751,7 +755,9 @@ export class Lobby {
     // Hide bike carousel on level step (use that space for level cards + difficulty)
     const carousel = document.getElementById('bike-carousel');
     const lobbyCard = document.querySelector('.lobby-card');
-    const hideCarousel = (step === this.levelStep);
+    // Tourist opens from the level list (#400): the bike was already chosen
+    // there, and on a phone the carousel pushes the route form off-screen.
+    const hideCarousel = (step === this.levelStep || step === this.touristStep);
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
     if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
     const lobbyEl = document.getElementById('lobby');
@@ -1404,10 +1410,29 @@ export class Lobby {
     return getEditionRules().tourist && !!getMapsApiKey();
   }
 
+  /** #400: "Map Tourist" alone, "Map Tourists" when two ride it. */
+  _touristLabel() {
+    return this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
+      ? 'Map Tourists' : 'Map Tourist';
+  }
+
+  /** The SOLO list is shared with couch co-op, so name the card as it is shown. */
+  _refreshTouristCard() {
+    const name = document.querySelector('#level-cards .level-card-tourist .level-card-name');
+    if (name) name.textContent = this._touristLabel();
+  }
+
   _openTouristStep() {
     // Who rides it: alone, two on this screen, or the room (captain plans).
     this._touristFor = this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
       ? this._pendingMode : 'solo';
+    const together = this._touristFor !== 'solo';
+    const prompt = this.touristStep.querySelector('.lobby-prompt');
+    if (prompt) prompt.textContent = together ? 'Map Tourists · Where are you two?' : 'Map Tourist · Where to?';
+    const fromIn = document.getElementById('tourist-from');
+    const toIn = document.getElementById('tourist-to');
+    if (fromIn) fromIn.placeholder = together ? 'Your address or city' : 'Start: address or city';
+    if (toIn) toIn.placeholder = together ? 'Their address or city' : 'Destination: address or city';
     if (this._touristFor === 'solo') this._pendingMode = 'tourist';
     this._forceWizard = false;
     this._showStep(this.touristStep);
@@ -1714,9 +1739,9 @@ export class Lobby {
       card.innerHTML =
         '<div class="level-card-top">' +
           '<span class="level-card-icon">&#128205;</span>' +
-          '<span class="level-card-name">Ride the distance between you</span>' +
+          '<span class="level-card-name">' + this._touristLabel() + '</span>' +
         '</div>' +
-        '<div class="level-card-desc">Two addresses become a ride through real streets.</div>';
+        '<div class="level-card-desc">Two places on the map become a ride through real streets.</div>';
       card.addEventListener('click', () => this._openTouristStep());
       container.appendChild(card);
       buttons.push(card);

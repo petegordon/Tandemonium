@@ -128,9 +128,9 @@ export function planRoute(from, to, { stepM = 500 } = {}) {
   };
 }
 
-/** "Ride the distance between you: 1,209 km" — the sentence this is all for. */
+/** "1,209 km of real streets" — the mode is named Map Tourist(s) (#400). */
 export function headlineFor(realM) {
-  return `Ride the distance between you: ${formatDistance(realM)}`;
+  return `${formatDistance(realM)} of real streets`;
 }
 
 /** Metres as a human number: 850 m, 2.4 km, 1,209 km. */
