@@ -2882,6 +2882,16 @@ class Game {
     return html;
   }
 
+  /**
+   * #398 · a ranked run is over (finish, END RIDE / DNF, quit, disconnect):
+   * nothing is ranked any more, and the RANKED RUN badge must not follow the
+   * player back into the lobby.
+   */
+  _endRankedRun() {
+    this._rankedRunActive = false;
+    if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(false);
+  }
+
   /** D-2 · spend the day's ranked run as an unfinished attempt. */
   _recordRankedDnf() {
     const level = this.lobby.selectedLevel;
@@ -2893,7 +2903,7 @@ class Game {
       safety: this.safetyMode,
       partner: this._partnerKey()
     });
-    this._rankedRunActive = false;
+    this._endRankedRun();
     try {
       analytics.trackEvent('daily_finish', {
         key: level.key, mode: this._dailyRunMode(), ranked: true, dnf: true,
@@ -4585,6 +4595,7 @@ class Game {
   }
 
   _returnToLobby() {
+    this._endRankedRun();   // #398
     if (this._coachVisible) this._dismissCoachCard();
     this._hideGhost();   // D-4: no ghost hanging around the empty road
     this._hideTouristGoal();   // E-7
@@ -4726,6 +4737,7 @@ class Game {
   }
 
   _returnToRoom() {
+    this._endRankedRun();   // #398
     this._musicBtn.style.display = 'none';
     this.quickMenu.setVisible(false);
     if (!this.net) {
