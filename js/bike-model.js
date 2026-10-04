@@ -949,7 +949,8 @@ export class BikeModel {
       this.heading = pt.heading;
     } else {
       this.position.set(0, 0, 0);
-      this.heading = 0;
+      // #400: a Map Tourist route faces its destination from the first reset.
+      this.heading = this.startHeading || 0;
     }
 
     this.distanceTraveled = distance;

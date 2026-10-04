@@ -43,7 +43,7 @@ import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, weeklyKey } from './daily-seed.js';
-import { planRoute, skipLabel, isValidPoint } from './tourist-route.js';
+import { planRoute, planExplore, skipLabel, isValidPoint } from './tourist-route.js';
 import { getMapsApiKey, geocodeAddress } from './tourist-config.js';
 import {
   resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
@@ -1385,13 +1385,15 @@ export class Lobby {
     try {
       const raw = localStorage.getItem('tandemonium_tourist_route');
       const saved = raw ? JSON.parse(raw) : null;
-      return saved && isValidPoint(saved.from) && isValidPoint(saved.to) ? saved : null;
+      // #400: `to` is optional — one address is an open-world ride.
+      if (!saved || !isValidPoint(saved.from)) return null;
+      return saved.to == null || isValidPoint(saved.to) ? saved : null;
     } catch { return null; }
   }
 
-  _saveRoute(from, to) {
+  _saveRoute(from, to = null) {
     try {
-      localStorage.setItem('tandemonium_tourist_route', JSON.stringify({ from, to, at: Date.now() }));
+      localStorage.setItem('tandemonium_tourist_route', JSON.stringify({ from, to: to || null, at: Date.now() }));
     } catch { /* private mode: the ride still works, it is just not remembered */ }
   }
 
@@ -1428,11 +1430,11 @@ export class Lobby {
       ? this._pendingMode : 'solo';
     const together = this._touristFor !== 'solo';
     const prompt = this.touristStep.querySelector('.lobby-prompt');
-    if (prompt) prompt.textContent = together ? 'Map Tourists · Where are you two?' : 'Map Tourist · Where to?';
+    if (prompt) prompt.textContent = together ? 'Map Tourists · Where will you ride?' : 'Map Tourist · Where will you ride?';
     const fromIn = document.getElementById('tourist-from');
     const toIn = document.getElementById('tourist-to');
-    if (fromIn) fromIn.placeholder = together ? 'Your address or city' : 'Start: address or city';
-    if (toIn) toIn.placeholder = together ? 'Their address or city' : 'Destination: address or city';
+    if (fromIn) fromIn.placeholder = 'Address or place';
+    if (toIn) toIn.placeholder = together ? "Your partner's address or city" : 'Second address or city';
     if (this._touristFor === 'solo') this._pendingMode = 'tourist';
     this._forceWizard = false;
     this._showStep(this.touristStep);
@@ -1454,14 +1456,37 @@ export class Lobby {
     const to = document.getElementById('tourist-to');
     const go = document.getElementById('btn-tourist-ride');
     const onEdit = () => {
-      const ready = from.value.trim().length > 2 && to.value.trim().length > 2;
+      const two = this._touristTwoAddresses();
+      const ready = from.value.trim().length > 2 && (!two || to.value.trim().length > 2);
       go.disabled = !ready;
-      go.textContent = 'PLAN THE RIDE';
+      go.textContent = two ? 'PLAN THE RIDE' : 'EXPLORE HERE';
       this._touristPlan = null;
+      const preview = document.getElementById('tourist-preview');
+      if (preview) preview.textContent = '';
     };
+    this._onTouristEdit = onEdit;
     from.addEventListener('input', onEdit);
     to.addEventListener('input', onEdit);
     go.addEventListener('click', () => this._planTouristRide());
+
+    // #400: one address explores around it; a second one plans a route.
+    const add = document.getElementById('btn-tourist-add-to');
+    const remove = document.getElementById('btn-tourist-remove-to');
+    if (add) add.addEventListener('click', () => { this._setTouristTwoAddresses(true); to.focus(); onEdit(); });
+    if (remove) remove.addEventListener('click', () => { to.value = ''; this._setTouristTwoAddresses(false); onEdit(); });
+  }
+
+  /** #400 · is the second-address field showing? */
+  _touristTwoAddresses() {
+    const row = document.getElementById('tourist-to-row');
+    return !!row && row.style.display !== 'none';
+  }
+
+  _setTouristTwoAddresses(on) {
+    const row = document.getElementById('tourist-to-row');
+    const add = document.getElementById('btn-tourist-add-to');
+    if (row) row.style.display = on ? '' : 'none';
+    if (add) add.style.display = on ? 'none' : '';
   }
 
   /** E-8 · offer the last route back, so a repeat ride is one button. */
@@ -1471,15 +1496,20 @@ export class Lobby {
     const go = document.getElementById('btn-tourist-ride');
     if (!saved) {
       if (preview) preview.textContent = '';
+      this._setTouristTwoAddresses(false);
+      if (this._onTouristEdit) this._onTouristEdit();
       return;
     }
     document.getElementById('tourist-from').value = saved.from.label || '';
-    document.getElementById('tourist-to').value = saved.to.label || '';
+    document.getElementById('tourist-to').value = saved.to ? (saved.to.label || '') : '';
+    this._setTouristTwoAddresses(!!saved.to);
     if (go) go.disabled = false;
-    const plan = planRoute(saved.from, saved.to);
+    const plan = saved.to ? planRoute(saved.from, saved.to) : planExplore(saved.from);
     if (preview) {
-      preview.innerHTML = 'Again? <strong>' + this._escape(saved.from.label) + '</strong> to <strong>' +
-        this._escape(saved.to.label) + '</strong><br>' + this._escape(plan.headline);
+      preview.innerHTML = saved.to
+        ? 'Again? <strong>' + this._escape(saved.from.label) + '</strong> to <strong>' +
+          this._escape(saved.to.label) + '</strong><br>' + this._escape(plan.headline)
+        : 'Again? <strong>' + this._escape(saved.from.label) + '</strong><br>Open world · ride anywhere nearby';
     }
     this._touristPlan = plan;
     if (go) go.textContent = 'RIDE IT AGAIN';
@@ -1496,6 +1526,7 @@ export class Lobby {
     const preview = document.getElementById('tourist-preview');
     const fromText = document.getElementById('tourist-from').value;
     const toText = document.getElementById('tourist-to').value;
+    const two = this._touristTwoAddresses() && toText.trim().length > 0;
 
     // Second press with a plan already on screen: ride it.
     if (this._touristPlan) {
@@ -1506,6 +1537,26 @@ export class Lobby {
     errorEl.textContent = '';
     go.disabled = true;
     go.textContent = 'FINDING…';
+
+    // #400 · one address: find it and ride straight in (open world). No
+    // two-press reveal — there is no distance to show.
+    if (!two) {
+      try {
+        const from = await geocodeAddress(fromText);
+        if (!isValidPoint(from)) throw new Error('could not place that address');
+        this._saveRoute(from, null);
+        analytics.trackEvent('tourist_explore_planned');
+        go.disabled = false;
+        go.textContent = 'EXPLORE HERE';
+        this._startTouristRide(planExplore(from));
+      } catch (err) {
+        errorEl.textContent = String(err && err.message || err).replace(/^Error:s*/, '');
+        go.disabled = false;
+        go.textContent = 'EXPLORE HERE';
+        analytics.trackEvent('tourist_route_failed');
+      }
+      return;
+    }
 
     try {
       const [from, to] = await Promise.all([
@@ -1551,7 +1602,7 @@ export class Lobby {
       }
       this._roomTouristPlan = plan;
       this._placementSalt = makePlacementSalt();
-      this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.to));
+      this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.explore ? null : plan.to));
       this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, null, true));
       analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000), mode: 'online' });
       this._transitionToGame();
@@ -4217,8 +4268,10 @@ export class Lobby {
       // #400 · Stoker: the captain planned a Tourist route. Rebuild the same
       // plan from the two end points (pure, deterministic); held until the
       // flagged START_RIDE that follows.
-      this._stokerTouristPlan = isValidPoint(profile.from) && isValidPoint(profile.to)
-        ? planRoute(profile.from, profile.to) : null;
+      // A null `to` is an open-world ride around `from` (#400).
+      this._stokerTouristPlan = !isValidPoint(profile.from) ? null
+        : isValidPoint(profile.to) ? planRoute(profile.from, profile.to)
+        : profile.to == null ? planExplore(profile.from) : null;
     } else if (profile.type === ROOM_MSG.START_RIDE) {
       // #400: a Tourist ride carries its route; any other ride clears it.
       // A flagged start without a usable route still goes to the barrier (as

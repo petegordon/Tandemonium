@@ -234,6 +234,14 @@
     font-size: 15px;
   }
   .tourist-input::placeholder { color: rgba(255,255,255,0.35); }
+  .tourist-to-row { display: flex; gap: 6px; align-items: center; }
+  .tourist-to-row .tourist-input { flex: 1; min-width: 0; }
+  .tourist-remove-to, .tourist-add-to {
+    background: none; border: 1px dashed rgba(255,255,255,0.3); color: rgba(255,255,255,0.75);
+    border-radius: 8px; cursor: pointer; font-weight: 700;
+  }
+  .tourist-remove-to { width: 34px; height: 34px; font-size: 18px; border-style: solid; flex: none; }
+  .tourist-add-to { padding: 8px 10px; font-size: 12px; letter-spacing: 0.5px; }
   .tourist-error {
     min-height: 15px;
     font-size: 12px;
@@ -5669,8 +5677,13 @@ ON</button>
           <div id="tourist-form">
             <input id="tourist-from" class="tourist-input" type="text"
                    placeholder="Your address or city" autocomplete="off" spellcheck="false">
-            <input id="tourist-to" class="tourist-input" type="text"
-                   placeholder="Their address or city" autocomplete="off" spellcheck="false">
+            <!-- #400: one address = open world; a second one makes it a route. -->
+            <div id="tourist-to-row" class="tourist-to-row" style="display:none;">
+              <input id="tourist-to" class="tourist-input" type="text"
+                     placeholder="Second address or city" autocomplete="off" spellcheck="false">
+              <button type="button" class="tourist-remove-to" id="btn-tourist-remove-to" title="Remove the second address">&times;</button>
+            </div>
+            <button type="button" class="tourist-add-to" id="btn-tourist-add-to">+ ADD A SECOND ADDRESS</button>
             <div id="tourist-error" class="tourist-error"></div>
             <div id="tourist-preview" class="tourist-preview"></div>
             <button class="lobby-btn lobby-btn-accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</button>

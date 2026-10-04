@@ -60,8 +60,8 @@ import { World } from './world.js';
 // exists to prevent. It is loaded on demand instead, only when ?mode=tourist
 // asks for it, and a failure to load degrades to the normal world with a
 // message rather than a blank screen.
-import { isTouristMode, getMapsApiKey, resolveTouristOrigin } from './tourist-config.js';
-import { formatDistance, skipLabel } from './tourist-route.js';
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt } from './tourist-config.js';
+import { formatDistance, skipLabel, headingForBearing } from './tourist-route.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
 const TOURIST_READY_TIMEOUT_MS = 20000;
@@ -3096,8 +3096,9 @@ class Game {
     this._touristArrived = false;
 
     // The ride is the ridable part of the route; the REAL distance is what the
-    // HUD says, because that number is the entire feature.
-    this._touristGoalM = plan.route.ridableM;
+    // HUD says, because that number is the entire feature. An open-world ride
+    // (#400, one address) has no destination.
+    this._touristGoalM = plan.explore ? Infinity : plan.route.ridableM;
 
     // A tourist ride needs a LEVEL, because every piece of ride machinery —
     // the race manager, the finish, the records, the disruption schedule —
@@ -3106,11 +3107,13 @@ class Game {
     // you out on the way to Denver, and a personal best written against the
     // wrong road. It is a pseudo-level: no timer, one checkpoint at the end,
     // and a distance that IS the destination.
+    // Open world: a "finish" far past the free-roam radius, so it never comes.
+    const rideM = plan.explore ? 100000 : Math.max(50, Math.round(plan.route.ridableM));
     this.lobby.selectedLevel = {
       id: 'tourist',
-      name: plan.to.label || 'Their door',
-      distance: Math.max(50, Math.round(plan.route.ridableM)),
-      checkpointInterval: Math.max(50, Math.round(plan.route.ridableM)),
+      name: plan.explore ? 'Map Tourist' : (plan.to.label || 'Their door'),
+      distance: rideM,
+      checkpointInterval: rideM,
       collectibles: 'none',
       icon: '📍',
       description: plan.headline,
@@ -3124,8 +3127,17 @@ class Game {
     const apiKey = getMapsApiKey();
     this._touristPending = true;
     this._showTouristGoal();
-    const ready = await this._loadTouristWorld(apiKey, isCurrent);
+    // #400: anchor the world at the first address (it used to always be the
+    // default Scioto Mile origin, whatever was typed). The elevation lookup has
+    // its own timeouts and falls back to a wide ground probe.
+    let origin = null;
+    try { origin = await resolveOriginAt(plan.from); } catch { origin = null; }
+    if (!isCurrent()) return false;
+    const ready = await this._loadTouristWorld(apiKey, isCurrent, origin);
     if (!ready) return false;
+    // A route faces its destination; open world faces north.
+    this.bike.startHeading = plan.explore ? 0 : headingForBearing(plan.bearing);
+    this.bike.heading = this.bike.startHeading;   // in case the bike was reset already
 
     if (this.world && this.world.setRoute) {
       this.world.setRoute(plan);
@@ -3160,8 +3172,10 @@ class Game {
     if (!el) return;
     const ridden = this.bike ? this.bike.distanceTraveled : 0;
     const left = Math.max(0, this._touristGoalM - ridden);
-    const text = this._touristRoute.headline +
-      ' · <span class="tourist-togo">' + formatDistance(left) + ' to go</span>';
+    const text = this._touristRoute.explore
+      ? this._touristRoute.headline + ' · <span class="tourist-togo">' + formatDistance(ridden) + ' ridden</span>'
+      : this._touristRoute.headline +
+        ' · <span class="tourist-togo">' + formatDistance(left) + ' to go</span>';
     if (text !== this._prevTouristGoalText) {
       this._prevTouristGoalText = text;
       el.innerHTML = text;
@@ -3219,7 +3233,7 @@ class Game {
    * billing — the player keeps the procedural world and is told why, rather
    * than staring at a blank screen.
    */
-  async _loadTouristWorld(apiKey, isCurrent = () => true) {
+  async _loadTouristWorld(apiKey, isCurrent = () => true, origin = null) {
     // #400: never two tiles worlds at once — a second route rides from the
     // procedural world, not on top of the last route's tiles.
     this._restoreProceduralWorld(true);
@@ -3231,7 +3245,7 @@ class Game {
       if (!isCurrent()) return false;
       // TouristWorld retunes the fog and the far plane; keep them to restore.
       this._preTouristView = { fog: this.scene.fog, far: this.camera.far };
-      const tourist = new TouristWorld(this.scene, this.camera, this.renderer, { apiKey });
+      const tourist = new TouristWorld(this.scene, this.camera, this.renderer, { apiKey, origin });
       // Park (do not dispose) the procedural world before the tiles take over
       // vertical placement, or two grounds fight over the bike. It comes back
       // intact in _restoreProceduralWorld when the tourist ride is over.
@@ -3274,7 +3288,7 @@ class Game {
     proc.unpark();
     this.world = proc;
     this._proceduralWorld = null;
-    if (this.bike) this.bike.roadPath = proc.roadPath;
+    if (this.bike) { this.bike.roadPath = proc.roadPath; this.bike.startHeading = 0; }
     this._restoreTouristView();
     this.isTourist = false;
     this._touristPending = false;

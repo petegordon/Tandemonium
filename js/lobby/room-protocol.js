@@ -64,7 +64,8 @@ export const RoomProtocol = {
   touristPlan: (from, to) => ({
     type: ROOM_MSG.TOURIST_PLAN,
     from: { lat: from.lat, lon: from.lon, label: String(from.label || '') },
-    to: { lat: to.lat, lon: to.lon, label: String(to.label || '') },
+    // #400: null = an open-world ride around `from` (one address).
+    to: to ? { lat: to.lat, lon: to.lon, label: String(to.label || '') } : null,
   }),
 
   /** #400 · in-ride ready barrier for co-op Tourist. */

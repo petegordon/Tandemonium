@@ -265,7 +265,61 @@ console.log('couch co-op:', JSON.stringify(local));
 const localOk = local.card && local.touristFor === 'local' && local.mode === 'local' && local.hasP2 &&
   local.state === 'instructions' && local.kind === 'TouristWorld' && local.level === 'tourist';
 
-const checks = { swapOk, coopOk, failOk, timeoutOk, localOk, noPageErrors: errors.length === 0 };
+// ── 5. #400 · one address = open world at THAT place; two = a route from the first ──
+const where = await open(true);
+const anchor = await where.evaluate(async () => {
+  const g = window._game, l = g.lobby;
+  const { planRoute, planExplore, headingForBearing } = await import('./js/tourist-route.js');
+  const home = { lat: 39.9451, lon: -82.7905, label: '7958 Norman St, Pickerington, OH' };
+  const cbus = { lat: 39.9612, lon: -82.9988, label: 'Columbus, OH' };
+
+  // The form: one field by default, a button for the second.
+  try { localStorage.removeItem('tandemonium_tourist_route'); } catch {}
+  l._pendingMode = 'solo';
+  l._openTouristStep();
+  const vis = id => document.getElementById(id).style.display !== 'none';
+  const go = document.getElementById('btn-tourist-ride');
+  document.getElementById('tourist-from').value = 'Pickerington, OH';
+  document.getElementById('tourist-from').dispatchEvent(new Event('input'));
+  const form1 = { toRow: vis('tourist-to-row'), add: vis('btn-tourist-add-to'), go: go.textContent, enabled: !go.disabled };
+  document.getElementById('btn-tourist-add-to').click();
+  const form2 = { toRow: vis('tourist-to-row'), add: vis('btn-tourist-add-to'), go: go.textContent, enabled: !go.disabled };
+  document.getElementById('btn-tourist-remove-to').click();
+  const form3 = { toRow: vis('tourist-to-row'), go: go.textContent };
+
+  const route = planRoute(home, cbus);
+  await g._onTouristReady({ plan: route });
+  const r = {
+    lat: g.world._origin.lat, lon: g.world._origin.lon,
+    startHeading: g.bike.startHeading, want: headingForBearing(route.bearing), heading: g.bike.heading,
+  };
+  g._returnToLobby();
+  const ex = planExplore(home);
+  await g._onTouristReady({ plan: ex });
+  g._updateTouristGoal();
+  const e = {
+    lat: g.world._origin.lat, lon: g.world._origin.lon, radius: g.world._maxRadiusM,
+    levelDistance: l.selectedLevel.distance, levelName: l.selectedLevel.name,
+    goal: document.getElementById('tourist-goal').textContent, startHeading: g.bike.startHeading,
+  };
+  g._returnToLobby();
+  return { form1, form2, form3, route: r, explore: e, after: g.bike.startHeading };
+});
+console.log('anchor + form:', JSON.stringify(anchor, null, 1));
+const near = (a, b) => Math.abs(a - b) < 1e-9;
+const anchorOk =
+  !anchor.form1.toRow && anchor.form1.add && anchor.form1.go === 'EXPLORE HERE' && anchor.form1.enabled &&
+  anchor.form2.toRow && !anchor.form2.add && anchor.form2.go === 'PLAN THE RIDE' && !anchor.form2.enabled &&
+  !anchor.form3.toRow && anchor.form3.go === 'EXPLORE HERE' &&
+  near(anchor.route.lat, 39.9451) && near(anchor.route.lon, -82.7905) &&
+  near(anchor.route.startHeading, anchor.route.want) && near(anchor.route.heading, anchor.route.want) &&
+  near(anchor.explore.lat, 39.9451) && anchor.explore.radius === 3000 &&
+  anchor.explore.levelDistance === 100000 && anchor.explore.levelName === 'Map Tourist' &&
+  /Exploring 7958 Norman St/.test(anchor.explore.goal) && /ridden/.test(anchor.explore.goal) &&
+  anchor.explore.startHeading === 0 && anchor.after === 0;
+await where.close();
+
+const checks = { swapOk, coopOk, failOk, timeoutOk, localOk, anchorOk, noPageErrors: errors.length === 0 };
 console.log(checks);
 const ok = Object.values(checks).every(Boolean);
 console.log(ok ? '✔ tourist rides hand the real road back; co-op Tourist meets at a ready barrier that never hangs'

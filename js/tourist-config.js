@@ -254,11 +254,37 @@ export async function resolveTouristOrigin() {
     return;
   }
 
+  const found = await lookupElevation(p.lat, p.lon);
+  if (found) {
+    _resolvedOrigin = { ...base, height: found.elevation + ANCHOR_MARGIN, anchored: true, ...found };
+  }
+}
+
+/**
+ * #400 · the anchor for a Map Tourist ride that starts at a geocoded address
+ * (the lobby form), with the same elevation lookup and fallbacks as ?lat/?lon.
+ * Without this every ride anchored at TOURIST_ORIGIN (Scioto Mile), whatever
+ * address was typed.
+ * @param {{lat:number, lon:number, label?:string}} point
+ */
+export async function resolveOriginAt(point) {
+  const base = {
+    name: (point && point.label) || `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`,
+    lat: point.lat, lon: point.lon, heading: 0, custom: true
+  };
+  const found = await lookupElevation(point.lat, point.lon);
+  return found
+    ? { ...base, height: found.elevation + ANCHOR_MARGIN, anchored: true, ...found }
+    : { ...base, height: TOURIST_CUSTOM_HEIGHT, anchored: false };   // wide probe
+}
+
+/** Ground elevation for an anchor: Google first, open-meteo second, else null. */
+async function lookupElevation(lat, lon) {
   let elevation = NaN;
   let source = null;
   try {
     elevation = await withTimeout(
-      elevationFromGoogle(p.lat, p.lon, getMapsApiKey()), 'Google ElevationService');
+      elevationFromGoogle(lat, lon, getMapsApiKey()), 'Google ElevationService');
     source = 'Google ElevationService';
   } catch (err) {
     console.warn(`[Tourist] Google ElevationService unavailable (${err.message}). ` +
@@ -266,7 +292,7 @@ export async function resolveTouristOrigin() {
       'and allowed in its API restrictions. Trying the fallback source.');
     try {
       elevation = await withTimeout(
-        elevationFromOpenMeteo(p.lat, p.lon), 'fallback elevation lookup');
+        elevationFromOpenMeteo(lat, lon), 'fallback elevation lookup');
       source = 'open-meteo fallback';
     } catch (err2) {
       // Non-fatal: getTouristOrigin() falls back to the blind guess + wide probe.
@@ -276,9 +302,7 @@ export async function resolveTouristOrigin() {
     }
   }
 
-  if (Number.isFinite(elevation)) {
-    _resolvedOrigin = { ...base, height: elevation + ANCHOR_MARGIN, anchored: true, elevation, source };
-  }
+  return Number.isFinite(elevation) ? { elevation, source } : null;
 }
 
 /**
