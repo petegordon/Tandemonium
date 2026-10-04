@@ -82,6 +82,7 @@ import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 import { isDemoEdition } from './edition.js';
+import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -1139,6 +1140,7 @@ class Game {
 
     // Media call: when partner's stream arrives (video + audio)
     this.net.onRemoteStream = (remoteStream) => {
+      if (!isMediaEnabled()) return; // no partner video/voice without room media
       this.recorder.setPartnerStream(remoteStream);
       // If partner camera is off, show avatar instead of black video
       if (!this.lobby._partnerCameraOn && this.lobby._partnerAvatarUrl) {
@@ -2086,7 +2088,7 @@ class Game {
     // Passing the engine lets startBuffer attach its mix destination directly.
     this.recorder.setLabels(this.mode);
     this.recorder.startBuffer(this.audioCtx, this.lobby.audioActive, this.audioEngine);
-    if (this.lobby.cameraActive) {
+    if (this.lobby.cameraActive && isMediaEnabled()) {
       this.recorder.startSelfie(this.net && this.net._localMediaStream);
     } else if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
       const user = this.lobby.auth.getUser();
@@ -4794,6 +4796,7 @@ class Game {
   }
 
   async _acquireLocalMedia() {
+    if (!isMediaEnabled()) return;
     if (this.net._localMediaStream) return;
     const constraints = {};
     if (this.lobby.cameraActive) constraints.video = { facingMode: 'user', width: 240, height: 240 };
@@ -4807,6 +4810,7 @@ class Game {
   }
 
   _initiateMediaCall() {
+    if (!isMediaEnabled()) return;
     if (!this.net || !this.net.peer) return;
     clearTimeout(this._mediaRetryTimeout);
     if (!this._mediaRetryCount) this._mediaRetryCount = 0;
