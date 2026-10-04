@@ -2,7 +2,7 @@
 // smoke-helping-hand.mjs — #403: retries get easier, visibly.
 //
 // On a practice Today's Road, fail checkpoint 2 again and again:
-//   attempts 1-3 ride as designed; attempt 4 gets 🪿 Lady Victoria (half gusts,
+//   attempts 1-3 ride as designed; attempt 4 gets 💨 Lady Victoria (half gusts,
 //   1.25× time); attempt 5 gets 🎩 Sir Winston (no gusts, 1.5× time, safety on);
 //   after the 5th failure the Royal Shortcut is offered — including when that
 //   failure is a timeout. Passing the checkpoint resets it. An assisted finish
@@ -166,12 +166,12 @@ check('attempt 3 unchanged', a3.tier === 0 && a3.badge === '' && Math.abs(a3.pus
 
 // failure 3 (crash modal) → attempt 4: Lady Victoria
 seen = await failByCrash(page);
-check('failure 3: 🪿 announced on the crash screen', /🪿 Lady Victoria sends a tailwind/.test(seen.announce) && seen.skip === '', seen);
+check('failure 3: 💨 announced on the crash screen', /💨 Lady Victoria sends a tailwind/.test(seen.announce) && seen.skip === '', seen);
 await retryFromModal(page);
 const a4 = await probe(page);
 console.log('  attempt 4:', JSON.stringify(a4));
-check('attempt 4: 🪿 badge, half gusts, 1.25× time, safety untouched',
-  a4.tier === 1 && a4.badge === '🪿' && Math.abs(a4.push - base.push * 0.5) < 1e-6
+check('attempt 4: 💨 badge, half gusts, 1.25× time, safety untouched',
+  a4.tier === 1 && a4.badge === '💨' && Math.abs(a4.push - base.push * 0.5) < 1e-6
   && Math.abs(a4.timeTotal - base.timeTotal * 1.25) < 1e-6 && a4.safety === base.safety);
 
 // failure 4 (timeout) → attempt 5: Sir Winston
@@ -287,8 +287,8 @@ const seg1 = await rp.evaluate(() => {
            badge: document.getElementById('help-badge').textContent };
 });
 console.log('  segment 1 after 3 failures:', JSON.stringify(seg1));
-check('segment 1: the count survives the restart from the start line, attempt 4 is 🪿',
-  seg1.passed === 0 && seg1.failures === 3 && seg1.tier === 1 && seg1.scale === 1.25 && seg1.badge === '🪿');
+check('segment 1: the count survives the restart from the start line, attempt 4 is 💨',
+  seg1.passed === 0 && seg1.failures === 3 && seg1.tier === 1 && seg1.scale === 1.25 && seg1.badge === '💨');
 
 const ok = checks.every(c => c.ok);
 console.log(ok ? `✔ helping hand: ${checks.length} checks passed` : `✖ helping hand: ${checks.filter(c => !c.ok).length} of ${checks.length} checks failed`);

@@ -28,7 +28,7 @@ export const HELP_SKIP_AFTER = 5;
 
 export const HELP_TIERS = Object.freeze({
   0: Object.freeze({ tier: 0, gustScale: 1, timeScale: 1, safety: false, icon: '', label: '' }),
-  1: Object.freeze({ tier: 1, gustScale: 0.5, timeScale: 1.25, safety: false, icon: '🪿', label: '🪿 Lady Victoria sends a tailwind' }),
+  1: Object.freeze({ tier: 1, gustScale: 0.5, timeScale: 1.25, safety: false, icon: '💨', label: '💨 Lady Victoria sends a tailwind' }),
   2: Object.freeze({ tier: 2, gustScale: 0, timeScale: 1.5, safety: true, icon: '🎩', label: '🎩 Sir Winston clears the road' }),
 });
 
