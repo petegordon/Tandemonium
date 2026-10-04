@@ -20,6 +20,10 @@
 //   'stageCleared'  { stage }  (the stage just cleared)
 //   'bigAir'        { seconds }
 //   'jackpot'       { stage }
+//   'ride'          { mode, kind, newRide, metres, finished, earned }  every
+//                   regular-ride payout (metres/earned: only what is new)
+//   'slingLaunch'   { stage, daily }   the bands let go
+//   'slingRun'      { distance, record, jackpot, fullTrails, straight, daily }
 // Pure rules: js/economy.js (scoreRide), js/wallet.js, js/slingshot.js.
 
 import * as analytics from './analytics.js';
@@ -99,7 +103,8 @@ class EconomyMode {
     const ride = this._rideSnapshot(kind, opts);
     this._lastRecordOutcome = null;
     if (!ride) return null;
-    if (!this._rideLedger || this._rideLedger.ref !== ride.ref) this._rideLedger = { ref: ride.ref, ledger: newLedger() };
+    const newRide = !this._rideLedger || this._rideLedger.ref !== ride.ref;
+    if (newRide) this._rideLedger = { ref: ride.ref, ledger: newLedger() };
     const step = ledgerStep(this._rideLedger.ledger, ride);
     this._rideLedger.ledger = step.ledger;
     const w = this._loadWallet();
@@ -108,6 +113,9 @@ class EconomyMode {
       this._depositCoins(score.total, { mode: ride.mode, kind });
       try { analytics.trackEvent('ride_coins', { mode: ride.mode, kind, earned: score.total, metres: score.metres }); } catch (_) { /* offline */ }
     }
+    // #401: the ride itself — distance, rides, days, Payday — for the achievements.
+    this._economyEvent('ride', { mode: ride.mode, kind, newRide, metres: score.metres,
+                                 finished: !!step.pay.finished, earned: score.total });
     return { score, wallet: this._wallet };
   }
 
