@@ -39,6 +39,8 @@ const waitState = (s, timeout = 120000) => page.waitForFunction((s) => window._g
 await page.evaluateOnNewDocument(() => {
   try { localStorage.setItem('tandemonium_slingshot', JSON.stringify({ coins: 100, best: 0, runs: 0, stage: 1, lv: {} })); } catch (e) {}
 });
+// D6 (#400): a returning player; the first-launch tutorial has its own smoke (smoke:tutorial).
+await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
 await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => !!window._game, { timeout: 30000 });
 await page.click('#tap-to-start').catch(() => {});

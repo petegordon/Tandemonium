@@ -50,6 +50,7 @@ import {
   rankedResult, computeStreak, formatDayLabel, formatClock
 } from './daily-ride.js';
 import * as records from './records.js';
+import { isTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achievements.js';
@@ -857,6 +858,17 @@ export class Lobby {
       this._syncMotionState();
       this._pendingMode = 'solo';
       this._detectAndSetInputMethod();
+      // D6 (#400): a first-time player goes straight into the tutorial
+      // (SKIP is on screen there) instead of a level list they can't read yet.
+      const tutorial = LEVELS.find(l => l.isTutorial);
+      if (tutorial && !isTutorialDone(tutorialStore())) {
+        this.selectedLevel = tutorial;
+        this._forceWizard = true;
+        this._updateDifficultyVisibility(tutorial.id);
+        analytics.trackEvent('tutorial_auto_start');
+        this._startRide();
+        return;
+      }
       this._showStep(this.levelStep);
     });
 

@@ -9,9 +9,9 @@ export const LEVELS = [
   {
     id: 'tutorial',
     name: 'Tutorial',
-    distance: 225,
+    distance: 150,             // D6 (#400): two phases end at 145 m (was 225)
     collectibles: 'presents',
-    checkpointInterval: 225,   // single checkpoint = entire ride
+    checkpointInterval: 150,   // single checkpoint = entire ride
     icon: '\uD83D\uDEB4',        // 🚴
     description: 'Master pedaling and steering!',
     isTutorial: true,

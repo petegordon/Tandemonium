@@ -31,6 +31,7 @@ import {
   buildShareStrip, browserStore
 } from './daily-ride.js';
 import { getLevelById, LEVELS, getInstructions, getMedals } from './race-config.js';
+import { markTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
@@ -92,12 +93,15 @@ const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 // presentation avoids a jarring freeze-flash for blips. See #320.
 const RECONNECT_GRACE_MS = 2000;
 
-// Tutorial phase boundaries — sequential layout so all phases are visible ahead
+// Tutorial phase boundaries — sequential layout so all phases are visible ahead.
+// D6 (#400): cut to about a minute — pedal (runway) → lean to collect → both
+// together. The separate pylon-weave phase is gone; its recovery measurement
+// (smoothing) now comes from the combined phase, which also alternates sides.
 const TUTORIAL_PHASES = {
   1: { runwayStart: 0,   contentStart: 30,  contentEnd: 80  },
-  2: { runwayStart: 80,  contentStart: 105, contentEnd: 158 },
-  3: { runwayStart: 158, contentStart: 180, contentEnd: 225 }
+  2: { runwayStart: 80,  contentStart: 100, contentEnd: 145 }
 };
+const TUTORIAL_LAST_PHASE = 2;
 
 // Per-phase item layouts at absolute sequential distances
 const TUTORIAL_ITEMS = {
@@ -112,26 +116,16 @@ const TUTORIAL_ITEMS = {
     obstacles: []
   },
   2: {
-    // Pylon weaving — 12m spacing for more reaction time
-    collectibles: [],
-    obstacles: [
-      { d: 112, offset: -1.0 },
-      { d: 124, offset: 1.0 },
-      { d: 136, offset: -1.0 },
-      { d: 148, offset: 1.0 }
-    ]
-  },
-  3: {
     // Combines collecting + dodging — alternating sides, wider offsets
     collectibles: [
-      { d: 185, offset: 1.8 },
-      { d: 200, offset: -1.8 },
-      { d: 215, offset: 1.8 }
+      { d: 105, offset: 1.8 },
+      { d: 120, offset: -1.8 },
+      { d: 135, offset: 1.8 }
     ],
     obstacles: [
-      { d: 192, offset: -1.0 },
-      { d: 207, offset: 1.0 },
-      { d: 222, offset: -1.0 }
+      { d: 112, offset: -1.0 },
+      { d: 127, offset: 1.0 },
+      { d: 142, offset: -1.0 }
     ]
   }
 };
@@ -515,6 +509,10 @@ class Game {
         this._returnToLobby();
       }
     });
+
+    // D6 (#400) · the tutorial's way out, and its one-tap way on.
+    this._onTap('btn-tutorial-skip', () => this._skipTutorial());
+    this._onTap('btn-tutorial-next', () => this._nextAfterTutorial());
 
     // B-5 · end-screen calls to action (wishlist / send a link).
     this._wireCtaButtons();
@@ -948,9 +946,17 @@ class Game {
     // Load saved tuning on every solo start
     this._loadSavedTuning();
 
-    // Tutorial is launched explicitly via "Learn to Ride" button, not auto-forced
+    // Tutorial: from its level card, or the first SOLO of a new player (D6)
     if (this.lobby._forceWizard) {
       this._startTutorialRide();
+      return;
+    }
+
+    // D6 (#400): NEXT: GRANDMA'S on the tutorial-complete screen is the tap
+    // that starts the ride — no second "tap to start" screen.
+    if (this._autoStartNextRide) {
+      this._autoStartNextRide = false;
+      this._startCountdown();
       return;
     }
 
@@ -2753,6 +2759,8 @@ class Game {
     if (offRoadWarn) offRoadWarn.classList.remove('visible');
     const calibOverlay = document.getElementById('calib-flow-overlay');
     if (calibOverlay) calibOverlay.style.display = 'none';
+    const tutSkip = document.getElementById('btn-tutorial-skip');
+    if (tutSkip) tutSkip.classList.remove('visible');
     if (this._stokerCTATimer) { clearTimeout(this._stokerCTATimer); this._stokerCTATimer = null; }
     this._clearOverlayButtons();
   }
@@ -7223,13 +7231,22 @@ class Game {
     const gauge = document.getElementById('calib-flow-gauge');
     const label = document.getElementById('calib-flow-label');
     const icon = document.getElementById('calib-flow-icon');
-    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+    // D6: SKIP TUTORIAL ends the tutorial mid-flow; every wait below then
+    // resolves at once so the flow unwinds within a frame instead of
+    // finishing invisibly over the next ~30 s.
+    const skipped = () => !this._tutorialActive;
+    const wait = (ms) => new Promise(r => {
+      const t0 = performance.now();
+      const tick = () => (skipped() || performance.now() - t0 >= ms) ? r() : setTimeout(tick, 50);
+      tick();
+    });
 
     // Helper: wait for player to hit a lean target
     const waitForLean = (dir, threshold) => new Promise((resolve) => {
       let resolved = false;
       const check = () => {
         if (resolved) return;
+        if (skipped()) { resolved = true; resolve(); return; }
         const lean = this.input.getMotionLean();
         const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
         const offset = this.input.motionOffset || 0;
@@ -7358,6 +7375,11 @@ class Game {
       }
       // Safety timeout
       setTimeout(() => { if (!resolved) { resolved = true; resolve(); } }, 10000);
+      // D6: SKIP TUTORIAL ends this step too
+      const skipIv = setInterval(() => {
+        if (!resolved && skipped()) { resolved = true; resolve(); }
+        if (resolved) clearInterval(skipIv);
+      }, 50);
     });
     // Restore pointer-events
     overlay.style.pointerEvents = 'none';
@@ -7375,6 +7397,48 @@ class Game {
     // Restore state
     this.autoSpeed = prevAutoSpeed;
     this._calibSuppressPedals = false;
+  }
+
+  /** D6 (#400) · SKIP TUTORIAL: counts as done, back to the solo level list. */
+  _skipTutorial() {
+    if (!this._tutorialActive) return;
+    markTutorialDone(tutorialStore(), 'skip');
+    const durationSec = this._tutorialStartTime ? (performance.now() - this._tutorialStartTime) / 1000 : 0;
+    analytics.trackEvent('tutorial_skip', {
+      phase: this._tutTargetPhase, duration_sec: Math.round(durationSec)
+    });
+    if (analytics.getCurrentRideId()) {
+      analytics.endRide({
+        completed: false,
+        abandon_reason: 'tutorial_skip',
+        distance: this.bike ? this.bike.distanceTraveled : 0,
+      });
+    }
+    if (this.net) { this._endTutorialRide(); return; }   // co-op: back to the room
+    // The level list should offer the first real ride, not the tutorial again.
+    this.lobby.selectedLevel = LEVELS.find(l => !l.isTutorial) || this.lobby.selectedLevel;
+    this.lobby.selectedDifficulty = 'chill';
+    this._returnToLobby();
+    this.lobby._pendingMode = 'solo';
+    this.lobby._showStep(this.lobby.levelStep);
+  }
+
+  /**
+   * D6 (#400) · NEXT: GRANDMA'S — one tap from the tutorial-complete screen
+   * into the first real level (solo). Saves the steering feel exactly like the
+   * LOBBY button, then starts the ride without the "tap to start" screen.
+   */
+  _nextAfterTutorial() {
+    const next = LEVELS.find(l => l.id === 'grandma') || LEVELS.find(l => !l.isTutorial);
+    this._finishTutorial();   // saves feel; solo → lobby level list
+    if (this.net || !next || this.state !== 'lobby') return;
+    this.lobby.selectedLevel = next;
+    this.lobby._forceWizard = false;
+    this.lobby._pendingMode = 'solo';
+    this.lobby._updateDifficultyVisibility(next.id);
+    analytics.trackEvent('tutorial_next', { level: next.id });
+    this._autoStartNextRide = true;
+    this.lobby._startRide();
   }
 
   async _startTutorialRide() {
@@ -7405,8 +7469,7 @@ class Game {
     // Per-phase auto-correction strength ramp
     this._tutPhaseAutoCorrectionStrengths = {
       1: 6.0,   // very strong self-righting
-      2: 4.5,   // moderate
-      3: 3.0    // standard Chill level
+      2: 4.5    // moderate (the combined finale; was a third phase at 3.0)
     };
 
     // Use tutorial level with dedicated tutorial difficulty
@@ -7436,6 +7499,9 @@ class Game {
 
     // Show tutorial UI
     document.getElementById('btn-tutorial-continue').onclick = () => this._finishTutorial();
+    // D6: SKIP is always on screen in a solo tutorial (co-op keeps the pair together)
+    const skipBtn = document.getElementById('btn-tutorial-skip');
+    if (skipBtn) skipBtn.classList.toggle('visible', this.mode === 'solo');
 
     // Analytics: tutorial start
     analytics.setPage('tutorial');
@@ -7483,6 +7549,7 @@ class Game {
       const flavorNum = document.getElementById('countdown-flavor-num');
       if (flavorNum) flavorNum.style.visibility = 'hidden';
       await this._runCalibrationFlow();
+      if (!this._tutorialActive) return;   // D6: skipped during calibration
 
       // Resume countdown from 3 seconds (captain starts immediately, stoker waits for EVT_COUNTDOWN)
       if (flavorNum) flavorNum.style.visibility = '';
@@ -7710,13 +7777,13 @@ class Game {
         this._tutorialCollected += this.collectibleManager.countCollectedInRange(pi.contentStart, pi.contentEnd);
       }
       this._tutCompletedPhases.add(tp);
-      if (tp < 3) {
+      if (tp < TUTORIAL_LAST_PHASE) {
         // Advance to next phase — keep riding forward
         this._tutTargetPhase = tp + 1;
         this._tutorialPhase = -1; // will show runway prompt
         this._tutOffRoadTime = 0;
       } else {
-        // All 3 phases done
+        // All phases done
         this._tutorialComplete();
       }
     }
@@ -7776,22 +7843,19 @@ class Game {
       prompts = {
         0: 'Pedal together to build speed!',
         1: 'Captain, ' + steerVerb.toLowerCase() + ' to collect the presents!',
-        2: 'Captain, dodge the pylons!',
-        3: 'Put it all together! Collect and dodge!'
+        2: 'Put it all together! Collect and dodge!'
       };
     } else if (isStoker) {
       prompts = {
         0: 'Pedal together to build speed!',
         1: 'Keep pedaling — captain is steering!',
-        2: 'Keep pedaling — captain is dodging!',
-        3: 'Great teamwork! Keep the rhythm going!'
+        2: 'Great teamwork! Keep the rhythm going!'
       };
     } else {
       prompts = {
         0: 'Pedal to build speed!',
         1: steerVerb + ' to collect the presents!',
-        2: 'Dodge the pylons!',
-        3: 'Put it all together! Collect and dodge!'
+        2: 'Put it all together! Collect and dodge!'
       };
     }
     text.textContent = prompts[phase] || '';
@@ -7809,7 +7873,7 @@ class Game {
     // Combine items from all phases into a single set so everything is visible ahead
     const allCollectibles = [];
     const allObstacles = [];
-    for (let p = 1; p <= 3; p++) {
+    for (let p = 1; p <= TUTORIAL_LAST_PHASE; p++) {
       allCollectibles.push(...TUTORIAL_ITEMS[p].collectibles);
       allObstacles.push(...TUTORIAL_ITEMS[p].obstacles);
     }
@@ -7926,6 +7990,7 @@ class Game {
     setTimeout(() => {
       crashEl.classList.remove('visible');
       document.getElementById('tutorial-crash-text').textContent = 'Oops! Try again';
+      if (!this._tutorialActive) return;   // D6: skipped meanwhile
       // Reset bike to start of this phase's runway
       this.bike.resetToDistance(pi.runwayStart);
       this.bike.distanceTraveled = pi.runwayStart;
@@ -7977,7 +8042,7 @@ class Game {
       const hasMotion = this.input.motionEnabled || this.input.gyroConnected;
       const action = this.input.gyroConnected ? 'leans' : hasMotion ? 'tilts' : 'moves';
       hintEl.textContent = 'Try smaller ' + action + ' \u2014 gentle corrections!';
-    } else if (phase === 3) {
+    } else if (phase === TUTORIAL_LAST_PHASE) {
       hintEl.textContent = 'Watch ahead and steer early!';
     } else {
       hintEl.textContent = 'Keep pedaling to stay stable!';
@@ -7990,6 +8055,7 @@ class Game {
     const pi = TUTORIAL_PHASES[phase];
     setTimeout(() => {
       crashEl.classList.remove('visible');
+      if (!this._tutorialActive) return;   // D6: skipped meanwhile
       // Reset bike to start of this phase's runway
       this.bike.resetToDistance(pi.runwayStart);
       this.bike.distanceTraveled = pi.runwayStart;
@@ -8080,7 +8146,7 @@ class Game {
     if (this._tutorialAttempts > 1) {
       html += 'Attempts: ' + this._tutorialAttempts + ' \u2014 Practice makes perfect!<br>';
     }
-    const totalPresents = TUTORIAL_ITEMS[1].collectibles.length + TUTORIAL_ITEMS[2].collectibles.length + TUTORIAL_ITEMS[3].collectibles.length;
+    const totalPresents = Object.values(TUTORIAL_ITEMS).reduce((n, p) => n + p.collectibles.length, 0);
     html += 'Presents collected: ' + this._tutorialCollected + '/' + totalPresents + '<br>';
     html += '<span class="calibrated">Steering calibrated to your style!</span>';
     statsEl.innerHTML = html;
@@ -8099,15 +8165,29 @@ class Game {
       steamCta.style.display = '';
     }
 
+    // D6 (#400): finished — never auto-sent here again — and no SKIP now.
+    markTutorialDone(tutorialStore(), 'complete');
+    const skipBtn = document.getElementById('btn-tutorial-skip');
+    if (skipBtn) skipBtn.classList.remove('visible');
+
+    // Solo: NEXT: GRANDMA'S is the primary, LOBBY the secondary. Co-op keeps
+    // the single "Let's RIDE!" back to the room.
+    const nextBtn = document.getElementById('btn-tutorial-next');
+    const continueBtn = document.getElementById('btn-tutorial-continue');
+    const soloNext = !this.net && !!nextBtn;
+    if (nextBtn) nextBtn.style.display = soloNext ? '' : 'none';
+    continueBtn.textContent = soloNext ? 'LOBBY' : "Let's RIDE!";
+    continueBtn.classList.toggle('lobby-btn-accent', !soloNext);
+
     document.getElementById('tutorial-complete').classList.add('visible');
 
-    // Register buttons for gamepad navigation (Steam Store link + continue)
+    // Register buttons for gamepad navigation (Steam Store link + next + continue)
     const steamStoreBtn = document.getElementById('btn-steam-store');
-    const continueBtn = document.getElementById('btn-tutorial-continue');
     const overlayBtns = [];
     if (steamStoreBtn) overlayBtns.push(steamStoreBtn);
+    if (soloNext) overlayBtns.push(nextBtn);
     overlayBtns.push(continueBtn);
-    this._setOverlayButtons(overlayBtns, overlayBtns.length - 1);
+    this._setOverlayButtons(overlayBtns, soloNext ? overlayBtns.indexOf(nextBtn) : overlayBtns.length - 1);
     this._overlayFocus.setSlider(slider);
 
     if (isMobile) {
@@ -8139,7 +8219,11 @@ class Game {
     if (steamCta) steamCta.style.display = 'none';
 
     // Change button to return to room (captain controls next action)
+    markTutorialDone(tutorialStore(), 'complete');   // D6
+    const nextBtn = document.getElementById('btn-tutorial-next');
+    if (nextBtn) nextBtn.style.display = 'none';
     const continueBtn = document.getElementById('btn-tutorial-continue');
+    continueBtn.classList.add('lobby-btn-accent');
     continueBtn.textContent = 'Continue';
     continueBtn.onclick = () => {
       document.getElementById('tutorial-complete').classList.remove('visible');
