@@ -36,7 +36,7 @@
     "smoke:ping": "node scripts/smoke-sync-ping.mjs",
     "smoke:disruptions": "node scripts/smoke-disruptions.mjs",
     "gen-tourist-key": "node scripts/gen-tourist-key.js",
-    "smoke:tourist": "node scripts/smoke-tourist-route.mjs",
+    "smoke:tourist": "node scripts/smoke-tourist-route.mjs && node scripts/smoke-tourist-coop.mjs",
     "smoke:layout": "node scripts/smoke-hud-layout.mjs",
     "smoke:slingshot": "node scripts/smoke-slingshot.mjs",
     "smoke:slingshot-aim": "node scripts/smoke-slingshot-aim.mjs",
