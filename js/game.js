@@ -10,7 +10,6 @@ import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
 import './build-badge.js';   // preview builds: which commit is on screen
 import { installSlingshotMode } from './slingshot-mode.js';
-import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
 import {
@@ -724,18 +723,7 @@ class Game {
     }, {
       isOn: () => this.controllerHud.isOn(),
       run: () => this.controllerHud.toggle(),
-    }, {
-      // D-4 · the ghost. Only offered when there is a best to ride against.
-      available: () => !!this._ghostPlayer || !!this._ghostOff,
-      isOn: () => !this._ghostOff,
-      run: () => {
-        this._ghostOff = !this._ghostOff;
-        if (this._ghostOff) this._hideGhost();
-        else this._startGhost(this.lobby.selectedLevel || {});
-        try { localStorage.setItem('tandemonium_ghost_off', this._ghostOff ? '1' : ''); } catch {}
-      },
     });
-    try { this._ghostOff = !!localStorage.getItem('tandemonium_ghost_off'); } catch { this._ghostOff = false; }
 
     // Volume changes from lobby slider
     this.lobby.onVolumeChanged = (vol) => {
@@ -2042,10 +2030,6 @@ class Game {
     // D-3: no stale strip from a previous ride on a different road.
     this._dailyStripText = null;
 
-    // D-4: record this ride's line, and put out the ghost of the best one.
-    if (this._rideSystemOn('ghost')) this._startGhost(level);
-    else { this._hideGhost(); this._ghostPlayer = null; }
-
     // E-2: plan what the road is going to do to this pair.
     if (this._rideSystemOn('disruptions')) this._startDisruptions(level, difficultyName);
     else this._disruptions = [];
@@ -2435,13 +2419,6 @@ class Game {
       const passed = this.raceManager ? this.raceManager.passedCheckpoints.size : 0;
       this._rideSplits.length = Math.min(this._rideSplits.length, passed);
     }
-    // D-4: a ride with a restart in it no longer has one continuous line, so
-    // it does not leave a ghost behind. The TIME still counts — restarts cost
-    // seconds, and beating your best with one is a real result — but a ghost
-    // stitched across a rewind would teach a line nobody rode.
-    this._ghostTrackValid = false;
-    this._ghostElapsed = 0;
-    if (this._ghostPlayer) this._ghostPlayer.reset();
 
     // DDA: apply invisible adjustments on restart
     if (this.ddaManager && this.mode !== 'stoker') {
@@ -2804,15 +2781,11 @@ class Game {
     let result = { isNewBest: false, delta: previous ? summary.timeMs - previous.timeMs : null };
 
     if (!fromRemote) {
-      // D-4: a new best keeps its line, so the next ride has something to chase.
-      const provisional = records.getBest(store, k);
-      const isNewBest = !provisional || summary.timeMs < provisional.timeMs;
       result = records.recordRun(store, k, {
         timeMs: summary.timeMs,
         splits: this._rideSplits || [],
         collectibles: summary.collectibles,
-        crashes: summary.crashes,
-        track: this._finishGhostRecording(isNewBest)
+        crashes: summary.crashes
       });
       records.save(store);
       this._recordStore = store;
@@ -2900,137 +2873,6 @@ class Game {
         distance: this.bike ? Math.round(this.bike.distanceTraveled) : 0
       });
     } catch {}
-  }
-
-  // ============================================================
-  // D-4 · GHOSTS — the rider you were yesterday
-  // ============================================================
-  //
-  // A best time is a number; a ghost is an opponent. It is also the cheapest
-  // teaching tool the game can have: a first-timer who cannot describe what
-  // they are doing wrong can still see a better line down the road.
-  //
-  // The recording and interpolation are in js/ghost.js (pure, tested). What is
-  // here is the bike: a clone of the loaded model, no physics, no collisions,
-  // 40% opaque, driven straight from the track's road distance.
-
-  /** Start recording this ride, and load a ghost to ride against. */
-  _startGhost(level) {
-    this._ghostRecorder = this._ghostRecorder || new GhostRecorder();
-    this._ghostRecorder.reset();
-    this._ghostTrackValid = true;
-    this._ghostPlayer = null;
-    this._ghostElapsed = 0;
-
-    if (!this._ghostEnabled()) { this._hideGhost(); return; }
-
-    const track = records.getTrack(this._recordStore || records.load(), this._recordKey());
-    if (!track || !track.count) { this._hideGhost(); return; }
-
-    this._ghostPlayer = new GhostPlayer(track);
-    this._ensureGhostMesh();
-    if (this._ghostGroup) this._ghostGroup.visible = true;
-  }
-
-  /**
-   * Ghosts are off when the player asked for less motion, and off on a machine
-   * that is already struggling — a second bike is cheap, but not free, and the
-   * frame rate is the thing the ride actually depends on.
-   */
-  _ghostEnabled() {
-    if (this._ghostOff) return false;
-    if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
-    const fps = this._getFpsStats ? this._getFpsStats() : null;
-    if (fps && fps.avg_fps && fps.avg_fps < 40) return false;
-    return true;
-  }
-
-  /** Build the ghost bike once, by cloning the one already in the scene. */
-  _ensureGhostMesh() {
-    if (this._ghostBike || !this.bike || !this.bike.modelLoaded) return;
-    try {
-      this._ghostBike = new BikeModel(this.scene, null, this.bike);
-      this._ghostGroup = this._ghostBike.group;
-      this._ghostBike.roadPath = this.world.roadPath;
-      this._ghostGroup.traverse((child) => {
-        if (!child.material) return;
-        const mats = Array.isArray(child.material) ? child.material : [child.material];
-        child.material = mats.map((m) => {
-          const ghost = m.clone();
-          ghost.transparent = true;
-          ghost.opacity = 0.4;
-          ghost.depthWrite = false;      // no z-fighting with the real bike
-          if (ghost.color) ghost.color.multiplyScalar(0.6);
-          return ghost;
-        });
-        if (child.material.length === 1) child.material = child.material[0];
-      });
-    } catch (err) {
-      // A ghost is a nicety. If the clone fails, the ride continues.
-      console.warn('ghost: could not build the mesh', err);
-      this._ghostBike = null;
-      this._ghostGroup = null;
-    }
-  }
-
-  _hideGhost() {
-    if (this._ghostGroup) this._ghostGroup.visible = false;
-  }
-
-  /**
-   * Per frame: record where we are, and move the ghost to where it was.
-   * Cheap on purpose — two array reads and a transform, no physics.
-   */
-  _updateGhost(dt) {
-    if (this.state !== 'playing' || !this.bike) return;
-
-    // Record. The clock is the race clock, so a rewind rewinds the recording
-    // too rather than smearing the ghost across a restart.
-    if (this._ghostRecorder && this.raceManager && !this.raceManager.timerHeld) {
-      this._ghostRecorder.sample(dt, {
-        roadD: this.bike.distanceTraveled,
-        lateral: this.bike._lateralOffset || 0,
-        lean: this.bike.lean
-      });
-    }
-
-    // Play back.
-    if (!this._ghostPlayer || !this._ghostBike || !this._ghostGroup) return;
-    this._ghostElapsed += dt;
-    const s = this._ghostPlayer.at(this._ghostElapsed);
-    if (!s) return;
-    if (s.finished) { this._ghostGroup.visible = false; return; }
-
-    const path = this.world.roadPath;
-    if (!path) return;
-    const pt = path.getPointAtDistance(s.roadD % path.loopLength);
-    const rightX = Math.cos(pt.heading);
-    const rightZ = -Math.sin(pt.heading);
-    this._ghostGroup.position.set(
-      pt.x + rightX * s.lateral,
-      pt.y,
-      pt.z + rightZ * s.lateral
-    );
-    this._ghostGroup.rotation.set(0, pt.heading, s.lean);
-  }
-
-  /**
-   * D-4 · at a checkpoint, how far ahead or behind the ghost is. Replaces the
-   * B-3 split delta when a ghost is riding, because "you are 1.3 s behind that
-   * bike over there" is a more useful sentence than "+1.3".
-   */
-  _ghostDeltaNow() {
-    if (!this._ghostPlayer || !this.raceManager) return null;
-    const d = ghostDeltaAt(this._ghostPlayer.track, this.bike.distanceTraveled,
-      this.raceManager.getElapsedMs() / 1000);
-    return d === null ? null : Math.round(d * 1000);
-  }
-
-  /** Finish: keep the line if this ride was a new best. */
-  _finishGhostRecording(isNewBest) {
-    if (!this._ghostRecorder || this._ghostTrackValid === false) return null;
-    const track = this._ghostRecorder.finish();
-    return isNewBest && track.count > 1 ? track : null;
   }
 
   // ============================================================
@@ -3803,9 +3645,7 @@ class Game {
         const elapsed = this.raceManager.getElapsedMs();
         const index = this._rideSplits.length;
         this._rideSplits.push(Math.round(elapsed));
-        // D-4: against the ghost when one is riding — "you are 1.3 s behind
-        // that bike" beats "+1.3" — otherwise against the stored split.
-        const delta = this._ghostDeltaNow() ?? records.splitDelta(this._rideBest, index, elapsed);
+        const delta = records.splitDelta(this._rideBest, index, elapsed);
         if (delta !== null) this.hud.showSplitDelta(delta);
       }
 
@@ -4586,7 +4426,6 @@ class Game {
 
   _returnToLobby() {
     if (this._coachVisible) this._dismissCoachCard();
-    this._hideGhost();   // D-4: no ghost hanging around the empty road
     this._hideTouristGoal();   // E-7
     this._touristRoute = null;
     this._leaveSlingMode();
@@ -5883,7 +5722,6 @@ class Game {
     if (this._rideSystemOn('achievements')) this._checkAchievements(dt);
     this._updateCoachCard(dt);
     this._drainPendingGyroCalibration();
-    if (this._rideSystemOn('ghost')) this._updateGhost(dt);
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2
     if (this._touristRoute) this._updateTouristGoal();   // E-7
@@ -5994,7 +5832,6 @@ class Game {
     this._checkAchievements(dt);
     this._updateCoachCard(dt);
     this._drainPendingGyroCalibration();
-    this._updateGhost(dt);
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2
     if (this._touristRoute) this._updateTouristGoal();   // E-7

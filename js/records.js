@@ -19,14 +19,6 @@ export const STORAGE_KEY = 'tandemonium_records';
 export const MAX_KEYS = 200;
 
 /**
- * D-4 · how many ghost tracks to keep. A track is ~10-25 KB, versus a few
- * hundred bytes for a plain record, so tracks are budgeted separately and
- * dropped first: losing a ghost costs a nicety, losing the whole store costs
- * every best the player has.
- */
-export const MAX_TRACKS = 8;
-
-/**
  * Record key. Modes are kept apart because they are not comparable rides:
  * one person steering is a different game from two.
  * @param {string} levelId  'grandma' | 'daily' | …
@@ -63,11 +55,7 @@ export function recordRun(store, k, run) {
     splits: Array.isArray(run.splits) ? run.splits.map(n => Math.round(n)) : [],
     collectibles: run.collectibles ?? 0,
     crashes: run.crashes ?? 0,
-    date: run.date || new Date().toISOString(),
-    // D-4: the line the best was ridden on, for the ghost. Only ever kept for
-    // the CURRENT best — a ghost of a run you have already beaten is not a
-    // target, it is clutter.
-    track: run.track || null
+    date: run.date || new Date().toISOString()
   };
 
   if (!previous) {
@@ -93,14 +81,10 @@ export function recordRun(store, k, run) {
 export function trim(store) {
   const keys = Object.keys(store);
 
-  // D-4: ghost tracks first — oldest tracks are dropped while their records
-  // (the times, which are what the player actually cares about) stay.
-  const withTracks = keys.filter(k => store[k] && store[k].track);
-  if (withTracks.length > MAX_TRACKS) {
-    withTracks
-      .sort((a, b) => String(store[a].date).localeCompare(String(store[b].date)))
-      .slice(0, withTracks.length - MAX_TRACKS)
-      .forEach(k => { delete store[k].track; });
+  // The D-4 ghost (removed in #400) stored a ~10-25 KB ride track on each
+  // best. Old stores may still carry them: drop them, keep the times.
+  for (const k of keys) {
+    if (store[k] && store[k].track !== undefined) delete store[k].track;
   }
 
   if (keys.length <= MAX_KEYS) return store;
@@ -109,12 +93,6 @@ export function trim(store) {
     .slice(0, keys.length - MAX_KEYS)
     .forEach(k => { delete store[k]; });
   return store;
-}
-
-/** D-4 · the ghost track stored with a best, or null. */
-export function getTrack(store, k) {
-  const rec = getBest(store, k);
-  return (rec && rec.track) || null;
 }
 
 /**

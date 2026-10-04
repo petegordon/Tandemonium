@@ -20,11 +20,11 @@ export const STORAGE_KEY = 'tandemonium_slingshot';
 
 /**
  * Normal-ride systems that stay off in this mode (see Game._rideSystemOn):
- * no achievements for being flung, no ghost/disruptions/assist built for a
+ * no achievements for being flung, no disruptions/assist built for a
  * pedalled race, no coach card, no cruise control (it would never stall), and
  * launch/result events instead of a ride per launch in analytics.
  */
-export const SLING_SYSTEMS_OFF = new Set(['achievements', 'ghost', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']);
+export const SLING_SYSTEMS_OFF = new Set(['achievements', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']);
 
 export const UPGRADES = [
   { id: 'sling',   name: 'Slingshot',       desc: 'Thicker bands, faster launch',       max: 10, base: 40, icon: '🎯' },

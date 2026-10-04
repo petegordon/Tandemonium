@@ -326,7 +326,7 @@ test('progression: a maxed bike clears the last goal even riding the edge', () =
 
 test('the systems table: what a normal ride runs that this mode does not', async () => {
   const { SLING_SYSTEMS_OFF } = await import('../../js/slingshot.js');
-  for (const name of ['achievements', 'ghost', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']) {
+  for (const name of ['achievements', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']) {
     assert.ok(SLING_SYSTEMS_OFF.has(name), `${name} should be off in Slingshot`);
   }
   assert.equal(SLING_SYSTEMS_OFF.has('collectibles'), false, 'coins are the point');
