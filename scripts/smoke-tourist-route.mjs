@@ -124,7 +124,7 @@ const ok = !hidden.visible && flow.shown && flow.stepShown && flow.savedOk
   && ride.levelId === 'tourist' && ride.levelIsTourist && ride.timerEnabled === false
   && ride.finishesAtDestination
   && /MADE IT TO THEM/.test(ride.title) && /Theirs/.test(ride.dest)
-  && /Ride the distance between you/.test(ride.strip);
+  && /km of real streets/.test(ride.strip);
 console.log(ok ? '✔ hidden without a key; plans, remembers, counts down, and arrives with a shareable result'
                : '✖ tourist flow wrong');
 await browser.close(); server.close(); process.exit(ok?0:1);
