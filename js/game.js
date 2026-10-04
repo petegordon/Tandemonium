@@ -8033,8 +8033,11 @@ class Game {
       TUNE.responseCurve = params.responseCurve;
     }
 
-    // Snapshot calibrated values as the base for feel scaling
+    // Snapshot calibrated values as the base for feel scaling, then ride them
+    // at the default feel (#399: 0.3, the stable end) until the player moves
+    // the slider on the completion screen.
     snapshotTuningBase();
+    applySteeringFeel(BALANCE_DEFAULTS.steeringFeel);
 
     // Save to localStorage
     const saveData = {
@@ -8045,7 +8048,7 @@ class Game {
       deadzone: params.deadzone,
       outputSmoothing: params.outputSmoothing,
       responseCurve: params.responseCurve,
-      steeringFeel: 0.5,
+      steeringFeel: BALANCE_DEFAULTS.steeringFeel,
       timestamp: Date.now()
     };
     try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}
@@ -8072,7 +8075,7 @@ class Game {
 
     // Set up steering feel slider
     const slider = document.getElementById('steering-feel-slider');
-    slider.value = 50;
+    slider.value = Math.round(BALANCE_DEFAULTS.steeringFeel * 100);
     slider.oninput = () => {
       const feel = slider.value / 100;
       applySteeringFeel(feel);
@@ -8113,7 +8116,7 @@ class Game {
 
     // Show steering feel slider for stoker too (their lean input matters)
     const slider = document.getElementById('steering-feel-slider');
-    slider.value = 50;
+    slider.value = Math.round(BALANCE_DEFAULTS.steeringFeel * 100);
     slider.oninput = () => {
       const feel = slider.value / 100;
       applySteeringFeel(feel);
@@ -8210,7 +8213,7 @@ class Game {
   _finishTutorial() {
     // Save the final steering feel value
     const slider = document.getElementById('steering-feel-slider');
-    const feel = (slider ? slider.value : 50) / 100;
+    const feel = (slider ? slider.value : BALANCE_DEFAULTS.steeringFeel * 100) / 100;
     try {
       const saved = localStorage.getItem(this._tuningKey());
       if (saved) {

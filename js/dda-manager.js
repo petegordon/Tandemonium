@@ -4,6 +4,14 @@
 
 import { TUNE, DIFFICULTY_PRESETS } from './config.js';
 
+// Failures at one checkpoint before each kind of help appears.
+// #399 (5/5 playtesters found steering too sensitive, one quit): ASSIST is now
+// offered after 2 failures instead of 4. The silent tune and SKIP CHECKPOINT
+// thresholds are unchanged.
+export const DDA_SILENT_ADJUST_AFTER = 2;
+export const DDA_ASSIST_AFTER = 2;
+export const DDA_SKIP_AFTER = 6;
+
 export class DDAManager {
   constructor(difficulty) {
     this._baseDifficulty = difficulty || 'adventurous';
@@ -38,13 +46,13 @@ export class DDAManager {
       offerSkip: false,
     };
 
-    if (failures >= 2) {
+    if (failures >= DDA_SILENT_ADJUST_AFTER) {
       result.adjustTune = true;
     }
-    if (failures >= 4 && !this._assistOffered) {
+    if (failures >= DDA_ASSIST_AFTER && !this._assistOffered) {
       result.offerAssist = true;
     }
-    if (failures >= 6 && !this._skipOffered) {
+    if (failures >= DDA_SKIP_AFTER && !this._skipOffered) {
       result.offerSkip = true;
     }
 
