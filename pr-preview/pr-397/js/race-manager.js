@@ -62,6 +62,11 @@ export class RaceManager {
     // starts riding (or the grace runs out).
     this.timerHeld = true;
     this.graceElapsed = 0;
+
+    // #403 · the helping hand's extra time for the segment being retried
+    // (1.25 on Tier 1, 1.5 on Tier 2). Set by the game; passing a checkpoint
+    // puts it back to 1, because the count it came from resets there.
+    this.helpTimeScale = 1;
   }
 
   /**
@@ -74,7 +79,7 @@ export class RaceManager {
 
   _segmentBudget(segmentDistance) {
     const base = Math.max(10, (segmentDistance / 250) * 60); // 60 seconds per 250m, minimum 10s
-    return base * (TUNE.timeMultiplier || 1.0);
+    return base * (TUNE.timeMultiplier || 1.0) * (this.helpTimeScale || 1);
   }
 
   start() {
@@ -157,6 +162,7 @@ export class RaceManager {
           }
         }
         const segDist = nextTarget - cp;
+        this.helpTimeScale = 1;   // #403: a new stretch of road, a new count
         this.segmentTimeTotal = this._segmentBudget(segDist);
         this.segmentTimeRemaining = this.segmentTimeTotal;
         this.timerHeld = false;   // grace is for the first segment only

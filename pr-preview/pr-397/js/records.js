@@ -49,6 +49,12 @@ export function recordRun(store, k, run) {
   if (!store || !k || !run || typeof run.timeMs !== 'number' || !(run.timeMs > 0)) {
     return { isNewBest: false, delta: null, best: getBest(store, k) };
   }
+  // #403 · a run with the Royal Shortcut taken did not ride the whole road:
+  // it can finish, but it never becomes a best.
+  if (run.skipped) {
+    const best = getBest(store, k);
+    return { isNewBest: false, delta: best ? Math.round(run.timeMs) - best.timeMs : null, best };
+  }
   const previous = getBest(store, k);
   const entry = {
     timeMs: Math.round(run.timeMs),
@@ -57,6 +63,9 @@ export function recordRun(store, k, run) {
     crashes: run.crashes ?? 0,
     date: run.date || new Date().toISOString()
   };
+  // #403 · a helped (🛟) best is kept and flagged, but never replaces an
+  // unassisted one; and the first unassisted finish always replaces a 🛟 best.
+  if (run.helped) entry.helped = true;
 
   if (!previous) {
     store[k] = entry;
@@ -65,6 +74,14 @@ export function recordRun(store, k, run) {
   }
 
   const delta = entry.timeMs - previous.timeMs;
+  if (entry.helped && !previous.helped) {
+    return { isNewBest: false, delta, best: previous };
+  }
+  if (!entry.helped && previous.helped) {
+    store[k] = entry;
+    trim(store);
+    return { isNewBest: true, delta, best: entry, replacedHelped: true };
+  }
   if (delta < 0) {
     store[k] = entry;
     trim(store);
@@ -137,6 +154,23 @@ export function medalFor(timeMs, thresholds) {
 }
 
 export const MEDAL_ICON = { gold: '🥇', silver: '🥈', bronze: '🥉' };
+
+/** #403 · the mark on a medal or best earned with the helping hand. */
+export const HELPED_ICON = '🛟';
+
+/**
+ * #403 · the medal a run actually keeps. A helped run (any helping-hand tier,
+ * or ASSIST, at any point) is capped at bronze; a run with a skipped
+ * checkpoint earns none.
+ * @param {'gold'|'silver'|'bronze'|null} medal  what the time alone earns
+ * @param {{ helped?: boolean, skipped?: boolean }} [flags]
+ */
+export function capMedal(medal, flags = {}) {
+  if (!medal) return null;
+  if (flags.skipped) return null;
+  if (flags.helped) return 'bronze';
+  return medal;
+}
 
 /** The next medal up from `medal`, or null when there is nothing better. */
 export function nextMedal(medal) {
