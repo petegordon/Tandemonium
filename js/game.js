@@ -10,6 +10,7 @@ import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
 import './build-badge.js';   // preview builds: which commit is on screen
 import { installSlingshotMode } from './slingshot-mode.js';
+import { installEconomyMode } from './economy-mode.js';
 import { GhostRecorder, GhostPlayer, ghostDeltaAt } from './ghost.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
@@ -518,6 +519,8 @@ class Game {
 
     // B-5 · end-screen calls to action (wishlist / send a link).
     this._wireCtaButtons();
+    // #400 D4 · the end screens' GARAGE → buttons.
+    this._wireEconomyButtons();
     // E-3 · the touch sprint/emote row.
     this._wirePingRow();
     // D-3 · share the day's result.
@@ -699,6 +702,7 @@ class Game {
       onVersusReady: (opts) => this._onVersusReady(opts),
       onTouristReady: (opts) => this._onTouristReady(opts),   // E-6
       onSlingshotReady: () => this._openSlingGarage(),
+      onGarage: () => this._openGarageFromLobby(),   // #400 D4
       input: this.input,
       controllerManager: this.controllerManager,
     });
@@ -913,14 +917,16 @@ class Game {
     return shown;
   }
 
+  /** B-5 · the wishlist CTA: the store page, counted. Also the Slingshot demo's end (#400). */
+  _openStorePage(which) {
+    try { analytics.trackWishlistClick(which); } catch {}
+    window.open('https://store.steampowered.com/app/4482940/Tandemonium/', '_blank', 'noopener');
+  }
+
   /** B-5 · one wiring point for both end screens' CTA buttons. */
   _wireCtaButtons() {
-    const STORE_URL = 'https://store.steampowered.com/app/4482940/Tandemonium/';
     for (const which of ['victory', 'gameover']) {
-      this._onTap('btn-wishlist-' + which, () => {
-        try { analytics.trackWishlistClick(which); } catch {}
-        window.open(STORE_URL, '_blank', 'noopener');
-      });
+      this._onTap('btn-wishlist-' + which, () => this._openStorePage(which));
       this._onTap('btn-invite-' + which, () => {
         try { analytics.trackInviteClick(which); } catch {}
         // Use the lobby's own room flow — creating a room anywhere else would
@@ -1988,6 +1994,7 @@ class Game {
       this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
     }
 
+    this._payoutAbandon();   // #400 D4: a ride restarted mid-way still pays its distance
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this.balanceCtrl.resetSteerFrames();
@@ -2706,8 +2713,9 @@ class Game {
     const skipBtn = document.getElementById('btn-skip-checkpoint');
     // B-5: wishlist + send-a-link, after the ride buttons.
     const gameoverCtas = this._updateCtaButtons('gameover');
+    // #400 D4: a crashed ride still pays for its distance.
     const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn,
-      document.getElementById('btn-gameover-lobby'), ...gameoverCtas]
+      document.getElementById('btn-gameover-lobby'), ...this._showRideCoins('gameover', 'crash'), ...gameoverCtas]
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
 
@@ -2871,6 +2879,9 @@ class Game {
         });
       } catch {}
     }
+
+    // #400 D4: the medal and NEW BEST pay coins (js/economy-mode.js · _payoutRide).
+    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous) };
 
     try {
       analytics.trackEvent('run_recorded', {
@@ -4344,7 +4355,9 @@ class Game {
     const victoryCtas = this._updateCtaButtons('victory');
 
     // Gamepad navigation for victory buttons
-    const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby'), ...victoryCtas];
+    // #400 D4: the ride pays Chaos Coins — the tally, and GARAGE → to spend them.
+    const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby'),
+      ...this._showRideCoins('victory', 'finish', { summary }), ...victoryCtas];
     // Include "next level" if visible, and default-focus it
     if (hasNext) {
       victoryBtns.splice(1, 0, nextBtn);
@@ -4585,6 +4598,7 @@ class Game {
   }
 
   _returnToLobby() {
+    this._payoutAbandon();   // #400 D4: an abandoned ride still pays its distance
     if (this._coachVisible) this._dismissCoachCard();
     this._hideGhost();   // D-4: no ghost hanging around the empty road
     this._hideTouristGoal();   // E-7
@@ -4726,6 +4740,7 @@ class Game {
   }
 
   _returnToRoom() {
+    this._payoutAbandon();   // #400 D4
     this._musicBtn.style.display = 'none';
     this.quickMenu.setVisible(false);
     if (!this.net) {
@@ -6712,6 +6727,7 @@ class Game {
     if (!winner || !loser || !this.versusHud) return;
     this.versusHud.hideBanner();
     const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser);
+    this._showVersusCoins();   // #400 D4: one payout per race
     rematchBtn.addEventListener('click', () => this._rematchVersus());
     lobbyBtn.addEventListener('click', () => {
       this._clearOverlayButtons();
@@ -8069,6 +8085,7 @@ class Game {
     html += 'Presents collected: ' + this._tutorialCollected + '/' + totalPresents + '<br>';
     html += '<span class="calibrated">Steering calibrated to your style!</span>';
     statsEl.innerHTML = html;
+    this._showRideCoins('tutorial', 'finish', { tutorial: true, pickups: this._tutorialCollected });   // #400 D4
 
     // Set up steering feel slider
     const slider = document.getElementById('steering-feel-slider');
@@ -8110,6 +8127,7 @@ class Game {
     document.getElementById('tutorial-prompt').classList.remove('visible');
     const statsEl = document.getElementById('tutorial-complete-stats');
     statsEl.innerHTML = '<span class="calibrated">Great teamwork! Steering calibrated.</span>';
+    this._showRideCoins('tutorial', 'finish', { tutorial: true });   // #400 D4: each device pays its own wallet
 
     // Show steering feel slider for stoker too (their lean input matters)
     const slider = document.getElementById('steering-feel-slider');
@@ -8316,6 +8334,7 @@ class Game {
 if (isTouristMode()) await resolveTouristOrigin();
 
 installSlingshotMode(Game);   // js/slingshot-mode.js
+installEconomyMode(Game);     // js/economy-mode.js — every ride pays Chaos Coins (#400 D4)
 const game = new Game();
 window._game = game;
 window.perfProbe = perfProbe;

@@ -35,10 +35,18 @@ const checks = [];
 const check = (ok, msg) => { checks.push(ok); console.log(`${ok ? '✔' : '✖'} ${msg}`); };
 const waitState = (s, timeout = 120000) => page.waitForFunction((s) => window._game?.state === s, { timeout, polling: 100 }, s);
 
-// A clean wallet with enough coins to buy something.
+// An old (v2) Slingshot save with enough coins to buy something: the wallet
+// (#400 D4) takes them over on first load. Once only — a reload keeps the wallet.
 await page.evaluateOnNewDocument(() => {
-  try { localStorage.setItem('tandemonium_slingshot', JSON.stringify({ coins: 100, best: 0, runs: 0, stage: 1, lv: {} })); } catch (e) {}
+  try {
+    if (!sessionStorage.getItem('__seeded')) {
+      sessionStorage.setItem('__seeded', '1');
+      localStorage.removeItem('tandemonium_wallet');
+      localStorage.setItem('tandemonium_slingshot', JSON.stringify({ coins: 100, best: 0, runs: 0, stage: 1, lv: {} }));
+    }
+  } catch (e) {}
 });
+const wallet = () => page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_wallet') || '{}'));
 await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => !!window._game, { timeout: 30000 });
 await page.click('#tap-to-start').catch(() => {});
@@ -56,8 +64,10 @@ await shot('1-garage');
 
 // 2. Buy the slingshot upgrade (40 coins)
 await page.evaluate(() => document.querySelectorAll('#sling-garage .sling-up')[0].click());
-const afterBuy = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')));
-check(afterBuy.coins === 60 && afterBuy.lv.sling === 1, `buying spends coins and saves (coins ${afterBuy.coins}, sling L${afterBuy.lv.sling})`);
+const afterBuy = await wallet();
+const slingSave = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')));
+check(afterBuy.coins === 60 && afterBuy.lv.sling === 1 && slingSave.coins === undefined && slingSave.v === 3,
+  `the old save's coins moved to the wallet; buying spends them (coins ${afterBuy.coins}, sling L${afterBuy.lv.sling})`);
 
 // 3. Launch → straight into the slingshot (no instructions screen, no countdown)
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button')).find(b => /launch/i.test(b.textContent)).click());
@@ -171,8 +181,8 @@ check(tally.visible && tally.flag && Number(tally.m.replace(/,/g, '')) === Math.
   `end of ride: a flag, "${tally.m} m" counted up, then "+${tally.c} 🪙"`);
 if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '4a-tally.png') });
 await waitState('slingResults', 60000);
-const r1 = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, save: JSON.parse(localStorage.getItem('tandemonium_slingshot')) }));
-check(/stop/i.test(r1.title) && r1.save.runs === 1 && r1.save.coins > 60, `stalling ends the run and pays out ("${r1.title}", wallet ${r1.save.coins})`);
+const r1 = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, save: JSON.parse(localStorage.getItem('tandemonium_slingshot')), wallet: JSON.parse(localStorage.getItem('tandemonium_wallet')) }));
+check(/stop/i.test(r1.title) && r1.save.runs === 1 && r1.wallet.coins > 60, `stalling ends the run and pays into the wallet ("${r1.title}", wallet ${r1.wallet.coins})`);
 const status = await page.evaluate(() => document.getElementById('status').textContent);
 check(!/pedal|resetting/i.test(status), `no "tap pedals" prompt when the bike stops ("${status}")`);
 await shot('4-results');
@@ -255,10 +265,10 @@ check(air.state === 'playing' && air.t >= 0.8 && air.bigAirs === bigBefore + 1,
 check(air.cleared, 'flying off the ramp sails clean over the hay bale behind it');
 
 // 13. …then the jackpot billboard: the run ends at double pay.
-const walletBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins);
+const walletBefore = (await wallet()).coins;
 await rollInto('jackpot');
 await waitState('slingResults', 60000);
-const jp = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_slingshot')).coins }));
+const jp = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_wallet')).coins }));
 check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /Big air/.test(jp.rows) && /×2/.test(jp.rows) && jp.coins > walletBefore, `the jackpot ends the run at double pay ("${jp.title}", +${jp.coins - walletBefore})`);
 
 // 14. Twenty relaunches on the same stage re-arm the ride instead of
