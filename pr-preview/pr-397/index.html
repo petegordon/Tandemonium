@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'7aa7492',pr:397,time:'10-04-2026 15:40'}</script><base href="/pr-preview/pr-397/">
+<head><script>window.__BUILD={sha:'02ecf4e',pr:397,time:'10-04-2026 16:08'}</script><base href="/pr-preview/pr-397/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
@@ -234,6 +234,14 @@
     font-size: 15px;
   }
   .tourist-input::placeholder { color: rgba(255,255,255,0.35); }
+  .tourist-to-row { display: flex; gap: 6px; align-items: center; }
+  .tourist-to-row .tourist-input { flex: 1; min-width: 0; }
+  .tourist-remove-to, .tourist-add-to {
+    background: none; border: 1px dashed rgba(255,255,255,0.3); color: rgba(255,255,255,0.75);
+    border-radius: 8px; cursor: pointer; font-weight: 700;
+  }
+  .tourist-remove-to { width: 34px; height: 34px; font-size: 18px; border-style: solid; flex: none; }
+  .tourist-add-to { padding: 8px 10px; font-size: 12px; letter-spacing: 0.5px; }
   .tourist-error {
     min-height: 15px;
     font-size: 12px;
@@ -5669,8 +5677,13 @@ ON</button>
           <div id="tourist-form">
             <input id="tourist-from" class="tourist-input" type="text"
                    placeholder="Your address or city" autocomplete="off" spellcheck="false">
-            <input id="tourist-to" class="tourist-input" type="text"
-                   placeholder="Their address or city" autocomplete="off" spellcheck="false">
+            <!-- #400: one address = open world; a second one makes it a route. -->
+            <div id="tourist-to-row" class="tourist-to-row" style="display:none;">
+              <input id="tourist-to" class="tourist-input" type="text"
+                     placeholder="Second address or city" autocomplete="off" spellcheck="false">
+              <button type="button" class="tourist-remove-to" id="btn-tourist-remove-to" title="Remove the second address">&times;</button>
+            </div>
+            <button type="button" class="tourist-add-to" id="btn-tourist-add-to">+ ADD A SECOND ADDRESS</button>
             <div id="tourist-error" class="tourist-error"></div>
             <div id="tourist-preview" class="tourist-preview"></div>
             <button class="lobby-btn lobby-btn-accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</button>
@@ -5970,7 +5983,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.7aa7492 | 10-04-2026 15:40 (PR #397)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.02ecf4e | 10-04-2026 16:08 (PR #397)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

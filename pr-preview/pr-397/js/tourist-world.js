@@ -75,7 +75,8 @@ export class TouristWorld {
     tiles.registerPlugin(new TileCompressionPlugin());
     tiles.registerPlugin(new TilesFadePlugin());
     // Where are we riding? Defaults to Scioto Mile; ?lat/?lon points it anywhere.
-    const origin = getTouristOrigin();
+    // #400: a lobby ride passes the anchor it resolved for its first address.
+    const origin = options.origin || getTouristOrigin();
     this._origin = origin;
     console.log(`[Tourist] riding ${origin.name} — anchor ${Math.round(origin.height)}m ` +
       `(${origin.anchored === false ? 'GUESSED, wide probe' : origin.source || 'explicit ?h'})`);
@@ -173,6 +174,8 @@ export class TouristWorld {
   /** E-6 · a planned A-to-B ride: budget the radius for its actual length. */
   setRoute(plan) {
     this._route = plan;
+    // #400: an open-world ride (one address) roams the usual free-roam radius.
+    if (plan && plan.explore) { this.setMaxRadius(TOURIST_MAX_RADIUS_M); return; }
     this.setMaxRadius((plan && plan.route ? plan.route.ridableM : 0) + 500);
   }
 
