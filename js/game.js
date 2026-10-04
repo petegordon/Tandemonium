@@ -11,6 +11,7 @@ import * as records from './records.js';
 import './build-badge.js';   // preview builds: which commit is on screen
 import { installSlingshotMode } from './slingshot-mode.js';
 import { installEconomyMode } from './economy-mode.js';
+import { installHelpingHandMode, HELP_PROFILE_TYPE } from './helping-hand-mode.js';
 import { buildLookahead, seatSeesLookahead, CAPTAIN_VIEW_M, LOOKAHEAD_M } from './lookahead.js';
 import { createPingState, callSprint, addEmote, tickPing, syncMultiplier, EMOTES } from './sync-ping.js';
 import {
@@ -479,6 +480,7 @@ class Game {
         this._assistWeight = 0.65;
         this.assistBtn.className = 'side-btn assist-on';
         this.assistBtn.textContent = 'ASSIST\nON';
+        this._helpMarkAssisted();   // #403: an ASSIST finish is a 🛟 finish
       }
     });
 
@@ -558,6 +560,10 @@ class Game {
       }
       this._hideGameOver();
       if (this.raceManager) {
+        // #403: the Royal Shortcut — no medal or best for this ride, and the
+        // helping hand resets with the count (before the timer is refilled).
+        this._helpMarkSkipped();
+        this._helpOnCheckpoint();
         // Find next unpassed checkpoint
         let nextCp = this.raceManager.raceDistance;
         for (const cp of this.raceManager.checkpoints) {
@@ -574,6 +580,17 @@ class Game {
         this._showCheckpointFlash();
       }
       this._resumeCountdown();
+    });
+
+    // #403 · a failed ranked run: the attempt is spent (as a DNF), so ride the
+    // same road again as practice, where the helping hand is on.
+    this._onTap('btn-practice-help', () => {
+      this._hideGameOver();
+      try { analytics.trackEvent('ranked_to_practice', { distance: this.bike ? Math.round(this.bike.distanceTraveled) : 0 }); } catch {}
+      if (this._rankedRunActive) this._recordRankedDnf();
+      if (this.mode === 'captain' && this.net) this.net.sendProfile({ type: 'dailyMode', mode: 'practice' });
+      if (this.lobby) this.lobby._dailyMode = 'practice';
+      this._resetGame(false, true);
     });
 
     // Game Over: restart
@@ -1222,7 +1239,15 @@ class Game {
       // D-2: the captain chose practice or ranked for the pair. The countdown
       // event is a bare byte, so the mode needs its own message; the stoker
       // stores the pair result too, so it has to know.
+      // #403: the captain's helping-hand tier and flags.
+      if (profile && profile.type === HELP_PROFILE_TYPE) {
+        this._onHelpProfile(profile);
+        return;
+      }
       if (profile && profile.type === 'dailyMode') {
+        // #403: the captain turned a failed ranked run into practice — it is
+        // spent on this side too.
+        if (this._rankedRunActive && profile.mode !== 'ranked' && this.state !== 'lobby') this._recordRankedDnf();
         this._rankedRunActive = profile.mode === 'ranked';
         if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
         return;
@@ -1926,7 +1951,14 @@ class Game {
     // D-2: no dynamic difficulty on a ranked run. Everyone rides the same road
     // under the same rules, or the times mean nothing. Every ddaManager call
     // site is already null-guarded (grep: `this.ddaManager &&`).
-    this.ddaManager = (this._rankedRunActive || !this._rideSystemOn('dda')) ? null : new DDAManager(difficultyName);
+    // #403: a retry of the first segment comes through here too (the bike goes
+    // back to the start line). It keeps the DDA, so its failure count — and the
+    // helping hand — survive; a new ride starts a fresh one.
+    const keepHelp = !!this._helpKeepRide && !!this.ddaManager && !this._rankedRunActive;
+    this._helpKeepRide = false;
+    this.ddaManager = (this._rankedRunActive || !this._rideSystemOn('dda')) ? null
+      : (keepHelp ? this.ddaManager : new DDAManager(difficultyName));
+    if (keepHelp) this.ddaManager.applyInvisibleAdjustments();
     this._assistWeight = 0;
 
     // Apply auto-speed from difficulty preset (Chill/Tutorial cruise automatically)
@@ -2060,6 +2092,10 @@ class Game {
       this.lobby._dailyMode = null;
       this._rankedRunActive = !!(level.isDaily && chosenMode === 'ranked' && getEditionRules().ranked);
     }
+    // #403: the DDA above was created before this ride was known to be ranked
+    // (the flag still held the previous ride's value), so a ranked run used to
+    // get the silent tune and the ASSIST offer. Ranked stays pure.
+    if (this._rankedRunActive) this.ddaManager = null;
     if (this._rankedRunActive && this.mode === 'captain' && this.net) {
       // The countdown event is a bare byte, so the mode needs its own message.
       this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
@@ -2068,6 +2104,7 @@ class Game {
     this._payoutAbandon();   // #400 D4: a ride restarted mid-way still pays its distance
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
+    this._helpStartRide(keepHelp);   // #403: before the first budget is shown
     this.balanceCtrl.resetSteerFrames();
     if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
@@ -2410,12 +2447,15 @@ class Game {
     }
 
     // DDA: timeout counts as a failure
+    let helpNow = null;
     if (this.ddaManager && this.mode !== 'stoker') {
       let checkpointD = 0;
       if (this.raceManager && this.raceManager.passedCheckpoints.size > 0) {
         checkpointD = Math.max(...this.raceManager.passedCheckpoints);
       }
       this.ddaManager.recordFailure(checkpointD);
+      // #403: the next attempt's tier, announced on the TOO SLOW screen.
+      helpNow = this._helpOnFailure(checkpointD);
     }
 
     // Dismiss the countdown overlay immediately so "1" doesn't stick
@@ -2433,6 +2473,12 @@ class Game {
 
     setTimeout(() => {
       flash.classList.remove('visible');
+      // #403: after the 5th failure the player gets a choice, not an
+      // automatic retry — the Royal Shortcut is on the game-over screen.
+      if (helpNow && helpNow.offerSkip && this.state === 'gameover') {
+        this._showGameOver(false, { timeout: true });
+        return;
+      }
       this.state = 'playing';
       // Reset segment timer before _resetGame so it reinits properly
       if (this.raceManager) {
@@ -2583,6 +2629,7 @@ class Game {
     if (checkpointD > 0) {
       this._resumeCountdown();
     } else {
+      this._helpKeepRide = !fromBeginning;   // #403: same ride, same count
       this._startCountdown();
     }
   }
@@ -2718,13 +2765,18 @@ class Game {
     this._setOverlayButtons(btns);
   }
 
-  _showGameOver(fromRemote = false) {
+  _showGameOver(fromRemote = false, opts = {}) {
     this.state = 'gameover';
     this.hud.hideTimer();
     // The quick menu sits above the result overlays, so retire it with the ride.
     this.quickMenu.setVisible(false);
-    if (this.raceManager) this.raceManager.crashCount++;
-    hapticCrash();
+    // #403: a timeout can end on this screen too (it was already counted).
+    if (this.raceManager && !opts.timeout) this.raceManager.crashCount++;
+    if (!opts.timeout) hapticCrash();
+    const tooSlow = document.getElementById('timeout-flash');
+    if (tooSlow) tooSlow.classList.remove('visible');
+    const title = document.getElementById('gameover-title');
+    if (title) title.textContent = opts.timeout ? 'TOO SLOW!' : 'GAME OVER';
 
     // Crash analytics already recorded at impact time in _recordCrash()
     this._lastCrashCause = null;
@@ -2735,7 +2787,10 @@ class Game {
       checkpointD = Math.max(...this.raceManager.passedCheckpoints);
     }
     if (this.ddaManager && this.mode !== 'stoker') {
-      this.ddaManager.recordFailure(checkpointD);
+      if (!opts.timeout) {
+        this.ddaManager.recordFailure(checkpointD);
+        this._helpOnFailure(checkpointD);   // #403: the next attempt's tier, announced here
+      }
       const ddaResult = this.ddaManager.evaluate(checkpointD);
 
       // Show skip button if DDA recommends it
@@ -2773,10 +2828,16 @@ class Game {
     if (lobbyBtn) lobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
     const skipBtn = document.getElementById('btn-skip-checkpoint');
+    // #403 · a failed ranked run: offer the same road as practice, with help.
+    const practiceBtn = document.getElementById('btn-practice-help');
+    if (practiceBtn) {
+      const level = this.lobby.selectedLevel;
+      practiceBtn.style.display = (this._rankedRunActive && this.mode !== 'stoker' && level && level.isDaily) ? '' : 'none';
+    }
     // B-5: wishlist + send-a-link, after the ride buttons.
     const gameoverCtas = this._updateCtaButtons('gameover');
     // #400 D4: a crashed ride still pays for its distance.
-    const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, roomBtn,
+    const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, practiceBtn, roomBtn,
       document.getElementById('btn-gameover-lobby'), ...this._showRideCoins('gameover', 'crash'), ...gameoverCtas]
       .filter(el => el && el.style.display !== 'none');
     this._setOverlayButtons(btns);
@@ -2875,35 +2936,44 @@ class Game {
     const previous = records.getBest(store, k);
     let result = { isNewBest: false, delta: previous ? summary.timeMs - previous.timeMs : null };
 
+    // #403: a 🛟 run is recorded flagged; a skipped one is never a best.
+    const help = this._helpFlags();
     if (!fromRemote) {
       result = records.recordRun(store, k, {
         timeMs: summary.timeMs,
         splits: this._rideSplits || [],
         collectibles: summary.collectibles,
-        crashes: summary.crashes
+        crashes: summary.crashes,
+        helped: help.helped,
+        skipped: help.skipped
       });
       records.save(store);
       this._recordStore = store;
     }
 
     const thresholds = getMedals(level.id, this.lobby.selectedDifficulty);
-    const medal = records.medalFor(summary.timeMs, thresholds);
-    const next = records.nextMedal(medal);
+    const medal = this._helpMedal(summary.timeMs, thresholds);   // #403: 🛟 caps at bronze
+    const next = (help.helped || help.skipped) ? null : records.nextMedal(medal);
+    const lifebuoy = help.helped && !help.skipped ? records.HELPED_ICON + ' ' : '';
 
-    let html = '';
-    if (result.isNewBest && previous) {
-      html += '<div class="victory-stat victory-perfect">⭐ NEW BEST! ' +
+    let html = this._helpVictoryNote();
+    if (help.skipped) {
+      // No best and no medal line: the shortcut note above says why.
+    } else if (result.replacedHelped) {
+      html += '<div class="victory-stat victory-perfect">⭐ FIRST FINISH WITHOUT HELP ⭐</div>';
+    } else if (result.isNewBest && previous) {
+      html += '<div class="victory-stat victory-perfect">' + lifebuoy + '⭐ NEW BEST! ' +
         records.formatDelta(result.delta) + 's ⭐</div>';
     } else if (result.isNewBest) {
-      html += '<div class="victory-stat victory-perfect">⭐ FIRST RIDE ON THIS ROAD ⭐</div>';
+      html += '<div class="victory-stat victory-perfect">' + lifebuoy + '⭐ FIRST RIDE ON THIS ROAD ⭐</div>';
     } else if (previous) {
       html += '<div class="victory-stat">🏅 Best <strong>' + records.formatTime(previous.timeMs) +
         '</strong> · you ' + records.formatTime(summary.timeMs) +
         ' (' + records.formatDelta(result.delta) + ')</div>';
     }
 
-    if (thresholds) {
-      const earned = medal ? records.MEDAL_ICON[medal] + ' ' + medal.toUpperCase() : 'no medal yet';
+    if (thresholds && !help.skipped) {
+      const earned = medal ? lifebuoy + records.MEDAL_ICON[medal] + ' ' + medal.toUpperCase() : 'no medal yet';
       const chase = next ? ' · ' + records.MEDAL_ICON[next] + ' at ' + records.formatTime(thresholds[next]) : '';
       html += '<div class="victory-stat">' + earned + chase + '</div>';
     }
@@ -2926,8 +2996,10 @@ class Game {
           sync: this.sharedPedal ? this.sharedPedal.offsetScore : null,
           partner: this._partnerKey()
         });
-      } else if (!fromRemote) {
-        recordPractice(store, level.key, summary.timeMs);
+      } else if (!fromRemote && !help.skipped) {
+        // #403: a 🛟 finish counts as finishing the road (streaks, Slingshot's
+        // gate) but its time is not the practice best; a shortcut is neither.
+        recordPractice(store, level.key, help.helped ? null : summary.timeMs);
       }
       if (dailyMode === 'pair' && this._partnerKey()) {
         recordPartner(store, level.key, this._partnerKey());
@@ -3393,7 +3465,7 @@ class Game {
     if (this.state !== 'playing' || !this.bike) { this._clearDisruptionEffects(); return; }
 
     const d = this.bike.distanceTraveled;
-    const active = disruptionAt(this._disruptions, d, (e) => {
+    let active = disruptionAt(this._disruptions, d, (e) => {
       // Cobbles is a piece of road, so its extent is a fixed length in metres.
       // The other two are moments: convert their seconds at the speed they
       // started at, with a floor so a stopped bike does not sit inside a gust
@@ -3402,6 +3474,10 @@ class Game {
       const speed = Math.max(3, this._disruptionStartSpeed || this.bike.speed || 6);
       return e.atM + e.duration * speed;
     });
+    // #403 · Sir Winston clears the road: no gusts at all on a Tier 2 retry —
+    // no banner, no wind, no push.
+    const gustScale = this._helpGustScale ?? 1;
+    if (active && active.event.kind === KIND.GUST && gustScale <= 0) active = null;
 
     // Banner
     if (this.hud.updateDisruption) {
@@ -3434,7 +3510,7 @@ class Game {
         // average, so agreeing is the only way out of it. Shaped by the
         // envelope so it arrives and passes rather than switching on.
         const env = gustEnvelope(this._activeDisruption.progress);
-        this.bike.leanVelocity += (this._gustDirection || 1) * GUST_FORCE * env * dt;
+        this.bike.leanVelocity += (this._gustDirection || 1) * GUST_FORCE * gustScale * env * dt;   // #403: Lady Victoria halves it
       }
     }
 
@@ -3466,7 +3542,7 @@ class Game {
         this._activeDisruption.event.kind === KIND.GUST;
       this.gustVisual.setWind(
         this._gustDirection || 1,
-        gusting ? gustEnvelope(this._activeDisruption.progress) : 0
+        gusting ? gustEnvelope(this._activeDisruption.progress) * gustScale : 0
       );
     }
 
@@ -3813,7 +3889,7 @@ class Game {
       dnf: !!summary.dnf,
       distance: summary.distance,
       raceDistance: summary.raceDistance || level.distance,
-      medal: records.medalFor(summary.timeMs, thresholds),
+      medal: this._helpMedal(summary.timeMs, thresholds),   // #403
       collectibles: summary.collectibles,
       collectiblesTotal: summary.collectiblesTotal,
       crashes: summary.crashes,
@@ -3904,6 +3980,7 @@ class Game {
       if (this.ddaManager) {
         this.ddaManager.onCheckpointPassed(raceEvent.distance);
       }
+      this._helpOnCheckpoint();   // #403: the count and the tier reset here
 
       // Notify stoker
       if (this.mode === 'captain' && this.net) {
@@ -4694,6 +4771,7 @@ class Game {
   _returnToLobby() {
     this._payoutAbandon();   // #400 D4: an abandoned ride still pays its distance
     this._endRankedRun();   // #398
+    this._helpEndRide();    // #403
     if (this._coachVisible) this._dismissCoachCard();
     this._hideTouristGoal();   // E-7
     this._touristRoute = null;
@@ -4838,6 +4916,7 @@ class Game {
   _returnToRoom() {
     this._payoutAbandon();   // #400 D4
     this._endRankedRun();   // #398
+    this._helpEndRide();    // #403
     this._musicBtn.style.display = 'none';
     this.quickMenu.setVisible(false);
     if (!this.net) {
@@ -8522,6 +8601,7 @@ if (isTouristMode()) await resolveTouristOrigin();
 
 installSlingshotMode(Game);   // js/slingshot-mode.js
 installEconomyMode(Game);     // js/economy-mode.js — every ride pays Chaos Coins (#400 D4)
+installHelpingHandMode(Game); // js/helping-hand-mode.js — retries get easier, visibly (#403)
 const game = new Game();
 window._game = game;
 window.perfProbe = perfProbe;

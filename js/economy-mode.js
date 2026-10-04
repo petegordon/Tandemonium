@@ -76,9 +76,12 @@ class EconomyMode {
     }
     if (!this.raceManager || !level) return null;
     const summary = opts.summary;
-    const finished = kind === 'finish';
+    // #403: a ride with the Royal Shortcut taken reaches the finish but is paid
+    // for its distance and pickups only — no finish bonus, medal or best.
+    const skipped = !!(this._helpFlags && this._helpFlags().skipped);
+    const finished = kind === 'finish' && !skipped;
     const cap = level.distance || Infinity;
-    const distance = Math.min(cap, finished && summary ? summary.distance
+    const distance = Math.min(cap, kind === 'finish' && summary ? summary.distance
       : (this.bike ? this.bike.distanceTraveled || 0 : 0));
     const pickups = summary && summary.collectibles != null ? summary.collectibles
       : (this.collectibleManager ? this.collectibleManager.collected : (this.raceManager.collectiblesCount || 0));

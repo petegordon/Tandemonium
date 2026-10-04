@@ -224,6 +224,22 @@ export class HUD {
   }
 
   /**
+   * #403 · the helping hand's badge: 🪿 (Tier 1) or 🎩 (Tier 2) while a tier is
+   * on, so the easier retry reads as a game mechanic, not a hidden nerf. It sits
+   * where the RANKED RUN badge does — a ranked run never gets help.
+   */
+  setHelpBadge(tier, label = '') {
+    const el = this._helpBadgeEl || (this._helpBadgeEl = document.getElementById('help-badge'));
+    if (!el) return;
+    const icon = tier >= 2 ? '🎩' : tier >= 1 ? '🪿' : '';
+    el.textContent = icon;
+    el.title = label || '';
+    el.setAttribute('aria-label', label || '');
+    el.dataset.tier = String(tier || 0);
+    el.classList.toggle('show', !!icon);
+  }
+
+  /**
    * E-2 · the road's three-second warning, and the event itself.
    * Null hides it.
    */
