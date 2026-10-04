@@ -670,8 +670,14 @@ function createWindow() {
   // Load via custom protocol (no network socket → no Windows Firewall prompt)
   // Tourist Mode (#333) dev toggle: `TANDEM_TOURIST=1 npm start` streams Google
   // Photorealistic 3D Tiles instead of the procedural road.
-  const _touristQuery = process.env.TANDEM_TOURIST ? '?mode=tourist' : '';
-  mainWindow.loadURL('tandemonium://app/index.html' + _touristQuery);
+  // #400: the demo is the full game restricted by js/edition.js, switched on
+  // by ?demo=1. Launch with --demo (Steam demo launch option) or
+  // TANDEMONIUM_DEMO=1 to get it in the desktop build.
+  const _params = new URLSearchParams();
+  if (process.env.TANDEM_TOURIST) _params.set('mode', 'tourist');
+  if (process.argv.includes('--demo') || process.env.TANDEMONIUM_DEMO === '1') _params.set('demo', '1');
+  const _query = _params.toString() ? '?' + _params.toString() : '';
+  mainWindow.loadURL('tandemonium://app/index.html' + _query);
 
   mainWindow.on('closed', () => {
     mainWindow = null;

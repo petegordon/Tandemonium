@@ -81,6 +81,7 @@ import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
+import { isDemoEdition } from './edition.js';
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -860,16 +861,8 @@ class Game {
    * touched here — the plan forbids it, and the query flag is enough.
    */
   get _isDemo() {
-    if (this.__isDemo !== undefined) return this.__isDemo;
-    let demo = false;
-    try {
-      demo = new URLSearchParams(location.search).get('demo') === '1';
-    } catch { /* non-browser context */ }
-    if (!demo && typeof window !== 'undefined' && window.tandemoniumSteam) {
-      demo = !!window.tandemoniumSteam.isDemo;
-    }
-    this.__isDemo = demo;
-    return demo;
+    // #400: one source of truth for what the demo restricts — js/edition.js.
+    return isDemoEdition();
   }
 
   /**

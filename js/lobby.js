@@ -61,6 +61,7 @@ import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
 import { renderRoomQR } from './lobby/room-qr.js';
+import { isDemoEdition } from './edition.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -1254,14 +1255,8 @@ export class Lobby {
    * launch URL carries).
    */
   get isDemoBuild() {
-    if (this.__isDemo !== undefined) return this.__isDemo;
-    let demo = false;
-    try { demo = new URLSearchParams(location.search).get('demo') === '1'; } catch {}
-    if (!demo && typeof window !== 'undefined' && window.tandemoniumSteam) {
-      demo = !!window.tandemoniumSteam.isDemo;
-    }
-    this.__isDemo = demo;
-    return demo;
+    // #400: one source of truth for what the demo restricts — js/edition.js.
+    return isDemoEdition();
   }
 
   /**
