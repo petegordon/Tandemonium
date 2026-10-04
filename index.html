@@ -5598,17 +5598,15 @@ ON</button>
           <div class="lobby-mode-buttons">
             <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
             <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
-            <!-- E-6 · the one mode that is about the thing the players feel.
-                 Hidden unless a Maps key is present: without one it can only
-                 disappoint. -->
-            <button class="lobby-btn" id="btn-tourist" style="display:none;">&#128205; RIDE THE DISTANCE BETWEEN YOU</button>
+            <!-- E-6 · Tourist ("ride the distance between you") is a card in
+                 the SOLO level list (#400), shown only with a Maps key. -->
           </div>
         </div>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Tourist route (#lobby-tourist)  — E-6
              Two addresses become a ride over real photogrammetry.
-             Back: #lobby-mode
+             Back: #lobby-level (opened from the SOLO list's Tourist card)
              ════════════════════════════════════════════════════ -->
         <div id="lobby-tourist" class="lobby-step" style="display:none;">
           <p class="lobby-prompt">Where are you two?</p>
@@ -6196,15 +6194,13 @@ ON</button>
 <!-- Slingshot mode · the end-of-ride signal: distance, then the coins it pays. -->
 <div id="sling-tally"></div>
 
-<!-- Demo end overlay (solo demo checkpoint limit reached) -->
+<!-- #400 · Demo end: NEXT LEVEL after the last road the demo includes. -->
 <div id="demo-end-overlay" style="display:none;">
   <div class="disconnect-box">
-    <p style="color:#44ff66;font-size:1.2em;margin-bottom:4px;">Thanks for trying the demo!</p>
-    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">Unlock the full game with all levels, leaderboards, and solo rides.</p>
-    <button class="lobby-btn lobby-btn-accent" id="btn-demo-buy">GET FULL GAME &middot; $5.99</button>
-    <button class="lobby-btn" id="btn-demo-together" style="margin-top:10px;">JOIN A FRIEND'S RIDE</button>
-    <p style="font-size:0.75em;opacity:0.5;margin-top:4px;margin-bottom:12px;">Sign in to join someone with the full game &mdash; always free!</p>
-    <button class="lobby-btn" id="btn-demo-lobby" style="margin-top:0;">BACK TO LOBBY</button>
+    <p style="color:#44ff66;font-size:1.2em;margin-bottom:4px;">That's the demo!</p>
+    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">The full game has a new road every day, ranked runs and every Slingshot stage.</p>
+    <button class="lobby-btn lobby-btn-accent cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</button>
+    <button class="lobby-btn" id="btn-demo-lobby" style="margin-top:10px;">BACK TO LOBBY</button>
   </div>
 </div>
 
