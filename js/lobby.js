@@ -62,6 +62,7 @@ import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
 import { renderRoomQR } from './lobby/room-qr.js';
 import { isDemoEdition } from './edition.js';
+import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -205,8 +206,17 @@ export class Lobby {
     this._cameraPermitted = false;
     this._hasCamera = true; // assume true, check async below
 
+    // Room camera/mic off (#400 D7, default): no camera/audio toggles, and
+    // never touch getUserMedia/enumerateDevices. Multiplayer is unaffected.
+    this._mediaEnabled = isMediaEnabled();
+    if (!this._mediaEnabled) {
+      this._hasCamera = false;
+      this.toggleCamera.style.display = 'none';
+      this.toggleAudio.style.display = 'none';
+    }
+
     // Hide camera toggle if no camera hardware exists
-    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    if (this._mediaEnabled && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       navigator.mediaDevices.enumerateDevices().then(devices => {
         this._hasCamera = devices.some(d => d.kind === 'videoinput');
         if (!this._hasCamera) {
@@ -2065,6 +2075,18 @@ export class Lobby {
   // we remember it so re-enabling doesn't re-prompt.
 
   _toggleAll() {
+    // Room media off: ALL covers only what's left (motion + music).
+    if (!this._mediaEnabled) {
+      const allOn = (!this._motionAvailable() || this.motionActive) && this.musicActive;
+      if (allOn) {
+        if (this._motionAvailable() && this.motionActive) this._toggleMotion();
+        if (this.musicActive) this._toggleMusic();
+      } else {
+        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
+        if (!this.musicActive) this._toggleMusic();
+      }
+      return;
+    }
     // If ALL is active, turn everything off
     const motionOk = !this._motionAvailable() || this.motionActive;
     const cameraOk = !this._hasCamera || this.cameraActive;
@@ -2238,7 +2260,8 @@ export class Lobby {
 
   _updateAllToggle() {
     const motionOk = !this._motionAvailable() || this.motionActive;
-    if (this.cameraActive && this.audioActive && motionOk && this.musicActive) {
+    const mediaOk = !this._mediaEnabled || (this.cameraActive && this.audioActive);
+    if (mediaOk && motionOk && this.musicActive) {
       this.toggleAll.classList.add('active');
     } else {
       this.toggleAll.classList.remove('active');
@@ -2246,6 +2269,7 @@ export class Lobby {
   }
 
   _toggleCamera() {
+    if (!this._mediaEnabled) return; // room media off (#400 D7)
     if (!this._hasCamera) return; // no camera hardware
     if (this.cameraActive) {
       this.cameraActive = false;
@@ -2478,6 +2502,7 @@ export class Lobby {
   }
 
   _toggleAudio() {
+    if (!this._mediaEnabled) return; // room media off (#400 D7)
     if (this.audioActive) {
       this.audioActive = false;
       this._setToggleActive('audio', false);
@@ -3064,7 +3089,7 @@ export class Lobby {
     this._permissionsChecked = true;
 
     // Camera
-    if (navigator.permissions) {
+    if (this._mediaEnabled && navigator.permissions) {
       navigator.permissions.query({ name: 'camera' }).then(r => {
         if (r.state === 'granted') {
           this._cameraPermitted = true;
@@ -3908,6 +3933,9 @@ export class Lobby {
 
     // Show partner PiP in lobby mode (no appendChild — CSS handles positioning)
     // PiP class is managed by _showStep() — no manual toggle needed here
+
+    // Room media off (#400 D7): no media call to place.
+    if (!this._mediaEnabled) return;
 
     // Captain initiates media call first; stoker follows after a delay as fallback.
     // Staggered to avoid cross-call interference that causes flickering.
@@ -5534,14 +5562,16 @@ export class Lobby {
     const partnerWrap = document.getElementById('partner-pip-wrap');
     // Remove lobby/level classes and set inline display:block to prevent
     // base CSS display:none from flashing the PiPs invisible before
-    // game-recorder shows them.
+    // game-recorder shows them. Room media off (#400 D7): the in-ride
+    // selfie/partner PiP frames stay hidden.
+    const pipDisplay = this._mediaEnabled ? 'block' : 'none';
     if (selfieWrap) {
       selfieWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      selfieWrap.style.display = 'block';
+      selfieWrap.style.display = pipDisplay;
     }
     if (partnerWrap) {
       partnerWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      partnerWrap.style.display = 'block';
+      partnerWrap.style.display = pipDisplay;
     }
   }
 
