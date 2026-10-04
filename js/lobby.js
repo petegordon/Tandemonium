@@ -64,6 +64,7 @@ import { NetSession } from './lobby/net-session.js';
 import { renderRoomQR } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed } from './edition.js';
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
+import { loadWallet, browserStore as walletStore } from './wallet.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -129,9 +130,10 @@ const HOLIDAY_BIKES = {
 };
 
 export class Lobby {
-  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, onSlingshotReady, input, controllerManager }) {
+  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, onSlingshotReady, onGarage, input, controllerManager }) {
     this.onSolo = onSolo;
     this.onSlingshotReady = onSlingshotReady || (() => {});
+    this.onGarage = onGarage || (() => {});   // #400 D4 · the one garage
     this.onTouristReady = onTouristReady || (() => {});   // E-6
     this.onMultiplayerReady = onMultiplayerReady;
     this.onLocalReady = onLocalReady;
@@ -301,7 +303,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo')],
+      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage')].filter(Boolean),
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
@@ -674,6 +676,7 @@ export class Lobby {
     this._applyPresetToPreview();
     // Rebuild level cards to reflect newly unlocked levels
     this._rebuildLevelCards();
+    this._refreshWallet();   // #400 D4: what the last ride paid
     this._showStep(this.modeStep);
     this._startGamepadNav();
     this._checkPermissionStates();
@@ -860,7 +863,25 @@ export class Lobby {
     this._stopPreviewLoop();
   }
 
+  /** #400 D4 · the Chaos Coin balance on the GARAGE button (js/wallet.js). */
+  _refreshWallet() {
+    const el = document.getElementById('lobby-wallet');
+    if (!el) return;
+    const w = loadWallet(walletStore());
+    el.textContent = ' · 🪙 ' + w.coins.toLocaleString('en-US');
+  }
+
   _setup() {
+    // #400 D4 · GARAGE: spend every mode's Chaos Coins.
+    const garageBtn = document.getElementById('btn-garage');
+    if (garageBtn) {
+      this._refreshWallet();
+      garageBtn.addEventListener('click', () => {
+        this._hideLobby();
+        this.onGarage();
+      });
+    }
+
     // SOLO → always show level selection
     document.getElementById('btn-solo').addEventListener('click', async () => {
       analytics.trackFirstInput('solo');
