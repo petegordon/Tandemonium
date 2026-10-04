@@ -32,8 +32,8 @@ test('attempt 4: Lady Victoria — half gusts, +25 % time, safety untouched', ()
   assert.equal(h.timeScale, 1.25);
   assert.equal(h.safety, false);
   assert.equal(h.offerSkip, false);
-  assert.equal(h.icon, '🪿');
-  assert.equal(h.label, '🪿 Lady Victoria sends a tailwind');
+  assert.equal(h.icon, '💨');
+  assert.equal(h.label, '💨 Lady Victoria sends a tailwind');
 });
 
 test('attempt 5: Sir Winston — no gusts, +50 % time, safety on', () => {

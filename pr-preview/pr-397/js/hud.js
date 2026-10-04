@@ -224,14 +224,14 @@ export class HUD {
   }
 
   /**
-   * #403 · the helping hand's badge: 🪿 (Tier 1) or 🎩 (Tier 2) while a tier is
+   * #403 · the helping hand's badge: 💨 (Tier 1) or 🎩 (Tier 2) while a tier is
    * on, so the easier retry reads as a game mechanic, not a hidden nerf. It sits
    * where the RANKED RUN badge does — a ranked run never gets help.
    */
   setHelpBadge(tier, label = '') {
     const el = this._helpBadgeEl || (this._helpBadgeEl = document.getElementById('help-badge'));
     if (!el) return;
-    const icon = tier >= 2 ? '🎩' : tier >= 1 ? '🪿' : '';
+    const icon = tier >= 2 ? '🎩' : tier >= 1 ? '💨' : '';
     el.textContent = icon;
     el.title = label || '';
     el.setAttribute('aria-label', label || '');
