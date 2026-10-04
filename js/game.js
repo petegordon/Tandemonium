@@ -5610,7 +5610,9 @@ class Game {
     this.achievements.crash(cause, {   // #401
       ref: this.mode === 'versus' ? null : this.raceManager,
       distance: bike ? bike.distanceTraveled : 0,
-      raceDistance: this.raceManager ? this.raceManager.raceDistance : 0,
+      raceDistance: (this.mode === 'versus'
+        ? (this.lobby.selectedLevel && this.lobby.selectedLevel.distance)
+        : (this.raceManager && this.raceManager.raceDistance)) || 0,
     });
     if (bike) {
       analytics.trackRideEvent('crash', bike.distanceTraveled, {
