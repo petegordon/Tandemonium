@@ -16,6 +16,8 @@
 // Pure and DOM-free like records.js / daily-ride.js: the save lives behind an
 // injectable {get,set} store so the tests run in Node. game.js only glues it in.
 
+import { seedFromKey, deriveSeed } from './daily-seed.js';
+
 export const STORAGE_KEY = 'tandemonium_slingshot';
 
 /**
@@ -26,11 +28,16 @@ export const STORAGE_KEY = 'tandemonium_slingshot';
  */
 export const SLING_SYSTEMS_OFF = new Set(['achievements', 'ghost', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']);
 
+// The garage (#400 D5). The upgrades live in the shared wallet (js/wallet.js)
+// and every mode's payout uses the Coin multiplier, but Slingshot and Tyres &
+// frame only ever change Slingshot physics — never a race. Aero was folded into
+// Tyres & frame: on its own it was a trap pick (+7 m for 50 coins at level 1).
+// Prices are first guesses pending playtest, tuned by the progression sim in
+// test/unit/slingshot.test.mjs.
 export const UPGRADES = [
-  { id: 'sling',   name: 'Slingshot',       desc: 'Thicker bands, faster launch',       max: 10, base: 40, icon: '🎯' },
-  { id: 'wheels',  name: 'Wheels',          desc: 'Smoother tyres, less rolling drag',  max: 10, base: 35, icon: '🛞' },
-  { id: 'aero',    name: 'Aero frame',      desc: 'Less wind drag at speed',            max: 10, base: 50, icon: '💨' },
-  { id: 'magnet',  name: 'Coin multiplier', desc: 'Every run pays more Chaos Coins',    max: 8,  base: 60, icon: '🪙' },
+  { id: 'sling',   name: 'Slingshot',       desc: 'Thicker bands, faster launch',        max: 10, base: 40, icon: '🎯' },
+  { id: 'wheels',  name: 'Tyres & frame',   desc: 'Less rolling drag and less wind drag', max: 10, base: 70, icon: '🛞' },
+  { id: 'magnet',  name: 'Coin multiplier', desc: 'Every ride, every mode pays more',    max: 8,  base: 60, icon: '🪙' },
 ];
 
 export function getUpgrade(id) {
@@ -48,7 +55,7 @@ export function slingStats(lv = {}) {
   return {
     launchMax: 14 + L('sling') * 1.2,                 // m/s at a full pull
     crr: 0.02 * Math.pow(0.93, L('wheels')),          // rolling resistance (× g) on dirt
-    drag: 0.001 * Math.pow(0.93, L('aero')),          // aero drag (× v²)
+    drag: 0.001 * Math.pow(0.93, L('wheels')),        // air drag (× v²) — Tyres & frame does both
     coinMult: 1 + L('magnet') * 0.25,                 // payout multiplier
   };
 }
@@ -181,6 +188,45 @@ export function stageBonus(stage) {
   return 50 * Math.max(1, Math.floor(stage || 1));
 }
 
+// ---- Stage gates (#400 D11a) --------------------------------
+
+/**
+ * Some stages need something from the rest of the game before they can be
+ * launched: going back to a regular ride is how you progress here. Keyed by
+ * the stage that is LOCKED. Edit freely — each row is one of:
+ *   { level, medal }  a medal of at least `medal` on `level` (any mode/difficulty)
+ *   { daily: true }   any finished Today's Road
+ * First guesses (Pete, 2026-10-04), pending playtest.
+ */
+export const STAGE_GATES = {
+  4: { level: 'grandma', medal: 'bronze', label: "Win a 🥉 bronze on Grandma's" },
+  6: { daily: true, level: 'daily', label: "Finish a Today's Road" },
+  7: { level: 'grandma', medal: 'gold', label: "Win a 🥇 gold on Grandma's" },
+};
+
+const MEDAL_RANK = { bronze: 1, silver: 2, gold: 3 };
+
+/**
+ * Why stage `stage` can't be launched yet, or null when it can.
+ * progress: { medals: { [levelId]: 'gold'|'silver'|'bronze' }, dailyFinished }
+ * (js/economy.js · gateProgress builds it from the records and Today's Road).
+ * maxStage: the edition's cap (js/edition.js) — past it, it's the demo's end.
+ * @returns {null | { kind: 'demo'|'medal'|'daily', label, level? }}
+ */
+export function stageLock(stage, progress = {}, { maxStage = null } = {}) {
+  const n = Math.max(1, Math.floor(stage || 1));
+  if (maxStage != null && n > maxStage) {
+    return { kind: 'demo', label: "That's the demo — get the full game for more stages" };
+  }
+  const gate = STAGE_GATES[n];
+  if (!gate) return null;
+  if (gate.daily) {
+    return progress.dailyFinished ? null : { kind: 'daily', label: gate.label, level: gate.level };
+  }
+  const have = MEDAL_RANK[(progress.medals || {})[gate.level]] || 0;
+  return have >= MEDAL_RANK[gate.medal] ? null : { kind: 'medal', label: gate.label, level: gate.level };
+}
+
 // ---- Course -------------------------------------------------
 
 export const COINS_PER_TRAIL = 5;
@@ -221,8 +267,9 @@ export const LANES = [-1.6, 0, 1.6];
  *    JACKPOT billboard — hit it and the run ends at double pay.
  *  - Then coin trails all the way to the goal.
  */
-export function planCourse(stage, distance) {
-  const rng = lcg(7919 * Math.max(1, Math.floor(stage || 1)) + 13);
+export function planCourse(stage, distance, { seed = null } = {}) {
+  // A seed (Today's Launch) replaces the stage's fixed layout with the day's.
+  const rng = lcg(seed != null ? seed : 7919 * Math.max(1, Math.floor(stage || 1)) + 13);
   const pickLanes = () => {
     const l = LANES.slice();
     for (let i = l.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [l[i], l[j]] = [l[j], l[i]]; }
@@ -247,7 +294,7 @@ export function planCourse(stage, distance) {
   ramps.push({ d: g2 - 7, offset: h2 });
   for (let d = g2 + 90; d < distance - 40; d += 110 + rng() * 60) ramps.push({ d, offset: LANES[Math.floor(rng() * 3)] });
 
-  coins.push(...planCoinTrails(distance, 31 * stage + 7, { start: g2 + 40 }));
+  coins.push(...planCoinTrails(distance, seed != null ? Math.floor(rng() * 233280) + 1 : 31 * stage + 7, { start: g2 + 40 }));
   // No coin trail sits on a ramp.
   const clear = coins.filter(c => !ramps.some(r => Math.abs(c.d - r.d) < 4 && Math.abs(c.offset - r.offset) < 1.2));
   return { coins: clear, hay, ramps, jackpot };
@@ -273,6 +320,9 @@ export const HAY_CLEAR_H = 1.2;
 
 // ---- Scoring ------------------------------------------------
 
+// First guesses pending playtest. Slingshot pays faster per metre than a
+// regular ride (js/economy.js · RIDE_PAY, 1 per 5 m) because a launch is a
+// few seconds long and the metres are the whole game here.
 export const PAY = {
   metresPerCoin: 2,     // 1 Chaos Coin per 2 m
   perCoin: 5,
@@ -286,13 +336,14 @@ export function jackpotBonus(stage) {
 
 /**
  * One run's payout.
- * run:  { distance, coins, stageCleared, jackpot }   (distance from the slingshot)
- * save: { best, runs, stage, lv }
+ * run:  { distance, coins, stageCleared, jackpot, bigAirs }   (distance from the slingshot)
+ * save: { best, runs, stage }  — for Today's Launch, the day's best and runs
+ * coinMult: the wallet's multiplier (js/wallet.js · coinMultiplier). Defaults
+ *   to what save.lv would give, for callers that still pass upgrade levels.
  */
-export function scoreRun(run, save) {
+export function scoreRun(run, save, coinMult = slingStats(save.lv).coinMult) {
   const distance = Math.max(0, Math.floor(run.distance || 0));
   const best = save.best || 0;
-  const stats = slingStats(save.lv);
   const distPay = Math.floor(distance / PAY.metresPerCoin);
   const coinPay = (run.coins || 0) * PAY.perCoin;
   const isRecord = distance > best;
@@ -303,26 +354,64 @@ export function scoreRun(run, save) {
   const jackpotPay = run.jackpot ? jackpotBonus(save.stage) : 0;
   const airPay = (run.bigAirs || 0) * BIG_AIR_PAY;
   const subtotal = distPay + coinPay + recordPay + stagePay + jackpotPay + airPay;
-  const multiplier = stats.coinMult * (run.jackpot ? 2 : 1);
+  const multiplier = coinMult * (run.jackpot ? 2 : 1);
   const total = Math.floor(subtotal * multiplier);
   return { distance, distPay, coinPay, recordPay, stagePay, jackpotPay, airPay, subtotal,
            multiplier, total, isRecord };
 }
 
-// ---- Save ---------------------------------------------------
+// ---- Today's Launch (#400 D11b) ----------------------------
 
-export const SAVE_VERSION = 2;
+/**
+ * One seeded course a day, the same for everyone, on the day key Today's Road
+ * uses (js/daily-seed.js). No stage goal: the run ends when the bike stalls or
+ * crashes, and the day's best distance is the thing to beat.
+ */
+export const TODAYS_LAUNCH_SALT = 101;          // private to this mode: not in daily-seed's SALT table
+export const TODAYS_LAUNCH_LENGTH = 1150;       // past every stage goal, inside one 1200 m lap
+const TODAYS_LAUNCH_LAYOUT_STAGE = 7;           // jackpot billboard on, like a late stage
+
+export function todaysLaunchSeed(key) {
+  return deriveSeed(seedFromKey(key), TODAYS_LAUNCH_SALT);
+}
+
+/** The day's course: deterministic per key, different from day to day. */
+export function todaysLaunchCourse(key) {
+  return planCourse(TODAYS_LAUNCH_LAYOUT_STAGE, TODAYS_LAUNCH_LENGTH + SLING_REST_D, { seed: todaysLaunchSeed(key) });
+}
+
+/** The save's record for `key` (a fresh one when the stored day is another day). */
+export function todaysLaunchStatus(save, key) {
+  const d = save && save.daily;
+  return d && d.key === key ? { key, best: d.best || 0, runs: d.runs || 0 } : { key, best: 0, runs: 0 };
+}
+
+/** Bank a Today's Launch run on the save. Returns a NEW save. */
+export function applyTodaysLaunch(save, key, score) {
+  const cur = todaysLaunchStatus(save, key);
+  return { ...save, daily: { key, best: Math.max(cur.best, score.distance), runs: cur.runs + 1 } };
+}
+
+// ---- Save ---------------------------------------------------
+//
+// v3 (#400): Chaos Coins and the upgrade levels moved to the one wallet every
+// mode shares (js/wallet.js). This save keeps only Slingshot's own progress.
+// A v1/v2 save still carries `coins` and `lv`; takeLegacyWallet() hands them
+// over exactly once (the wallet migration calls it).
+
+export const SAVE_VERSION = 3;
 
 export function emptySave() {
-  return { v: SAVE_VERSION, coins: 0, best: 0, runs: 0, stage: 1, lv: {} };
+  return { v: SAVE_VERSION, best: 0, runs: 0, stage: 1, daily: null };
 }
 
 /**
  * Upgrades that existed in earlier builds and were removed (pedaling and the
- * checkpoint gates left the mode). Their base prices, so a save that bought
- * them gets every coin back instead of silently losing it.
+ * checkpoint gates left the mode; Aero folded into Tyres & frame). Their base
+ * prices, so a save that bought them gets every coin back instead of silently
+ * losing it.
  */
-export const RETIRED_UPGRADES = { legs: 45, stamina: 40, gate: 45 };
+export const RETIRED_UPGRADES = { legs: 45, stamina: 40, gate: 45, aero: 50 };
 
 /** Coins spent taking an upgrade with this base price from 0 to `level`. */
 export function spentOn(base, level) {
@@ -331,60 +420,105 @@ export function spentOn(base, level) {
   return total;
 }
 
+const num = (v, d) => (Number.isFinite(v) && v >= 0 ? v : d);
+
+/**
+ * Live upgrade levels from any object, clamped, plus the coins refunded for
+ * retired ones. Shared by the legacy hand-over and the wallet's own sanitize.
+ */
+export function sanitizeLevels(rawLv) {
+  const lv = {};
+  let refund = 0;
+  if (rawLv && typeof rawLv === 'object') {
+    for (const u of UPGRADES) {
+      const v = Math.floor(num(rawLv[u.id], 0));
+      if (v > 0) lv[u.id] = Math.min(u.max, v);
+    }
+    for (const [id, base] of Object.entries(RETIRED_UPGRADES)) {
+      const v = Math.floor(num(rawLv[id], 0));
+      if (v > 0) refund += spentOn(base, Math.min(10, v));
+    }
+  }
+  return { lv, refund };
+}
+
 function sanitize(o) {
   const s = emptySave();
   if (!o || typeof o !== 'object') return s;
-  const num = (v, d) => (Number.isFinite(v) && v >= 0 ? v : d);
-  s.coins = Math.floor(num(o.coins, 0));
   s.best = Math.floor(num(o.best, 0));
   s.runs = Math.floor(num(o.runs, 0));
   s.stage = Math.max(1, Math.floor(num(o.stage, 1)));
-  if (o.lv && typeof o.lv === 'object') {
-    for (const u of UPGRADES) {
-      const v = Math.floor(num(o.lv[u.id], 0));
-      if (v > 0) s.lv[u.id] = Math.min(u.max, v);
-    }
-    for (const [id, base] of Object.entries(RETIRED_UPGRADES)) {
-      const v = Math.floor(num(o.lv[id], 0));
-      if (v > 0) s.coins += spentOn(base, Math.min(10, v));
-    }
+  const d = o.daily;
+  if (d && typeof d === 'object' && typeof d.key === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.key)) {
+    s.daily = { key: d.key, best: Math.floor(num(d.best, 0)), runs: Math.floor(num(d.runs, 0)) };
   }
   return s;
 }
 
-export function loadSave(store) {
+function readRaw(store) {
   try {
     const raw = store.get(STORAGE_KEY);
-    return sanitize(raw ? JSON.parse(raw) : null);
+    const o = raw ? JSON.parse(raw) : null;
+    return o && typeof o === 'object' ? o : null;
   } catch (e) {
-    return emptySave();
+    return null;
   }
 }
 
-export function writeSave(store, save) {
-  try { store.set(STORAGE_KEY, JSON.stringify(save)); } catch (e) { /* storage full / blocked */ }
+export function loadSave(store) {
+  return sanitize(readRaw(store));
 }
 
-/** Bank a scored run. Returns a NEW save; `score` comes from scoreRun. */
+export function writeSave(store, save) {
+  try { store.set(STORAGE_KEY, JSON.stringify(sanitize(save))); } catch (e) { /* storage full / blocked */ }
+}
+
+/**
+ * The coins and upgrade levels an old (v1/v2) save still holds, with retired
+ * upgrades refunded as coins — and the save rewritten without them, so they
+ * can only ever be handed over once. Returns null when there is nothing.
+ */
+export function takeLegacyWallet(store) {
+  const o = readRaw(store);
+  if (!o || (o.coins == null && o.lv == null)) return null;
+  const { lv, refund } = sanitizeLevels(o.lv);
+  const coins = Math.floor(num(o.coins, 0)) + refund;
+  writeSave(store, o);   // sanitize drops coins + lv
+  return { coins, lv };
+}
+
+/** Bank a scored stage run. Returns a NEW save; `score` comes from scoreRun. Coins go to the wallet. */
 export function applyRun(save, run, score) {
-  const next = { ...save, lv: { ...save.lv } };
-  next.coins += score.total;
+  const next = { ...save };
   next.runs += 1;
   if (score.isRecord) next.best = score.distance;
   if (run.stageCleared) next.stage += 1;
   return next;
 }
 
-/** Buy one level of an upgrade. Returns { ok, save, reason }. */
+/**
+ * Buy one level of an upgrade from a wallet ({ coins, lv, … }).
+ * Returns { ok, save, reason } — `save` is the new wallet.
+ */
 export function buyUpgrade(save, id) {
   const u = getUpgrade(id);
   if (!u) return { ok: false, save, reason: 'unknown' };
-  const level = save.lv[id] || 0;
+  const level = (save.lv || {})[id] || 0;
   if (level >= u.max) return { ok: false, save, reason: 'maxed' };
   const price = upgradeCost(u, level);
   if (save.coins < price) return { ok: false, save, reason: 'poor' };
   const next = { ...save, coins: save.coins - price, lv: { ...save.lv, [id]: level + 1 } };
-  return { ok: true, save: next, reason: null };
+  return { ok: true, save: next, reason: null, price };
+}
+
+/** Metres a full pull gains from the next level of `id` (0 for the Coin multiplier). */
+export function upgradeGain(lv, id) {
+  const u = getUpgrade(id);
+  const level = (lv || {})[id] || 0;
+  if (!u || level >= u.max) return 0;
+  const now = predictCoast(slingStats(lv), 1, 'dirt');
+  const next = predictCoast(slingStats({ ...lv, [id]: level + 1 }), 1, 'dirt');
+  return Math.max(0, next - now);
 }
 
 /** Guarded localStorage, same shape as daily-ride.js browserStore(). */
