@@ -75,6 +75,7 @@ const measure = () => page.evaluate(() => {
     cam: { x: cam.position.x, y: cam.position.y, z: cam.position.z, rx: cam.rotation.x, ry: cam.rotation.y, rz: cam.rotation.z },
     bikeX: bikeC.x, guideEndX, inView, overlaps, pedalsHidden: hidden('#pedal-bar') && hidden('.versus-pedals'),
     earned: g.achievements.getEarnedIds().length,
+    earnedIds: g.achievements.getEarnedIds(),
     toast: document.getElementById('sling-toast').classList.contains('visible'),
   };
 });
@@ -119,6 +120,7 @@ async function suite(label, vp) {
   check(rest.pedalsHidden, 'no pedal pads');
   check(rest.overlaps.length === 0, `no text over the bike at rest${rest.overlaps.length ? ' (' + rest.overlaps.join(', ') + ')' : ''}`);
   const earnedBefore = rest.earned;
+  const earnedIdsBefore = new Set(rest.earnedIds);
 
   const S = Math.min(vp.width, vp.height);
   const pullPx = Math.min(vp.height * 0.3 + 20, vp.height - cy - 10);
@@ -156,13 +158,15 @@ async function suite(label, vp) {
   const rc = await measure(); await page.mouse.up({ button: 'right' });
   check(rc.pull === 0, 'a right-click drag is ignored');
 
-  // Touch launch; no achievement for being flung.
+  // Touch launch. Since #401 a launch may earn SLINGSHOT achievements ("Fire!"),
+  // but never a regular-ride one (pedalling, finishing, distance…).
   await holdAt(0, pullPx);
   await touch('touchEnd');
   await waitState('playing', 60000);
   await new Promise(r => setTimeout(r, 2500));
   const flown = await measure();
-  check(flown.earned === earnedBefore, `no achievement fires on a launch (${flown.earned - earnedBefore} new)`);
+  const newIds = flown.earnedIds.filter(id => !earnedIdsBefore.has(id));
+  check(newIds.every(id => id.startsWith('sling_')), `a launch earns only Slingshot achievements (${newIds.join(', ') || 'none'})`);
 
   // Keyboard: hold ↓, nudge →, release ↓ fires.
   await toSlingshot(false);
