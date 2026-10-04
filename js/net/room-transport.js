@@ -15,6 +15,7 @@ import {
   MSG_HEARTBEAT,
   TURN_CREDENTIALS_URL, PEERJS_HOST, PEERJS_PORT, PEERJS_PATH, PEERJS_SECURE
 } from '../config.js';
+import { isMediaEnabled } from '../edition.js';
 
 // Fast lane for high-rate, latest-wins traffic (bike STATE / LEAN). A second
 // data channel on the same RTCPeerConnection, unordered with no retransmits,
@@ -56,6 +57,10 @@ export class RoomTransport {
     this.onAuthError = null; // fires when relay rejects connection (401/403 auth failure)
     this.cameraEnabled = true; // set false to suppress local camera in calls
     this.audioEnabled = false; // set true to include microphone in calls
+    // Room camera/mic (#400 D7). When false the transport never acquires a
+    // local stream, never places a media call, and closes incoming ones.
+    // Data connections are unaffected.
+    this.mediaEnabled = isMediaEnabled();
     this._mediaCall = null;
     this._localMediaStream = null;
     this._heartbeatInterval = null;
@@ -447,6 +452,12 @@ export class RoomTransport {
   }
 
   _handleIncomingCall(call) {
+    // Media off: refuse the call (an older client with media on may still
+    // place one) — close it rather than answer, so no MediaConnection opens.
+    if (!this.mediaEnabled) {
+      try { call.close(); } catch (e) {}
+      return;
+    }
     // Close previous media call to prevent duplicate streams
     if (this._mediaCall) {
       try { this._mediaCall.close(); } catch (e) {}
@@ -678,6 +689,7 @@ export class RoomTransport {
   }
 
   async acquireLocalMedia(cameraEnabled, audioEnabled) {
+    if (!this.mediaEnabled) return;
     // If stream already has all requested tracks, nothing to do
     if (this._localMediaStream) {
       const hasVideo = this._localMediaStream.getVideoTracks().length > 0;
@@ -708,6 +720,7 @@ export class RoomTransport {
   }
 
   initiateCall() {
+    if (!this.mediaEnabled) return;
     if (!this.peer || !this.conn) return;
     const localStream = this._localMediaStream || new MediaStream();
     const remotePeerId = this.conn.peer;
