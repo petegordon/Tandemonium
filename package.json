@@ -37,7 +37,8 @@
     "smoke:tourist": "node scripts/smoke-tourist-route.mjs",
     "smoke:layout": "node scripts/smoke-hud-layout.mjs",
     "smoke:slingshot": "node scripts/smoke-slingshot.mjs",
-    "smoke:slingshot-aim": "node scripts/smoke-slingshot-aim.mjs"
+    "smoke:slingshot-aim": "node scripts/smoke-slingshot-aim.mjs",
+    "smoke:economy": "node scripts/smoke-economy.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",
