@@ -1242,6 +1242,34 @@ export class World {
     return true;
   }
 
+  /**
+   * #400 · Tourist Mode swaps a tiles world in for a ride. This world is not
+   * disposed for it (it has no dispose, and its road chunks can't be rebuilt in
+   * place): everything it put in the scene is taken out, and put back by
+   * unpark() — the same road, chunks, trees, clouds and lights, untouched.
+   */
+  park() {
+    if (this._parkedObjects) return;
+    this.clearRaceMarkers();
+    const owned = [
+      this.floor, this.floorB, this._ambient, this.sun, this.sun && this.sun.target, this._hemi, this._fill,
+      ...this._treePool.map(t => t.mesh),
+      ...this._cloudPool.map(c => c.group),
+      ...this._balloons.map(b => b.group),
+      ...(this.roadChunks ? this.roadChunks._chunks.map(c => c.group) : [])
+    ];
+    this._parkedObjects = owned.filter(o => o && o.parent === this.scene);
+    for (const o of this._parkedObjects) this.scene.remove(o);
+  }
+
+  unpark() {
+    if (!this._parkedObjects) return;
+    for (const o of this._parkedObjects) this.scene.add(o);
+    this._parkedObjects = null;
+  }
+
+  get parked() { return !!this._parkedObjects; }
+
   clearRaceMarkers() {
     this._cleanupDestVideo();
     this._raceMarkers.forEach(m => {

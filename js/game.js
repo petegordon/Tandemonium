@@ -36,10 +36,10 @@ import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
-import { AchievementManager, showAchievementToast, updateBadgeDisplay } from './achievements.js';
+import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { FocusController } from './nav/focus-controller.js';
-import { ROOM_MSG } from './lobby/room-protocol.js';
+import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
 import { BalanceController } from './balance-controller.js';
@@ -62,6 +62,9 @@ import { World } from './world.js';
 // message rather than a blank screen.
 import { isTouristMode, getMapsApiKey, resolveTouristOrigin } from './tourist-config.js';
 import { formatDistance, skipLabel } from './tourist-route.js';
+// #400 · how long a co-op Tourist pair waits for both tiles worlds before
+// going back to the room (never an indefinite hang on a loading screen).
+const TOURIST_READY_TIMEOUT_MS = 20000;
 import { HUD } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { GustVisual } from './gust-visual.js';
@@ -988,6 +991,7 @@ class Game {
     this.hud.setSeat('captain', false);   // A-4: no sync row when riding alone
     this.isTourist = false;               // E-7: a normal solo ride, not a route
     this._touristRoute = null;
+    this._restoreProceduralWorld();       // #400: never on a leftover tiles world
     this._hideTouristGoal();
     this._leaveSlingMode();
     this.bike.applyPreset(this.lobby.selectedPreset);
@@ -1011,6 +1015,7 @@ class Game {
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
+    this._partnerTouristReady = null;   // #400: this ride's ready barrier starts empty
     this._lobbyBtn.textContent = 'ROOM';
     this.bike.applyPreset(this.lobby.selectedPreset);
 
@@ -1220,6 +1225,19 @@ class Game {
         if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
         return;
       }
+      // #400: the partner's side of the co-op Tourist ready barrier.
+      if (profile && profile.type === ROOM_MSG.TOURIST_READY) {
+        this._partnerTouristReady = !!profile.ok;
+        if (this._onPartnerTouristReady) {
+          this._onPartnerTouristReady();
+        } else if (!profile.ok && this._touristRoute) {
+          // Past our barrier already; the partner's side gave up. Their
+          // EVT_RETURN_ROOM follows — say why it happened.
+          this._lastTouristAbort = 'The streets didn’t load for both of you.';
+          showInfoToast('📍', 'Back in the room', this._lastTouristAbort);
+        }
+        return;
+      }
       // E-3: a sprint call or an emote from the other seat.
       if (profile && profile.type === 'ping') {
         this._receivePing(profile);
@@ -1313,6 +1331,13 @@ class Game {
     this.input.suppressGamepadBadge = true;
     const gpBadge = document.getElementById('gamepad-badge');
     if (gpBadge) gpBadge.style.display = 'none';
+
+    // #400: co-op Tourist — the captain planned a route and both sides got it.
+    const touristPlan = this.lobby.takeRoomTouristPlan();
+    if (touristPlan) {
+      this._startCoopTourist(touristPlan);
+      return;
+    }
 
     // Check for multiplayer tutorial (Learn to Ride together)
     if (this.lobby._forceWizard) {
@@ -1418,6 +1443,7 @@ class Game {
     this.hud.updateLookahead(null);
     this._touristRoute = null;
     this._hideTouristGoal();
+    this._restoreProceduralWorld();   // #400
     this._loadSavedTuning();
     // The join screen suspended activity-claims so it could be the sole
     // claimer; rosters are locked now, so restore normal behavior (spare
@@ -3094,16 +3120,105 @@ class Game {
   // The maths is in js/tourist-route.js (pure, tested). Here: start the ride,
   // keep the distance on screen, and end it when they arrive.
 
-  /** E-6 · the lobby handed over a planned route. */
-  async _onTouristReady({ plan }) {
+  /**
+   * E-6 · the lobby handed over a planned route. Solo, or (#400) couch co-op
+   * when `local` carries P2's input: one screen, one tiles world, then the
+   * ordinary local co-op setup.
+   */
+  async _onTouristReady({ plan, local = null }) {
     if (!plan) return;
+    if (local) {
+      await this._prepareTouristRide(plan);
+      this._onLocalReady(local);
+      return;
+    }
     this.mode = 'solo';
+    this.hud.setSeat('captain', false);
+    this._lobbyBtn.textContent = 'LOBBY';
+    await this._prepareTouristRide(plan);
+
+    this.state = 'instructions';
+    this._updateInstructionsText();
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  /**
+   * #400 · co-op Tourist (online). Both sides load the tiles world for the
+   * captain's route, then meet at a ready barrier: each sends TOURIST_READY
+   * and waits for the other's. Only when both are up does the ride reach its
+   * instructions screen; a failure on either side or no answer within
+   * TOURIST_READY_TIMEOUT_MS sends the pair back to the room with a message.
+   * "Ready" means the tiles renderer is built for the route with a Maps key;
+   * tiles then stream in during the ride as they do solo.
+   */
+  async _startCoopTourist(plan) {
+    const id = this._touristBarrierId = (this._touristBarrierId || 0) + 1;
+    const isCurrent = () => id === this._touristBarrierId && !!this.net;
+    const timeoutMs = this._touristReadyTimeoutMs ?? TOURIST_READY_TIMEOUT_MS;
+    const statusEl = document.getElementById('status');
+    if (statusEl) statusEl.textContent = 'Loading the streets for you both…';
+
+    let timer = null;
+    const deadline = new Promise(r => { timer = setTimeout(() => r('timeout'), timeoutMs); });
+    const partner = new Promise(r => {
+      if (this._partnerTouristReady !== null) { r(this._partnerTouristReady); return; }
+      this._onPartnerTouristReady = () => r(this._partnerTouristReady);
+    });
+    // A route this side could not rebuild, or a build with Tourist switched
+    // off (no Maps key / the demo), cannot load — it fails the barrier at once.
+    const canLoad = !!plan.route && getEditionRules().tourist && !!getMapsApiKey();
+    const mine = canLoad
+      ? Promise.race([this._prepareTouristRide(plan, isCurrent), deadline])
+      : Promise.resolve(false);
+    const ok = await mine;
+    if (!isCurrent()) { clearTimeout(timer); this._onPartnerTouristReady = null; return; }
+    if (ok === true && this.net.connected) this.net.sendProfile(RoomProtocol.touristReady(true));
+    const theirs = ok === true ? await Promise.race([partner, deadline]) : false;
+    clearTimeout(timer);
+    this._onPartnerTouristReady = null;
+    if (!isCurrent()) return;
+
+    if (ok !== true || theirs !== true) {
+      const why = ok !== true
+        ? (ok === 'timeout' ? 'The streets took too long to load here.' : 'The streets could not load on this device.')
+        : (theirs === 'timeout' ? 'Your partner’s streets took too long to load.' : 'The streets didn’t load for both of you.');
+      try { analytics.trackEvent('tourist_coop_abort', { mine: String(ok), theirs: String(theirs) }); } catch {}
+      // Tell the partner first (so they show the reason, not just a room).
+      if (this.net.connected) {
+        this.net.sendProfile(RoomProtocol.touristReady(false));
+        // A partner that already got our ready may be past its barrier, on
+        // the instructions screen: bring it back to the room too. (A partner
+        // still waiting gives up on its own from the message above.)
+        if (ok === true) this.net.sendEvent(EVT_RETURN_ROOM);
+      }
+      if (statusEl) statusEl.textContent = '';
+      this._returnToRoom();
+      this._lastTouristAbort = why;   // read by smoke:tourist
+      showInfoToast('📍', 'Back in the room', why);
+      return;
+    }
+
+    if (statusEl) statusEl.textContent = '';
+    try { analytics.trackEvent('tourist_coop_ready', { role: this.mode }); } catch {}
+    this.state = 'instructions';
+    this._updateInstructionsText();
+    this.instructionsEl.classList.remove('hidden');
+    this._setupStartHandler();
+  }
+
+  /**
+   * E-6 · everything a tourist ride needs before its instructions screen: the
+   * route, the pseudo-level, the goal readout and the tiles world.
+   * @param {object} plan  from planRoute()
+   * @param {() => boolean} [isCurrent]  false once a co-op load is abandoned
+   * @returns {Promise<boolean>} true when the tiles world is up
+   */
+  async _prepareTouristRide(plan, isCurrent = () => true) {
     this._leaveSlingMode();
     this.isTourist = true;
     this._touristRoute = plan;
     this._touristArrived = false;
-    this.hud.setSeat('captain', false);
-    this._lobbyBtn.textContent = 'LOBBY';
 
     // The ride is the ridable part of the route; the REAL distance is what the
     // HUD says, because that number is the entire feature.
@@ -3134,7 +3249,8 @@ class Game {
     const apiKey = getMapsApiKey();
     this._touristPending = true;
     this._showTouristGoal();
-    await this._loadTouristWorld(apiKey);
+    const ready = await this._loadTouristWorld(apiKey, isCurrent);
+    if (!ready) return false;
 
     if (this.world && this.world.setRoute) {
       this.world.setRoute(plan);
@@ -3143,11 +3259,7 @@ class Game {
       // player's own end of the line, which is the half that means something.
       this.world.setOrigin(plan.from);
     }
-
-    this.state = 'instructions';
-    this._updateInstructionsText();
-    this.instructionsEl.classList.remove('hidden');
-    this._setupStartHandler();
+    return !!apiKey;
   }
 
   /** E-7 · the sentence, and how much of it is left. */
@@ -3232,27 +3344,75 @@ class Game {
    * billing — the player keeps the procedural world and is told why, rather
    * than staring at a blank screen.
    */
-  async _loadTouristWorld(apiKey) {
+  async _loadTouristWorld(apiKey, isCurrent = () => true) {
+    // #400: never two tiles worlds at once — a second route rides from the
+    // procedural world, not on top of the last route's tiles.
+    this._restoreProceduralWorld(true);
     try {
       const { TouristWorld } = await import('./tourist-world.js');
+      // A co-op load that was abandoned while the module was fetching (the
+      // ready barrier timed out, the pair went back to the room) must not
+      // swap the world afterwards.
+      if (!isCurrent()) return false;
+      // TouristWorld retunes the fog and the far plane; keep them to restore.
+      this._preTouristView = { fog: this.scene.fog, far: this.camera.far };
       const tourist = new TouristWorld(this.scene, this.camera, this.renderer, { apiKey });
-      // Retire the procedural world before the tiles take over vertical
-      // placement, or two grounds fight over the bike.
-      if (this.world && this.world.roadChunks) this.world.roadChunks.dispose();
+      // Park (do not dispose) the procedural world before the tiles take over
+      // vertical placement, or two grounds fight over the bike. It comes back
+      // intact in _restoreProceduralWorld when the tourist ride is over.
+      if (this.world && this.world.park) {
+        this.world.park();
+        this._proceduralWorld = this.world;
+      }
       this.world = tourist;
       this.bike.roadPath = null;
       this.world.setBike(this.bike);
       this._touristPending = false;
       try { analytics.trackEvent('tourist_world_ready'); } catch {}
+      return true;
     } catch (err) {
       this._touristPending = false;
       this.isTourist = false;
+      if (this._preTouristView && !this._proceduralWorld) this._restoreTouristView();
       console.error('[Tourist Mode] could not load the tiles renderer — ' +
         'staying on the procedural world.', err);
       const el = document.getElementById('tourist-credits');
       if (el) el.textContent = 'Tourist Mode unavailable — riding the usual road instead.';
       try { analytics.trackEvent('tourist_world_failed', { message: String(err && err.message).slice(0, 120) }); } catch {}
+      return false;
     }
+  }
+
+  /**
+   * #400 · after a tourist ride, every other ride runs on the procedural world
+   * again: the tiles world is disposed (renderer, lights, notices) and the
+   * parked World comes back with its own road, chunks, fog and far plane.
+   * No-op when no tourist ride swapped the world. The boot-time dev toggle
+   * (?mode=tourist) keeps its tiles unless `force` (a new route is loading).
+   * @returns {boolean} whether the world was swapped back
+   */
+  _restoreProceduralWorld(force = false) {
+    const proc = this._proceduralWorld;
+    if (!proc) return false;
+    if (!force && isTouristMode()) return false;
+    if (this.world && this.world !== proc && this.world.dispose) this.world.dispose();
+    proc.unpark();
+    this.world = proc;
+    this._proceduralWorld = null;
+    if (this.bike) this.bike.roadPath = proc.roadPath;
+    this._restoreTouristView();
+    this.isTourist = false;
+    this._touristPending = false;
+    return true;
+  }
+
+  _restoreTouristView() {
+    const v = this._preTouristView;
+    if (!v) return;
+    this.scene.fog = v.fog;
+    this.camera.far = v.far;
+    this.camera.updateProjectionMatrix();
+    this._preTouristView = null;
   }
 
   // ============================================================
@@ -4642,6 +4802,8 @@ class Game {
     this._hideGhost();   // D-4: no ghost hanging around the empty road
     this._hideTouristGoal();   // E-7
     this._touristRoute = null;
+    this._touristBarrierId = (this._touristBarrierId || 0) + 1;   // abandon a co-op load
+    this._restoreProceduralWorld();   // #400: the next ride is on the real road again
     this._leaveSlingMode();
     this.hud.updateLookahead(null);   // E-1
     this._lookaheadWasOn = false;
@@ -4804,6 +4966,12 @@ class Game {
     this._hideGameOver();
     this._hideVictory();
     this._hideAllOverlays();
+
+    // #400: a tourist ride (or its pending load) ends here too.
+    this._hideTouristGoal();
+    this._touristRoute = null;
+    this._touristBarrierId = (this._touristBarrierId || 0) + 1;
+    this._restoreProceduralWorld();
 
     // Partial cleanup: game state only (keep connection + media alive)
     this.countdownTimer = 0;

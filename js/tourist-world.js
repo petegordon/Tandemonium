@@ -447,6 +447,9 @@ export class TouristWorld {
     if (this._draco) this._draco.dispose();
     if (this._hemi) this.scene.remove(this._hemi);
     if (this._sun) this.scene.remove(this._sun);
+    // #400: nothing of this ride may outlive it on the next (procedural) one.
+    if (this._noticeEl) { this._noticeEl.remove(); this._noticeEl = null; }
+    if (this._creditsEl) this._creditsEl.textContent = '';
   }
 }
 
