@@ -217,6 +217,13 @@ test('gate progress: medals from any mode/difficulty record, Today\'s Road from 
   assert.deepEqual(gateProgress(null, null), { medals: {}, dailyFinished: false });
 });
 
+test('#403 gate progress: a helped (🛟) best counts as bronze at most, and a helped daily finish is a finish', () => {
+  const m = getMedals('grandma', 'chill');
+  const records = { 'grandma|chill|solo': { timeMs: m.gold - 1, helped: true } };
+  assert.deepEqual(gateProgress(records, {}).medals, { grandma: 'bronze' });
+  assert.equal(gateProgress({ 'daily:2026-10-01|adventurous|solo': { timeMs: 90000, helped: true } }, {}).dailyFinished, true);
+});
+
 // ---- Today's Launch (D11b) -----------------------------------------------
 
 test('Today\'s Launch: the same course all day, a different one tomorrow', () => {

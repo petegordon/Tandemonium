@@ -10,7 +10,7 @@
 //
 // Pure and DOM-free. The Game glue is js/economy-mode.js.
 
-import { medalFor } from './records.js';
+import { medalFor, capMedal } from './records.js';
 import { getMedals } from './race-config.js';
 
 /**
@@ -99,7 +99,8 @@ export function gateProgress(recordsStore, dailyAll) {
     if (!rec || typeof rec.timeMs !== 'number') continue;
     const [levelId, difficulty] = k.split('|');
     if (levelId.startsWith('daily:')) { dailyFinished = true; continue; }
-    const m = medalFor(rec.timeMs, getMedals(levelId, difficulty));
+    // #403: a 🛟 best (helping hand or ASSIST) counts as bronze at most.
+    const m = capMedal(medalFor(rec.timeMs, getMedals(levelId, difficulty)), { helped: !!rec.helped });
     if (m && (RANK[m] || 0) > (RANK[medals[levelId]] || 0)) medals[levelId] = m;
   }
   for (const entry of Object.values(dailyAll || {})) {

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   key, getBest, recordRun, trim, splitDelta, formatDelta, formatTime,
-  medalFor, nextMedal, MAX_KEYS
+  medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON
 } from '../../js/records.js';
 
 test('keys separate level, difficulty and mode', () => {
@@ -121,4 +121,58 @@ test('legacy ghost tracks are dropped, records are kept', () => {
   assert.equal(Object.values(store).filter(r => 'track' in r).length, 0, 'no tracks kept');
   assert.equal(Object.keys(store).length, 12, 'the RECORDS must all survive');
   assert.equal(store.k0.timeMs, 1000, 'times are still there');
+});
+
+// ---- #403 · the helping hand ----------------------------------------------
+
+test('#403 a helped run caps the medal at bronze; a skipped one earns none', () => {
+  assert.equal(capMedal('gold', { helped: true }), 'bronze');
+  assert.equal(capMedal('silver', { helped: true }), 'bronze');
+  assert.equal(capMedal('bronze', { helped: true }), 'bronze');
+  assert.equal(capMedal(null, { helped: true }), null, 'too slow for bronze is still no medal');
+  assert.equal(capMedal('gold', { skipped: true }), null);
+  assert.equal(capMedal('gold', { helped: true, skipped: true }), null);
+  assert.equal(capMedal('gold'), 'gold');
+  assert.equal(HELPED_ICON, '🛟');
+});
+
+test('#403 a helped run is recorded with 🛟 when there is no best yet', () => {
+  const store = {};
+  const r = recordRun(store, 'k', { timeMs: 200000, helped: true });
+  assert.equal(r.isNewBest, true);
+  assert.equal(getBest(store, 'k').helped, true);
+});
+
+test('#403 a helped run never overwrites an unassisted best, however fast', () => {
+  const store = {};
+  recordRun(store, 'k', { timeMs: 161000 });
+  const r = recordRun(store, 'k', { timeMs: 120000, helped: true });
+  assert.equal(r.isNewBest, false);
+  assert.equal(getBest(store, 'k').timeMs, 161000);
+  assert.equal(getBest(store, 'k').helped, undefined);
+});
+
+test('#403 a faster helped run replaces a helped best; an unassisted finish always replaces it', () => {
+  const store = {};
+  recordRun(store, 'k', { timeMs: 200000, helped: true });
+  const faster = recordRun(store, 'k', { timeMs: 190000, helped: true });
+  assert.equal(faster.isNewBest, true);
+  assert.equal(getBest(store, 'k').timeMs, 190000);
+  assert.equal(getBest(store, 'k').helped, true);
+  const real = recordRun(store, 'k', { timeMs: 210000 });
+  assert.equal(real.isNewBest, true, 'the first unassisted finish outranks any 🛟 best');
+  assert.equal(real.replacedHelped, true);
+  assert.equal(getBest(store, 'k').timeMs, 210000);
+  assert.equal(getBest(store, 'k').helped, undefined);
+});
+
+test('#403 a run with a skipped checkpoint is never a best', () => {
+  const store = {};
+  const first = recordRun(store, 'k', { timeMs: 100000, skipped: true });
+  assert.equal(first.isNewBest, false);
+  assert.equal(getBest(store, 'k'), null);
+  recordRun(store, 'k', { timeMs: 161000 });
+  const r = recordRun(store, 'k', { timeMs: 90000, skipped: true });
+  assert.equal(r.isNewBest, false);
+  assert.equal(getBest(store, 'k').timeMs, 161000);
 });
