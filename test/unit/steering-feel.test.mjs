@@ -68,10 +68,10 @@ test('the default steering feel is applied at load, not just shown on the slider
   assert.equal(TUNE.gyroResponseCurve, 2.0, 'already at the 2.0 ceiling');
 });
 
-test('DDA offers ASSIST after 2 failures; silent assist and SKIP unchanged', () => {
+test('DDA offers ASSIST after 2 failures; silent assist unchanged; SKIP after 5 (#403)', () => {
   assert.equal(DDA_ASSIST_AFTER, 2);
   assert.equal(DDA_SILENT_ADJUST_AFTER, 2);
-  assert.equal(DDA_SKIP_AFTER, 6);
+  assert.equal(DDA_SKIP_AFTER, 5);
   const dda = new DDAManager('chill');
   dda.recordFailure(100);
   assert.equal(dda.evaluate(100).offerAssist, false, 'one failure is not enough');

@@ -3,14 +3,16 @@
 // ============================================================
 
 import { TUNE, DIFFICULTY_PRESETS } from './config.js';
+import { HELP_SKIP_AFTER } from './helping-hand.js';
 
 // Failures at one checkpoint before each kind of help appears.
 // #399 (5/5 playtesters found steering too sensitive, one quit): ASSIST is now
-// offered after 2 failures instead of 4. The silent tune and SKIP CHECKPOINT
-// thresholds are unchanged.
+// offered after 2 failures instead of 4. The silent tune is unchanged.
+// #403: SKIP CHECKPOINT ("Take the Royal Shortcut") after 5 failures, not 6 —
+// the helping hand's schedule (js/helping-hand.js) owns the number.
 export const DDA_SILENT_ADJUST_AFTER = 2;
 export const DDA_ASSIST_AFTER = 2;
-export const DDA_SKIP_AFTER = 6;
+export const DDA_SKIP_AFTER = HELP_SKIP_AFTER;
 
 export class DDAManager {
   constructor(difficulty) {
@@ -52,7 +54,9 @@ export class DDAManager {
     if (failures >= DDA_ASSIST_AFTER && !this._assistOffered) {
       result.offerAssist = true;
     }
-    if (failures >= DDA_SKIP_AFTER && !this._skipOffered) {
+    // #403: offered on every failure from the 5th, not once — the game-over
+    // screen is rebuilt each time, and a hidden way out helps nobody.
+    if (failures >= DDA_SKIP_AFTER) {
       result.offerSkip = true;
     }
 
@@ -81,7 +85,9 @@ export class DDAManager {
       TUNE.gravityForce = this._basePreset.gravityForce;
       this._adjustmentsActive = false;
     }
-    // Clear failure count for the passed checkpoint
+    // Clear the failure counts: passing the checkpoint ends the stretch the
+    // player was stuck on (#403 — the helping hand resets with it).
+    this._failureCounts = {};
     this._currentCheckpoint = checkpointD;
     this._assistOffered = false;
     this._skipOffered = false;
