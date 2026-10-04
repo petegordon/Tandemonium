@@ -51,6 +51,29 @@ export function dailySeed(date = new Date()) {
   return seedFromKey(dailyKey(date));
 }
 
+/**
+ * #400 · the demo's "This Week's Road": which week's road is current at
+ * `date`, named by its Monday's day key. Built on dailyKey, so the week rolls
+ * over at the same 09:00 UTC, on Monday.
+ * @returns {string} 'YYYY-MM-DD' (always a Monday)
+ */
+export function weeklyKey(date = new Date()) {
+  const day = dailyKey(date);
+  const d = new Date(day + 'T00:00:00Z');
+  const sinceMonday = (d.getUTCDay() + 6) % 7;     // Monday = 0
+  d.setUTCDate(d.getUTCDate() - sinceMonday);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The seed for the week's road. Deliberately the seed of the Monday's daily
+ * road: the weekly road IS that Monday's Today's Road, so a day's records and
+ * the week's never describe two different roads under one key.
+ */
+export function weeklySeed(date = new Date()) {
+  return seedFromKey(weeklyKey(date));
+}
+
 // Salt table — one per thing the world seeds. Keep these stable: changing a
 // salt silently changes every existing daily road.
 export const SALT = {

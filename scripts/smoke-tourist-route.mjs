@@ -30,8 +30,9 @@ async function open(withKey) {
 // 1. No key: the entry point must not exist. An entry that fails is worse than none.
 const noKey = await open(false);
 const hidden = await noKey.evaluate(() => {
-  const b = document.getElementById('btn-tourist');
-  return { exists: !!b, visible: b ? b.style.display !== 'none' : false };
+  // #400: the entry is a card in the SOLO level list.
+  const b = document.querySelector('#level-cards .level-card[data-level-id="tourist"]');
+  return { exists: !!b, visible: !!b };
 });
 console.log('without a key:', JSON.stringify(hidden));
 
@@ -40,8 +41,9 @@ const page = await open(true);
 const flow = await page.evaluate(async () => {
   const l = window._game.lobby;
   document.getElementById('tap-to-start')?.click();
-  const btn = document.getElementById('btn-tourist');
-  const shown = btn.style.display !== 'none';
+  document.getElementById('btn-solo')?.click();
+  const btn = document.querySelector('#level-cards .level-card[data-level-id="tourist"]');
+  const shown = !!btn;
   btn.click();
   const stepShown = document.getElementById('lobby-tourist').style.display !== 'none';
 

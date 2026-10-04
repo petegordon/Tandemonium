@@ -81,7 +81,7 @@ import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
-import { isDemoEdition } from './edition.js';
+import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
@@ -642,14 +642,28 @@ class Game {
     });
     this._onTap('btn-next-level', () => {
       this._hideVictory();
-      // Advance to next level
-      const curIdx = LEVELS.indexOf(this.lobby.selectedLevel);
-      if (curIdx >= 0 && curIdx < LEVELS.length - 1) {
-        this.lobby.selectedLevel = LEVELS[curIdx + 1];
+      // Advance to the next level this edition offers and that is unlocked
+      // (#400: never into a locked or demo-excluded level).
+      const next = this._nextLevel();
+      if (next) {
+        this.lobby.selectedLevel = next;
+        this.lobby._updateDifficultyVisibility(next.id);   // the road's fixed difficulty
         this._resetGame(false, true);
+      } else if (getEditionRules().isDemo) {
+        this._showDemoEnd();
       } else {
         this._returnToLobby();
       }
+    });
+    // #400 · the demo's end screen (NEXT LEVEL after its last road).
+    this._onTap('btn-wishlist-demo-end', () => {
+      try { analytics.trackWishlistClick('demo_end'); } catch {}
+      window.open('https://store.steampowered.com/app/4482940/Tandemonium/', '_blank', 'noopener');
+    });
+    this._onTap('btn-demo-lobby', () => {
+      this._hideDemoEnd();
+      analytics.setPage('lobby');
+      this._returnToLobby();
     });
     // Victory: return to room (stay connected)
     this._onTap('btn-victory-room', () => {
@@ -879,6 +893,39 @@ class Game {
     const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
     const isElectron = ua.includes('Electron');
     return !isElectron;    // plain web build
+  }
+
+  /**
+   * #400 · where NEXT LEVEL goes: the next level in LEVELS order that this
+   * edition offers and the lobby shows unlocked, resolved (the shared road gets
+   * its day/week key and seed). null when there is none.
+   */
+  _nextLevel() {
+    const cur = this.lobby.selectedLevel;
+    if (!cur) return null;
+    const locked = this.lobby._lockedLevelIds;
+    const next = nextAllowedLevel(LEVELS, cur.id, getEditionRules(),
+      (l) => !!(locked && locked.has(l.id)));
+    return next ? this.lobby.resolveRoadLevel(next) : null;
+  }
+
+  /** #400 · "That's the demo": wishlist, or back to the lobby. */
+  _showDemoEnd() {
+    const overlay = document.getElementById('demo-end-overlay');
+    if (!overlay) { this._returnToLobby(); return; }
+    const wishlist = document.getElementById('btn-wishlist-demo-end');
+    if (wishlist) wishlist.style.display = this._canWishlist ? '' : 'none';
+    overlay.style.display = 'flex';
+    const btns = [wishlist, document.getElementById('btn-demo-lobby')]
+      .filter(b => b && b.style.display !== 'none');
+    this._setOverlayButtons(btns, 0);
+    try { analytics.trackEvent('demo_end_shown', { level: this.lobby.selectedLevel && this.lobby.selectedLevel.id }); } catch {}
+  }
+
+  _hideDemoEnd() {
+    const overlay = document.getElementById('demo-end-overlay');
+    if (overlay) overlay.style.display = 'none';
+    this._clearOverlayButtons();
   }
 
   /**
@@ -1983,7 +2030,7 @@ class Game {
     if (this.mode !== 'stoker') {
       const chosenMode = this.lobby._dailyMode;
       this.lobby._dailyMode = null;
-      this._rankedRunActive = !!(level.isDaily && chosenMode === 'ranked' && !this._isDemo);
+      this._rankedRunActive = !!(level.isDaily && chosenMode === 'ranked' && getEditionRules().ranked);
     }
     if (this._rankedRunActive && this.mode === 'captain' && this.net) {
       // The countdown event is a bare byte, so the mode needs its own message.
@@ -3649,7 +3696,7 @@ class Game {
         (pair.rides || 0) + ' ride' + (pair.rides === 1 ? '' : 's') + ' together' +
         (km >= 0.1 ? ' · ' + km.toFixed(1) + ' km' : '') +
         (previousBest ? ' · best ' + records.formatTime(previousBest) : '') +
-        (pair.daily_streak >= 2 ? ' · 🔥 ' + pair.daily_streak : '') +
+        (pair.daily_streak >= 2 && !getEditionRules().weeklyRoad ? ' · 🔥 ' + pair.daily_streak : '') +
       '</div>' +
       (beat ? '<div class="pair-panel-best">⭐ NEW PAIR BEST</div>' : '');
     el.style.display = 'block';
@@ -3933,7 +3980,8 @@ class Game {
 
     // F-1 · the loops the plan built. Read from the local stores, so they work
     // signed out; the pair numbers come from the server panel when there is one.
-    if (level.isDaily && level.key) {
+    // #400: no day streaks off the demo's weekly road.
+    if (level.isDaily && level.key && !getEditionRules().weeklyRoad) {
       const store = browserStore();
       state.dailyRanked = this._rankedRunActive;
       const mode = this._dailyRunMode();
@@ -4317,11 +4365,14 @@ class Game {
     this._submitDailyRanked(summary);
     this._renderPairPanel(summary);
 
-    // Show NEXT LEVEL button if there's a next level
+    // Show NEXT LEVEL button if there's a next level. #400: in the demo, after
+    // its last level it still shows and opens the demo's end screen.
     const nextBtn = document.getElementById('btn-next-level');
     const playAgainBtn = document.getElementById('btn-play-again');
-    const curIdx = LEVELS.indexOf(this.lobby.selectedLevel);
-    const hasNext = nextBtn && curIdx >= 0 && curIdx < LEVELS.length - 1;
+    const curLevel = this.lobby.selectedLevel;
+    const demoEnd = getEditionRules().isDemo && !!curLevel &&
+      LEVELS.some(l => l.id === curLevel.id && !l.isTutorial);
+    const hasNext = !!nextBtn && (!!this._nextLevel() || demoEnd);
     if (nextBtn) {
       nextBtn.style.display = hasNext ? '' : 'none';
     }
@@ -4388,7 +4439,7 @@ class Game {
     const auth = this.lobby.auth;
     if (!auth || !auth.isLoggedIn()) return;
     // Demo mode: don't save scores to leaderboard
-    if (this._isDemo) return;
+    if (!getEditionRules().ranked) return;
 
     const level = this.lobby.selectedLevel;
     const raceSummary = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;

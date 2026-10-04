@@ -66,6 +66,28 @@ export function levelAllowed(rules, id) {
 }
 
 /**
+ * NEXT LEVEL: the first level after `currentId` (in `levels` order) that these
+ * rules offer and that is not locked. Never the tutorial — NEXT LEVEL is for
+ * moving on, not back. null when there is none (the caller decides: the demo
+ * shows its end screen, the full game goes back to the lobby).
+ *
+ * @param {Array<{id:string,isTutorial?:boolean}>} levels  LEVELS, in order
+ * @param {string} currentId
+ * @param {object} rules       FULL_RULES / DEMO_RULES
+ * @param {(level)=>boolean} [isLocked]
+ */
+export function nextAllowedLevel(levels, currentId, rules, isLocked = () => false) {
+  const i = levels.findIndex(l => l.id === currentId);
+  if (i < 0) return null;
+  for (let j = i + 1; j < levels.length; j++) {
+    const l = levels[j];
+    if (l.isTutorial || !levelAllowed(rules, l.id) || isLocked(l)) continue;
+    return l;
+  }
+  return null;
+}
+
+/**
  * Room camera + microphone (WebRTC media) — #400 D7. Multiplayer itself is
  * NOT behind this: rooms, data channels, co-op and versus always work. Off in
  * every edition unless `?media=1` is passed, so nothing ever prompts for a
