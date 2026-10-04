@@ -4,8 +4,8 @@
 //     (+ the Slingshot card) — no Tourist even with a Maps key; the road rides
 //     on Chill with the week's key; NEXT LEVEL from Grandma's goes to the
 //     weekly road, and from there to the demo's end screen, never elsewhere.
-//   full game (?key=dummy): the Tourist card is under SOLO (not under RIDE
-//     TOGETHER: co-op Tourist is not built), the road is Today's Road.
+//   full game (?key=dummy): the Tourist card is under SOLO and RIDE TOGETHER
+//     (captain), not VERSUS; the road is Today's Road.
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
 const ROOT=process.cwd(); const PORT=8937;
 const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml','.glb':'model/gltf-binary','.mp3':'audio/mpeg','.json':'application/json'};
@@ -126,7 +126,7 @@ const checks = {
   demoEnd: dw.fromRoad === null && dw.endShown && /That's the demo/.test(dw.endText) &&
     dw.wishlistShown && dw.endHidden === true,
   fullTouristSolo: fl.solo.includes('tourist') && fl.solo.includes('slingshot'),
-  fullNoTouristCoop: !fl.coop.includes('tourist') && !fl.versus.includes('tourist'),
+  fullTouristCoop: fl.coop.includes('tourist') && !fl.versus.includes('tourist'),
   fullRoadDaily: fl.roadName === "Today's Road" && fw.picked.key === fw.picked.today &&
     fw.picked.difficulty === 'adventurous',
   fullNextNotLocked: !!fw.next && !fw.nextLocked && fw.fromRoad === null,

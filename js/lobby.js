@@ -1361,19 +1361,22 @@ export class Lobby {
    * Maps key the mode can only disappoint, and an entry point that fails is
    * worse than no entry point — that is the #350 lesson.
    *
-   * #400: the entry is a card in the SOLO level list (_buildLevelCardsShared),
-   * not a mode-screen button, and it is solo only. Co-op Tourist (captain
-   * plans, the plan goes to the stoker, both stream tiles) is NOT built: after
-   * a tourist ride this.world stays the tiles world (nothing rebuilds the
-   * procedural one), so the room's next ride would run on it; and two clients
-   * streaming metered tiles can't be verified without a real key.
+   * #400: the entry is a card in the SOLO level list (which couch co-op uses
+   * too) and in the captain's RIDE TOGETHER list (_buildLevelCardsShared), not
+   * a mode-screen button. Online: the captain plans, the end points go to the
+   * stoker (RoomProtocol.touristPlan), and the game meets at a tiles-ready
+   * barrier before the countdown (game._startCoopTourist).
    */
   _touristAvailable() {
     return getEditionRules().tourist && !!getMapsApiKey();
   }
 
   _openTouristStep() {
-    this._pendingMode = 'tourist';
+    // Who rides it: alone, two on this screen, or the room (captain plans).
+    this._touristFor = this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
+      ? this._pendingMode : 'solo';
+    if (this._touristFor === 'solo') this._pendingMode = 'tourist';
+    this._forceWizard = false;
     this._showStep(this.touristStep);
     this._prefillTouristForm();
     analytics.trackEvent('tourist_open');
@@ -1384,7 +1387,8 @@ export class Lobby {
 
     const back = document.getElementById('btn-back-tourist');
     if (back) back.addEventListener('click', () => {
-      this._pendingMode = 'solo';
+      if (this._touristFor === 'multiplayer') { this._showRoomLevelsStep(); return; }
+      this._pendingMode = this._touristFor === 'local' ? 'local' : 'solo';
       this._showStep(this.levelStep);
     });
 
@@ -1477,9 +1481,41 @@ export class Lobby {
   }
 
   _startTouristRide(plan) {
+    const forMode = this._touristFor || 'solo';
+    if (forMode === 'multiplayer') {
+      // Online co-op: the captain's plan travels as its two end points, then
+      // the ordinary start message (flagged), and both sides enter the game.
+      if (this._roomRole !== 'captain') return;
+      if (!this.net || !this.net.connected) {
+        const errorEl = document.getElementById('tourist-error');
+        if (errorEl) errorEl.textContent = 'Reconnecting to your partner…';
+        return;
+      }
+      this._roomTouristPlan = plan;
+      this._placementSalt = makePlacementSalt();
+      this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.to));
+      this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, null, true));
+      analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000), mode: 'online' });
+      this._transitionToGame();
+      return;
+    }
     this._hideLobby();
-    this.onTouristReady({ plan });
-    analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000) });
+    if (forMode === 'local') {
+      this.onTouristReady({ plan, local: { inputP2: this._localP2InputManager, sourceType: this._localP2Type } });
+    } else {
+      this.onTouristReady({ plan });
+    }
+    analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000), mode: forMode });
+  }
+
+  /**
+   * #400 · the route this room's ride is for, once: the game takes it when the
+   * ride starts (null for every ordinary ride).
+   */
+  takeRoomTouristPlan() {
+    const plan = this._roomTouristPlan || null;
+    this._roomTouristPlan = null;
+    return plan;
   }
 
   /** Escape a geocoder-supplied label before it goes anywhere near innerHTML. */
@@ -1638,7 +1674,7 @@ export class Lobby {
     // card opens the route-planning step. Only when it can work (a Maps key)
     // and the edition includes it — an entry point that fails is worse than
     // none (#350). Solo only: co-op Tourist is not built (see _initTouristEntry).
-    if (mode === 'solo' && isClickable && this._touristAvailable()) {
+    if ((mode === 'solo' || mode === 'multiplayer') && isClickable && this._touristAvailable()) {
       const card = document.createElement('button');
       card.className = 'level-card level-card-tourist';
       card.dataset.levelId = 'tourist';
@@ -4101,7 +4137,18 @@ export class Lobby {
     } else if (profile.type === ROOM_MSG.PLAY_GAME) {
       // Stoker: captain clicked PLAY GAME → go to levels step
       this._showRoomLevelsStep();
+    } else if (profile.type === ROOM_MSG.TOURIST_PLAN) {
+      // #400 · Stoker: the captain planned a Tourist route. Rebuild the same
+      // plan from the two end points (pure, deterministic); held until the
+      // flagged START_RIDE that follows.
+      this._stokerTouristPlan = isValidPoint(profile.from) && isValidPoint(profile.to)
+        ? planRoute(profile.from, profile.to) : null;
     } else if (profile.type === ROOM_MSG.START_RIDE) {
+      // #400: a Tourist ride carries its route; any other ride clears it.
+      // A flagged start without a usable route still goes to the barrier (as
+      // a plan that cannot load), so the pair returns to the room together.
+      this._roomTouristPlan = profile.tourist ? (this._stokerTouristPlan || { unusable: true }) : null;
+      this._stokerTouristPlan = null;
       // Stoker: captain started the ride. Take the captain's placement salt and
       // world seed — they are authoritative for what the road contains (B-4).
       this._placementSalt = profile.placementSalt || 0;
