@@ -127,13 +127,28 @@ export const PEERJS_SECURE = true;
 // Shared defaults (platform-independent)
 const SHARED_PHYSICS = {
   calibSamples: 10,
-  // Controller gyro (WebHID) — unchanged, hardware is consistent
-  gyroSensitivity: 40,
+  // Controller gyro (WebHID). #399 playtest: 5/5 testers found steering too
+  // sensitive ("gyro is fidgety"), so the defaults are gentler:
+  //   gyroSensitivity 40 → 55: degrees of controller roll for a full lean.
+  gyroSensitivity: 55,
   gyroDeadzone: 4,
-  gyroOutputSmoothing: 0.5,
-  gyroResponseCurve: 1.5,
-  steeringFeel: 0.5,
+  //   gyroOutputSmoothing 0.5 → 0.4: this is the EMA weight of each new
+  //   sample, so LOWER = MORE smoothing (see applySteeringFeel: Stable scales
+  //   it down). #399 asked for slightly more smoothing.
+  gyroOutputSmoothing: 0.4,
+  //   gyroResponseCurve 1.5 → 2.0: small rolls barely steer; 2.0 is also the
+  //   ceiling applySteeringFeel and calibration clamp it to.
+  gyroResponseCurve: 2.0,
+  // Steering Feel slider default (0 = Stable … 1 = Responsive). #399: 0.5 →
+  // 0.3, the stable end. Only the default — a saved preference wins. Applied
+  // at module load below, so it shapes the defaults even with nothing saved.
+  steeringFeel: 0.3,
   gyroAccelCorrection: 0.02,
+  // Gamepad left stick (#399: "joystick went way off"). Dead zone 0.08 → 0.15,
+  // then out = sign(x)·|x|^curve rescaled past the dead zone so full deflection
+  // is still 1 — small thumb movements barely steer. See stickResponse().
+  stickDeadzone: 0.15,
+  stickResponseCurve: 1.8,
   // Phone tilt steering gain: the lean a given tilt produces is scaled by
   // this after the deadzone/response curve. 1 = the original feel; 0.25 =
   // a quarter as sensitive (requested for a phone player who found tilt too
@@ -288,6 +303,25 @@ export function applySteeringFeel(feel) {
   TUNE.gyroOutputSmoothing = Math.min(0.8, Math.max(0.15, TUNING_BASE.gyroOutputSmoothing * smScale));
   TUNE.gyroSensitivity = Math.min(60, Math.max(15, TUNING_BASE.gyroSensitivity * senScale));
   TUNE.gyroResponseCurve = Math.min(2.0, Math.max(1.0, TUNING_BASE.gyroResponseCurve + rcShift));
+}
+
+// #399: the default feel has to shape the defaults, not just the slider. With
+// nothing saved (no tutorial yet) this is what a first-time player rides with;
+// a saved preference re-applies over it in Game._loadSavedTuning.
+applySteeringFeel(TUNE.steeringFeel);
+
+/**
+ * Gamepad left-stick X → lean input (#399). Inside the dead zone → 0; past it
+ * the remaining travel is rescaled to 0..1 and raised to `curve`, so a light
+ * thumb barely steers and full deflection is still exactly ±1.
+ * @param {number} x raw axis, -1..1
+ */
+export function stickResponse(x, deadzone = TUNE.stickDeadzone, curve = TUNE.stickResponseCurve) {
+  const ax = Math.abs(x || 0);
+  if (!(ax > deadzone)) return 0;
+  if (ax >= 1) return Math.sign(x);
+  const t = (ax - deadzone) / (1 - deadzone);
+  return Math.sign(x) * Math.pow(t, curve);
 }
 
 // ============================================================

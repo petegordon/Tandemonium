@@ -22,6 +22,8 @@ export const ROOM_MSG = {
   START_RIDE:      'startRide',
   CAMERA_TOGGLE:   'cameraToggle',
   BIKE_SYNC:       'bikeSync',
+  TOURIST_PLAN:    'touristPlan',    // #400 · co-op Tourist route, captain → stoker
+  TOURIST_READY:   'touristReady',   // #400 · in-ride: my tiles world is up (or not)
 };
 
 export const RoomProtocol = {
@@ -49,8 +51,24 @@ export const RoomProtocol = {
    * a stoker that receives nothing falls back to legacy placement, which is
    * what an older build already does.
    */
-  startRide: (placementSalt = 0, worldSeed = null) =>
-    ({ type: ROOM_MSG.START_RIDE, placementSalt, worldSeed }),
+  startRide: (placementSalt = 0, worldSeed = null, tourist = false) =>
+    (tourist
+      ? { type: ROOM_MSG.START_RIDE, placementSalt, worldSeed, tourist: true }
+      : { type: ROOM_MSG.START_RIDE, placementSalt, worldSeed }),
+
+  /**
+   * #400 · the captain planned a Tourist route. Only the two end points travel:
+   * the stoker rebuilds the identical plan with the pure planRoute(). Sent
+   * immediately before a startRide(…, tourist = true).
+   */
+  touristPlan: (from, to) => ({
+    type: ROOM_MSG.TOURIST_PLAN,
+    from: { lat: from.lat, lon: from.lon, label: String(from.label || '') },
+    to: { lat: to.lat, lon: to.lon, label: String(to.label || '') },
+  }),
+
+  /** #400 · in-ride ready barrier for co-op Tourist. */
+  touristReady: (ok) => ({ type: ROOM_MSG.TOURIST_READY, ok: !!ok }),
 
   /** A player's bike preset (so the partner renders the right bike). */
   bikeSync: (presetKey) => ({ type: ROOM_MSG.BIKE_SYNC, presetKey }),

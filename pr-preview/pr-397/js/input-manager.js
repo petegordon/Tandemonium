@@ -3,7 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { isMobile, TUNE } from './config.js';
+import { isMobile, TUNE, stickResponse } from './config.js';
 import * as analytics from './analytics.js';
 import { addHapticSource, removeHapticSource } from './haptics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
@@ -845,10 +845,11 @@ export class InputManager {
     this._refreshSteamInputSnapshot();
     const gp = this.getGamepadState();
     if (gp) {
-      // Left stick X — deadzone 0.08
+      // Left stick X — dead zone + response curve (TUNE.stickDeadzone /
+      // stickResponseCurve; #399: the linear 0.08 stick was far too twitchy).
       const rawX = gp.axes[0] || 0;
       this._gpRawStickX = rawX;
-      this.gamepadLean = this.suppressGamepadLean ? 0 : (Math.abs(rawX) < 0.08 ? 0 : rawX);
+      this.gamepadLean = this.suppressGamepadLean ? 0 : stickResponse(rawX);
 
       // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
       const THRESHOLD = 0.5;

@@ -97,6 +97,7 @@ export class ObstacleManager {
     this._video.play().catch(err => {
       console.warn('Obstacle video autoplay blocked:', err.message);
       const retry = () => {
+        if (!this._video) return;   // disposed before the first gesture
         this._video.play().then(() => {
           document.removeEventListener('touchstart', retry);
           document.removeEventListener('click', retry);

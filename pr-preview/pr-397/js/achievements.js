@@ -26,7 +26,6 @@ const ACHIEVEMENTS = [
 
   // Finish levels
   { id: 'home_sweet',   name: "Home Sweet Home",   icon: '\uD83C\uDFE0', condition: s => s.finishedLevel === 'grandma' }, // 🏠
-  { id: 'royal',        name: 'Royal Arrival',     icon: '\uD83C\uDFF0', condition: s => s.finishedLevel === 'castle' },   // 🏰
 
   // Per-bike Grandma's House achievements
   { id: 'grandma_default',  name: "Grandma's Classic",     icon: '🚲', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'default' },
@@ -39,7 +38,6 @@ const ACHIEVEMENTS = [
 
   // Perfect rides (no crashes, no checkpoint restarts)
   { id: 'perfect_1k',   name: 'Flawless',           icon: '\uD83D\uDCAE', condition: s => s.finishedLevel === 'grandma' && s.crashes === 0 && s.restarts === 0 },  // 💮
-  { id: 'perfect_5k',   name: 'Untouchable',        icon: '\uD83D\uDC8E', condition: s => s.finishedLevel === 'castle' && s.crashes === 0 && s.restarts === 0 },   // 💎
 
   // Contribution
   { id: 'team_player',  name: 'Team Player',       icon: '\uD83E\uDD1C', condition: s => s.isMultiplayer && s.safePct >= 80 }, // 🤜

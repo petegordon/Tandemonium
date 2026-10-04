@@ -8,6 +8,7 @@ import {
   runDistance, dragToAim, aimPose, roadExitDistance, MIN_LAUNCH_PULL, jackpotBonus,
   SLING_POST_D, SLING_REST_D, SLING_PULL_BACK, SLING_MAX_LATERAL, SLING_MAX_AIM, ROAD_HALF_WIDTH
 } from '../../js/slingshot.js';
+import { emptyWallet, loadWallet, deposit, coinMultiplier } from '../../js/wallet.js';
 
 const memStore = () => {
   const m = new Map();
@@ -133,12 +134,12 @@ test('a short run is not a record and pays no record bonus', () => {
   assert.equal(r.recordPay, 0);
 });
 
-test('applyRun banks coins, bumps runs/best/stage without mutating', () => {
+test('applyRun bumps runs/best/stage without mutating (coins go to the wallet)', () => {
   const s = emptySave();
   const run = { distance: 320, stageCleared: true };
   const score = scoreRun(run, s);
   const n = applyRun(s, run, score);
-  assert.equal(n.coins, score.total);
+  assert.equal(n.coins, undefined, 'no coins in the Slingshot save any more');
   assert.equal(n.runs, 1);
   assert.equal(n.best, 320);
   assert.equal(n.stage, 2);
@@ -158,16 +159,16 @@ test('buying: spends coins, refuses when poor or maxed', () => {
 
 test('save round-trips and survives garbage', () => {
   const store = memStore();
-  const s = { v: 2, coins: 42, best: 310, runs: 5, stage: 2, lv: { sling: 3 } };
+  const s = { v: SAVE_VERSION, best: 310, runs: 5, stage: 2, daily: { key: '2026-10-04', best: 400, runs: 2 } };
   writeSave(store, s);
   assert.deepEqual(loadSave(store), s);
   store.set(STORAGE_KEY, '{nope');
   assert.deepEqual(loadSave(store), emptySave());
-  store.set(STORAGE_KEY, JSON.stringify({ coins: -5, stage: 0, lv: { sling: 99, bogus: 3 } }));
+  store.set(STORAGE_KEY, JSON.stringify({ best: -5, stage: 0, daily: { key: 'yesterday', best: 9 } }));
   const g = loadSave(store);
-  assert.equal(g.coins, 0);
+  assert.equal(g.best, 0);
   assert.equal(g.stage, 1);
-  assert.deepEqual(g.lv, { sling: 10 });
+  assert.equal(g.daily, null, 'a malformed day is dropped');
 });
 
 test('coin trails: whole trails, deterministic, on the road, after the start', () => {
@@ -233,18 +234,19 @@ test('no pedaling upgrades: the slingshot is the only push', () => {
 
 test('an old save gets its coins back for upgrades that no longer exist', () => {
   const store = memStore();
-  // A tester on an earlier build bought Pedal power 2, Stamina 1, Checkpoint boost 3.
-  writeSave(store, { coins: 7, best: 120, runs: 4, stage: 1, lv: { sling: 1, legs: 2, stamina: 1, gate: 3 } });
-  const s = loadSave(store);
-  const refund = spentOn(45, 2) + spentOn(40, 1) + spentOn(45, 3);
-  assert.equal(refund, 45 + 70 + 40 + 45 + 70 + 110);
-  assert.equal(s.coins, 7 + refund);
-  assert.deepEqual(s.lv, { sling: 1 }, 'retired upgrades are gone, live ones kept');
-  assert.equal(s.v, SAVE_VERSION);
-  // Saving and loading again must not refund twice.
-  writeSave(store, s);
-  assert.equal(loadSave(store).coins, s.coins);
-  assert.deepEqual(Object.keys(RETIRED_UPGRADES).sort(), ['gate', 'legs', 'stamina']);
+  // A tester on an earlier build bought Pedal power 2, Stamina 1, Checkpoint
+  // boost 3 and Aero frame 2 (folded into Tyres & frame, #400 D5).
+  store.set(STORAGE_KEY, JSON.stringify({ coins: 7, best: 120, runs: 4, stage: 1, lv: { sling: 1, legs: 2, stamina: 1, gate: 3, aero: 2 } }));
+  const w = loadWallet(store);
+  const refund = spentOn(45, 2) + spentOn(40, 1) + spentOn(45, 3) + spentOn(50, 2);
+  assert.equal(refund, 45 + 70 + 40 + 45 + 70 + 110 + 50 + 80);
+  assert.equal(w.coins, 7 + refund);
+  assert.deepEqual(w.lv, { sling: 1 }, 'retired upgrades are gone, live ones kept');
+  assert.equal(loadSave(store).v, SAVE_VERSION);
+  assert.equal(loadSave(store).best, 120, 'Slingshot progress stays in its own save');
+  // Loading again must not refund (or move the coins) twice.
+  assert.equal(loadWallet(store).coins, w.coins);
+  assert.deepEqual(Object.keys(RETIRED_UPGRADES).sort(), ['aero', 'gate', 'legs', 'stamina']);
 });
 
 test('aim: every drag stays on the road for at least 40 m unsteered', () => {
@@ -289,31 +291,42 @@ test('course: fixed per stage, lanes that make a choice, jackpot from stage 2', 
   }
 });
 
-/** A player who gets `skill` of the ideal distance and buys the cheapest upgrade they can. */
+/**
+ * A player who gets `skill` of the ideal distance and buys the cheapest
+ * upgrade they can. Slingshot coins only — regular rides would only speed it
+ * up — and the stage gates are assumed met.
+ */
 function simulate(skill, coinsPerRun = 5, maxRuns = 300) {
-  let save = emptySave(); const perStage = []; let n = 0;
+  let save = emptySave(), wallet = emptyWallet(); const perStage = []; let n = 0;
   for (let r = 0; r < maxRuns && save.stage <= STAGE_GOALS.length; r++) {
-    const reach = predictCoast(slingStats(save.lv), 1, 'dirt') * skill;
+    const reach = predictCoast(slingStats(wallet.lv), 1, 'dirt') * skill;
     const goal = stageGoal(save.stage);
     const run = { distance: Math.min(reach, goal), coins: coinsPerRun, stageCleared: reach >= goal };
-    save = applyRun(save, run, scoreRun(run, save)); n++;
+    const score = scoreRun(run, save, coinMultiplier(wallet));
+    wallet = deposit(wallet, score.total);
+    save = applyRun(save, run, score); n++;
     if (run.stageCleared) { perStage.push(n); n = 0; }
     for (;;) {
-      const opts = UPGRADES.filter(u => (save.lv[u.id] || 0) < u.max)
-        .map(u => ({ u, c: upgradeCost(u, save.lv[u.id] || 0) })).sort((a, b) => a.c - b.c);
-      if (!opts.length || opts[0].c > save.coins) break;
-      save = buyUpgrade(save, opts[0].u.id).save;
+      const opts = UPGRADES.filter(u => (wallet.lv[u.id] || 0) < u.max)
+        .map(u => ({ u, c: upgradeCost(u, wallet.lv[u.id] || 0) })).sort((a, b) => a.c - b.c);
+      if (!opts.length || opts[0].c > wallet.coins) break;
+      wallet = buyUpgrade(wallet, opts[0].u.id).save;
     }
   }
   return perStage;
 }
 
-test('progression: a decent player clears every stage in 1-4 launches, and it takes a while', () => {
-  const runs = simulate(0.8);
-  assert.equal(runs.length, STAGE_GOALS.length, `only cleared ${runs.length} stages: ${runs.join(' ')}`);
-  for (const [i, n] of runs.entries()) assert.ok(n >= 1 && n <= 4, `stage ${i + 1} took ${n} launches`);
-  assert.ok(runs.reduce((a, b) => a + b, 0) >= 12, `too quick: ${runs.join(' ')}`);
-  // The first launch pays for the first upgrade.
+for (const skill of [0.8, 0.9, 1.0]) {
+  test(`progression: skill ${skill} clears every stage in 1-4 launches, and it takes a while`, () => {
+    const runs = simulate(skill);
+    assert.equal(runs.length, STAGE_GOALS.length, `only cleared ${runs.length} stages: ${runs.join(' ')}`);
+    for (const [i, n] of runs.entries()) assert.ok(n >= 1 && n <= 4, `stage ${i + 1} took ${n} launches (${runs.join(' ')})`);
+    // The whole ladder should take a session, not a coffee break.
+    assert.ok(runs.reduce((a, b) => a + b, 0) >= (skill <= 0.8 ? 12 : 8), `too quick: ${runs.join(' ')}`);
+  });
+}
+
+test('progression: the first launch pays for the first upgrade', () => {
   const first = scoreRun({ distance: predictCoast(slingStats({}), 1, 'dirt') * 0.8, coins: 0 }, emptySave()).total;
   assert.ok(first >= Math.min(...UPGRADES.map(u => upgradeCost(u, 0))));
 });
@@ -326,7 +339,7 @@ test('progression: a maxed bike clears the last goal even riding the edge', () =
 
 test('the systems table: what a normal ride runs that this mode does not', async () => {
   const { SLING_SYSTEMS_OFF } = await import('../../js/slingshot.js');
-  for (const name of ['achievements', 'ghost', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']) {
+  for (const name of ['achievements', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']) {
     assert.ok(SLING_SYSTEMS_OFF.has(name), `${name} should be off in Slingshot`);
   }
   assert.equal(SLING_SYSTEMS_OFF.has('collectibles'), false, 'coins are the point');
