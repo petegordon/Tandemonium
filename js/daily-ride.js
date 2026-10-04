@@ -50,9 +50,13 @@ export function formatDayLabel(key) {
 export function dailyStatus(store, key) {
   const all = readAll(store);
   const entry = all[key];
+  // #398: a ranked run goes through recordRanked, not recordPractice, so the
+  // card has to read it from here or the day still says "not ridden yet".
+  const ranked = (entry && entry.ranked) || {};
   return {
     practiced: (entry && entry.practice) || 0,
-    best: (entry && entry.best) || null
+    best: (entry && entry.best) || null,
+    ranked: { solo: ranked.solo || null, pair: ranked.pair || null }
   };
 }
 
@@ -87,14 +91,22 @@ export function prune(all, todayKey) {
  */
 export function dailyDescription(status, key) {
   const label = formatDayLabel(key);
-  if (!status || !status.practiced) return `${label} · not ridden yet`;
-  const runs = status.practiced === 1 ? 'ridden once' : `ridden ×${status.practiced}`;
-  if (status.best) {
-    const total = Math.round(status.best / 1000);
-    const t = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-    return `${label} · ${runs} · best ${t}`;
+  const bits = [label];
+  // #398: the day's ranked run (solo / pair) counts as ridden, with its time
+  // or DNF, so the card shows that the one ranked attempt has been used.
+  const ranked = (status && status.ranked) || {};
+  for (const mode of ['solo', 'pair']) {
+    const r = ranked[mode];
+    if (!r) continue;
+    const name = mode === 'pair' ? 'Pair ranked' : 'Ranked';
+    bits.push(r.dnf || !(r.timeMs > 0) ? `${name} · DNF` : `${name} ✓ ${formatClock(r.timeMs)}`);
   }
-  return `${label} · ${runs}`;
+  if (status && status.practiced) {
+    bits.push(status.practiced === 1 ? 'ridden once' : `ridden ×${status.practiced}`);
+    if (status.best) bits.push(`best ${formatClock(status.best)}`);
+  }
+  if (bits.length === 1) return `${label} · not ridden yet`;
+  return bits.join(' · ');
 }
 
 /** Fixed subtitle explaining the rules, shown under the description. */

@@ -17,6 +17,8 @@ page.on('request',(req)=>{const u=req.url(); if(u.startsWith(`http://127.0.0.1:$
  if(f&&fs.existsSync(f))return req.respond({status:200,contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:fs.readFileSync(f)});
  return req.abort();});
 page.on('pageerror', e => console.log('  PAGEERROR:', e.message));
+// D6 (#400): a returning player; the first-launch tutorial has its own smoke (smoke:tutorial).
+await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
 await page.goto(`http://127.0.0.1:${PORT}/index.html`,{waitUntil:'domcontentloaded'});
 await page.waitForFunction(()=>!!window._game,{timeout:30000});
 

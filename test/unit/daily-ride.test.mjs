@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveDailyLevel, formatDayLabel, dailyStatus, recordPractice, prune,
-  dailyDescription, KEEP_DAYS, STORAGE_KEY
+  dailyDescription, recordRanked, KEEP_DAYS, STORAGE_KEY
 } from '../../js/daily-ride.js';
 import { dailyKey, dailySeed } from '../../js/daily-seed.js';
 
@@ -39,7 +39,7 @@ test('the day label is locale-independent', () => {
 test('an untouched day reads as not ridden', () => {
   const store = memStore();
   const status = dailyStatus(store, '2026-09-08');
-  assert.deepEqual(status, { practiced: 0, best: null });
+  assert.deepEqual(status, { practiced: 0, best: null, ranked: { solo: null, pair: null } });
   assert.equal(dailyDescription(status, '2026-09-08'), 'Tue, Sep 8 · not ridden yet');
 });
 
@@ -82,11 +82,35 @@ test('old days are pruned, recent ones are kept', () => {
 test('a store that throws does not take the ride down', () => {
   const angry = { get() { throw new Error('blocked'); }, set() { throw new Error('blocked'); } };
   assert.doesNotThrow(() => recordPractice(angry, '2026-09-08', 1000));
-  assert.deepEqual(dailyStatus(angry, '2026-09-08'), { practiced: 0, best: null });
+  assert.deepEqual(dailyStatus(angry, '2026-09-08'), { practiced: 0, best: null, ranked: { solo: null, pair: null } });
 });
 
 test('the store key is namespaced', () => {
   const store = memStore();
   recordPractice(store, '2026-09-08', 1000);
   assert.ok(store._m.has(STORAGE_KEY));
+});
+
+// #398 · a ranked run used the day's one attempt; the card has to say so.
+test('a ranked finish counts as ridden and shows its time', () => {
+  const store = memStore();
+  recordRanked(store, '2026-09-08', 'solo', { timeMs: 65400, distance: 500 });
+  const status = dailyStatus(store, '2026-09-08');
+  assert.equal(status.ranked.solo.timeMs, 65400);
+  assert.equal(dailyDescription(status, '2026-09-08'), 'Tue, Sep 8 · Ranked ✓ 1:05');
+});
+
+test('a ranked DNF (END RIDE) still reads as the run being used', () => {
+  const store = memStore();
+  recordRanked(store, '2026-09-08', 'solo', { dnf: true, distance: 120 });
+  assert.equal(dailyDescription(dailyStatus(store, '2026-09-08'), '2026-09-08'), 'Tue, Sep 8 · Ranked · DNF');
+});
+
+test('solo and pair ranked runs and practice all show', () => {
+  const store = memStore();
+  recordRanked(store, '2026-09-08', 'pair', { timeMs: 70000 });
+  recordRanked(store, '2026-09-08', 'solo', { dnf: true });
+  recordPractice(store, '2026-09-08', 62000);
+  assert.equal(dailyDescription(dailyStatus(store, '2026-09-08'), '2026-09-08'),
+    'Tue, Sep 8 · Ranked · DNF · Pair ranked ✓ 1:10 · ridden once · best 1:02');
 });

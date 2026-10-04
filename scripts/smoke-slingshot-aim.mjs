@@ -86,6 +86,8 @@ const touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touch
 
 async function toSlingshot(first) {
   if (first) {
+    // D6 (#400): a returning player; the first-launch tutorial has its own smoke (smoke:tutorial).
+    await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
     await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!window._game, { timeout: 30000 });
     await page.evaluate(() => document.getElementById('tap-to-start')?.click());

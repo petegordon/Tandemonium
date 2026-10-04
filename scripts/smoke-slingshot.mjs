@@ -47,6 +47,8 @@ await page.evaluateOnNewDocument(() => {
   } catch (e) {}
 });
 const wallet = () => page.evaluate(() => JSON.parse(localStorage.getItem('tandemonium_wallet') || '{}'));
+// D6 (#400): a returning player; the first-launch tutorial has its own smoke (smoke:tutorial).
+await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
 await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => !!window._game, { timeout: 30000 });
 await page.click('#tap-to-start').catch(() => {});
