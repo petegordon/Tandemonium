@@ -49,6 +49,8 @@ const boot = async (query = '') => {
   await new Promise(r => setTimeout(r, 500));
 };
 
+// D6 (#400): a returning player; the first-launch tutorial has its own smoke (smoke:tutorial).
+await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
 // A fresh player: no wallet, no records, no Slingshot save. (Once per session.)
 await page.evaluateOnNewDocument(() => {
   try {
