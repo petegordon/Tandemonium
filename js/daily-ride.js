@@ -13,7 +13,7 @@
 // DOM-free and storage-agnostic so it can be tested: the store is any object
 // with get(key)/set(key, value).
 
-import { dailyKey, dailySeed } from './daily-seed.js';
+import { dailyKey, dailySeed, weeklyKey, weeklySeed } from './daily-seed.js';
 
 export const STORAGE_KEY = 'tandemonium_daily';
 
@@ -99,6 +99,51 @@ export function dailyDescription(status, key) {
 
 /** Fixed subtitle explaining the rules, shown under the description. */
 export const DAILY_RULES_LINE = 'Same road for everyone today · new road at 09:00 UTC (05:00 ET)';
+
+// ── #400 · the demo's weekly road ─────────────────────────────────────────
+//
+// In the demo, Today's Road becomes "This Week's Road": one road per ISO week
+// (keyed by its Monday, see weeklyKey), ridden on Chill with safety on (D10),
+// practice only. The full game is unchanged. Records and practice counts use
+// the Monday's key, so the storage format is the daily one.
+
+export const WEEKLY_NAME = "This Week's Road";
+export const WEEKLY_DESCRIPTION = 'A new road every week';
+export const WEEKLY_DIFFICULTY = 'chill';
+export const WEEKLY_RULES_LINE = 'Same road for everyone this week · new road every Monday';
+
+/** The base daily level, presented as the weekly road (no key/seed yet). */
+export function asWeeklyRoad(baseLevel) {
+  return {
+    ...baseLevel,
+    name: WEEKLY_NAME,
+    description: WEEKLY_DESCRIPTION,
+    fixedDifficulty: WEEKLY_DIFFICULTY,
+    isWeekly: true
+  };
+}
+
+/** The weekly road with the week's identity attached (cf. resolveDailyLevel). */
+export function resolveWeeklyLevel(baseLevel, { key, seed } = {}) {
+  const k = key || weeklyKey();
+  const level = resolveDailyLevel(asWeeklyRoad(baseLevel), {
+    key: k, seed: typeof seed === 'number' ? seed : weeklySeed()
+  });
+  level.dateLabel = 'Week of ' + shortWeekLabel(level.key);
+  return level;
+}
+
+/** "Sep 28" from a Monday key. */
+function shortWeekLabel(key) {
+  const label = formatDayLabel(key);
+  return label ? label.split(', ')[1] : '';
+}
+
+/** The card line for the weekly road: what you've done on it this week. */
+export function weeklyDescription(status, key) {
+  const label = 'Week of ' + shortWeekLabel(key);
+  return WEEKLY_DESCRIPTION + '<br>' + dailyDescription(status, key).replace(formatDayLabel(key), label);
+}
 
 // ── storage helpers ───────────────────────────────────────────────────────
 
