@@ -3018,21 +3018,39 @@ export class Lobby {
     }).join('');
   }
 
+  /**
+   * #401 · the badge screen: the 93 visible achievements grouped by section,
+   * counters with their progress (3/7 days), hidden ones as ??? until earned.
+   */
   _renderAchievements() {
     const container = document.getElementById('lb-achievements');
-    const defs = this._achievements.getAllDefinitions();
+    if (!container) return;
+    const sections = this._achievements.getSections();
+    const defs = sections.flatMap(s => s.items);
     const earnedCount = defs.filter(d => d.earned).length;
+    const fmt = v => Math.floor(v).toLocaleString('en-US');
 
     let html = '<div class="lb-ach-count"><span>' + earnedCount + '</span> / ' + defs.length + ' Unlocked</div>';
-    html += '<div class="lb-achievement-grid">';
-    defs.forEach(d => {
-      const cls = d.earned ? 'earned' : 'locked';
-      html += '<div class="lb-ach-item ' + cls + '">' +
-        '<span class="lb-ach-icon">' + d.icon + '</span>' +
-        '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
-      '</div>';
-    });
-    html += '</div>';
+    for (const sec of sections) {
+      const got = sec.items.filter(d => d.earned).length;
+      html += '<div class="lb-ach-section" data-section="' + sec.id + '">' +
+        '<div class="lb-ach-section-title">' + this._escapeHtml(sec.title) +
+        ' <span class="lb-ach-section-count">' + got + '/' + sec.items.length + '</span></div>';
+      html += '<div class="lb-achievement-grid">';
+      sec.items.forEach(d => {
+        const cls = (d.earned ? 'earned' : 'locked') + (d.secret ? ' secret' : '') + (d.demoLocked ? ' demo-locked' : '');
+        const prog = d.progress && d.progress[0] > 0
+          ? '<span class="lb-ach-progress">' + fmt(d.progress[0]) + '/' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '') + '</span>'
+          : '';
+        const tip = d.desc + (d.demoLocked ? ' (full game)' : '');
+        html += '<div class="lb-ach-item ' + cls + '" data-ach="' + d.id + '" title="' + this._escapeHtml(tip) + '">' +
+          '<span class="lb-ach-icon">' + d.icon + '</span>' +
+          '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
+          prog +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
     container.innerHTML = html;
   }
 

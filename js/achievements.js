@@ -1,90 +1,55 @@
 // ============================================================
-// ACHIEVEMENTS — unlock conditions, persistence, toast display
+// ACHIEVEMENTS — the manager: persistence, events, toasts, Steam
 // ============================================================
+//
+// The 100 definitions, the lifetime stats and the pure rules live in
+// js/achievement-defs.js (#401). This file keeps what touches the browser:
+// localStorage, the economy-event listener, Steam, server sync, the toast and
+// the badges — plus the thin readers that turn Game state into the plain
+// objects the rules take, so game.js only holds one-line call sites.
 
-import { API_BASE } from './config.js';
+import { API_BASE, TUNE } from './config.js';
+import { getEditionRules } from './edition.js';
+import { dailyKey } from './daily-seed.js';
+import { WALLET_KEY, sanitizeWallet, canRebuild } from './wallet.js';
+import {
+  ACHIEVEMENTS, RETIRED_IDS, SECTIONS, STATS_VERSION,
+  migrateStats, applyEvent, RideTracker, versusResult,
+} from './achievement-defs.js';
 
-const ACHIEVEMENTS = [
-  // Distance milestones (cumulative across completed rides)
-  { id: 'first_500m',   name: 'First 500m',      icon: '\uD83D\uDC5F', condition: s => s.cumulativeDistance >= 500 },  // 👟
-  { id: 'first_km',     name: '1K Club',          icon: '\uD83C\uDFC5', condition: s => s.cumulativeDistance >= 1000 },   // 🏅
-  { id: 'five_k',       name: '5K Champion',      icon: '\uD83C\uDFC6', condition: s => s.cumulativeDistance >= 5000 },   // 🏆
-
-  // Speed
-  { id: 'speed_demon',  name: 'Speed Demon',      icon: '\u26A1',       condition: s => s.speed >= 13.9 },      // ⚡ (50 km/h)
-
-  // Sync (multiplayer)
-  // A-2: reachable by cooperation now. Each paired beat adds +0.10 to offsetScore
-  // against 5%/s decay, so two riders answering each other's beat at ~1 beat/s
-  // cross 0.9 in about ten seconds. Under the old rule this was only reachable
-  // when one player pedalled alone while the other coasted.
-  { id: 'perfect_sync', name: 'Perfect Sync',     icon: '\uD83E\uDD1D', condition: s => s.offsetScore > 0.9 && s.syncDuration >= 10 }, // 🤝
-
-  // Collection
-  { id: 'collector',    name: 'Collector',         icon: '\uD83C\uDF1F', condition: s => s.collectibles >= 10 }, // 🌟
-  { id: 'hoarder',      name: 'Hoarder',           icon: '\uD83D\uDC51', condition: s => s.collectibles > 0 && s.collectibles >= s.totalCollectibles }, // 👑
-
-  // Finish levels
-  { id: 'home_sweet',   name: "Home Sweet Home",   icon: '\uD83C\uDFE0', condition: s => s.finishedLevel === 'grandma' }, // 🏠
-
-  // Per-bike Grandma's House achievements
-  { id: 'grandma_default',  name: "Grandma's Classic",     icon: '🚲', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'default' },
-  { id: 'grandma_orange',   name: 'Marmalade Delivery',    icon: '🍊', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'bike_orange' },
-  { id: 'grandma_magenta',  name: 'Berry Special Visit',   icon: '🫐', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'bike_magenta' },
-  { id: 'grandma_red',      name: 'Cherry on Top',         icon: '🍒', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'bike_red' },
-  { id: 'grandma_blue',     name: "Ocean to Grandma's",    icon: '🌊', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'bike_blue' },
-  { id: 'grandma_green',    name: 'Jungle Express',        icon: '🌿', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'bike_green' },
-  { id: 'grandma_yellow',   name: 'Banana Delivery',       icon: '🍌', condition: s => s.finishedLevel === 'grandma' && s.bikeKey === 'bike_yellow' },
-
-  // Perfect rides (no crashes, no checkpoint restarts)
-  { id: 'perfect_1k',   name: 'Flawless',           icon: '\uD83D\uDCAE', condition: s => s.finishedLevel === 'grandma' && s.crashes === 0 && s.restarts === 0 },  // 💮
-
-  // Contribution
-  { id: 'team_player',  name: 'Team Player',       icon: '\uD83E\uDD1C', condition: s => s.isMultiplayer && s.safePct >= 80 }, // 🤜
-
-  // ── F-1 · the loops this game is actually about ──────────────────────────
-  //
-  // Nineteen achievements existed and seven of them were "finish Grandma's on
-  // a particular bike colour" — a completion checklist for a player who wants
-  // to exhaust content, which is the anti-persona. These six reward what the
-  // plan built: coming back, riding the shared road, and riding it with the
-  // same person.
-  { id: 'daily_first',     name: "Today's Road",       icon: '\uD83D\uDCC5', condition: s => s.dailyRanked === true },   // 📅
-  { id: 'daily_streak_7',  name: 'A Week of Roads',    icon: '\uD83D\uDD25', condition: s => s.dailyStreak >= 7 },       // 🔥
-  { id: 'daily_streak_30', name: 'A Month of Roads',   icon: '\u2604\uFE0F', condition: s => s.dailyStreak >= 30 },      // ☄️
-  { id: 'pair_10_rides',   name: 'Regulars',           icon: '\uD83D\uDC6B', condition: s => s.pairRides >= 10 },        // 👫
-  { id: 'pair_100km',      name: 'A Hundred Together', icon: '\uD83D\uDEE3\uFE0F', condition: s => s.pairDistanceKm >= 100 }, // 🛣️
-  { id: 'distance_between_us', name: 'The Distance Between Us', icon: '\uD83D\uDCCD', condition: s => s.touristFinished === true }, // 📍 (Phase E)
-];
-
-/**
- * F-1 · the seven per-bike-colour Grandma's achievements are retired from the
- * VISIBLE list. The ids stay in ACHIEVEMENTS so anyone who earned one keeps it
- * and Steam still recognises it — they are simply no longer presented as
- * something to go and do. They rewarded riding the same 250 m seven times to
- * see seven colours, which is the completion loop this plan exists to stop
- * being the whole game.
- */
-const RETIRED_IDS = new Set([
-  'grandma_default', 'grandma_orange', 'grandma_magenta', 'grandma_red',
-  'grandma_blue', 'grandma_green', 'grandma_yellow'
-]);
+export { ACHIEVEMENTS, RETIRED_IDS, SECTIONS };
 
 const STORAGE_KEY = 'tandemonium_achievements';
 const STATS_KEY = 'tandemonium_achievement_stats';
+const ECONOMY_EVENT = 'tandemonium:economy';
 
 export class AchievementManager {
   constructor() {
     this._earned = new Map(); // id → { earnedAt, ... }
     this._newThisSession = []; // newly earned this session
     this._syncHighScore = 0; // consecutive seconds with offsetScore > 0.9
-    this._cumulativeDistance = 0;
+    this._stats = migrateStats(null);
+    /** The ride in progress (js/achievement-defs.js · RideTracker). */
+    this.ride = new RideTracker();
+    /** Called with each newly earned record (the game toasts it). */
+    this.onEarned = null;
+    this._demo = null;
+    this._versus = null;
     // Injected identity ({ getToken() }) — lets achievements push to the
     // backend without knowing about auth. Set via setIdentity(). (#318 Step 4)
     this._identity = null;
     this._load();
     this._loadStats();
   }
+
+  /** The demo never awards the full-game-only achievements (defs `demo: false`). */
+  get demo() {
+    if (this._demo === null) {
+      try { this._demo = !!getEditionRules().isDemo; } catch (e) { this._demo = false; }
+    }
+    return this._demo;
+  }
+  set demo(v) { this._demo = !!v; }
 
   /** Inject the identity provider used to authorize server sync. */
   setIdentity(identity) {
@@ -133,43 +98,47 @@ export class AchievementManager {
     } catch (e) {}
   }
 
+  /** v1 ({ cumulativeDistance }) and v2 both load; an old save is rewritten as v2. */
   _loadStats() {
+    let raw = null;
     try {
-      const raw = localStorage.getItem(STATS_KEY);
-      if (raw) {
-        const data = JSON.parse(raw);
-        this._cumulativeDistance = data.cumulativeDistance || 0;
-      }
+      const s = localStorage.getItem(STATS_KEY);
+      raw = s ? JSON.parse(s) : null;
     } catch (e) {}
+    this._stats = migrateStats(raw);
+    if (raw && raw.v !== STATS_VERSION) this._saveStats();
   }
 
   _saveStats() {
     try {
-      localStorage.setItem(STATS_KEY, JSON.stringify({
-        cumulativeDistance: this._cumulativeDistance,
-      }));
+      localStorage.setItem(STATS_KEY, JSON.stringify(this._stats));
     } catch (e) {}
   }
 
-  /** Re-read earned achievements from localStorage (e.g. after a ride). */
+  /** Re-read earned achievements and stats from localStorage (e.g. after a ride). */
   reload() {
     this._earned = new Map();
     this._load();
+    this._loadStats();
   }
 
-  /** Record distance from a completed ride. */
+  /** Lifetime stats (a copy). */
+  getStats() {
+    return { ...this._stats };
+  }
+
+  /** Kept for old callers: distance now arrives through the 'ride' event. */
   addCompletedDistance(distance) {
-    this._cumulativeDistance += distance;
+    this._stats = { ...this._stats, cumulativeDistance: this._stats.cumulativeDistance + Math.max(0, distance || 0) };
     this._saveStats();
   }
 
   getCumulativeDistance() {
-    return this._cumulativeDistance;
+    return this._stats.cumulativeDistance;
   }
 
+  /** Per-frame / finish check against the state of the moment. */
   check(state) {
-    const newlyEarned = [];
-
     // Track sync duration for Perfect Sync
     if (state.offsetScore > 0.9) {
       this._syncHighScore += state.dt || 0;
@@ -177,11 +146,24 @@ export class AchievementManager {
       this._syncHighScore = 0;
     }
     state.syncDuration = this._syncHighScore;
+    return this._evaluate(state);
+  }
 
+  /** Fold an event into the lifetime stats, save, and check. */
+  record(type, detail = {}) {
+    this._stats = applyEvent(this._stats, type, detail, dailyKey());
+    this._saveStats();
+    return this._evaluate({});
+  }
+
+  _evaluate(state) {
+    const newlyEarned = [];
+    const demo = this.demo;
     for (const ach of ACHIEVEMENTS) {
       if (this._earned.has(ach.id)) continue;
+      if (demo && !ach.demo) continue;
       try {
-        if (ach.condition(state)) {
+        if (ach.condition(state, this._stats)) {
           const record = { id: ach.id, name: ach.name, icon: ach.icon, earnedAt: Date.now() };
           this._earned.set(ach.id, record);
           this._newThisSession.push(record);
@@ -193,13 +175,109 @@ export class AchievementManager {
     if (newlyEarned.length > 0) {
       this._save();
       // Mirror newly earned achievements to Steam
-      if (window.steam) {
+      if (typeof window !== 'undefined' && window.steam) {
         for (const a of newlyEarned) {
           window.steam.activateAchievement(a.id.toUpperCase());
         }
       }
+      if (this.onEarned) {
+        for (const a of newlyEarned) {
+          try { this.onEarned(a); } catch (e) {}
+        }
+      }
     }
     return newlyEarned;
+  }
+
+  // ── Game glue: plain readers so game.js stays one-liners ──────────────
+
+  /** Listen for the economy events (js/economy-mode.js · _economyEvent). Once, from the game. */
+  listen(target = (typeof window !== 'undefined' ? window : null)) {
+    if (!target || this._listening) return;
+    this._listening = true;
+    target.addEventListener(ECONOMY_EVENT, (e) => {
+      const d = (e && e.detail) || {};
+      if (!d.type) return;
+      if (d.type === 'upgrade') {
+        let allMaxed = false;
+        try { allMaxed = canRebuild(sanitizeWallet(JSON.parse(localStorage.getItem(WALLET_KEY) || 'null'))); } catch (_) {}
+        this.record('upgrade', { ...d, allMaxed });
+      } else {
+        this.record(d.type, d);
+      }
+    });
+  }
+
+  /** A good pedal stroke. Writes once, the first time. */
+  notePedal() {
+    if (!this._stats.pedalled) this.record('pedal');
+  }
+
+  /** A crash, anywhere. Feeds the ride (False Start, So Close, Weathered) and the lifetime count. */
+  crash(cause, { ref, distance, raceDistance } = {}) {
+    const r = this.ride.crash({ ref, cause, distance, raceDistance });
+    return this.record('crash', r);
+  }
+
+  /** A gust starts (true) or ends (false). */
+  gust(starting) {
+    if (starting) return this.record('gust');
+    return this.ride.gust(false) ? this.record('weathered') : [];
+  }
+
+  /**
+   * The per-ride numbers for this frame, from the game: off-road time, the
+   * centre strip, boost chains, steady hands. Returns them for the state.
+   */
+  rideFrame(dt, game) {
+    const b = game.bike;
+    if (!b) return {};
+    const crashThreshold = TUNE.crashThreshold || 1.35;
+    const dangerOnset = TUNE.dangerOnset || 0.55;
+    const shaking = Math.abs(b.lean || 0) / crashThreshold > dangerOnset || (b._edgeIntensity || 0) > 0;
+    return this.ride.frame(dt, {
+      ref: game.raceManager || null,
+      playing: game.state === 'playing',
+      fallen: !!b.fallen,
+      speed: b.speed || 0,
+      lateralOffset: b._lateralOffset || 0,
+      onCenterStrip: !!b.onCenterStrip,
+      boosting: (b.boostTimer || 0) > 0,
+      shaking,
+      assistOn: (game._assistWeight || 0) > 0,
+    });
+  }
+
+  /** The finish: the ride's numbers + the lifetime counters it moves. */
+  finish(state) {
+    const ride = this.ride.ref === state.ref ? this.ride.snapshot() : {};
+    const s = { ...ride, ...state };
+    s.crashes = Math.max(s.crashes || 0, ride.rideCrashes || 0);
+    this._stats = applyEvent(this._stats, 'finish', s, dailyKey());
+    this._saveStats();
+    return this._evaluate(s);
+  }
+
+  /** Versus, each frame: who led when the leader crossed halfway. */
+  versusFrame(rigs, raceDistance) {
+    if (!rigs || !rigs.length) return;
+    const key = rigs[0].raceManager;
+    if (!this._versus || this._versus.key !== key) this._versus = { key, halfLeader: null };
+    if (this._versus.halfLeader || !(raceDistance > 0)) return;
+    let lead = rigs[0];
+    for (const r of rigs) if (r.bike.distanceTraveled > lead.bike.distanceTraveled) lead = r;
+    if (lead.bike.distanceTraveled >= raceDistance / 2) this._versus.halfLeader = lead.id;
+  }
+
+  /** Versus: the race is won. */
+  versusFinish(winner, loser, raceDistance) {
+    if (!winner || !loser) return [];
+    const team = r => ({ id: r.id, members: r.members, distance: r.bike.distanceTraveled, speed: r.bike.speed });
+    const halfLeader = this._versus && this._versus.key === winner.raceManager ? this._versus.halfLeader
+      : (this._versus && this._versus.key === loser.raceManager ? this._versus.halfLeader : null);
+    const res = versusResult({ winner: team(winner), loser: team(loser), raceDistance, halfLeader });
+    this._versus = null;
+    return this.record('versus', res);
   }
 
   getEarned() {
@@ -219,18 +297,45 @@ export class AchievementManager {
     return this._newThisSession;
   }
 
+  /**
+   * What the lobby's badge screen lists: the 93 visible achievements (the
+   * retired colours never show). Hidden ones read "???" until earned; counters
+   * carry [current, goal] progress; demoLocked marks full-game-only rows.
+   */
   getAllDefinitions() {
-    // F-1: retired achievements are shown only to the people who already have
-    // them — earned things never disappear, but nobody new is pointed at them.
+    const demo = this.demo;
     return ACHIEVEMENTS
-      .filter(a => !RETIRED_IDS.has(a.id) || this._earned.has(a.id))
-      .map(a => ({
-        id: a.id,
-        name: a.name,
-        icon: a.icon,
-        earned: this._earned.has(a.id),
-        retired: RETIRED_IDS.has(a.id)
-      }));
+      .filter(a => !RETIRED_IDS.has(a.id))
+      .map(a => {
+        const earned = this._earned.has(a.id);
+        const secret = a.hidden && !earned;
+        let progress = null;
+        if (!earned && !secret && a.progress) {
+          try { progress = a.progress(this._stats); } catch (e) { progress = null; }
+        }
+        return {
+          id: a.id,
+          section: a.section,
+          name: secret ? '???' : a.name,
+          icon: secret ? '❔' : a.icon,
+          desc: secret ? 'A hidden achievement' : a.desc,
+          earned,
+          hidden: !!a.hidden,
+          secret,
+          retired: false,
+          progress,
+          unit: a.unit || '',
+          demoLocked: demo && !a.demo,
+        };
+      });
+  }
+
+  /** getAllDefinitions grouped by section, in section order (empty sections dropped). */
+  getSections() {
+    const defs = this.getAllDefinitions();
+    return SECTIONS
+      .map(sec => ({ ...sec, items: defs.filter(d => d.section === sec.id) }))
+      .filter(sec => sec.items.length > 0);
   }
 
   /** Push all earned achievements to Steam profile (catches web/mobile unlocks). */

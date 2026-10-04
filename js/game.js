@@ -24,7 +24,7 @@ const ACTIVE_TEXT = {
   gust: '💨 HOLD IT',
   cobbles: '🪨 ROUGH ROAD'
 };
-import { makePlacementSalt } from './daily-seed.js';
+import { makePlacementSalt, dailyKey } from './daily-seed.js';
 import {
   recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
   buildShareStrip, browserStore
@@ -619,6 +619,8 @@ class Game {
 
     // Achievements (persists across sessions)
     this.achievements = new AchievementManager();
+    this.achievements.onEarned = (a) => this._onAchievementEarned(a);   // #401: every unlock, any source
+    this.achievements.listen(window);                                   // #401: economy + Slingshot events
     this._updateBadges();
 
     // Contribution bar elements
@@ -1088,6 +1090,7 @@ class Game {
         // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
         if (this.raceManager) this.raceManager.start();
+        this.achievements.ride.go();   // #401 False Start
         const flavorNum = document.getElementById('countdown-flavor-num');
         const flavorIcon = document.getElementById('countdown-flavor-icon');
         const flavorText = document.getElementById('countdown-flavor-text');
@@ -2337,6 +2340,7 @@ class Game {
       }
       this._playBeep(800, 0.4);
       if (this.raceManager) this.raceManager.start();
+      this.achievements.ride.go();   // #401 False Start
       if (this.mode === 'versus' && this.versusRigs) {
         for (const rig of this.versusRigs) {
           if (rig.raceManager) rig.raceManager.start();
@@ -2744,6 +2748,7 @@ class Game {
       // Show assist button if DDA recommends it
       if (ddaResult.offerAssist) {
         this.ddaManager.markAssistOffered();
+        this.achievements.ride.assistOffered = true;   // #401 Did It Myself
         const assistBtn = document.getElementById('assist-btn');
         if (assistBtn) assistBtn.style.display = '';
       }
@@ -3467,9 +3472,11 @@ class Game {
     }
     hapticBump();
     try { analytics.trackRideEvent('disruption', event.atM, { kind: event.kind }); } catch {}
+    if (event.kind === KIND.GUST) this.achievements.gust(true);   // #401
   }
 
   _onDisruptionEnd() {
+    if (this._activeDisruption && this._activeDisruption.event.kind === KIND.GUST) this.achievements.gust(false);   // #401
     this._clearDisruptionEffects();
   }
 
@@ -3829,6 +3836,7 @@ class Game {
         if (btn) { btn.textContent = 'COPIED'; setTimeout(() => { btn.textContent = '📋 SHARE RESULT'; }, 1600); }
       }
       try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method, where }); } catch {}
+      if (this.lobby.selectedLevel?.isDaily) this.achievements.record('share');   // #401 Show-Off
     } catch { /* the user dismissed the share sheet; that is not an error */ }
   }
 
@@ -3918,7 +3926,10 @@ class Game {
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
     // Slingshot: Chaos Coins are money, not a boost; the gates are the boost.
     if (this.isSlingshot && this._slingRun) this._onSlingCoin(count);
-    else this.bike.boostTimer = 3; // 3-second speed boost
+    else {
+      this.bike.boostTimer = 3; // 3-second speed boost
+      this.achievements.record('boost', { count });   // #401
+    }
     // B-4: the boost was silent apart from a pickup beep, so it read as "you
     // collected a thing" rather than "you are now faster". Pitch up.
     this._playBeep(1200, 0.1);
@@ -3943,6 +3954,7 @@ class Game {
       finishedLevel: null,
       isMultiplayer: this.mode !== 'solo',
       safePct: 0,
+      ...this.achievements.rideFrame(dt, this),   // #401: off-road, centre strip, boost chain, steady hands
     };
 
     if (this.contributionTracker) {
@@ -3954,21 +3966,25 @@ class Game {
       }
     }
 
-    const newlyEarned = this.achievements.check(state);
-    newlyEarned.forEach(a => {
-      showAchievementToast(a);
-      this._updateBadges();
+    this.achievements.check(state);
+  }
+
+  /** Every unlock, from any source (a frame, a finish, a payout, a launch): toast + badges. */
+  _onAchievementEarned(a) {
+    showAchievementToast(a);
+    this._updateBadges();
+    try {
       analytics.trackEvent('achievement_earned', {
         achievement_id: a.id,
         ride_id: analytics.getCurrentRideId(),
       });
-    });
+    } catch {}
   }
 
   _checkFinishAchievements() {
     const level = this.lobby.selectedLevel;
-    // Record this ride's distance for cumulative tracking
-    this.achievements.addCompletedDistance(this.bike.distanceTraveled);
+    // #401: the ride's metres reach the lifetime distance through the payout
+    // ('ride' event, js/economy-mode.js), crashed and abandoned rides included.
     const state = {
       distance: this.bike.distanceTraveled,
       cumulativeDistance: this.achievements.getCumulativeDistance(),
@@ -4008,11 +4024,20 @@ class Game {
       state.pairDistanceKm = (this._lastPairSummary.distance || 0) / 1000;
     }
 
-    const newlyEarned = this.achievements.check(state);
-    newlyEarned.forEach(a => {
-      showAchievementToast(a);
-      this._updateBadges();
+    // #401: medal, best, difficulty, co-op partner, Tourist, the pair's weeks.
+    const outcome = this._lastRecordOutcome || {};
+    const partnerKey = this._partnerKey();
+    Object.assign(state, {
+      ref: this.raceManager,
+      medal: outcome.medal || null,
+      newBest: !!outcome.isNewBest,
+      difficulty: level.fixedDifficulty || this.lobby.selectedDifficulty,
+      isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local',
+      partnerKey,
+      touristFinished: !!(this.isTourist || this._touristRoute),
+      pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
+    this.achievements.finish(state);
   }
 
   _updateBadges() {
@@ -5582,6 +5607,13 @@ class Game {
 
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
+    this.achievements.crash(cause, {   // #401
+      ref: this.mode === 'versus' ? null : this.raceManager,
+      distance: bike ? bike.distanceTraveled : 0,
+      raceDistance: (this.mode === 'versus'
+        ? (this.lobby.selectedLevel && this.lobby.selectedLevel.distance)
+        : (this.raceManager && this.raceManager.raceDistance)) || 0,
+    });
     if (bike) {
       analytics.trackRideEvent('crash', bike.distanceTraveled, {
         lean_angle: bike.lean,
@@ -5930,6 +5962,7 @@ class Game {
     if (this.isSlingshot) pedalResult = this._slingPedal(pedalResult);
     else this._playPedalTaps(this.pedalCtrl);
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
+    if (this.isSlingshot) this._slingLean = balanceResult.leanInput;   // #401 Straight Shooter
 
     // Sync balance assist to bike model
     this.bike._balanceAssist = this._assistWeight;
@@ -6287,6 +6320,7 @@ class Game {
       if (ev.kind !== 'wrong' && ev.kind !== 'fight') {
         if (this.raceManager && this.raceManager.timerHeld) this.raceManager.noteFirstPedal();
         this._coachGoodTaps = (this._coachGoodTaps || 0) + 1;
+        this.achievements.notePedal();   // #401 Kick Off
       } else {
         this._coachWrongFlash = true;
       }
@@ -6412,6 +6446,7 @@ class Game {
     }
 
     for (const rig of rigs) this._stepTeam(rig, dt);
+    this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
 
     // Bike-vs-bike contact: bumping knocks both around a little.
     this._resolveVersusBikeContact(dt);
@@ -6651,6 +6686,7 @@ class Game {
     rig.collectibles += count;
     if (rig.raceManager) rig.raceManager.collectiblesCount += count;
     rig.bike.boostTimer = 3;
+    this.achievements.record('boost', { count });   // #401
     this._playBeep(1200, 0.1);
     setTimeout(() => this._playBeep(1600, 0.08), 80);
     hapticCheckpoint(rig.inputs);
@@ -6680,6 +6716,7 @@ class Game {
    */
   _finishVersusRace(winner) {
     const loser = this.versusRigs.find((r) => r !== winner);
+    this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';
@@ -8130,6 +8167,7 @@ class Game {
 
   _tutorialComplete() {
     this._tutorialAttempts++;
+    this.achievements.record('tutorial', { clean: this._tutorialAttempts === 1 });   // #401
 
     // Analytics: tutorial complete
     const durationSec = this._tutorialStartTime ? (performance.now() - this._tutorialStartTime) / 1000 : 0;
@@ -8251,6 +8289,7 @@ class Game {
 
   _showStokerTutorialComplete() {
     this._tutorialActive = false;
+    this.achievements.record('tutorial', { clean: false });   // #401 (the stoker's retries aren't counted here)
     this.state = 'gameover'; // pause updates
 
     // Reuse tutorial-complete overlay with stoker-appropriate content

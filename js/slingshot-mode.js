@@ -228,6 +228,7 @@ class SlingshotMode {
     this._slingRun = {
       pull: 0, side: 0, launched: false, dragReleased: false, bigAirs: 0, wasAir: false,
       coins: 0, topSpeed: 0, stillT: 0, crashDistance: null, over: false,
+      steerAt: null,   // #401 Straight Shooter: run distance at the first steer after launch
     };
     // Not a countdown: the aim phase is its own state, with its own camera.
     this.state = 'slingAim';
@@ -498,6 +499,7 @@ class SlingshotMode {
     analytics.trackEvent('slingshot_launch', {
       pull: Math.round(run.pull * 100), aim: Math.round(run.side * 100), stage: this._slingSave.stage,
     });
+    this._economyEvent('slingLaunch', { stage: this._slingSave.stage, daily: !!this._slingDaily });   // #401
   }
 
   /** No pedaling in this mode: the slingshot is the only push. */
@@ -514,6 +516,9 @@ class SlingshotMode {
     this._easeSlingFov(dt);
     const b = this.bike;
     run.topSpeed = Math.max(run.topSpeed, b.speed);
+    if (run.launched && run.steerAt == null && Math.abs(this._slingLean || 0) > sling.STEER_DEADZONE) {
+      run.steerAt = sling.runDistance(b.distanceTraveled);
+    }
     if (b.fallen && run.crashDistance == null) run.crashDistance = b.distanceTraveled;
     if (this._slingProps && !b.fallen) {
       for (const hit of this._slingProps.update(b.distanceTraveled, b._lateralOffset || 0, b.air ? b.air.h : 0)) {
@@ -621,6 +626,12 @@ class SlingshotMode {
     }
     sling.writeSave(this._slingStore(), this._slingSave);
     this._depositCoins(score.total, { mode: daily ? 'todaysLaunch' : 'slingshot', kind: cause });
+    // #401: the run, for the Slingshot achievements (Slingshot keeps ride checks off).
+    this._economyEvent('slingRun', {
+      distance: score.distance, record: score.isRecord, jackpot: !!run.jackpot, daily: !!daily,
+      fullTrails: sling.completedTrails(this.collectibleManager ? this.collectibleManager._items : []),
+      straight: sling.isStraightShot(score.distance, run.steerAt),
+    });
     if (daily) {
       this._economyEvent('todaysLaunch', { key: daily.key, distance: score.distance, best: score.isRecord, earned: score.total });
     } else if (runData.stageCleared) {
