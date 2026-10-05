@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
@@ -63,6 +64,7 @@ import { World } from './world.js';
 // message rather than a blank screen.
 import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor } from './tourist-config.js';
 import { formatDistance, skipLabel, headingForBearing } from './tourist-route.js';
+import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
 const TOURIST_READY_TIMEOUT_MS = 20000;
@@ -85,6 +87,7 @@ import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
+import { isBotTeam } from './versus/versus-bot.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
@@ -1974,6 +1977,11 @@ class Game {
     // recorder, or contribution tracking.
     if (this.mode === 'versus') { this._startVersusCountdown(); return; }
 
+    // #400 D4 / M2: a ride left for a new one still pays its distance. First,
+    // before the bike or world is reset and before _rankedRunActive is
+    // recomputed for the next ride (m14). Idempotent through the ledger.
+    this._payoutAbandon();
+
     this.state = 'countdown';
     this.countdownTimer = 3.0;
     this._hideGameOver();
@@ -2136,12 +2144,16 @@ class Game {
     // (the flag still held the previous ride's value), so a ranked run used to
     // get the silent tune and the ASSIST offer. Ranked stays pure.
     if (this._rankedRunActive) this.ddaManager = null;
+    this._applyRankedLocks();   // M4: SAFETY and SPEED off and locked on a ranked run
     if (this._rankedRunActive && this.mode === 'captain' && this.net) {
       // The countdown event is a bare byte, so the mode needs its own message.
       this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
     }
 
-    this._payoutAbandon();   // #400 D4: a ride restarted mid-way still pays its distance
+    // M2: the payout ledger is keyed by RIDE: start line → finish or abandon,
+    // through any checkpoint restarts. A retry of segment 1 is the same ride.
+    if (!this._sameRideNext || !this._rideRef) this._rideRef = {};
+    this._sameRideNext = false;
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this._helpStartRide(keepHelp);   // #403: before the first budget is shown
@@ -2551,6 +2563,9 @@ class Game {
   _resetGame(fromRemote = false, fromBeginning = false) {
     // Slingshot: every reset is back into the slingshot, never to a checkpoint.
     if (this.isSlingshot) { this._resetToSling(); return; }
+    // M2: pay what the ride has done before the bike goes back (the ledger
+    // makes a second payout of the same metres pay nothing).
+    this._payoutAbandon();
     // Analytics: track reset/restart
     analytics.trackRideEvent('reset', this.bike ? this.bike.distanceTraveled : 0, {
       from_beginning: fromBeginning,
@@ -2670,6 +2685,7 @@ class Game {
       this._resumeCountdown();
     } else {
       this._helpKeepRide = !fromBeginning;   // #403: same ride, same count
+      this._sameRideNext = !fromBeginning && !(this.raceManager && this.raceManager.finished);   // M2
       this._startCountdown();
     }
   }
@@ -2985,7 +3001,11 @@ class Game {
         collectibles: summary.collectibles,
         crashes: summary.crashes,
         helped: help.helped,
-        skipped: help.skipped
+        skipped: help.skipped,
+        // M3: the medal this run keeps (🛟 caps it at bronze) — the record keeps the best ever.
+        medal: this._helpMedal(summary.timeMs, getMedals(level.id, this.lobby.selectedDifficulty))
+      }, {
+        medalOf: rec => records.capMedal(records.medalFor(rec.timeMs, getMedals(level.id, this.lobby.selectedDifficulty)), { helped: !!rec.helped })
       });
       records.save(store);
       this._recordStore = store;
@@ -3053,7 +3073,9 @@ class Game {
     }
 
     // #400 D4: the medal and NEW BEST pay coins (js/economy-mode.js · _payoutRide).
-    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous) };
+    // M3: NEW BEST pays only for a faster run (a first unaided finish slower
+    // than a 🛟 best replaces it, but is not paid as a best).
+    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous && result.delta < 0) };
 
     try {
       analytics.trackEvent('run_recorded', {
@@ -3072,6 +3094,7 @@ class Game {
    */
   _endRankedRun() {
     this._rankedRunActive = false;
+    this._applyRankedLocks();   // M4: SAFETY and SPEED back as the player had them
     if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(false);
   }
 
@@ -3266,6 +3289,8 @@ class Game {
       icon: '📍',
       description: plan.headline,
       isTourist: true,
+      // B3: open world pays coins for at most 10 km a ride (no farming circles).
+      payCapM: plan.explore ? OPEN_WORLD_PAY_CAP_M : undefined,
       timerEnabled: false,      // there is no losing a ride to someone you love
       treeCollision: false,
       motionAdaptation: false
@@ -3288,6 +3313,10 @@ class Game {
     // A route faces its destination; open world faces north.
     this.bike.startHeading = plan.explore ? 0 : headingForBearing(plan.bearing);
     this.bike.heading = this.bike.startHeading;   // in case the bike was reset already
+    // B3: no roadPath here, so this odometer is what moves bike.distanceTraveled
+    // (the finish, the goal readout, coins, achievements). Route: progress along
+    // the bearing; open world: distance ridden.
+    this._touristOdo = new TouristOdometer({ heading: plan.explore ? null : this.bike.startHeading });
 
     if (this.world && this.world.setRoute) {
       this.world.setRoute(plan);
@@ -3305,6 +3334,14 @@ class Game {
     if (!el || !this._touristRoute) return;
     el.classList.add('visible');
     this._updateTouristGoal();
+  }
+
+  /** B3 · the authoritative side (solo / captain) moves the ride's distance. */
+  _tickTouristOdometer() {
+    const odo = this._touristOdo;
+    const b = this.bike;
+    if (!odo || !b || !this.isTourist) return;
+    b.distanceTraveled = odo.update(b.position.x, b.position.z, b.distanceTraveled);
   }
 
   _hideTouristGoal() {
@@ -4112,19 +4149,19 @@ class Game {
   }
 
   _checkAchievements(dt) {
-    const state = {
-      distance: this.bike.distanceTraveled,
-      cumulativeDistance: this.achievements.getCumulativeDistance(),
-      speed: this.bike.speed,
-      dt,
-      offsetScore: this.sharedPedal ? this.sharedPedal.offsetScore : 0,
-      collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
-      totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
-      finishedLevel: null,
-      isMultiplayer: this.mode !== 'solo',
-      safePct: 0,
-      ...this.achievements.rideFrame(dt, this),   // #401: off-road, centre strip, boost chain, steady hands
-    };
+    // One state object, reused every frame (no per-frame allocation here).
+    const state = this._achFrameState || (this._achFrameState = {});
+    state.distance = this.bike.distanceTraveled;
+    state.cumulativeDistance = this.achievements.getCumulativeDistance();
+    state.speed = this.bike.speed;
+    state.dt = dt;
+    state.offsetScore = this.sharedPedal ? this.sharedPedal.offsetScore : 0;
+    state.collectibles = this.collectibleManager ? this.collectibleManager.collected : 0;
+    state.totalCollectibles = this.collectibleManager ? this.collectibleManager.getTotalItems() : 0;
+    state.finishedLevel = null;
+    state.isMultiplayer = this.mode !== 'solo';
+    state.safePct = 0;
+    Object.assign(state, this.achievements.rideFrame(dt, this));   // #401: off-road, centre strip, boost chain, steady hands
 
     if (this.contributionTracker) {
       const summary = this.contributionTracker.getSummary();
@@ -4179,7 +4216,8 @@ class Game {
     // F-1 · the loops the plan built. Read from the local stores, so they work
     // signed out; the pair numbers come from the server panel when there is one.
     // #400: no day streaks off the demo's weekly road.
-    if (level.isDaily && level.key && !getEditionRules().weeklyRoad) {
+    const weekly = !!(level.isWeekly || getEditionRules().weeklyRoad);
+    if (level.isDaily && level.key && !weekly) {
       const store = browserStore();
       state.dailyRanked = this._rankedRunActive;
       const mode = this._dailyRunMode();
@@ -4204,6 +4242,7 @@ class Game {
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local',
       partnerKey,
       touristFinished: !!(this.isTourist || this._touristRoute),
+      weekly,   // m5: the weekly road feeds no day streak
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
     this.achievements.finish(state);
@@ -5781,7 +5820,8 @@ class Game {
 
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
-    this.achievements.crash(cause, {   // #401
+    // #401: a Slingshot crash is not a ride crash (no Goose Down, So Close, False Start).
+    if (this._rideSystemOn('achievements')) this.achievements.crash(cause, {   // #401
       ref: this.mode === 'versus' ? null : this.raceManager,
       distance: bike ? bike.distanceTraveled : 0,
       raceDistance: (this.mode === 'versus'
@@ -6146,6 +6186,7 @@ class Game {
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
+    if (this._touristRoute) this._tickTouristOdometer();   // B3
 
     // Race progress + contribution tracking
     if (this.raceManager) {
@@ -6251,6 +6292,7 @@ class Game {
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
+    if (this._touristRoute) this._tickTouristOdometer();   // B3
 
     // Race progress + contribution tracking (captain is authoritative).
     // The race clock keeps running during a partner reconnect (#316): a brief
@@ -6469,6 +6511,35 @@ class Game {
     this._updateSafetyBtn();
   }
 
+  /**
+   * M4 · ranked fairness. A ranked run rides with SAFETY and SPEED (cruise)
+   * forced off, and both buttons (HUD, D-pad, quick menu) disabled for the
+   * ride — `safetyUsed` is only sampled at the finish, so toggling mid-run
+   * would otherwise submit as safety-free. When the run is over the player's
+   * own choices come back. Called whenever _rankedRunActive changes.
+   */
+  _applyRankedLocks() {
+    const lock = !!this._rankedRunActive;
+    if (lock) {
+      // (Safety the helping hand turned on is not the player's choice — m13.)
+      if (!this._rankedLockPrev) this._rankedLockPrev = { safety: this._helpSafetyPrev === false ? false : this.safetyMode, speed: this.autoSpeed };
+      this.safetyMode = false;
+      this.autoSpeed = false;
+    } else if (this._rankedLockPrev) {
+      this.safetyMode = this._rankedLockPrev.safety;
+      this.autoSpeed = this._rankedLockPrev.speed;
+      this._rankedLockPrev = null;
+    }
+    this._updateSafetyBtn();
+    if (this.speedBtn) {
+      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+      this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
+      this.speedBtn.disabled = lock;
+    }
+    if (this.safetyBtn) this.safetyBtn.disabled = lock;
+    if (this.quickMenu && this.quickMenu.sync) this.quickMenu.sync();
+  }
+
   _recordBalanceCrashIfNew(wasFallen) {
     if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
       this._recordCrash('balance');
@@ -6620,7 +6691,9 @@ class Game {
     }
 
     for (const rig of rigs) this._stepTeam(rig, dt);
-    this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
+    this.achievements.ride.frame(dt, { ref: null, playing: true });   // #401 False Start: the clock since GO runs in versus too
+    // m19: a race against the ?versusbot=1 rider earns no achievements.
+    if (!rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
 
     // Bike-vs-bike contact: bumping knocks both around a little.
     this._resolveVersusBikeContact(dt);
@@ -6890,7 +6963,7 @@ class Game {
    */
   _finishVersusRace(winner) {
     const loser = this.versusRigs.find((r) => r !== winner);
-    this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401
+    if (!isBotTeam(winner) && !isBotTeam(loser)) this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401 (m19: not vs the bot)
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';
@@ -7098,6 +7171,15 @@ class Game {
     if (state) {
       this.bike.applyRemoteState(state);
     }
+    // m7: the stoker's own ride tracker sees the crash too. The cause isn't
+    // sent, so it's 'unknown' (counts against No Trees, to be safe).
+    if (this.bike.fallen && !this._stokerWasFallen && this.state === 'playing') {
+      this.achievements.crash('unknown', {
+        ref: this.raceManager,
+        distance: this.bike.distanceTraveled,
+        raceDistance: (this.raceManager && this.raceManager.raceDistance) || 0,
+      });
+    }
 
     // Detect crash recovery (backup for EVT_GAMEOVER)
     if (this._stokerWasFallen && !this.bike.fallen) {
@@ -7182,8 +7264,10 @@ class Game {
     remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     this._updateLookahead(dt);    // E-1 · the road only the stoker can see
+    this._checkAchievements(dt);  // m7: the ride tracker + frame checks run for the stoker too
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
+    if (this._touristRoute) this._updateTouristGoal();   // B3 · the captain's odometer, synced
     const stokerBalance = this.balanceCtrl.update();
     const stokerLean = stokerBalance.leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
@@ -7252,26 +7336,24 @@ class Game {
     // Observed median lean for response curve
     const medianLean = absSamples[Math.floor(absSamples.length * 0.5)];
 
-    // Blend toward observed values
+    // Blend the un-feeled calibration BASE toward the observed values (B2):
+    // the observations are physical degrees, like the base; TUNE is the base
+    // with the steering feel applied, derived once below.
+    const B = TUNING_BASE;
     if (isGyro) {
-      TUNE.gyroDeadzone += (observedDeadzone - TUNE.gyroDeadzone) * blend;
-      TUNE.gyroSensitivity += (observedSensitivity - TUNE.gyroSensitivity) * blend;
+      B.gyroDeadzone += (observedDeadzone - B.gyroDeadzone) * blend;
+      B.gyroSensitivity += (observedSensitivity - B.gyroSensitivity) * blend;
       const targetCurve = Math.min(2.0, Math.max(1.0, 1.0 + (medianLean / observedSensitivity) * 0.5));
-      TUNE.gyroResponseCurve += (targetCurve - TUNE.gyroResponseCurve) * blend;
+      B.gyroResponseCurve += (targetCurve - B.gyroResponseCurve) * blend;
     } else {
-      TUNE.deadzone += (observedDeadzone - TUNE.deadzone) * blend;
-      TUNE.sensitivity += (observedSensitivity - TUNE.sensitivity) * blend;
+      B.deadzone += (observedDeadzone - B.deadzone) * blend;
+      B.sensitivity += (observedSensitivity - B.sensitivity) * blend;
       const targetCurve = Math.min(2.5, Math.max(1.2, 1.5 + medianLean / observedSensitivity));
-      TUNE.responseCurve += (targetCurve - TUNE.responseCurve) * blend;
+      B.responseCurve += (targetCurve - B.responseCurve) * blend;
     }
 
-    // Update base snapshot so steering feel scaling stays relative
-    snapshotTuningBase();
-
-    // Re-apply current steering feel on top of the new base
-    if (TUNE.steeringFeel != null && TUNE.steeringFeel !== 0.5) {
-      applySteeringFeel(TUNE.steeringFeel);
-    }
+    // Ride the new base at the current feel — once, from the base.
+    applySteeringFeel(TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
 
     // Persist updated values (throttled — only save every 30s)
     this._saveAdaptedTuning(isGyro);
@@ -7284,15 +7366,17 @@ class Game {
       data.inputType = isGyro ? 'gyro' : 'phone';
       data.platform = isAndroid ? 'android' : isIOS ? 'ios' : 'desktop';
       data.timestamp = Date.now();
+      // B2: persist the un-feeled base, never the feel-scaled TUNE.
       if (isGyro) {
-        data.sensitivity = Math.round(TUNE.gyroSensitivity * 10) / 10;
-        data.deadzone = Math.round(TUNE.gyroDeadzone * 10) / 10;
-        data.responseCurve = Math.round(TUNE.gyroResponseCurve * 100) / 100;
+        data.sensitivity = Math.round(TUNING_BASE.gyroSensitivity * 10) / 10;
+        data.deadzone = Math.round(TUNING_BASE.gyroDeadzone * 10) / 10;
+        data.responseCurve = Math.round(TUNING_BASE.gyroResponseCurve * 100) / 100;
       } else {
-        data.sensitivity = Math.round(TUNE.sensitivity * 10) / 10;
-        data.deadzone = Math.round(TUNE.deadzone * 10) / 10;
-        data.responseCurve = Math.round(TUNE.responseCurve * 100) / 100;
+        data.sensitivity = Math.round(TUNING_BASE.sensitivity * 10) / 10;
+        data.deadzone = Math.round(TUNING_BASE.deadzone * 10) / 10;
+        data.responseCurve = Math.round(TUNING_BASE.responseCurve * 100) / 100;
       }
+      data[TUNING_SAVE_BASE_FLAG] = true;
       // Preserve steeringFeel if set
       localStorage.setItem(this._tuningKey(), JSON.stringify(data));
     } catch {}
@@ -7442,19 +7526,17 @@ class Game {
       if (data.version !== 1) return false;
       const curType = this.input.gyroConnected ? 'gyro' : 'phone';
       if (data.inputType !== curType) return false;
-      // Apply saved tuning
-      if (data.sensitivity != null) TUNE.sensitivity = data.sensitivity;
-      if (data.deadzone != null) TUNE.deadzone = data.deadzone;
-      if (data.outputSmoothing != null) TUNE.outputSmoothing = data.outputSmoothing;
-      if (data.responseCurve != null) TUNE.responseCurve = data.responseCurve;
-      if (data.gyroSensitivity != null) TUNE.gyroSensitivity = data.gyroSensitivity;
-      if (data.gyroDeadzone != null) TUNE.gyroDeadzone = data.gyroDeadzone;
-      if (data.gyroOutputSmoothing != null) TUNE.gyroOutputSmoothing = data.gyroOutputSmoothing;
-      if (data.gyroResponseCurve != null) TUNE.gyroResponseCurve = data.gyroResponseCurve;
-      // Snapshot base values, then apply feel on top
-      snapshotTuningBase();
-      if (data.steeringFeel != null) {
-        applySteeringFeel(data.steeringFeel);
+      // B2: the save holds the un-feeled calibration base. Saves from before
+      // the fix stored feel-scaled values; migrateSavedTuning divides that
+      // back out (or falls back to defaults) and the save is rewritten once.
+      const { values, migrated } = migrateSavedTuning(data);
+      setTuningBase(tuningBaseFromSave(data, values));
+      applySteeringFeel(Number.isFinite(data.steeringFeel) ? data.steeringFeel
+        : TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
+      if (migrated) {
+        try {
+          localStorage.setItem(this._tuningKey(), JSON.stringify({ ...data, ...values, [TUNING_SAVE_BASE_FLAG]: true }));
+        } catch {}
       }
       return true;
     } catch { return false; }
@@ -7509,7 +7591,11 @@ class Game {
       const check = () => {
         if (resolved) return;
         if (skipped()) { resolved = true; resolve(); return; }
-        const lean = this.input.getMotionLean();
+        // Ungained lean (B1, PR #397 review): phone tilt steers at
+        // TUNE.mobileTiltGain (0.25), so the gained getMotionLean() tops out at
+        // the ±0.25 targets and never passes them. Calibrate on what the
+        // player is physically doing. Controller gyro: identical (gain 1).
+        const lean = this.input.getMotionLeanVisual();
         const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
         const offset = this.input.motionOffset || 0;
         this._calibTiltSamples.push(raw - offset);
@@ -8222,6 +8308,9 @@ class Game {
     // Guard against being called multiple frames in a row
     if (this._tutRetryPending) return;
     this._tutRetryPending = true;
+    // m3 (PR #397 review): a phase retry (off-road, missed present/pylon) is
+    // an attempt like a crash, so "Natural" (tutorial_clean) needs none of them.
+    this._tutorialAttempts++;
 
     // Feed failure to DDA manager
     if (this.ddaManager) {
@@ -8361,23 +8450,17 @@ class Game {
     const isGyro = this.input.gyroConnected;
     const params = this._computeTuningParams(isGyro);
 
-    // Apply to TUNE
+    // The calibration is the un-feeled base (B2); ride it at the default feel
+    // (#399: 0.3, the stable end) until the player moves the slider on the
+    // completion screen.
     if (isGyro) {
-      TUNE.gyroSensitivity = params.sensitivity;
-      TUNE.gyroDeadzone = params.deadzone;
-      TUNE.gyroOutputSmoothing = params.outputSmoothing;
-      TUNE.gyroResponseCurve = params.responseCurve;
+      setTuningBase({
+        gyroSensitivity: params.sensitivity, gyroDeadzone: params.deadzone,
+        gyroOutputSmoothing: params.outputSmoothing, gyroResponseCurve: params.responseCurve,
+      });
     } else {
-      TUNE.sensitivity = params.sensitivity;
-      TUNE.deadzone = params.deadzone;
-      TUNE.outputSmoothing = params.outputSmoothing;
-      TUNE.responseCurve = params.responseCurve;
+      setTuningBase(params);
     }
-
-    // Snapshot calibrated values as the base for feel scaling, then ride them
-    // at the default feel (#399: 0.3, the stable end) until the player moves
-    // the slider on the completion screen.
-    snapshotTuningBase();
     applySteeringFeel(BALANCE_DEFAULTS.steeringFeel);
 
     // Save to localStorage
@@ -8390,6 +8473,7 @@ class Game {
       outputSmoothing: params.outputSmoothing,
       responseCurve: params.responseCurve,
       steeringFeel: BALANCE_DEFAULTS.steeringFeel,
+      [TUNING_SAVE_BASE_FLAG]: true,   // B2: these are the un-feeled base
       timestamp: Date.now()
     };
     try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}

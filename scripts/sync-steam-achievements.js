@@ -4,10 +4,13 @@
  *
  * Reads achievements from js/achievement-defs.js (source of truth, #401),
  * opens Steamworks in a visible browser, waits for login,
- * scrapes current achievements, then deletes/adds to match code.
+ * scrapes current achievements, then adds what code has and Steamworks lacks.
+ * Deleting is opt-in (--delete): a deleted achievement is gone for every
+ * player who earned it, so without the flag the script only lists what a
+ * --delete run would remove.
  *
  * Usage:
- *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--no-delete] [--allow-empty] [--debug]
+ *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--delete] [--allow-empty] [--debug]
  *
  * Default appId: 4510250 (playtest). Use 4482940 for main game.
  */
@@ -43,7 +46,7 @@ async function parseAchievementsFromCode() {
 }
 
 // royal and perfect_5k (Castle, #400 D2) and beat_ghost (D3) are gone from the
-// code; with --no-delete left off, a sync removes them from Steamworks.
+// code; a sync only removes them from Steamworks when run with --delete.
 function describeCondition(id, fallback) {
   const descriptions = {
     first_500m: 'Ride 500 meters total',
@@ -477,13 +480,15 @@ async function main() {
       console.log(`Read app ID ${appId} from steam_appid.txt`);
     } catch (e) {
       console.error('No app ID provided and steam_appid.txt not found.');
-      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--debug] [--no-delete] [--allow-empty]');
+      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--debug] [--delete] [--allow-empty]');
       process.exit(1);
     }
   }
   const url = `https://partner.steamgames.com/apps/achievements/${appId}`;
   const dryRun = process.argv.includes('--dry-run');
-  const skipDelete = process.argv.includes('--no-delete');
+  // Deletes are opt-in: Steam can't undo one for the players who earned it.
+  const skipDelete = !process.argv.includes('--delete');
+  if (process.argv.includes('--no-delete')) console.log('Note: --no-delete is the default now; pass --delete to remove achievements.');
   const allowEmpty = process.argv.includes('--allow-empty');
 
   console.log('=== Steam Achievement Sync ===');
@@ -625,16 +630,18 @@ async function main() {
   console.log(`  To delete:      ${toDelete.length}`);
   console.log('');
 
-  if (toAdd.length === 0 && toDelete.length === 0) {
-    console.log('Everything is in sync! Nothing to do.');
-    await browser.close();
-    return;
-  }
-
   if (toDelete.length > 0) {
-    console.log('Achievements to DELETE (on Steamworks but not in code):');
+    console.log(skipDelete
+      ? 'On Steamworks but not in code — WOULD be deleted with --delete (not deleting):'
+      : 'Achievements to DELETE (on Steamworks but not in code):');
     for (const a of toDelete) console.log(`  - ${a.apiName} ("${a.displayName}")`);
     console.log('');
+  }
+
+  if (toAdd.length === 0 && (skipDelete || toDelete.length === 0)) {
+    console.log(toDelete.length ? 'Nothing to add (deletes skipped — see above).' : 'Everything is in sync! Nothing to do.');
+    await browser.close();
+    return;
   }
 
   if (toAdd.length > 0) {

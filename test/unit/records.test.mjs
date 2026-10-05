@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   key, getBest, recordRun, trim, splitDelta, formatDelta, formatTime,
-  medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON
+  medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON, betterMedal
 } from '../../js/records.js';
 
 test('keys separate level, difficulty and mode', () => {
@@ -56,15 +56,38 @@ test('nonsense runs are ignored', () => {
   assert.equal(getBest(store, 'k'), null);
 });
 
-test('the store is trimmed oldest-first', () => {
+test('the store is trimmed oldest-first (Today\'s Road keys)', () => {
   const store = {};
+  const dk = i => `daily:${new Date(2020, 0, 1 + i).toISOString().slice(0, 10)}|adventurous|solo`;
   for (let i = 0; i < MAX_KEYS + 10; i++) {
-    store['k' + i] = { timeMs: 1000, splits: [], date: new Date(2020, 0, 1 + i).toISOString() };
+    store[dk(i)] = { timeMs: 1000, splits: [], date: new Date(2020, 0, 1 + i).toISOString() };
   }
   trim(store);
   assert.equal(Object.keys(store).length, MAX_KEYS);
-  assert.equal(store.k0, undefined, 'the oldest went first');
-  assert.ok(store['k' + (MAX_KEYS + 9)], 'the newest stayed');
+  assert.equal(store[dk(0)], undefined, 'the oldest went first');
+  assert.ok(store[dk(MAX_KEYS + 9)], 'the newest stayed');
+});
+
+test('m20: trimming drops old Today\'s Road keys first and never a level record', () => {
+  const store = {
+    // The oldest entry in the store, and the gold that opens Slingshot stage 7.
+    'grandma|adventurous|solo': { timeMs: 1000, splits: [], date: '2019-01-01T00:00:00.000Z', bestMedal: 'gold' },
+    'tutorial|tutorial|solo': { timeMs: 1000, splits: [], date: '2019-01-02T00:00:00.000Z' },
+  };
+  for (let i = 0; i < MAX_KEYS + 5; i++) {
+    const day = new Date(2020, 0, 1 + i).toISOString();
+    store[`daily:${day.slice(0, 10)}|adventurous|solo`] = { timeMs: 1000, splits: [], date: day };
+  }
+  trim(store);
+  assert.equal(Object.keys(store).length, MAX_KEYS);
+  assert.ok(store['grandma|adventurous|solo'], "Grandma's gold survives");
+  assert.ok(store['tutorial|tutorial|solo']);
+  assert.equal(store['daily:2020-01-01|adventurous|solo'], undefined, 'the oldest daily went first');
+  // Only level records over the limit: nothing is dropped.
+  const levels = {};
+  for (let i = 0; i < MAX_KEYS + 3; i++) levels[`lvl${i}|chill|solo`] = { timeMs: 1, splits: [], date: '2020-01-01' };
+  trim(levels);
+  assert.equal(Object.keys(levels).length, MAX_KEYS + 3);
 });
 
 test('split deltas compare against the best at the same checkpoint', () => {
@@ -175,4 +198,18 @@ test('#403 a run with a skipped checkpoint is never a best', () => {
   const r = recordRun(store, 'k', { timeMs: 90000, skipped: true });
   assert.equal(r.isNewBest, false);
   assert.equal(getBest(store, 'k').timeMs, 161000);
+});
+
+test('M3: records keep the best medal ever; a legacy record gets its medal from its time', () => {
+  const store = {};
+  const t = { gold: 140000, silver: 170000, bronze: 210000 };
+  const medalOf = rec => capMedal(medalFor(rec.timeMs, t), { helped: !!rec.helped });
+  // A record saved before bestMedal existed: silver by its time.
+  store.k = { timeMs: 150000, splits: [], date: '2026-01-01' };
+  const r = recordRun(store, 'k', { timeMs: 200000, medal: 'bronze' }, { medalOf });
+  assert.equal(r.faster, false);
+  assert.equal(store.k.bestMedal, 'silver');
+  assert.equal(betterMedal('bronze', 'gold'), 'gold');
+  assert.equal(betterMedal('silver', null), 'silver');
+  assert.equal(betterMedal(null, 'nope'), null);
 });

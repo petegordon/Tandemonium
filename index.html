@@ -1399,7 +1399,9 @@
     display: none;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* M6: safe — taller than a landscape phone, it scrolls from the top
+       instead of centring the title off the top edge. */
+    justify-content: safe center;
     z-index: 60;
     padding: 10px 20px;
     text-align: center;
@@ -1902,6 +1904,8 @@
     box-sizing: border-box;
   }
   .side-btn:active { filter: brightness(1.4); }
+  /* M4: SAFETY and SPEED are locked on a ranked run. */
+  .side-btn:disabled { opacity: 0.35; filter: grayscale(1); cursor: not-allowed; }
   #safety-btn {
     grid-area: safety;
     clip-path: polygon(0% 0%, 100% 0%, 72% 100%, 28% 100%);
@@ -3590,7 +3594,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* M6: a 5th-failure game over is taller than a landscape phone: scroll,
+       and never centre the title off the top edge. */
+    justify-content: safe center;
+    overflow-y: auto;
     padding: 30px;
   }
 
@@ -3603,7 +3610,8 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: safe center;   /* M6: see #gameover-overlay */
+    overflow-y: auto;
     padding: 30px;
   }
 

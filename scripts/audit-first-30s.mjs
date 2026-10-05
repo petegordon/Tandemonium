@@ -45,6 +45,8 @@ const rows = [];
 for (const prof of PROFILES) {
   const page = await browser.newPage();
   await page.setViewport(prof.viewport);
+  // SOLO must open the level list, not the first-run tutorial auto-start.
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
   if (prof.ua) await page.setUserAgent(prof.ua);
   await page.setRequestInterception(true);
   page.on('request', (req) => {

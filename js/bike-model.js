@@ -799,6 +799,7 @@ export class BikeModel {
       const info = this.roadPath.getClosestRoadInfo(this.position.x, this.position.z, this.roadD);
       if (info) {
         this._lateralOffset = info.lateralOffset;
+        this.onCenterStrip = Math.abs(info.lateralOffset) < 0.5 && this.speed > 0.5;   // same rule as update()
         const sinH = Math.sin(this.heading);
         const cosH = Math.cos(this.heading);
         const frontPt = this.roadPath.getPointAtDistance(this.roadD + 2);

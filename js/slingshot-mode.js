@@ -89,6 +89,17 @@ class SlingshotMode {
   }
 
   /**
+   * The stage a launch plays (m9). Past the demo's last stage the demo keeps
+   * launching on that last stage — a replay: normal pay, its goal already
+   * cleared, the stage never moves.
+   */
+  _slingPlayStage() {
+    const stage = this._slingSave.stage;
+    const max = getEditionRules().slingshot.maxStage;
+    return max != null && stage > max ? max : stage;
+  }
+
+  /**
    * The one garage. From the Slingshot it carries LAUNCH (or what the stage
    * needs first); `standalone` (the lobby's GARAGE, an end screen's GARAGE →)
    * is just the wallet and the upgrades, with BACK to the lobby.
@@ -107,6 +118,9 @@ class SlingshotMode {
         standalone,
         lock,
         todays: this._todaysLaunchOn() ? sling.todaysLaunchStatus(this._slingSave, dailyKey()) : null,
+        // m9: at the demo's end, LAUNCH replays its last stage; no Rebuild in the demo.
+        replay: lock && lock.kind === 'demo' && !this._slingLock(this._slingPlayStage()) ? this._slingPlayStage() : null,
+        rebuildOffered: !getEditionRules().isDemo,
         canWishlist: this._canWishlist,
         onBuy: (id) => {
           const r = sling.buyUpgrade(this._loadWallet(), id);
@@ -148,7 +162,7 @@ class SlingshotMode {
     if (!this._wallet || !this._slingSave) this._loadGarage();
     const save = this._slingSave;
     // A stage that needs a medal (or is past the demo) goes back to the garage, which says why.
-    if (!daily && this._slingLock(save.stage)) { this._openSlingGarage(); return; }
+    if (!daily && this._slingLock(this._slingPlayStage())) { this._openSlingGarage(); return; }
     if (daily && !this._todaysLaunchOn()) { this._openSlingGarage(); return; }
     this._clearOverlayButtons();
     slingUI.hideGarage();
@@ -173,10 +187,11 @@ class SlingshotMode {
     // Road distances are measured from the start line; the run is measured
     // from the slingshot's rest point, so the finish sits that much further on.
     // Today's Launch has no goal: its "finish" is the end of the course, past every stage goal.
-    const finishD = (daily ? sling.TODAYS_LAUNCH_LENGTH : sling.stageGoal(save.stage)) + sling.SLING_REST_D;
+    const stage = this._slingPlayStage();   // m9: the demo replays its last stage
+    const finishD = (daily ? sling.TODAYS_LAUNCH_LENGTH : sling.stageGoal(stage)) + sling.SLING_REST_D;
     this.lobby.selectedLevel = {
       id: 'slingshot',
-      name: daily ? "Today's Launch" : `Slingshot · Stage ${save.stage}`,
+      name: daily ? "Today's Launch" : `Slingshot · Stage ${stage}`,
       distance: finishD,
       checkpointInterval: finishD,   // the only "checkpoint" is the finish: no gates
       collectibles: 'coins',
@@ -187,7 +202,7 @@ class SlingshotMode {
       motionAdaptation: false
     };
     // Early stages keep the road forgiving; later ones bring the obstacles.
-    this.lobby.selectedDifficulty = !daily && save.stage >= 4 ? 'adventurous' : 'chill';
+    this.lobby.selectedDifficulty = !daily && stage >= 4 ? 'adventurous' : 'chill';
 
     // No instructions screen: the drag is the instruction. The LAUNCH tap is
     // still a user gesture, so ask for tilt (steering after launch) here.
@@ -261,7 +276,7 @@ class SlingshotMode {
     // random cones — nothing in the way should be a surprise crash.
     const course = this._slingDaily
       ? sling.todaysLaunchCourse(this._slingDaily.key)
-      : sling.planCourse(this._slingSave.stage, level.distance);
+      : sling.planCourse(this._slingPlayStage(), level.distance);
     this.collectibleManager.replaceItems(course.coins);
     if (this.obstacleManager) this.obstacleManager.replaceItems([]);
     if (this._slingProps) this._slingProps.dispose();
@@ -497,9 +512,9 @@ class SlingshotMode {
     hapticCheckpoint();
     this._playChime(1320, 0.15);
     analytics.trackEvent('slingshot_launch', {
-      pull: Math.round(run.pull * 100), aim: Math.round(run.side * 100), stage: this._slingSave.stage,
+      pull: Math.round(run.pull * 100), aim: Math.round(run.side * 100), stage: this._slingPlayStage(),
     });
-    this._economyEvent('slingLaunch', { stage: this._slingSave.stage, daily: !!this._slingDaily });   // #401
+    this._economyEvent('slingLaunch', { stage: this._slingPlayStage(), daily: !!this._slingDaily });   // #401
   }
 
   /** No pedaling in this mode: the slingshot is the only push. */
@@ -532,7 +547,7 @@ class SlingshotMode {
           slingUI.toast('Hay bale!');
         } else if (hit.kind === 'jackpot') {
           run.jackpot = true;
-          this._economyEvent('jackpot', { stage: this._slingSave.stage });
+          this._economyEvent('jackpot', { stage: this._slingPlayStage() });
           hapticCheckpoint();
           this._playChime(1760, 0.3);
           this._endSlingRun('jackpot');
@@ -572,7 +587,7 @@ class SlingshotMode {
     slingUI.updateHud({
       coins: run.coins,
       distance: sling.runDistance(this.bike.distanceTraveled),
-      goal: daily ? null : sling.stageGoal(this._slingSave.stage),
+      goal: daily ? null : sling.stageGoal(this._slingPlayStage()),
       best: daily ? sling.todaysLaunchStatus(this._slingSave, daily.key).best : 0,
     });
   }
@@ -612,7 +627,10 @@ class SlingshotMode {
     const distance = sling.runDistance(cause === 'crash' && run.crashDistance != null
       ? run.crashDistance : this.bike.distanceTraveled);
     const daily = this._slingDaily;
-    const runData = { distance, coins: run.coins, stageCleared: !daily && cause === 'goal', jackpot: !!run.jackpot, bigAirs: run.bigAirs };
+    // m9: a demo replay of its last stage pays normally, but that goal is already cleared.
+    const stage = this._slingPlayStage();
+    const replay = !daily && stage !== this._slingSave.stage;
+    const runData = { distance, coins: run.coins, stageCleared: !daily && !replay && cause === 'goal', jackpot: !!run.jackpot, bigAirs: run.bigAirs };
     const mult = walletLib.coinMultiplier(this._loadWallet());
     let score;
     if (daily) {
@@ -621,7 +639,7 @@ class SlingshotMode {
       score = sling.scoreRun(runData, { ...today, stage: this._slingSave.stage }, mult);
       this._slingSave = sling.applyTodaysLaunch(this._slingSave, daily.key, score);
     } else {
-      score = sling.scoreRun(runData, this._slingSave, mult);
+      score = sling.scoreRun(runData, replay ? { ...this._slingSave, stage } : this._slingSave, mult);
       this._slingSave = sling.applyRun(this._slingSave, runData, score);
     }
     sling.writeSave(this._slingStore(), this._slingSave);

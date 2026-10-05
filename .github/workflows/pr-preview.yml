@@ -5,14 +5,18 @@ on:
     types: [opened, synchronize, reopened, closed]
 
 jobs:
-  # Tests report on the PR (and should gate the merge via branch protection),
-  # but they no longer gate the PREVIEW: a flaky unrelated test once blocked a
-  # deploy and a phone tester spent a round on a stale build without knowing.
-  # A broken build now shows as a red check next to a live preview instead of
-  # a silently old preview.
+  # Tests report on the PR as the `tests` check, but they don't gate the
+  # PREVIEW: a flaky unrelated test once blocked a deploy and a phone tester
+  # spent a round on a stale build without knowing. A broken build shows as a
+  # red check next to a live preview instead of a silently old preview.
+  # What stops a red build reaching production is deploy.yml, which runs the
+  # unit tests itself and does not deploy if they fail. (Making `tests` a
+  # required check for merging is a branch-protection setting on main, not
+  # something this file can do.)
   tests:
     if: github.event.action != 'closed'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,6 +44,27 @@ jobs:
           # ...and again over an insecure context, which is how a phone reaches
           # the site from an http:// link. crypto.randomUUID is undefined there.
           npm run smoke:insecure
+
+      # A fast subset of the headless smokes (puppeteer's own Chrome, launched
+      # with --no-sandbox by each script): what each edition offers, the room's
+      # camera/mic staying off, and the one coin wallet. They run side by side —
+      # each serves the game on its own port — so the job stays a few minutes.
+      - name: Smoke subset (edition, no-media, economy)
+        run: |
+          pids=(); names=()
+          for s in smoke:edition smoke:no-media smoke:economy; do
+            npm run -s "$s" > "smoke-${s#smoke:}.log" 2>&1 &
+            pids+=($!); names+=("$s")
+          done
+          fail=0
+          for i in "${!pids[@]}"; do
+            if wait "${pids[$i]}"; then status=passed; else status=FAILED; fail=1; fi
+            echo "::group::${names[$i]} — $status"
+            cat "smoke-${names[$i]#smoke:}.log"
+            echo "::endgroup::"
+            if [ "$status" = FAILED ]; then echo "::error::${names[$i]} failed"; fi
+          done
+          exit $fail
 
   preview:
     runs-on: ubuntu-latest

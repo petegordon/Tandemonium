@@ -25,6 +25,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Nothing reaches production on red: the unit tests run here, before
+      # anything is staged, and a failure stops the job (no deploy). This does
+      # not rely on the PR's `tests` check having been green when it merged.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund
+
+      - name: Unit tests
+        run: npm test
+
       # Stamp the deployed commit + time into the lobby footer (#lobby-version)
       # so the live web build shows what's actually deployed. Mirrors the
       # PowerShell stamp step in build-windows.yml (which only covers desktop).

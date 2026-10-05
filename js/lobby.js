@@ -66,6 +66,7 @@ import { renderRoomQR } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
+import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
@@ -1583,7 +1584,7 @@ export class Lobby {
         go.textContent = 'EXPLORE HERE';
         this._startTouristRide(planExplore(from));
       } catch (err) {
-        errorEl.textContent = String(err && err.message || err).replace(/^Error:s*/, '');
+        errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
         go.disabled = false;
         go.textContent = 'EXPLORE HERE';
         analytics.trackEvent('tourist_route_failed');
@@ -5380,7 +5381,8 @@ export class Lobby {
     // Debug: ?versusbot=1 fills Team B with a synthetic rider so split-
     // screen, streaming separation, and the finish flow are testable with
     // one human. The game drives its taps at a fixed cadence (_stepTeam).
-    if (new URLSearchParams(window.location.search).get('versusbot') === '1') {
+    // m19: local servers / ?dev=1 only (js/versus/versus-bot.js).
+    if (versusBotAllowed(window.location.search, window.location.hostname, window.location.protocol)) {
       this._versusPlayers.push({
         n: 2,
         type: 'bot',
