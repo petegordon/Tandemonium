@@ -11,11 +11,13 @@
 import { API_BASE, TUNE } from './config.js';
 import { getEditionRules } from './edition.js';
 import { dailyKey } from './daily-seed.js';
-import { computeStreak, browserStore } from './daily-ride.js';
+import { computeStreak, browserStore, STORAGE_KEY as DAILY_KEY } from './daily-ride.js';
+import { STORAGE_KEY as RECORDS_KEY } from './records.js';
+import { loadSave as loadSlingSave, STORAGE_KEY as SLING_KEY } from './slingshot.js';
 import { WALLET_KEY, sanitizeWallet, canRebuild } from './wallet.js';
 import {
   ACHIEVEMENTS, RETIRED_IDS, SECTIONS, STATS_VERSION,
-  migrateStats, applyEvent, RideTracker, versusResult,
+  migrateStats, applyEvent, seedStats, RideTracker, versusResult,
 } from './achievement-defs.js';
 
 export { ACHIEVEMENTS, RETIRED_IDS, SECTIONS };
@@ -99,7 +101,12 @@ export class AchievementManager {
     } catch (e) {}
   }
 
-  /** v1 ({ cumulativeDistance }) and v2 both load; an old save is rewritten as v2. */
+  /**
+   * v1 ({ cumulativeDistance }) and v2 both load; an old save is rewritten as
+   * v2. m21: on that migration (or with no stats at all) the counters are
+   * seeded from the saves the player already has, and anything those already
+   * satisfy is granted (quietly: no toast is hooked up yet).
+   */
   _loadStats() {
     let raw = null;
     try {
@@ -107,7 +114,22 @@ export class AchievementManager {
       raw = s ? JSON.parse(s) : null;
     } catch (e) {}
     this._stats = migrateStats(raw);
-    if (raw && raw.v !== STATS_VERSION) this._saveStats();
+    if (raw && raw.v === STATS_VERSION) return;
+    const saves = this._readSaves();
+    if (!raw && !saves.any) return;
+    this._stats = seedStats(this._stats, saves);
+    this._saveStats();
+    this._evaluate({});
+  }
+
+  /** The saves m21 seeds from (each null when absent or unreadable). */
+  _readSaves() {
+    const get = (k) => { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : null; } catch (e) { return null; } };
+    const records = get(RECORDS_KEY), daily = get(DAILY_KEY), rawSling = get(SLING_KEY), rawWallet = get(WALLET_KEY);
+    let sling = null, wallet = null;
+    try { if (rawSling) sling = loadSlingSave(browserStore()); } catch (e) {}
+    try { if (rawWallet) wallet = sanitizeWallet(rawWallet); } catch (e) {}
+    return { records, daily, sling, wallet, any: !!(records || daily || sling || wallet) };
   }
 
   _saveStats() {

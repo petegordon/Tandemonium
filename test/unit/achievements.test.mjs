@@ -346,12 +346,12 @@ test('manager: an old save keeps everything earned; v1 stats migrate', async () 
   const { AchievementManager } = await import('../../js/achievements.js');
   const m = new AchievementManager();
   m.demo = false;
-  assert.deepEqual(m.getEarnedIds().sort(), ['grandma_red', 'home_sweet']);
+  // m21: the migration grants what the old distance already deserved.
+  assert.deepEqual(m.getEarnedIds().sort(), ['first_500m', 'grandma_red', 'home_sweet']);
   assert.equal(m.getCumulativeDistance(), 600);
   assert.equal(JSON.parse(localStorage.getItem('tandemonium_achievement_stats')).v, STATS_VERSION);
-  // The next event earns what the old distance already deserved.
   const got = m.record('coins', { amount: 5 }).map(a => a.id);
-  assert.ok(got.includes('first_500m') && got.includes('coin_first'), got.join(','));
+  assert.ok(got.includes('coin_first'), got.join(','));
   assert.ok(m.getEarnedIds().includes('grandma_red'));
 });
 
@@ -415,6 +415,99 @@ test('manager: the stoker (and local co-op) ride tracker earns ride-scoped achie
   m2.crash('unknown', { ref: rm2, distance: 100, raceDistance: 500 });
   assert.equal(m2.ride.snapshot().treeHits, 1);
   assert.ok(!m2.finish({ ref: rm2, finishedLevel: 'daily', crashes: 1, restarts: 0 }).some(a => a.id === 'no_trees_daily'));
+});
+
+// ── m21 · retroactive credit from existing saves ──────────────────
+
+async function synthSaves() {
+  const { getMedals } = await import('../../js/race-config.js');
+  const gold = getMedals('grandma', 'chill').gold;
+  const fin = { practice: 2, partners: ['pal'] };
+  return {
+    tandemonium_records: JSON.stringify({
+      'grandma|chill|solo': { timeMs: gold - 1000, splits: [], date: '2026-09-01' },
+      'grandma|chill|coop': { timeMs: gold + 60000, splits: [], date: '2026-09-02' },
+      'daily:2026-09-10|chill|solo': { timeMs: 9000000, splits: [], date: '2026-09-10' },
+      'junk|x|solo': { nope: 1 },
+    }),
+    tandemonium_slingshot: JSON.stringify({ v: 3, best: 540, runs: 12, stage: 4, daily: { key: '2026-09-11', best: 300, runs: 2 } }),
+    tandemonium_daily: JSON.stringify({ '2026-09-10': fin, '2026-09-11': fin, '2026-09-12': { practice: 1 }, '2026-09-20': { practice: 0 } }),
+    tandemonium_wallet: JSON.stringify({ v: 1, coins: 50, earned: 1500, lv: { sling: 10, wheels: 2 }, rebuilds: 0 }),
+  };
+}
+
+test('stats: seeding from saves raises counters, never lowers them (m21)', async () => {
+  const { seedStats } = await import('../../js/achievement-defs.js');
+  const saves = Object.fromEntries(Object.entries(await synthSaves()).map(([k, v]) => [k, JSON.parse(v)]));
+  const L = seedStats(migrateStats({ cumulativeDistance: 800 }), {
+    records: saves.tandemonium_records, sling: saves.tandemonium_slingshot,
+    daily: saves.tandemonium_daily, wallet: saves.tandemonium_wallet,
+  });
+  assert.equal(L.cumulativeDistance, 800);
+  assert.equal(L.finishes, 3);
+  assert.equal(L.personalBests, 3);
+  assert.equal(L.coopFinishes, 1);
+  assert.deepEqual(L.golds, ['grandma']);
+  assert.equal(L.medalKeys, 1);
+  assert.equal(L.slingBest, 540);
+  assert.equal(L.slingStage, 3);
+  assert.equal(L.slingLaunches, 12);
+  assert.deepEqual(L.launchDays, ['2026-09-11']);
+  assert.equal(L.rides, 15);
+  assert.equal(L.days, 3);                       // 09-20 has no finish
+  assert.equal(L.dailyPractice, 5);
+  assert.equal(L.dailyDayBest, 3);
+  assert.deepEqual(L.partners, ['pal']);
+  assert.equal(L.coinsEarned, 1500);
+  assert.equal(L.upgrades, 12);
+  assert.equal(L.maxedAny, true);
+  assert.equal(L.maxedAll, false);
+  assert.ok(L.coinsSpent > 1000);
+  // Loses nothing: bigger counters and existing lists survive.
+  const big = { ...emptyStats(), finishes: 99, slingBest: 2000, coinsEarned: 1e5, days: 40, dayList: ['2026-09-10', '2026-08-01'], golds: ['daily'] };
+  const K = seedStats(big, { records: saves.tandemonium_records, sling: saves.tandemonium_slingshot, daily: saves.tandemonium_daily, wallet: saves.tandemonium_wallet });
+  assert.equal(K.finishes, 99);
+  assert.equal(K.slingBest, 2000);
+  assert.equal(K.coinsEarned, 1e5);
+  assert.equal(K.days, 42);                      // + 09-11 and 09-12
+  assert.deepEqual([...K.golds].sort(), ['daily', 'grandma']);
+  assert.ok(K.dayList.includes('2026-08-01'));
+  // A rebuilt wallet proves every upgrade was maxed.
+  const R = seedStats(emptyStats(), { wallet: { earned: 0, lv: {}, rebuilds: 2 } });
+  assert.equal(R.maxedAll, true);
+  assert.ok(R.upgrades > 0 && R.coinsSpent > 1000);
+  // No saves: nothing changes.
+  assert.deepEqual(seedStats(emptyStats(), {}), emptyStats());
+});
+
+test('manager: an old player is granted what their saves already prove, once (m21)', async () => {
+  globalThis.localStorage = fakeStorage({
+    ...(await synthSaves()),
+    tandemonium_achievements: JSON.stringify([{ id: 'home_sweet', earnedAt: 1 }]),
+    tandemonium_achievement_stats: JSON.stringify({ cumulativeDistance: 1200 }),
+  });
+  const { AchievementManager } = await import('../../js/achievements.js');
+  const m = new AchievementManager();
+  const ids = m.getEarnedIds();
+  for (const id of ['home_sweet', 'first_km', 'first_finish', 'new_best', 'medal_key', 'coop_first', 'sling_first',
+    'sling_stage1', 'sling_stage3', 'sling_500', 'coin_first', 'coins_1000', 'first_upgrade', 'big_spender',
+    'rides_10', 'days_3', 'daily_streak_3']) {
+    assert.ok(ids.includes(id), `${id} should be granted (${ids.join(',')})`);
+  }
+  for (const id of ['sling_stage5', 'all_gold', 'garage_royalty', 'days_7']) assert.ok(!ids.includes(id), `${id} is not proven`);
+  const saved = JSON.parse(localStorage.getItem('tandemonium_achievement_stats'));
+  assert.equal(saved.v, STATS_VERSION);
+  assert.equal(saved.cumulativeDistance, 1200);
+  assert.equal(saved.slingBest, 540);
+  // Seeding happens on migration only: a v2 save is read as is.
+  localStorage.setItem('tandemonium_slingshot', JSON.stringify({ v: 3, best: 900, runs: 40, stage: 6 }));
+  const again = new AchievementManager();
+  assert.equal(again.getStats().slingBest, 540);
+  // A brand-new player with no saves writes nothing.
+  globalThis.localStorage = fakeStorage();
+  const fresh = new AchievementManager();
+  assert.equal(fresh.getEarnedIds().length, 0);
+  assert.equal(localStorage.getItem('tandemonium_achievement_stats'), null);
 });
 
 test('manager: the demo never awards a full-game-only achievement', async () => {

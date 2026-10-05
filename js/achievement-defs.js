@@ -26,8 +26,9 @@
 // 'scope' — a long-haul goal kept for the full game. The demo never awards
 // them; the stats keep counting, so they unlock on the full game's first check.
 
-import { LEVELS } from './race-config.js';
-import { STAGE_GATES, STAGE_GOALS, UPGRADES } from './slingshot.js';
+import { LEVELS, getMedals } from './race-config.js';
+import { STAGE_GATES, STAGE_GOALS, UPGRADES, upgradeCost } from './slingshot.js';
+import { medalFor, capMedal } from './records.js';
 
 export const SECTIONS = [
   { id: 'first',    title: 'First rides' },
@@ -320,6 +321,123 @@ const addUnique = (list, v) => (v && !list.includes(v) ? [...list, v] : list);
 /** Does this finish's medal meet a Slingshot stage gate (js/slingshot.js · STAGE_GATES)? */
 export function opensMedalGate(levelId, medal) {
   return Object.values(STAGE_GATES).some(g => g.medal && g.level === levelId && rank(medal) >= rank(g.medal));
+}
+
+/**
+ * m21 · retroactive credit. A player whose stats predate v2 already has saves
+ * that prove some of the 100: personal bests and medals (tandemonium_records),
+ * Slingshot progress (tandemonium_slingshot), Today's Road days
+ * (tandemonium_daily) and the wallet. Fold them in as LOWER BOUNDS: every
+ * counter only ever goes up, every list only gains, nothing is lost.
+ *   saves: { records, sling, daily, wallet } — each the parsed save or null
+ *   (sling and wallet already sanitized: js/slingshot.js · loadSave,
+ *   js/wallet.js · sanitizeWallet).
+ * Returns a NEW object.
+ */
+export function seedStats(prev, saves = {}) {
+  const L = { ...prev, dayList: [...prev.dayList], golds: [...prev.golds], launchDays: [...prev.launchDays], partners: [...prev.partners] };
+  const up = (k, v) => { if (Number.isFinite(v) && v > L[k]) L[k] = Math.floor(v); };
+  const obj = o => (o && typeof o === 'object' ? o : null);
+
+  // Personal bests and medals: one record = at least one finish and one new best.
+  const records = obj(saves.records);
+  let recordCount = 0;
+  if (records) {
+    const per = { coop: 0, versus: 0 };
+    let tutorial = false, medalKey = false;
+    for (const [k, rec] of Object.entries(records)) {
+      if (!rec || typeof rec.timeMs !== 'number' || !(rec.timeMs > 0)) continue;
+      recordCount += 1;
+      const [rawLevel, difficulty, mode] = k.split('|');
+      const levelId = String(rawLevel).startsWith('daily:') ? 'daily' : rawLevel;
+      if (mode in per) per[mode] += 1;
+      if (levelId === 'tutorial') tutorial = true;
+      const medal = MEDAL_RANK[rec.bestMedal] ? rec.bestMedal
+        : capMedal(medalFor(rec.timeMs, getMedals(levelId, difficulty)), { helped: !!rec.helped });
+      if (medal === 'gold' && MEDAL_LEVELS.includes(levelId) && !L.golds.includes(levelId)) L.golds.push(levelId);
+      if (medal && opensMedalGate(levelId, medal)) medalKey = true;
+    }
+    up('finishes', recordCount);
+    up('personalBests', recordCount);
+    up('coopFinishes', per.coop);
+    up('versusRaces', per.versus);
+    if (tutorial) up('tutorialDone', 1);
+    if (medalKey) up('medalKeys', 1);
+  }
+
+  // Slingshot: `stage` is the stage being played, so stage - 1 are cleared.
+  const sling = obj(saves.sling);
+  if (sling) {
+    up('slingBest', n(sling.best));
+    up('slingStage', n(sling.stage) - 1);
+    up('slingLaunches', n(sling.runs));
+    const d = obj(sling.daily);
+    if (d && typeof d.key === 'string' && n(d.runs) > 0 && !L.launchDays.includes(d.key)) L.launchDays.push(d.key);
+  }
+  up('rides', recordCount + n(sling && sling.runs));
+
+  // Today's Road: the days ridden, practice finishes, partners, the day streak.
+  const daily = obj(saves.daily);
+  if (daily) {
+    const finished = Object.keys(daily)
+      .filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k) && obj(daily[k]))
+      .filter(k => n(daily[k].practice) > 0 || (obj(daily[k].ranked) && Object.keys(daily[k].ranked).length > 0))
+      .sort();
+    let practice = 0;
+    for (const k of finished) {
+      practice += n(daily[k].practice);
+      for (const p of Array.isArray(daily[k].partners) ? daily[k].partners : []) {
+        if (typeof p === 'string' && p && !L.partners.includes(p)) L.partners.push(p);
+      }
+      if (!L.dayList.includes(k) && (L.dayList.length < DAY_LIST_MAX || k > L.dayList[0])) {
+        L.days += 1;
+        L.dayList.push(k);
+      }
+    }
+    L.dayList = L.dayList.sort().slice(-DAY_LIST_MAX);
+    if (L.dayList.length && (!L.lastDay || L.dayList[L.dayList.length - 1] > L.lastDay)) L.lastDay = L.dayList[L.dayList.length - 1];
+    up('dailyPractice', practice);
+    let run = 0, best = 0;
+    for (let i = 0; i < finished.length; i++) {
+      run = i > 0 && daysBetween(finished[i - 1], finished[i]) === 1 ? run + 1 : 1;
+      best = Math.max(best, run);
+    }
+    up('dailyDayBest', best);
+    const newest = finished[finished.length - 1];
+    if (newest && (!L.lastDailyDay || newest > L.lastDailyDay)) {
+      L.lastDailyDay = newest;
+      L.dailyDayRun = run;
+    }
+  }
+
+  // The wallet: coins earned, upgrades bought, rebuilds.
+  const w = obj(saves.wallet);
+  if (w) {
+    up('coinsEarned', n(w.earned));
+    up('rebuilds', n(w.rebuilds));
+    let levels = 0, spent = 0;
+    for (const u of UPGRADES) {
+      const lv = Math.min(u.max, Math.floor(n(w.lv && w.lv[u.id])));
+      levels += lv;
+      for (let l = 0; l < lv; l++) spent += upgradeCost(u, l);
+      if (lv >= u.max) L.maxedAny = true;
+    }
+    // A rebuild needed every upgrade maxed, then reset them: count those too.
+    const rebuilds = Math.floor(n(w.rebuilds));
+    if (rebuilds > 0) {
+      let full = 0;
+      for (const u of UPGRADES) for (let l = 0; l < u.max; l++) full += upgradeCost(u, l);
+      spent += rebuilds * full;
+      levels += rebuilds * UPGRADES.reduce((a, u) => a + u.max, 0);
+    }
+    up('upgrades', levels);
+    up('coinsSpent', spent);
+    if (UPGRADES.every(u => n(w.lv && w.lv[u.id]) >= u.max) || n(w.rebuilds) > 0) {
+      L.maxedAny = true;
+      L.maxedAll = true;
+    }
+  }
+  return L;
 }
 
 /**
