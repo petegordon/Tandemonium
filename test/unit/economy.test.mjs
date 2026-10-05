@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   WALLET_KEY, WALLET_VERSION, emptyWallet, loadWallet, writeWallet, deposit, coinMultiplier,
-  prestigeBonus, canRebuild, rebuild, REBUILD_BONUS, sanitizeWallet,
+  prestigeBonus, canRebuild, rebuild, REBUILD_BONUS, REBUILD_CAP, sanitizeWallet,
 } from '../../js/wallet.js';
 import {
   STORAGE_KEY as SLING_KEY, UPGRADES, upgradeCost, buyUpgrade, loadSave, writeSave, emptySave,
@@ -160,6 +160,19 @@ test('the Coin multiplier and the prestige bonus multiply every payout', () => {
 
 // ---- Prestige (D11c) -------------------------------------------------------
 
+test('B5: the rebuild bonus stops at REBUILD_CAP (5) rebuilds, +50 %', () => {
+  assert.equal(REBUILD_CAP, 5);
+  const at = n => prestigeBonus({ ...emptyWallet(), rebuilds: n });
+  assert.ok(Math.abs(at(5) - 1.5) < 1e-9);
+  assert.equal(at(6), at(5));
+  assert.equal(at(40), at(5));
+  assert.ok(at(4) < at(5));
+  // Rebuilding past the cap is still allowed (it just adds nothing).
+  const r = rebuild({ ...emptyWallet(), lv: maxed(), rebuilds: 7 });
+  assert.ok(r.ok);
+  assert.equal(r.wallet.rebuilds, 8);
+});
+
 test('prestige: only when everything is maxed; resets upgrades, keeps coins and stage', () => {
   const store = memStore();
   assert.equal(canRebuild(emptyWallet()), false);
@@ -248,19 +261,19 @@ test('Today\'s Launch: the day\'s best and record bonus, reset by a new day', ()
   let save = emptySave();
   const k = '2026-10-04';
   let st = todaysLaunchStatus(save, k);
-  assert.deepEqual(st, { key: k, best: 0, runs: 0 });
+  assert.deepEqual(st, { key: k, best: 0, runs: 0, jackpot: false });
   const first = scoreRun({ distance: 300 }, st, 1);
   assert.equal(first.recordPay, 0, 'no record bonus on the first run of the day');
   save = applyTodaysLaunch(save, k, first);
   st = todaysLaunchStatus(save, k);
-  assert.deepEqual(st, { key: k, best: 300, runs: 1 });
+  assert.deepEqual(st, { key: k, best: 300, runs: 1, jackpot: false });
   const second = scoreRun({ distance: 400 }, st, 1);
   assert.equal(second.recordPay, 25);
   save = applyTodaysLaunch(save, k, second);
   save = applyTodaysLaunch(save, k, scoreRun({ distance: 100 }, todaysLaunchStatus(save, k), 1));
   assert.equal(todaysLaunchStatus(save, k).best, 400, 'a shorter run keeps the best');
   assert.equal(save.stage, 1, 'Today\'s Launch never moves the stage');
-  assert.deepEqual(todaysLaunchStatus(save, '2026-10-05'), { key: '2026-10-05', best: 0, runs: 0 });
+  assert.deepEqual(todaysLaunchStatus(save, '2026-10-05'), { key: '2026-10-05', best: 0, runs: 0, jackpot: false });
   const store = memStore();
   writeSave(store, save);
   assert.deepEqual(loadSave(store).daily, { key: k, best: 400, runs: 3 });
