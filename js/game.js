@@ -7428,7 +7428,11 @@ class Game {
       const check = () => {
         if (resolved) return;
         if (skipped()) { resolved = true; resolve(); return; }
-        const lean = this.input.getMotionLean();
+        // Ungained lean (B1, PR #397 review): phone tilt steers at
+        // TUNE.mobileTiltGain (0.25), so the gained getMotionLean() tops out at
+        // the ±0.25 targets and never passes them. Calibrate on what the
+        // player is physically doing. Controller gyro: identical (gain 1).
+        const lean = this.input.getMotionLeanVisual();
         const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
         const offset = this.input.motionOffset || 0;
         this._calibTiltSamples.push(raw - offset);

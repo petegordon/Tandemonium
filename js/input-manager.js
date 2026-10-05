@@ -753,7 +753,11 @@ export class InputManager {
     } else {
       // Mobile tilt (gravity-absolute): original always-on EMA + hard 0.3 gate.
       this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
-      if (Math.abs(this._smoothedLean) < 0.3) {
+      // Gate on the UNGAINED lean (B1, PR #397 review): _smoothedLean carries
+      // TUNE.mobileTiltGain (0.25), so it never reaches 0.3 and the offset
+      // chased every held tilt — washing out turns and leaving the centre
+      // off by 10°+ afterwards (the tutorial's "back to center" timed out).
+      if (Math.abs(this.motionLeanVisual) < 0.3) {
         this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate;
       }
     }

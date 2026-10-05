@@ -2,7 +2,8 @@
 // smoke-tutorial-first.mjs — D6 (#400) / #399: a first-time player who picks
 // SOLO lands in the tutorial with SKIP on screen; SKIP marks it done and goes to
 // the level list; a returning player (saved motion tuning) is not forced in;
-// and tutorial-complete's NEXT: GRANDMA'S starts Grandma's in one tap.
+// and tutorial-complete's NEXT: GRANDMA'S starts Grandma's in one tap; and a
+// phone player passes the tilt calibration by actually tilting (B1).
 // The tutorial ride itself is not ridden here — headless renders at ~1.4 fps —
 // so completion is triggered through the game's own _tutorialComplete().
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
@@ -15,7 +16,8 @@ const browser=await puppeteer.launch({headless:'new',args:['--no-sandbox','--use
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 
 // Each scenario gets its own incognito context, so localStorage starts empty.
-async function open(seed = {}) {
+// `beforeSolo` (optional) runs in the page after boot, before SOLO is clicked.
+async function open(seed = {}, beforeSolo = null) {
   const ctx = await browser.createBrowserContext();
   const page=await ctx.newPage(); await page.setViewport({width:1280,height:800});
   await page.setRequestInterception(true);
@@ -29,6 +31,7 @@ async function open(seed = {}) {
   await page.evaluateOnNewDocument((s) => { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); }, seed);
   await page.goto(`http://127.0.0.1:${PORT}/index.html`,{waitUntil:'domcontentloaded',timeout:90000});
   await page.waitForFunction(()=>!!window._game,{timeout:90000});
+  if (beforeSolo) await page.evaluate(beforeSolo);
   await page.evaluate(() => {
     document.getElementById('tap-to-start')?.click();
     document.getElementById('btn-solo').click();
@@ -89,7 +92,51 @@ const next = await where(finisher);
 next.instructionsHidden = await finisher.evaluate(() => document.getElementById('instructions')?.classList.contains('hidden') ?? true);
 console.log('after NEXT:', JSON.stringify(next));
 
+await finisher.browserContext().close();
+
+// 5. B1 (PR #397 review): a PHONE player passes the tilt calibration by tilting.
+// Phone tilt steers at TUNE.mobileTiltGain (0.25), so the gained lean can never
+// pass the ±0.25 targets; the calibration reads the ungained lean instead. A
+// stand-in player feeds real deviceorientation events into the same
+// InputManager path a phone uses, tilting whichever way the card asks, and
+// every step must clear well before its 8 s safety timeout.
+const STEP_LIMIT_MS = 5000;   // headless renders at ~1.4 fps; each step times out at 8 s
+const tilter = await open({}, () => {
+  const g = window._game;
+  g.input._startMotionListening();
+  window.__tiltTarget = 0;
+  window.__tiltLog = [];
+  const fire = () => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 0, gamma: window.__tiltTarget }));
+  for (let i = 0; i < 8; i++) fire();   // warm-up → motionEnabled before SOLO
+  setInterval(fire, 16);
+  let last = null;
+  setInterval(() => {
+    const el = document.getElementById('calib-flow-label');
+    const t = el ? el.textContent : '';
+    // Headless delivers only a few events per second, so the 10-sample rest
+    // calibration (0.17 s on a real phone) can outlast the welcome card: hold
+    // still until it has finished and the drift tracker has its first sample.
+    const settled = g.input.motionOffset != null && g.input._driftEma != null;
+    window.__tiltTarget = !settled ? 0 : /left/i.test(t) ? -35 : /right/i.test(t) ? 35 : 0;
+    if (t !== last) { window.__tiltLog.push([Math.round(performance.now()), t]); last = t; }
+  }, 30);
+});
+await tilter.waitForFunction(() => (window.__tiltLog || []).some(([, t]) => /recalibrate/i.test(t)), { timeout: 90000 }).catch(() => {});
+const tiltLog = await tilter.evaluate(() => window.__tiltLog);
+const tiltSteps = [];
+for (let i = 0; i < tiltLog.length - 1; i++) {
+  const [t0, label] = tiltLog[i];
+  if (/(left|right|center)\.\.\.$/i.test(label)) tiltSteps.push({ label, ms: tiltLog[i + 1][0] - t0 });
+}
+console.log('phone tilt calibration steps:', JSON.stringify(tiltSteps));
+// A centre step can clear between two label samples (already centred), so it
+// may not show up; all four tilt steps must.
+const tiltOk = tiltSteps.filter(s => /(left|right)\.\.\.$/i.test(s.label)).length === 4 &&
+  tiltSteps.every(s => s.ms < STEP_LIMIT_MS);
+await tilter.browserContext().close();
+
 const ok =
+  tiltOk &&
   first.tutorial && first.level === 'tutorial' && first.skipVisible && first.done === null &&
   !skipped.tutorial && skipped.done === 'skip' && skipped.onLevelList && !skipped.skipVisible &&
     skipped.selectedCard === 'grandma' &&
@@ -97,6 +144,6 @@ const ok =
   screen.overlay && screen.nextVisible && /GRANDMA/i.test(screen.nextText) && screen.continueText === 'LOBBY' &&
     screen.done === 'complete' && !screen.skipVisible &&
   next.level === 'grandma' && !next.tutorial && ['countdown', 'playing'].includes(next.state) && next.instructionsHidden;
-console.log(ok ? '✔ first SOLO → tutorial with SKIP; SKIP → level list; returning players not forced; NEXT → Grandma\'s'
+console.log(ok ? '✔ first SOLO → tutorial with SKIP; SKIP → level list; returning players not forced; NEXT → Grandma\'s; phone tilt calibration passes'
                : '✖ something is wrong');
 await browser.close(); server.close(); process.exit(ok?0:1);
