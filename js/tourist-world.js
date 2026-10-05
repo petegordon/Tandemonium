@@ -441,7 +441,8 @@ export class TouristWorld {
   setBalloonColor() {}
   checkTreeCollision() { return { hit: false }; }
   // _startCountdown reseeds the world from the level; real streets have no seed.
-  // (Without this the countdown threw at GO and the ride never got its race.)
+  // (Without this _startCountdown threw before it built the RaceManager, so a
+  // tourist ride rolled but never had a finish.)
   reseed() { return false; }
 
   dispose() {
