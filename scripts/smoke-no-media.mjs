@@ -107,6 +107,8 @@ async function runPass(media) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 900 });
   await page.evaluateOnNewDocument(instrument);
+  // SOLO must open the level list, not the first-run tutorial auto-start.
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const u = req.url();
