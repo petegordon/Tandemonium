@@ -1934,6 +1934,11 @@ class Game {
     // recorder, or contribution tracking.
     if (this.mode === 'versus') { this._startVersusCountdown(); return; }
 
+    // #400 D4 / M2: a ride left for a new one still pays its distance. First,
+    // before the bike or world is reset and before _rankedRunActive is
+    // recomputed for the next ride (m14). Idempotent through the ledger.
+    this._payoutAbandon();
+
     this.state = 'countdown';
     this.countdownTimer = 3.0;
     this._hideGameOver();
@@ -2101,7 +2106,10 @@ class Game {
       this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
     }
 
-    this._payoutAbandon();   // #400 D4: a ride restarted mid-way still pays its distance
+    // M2: the payout ledger is keyed by RIDE: start line → finish or abandon,
+    // through any checkpoint restarts. A retry of segment 1 is the same ride.
+    if (!this._sameRideNext || !this._rideRef) this._rideRef = {};
+    this._sameRideNext = false;
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this._helpStartRide(keepHelp);   // #403: before the first budget is shown
@@ -2511,6 +2519,9 @@ class Game {
   _resetGame(fromRemote = false, fromBeginning = false) {
     // Slingshot: every reset is back into the slingshot, never to a checkpoint.
     if (this.isSlingshot) { this._resetToSling(); return; }
+    // M2: pay what the ride has done before the bike goes back (the ledger
+    // makes a second payout of the same metres pay nothing).
+    this._payoutAbandon();
     // Analytics: track reset/restart
     analytics.trackRideEvent('reset', this.bike ? this.bike.distanceTraveled : 0, {
       from_beginning: fromBeginning,
@@ -2630,6 +2641,7 @@ class Game {
       this._resumeCountdown();
     } else {
       this._helpKeepRide = !fromBeginning;   // #403: same ride, same count
+      this._sameRideNext = !fromBeginning && !(this.raceManager && this.raceManager.finished);   // M2
       this._startCountdown();
     }
   }

@@ -8,7 +8,8 @@
 //   _showGameOver     → _showRideCoins('gameover', 'crash')
 //   _tutorialComplete → _showRideCoins('tutorial', 'finish', …)
 //   versus results    → _showVersusCoins()
-//   _startCountdown / _returnToLobby / _returnToRoom → _payoutRide('abandon')
+//   _resetGame (top) / _startCountdown (top) / _returnToLobby / _returnToRoom
+//                     → _payoutRide('abandon')
 //
 // HOOK FOR ACHIEVEMENTS (#401): every economy event goes through ONE method,
 // _economyEvent(type, detail), which also dispatches a window CustomEvent
@@ -71,7 +72,7 @@ class EconomyMode {
       return { ref: rigs[0].raceManager, distance, pickups: 0, finished: rigs.some(r => r.finished), mode: 'versus' };
     }
     if (opts.tutorial) {
-      return { ref: this.raceManager || {}, distance: level ? level.distance : 0,
+      return { ref: this._rideRef || this.raceManager || {}, distance: level ? level.distance : 0,
                pickups: opts.pickups || 0, finished: true, mode: 'tutorial' };
     }
     if (!this.raceManager || !level) return null;
@@ -90,7 +91,9 @@ class EconomyMode {
       : level.isTutorial ? 'tutorial'
       : level.isDaily ? (this._rankedRunActive ? 'daily-ranked' : 'daily')
       : this.mode;
-    return { ref: this.raceManager, distance, pickups, finished,
+    // M2: one ledger per ride (Game._rideRef), not per RaceManager — a retry of
+    // segment 1 builds a new RaceManager but is the same ride.
+    return { ref: this._rideRef || this.raceManager, distance, pickups, finished,
              medal: outcome ? outcome.medal : null, newBest: !!(outcome && outcome.isNewBest), mode };
   }
 
