@@ -85,6 +85,7 @@ import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
+import { isBotTeam } from './versus/versus-bot.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 
@@ -6588,7 +6589,8 @@ class Game {
     }
 
     for (const rig of rigs) this._stepTeam(rig, dt);
-    this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
+    // m19: a race against the ?versusbot=1 rider earns no achievements.
+    if (!rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
 
     // Bike-vs-bike contact: bumping knocks both around a little.
     this._resolveVersusBikeContact(dt);
@@ -6858,7 +6860,7 @@ class Game {
    */
   _finishVersusRace(winner) {
     const loser = this.versusRigs.find((r) => r !== winner);
-    this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401
+    if (!isBotTeam(winner) && !isBotTeam(loser)) this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401 (m19: not vs the bot)
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';

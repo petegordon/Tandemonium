@@ -32,6 +32,7 @@ import { LEVELS } from './race-config.js';
 import * as walletLib from './wallet.js';
 import { scoreRide, newLedger, ledgerStep } from './economy.js';
 import { COIN, toast } from './slingshot-ui.js';
+import { humanTeams } from './versus/versus-bot.js';
 
 const fmt = n => Math.floor(n).toLocaleString('en-US');
 
@@ -64,12 +65,15 @@ class EconomyMode {
   _rideSnapshot(kind, opts = {}) {
     const level = this.lobby && this.lobby.selectedLevel;
     if (this.mode === 'versus') {
-      const rigs = this.versusRigs;
-      if (!rigs || !rigs.length || !rigs[0].raceManager) return null;
+      const all = this.versusRigs;
+      if (!all || !all.length || !all[0].raceManager) return null;
+      // m19: a ?versusbot=1 team pays nothing (it would be AFK-farmable).
+      const rigs = humanTeams(all);
+      if (!rigs.length) return null;
       const cap = level ? level.distance : Infinity;
       const distance = Math.max(...rigs.map(r => Math.min(cap, r.bike.distanceTraveled || 0)));
       // One device: paid once per race, on the furthest team, plus the finish.
-      return { ref: rigs[0].raceManager, distance, pickups: 0, finished: rigs.some(r => r.finished), mode: 'versus' };
+      return { ref: all[0].raceManager, distance, pickups: 0, finished: rigs.some(r => r.finished), mode: 'versus' };
     }
     if (opts.tutorial) {
       return { ref: this._rideRef || this.raceManager || {}, distance: level ? level.distance : 0,
