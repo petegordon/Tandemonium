@@ -5700,7 +5700,8 @@ class Game {
 
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
-    this.achievements.crash(cause, {   // #401
+    // #401: a Slingshot crash is not a ride crash (no Goose Down, So Close, False Start).
+    if (this._rideSystemOn('achievements')) this.achievements.crash(cause, {   // #401
       ref: this.mode === 'versus' ? null : this.raceManager,
       distance: bike ? bike.distanceTraveled : 0,
       raceDistance: (this.mode === 'versus'
