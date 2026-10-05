@@ -33,13 +33,15 @@ function pips(level, max) {
  *   lock         js/slingshot.js · stageLock() for the current stage, or null
  *   todays       { best, runs } when Today's Launch is offered, else null
  *   canWishlist  show the WISHLIST button on the demo's end
+ *   replay       at the demo's end: the stage LAUNCH replays (m9), else null
+ *   rebuildOffered  false hides Rebuild (the demo, m9)
  *   onBuy(id) onLaunch() onLobby() onToday() onRebuild() onGoRide(levelId) onWishlist()
  * }
  * Returns buttons in focus order: launch (or the lock's action), Today's
  * Launch, upgrades, rebuild, lobby. Upgrade buttons carry data-up="<id>".
  */
 export function renderGarage(save, wallet, opts = {}) {
-  const { standalone = false, lock = null, todays = null, canWishlist = false } = opts;
+  const { standalone = false, lock = null, todays = null, canWishlist = false, replay = null, rebuildOffered = true } = opts;
   const root = $('sling-garage');
   root.innerHTML = '';
   const mult = coinMultiplier(wallet);
@@ -66,6 +68,12 @@ export function renderGarage(save, wallet, opts = {}) {
         w.addEventListener('click', () => opts.onWishlist && opts.onWishlist());
         top.appendChild(w);
         buttons.push(w);
+      }
+      if (replay) {
+        const again = el('button', 'lobby-btn', `LAUNCH · REPLAY STAGE ${replay}`);
+        again.addEventListener('click', () => opts.onLaunch && opts.onLaunch());
+        top.appendChild(again);
+        buttons.push(again);
       }
     } else if (lock.level) {
       const go = el('button', 'lobby-btn lobby-btn-accent', `${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`);
@@ -109,7 +117,7 @@ export function renderGarage(save, wallet, opts = {}) {
   root.appendChild(list);
 
   // Prestige (D11c): only once everything is maxed. Two presses — it resets.
-  if (canRebuild(wallet)) {
+  if (rebuildOffered && canRebuild(wallet)) {
     // B5: the bonus stops growing at REBUILD_CAP rebuilds — say so rather than hide the button.
     const capped = (wallet.rebuilds || 0) >= REBUILD_CAP;
     const label = capped
@@ -190,6 +198,7 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
       ? `🎉 ${lock.label}` : `🔒 Next stage: ${lock.label}`));
     if (lock.kind === 'demo') {
       if (canWishlist) mk('&#9829; WISHLIST ON STEAM', 'lobby-btn lobby-btn-accent cta-btn', () => onWishlist && onWishlist());
+      mk('LAUNCH AGAIN', 'lobby-btn', onAgain);   // m9: the demo replays its last stage
     } else if (lock.level) {
       mk(`${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`, 'lobby-btn lobby-btn-accent', () => onGoRide && onGoRide(lock.level));
     }
