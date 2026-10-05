@@ -49,20 +49,19 @@ jobs:
       # with --no-sandbox by each script): what each edition offers, the room's
       # camera/mic staying off, and the one coin wallet. They run side by side —
       # each serves the game on its own port — so the job stays a few minutes.
-      - name: Smoke subset (edition, no-media, economy)
+      # Lobby-level smokes only, one at a time. The ride smokes (no-media,
+      # economy, …) need a full ride under software WebGL, which on a hosted
+      # runner takes longer than their timeouts (and three Chromes in parallel
+      # starve a 2-core runner). They run locally: see README smoke:*.
+      - name: Smoke subset (lobby, edition)
         run: |
-          pids=(); names=()
-          for s in smoke:edition smoke:no-media smoke:economy; do
-            npm run -s "$s" > "smoke-${s#smoke:}.log" 2>&1 &
-            pids+=($!); names+=("$s")
-          done
           fail=0
-          for i in "${!pids[@]}"; do
-            if wait "${pids[$i]}"; then status=passed; else status=FAILED; fail=1; fi
-            echo "::group::${names[$i]} — $status"
-            cat "smoke-${names[$i]#smoke:}.log"
+          for s in smoke smoke:edition; do
+            if npm run -s "$s" > "smoke-log.txt" 2>&1; then status=passed; else status=FAILED; fail=1; fi
+            echo "::group::$s — $status"
+            cat smoke-log.txt
             echo "::endgroup::"
-            if [ "$status" = FAILED ]; then echo "::error::${names[$i]} failed"; fi
+            if [ "$status" = FAILED ]; then echo "::error::$s failed"; fi
           done
           exit $fail
 
