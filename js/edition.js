@@ -97,6 +97,36 @@ export function resolveMediaEnabled(search) {
   try { return new URLSearchParams(search || '').get('media') === '1'; } catch { return false; }
 }
 
+/**
+ * URL params that define the edition/session and must survive URL tidying and
+ * travel in every invite link (PR #397 B4a): without them a reload or an
+ * invite drops a demo player into the full game.
+ */
+export const CARRIED_PARAMS = Object.freeze(['demo', 'media']);
+
+/** `search` reduced to the carried params, as '?demo=1&media=1' or ''. */
+export function carriedQuery(search) {
+  const out = new URLSearchParams();
+  try {
+    const p = new URLSearchParams(search || '');
+    for (const k of CARRIED_PARAMS) if (p.has(k)) out.set(k, p.get(k));
+  } catch { /* bad input */ }
+  const s = out.toString();
+  return s ? '?' + s : '';
+}
+
+/**
+ * Room join link: `${base}?room=CODE` plus demo=1 / media=1 when this side is
+ * on the demo / has room media on, so the partner opens the same edition.
+ */
+export function buildJoinUrl(base, code, { demo = false, media = false } = {}) {
+  const p = new URLSearchParams();
+  p.set('room', code);
+  if (demo) p.set('demo', '1');
+  if (media) p.set('media', '1');
+  return base + '?' + p.toString();
+}
+
 // ── cached, browser-facing ──────────────────────────────────
 
 let _rules = null;

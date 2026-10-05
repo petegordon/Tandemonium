@@ -8,11 +8,16 @@
 // tourist world + road-path shims.
 // ============================================================
 
+import { getEditionRules } from './edition.js';
+
 /**
  * Is Tourist Mode requested? Activated with `?mode=tourist` (matches the
  * existing URL-param convention used for ?quality, ?notrees, ?noclip).
  */
 export function isTouristMode() {
+  // PR #397 B4b: never in an edition without Tourist (the demo) — ?mode=tourist
+  // is ignored there and the game boots normally.
+  if (!getEditionRules().tourist) return false;
   return new URLSearchParams(window.location.search).get('mode') === 'tourist';
 }
 

@@ -63,7 +63,7 @@ import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
 import { renderRoomQR } from './lobby/room-qr.js';
-import { isDemoEdition, getEditionRules, levelAllowed } from './edition.js';
+import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery } from './edition.js';
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { loadWallet, browserStore as walletStore } from './wallet.js';
 
@@ -3495,7 +3495,8 @@ export class Lobby {
     const roomParam = params.get('room');
     if (!roomParam) { this._checkDailyLink(); return; }
 
-    history.replaceState(null, '', window.location.pathname);
+    // B4a: drop ?room= but keep demo/media so a reload stays in this edition.
+    history.replaceState(null, '', window.location.pathname + carriedQuery(window.location.search));
     const code = roomParam.toUpperCase();
     const fullCode = code.startsWith('TNDM-') ? code : 'TNDM-' + code;
 

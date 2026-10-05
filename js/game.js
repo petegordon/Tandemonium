@@ -5146,7 +5146,8 @@ class Game {
     // E-5 · Tourist Mode's front door. Shown only when a Maps key is present:
     // an entry point that cannot work is worse than none (the #350 lesson).
     const touristBtn = document.getElementById('options-tourist-btn');
-    if (touristBtn && getMapsApiKey()) {
+    // PR #397 B4b: and only in an edition that has Tourist (hidden in the demo).
+    if (touristBtn && getMapsApiKey() && getEditionRules().tourist) {
       for (const id of ['opt-tourist-label', 'options-tourist-btn', 'opt-tourist-note']) {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
