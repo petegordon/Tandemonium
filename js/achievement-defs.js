@@ -84,6 +84,15 @@ function km(goalM) {
   };
 }
 
+/**
+ * A day-streak badge's progress: the streak held TODAY (live.dailyStreak, from
+ * js/daily-ride.js · computeStreak), not the last run ever counted — a streak
+ * broken a month ago shows 0, not "2/3 days".
+ */
+function streakProgress(goal) {
+  return (L, live) => [Math.min(goal, Math.floor(n(live && live.dailyStreak))), goal];
+}
+
 const grandmaBike = key => s => s.finishedLevel === 'grandma' && s.bikeKey === key;
 
 // prettier-ignore
@@ -178,11 +187,11 @@ export const ACHIEVEMENTS = [
   // ── 10. Today's Road ─────────────────────────────────────
   { id: 'daily_first',    section: 'daily', name: "Today's Road",        icon: '📅', desc: "Do your first ranked Today's Road", condition: s => s.dailyRanked === true, demo: false, full: 'ranked' },
   { id: 'daily_streak_3', section: 'daily', name: 'Three in a Row',      icon: '🔁', desc: "Ride Today's Road on 3 days running", condition: (s, L) => n(s.dailyStreak) >= 3 || n(L.dailyDayBest) >= 3,
-    progress: L => [Math.min(3, n(L.dailyDayRun)), 3], unit: 'days', demo: false, full: 'weeklyRoad' },
+    progress: streakProgress(3), unit: 'days', demo: false, full: 'weeklyRoad' },
   { id: 'daily_streak_7', section: 'daily', name: 'A Week of Roads',     icon: '🔥', desc: "Ride Today's Road 7 days running", condition: (s, L) => n(s.dailyStreak) >= 7 || n(L.dailyDayBest) >= 7,
-    progress: L => [Math.min(7, n(L.dailyDayRun)), 7], unit: 'days', demo: false, full: 'weeklyRoad' },
+    progress: streakProgress(7), unit: 'days', demo: false, full: 'weeklyRoad' },
   { id: 'daily_streak_30', section: 'daily', name: 'A Month of Roads',   icon: '☄️', desc: "Ride Today's Road 30 days running", condition: (s, L) => n(s.dailyStreak) >= 30 || n(L.dailyDayBest) >= 30,
-    progress: L => [Math.min(30, n(L.dailyDayRun)), 30], unit: 'days', demo: false, full: 'scope' },
+    progress: streakProgress(30), unit: 'days', demo: false, full: 'scope' },
   { id: 'daily_share',    section: 'daily', name: 'Show-Off',            icon: '📣', desc: "Share a Today's Road result",         ...count('shares', 1) },
   { id: 'daily_practice_10', section: 'daily', name: 'Practice Makes Perfect', icon: '🔂', desc: "Finish 10 practice rides on Today's Road", ...count('dailyPractice', 10) },
 

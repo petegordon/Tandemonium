@@ -373,6 +373,24 @@ test('manager: badge screen — 93 rows, hidden as ???, retired never, progress'
   assert.equal(m.getAllDefinitions().find(d => d.id === 'false_start').name, 'False Start');
 });
 
+test('manager: streak badges show the streak held today, not a stale run (m6)', async () => {
+  const { dailyKey } = await import('../../js/daily-seed.js');
+  const day = (off) => new Date(Date.parse(dailyKey() + 'T00:00:00Z') + off * 86400000).toISOString().slice(0, 10);
+  const fin = { practice: 1 };
+  // A 2-day run a month ago: the lifetime counter still says 2.
+  globalThis.localStorage = fakeStorage({
+    tandemonium_achievement_stats: JSON.stringify({ v: STATS_VERSION, dailyDayRun: 2, dailyDayBest: 2, lastDailyDay: day(-30) }),
+    tandemonium_daily: JSON.stringify({ [day(-31)]: fin, [day(-30)]: fin }),
+  });
+  const { AchievementManager } = await import('../../js/achievements.js');
+  const m = new AchievementManager();
+  m.demo = false;
+  assert.deepEqual(m.getAllDefinitions().find(d => d.id === 'daily_streak_3').progress, [0, 3]);
+  // Ridden yesterday and today: 2 days live.
+  localStorage.setItem('tandemonium_daily', JSON.stringify({ [day(-1)]: fin, [day(0)]: fin }));
+  assert.deepEqual(m.getAllDefinitions().find(d => d.id === 'daily_streak_7').progress, [2, 7]);
+});
+
 test('manager: the demo never awards a full-game-only achievement', async () => {
   globalThis.localStorage = fakeStorage();
   const { AchievementManager } = await import('../../js/achievements.js');

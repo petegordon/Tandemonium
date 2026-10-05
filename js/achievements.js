@@ -11,6 +11,7 @@
 import { API_BASE, TUNE } from './config.js';
 import { getEditionRules } from './edition.js';
 import { dailyKey } from './daily-seed.js';
+import { computeStreak, browserStore } from './daily-ride.js';
 import { WALLET_KEY, sanitizeWallet, canRebuild } from './wallet.js';
 import {
   ACHIEVEMENTS, RETIRED_IDS, SECTIONS, STATS_VERSION,
@@ -304,6 +305,9 @@ export class AchievementManager {
    */
   getAllDefinitions() {
     const demo = this.demo;
+    // The day-streak badges read the streak held today (m6).
+    let live = { dailyStreak: 0 };
+    try { live = { dailyStreak: computeStreak(browserStore(), dailyKey()).current }; } catch (e) {}
     return ACHIEVEMENTS
       .filter(a => !RETIRED_IDS.has(a.id))
       .map(a => {
@@ -311,7 +315,7 @@ export class AchievementManager {
         const secret = a.hidden && !earned;
         let progress = null;
         if (!earned && !secret && a.progress) {
-          try { progress = a.progress(this._stats); } catch (e) { progress = null; }
+          try { progress = a.progress(this._stats, live); } catch (e) { progress = null; }
         }
         return {
           id: a.id,
