@@ -24,8 +24,9 @@ const EXISTING = [
 // ✓, but the demo's Slingshot stops at stage 3 (DEMO_RULES.slingshot.maxStage),
 // so the edition rules win. double_down (m4): a stage-mode jackpot run ends
 // at ~118 m, short of any stage-2+ best, so only Today's Launch can earn it.
+// daily_streak_3/7 (m5): the demo rides the weekly road, which feeds no day streak.
 const SPEC_FULL_ONLY = [
-  'sling_stage5', 'double_down',
+  'sling_stage5', 'double_down', 'daily_streak_3', 'daily_streak_7',
   'century', 'days_30', 'all_gold', 'sling_stage7', 'sling_1000', 'todays_launch', 'launch_week',
   'coins_10000', 'max_upgrade', 'garage_royalty', 'rebuilt', 'ship_of_theseus', 'daily_first',
   'daily_streak_30', 'pair_100km', 'standing_date', 'distance_between_us', 'grand_tour',
@@ -114,9 +115,9 @@ test('nothing is earned from a fresh start', () => {
 
 // ── the demo ─────────────────────────────────────────────────────
 
-test('the demo-unearnable list is the spec Demo column + the stage cap (20 full-only, 80 demo)', () => {
+test('the demo-unearnable list is the spec Demo column + the stage cap (22 full-only, 78 demo)', () => {
   assert.deepEqual([...DEMO_UNEARNABLE].sort(), [...SPEC_FULL_ONLY].sort());
-  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 80);
+  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 78);
 });
 
 test('each full-only reason matches the edition rules', () => {
@@ -129,6 +130,7 @@ test('each full-only reason matches the edition rules', () => {
         assert.ok(a.stage > DEMO_RULES.slingshot.maxStage, `${a.id}: stage ${a.stage} is inside the demo`);
         assert.equal(FULL_RULES.slingshot.maxStage, null);
         break;
+      case 'weeklyRoad': assert.equal(DEMO_RULES.weeklyRoad, true); assert.equal(FULL_RULES.weeklyRoad, false); break;
       case 'scope': break;   // a long-haul goal the spec keeps for the full game
       default: assert.fail(`${a.id} has no reason to be full-only (${a.full})`);
     }
@@ -191,6 +193,12 @@ test("stats: Today's Road day streak and medal keys", () => {
   L = applyEvent(L, 'finish', { finishedLevel: 'daily' }, '2026-10-06');
   assert.equal(L.dailyDayRun, 1);
   assert.equal(L.dailyDayBest, 3);
+  // m5: weekly-road finishes on later days feed no day streak.
+  let W = L;
+  for (const day of ['2026-10-07', '2026-10-08', '2026-10-09']) W = applyEvent(W, 'finish', { finishedLevel: 'daily', weekly: true }, day);
+  assert.equal(W.dailyDayRun, 1);
+  assert.equal(W.dailyDayBest, 3);
+  assert.equal(W.lastDailyDay, '2026-10-06');
   assert.equal(opensMedalGate('grandma', 'bronze'), true);
   assert.equal(opensMedalGate('grandma', null), false);
   L = applyEvent(L, 'finish', { finishedLevel: 'grandma', medal: 'gold', isCoop: true, partnerKey: 'p1' }, '2026-10-06');

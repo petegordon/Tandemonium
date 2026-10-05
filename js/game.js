@@ -4101,7 +4101,8 @@ class Game {
     // F-1 · the loops the plan built. Read from the local stores, so they work
     // signed out; the pair numbers come from the server panel when there is one.
     // #400: no day streaks off the demo's weekly road.
-    if (level.isDaily && level.key && !getEditionRules().weeklyRoad) {
+    const weekly = !!(level.isWeekly || getEditionRules().weeklyRoad);
+    if (level.isDaily && level.key && !weekly) {
       const store = browserStore();
       state.dailyRanked = this._rankedRunActive;
       const mode = this._dailyRunMode();
@@ -4126,6 +4127,7 @@ class Game {
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local',
       partnerKey,
       touristFinished: !!(this.isTourist || this._touristRoute),
+      weekly,   // m5: the weekly road feeds no day streak
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
     this.achievements.finish(state);

@@ -19,8 +19,9 @@
 // demo: false marks the 18 rows the spec's Demo column calls full-game only,
 // plus sling_stage5: the spec marks it demo ✓, but DEMO_RULES caps the
 // Slingshot at stage 3, so stage 5 can't be cleared in the demo; and
-// double_down: only Today's Launch (full game) can pair a jackpot with a best
-// (20 in all).
+// double_down: only Today's Launch (full game) can pair a jackpot with a best;
+// and daily_streak_3/7: the demo rides the weekly road, which feeds no day
+// streak (22 in all).
 // `full` says why: an edition rule (js/edition.js · DEMO_RULES) blocks it, or
 // 'scope' — a long-haul goal kept for the full game. The demo never awards
 // them; the stats keep counting, so they unlock on the full game's first check.
@@ -177,9 +178,9 @@ export const ACHIEVEMENTS = [
   // ── 10. Today's Road ─────────────────────────────────────
   { id: 'daily_first',    section: 'daily', name: "Today's Road",        icon: '📅', desc: "Do your first ranked Today's Road", condition: s => s.dailyRanked === true, demo: false, full: 'ranked' },
   { id: 'daily_streak_3', section: 'daily', name: 'Three in a Row',      icon: '🔁', desc: "Ride Today's Road on 3 days running", condition: (s, L) => n(s.dailyStreak) >= 3 || n(L.dailyDayBest) >= 3,
-    progress: L => [Math.min(3, n(L.dailyDayRun)), 3], unit: 'days' },
+    progress: L => [Math.min(3, n(L.dailyDayRun)), 3], unit: 'days', demo: false, full: 'weeklyRoad' },
   { id: 'daily_streak_7', section: 'daily', name: 'A Week of Roads',     icon: '🔥', desc: "Ride Today's Road 7 days running", condition: (s, L) => n(s.dailyStreak) >= 7 || n(L.dailyDayBest) >= 7,
-    progress: L => [Math.min(7, n(L.dailyDayRun)), 7], unit: 'days' },
+    progress: L => [Math.min(7, n(L.dailyDayRun)), 7], unit: 'days', demo: false, full: 'weeklyRoad' },
   { id: 'daily_streak_30', section: 'daily', name: 'A Month of Roads',   icon: '☄️', desc: "Ride Today's Road 30 days running", condition: (s, L) => n(s.dailyStreak) >= 30 || n(L.dailyDayBest) >= 30,
     progress: L => [Math.min(30, n(L.dailyDayRun)), 30], unit: 'days', demo: false, full: 'scope' },
   { id: 'daily_share',    section: 'daily', name: 'Show-Off',            icon: '📣', desc: "Share a Today's Road result",         ...count('shares', 1) },
@@ -347,7 +348,8 @@ export function applyEvent(prev, type, d = {}, today = null) {
         L.coopFinishes += 1;
         if (d.partnerKey) L.partners = addUnique(L.partners, d.partnerKey);
       }
-      if (d.finishedLevel === 'daily' && today && L.lastDailyDay !== today) {
+      // The demo's weekly road (d.weekly) is one road a week: it feeds no day streak.
+      if (d.finishedLevel === 'daily' && !d.weekly && today && L.lastDailyDay !== today) {
         const gap = L.lastDailyDay ? daysBetween(L.lastDailyDay, today) : 0;
         L.dailyDayRun = gap === 1 ? L.dailyDayRun + 1 : 1;
         L.dailyDayBest = Math.max(L.dailyDayBest, L.dailyDayRun);
