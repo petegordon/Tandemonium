@@ -4101,7 +4101,8 @@ class Game {
     // F-1 · the loops the plan built. Read from the local stores, so they work
     // signed out; the pair numbers come from the server panel when there is one.
     // #400: no day streaks off the demo's weekly road.
-    if (level.isDaily && level.key && !getEditionRules().weeklyRoad) {
+    const weekly = !!(level.isWeekly || getEditionRules().weeklyRoad);
+    if (level.isDaily && level.key && !weekly) {
       const store = browserStore();
       state.dailyRanked = this._rankedRunActive;
       const mode = this._dailyRunMode();
@@ -4126,6 +4127,7 @@ class Game {
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local',
       partnerKey,
       touristFinished: !!(this.isTourist || this._touristRoute),
+      weekly,   // m5: the weekly road feeds no day streak
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
     this.achievements.finish(state);
@@ -5700,7 +5702,8 @@ class Game {
 
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
-    this.achievements.crash(cause, {   // #401
+    // #401: a Slingshot crash is not a ride crash (no Goose Down, So Close, False Start).
+    if (this._rideSystemOn('achievements')) this.achievements.crash(cause, {   // #401
       ref: this.mode === 'versus' ? null : this.raceManager,
       distance: bike ? bike.distanceTraveled : 0,
       raceDistance: (this.mode === 'versus'
@@ -6539,6 +6542,7 @@ class Game {
     }
 
     for (const rig of rigs) this._stepTeam(rig, dt);
+    this.achievements.ride.frame(dt, { ref: null, playing: true });   // #401 False Start: the clock since GO runs in versus too
     this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
 
     // Bike-vs-bike contact: bumping knocks both around a little.
@@ -7017,6 +7021,15 @@ class Game {
     if (state) {
       this.bike.applyRemoteState(state);
     }
+    // m7: the stoker's own ride tracker sees the crash too. The cause isn't
+    // sent, so it's 'unknown' (counts against No Trees, to be safe).
+    if (this.bike.fallen && !this._stokerWasFallen && this.state === 'playing') {
+      this.achievements.crash('unknown', {
+        ref: this.raceManager,
+        distance: this.bike.distanceTraveled,
+        raceDistance: (this.raceManager && this.raceManager.raceDistance) || 0,
+      });
+    }
 
     // Detect crash recovery (backup for EVT_GAMEOVER)
     if (this._stokerWasFallen && !this.bike.fallen) {
@@ -7101,6 +7114,7 @@ class Game {
     remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     this._updateLookahead(dt);    // E-1 · the road only the stoker can see
+    this._checkAchievements(dt);  // m7: the ride tracker + frame checks run for the stoker too
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
     const stokerBalance = this.balanceCtrl.update();

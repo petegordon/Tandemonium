@@ -131,6 +131,14 @@ await waitState('slingResults', 120000);
 const st2 = await stats();
 check(st2.slingLaunches === 1 && st2.slingBest >= 100 && st2.rides === 2,
   `the run is counted (${st2.slingLaunches} launch, best ${st2.slingBest} m, ${st2.rides} rides)`);
+// m2: a Slingshot crash feeds no ride achievement (Goose Down, So Close, False Start).
+const slingCrash = await page.evaluate(() => {
+  const g = window._game; const was = g._lastCrashCause;
+  g._recordCrash('tree'); g._lastCrashCause = was;
+  return { sling: !!g.isSlingshot, crashes: JSON.parse(localStorage.getItem('tandemonium_achievement_stats') || '{}').crashes || 0 };
+});
+check(slingCrash.sling && slingCrash.crashes === (st2.crashes || 0) && !(await earned()).includes('first_crash'),
+  `a Slingshot crash counts for no ride achievement (crashes ${slingCrash.crashes})`);
 await shot('3-sling');
 
 check(errors.length === 0, `no page errors (${errors.length})`);

@@ -22,9 +22,11 @@ const EXISTING = [
 
 // The spec's Demo column "—" (issue #401), plus sling_stage5: the spec marks it
 // ✓, but the demo's Slingshot stops at stage 3 (DEMO_RULES.slingshot.maxStage),
-// so the edition rules win.
+// so the edition rules win. double_down (m4): a stage-mode jackpot run ends
+// at ~118 m, short of any stage-2+ best, so only Today's Launch can earn it.
+// daily_streak_3/7 (m5): the demo rides the weekly road, which feeds no day streak.
 const SPEC_FULL_ONLY = [
-  'sling_stage5',
+  'sling_stage5', 'double_down', 'daily_streak_3', 'daily_streak_7',
   'century', 'days_30', 'all_gold', 'sling_stage7', 'sling_1000', 'todays_launch', 'launch_week',
   'coins_10000', 'max_upgrade', 'garage_royalty', 'rebuilt', 'ship_of_theseus', 'daily_first',
   'daily_streak_30', 'pair_100km', 'standing_date', 'distance_between_us', 'grand_tour',
@@ -113,9 +115,9 @@ test('nothing is earned from a fresh start', () => {
 
 // ── the demo ─────────────────────────────────────────────────────
 
-test('the demo-unearnable list is the spec Demo column + the stage cap (19 full-only, 81 demo)', () => {
+test('the demo-unearnable list is the spec Demo column + the stage cap (22 full-only, 78 demo)', () => {
   assert.deepEqual([...DEMO_UNEARNABLE].sort(), [...SPEC_FULL_ONLY].sort());
-  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 81);
+  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 78);
 });
 
 test('each full-only reason matches the edition rules', () => {
@@ -128,6 +130,7 @@ test('each full-only reason matches the edition rules', () => {
         assert.ok(a.stage > DEMO_RULES.slingshot.maxStage, `${a.id}: stage ${a.stage} is inside the demo`);
         assert.equal(FULL_RULES.slingshot.maxStage, null);
         break;
+      case 'weeklyRoad': assert.equal(DEMO_RULES.weeklyRoad, true); assert.equal(FULL_RULES.weeklyRoad, false); break;
       case 'scope': break;   // a long-haul goal the spec keeps for the full game
       default: assert.fail(`${a.id} has no reason to be full-only (${a.full})`);
     }
@@ -190,6 +193,12 @@ test("stats: Today's Road day streak and medal keys", () => {
   L = applyEvent(L, 'finish', { finishedLevel: 'daily' }, '2026-10-06');
   assert.equal(L.dailyDayRun, 1);
   assert.equal(L.dailyDayBest, 3);
+  // m5: weekly-road finishes on later days feed no day streak.
+  let W = L;
+  for (const day of ['2026-10-07', '2026-10-08', '2026-10-09']) W = applyEvent(W, 'finish', { finishedLevel: 'daily', weekly: true }, day);
+  assert.equal(W.dailyDayRun, 1);
+  assert.equal(W.dailyDayBest, 3);
+  assert.equal(W.lastDailyDay, '2026-10-06');
   assert.equal(opensMedalGate('grandma', 'bronze'), true);
   assert.equal(opensMedalGate('grandma', null), false);
   L = applyEvent(L, 'finish', { finishedLevel: 'grandma', medal: 'gold', isCoop: true, partnerKey: 'p1' }, '2026-10-06');
@@ -239,6 +248,29 @@ test('ride tracker: False Start and So Close', () => {
   const late = t.crash({ ref: 'r1', distance: 245, raceDistance: 250 });
   assert.deepEqual(late, { falseStart: false, soClose: true });
   assert.equal(t.snapshot().rideCrashes, 3);
+});
+
+test('ride tracker: False Start only within 3 s of GO, versus included (m1)', () => {
+  // Versus ticks frame() with ref null each playing frame (game.js · _updateVersus).
+  const vs = new RideTracker();
+  vs.go();
+  for (let i = 0; i < 40; i++) vs.frame(0.1, { ref: null, playing: true });   // 4 s after GO
+  assert.equal(vs.crash({ ref: null, distance: 30, raceDistance: 500 }).falseStart, false);
+  vs.go();
+  for (let i = 0; i < 20; i++) vs.frame(0.1, { ref: null, playing: true });   // 2 s after GO
+  assert.equal(vs.crash({ ref: null, distance: 8, raceDistance: 500 }).falseStart, true);
+  // A versus GO right after a solo ride (a different ref) still counts from GO.
+  const t = new RideTracker();
+  t.frame(1, frame({ ref: 'solo' }));
+  t.go();
+  t.frame(0.5, { ref: null, playing: true });
+  assert.equal(t.crash({ ref: null }).falseStart, true);
+  // A GO is fresh only until the first frame or crash: a later ride's crash
+  // with no GO of its own is not a False Start.
+  const u = new RideTracker();
+  u.go();
+  assert.equal(u.crash({ ref: 'a' }).falseStart, true);
+  assert.equal(u.crash({ ref: 'b' }).falseStart, false);
 });
 
 test('ride tracker: off-road, centre strip, boost chain, steady hands, assist', () => {
@@ -314,12 +346,12 @@ test('manager: an old save keeps everything earned; v1 stats migrate', async () 
   const { AchievementManager } = await import('../../js/achievements.js');
   const m = new AchievementManager();
   m.demo = false;
-  assert.deepEqual(m.getEarnedIds().sort(), ['grandma_red', 'home_sweet']);
+  // m21: the migration grants what the old distance already deserved.
+  assert.deepEqual(m.getEarnedIds().sort(), ['first_500m', 'grandma_red', 'home_sweet']);
   assert.equal(m.getCumulativeDistance(), 600);
   assert.equal(JSON.parse(localStorage.getItem('tandemonium_achievement_stats')).v, STATS_VERSION);
-  // The next event earns what the old distance already deserved.
   const got = m.record('coins', { amount: 5 }).map(a => a.id);
-  assert.ok(got.includes('first_500m') && got.includes('coin_first'), got.join(','));
+  assert.ok(got.includes('coin_first'), got.join(','));
   assert.ok(m.getEarnedIds().includes('grandma_red'));
 });
 
@@ -339,6 +371,143 @@ test('manager: badge screen — 93 rows, hidden as ???, retired never, progress'
   assert.equal(m.getSections().length, 14);
   m.record('crash', { falseStart: true });
   assert.equal(m.getAllDefinitions().find(d => d.id === 'false_start').name, 'False Start');
+});
+
+test('manager: streak badges show the streak held today, not a stale run (m6)', async () => {
+  const { dailyKey } = await import('../../js/daily-seed.js');
+  const day = (off) => new Date(Date.parse(dailyKey() + 'T00:00:00Z') + off * 86400000).toISOString().slice(0, 10);
+  const fin = { practice: 1 };
+  // A 2-day run a month ago: the lifetime counter still says 2.
+  globalThis.localStorage = fakeStorage({
+    tandemonium_achievement_stats: JSON.stringify({ v: STATS_VERSION, dailyDayRun: 2, dailyDayBest: 2, lastDailyDay: day(-30) }),
+    tandemonium_daily: JSON.stringify({ [day(-31)]: fin, [day(-30)]: fin }),
+  });
+  const { AchievementManager } = await import('../../js/achievements.js');
+  const m = new AchievementManager();
+  m.demo = false;
+  assert.deepEqual(m.getAllDefinitions().find(d => d.id === 'daily_streak_3').progress, [0, 3]);
+  // Ridden yesterday and today: 2 days live.
+  localStorage.setItem('tandemonium_daily', JSON.stringify({ [day(-1)]: fin, [day(0)]: fin }));
+  assert.deepEqual(m.getAllDefinitions().find(d => d.id === 'daily_streak_7').progress, [2, 7]);
+});
+
+test('manager: the stoker (and local co-op) ride tracker earns ride-scoped achievements (m7)', async () => {
+  globalThis.localStorage = fakeStorage();
+  const { AchievementManager } = await import('../../js/achievements.js');
+  const m = new AchievementManager();
+  m.demo = false;
+  // The stoker's bike: remote state only (no physics), on the centre strip.
+  const rm = { raceDistance: 500 };
+  const game = { state: 'playing', raceManager: rm, _assistWeight: 0,
+    bike: { lean: 0, fallen: false, speed: 8, _lateralOffset: 0.2, onCenterStrip: true, boostTimer: 0 } };
+  m.ride.go();
+  const ids = [];
+  for (let i = 0; i < 62; i++) ids.push(...m.check({ dt: 1, speed: 8, ...m.rideFrame(1, game) }).map(a => a.id));
+  assert.ok(ids.includes('steady_hands') && ids.includes('centerline'), ids.join(','));
+  // A clean finish: Stayed on the Road and No Trees.
+  const clean = m.finish({ ref: rm, finishedLevel: 'daily', crashes: 0, restarts: 0 }).map(a => a.id);
+  assert.ok(clean.includes('no_offroad') && clean.includes('no_trees_daily'), clean.join(','));
+  // A stoker crash has no cause: it counts as a crash and against No Trees.
+  const m2 = new AchievementManager();
+  m2.demo = false;
+  const rm2 = { raceDistance: 500 };
+  m2.rideFrame(1, { ...game, raceManager: rm2 });
+  m2.crash('unknown', { ref: rm2, distance: 100, raceDistance: 500 });
+  assert.equal(m2.ride.snapshot().treeHits, 1);
+  assert.ok(!m2.finish({ ref: rm2, finishedLevel: 'daily', crashes: 1, restarts: 0 }).some(a => a.id === 'no_trees_daily'));
+});
+
+// ── m21 · retroactive credit from existing saves ──────────────────
+
+async function synthSaves() {
+  const { getMedals } = await import('../../js/race-config.js');
+  const gold = getMedals('grandma', 'chill').gold;
+  const fin = { practice: 2, partners: ['pal'] };
+  return {
+    tandemonium_records: JSON.stringify({
+      'grandma|chill|solo': { timeMs: gold - 1000, splits: [], date: '2026-09-01' },
+      'grandma|chill|coop': { timeMs: gold + 60000, splits: [], date: '2026-09-02' },
+      'daily:2026-09-10|chill|solo': { timeMs: 9000000, splits: [], date: '2026-09-10' },
+      'junk|x|solo': { nope: 1 },
+    }),
+    tandemonium_slingshot: JSON.stringify({ v: 3, best: 540, runs: 12, stage: 4, daily: { key: '2026-09-11', best: 300, runs: 2 } }),
+    tandemonium_daily: JSON.stringify({ '2026-09-10': fin, '2026-09-11': fin, '2026-09-12': { practice: 1 }, '2026-09-20': { practice: 0 } }),
+    tandemonium_wallet: JSON.stringify({ v: 1, coins: 50, earned: 1500, lv: { sling: 10, wheels: 2 }, rebuilds: 0 }),
+  };
+}
+
+test('stats: seeding from saves raises counters, never lowers them (m21)', async () => {
+  const { seedStats } = await import('../../js/achievement-defs.js');
+  const saves = Object.fromEntries(Object.entries(await synthSaves()).map(([k, v]) => [k, JSON.parse(v)]));
+  const L = seedStats(migrateStats({ cumulativeDistance: 800 }), {
+    records: saves.tandemonium_records, sling: saves.tandemonium_slingshot,
+    daily: saves.tandemonium_daily, wallet: saves.tandemonium_wallet,
+  });
+  assert.equal(L.cumulativeDistance, 800);
+  assert.equal(L.finishes, 3);
+  assert.equal(L.personalBests, 3);
+  assert.equal(L.coopFinishes, 1);
+  assert.deepEqual(L.golds, ['grandma']);
+  assert.equal(L.medalKeys, 1);
+  assert.equal(L.slingBest, 540);
+  assert.equal(L.slingStage, 3);
+  assert.equal(L.slingLaunches, 12);
+  assert.deepEqual(L.launchDays, ['2026-09-11']);
+  assert.equal(L.rides, 15);
+  assert.equal(L.days, 3);                       // 09-20 has no finish
+  assert.equal(L.dailyPractice, 5);
+  assert.equal(L.dailyDayBest, 3);
+  assert.deepEqual(L.partners, ['pal']);
+  assert.equal(L.coinsEarned, 1500);
+  assert.equal(L.upgrades, 12);
+  assert.equal(L.maxedAny, true);
+  assert.equal(L.maxedAll, false);
+  assert.ok(L.coinsSpent > 1000);
+  // Loses nothing: bigger counters and existing lists survive.
+  const big = { ...emptyStats(), finishes: 99, slingBest: 2000, coinsEarned: 1e5, days: 40, dayList: ['2026-09-10', '2026-08-01'], golds: ['daily'] };
+  const K = seedStats(big, { records: saves.tandemonium_records, sling: saves.tandemonium_slingshot, daily: saves.tandemonium_daily, wallet: saves.tandemonium_wallet });
+  assert.equal(K.finishes, 99);
+  assert.equal(K.slingBest, 2000);
+  assert.equal(K.coinsEarned, 1e5);
+  assert.equal(K.days, 42);                      // + 09-11 and 09-12
+  assert.deepEqual([...K.golds].sort(), ['daily', 'grandma']);
+  assert.ok(K.dayList.includes('2026-08-01'));
+  // A rebuilt wallet proves every upgrade was maxed.
+  const R = seedStats(emptyStats(), { wallet: { earned: 0, lv: {}, rebuilds: 2 } });
+  assert.equal(R.maxedAll, true);
+  assert.ok(R.upgrades > 0 && R.coinsSpent > 1000);
+  // No saves: nothing changes.
+  assert.deepEqual(seedStats(emptyStats(), {}), emptyStats());
+});
+
+test('manager: an old player is granted what their saves already prove, once (m21)', async () => {
+  globalThis.localStorage = fakeStorage({
+    ...(await synthSaves()),
+    tandemonium_achievements: JSON.stringify([{ id: 'home_sweet', earnedAt: 1 }]),
+    tandemonium_achievement_stats: JSON.stringify({ cumulativeDistance: 1200 }),
+  });
+  const { AchievementManager } = await import('../../js/achievements.js');
+  const m = new AchievementManager();
+  const ids = m.getEarnedIds();
+  for (const id of ['home_sweet', 'first_km', 'first_finish', 'new_best', 'medal_key', 'coop_first', 'sling_first',
+    'sling_stage1', 'sling_stage3', 'sling_500', 'coin_first', 'coins_1000', 'first_upgrade', 'big_spender',
+    'rides_10', 'days_3', 'daily_streak_3']) {
+    assert.ok(ids.includes(id), `${id} should be granted (${ids.join(',')})`);
+  }
+  for (const id of ['sling_stage5', 'all_gold', 'garage_royalty', 'days_7']) assert.ok(!ids.includes(id), `${id} is not proven`);
+  const saved = JSON.parse(localStorage.getItem('tandemonium_achievement_stats'));
+  assert.equal(saved.v, STATS_VERSION);
+  assert.equal(saved.cumulativeDistance, 1200);
+  assert.equal(saved.slingBest, 540);
+  // Seeding happens on migration only: a v2 save is read as is.
+  localStorage.setItem('tandemonium_slingshot', JSON.stringify({ v: 3, best: 900, runs: 40, stage: 6 }));
+  const again = new AchievementManager();
+  assert.equal(again.getStats().slingBest, 540);
+  // A brand-new player with no saves writes nothing.
+  globalThis.localStorage = fakeStorage();
+  const fresh = new AchievementManager();
+  assert.equal(fresh.getEarnedIds().length, 0);
+  assert.equal(localStorage.getItem('tandemonium_achievement_stats'), null);
 });
 
 test('manager: the demo never awards a full-game-only achievement', async () => {
