@@ -1,1 +1,0 @@
-window.__TOURIST_MAPS_KEY__ = "AIzaSyDWDZ-E6A5fbqdIn1xuJD0T76Dm1wXIe4s";
