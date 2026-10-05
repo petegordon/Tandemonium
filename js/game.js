@@ -4034,19 +4034,19 @@ class Game {
   }
 
   _checkAchievements(dt) {
-    const state = {
-      distance: this.bike.distanceTraveled,
-      cumulativeDistance: this.achievements.getCumulativeDistance(),
-      speed: this.bike.speed,
-      dt,
-      offsetScore: this.sharedPedal ? this.sharedPedal.offsetScore : 0,
-      collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
-      totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
-      finishedLevel: null,
-      isMultiplayer: this.mode !== 'solo',
-      safePct: 0,
-      ...this.achievements.rideFrame(dt, this),   // #401: off-road, centre strip, boost chain, steady hands
-    };
+    // One state object, reused every frame (no per-frame allocation here).
+    const state = this._achFrameState || (this._achFrameState = {});
+    state.distance = this.bike.distanceTraveled;
+    state.cumulativeDistance = this.achievements.getCumulativeDistance();
+    state.speed = this.bike.speed;
+    state.dt = dt;
+    state.offsetScore = this.sharedPedal ? this.sharedPedal.offsetScore : 0;
+    state.collectibles = this.collectibleManager ? this.collectibleManager.collected : 0;
+    state.totalCollectibles = this.collectibleManager ? this.collectibleManager.getTotalItems() : 0;
+    state.finishedLevel = null;
+    state.isMultiplayer = this.mode !== 'solo';
+    state.safePct = 0;
+    Object.assign(state, this.achievements.rideFrame(dt, this));   // #401: off-road, centre strip, boost chain, steady hands
 
     if (this.contributionTracker) {
       const summary = this.contributionTracker.getSummary();
