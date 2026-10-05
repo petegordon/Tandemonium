@@ -1449,6 +1449,10 @@ export class Lobby {
 
   /** The SOLO list is shared with couch co-op, so name the card as it is shown. */
   _refreshTouristCard() {
+    // PR #397 m10: the SOLO list was built for one rider or for the couch;
+    // rebuild it when the other one is about to see it (Slingshot card).
+    const want = this._pendingMode === 'local' ? 'local' : this._pendingMode === 'solo' ? 'solo' : null;
+    if (want && this._soloListFor && want !== this._soloListFor) this._rebuildLevelCards();
     const name = document.querySelector('#level-cards .level-card-tourist .level-card-name');
     if (name) name.textContent = this._touristLabel();
   }
@@ -1801,7 +1805,10 @@ export class Lobby {
     // Slingshot lives under SOLO: a mode, not a level, so its card skips the
     // difficulty/START RIDE flow and opens the garage directly. #400: the
     // edition decides (the demo keeps it, with a stage cap).
-    if (mode === 'solo' && isClickable && rules.slingshot.enabled) {
+    // PR #397 m10: not for couch co-op, which shares this list — the Slingshot
+    // is one rider, and leaving through it silently dropped P2.
+    this._soloListFor = mode !== 'solo' ? null : this._pendingMode === 'local' ? 'local' : 'solo';
+    if (mode === 'solo' && isClickable && rules.slingshot.enabled && this._pendingMode !== 'local') {
       const card = document.createElement('button');
       card.className = 'level-card level-card-slingshot';
       card.dataset.levelId = 'slingshot';
