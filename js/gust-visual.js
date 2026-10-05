@@ -98,8 +98,13 @@ export class GustVisual {
     const along = -SPAWN_BEHIND + Math.random() * (SPAWN_AHEAD + SPAWN_BEHIND);
 
     // The bike's heading gives us the two axes to place along.
+    // #395.1: the rider's right of forward (sin h, 0, cos h) in three.js y-up
+    // is (-cos h, 0, sin h). A positive lean tilts the bike that way (rotation
+    // about its local +Z) and BikeModel turns it that way (heading -= lean·…),
+    // so a positive push (dir = +1) must carry the dust to the right. This used
+    // (cos h, -sin h) — the left — and the streaks blew against the push.
     const fx = Math.sin(bike.heading), fz = Math.cos(bike.heading);
-    const rx = fz, rz = -fx;   // right-hand perpendicular
+    const rx = -fz, rz = fx;   // rider's right
 
     this.hx[i] = bike.position.x + rx * lateral + fx * along;
     this.hz[i] = bike.position.z + rz * lateral + fz * along;

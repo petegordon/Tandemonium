@@ -30,6 +30,8 @@ page.on('console', m => { if (m.type()==='error') console.log('   console.error:
 
 await page.bringToFront();
 const t0 = Date.now();
+// D6 (#400): a returning player; the first-launch tutorial has its own smoke (smoke:tutorial).
+await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
 await page.goto(`http://127.0.0.1:${PORT}/index.html`,{waitUntil:'domcontentloaded'});
 await page.waitForFunction(()=>!!window._game,{timeout:45000});
 const steps = [];

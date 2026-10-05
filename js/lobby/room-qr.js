@@ -9,6 +9,7 @@
 // ============================================================
 
 import { SITE_URL } from '../config.js';
+import { buildJoinUrl, isDemoEdition, isMediaEnabled } from '../edition.js';
 
 /**
  * The shareable join URL for a room code. In Electron we use the production
@@ -20,7 +21,8 @@ export function joinUrl(code) {
   const baseUrl = isDesktop
     ? SITE_URL
     : window.location.origin + window.location.pathname;
-  return baseUrl + '?room=' + code;
+  // B4a: the partner opens the same edition (demo) and media setting.
+  return buildJoinUrl(baseUrl, code, { demo: isDemoEdition(), media: isMediaEnabled() });
 }
 
 /** Render the room QR + URL and wire long-press-to-copy. Returns the URL. */

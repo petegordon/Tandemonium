@@ -19,17 +19,9 @@ export const STORAGE_KEY = 'tandemonium_records';
 export const MAX_KEYS = 200;
 
 /**
- * D-4 · how many ghost tracks to keep. A track is ~10-25 KB, versus a few
- * hundred bytes for a plain record, so tracks are budgeted separately and
- * dropped first: losing a ghost costs a nicety, losing the whole store costs
- * every best the player has.
- */
-export const MAX_TRACKS = 8;
-
-/**
  * Record key. Modes are kept apart because they are not comparable rides:
  * one person steering is a different game from two.
- * @param {string} levelId  'grandma' | 'castle' | …
+ * @param {string} levelId  'grandma' | 'daily' | …
  * @param {string} difficulty 'chill' | 'adventurous' | …
  * @param {'solo'|'coop'|'versus'} mode
  */
@@ -49,72 +41,103 @@ export function getBest(store, k) {
  *
  * @param {object} store    mutated in place (and returned) — the caller saves it
  * @param {string} k        key()
- * @param {object} run      { timeMs, splits?: number[], collectibles?, crashes?, date? }
- * @returns {{ isNewBest: boolean, delta: number|null, best: object }}
+ * @param {object} run      { timeMs, splits?: number[], collectibles?, crashes?, date?,
+ *                            medal?: the medal this run keeps (helped: capped at bronze) }
+ * @param {object} [opts]   { medalOf(rec) } — the medal an older record's time earns,
+ *                          for records saved before bestMedal existed
+ * @returns {{ isNewBest: boolean, faster: boolean, delta: number|null, best: object }}
  *          `delta` is this run minus the previous best, in ms (negative = faster).
+ *          `faster`: quicker than the previous best (or the first) — what NEW BEST pays for (M3).
  */
-export function recordRun(store, k, run) {
+export function recordRun(store, k, run, opts = {}) {
   if (!store || !k || !run || typeof run.timeMs !== 'number' || !(run.timeMs > 0)) {
     return { isNewBest: false, delta: null, best: getBest(store, k) };
   }
+  // #403 · a run with the Royal Shortcut taken did not ride the whole road:
+  // it can finish, but it never becomes a best.
+  if (run.skipped) {
+    const best = getBest(store, k);
+    return { isNewBest: false, faster: false, delta: best ? Math.round(run.timeMs) - best.timeMs : null, best };
+  }
   const previous = getBest(store, k);
+  // M3 · the best medal EVER on this key (helped capped at bronze by the
+  // caller). It survives the time it was won with being replaced, so a slower
+  // unaided finish can never take away what a Slingshot gate already read.
+  const prevMedal = previous ? betterMedal(validMedal(previous.bestMedal),
+    typeof opts.medalOf === 'function' ? validMedal(opts.medalOf(previous)) : null) : null;
+  const bestMedal = betterMedal(prevMedal, validMedal(run.medal));
+  const keep = (rec) => { if (bestMedal) rec.bestMedal = bestMedal; return rec; };
   const entry = {
     timeMs: Math.round(run.timeMs),
     splits: Array.isArray(run.splits) ? run.splits.map(n => Math.round(n)) : [],
     collectibles: run.collectibles ?? 0,
     crashes: run.crashes ?? 0,
-    date: run.date || new Date().toISOString(),
-    // D-4: the line the best was ridden on, for the ghost. Only ever kept for
-    // the CURRENT best — a ghost of a run you have already beaten is not a
-    // target, it is clutter.
-    track: run.track || null
+    date: run.date || new Date().toISOString()
   };
+  // #403 · a helped (🛟) best is kept and flagged, but never replaces an
+  // unassisted one; and the first unassisted finish always replaces a 🛟 best.
+  if (run.helped) entry.helped = true;
 
   if (!previous) {
-    store[k] = entry;
+    store[k] = keep(entry);
     trim(store);
-    return { isNewBest: true, delta: null, best: entry };
+    return { isNewBest: true, faster: true, delta: null, best: entry };
   }
 
   const delta = entry.timeMs - previous.timeMs;
-  if (delta < 0) {
-    store[k] = entry;
-    trim(store);
-    return { isNewBest: true, delta, best: entry };
+  const faster = delta < 0;
+  if (entry.helped && !previous.helped) {
+    keep(previous);
+    return { isNewBest: false, faster: false, delta, best: previous };
   }
+  if (!entry.helped && previous.helped) {
+    store[k] = keep(entry);
+    trim(store);
+    return { isNewBest: true, faster, delta, best: entry, replacedHelped: true };
+  }
+  if (faster) {
+    store[k] = keep(entry);
+    trim(store);
+    return { isNewBest: true, faster, delta, best: entry };
+  }
+  keep(previous);
   // A slower run still teaches us something when the old best has no splits.
   if (previous.splits.length === 0 && entry.splits.length > 0) {
     previous.splits = entry.splits;
   }
-  return { isNewBest: false, delta, best: previous };
+  return { isNewBest: false, faster: false, delta, best: previous };
 }
 
-/** Drop the oldest entries when the store grows past MAX_KEYS. */
+const MEDAL_RANK = { bronze: 1, silver: 2, gold: 3 };
+const validMedal = m => (MEDAL_RANK[m] ? m : null);
+
+/** The better of two medals ('gold' | 'silver' | 'bronze' | null). */
+export function betterMedal(a, b) {
+  return (MEDAL_RANK[b] || 0) > (MEDAL_RANK[a] || 0) ? b : validMedal(a);
+}
+
+/**
+ * Drop the oldest entries when the store grows past MAX_KEYS — Today's Road
+ * keys only (m20). Each day adds one `daily:<day>|…` key, while the level
+ * records are few and permanent (the Slingshot stage gates read them), so the
+ * dailies go first, oldest first, and a level record is never dropped.
+ */
 export function trim(store) {
   const keys = Object.keys(store);
 
-  // D-4: ghost tracks first — oldest tracks are dropped while their records
-  // (the times, which are what the player actually cares about) stay.
-  const withTracks = keys.filter(k => store[k] && store[k].track);
-  if (withTracks.length > MAX_TRACKS) {
-    withTracks
-      .sort((a, b) => String(store[a].date).localeCompare(String(store[b].date)))
-      .slice(0, withTracks.length - MAX_TRACKS)
-      .forEach(k => { delete store[k].track; });
+  // The D-4 ghost (removed in #400) stored a ~10-25 KB ride track on each
+  // best. Old stores may still carry them: drop them, keep the times.
+  for (const k of keys) {
+    if (store[k] && store[k].track !== undefined) delete store[k].track;
   }
 
   if (keys.length <= MAX_KEYS) return store;
   keys
+    .filter(k => k.startsWith('daily:'))
     .sort((a, b) => String(store[a].date).localeCompare(String(store[b].date)))
     .slice(0, keys.length - MAX_KEYS)
     .forEach(k => { delete store[k]; });
   return store;
-}
-
-/** D-4 · the ghost track stored with a best, or null. */
-export function getTrack(store, k) {
-  const rec = getBest(store, k);
-  return (rec && rec.track) || null;
 }
 
 /**
@@ -159,6 +182,23 @@ export function medalFor(timeMs, thresholds) {
 }
 
 export const MEDAL_ICON = { gold: '🥇', silver: '🥈', bronze: '🥉' };
+
+/** #403 · the mark on a medal or best earned with the helping hand. */
+export const HELPED_ICON = '🛟';
+
+/**
+ * #403 · the medal a run actually keeps. A helped run (any helping-hand tier,
+ * or ASSIST, at any point) is capped at bronze; a run with a skipped
+ * checkpoint earns none.
+ * @param {'gold'|'silver'|'bronze'|null} medal  what the time alone earns
+ * @param {{ helped?: boolean, skipped?: boolean }} [flags]
+ */
+export function capMedal(medal, flags = {}) {
+  if (!medal) return null;
+  if (flags.skipped) return null;
+  if (flags.helped) return 'bronze';
+  return medal;
+}
 
 /** The next medal up from `medal`, or null when there is nothing better. */
 export function nextMedal(medal) {

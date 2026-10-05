@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   key, getBest, recordRun, trim, splitDelta, formatDelta, formatTime,
-  medalFor, nextMedal, MAX_KEYS
+  medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON, betterMedal
 } from '../../js/records.js';
 
 test('keys separate level, difficulty and mode', () => {
@@ -56,15 +56,38 @@ test('nonsense runs are ignored', () => {
   assert.equal(getBest(store, 'k'), null);
 });
 
-test('the store is trimmed oldest-first', () => {
+test('the store is trimmed oldest-first (Today\'s Road keys)', () => {
   const store = {};
+  const dk = i => `daily:${new Date(2020, 0, 1 + i).toISOString().slice(0, 10)}|adventurous|solo`;
   for (let i = 0; i < MAX_KEYS + 10; i++) {
-    store['k' + i] = { timeMs: 1000, splits: [], date: new Date(2020, 0, 1 + i).toISOString() };
+    store[dk(i)] = { timeMs: 1000, splits: [], date: new Date(2020, 0, 1 + i).toISOString() };
   }
   trim(store);
   assert.equal(Object.keys(store).length, MAX_KEYS);
-  assert.equal(store.k0, undefined, 'the oldest went first');
-  assert.ok(store['k' + (MAX_KEYS + 9)], 'the newest stayed');
+  assert.equal(store[dk(0)], undefined, 'the oldest went first');
+  assert.ok(store[dk(MAX_KEYS + 9)], 'the newest stayed');
+});
+
+test('m20: trimming drops old Today\'s Road keys first and never a level record', () => {
+  const store = {
+    // The oldest entry in the store, and the gold that opens Slingshot stage 7.
+    'grandma|adventurous|solo': { timeMs: 1000, splits: [], date: '2019-01-01T00:00:00.000Z', bestMedal: 'gold' },
+    'tutorial|tutorial|solo': { timeMs: 1000, splits: [], date: '2019-01-02T00:00:00.000Z' },
+  };
+  for (let i = 0; i < MAX_KEYS + 5; i++) {
+    const day = new Date(2020, 0, 1 + i).toISOString();
+    store[`daily:${day.slice(0, 10)}|adventurous|solo`] = { timeMs: 1000, splits: [], date: day };
+  }
+  trim(store);
+  assert.equal(Object.keys(store).length, MAX_KEYS);
+  assert.ok(store['grandma|adventurous|solo'], "Grandma's gold survives");
+  assert.ok(store['tutorial|tutorial|solo']);
+  assert.equal(store['daily:2020-01-01|adventurous|solo'], undefined, 'the oldest daily went first');
+  // Only level records over the limit: nothing is dropped.
+  const levels = {};
+  for (let i = 0; i < MAX_KEYS + 3; i++) levels[`lvl${i}|chill|solo`] = { timeMs: 1, splits: [], date: '2020-01-01' };
+  trim(levels);
+  assert.equal(Object.keys(levels).length, MAX_KEYS + 3);
 });
 
 test('split deltas compare against the best at the same checkpoint', () => {
@@ -106,22 +129,87 @@ test('the next medal up is what the screen should point at', () => {
   assert.equal(nextMedal('gold'), null);
 });
 
-// D-4 (review) · the ghost-track budget has to actually evict, or the store
-// grows until a save silently fails and the player loses every best they have.
-test('ghost tracks are evicted before records are', async () => {
-  const { MAX_TRACKS } = await import('../../js/records.js');
+// #400 · the D-4 ghost is gone. Stores saved while it existed carry a ride
+// track on each best; those are dropped and every time survives.
+test('legacy ghost tracks are dropped, records are kept', () => {
   const store = {};
   const track = { hz: 5, count: 2, data: [0, 0, 0, 1, 0, 0] };
-  for (let i = 0; i < MAX_TRACKS + 4; i++) {
+  for (let i = 0; i < 12; i++) {
     store['k' + i] = {
       timeMs: 1000, splits: [], collectibles: 0, crashes: 0,
       date: new Date(2026, 0, 1 + i).toISOString(), track
     };
   }
   trim(store);
-  const withTracks = Object.values(store).filter(r => r.track).length;
-  assert.equal(withTracks, MAX_TRACKS, 'too many tracks kept');
-  assert.equal(Object.keys(store).length, MAX_TRACKS + 4, 'the RECORDS must all survive');
-  assert.equal(store.k0.track, undefined, 'the oldest track went first');
-  assert.equal(store.k0.timeMs, 1000, 'but its time is still there');
+  assert.equal(Object.values(store).filter(r => 'track' in r).length, 0, 'no tracks kept');
+  assert.equal(Object.keys(store).length, 12, 'the RECORDS must all survive');
+  assert.equal(store.k0.timeMs, 1000, 'times are still there');
+});
+
+// ---- #403 · the helping hand ----------------------------------------------
+
+test('#403 a helped run caps the medal at bronze; a skipped one earns none', () => {
+  assert.equal(capMedal('gold', { helped: true }), 'bronze');
+  assert.equal(capMedal('silver', { helped: true }), 'bronze');
+  assert.equal(capMedal('bronze', { helped: true }), 'bronze');
+  assert.equal(capMedal(null, { helped: true }), null, 'too slow for bronze is still no medal');
+  assert.equal(capMedal('gold', { skipped: true }), null);
+  assert.equal(capMedal('gold', { helped: true, skipped: true }), null);
+  assert.equal(capMedal('gold'), 'gold');
+  assert.equal(HELPED_ICON, '🛟');
+});
+
+test('#403 a helped run is recorded with 🛟 when there is no best yet', () => {
+  const store = {};
+  const r = recordRun(store, 'k', { timeMs: 200000, helped: true });
+  assert.equal(r.isNewBest, true);
+  assert.equal(getBest(store, 'k').helped, true);
+});
+
+test('#403 a helped run never overwrites an unassisted best, however fast', () => {
+  const store = {};
+  recordRun(store, 'k', { timeMs: 161000 });
+  const r = recordRun(store, 'k', { timeMs: 120000, helped: true });
+  assert.equal(r.isNewBest, false);
+  assert.equal(getBest(store, 'k').timeMs, 161000);
+  assert.equal(getBest(store, 'k').helped, undefined);
+});
+
+test('#403 a faster helped run replaces a helped best; an unassisted finish always replaces it', () => {
+  const store = {};
+  recordRun(store, 'k', { timeMs: 200000, helped: true });
+  const faster = recordRun(store, 'k', { timeMs: 190000, helped: true });
+  assert.equal(faster.isNewBest, true);
+  assert.equal(getBest(store, 'k').timeMs, 190000);
+  assert.equal(getBest(store, 'k').helped, true);
+  const real = recordRun(store, 'k', { timeMs: 210000 });
+  assert.equal(real.isNewBest, true, 'the first unassisted finish outranks any 🛟 best');
+  assert.equal(real.replacedHelped, true);
+  assert.equal(getBest(store, 'k').timeMs, 210000);
+  assert.equal(getBest(store, 'k').helped, undefined);
+});
+
+test('#403 a run with a skipped checkpoint is never a best', () => {
+  const store = {};
+  const first = recordRun(store, 'k', { timeMs: 100000, skipped: true });
+  assert.equal(first.isNewBest, false);
+  assert.equal(getBest(store, 'k'), null);
+  recordRun(store, 'k', { timeMs: 161000 });
+  const r = recordRun(store, 'k', { timeMs: 90000, skipped: true });
+  assert.equal(r.isNewBest, false);
+  assert.equal(getBest(store, 'k').timeMs, 161000);
+});
+
+test('M3: records keep the best medal ever; a legacy record gets its medal from its time', () => {
+  const store = {};
+  const t = { gold: 140000, silver: 170000, bronze: 210000 };
+  const medalOf = rec => capMedal(medalFor(rec.timeMs, t), { helped: !!rec.helped });
+  // A record saved before bestMedal existed: silver by its time.
+  store.k = { timeMs: 150000, splits: [], date: '2026-01-01' };
+  const r = recordRun(store, 'k', { timeMs: 200000, medal: 'bronze' }, { medalOf });
+  assert.equal(r.faster, false);
+  assert.equal(store.k.bestMedal, 'silver');
+  assert.equal(betterMedal('bronze', 'gold'), 'gold');
+  assert.equal(betterMedal('silver', null), 'silver');
+  assert.equal(betterMedal(null, 'nope'), null);
 });

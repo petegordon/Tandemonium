@@ -103,7 +103,6 @@ test('every kind has a banner that says what to do', () => {
     const text = telegraphText(kind);
     assert.ok(text.length > 3, `${kind} has no banner`);
   }
-  assert.match(telegraphText(KIND.GOOSE), /COAST/, 'the goose banner must say the verb');
 });
 
 test('a short ride is left alone rather than crammed', () => {
@@ -111,12 +110,13 @@ test('a short ride is left alone rather than crammed', () => {
   assert.deepEqual(planDisruptions(ride({ distance: 0 })), []);
 });
 
-test('only the three kinds we built ever appear', () => {
+test('only the kinds we built ever appear — gust and cobbles (#400 removed the goose)', () => {
   const kinds = new Set();
   for (let seed = 1; seed < 200; seed++) {
     for (const e of planDisruptions(ride({ seed, difficulty: 'daredevil' }))) kinds.add(e.kind);
   }
   assert.deepEqual([...kinds].sort(), Object.values(KIND).sort());
+  assert.deepEqual(Object.values(KIND).sort(), ['cobbles', 'gust']);
 });
 
 // E-2 · the gust has to be a shove that arrives and passes, and it has to be
@@ -172,23 +172,24 @@ test('events still keep clear of checkpoints', () => {
 });
 
 test('a ride shows as many different things as it has room for', () => {
-  // Adventurous gets two events. Picking each independently from three kinds
-  // meant a third of rides drew the same one twice — Today's Road drew gust,
-  // gust, so nobody riding it could meet the cobbles at all. Whatever else the
-  // schedule does, it must not hide a feature behind a coin flip.
+  // Adventurous gets two events. Picking each independently meant some rides
+  // drew the same one twice — Today's Road drew gust, gust, so nobody riding
+  // it could meet the cobbles at all. Whatever else the schedule does, it must
+  // not hide a feature behind a coin flip.
+  const kindCount = Object.values(KIND).length;
   for (let seed = 1; seed <= 400; seed++) {
     for (const [difficulty, want] of [['adventurous', 2], ['daredevil', 3]]) {
       const events = planDisruptions({ seed, distance: 500, difficulty, checkpoints: [125, 250, 375] });
       if (events.length < want) continue;   // one was dropped for a checkpoint
       const kinds = events.map(e => e.kind);
-      assert.equal(new Set(kinds).size, kinds.length,
-        `seed ${seed} on ${difficulty} repeated a kind: ${kinds.join(', ')}`);
+      assert.equal(new Set(kinds).size, Math.min(kinds.length, kindCount),
+        `seed ${seed} on ${difficulty} repeated a kind before using every kind: ${kinds.join(', ')}`);
     }
   }
 });
 
 test('across many roads every kind still turns up about as often as the others', () => {
-  const seen = { gust: 0, goose: 0, cobbles: 0 };
+  const seen = { gust: 0, cobbles: 0 };
   for (let seed = 1; seed <= 600; seed++) {
     for (const e of planDisruptions({ seed, distance: 500, difficulty: 'adventurous', checkpoints: [125, 250, 375] })) {
       seen[e.kind]++;
@@ -197,6 +198,6 @@ test('across many roads every kind still turns up about as often as the others',
   const counts = Object.values(seen);
   const total = counts.reduce((a, b) => a + b, 0);
   for (const [kind, n] of Object.entries(seen)) {
-    assert.ok(n > total * 0.25, `${kind} only appeared ${n} times in ${total}`);
+    assert.ok(n > total * 0.4, `${kind} only appeared ${n} times in ${total}`);
   }
 });
