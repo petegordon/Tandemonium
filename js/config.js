@@ -153,6 +153,12 @@ const SHARED_PHYSICS = {
   // this after the deadzone/response curve. 1 = the original feel; 0.25 =
   // a quarter as sensitive (requested for a phone player who found tilt too
   // twitchy). Phone tilt only — controller gyro (WebHID/Steam) is unchanged.
+  // Intended (PR #397 review R5): a phone gets BOTH this gain and the default
+  // Steering Feel 0.3 (wider dead zone, more smoothing, more degrees for a full
+  // lean). The two stack on purpose — phone tilt is meant to be the gentlest
+  // input. The riders' body lean and the tutorial's tilt calibration use the
+  // ungained lean (InputManager.getMotionLeanVisual), so this only softens
+  // steering, not what the player sees or how calibration measures.
   mobileTiltGain: 0.25,
   // Shared physics
   leanForce: 12,
