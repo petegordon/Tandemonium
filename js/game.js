@@ -61,7 +61,7 @@ import { World } from './world.js';
 // exists to prevent. It is loaded on demand instead, only when ?mode=tourist
 // asks for it, and a failure to load degrades to the normal world with a
 // message rather than a blank screen.
-import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt } from './tourist-config.js';
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor } from './tourist-config.js';
 import { formatDistance, skipLabel, headingForBearing } from './tourist-route.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
@@ -86,6 +86,7 @@ import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
+import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
@@ -670,7 +671,7 @@ class Game {
         this.lobby.selectedLevel = next;
         this.lobby._updateDifficultyVisibility(next.id);   // the road's fixed difficulty
         this._resetGame(false, true);
-      } else if (getEditionRules().isDemo) {
+      } else if (this._roomRules().isDemo) {
         this._showDemoEnd();
       } else {
         this._returnToLobby();
@@ -892,6 +893,17 @@ class Game {
   }
 
   /**
+   * PR #397 M1 · the rules this ride runs by: in an online room the most
+   * restrictive of both sides (a demo or old partner → unranked, no helping
+   * hand for an old one); otherwise this edition's.
+   */
+  _roomRules() {
+    const mine = getEditionRules();
+    if (this.mode !== 'captain' && this.mode !== 'stoker') return mine;
+    return mergeRoomRules(mine, (this.lobby && this.lobby._partnerRoom) || null);
+  }
+
+  /**
    * B-5 · is this a build where wishlisting means anything?
    *
    * The web build and the demo: yes — 68-88% of Next Fest wishlists come from
@@ -915,7 +927,7 @@ class Game {
     const cur = this.lobby.selectedLevel;
     if (!cur) return null;
     const locked = this.lobby._lockedLevelIds;
-    const next = nextAllowedLevel(LEVELS, cur.id, getEditionRules(),
+    const next = nextAllowedLevel(LEVELS, cur.id, this._roomRules(),   // M1: a room's rules
       (l) => !!(locked && locked.has(l.id)));
     return next ? this.lobby.resolveRoadLevel(next) : null;
   }
@@ -1139,8 +1151,10 @@ class Game {
         // Idempotent: captain may retry-send GAMEOVER for reliability.
         if (this.state === 'playing') this._showGameOver(true);
       } else if (eventType === EVT_CHECKPOINT) {
+        this._clearStokerTimeout();   // PR #397 M1: the captain made it — so did we
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
+        this._clearStokerTimeout();
         // Idempotent: captain may retry-send FINISH for reliability.
         if (this.state === 'victory' || this.state === 'finishCinematic') return;
         // Tutorial: show completion screen instead of normal victory
@@ -1163,6 +1177,11 @@ class Game {
     this.net.onConnected = () => {
       this._hideReconnecting();
       document.getElementById('disconnect-overlay').style.display = 'none';
+      // PR #397 M1: profile messages sent while disconnected were dropped —
+      // resend this side's room profile and the captain's helping-hand state.
+      this._sendProfile();
+      if (this.mode === 'captain' && this._help) this._sendHelpState();
+      this._resendTouristBarrier();   // PR #397 m15
       // Re-establish media call after data reconnection (only if P2P is already up)
       if (this.mode === 'captain' && this.net.transport === 'p2p') {
         this._initiateMediaCall();
@@ -1248,7 +1267,8 @@ class Game {
         // #403: the captain turned a failed ranked run into practice — it is
         // spent on this side too.
         if (this._rankedRunActive && profile.mode !== 'ranked' && this.state !== 'lobby') this._recordRankedDnf();
-        this._rankedRunActive = profile.mode === 'ranked';
+        // PR #397 M1: never ranked when this side's (or the room's) rules say no.
+        this._rankedRunActive = profile.mode === 'ranked' && this._roomRules().ranked;
         if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
         return;
       }
@@ -1312,6 +1332,8 @@ class Game {
       if (profile.achievements) {
         updateBadgeDisplay('partner-badges', profile.achievements);
       }
+      // PR #397 M1: the partner's edition and capabilities (null caps = old build).
+      if (this.lobby) this.lobby._partnerRoom = partnerFromProfile(profile);
       // Capture partner server ID for score attribution
       if (profile.serverId) this._partnerServerId = profile.serverId;
       // D-5: and their name, for the pair streak and the share strip.
@@ -3099,6 +3121,33 @@ class Game {
    * "Ready" means the tiles renderer is built for the route with a Maps key;
    * tiles then stream in during the ride as they do solo.
    */
+  /** PR #397 M1 · stoker: the captain passed a checkpoint / finished — drop TOO SLOW. */
+  _clearStokerTimeout() {
+    if (!this._stokerTimeoutShown) return;
+    this._stokerTimeoutShown = false;
+    const flash = document.getElementById('timeout-flash');
+    if (flash) flash.classList.remove('visible');
+  }
+
+  /**
+   * PR #397 m15 · back from a connection blip while a co-op Tourist barrier is
+   * pending: profile messages sent meanwhile were dropped, so resend them. The
+   * captain resends the plan and the flagged start (a stoker still in the room because they were lost joins now; one already in the game ignores both),
+   * and either side resends its touristReady if it had sent one.
+   */
+  _resendTouristBarrier() {
+    const p = this._touristBarrierPending;
+    if (!p || p.id !== this._touristBarrierId || !this.net || !this.net.connected) return;
+    // Kept past this side's own barrier (the partner may still be waiting on
+    // our ready) until the ride starts or the pair leaves (the id moves on).
+    if (this.state === 'playing' || this.state === 'countdown') return;
+    if (this.mode === 'captain' && p.plan && p.plan.from) {
+      this.net.sendProfile(RoomProtocol.touristPlan(p.plan.from, p.plan.explore ? null : p.plan.to, p.plan.anchor));
+      this.net.sendProfile(RoomProtocol.startRide(this.lobby._placementSalt || 0, null, true));
+    }
+    if (p.readySent) this.net.sendProfile(RoomProtocol.touristReady(true));
+  }
+
   async _startCoopTourist(plan) {
     const id = this._touristBarrierId = (this._touristBarrierId || 0) + 1;
     const isCurrent = () => id === this._touristBarrierId && !!this.net;
@@ -3115,19 +3164,26 @@ class Game {
     // A route this side could not rebuild, or a build with Tourist switched
     // off (no Maps key / the demo), cannot load — it fails the barrier at once.
     const canLoad = !!plan.route && getEditionRules().tourist && !!getMapsApiKey();
+    // PR #397 m15: a partner that fails while this side is still loading ends
+    // the wait at once, rather than after this side's own load settles.
+    const partnerFailed = partner.then(v => (v === true ? new Promise(() => {}) : 'partner'));
+    const pending = this._touristBarrierPending = { id, plan, readySent: false };
     const mine = canLoad
-      ? Promise.race([this._prepareTouristRide(plan, isCurrent), deadline])
+      ? Promise.race([this._prepareTouristRide(plan, isCurrent), deadline, partnerFailed])
       : Promise.resolve(false);
     const ok = await mine;
     if (!isCurrent()) { clearTimeout(timer); this._onPartnerTouristReady = null; return; }
     if (ok === true && this.net.connected) this.net.sendProfile(RoomProtocol.touristReady(true));
+    pending.readySent = ok === true;   // resent from onConnected if it was dropped
     const theirs = ok === true ? await Promise.race([partner, deadline]) : false;
     clearTimeout(timer);
     this._onPartnerTouristReady = null;
     if (!isCurrent()) return;
 
     if (ok !== true || theirs !== true) {
-      const why = ok !== true
+      if (this._touristBarrierPending === pending) this._touristBarrierPending = null;
+      const why = ok === 'partner' ? 'The streets didn’t load for both of you.'
+        : ok !== true
         ? (ok === 'timeout' ? 'The streets took too long to load here.' : 'The streets could not load on this device.')
         : (theirs === 'timeout' ? 'Your partner’s streets took too long to load.' : 'The streets didn’t load for both of you.');
       try { analytics.trackEvent('tourist_coop_abort', { mine: String(ok), theirs: String(theirs) }); } catch {}
@@ -3137,7 +3193,9 @@ class Game {
         // A partner that already got our ready may be past its barrier, on
         // the instructions screen: bring it back to the room too. (A partner
         // still waiting gives up on its own from the message above.)
-        if (ok === true) this.net.sendEvent(EVT_RETURN_ROOM);
+        // PR #397 M1: ALWAYS — a partner that never answered (an old build)
+        // would otherwise sit on its instructions screen.
+        this.net.sendEvent(EVT_RETURN_ROOM);
       }
       if (statusEl) statusEl.textContent = '';
       this._returnToRoom();
@@ -3203,7 +3261,9 @@ class Game {
     // default Scioto Mile origin, whatever was typed). The elevation lookup has
     // its own timeouts and falls back to a wide ground probe.
     let origin = null;
-    try { origin = await resolveOriginAt(plan.from); } catch { origin = null; }
+    // PR #397 m16: co-op — the captain looked the anchor up once and sent it.
+    if (plan.anchor) origin = originFromAnchor(plan.from, plan.anchor);
+    if (!origin) { try { origin = await resolveOriginAt(plan.from); } catch { origin = null; } }
     if (!isCurrent()) return false;
     const ready = await this._loadTouristWorld(apiKey, isCurrent, origin);
     if (!ready) return false;
@@ -4176,6 +4236,7 @@ class Game {
     // id analytics already uses; it identifies a browser, not a person.
     try { profile.deviceId = analytics.getDeviceId(); } catch {}
     profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
+    if (this.lobby.roomProfileFields) Object.assign(profile, this.lobby.roomProfileFields());   // PR #397 M1
     this.net.sendProfile(profile);
   }
 
@@ -4499,7 +4560,7 @@ class Game {
     const nextBtn = document.getElementById('btn-next-level');
     const playAgainBtn = document.getElementById('btn-play-again');
     const curLevel = this.lobby.selectedLevel;
-    const demoEnd = getEditionRules().isDemo && !!curLevel &&
+    const demoEnd = this._roomRules().isDemo && !!curLevel &&
       LEVELS.some(l => l.id === curLevel.id && !l.isTutorial);
     const hasNext = !!nextBtn && (!!this._nextLevel() || demoEnd);
     if (nextBtn) {

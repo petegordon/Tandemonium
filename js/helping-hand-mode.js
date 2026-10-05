@@ -35,6 +35,9 @@ class HelpingHandMode {
     if (level.isTutorial || this._tutorialActive) return false;
     if (level.timerEnabled === false || this._touristRoute || this.isTourist) return false;
     if (this._rankedRunActive) return false;   // ranked stays pure (D-2)
+    // PR #397 M1: an old-build partner can't follow the tier (its timer would
+    // run out first), so a room with one gets no helping hand at all.
+    if (this._roomRules && !this._roomRules().helpingHand && (this.mode === 'captain' || this.mode === 'stoker')) return false;
     return true;
   }
 

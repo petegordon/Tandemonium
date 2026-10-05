@@ -283,6 +283,20 @@ export async function resolveOriginAt(point) {
     : { ...base, height: TOURIST_CUSTOM_HEIGHT, anchored: false };   // wide probe
 }
 
+/**
+ * PR #397 m16 · the same anchor as resolveOriginAt(point), from a height the
+ * co-op captain already looked up ({ height, anchored } in touristPlan).
+ * null when the anchor is unusable (the caller then does its own lookup).
+ */
+export function originFromAnchor(point, anchor) {
+  if (!point || !anchor || !Number.isFinite(anchor.height)) return null;
+  return {
+    name: point.label || `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`,
+    lat: point.lat, lon: point.lon, heading: 0, custom: true,
+    height: anchor.height, anchored: !!anchor.anchored
+  };
+}
+
 /** Ground elevation for an anchor: Google first, open-meteo second, else null. */
 async function lookupElevation(lat, lon) {
   let elevation = NaN;
