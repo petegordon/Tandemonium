@@ -670,6 +670,11 @@ class Game {
       if (next) {
         this.lobby.selectedLevel = next;
         this.lobby._updateDifficultyVisibility(next.id);   // the road's fixed difficulty
+        // PR #397 m11: the captain drives level changes — the stoker adopts
+        // this levelSync, then the EVT_RESET below rebuilds its ride on it.
+        if (this.mode === 'captain' && this.net && this.net.connected) {
+          this.net.sendProfile(RoomProtocol.levelSync(next.id, this.lobby._levelSyncExtra(next)));
+        }
         this._resetGame(false, true);
       } else if (this._roomRules().isDemo) {
         this._showDemoEnd();
@@ -681,6 +686,11 @@ class Game {
     this._onTap('btn-wishlist-demo-end', () => {
       try { analytics.trackWishlistClick('demo_end'); } catch {}
       window.open('https://store.steampowered.com/app/4482940/Tandemonium/', '_blank', 'noopener');
+    });
+    // PR #397 m11: in a room, the demo's end goes back to the room together.
+    this._onTap('btn-demo-room', () => {
+      this._hideDemoEnd();
+      this._returnToRoom();
     });
     this._onTap('btn-demo-lobby', () => {
       this._hideDemoEnd();
@@ -938,8 +948,10 @@ class Game {
     if (!overlay) { this._returnToLobby(); return; }
     const wishlist = document.getElementById('btn-wishlist-demo-end');
     if (wishlist) wishlist.style.display = this._canWishlist ? '' : 'none';
+    const roomBtn = document.getElementById('btn-demo-room');   // PR #397 m11
+    if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
     overlay.style.display = 'flex';
-    const btns = [wishlist, document.getElementById('btn-demo-lobby')]
+    const btns = [wishlist, roomBtn, document.getElementById('btn-demo-lobby')]
       .filter(b => b && b.style.display !== 'none');
     this._setOverlayButtons(btns, 0);
     try { analytics.trackEvent('demo_end_shown', { level: this.lobby.selectedLevel && this.lobby.selectedLevel.id }); } catch {}
@@ -1320,6 +1332,12 @@ class Game {
           const avatarUrl = profile.avatar || this.lobby._partnerAvatarUrl;
           if (avatarUrl) this.recorder.showPartnerAvatar(this.lobby._avatarCache.get(avatarUrl) || avatarUrl);
         }
+        return;
+      }
+      // PR #397 m11: the captain's NEXT LEVEL — adopt its level (and road and
+      // difficulty); the EVT_RESET that follows rebuilds the ride on it.
+      if (profile && profile.type === ROOM_MSG.LEVEL_SYNC && this.mode === 'stoker') {
+        this.lobby._handleRoomMessage(profile);
         return;
       }
       // Ignore room sync messages (bikeSync, levelSync, startRide, playGame, difficultySync)
@@ -4562,7 +4580,8 @@ class Game {
     const curLevel = this.lobby.selectedLevel;
     const demoEnd = this._roomRules().isDemo && !!curLevel &&
       LEVELS.some(l => l.id === curLevel.id && !l.isTutorial);
-    const hasNext = !!nextBtn && (!!this._nextLevel() || demoEnd);
+    // PR #397 m11: never for the stoker — the captain drives level changes.
+    const hasNext = !!nextBtn && this.mode !== 'stoker' && (!!this._nextLevel() || demoEnd);
     if (nextBtn) {
       nextBtn.style.display = hasNext ? '' : 'none';
     }
