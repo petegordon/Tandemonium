@@ -923,11 +923,15 @@ export class InputManager {
       }
 
       // Fallback — bound Steer analog action. No real roll angle: Steam only
-      // exposes the post-mapping vector on this path.
-      this.motionLean = primary.steerX;
-      this.motionLeanVisual = primary.steerX;
-      this._smoothedLean = primary.steerX;
-      this._prevLeanRaw = primary.steerX;
+      // exposes the post-mapping vector on this path. m22 (PR #397 review):
+      // it's a stick-like axis, so it gets the same dead zone + response curve
+      // as the gamepad left stick (#399); the raw value still feeds the
+      // pseudo roll angle the tutorial samples.
+      const steer = stickResponse(primary.steerX);
+      this.motionLean = steer;
+      this.motionLeanVisual = steer;
+      this._smoothedLean = steer;
+      this._prevLeanRaw = steer;
       this._gyroRollAccum = -primary.steerX * 90;
       this._accelRoll = 0;
       if (Math.abs(primary.steerX) > 0.05) this._markActive();
