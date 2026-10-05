@@ -115,11 +115,45 @@ const card = await web.evaluate(() => {
 });
 console.log('daily card:', card);
 
+// 7. M4: a ranked run forces SAFETY and SPEED off and locks their buttons (HUD,
+// D-pad and quick menu) for the ride; the player's own choices come back after.
+const locks = await web.evaluate(() => {
+  const g = window._game;
+  const qmHidden = id => { g.quickMenu.sync(); return !!document.getElementById(id)?.hidden; };
+  g.mode = 'solo';
+  g.lobby.selectedLevel = { ...g.lobby.selectedLevel, isDaily: true };
+  g.safetyMode = true; g._safetyTouched = true; g.autoSpeed = true;
+  g.lobby._dailyMode = 'ranked';
+  g._startCountdown();
+  g.safetyBtn.click(); g.speedBtn.click();   // what the D-pad and the HUD do
+  const during = {
+    ranked: g._rankedRunActive, safety: g.safetyMode, speed: g.autoSpeed,
+    safetyDisabled: g.safetyBtn.disabled, speedDisabled: g.speedBtn.disabled,
+    qmSafetyHidden: qmHidden('qm-safety'), qmSpeedHidden: qmHidden('qm-speed'),
+  };
+  g._recordRankedDnf();                     // END RIDE spends the run and ends it
+  const after = {
+    ranked: g._rankedRunActive, safety: g.safetyMode, speed: g.autoSpeed,
+    safetyDisabled: g.safetyBtn.disabled, speedDisabled: g.speedBtn.disabled,
+    qmSafetyHidden: qmHidden('qm-safety'),
+  };
+  g._returnToLobby();
+  return { during, after };
+});
+console.log('ranked locks:', JSON.stringify(locks));
+const locksOk = locks.during.ranked && !locks.during.safety && !locks.during.speed
+  && locks.during.safetyDisabled && locks.during.speedDisabled
+  && locks.during.qmSafetyHidden && locks.during.qmSpeedHidden
+  && !locks.after.ranked && locks.after.safety && locks.after.speed
+  && !locks.after.safetyDisabled && !locks.after.speedDisabled && !locks.after.qmSafetyHidden;
+console.log(locksOk ? '✔ SAFETY and SPEED are locked off on a ranked run and restored after'
+                    : '✖ SAFETY/SPEED ranked lock is wrong');
+
 const badgeOk = badge.exists && badge.before && !badge.afterDnf.shown && !badge.afterDnf.active
   && !badge.afterLobby.shown && !badge.afterLobby.active;
 const cardOk = !!card && /Ranked ✓ 2:41/.test(card) && !/not ridden yet/.test(card);
 
-const ok = badgeOk && cardOk &&chooser.visible && !chooser.rankedDisabled
+const ok = badgeOk && cardOk && locksOk &&chooser.visible && !chooser.rankedDisabled
   && afterSpend.rankedDisabled && /2:41/.test(afterSpend.hint) && afterSpend.pairStillFree
   && demoChooser.isDemo && demoChooser.asks === false
   && /Today's Road/.test(strip.text) && /2:41/.test(strip.text) && strip.text.split('\n').length === 4;

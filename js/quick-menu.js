@@ -122,8 +122,9 @@ export class QuickMenu {
     // speed and reset. Mirror that rather than handing the stoker controls the
     // D-pad never gave them.
     const rideControls = this.sideButtons && this.sideButtons.style.display !== 'none';
-    this._show('qm-safety', rideControls);
-    this._show('qm-speed', rideControls);
+    // M4: a ranked run locks SAFETY and SPEED (their buttons are disabled).
+    this._show('qm-safety', rideControls && !(this.safetyBtn && this.safetyBtn.disabled));
+    this._show('qm-speed', rideControls && !(this.speedBtn && this.speedBtn.disabled));
     this._show('qm-reset', rideControls);
     this._show('qm-lobby', rideControls);
 

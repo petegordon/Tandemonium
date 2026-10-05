@@ -2101,6 +2101,7 @@ class Game {
     // (the flag still held the previous ride's value), so a ranked run used to
     // get the silent tune and the ASSIST offer. Ranked stays pure.
     if (this._rankedRunActive) this.ddaManager = null;
+    this._applyRankedLocks();   // M4: SAFETY and SPEED off and locked on a ranked run
     if (this._rankedRunActive && this.mode === 'captain' && this.net) {
       // The countdown event is a bare byte, so the mode needs its own message.
       this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
@@ -3050,6 +3051,7 @@ class Game {
    */
   _endRankedRun() {
     this._rankedRunActive = false;
+    this._applyRankedLocks();   // M4: SAFETY and SPEED back as the player had them
     if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(false);
   }
 
@@ -6404,6 +6406,34 @@ class Game {
     if (this._safetyTouched) { this._updateSafetyBtn(); return; }
     if (TUNE.safetyDefault != null) this.safetyMode = !!TUNE.safetyDefault;
     this._updateSafetyBtn();
+  }
+
+  /**
+   * M4 · ranked fairness. A ranked run rides with SAFETY and SPEED (cruise)
+   * forced off, and both buttons (HUD, D-pad, quick menu) disabled for the
+   * ride — `safetyUsed` is only sampled at the finish, so toggling mid-run
+   * would otherwise submit as safety-free. When the run is over the player's
+   * own choices come back. Called whenever _rankedRunActive changes.
+   */
+  _applyRankedLocks() {
+    const lock = !!this._rankedRunActive;
+    if (lock) {
+      if (!this._rankedLockPrev) this._rankedLockPrev = { safety: this.safetyMode, speed: this.autoSpeed };
+      this.safetyMode = false;
+      this.autoSpeed = false;
+    } else if (this._rankedLockPrev) {
+      this.safetyMode = this._rankedLockPrev.safety;
+      this.autoSpeed = this._rankedLockPrev.speed;
+      this._rankedLockPrev = null;
+    }
+    this._updateSafetyBtn();
+    if (this.speedBtn) {
+      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+      this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
+      this.speedBtn.disabled = lock;
+    }
+    if (this.safetyBtn) this.safetyBtn.disabled = lock;
+    if (this.quickMenu && this.quickMenu.sync) this.quickMenu.sync();
   }
 
   _recordBalanceCrashIfNew(wasFallen) {
