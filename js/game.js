@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
@@ -7171,26 +7172,24 @@ class Game {
     // Observed median lean for response curve
     const medianLean = absSamples[Math.floor(absSamples.length * 0.5)];
 
-    // Blend toward observed values
+    // Blend the un-feeled calibration BASE toward the observed values (B2):
+    // the observations are physical degrees, like the base; TUNE is the base
+    // with the steering feel applied, derived once below.
+    const B = TUNING_BASE;
     if (isGyro) {
-      TUNE.gyroDeadzone += (observedDeadzone - TUNE.gyroDeadzone) * blend;
-      TUNE.gyroSensitivity += (observedSensitivity - TUNE.gyroSensitivity) * blend;
+      B.gyroDeadzone += (observedDeadzone - B.gyroDeadzone) * blend;
+      B.gyroSensitivity += (observedSensitivity - B.gyroSensitivity) * blend;
       const targetCurve = Math.min(2.0, Math.max(1.0, 1.0 + (medianLean / observedSensitivity) * 0.5));
-      TUNE.gyroResponseCurve += (targetCurve - TUNE.gyroResponseCurve) * blend;
+      B.gyroResponseCurve += (targetCurve - B.gyroResponseCurve) * blend;
     } else {
-      TUNE.deadzone += (observedDeadzone - TUNE.deadzone) * blend;
-      TUNE.sensitivity += (observedSensitivity - TUNE.sensitivity) * blend;
+      B.deadzone += (observedDeadzone - B.deadzone) * blend;
+      B.sensitivity += (observedSensitivity - B.sensitivity) * blend;
       const targetCurve = Math.min(2.5, Math.max(1.2, 1.5 + medianLean / observedSensitivity));
-      TUNE.responseCurve += (targetCurve - TUNE.responseCurve) * blend;
+      B.responseCurve += (targetCurve - B.responseCurve) * blend;
     }
 
-    // Update base snapshot so steering feel scaling stays relative
-    snapshotTuningBase();
-
-    // Re-apply current steering feel on top of the new base
-    if (TUNE.steeringFeel != null && TUNE.steeringFeel !== 0.5) {
-      applySteeringFeel(TUNE.steeringFeel);
-    }
+    // Ride the new base at the current feel — once, from the base.
+    applySteeringFeel(TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
 
     // Persist updated values (throttled — only save every 30s)
     this._saveAdaptedTuning(isGyro);
@@ -7203,15 +7202,17 @@ class Game {
       data.inputType = isGyro ? 'gyro' : 'phone';
       data.platform = isAndroid ? 'android' : isIOS ? 'ios' : 'desktop';
       data.timestamp = Date.now();
+      // B2: persist the un-feeled base, never the feel-scaled TUNE.
       if (isGyro) {
-        data.sensitivity = Math.round(TUNE.gyroSensitivity * 10) / 10;
-        data.deadzone = Math.round(TUNE.gyroDeadzone * 10) / 10;
-        data.responseCurve = Math.round(TUNE.gyroResponseCurve * 100) / 100;
+        data.sensitivity = Math.round(TUNING_BASE.gyroSensitivity * 10) / 10;
+        data.deadzone = Math.round(TUNING_BASE.gyroDeadzone * 10) / 10;
+        data.responseCurve = Math.round(TUNING_BASE.gyroResponseCurve * 100) / 100;
       } else {
-        data.sensitivity = Math.round(TUNE.sensitivity * 10) / 10;
-        data.deadzone = Math.round(TUNE.deadzone * 10) / 10;
-        data.responseCurve = Math.round(TUNE.responseCurve * 100) / 100;
+        data.sensitivity = Math.round(TUNING_BASE.sensitivity * 10) / 10;
+        data.deadzone = Math.round(TUNING_BASE.deadzone * 10) / 10;
+        data.responseCurve = Math.round(TUNING_BASE.responseCurve * 100) / 100;
       }
+      data[TUNING_SAVE_BASE_FLAG] = true;
       // Preserve steeringFeel if set
       localStorage.setItem(this._tuningKey(), JSON.stringify(data));
     } catch {}
@@ -7361,19 +7362,17 @@ class Game {
       if (data.version !== 1) return false;
       const curType = this.input.gyroConnected ? 'gyro' : 'phone';
       if (data.inputType !== curType) return false;
-      // Apply saved tuning
-      if (data.sensitivity != null) TUNE.sensitivity = data.sensitivity;
-      if (data.deadzone != null) TUNE.deadzone = data.deadzone;
-      if (data.outputSmoothing != null) TUNE.outputSmoothing = data.outputSmoothing;
-      if (data.responseCurve != null) TUNE.responseCurve = data.responseCurve;
-      if (data.gyroSensitivity != null) TUNE.gyroSensitivity = data.gyroSensitivity;
-      if (data.gyroDeadzone != null) TUNE.gyroDeadzone = data.gyroDeadzone;
-      if (data.gyroOutputSmoothing != null) TUNE.gyroOutputSmoothing = data.gyroOutputSmoothing;
-      if (data.gyroResponseCurve != null) TUNE.gyroResponseCurve = data.gyroResponseCurve;
-      // Snapshot base values, then apply feel on top
-      snapshotTuningBase();
-      if (data.steeringFeel != null) {
-        applySteeringFeel(data.steeringFeel);
+      // B2: the save holds the un-feeled calibration base. Saves from before
+      // the fix stored feel-scaled values; migrateSavedTuning divides that
+      // back out (or falls back to defaults) and the save is rewritten once.
+      const { values, migrated } = migrateSavedTuning(data);
+      setTuningBase(values);
+      applySteeringFeel(Number.isFinite(data.steeringFeel) ? data.steeringFeel
+        : TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
+      if (migrated) {
+        try {
+          localStorage.setItem(this._tuningKey(), JSON.stringify({ ...data, ...values, [TUNING_SAVE_BASE_FLAG]: true }));
+        } catch {}
       }
       return true;
     } catch { return false; }
@@ -8284,23 +8283,17 @@ class Game {
     const isGyro = this.input.gyroConnected;
     const params = this._computeTuningParams(isGyro);
 
-    // Apply to TUNE
+    // The calibration is the un-feeled base (B2); ride it at the default feel
+    // (#399: 0.3, the stable end) until the player moves the slider on the
+    // completion screen.
     if (isGyro) {
-      TUNE.gyroSensitivity = params.sensitivity;
-      TUNE.gyroDeadzone = params.deadzone;
-      TUNE.gyroOutputSmoothing = params.outputSmoothing;
-      TUNE.gyroResponseCurve = params.responseCurve;
+      setTuningBase({
+        gyroSensitivity: params.sensitivity, gyroDeadzone: params.deadzone,
+        gyroOutputSmoothing: params.outputSmoothing, gyroResponseCurve: params.responseCurve,
+      });
     } else {
-      TUNE.sensitivity = params.sensitivity;
-      TUNE.deadzone = params.deadzone;
-      TUNE.outputSmoothing = params.outputSmoothing;
-      TUNE.responseCurve = params.responseCurve;
+      setTuningBase(params);
     }
-
-    // Snapshot calibrated values as the base for feel scaling, then ride them
-    // at the default feel (#399: 0.3, the stable end) until the player moves
-    // the slider on the completion screen.
-    snapshotTuningBase();
     applySteeringFeel(BALANCE_DEFAULTS.steeringFeel);
 
     // Save to localStorage
@@ -8313,6 +8306,7 @@ class Game {
       outputSmoothing: params.outputSmoothing,
       responseCurve: params.responseCurve,
       steeringFeel: BALANCE_DEFAULTS.steeringFeel,
+      [TUNING_SAVE_BASE_FLAG]: true,   // B2: these are the un-feeled base
       timestamp: Date.now()
     };
     try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}
