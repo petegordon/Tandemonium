@@ -391,6 +391,32 @@ test('manager: streak badges show the streak held today, not a stale run (m6)', 
   assert.deepEqual(m.getAllDefinitions().find(d => d.id === 'daily_streak_7').progress, [2, 7]);
 });
 
+test('manager: the stoker (and local co-op) ride tracker earns ride-scoped achievements (m7)', async () => {
+  globalThis.localStorage = fakeStorage();
+  const { AchievementManager } = await import('../../js/achievements.js');
+  const m = new AchievementManager();
+  m.demo = false;
+  // The stoker's bike: remote state only (no physics), on the centre strip.
+  const rm = { raceDistance: 500 };
+  const game = { state: 'playing', raceManager: rm, _assistWeight: 0,
+    bike: { lean: 0, fallen: false, speed: 8, _lateralOffset: 0.2, onCenterStrip: true, boostTimer: 0 } };
+  m.ride.go();
+  const ids = [];
+  for (let i = 0; i < 62; i++) ids.push(...m.check({ dt: 1, speed: 8, ...m.rideFrame(1, game) }).map(a => a.id));
+  assert.ok(ids.includes('steady_hands') && ids.includes('centerline'), ids.join(','));
+  // A clean finish: Stayed on the Road and No Trees.
+  const clean = m.finish({ ref: rm, finishedLevel: 'daily', crashes: 0, restarts: 0 }).map(a => a.id);
+  assert.ok(clean.includes('no_offroad') && clean.includes('no_trees_daily'), clean.join(','));
+  // A stoker crash has no cause: it counts as a crash and against No Trees.
+  const m2 = new AchievementManager();
+  m2.demo = false;
+  const rm2 = { raceDistance: 500 };
+  m2.rideFrame(1, { ...game, raceManager: rm2 });
+  m2.crash('unknown', { ref: rm2, distance: 100, raceDistance: 500 });
+  assert.equal(m2.ride.snapshot().treeHits, 1);
+  assert.ok(!m2.finish({ ref: rm2, finishedLevel: 'daily', crashes: 1, restarts: 0 }).some(a => a.id === 'no_trees_daily'));
+});
+
 test('manager: the demo never awards a full-game-only achievement', async () => {
   globalThis.localStorage = fakeStorage();
   const { AchievementManager } = await import('../../js/achievements.js');

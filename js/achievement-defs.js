@@ -503,7 +503,7 @@ export class RideTracker {
     if (c.ref !== undefined) this.sync(c.ref);
     this._goFresh = false;                     // a GO is fresh only until the first frame or crash
     this.crashes += 1;
-    if (c.cause === 'tree') this.treeHits += 1;
+    if (c.cause === 'tree' || c.cause === 'unknown') this.treeHits += 1;   // 'unknown': the stoker isn't told the cause
     if (this.gustActive) this.gustCrashed = true;
     const falseStart = this.sinceGo != null && this.sinceGo <= FALSE_START_S;
     this.sinceGo = null;                       // only the first crash after a GO

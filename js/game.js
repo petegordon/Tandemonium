@@ -7021,6 +7021,15 @@ class Game {
     if (state) {
       this.bike.applyRemoteState(state);
     }
+    // m7: the stoker's own ride tracker sees the crash too. The cause isn't
+    // sent, so it's 'unknown' (counts against No Trees, to be safe).
+    if (this.bike.fallen && !this._stokerWasFallen && this.state === 'playing') {
+      this.achievements.crash('unknown', {
+        ref: this.raceManager,
+        distance: this.bike.distanceTraveled,
+        raceDistance: (this.raceManager && this.raceManager.raceDistance) || 0,
+      });
+    }
 
     // Detect crash recovery (backup for EVT_GAMEOVER)
     if (this._stokerWasFallen && !this.bike.fallen) {
@@ -7105,6 +7114,7 @@ class Game {
     remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     this._updateLookahead(dt);    // E-1 · the road only the stoker can see
+    this._checkAchievements(dt);  // m7: the ride tracker + frame checks run for the stoker too
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
     const stokerBalance = this.balanceCtrl.update();
