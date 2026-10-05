@@ -18,7 +18,9 @@
 //
 // demo: false marks the 18 rows the spec's Demo column calls full-game only,
 // plus sling_stage5: the spec marks it demo ✓, but DEMO_RULES caps the
-// Slingshot at stage 3, so stage 5 can't be cleared in the demo (19 in all).
+// Slingshot at stage 3, so stage 5 can't be cleared in the demo; and
+// double_down: only Today's Launch (full game) can pair a jackpot with a best
+// (20 in all).
 // `full` says why: an edition rule (js/edition.js · DEMO_RULES) blocks it, or
 // 'scope' — a long-haul goal kept for the full game. The demo never awards
 // them; the stats keep counting, so they unlock on the full game's first check.
@@ -153,7 +155,7 @@ export const ACHIEVEMENTS = [
   { id: 'big_air',        section: 'sling', name: 'Big Air',             icon: '🪂', desc: 'Land a Big Air off a ramp',           ...count('bigAirs', 1) },
   { id: 'frequent_flyer', section: 'sling', name: 'Frequent Flyer',      icon: '✈️', desc: 'Land 25 Big Airs',                    ...count('bigAirs', 25) },
   { id: 'jackpot',        section: 'sling', name: 'Jackpot!',            icon: '🎰', desc: 'Hit the jackpot billboard',           ...count('jackpots', 1) },
-  { id: 'double_down',    section: 'sling', name: 'Double Down',         icon: '🎲', desc: 'Hit the jackpot on a run that also beats your best distance', ...count('doubleDowns', 1) },
+  { id: 'double_down',    section: 'sling', name: 'Double Down',         icon: '🎲', desc: 'Hit the jackpot on a run that also beats your best distance', ...count('doubleDowns', 1), demo: false, full: 'todaysLaunch' },   // spec says demo ✓, but a stage-mode jackpot (≈118 m) can't beat a stage-2+ best; only Today's Launch can
   { id: 'full_trail',     section: 'sling', name: 'Full Trail',          icon: '🪙', desc: 'Grab all 5 coins in a trail',         ...count('fullTrails', 1) },
   { id: 'straight_shooter', section: 'sling', name: 'Straight Shooter',  icon: '📐', desc: 'Go 300 m without steering after launch', ...count('straightShots', 1) },
   { id: 'medal_key',      section: 'sling', name: 'Medal Key',           icon: '🗝️', desc: 'Win a regular-ride medal that unlocks a Slingshot stage', ...count('medalKeys', 1) },

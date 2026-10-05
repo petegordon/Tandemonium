@@ -22,9 +22,10 @@ const EXISTING = [
 
 // The spec's Demo column "—" (issue #401), plus sling_stage5: the spec marks it
 // ✓, but the demo's Slingshot stops at stage 3 (DEMO_RULES.slingshot.maxStage),
-// so the edition rules win.
+// so the edition rules win. double_down (m4): a stage-mode jackpot run ends
+// at ~118 m, short of any stage-2+ best, so only Today's Launch can earn it.
 const SPEC_FULL_ONLY = [
-  'sling_stage5',
+  'sling_stage5', 'double_down',
   'century', 'days_30', 'all_gold', 'sling_stage7', 'sling_1000', 'todays_launch', 'launch_week',
   'coins_10000', 'max_upgrade', 'garage_royalty', 'rebuilt', 'ship_of_theseus', 'daily_first',
   'daily_streak_30', 'pair_100km', 'standing_date', 'distance_between_us', 'grand_tour',
@@ -113,9 +114,9 @@ test('nothing is earned from a fresh start', () => {
 
 // ── the demo ─────────────────────────────────────────────────────
 
-test('the demo-unearnable list is the spec Demo column + the stage cap (19 full-only, 81 demo)', () => {
+test('the demo-unearnable list is the spec Demo column + the stage cap (20 full-only, 80 demo)', () => {
   assert.deepEqual([...DEMO_UNEARNABLE].sort(), [...SPEC_FULL_ONLY].sort());
-  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 81);
+  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 80);
 });
 
 test('each full-only reason matches the edition rules', () => {
