@@ -116,7 +116,12 @@ export function betterMedal(a, b) {
   return (MEDAL_RANK[b] || 0) > (MEDAL_RANK[a] || 0) ? b : validMedal(a);
 }
 
-/** Drop the oldest entries when the store grows past MAX_KEYS. */
+/**
+ * Drop the oldest entries when the store grows past MAX_KEYS — Today's Road
+ * keys only (m20). Each day adds one `daily:<day>|…` key, while the level
+ * records are few and permanent (the Slingshot stage gates read them), so the
+ * dailies go first, oldest first, and a level record is never dropped.
+ */
 export function trim(store) {
   const keys = Object.keys(store);
 
@@ -128,6 +133,7 @@ export function trim(store) {
 
   if (keys.length <= MAX_KEYS) return store;
   keys
+    .filter(k => k.startsWith('daily:'))
     .sort((a, b) => String(store[a].date).localeCompare(String(store[b].date)))
     .slice(0, keys.length - MAX_KEYS)
     .forEach(k => { delete store[k]; });
