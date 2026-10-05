@@ -6418,7 +6418,8 @@ class Game {
   _applyRankedLocks() {
     const lock = !!this._rankedRunActive;
     if (lock) {
-      if (!this._rankedLockPrev) this._rankedLockPrev = { safety: this.safetyMode, speed: this.autoSpeed };
+      // (Safety the helping hand turned on is not the player's choice — m13.)
+      if (!this._rankedLockPrev) this._rankedLockPrev = { safety: this._helpSafetyPrev === false ? false : this.safetyMode, speed: this.autoSpeed };
       this.safetyMode = false;
       this.autoSpeed = false;
     } else if (this._rankedLockPrev) {
