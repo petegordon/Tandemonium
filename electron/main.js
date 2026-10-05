@@ -46,6 +46,21 @@ if (!gotTheLock) {
 // we hit earlier on this branch.
 let steam = null;
 let appId = 4482940; // hoisted so Steam Input diagnostic can reference it below
+
+// #400 / PR #397 B4c: the Steam demo is its own Steam app id. Main decides
+// "is this the demo" once and both appends ?demo=1 to the page URL and
+// exposes it to the renderer via preload (tandemoniumSteam.isDemo), so the
+// demo does not depend on the --demo launch option alone.
+// TODO(#400): set this to the demo's Steam app id once Steamworks creates it
+// (none exists yet in steam/, steam_appid.txt or the docs). null = no demo app.
+const DEMO_STEAM_APP_ID = null;
+function _resolveIsDemo() {
+  if (process.argv.includes('--demo') || process.env.TANDEMONIUM_DEMO === '1') return true;
+  if (DEMO_STEAM_APP_ID == null) return false;
+  // Steam sets SteamAppId for Steam-launched processes; steam_appid.txt (appId) covers dev runs.
+  const running = parseInt(process.env.SteamAppId || '', 10);
+  return running === DEMO_STEAM_APP_ID || appId === DEMO_STEAM_APP_ID;
+}
 try {
   // Read app ID from steam_appid.txt (playtest: 4510250, release: 4482940)
   try {
@@ -475,6 +490,9 @@ ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
 ipcMain.handle('steam:input:poll', () => steamInputSnapshot);
 ipcMain.handle('steam:input:xinputMap', () => steamXInputMap);
+// B4c: preload reads this synchronously at load so js/edition.js sees
+// window.tandemoniumSteam.isDemo before the first getEditionRules() call.
+ipcMain.on('app:isDemo', (e) => { e.returnValue = _resolveIsDemo(); });
 
 // Full-diagnostic dump for the in-game Steam Input test page. Queries Steam
 // on demand for every piece of state we can read (handles, controllers,
@@ -675,7 +693,7 @@ function createWindow() {
   // TANDEMONIUM_DEMO=1 to get it in the desktop build.
   const _params = new URLSearchParams();
   if (process.env.TANDEM_TOURIST) _params.set('mode', 'tourist');
-  if (process.argv.includes('--demo') || process.env.TANDEMONIUM_DEMO === '1') _params.set('demo', '1');
+  if (_resolveIsDemo()) _params.set('demo', '1');
   const _query = _params.toString() ? '?' + _params.toString() : '';
   mainWindow.loadURL('tandemonium://app/index.html' + _query);
 
