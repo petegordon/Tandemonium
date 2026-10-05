@@ -184,8 +184,13 @@ export function stageGoal(stage) {
   return STAGE_GOALS[Math.min(n, STAGE_GOALS.length) - 1];
 }
 
+/** Stages past the table repeat the last goal, so they pay like the last stage (B5). */
+export function payStage(stage) {
+  return Math.min(Math.max(1, Math.floor(stage || 1)), STAGE_GOALS.length);
+}
+
 export function stageBonus(stage) {
-  return 50 * Math.max(1, Math.floor(stage || 1));
+  return 50 * payStage(stage);
 }
 
 // ---- Stage gates (#400 D11a) --------------------------------
@@ -295,7 +300,7 @@ export const LANES = [-1.6, 0, 1.6];
  *  - Gate 1 (~45 m, where the aim can reach any lane): one lane of coins, one
  *    hay bale, one clear lane.
  *  - Gate 2 (~110 m, reached by steering): coins, hay, and from stage 2 the
- *    JACKPOT billboard — hit it and the run ends at double pay.
+ *    JACKPOT billboard — hit it and the run ends; the first hit on a stage pays double.
  *  - Then coin trails all the way to the goal.
  */
 export function planCourse(stage, distance, { seed = null } = {}) {
@@ -362,15 +367,30 @@ export const PAY = {
 
 /** The jackpot billboard: a flat bonus, then the whole run pays double. */
 export function jackpotBonus(stage) {
-  return 100 + 50 * Math.max(1, Math.floor(stage || 1));
+  return 100 + 50 * payStage(stage);
+}
+
+/**
+ * Has the jackpot already paid out here? (B5) It pays its bonus and the ×2 the
+ * FIRST time it is hit on each stage, and once a day on Today's Launch; later
+ * hits still end the run but pay like an ordinary run of that distance.
+ * save: a stage save ({ stage, jackpots: [stages paid] }) or Today's Launch's
+ * status ({ jackpot: true once paid today }).
+ */
+export function jackpotCashed(save) {
+  if (!save) return false;
+  if (save.jackpot === true) return true;
+  return Array.isArray(save.jackpots) && save.jackpots.includes(Math.max(1, Math.floor(save.stage || 1)));
 }
 
 /**
  * One run's payout.
  * run:  { distance, coins, stageCleared, jackpot, bigAirs }   (distance from the slingshot)
- * save: { best, runs, stage }  — for Today's Launch, the day's best and runs
+ * save: { best, runs, stage, jackpots }  — for Today's Launch, the day's status
+ *   (best, runs, jackpot) plus the stage
  * coinMult: the wallet's multiplier (js/wallet.js · coinMultiplier). Defaults
  *   to what save.lv would give, for callers that still pass upgrade levels.
+ * `jackpotPaid` in the result: this run cashed the jackpot (first hit).
  */
 export function scoreRun(run, save, coinMult = slingStats(save.lv).coinMult) {
   const distance = Math.max(0, Math.floor(run.distance || 0));
@@ -382,13 +402,14 @@ export function scoreRun(run, save, coinMult = slingStats(save.lv).coinMult) {
   const recordPay = isRecord && (save.runs || 0) > 0
     ? Math.floor((distance - best) / PAY.recordDivisor) : 0;
   const stagePay = run.stageCleared ? stageBonus(save.stage) : 0;
-  const jackpotPay = run.jackpot ? jackpotBonus(save.stage) : 0;
+  const jackpotPaid = !!run.jackpot && !jackpotCashed(save);
+  const jackpotPay = jackpotPaid ? jackpotBonus(save.stage) : 0;
   const airPay = (run.bigAirs || 0) * BIG_AIR_PAY;
   const subtotal = distPay + coinPay + recordPay + stagePay + jackpotPay + airPay;
-  const multiplier = coinMult * (run.jackpot ? 2 : 1);
+  const multiplier = coinMult * (jackpotPaid ? 2 : 1);
   const total = Math.floor(subtotal * multiplier);
   return { distance, distPay, coinPay, recordPay, stagePay, jackpotPay, airPay, subtotal,
-           multiplier, total, isRecord };
+           multiplier, total, isRecord, jackpotPaid, stage: Math.max(1, Math.floor(save.stage || 1)) };
 }
 
 // ---- Today's Launch (#400 D11b) ----------------------------
@@ -414,13 +435,15 @@ export function todaysLaunchCourse(key) {
 /** The save's record for `key` (a fresh one when the stored day is another day). */
 export function todaysLaunchStatus(save, key) {
   const d = save && save.daily;
-  return d && d.key === key ? { key, best: d.best || 0, runs: d.runs || 0 } : { key, best: 0, runs: 0 };
+  return d && d.key === key ? { key, best: d.best || 0, runs: d.runs || 0, jackpot: !!d.jackpot }
+    : { key, best: 0, runs: 0, jackpot: false };
 }
 
-/** Bank a Today's Launch run on the save. Returns a NEW save. */
+/** Bank a Today's Launch run on the save. Returns a NEW save. The jackpot pays once a day (B5). */
 export function applyTodaysLaunch(save, key, score) {
   const cur = todaysLaunchStatus(save, key);
-  return { ...save, daily: { key, best: Math.max(cur.best, score.distance), runs: cur.runs + 1 } };
+  return { ...save, daily: { key, best: Math.max(cur.best, score.distance), runs: cur.runs + 1,
+                             jackpot: cur.jackpot || !!score.jackpotPaid } };
 }
 
 // ---- Save ---------------------------------------------------
@@ -433,7 +456,7 @@ export function applyTodaysLaunch(save, key, score) {
 export const SAVE_VERSION = 3;
 
 export function emptySave() {
-  return { v: SAVE_VERSION, best: 0, runs: 0, stage: 1, daily: null };
+  return { v: SAVE_VERSION, best: 0, runs: 0, stage: 1, daily: null, jackpots: [] };
 }
 
 /**
@@ -482,6 +505,11 @@ function sanitize(o) {
   const d = o.daily;
   if (d && typeof d === 'object' && typeof d.key === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.key)) {
     s.daily = { key: d.key, best: Math.floor(num(d.best, 0)), runs: Math.floor(num(d.runs, 0)) };
+    if (d.jackpot === true) s.daily.jackpot = true;
+  }
+  // B5: the stages whose jackpot has paid out.
+  if (Array.isArray(o.jackpots)) {
+    s.jackpots = [...new Set(o.jackpots.filter(n => Number.isInteger(n) && n >= 1))].sort((a, b) => a - b);
   }
   return s;
 }
@@ -524,6 +552,8 @@ export function applyRun(save, run, score) {
   next.runs += 1;
   if (score.isRecord) next.best = score.distance;
   if (run.stageCleared) next.stage += 1;
+  // B5: the jackpot cashed on this stage stays cashed.
+  if (score.jackpotPaid) next.jackpots = [...new Set([...(save.jackpots || []), score.stage || save.stage])];
   return next;
 }
 

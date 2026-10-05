@@ -86,6 +86,7 @@ import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
+import { isBotTeam } from './versus/versus-bot.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 
@@ -1935,6 +1936,11 @@ class Game {
     // recorder, or contribution tracking.
     if (this.mode === 'versus') { this._startVersusCountdown(); return; }
 
+    // #400 D4 / M2: a ride left for a new one still pays its distance. First,
+    // before the bike or world is reset and before _rankedRunActive is
+    // recomputed for the next ride (m14). Idempotent through the ledger.
+    this._payoutAbandon();
+
     this.state = 'countdown';
     this.countdownTimer = 3.0;
     this._hideGameOver();
@@ -2097,12 +2103,16 @@ class Game {
     // (the flag still held the previous ride's value), so a ranked run used to
     // get the silent tune and the ASSIST offer. Ranked stays pure.
     if (this._rankedRunActive) this.ddaManager = null;
+    this._applyRankedLocks();   // M4: SAFETY and SPEED off and locked on a ranked run
     if (this._rankedRunActive && this.mode === 'captain' && this.net) {
       // The countdown event is a bare byte, so the mode needs its own message.
       this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
     }
 
-    this._payoutAbandon();   // #400 D4: a ride restarted mid-way still pays its distance
+    // M2: the payout ledger is keyed by RIDE: start line → finish or abandon,
+    // through any checkpoint restarts. A retry of segment 1 is the same ride.
+    if (!this._sameRideNext || !this._rideRef) this._rideRef = {};
+    this._sameRideNext = false;
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this._helpStartRide(keepHelp);   // #403: before the first budget is shown
@@ -2512,6 +2522,9 @@ class Game {
   _resetGame(fromRemote = false, fromBeginning = false) {
     // Slingshot: every reset is back into the slingshot, never to a checkpoint.
     if (this.isSlingshot) { this._resetToSling(); return; }
+    // M2: pay what the ride has done before the bike goes back (the ledger
+    // makes a second payout of the same metres pay nothing).
+    this._payoutAbandon();
     // Analytics: track reset/restart
     analytics.trackRideEvent('reset', this.bike ? this.bike.distanceTraveled : 0, {
       from_beginning: fromBeginning,
@@ -2631,6 +2644,7 @@ class Game {
       this._resumeCountdown();
     } else {
       this._helpKeepRide = !fromBeginning;   // #403: same ride, same count
+      this._sameRideNext = !fromBeginning && !(this.raceManager && this.raceManager.finished);   // M2
       this._startCountdown();
     }
   }
@@ -2946,7 +2960,11 @@ class Game {
         collectibles: summary.collectibles,
         crashes: summary.crashes,
         helped: help.helped,
-        skipped: help.skipped
+        skipped: help.skipped,
+        // M3: the medal this run keeps (🛟 caps it at bronze) — the record keeps the best ever.
+        medal: this._helpMedal(summary.timeMs, getMedals(level.id, this.lobby.selectedDifficulty))
+      }, {
+        medalOf: rec => records.capMedal(records.medalFor(rec.timeMs, getMedals(level.id, this.lobby.selectedDifficulty)), { helped: !!rec.helped })
       });
       records.save(store);
       this._recordStore = store;
@@ -3014,7 +3032,9 @@ class Game {
     }
 
     // #400 D4: the medal and NEW BEST pay coins (js/economy-mode.js · _payoutRide).
-    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous) };
+    // M3: NEW BEST pays only for a faster run (a first unaided finish slower
+    // than a 🛟 best replaces it, but is not paid as a best).
+    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous && result.delta < 0) };
 
     try {
       analytics.trackEvent('run_recorded', {
@@ -3033,6 +3053,7 @@ class Game {
    */
   _endRankedRun() {
     this._rankedRunActive = false;
+    this._applyRankedLocks();   // M4: SAFETY and SPEED back as the player had them
     if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(false);
   }
 
@@ -6392,6 +6413,35 @@ class Game {
     this._updateSafetyBtn();
   }
 
+  /**
+   * M4 · ranked fairness. A ranked run rides with SAFETY and SPEED (cruise)
+   * forced off, and both buttons (HUD, D-pad, quick menu) disabled for the
+   * ride — `safetyUsed` is only sampled at the finish, so toggling mid-run
+   * would otherwise submit as safety-free. When the run is over the player's
+   * own choices come back. Called whenever _rankedRunActive changes.
+   */
+  _applyRankedLocks() {
+    const lock = !!this._rankedRunActive;
+    if (lock) {
+      // (Safety the helping hand turned on is not the player's choice — m13.)
+      if (!this._rankedLockPrev) this._rankedLockPrev = { safety: this._helpSafetyPrev === false ? false : this.safetyMode, speed: this.autoSpeed };
+      this.safetyMode = false;
+      this.autoSpeed = false;
+    } else if (this._rankedLockPrev) {
+      this.safetyMode = this._rankedLockPrev.safety;
+      this.autoSpeed = this._rankedLockPrev.speed;
+      this._rankedLockPrev = null;
+    }
+    this._updateSafetyBtn();
+    if (this.speedBtn) {
+      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+      this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
+      this.speedBtn.disabled = lock;
+    }
+    if (this.safetyBtn) this.safetyBtn.disabled = lock;
+    if (this.quickMenu && this.quickMenu.sync) this.quickMenu.sync();
+  }
+
   _recordBalanceCrashIfNew(wasFallen) {
     if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
       this._recordCrash('balance');
@@ -6544,7 +6594,8 @@ class Game {
 
     for (const rig of rigs) this._stepTeam(rig, dt);
     this.achievements.ride.frame(dt, { ref: null, playing: true });   // #401 False Start: the clock since GO runs in versus too
-    this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
+    // m19: a race against the ?versusbot=1 rider earns no achievements.
+    if (!rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
 
     // Bike-vs-bike contact: bumping knocks both around a little.
     this._resolveVersusBikeContact(dt);
@@ -6814,7 +6865,7 @@ class Game {
    */
   _finishVersusRace(winner) {
     const loser = this.versusRigs.find((r) => r !== winner);
-    this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401
+    if (!isBotTeam(winner) && !isBotTeam(loser)) this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401 (m19: not vs the bot)
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';

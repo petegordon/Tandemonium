@@ -8,7 +8,8 @@
 //   _showGameOver     → _showRideCoins('gameover', 'crash')
 //   _tutorialComplete → _showRideCoins('tutorial', 'finish', …)
 //   versus results    → _showVersusCoins()
-//   _startCountdown / _returnToLobby / _returnToRoom → _payoutRide('abandon')
+//   _resetGame (top) / _startCountdown (top) / _returnToLobby / _returnToRoom
+//                     → _payoutRide('abandon')
 //
 // HOOK FOR ACHIEVEMENTS (#401): every economy event goes through ONE method,
 // _economyEvent(type, detail), which also dispatches a window CustomEvent
@@ -31,6 +32,7 @@ import { LEVELS } from './race-config.js';
 import * as walletLib from './wallet.js';
 import { scoreRide, newLedger, ledgerStep } from './economy.js';
 import { COIN, toast } from './slingshot-ui.js';
+import { humanTeams } from './versus/versus-bot.js';
 
 const fmt = n => Math.floor(n).toLocaleString('en-US');
 
@@ -63,15 +65,18 @@ class EconomyMode {
   _rideSnapshot(kind, opts = {}) {
     const level = this.lobby && this.lobby.selectedLevel;
     if (this.mode === 'versus') {
-      const rigs = this.versusRigs;
-      if (!rigs || !rigs.length || !rigs[0].raceManager) return null;
+      const all = this.versusRigs;
+      if (!all || !all.length || !all[0].raceManager) return null;
+      // m19: a ?versusbot=1 team pays nothing (it would be AFK-farmable).
+      const rigs = humanTeams(all);
+      if (!rigs.length) return null;
       const cap = level ? level.distance : Infinity;
       const distance = Math.max(...rigs.map(r => Math.min(cap, r.bike.distanceTraveled || 0)));
       // One device: paid once per race, on the furthest team, plus the finish.
-      return { ref: rigs[0].raceManager, distance, pickups: 0, finished: rigs.some(r => r.finished), mode: 'versus' };
+      return { ref: all[0].raceManager, distance, pickups: 0, finished: rigs.some(r => r.finished), mode: 'versus' };
     }
     if (opts.tutorial) {
-      return { ref: this.raceManager || {}, distance: level ? level.distance : 0,
+      return { ref: this._rideRef || this.raceManager || {}, distance: level ? level.distance : 0,
                pickups: opts.pickups || 0, finished: true, mode: 'tutorial' };
     }
     if (!this.raceManager || !level) return null;
@@ -90,7 +95,9 @@ class EconomyMode {
       : level.isTutorial ? 'tutorial'
       : level.isDaily ? (this._rankedRunActive ? 'daily-ranked' : 'daily')
       : this.mode;
-    return { ref: this.raceManager, distance, pickups, finished,
+    // M2: one ledger per ride (Game._rideRef), not per RaceManager — a retry of
+    // segment 1 builds a new RaceManager but is the same ride.
+    return { ref: this._rideRef || this.raceManager, distance, pickups, finished,
              medal: outcome ? outcome.medal : null, newBest: !!(outcome && outcome.isNewBest), mode };
   }
 

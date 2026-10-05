@@ -67,6 +67,13 @@ class HelpingHandMode {
     if (this.mode !== 'stoker') {
       if (!keep || !this._helpEligible()) {
         h.tier = 0;
+        // m13: give safety back. _applySafetyDefault has already reset an
+        // untouched choice to the difficulty's default; a player who pressed
+        // SAFETY had it off before Sir Winston turned it on.
+        if (this._helpSafetyPrev === false && this._safetyTouched) {
+          this.safetyMode = false;
+          if (this._updateSafetyBtn) this._updateSafetyBtn();
+        }
         this._helpSafetyPrev = null;
       }
       h.helped = h.tier > 0;

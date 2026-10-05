@@ -200,6 +200,26 @@ const demo = await page.evaluate(() => ({
 check(/demo/i.test(demo.lock) && demo.wish && !demo.today, `the demo stops at its cap with WISHLIST, no Today's Launch ("${demo.lock}")`);
 await shot('4-demo-end');
 
+// 11. m9: the demo's end is not a dead end — LAUNCH replays the last stage
+// (normal pay, the stage never moves) and the garage offers no Rebuild.
+await setLS('tandemonium_wallet', { v: 1, coins: 50, earned: 900, lv: { sling: 10, wheels: 10, magnet: 8 }, rebuilds: 0 });
+await page.evaluate(() => window._game._openSlingGarage());
+await waitState('slingGarage', 20000);
+const demoGarage = await page.evaluate(() => ({
+  replay: Array.from(document.querySelectorAll('#sling-garage button')).some(b => /REPLAY STAGE 3/.test(b.textContent)),
+  rebuild: !!document.querySelector('#sling-garage .sling-rebuild'),
+}));
+check(demoGarage.replay && !demoGarage.rebuild, `the demo's end offers REPLAY STAGE 3 and no Rebuild (${JSON.stringify(demoGarage)})`);
+await clickText('#sling-garage button', /REPLAY STAGE 3/);
+await waitState('slingAim', 20000);
+const replayRun = await page.evaluate(() => ({ name: window._game.lobby.selectedLevel.name, stage: window._game._slingSave.stage }));
+check(/Stage 3/.test(replayRun.name) && replayRun.stage === 4, `the replay launches stage 3 and the save stays on 4 (${JSON.stringify(replayRun)})`);
+await page.evaluate(() => { const g = window._game; g._slingRun.pull = 1; g._slingGo(); g.bike.distanceTraveled = 5.2 + 200; g._endSlingRun('stall'); });
+await waitState('slingResults', 20000);
+const replayEnd = await slingSave();
+check(replayEnd.stage === 4, `a demo replay never moves the stage (${replayEnd.stage})`);
+await page.evaluate(() => window._game._leaveSlingMode());
+
 check(errors.length === 0, `no page errors (${errors.length})`);
 await browser.close(); server.close();
 const ok = checks.every(Boolean);

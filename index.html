@@ -1902,6 +1902,8 @@
     box-sizing: border-box;
   }
   .side-btn:active { filter: brightness(1.4); }
+  /* M4: SAFETY and SPEED are locked on a ranked run. */
+  .side-btn:disabled { opacity: 0.35; filter: grayscale(1); cursor: not-allowed; }
   #safety-btn {
     grid-area: safety;
     clip-path: polygon(0% 0%, 100% 0%, 72% 100%, 28% 100%);
