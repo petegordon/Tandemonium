@@ -488,6 +488,7 @@ export class RideTracker {
    */
   crash(c = {}) {
     if (c.ref !== undefined) this.sync(c.ref);
+    this._goFresh = false;                     // a GO is fresh only until the first frame or crash
     this.crashes += 1;
     if (c.cause === 'tree') this.treeHits += 1;
     if (this.gustActive) this.gustCrashed = true;

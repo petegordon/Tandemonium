@@ -241,6 +241,29 @@ test('ride tracker: False Start and So Close', () => {
   assert.equal(t.snapshot().rideCrashes, 3);
 });
 
+test('ride tracker: False Start only within 3 s of GO, versus included (m1)', () => {
+  // Versus ticks frame() with ref null each playing frame (game.js · _updateVersus).
+  const vs = new RideTracker();
+  vs.go();
+  for (let i = 0; i < 40; i++) vs.frame(0.1, { ref: null, playing: true });   // 4 s after GO
+  assert.equal(vs.crash({ ref: null, distance: 30, raceDistance: 500 }).falseStart, false);
+  vs.go();
+  for (let i = 0; i < 20; i++) vs.frame(0.1, { ref: null, playing: true });   // 2 s after GO
+  assert.equal(vs.crash({ ref: null, distance: 8, raceDistance: 500 }).falseStart, true);
+  // A versus GO right after a solo ride (a different ref) still counts from GO.
+  const t = new RideTracker();
+  t.frame(1, frame({ ref: 'solo' }));
+  t.go();
+  t.frame(0.5, { ref: null, playing: true });
+  assert.equal(t.crash({ ref: null }).falseStart, true);
+  // A GO is fresh only until the first frame or crash: a later ride's crash
+  // with no GO of its own is not a False Start.
+  const u = new RideTracker();
+  u.go();
+  assert.equal(u.crash({ ref: 'a' }).falseStart, true);
+  assert.equal(u.crash({ ref: 'b' }).falseStart, false);
+});
+
 test('ride tracker: off-road, centre strip, boost chain, steady hands, assist', () => {
   const t = new RideTracker();
   for (let i = 0; i < 31; i++) t.frame(1, frame({ onCenterStrip: true, boosting: i < 11 }));
