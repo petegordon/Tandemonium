@@ -285,6 +285,21 @@ export const TUNING_KEYS = ['sensitivity', 'deadzone', 'outputSmoothing', 'respo
  * Write calibrated (un-feeled) values into the base. Only finite numbers for
  * TUNING_KEYS are taken. Follow with applySteeringFeel(feel) to ride them.
  */
+/**
+ * A saved tuning record → TUNING_BASE keys. Gyro saves (inputType 'gyro') store
+ * their values under the PHONE-named keys (sensitivity, deadzone, …), so they
+ * map onto the gyro* base here; loading them as-is used to overwrite the phone
+ * base and leave the gyro calibration unloaded (found in the #397 review fixes).
+ */
+export function tuningBaseFromSave(data, values) {
+  if (!values || !data || data.inputType !== 'gyro') return values;
+  const out = {};
+  for (const [k, v] of Object.entries(values)) {
+    out[k.startsWith('gyro') ? k : 'gyro' + k[0].toUpperCase() + k.slice(1)] = v;
+  }
+  return out;
+}
+
 export function setTuningBase(values) {
   if (!values) return;
   for (const k of TUNING_KEYS) {
