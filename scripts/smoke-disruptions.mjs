@@ -63,6 +63,7 @@ const out = await page.evaluate(async () => {
 console.log(JSON.stringify(out, null, 1));
 
 const ok = out.plan.length === 2 && out.chill === 0
+  && out.plan.every(e => e.kind === 'gust' || e.kind === 'cobbles')
   && !out.before.shown && out.before.window === out.defaultWindow
   && out.warned.shown && /COBBLES/.test(out.warned.text) && out.warned.window === out.defaultWindow
   && out.during.shown && out.during.window === 0.15

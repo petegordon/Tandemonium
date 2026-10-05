@@ -2,12 +2,15 @@
 /**
  * Sync Steam Achievements — Puppeteer automation
  *
- * Reads achievements from js/achievements.js (source of truth),
+ * Reads achievements from js/achievement-defs.js (source of truth, #401),
  * opens Steamworks in a visible browser, waits for login,
- * scrapes current achievements, then deletes/adds to match code.
+ * scrapes current achievements, then adds what code has and Steamworks lacks.
+ * Deleting is opt-in (--delete): a deleted achievement is gone for every
+ * player who earned it, so without the flag the script only lists what a
+ * --delete run would remove.
  *
  * Usage:
- *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--no-delete] [--debug]
+ *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--delete] [--allow-empty] [--debug]
  *
  * Default appId: 4510250 (playtest). Use 4482940 for main game.
  */
@@ -20,33 +23,31 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const DEBUG = process.argv.includes('--debug');
 
-// ── Parse achievements from source code ──────────────────────────
-function parseAchievementsFromCode() {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'achievements.js'), 'utf-8');
-
-  const entries = [];
-  const entryRegex = /\{\s*id:\s*'([^']+)'\s*,\s*name:\s*(?:"([^"]+)"|'([^']+)')\s*,\s*icon:\s*(?:'[^']*'|"[^"]*")\s*,\s*condition:\s*s\s*=>\s*([^}]+)\}/g;
-  let match;
-  while ((match = entryRegex.exec(src)) !== null) {
-    const id = match[1];
-    const name = match[2] || match[3];
-    entries.push({
-      id,
-      apiName: id.toUpperCase(),
-      displayName: name,
-      description: describeCondition(id),
-    });
-  }
+// ── Read achievements from the definitions module ────────────────
+// #401: all 100 (the 7 retired colours included — they stay on Steam so
+// nobody loses one). js/achievement-defs.js is ESM, so import it.
+async function parseAchievementsFromCode() {
+  const { pathToFileURL } = require('url');
+  const defs = await import(pathToFileURL(path.join(__dirname, '..', 'js', 'achievement-defs.js')).href);
+  const entries = defs.ACHIEVEMENTS.map(a => ({
+    id: a.id,
+    apiName: a.id.toUpperCase(),
+    displayName: a.name,
+    description: describeCondition(a.id, a.desc),
+    hidden: !!a.hidden,
+  }));
 
   if (entries.length === 0) {
-    console.error('ERROR: Could not parse any achievements from js/achievements.js');
+    console.error('ERROR: Could not read any achievements from js/achievement-defs.js');
     process.exit(1);
   }
 
   return entries;
 }
 
-function describeCondition(id) {
+// royal and perfect_5k (Castle, #400 D2) and beat_ghost (D3) are gone from the
+// code; a sync only removes them from Steamworks when run with --delete.
+function describeCondition(id, fallback) {
   const descriptions = {
     first_500m: 'Ride 500 meters total',
     first_km: 'Ride 1,000 meters total',
@@ -56,7 +57,6 @@ function describeCondition(id) {
     collector: 'Collect 10 items',
     hoarder: 'Collect every item in a level',
     home_sweet: "Finish Grandma's House",
-    royal: 'Finish Castle',
     grandma_default: "Finish Grandma's House on the default bike",
     grandma_orange: "Finish Grandma's House on the orange bike",
     grandma_magenta: "Finish Grandma's House on the magenta bike",
@@ -65,7 +65,6 @@ function describeCondition(id) {
     grandma_green: "Finish Grandma's House on the green bike",
     grandma_yellow: "Finish Grandma's House on the yellow bike",
     perfect_1k: "Finish Grandma's House with no crashes or restarts",
-    perfect_5k: 'Finish Castle with no crashes or restarts',
     team_player: '80%+ safe riding in multiplayer',
     // F-1 · the loops the value & appeal plan built. The seven grandma_* entries
     // above are retired from the in-game list but stay here: a Steam
@@ -77,8 +76,87 @@ function describeCondition(id) {
     pair_10_rides: 'Ride ten times with the same partner',
     pair_100km: 'Ride 100 km with the same partner',
     distance_between_us: 'Ride the distance between you and someone else',
+    // #401 · the 77 new ones (100 in all).
+    first_pedal: 'Pedal for the first time',
+    tutorial_done: 'Finish the Tutorial',
+    tutorial_clean: 'Finish the Tutorial without a single retry',
+    first_finish: 'Finish any level',
+    first_crash: 'Crash for the first time',
+    first_remount: 'Crash, get back on, and finish that same ride',
+    first_boost: 'Trigger a boost by grabbing a present or gem',
+    ten_k: 'Ride 10 km total',
+    half_marathon: 'Ride 21.1 km total',
+    marathon: 'Ride 42.2 km total',
+    century: 'Ride 100 km total',
+    rides_10: 'Go on 10 rides of any kind',
+    days_3: 'Ride on 3 different days',
+    days_7: 'Ride on 7 different days',
+    days_30: 'Ride on 30 different days',
+    grandma_bronze: "Win bronze on Grandma's",
+    grandma_silver: "Win silver on Grandma's",
+    grandma_gold: "Win gold on Grandma's",
+    daily_gold: "Win gold on Today's Road (practice counts)",
+    all_gold: 'Win gold on every level',
+    adventurer: 'Finish any level on Adventurous',
+    daredevil: 'Finish any level on Daredevil',
+    steady_hands: 'Ride 60 seconds without the bike shaking from leaning too far',
+    centerline: "Stay on the road's centre strip for 30 seconds straight",
+    no_offroad: 'Finish a level without going off-road',
+    no_trees_daily: "Finish Today's Road without hitting a tree",
+    new_best: 'Set a new personal best',
+    assist_free: 'Turn down ASSIST when it is offered, then finish',
+    terminal_goose: 'Reach 65 km/h',
+    boost_25: 'Trigger 25 boosts',
+    afterburner: 'Chain pickups to keep boosting for 10 seconds straight',
+    presents_100: 'Collect 100 presents in total',
+    daily_haul: "Collect every present on Today's Road",
+    sling_first: 'Launch from the slingshot',
+    sling_stage1: 'Clear Slingshot stage 1 (300 m)',
+    sling_stage3: 'Clear Slingshot stage 3',
+    sling_stage5: 'Clear Slingshot stage 5',
+    sling_stage7: 'Clear Slingshot stage 7 (1,050 m)',
+    sling_500: 'Fly 500 m in one launch',
+    sling_1000: 'Fly 1,000 m in one launch',
+    big_air: 'Land a Big Air off a ramp',
+    frequent_flyer: 'Land 25 Big Airs',
+    jackpot: 'Hit the jackpot billboard',
+    double_down: 'Hit the jackpot on a run that also beats your best distance',
+    full_trail: 'Grab all 5 coins in a trail',
+    straight_shooter: 'Go 300 m without steering after launch',
+    medal_key: 'Win a regular-ride medal that unlocks a Slingshot stage',
+    todays_launch: "Fly Today's Launch, the daily Slingshot course",
+    launch_week: "Fly Today's Launch on 7 different days",
+    coin_first: 'Earn your first Chaos Coin',
+    coins_1000: 'Earn 1,000 Chaos Coins in total',
+    coins_10000: 'Earn 10,000 Chaos Coins in total',
+    payday: 'Earn 200 coins from one regular (non-Slingshot) ride',
+    first_upgrade: 'Buy your first garage upgrade',
+    max_upgrade: 'Max out any one upgrade',
+    garage_royalty: 'Max out every upgrade',
+    big_spender: 'Spend 1,000 coins in the garage',
+    rebuilt: 'Rebuild the bike for the first time',
+    ship_of_theseus: 'Rebuild the bike 5 times',
+    daily_streak_3: "Ride Today's Road three days running",
+    daily_share: "Share a Today's Road result",
+    daily_practice_10: "Finish 10 practice rides on Today's Road",
+    coop_first: 'Finish a co-op ride',
+    social_goose: 'Finish co-op rides with 3 different partners',
+    standing_date: 'Keep a 4-week pair streak',
+    versus_first: 'Finish a versus race',
+    versus_win: 'Win a versus race',
+    versus_2v2: 'Win a 2v2 versus race',
+    versus_close: 'Win a versus race by less than 1 second',
+    versus_comeback: 'Win a versus race after trailing at halfway',
+    versus_10: 'Win 10 versus races',
+    // Hidden on Steam (set "Hidden" by hand in Steamworks — this script cannot):
+    crashes_10: 'Crash 10 times in total',
+    false_start: 'Crash within 3 seconds of GO',
+    so_close: 'Crash within 10 m of the finish',
+    weathered: 'Ride through a gust without crashing',
+    gone_with_wind: 'Get pushed by 10 gusts',
+    grand_tour: 'Ride 5 km in total in Tourist',
   };
-  return descriptions[id] || id;
+  return descriptions[id] || fallback || id;
 }
 
 // ── Wait for user to press ENTER ─────────────────────────────────
@@ -90,6 +168,27 @@ function waitForEnter() {
       resolve();
     });
   });
+}
+
+// ── Wait for the achievements table to finish rendering ──────────
+// "Achievement Configuration" appears before the rows do. Scraping at that
+// moment read 0 rows and the sync re-added all 25 as duplicates (Sept 2026),
+// so wait until the row count holds steady across several polls.
+async function waitForTable(page, { timeout = 30000, interval = 1500, stablePolls = 3 } = {}) {
+  const start = Date.now();
+  let last = -1, stable = 0;
+  while (Date.now() - start < timeout) {
+    await sleep(interval);
+    const n = await page.evaluate(() =>
+      document.querySelectorAll('tr[id] input[value="Delete"]').length
+    ).catch(() => -1);
+    stable = (n === last && n >= 0) ? stable + 1 : 0;
+    last = n;
+    // A non-empty table settles fast; an empty one might still be loading, so
+    // it has to hold for the whole timeout before we believe it.
+    if (n > 0 && stable >= stablePolls) return n;
+  }
+  return last;
 }
 
 // ── Scrape current achievements from Steamworks ──────────────────
@@ -140,7 +239,9 @@ async function scrapeAchievements(page) {
       const displayName = secondLines[0] || '';
 
       if (apiName && apiName !== 'API Name') {
-        achievements.push({ apiName, displayName });
+        // row.id is Steam's stat/bit id (e.g. "a20_3") — unique even when two
+        // rows share an API name, so deletes can target one row exactly.
+        achievements.push({ apiName, displayName, rowId: row.id || null });
       }
     }
     return achievements;
@@ -186,30 +287,28 @@ async function dumpFormDebug(page, label) {
 }
 
 // ── Delete an achievement by clicking its Delete button ──────────
-async function deleteAchievement(page, apiName) {
+// Targets the row by its Steam row id, never by API name: with duplicates
+// present, "first row with this name" is the ORIGINAL — the one players'
+// unlocks are attached to.
+async function deleteAchievement(page, rowId, apiName) {
+  if (!rowId) return false;
+
   // Handle the confirmation dialog
   page.once('dialog', async dialog => {
     await dialog.accept();
   });
 
-  const deleted = await page.evaluate((name) => {
-    const rows = document.querySelectorAll('tr');
-    for (const row of rows) {
-      const firstCell = row.querySelector('td');
-      if (!firstCell) continue;
-      const cellText = firstCell.textContent.trim();
-      const apiMatch = cellText.match(/^([A-Z][A-Z0-9_]+)/);
-      if (apiMatch && apiMatch[1] === name) {
-        const deleteBtn = Array.from(row.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
-          .find(el => (el.textContent || el.value || '').trim() === 'Delete');
-        if (deleteBtn) {
-          deleteBtn.click();
-          return true;
-        }
-      }
-    }
-    return false;
-  }, apiName);
+  const deleted = await page.evaluate((id, name) => {
+    const row = document.getElementById(id);
+    if (!row) return false;
+    const firstCell = row.querySelector('td');
+    if (!firstCell || firstCell.textContent.trim().split('\n')[0].trim() !== name) return false;
+    const deleteBtn = Array.from(row.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
+      .find(el => (el.textContent || el.value || '').trim() === 'Delete');
+    if (!deleteBtn) return false;
+    deleteBtn.click();
+    return true;
+  }, rowId, apiName);
 
   if (deleted) {
     await sleep(2000);
@@ -381,13 +480,16 @@ async function main() {
       console.log(`Read app ID ${appId} from steam_appid.txt`);
     } catch (e) {
       console.error('No app ID provided and steam_appid.txt not found.');
-      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--debug] [--no-delete]');
+      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--debug] [--delete] [--allow-empty]');
       process.exit(1);
     }
   }
   const url = `https://partner.steamgames.com/apps/achievements/${appId}`;
   const dryRun = process.argv.includes('--dry-run');
-  const skipDelete = process.argv.includes('--no-delete');
+  // Deletes are opt-in: Steam can't undo one for the players who earned it.
+  const skipDelete = !process.argv.includes('--delete');
+  if (process.argv.includes('--no-delete')) console.log('Note: --no-delete is the default now; pass --delete to remove achievements.');
+  const allowEmpty = process.argv.includes('--allow-empty');
 
   console.log('=== Steam Achievement Sync ===');
   console.log(`App ID: ${appId}`);
@@ -397,7 +499,7 @@ async function main() {
   console.log('');
 
   // Parse achievements from code
-  const codeAchievements = parseAchievementsFromCode();
+  const codeAchievements = await parseAchievementsFromCode();
   console.log(`Found ${codeAchievements.length} achievements in code:`);
   for (const a of codeAchievements) {
     console.log(`  ${a.apiName} — "${a.displayName}"`);
@@ -481,6 +583,8 @@ async function main() {
   }
 
   // Scrape current achievements
+  console.log('Waiting for the achievements table to load...');
+  await waitForTable(page);
   console.log('Scraping current achievements from Steamworks...');
   await dumpFormDebug(page, 'initial page');
   const steamAchievements = await scrapeAchievements(page);
@@ -489,6 +593,28 @@ async function main() {
     console.log(`  ${a.apiName} — "${a.displayName}"`);
   }
   console.log('');
+
+  // An empty read is far more likely to be a page that hasn't rendered than an
+  // app with no achievements — and acting on it re-adds everything as
+  // duplicates. Only proceed on an explicitly empty app.
+  if (steamAchievements.length === 0 && codeAchievements.length > 0 && !allowEmpty) {
+    console.error('Read 0 achievements from Steamworks — the table probably had not loaded.');
+    console.error('Nothing changed. Re-run, or pass --allow-empty if this app really has none yet.');
+    await browser.close();
+    process.exit(1);
+  }
+
+  // Duplicate API names on Steamworks mean something already went wrong; the
+  // name-keyed plan below can't reason about them safely.
+  const seen = new Map();
+  for (const a of steamAchievements) seen.set(a.apiName, (seen.get(a.apiName) || 0) + 1);
+  const dupes = [...seen].filter(([, n]) => n > 1).map(([name]) => name);
+  if (dupes.length > 0) {
+    console.error(`Steamworks has duplicate API names: ${dupes.join(', ')}`);
+    console.error('Nothing changed. Remove the extra rows by hand (keep the lowest id — the original) and re-run.');
+    await browser.close();
+    process.exit(1);
+  }
 
   // Compare
   const codeSet = new Map(codeAchievements.map(a => [a.apiName, a]));
@@ -504,21 +630,29 @@ async function main() {
   console.log(`  To delete:      ${toDelete.length}`);
   console.log('');
 
-  if (toAdd.length === 0 && toDelete.length === 0) {
-    console.log('Everything is in sync! Nothing to do.');
-    await browser.close();
-    return;
-  }
-
   if (toDelete.length > 0) {
-    console.log('Achievements to DELETE (on Steamworks but not in code):');
+    console.log(skipDelete
+      ? 'On Steamworks but not in code — WOULD be deleted with --delete (not deleting):'
+      : 'Achievements to DELETE (on Steamworks but not in code):');
     for (const a of toDelete) console.log(`  - ${a.apiName} ("${a.displayName}")`);
     console.log('');
+  }
+
+  if (toAdd.length === 0 && (skipDelete || toDelete.length === 0)) {
+    console.log(toDelete.length ? 'Nothing to add (deletes skipped — see above).' : 'Everything is in sync! Nothing to do.');
+    await browser.close();
+    return;
   }
 
   if (toAdd.length > 0) {
     console.log('Achievements to ADD (in code but not on Steamworks):');
     for (const a of toAdd) console.log(`  + ${a.apiName} ("${a.displayName}") — ${a.description}`);
+    console.log('');
+  }
+
+  const hiddenOnes = codeAchievements.filter(a => a.hidden).map(a => a.apiName);
+  if (hiddenOnes.length > 0) {
+    console.log('Mark these HIDDEN by hand in Steamworks (the form fill does not): ' + hiddenOnes.join(', '));
     console.log('');
   }
 
@@ -544,13 +678,13 @@ async function main() {
   if (!skipDelete && deleteList.length > 0) {
     console.log('Deleting achievements...');
     for (const a of deleteList) {
-      process.stdout.write(`  Deleting ${a.apiName}...`);
-      const ok = await deleteAchievement(page, a.apiName);
+      process.stdout.write(`  Deleting ${a.apiName} (${a.rowId})...`);
+      const ok = await deleteAchievement(page, a.rowId, a.apiName);
       console.log(ok ? ' done' : ' FAILED');
     }
     // Reload page after deletes
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    await sleep(1000);
+    await waitForTable(page);
     console.log('');
   }
 
@@ -558,6 +692,13 @@ async function main() {
   if (addList.length > 0) {
     console.log('Adding achievements...');
     for (const a of addList) {
+      // Re-check against the live table right before each add: never create
+      // a second row with an API name that already exists.
+      const live = await scrapeAchievements(page);
+      if (live.some(x => x.apiName === a.apiName)) {
+        console.log(`  Skipping ${a.apiName} — already on Steamworks`);
+        continue;
+      }
       process.stdout.write(`  Adding ${a.apiName}...\n`);
       const ok = await addAchievement(page, a);
       console.log(ok ? '  done' : '  FAILED');
@@ -568,15 +709,24 @@ async function main() {
   // Final scrape to verify
   console.log('Verifying...');
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-  await sleep(2000);
+  await waitForTable(page);
   const finalAchievements = await scrapeAchievements(page);
   console.log(`Steamworks now has ${finalAchievements.length} achievements.`);
   console.log(`Code expects ${codeAchievements.length} achievements.`);
 
-  if (finalAchievements.length === codeAchievements.length) {
+  // Compare by name, not count — a count can match while names are wrong.
+  const finalNames = finalAchievements.map(a => a.apiName);
+  const missing = codeAchievements.filter(a => !finalNames.includes(a.apiName)).map(a => a.apiName);
+  const extra = finalNames.filter(n => !codeSet.has(n));
+  const doubled = finalNames.filter((n, i) => finalNames.indexOf(n) !== i);
+  if (missing.length) console.log(`  Missing:    ${missing.join(', ')}`);
+  if (extra.length) console.log(`  Not in code: ${extra.join(', ')}`);
+  if (doubled.length) console.log(`  DUPLICATED: ${[...new Set(doubled)].join(', ')}`);
+
+  if (!missing.length && !doubled.length && (skipDelete || !extra.length)) {
     console.log('SYNC COMPLETE!');
   } else {
-    console.log('WARNING: Count mismatch — review in the browser.');
+    console.log('WARNING: Steamworks does not match the code — review in the browser.');
     console.log('Press ENTER to close the browser...');
     await waitForEnter();
   }

@@ -27,6 +27,13 @@ contextBridge.exposeInMainWorld('electronApp', {
   diag: (msg) => ipcRenderer.send('renderer:diag', String(msg)),
 });
 
+// #400 B4c: main decides the edition (--demo, TANDEMONIUM_DEMO=1, or the demo
+// Steam app id); js/edition.js reads tandemoniumSteam.isDemo. Synchronous so
+// it is set before any module asks for the edition rules.
+let _isDemo = false;
+try { _isDemo = ipcRenderer.sendSync('app:isDemo') === true; } catch (e) {}
+contextBridge.exposeInMainWorld('tandemoniumSteam', { isDemo: _isDemo });
+
 // Steam Input snapshot: pushed from main at ~60Hz via 'steam:input:tick'.
 // Renderer reads `window.steam.input.getLatest()` synchronously each frame —
 // no per-frame IPC round-trip.

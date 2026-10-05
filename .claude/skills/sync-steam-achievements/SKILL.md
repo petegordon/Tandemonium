@@ -19,7 +19,7 @@ node scripts/sync-steam-achievements.js [appId] [flags]
 **Flags:**
 - `--dry-run` — Compare and report only, no changes
 - `--debug` — Limit to 1 delete + 1 add, screenshots, verbose logging
-- `--no-delete` — Only add missing achievements, skip deletes
+- `--delete` — Also delete achievements on Steamworks that aren't in code (opt-in: a delete can't be undone for players who earned it). Without it the script only lists what would be deleted.
 
 **Examples:**
 - Full sync (uses steam_appid.txt): `node scripts/sync-steam-achievements.js`
@@ -34,7 +34,7 @@ node scripts/sync-steam-achievements.js [appId] [flags]
 3. Clicks "Sign in" and polls until login completes (2 min timeout)
 4. Scrapes currently configured achievements
 5. Compares code vs Steamworks — shows sync plan
-6. Deletes achievements on Steamworks not in code
+6. Lists achievements on Steamworks not in code (deletes them only with `--delete`)
 7. Adds achievements in code not on Steamworks (clicks New Achievement, types API Name/Display Name/Description, clicks Save)
 8. Verifies final count matches
 

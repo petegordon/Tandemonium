@@ -100,7 +100,7 @@ test('planning a route gives the ride and the sentence', () => {
   within(plan.realM, 1870000, 1, 'real distance');
   assert.equal(plan.route.capped, true);
   assert.ok(plan.waypoints.length > 100, 'a long route still gets waypoints for elevation');
-  assert.match(plan.headline, /Ride the distance between you: 1,8\d\d km/);
+  assert.match(plan.headline, /^1,8\d\d km of real streets$/);
 });
 
 test('a two-kilometre plan is ridden end to end', () => {
@@ -130,8 +130,8 @@ test('a bad geocode is rejected before it is ridden', () => {
 });
 
 test('the headline is the whole pitch, in one line', () => {
-  assert.equal(headlineFor(1209000), 'Ride the distance between you: 1,209 km');
-  assert.equal(headlineFor(1920), 'Ride the distance between you: 1.9 km');
+  assert.equal(headlineFor(1209000), '1,209 km of real streets');
+  assert.equal(headlineFor(1920), '1.9 km of real streets');
 });
 
 // E-5 · the billing bound. Tiles are metered, so this constant is the

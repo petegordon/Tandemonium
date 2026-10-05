@@ -128,9 +128,39 @@ export function planRoute(from, to, { stepM = 500 } = {}) {
   };
 }
 
-/** "Ride the distance between you: 1,209 km" — the sentence this is all for. */
+/**
+ * #400 · Map Tourist with ONE address: an open-world ride around that place —
+ * no destination, no finish, the usual free-roam radius. Same shape as a
+ * planRoute() plan so every consumer can stay one code path.
+ */
+export function planExplore(from) {
+  return {
+    from, to: null, explore: true, realM: 0,
+    route: { segments: [], ridableM: 0, realM: 0, skippedM: 0, capped: false },
+    waypoints: [from],
+    bearing: 0,
+    headline: `Exploring ${shortPlace(from && from.label)}`
+  };
+}
+
+/** "7958 Norman St, Pickerington, OH 43147, USA" → "7958 Norman St". */
+export function shortPlace(label) {
+  const first = String(label || '').split(',')[0].trim();
+  return first || 'here';
+}
+
+/**
+ * Bike heading (radians) that faces compass bearing `deg` in the tiles frame.
+ * ReorientationPlugin anchors ENU with +Z north and +X WEST, and the bike's
+ * forward is (sin h, cos h) in x/z — so east (90°) is h = -π/2.
+ */
+export function headingForBearing(deg) {
+  return -rad(deg || 0);
+}
+
+/** "1,209 km of real streets" — the mode is named Map Tourist(s) (#400). */
 export function headlineFor(realM) {
-  return `Ride the distance between you: ${formatDistance(realM)}`;
+  return `${formatDistance(realM)} of real streets`;
 }
 
 /** Metres as a human number: 850 m, 2.4 km, 1,209 km. */

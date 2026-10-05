@@ -118,3 +118,20 @@ test('the budget for a restart never shrinks below what the rider first had', ()
     if (ev && ev.event === 'checkpoint') opening = rm.segmentTimeTotal;
   }
 });
+
+test('#403 the helping hand stretches a retried segment, and passing the checkpoint drops it', () => {
+  const rm = new RaceManager(level);
+  rm.start();
+  rm.update(70, 0.016);                          // past the 62 m checkpoint
+  rm.resetSegmentTimer(62);
+  const base = rm.segmentTimeTotal;
+  rm.helpTimeScale = 1.25;
+  rm.resetSegmentTimer(62);
+  assert.ok(Math.abs(rm.segmentTimeTotal - base * 1.25) < 1e-9, 'Tier 1: +25 %');
+  rm.helpTimeScale = 1.5;
+  rm.resetSegmentTimer(62);
+  assert.ok(Math.abs(rm.segmentTimeTotal - base * 1.5) < 1e-9, 'Tier 2: +50 %');
+  rm.update(130, 0.016);                         // past 124 m: the next checkpoint
+  assert.equal(rm.helpTimeScale, 1);
+  assert.ok(Math.abs(rm.segmentTimeTotal - base) < 1e-9, 'the next stretch is back to its own budget');
+});

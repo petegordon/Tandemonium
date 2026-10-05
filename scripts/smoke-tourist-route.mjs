@@ -13,6 +13,8 @@ const browser=await puppeteer.launch({headless:'new',args:['--no-sandbox','--use
 
 async function open(withKey) {
   const page=await browser.newPage(); await page.setViewport({width:1280,height:800});
+  // SOLO must open the level list, not the first-run tutorial auto-start.
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
   if (withKey) await page.evaluateOnNewDocument(() => { window.__TOURIST_MAPS_KEY__ = 'test-key-not-real'; });
   await page.setRequestInterception(true);
   page.on('request',(req)=>{const u=req.url(); if(u.startsWith(`http://127.0.0.1:${PORT}`))return req.continue();
@@ -30,8 +32,9 @@ async function open(withKey) {
 // 1. No key: the entry point must not exist. An entry that fails is worse than none.
 const noKey = await open(false);
 const hidden = await noKey.evaluate(() => {
-  const b = document.getElementById('btn-tourist');
-  return { exists: !!b, visible: b ? b.style.display !== 'none' : false };
+  // #400: the entry is a card in the SOLO level list.
+  const b = document.querySelector('#level-cards .level-card[data-level-id="tourist"]');
+  return { exists: !!b, visible: !!b };
 });
 console.log('without a key:', JSON.stringify(hidden));
 
@@ -40,8 +43,9 @@ const page = await open(true);
 const flow = await page.evaluate(async () => {
   const l = window._game.lobby;
   document.getElementById('tap-to-start')?.click();
-  const btn = document.getElementById('btn-tourist');
-  const shown = btn.style.display !== 'none';
+  document.getElementById('btn-solo')?.click();
+  const btn = document.querySelector('#level-cards .level-card[data-level-id="tourist"]');
+  const shown = !!btn;
   btn.click();
   const stepShown = document.getElementById('lobby-tourist').style.display !== 'none';
 
@@ -90,19 +94,17 @@ const ride = await page.evaluate(async () => {
   g.state = 'playing';
   g._showTouristGoal();
 
-  g.bike.distanceTraveled = 0;
+  // Nothing sets distanceTraveled by hand (review B3): the odometer counting
+  // down as the bike really rides, and arriving, are smoke-tourist-coop §6,
+  // which can load the tiles world (stubbed). Here the tiles CDN is blocked.
   g._updateTouristGoal();
   const atStart = document.getElementById('tourist-goal').textContent;
-
-  g.bike.distanceTraveled = plan.route.ridableM / 2;
-  g._updateTouristGoal();
-  const halfway = document.getElementById('tourist-goal').textContent;
 
   // The victory screen's tourist block, as _showVictory calls it.
   const html = g._touristVictoryHtml(plan.route.ridableM);
 
   return {
-    atStart, halfway,
+    atStart,
     levelId: level.id,
     levelIsTourist: !!level.isTourist,
     timerEnabled: level.timerEnabled,
@@ -118,11 +120,11 @@ console.log('the ride:', JSON.stringify(ride, null, 1));
 const ok = !hidden.visible && flow.shown && flow.stepShown && flow.savedOk
   && /1,8\d\d km/.test(flow.headline) && flow.capped && flow.ridableKm === 5
   && flow.prefilled.from === 'Columbus, OH' && /RIDE IT AGAIN/.test(flow.prefilled.button)
-  && /to go/.test(ride.atStart) && ride.atStart !== ride.halfway
+  && /2\.0 km to go/.test(ride.atStart)
   && ride.levelId === 'tourist' && ride.levelIsTourist && ride.timerEnabled === false
   && ride.finishesAtDestination
   && /MADE IT TO THEM/.test(ride.title) && /Theirs/.test(ride.dest)
-  && /Ride the distance between you/.test(ride.strip);
+  && /km of real streets/.test(ride.strip);
 console.log(ok ? '✔ hidden without a key; plans, remembers, counts down, and arrives with a shareable result'
                : '✖ tourist flow wrong');
 await browser.close(); server.close(); process.exit(ok?0:1);

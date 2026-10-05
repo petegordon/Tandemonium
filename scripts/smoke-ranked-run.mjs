@@ -20,6 +20,8 @@ async function open(query='') {
    if(f&&fs.existsSync(f))return req.respond({status:200,contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:fs.readFileSync(f)});
    return req.abort();});
   page.on('pageerror', e => console.log('  PAGEERROR:', e.message));
+  // D6 (#400): a returning player; the first-launch tutorial has its own smoke (smoke:tutorial).
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
   await page.goto(`http://127.0.0.1:${PORT}/index.html${query}`,{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!!window._game,{timeout:30000});
   return page;
@@ -88,7 +90,70 @@ const strip = await web.evaluate(async () => {
 });
 console.log('strip:\n' + strip.text);
 
-const ok = chooser.visible && !chooser.rankedDisabled
+// 5. #398: the RANKED RUN badge never follows the player into the lobby —
+// neither after END RIDE (DNF) nor after a finish / quit (_returnToLobby).
+const badge = await web.evaluate(() => {
+  const g = window._game;
+  const el = document.getElementById('ranked-badge');
+  const shown = () => !!(el && el.classList.contains('show'));
+  g._rankedRunActive = true; g.hud.setRankedBadge(true);
+  const before = shown();
+  g._recordRankedDnf();
+  const afterDnf = { shown: shown(), active: g._rankedRunActive };
+  g._rankedRunActive = true; g.hud.setRankedBadge(true);
+  g._returnToLobby();
+  const afterLobby = { shown: shown(), active: g._rankedRunActive };
+  return { exists: !!el, before, afterDnf, afterLobby };
+});
+console.log('ranked badge:', JSON.stringify(badge));
+
+// 6. #398: the Today's Road card says the day's ranked run was used.
+const card = await web.evaluate(() => {
+  window._game.lobby._rebuildLevelCards();
+  const d = document.querySelector('.level-card[data-level-id="daily"] .level-card-desc');
+  return d ? d.textContent : null;
+});
+console.log('daily card:', card);
+
+// 7. M4: a ranked run forces SAFETY and SPEED off and locks their buttons (HUD,
+// D-pad and quick menu) for the ride; the player's own choices come back after.
+const locks = await web.evaluate(() => {
+  const g = window._game;
+  const qmHidden = id => { g.quickMenu.sync(); return !!document.getElementById(id)?.hidden; };
+  g.mode = 'solo';
+  g.lobby.selectedLevel = { ...g.lobby.selectedLevel, isDaily: true };
+  g.safetyMode = true; g._safetyTouched = true; g.autoSpeed = true;
+  g.lobby._dailyMode = 'ranked';
+  g._startCountdown();
+  g.safetyBtn.click(); g.speedBtn.click();   // what the D-pad and the HUD do
+  const during = {
+    ranked: g._rankedRunActive, safety: g.safetyMode, speed: g.autoSpeed,
+    safetyDisabled: g.safetyBtn.disabled, speedDisabled: g.speedBtn.disabled,
+    qmSafetyHidden: qmHidden('qm-safety'), qmSpeedHidden: qmHidden('qm-speed'),
+  };
+  g._recordRankedDnf();                     // END RIDE spends the run and ends it
+  const after = {
+    ranked: g._rankedRunActive, safety: g.safetyMode, speed: g.autoSpeed,
+    safetyDisabled: g.safetyBtn.disabled, speedDisabled: g.speedBtn.disabled,
+    qmSafetyHidden: qmHidden('qm-safety'),
+  };
+  g._returnToLobby();
+  return { during, after };
+});
+console.log('ranked locks:', JSON.stringify(locks));
+const locksOk = locks.during.ranked && !locks.during.safety && !locks.during.speed
+  && locks.during.safetyDisabled && locks.during.speedDisabled
+  && locks.during.qmSafetyHidden && locks.during.qmSpeedHidden
+  && !locks.after.ranked && locks.after.safety && locks.after.speed
+  && !locks.after.safetyDisabled && !locks.after.speedDisabled && !locks.after.qmSafetyHidden;
+console.log(locksOk ? '✔ SAFETY and SPEED are locked off on a ranked run and restored after'
+                    : '✖ SAFETY/SPEED ranked lock is wrong');
+
+const badgeOk = badge.exists && badge.before && !badge.afterDnf.shown && !badge.afterDnf.active
+  && !badge.afterLobby.shown && !badge.afterLobby.active;
+const cardOk = !!card && /Ranked ✓ 2:41/.test(card) && !/not ridden yet/.test(card);
+
+const ok = badgeOk && cardOk && locksOk &&chooser.visible && !chooser.rankedDisabled
   && afterSpend.rankedDisabled && /2:41/.test(afterSpend.hint) && afterSpend.pairStillFree
   && demoChooser.isDemo && demoChooser.asks === false
   && /Today's Road/.test(strip.text) && /2:41/.test(strip.text) && strip.text.split('\n').length === 4;

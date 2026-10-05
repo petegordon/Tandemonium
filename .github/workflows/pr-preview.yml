@@ -4,28 +4,24 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
 
-# Share the single gh-pages write queue with deploy.yml so previews and the
-# main deploy never push to gh-pages concurrently (non-fast-forward race). All
-# gh-pages writes across the repo serialize; cancel-in-progress:false → queue. (#319)
-concurrency:
-  group: gh-pages-write
-  cancel-in-progress: false
-
 jobs:
-  preview:
+  # Tests report on the PR as the `tests` check, but they don't gate the
+  # PREVIEW: a flaky unrelated test once blocked a deploy and a phone tester
+  # spent a round on a stale build without knowing. A broken build shows as a
+  # red check next to a live preview instead of a silently old preview.
+  # What stops a red build reaching production is deploy.yml, which runs the
+  # unit tests itself and does not deploy if they fail. (Making `tests` a
+  # required check for merging is a branch-protection setting on main, not
+  # something this file can do.)
+  tests:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        # Always check out — the cleanup path (PR closed/merged) also needs a
-        # git repo, or pr-preview-action fails with "not in a git directory".
         uses: actions/checkout@v4
 
-      # A-0 · unit tests gate the preview deploy.
       - name: Set up Node
-        if: github.event.action != 'closed'
         uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -34,23 +30,57 @@ jobs:
       # exercises js/road-path.js), so dependencies have to be installed before
       # the first gate runs — not midway through, as they used to be.
       - name: Install dependencies
-        if: github.event.action != 'closed'
         run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund
 
       - name: Unit tests
-        if: github.event.action != 'closed'
         run: npm test
 
       # A-3 · the game has no build step, so a broken import only shows up when
       # someone opens the page. This opens it.
       - name: Lobby smoke test
-        if: github.event.action != 'closed'
         run: |
           npx puppeteer browsers install chrome
           npm run smoke
           # ...and again over an insecure context, which is how a phone reaches
           # the site from an http:// link. crypto.randomUUID is undefined there.
           npm run smoke:insecure
+
+      # A fast subset of the headless smokes (puppeteer's own Chrome, launched
+      # with --no-sandbox by each script): what each edition offers, the room's
+      # camera/mic staying off, and the one coin wallet. They run side by side —
+      # each serves the game on its own port — so the job stays a few minutes.
+      # Lobby-level smokes only, one at a time. The ride smokes (no-media,
+      # economy, …) need a full ride under software WebGL, which on a hosted
+      # runner takes longer than their timeouts (and three Chromes in parallel
+      # starve a 2-core runner). They run locally: see README smoke:*.
+      - name: Smoke subset (lobby, edition)
+        run: |
+          fail=0
+          for s in smoke smoke:edition; do
+            if npm run -s "$s" > "smoke-log.txt" 2>&1; then status=passed; else status=FAILED; fail=1; fi
+            echo "::group::$s — $status"
+            cat smoke-log.txt
+            echo "::endgroup::"
+            if [ "$status" = FAILED ]; then echo "::error::$s failed"; fi
+          done
+          exit $fail
+
+  preview:
+    runs-on: ubuntu-latest
+    # Previews serialize among themselves. deploy.yml has its own group
+    # (gh-pages-main) so a burst of preview runs can't evict a pending main deploy;
+    # it retries if a preview push races it. (#319)
+    concurrency:
+      group: gh-pages-write
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        # Always check out — the cleanup path (PR closed/merged) also needs a
+        # git repo, or pr-preview-action fails with "not in a git directory".
+        uses: actions/checkout@v4
 
       - name: Stage deploy files
         if: github.event.action != 'closed'
@@ -70,11 +100,20 @@ jobs:
           sed -i 's|<head>|<head><base href="/pr-preview/pr-${{ github.event.number }}/">|' _site/index.html
           # Stamp the previewed commit + time into the lobby footer so the
           # preview build's version is visible (tagged with the PR number).
-          HASH=$(git rev-parse --short HEAD)
+          # The PR's HEAD commit, not `git rev-parse HEAD`: on pull_request
+          # that is a merge commit whose hash matches nothing in `git log`.
+          HASH=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
           DATE=$(TZ='America/New_York' date '+%m-%d-%Y %H:%M')
           VERSION="v.$HASH | $DATE (PR #${{ github.event.number }})"
           # Delimiter '@' (not '#') — the version contains '#' from the PR number.
           sed -i -E "s@id=\"lobby-version\">[^<]*@id=\"lobby-version\">${VERSION}@" _site/index.html
+          # Build identity for js/build-badge.js: an on-screen watermark, a
+          # version.json to spot a newer deploy, and the sha stamped into the
+          # module itself to spot stale cached game files.
+          PR=${{ github.event.number }}
+          echo "{\"sha\":\"$HASH\",\"pr\":$PR,\"time\":\"$DATE\"}" > _site/version.json
+          sed -i "s|<head>|<head><script>window.__BUILD={sha:'$HASH',pr:$PR,time:'$DATE'}</script>|" _site/index.html
+          sed -i "s|%%MODULE_SHA%%|$HASH|" _site/js/build-badge.js
 
       # Tourist Mode (#333) reads window.__TOURIST_MAPS_KEY__ from the gitignored
       # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).

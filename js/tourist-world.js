@@ -75,7 +75,8 @@ export class TouristWorld {
     tiles.registerPlugin(new TileCompressionPlugin());
     tiles.registerPlugin(new TilesFadePlugin());
     // Where are we riding? Defaults to Scioto Mile; ?lat/?lon points it anywhere.
-    const origin = getTouristOrigin();
+    // #400: a lobby ride passes the anchor it resolved for its first address.
+    const origin = options.origin || getTouristOrigin();
     this._origin = origin;
     console.log(`[Tourist] riding ${origin.name} — anchor ${Math.round(origin.height)}m ` +
       `(${origin.anchored === false ? 'GUESSED, wide probe' : origin.source || 'explicit ?h'})`);
@@ -173,6 +174,8 @@ export class TouristWorld {
   /** E-6 · a planned A-to-B ride: budget the radius for its actual length. */
   setRoute(plan) {
     this._route = plan;
+    // #400: an open-world ride (one address) roams the usual free-roam radius.
+    if (plan && plan.explore) { this.setMaxRadius(TOURIST_MAX_RADIUS_M); return; }
     this.setMaxRadius((plan && plan.route ? plan.route.ridableM : 0) + 500);
   }
 
@@ -437,6 +440,10 @@ export class TouristWorld {
   clearRaceMarkers() {}
   setBalloonColor() {}
   checkTreeCollision() { return { hit: false }; }
+  // _startCountdown reseeds the world from the level; real streets have no seed.
+  // (Without this _startCountdown threw before it built the RaceManager, so a
+  // tourist ride rolled but never had a finish.)
+  reseed() { return false; }
 
   dispose() {
     if (this.tiles) {
@@ -447,6 +454,9 @@ export class TouristWorld {
     if (this._draco) this._draco.dispose();
     if (this._hemi) this.scene.remove(this._hemi);
     if (this._sun) this.scene.remove(this._sun);
+    // #400: nothing of this ride may outlive it on the next (procedural) one.
+    if (this._noticeEl) { this._noticeEl.remove(); this._noticeEl = null; }
+    if (this._creditsEl) this._creditsEl.textContent = '';
   }
 }
 
