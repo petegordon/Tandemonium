@@ -42,14 +42,16 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { LEVELS, getMedals } from './race-config.js';
-import { makePlacementSalt, dailyKey, dailySeed } from './daily-seed.js';
-import { planRoute, skipLabel, isValidPoint } from './tourist-route.js';
-import { getMapsApiKey, geocodeAddress } from './tourist-config.js';
+import { makePlacementSalt, dailyKey, dailySeed, weeklyKey } from './daily-seed.js';
+import { planRoute, planExplore, skipLabel, isValidPoint } from './tourist-route.js';
+import { getMapsApiKey, geocodeAddress, resolveOriginAt } from './tourist-config.js';
 import {
   resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
-  rankedResult, computeStreak, formatDayLabel, formatClock
+  rankedResult, computeStreak, formatDayLabel, formatClock,
+  asWeeklyRoad, resolveWeeklyLevel, weeklyDescription, WEEKLY_RULES_LINE
 } from './daily-ride.js';
 import * as records from './records.js';
+import { isTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { AuthManager } from './auth.js';
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achievements.js';
@@ -61,6 +63,11 @@ import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
 import { renderRoomQR } from './lobby/room-qr.js';
+import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery } from './edition.js';
+import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict } from './edition.js'; // PR #397 M1
+import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
+import { versusBotAllowed } from './versus/versus-bot.js';
+import { loadWallet, browserStore as walletStore } from './wallet.js';
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -126,8 +133,10 @@ const HOLIDAY_BIKES = {
 };
 
 export class Lobby {
-  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, input, controllerManager }) {
+  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, onSlingshotReady, onGarage, input, controllerManager }) {
     this.onSolo = onSolo;
+    this.onSlingshotReady = onSlingshotReady || (() => {});
+    this.onGarage = onGarage || (() => {});   // #400 D4 · the one garage
     this.onTouristReady = onTouristReady || (() => {});   // E-6
     this.onMultiplayerReady = onMultiplayerReady;
     this.onLocalReady = onLocalReady;
@@ -203,8 +212,17 @@ export class Lobby {
     this._cameraPermitted = false;
     this._hasCamera = true; // assume true, check async below
 
+    // Room camera/mic off (#400 D7, default): no camera/audio toggles, and
+    // never touch getUserMedia/enumerateDevices. Multiplayer is unaffected.
+    this._mediaEnabled = isMediaEnabled();
+    if (!this._mediaEnabled) {
+      this._hasCamera = false;
+      this.toggleCamera.style.display = 'none';
+      this.toggleAudio.style.display = 'none';
+    }
+
     // Hide camera toggle if no camera hardware exists
-    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    if (this._mediaEnabled && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       navigator.mediaDevices.enumerateDevices().then(devices => {
         this._hasCamera = devices.some(d => d.kind === 'videoinput');
         if (!this._hasCamera) {
@@ -288,7 +306,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo')],
+      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage')].filter(Boolean),
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
@@ -332,6 +350,9 @@ export class Lobby {
     this._stepBack.set(this.hostStep, document.getElementById('btn-back-role-host'));
     this._stepBack.set(this.joinStep, document.getElementById('btn-back-role-join'));
     this._stepBack.set(this.versusStep, document.getElementById('btn-back-versus'));
+    // #400: Tourist's inline Back is hidden by .lobby-step .lobby-back like every
+    // step's; registering it drives the fixed bottom Back (and gamepad B).
+    this._stepBack.set(this.touristStep, document.getElementById('btn-back-tourist'));
 
     // Fixed back button (non-gamepad, stays at bottom of steps column)
     this._fixedBackBtn = document.getElementById('lobby-fixed-back');
@@ -661,6 +682,7 @@ export class Lobby {
     this._applyPresetToPreview();
     // Rebuild level cards to reflect newly unlocked levels
     this._rebuildLevelCards();
+    this._refreshWallet();   // #400 D4: what the last ride paid
     this._showStep(this.modeStep);
     this._startGamepadNav();
     this._checkPermissionStates();
@@ -701,6 +723,7 @@ export class Lobby {
     if (step === this.levelStep || step === this.versusStep || step === this.roomStep) {
       this._refreshRecordLines();
     }
+    if (step === this.levelStep) this._refreshTouristCard();
 
     // Local-MP JOIN RIDE monitor: run only while the captain host page is visible.
     if (step === this.hostStep) {
@@ -734,7 +757,9 @@ export class Lobby {
     // Hide bike carousel on level step (use that space for level cards + difficulty)
     const carousel = document.getElementById('bike-carousel');
     const lobbyCard = document.querySelector('.lobby-card');
-    const hideCarousel = (step === this.levelStep);
+    // Tourist opens from the level list (#400): the bike was already chosen
+    // there, and on a phone the carousel pushes the route form off-screen.
+    const hideCarousel = (step === this.levelStep || step === this.touristStep);
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
     if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
     const lobbyEl = document.getElementById('lobby');
@@ -847,7 +872,25 @@ export class Lobby {
     this._stopPreviewLoop();
   }
 
+  /** #400 D4 · the Chaos Coin balance on the GARAGE button (js/wallet.js). */
+  _refreshWallet() {
+    const el = document.getElementById('lobby-wallet');
+    if (!el) return;
+    const w = loadWallet(walletStore());
+    el.textContent = ' · 🪙 ' + w.coins.toLocaleString('en-US');
+  }
+
   _setup() {
+    // #400 D4 · GARAGE: spend every mode's Chaos Coins.
+    const garageBtn = document.getElementById('btn-garage');
+    if (garageBtn) {
+      this._refreshWallet();
+      garageBtn.addEventListener('click', () => {
+        this._hideLobby();
+        this.onGarage();
+      });
+    }
+
     // SOLO → always show level selection
     document.getElementById('btn-solo').addEventListener('click', async () => {
       analytics.trackFirstInput('solo');
@@ -855,6 +898,17 @@ export class Lobby {
       this._syncMotionState();
       this._pendingMode = 'solo';
       this._detectAndSetInputMethod();
+      // D6 (#400): a first-time player goes straight into the tutorial
+      // (SKIP is on screen there) instead of a level list they can't read yet.
+      const tutorial = LEVELS.find(l => l.isTutorial);
+      if (tutorial && !isTutorialDone(tutorialStore())) {
+        this.selectedLevel = tutorial;
+        this._forceWizard = true;
+        this._updateDifficultyVisibility(tutorial.id);
+        analytics.trackEvent('tutorial_auto_start');
+        this._startRide();
+        return;
+      }
       this._showStep(this.levelStep);
     });
 
@@ -1252,15 +1306,50 @@ export class Lobby {
    * the Steam-side flag; this is the query-string half, which is what the demo
    * launch URL carries).
    */
-  get isDemoBuild() {
-    if (this.__isDemo !== undefined) return this.__isDemo;
-    let demo = false;
-    try { demo = new URLSearchParams(location.search).get('demo') === '1'; } catch {}
-    if (!demo && typeof window !== 'undefined' && window.tandemoniumSteam) {
-      demo = !!window.tandemoniumSteam.isDemo;
+  /**
+   * PR #397 M1 · the rules this lobby picks by: this edition's, or in an online room the MOST RESTRICTIVE of the two sides (edition.mergeRoomRules).
+   * Until the partner's room profile arrives it counts as an old client.
+   */
+  roomRules() {
+    const mine = getEditionRules();
+    return this._pendingMode === 'multiplayer' ? mergeRoomRules(mine, this._partnerRoom || null) : mine;
+  }
+
+  /** PR #397 M1 · { edition, caps } for this side's room profile. */
+  roomProfileFields() {
+    return roomProfileFields(getEditionRules());
+  }
+
+  /**
+   * PR #397 M1 · the levelSync payload beyond the level id: the effective
+   * difficulty, and for the shared road its kind, key and seed — the stoker
+   * adopts these rather than resolving them from its own edition.
+   */
+  _levelSyncExtra(level) {
+    const extra = { difficulty: this.selectedDifficulty };
+    if (level && level.isDaily) {
+      extra.key = level.key; extra.seed = level.seed;
+      extra.roadKind = level.isWeekly ? 'weekly' : 'daily';
     }
-    this.__isDemo = demo;
-    return demo;
+    return extra;
+  }
+
+  get isDemoBuild() {
+    // #400: one source of truth for what the demo restricts — js/edition.js.
+    return isDemoEdition();
+  }
+
+  /**
+   * #400 · the shared road with its identity attached: Today's Road, or in the
+   * demo This Week's Road (rules.weeklyRoad). Any other level comes back as is.
+   * `key`/`seed` are the captain's when a stoker resolves it (C-2).
+   */
+  resolveRoadLevel(level, { key, seed } = {}) {
+    if (!level || !level.isDaily) return level;
+    if (this.roomRules().weeklyRoad) return resolveWeeklyLevel(level, { key, seed });
+    return resolveDailyLevel(level, {
+      key: key || dailyKey(), seed: typeof seed === 'number' ? seed : dailySeed()
+    });
   }
 
   /**
@@ -1272,7 +1361,7 @@ export class Lobby {
    */
   _shouldAskDailyMode() {
     if (!this.selectedLevel || !this.selectedLevel.isDaily) return false;
-    if (this.isDemoBuild) return false;                 // demo is practice-only
+    if (!this.roomRules().ranked) return false;        // demo is practice-only; so is a room with a demo/old partner
     if (this._pendingMode === 'multiplayer' && this._roomRole !== 'captain') return false;
     return true;
   }
@@ -1326,13 +1415,15 @@ export class Lobby {
     try {
       const raw = localStorage.getItem('tandemonium_tourist_route');
       const saved = raw ? JSON.parse(raw) : null;
-      return saved && isValidPoint(saved.from) && isValidPoint(saved.to) ? saved : null;
+      // #400: `to` is optional — one address is an open-world ride.
+      if (!saved || !isValidPoint(saved.from)) return null;
+      return saved.to == null || isValidPoint(saved.to) ? saved : null;
     } catch { return null; }
   }
 
-  _saveRoute(from, to) {
+  _saveRoute(from, to = null) {
     try {
-      localStorage.setItem('tandemonium_tourist_route', JSON.stringify({ from, to, at: Date.now() }));
+      localStorage.setItem('tandemonium_tourist_route', JSON.stringify({ from, to: to || null, at: Date.now() }));
     } catch { /* private mode: the ride still works, it is just not remembered */ }
   }
 
@@ -1340,34 +1431,96 @@ export class Lobby {
    * Show the Tourist entry at all only when it can actually work. Without a
    * Maps key the mode can only disappoint, and an entry point that fails is
    * worse than no entry point — that is the #350 lesson.
+   *
+   * #400: the entry is a card in the SOLO level list (which couch co-op uses
+   * too) and in the captain's RIDE TOGETHER list (_buildLevelCardsShared), not
+   * a mode-screen button. Online: the captain plans, the end points go to the
+   * stoker (RoomProtocol.touristPlan), and the game meets at a tiles-ready
+   * barrier before the countdown (game._startCoopTourist).
    */
+  _touristAvailable() {
+    return this.roomRules().tourist && !!getMapsApiKey();   // M1: room needs a partner that can ride it
+  }
+
+  /** #400: "Map Tourist" alone, "Map Tourists" when two ride it. */
+  _touristLabel() {
+    return this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
+      ? 'Map Tourists' : 'Map Tourist';
+  }
+
+  /** The SOLO list is shared with couch co-op, so name the card as it is shown. */
+  _refreshTouristCard() {
+    // PR #397 m10: the SOLO list was built for one rider or for the couch;
+    // rebuild it when the other one is about to see it (Slingshot card).
+    const want = this._pendingMode === 'local' ? 'local' : this._pendingMode === 'solo' ? 'solo' : null;
+    if (want && this._soloListFor && want !== this._soloListFor) this._rebuildLevelCards();
+    const name = document.querySelector('#level-cards .level-card-tourist .level-card-name');
+    if (name) name.textContent = this._touristLabel();
+  }
+
+  _openTouristStep() {
+    // Who rides it: alone, two on this screen, or the room (captain plans).
+    this._touristFor = this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
+      ? this._pendingMode : 'solo';
+    const together = this._touristFor !== 'solo';
+    const prompt = this.touristStep.querySelector('.lobby-prompt');
+    if (prompt) prompt.textContent = together ? 'Map Tourists · Where will you ride?' : 'Map Tourist · Where will you ride?';
+    const fromIn = document.getElementById('tourist-from');
+    const toIn = document.getElementById('tourist-to');
+    if (fromIn) fromIn.placeholder = 'Address or place';
+    if (toIn) toIn.placeholder = together ? "Your partner's address or city" : 'Second address or city';
+    if (this._touristFor === 'solo') this._pendingMode = 'tourist';
+    this._forceWizard = false;
+    this._showStep(this.touristStep);
+    this._prefillTouristForm();
+    analytics.trackEvent('tourist_open');
+  }
+
   _initTouristEntry() {
-    const btn = document.getElementById('btn-tourist');
-    if (!btn) return;
-    if (!getMapsApiKey()) return;              // stays hidden
-    btn.style.display = '';
-    btn.addEventListener('click', () => {
-      this._pendingMode = 'tourist';
-      this._showStep(this.touristStep);
-      this._prefillTouristForm();
-      analytics.trackEvent('tourist_open');
-    });
+    if (!this._touristAvailable()) return;     // no card is built either
 
     const back = document.getElementById('btn-back-tourist');
-    if (back) back.addEventListener('click', () => this._showStep(this.modeStep));
+    if (back) back.addEventListener('click', () => {
+      if (this._touristFor === 'multiplayer') { this._showRoomLevelsStep(); return; }
+      this._pendingMode = this._touristFor === 'local' ? 'local' : 'solo';
+      this._showStep(this.levelStep);
+    });
 
     const from = document.getElementById('tourist-from');
     const to = document.getElementById('tourist-to');
     const go = document.getElementById('btn-tourist-ride');
     const onEdit = () => {
-      const ready = from.value.trim().length > 2 && to.value.trim().length > 2;
+      const two = this._touristTwoAddresses();
+      const ready = from.value.trim().length > 2 && (!two || to.value.trim().length > 2);
       go.disabled = !ready;
-      go.textContent = 'PLAN THE RIDE';
+      go.textContent = two ? 'PLAN THE RIDE' : 'EXPLORE HERE';
       this._touristPlan = null;
+      const preview = document.getElementById('tourist-preview');
+      if (preview) preview.textContent = '';
     };
+    this._onTouristEdit = onEdit;
     from.addEventListener('input', onEdit);
     to.addEventListener('input', onEdit);
     go.addEventListener('click', () => this._planTouristRide());
+
+    // #400: one address explores around it; a second one plans a route.
+    const add = document.getElementById('btn-tourist-add-to');
+    const remove = document.getElementById('btn-tourist-remove-to');
+    if (add) add.addEventListener('click', () => { this._setTouristTwoAddresses(true); to.focus(); onEdit(); });
+    if (remove) remove.addEventListener('click', () => { to.value = ''; this._setTouristTwoAddresses(false); onEdit(); });
+  }
+
+  /** #400 · is the second-address field showing? */
+  _touristTwoAddresses() {
+    const row = document.getElementById('tourist-to-row');
+    return !!row && row.style.display !== 'none';
+  }
+
+  _setTouristTwoAddresses(on) {
+    const row = document.getElementById('tourist-to-row');
+    const add = document.getElementById('btn-tourist-add-to');
+    if (row) row.style.display = on ? '' : 'none';
+    if (add) add.style.display = on ? 'none' : '';
   }
 
   /** E-8 · offer the last route back, so a repeat ride is one button. */
@@ -1377,15 +1530,20 @@ export class Lobby {
     const go = document.getElementById('btn-tourist-ride');
     if (!saved) {
       if (preview) preview.textContent = '';
+      this._setTouristTwoAddresses(false);
+      if (this._onTouristEdit) this._onTouristEdit();
       return;
     }
     document.getElementById('tourist-from').value = saved.from.label || '';
-    document.getElementById('tourist-to').value = saved.to.label || '';
+    document.getElementById('tourist-to').value = saved.to ? (saved.to.label || '') : '';
+    this._setTouristTwoAddresses(!!saved.to);
     if (go) go.disabled = false;
-    const plan = planRoute(saved.from, saved.to);
+    const plan = saved.to ? planRoute(saved.from, saved.to) : planExplore(saved.from);
     if (preview) {
-      preview.innerHTML = 'Again? <strong>' + this._escape(saved.from.label) + '</strong> to <strong>' +
-        this._escape(saved.to.label) + '</strong><br>' + this._escape(plan.headline);
+      preview.innerHTML = saved.to
+        ? 'Again? <strong>' + this._escape(saved.from.label) + '</strong> to <strong>' +
+          this._escape(saved.to.label) + '</strong><br>' + this._escape(plan.headline)
+        : 'Again? <strong>' + this._escape(saved.from.label) + '</strong><br>Open world · ride anywhere nearby';
     }
     this._touristPlan = plan;
     if (go) go.textContent = 'RIDE IT AGAIN';
@@ -1402,6 +1560,7 @@ export class Lobby {
     const preview = document.getElementById('tourist-preview');
     const fromText = document.getElementById('tourist-from').value;
     const toText = document.getElementById('tourist-to').value;
+    const two = this._touristTwoAddresses() && toText.trim().length > 0;
 
     // Second press with a plan already on screen: ride it.
     if (this._touristPlan) {
@@ -1412,6 +1571,26 @@ export class Lobby {
     errorEl.textContent = '';
     go.disabled = true;
     go.textContent = 'FINDING…';
+
+    // #400 · one address: find it and ride straight in (open world). No
+    // two-press reveal — there is no distance to show.
+    if (!two) {
+      try {
+        const from = await geocodeAddress(fromText);
+        if (!isValidPoint(from)) throw new Error('could not place that address');
+        this._saveRoute(from, null);
+        analytics.trackEvent('tourist_explore_planned');
+        go.disabled = false;
+        go.textContent = 'EXPLORE HERE';
+        this._startTouristRide(planExplore(from));
+      } catch (err) {
+        errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
+        go.disabled = false;
+        go.textContent = 'EXPLORE HERE';
+        analytics.trackEvent('tourist_route_failed');
+      }
+      return;
+    }
 
     try {
       const [from, to] = await Promise.all([
@@ -1444,10 +1623,57 @@ export class Lobby {
     }
   }
 
-  _startTouristRide(plan) {
+  async _startTouristRide(plan) {
+    const forMode = this._touristFor || 'solo';
+    if (forMode === 'multiplayer') {
+      // Online co-op: the captain's plan travels as its two end points, then
+      // the ordinary start message (flagged), and both sides enter the game.
+      if (this._roomRole !== 'captain') return;
+      const errorEl = document.getElementById('tourist-error');
+      if (!this.net || !this.net.connected) {
+        if (errorEl) errorEl.textContent = 'Reconnecting to your partner…';
+        return;
+      }
+      // PR #397 m16: the captain finds the anchor's ground height ONCE, here,
+      // outside the shared ready deadline, and sends it with the plan.
+      if (!plan.anchor) {
+        const go = document.getElementById('btn-tourist-ride');
+        if (go) go.disabled = true;
+        try {
+          const o = await resolveOriginAt(plan.from);
+          if (o && Number.isFinite(o.height)) plan.anchor = { height: o.height, anchored: !!o.anchored };
+        } catch { /* the stoker falls back to its own lookup */ }
+        if (go) go.disabled = false;
+        if (!this.net || !this.net.connected) {
+          if (errorEl) errorEl.textContent = 'Reconnecting to your partner…';
+          return;
+        }
+      }
+      this._roomTouristPlan = plan;
+      this._placementSalt = makePlacementSalt();
+      this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.explore ? null : plan.to, plan.anchor));
+      this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, null, true));
+      analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000), mode: 'online' });
+      this._transitionToGame();
+      return;
+    }
     this._hideLobby();
-    this.onTouristReady({ plan });
-    analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000) });
+    if (forMode === 'local') {
+      this.onTouristReady({ plan, local: { inputP2: this._localP2InputManager, sourceType: this._localP2Type } });
+    } else {
+      this.onTouristReady({ plan });
+    }
+    analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000), mode: forMode });
+  }
+
+  /**
+   * #400 · the route this room's ride is for, once: the game takes it when the
+   * ride starts (null for every ordinary ride).
+   */
+  takeRoomTouristPlan() {
+    const plan = this._roomTouristPlan || null;
+    this._roomTouristPlan = null;
+    return plan;
   }
 
   /** Escape a geocoder-supplied label before it goes anywhere near innerHTML. */
@@ -1472,14 +1698,13 @@ export class Lobby {
     container.innerHTML = '';
     const buttons = [];
 
-    // Level unlock requirements: Castle requires finishing Grandma's House
-    const LEVEL_UNLOCK = { castle: 'home_sweet' };
+    // Level unlock requirements: { levelId: achievementId }. None today —
+    // the Castle (the only locked level) was removed in #400.
+    const LEVEL_UNLOCK = {};
 
-    // C-4 · the demo ships Tutorial, Grandma's and Today's Road. The Castle
-    // stays shut and points at the store instead of at an achievement the
-    // player could earn in the next three minutes: a demo that hands over its
-    // second level has nothing left to sell.
-    const demoLocked = this.isDemoBuild ? new Set(['castle']) : new Set();
+    // C-4 · levels the demo shows locked, pointing at the store. Empty since
+    // the Castle was removed (#400).
+    const demoLocked = new Set();
 
     // Check if gyro is active but uncalibrated (show recommendation, don't lock)
     const needsTuning = this._needsMotionTuning();
@@ -1487,8 +1712,13 @@ export class Lobby {
     // C-2: Today's Road is not in the VERSUS list — versus has its own rules
     // (two teams, one screen) and a shared daily result means nothing there.
     const isVersus = mode === 'versus';
+    // #400: every list offers only what this edition includes; in the demo the
+    // shared road is This Week's Road.
+    const rules = this.roomRules();   // PR #397 M1: a room offers what BOTH sides can ride
     const levels = LEVELS.filter(l =>
-      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily));
+      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id))
+      .map(l => (l.isDaily && rules.weeklyRoad ? asWeeklyRoad(l) : l));
+    this._lockedLevelIds = this._lockedLevelIds || new Set();   // read by NEXT LEVEL
 
     levels.forEach(level => {
       const isTutorial = level.isTutorial;
@@ -1496,6 +1726,7 @@ export class Lobby {
       const demoGated = demoLocked.has(level.id);
       const locked = demoGated ||
         (!isTutorial && requiredAch && !this._achievements.getEarnedIds().includes(requiredAch));
+      if (locked) this._lockedLevelIds.add(level.id); else this._lockedLevelIds.delete(level.id);
 
       const card = document.createElement('button');
       card.className = 'level-card' + (locked ? ' level-locked' : '') + (isTutorial ? ' level-card-tutorial' : '');
@@ -1520,7 +1751,11 @@ export class Lobby {
         // C-2: Today's Road says which day it is, what you have done on it, and
         // when the next road arrives \u2014 a daily thing nobody knows is daily is
         // just a level.
-        if (level.isDaily) {
+        if (level.isWeekly) {
+          const key = weeklyKey();
+          desc = weeklyDescription(dailyStatus(browserStore(), key), key) +
+            '<br><span class="level-card-daily-rule">' + WEEKLY_RULES_LINE + '</span>';
+        } else if (level.isDaily) {
           const key = dailyKey();
           desc = dailyDescription(dailyStatus(browserStore(), key), key) +
             '<br><span class="level-card-daily-rule">' + DAILY_RULES_LINE + '</span>';
@@ -1541,9 +1776,7 @@ export class Lobby {
             // C-2: Today's Road resolves its identity at the moment it is picked
             // — the day key and seed come from the clock now, not from whenever
             // this page was loaded (someone may have left it open overnight).
-            this.selectedLevel = level.isDaily
-              ? resolveDailyLevel(level, { key: dailyKey(), seed: dailySeed() })
-              : level;
+            this.selectedLevel = this.resolveRoadLevel(level);
             this._forceWizard = isTutorial;
             this._updateDifficultyVisibility(level.id);
             container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
@@ -1557,9 +1790,7 @@ export class Lobby {
               // C-2: the captain's day key and seed are authoritative — a stoker
               // whose clock is on the other side of the 09:00 UTC rollover must
               // still ride the captain's road, not a different one.
-              this.net.sendProfile(RoomProtocol.levelSync(level.id, level.isDaily
-                ? { key: this.selectedLevel.key, seed: this.selectedLevel.seed }
-                : null));
+              this.net.sendProfile(RoomProtocol.levelSync(level.id, this._levelSyncExtra(this.selectedLevel)));
             }
           });
         } else {
@@ -1572,26 +1803,71 @@ export class Lobby {
       if (!locked) buttons.push(card);
     });
 
+    // Slingshot lives under SOLO: a mode, not a level, so its card skips the
+    // difficulty/START RIDE flow and opens the garage directly. #400: the
+    // edition decides (the demo keeps it, with a stage cap).
+    // PR #397 m10: not for couch co-op, which shares this list — the Slingshot
+    // is one rider, and leaving through it silently dropped P2.
+    this._soloListFor = mode !== 'solo' ? null : this._pendingMode === 'local' ? 'local' : 'solo';
+    if (mode === 'solo' && isClickable && rules.slingshot.enabled && this._pendingMode !== 'local') {
+      const card = document.createElement('button');
+      card.className = 'level-card level-card-slingshot';
+      card.dataset.levelId = 'slingshot';
+      card.innerHTML =
+        '<div class="level-card-top">' +
+          '<span class="level-card-icon">&#127919;</span>' +
+          '<span class="level-card-name">Slingshot</span>' +
+        '</div>' +
+        '<div class="level-card-desc">Pull back, aim, let go. Earn Chaos Coins and upgrade.</div>';
+      card.addEventListener('click', () => {
+        this._pendingMode = 'slingshot';
+        this._hideLobby();
+        this.onSlingshotReady();
+        analytics.trackEvent('slingshot_open');
+      });
+      container.appendChild(card);
+      buttons.push(card);
+    }
+
+    // E-6 / #400 · Tourist lives under SOLO too: a mode, not a level, so its
+    // card opens the route-planning step. Only when it can work (a Maps key)
+    // and the edition includes it — an entry point that fails is worse than
+    // none (#350). Solo only: co-op Tourist is not built (see _initTouristEntry).
+    if ((mode === 'solo' || mode === 'multiplayer') && isClickable && this._touristAvailable()) {
+      const card = document.createElement('button');
+      card.className = 'level-card level-card-tourist';
+      card.dataset.levelId = 'tourist';
+      card.innerHTML =
+        '<div class="level-card-top">' +
+          '<span class="level-card-icon">&#128205;</span>' +
+          '<span class="level-card-name">' + this._touristLabel() + '</span>' +
+        '</div>' +
+        '<div class="level-card-desc">Two places on the map become a ride through real streets.</div>';
+      card.addEventListener('click', () => this._openTouristStep());
+      container.appendChild(card);
+      buttons.push(card);
+    }
+
     // Default selection: restore previous or pick first unlocked non-tutorial level
     if (isClickable) {
       let defaultCard = null;
       if (this.selectedLevel) {
         // Restore previous selection
-        defaultCard = container.querySelector('.level-card[data-level-id="' + this.selectedLevel.id + '"]:not(.level-locked)');
+        defaultCard = container.querySelector('.level-card[data-level-id="' + this.selectedLevel.id + '"]:not(.level-locked):not(.level-card-slingshot):not(.level-card-tourist)');
       }
       if (!defaultCard) {
         // Pick first unlocked non-tutorial level (Grandma's)
-        defaultCard = container.querySelector('.level-card:not(.level-locked):not(.level-card-tutorial)');
+        defaultCard = container.querySelector('.level-card:not(.level-locked):not(.level-card-tutorial):not(.level-card-slingshot):not(.level-card-tourist)');
       }
       if (defaultCard) {
         defaultCard.classList.add('selected');
-        this.selectedLevel = LEVELS.find(l => l.id === defaultCard.dataset.levelId);
+        this.selectedLevel = this.resolveRoadLevel(LEVELS.find(l => l.id === defaultCard.dataset.levelId));
         this._forceWizard = !!(this.selectedLevel && this.selectedLevel.isTutorial);
         if (startBtn) startBtn.disabled = false;
         this._updateDifficultyVisibility(defaultCard.dataset.levelId);
         // Sync to partner on multiplayer re-entry
         if (this.net && this.net.connected) {
-          this.net.sendProfile(RoomProtocol.levelSync(this.selectedLevel.id));
+          this.net.sendProfile(RoomProtocol.levelSync(this.selectedLevel.id, this._levelSyncExtra(this.selectedLevel)));
         }
       }
     }
@@ -1674,7 +1950,10 @@ export class Lobby {
     // C-2: Today's Road is one road at one difficulty for everyone — a shared
     // road that each player tunes to taste is not a shared road.
     const daily = LEVELS.find(l => l.id === levelId && l.isDaily);
-    const forced = isTutorial ? 'chill' : (daily ? daily.fixedDifficulty : null);
+    // #400 D10: the demo's weekly road rides on Chill (safety on).
+    const roadDifficulty = daily && this.roomRules().weeklyRoad
+      ? asWeeklyRoad(daily).fixedDifficulty : (daily && daily.fixedDifficulty);
+    const forced = isTutorial ? 'chill' : (daily ? roadDifficulty : null);
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
     if (forced && !isTutorial) {
       diffBtns.forEach(b => {
@@ -1683,6 +1962,7 @@ export class Lobby {
         b.classList.toggle('selected', b.dataset.difficulty === forced);
       });
       this.selectedDifficulty = forced;
+      this._syncForcedDifficulty();   // PR #397 M1
       this._refreshRecordLines();
       return;
     }
@@ -1702,6 +1982,14 @@ export class Lobby {
       const chillBtn = document.querySelector('#difficulty-selector .difficulty-btn[data-difficulty="chill"]');
       if (chillBtn) chillBtn.classList.add('selected');
       this.selectedDifficulty = 'chill';
+      this._syncForcedDifficulty();   // PR #397 M1
+    }
+  }
+
+  /** PR #397 M1 · a forced difficulty (road, tutorial) goes to the stoker too. */
+  _syncForcedDifficulty() {
+    if (this._roomRole === 'captain' && this._pendingMode === 'multiplayer' && this.net && this.net.connected) {
+      this.net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
     }
   }
 
@@ -2047,6 +2335,18 @@ export class Lobby {
   // we remember it so re-enabling doesn't re-prompt.
 
   _toggleAll() {
+    // Room media off: ALL covers only what's left (motion + music).
+    if (!this._mediaEnabled) {
+      const allOn = (!this._motionAvailable() || this.motionActive) && this.musicActive;
+      if (allOn) {
+        if (this._motionAvailable() && this.motionActive) this._toggleMotion();
+        if (this.musicActive) this._toggleMusic();
+      } else {
+        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
+        if (!this.musicActive) this._toggleMusic();
+      }
+      return;
+    }
     // If ALL is active, turn everything off
     const motionOk = !this._motionAvailable() || this.motionActive;
     const cameraOk = !this._hasCamera || this.cameraActive;
@@ -2220,7 +2520,8 @@ export class Lobby {
 
   _updateAllToggle() {
     const motionOk = !this._motionAvailable() || this.motionActive;
-    if (this.cameraActive && this.audioActive && motionOk && this.musicActive) {
+    const mediaOk = !this._mediaEnabled || (this.cameraActive && this.audioActive);
+    if (mediaOk && motionOk && this.musicActive) {
       this.toggleAll.classList.add('active');
     } else {
       this.toggleAll.classList.remove('active');
@@ -2228,6 +2529,7 @@ export class Lobby {
   }
 
   _toggleCamera() {
+    if (!this._mediaEnabled) return; // room media off (#400 D7)
     if (!this._hasCamera) return; // no camera hardware
     if (this.cameraActive) {
       this.cameraActive = false;
@@ -2460,6 +2762,7 @@ export class Lobby {
   }
 
   _toggleAudio() {
+    if (!this._mediaEnabled) return; // room media off (#400 D7)
     if (this.audioActive) {
       this.audioActive = false;
       this._setToggleActive('audio', false);
@@ -2784,7 +3087,7 @@ export class Lobby {
   }
 
   _renderEntries(entries, level, myId) {
-    const collectibleEmoji = level.collectibles === 'gems' ? '\uD83D\uDC8E' : '\uD83C\uDF81';
+    const collectibleEmoji = '\uD83C\uDF81';
 
     return entries.map((e, i) => {
       const isYou = myId && e.user_id === myId;
@@ -2848,21 +3151,39 @@ export class Lobby {
     }).join('');
   }
 
+  /**
+   * #401 · the badge screen: the 93 visible achievements grouped by section,
+   * counters with their progress (3/7 days), hidden ones as ??? until earned.
+   */
   _renderAchievements() {
     const container = document.getElementById('lb-achievements');
-    const defs = this._achievements.getAllDefinitions();
+    if (!container) return;
+    const sections = this._achievements.getSections();
+    const defs = sections.flatMap(s => s.items);
     const earnedCount = defs.filter(d => d.earned).length;
+    const fmt = v => Math.floor(v).toLocaleString('en-US');
 
     let html = '<div class="lb-ach-count"><span>' + earnedCount + '</span> / ' + defs.length + ' Unlocked</div>';
-    html += '<div class="lb-achievement-grid">';
-    defs.forEach(d => {
-      const cls = d.earned ? 'earned' : 'locked';
-      html += '<div class="lb-ach-item ' + cls + '">' +
-        '<span class="lb-ach-icon">' + d.icon + '</span>' +
-        '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
-      '</div>';
-    });
-    html += '</div>';
+    for (const sec of sections) {
+      const got = sec.items.filter(d => d.earned).length;
+      html += '<div class="lb-ach-section" data-section="' + sec.id + '">' +
+        '<div class="lb-ach-section-title">' + this._escapeHtml(sec.title) +
+        ' <span class="lb-ach-section-count">' + got + '/' + sec.items.length + '</span></div>';
+      html += '<div class="lb-achievement-grid">';
+      sec.items.forEach(d => {
+        const cls = (d.earned ? 'earned' : 'locked') + (d.secret ? ' secret' : '') + (d.demoLocked ? ' demo-locked' : '');
+        const prog = d.progress && d.progress[0] > 0
+          ? '<span class="lb-ach-progress">' + fmt(d.progress[0]) + '/' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '') + '</span>'
+          : '';
+        const tip = d.desc + (d.demoLocked ? ' (full game)' : '');
+        html += '<div class="lb-ach-item ' + cls + '" data-ach="' + d.id + '" title="' + this._escapeHtml(tip) + '">' +
+          '<span class="lb-ach-icon">' + d.icon + '</span>' +
+          '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
+          prog +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
     container.innerHTML = html;
   }
 
@@ -3046,7 +3367,7 @@ export class Lobby {
     this._permissionsChecked = true;
 
     // Camera
-    if (navigator.permissions) {
+    if (this._mediaEnabled && navigator.permissions) {
       navigator.permissions.query({ name: 'camera' }).then(r => {
         if (r.state === 'granted') {
           this._cameraPermitted = true;
@@ -3203,13 +3524,13 @@ export class Lobby {
     try { param = new URLSearchParams(window.location.search).get('daily'); } catch { return; }
     if (!param) return;
 
-    const today = dailyKey();
+    const today = getEditionRules().weeklyRoad ? weeklyKey() : dailyKey();   // #400
     const expired = param !== today;
     const level = LEVELS.find(l => l.isDaily);
     if (!level) return;
 
     this._pendingMode = 'solo';
-    this.selectedLevel = resolveDailyLevel(level, { key: today, seed: dailySeed() });
+    this.selectedLevel = this.resolveRoadLevel(level, { key: today });
     this._updateDifficultyVisibility('daily');
     this._showStep(this.levelStep);
     this._refreshRecordLines();
@@ -3231,7 +3552,8 @@ export class Lobby {
     const roomParam = params.get('room');
     if (!roomParam) { this._checkDailyLink(); return; }
 
-    history.replaceState(null, '', window.location.pathname);
+    // B4a: drop ?room= but keep demo/media so a reload stays in this edition.
+    history.replaceState(null, '', window.location.pathname + carriedQuery(window.location.search));
     const code = roomParam.toUpperCase();
     const fullCode = code.startsWith('TNDM-') ? code : 'TNDM-' + code;
 
@@ -3254,6 +3576,7 @@ export class Lobby {
 
   async _createRoom() {
     this._replaceNet();
+    this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1: a new partner, not heard from yet
     const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
@@ -3336,6 +3659,7 @@ export class Lobby {
 
   async _joinRoom(code) {
     this._replaceNet();
+    this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1
     const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
     this.net.cameraEnabled = this.cameraActive;
@@ -3891,6 +4215,9 @@ export class Lobby {
     // Show partner PiP in lobby mode (no appendChild — CSS handles positioning)
     // PiP class is managed by _showStep() — no manual toggle needed here
 
+    // Room media off (#400 D7): no media call to place.
+    if (!this._mediaEnabled) return;
+
     // Captain initiates media call first; stoker follows after a delay as fallback.
     // Staggered to avoid cross-call interference that causes flickering.
     // PeerJS media calls require P2P, so we wait for the upgrade first.
@@ -3952,6 +4279,7 @@ export class Lobby {
         const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
         updateBadgeDisplay('partner-badges', profile.achievements, shape);
       }
+      if (profile) this._notePartnerRoom(profile);   // PR #397 M1
       return;
     }
 
@@ -3960,11 +4288,25 @@ export class Lobby {
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
       const picked = LEVELS.find(l => l.id === profile.levelId);
+      // PR #397 m17: a level (or a Today's Road) this side's edition does not
+      // offer is refused — the captain hears why, this side stays on the list.
+      const verdict = levelSyncVerdict(getEditionRules(), picked, profile);
+      if (!verdict.ok) {
+        this._refusedLevelId = profile.levelId;
+        this._refusedReason = verdict.reason;
+        if (this.net && this.net.connected) this.net.sendProfile(RoomProtocol.levelRefused(profile.levelId, verdict.reason));
+        return;
+      }
+      this._refusedLevelId = null;
       // C-2: for Today's Road, take the captain's key and seed rather than
       // reading this device's clock — otherwise a stoker on the far side of
       // the 09:00 UTC rollover would ride a different road with the same name.
+      // PR #397 M1: and the captain's road KIND (weekly / daily), not one
+      // resolved from this side's edition.
       this.selectedLevel = picked && picked.isDaily
-        ? resolveDailyLevel(picked, { key: profile.key, seed: profile.seed })
+        ? (verdict.roadKind === 'weekly'
+          ? resolveWeeklyLevel(picked, { key: profile.key, seed: profile.seed })
+          : resolveDailyLevel(picked, { key: profile.key || dailyKey(), seed: typeof profile.seed === 'number' ? profile.seed : dailySeed() }))
         : (picked || this.selectedLevel);
       // Track if captain selected tutorial — stoker needs _forceWizard too
       this._forceWizard = (profile.levelId === 'tutorial');
@@ -3974,6 +4316,9 @@ export class Lobby {
       });
       // Update difficulty selector (disable harder options for tutorial)
       this._updateDifficultyVisibility(profile.levelId);
+      // PR #397 M1: the captain's effective difficulty wins over the one this
+      // side would force (e.g. a full stoker on a demo captain's weekly road).
+      if (typeof profile.difficulty === 'string' && profile.difficulty) this._adoptDifficulty(profile.difficulty);
     } else if (profile.type === ROOM_MSG.CAMERA_TOGGLE) {
       // Partner toggled their camera — update state and refresh PiP
       this._partnerCameraOn = !!profile.enabled;
@@ -3990,14 +4335,37 @@ export class Lobby {
       this._updatePartnerPip();
     } else if (profile.type === ROOM_MSG.DIFFICULTY_SYNC) {
       // Stoker: update difficulty selection to match captain's choice
-      this.selectedDifficulty = profile.difficulty;
-      document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
-      document.querySelectorAll('.difficulty-btn[data-difficulty="' + profile.difficulty + '"]')
-        .forEach(b => b.classList.add('selected'));
+      this._adoptDifficulty(profile.difficulty);
+    } else if (profile.type === ROOM_MSG.LEVEL_REFUSED) {
+      // PR #397 m17 · Captain: the stoker's edition can't ride that level.
+      this._onLevelRefused(profile);
     } else if (profile.type === ROOM_MSG.PLAY_GAME) {
       // Stoker: captain clicked PLAY GAME → go to levels step
       this._showRoomLevelsStep();
+    } else if (profile.type === ROOM_MSG.TOURIST_PLAN) {
+      // #400 · Stoker: the captain planned a Tourist route. Rebuild the same
+      // plan from the two end points (pure, deterministic); held until the
+      // flagged START_RIDE that follows.
+      // A null `to` is an open-world ride around `from` (#400).
+      this._stokerTouristPlan = !isValidPoint(profile.from) ? null
+        : isValidPoint(profile.to) ? planRoute(profile.from, profile.to)
+        : profile.to == null ? planExplore(profile.from) : null;
+      // PR #397 m16: the captain's anchor height, when it sent one.
+      if (this._stokerTouristPlan && profile.anchor && Number.isFinite(profile.anchor.height)) {
+        this._stokerTouristPlan.anchor = { height: profile.anchor.height, anchored: !!profile.anchor.anchored };
+      }
     } else if (profile.type === ROOM_MSG.START_RIDE) {
+      // PR #397 m17: never ride a level this edition refused — stay on the list
+      // and say so again (an old captain ignores it and rides alone).
+      if (this._refusedLevelId && !profile.tourist) {
+        if (this.net && this.net.connected) this.net.sendProfile(RoomProtocol.levelRefused(this._refusedLevelId, this._refusedReason));
+        return;
+      }
+      // #400: a Tourist ride carries its route; any other ride clears it.
+      // A flagged start without a usable route still goes to the barrier (as
+      // a plan that cannot load), so the pair returns to the room together.
+      this._roomTouristPlan = profile.tourist ? (this._stokerTouristPlan || { unusable: true }) : null;
+      this._stokerTouristPlan = null;
       // Stoker: captain started the ride. Take the captain's placement salt and
       // world seed — they are authoritative for what the road contains (B-4).
       this._placementSalt = profile.placementSalt || 0;
@@ -4006,6 +4374,46 @@ export class Lobby {
       }
       this._transitionToGame();
     }
+  }
+
+  /** Stoker: show and keep the captain's difficulty. */
+  _adoptDifficulty(difficulty) {
+    this.selectedDifficulty = difficulty;
+    document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll('.difficulty-btn[data-difficulty="' + difficulty + '"]')
+      .forEach(b => b.classList.add('selected'));
+  }
+
+  /**
+   * PR #397 M1 · the partner's { edition, caps } arrived (in its untyped room
+   * profile). The room's rules may have changed: a captain on the level list
+   * rebuilds it (and re-syncs the selection) so both sides ride the same road.
+   */
+  _notePartnerRoom(profile) {
+    const next = partnerFromProfile(profile);
+    const prev = this._partnerRoom || null;
+    this._partnerRoom = next;
+    const same = prev && prev.edition === next.edition &&
+      JSON.stringify(prev.caps) === JSON.stringify(next.caps);
+    if (same) return;
+    if (this._pendingMode === 'multiplayer' && this._currentStep === this.levelStep) {
+      this._buildRoomLevelCards(this._roomRole === 'captain');
+    }
+  }
+
+  /** PR #397 m17 · Captain: the stoker refused the level; stay on the list. */
+  _onLevelRefused(profile) {
+    if (this._roomRole !== 'captain') return;
+    this._lastLevelRefused = profile.levelId || '';   // read by smoke:tourist
+    if (profile.reason === 'demo') {
+      showInfoToast('🔒', 'Your partner is on the demo',
+        'They can ride the Tutorial, Grandma’s House and This Week’s Road with you.');
+    } else {
+      showInfoToast('🔒', 'Your partner can’t ride that one', 'Pick another level to ride together.');
+    }
+    const startBtn = document.getElementById('btn-start-ride');
+    if (startBtn && this._pendingMode === 'multiplayer') startBtn.disabled = true;
+    document.querySelectorAll('#level-cards .level-card.selected').forEach(c => c.classList.remove('selected'));
   }
 
   _sendRoomProfile() {
@@ -4019,6 +4427,7 @@ export class Lobby {
     // Anonymous players (joined via invite without signing in) have no name —
     // give the partner a friendly label instead of a blank. (Issue #312)
     if (!profile.name) profile.name = GUEST_NAME;
+    Object.assign(profile, this.roomProfileFields());   // PR #397 M1: { edition, caps }
     this.net.sendProfile(profile);
   }
 
@@ -4972,7 +5381,8 @@ export class Lobby {
     // Debug: ?versusbot=1 fills Team B with a synthetic rider so split-
     // screen, streaming separation, and the finish flow are testable with
     // one human. The game drives its taps at a fixed cadence (_stepTeam).
-    if (new URLSearchParams(window.location.search).get('versusbot') === '1') {
+    // m19: local servers / ?dev=1 only (js/versus/versus-bot.js).
+    if (versusBotAllowed(window.location.search, window.location.hostname, window.location.protocol)) {
       this._versusPlayers.push({
         n: 2,
         type: 'bot',
@@ -5516,14 +5926,16 @@ export class Lobby {
     const partnerWrap = document.getElementById('partner-pip-wrap');
     // Remove lobby/level classes and set inline display:block to prevent
     // base CSS display:none from flashing the PiPs invisible before
-    // game-recorder shows them.
+    // game-recorder shows them. Room media off (#400 D7): the in-ride
+    // selfie/partner PiP frames stay hidden.
+    const pipDisplay = this._mediaEnabled ? 'block' : 'none';
     if (selfieWrap) {
       selfieWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      selfieWrap.style.display = 'block';
+      selfieWrap.style.display = pipDisplay;
     }
     if (partnerWrap) {
       partnerWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      partnerWrap.style.display = 'block';
+      partnerWrap.style.display = pipDisplay;
     }
   }
 

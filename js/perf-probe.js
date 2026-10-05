@@ -17,6 +17,8 @@
 // Output: per-step timing with deltas, GPU string, lowEnd boolean.
 // ============================================================
 
+import { isMediaEnabled } from './edition.js';
+
 const ITERATIONS = 30;
 const WARMUP = 5;
 export const LOW_END_FPS = 45; // game targets 60fps; below 45 means consistently over budget
@@ -67,6 +69,7 @@ export async function perfProbe() {
   let cameraStream = null;
   let cameraVideo = null;
   try {
+    if (!isMediaEnabled()) throw new Error('room media off (?media=1 to enable)');
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: 240, height: 240 },
       audio: false
@@ -89,6 +92,7 @@ export async function perfProbe() {
   // ── Step 3: + audio DSP ──
   let audioStream = null;
   try {
+    if (!isMediaEnabled()) throw new Error('room media off (?media=1 to enable)');
     audioStream = await navigator.mediaDevices.getUserMedia({
       video: false,
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }

@@ -9,9 +9,9 @@ export const LEVELS = [
   {
     id: 'tutorial',
     name: 'Tutorial',
-    distance: 225,
+    distance: 150,             // D6 (#400): two phases end at 145 m (was 225)
     collectibles: 'presents',
-    checkpointInterval: 225,   // single checkpoint = entire ride
+    checkpointInterval: 150,   // single checkpoint = entire ride
     icon: '\uD83D\uDEB4',        // 🚴
     description: 'Master pedaling and steering!',
     isTutorial: true,
@@ -28,15 +28,6 @@ export const LEVELS = [
     checkpointInterval: 62,
     icon: '\uD83C\uDFE0',        // 🏠
     description: 'Grandma called — she needs her presents!'
-  },
-  {
-    id: 'castle',
-    name: 'The Castle',
-    distance: 500,
-    collectibles: 'gems',
-    checkpointInterval: 125,
-    icon: '\uD83C\uDFF0',        // 🏰
-    description: 'The King awaits! Collect gems on the road to glory!'
   },
   {
     // C-2 · Today's Road. The seed is NOT stored here: it is resolved at

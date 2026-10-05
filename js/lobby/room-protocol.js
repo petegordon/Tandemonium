@@ -22,6 +22,9 @@ export const ROOM_MSG = {
   START_RIDE:      'startRide',
   CAMERA_TOGGLE:   'cameraToggle',
   BIKE_SYNC:       'bikeSync',
+  TOURIST_PLAN:    'touristPlan',    // #400 · co-op Tourist route, captain → stoker
+  TOURIST_READY:   'touristReady',   // #400 · in-ride: my tiles world is up (or not)
+  LEVEL_REFUSED:   'levelRefused',   // PR #397 M1/m17 · stoker → captain: my edition can't ride that
 };
 
 export const RoomProtocol = {
@@ -31,9 +34,20 @@ export const RoomProtocol = {
    * C-2: `extra` carries Today's Road identity ({ key, seed }). The captain's
    * clock is authoritative — a stoker on the other side of the 09:00 UTC
    * rollover must ride the captain's road, not a road of their own.
+   *
+   * PR #397 M1: `extra` also carries the room's EFFECTIVE road — roadKind
+   * ('daily' | 'weekly') and difficulty — which the stoker adopts instead of
+   * resolving from its own edition. Old stokers read only key/seed.
    */
   levelSync: (levelId, extra = null) =>
     extra ? { type: ROOM_MSG.LEVEL_SYNC, levelId, ...extra } : { type: ROOM_MSG.LEVEL_SYNC, levelId },
+
+  /**
+   * PR #397 m17 · stoker → captain: the level just synced is one this side's
+   * edition does not offer (reason 'demo' = I'm on the demo). The stoker stays
+   * on the level list; an old captain drops the unknown type.
+   */
+  levelRefused: (levelId, reason = 'demo') => ({ type: ROOM_MSG.LEVEL_REFUSED, levelId: String(levelId || ''), reason: String(reason) }),
 
   /** Captain picked a difficulty. */
   difficultySync: (difficulty) => ({ type: ROOM_MSG.DIFFICULTY_SYNC, difficulty }),
@@ -49,8 +63,31 @@ export const RoomProtocol = {
    * a stoker that receives nothing falls back to legacy placement, which is
    * what an older build already does.
    */
-  startRide: (placementSalt = 0, worldSeed = null) =>
-    ({ type: ROOM_MSG.START_RIDE, placementSalt, worldSeed }),
+  startRide: (placementSalt = 0, worldSeed = null, tourist = false) =>
+    (tourist
+      ? { type: ROOM_MSG.START_RIDE, placementSalt, worldSeed, tourist: true }
+      : { type: ROOM_MSG.START_RIDE, placementSalt, worldSeed }),
+
+  /**
+   * #400 · the captain planned a Tourist route. Only the two end points travel:
+   * the stoker rebuilds the identical plan with the pure planRoute(). Sent
+   * immediately before a startRide(…, tourist = true).
+   */
+  touristPlan: (from, to, anchor = null) => {
+    const m = {
+      type: ROOM_MSG.TOURIST_PLAN,
+      from: { lat: from.lat, lon: from.lon, label: String(from.label || '') },
+      // #400: null = an open-world ride around `from` (one address).
+      to: to ? { lat: to.lat, lon: to.lon, label: String(to.label || '') } : null,
+    };
+    // PR #397 m16: the captain looked the anchor's ground height up once; the
+    // stoker uses it instead of a second lookup inside the shared deadline.
+    if (anchor && Number.isFinite(anchor.height)) m.anchor = { height: anchor.height, anchored: !!anchor.anchored };
+    return m;
+  },
+
+  /** #400 · in-ride ready barrier for co-op Tourist. */
+  touristReady: (ok) => ({ type: ROOM_MSG.TOURIST_READY, ok: !!ok }),
 
   /** A player's bike preset (so the partner renders the right bike). */
   bikeSync: (presetKey) => ({ type: ROOM_MSG.BIKE_SYNC, presetKey }),

@@ -66,6 +66,16 @@ export class BikeModel {
     this._braking = false;
     this.boostTimer = 0;
 
+    // Slingshot mode: when set, { decel(v, centerDist) → m/s², maxSpeed }
+    // replaces the arcade friction, the centre-strip push and the edge/grass
+    // drag, so a launched bike coasts and the surface costs a little per second
+    // instead of a share of the speed.
+    this.coast = null;
+    // Airborne (Slingshot ramps): { vy, h, t } while off the ground, else null.
+    // Height rides on top of the road; gravity brings it back; nothing else
+    // in the game sets it, so every other ride stays road-locked.
+    this.air = null;
+
     // Optional crash-tumble hooks (issue #388). The physics sidecar is wired in
     // by the game, not imported here — this model stays a pure arcade balance
     // model that knows nothing about Rapier, and plays identically when the
@@ -487,7 +497,10 @@ export class BikeModel {
       // Coop provides each rider's own lean; solo provides only the aggregate
       // leanInput, in which case the captain leans with it and the stoker (who
       // has no second input in solo) stays upright.
-      const cap = (balanceResult.captainLean != null) ? balanceResult.captainLean : balanceResult.leanInput;
+      // visualLean: the rider's own tilt before the steering gain, so the look
+      // matches the player's body even when the steering is gentler.
+      const cap = (balanceResult.captainLean != null) ? balanceResult.captainLean
+        : (balanceResult.visualLean != null ? balanceResult.visualLean : balanceResult.leanInput);
       const sto = (balanceResult.stokerLean != null) ? balanceResult.stokerLean : 0;
       this.setRiderLeans(cap, sto);
     }
@@ -530,35 +543,41 @@ export class BikeModel {
       this.speed += 4.0 * dt; // sustained push
     }
 
-    // Friction — reduced at low speeds so startup isn't brutally hard
-    const frictionBase = 0.6;
-    const frictionMin = 0.15;
-    const frictionRamp = Math.min(1, this.speed / 4); // full friction at ~4 m/s (~14 km/h)
-    this.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
-
     // Center-strip bonus: compacted dirt in the middle 20% of road is faster.
     // B-4: this has always been here and has never been visible, so nobody has
     // ever chosen to ride the middle. `onCenterStrip` lets the HUD say so.
     const centerDist = Math.abs(this._lateralOffset);
     this.onCenterStrip = centerDist < 0.5 && this.speed > 0.5;
-    if (this.onCenterStrip) {
+
+    if (this.coast) {
+      // Slingshot: rolling + air drag, with the rolling part set by the surface.
+      this.speed = Math.max(0, this.speed - this.coast.decel(this.speed, centerDist, !!this.air) * dt);
+    } else {
+      // Friction — reduced at low speeds so startup isn't brutally hard
+      const frictionBase = 0.6;
+      const frictionMin = 0.15;
+      const frictionRamp = Math.min(1, this.speed / 4); // full friction at ~4 m/s (~14 km/h)
+      this.speed *= (1 - (frictionMin + (frictionBase - frictionMin) * frictionRamp) * dt);
+    }
+
+    if (this.onCenterStrip && !this.coast) {
       this.speed *= (1 + 0.3 * (1 - centerDist / 0.5) * dt); // gentle boost
     }
 
     // Road-edge drag: drifting toward the edges of the dirt path slows you
-    if (centerDist > 0.5 && centerDist <= 2.5 && this.speed > 0) {
+    if (!this.coast && centerDist > 0.5 && centerDist <= 2.5 && this.speed > 0) {
       const edgeFrac = (centerDist - 0.5) / 2.0; // 0→1 across road width
       this.speed *= (1 - edgeFrac * 0.8 * dt);    // moderate drag near edges
     }
 
     // Grass drag: off-road surface slows you down significantly
     const offRoadDrag = Math.max(0, centerDist - 2.5);
-    if (offRoadDrag > 0 && this.speed > 0) {
+    if (!this.coast && offRoadDrag > 0 && this.speed > 0) {
       const dragIntensity = Math.min(offRoadDrag / 3, 1); // 0→1 over 3 units
       this.speed *= (1 - dragIntensity * 1.5 * dt);       // strong off-road friction
     }
 
-    this.maxSpeed = TUNE.maxSpeed || 16;
+    this.maxSpeed = (this.coast && this.coast.maxSpeed) || TUNE.maxSpeed || 16;
     this.speed = Math.max(0, Math.min(this.speed, this.maxSpeed));
 
     // Balance physics (portrait-tuned: softer response, more damping)
@@ -706,11 +725,22 @@ export class BikeModel {
         this._rearWheelOffset = rearDx * rearRightX + rearDz * rearRightZ;
 
         this.position.y = this.roadPath.getPointAtDistance(this.roadD).y;
+        if (this.air) {
+          this.air.vy -= 9.8 * dt;
+          this.air.h += this.air.vy * dt;
+          this.air.t += dt;
+          if (this.air.h <= 0) {                 // touchdown
+            this.lastAirTime = this.air.t;
+            this.air = null;
+          } else {
+            this.position.y += this.air.h;
+          }
+        }
       }
     }
 
     // Fall detection
-    if (Math.abs(this.lean) > (TUNE.crashThreshold || 1.35)) {
+    if (!this.air && Math.abs(this.lean) > (TUNE.crashThreshold || 1.35)) {
       this._fall();
     }
 
@@ -769,6 +799,7 @@ export class BikeModel {
       const info = this.roadPath.getClosestRoadInfo(this.position.x, this.position.z, this.roadD);
       if (info) {
         this._lateralOffset = info.lateralOffset;
+        this.onCenterStrip = Math.abs(info.lateralOffset) < 0.5 && this.speed > 0.5;   // same rule as update()
         const sinH = Math.sin(this.heading);
         const cosH = Math.cos(this.heading);
         const frontPt = this.roadPath.getPointAtDistance(this.roadD + 2);
@@ -876,7 +907,14 @@ export class BikeModel {
     this.position.y = terrainY - 0.15;
   }
 
+  /** Leave the ground at vertical speed vy (m/s). */
+  launchAir(vy) {
+    this.air = { vy, h: 0.01, t: 0 };
+    this.lastAirTime = 0;
+  }
+
   _reset() {
+    this.air = null;
     // Hand the visual group back before restoring the upright pose, or the
     // tumble keeps driving it and the reset is invisible.
     if (this.onReset) this.onReset(this);
@@ -895,6 +933,7 @@ export class BikeModel {
   }
 
   resetToDistance(distance) {
+    this.air = null;
     if (this.onReset) this.onReset(this);
     this.fallen = false;
     this.lean = 0;
@@ -911,7 +950,8 @@ export class BikeModel {
       this.heading = pt.heading;
     } else {
       this.position.set(0, 0, 0);
-      this.heading = 0;
+      // #400: a Map Tourist route faces its destination from the first reset.
+      this.heading = this.startHeading || 0;
     }
 
     this.distanceTraveled = distance;

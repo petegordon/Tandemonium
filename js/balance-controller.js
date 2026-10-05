@@ -88,7 +88,12 @@ export class BalanceController {
     let leanInput = 0;
     if (this.input.isPressed('KeyA')) { leanInput -= 1; this.steerFrames.keyboard++; }
     if (this.input.isPressed('KeyD')) { leanInput += 1; this.steerFrames.keyboard++; }
+    // visualLean: the same sum, but with phone tilt before TUNE.mobileTiltGain —
+    // for the riders' body lean only (the look), never the physics.
+    let visualLean = leanInput;
     const motion = this.input.getMotionLean();
+    const motionVisual = this.input.getMotionLeanVisual ? this.input.getMotionLeanVisual() : motion;
+    visualLean += motionVisual;
     if (motion !== 0) {
       leanInput += motion;
       // Only count as intentional input above noise floor (avoids laptop sensor drift)
@@ -102,16 +107,19 @@ export class BalanceController {
     }
     const gpLean = this.input.getGamepadLean();
     if (gpLean !== 0) { leanInput += gpLean; this.steerFrames.gamepad++; }
+    visualLean += gpLean;
     leanInput = Math.max(-1, Math.min(1, leanInput));
+    visualLean = Math.max(-1, Math.min(1, visualLean));
 
     // Blend with auto-steer if assist is active
     if (assistWeight > 0 && bike) {
       const autoLean = this.computeAutoSteer(bike, collectibleManager, obstacleManager);
       leanInput = autoLean * assistWeight + leanInput * (1 - assistWeight);
       leanInput = Math.max(-1, Math.min(1, leanInput));
+      visualLean = Math.max(-1, Math.min(1, autoLean * assistWeight + visualLean * (1 - assistWeight)));
     }
 
-    return { leanInput, gyroActive: this.input.gyroConnected };
+    return { leanInput, visualLean, gyroActive: this.input.gyroConnected };
   }
 
   getSteerSource() {

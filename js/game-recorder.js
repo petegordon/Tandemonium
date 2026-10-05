@@ -6,6 +6,7 @@
 // Detect iOS and use WebCodecs VideoEncoder + mp4-muxer instead.
 import * as analytics from './analytics.js';
 import { FocusController } from './nav/focus-controller.js';
+import { isMediaEnabled } from './edition.js';
 
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -218,6 +219,10 @@ export class GameRecorder {
     this._wcTargetFps = 20;       // encode at 20fps to keep buffer small
     this._wcLastFrameTime = 0;
     this._wcMp4Muxer = null;      // loaded dynamically
+
+    // Room camera/mic (#400 D7). Off: clips are game video + game audio only —
+    // no selfie camera, no mic narration, no partner video/voice, no PiPs.
+    this.mediaEnabled = isMediaEnabled();
 
     // Selfie camera
     this.selfieStream = null;
@@ -513,6 +518,7 @@ export class GameRecorder {
   // ── Selfie camera (Phase 2) ──
 
   async startSelfie(existingStream) {
+    if (!this.mediaEnabled) return;
     if (this.selfieActive) return;
     // Hide avatar fallback when real camera starts
     if (this.selfieAvatar) this.selfieAvatar.style.display = 'none';
@@ -546,6 +552,7 @@ export class GameRecorder {
   }
 
   showAvatarPip(avatarUrl) {
+    if (!this.mediaEnabled) return;
     if (!avatarUrl || !this.selfieAvatar || !this.selfieWrap) return;
     this.selfieAvatar.src = avatarUrl;
     this.selfieAvatar.style.display = 'block';
@@ -573,6 +580,7 @@ export class GameRecorder {
   // ── Partner video (Phase 3) ──
 
   setPartnerStream(stream) {
+    if (!this.mediaEnabled) return;
     this.partnerStream = stream;
     if (this.partnerVideo && stream) {
       // Only reassign if different stream — avoids killing iOS playback
@@ -588,6 +596,7 @@ export class GameRecorder {
   }
 
   showPartnerAvatar(avatarUrl) {
+    if (!this.mediaEnabled) return;
     if (!avatarUrl || !this.partnerAvatar || !this.partnerWrap) return;
     this.partnerAvatar.src = avatarUrl;
     this.partnerAvatar.style.display = 'block';
@@ -616,6 +625,7 @@ export class GameRecorder {
   // ── Audio mixing for clip recording ──
 
   addAudioStreams(localStream, remoteStream) {
+    if (!this.mediaEnabled) return;
     // Use the existing audio destination set up by startBuffer()
     if (!this._audioCtx || !this._audioDestination) return;
     try {
@@ -709,7 +719,7 @@ export class GameRecorder {
     if (this.shareBtn) this.shareBtn.style.display = 'block';
 
     // Request mic in background (non-blocking) — game beeps still recorded without it
-    if (audioCtx && micEnabled) {
+    if (audioCtx && micEnabled && this.mediaEnabled) {
       navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
         this._micStream = micStream;
         if (this._audioCtx && this._audioDestination) {

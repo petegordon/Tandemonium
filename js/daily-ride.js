@@ -13,7 +13,7 @@
 // DOM-free and storage-agnostic so it can be tested: the store is any object
 // with get(key)/set(key, value).
 
-import { dailyKey, dailySeed } from './daily-seed.js';
+import { dailyKey, dailySeed, weeklyKey, weeklySeed } from './daily-seed.js';
 
 export const STORAGE_KEY = 'tandemonium_daily';
 
@@ -50,9 +50,13 @@ export function formatDayLabel(key) {
 export function dailyStatus(store, key) {
   const all = readAll(store);
   const entry = all[key];
+  // #398: a ranked run goes through recordRanked, not recordPractice, so the
+  // card has to read it from here or the day still says "not ridden yet".
+  const ranked = (entry && entry.ranked) || {};
   return {
     practiced: (entry && entry.practice) || 0,
-    best: (entry && entry.best) || null
+    best: (entry && entry.best) || null,
+    ranked: { solo: ranked.solo || null, pair: ranked.pair || null }
   };
 }
 
@@ -87,18 +91,71 @@ export function prune(all, todayKey) {
  */
 export function dailyDescription(status, key) {
   const label = formatDayLabel(key);
-  if (!status || !status.practiced) return `${label} · not ridden yet`;
-  const runs = status.practiced === 1 ? 'ridden once' : `ridden ×${status.practiced}`;
-  if (status.best) {
-    const total = Math.round(status.best / 1000);
-    const t = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-    return `${label} · ${runs} · best ${t}`;
+  const bits = [label];
+  // #398: the day's ranked run (solo / pair) counts as ridden, with its time
+  // or DNF, so the card shows that the one ranked attempt has been used.
+  const ranked = (status && status.ranked) || {};
+  for (const mode of ['solo', 'pair']) {
+    const r = ranked[mode];
+    if (!r) continue;
+    const name = mode === 'pair' ? 'Pair ranked' : 'Ranked';
+    bits.push(r.dnf || !(r.timeMs > 0) ? `${name} · DNF` : `${name} ✓ ${formatClock(r.timeMs)}`);
   }
-  return `${label} · ${runs}`;
+  if (status && status.practiced) {
+    bits.push(status.practiced === 1 ? 'ridden once' : `ridden ×${status.practiced}`);
+    if (status.best) bits.push(`best ${formatClock(status.best)}`);
+  }
+  if (bits.length === 1) return `${label} · not ridden yet`;
+  return bits.join(' · ');
 }
 
 /** Fixed subtitle explaining the rules, shown under the description. */
 export const DAILY_RULES_LINE = 'Same road for everyone today · new road at 09:00 UTC (05:00 ET)';
+
+// ── #400 · the demo's weekly road ─────────────────────────────────────────
+//
+// In the demo, Today's Road becomes "This Week's Road": one road per ISO week
+// (keyed by its Monday, see weeklyKey), ridden on Chill with safety on (D10),
+// practice only. The full game is unchanged. Records and practice counts use
+// the Monday's key, so the storage format is the daily one.
+
+export const WEEKLY_NAME = "This Week's Road";
+export const WEEKLY_DESCRIPTION = 'A new road every week';
+export const WEEKLY_DIFFICULTY = 'chill';
+export const WEEKLY_RULES_LINE = 'Same road for everyone this week · new road every Monday';
+
+/** The base daily level, presented as the weekly road (no key/seed yet). */
+export function asWeeklyRoad(baseLevel) {
+  return {
+    ...baseLevel,
+    name: WEEKLY_NAME,
+    description: WEEKLY_DESCRIPTION,
+    fixedDifficulty: WEEKLY_DIFFICULTY,
+    isWeekly: true
+  };
+}
+
+/** The weekly road with the week's identity attached (cf. resolveDailyLevel). */
+export function resolveWeeklyLevel(baseLevel, { key, seed } = {}) {
+  const k = key || weeklyKey();
+  const level = resolveDailyLevel(asWeeklyRoad(baseLevel), {
+    key: k, seed: typeof seed === 'number' ? seed : weeklySeed()
+  });
+  level.dateLabel = 'Week of ' + shortWeekLabel(level.key);
+  return level;
+}
+
+/** "Sep 28" from a Monday key. */
+function shortWeekLabel(key) {
+  const label = formatDayLabel(key);
+  return label ? label.split(', ')[1] : '';
+}
+
+/** The card line for the weekly road: what you've done on it this week. */
+export function weeklyDescription(status, key) {
+  const label = 'Week of ' + shortWeekLabel(key);
+  return WEEKLY_DESCRIPTION + '<br>' + dailyDescription(status, key).replace(formatDayLabel(key), label);
+}
 
 // ── storage helpers ───────────────────────────────────────────────────────
 

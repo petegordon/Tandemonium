@@ -220,10 +220,12 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    width: min(340px, 86vw);
+    /* #400: keep clear of the side toggle columns on a phone, like the level cards */
+    width: min(340px, calc(100vw - 150px));
     margin: 0 auto;
   }
   .tourist-input {
+    min-width: 0;
     padding: 10px 12px;
     border: 1px solid rgba(255,255,255,0.18);
     border-radius: 8px;
@@ -232,6 +234,14 @@
     font-size: 15px;
   }
   .tourist-input::placeholder { color: rgba(255,255,255,0.35); }
+  .tourist-to-row { display: flex; gap: 6px; align-items: center; }
+  .tourist-to-row .tourist-input { flex: 1; min-width: 0; }
+  .tourist-remove-to, .tourist-add-to {
+    background: none; border: 1px dashed rgba(255,255,255,0.3); color: rgba(255,255,255,0.75);
+    border-radius: 8px; cursor: pointer; font-weight: 700;
+  }
+  .tourist-remove-to { width: 34px; height: 34px; font-size: 18px; border-style: solid; flex: none; }
+  .tourist-add-to { padding: 8px 10px; font-size: 12px; letter-spacing: 0.5px; }
   .tourist-error {
     min-height: 15px;
     font-size: 12px;
@@ -265,6 +275,121 @@
   }
   #tourist-goal.visible { display: block; }
   #tourist-goal .tourist-togo { color: #ffd23f; }
+  /* Slingshot mode · in-ride strip, garage and results. */
+  #sling-hud {
+    position: fixed; top: 92px; left: 50%; transform: translateX(-50%);
+    display: none; gap: 10px; align-items: center;
+    padding: 4px 12px; border-radius: 999px; background: rgba(0,0,0,0.5);
+    color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap;
+    pointer-events: none; z-index: 55;
+  }
+  #sling-hud.visible { display: flex; }
+  #sling-hud .sling-coins { color: #ffd23f; font-size: 17px; display: inline-block; }
+  #sling-hud .sling-coins.pop { animation: sling-coin-pop 0.45s ease-out; }
+  @keyframes sling-coin-pop { 0% { transform: scale(1); } 35% { transform: scale(1.7); text-shadow: 0 0 12px #ffd23f; } 100% { transform: scale(1); } }
+  .sling-coin-float {
+    position: fixed; left: 50%; top: 118px; transform: translateX(-50%);
+    color: #ffd23f; font-weight: 900; font-size: 20px; pointer-events: none; z-index: 57;
+    text-shadow: 0 0 10px rgba(255,210,63,0.8), 0 2px 4px rgba(0,0,0,0.6);
+    animation: sling-coin-float 0.9s ease-out forwards;
+  }
+  @keyframes sling-coin-float { from { opacity: 1; transform: translate(-50%, 0) scale(1.2); } to { opacity: 0; transform: translate(-50%, -40px) scale(1); } }
+  body.sling-mode #pedal-bar { display: none !important; }   /* no pedaling in this mode */
+  /* Top of the screen, out from under the thumb that is dragging. */
+  #sling-pull {
+    position: fixed; left: 50%; top: 128px; transform: translateX(-50%);
+    width: min(280px, 72vw); display: none; text-align: center; color: #fff;
+    font-size: 13px; font-weight: 800; letter-spacing: 0.5px; pointer-events: none; z-index: 56;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.6);
+  }
+  #sling-pull.visible { display: block; }
+  /* Short landscape screens: the aim camera frames the bike up to the top, so
+     the hint moves to the left edge, beside the fork. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    #sling-pull { top: 50%; left: 12px; transform: translateY(-50%); width: 170px; text-align: left; }
+  }
+  #sling-pull .sling-hint { transition: opacity 0.6s; }
+  #sling-pull.pulling .sling-hint { opacity: 0; }
+  #sling-pull .sling-predict { margin-top: 4px; font-size: 13px; color: #ffd23f; min-height: 1em; }
+  #sling-pull.learned .sling-hint { opacity: 0; height: 0; overflow: hidden; }
+  #sling-toast {
+    position: fixed; left: 50%; top: 40%; transform: translateX(-50%);
+    padding: 6px 14px; border-radius: 999px; background: rgba(0,0,0,0.6);
+    color: #fff; font-weight: 800; font-size: 14px; pointer-events: none; z-index: 57;
+    opacity: 0; transition: opacity 0.25s;
+  }
+  #sling-toast.visible { opacity: 1; }
+  #sling-finger {
+    position: fixed; transform: translate(-50%, -100%); display: none;
+    padding: 3px 9px; border-radius: 999px; background: rgba(0,0,0,0.55);
+    color: #ffd23f; font-weight: 900; font-size: 14px; white-space: nowrap;
+    pointer-events: none; z-index: 58;
+  }
+  #sling-finger.visible { display: block; }
+  #sling-tally {
+    position: fixed; left: 50%; top: 30%; transform: translateX(-50%);
+    display: none; text-align: center; color: #fff; pointer-events: none; z-index: 58;
+    text-shadow: 0 3px 10px rgba(0,0,0,0.7);
+  }
+  #sling-tally.visible { display: block; animation: sling-tally-in 0.3s ease-out; }
+  @keyframes sling-tally-in { from { opacity: 0; transform: translate(-50%, 16px) scale(0.9); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+  #sling-tally .tally-label { font-size: 20px; font-weight: 900; color: #ff8a3c; letter-spacing: 2px; }
+  #sling-tally .tally-dist { font-size: 64px; font-weight: 900; line-height: 1; }
+  #sling-tally .tally-coins { font-size: 34px; font-weight: 900; color: #ffd23f; opacity: 0; transition: opacity 0.2s; }
+  #sling-tally .tally-coins.shown { opacity: 1; }
+  #sling-tally .tally-skip { margin-top: 10px; font-size: 12px; opacity: 0.7; }
+  /* Preview builds only (js/build-badge.js): which commit is on screen. */
+  #build-badge {
+    position: fixed; left: 6px; bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+    font: 600 10px/1 ui-monospace, monospace; color: rgba(255,255,255,0.75);
+    background: rgba(0,0,0,0.35); padding: 2px 5px; border-radius: 4px;
+    pointer-events: none; z-index: 9999;
+  }
+  #build-stale {
+    position: fixed; left: 50%; top: calc(8px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+    padding: 8px 14px; border: 0; border-radius: 999px; background: #ffd23f; color: #000;
+    font-weight: 800; font-size: 13px; z-index: 10000; cursor: pointer;
+  }
+  #sling-pull .bar { height: 14px; margin-top: 6px; border-radius: 7px; background: rgba(0,0,0,0.5); overflow: hidden; border: 2px solid rgba(255,255,255,0.7); }
+  #sling-pull .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ffd23f, #ff5a3c); }
+  #sling-garage, #sling-results {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none;
+    flex-direction: column; align-items: center; justify-content: flex-start;
+    z-index: 60; padding: 16px; overflow-y: auto; color: #fff; text-align: center;
+  }
+  #sling-garage.visible, #sling-results.visible { display: flex; }
+  #sling-garage h2, #sling-results h2 { font-size: 24px; margin: 6px 0 2px; color: #ffd23f; }
+  .sling-wallet { font-size: 18px; font-weight: 800; color: #ffd23f; margin-bottom: 4px; }
+  .sling-sub { font-size: 13px; color: rgba(255,255,255,0.75); margin-bottom: 10px; max-width: 420px; }
+  .sling-list { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 420px; margin-bottom: 12px; }
+  .sling-up {
+    display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
+    padding: 8px 10px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.06); color: #fff; font: inherit; cursor: pointer;
+  }
+  .sling-up:focus, .sling-up.gamepad-focus { outline: none; border-color: #ffd23f; }
+  .sling-up[disabled] { opacity: 0.45; cursor: default; }
+  .sling-up .ico { font-size: 22px; }
+  .sling-up .txt { flex: 1; }
+  .sling-up .txt b { display: block; font-size: 14px; }
+  .sling-up .txt small { font-size: 11px; color: rgba(255,255,255,0.65); }
+  .sling-up .pips { font-size: 10px; letter-spacing: 1px; color: #ffd23f; }
+  .sling-up .price { font-weight: 800; color: #ffd23f; white-space: nowrap; }
+  .sling-rows { width: 100%; max-width: 300px; margin: 8px 0 12px; }
+  .sling-rows .row { display: flex; justify-content: space-between; font-size: 14px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  .sling-rows .row.total { font-weight: 800; color: #ffd23f; border-bottom: none; font-size: 16px; }
+  .sling-big { font-size: 40px; font-weight: 800; }
+  .sling-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #44ff66; color: #000; font-size: 12px; font-weight: 800; margin: 2px; }
+  .sling-buttons { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 300px; margin: 6px 0 12px; }
+  /* #400 D4/D5 · one garage for every mode, and every ride's coin tally */
+  .sling-lock { font-size: 14px; font-weight: 700; color: #ffd23f; padding: 6px 10px; border: 1px dashed rgba(255,210,63,0.6); border-radius: 8px; }
+  .sling-up .price small.gain { display: block; font-size: 11px; font-weight: 700; color: #9dff9d; text-align: right; }
+  .sling-rebuilds { background: #ffd23f; vertical-align: middle; }
+  .ride-coins { width: 100%; max-width: 320px; margin: 8px auto 4px; text-align: center; }
+  .ride-coins-head { font-size: 22px; font-weight: 900; color: #ffd23f; }
+  .ride-coins .sling-rows { margin: 4px auto 6px; }
+  .ride-coins-wallet { font-size: 13px; color: rgba(255,255,255,0.75); }
+  .lobby-wallet { color: #ffd23f; font-weight: 800; margin-left: 6px; }
   /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
   #disruption-banner {
     position: fixed;
@@ -434,6 +559,33 @@
     z-index: 56;
   }
   #ranked-badge.show { display: block; }
+  /* #403 · the helping hand's badge (💨 / 🎩). Same slot as #ranked-badge: a
+     ranked run never gets help, so the two are never on screen together. */
+  #help-badge {
+    position: fixed;
+    top: 92px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: rgba(120,200,255,0.85);
+    font-size: 15px;
+    line-height: 1.3;
+    pointer-events: none;
+    z-index: 56;
+  }
+  #help-badge.show { display: block; }
+  /* #403 · the helping hand, announced on the crash and TOO SLOW screens. */
+  .help-announce {
+    margin: 6px 0 12px;
+    padding: 6px 14px;
+    border-radius: 10px;
+    background: rgba(120,200,255,0.18);
+    color: #bfe6ff;
+    font-weight: 700;
+    font-size: 17px;
+  }
   /* D-2 · practice / ranked chooser. */
   #daily-mode-overlay {
     display: none;
@@ -547,6 +699,11 @@
     left: 50%;
     bottom: 30%;
     transform: translateX(-50%);
+    /* left:50% would cap the shrink-to-fit width at half the screen, wrapping
+       every line on a phone; the boost line (#399) made that tall enough to
+       hit #lookahead. */
+    width: max-content;
+    max-width: calc(100vw - 32px);
     display: none;
     flex-direction: column;
     align-items: center;
@@ -570,6 +727,7 @@
     background: rgba(255,255,255,0.16);
   }
   #coach-steer-line { font-size: 12px; color: rgba(255,255,255,0.75); }
+  #coach-boost-line { font-size: 12px; color: #ffd23f; }
   #coach-dots { display: flex; gap: 6px; }
   .coach-dot {
     width: 10px;
@@ -791,6 +949,26 @@
   }
   .tutorial-dot.active { background: #44ff66; }
   .tutorial-dot.done { background: #ffd700; }
+  #btn-tutorial-skip {
+    /* Right edge, under the quick-menu button: clear of the pedals (bottom)
+       and the phase prompt (top centre). */
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 140px);
+    right: 14px;
+    z-index: 210;
+    display: none;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    color: #fff;
+    background: rgba(0,0,0,0.55);
+    border: 1px solid rgba(255,255,255,0.5);
+    border-radius: 999px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  #btn-tutorial-skip.visible { display: block; }
   /* ── Coaching dodge arrow ── */
   #coaching-dodge-arrow {
     position: fixed;
@@ -1221,7 +1399,9 @@
     display: none;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* M6: safe — taller than a landscape phone, it scrolls from the top
+       instead of centring the title off the top edge. */
+    justify-content: safe center;
     z-index: 60;
     padding: 10px 20px;
     text-align: center;
@@ -1724,6 +1904,8 @@
     box-sizing: border-box;
   }
   .side-btn:active { filter: brightness(1.4); }
+  /* M4: SAFETY and SPEED are locked on a ranked run. */
+  .side-btn:disabled { opacity: 0.35; filter: grayscale(1); cursor: not-allowed; }
   #safety-btn {
     grid-area: safety;
     clip-path: polygon(0% 0%, 100% 0%, 72% 100%, 28% 100%);
@@ -2368,6 +2550,26 @@
     opacity: 0.35;
     border-color: rgba(255,255,255,0.08);
   }
+  /* #401: sections, counter progress, hidden + full-game-only badges */
+  .lb-ach-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.75);
+    text-align: left;
+    margin: 6px 4px 6px;
+  }
+  .lb-ach-section-count {
+    font-weight: 400;
+    color: rgba(255,255,255,0.45);
+  }
+  .lb-ach-progress {
+    font-size: 8px;
+    color: rgba(255,220,120,0.9);
+    margin-top: 2px;
+  }
+  .lb-ach-item.locked:has(.lb-ach-progress) { opacity: 0.6; }
+  .lb-ach-item.secret .lb-ach-name { font-style: italic; }
+  .lb-ach-item.demo-locked { border-style: dashed; }
   .lb-ach-count {
     font-size: 11px;
     color: rgba(255,255,255,0.5);
@@ -3392,7 +3594,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* M6: a 5th-failure game over is taller than a landscape phone: scroll,
+       and never centre the title off the top edge. */
+    justify-content: safe center;
+    overflow-y: auto;
     padding: 30px;
   }
 
@@ -3405,7 +3610,8 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: safe center;   /* M6: see #gameover-overlay */
+    overflow-y: auto;
     padding: 30px;
   }
 
@@ -5008,7 +5214,7 @@
 
 <div id="status"></div>
 <div id="checkpoint-flash">CHECK POINT</div>
-<div id="timeout-flash"><div id="timeout-icon">&#x1F40C;</div><div id="timeout-text">TOO SLOW!</div></div>
+<div id="timeout-flash"><div id="timeout-icon">&#x1F40C;</div><div id="timeout-text">TOO SLOW!</div><div id="timeout-help" class="help-announce" style="display:none;"></div></div>
 
 <!-- Side buttons (D-pad layout) -->
 <div id="side-buttons">
@@ -5046,11 +5252,6 @@ ON</button>
       <button class="qm-item" id="qm-controllers">
         <span class="qm-icon">&#x1F3AE;</span><span class="qm-label">CONTROLLERS</span><span class="qm-state"></span>
       </button>
-      <!-- D-4 · the ghost of your best ride. Off is a real preference: some
-           people find being chased by themselves stressful rather than fun. -->
-      <button class="qm-item" id="qm-ghost">
-        <span class="qm-icon">&#x1F47B;</span><span class="qm-label">GHOST</span><span class="qm-state"></span>
-      </button>
       <button class="qm-item" id="qm-reset">
         <span class="qm-icon">&#x21BA;</span><span class="qm-label">RESET</span><span class="qm-state"></span>
       </button>
@@ -5070,10 +5271,19 @@ ON</button>
     <span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span><span class="coach-dot"></span>
   </div>
   <div id="coach-steer-line">Steer: <b>A</b> / <b>D</b></div>
+  <!-- #399: playtesters never discovered the boost. -->
+  <div id="coach-boost-line">&#127873; Grab presents for a speed <b>BOOST</b></div>
 </div>
 
 <!-- E-7 · how far there is between you, and how much of it is left. -->
 <div id="tourist-goal"></div>
+
+<!-- Slingshot mode · coins this run and distance to the stage goal. -->
+<div id="sling-hud"></div>
+<!-- Slingshot mode · the pull meter while the riders wind the bands. -->
+<div id="sling-pull"><div class="sling-hint">Pull back &middot; aim &middot; let go</div><div class="bar"><i></i></div><div class="sling-predict"></div></div>
+<div id="sling-toast"></div>
+<div id="sling-finger"></div>
 
 <!-- E-2 · the road is about to do something. Both riders see this. -->
 <div id="disruption-banner"></div>
@@ -5096,6 +5306,7 @@ ON</button>
 
 <!-- D-2 · this ride counts. -->
 <div id="ranked-badge">RANKED RUN</div>
+<div id="help-badge" data-tier="0"></div>
 
 <!-- D-2 · Practice or a ranked run, on Today's Road only. Shown by the lobby
      before START RIDE takes effect. The demo build never shows this: it is
@@ -5485,25 +5696,30 @@ ON</button>
           <div class="lobby-mode-buttons">
             <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
             <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
-            <!-- E-6 · the one mode that is about the thing the players feel.
-                 Hidden unless a Maps key is present: without one it can only
-                 disappoint. -->
-            <button class="lobby-btn" id="btn-tourist" style="display:none;">&#128205; RIDE THE DISTANCE BETWEEN YOU</button>
+            <!-- #400 D4 · the one garage every mode's Chaos Coins are spent in, and the wallet. -->
+            <button class="lobby-btn" id="btn-garage">&#128736; GARAGE<span id="lobby-wallet" class="lobby-wallet"></span></button>
+            <!-- E-6 · Tourist ("ride the distance between you") is a card in
+                 the SOLO level list (#400), shown only with a Maps key. -->
           </div>
         </div>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Tourist route (#lobby-tourist)  — E-6
              Two addresses become a ride over real photogrammetry.
-             Back: #lobby-mode
+             Back: #lobby-level (opened from the SOLO list's Tourist card)
              ════════════════════════════════════════════════════ -->
         <div id="lobby-tourist" class="lobby-step" style="display:none;">
           <p class="lobby-prompt">Where are you two?</p>
           <div id="tourist-form">
             <input id="tourist-from" class="tourist-input" type="text"
                    placeholder="Your address or city" autocomplete="off" spellcheck="false">
-            <input id="tourist-to" class="tourist-input" type="text"
-                   placeholder="Their address or city" autocomplete="off" spellcheck="false">
+            <!-- #400: one address = open world; a second one makes it a route. -->
+            <div id="tourist-to-row" class="tourist-to-row" style="display:none;">
+              <input id="tourist-to" class="tourist-input" type="text"
+                     placeholder="Second address or city" autocomplete="off" spellcheck="false">
+              <button type="button" class="tourist-remove-to" id="btn-tourist-remove-to" title="Remove the second address">&times;</button>
+            </div>
+            <button type="button" class="tourist-add-to" id="btn-tourist-add-to">+ ADD A SECOND ADDRESS</button>
             <div id="tourist-error" class="tourist-error"></div>
             <div id="tourist-preview" class="tourist-preview"></div>
             <button class="lobby-btn lobby-btn-accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</button>
@@ -5803,7 +6019,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.aab9eaa | 09-23-2026 23:49</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.e0e96ae | 10-05-2026 12:20</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -5939,7 +6155,6 @@ ON</button>
         <li><span class="ach-icon">🌟</span><strong>Collector</strong> <span class="ach-desc">— Grab 10 collectibles in a run</span></li>
         <li><span class="ach-icon">👑</span><strong>Hoarder</strong> <span class="ach-desc">— Grab every collectible in a level</span></li>
         <li><span class="ach-icon">🏠</span><strong>Home Sweet Home</strong> <span class="ach-desc">— Finish Grandma's House</span></li>
-        <li><span class="ach-icon">🏰</span><strong>Royal Arrival</strong> <span class="ach-desc">— Finish The Castle</span></li>
         <li><span class="ach-icon">🚲</span><strong>Grandma's Classic</strong> <span class="ach-desc">— Finish Grandma's on the default bike</span></li>
         <li><span class="ach-icon">🍊</span><strong>Marmalade Delivery</strong> <span class="ach-desc">— Finish Grandma's on the orange bike</span></li>
         <li><span class="ach-icon">🫐</span><strong>Berry Special Visit</strong> <span class="ach-desc">— Finish Grandma's on the magenta bike</span></li>
@@ -5948,7 +6163,6 @@ ON</button>
         <li><span class="ach-icon">🌿</span><strong>Jungle Express</strong> <span class="ach-desc">— Finish Grandma's on the green bike</span></li>
         <li><span class="ach-icon">🍌</span><strong>Banana Delivery</strong> <span class="ach-desc">— Finish Grandma's on the yellow bike</span></li>
         <li><span class="ach-icon">💮</span><strong>Flawless</strong> <span class="ach-desc">— Finish Grandma's House with no crashes or restarts</span></li>
-        <li><span class="ach-icon">💎</span><strong>Untouchable</strong> <span class="ach-desc">— Finish The Castle with no crashes or restarts</span></li>
         <li><span class="ach-icon">🤜</span><strong>Team Player</strong> <span class="ach-desc">— Stay safe 80% of a multiplayer ride</span></li>
       </ul>
     </div>
@@ -5988,9 +6202,11 @@ ON</button>
   <div id="tutorial-phase-dots">
     <div class="tutorial-dot" data-phase="1"></div>
     <div class="tutorial-dot" data-phase="2"></div>
-    <div class="tutorial-dot" data-phase="3"></div>
   </div>
 </div>
+<!-- D6 (#400): always-visible way out of the tutorial (first launch sends new
+     players here). Above #calib-flow-overlay so it works during calibration. -->
+<button id="btn-tutorial-skip" type="button">SKIP TUTORIAL</button>
 <div id="coaching-dodge-arrow">
   <svg width="100" height="100" viewBox="0 0 256 256" fill="none">
     <path fill="#44ff66" d="
@@ -6022,7 +6238,7 @@ ON</button>
     <div class="steering-feel-label">Steering Feel</div>
     <div class="steering-feel-row">
       <span class="steering-feel-end">Stable</span>
-      <input type="range" id="steering-feel-slider" min="0" max="100" value="50">
+      <input type="range" id="steering-feel-slider" min="0" max="100" value="30">
       <span class="steering-feel-end">Responsive</span>
     </div>
   </div>
@@ -6030,18 +6246,27 @@ ON</button>
     <iframe src="https://store.steampowered.com/widget/4482940/" frameborder="0" width="100%" height="190" style="max-width:646px;border-radius:8px;"></iframe>
     <a class="lobby-btn" id="btn-steam-store" href="https://store.steampowered.com/app/4482940/Tandemonium/" target="_blank" rel="noopener" style="display:inline-block;margin-top:16px;color:#67c1f5;text-decoration:none;max-width:280px;width:280px;">View on Steam Store &rarr;</a>
   </div>
+  <!-- D6 (#400): solo goes straight on to the first real level in one tap. -->
+  <button class="lobby-btn lobby-btn-accent" id="btn-tutorial-next" style="margin-top:16px;display:none;">NEXT: GRANDMA'S</button>
   <button class="lobby-btn lobby-btn-accent" id="btn-tutorial-continue" style="margin-top:16px;">Let's RIDE!</button>
 </div>
 
 <!-- Game Over overlay -->
 <div id="gameover-overlay" style="display:none;">
   <div class="disconnect-box">
-    <p style="color:#ff4444">GAME OVER</p>
+    <p id="gameover-title" style="color:#ff4444">GAME OVER</p>
+    <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
+    <div id="gameover-help" class="help-announce" style="display:none;"></div>
+    <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
+    <div id="gameover-coins" class="ride-coins" style="display:none;"></div>
     <button class="lobby-btn" id="btn-gameover-clip" style="margin-bottom:10px;display:none;">&#x1F3AC; SAVE CLIP</button>
     <button class="lobby-btn lobby-btn-accent" id="btn-restart">RESTART</button>
-    <button class="lobby-btn" id="btn-skip-checkpoint" style="margin-top:10px;display:none;">SKIP CHECKPOINT</button>
+    <button class="lobby-btn" id="btn-skip-checkpoint" style="margin-top:10px;display:none;">&#x1F451; Take the Royal Shortcut</button>
+    <!-- #403 · a failed ranked run: the attempt is spent; ride the road as practice. -->
+    <button class="lobby-btn" id="btn-practice-help" style="margin-top:10px;display:none;">&#x1F6DF; Ride it as practice — with a helping hand</button>
     <button class="lobby-btn" id="btn-gameover-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
     <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">END RIDE TOGETHER</button>
+    <button class="lobby-btn" id="btn-gameover-garage" style="margin-top:10px;display:none;">GARAGE &rarr;</button>
     <!-- B-5 · the two things a demo player should be able to do next. Shown by
          _updateCtaButtons(); hidden in the full Steam build. -->
     <!-- D-3 · see the victory overlay. -->
@@ -6060,6 +6285,8 @@ ON</button>
   <div id="victory-right">
     <p id="victory-destination"></p>
     <div id="victory-stats"></div>
+    <!-- #400 D4 · what the ride paid. Filled by js/economy-mode.js. -->
+    <div id="victory-coins" class="ride-coins" style="display:none;"></div>
   </div>
   <!-- D-8 · what the two of you have done together. -->
   <div id="pair-panel" style="display:none;"></div>
@@ -6068,6 +6295,7 @@ ON</button>
     <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
     <button class="lobby-btn" id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</button>
     <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">END RIDE TOGETHER</button>
+    <button class="lobby-btn" id="btn-victory-garage" style="margin-top:6px;display:none;">GARAGE &rarr;</button>
     <!-- B-5 · see the game-over overlay. -->
     <!-- D-3 · share the day's result (Today's Road only). -->
     <button class="lobby-btn cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</button>
@@ -6076,15 +6304,21 @@ ON</button>
   </div>
 </div>
 
-<!-- Demo end overlay (solo demo checkpoint limit reached) -->
+<!-- Slingshot mode · spend Chaos Coins between launches. Filled by js/slingshot-ui.js. -->
+<div id="sling-garage"></div>
+<!-- Slingshot mode · one launch's payout. -->
+<div id="sling-results"></div>
+<!-- Slingshot mode · the end-of-ride signal: distance, then the coins it pays. -->
+<div id="sling-tally"></div>
+
+<!-- #400 · Demo end: NEXT LEVEL after the last road the demo includes. -->
 <div id="demo-end-overlay" style="display:none;">
   <div class="disconnect-box">
-    <p style="color:#44ff66;font-size:1.2em;margin-bottom:4px;">Thanks for trying the demo!</p>
-    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">Unlock the full game with all levels, leaderboards, and solo rides.</p>
-    <button class="lobby-btn lobby-btn-accent" id="btn-demo-buy">GET FULL GAME &middot; $5.99</button>
-    <button class="lobby-btn" id="btn-demo-together" style="margin-top:10px;">JOIN A FRIEND'S RIDE</button>
-    <p style="font-size:0.75em;opacity:0.5;margin-top:4px;margin-bottom:12px;">Sign in to join someone with the full game &mdash; always free!</p>
-    <button class="lobby-btn" id="btn-demo-lobby" style="margin-top:0;">BACK TO LOBBY</button>
+    <p style="color:#44ff66;font-size:1.2em;margin-bottom:4px;">That's the demo!</p>
+    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">The full game has a new road every day, ranked runs and every Slingshot stage.</p>
+    <button class="lobby-btn lobby-btn-accent cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</button>
+    <button class="lobby-btn" id="btn-demo-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
+    <button class="lobby-btn" id="btn-demo-lobby" style="margin-top:10px;">BACK TO LOBBY</button>
   </div>
 </div>
 
