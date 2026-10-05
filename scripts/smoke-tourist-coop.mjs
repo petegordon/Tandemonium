@@ -319,7 +319,78 @@ const anchorOk =
   anchor.explore.startHeading === 0 && anchor.after === 0;
 await where.close();
 
-const checks = { swapOk, coopOk, failOk, timeoutOk, localOk, anchorOk, noPageErrors: errors.length === 0 };
+// ── 6. review B3 · the odometer: real frames of the solo loop move the bike, ──
+// nothing sets distanceTraveled by hand. A short route arrives (the ordinary
+// finish → victory); open world counts what was ridden, and it pays.
+const odoPage = await open(true);
+await odoPage.setViewport({ width: 480, height: 320 });   // cheaper frames
+const odo = await odoPage.evaluate(async () => {
+  const g = window._game, l = g.lobby;
+  const { planRoute, planExplore } = await import('./js/tourist-route.js');
+  // Ride `frames` real _updateSolo frames at `speed` m/s, turning `turn` rad a
+  // frame; keep the bike upright and rolling (no rider input headless).
+  const rideFrames = (frames, speed, turn = 0, dt = 0.05) => {
+    let n = 0;
+    for (; n < frames && g.state === 'playing'; n++) {
+      g.bike.speed = speed; g.bike.lean = 0; g.bike.leanVelocity = 0; g.bike.fallen = false;
+      g.bike.heading += turn;
+      g._updateSolo(dt);
+    }
+    return n;
+  };
+  const startRide = async (plan) => {
+    await g._onTouristReady({ plan });
+    g._startCountdown();
+    g._updateCountdown(10);   // straight to GO
+  };
+  const goal = () => document.getElementById('tourist-goal').textContent;
+
+  // Route: ~160 m north-west, so the finish is reachable in a few hundred frames.
+  const plan = planRoute({ lat: 39.9612, lon: -82.9988, label: 'Home' },
+                         { lat: 39.9624, lon: -82.9998, label: 'Next door' });
+  await startRide(plan);
+  const r = { state0: g.state, kind: g.world.constructor.name, d0: g.bike.distanceTraveled, goal0: goal(),
+              finishM: l.selectedLevel.distance };
+  rideFrames(40, 10);                                   // 20 m along the bearing
+  r.d20 = g.bike.distanceTraveled; r.goal20 = goal();
+  const h = g.bike.heading;
+  g.bike.heading = h + Math.PI / 2; rideFrames(40, 10); // 20 m sideways: no progress
+  r.dSide = g.bike.distanceTraveled;
+  g.bike.heading = h + Math.PI; rideFrames(20, 10);     // 10 m back: never subtracts
+  r.dBack = g.bike.distanceTraveled;
+  g.bike.heading = h;
+  r.frames = rideFrames(2000, 12);                      // on to the door
+  r.stateAtLine = g.state;
+  r.dLine = g.bike.distanceTraveled;
+  for (let i = 0; i < 400 && g.state === 'finishCinematic'; i++) g._updateFinishCinematic(0.1);
+  r.end = g.state;
+  r.title = document.getElementById('victory-title').textContent;
+  g._returnToLobby();
+
+  // Open world: ride a circle; the readout counts it and the payout sees it.
+  await startRide(planExplore({ lat: 39.9451, lon: -82.7905, label: '7958 Norman St, Pickerington, OH' }));
+  const e = { state0: g.state, d0: g.bike.distanceTraveled, goal0: goal(), payCapM: l.selectedLevel.payCapM };
+  rideFrames(200, 10, 0.02);                            // 100 m round a bend
+  e.d = g.bike.distanceTraveled;
+  e.goal = goal();
+  const snap = g._rideSnapshot('abandon');
+  e.payM = snap && snap.distance; e.payMode = snap && snap.mode;
+  g._returnToLobby();
+  return { route: r, explore: e };
+});
+console.log('odometer:', JSON.stringify(odo, null, 1));
+const R = odo.route, E = odo.explore;
+const odoOk =
+  R.state0 === 'playing' && R.kind === 'TouristWorld' && R.d0 === 0 && /to go/.test(R.goal0) &&
+  Math.abs(R.d20 - 20) < 1.5 && R.goal20 !== R.goal0 &&
+  Math.abs(R.dSide - R.d20) < 0.5 && R.dBack === R.dSide &&
+  R.dLine >= R.finishM && R.stateAtLine === 'finishCinematic' && R.end === 'victory' && /MADE IT TO THEM/.test(R.title) &&
+  E.state0 === 'playing' && E.d0 === 0 && /0 m ridden/.test(E.goal0) && E.payCapM === 10000 &&
+  Math.abs(E.d - 100) < 3 && /\b\d{2,3} m ridden/.test(E.goal) && !/ 0 m ridden/.test(E.goal) &&
+  E.payMode === 'tourist' && Math.abs(E.payM - E.d) < 0.01;
+await odoPage.close();
+
+const checks = { swapOk, coopOk, failOk, timeoutOk, localOk, anchorOk, odoOk, noPageErrors: errors.length === 0 };
 console.log(checks);
 const ok = Object.values(checks).every(Boolean);
 console.log(ok ? '✔ tourist rides hand the real road back; co-op Tourist meets at a ready barrier that never hangs'

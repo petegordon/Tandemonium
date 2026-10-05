@@ -80,7 +80,7 @@ class EconomyMode {
     // for its distance and pickups only — no finish bonus, medal or best.
     const skipped = !!(this._helpFlags && this._helpFlags().skipped);
     const finished = kind === 'finish' && !skipped;
-    const cap = level.distance || Infinity;
+    const cap = level.payCapM || level.distance || Infinity;   // payCapM: open-world Tourist (B3)
     const distance = Math.min(cap, kind === 'finish' && summary ? summary.distance
       : (this.bike ? this.bike.distanceTraveled || 0 : 0));
     const pickups = summary && summary.collectibles != null ? summary.collectibles

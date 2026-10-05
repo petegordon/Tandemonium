@@ -94,19 +94,17 @@ const ride = await page.evaluate(async () => {
   g.state = 'playing';
   g._showTouristGoal();
 
-  g.bike.distanceTraveled = 0;
+  // Nothing sets distanceTraveled by hand (review B3): the odometer counting
+  // down as the bike really rides, and arriving, are smoke-tourist-coop §6,
+  // which can load the tiles world (stubbed). Here the tiles CDN is blocked.
   g._updateTouristGoal();
   const atStart = document.getElementById('tourist-goal').textContent;
-
-  g.bike.distanceTraveled = plan.route.ridableM / 2;
-  g._updateTouristGoal();
-  const halfway = document.getElementById('tourist-goal').textContent;
 
   // The victory screen's tourist block, as _showVictory calls it.
   const html = g._touristVictoryHtml(plan.route.ridableM);
 
   return {
-    atStart, halfway,
+    atStart,
     levelId: level.id,
     levelIsTourist: !!level.isTourist,
     timerEnabled: level.timerEnabled,
@@ -122,7 +120,7 @@ console.log('the ride:', JSON.stringify(ride, null, 1));
 const ok = !hidden.visible && flow.shown && flow.stepShown && flow.savedOk
   && /1,8\d\d km/.test(flow.headline) && flow.capped && flow.ridableKm === 5
   && flow.prefilled.from === 'Columbus, OH' && /RIDE IT AGAIN/.test(flow.prefilled.button)
-  && /to go/.test(ride.atStart) && ride.atStart !== ride.halfway
+  && /2\.0 km to go/.test(ride.atStart)
   && ride.levelId === 'tourist' && ride.levelIsTourist && ride.timerEnabled === false
   && ride.finishesAtDestination
   && /MADE IT TO THEM/.test(ride.title) && /Theirs/.test(ride.dest)
