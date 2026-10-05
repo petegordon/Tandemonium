@@ -3240,6 +3240,13 @@ class Game {
       }
       if (statusEl) statusEl.textContent = '';
       this._returnToRoom();
+      // A load that failed BEFORE the world swapped leaves nothing for
+      // _restoreProceduralWorld to undo: clear the tourist state here too.
+      this._restoreProceduralWorld(true);
+      this.isTourist = false;
+      this._touristRoute = null;
+      this._touristOdo = null;
+      this._hideTouristGoal();
       this._lastTouristAbort = why;   // read by smoke:tourist
       showInfoToast('📍', 'Back in the room', why);
       return;
