@@ -230,6 +230,28 @@ test('gate progress: medals from any mode/difficulty record, Today\'s Road from 
   assert.deepEqual(gateProgress(null, null), { medals: {}, dailyFinished: false });
 });
 
+test('M3: a slower unaided finish never re-locks a stage, and is not paid NEW BEST', async () => {
+  const { recordRun, capMedal, medalFor } = await import('../../js/records.js');
+  const m = getMedals('grandma', 'adventurous');
+  const medalOf = rec => capMedal(medalFor(rec.timeMs, m), { helped: !!rec.helped });
+  const store = {};
+  const k = 'grandma|adventurous|solo';
+  // A helped bronze opens stage 4…
+  recordRun(store, k, { timeMs: m.gold - 1000, helped: true, medal: 'bronze' }, { medalOf });
+  assert.equal(stageLock(4, gateProgress(store, {})), null);
+  // …then an unaided finish 61 s slower with no medal replaces the 🛟 best.
+  const slow = recordRun(store, k, { timeMs: m.bronze + 61000, medal: null }, { medalOf });
+  assert.equal(slow.replacedHelped, true);
+  assert.equal(slow.faster, false, 'slower: no NEW BEST pay');
+  assert.equal(store[k].bestMedal, 'bronze', 'the best medal ever is kept');
+  assert.equal(stageLock(4, gateProgress(store, {})), null, 'stage 4 stays open');
+  // A faster run is a paid best and can raise the medal.
+  const fast = recordRun(store, k, { timeMs: m.gold - 1, medal: 'gold' }, { medalOf });
+  assert.equal(fast.faster, true);
+  assert.equal(store[k].bestMedal, 'gold');
+  assert.equal(stageLock(7, gateProgress(store, {})), null);
+});
+
 test('#403 gate progress: a helped (🛟) best counts as bronze at most, and a helped daily finish is a finish', () => {
   const m = getMedals('grandma', 'chill');
   const records = { 'grandma|chill|solo': { timeMs: m.gold - 1, helped: true } };

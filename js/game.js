@@ -2957,7 +2957,11 @@ class Game {
         collectibles: summary.collectibles,
         crashes: summary.crashes,
         helped: help.helped,
-        skipped: help.skipped
+        skipped: help.skipped,
+        // M3: the medal this run keeps (🛟 caps it at bronze) — the record keeps the best ever.
+        medal: this._helpMedal(summary.timeMs, getMedals(level.id, this.lobby.selectedDifficulty))
+      }, {
+        medalOf: rec => records.capMedal(records.medalFor(rec.timeMs, getMedals(level.id, this.lobby.selectedDifficulty)), { helped: !!rec.helped })
       });
       records.save(store);
       this._recordStore = store;
@@ -3025,7 +3029,9 @@ class Game {
     }
 
     // #400 D4: the medal and NEW BEST pay coins (js/economy-mode.js · _payoutRide).
-    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous) };
+    // M3: NEW BEST pays only for a faster run (a first unaided finish slower
+    // than a 🛟 best replaces it, but is not paid as a best).
+    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous && result.delta < 0) };
 
     try {
       analytics.trackEvent('run_recorded', {

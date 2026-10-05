@@ -41,11 +41,15 @@ export function getBest(store, k) {
  *
  * @param {object} store    mutated in place (and returned) — the caller saves it
  * @param {string} k        key()
- * @param {object} run      { timeMs, splits?: number[], collectibles?, crashes?, date? }
- * @returns {{ isNewBest: boolean, delta: number|null, best: object }}
+ * @param {object} run      { timeMs, splits?: number[], collectibles?, crashes?, date?,
+ *                            medal?: the medal this run keeps (helped: capped at bronze) }
+ * @param {object} [opts]   { medalOf(rec) } — the medal an older record's time earns,
+ *                          for records saved before bestMedal existed
+ * @returns {{ isNewBest: boolean, faster: boolean, delta: number|null, best: object }}
  *          `delta` is this run minus the previous best, in ms (negative = faster).
+ *          `faster`: quicker than the previous best (or the first) — what NEW BEST pays for (M3).
  */
-export function recordRun(store, k, run) {
+export function recordRun(store, k, run, opts = {}) {
   if (!store || !k || !run || typeof run.timeMs !== 'number' || !(run.timeMs > 0)) {
     return { isNewBest: false, delta: null, best: getBest(store, k) };
   }
@@ -53,9 +57,16 @@ export function recordRun(store, k, run) {
   // it can finish, but it never becomes a best.
   if (run.skipped) {
     const best = getBest(store, k);
-    return { isNewBest: false, delta: best ? Math.round(run.timeMs) - best.timeMs : null, best };
+    return { isNewBest: false, faster: false, delta: best ? Math.round(run.timeMs) - best.timeMs : null, best };
   }
   const previous = getBest(store, k);
+  // M3 · the best medal EVER on this key (helped capped at bronze by the
+  // caller). It survives the time it was won with being replaced, so a slower
+  // unaided finish can never take away what a Slingshot gate already read.
+  const prevMedal = previous ? betterMedal(validMedal(previous.bestMedal),
+    typeof opts.medalOf === 'function' ? validMedal(opts.medalOf(previous)) : null) : null;
+  const bestMedal = betterMedal(prevMedal, validMedal(run.medal));
+  const keep = (rec) => { if (bestMedal) rec.bestMedal = bestMedal; return rec; };
   const entry = {
     timeMs: Math.round(run.timeMs),
     splits: Array.isArray(run.splits) ? run.splits.map(n => Math.round(n)) : [],
@@ -68,30 +79,41 @@ export function recordRun(store, k, run) {
   if (run.helped) entry.helped = true;
 
   if (!previous) {
-    store[k] = entry;
+    store[k] = keep(entry);
     trim(store);
-    return { isNewBest: true, delta: null, best: entry };
+    return { isNewBest: true, faster: true, delta: null, best: entry };
   }
 
   const delta = entry.timeMs - previous.timeMs;
+  const faster = delta < 0;
   if (entry.helped && !previous.helped) {
-    return { isNewBest: false, delta, best: previous };
+    keep(previous);
+    return { isNewBest: false, faster: false, delta, best: previous };
   }
   if (!entry.helped && previous.helped) {
-    store[k] = entry;
+    store[k] = keep(entry);
     trim(store);
-    return { isNewBest: true, delta, best: entry, replacedHelped: true };
+    return { isNewBest: true, faster, delta, best: entry, replacedHelped: true };
   }
-  if (delta < 0) {
-    store[k] = entry;
+  if (faster) {
+    store[k] = keep(entry);
     trim(store);
-    return { isNewBest: true, delta, best: entry };
+    return { isNewBest: true, faster, delta, best: entry };
   }
+  keep(previous);
   // A slower run still teaches us something when the old best has no splits.
   if (previous.splits.length === 0 && entry.splits.length > 0) {
     previous.splits = entry.splits;
   }
-  return { isNewBest: false, delta, best: previous };
+  return { isNewBest: false, faster: false, delta, best: previous };
+}
+
+const MEDAL_RANK = { bronze: 1, silver: 2, gold: 3 };
+const validMedal = m => (MEDAL_RANK[m] ? m : null);
+
+/** The better of two medals ('gold' | 'silver' | 'bronze' | null). */
+export function betterMedal(a, b) {
+  return (MEDAL_RANK[b] || 0) > (MEDAL_RANK[a] || 0) ? b : validMedal(a);
 }
 
 /** Drop the oldest entries when the store grows past MAX_KEYS. */

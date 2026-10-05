@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   key, getBest, recordRun, trim, splitDelta, formatDelta, formatTime,
-  medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON
+  medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON, betterMedal
 } from '../../js/records.js';
 
 test('keys separate level, difficulty and mode', () => {
@@ -175,4 +175,18 @@ test('#403 a run with a skipped checkpoint is never a best', () => {
   const r = recordRun(store, 'k', { timeMs: 90000, skipped: true });
   assert.equal(r.isNewBest, false);
   assert.equal(getBest(store, 'k').timeMs, 161000);
+});
+
+test('M3: records keep the best medal ever; a legacy record gets its medal from its time', () => {
+  const store = {};
+  const t = { gold: 140000, silver: 170000, bronze: 210000 };
+  const medalOf = rec => capMedal(medalFor(rec.timeMs, t), { helped: !!rec.helped });
+  // A record saved before bestMedal existed: silver by its time.
+  store.k = { timeMs: 150000, splits: [], date: '2026-01-01' };
+  const r = recordRun(store, 'k', { timeMs: 200000, medal: 'bronze' }, { medalOf });
+  assert.equal(r.faster, false);
+  assert.equal(store.k.bestMedal, 'silver');
+  assert.equal(betterMedal('bronze', 'gold'), 'gold');
+  assert.equal(betterMedal('silver', null), 'silver');
+  assert.equal(betterMedal(null, 'nope'), null);
 });
