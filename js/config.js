@@ -153,6 +153,12 @@ const SHARED_PHYSICS = {
   // this after the deadzone/response curve. 1 = the original feel; 0.25 =
   // a quarter as sensitive (requested for a phone player who found tilt too
   // twitchy). Phone tilt only — controller gyro (WebHID/Steam) is unchanged.
+  // Intended (PR #397 review R5): a phone gets BOTH this gain and the default
+  // Steering Feel 0.3 (wider dead zone, more smoothing, more degrees for a full
+  // lean). The two stack on purpose — phone tilt is meant to be the gentlest
+  // input. The riders' body lean and the tutorial's tilt calibration use the
+  // ungained lean (InputManager.getMotionLeanVisual), so this only softens
+  // steering, not what the player sees or how calibration measures.
   mobileTiltGain: 0.25,
   // Shared physics
   leanForce: 12,
@@ -263,22 +269,93 @@ export function applyDifficulty(presetName) {
   Object.assign(TUNE, preset);
 }
 
-// Snapshot of calibrated base values for steering feel scaling.
-// Updated by tutorial completion and background adaptation saves.
+// The calibrated, UN-FEELED motion tuning (B2, PR #397 review). The tutorial's
+// calibration and background adaptation write HERE (setTuningBase) and are what
+// gets saved; TUNE's motion params are always applySteeringFeel(base, feel),
+// derived once per change. Never copy TUNE back into the base: TUNE is already
+// feel-scaled, and re-applying the feel on top compounded every adaptation
+// pass (sensitivity 51.7 → 29.6 in ~2 min of gyro riding).
 export const TUNING_BASE = { ...BALANCE_DEFAULTS };
 
-/** Capture current TUNE motion params as the base for steering feel scaling. */
-export function snapshotTuningBase() {
-  for (const k of ['sensitivity', 'deadzone', 'outputSmoothing', 'responseCurve',
-                    'gyroSensitivity', 'gyroDeadzone', 'gyroOutputSmoothing', 'gyroResponseCurve']) {
-    TUNING_BASE[k] = TUNE[k];
+/** The motion params steering feel scales (phone tilt + controller gyro). */
+export const TUNING_KEYS = ['sensitivity', 'deadzone', 'outputSmoothing', 'responseCurve',
+  'gyroSensitivity', 'gyroDeadzone', 'gyroOutputSmoothing', 'gyroResponseCurve'];
+
+/**
+ * Write calibrated (un-feeled) values into the base. Only finite numbers for
+ * TUNING_KEYS are taken. Follow with applySteeringFeel(feel) to ride them.
+ */
+export function setTuningBase(values) {
+  if (!values) return;
+  for (const k of TUNING_KEYS) {
+    if (Number.isFinite(values[k])) TUNING_BASE[k] = values[k];
   }
 }
 
 /**
+ * Legacy: copies TUNE (already feel-scaled) into the base — the B2 compounding
+ * bug. Nothing calls it any more; kept only so existing imports still resolve.
+ * @deprecated use setTuningBase()
+ */
+export function snapshotTuningBase() {
+  for (const k of TUNING_KEYS) TUNING_BASE[k] = TUNE[k];
+}
+
+// Each param's clamp, as applySteeringFeel and calibration apply it.
+const TUNING_BOUNDS = {
+  sensitivity: [15, 60], deadzone: [2, 8], outputSmoothing: [0.15, 0.8], responseCurve: [1.0, 2.5],
+  gyroSensitivity: [15, 60], gyroDeadzone: [2, 8], gyroOutputSmoothing: [0.15, 0.8], gyroResponseCurve: [1.0, 2.0],
+};
+
+/** Saves written from this build on hold the un-feeled base (see migrateSavedTuning). */
+export const TUNING_SAVE_BASE_FLAG = 'tuningBase';
+
+/**
+ * The calibration base held in a saved tuning record (`tandemonium_motion_tuning…`).
+ *
+ * Saves written before B2's fix stored the FEEL-SCALED values for sensitivity,
+ * deadzone and response curve (background adaptation saved TUNE). If such a
+ * save carries a steeringFeel, that scale is divided back out using the old
+ * formula; a value pinned at its clamp can't be un-scaled (the clamp threw the
+ * information away), so that param falls back to its default. outputSmoothing
+ * was only ever written by the tutorial, un-feeled, so it is taken as is. A
+ * legacy save with no steeringFeel was never feel-scaled (old default 0.5 for
+ * the scaled params is the identity). Saves flagged TUNING_SAVE_BASE_FLAG are
+ * already the base.
+ *
+ * Pure. @returns {{ values: object, migrated: boolean }} values keyed like the save.
+ */
+export function migrateSavedTuning(data, defaults = BALANCE_DEFAULTS) {
+  const values = {};
+  if (!data || typeof data !== 'object') return { values, migrated: false };
+  for (const k of TUNING_KEYS) if (Number.isFinite(data[k])) values[k] = data[k];
+  const feel = data.steeringFeel;
+  if (data[TUNING_SAVE_BASE_FLAG] || !Number.isFinite(feel)) return { values, migrated: false };
+  const gyroSave = data.inputType === 'gyro';
+  // The scales the pre-fix applySteeringFeel used (senScale had the old, inverted sign).
+  const old = { dz: 1.4 - 0.8 * feel, sen: 0.85 + 0.3 * feel, rc: 0.3 - 0.6 * feel };
+  for (const k of Object.keys(values)) {
+    if (/OutputSmoothing$|^outputSmoothing$/.test(k)) continue;
+    // A gyro save stored the gyro values under the phone-named keys.
+    const bk = gyroSave && !k.startsWith('gyro') ? 'gyro' + k[0].toUpperCase() + k.slice(1) : k;
+    const [lo, hi] = TUNING_BOUNDS[bk];
+    const v = values[k];
+    const pinned = v <= lo + 1e-6 || v >= hi - 1e-6;
+    let base;
+    if (/[sS]ensitivity$/.test(k)) base = v / old.sen;
+    else if (/[dD]eadzone$/.test(k)) base = v / old.dz;
+    else base = v - old.rc;                     // response curve: additive shift
+    values[k] = pinned || !Number.isFinite(base) ? defaults[k] : Math.min(hi, Math.max(lo, base));
+  }
+  return { values, migrated: true };
+}
+
+/**
  * Apply a steering feel value (0 = Stable, 1 = Responsive) by scaling
- * the calibrated base tuning parameters. Call AFTER loading saved tuning
- * or after tutorial completion.
+ * TUNING_BASE into TUNE's motion params. Reads only the base, so calling it
+ * any number of times with the same feel gives the same TUNE. Call after
+ * setTuningBase (saved tuning, tutorial calibration, adaptation) or when the
+ * slider moves.
  * @param {number} feel — 0..1 slider value
  */
 export function applySteeringFeel(feel) {
@@ -287,8 +364,10 @@ export function applySteeringFeel(feel) {
   const dzScale = 1.4 - 0.8 * feel;
   // Smoothing: Stable = more smoothing (×0.6 output factor), Responsive = less (×1.5)
   const smScale = 0.6 + 0.9 * feel;
-  // Sensitivity: Stable = less (×0.85), Responsive = more (×1.15)
-  const senScale = 0.85 + 0.3 * feel;
+  // Sensitivity is DEGREES of tilt for a full lean, so a bigger number steers
+  // less. Stable = more degrees (×1.15, gentler), Responsive = fewer (×0.85).
+  // (B2: this was 0.85 + 0.3·feel, which made the Stable end twitchier.)
+  const senScale = 1.15 - 0.3 * feel;
   // Response curve: Stable = higher exponent (more gradual center), Responsive = lower
   const rcShift = 0.3 - 0.6 * feel; // +0.3 at Stable, -0.3 at Responsive
 
