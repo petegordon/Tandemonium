@@ -8144,6 +8144,9 @@ class Game {
     // Guard against being called multiple frames in a row
     if (this._tutRetryPending) return;
     this._tutRetryPending = true;
+    // m3 (PR #397 review): a phase retry (off-road, missed present/pylon) is
+    // an attempt like a crash, so "Natural" (tutorial_clean) needs none of them.
+    this._tutorialAttempts++;
 
     // Feed failure to DDA manager
     if (this.ddaManager) {

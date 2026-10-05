@@ -82,7 +82,8 @@ const screen = await finisher.evaluate(() => {
     nextVisible: !!(next && next.offsetParent !== null), nextText: next && next.textContent.trim(),
     continueText: cont.textContent.trim(),
     done: localStorage.getItem('tandemonium_tutorial_done'),
-    skipVisible: getComputedStyle(document.getElementById('btn-tutorial-skip')).display !== 'none'
+    skipVisible: getComputedStyle(document.getElementById('btn-tutorial-skip')).display !== 'none',
+    natural: window._game.achievements.getEarnedIds().includes('tutorial_clean')
   };
 });
 console.log('tutorial complete:', JSON.stringify(screen));
@@ -99,8 +100,9 @@ await finisher.browserContext().close();
 // pass the ±0.25 targets; the calibration reads the ungained lean instead. A
 // stand-in player feeds real deviceorientation events into the same
 // InputManager path a phone uses, tilting whichever way the card asks, and
-// every step must clear well before its 8 s safety timeout.
-const STEP_LIMIT_MS = 5000;   // headless renders at ~1.4 fps; each step times out at 8 s
+// every step must clear well before its 8 s safety timeout (tilt steps were
+// all hitting it). Headless renders at ~1.4 fps, so the bounds are loose.
+const TILT_LIMIT_MS = 5000, CENTER_LIMIT_MS = 7000;
 const tilter = await open({}, () => {
   const g = window._game;
   g.input._startMotionListening();
@@ -117,26 +119,43 @@ const tilter = await open({}, () => {
     // calibration (0.17 s on a real phone) can outlast the welcome card: hold
     // still until it has finished and the drift tracker has its first sample.
     const settled = g.input.motionOffset != null && g.input._driftEma != null;
+    if (settled && window.__settledAt == null) window.__settledAt = Math.round(performance.now());
     window.__tiltTarget = !settled ? 0 : /left/i.test(t) ? -35 : /right/i.test(t) ? 35 : 0;
     if (t !== last) { window.__tiltLog.push([Math.round(performance.now()), t]); last = t; }
   }, 30);
 });
 await tilter.waitForFunction(() => (window.__tiltLog || []).some(([, t]) => /recalibrate/i.test(t)), { timeout: 90000 }).catch(() => {});
-const tiltLog = await tilter.evaluate(() => window.__tiltLog);
+const { tiltLog, settledAt } = await tilter.evaluate(() => ({ tiltLog: window.__tiltLog, settledAt: window.__settledAt || 0 }));
 const tiltSteps = [];
 for (let i = 0; i < tiltLog.length - 1; i++) {
   const [t0, label] = tiltLog[i];
-  if (/(left|right|center)\.\.\.$/i.test(label)) tiltSteps.push({ label, ms: tiltLog[i + 1][0] - t0 });
+  if (/(left|right|center)\.\.\.$/i.test(label)) tiltSteps.push({ label, ms: tiltLog[i + 1][0] - Math.max(t0, settledAt) });
 }
 console.log('phone tilt calibration steps:', JSON.stringify(tiltSteps));
 // A centre step can clear between two label samples (already centred), so it
 // may not show up; all four tilt steps must.
-const tiltOk = tiltSteps.filter(s => /(left|right)\.\.\.$/i.test(s.label)).length === 4 &&
-  tiltSteps.every(s => s.ms < STEP_LIMIT_MS);
+const isTilt = (s) => /(left|right)\.\.\.$/i.test(s.label);
+const tiltOk = tiltSteps.filter(isTilt).length === 4 &&
+  tiltSteps.every(s => s.ms < (isTilt(s) ? TILT_LIMIT_MS : CENTER_LIMIT_MS));
 await tilter.browserContext().close();
+
+// 6. m3 (PR #397 review): a phase retry (off-road / missed present) counts as an
+// attempt, so finishing after one is not "Natural" (tutorial_clean). Scenario 4
+// above finished with no retry and must have earned it.
+const retrier = await open();
+const retried = await retrier.evaluate(async () => {
+  const g = window._game;
+  g._tutorialPhaseRetry(1, 'Stay on the road!');
+  await new Promise(r => setTimeout(r, 1400));   // the retry's reset runs at 1.2 s
+  g._tutorialComplete();
+  return { attempts: g._tutorialAttempts, natural: g.achievements.getEarnedIds().includes('tutorial_clean') };
+});
+console.log('retry then finish:', JSON.stringify(retried), '| clean finish natural:', screen.natural);
+await retrier.browserContext().close();
 
 const ok =
   tiltOk &&
+  screen.natural === true && retried.natural === false && retried.attempts === 2 &&
   first.tutorial && first.level === 'tutorial' && first.skipVisible && first.done === null &&
   !skipped.tutorial && skipped.done === 'skip' && skipped.onLevelList && !skipped.skipVisible &&
     skipped.selectedCard === 'grandma' &&
