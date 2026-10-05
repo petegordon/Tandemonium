@@ -1551,7 +1551,7 @@ export class Lobby {
         go.textContent = 'EXPLORE HERE';
         this._startTouristRide(planExplore(from));
       } catch (err) {
-        errorEl.textContent = String(err && err.message || err).replace(/^Error:s*/, '');
+        errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
         go.disabled = false;
         go.textContent = 'EXPLORE HERE';
         analytics.trackEvent('tourist_route_failed');

@@ -64,6 +64,7 @@ import { World } from './world.js';
 // message rather than a blank screen.
 import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt } from './tourist-config.js';
 import { formatDistance, skipLabel, headingForBearing } from './tourist-route.js';
+import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
 const TOURIST_READY_TIMEOUT_MS = 20000;
@@ -3212,6 +3213,8 @@ class Game {
       icon: '📍',
       description: plan.headline,
       isTourist: true,
+      // B3: open world pays coins for at most 10 km a ride (no farming circles).
+      payCapM: plan.explore ? OPEN_WORLD_PAY_CAP_M : undefined,
       timerEnabled: false,      // there is no losing a ride to someone you love
       treeCollision: false,
       motionAdaptation: false
@@ -3232,6 +3235,10 @@ class Game {
     // A route faces its destination; open world faces north.
     this.bike.startHeading = plan.explore ? 0 : headingForBearing(plan.bearing);
     this.bike.heading = this.bike.startHeading;   // in case the bike was reset already
+    // B3: no roadPath here, so this odometer is what moves bike.distanceTraveled
+    // (the finish, the goal readout, coins, achievements). Route: progress along
+    // the bearing; open world: distance ridden.
+    this._touristOdo = new TouristOdometer({ heading: plan.explore ? null : this.bike.startHeading });
 
     if (this.world && this.world.setRoute) {
       this.world.setRoute(plan);
@@ -3249,6 +3256,14 @@ class Game {
     if (!el || !this._touristRoute) return;
     el.classList.add('visible');
     this._updateTouristGoal();
+  }
+
+  /** B3 · the authoritative side (solo / captain) moves the ride's distance. */
+  _tickTouristOdometer() {
+    const odo = this._touristOdo;
+    const b = this.bike;
+    if (!odo || !b || !this.isTourist) return;
+    b.distanceTraveled = odo.update(b.position.x, b.position.z, b.distanceTraveled);
   }
 
   _hideTouristGoal() {
@@ -4056,19 +4071,19 @@ class Game {
   }
 
   _checkAchievements(dt) {
-    const state = {
-      distance: this.bike.distanceTraveled,
-      cumulativeDistance: this.achievements.getCumulativeDistance(),
-      speed: this.bike.speed,
-      dt,
-      offsetScore: this.sharedPedal ? this.sharedPedal.offsetScore : 0,
-      collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
-      totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
-      finishedLevel: null,
-      isMultiplayer: this.mode !== 'solo',
-      safePct: 0,
-      ...this.achievements.rideFrame(dt, this),   // #401: off-road, centre strip, boost chain, steady hands
-    };
+    // One state object, reused every frame (no per-frame allocation here).
+    const state = this._achFrameState || (this._achFrameState = {});
+    state.distance = this.bike.distanceTraveled;
+    state.cumulativeDistance = this.achievements.getCumulativeDistance();
+    state.speed = this.bike.speed;
+    state.dt = dt;
+    state.offsetScore = this.sharedPedal ? this.sharedPedal.offsetScore : 0;
+    state.collectibles = this.collectibleManager ? this.collectibleManager.collected : 0;
+    state.totalCollectibles = this.collectibleManager ? this.collectibleManager.getTotalItems() : 0;
+    state.finishedLevel = null;
+    state.isMultiplayer = this.mode !== 'solo';
+    state.safePct = 0;
+    Object.assign(state, this.achievements.rideFrame(dt, this));   // #401: off-road, centre strip, boost chain, steady hands
 
     if (this.contributionTracker) {
       const summary = this.contributionTracker.getSummary();
@@ -6090,6 +6105,7 @@ class Game {
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
+    if (this._touristRoute) this._tickTouristOdometer();   // B3
 
     // Race progress + contribution tracking
     if (this.raceManager) {
@@ -6195,6 +6211,7 @@ class Game {
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
+    if (this._touristRoute) this._tickTouristOdometer();   // B3
 
     // Race progress + contribution tracking (captain is authoritative).
     // The race clock keeps running during a partner reconnect (#316): a brief
@@ -7169,6 +7186,7 @@ class Game {
     this._checkAchievements(dt);  // m7: the ride tracker + frame checks run for the stoker too
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
+    if (this._touristRoute) this._updateTouristGoal();   // B3 · the captain's odometer, synced
     const stokerBalance = this.balanceCtrl.update();
     const stokerLean = stokerBalance.leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);

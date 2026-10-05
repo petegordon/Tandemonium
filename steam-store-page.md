@@ -29,9 +29,17 @@ Lean too far? The bike tips. Hit 77 degrees and it's over. Unless you somehow re
 "Grandma called — she needs her presents!"
 A short, sweet sprint through the countryside. Collect presents along the way. Sounds easy. It isn't.
 
-[b]The Castle[/b]
-"The King awaits! Collect gems on the road to glory!"
-The long haul. Gems to collect and plenty of chances to wipe out spectacularly.
+[b]Today's Road[/b]
+A brand-new road every day — same for everyone. Ride it, post a time, come back tomorrow for another.
+
+[b]Map Tourist[/b]
+Pick an address — or two — and ride real streets in 3D. Your neighbourhood, your office, your grandma's actual house.
+
+[b]Slingshot[/b]
+Pull back, let go, and fling the tandem down the road. Earn coins, upgrade the garage, launch further.
+
+[b]Versus[/b]
+Split-screen on one couch: race team against team and see whose tandem gets there first.
 
 [h2]Pick Your Ride[/h2]
 
@@ -58,9 +66,10 @@ Earn badges across distance, speed, cooperation, mastery, and exploration:
 [*] [b]Speed[/b] — Speed Demon (hit 50 km/h)
 [*] [b]Cooperation[/b] — Perfect Sync (10 seconds of coordinated pedaling), Team Player
 [*] [b]Collection[/b] — Collector, Hoarder (grab every collectible in a level)
-[*] [b]Level completion[/b] — Home Sweet Home, Royal Arrival
+[*] [b]Level completion[/b] — Home Sweet Home
 [*] [b]Bike + level combos[/b] — Marmalade Delivery, Berry Special Visit, Cherry on Top, Ocean to Grandma's, Jungle Express, Banana Delivery, Grandma's Classic
-[*] [b]Flawless rides[/b] — Flawless 1K, Untouchable (no crashes on The Castle)
+[*] [b]Flawless rides[/b] — Flawless (finish Grandma's House with no crashes or restarts)
+[*] [b]Exploration[/b] — Grand Tour (ride 5 km of real streets in Map Tourist)
 [/list]
 
 Earned badges orbit your avatar during gameplay. Your partner sees them. They're wearable bragging rights.
@@ -76,7 +85,7 @@ Four tabs. Four ways to compete.
 [*] [b]You[/b] — Your personal ride history. Every attempt, every time, every role.
 [/list]
 
-Every leaderboard entry shows whether you rode as Captain, Stoker, or Solo. Filter by level. See who's actually the fastest on Grandma's House vs The Castle.
+Every leaderboard entry shows whether you rode as Captain, Stoker, or Solo. Filter by level. See who's actually the fastest on Grandma's House vs Today's Road.
 
 [h2]See Your Partner. See Them Pedal. Hear the Panic![/h2]
 
@@ -88,7 +97,9 @@ Built-in video and voice chat. Watch your partner's face as the bike starts tipp
 [*] Physics-based tandem bicycle with realistic balance, lean, and crash mechanics
 [*] Online multiplayer via peer-to-peer connection — play with anyone, anywhere
 [*] Solo mode for lone riders who enjoy suffering
-[*] 2 courses with collectibles (presents and gems)
+[*] Grandma's House plus a new Today's Road every day, with presents to collect
+[*] Map Tourist — ride real streets in 3D
+[*] Slingshot mode and split-screen Versus
 [*] 7 named bikes with unique colors
 [*] 19 achievement badges across 7 categories
 [*] 4-tab leaderboard with role tracking (Captain / Stoker / Solo)
