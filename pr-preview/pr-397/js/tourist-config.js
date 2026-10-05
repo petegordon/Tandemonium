@@ -8,11 +8,16 @@
 // tourist world + road-path shims.
 // ============================================================
 
+import { getEditionRules } from './edition.js';
+
 /**
  * Is Tourist Mode requested? Activated with `?mode=tourist` (matches the
  * existing URL-param convention used for ?quality, ?notrees, ?noclip).
  */
 export function isTouristMode() {
+  // PR #397 B4b: never in an edition without Tourist (the demo) — ?mode=tourist
+  // is ignored there and the game boots normally.
+  if (!getEditionRules().tourist) return false;
   return new URLSearchParams(window.location.search).get('mode') === 'tourist';
 }
 
@@ -276,6 +281,20 @@ export async function resolveOriginAt(point) {
   return found
     ? { ...base, height: found.elevation + ANCHOR_MARGIN, anchored: true, ...found }
     : { ...base, height: TOURIST_CUSTOM_HEIGHT, anchored: false };   // wide probe
+}
+
+/**
+ * PR #397 m16 · the same anchor as resolveOriginAt(point), from a height the
+ * co-op captain already looked up ({ height, anchored } in touristPlan).
+ * null when the anchor is unusable (the caller then does its own lookup).
+ */
+export function originFromAnchor(point, anchor) {
+  if (!point || !anchor || !Number.isFinite(anchor.height)) return null;
+  return {
+    name: point.label || `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`,
+    lat: point.lat, lon: point.lon, heading: 0, custom: true,
+    height: anchor.height, anchored: !!anchor.anchored
+  };
 }
 
 /** Ground elevation for an anchor: Google first, open-meteo second, else null. */

@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
@@ -61,8 +62,9 @@ import { World } from './world.js';
 // exists to prevent. It is loaded on demand instead, only when ?mode=tourist
 // asks for it, and a failure to load degrades to the normal world with a
 // message rather than a blank screen.
-import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt } from './tourist-config.js';
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor } from './tourist-config.js';
 import { formatDistance, skipLabel, headingForBearing } from './tourist-route.js';
+import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
 const TOURIST_READY_TIMEOUT_MS = 20000;
@@ -85,7 +87,9 @@ import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
+import { isBotTeam } from './versus/versus-bot.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
+import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
@@ -669,8 +673,13 @@ class Game {
       if (next) {
         this.lobby.selectedLevel = next;
         this.lobby._updateDifficultyVisibility(next.id);   // the road's fixed difficulty
+        // PR #397 m11: the captain drives level changes — the stoker adopts
+        // this levelSync, then the EVT_RESET below rebuilds its ride on it.
+        if (this.mode === 'captain' && this.net && this.net.connected) {
+          this.net.sendProfile(RoomProtocol.levelSync(next.id, this.lobby._levelSyncExtra(next)));
+        }
         this._resetGame(false, true);
-      } else if (getEditionRules().isDemo) {
+      } else if (this._roomRules().isDemo) {
         this._showDemoEnd();
       } else {
         this._returnToLobby();
@@ -680,6 +689,11 @@ class Game {
     this._onTap('btn-wishlist-demo-end', () => {
       try { analytics.trackWishlistClick('demo_end'); } catch {}
       window.open('https://store.steampowered.com/app/4482940/Tandemonium/', '_blank', 'noopener');
+    });
+    // PR #397 m11: in a room, the demo's end goes back to the room together.
+    this._onTap('btn-demo-room', () => {
+      this._hideDemoEnd();
+      this._returnToRoom();
     });
     this._onTap('btn-demo-lobby', () => {
       this._hideDemoEnd();
@@ -892,6 +906,17 @@ class Game {
   }
 
   /**
+   * PR #397 M1 · the rules this ride runs by: in an online room the most
+   * restrictive of both sides (a demo or old partner → unranked, no helping
+   * hand for an old one); otherwise this edition's.
+   */
+  _roomRules() {
+    const mine = getEditionRules();
+    if (this.mode !== 'captain' && this.mode !== 'stoker') return mine;
+    return mergeRoomRules(mine, (this.lobby && this.lobby._partnerRoom) || null);
+  }
+
+  /**
    * B-5 · is this a build where wishlisting means anything?
    *
    * The web build and the demo: yes — 68-88% of Next Fest wishlists come from
@@ -915,7 +940,7 @@ class Game {
     const cur = this.lobby.selectedLevel;
     if (!cur) return null;
     const locked = this.lobby._lockedLevelIds;
-    const next = nextAllowedLevel(LEVELS, cur.id, getEditionRules(),
+    const next = nextAllowedLevel(LEVELS, cur.id, this._roomRules(),   // M1: a room's rules
       (l) => !!(locked && locked.has(l.id)));
     return next ? this.lobby.resolveRoadLevel(next) : null;
   }
@@ -926,8 +951,10 @@ class Game {
     if (!overlay) { this._returnToLobby(); return; }
     const wishlist = document.getElementById('btn-wishlist-demo-end');
     if (wishlist) wishlist.style.display = this._canWishlist ? '' : 'none';
+    const roomBtn = document.getElementById('btn-demo-room');   // PR #397 m11
+    if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
     overlay.style.display = 'flex';
-    const btns = [wishlist, document.getElementById('btn-demo-lobby')]
+    const btns = [wishlist, roomBtn, document.getElementById('btn-demo-lobby')]
       .filter(b => b && b.style.display !== 'none');
     this._setOverlayButtons(btns, 0);
     try { analytics.trackEvent('demo_end_shown', { level: this.lobby.selectedLevel && this.lobby.selectedLevel.id }); } catch {}
@@ -1139,8 +1166,10 @@ class Game {
         // Idempotent: captain may retry-send GAMEOVER for reliability.
         if (this.state === 'playing') this._showGameOver(true);
       } else if (eventType === EVT_CHECKPOINT) {
+        this._clearStokerTimeout();   // PR #397 M1: the captain made it — so did we
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
+        this._clearStokerTimeout();
         // Idempotent: captain may retry-send FINISH for reliability.
         if (this.state === 'victory' || this.state === 'finishCinematic') return;
         // Tutorial: show completion screen instead of normal victory
@@ -1163,6 +1192,11 @@ class Game {
     this.net.onConnected = () => {
       this._hideReconnecting();
       document.getElementById('disconnect-overlay').style.display = 'none';
+      // PR #397 M1: profile messages sent while disconnected were dropped —
+      // resend this side's room profile and the captain's helping-hand state.
+      this._sendProfile();
+      if (this.mode === 'captain' && this._help) this._sendHelpState();
+      this._resendTouristBarrier();   // PR #397 m15
       // Re-establish media call after data reconnection (only if P2P is already up)
       if (this.mode === 'captain' && this.net.transport === 'p2p') {
         this._initiateMediaCall();
@@ -1248,7 +1282,8 @@ class Game {
         // #403: the captain turned a failed ranked run into practice — it is
         // spent on this side too.
         if (this._rankedRunActive && profile.mode !== 'ranked' && this.state !== 'lobby') this._recordRankedDnf();
-        this._rankedRunActive = profile.mode === 'ranked';
+        // PR #397 M1: never ranked when this side's (or the room's) rules say no.
+        this._rankedRunActive = profile.mode === 'ranked' && this._roomRules().ranked;
         if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
         return;
       }
@@ -1302,6 +1337,12 @@ class Game {
         }
         return;
       }
+      // PR #397 m11: the captain's NEXT LEVEL — adopt its level (and road and
+      // difficulty); the EVT_RESET that follows rebuilds the ride on it.
+      if (profile && profile.type === ROOM_MSG.LEVEL_SYNC && this.mode === 'stoker') {
+        this.lobby._handleRoomMessage(profile);
+        return;
+      }
       // Ignore room sync messages (bikeSync, levelSync, startRide, playGame, difficultySync)
       if (profile && profile.type) return;
       // Show partner avatar if no active video stream
@@ -1312,6 +1353,8 @@ class Game {
       if (profile.achievements) {
         updateBadgeDisplay('partner-badges', profile.achievements);
       }
+      // PR #397 M1: the partner's edition and capabilities (null caps = old build).
+      if (this.lobby) this.lobby._partnerRoom = partnerFromProfile(profile);
       // Capture partner server ID for score attribution
       if (profile.serverId) this._partnerServerId = profile.serverId;
       // D-5: and their name, for the pair streak and the share strip.
@@ -1934,6 +1977,11 @@ class Game {
     // recorder, or contribution tracking.
     if (this.mode === 'versus') { this._startVersusCountdown(); return; }
 
+    // #400 D4 / M2: a ride left for a new one still pays its distance. First,
+    // before the bike or world is reset and before _rankedRunActive is
+    // recomputed for the next ride (m14). Idempotent through the ledger.
+    this._payoutAbandon();
+
     this.state = 'countdown';
     this.countdownTimer = 3.0;
     this._hideGameOver();
@@ -2096,12 +2144,16 @@ class Game {
     // (the flag still held the previous ride's value), so a ranked run used to
     // get the silent tune and the ASSIST offer. Ranked stays pure.
     if (this._rankedRunActive) this.ddaManager = null;
+    this._applyRankedLocks();   // M4: SAFETY and SPEED off and locked on a ranked run
     if (this._rankedRunActive && this.mode === 'captain' && this.net) {
       // The countdown event is a bare byte, so the mode needs its own message.
       this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
     }
 
-    this._payoutAbandon();   // #400 D4: a ride restarted mid-way still pays its distance
+    // M2: the payout ledger is keyed by RIDE: start line → finish or abandon,
+    // through any checkpoint restarts. A retry of segment 1 is the same ride.
+    if (!this._sameRideNext || !this._rideRef) this._rideRef = {};
+    this._sameRideNext = false;
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this._helpStartRide(keepHelp);   // #403: before the first budget is shown
@@ -2511,6 +2563,9 @@ class Game {
   _resetGame(fromRemote = false, fromBeginning = false) {
     // Slingshot: every reset is back into the slingshot, never to a checkpoint.
     if (this.isSlingshot) { this._resetToSling(); return; }
+    // M2: pay what the ride has done before the bike goes back (the ledger
+    // makes a second payout of the same metres pay nothing).
+    this._payoutAbandon();
     // Analytics: track reset/restart
     analytics.trackRideEvent('reset', this.bike ? this.bike.distanceTraveled : 0, {
       from_beginning: fromBeginning,
@@ -2630,6 +2685,7 @@ class Game {
       this._resumeCountdown();
     } else {
       this._helpKeepRide = !fromBeginning;   // #403: same ride, same count
+      this._sameRideNext = !fromBeginning && !(this.raceManager && this.raceManager.finished);   // M2
       this._startCountdown();
     }
   }
@@ -2945,7 +3001,11 @@ class Game {
         collectibles: summary.collectibles,
         crashes: summary.crashes,
         helped: help.helped,
-        skipped: help.skipped
+        skipped: help.skipped,
+        // M3: the medal this run keeps (🛟 caps it at bronze) — the record keeps the best ever.
+        medal: this._helpMedal(summary.timeMs, getMedals(level.id, this.lobby.selectedDifficulty))
+      }, {
+        medalOf: rec => records.capMedal(records.medalFor(rec.timeMs, getMedals(level.id, this.lobby.selectedDifficulty)), { helped: !!rec.helped })
       });
       records.save(store);
       this._recordStore = store;
@@ -3013,7 +3073,9 @@ class Game {
     }
 
     // #400 D4: the medal and NEW BEST pay coins (js/economy-mode.js · _payoutRide).
-    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous) };
+    // M3: NEW BEST pays only for a faster run (a first unaided finish slower
+    // than a 🛟 best replaces it, but is not paid as a best).
+    this._lastRecordOutcome = { medal, isNewBest: !!(result.isNewBest && previous && result.delta < 0) };
 
     try {
       analytics.trackEvent('run_recorded', {
@@ -3032,6 +3094,7 @@ class Game {
    */
   _endRankedRun() {
     this._rankedRunActive = false;
+    this._applyRankedLocks();   // M4: SAFETY and SPEED back as the player had them
     if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(false);
   }
 
@@ -3099,6 +3162,33 @@ class Game {
    * "Ready" means the tiles renderer is built for the route with a Maps key;
    * tiles then stream in during the ride as they do solo.
    */
+  /** PR #397 M1 · stoker: the captain passed a checkpoint / finished — drop TOO SLOW. */
+  _clearStokerTimeout() {
+    if (!this._stokerTimeoutShown) return;
+    this._stokerTimeoutShown = false;
+    const flash = document.getElementById('timeout-flash');
+    if (flash) flash.classList.remove('visible');
+  }
+
+  /**
+   * PR #397 m15 · back from a connection blip while a co-op Tourist barrier is
+   * pending: profile messages sent meanwhile were dropped, so resend them. The
+   * captain resends the plan and the flagged start (a stoker still in the room because they were lost joins now; one already in the game ignores both),
+   * and either side resends its touristReady if it had sent one.
+   */
+  _resendTouristBarrier() {
+    const p = this._touristBarrierPending;
+    if (!p || p.id !== this._touristBarrierId || !this.net || !this.net.connected) return;
+    // Kept past this side's own barrier (the partner may still be waiting on
+    // our ready) until the ride starts or the pair leaves (the id moves on).
+    if (this.state === 'playing' || this.state === 'countdown') return;
+    if (this.mode === 'captain' && p.plan && p.plan.from) {
+      this.net.sendProfile(RoomProtocol.touristPlan(p.plan.from, p.plan.explore ? null : p.plan.to, p.plan.anchor));
+      this.net.sendProfile(RoomProtocol.startRide(this.lobby._placementSalt || 0, null, true));
+    }
+    if (p.readySent) this.net.sendProfile(RoomProtocol.touristReady(true));
+  }
+
   async _startCoopTourist(plan) {
     const id = this._touristBarrierId = (this._touristBarrierId || 0) + 1;
     const isCurrent = () => id === this._touristBarrierId && !!this.net;
@@ -3115,19 +3205,26 @@ class Game {
     // A route this side could not rebuild, or a build with Tourist switched
     // off (no Maps key / the demo), cannot load — it fails the barrier at once.
     const canLoad = !!plan.route && getEditionRules().tourist && !!getMapsApiKey();
+    // PR #397 m15: a partner that fails while this side is still loading ends
+    // the wait at once, rather than after this side's own load settles.
+    const partnerFailed = partner.then(v => (v === true ? new Promise(() => {}) : 'partner'));
+    const pending = this._touristBarrierPending = { id, plan, readySent: false };
     const mine = canLoad
-      ? Promise.race([this._prepareTouristRide(plan, isCurrent), deadline])
+      ? Promise.race([this._prepareTouristRide(plan, isCurrent), deadline, partnerFailed])
       : Promise.resolve(false);
     const ok = await mine;
     if (!isCurrent()) { clearTimeout(timer); this._onPartnerTouristReady = null; return; }
     if (ok === true && this.net.connected) this.net.sendProfile(RoomProtocol.touristReady(true));
+    pending.readySent = ok === true;   // resent from onConnected if it was dropped
     const theirs = ok === true ? await Promise.race([partner, deadline]) : false;
     clearTimeout(timer);
     this._onPartnerTouristReady = null;
     if (!isCurrent()) return;
 
     if (ok !== true || theirs !== true) {
-      const why = ok !== true
+      if (this._touristBarrierPending === pending) this._touristBarrierPending = null;
+      const why = ok === 'partner' ? 'The streets didn’t load for both of you.'
+        : ok !== true
         ? (ok === 'timeout' ? 'The streets took too long to load here.' : 'The streets could not load on this device.')
         : (theirs === 'timeout' ? 'Your partner’s streets took too long to load.' : 'The streets didn’t load for both of you.');
       try { analytics.trackEvent('tourist_coop_abort', { mine: String(ok), theirs: String(theirs) }); } catch {}
@@ -3137,10 +3234,19 @@ class Game {
         // A partner that already got our ready may be past its barrier, on
         // the instructions screen: bring it back to the room too. (A partner
         // still waiting gives up on its own from the message above.)
-        if (ok === true) this.net.sendEvent(EVT_RETURN_ROOM);
+        // PR #397 M1: ALWAYS — a partner that never answered (an old build)
+        // would otherwise sit on its instructions screen.
+        this.net.sendEvent(EVT_RETURN_ROOM);
       }
       if (statusEl) statusEl.textContent = '';
       this._returnToRoom();
+      // A load that failed BEFORE the world swapped leaves nothing for
+      // _restoreProceduralWorld to undo: clear the tourist state here too.
+      this._restoreProceduralWorld(true);
+      this.isTourist = false;
+      this._touristRoute = null;
+      this._touristOdo = null;
+      this._hideTouristGoal();
       this._lastTouristAbort = why;   // read by smoke:tourist
       showInfoToast('📍', 'Back in the room', why);
       return;
@@ -3190,6 +3296,8 @@ class Game {
       icon: '📍',
       description: plan.headline,
       isTourist: true,
+      // B3: open world pays coins for at most 10 km a ride (no farming circles).
+      payCapM: plan.explore ? OPEN_WORLD_PAY_CAP_M : undefined,
       timerEnabled: false,      // there is no losing a ride to someone you love
       treeCollision: false,
       motionAdaptation: false
@@ -3203,13 +3311,19 @@ class Game {
     // default Scioto Mile origin, whatever was typed). The elevation lookup has
     // its own timeouts and falls back to a wide ground probe.
     let origin = null;
-    try { origin = await resolveOriginAt(plan.from); } catch { origin = null; }
+    // PR #397 m16: co-op — the captain looked the anchor up once and sent it.
+    if (plan.anchor) origin = originFromAnchor(plan.from, plan.anchor);
+    if (!origin) { try { origin = await resolveOriginAt(plan.from); } catch { origin = null; } }
     if (!isCurrent()) return false;
     const ready = await this._loadTouristWorld(apiKey, isCurrent, origin);
     if (!ready) return false;
     // A route faces its destination; open world faces north.
     this.bike.startHeading = plan.explore ? 0 : headingForBearing(plan.bearing);
     this.bike.heading = this.bike.startHeading;   // in case the bike was reset already
+    // B3: no roadPath here, so this odometer is what moves bike.distanceTraveled
+    // (the finish, the goal readout, coins, achievements). Route: progress along
+    // the bearing; open world: distance ridden.
+    this._touristOdo = new TouristOdometer({ heading: plan.explore ? null : this.bike.startHeading });
 
     if (this.world && this.world.setRoute) {
       this.world.setRoute(plan);
@@ -3227,6 +3341,14 @@ class Game {
     if (!el || !this._touristRoute) return;
     el.classList.add('visible');
     this._updateTouristGoal();
+  }
+
+  /** B3 · the authoritative side (solo / captain) moves the ride's distance. */
+  _tickTouristOdometer() {
+    const odo = this._touristOdo;
+    const b = this.bike;
+    if (!odo || !b || !this.isTourist) return;
+    b.distanceTraveled = odo.update(b.position.x, b.position.z, b.distanceTraveled);
   }
 
   _hideTouristGoal() {
@@ -4034,19 +4156,19 @@ class Game {
   }
 
   _checkAchievements(dt) {
-    const state = {
-      distance: this.bike.distanceTraveled,
-      cumulativeDistance: this.achievements.getCumulativeDistance(),
-      speed: this.bike.speed,
-      dt,
-      offsetScore: this.sharedPedal ? this.sharedPedal.offsetScore : 0,
-      collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
-      totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
-      finishedLevel: null,
-      isMultiplayer: this.mode !== 'solo',
-      safePct: 0,
-      ...this.achievements.rideFrame(dt, this),   // #401: off-road, centre strip, boost chain, steady hands
-    };
+    // One state object, reused every frame (no per-frame allocation here).
+    const state = this._achFrameState || (this._achFrameState = {});
+    state.distance = this.bike.distanceTraveled;
+    state.cumulativeDistance = this.achievements.getCumulativeDistance();
+    state.speed = this.bike.speed;
+    state.dt = dt;
+    state.offsetScore = this.sharedPedal ? this.sharedPedal.offsetScore : 0;
+    state.collectibles = this.collectibleManager ? this.collectibleManager.collected : 0;
+    state.totalCollectibles = this.collectibleManager ? this.collectibleManager.getTotalItems() : 0;
+    state.finishedLevel = null;
+    state.isMultiplayer = this.mode !== 'solo';
+    state.safePct = 0;
+    Object.assign(state, this.achievements.rideFrame(dt, this));   // #401: off-road, centre strip, boost chain, steady hands
 
     if (this.contributionTracker) {
       const summary = this.contributionTracker.getSummary();
@@ -4101,7 +4223,8 @@ class Game {
     // F-1 · the loops the plan built. Read from the local stores, so they work
     // signed out; the pair numbers come from the server panel when there is one.
     // #400: no day streaks off the demo's weekly road.
-    if (level.isDaily && level.key && !getEditionRules().weeklyRoad) {
+    const weekly = !!(level.isWeekly || getEditionRules().weeklyRoad);
+    if (level.isDaily && level.key && !weekly) {
       const store = browserStore();
       state.dailyRanked = this._rankedRunActive;
       const mode = this._dailyRunMode();
@@ -4126,6 +4249,7 @@ class Game {
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local',
       partnerKey,
       touristFinished: !!(this.isTourist || this._touristRoute),
+      weekly,   // m5: the weekly road feeds no day streak
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
     this.achievements.finish(state);
@@ -4176,6 +4300,7 @@ class Game {
     // id analytics already uses; it identifies a browser, not a person.
     try { profile.deviceId = analytics.getDeviceId(); } catch {}
     profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
+    if (this.lobby.roomProfileFields) Object.assign(profile, this.lobby.roomProfileFields());   // PR #397 M1
     this.net.sendProfile(profile);
   }
 
@@ -4499,9 +4624,10 @@ class Game {
     const nextBtn = document.getElementById('btn-next-level');
     const playAgainBtn = document.getElementById('btn-play-again');
     const curLevel = this.lobby.selectedLevel;
-    const demoEnd = getEditionRules().isDemo && !!curLevel &&
+    const demoEnd = this._roomRules().isDemo && !!curLevel &&
       LEVELS.some(l => l.id === curLevel.id && !l.isTutorial);
-    const hasNext = !!nextBtn && (!!this._nextLevel() || demoEnd);
+    // PR #397 m11: never for the stoker — the captain drives level changes.
+    const hasNext = !!nextBtn && this.mode !== 'stoker' && (!!this._nextLevel() || demoEnd);
     if (nextBtn) {
       nextBtn.style.display = hasNext ? '' : 'none';
     }
@@ -5146,7 +5272,8 @@ class Game {
     // E-5 · Tourist Mode's front door. Shown only when a Maps key is present:
     // an entry point that cannot work is worse than none (the #350 lesson).
     const touristBtn = document.getElementById('options-tourist-btn');
-    if (touristBtn && getMapsApiKey()) {
+    // PR #397 B4b: and only in an edition that has Tourist (hidden in the demo).
+    if (touristBtn && getMapsApiKey() && getEditionRules().tourist) {
       for (const id of ['opt-tourist-label', 'options-tourist-btn', 'opt-tourist-note']) {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
@@ -5700,7 +5827,8 @@ class Game {
 
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
-    this.achievements.crash(cause, {   // #401
+    // #401: a Slingshot crash is not a ride crash (no Goose Down, So Close, False Start).
+    if (this._rideSystemOn('achievements')) this.achievements.crash(cause, {   // #401
       ref: this.mode === 'versus' ? null : this.raceManager,
       distance: bike ? bike.distanceTraveled : 0,
       raceDistance: (this.mode === 'versus'
@@ -6065,6 +6193,7 @@ class Game {
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
+    if (this._touristRoute) this._tickTouristOdometer();   // B3
 
     // Race progress + contribution tracking
     if (this.raceManager) {
@@ -6170,6 +6299,7 @@ class Game {
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
+    if (this._touristRoute) this._tickTouristOdometer();   // B3
 
     // Race progress + contribution tracking (captain is authoritative).
     // The race clock keeps running during a partner reconnect (#316): a brief
@@ -6388,6 +6518,35 @@ class Game {
     this._updateSafetyBtn();
   }
 
+  /**
+   * M4 · ranked fairness. A ranked run rides with SAFETY and SPEED (cruise)
+   * forced off, and both buttons (HUD, D-pad, quick menu) disabled for the
+   * ride — `safetyUsed` is only sampled at the finish, so toggling mid-run
+   * would otherwise submit as safety-free. When the run is over the player's
+   * own choices come back. Called whenever _rankedRunActive changes.
+   */
+  _applyRankedLocks() {
+    const lock = !!this._rankedRunActive;
+    if (lock) {
+      // (Safety the helping hand turned on is not the player's choice — m13.)
+      if (!this._rankedLockPrev) this._rankedLockPrev = { safety: this._helpSafetyPrev === false ? false : this.safetyMode, speed: this.autoSpeed };
+      this.safetyMode = false;
+      this.autoSpeed = false;
+    } else if (this._rankedLockPrev) {
+      this.safetyMode = this._rankedLockPrev.safety;
+      this.autoSpeed = this._rankedLockPrev.speed;
+      this._rankedLockPrev = null;
+    }
+    this._updateSafetyBtn();
+    if (this.speedBtn) {
+      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
+      this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
+      this.speedBtn.disabled = lock;
+    }
+    if (this.safetyBtn) this.safetyBtn.disabled = lock;
+    if (this.quickMenu && this.quickMenu.sync) this.quickMenu.sync();
+  }
+
   _recordBalanceCrashIfNew(wasFallen) {
     if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
       this._recordCrash('balance');
@@ -6539,7 +6698,9 @@ class Game {
     }
 
     for (const rig of rigs) this._stepTeam(rig, dt);
-    this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
+    this.achievements.ride.frame(dt, { ref: null, playing: true });   // #401 False Start: the clock since GO runs in versus too
+    // m19: a race against the ?versusbot=1 rider earns no achievements.
+    if (!rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
 
     // Bike-vs-bike contact: bumping knocks both around a little.
     this._resolveVersusBikeContact(dt);
@@ -6809,7 +6970,7 @@ class Game {
    */
   _finishVersusRace(winner) {
     const loser = this.versusRigs.find((r) => r !== winner);
-    this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401
+    if (!isBotTeam(winner) && !isBotTeam(loser)) this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401 (m19: not vs the bot)
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';
@@ -7017,6 +7178,15 @@ class Game {
     if (state) {
       this.bike.applyRemoteState(state);
     }
+    // m7: the stoker's own ride tracker sees the crash too. The cause isn't
+    // sent, so it's 'unknown' (counts against No Trees, to be safe).
+    if (this.bike.fallen && !this._stokerWasFallen && this.state === 'playing') {
+      this.achievements.crash('unknown', {
+        ref: this.raceManager,
+        distance: this.bike.distanceTraveled,
+        raceDistance: (this.raceManager && this.raceManager.raceDistance) || 0,
+      });
+    }
 
     // Detect crash recovery (backup for EVT_GAMEOVER)
     if (this._stokerWasFallen && !this.bike.fallen) {
@@ -7101,8 +7271,10 @@ class Game {
     remoteData.remoteLastTapTime = this._remoteLastTapTime;
     this.hud.update(this.bike, this.input, this.pedalCtrl, dt, remoteData);
     this._updateLookahead(dt);    // E-1 · the road only the stoker can see
+    this._checkAchievements(dt);  // m7: the ride tracker + frame checks run for the stoker too
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2 · the stoker sees the same banner
+    if (this._touristRoute) this._updateTouristGoal();   // B3 · the captain's odometer, synced
     const stokerBalance = this.balanceCtrl.update();
     const stokerLean = stokerBalance.leanInput;
     this.archIndicator.update(this.bike, stokerLean, this.remoteLean);
@@ -7171,26 +7343,24 @@ class Game {
     // Observed median lean for response curve
     const medianLean = absSamples[Math.floor(absSamples.length * 0.5)];
 
-    // Blend toward observed values
+    // Blend the un-feeled calibration BASE toward the observed values (B2):
+    // the observations are physical degrees, like the base; TUNE is the base
+    // with the steering feel applied, derived once below.
+    const B = TUNING_BASE;
     if (isGyro) {
-      TUNE.gyroDeadzone += (observedDeadzone - TUNE.gyroDeadzone) * blend;
-      TUNE.gyroSensitivity += (observedSensitivity - TUNE.gyroSensitivity) * blend;
+      B.gyroDeadzone += (observedDeadzone - B.gyroDeadzone) * blend;
+      B.gyroSensitivity += (observedSensitivity - B.gyroSensitivity) * blend;
       const targetCurve = Math.min(2.0, Math.max(1.0, 1.0 + (medianLean / observedSensitivity) * 0.5));
-      TUNE.gyroResponseCurve += (targetCurve - TUNE.gyroResponseCurve) * blend;
+      B.gyroResponseCurve += (targetCurve - B.gyroResponseCurve) * blend;
     } else {
-      TUNE.deadzone += (observedDeadzone - TUNE.deadzone) * blend;
-      TUNE.sensitivity += (observedSensitivity - TUNE.sensitivity) * blend;
+      B.deadzone += (observedDeadzone - B.deadzone) * blend;
+      B.sensitivity += (observedSensitivity - B.sensitivity) * blend;
       const targetCurve = Math.min(2.5, Math.max(1.2, 1.5 + medianLean / observedSensitivity));
-      TUNE.responseCurve += (targetCurve - TUNE.responseCurve) * blend;
+      B.responseCurve += (targetCurve - B.responseCurve) * blend;
     }
 
-    // Update base snapshot so steering feel scaling stays relative
-    snapshotTuningBase();
-
-    // Re-apply current steering feel on top of the new base
-    if (TUNE.steeringFeel != null && TUNE.steeringFeel !== 0.5) {
-      applySteeringFeel(TUNE.steeringFeel);
-    }
+    // Ride the new base at the current feel — once, from the base.
+    applySteeringFeel(TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
 
     // Persist updated values (throttled — only save every 30s)
     this._saveAdaptedTuning(isGyro);
@@ -7203,15 +7373,17 @@ class Game {
       data.inputType = isGyro ? 'gyro' : 'phone';
       data.platform = isAndroid ? 'android' : isIOS ? 'ios' : 'desktop';
       data.timestamp = Date.now();
+      // B2: persist the un-feeled base, never the feel-scaled TUNE.
       if (isGyro) {
-        data.sensitivity = Math.round(TUNE.gyroSensitivity * 10) / 10;
-        data.deadzone = Math.round(TUNE.gyroDeadzone * 10) / 10;
-        data.responseCurve = Math.round(TUNE.gyroResponseCurve * 100) / 100;
+        data.sensitivity = Math.round(TUNING_BASE.gyroSensitivity * 10) / 10;
+        data.deadzone = Math.round(TUNING_BASE.gyroDeadzone * 10) / 10;
+        data.responseCurve = Math.round(TUNING_BASE.gyroResponseCurve * 100) / 100;
       } else {
-        data.sensitivity = Math.round(TUNE.sensitivity * 10) / 10;
-        data.deadzone = Math.round(TUNE.deadzone * 10) / 10;
-        data.responseCurve = Math.round(TUNE.responseCurve * 100) / 100;
+        data.sensitivity = Math.round(TUNING_BASE.sensitivity * 10) / 10;
+        data.deadzone = Math.round(TUNING_BASE.deadzone * 10) / 10;
+        data.responseCurve = Math.round(TUNING_BASE.responseCurve * 100) / 100;
       }
+      data[TUNING_SAVE_BASE_FLAG] = true;
       // Preserve steeringFeel if set
       localStorage.setItem(this._tuningKey(), JSON.stringify(data));
     } catch {}
@@ -7361,19 +7533,17 @@ class Game {
       if (data.version !== 1) return false;
       const curType = this.input.gyroConnected ? 'gyro' : 'phone';
       if (data.inputType !== curType) return false;
-      // Apply saved tuning
-      if (data.sensitivity != null) TUNE.sensitivity = data.sensitivity;
-      if (data.deadzone != null) TUNE.deadzone = data.deadzone;
-      if (data.outputSmoothing != null) TUNE.outputSmoothing = data.outputSmoothing;
-      if (data.responseCurve != null) TUNE.responseCurve = data.responseCurve;
-      if (data.gyroSensitivity != null) TUNE.gyroSensitivity = data.gyroSensitivity;
-      if (data.gyroDeadzone != null) TUNE.gyroDeadzone = data.gyroDeadzone;
-      if (data.gyroOutputSmoothing != null) TUNE.gyroOutputSmoothing = data.gyroOutputSmoothing;
-      if (data.gyroResponseCurve != null) TUNE.gyroResponseCurve = data.gyroResponseCurve;
-      // Snapshot base values, then apply feel on top
-      snapshotTuningBase();
-      if (data.steeringFeel != null) {
-        applySteeringFeel(data.steeringFeel);
+      // B2: the save holds the un-feeled calibration base. Saves from before
+      // the fix stored feel-scaled values; migrateSavedTuning divides that
+      // back out (or falls back to defaults) and the save is rewritten once.
+      const { values, migrated } = migrateSavedTuning(data);
+      setTuningBase(tuningBaseFromSave(data, values));
+      applySteeringFeel(Number.isFinite(data.steeringFeel) ? data.steeringFeel
+        : TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
+      if (migrated) {
+        try {
+          localStorage.setItem(this._tuningKey(), JSON.stringify({ ...data, ...values, [TUNING_SAVE_BASE_FLAG]: true }));
+        } catch {}
       }
       return true;
     } catch { return false; }
@@ -7428,7 +7598,11 @@ class Game {
       const check = () => {
         if (resolved) return;
         if (skipped()) { resolved = true; resolve(); return; }
-        const lean = this.input.getMotionLean();
+        // Ungained lean (B1, PR #397 review): phone tilt steers at
+        // TUNE.mobileTiltGain (0.25), so the gained getMotionLean() tops out at
+        // the ±0.25 targets and never passes them. Calibrate on what the
+        // player is physically doing. Controller gyro: identical (gain 1).
+        const lean = this.input.getMotionLeanVisual();
         const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
         const offset = this.input.motionOffset || 0;
         this._calibTiltSamples.push(raw - offset);
@@ -8141,6 +8315,9 @@ class Game {
     // Guard against being called multiple frames in a row
     if (this._tutRetryPending) return;
     this._tutRetryPending = true;
+    // m3 (PR #397 review): a phase retry (off-road, missed present/pylon) is
+    // an attempt like a crash, so "Natural" (tutorial_clean) needs none of them.
+    this._tutorialAttempts++;
 
     // Feed failure to DDA manager
     if (this.ddaManager) {
@@ -8280,23 +8457,17 @@ class Game {
     const isGyro = this.input.gyroConnected;
     const params = this._computeTuningParams(isGyro);
 
-    // Apply to TUNE
+    // The calibration is the un-feeled base (B2); ride it at the default feel
+    // (#399: 0.3, the stable end) until the player moves the slider on the
+    // completion screen.
     if (isGyro) {
-      TUNE.gyroSensitivity = params.sensitivity;
-      TUNE.gyroDeadzone = params.deadzone;
-      TUNE.gyroOutputSmoothing = params.outputSmoothing;
-      TUNE.gyroResponseCurve = params.responseCurve;
+      setTuningBase({
+        gyroSensitivity: params.sensitivity, gyroDeadzone: params.deadzone,
+        gyroOutputSmoothing: params.outputSmoothing, gyroResponseCurve: params.responseCurve,
+      });
     } else {
-      TUNE.sensitivity = params.sensitivity;
-      TUNE.deadzone = params.deadzone;
-      TUNE.outputSmoothing = params.outputSmoothing;
-      TUNE.responseCurve = params.responseCurve;
+      setTuningBase(params);
     }
-
-    // Snapshot calibrated values as the base for feel scaling, then ride them
-    // at the default feel (#399: 0.3, the stable end) until the player moves
-    // the slider on the completion screen.
-    snapshotTuningBase();
     applySteeringFeel(BALANCE_DEFAULTS.steeringFeel);
 
     // Save to localStorage
@@ -8309,6 +8480,7 @@ class Game {
       outputSmoothing: params.outputSmoothing,
       responseCurve: params.responseCurve,
       steeringFeel: BALANCE_DEFAULTS.steeringFeel,
+      [TUNING_SAVE_BASE_FLAG]: true,   // B2: these are the un-feeled base
       timestamp: Date.now()
     };
     try { localStorage.setItem(this._tuningKey(), JSON.stringify(saveData)); } catch {}

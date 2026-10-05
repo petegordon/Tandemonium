@@ -97,6 +97,102 @@ export function resolveMediaEnabled(search) {
   try { return new URLSearchParams(search || '').get('media') === '1'; } catch { return false; }
 }
 
+/**
+ * URL params that define the edition/session and must survive URL tidying and
+ * travel in every invite link (PR #397 B4a): without them a reload or an
+ * invite drops a demo player into the full game.
+ */
+export const CARRIED_PARAMS = Object.freeze(['demo', 'media']);
+
+/** `search` reduced to the carried params, as '?demo=1&media=1' or ''. */
+export function carriedQuery(search) {
+  const out = new URLSearchParams();
+  try {
+    const p = new URLSearchParams(search || '');
+    for (const k of CARRIED_PARAMS) if (p.has(k)) out.set(k, p.get(k));
+  } catch { /* bad input */ }
+  const s = out.toString();
+  return s ? '?' + s : '';
+}
+
+/**
+ * Room join link: `${base}?room=CODE` plus demo=1 / media=1 when this side is
+ * on the demo / has room media on, so the partner opens the same edition.
+ */
+export function buildJoinUrl(base, code, { demo = false, media = false } = {}) {
+  const p = new URLSearchParams();
+  p.set('room', code);
+  if (demo) p.set('demo', '1');
+  if (media) p.set('media', '1');
+  return base + '?' + p.toString();
+}
+
+// ── rooms: two editions / two versions (PR #397 M1) ─────────
+
+/**
+ * What this build understands in a room. Sent in the untyped room profile as
+ * { edition, caps }; a partner whose profile carries no `caps` is an OLD
+ * client (the build before this list existed).
+ *   tourist      co-op Map Tourists (touristPlan / touristReady barrier)
+ *   helpingHand  follows the captain's helping-hand tier (timer scaling)
+ *   weeklyRoad   knows the demo's This Week's Road
+ *   v2LevelSync  adopts levelSync {difficulty, roadKind, key, seed}; refuses
+ *                a level its edition does not allow (levelRefused)
+ */
+export const ROOM_CAPS = Object.freeze(['tourist', 'helpingHand', 'weeklyRoad', 'v2LevelSync']);
+
+/**
+ * The { edition, caps } fields this side puts in its room profile. `tourist`
+ * is advertised only by an edition that includes Tourist (a side without a
+ * Maps key still understands the barrier, and fails it at once).
+ */
+export function roomProfileFields(rules) {
+  const caps = ROOM_CAPS.filter(c => c !== 'tourist' || rules.tourist);
+  return { edition: rules.isDemo ? 'demo' : 'full', caps };
+}
+
+/** The partner's { edition, caps } from a received room profile (caps null = OLD client). */
+export function partnerFromProfile(profile) {
+  if (!profile) return null;
+  const caps = Array.isArray(profile.caps) ? profile.caps.filter(c => typeof c === 'string') : null;
+  return { edition: profile.edition === 'demo' ? 'demo' : 'full', caps };
+}
+
+/**
+ * The rules a room rides by: the MOST RESTRICTIVE of the two sides. Either
+ * player on the demo → DEMO_RULES for both. An OLD partner (or one not heard
+ * from yet) → no ranked, no Map Tourists, no helping hand. A partner without
+ * the 'tourist' cap → no Map Tourists.
+ * @param {object} mine     this side's FULL_RULES / DEMO_RULES
+ * @param {{edition:string, caps:string[]|null}|null} partner
+ */
+export function mergeRoomRules(mine, partner) {
+  const caps = partner && Array.isArray(partner.caps) ? partner.caps : null;
+  const base = mine.isDemo || (partner && partner.edition === 'demo') ? DEMO_RULES : mine;
+  return Object.freeze({
+    ...base,
+    ranked: base.ranked && !!caps,
+    tourist: base.tourist && !!caps && caps.includes('tourist'),
+    helpingHand: !!caps && caps.includes('helpingHand'),
+    partnerOld: !caps,
+  });
+}
+
+/**
+ * Stoker: may it ride the level in this levelSync under ITS OWN edition?
+ * The road kind is the captain's (`roadKind`); a captain that sends none is
+ * an old build, whose shared road is always Today's Road ('daily').
+ * @returns {{ok:true, roadKind:'daily'|'weekly'|null} | {ok:false, reason:string}}
+ */
+export function levelSyncVerdict(rules, level, msg = {}) {
+  if (!level) return { ok: false, reason: 'unknown' };
+  if (!levelAllowed(rules, level.id)) return { ok: false, reason: rules.isDemo ? 'demo' : 'level' };
+  if (!level.isDaily) return { ok: true, roadKind: null };
+  const roadKind = msg.roadKind === 'weekly' ? 'weekly' : 'daily';
+  if (roadKind === 'daily' && rules.weeklyRoad) return { ok: false, reason: 'demo' };
+  return { ok: true, roadKind };
+}
+
 // ── cached, browser-facing ──────────────────────────────────
 
 let _rules = null;

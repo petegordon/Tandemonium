@@ -5,7 +5,8 @@ import {
   UPGRADES, upgradeCost, slingStats, launchSpeed, coastDecel, surfaceAt, SURFACE_RR, predictCoast,
   stageGoal, stageBonus, STAGE_GOALS, scoreRun, emptySave, loadSave, writeSave, applyRun,
   buyUpgrade, planCoinTrails, planCourse, LANES, COINS_PER_TRAIL, STORAGE_KEY, SAVE_VERSION, spentOn, RETIRED_UPGRADES,
-  runDistance, dragToAim, aimPose, roadExitDistance, MIN_LAUNCH_PULL, jackpotBonus,
+  runDistance, dragToAim, aimPose, roadExitDistance, MIN_LAUNCH_PULL, jackpotBonus, jackpotCashed,
+  todaysLaunchStatus, applyTodaysLaunch,
   SLING_POST_D, SLING_REST_D, SLING_PULL_BACK, SLING_MAX_LATERAL, SLING_MAX_AIM, ROAD_HALF_WIDTH
 } from '../../js/slingshot.js';
 import { emptyWallet, loadWallet, deposit, coinMultiplier } from '../../js/wallet.js';
@@ -127,6 +128,68 @@ test('the jackpot: a flat bonus, then the whole run pays double', () => {
   assert.ok(r.total > rolled, `jackpot ${r.total} vs rolling ${rolled}`);
 });
 
+// ---- B5 · the jackpot farm and the stage-pay ceiling -----------------------
+
+test('B5: stage pay stops growing past the last goal', () => {
+  const last = STAGE_GOALS.length;
+  assert.equal(stageBonus(last + 1), stageBonus(last));
+  assert.equal(stageBonus(50), stageBonus(last));
+  assert.equal(jackpotBonus(50), jackpotBonus(last));
+  assert.ok(stageBonus(last) > stageBonus(last - 1), 'still rises up to the last stage');
+});
+
+test('B5: the jackpot pays its bonus and the x2 only the first time on each stage', () => {
+  let save = { ...emptySave(), stage: 7, best: 900, runs: 30 };
+  const run = { distance: 118, coins: 5, jackpot: true };
+  const first = scoreRun(run, save);
+  assert.equal(first.jackpotPaid, true);
+  assert.equal(first.multiplier, 2);
+  save = applyRun(save, run, first);
+  assert.deepEqual(save.jackpots, [7]);
+  assert.equal(jackpotCashed(save), true);
+  const again = scoreRun(run, save);
+  assert.equal(again.jackpotPaid, false);
+  assert.equal(again.jackpotPay, 0);
+  assert.equal(again.multiplier, 1);
+  assert.equal(again.total, scoreRun({ distance: 118, coins: 5 }, save).total, 'pays like an ordinary run');
+  // A new stage has its own jackpot.
+  assert.equal(scoreRun(run, { ...save, stage: 8 }).jackpotPaid, true);
+});
+
+test('B5: repeated jackpot runs cannot out-earn clearing stages', () => {
+  const N = 30;
+  const start = { ...emptySave(), stage: 7, best: 900, runs: 30 };
+  const jack = { distance: 118, coins: 5, jackpot: true };
+  let save = start, farm = 0;
+  for (let i = 0; i < N; i++) { const sc = scoreRun(jack, save); farm += sc.total; save = applyRun(save, jack, sc); }
+  // The same N launches spent clearing the (repeating) last goal instead.
+  const clearRun = { distance: STAGE_GOALS[STAGE_GOALS.length - 1], coins: 5, stageCleared: true };
+  save = start; let clears = 0;
+  for (let i = 0; i < N; i++) { const sc = scoreRun(clearRun, save); clears += sc.total; save = applyRun(save, clearRun, sc); }
+  assert.ok(farm < clears, `${N} jackpot runs paid ${farm}, ${N} clears paid ${clears}`);
+  // Per metre, a repeat jackpot is no better than a clear.
+  const after = scoreRun(jack, applyRun(start, jack, scoreRun(jack, start)));
+  const clear = scoreRun(clearRun, { ...start, best: clearRun.distance });
+  assert.ok(after.total / jack.distance <= clear.total / clearRun.distance,
+    `repeat jackpot ${after.total} for ${jack.distance} m vs clear ${clear.total} for ${clearRun.distance} m`);
+});
+
+test("B5: Today's Launch pays the jackpot at most once a day", () => {
+  const key = '2026-10-05';
+  let save = emptySave();
+  const run = { distance: 118, coins: 5, jackpot: true };
+  const today = () => ({ ...todaysLaunchStatus(save, key), stage: 7 });
+  const first = scoreRun(run, today());
+  assert.equal(first.jackpotPaid, true);
+  save = applyTodaysLaunch(save, key, first);
+  assert.equal(todaysLaunchStatus(save, key).jackpot, true);
+  const again = scoreRun(run, today());
+  assert.equal(again.jackpotPaid, false);
+  assert.equal(again.multiplier, 1);
+  // Tomorrow is a new day.
+  assert.equal(scoreRun(run, { ...todaysLaunchStatus(save, '2026-10-06'), stage: 7 }).jackpotPaid, true);
+});
+
 test('a short run is not a record and pays no record bonus', () => {
   const save = { ...emptySave(), best: 500, runs: 4 };
   const r = scoreRun({ distance: 100 }, save);
@@ -159,7 +222,7 @@ test('buying: spends coins, refuses when poor or maxed', () => {
 
 test('save round-trips and survives garbage', () => {
   const store = memStore();
-  const s = { v: SAVE_VERSION, best: 310, runs: 5, stage: 2, daily: { key: '2026-10-04', best: 400, runs: 2 } };
+  const s = { v: SAVE_VERSION, best: 310, runs: 5, stage: 2, daily: { key: '2026-10-04', best: 400, runs: 2, jackpot: true }, jackpots: [2] };
   writeSave(store, s);
   assert.deepEqual(loadSave(store), s);
   store.set(STORAGE_KEY, '{nope');

@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'85b4b8c',pr:397,time:'10-04-2026 18:11'}</script><base href="/pr-preview/pr-397/">
+<head><script>window.__BUILD={sha:'0c672b5',pr:397,time:'10-05-2026 10:34'}</script><base href="/pr-preview/pr-397/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
@@ -1399,7 +1399,9 @@
     display: none;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* M6: safe — taller than a landscape phone, it scrolls from the top
+       instead of centring the title off the top edge. */
+    justify-content: safe center;
     z-index: 60;
     padding: 10px 20px;
     text-align: center;
@@ -1902,6 +1904,8 @@
     box-sizing: border-box;
   }
   .side-btn:active { filter: brightness(1.4); }
+  /* M4: SAFETY and SPEED are locked on a ranked run. */
+  .side-btn:disabled { opacity: 0.35; filter: grayscale(1); cursor: not-allowed; }
   #safety-btn {
     grid-area: safety;
     clip-path: polygon(0% 0%, 100% 0%, 72% 100%, 28% 100%);
@@ -3590,7 +3594,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    /* M6: a 5th-failure game over is taller than a landscape phone: scroll,
+       and never centre the title off the top edge. */
+    justify-content: safe center;
+    overflow-y: auto;
     padding: 30px;
   }
 
@@ -3603,7 +3610,8 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: safe center;   /* M6: see #gameover-overlay */
+    overflow-y: auto;
     padding: 30px;
   }
 
@@ -6011,7 +6019,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.85b4b8c | 10-04-2026 18:11 (PR #397)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.0c672b5 | 10-05-2026 10:34 (PR #397)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6309,6 +6317,7 @@ ON</button>
     <p style="color:#44ff66;font-size:1.2em;margin-bottom:4px;">That's the demo!</p>
     <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">The full game has a new road every day, ranked runs and every Slingshot stage.</p>
     <button class="lobby-btn lobby-btn-accent cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</button>
+    <button class="lobby-btn" id="btn-demo-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
     <button class="lobby-btn" id="btn-demo-lobby" style="margin-top:10px;">BACK TO LOBBY</button>
   </div>
 </div>

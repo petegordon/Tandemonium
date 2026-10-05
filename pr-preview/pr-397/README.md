@@ -189,8 +189,18 @@ npm run smoke:ranked         # one ranked run per day; the demo never asks
 npm run smoke:lookahead      # the stoker sees road the captain cannot
 npm run smoke:ping           # sprint call, sync multiplier, emotes
 npm run smoke:disruptions    # warned before it acts, released after
-npm run smoke:tourist        # two addresses -> a ride (no Google needed)
-npm run smoke:layout         # every HUD overlay at once, and no overlaps
+npm run smoke:tourist        # two addresses -> a ride, odometer + arrival; co-op Tourist (no Google needed)
+npm run smoke:layout         # every HUD overlay at once, no overlaps; end screens fit landscape phones
+npm run smoke:tutorial       # first SOLO lands in the tutorial; SKIP and returning players don't
+npm run smoke:slingshot      # Slingshot end to end: garage, aim, launch, reset, results
+npm run smoke:slingshot-aim  # the Slingshot aim on phones (portrait + landscape touch)
+npm run smoke:edition        # what the demo and the full game each offer in the menus
+npm run smoke:economy        # one Chaos Coin wallet: ride payouts, garage, stage gates
+npm run smoke:achievements   # achievements wired end to end, badge screen
+npm run smoke:helping-hand   # repeated checkpoint failures get easier, visibly
+npm run smoke:no-media       # room camera/mic stays off unless ?media=1
+npm run smoke:physics        # the Rapier physics sidecar
+npm run smoke:controller-overlay  # the controller overlay HUD scenarios
 npm run check:dashboard-sql  # the dashboard SQL, against a real SQLite
 npm run audit:first30        # cold-load numbers per device profile (#263)
 ```

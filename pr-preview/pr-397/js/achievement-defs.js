@@ -18,13 +18,17 @@
 //
 // demo: false marks the 18 rows the spec's Demo column calls full-game only,
 // plus sling_stage5: the spec marks it demo ✓, but DEMO_RULES caps the
-// Slingshot at stage 3, so stage 5 can't be cleared in the demo (19 in all).
+// Slingshot at stage 3, so stage 5 can't be cleared in the demo; and
+// double_down: only Today's Launch (full game) can pair a jackpot with a best;
+// and daily_streak_3/7: the demo rides the weekly road, which feeds no day
+// streak (22 in all).
 // `full` says why: an edition rule (js/edition.js · DEMO_RULES) blocks it, or
 // 'scope' — a long-haul goal kept for the full game. The demo never awards
 // them; the stats keep counting, so they unlock on the full game's first check.
 
-import { LEVELS } from './race-config.js';
-import { STAGE_GATES, STAGE_GOALS, UPGRADES } from './slingshot.js';
+import { LEVELS, getMedals } from './race-config.js';
+import { STAGE_GATES, STAGE_GOALS, UPGRADES, upgradeCost } from './slingshot.js';
+import { medalFor, capMedal } from './records.js';
 
 export const SECTIONS = [
   { id: 'first',    title: 'First rides' },
@@ -79,6 +83,15 @@ function km(goalM) {
     progress: L => [Math.min(goalM, Math.floor(n(L.cumulativeDistance) / 100) * 100), goalM],
     unit: 'm',
   };
+}
+
+/**
+ * A day-streak badge's progress: the streak held TODAY (live.dailyStreak, from
+ * js/daily-ride.js · computeStreak), not the last run ever counted — a streak
+ * broken a month ago shows 0, not "2/3 days".
+ */
+function streakProgress(goal) {
+  return (L, live) => [Math.min(goal, Math.floor(n(live && live.dailyStreak))), goal];
 }
 
 const grandmaBike = key => s => s.finishedLevel === 'grandma' && s.bikeKey === key;
@@ -153,7 +166,7 @@ export const ACHIEVEMENTS = [
   { id: 'big_air',        section: 'sling', name: 'Big Air',             icon: '🪂', desc: 'Land a Big Air off a ramp',           ...count('bigAirs', 1) },
   { id: 'frequent_flyer', section: 'sling', name: 'Frequent Flyer',      icon: '✈️', desc: 'Land 25 Big Airs',                    ...count('bigAirs', 25) },
   { id: 'jackpot',        section: 'sling', name: 'Jackpot!',            icon: '🎰', desc: 'Hit the jackpot billboard',           ...count('jackpots', 1) },
-  { id: 'double_down',    section: 'sling', name: 'Double Down',         icon: '🎲', desc: 'Hit the jackpot on a run that also beats your best distance', ...count('doubleDowns', 1) },
+  { id: 'double_down',    section: 'sling', name: 'Double Down',         icon: '🎲', desc: 'Hit the jackpot on a run that also beats your best distance', ...count('doubleDowns', 1), demo: false, full: 'todaysLaunch' },   // spec says demo ✓, but a stage-mode jackpot (≈118 m) can't beat a stage-2+ best; only Today's Launch can
   { id: 'full_trail',     section: 'sling', name: 'Full Trail',          icon: '🪙', desc: 'Grab all 5 coins in a trail',         ...count('fullTrails', 1) },
   { id: 'straight_shooter', section: 'sling', name: 'Straight Shooter',  icon: '📐', desc: 'Go 300 m without steering after launch', ...count('straightShots', 1) },
   { id: 'medal_key',      section: 'sling', name: 'Medal Key',           icon: '🗝️', desc: 'Win a regular-ride medal that unlocks a Slingshot stage', ...count('medalKeys', 1) },
@@ -175,11 +188,11 @@ export const ACHIEVEMENTS = [
   // ── 10. Today's Road ─────────────────────────────────────
   { id: 'daily_first',    section: 'daily', name: "Today's Road",        icon: '📅', desc: "Do your first ranked Today's Road", condition: s => s.dailyRanked === true, demo: false, full: 'ranked' },
   { id: 'daily_streak_3', section: 'daily', name: 'Three in a Row',      icon: '🔁', desc: "Ride Today's Road on 3 days running", condition: (s, L) => n(s.dailyStreak) >= 3 || n(L.dailyDayBest) >= 3,
-    progress: L => [Math.min(3, n(L.dailyDayRun)), 3], unit: 'days' },
+    progress: streakProgress(3), unit: 'days', demo: false, full: 'weeklyRoad' },
   { id: 'daily_streak_7', section: 'daily', name: 'A Week of Roads',     icon: '🔥', desc: "Ride Today's Road 7 days running", condition: (s, L) => n(s.dailyStreak) >= 7 || n(L.dailyDayBest) >= 7,
-    progress: L => [Math.min(7, n(L.dailyDayRun)), 7], unit: 'days' },
+    progress: streakProgress(7), unit: 'days', demo: false, full: 'weeklyRoad' },
   { id: 'daily_streak_30', section: 'daily', name: 'A Month of Roads',   icon: '☄️', desc: "Ride Today's Road 30 days running", condition: (s, L) => n(s.dailyStreak) >= 30 || n(L.dailyDayBest) >= 30,
-    progress: L => [Math.min(30, n(L.dailyDayRun)), 30], unit: 'days', demo: false, full: 'scope' },
+    progress: streakProgress(30), unit: 'days', demo: false, full: 'scope' },
   { id: 'daily_share',    section: 'daily', name: 'Show-Off',            icon: '📣', desc: "Share a Today's Road result",         ...count('shares', 1) },
   { id: 'daily_practice_10', section: 'daily', name: 'Practice Makes Perfect', icon: '🔂', desc: "Finish 10 practice rides on Today's Road", ...count('dailyPractice', 10) },
 
@@ -311,6 +324,123 @@ export function opensMedalGate(levelId, medal) {
 }
 
 /**
+ * m21 · retroactive credit. A player whose stats predate v2 already has saves
+ * that prove some of the 100: personal bests and medals (tandemonium_records),
+ * Slingshot progress (tandemonium_slingshot), Today's Road days
+ * (tandemonium_daily) and the wallet. Fold them in as LOWER BOUNDS: every
+ * counter only ever goes up, every list only gains, nothing is lost.
+ *   saves: { records, sling, daily, wallet } — each the parsed save or null
+ *   (sling and wallet already sanitized: js/slingshot.js · loadSave,
+ *   js/wallet.js · sanitizeWallet).
+ * Returns a NEW object.
+ */
+export function seedStats(prev, saves = {}) {
+  const L = { ...prev, dayList: [...prev.dayList], golds: [...prev.golds], launchDays: [...prev.launchDays], partners: [...prev.partners] };
+  const up = (k, v) => { if (Number.isFinite(v) && v > L[k]) L[k] = Math.floor(v); };
+  const obj = o => (o && typeof o === 'object' ? o : null);
+
+  // Personal bests and medals: one record = at least one finish and one new best.
+  const records = obj(saves.records);
+  let recordCount = 0;
+  if (records) {
+    const per = { coop: 0, versus: 0 };
+    let tutorial = false, medalKey = false;
+    for (const [k, rec] of Object.entries(records)) {
+      if (!rec || typeof rec.timeMs !== 'number' || !(rec.timeMs > 0)) continue;
+      recordCount += 1;
+      const [rawLevel, difficulty, mode] = k.split('|');
+      const levelId = String(rawLevel).startsWith('daily:') ? 'daily' : rawLevel;
+      if (mode in per) per[mode] += 1;
+      if (levelId === 'tutorial') tutorial = true;
+      const medal = MEDAL_RANK[rec.bestMedal] ? rec.bestMedal
+        : capMedal(medalFor(rec.timeMs, getMedals(levelId, difficulty)), { helped: !!rec.helped });
+      if (medal === 'gold' && MEDAL_LEVELS.includes(levelId) && !L.golds.includes(levelId)) L.golds.push(levelId);
+      if (medal && opensMedalGate(levelId, medal)) medalKey = true;
+    }
+    up('finishes', recordCount);
+    up('personalBests', recordCount);
+    up('coopFinishes', per.coop);
+    up('versusRaces', per.versus);
+    if (tutorial) up('tutorialDone', 1);
+    if (medalKey) up('medalKeys', 1);
+  }
+
+  // Slingshot: `stage` is the stage being played, so stage - 1 are cleared.
+  const sling = obj(saves.sling);
+  if (sling) {
+    up('slingBest', n(sling.best));
+    up('slingStage', n(sling.stage) - 1);
+    up('slingLaunches', n(sling.runs));
+    const d = obj(sling.daily);
+    if (d && typeof d.key === 'string' && n(d.runs) > 0 && !L.launchDays.includes(d.key)) L.launchDays.push(d.key);
+  }
+  up('rides', recordCount + n(sling && sling.runs));
+
+  // Today's Road: the days ridden, practice finishes, partners, the day streak.
+  const daily = obj(saves.daily);
+  if (daily) {
+    const finished = Object.keys(daily)
+      .filter(k => /^\d{4}-\d{2}-\d{2}$/.test(k) && obj(daily[k]))
+      .filter(k => n(daily[k].practice) > 0 || (obj(daily[k].ranked) && Object.keys(daily[k].ranked).length > 0))
+      .sort();
+    let practice = 0;
+    for (const k of finished) {
+      practice += n(daily[k].practice);
+      for (const p of Array.isArray(daily[k].partners) ? daily[k].partners : []) {
+        if (typeof p === 'string' && p && !L.partners.includes(p)) L.partners.push(p);
+      }
+      if (!L.dayList.includes(k) && (L.dayList.length < DAY_LIST_MAX || k > L.dayList[0])) {
+        L.days += 1;
+        L.dayList.push(k);
+      }
+    }
+    L.dayList = L.dayList.sort().slice(-DAY_LIST_MAX);
+    if (L.dayList.length && (!L.lastDay || L.dayList[L.dayList.length - 1] > L.lastDay)) L.lastDay = L.dayList[L.dayList.length - 1];
+    up('dailyPractice', practice);
+    let run = 0, best = 0;
+    for (let i = 0; i < finished.length; i++) {
+      run = i > 0 && daysBetween(finished[i - 1], finished[i]) === 1 ? run + 1 : 1;
+      best = Math.max(best, run);
+    }
+    up('dailyDayBest', best);
+    const newest = finished[finished.length - 1];
+    if (newest && (!L.lastDailyDay || newest > L.lastDailyDay)) {
+      L.lastDailyDay = newest;
+      L.dailyDayRun = run;
+    }
+  }
+
+  // The wallet: coins earned, upgrades bought, rebuilds.
+  const w = obj(saves.wallet);
+  if (w) {
+    up('coinsEarned', n(w.earned));
+    up('rebuilds', n(w.rebuilds));
+    let levels = 0, spent = 0;
+    for (const u of UPGRADES) {
+      const lv = Math.min(u.max, Math.floor(n(w.lv && w.lv[u.id])));
+      levels += lv;
+      for (let l = 0; l < lv; l++) spent += upgradeCost(u, l);
+      if (lv >= u.max) L.maxedAny = true;
+    }
+    // A rebuild needed every upgrade maxed, then reset them: count those too.
+    const rebuilds = Math.floor(n(w.rebuilds));
+    if (rebuilds > 0) {
+      let full = 0;
+      for (const u of UPGRADES) for (let l = 0; l < u.max; l++) full += upgradeCost(u, l);
+      spent += rebuilds * full;
+      levels += rebuilds * UPGRADES.reduce((a, u) => a + u.max, 0);
+    }
+    up('upgrades', levels);
+    up('coinsSpent', spent);
+    if (UPGRADES.every(u => n(w.lv && w.lv[u.id]) >= u.max) || n(w.rebuilds) > 0) {
+      L.maxedAny = true;
+      L.maxedAll = true;
+    }
+  }
+  return L;
+}
+
+/**
  * Fold one event into the lifetime stats. Returns a NEW object.
  *   today: the day key ('YYYY-MM-DD', js/daily-seed.js · dailyKey)
  * Types: see the switch. Economy types match js/economy-mode.js · _economyEvent.
@@ -345,7 +475,8 @@ export function applyEvent(prev, type, d = {}, today = null) {
         L.coopFinishes += 1;
         if (d.partnerKey) L.partners = addUnique(L.partners, d.partnerKey);
       }
-      if (d.finishedLevel === 'daily' && today && L.lastDailyDay !== today) {
+      // The demo's weekly road (d.weekly) is one road a week: it feeds no day streak.
+      if (d.finishedLevel === 'daily' && !d.weekly && today && L.lastDailyDay !== today) {
         const gap = L.lastDailyDay ? daysBetween(L.lastDailyDay, today) : 0;
         L.dailyDayRun = gap === 1 ? L.dailyDayRun + 1 : 1;
         L.dailyDayBest = Math.max(L.dailyDayBest, L.dailyDayRun);
@@ -488,8 +619,9 @@ export class RideTracker {
    */
   crash(c = {}) {
     if (c.ref !== undefined) this.sync(c.ref);
+    this._goFresh = false;                     // a GO is fresh only until the first frame or crash
     this.crashes += 1;
-    if (c.cause === 'tree') this.treeHits += 1;
+    if (c.cause === 'tree' || c.cause === 'unknown') this.treeHits += 1;   // 'unknown': the stoker isn't told the cause
     if (this.gustActive) this.gustCrashed = true;
     const falseStart = this.sinceGo != null && this.sinceGo <= FALSE_START_S;
     this.sinceGo = null;                       // only the first crash after a GO
