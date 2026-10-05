@@ -6,6 +6,9 @@
 //     weekly road, and from there to the demo's end screen, never elsewhere.
 //   full game (?key=dummy): the Tourist card is under SOLO and RIDE TOGETHER
 //     (captain), not VERSUS; the road is Today's Road.
+//   PR #397 B4: the demo survives an invite (?demo=1&room=X keeps demo after
+//     the URL tidy; invite/QR links carry demo=1), Options hides "Ride real
+//     terrain" and ?demo=1&mode=tourist boots the ordinary game.
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
 const ROOT=process.cwd(); const PORT=8937;
 const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml','.glb':'model/gltf-binary','.mp3':'audio/mpeg','.json':'application/json'};
@@ -114,6 +117,26 @@ const fw = await full.evaluate(async () => {
 });
 console.log('full walk:', JSON.stringify(fw));
 
+// ── PR #397 B4 · the demo boundary ───────────────────────────────────────
+const joinLink = (page) => page.evaluate(async () => (await import('./js/lobby/room-qr.js')).joinUrl('TNDM-QRQR'));
+const optTourist = (page) => page.evaluate(() => document.getElementById('options-tourist-btn').style.display !== 'none');
+const invite = await open('?demo=1&room=TNDM-ABCD');
+await invite.evaluate(() => document.getElementById('tap-to-start')?.click());
+await invite.waitForFunction(() => !/room=/.test(location.search), { timeout: 15000, polling: 100 }).catch(() => null);
+const boundary = {
+  inviteSearch: await invite.evaluate(() => location.search),
+  inviteDemo: await invite.evaluate(async () => (await import('./js/edition.js')).isDemoEdition()),
+  demoJoin: await joinLink(demo),
+  fullJoin: await joinLink(full),
+  demoOptTourist: await optTourist(demo),
+  fullOptTourist: await optTourist(full),
+};
+await invite.close();
+const tourDemo = await open('?demo=1&mode=tourist&key=dummy');
+boundary.demoModeTourist = await tourDemo.evaluate(() => ({ isTourist: !!window._game.isTourist, world: window._game.world.constructor.name }));
+await tourDemo.close();
+console.log('demo boundary:', JSON.stringify(boundary));
+
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const checks = {
   demoSolo: same(dl.solo, ['tutorial', 'grandma', 'daily', 'slingshot']),
@@ -132,6 +155,12 @@ const checks = {
   fullRoadDaily: fl.roadName === "Today's Road" && fw.picked.key === fw.picked.today &&
     fw.picked.difficulty === 'adventurous',
   fullNextNotLocked: !!fw.next && !fw.nextLocked && fw.fromRoad === null,
+  // PR #397 B4a/B4b
+  inviteKeepsDemo: boundary.inviteSearch === '?demo=1' && boundary.inviteDemo === true,
+  inviteLinksCarryDemo: /[?&]room=TNDM-QRQR/.test(boundary.demoJoin) && /[?&]demo=1/.test(boundary.demoJoin) &&
+    !/demo=/.test(boundary.fullJoin),
+  demoNoTerrainOption: !boundary.demoOptTourist && boundary.fullOptTourist,
+  demoIgnoresModeTourist: !boundary.demoModeTourist.isTourist && boundary.demoModeTourist.world === 'World',
   noPageErrors: errors.length === 0
 };
 console.log(checks);
