@@ -13,7 +13,9 @@
 //
 // Each goose leans by ITS OWN rider's input (captainLean / stokerLean), exactly like the old fused
 // riders model; the bike tilts by the aggregate this.lean as before. The glTF exporter samples every
-// bone into every clip, so each clip is cut down to the bones it owns before it is played.
+// bone into every clip, so each clip is cut down to the bones it owns before it is played -- the bike's
+// two clips too: uncut, WheelSpin's resting cranks averaged with Pedal and the cranks turned half as far
+// as the geese's legs.
 
 export const SEATS = ['Captain', 'Stoker'];
 
@@ -24,6 +26,8 @@ const UPPER = new Set(['Spine', 'Spine1', 'Spine2', 'Neck', 'Neck1', 'Neck2', 'N
   'LeftShoulder', 'LeftArm', 'LeftForeArm', 'LeftHand',
   'RightShoulder', 'RightArm', 'RightForeArm', 'RightHand']);
 const LOWER_RE = /^(Left|Right)(UpLeg|Leg|Foot|ToeBase)$|^Cloth_/;
+const CRANK_RE = /^(Crank|Pedal)_/;      // the bike's Pedal clip: cranks + pedals (+ their PedalPin sockets ride along)
+const WHEEL_RE = /^Wheel_/;
 
 /** Bone (node) name a three.js track targets: "LeftLeg.quaternion" -> "LeftLeg". */
 export function trackBone(trackName) {
@@ -37,8 +41,14 @@ export function isUpperBone(name) { return UPPER.has(name); }
 /** Lower-body bones + cloth chains: driven by Pedal (cloth scale = the stoker's riding hem). */
 export function isLowerBone(name) { return LOWER_RE.test(name); }
 
-/** Which bones a clip may drive, by its name; null = not a riding clip. */
+/** The bike's crank / pedal bones (its Pedal clip) and wheel bones (its WheelSpin clip). */
+export function isCrankBone(name) { return CRANK_RE.test(name); }
+export function isWheelBone(name) { return WHEEL_RE.test(name); }
+
+/** Which bones a clip may drive, by its name; null = not a clip of the goose tandem. */
 export function boneFilterFor(clipName) {
+  if (clipName === 'Pedal') return isCrankBone;
+  if (clipName === 'WheelSpin') return isWheelBone;
   if (/^Pedal_/.test(clipName)) return isLowerBone;
   if (/^(Ride|Lean_L|Lean_R)_/.test(clipName)) return isUpperBone;
   return null;

@@ -142,6 +142,7 @@ export class BikeModel {
     // leans by its own rider's input. null on the other models.
     this.goose = null;
     this.riderViewScale = 1;     // rider height vs the fused riders model (front view)
+    this._soloRider = false;     // Show Solo: only the captain goose is shown
 
     // Versus spawns extra bikes by cloning an already-loaded one (instant, shares
     // geometry — no re-fetch/decode). A SKINNED riders model needs SkeletonUtils
@@ -387,6 +388,7 @@ export class BikeModel {
       }).then(() => {
         if (this._modelPath !== modelPath) return; // swapped away while loading
         this.goose = goose;
+        this.setSoloRider(this._soloRider);
         goose.update();
         model.updateMatrixWorld(true);
         const top = new THREE.Box3().setFromObject(model).max.y - model.position.y;
@@ -482,6 +484,13 @@ export class BikeModel {
    * update(). captain = the captain's own lean, stoker = the stoker's own lean.
    * In solo play pass the single lean for both so the pair sways together.
    */
+  /** Show Solo: true shows only the captain goose (goose tandem only; kept until the geese load). */
+  setSoloRider(on) {
+    this._soloRider = !!on;
+    const st = this.goose && this.goose.riders.Stoker;
+    if (st && st.root.visible === this._soloRider) st.root.visible = !this._soloRider;
+  }
+
   setRiderLeans(captain, stoker) {
     this._captainLeanTarget = Math.max(-1, Math.min(1, captain));
     this._stokerLeanTarget = Math.max(-1, Math.min(1, stoker));

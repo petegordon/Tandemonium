@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowSolo, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -5335,6 +5335,10 @@ class Game {
     const ridersOffBtn = document.getElementById('opt-riders-off');
     if (ridersOnBtn)  ridersOnBtn.addEventListener('click',  () => this._setShowRiders(true));
     if (ridersOffBtn) ridersOffBtn.addEventListener('click', () => this._setShowRiders(false));
+    const soloOnBtn  = document.getElementById('opt-solo-on');
+    const soloOffBtn = document.getElementById('opt-solo-off');
+    if (soloOnBtn)  soloOnBtn.addEventListener('click',  () => this._setShowSolo(true));
+    if (soloOffBtn) soloOffBtn.addEventListener('click', () => this._setShowSolo(false));
 
     const fpsOnBtn  = document.getElementById('opt-fps-on');
     const fpsOffBtn = document.getElementById('opt-fps-off');
@@ -5378,6 +5382,7 @@ class Game {
     this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
+    this._updateOptionsShowSoloUI();
     this._updateOptionsFpsUI();
     this._updateOptionsPhysicsUI();
   }
@@ -5471,6 +5476,21 @@ class Game {
       this.frontView.dispose();
       this.frontView = null;
     }
+  }
+
+  _setShowSolo(on) {
+    try { localStorage.setItem('tandemonium_show_solo', on ? 'on' : 'off'); } catch (e) {}
+    this._showSolo = !!on;
+    this._updateOptionsShowSoloUI();
+  }
+
+  _updateOptionsShowSoloUI() {
+    const on = getShowSolo();
+    const onBtn  = document.getElementById('opt-solo-on');
+    const offBtn = document.getElementById('opt-solo-off');
+    if (!onBtn) return;
+    onBtn.classList.toggle('active', on);
+    offBtn.classList.toggle('active', !on);
   }
 
   _updateOptionsShowRidersUI() {
@@ -5591,6 +5611,8 @@ class Game {
       document.getElementById('opt-gyro-gravity'),
       document.getElementById('opt-riders-on'),
       document.getElementById('opt-riders-off'),
+      document.getElementById('opt-solo-on'),
+      document.getElementById('opt-solo-off'),
       document.getElementById('opt-fps-on'),
       document.getElementById('opt-fps-off'),
       document.getElementById('opt-physics-on'),
@@ -5603,6 +5625,7 @@ class Game {
     this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
+    this._updateOptionsShowSoloUI();
     this._updateOptionsFpsUI();
     this._updateOptionsPhysicsUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
@@ -6088,6 +6111,11 @@ class Game {
         this.renderer.render(this.scene, this.camera);
       }
     }
+
+    // Show Solo: a solo ride shows only the captain goose (cached; the Options
+    // toggle and a mode change both apply on the next frame).
+    if (this._showSolo === undefined) this._showSolo = getShowSolo();
+    if (this.bike && this.bike.goose) this.bike.setSoloRider(this.mode === 'solo' && this._showSolo);
 
     // Front-view PiP — composite a front-facing "selfie cam" of the bike
     // into the lower-right corner, on top of whatever was just rendered.

@@ -92,6 +92,30 @@ check('bike crank turns with the crank angle', moved(crank.a.crank, crank.q.cran
 check('captain legs follow the crank', moved(crank.a.Captain, crank.q.Captain));
 check('stoker legs follow the crank', moved(crank.a.Stoker, crank.q.Stoker));
 
+// feet on the pedals through a whole crank turn, in the game's own playback (bike + geese mixers):
+// the ball of each foot vs its pedal pin raised by the ball height, in bike metres
+const feet = await page.evaluate(() => {
+  const b = window._game.bike, g = b.goose;
+  const model = b.group.children[0];
+  const k = model.scale.x;
+  const BALL = { Captain: 0.0244, Stoker: 0.028 };
+  const PIN = { Captain: { L: 'PedalPin_FL', R: 'PedalPin_FR' }, Stoker: { L: 'PedalPin_RL', R: 'PedalPin_RR' } };
+  const up = new b.group.position.constructor(0, 1, 0).applyQuaternion(b.group.quaternion);
+  const toe = {}, pin = {};
+  let worst = 0, at = null;
+  for (let deg = 0; deg < 360; deg += 5) {
+    g.setCrank(deg * Math.PI / 180); g.update(); b.group.updateMatrixWorld(true);
+    for (const seat of ['Captain', 'Stoker']) for (const side of ['L', 'R']) {
+      const t = g.riders[seat].root.getObjectByName(side === 'L' ? 'LeftToeBase' : 'RightToeBase').getWorldPosition(up.clone());
+      const q = model.getObjectByName(PIN[seat][side]).getWorldPosition(up.clone()).addScaledVector(up, BALL[seat] * k);
+      const d = t.distanceTo(q) / k;
+      if (d > worst) { worst = d; at = `${seat} ${side} @${deg}`; }
+    }
+  }
+  return { worstMm: +(worst * 1000).toFixed(1), at };
+});
+check('feet stay on the pedals through the crank turn (< 6 mm)', feet.worstMm < 6, feet);
+
 // independent lean: captain right, stoker left, at the same time
 const lean = await page.evaluate(async () => {
   const b = window._game.bike, g = b.goose;
@@ -135,6 +159,19 @@ await page.screenshot({ path: path.join(OUT, 'smoke-goose-ride.png') });
 // (aborted off-site requests and missing local extras show up as 'Failed to load resource'; the
 //  goose assets themselves must all load)
 const real = errors.filter(e => !/Failed to load resource/.test(e));
+// Show Solo: in a solo ride only the captain goose shows; off brings the stoker back
+const solo = await page.evaluate(async () => {
+  const gm = window._game, b = gm.bike;
+  const wait = () => new Promise(r => setTimeout(r, 1500));
+  gm._setShowSolo(true); await wait();
+  const on = { mode: gm.mode, stoker: b.goose.riders.Stoker.root.visible, captain: b.goose.riders.Captain.root.visible,
+               btn: document.getElementById('opt-solo-on')?.classList.contains('active') };
+  gm._setShowSolo(false); await wait();
+  const off = { stoker: b.goose.riders.Stoker.root.visible };
+  return { on, off };
+});
+check('Show Solo: solo ride shows only the captain; off shows both',
+  solo.on.mode === 'solo' && solo.on.stoker === false && solo.on.captain === true && solo.on.btn && solo.off.stoker === true, solo);
 check('no script errors', real.length === 0, real.slice(0, 5));
 check('every goose asset served', !missing.some(u => /goose/.test(u)), missing);
 

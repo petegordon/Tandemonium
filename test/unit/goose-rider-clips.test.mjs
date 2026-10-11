@@ -27,7 +27,15 @@ test('pedal clips drive legs + cloth chains only; ride/lean clips the upper body
   }
   assert.equal(boneFilterFor('Ride_Captain'), isUpperBone);
   assert.equal(boneFilterFor('idle'), null);
-  assert.equal(boneFilterFor('Pedal'), null);   // the bike's own clip is not a rider clip
+});
+
+test("the bike's clips keep only their own bones (uncut, WheelSpin halved the crank turn)", () => {
+  const pedal = boneFilterFor('Pedal'), wheels = boneFilterFor('WheelSpin');
+  for (const b of ['Crank_F', 'Crank_R', 'Pedal_FL', 'Pedal_RR']) { assert.ok(pedal(b), b); assert.ok(!wheels(b), b); }
+  for (const b of ['Wheel_F', 'Wheel_R']) { assert.ok(wheels(b), b); assert.ok(!pedal(b), b); }
+  for (const b of ['Bike_root', 'Steer', 'Seat_Captain', 'Grip_C_L']) { assert.ok(!pedal(b) && !wheels(b), b); }
+  // a rider's Pedal_<seat> is not the bike's Pedal
+  assert.ok(!boneFilterFor('Pedal_Captain')('Crank_F'));
 });
 
 test('each rider: ride fades as the lean grows, the matching side fades in, weights sum to 1', () => {
