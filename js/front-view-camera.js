@@ -199,10 +199,13 @@ export class FrontViewCamera {
     this._desiredPos.copy(bike.position);
     this._desiredPos.x += fwd.x * this.frontDist;
     this._desiredPos.z += fwd.z * this.frontDist;
-    this._desiredPos.y += this.height;
+    // Riders taller or shorter than the fused riders model this rig was tuned on
+    // (the goose tandem's geese are ~14% taller at the game's 4.4 m bike length).
+    const s = bike.riderViewScale || 1;
+    this._desiredPos.y += this.height * s;
 
     this._desiredLook.copy(bike.position);
-    this._desiredLook.y += this.lookHeight;
+    this._desiredLook.y += this.lookHeight * s;
 
     if (!this._initialized) {
       this._pos.copy(this._desiredPos);

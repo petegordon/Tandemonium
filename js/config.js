@@ -9,10 +9,21 @@ export const isMobile = !_isElectron && (
 export const isAndroid = /Android/i.test(navigator.userAgent);
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-// Riders model: the fused tandem + Victorian goose captain & stoker, skinned so
-// their torsos lean with the balance. See BikeModel rider-lean wiring. The older
-// rider-less frame lives at 'tandem-3d/tandem_bicycle.glb'.
-export const BIKE_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
+// Riders model: the goose tandem — a rigged tandem built to fit the geese (its Pedal /
+// WheelSpin clips drive the cranks and wheels) with the dressed goose captain and stoker
+// seated on its sockets; each goose pedals with the crank and leans by its own rider's input
+// (js/goose-riders.js). Built in petegordon/tandemonium-claude-3d (P4/P5). ?riders=fused
+// brings back the previous fused tandem + geese model for comparison. The rider-less frame
+// lives at 'tandem-3d/tandem_bicycle.glb'.
+export const FUSED_RIDERS_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
+export const GOOSE_BIKE_MODEL_PATH = 'tandem-3d/goose/goose_tandem.glb';
+export const GOOSE_RIDER_PATHS = {
+  Captain: 'tandem-3d/goose/goose_captain.glb',
+  Stoker: 'tandem-3d/goose/goose_stoker.glb',
+};
+const _ridersParam = (typeof location !== 'undefined')
+  ? new URLSearchParams(location.search).get('riders') : null;
+export const BIKE_MODEL_PATH = _ridersParam === 'fused' ? FUSED_RIDERS_MODEL_PATH : GOOSE_BIKE_MODEL_PATH;
 
 // The bike chooser / lobby preview keeps the original recolorable frame so the
 // color presets still take effect there. The in-game bike uses the riders model
