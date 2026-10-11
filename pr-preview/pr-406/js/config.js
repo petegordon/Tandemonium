@@ -38,6 +38,15 @@ export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
  * and the PBR lighting made phone rides lag badly (issue #390). An explicit
  * 'on' / 'off' from Options always wins. Read at boot (see Game constructor).
  */
+/**
+ * "Show Solo" setting — when on, a solo ride (one player) shows only the captain
+ * goose on the goose tandem; co-op, local and versus always show both. Off by
+ * default. Cached by the game; toggling in Options applies on the next frame.
+ */
+export function getShowSolo() {
+  try { return localStorage.getItem('tandemonium_show_solo') === 'on'; } catch (e) { return false; }
+}
+
 export function getShowRiders() {
   try {
     const pref = localStorage.getItem('tandemonium_show_riders');

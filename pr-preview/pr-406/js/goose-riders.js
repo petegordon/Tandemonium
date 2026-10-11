@@ -42,8 +42,10 @@ export class GooseRiders {
     this.bikeClips = animations;
     this.bikeMixer = new THREE.AnimationMixer(model);
     const byName = n => animations.find(c => c.name === n);
-    this.pedal = byName('Pedal') ? scrub(this.bikeMixer, byName('Pedal')) : null;
-    this.wheels = byName('WheelSpin') ? scrub(this.bikeMixer, byName('WheelSpin')) : null;
+    // cut to their own bones: both clips carry every bone, and two full-skeleton actions
+    // on one mixer average out (the cranks turned half as far as the geese's legs)
+    this.pedal = byName('Pedal') ? scrub(this.bikeMixer, cutClip(byName('Pedal'))) : null;
+    this.wheels = byName('WheelSpin') ? scrub(this.bikeMixer, cutClip(byName('WheelSpin'))) : null;
     this.wheelCircumference = 0;   // world units; set by BikeModel once the model is scaled
     this.riderClips = {};          // seat -> { pedal, ride, leanL, leanR } (already cut to their bones)
     this.riders = {};              // seat -> { root, mixer, pedal, ride, leanL, leanR }
