@@ -72,19 +72,6 @@ export class FrontViewCamera {
       'box-sizing:border-box',
     ].join(';');
 
-    const label = document.createElement('div');
-    label.textContent = 'FRONT VIEW';
-    label.style.cssText = [
-      'position:absolute',
-      'left:8px',
-      'top:6px',
-      'font:600 11px/1 system-ui,sans-serif',
-      'letter-spacing:0.08em',
-      'color:rgba(255,255,255,0.95)',
-      'text-shadow:0 1px 3px rgba(0,0,0,0.8)',
-    ].join(';');
-    frame.appendChild(label);
-
     document.body.appendChild(frame);
     this.frame = frame;
   }
