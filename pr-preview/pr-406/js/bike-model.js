@@ -7,7 +7,7 @@ import { COBBLES_SHAKE, COBBLES_DRAG } from './disruptions.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { BIKE_MODEL_PATH, GOOSE_RIDER_PATHS, TUNE } from './config.js';
+import { BIKE_MODEL_PATH, getGooseRiderPaths, TUNE } from './config.js';
 import { GooseRiders } from './goose-riders.js';
 
 // A-5 · where the safety clamp starts to be felt. The clamp itself is at ±1.0.
@@ -383,7 +383,9 @@ export class BikeModel {
       // versus clone (taken once modelLoaded) carries them too.
       const goose = new GooseRiders(model, gltf.animations);
       goose.measureWheel();
-      goose.loadRiders(loader, GOOSE_RIDER_PATHS).catch((err) => {
+      const riderPaths = getGooseRiderPaths();
+      this._gooseRiderPaths = riderPaths;
+      goose.loadRiders(loader, riderPaths).catch((err) => {
         console.warn('Goose riders failed to load; riding the bare bike:', err);
       }).then(() => {
         if (this._modelPath !== modelPath) return; // swapped away while loading
@@ -484,6 +486,28 @@ export class BikeModel {
    * update(). captain = the captain's own lean, stoker = the stoker's own lean.
    * In solo play pass the single lean for both so the pair sways together.
    */
+  /**
+   * Goose Outfits: seat another pair of geese on the goose tandem (no-op on the other models,
+   * or when the pair is already riding). The bike, its physics and every reference stay.
+   * @param {{Captain: string, Stoker: string}} paths
+   * @param {boolean} [disposeOld] false while live versus clones share the current geese
+   * @returns {Promise|undefined} settles once the new geese are seated
+   */
+  setGooseRiders(paths, disposeOld = true) {
+    if (!this.goose) return;
+    const cur = this._gooseRiderPaths;
+    if (cur && cur.Captain === paths.Captain && cur.Stoker === paths.Stoker) return;
+    this._gooseRiderPaths = paths;
+    const goose = this.goose;
+    const loader = new GLTFLoader();
+    loader.setDRACOLoader(getDracoLoader());
+    this._gooseSwap = goose.swapRiders(loader, paths, disposeOld && !this._sharedGeometry).then(() => {
+      if (this.goose !== goose) return; // the bike model was swapped meanwhile
+      this.setSoloRider(this._soloRider);
+    }).catch((err) => console.warn('Goose outfit failed to load; keeping the current geese:', err));
+    return this._gooseSwap;
+  }
+
   /** Show Solo: true shows only the captain goose (goose tandem only; kept until the geese load). */
   setSoloRider(on) {
     this._soloRider = !!on;

@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowSolo, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowSolo, getGooseOutfit, getGooseRiderPaths, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -5339,6 +5339,10 @@ class Game {
     const soloOffBtn = document.getElementById('opt-solo-off');
     if (soloOnBtn)  soloOnBtn.addEventListener('click',  () => this._setShowSolo(true));
     if (soloOffBtn) soloOffBtn.addEventListener('click', () => this._setShowSolo(false));
+    for (const key of ['original', 'cyclist', 'fancy']) {
+      const b = document.getElementById('opt-outfit-' + key);
+      if (b) b.addEventListener('click', () => this._setGooseOutfit(key));
+    }
 
     const fpsOnBtn  = document.getElementById('opt-fps-on');
     const fpsOffBtn = document.getElementById('opt-fps-off');
@@ -5383,6 +5387,7 @@ class Game {
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
     this._updateOptionsShowSoloUI();
+    this._updateOptionsGooseOutfitUI();
     this._updateOptionsFpsUI();
     this._updateOptionsPhysicsUI();
   }
@@ -5482,6 +5487,21 @@ class Game {
     try { localStorage.setItem('tandemonium_show_solo', on ? 'on' : 'off'); } catch (e) {}
     this._showSolo = !!on;
     this._updateOptionsShowSoloUI();
+  }
+
+  /** Goose Outfits: saved, then the geese on the bike are swapped in place (live versus rigs keep theirs). */
+  _setGooseOutfit(key) {
+    try { localStorage.setItem('tandemonium_goose_outfit', key); } catch (e) {}
+    this._updateOptionsGooseOutfitUI();
+    if (this.bike) this.bike.setGooseRiders(getGooseRiderPaths(), !this.versusRigs);
+  }
+
+  _updateOptionsGooseOutfitUI() {
+    const cur = getGooseOutfit();
+    for (const key of ['original', 'cyclist', 'fancy']) {
+      const b = document.getElementById('opt-outfit-' + key);
+      if (b) b.classList.toggle('active', key === cur);
+    }
   }
 
   _updateOptionsShowSoloUI() {
@@ -5613,6 +5633,9 @@ class Game {
       document.getElementById('opt-riders-off'),
       document.getElementById('opt-solo-on'),
       document.getElementById('opt-solo-off'),
+      document.getElementById('opt-outfit-original'),
+      document.getElementById('opt-outfit-cyclist'),
+      document.getElementById('opt-outfit-fancy'),
       document.getElementById('opt-fps-on'),
       document.getElementById('opt-fps-off'),
       document.getElementById('opt-physics-on'),
@@ -5626,6 +5649,7 @@ class Game {
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
     this._updateOptionsShowSoloUI();
+    this._updateOptionsGooseOutfitUI();
     this._updateOptionsFpsUI();
     this._updateOptionsPhysicsUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
