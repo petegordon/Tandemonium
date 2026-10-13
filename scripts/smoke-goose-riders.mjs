@@ -3,7 +3,7 @@
 // Checks: the rigged bike loads with both geese seated on its sockets and their riding clips
 // bound; the bike's cranks and both geese's legs follow the crank; each goose leans by ITS OWN
 // rider's lean (captain right / stoker left at the same time); the Goose Outfits option swaps
-// both geese in place (original / cyclist / fancy); writes screenshots to
+// both geese in place (victorian / cyclists / fancy); writes screenshots to
 // renders/smoke-goose-*.png. Headless software rendering is slow (~1-2 fps): state checks only.
 //   node scripts/smoke-goose-riders.mjs
 import http from 'node:http';
@@ -176,9 +176,9 @@ check('Show Solo: solo ride shows only the captain; off shows both',
 // Goose Outfits: each choice swaps both geese in place on the same bike; the new geese are
 // seated with all four clips, pedal with the crank, keep their feet on the pedals, and the old
 // geese leave the sockets. Show Solo carries over a swap.
-const EXPECT = { cyclist: ['goose_captain_cyclist.glb', 'goose_stoker_cyclist.glb'],
+const EXPECT = { cyclists: ['goose_captain_cyclist.glb', 'goose_stoker_cyclist.glb'],
                  fancy: ['goose_captain_fancy.glb', 'goose_stoker.glb'],
-                 original: ['goose_captain.glb', 'goose_stoker.glb'] };
+                 victorian: ['goose_captain.glb', 'goose_stoker_victorian.glb'] };
 for (const [key, files] of Object.entries(EXPECT)) {
   const solo = key === 'fancy';
   const r = await page.evaluate(async (key, solo) => {

@@ -5,24 +5,30 @@ import fs from 'node:fs';
 import { GOOSE_OUTFITS, DEFAULT_GOOSE_OUTFIT, normalizeGooseOutfit, gooseOutfitPaths }
   from '../../js/goose-outfits.js';
 
-test('three outfits: original, cyclist, fancy; original is the default', () => {
-  assert.deepEqual(Object.keys(GOOSE_OUTFITS), ['original', 'cyclist', 'fancy']);
-  assert.equal(DEFAULT_GOOSE_OUTFIT, 'original');
+test('three outfits: victorian, cyclists, fancy; victorian is the default', () => {
+  assert.deepEqual(Object.keys(GOOSE_OUTFITS), ['victorian', 'cyclists', 'fancy']);
+  assert.deepEqual(Object.values(GOOSE_OUTFITS).map(o => o.label), ['Victorian', 'Cyclists', 'Fancy']);
+  assert.equal(DEFAULT_GOOSE_OUTFIT, 'victorian');
 });
 
-test('pairings: cyclist pairs both cyclists; fancy = the Victorian male + the original female', () => {
-  assert.deepEqual(gooseOutfitPaths('original'),
-    { Captain: 'tandem-3d/goose/goose_captain.glb', Stoker: 'tandem-3d/goose/goose_stoker.glb' });
-  assert.deepEqual(gooseOutfitPaths('cyclist'),
+test('pairings: original male + Victorian lady; both cyclists; Victorian gent + the red-dress lady', () => {
+  assert.deepEqual(gooseOutfitPaths('victorian'),
+    { Captain: 'tandem-3d/goose/goose_captain.glb', Stoker: 'tandem-3d/goose/goose_stoker_victorian.glb' });
+  assert.deepEqual(gooseOutfitPaths('cyclists'),
     { Captain: 'tandem-3d/goose/goose_captain_cyclist.glb', Stoker: 'tandem-3d/goose/goose_stoker_cyclist.glb' });
   assert.deepEqual(gooseOutfitPaths('fancy'),
     { Captain: 'tandem-3d/goose/goose_captain_fancy.glb', Stoker: 'tandem-3d/goose/goose_stoker.glb' });
 });
 
-test('unknown or missing keys fall back to the original pair', () => {
+test('names saved by the first preview map to the renamed outfits', () => {
+  assert.equal(normalizeGooseOutfit('original'), 'victorian');
+  assert.equal(normalizeGooseOutfit('cyclist'), 'cyclists');
+});
+
+test('unknown or missing keys fall back to the default pair', () => {
   for (const k of [undefined, null, '', 'tuxedo', 'toString', '__proto__']) {
-    assert.equal(normalizeGooseOutfit(k), 'original', String(k));
-    assert.deepEqual(gooseOutfitPaths(k), gooseOutfitPaths('original'));
+    assert.equal(normalizeGooseOutfit(k), 'victorian', String(k));
+    assert.deepEqual(gooseOutfitPaths(k), gooseOutfitPaths('victorian'));
   }
 });
 
