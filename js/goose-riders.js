@@ -20,6 +20,18 @@ function scrub(mixer, clip) {
   return a;
 }
 
+function disposeTree(root) {
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    if (o.geometry) o.geometry.dispose();
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+      if (!m) continue;
+      for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+      m.dispose();
+    }
+  });
+}
+
 function cutClip(clip) {
   const keep = boneFilterFor(clip.name);
   const c = clip.clone();
@@ -69,6 +81,15 @@ export class GooseRiders {
    * @param {{Captain?: string, Stoker?: string}} paths
    */
   async loadRiders(loader, paths) {
+    const loaded = await GooseRiders._fetch(loader, paths);
+    for (const [seat, l] of Object.entries(loaded)) {
+      this.riderClips[seat] = l.clips;
+      this._seat(seat, l.scene);
+    }
+  }
+
+  static async _fetch(loader, paths) {
+    const out = {};
     await Promise.all(SEATS.filter(s => paths[s]).map(async (seat) => {
       const gltf = await loader.loadAsync(paths[seat]);
       const clips = {};
@@ -76,9 +97,33 @@ export class GooseRiders {
         const c = gltf.animations.find(a => a.name === prefix + seat);
         if (c) clips[key] = cutClip(c);
       }
-      this.riderClips[seat] = clips;
-      this._seat(seat, gltf.scene);
+      out[seat] = { scene: gltf.scene, clips };
     }));
+    return out;
+  }
+
+  /**
+   * Goose Outfits: replace both geese with another pair. The old geese keep riding until the
+   * new ones have loaded; then they leave their sockets (disposed unless a live versus clone
+   * still shares their geometry) and the new ones are seated and posed at the current crank.
+   * @param {GLTFLoader} loader
+   * @param {{Captain?: string, Stoker?: string}} paths
+   * @param {boolean} [disposeOld]
+   */
+  async swapRiders(loader, paths, disposeOld = true) {
+    const loaded = await GooseRiders._fetch(loader, paths);
+    for (const seat of Object.keys(loaded)) {
+      const old = this.riders[seat];
+      if (old) {
+        old.mixer.stopAllAction();
+        if (old.root.parent) old.root.parent.remove(old.root);
+        if (disposeOld) disposeTree(old.root);
+        delete this.riders[seat];
+      }
+      this.riderClips[seat] = loaded[seat].clips;
+      this._seat(seat, loaded[seat].scene);
+    }
+    this.update();
   }
 
   _seat(seat, root) {

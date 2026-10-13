@@ -2,6 +2,8 @@
 // CONFIG — shared constants
 // ============================================================
 
+import { gooseOutfitPaths, normalizeGooseOutfit, DEFAULT_GOOSE_OUTFIT } from './goose-outfits.js';
+
 const _isElectron = navigator.userAgent.includes('Electron');
 export const isMobile = !_isElectron && (
     /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
@@ -17,10 +19,8 @@ export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 // lives at 'tandem-3d/tandem_bicycle.glb'.
 export const FUSED_RIDERS_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
 export const GOOSE_BIKE_MODEL_PATH = 'tandem-3d/goose/goose_tandem.glb';
-export const GOOSE_RIDER_PATHS = {
-  Captain: 'tandem-3d/goose/goose_captain.glb',
-  Stoker: 'tandem-3d/goose/goose_stoker.glb',
-};
+// The riders on it come from the "Goose Outfits" setting (js/goose-outfits.js).
+export const GOOSE_RIDER_PATHS = gooseOutfitPaths(DEFAULT_GOOSE_OUTFIT);
 const _ridersParam = (typeof location !== 'undefined')
   ? new URLSearchParams(location.search).get('riders') : null;
 export const BIKE_MODEL_PATH = _ridersParam === 'fused' ? FUSED_RIDERS_MODEL_PATH : GOOSE_BIKE_MODEL_PATH;
@@ -45,6 +45,24 @@ export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
  */
 export function getShowSolo() {
   try { return localStorage.getItem('tandemonium_show_solo') === 'on'; } catch (e) { return false; }
+}
+
+/**
+ * "Goose Outfits" setting — which dressed geese ride the goose tandem: 'original',
+ * 'cyclist' (1920s male + lady cyclists) or 'fancy' (Victorian male + original female).
+ * ?outfit=<key> overrides the saved choice (testing). Applies immediately.
+ */
+export function getGooseOutfit() {
+  try {
+    const q = (typeof location !== 'undefined') ? new URLSearchParams(location.search).get('outfit') : null;
+    if (q) return normalizeGooseOutfit(q);
+    return normalizeGooseOutfit(localStorage.getItem('tandemonium_goose_outfit'));
+  } catch (e) { return DEFAULT_GOOSE_OUTFIT; }
+}
+
+/** The {Captain, Stoker} rider GLBs of the current Goose Outfits choice. */
+export function getGooseRiderPaths() {
+  return gooseOutfitPaths(getGooseOutfit());
 }
 
 export function getShowRiders() {

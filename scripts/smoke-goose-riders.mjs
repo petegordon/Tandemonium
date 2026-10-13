@@ -2,7 +2,8 @@
 // smoke-goose-riders.mjs — the goose tandem in a real solo ride (headless Chrome).
 // Checks: the rigged bike loads with both geese seated on its sockets and their riding clips
 // bound; the bike's cranks and both geese's legs follow the crank; each goose leans by ITS OWN
-// rider's lean (captain right / stoker left at the same time); writes screenshots to
+// rider's lean (captain right / stoker left at the same time); the Goose Outfits option swaps
+// both geese in place (original / cyclist / fancy); writes screenshots to
 // renders/smoke-goose-*.png. Headless software rendering is slow (~1-2 fps): state checks only.
 //   node scripts/smoke-goose-riders.mjs
 import http from 'node:http';
@@ -172,7 +173,66 @@ const solo = await page.evaluate(async () => {
 });
 check('Show Solo: solo ride shows only the captain; off shows both',
   solo.on.mode === 'solo' && solo.on.stoker === false && solo.on.captain === true && solo.on.btn && solo.off.stoker === true, solo);
-check('no script errors', real.length === 0, real.slice(0, 5));
+// Goose Outfits: each choice swaps both geese in place on the same bike; the new geese are
+// seated with all four clips, pedal with the crank, keep their feet on the pedals, and the old
+// geese leave the sockets. Show Solo carries over a swap.
+const EXPECT = { cyclist: ['goose_captain_cyclist.glb', 'goose_stoker_cyclist.glb'],
+                 fancy: ['goose_captain_fancy.glb', 'goose_stoker.glb'],
+                 original: ['goose_captain.glb', 'goose_stoker.glb'] };
+for (const [key, files] of Object.entries(EXPECT)) {
+  const solo = key === 'fancy';
+  const r = await page.evaluate(async (key, solo) => {
+    const gm = window._game, b = gm.bike;
+    gm._setShowSolo(solo);
+    const before = { Captain: b.goose.riders.Captain.root, Stoker: b.goose.riders.Stoker.root };
+    gm._setGooseOutfit(key);
+    await b._gooseSwap;
+    const g = b.goose, model = b.group.children[0];
+    const seats = {};
+    for (const s of ['Captain', 'Stoker']) {
+      const rr = g.riders[s];
+      const socket = model.getObjectByName('Seat_' + s);
+      seats[s] = { socket: rr.root.parent?.name, clips: ['pedal', 'ride', 'leanL', 'leanR'].filter(k => rr[k]).length,
+                   geeseOnSocket: socket.children.filter(c => c.userData.gooseSeat).length,
+                   oldGone: before[s] !== rr.root ? !before[s].parent : 'same', visible: rr.root.visible };
+    }
+    // legs follow the crank; foot-to-pin distance stays constant over the turn (its offset is the sole)
+    const k = model.scale.x, v = () => new model.position.constructor();
+    const PIN = { Captain: { L: 'PedalPin_FL', R: 'PedalPin_FR' }, Stoker: { L: 'PedalPin_RL', R: 'PedalPin_RR' } };
+    const span = {};
+    let legMoved = true;
+    for (const s of ['Captain', 'Stoker']) {
+      g.setCrank(0); g.update();
+      const q0 = g.riders[s].root.getObjectByName('LeftUpLeg').quaternion.clone();
+      g.setCrank(Math.PI / 2); g.update();
+      if (g.riders[s].root.getObjectByName('LeftUpLeg').quaternion.angleTo(q0) < 1e-3) legMoved = false;
+    }
+    for (let deg = 0; deg < 360; deg += 10) {
+      g.setCrank(deg * Math.PI / 180); g.update(); b.group.updateMatrixWorld(true);
+      for (const s of ['Captain', 'Stoker']) for (const side of ['L', 'R']) {
+        const t = g.riders[s].root.getObjectByName(side === 'L' ? 'LeftToeBase' : 'RightToeBase').getWorldPosition(v());
+        const d = t.distanceTo(model.getObjectByName(PIN[s][side]).getWorldPosition(v())) / k;
+        const id = s + side;
+        span[id] = span[id] || [1e9, -1e9];
+        span[id] = [Math.min(span[id][0], d), Math.max(span[id][1], d)];
+      }
+    }
+    const footSpanMm = Math.max(...Object.values(span).map(([a, z]) => (z - a) * 1000));
+    return { paths: b._gooseRiderPaths, seats, legMoved, footSpanMm: +footSpanMm.toFixed(1),
+             btn: document.getElementById('opt-outfit-' + key)?.classList.contains('active'),
+             saved: localStorage.getItem('tandemonium_goose_outfit') };
+  }, key, solo);
+  const okPaths = r.paths.Captain.endsWith(files[0]) && r.paths.Stoker.endsWith(files[1]);
+  const okSeats = ['Captain', 'Stoker'].every(s => r.seats[s].socket === `Seat_${s}` && r.seats[s].clips === 4 &&
+    r.seats[s].geeseOnSocket === 1 && r.seats[s].oldGone !== false);
+  check(`Goose Outfits '${key}': ${files.join(' + ')} seated, old geese gone, legs + feet on the crank`,
+    okPaths && okSeats && r.legMoved && r.footSpanMm < 6 && r.btn && r.saved === key &&
+    r.seats.Stoker.visible === !solo && r.seats.Captain.visible, r);
+  await new Promise(res => setTimeout(res, 1500));
+  await page.screenshot({ path: path.join(OUT, `smoke-goose-outfit-${key}.png`) });
+}
+await page.evaluate(() => window._game._setShowSolo(false));
+{ const realAll = errors.filter(e => !/Failed to load resource/.test(e)); check('no script errors', realAll.length === 0, realAll.slice(0, 5)); }
 check('every goose asset served', !missing.some(u => /goose/.test(u)), missing);
 
 console.log(JSON.stringify(results, null, 1));
