@@ -232,39 +232,63 @@ for (const [key, files] of Object.entries(EXPECT)) {
   await page.screenshot({ path: path.join(OUT, `smoke-goose-outfit-${key}.png`) });
 }
 await page.evaluate(() => window._game._setShowSolo(false));
-// Goose Colours: every colourway of every pair recolours both geese (shader remap / flat colour), the Options row
-// shows that pair's colourway names, and 'Original' puts every material back
+// Goose Colours: every colourway of every pair visibly recolours both geese -- checked on rendered pixels, with
+// a bike colour preset applied first (presets used to clone the geese's materials and drop the colourway shader)
 for (const key of Object.keys(EXPECT)) {
   const r = await page.evaluate(async (key) => {
     const gm = window._game, b = gm.bike;
     gm._setGooseOutfit(key);
     await b._gooseSwap;
-    const count = () => {
-      let on = 0, flat = 0;
-      const seen = new Set();
-      for (const rr of Object.values(b.goose.riders)) rr.root.traverse(o => {
-        if (!o.isMesh) return;
-        for (const m of [].concat(o.material)) {
-          if (!m || seen.has(m) || !m.userData.cw) continue;
-          seen.add(m);
-          if (m.userData.cw.u.cwOn.value > 0.5) on++;
-          else if (m.color && !m.color.equals(m.userData.cw.color)) flat++;
-        }
-      });
-      return on + flat;
+    b.applyPreset({});                               // a preset pass (resets the bike's materials)
+    const THREE_ = { V: gm.camera.position.constructor };
+    const model = b.group.children[0];
+    const shot = (seat) => {                          // mean colour of a close render of one rider's torso + lap
+      b.goose.update(); b.group.updateMatrixWorld(true);
+      const V = THREE_.V, k = model.scale.x;
+      const cap = model.getObjectByName('Seat_Captain').getWorldPosition(new V());
+      const sto = model.getObjectByName('Seat_Stoker').getWorldPosition(new V());
+      const fwd = cap.clone().sub(sto); fwd.y = 0; fwd.normalize();
+      const side = fwd.clone().cross(new V(0, 1, 0)).normalize();
+      const c = (seat === 'Captain' ? cap : sto).clone().add(new V(0, 0.35 * k, 0));
+      const cam = gm.camera.clone();
+      cam.fov = 20; cam.aspect = 1; cam.near = 0.05 * k; cam.far = 50 * k;
+      cam.position.copy(c).addScaledVector(side, 2.0 * k).add(new V(0, 0.2 * k, 0));
+      cam.lookAt(c); cam.updateProjectionMatrix();
+      const hid = [];
+      for (const o of gm.scene.children) if (o !== b.group && !o.isLight && o.visible) { o.visible = false; hid.push(o); }
+      gm.renderer.render(gm.scene, cam);
+      const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      const cx = cv.getContext('2d');
+      const src = gm.renderer.domElement, s0 = Math.min(src.width, src.height);
+      cx.drawImage(src, (src.width - s0) / 2 + s0 * 0.3, (src.height - s0) / 2 + s0 * 0.3, s0 * 0.4, s0 * 0.4, 0, 0, 64, 64);
+      for (const o of hid) o.visible = true;
+      const d = cx.getImageData(0, 0, 64, 64).data;
+      let rr = 0, gg = 0, bb = 0;
+      for (let i = 0; i < d.length; i += 4) { rr += d[i]; gg += d[i + 1]; bb += d[i + 2]; }
+      const n = d.length / 4;
+      return [rr / n, gg / n, bb / n];
     };
+    const diff = (u, v) => Math.hypot(u[0] - v[0], u[1] - v[1], u[2] - v[2]);
+    gm._setGooseColourway(0);
+    await new Promise(r_ => setTimeout(r_, 300));
+    const base = { Captain: shot('Captain'), Stoker: shot('Stoker') };
     const res = [];
     for (let i = 1; i < 4; i++) {
       gm._setGooseColourway(i);
-      await new Promise(r_ => setTimeout(r_, 400));
+      // the load path Pete hit: riders coloured, then the bike preset's first pass snapshots + clones materials
+      b._originalMats = null;
+      b.applyPreset({});
+      await new Promise(r_ => setTimeout(r_, 300));
       res.push({ label: document.getElementById('opt-colour-' + i).textContent,
-                 active: document.getElementById('opt-colour-' + i).classList.contains('active'), changed: count() });
+                 active: document.getElementById('opt-colour-' + i).classList.contains('active'),
+                 dCaptain: Math.round(diff(shot('Captain'), base.Captain)), dStoker: Math.round(diff(shot('Stoker'), base.Stoker)) });
     }
     gm._setGooseColourway(0);
-    return { ways: res, original: count(), label0: document.getElementById('opt-colour-0').textContent };
+    await new Promise(r_ => setTimeout(r_, 300));
+    return { ways: res, back: Math.round(diff(shot('Stoker'), base.Stoker)), label0: document.getElementById('opt-colour-0').textContent };
   }, key);
-  check(`Goose Colours '${key}': 3 colourways recolour both geese, Original restores`,
-    r.ways.every(w => w.active && w.changed >= 6 && w.label && w.label !== '-') && r.original === 0 && r.label0 === 'Original', r);
+  check(`Goose Colours '${key}': each colourway visibly recolours both geese (even after a bike preset); Original restores`,
+    r.ways.every(w => w.active && w.dCaptain >= 8 && w.dStoker >= 8 && w.label && w.label !== '-') && r.back <= 2 && r.label0 === 'Original', r);
 }
 { const realAll = errors.filter(e => !/Failed to load resource/.test(e)); check('no script errors', realAll.length === 0, realAll.slice(0, 5)); }
 check('every goose asset served', !missing.some(u => /goose/.test(u)), missing);
