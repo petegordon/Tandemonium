@@ -388,6 +388,8 @@
   .ride-coins { width: 100%; max-width: 320px; margin: 8px auto 4px; text-align: center; }
   .ride-coins-head { font-size: 22px; font-weight: 900; color: #ffd23f; }
   .ride-coins .sling-rows { margin: 4px auto 6px; }
+  /* the end screens set no text colour: the rows fell back to black on the dark overlay (blank lines) */
+  .ride-coins .sling-rows .row:not(.total) { color: rgba(255,255,255,0.88); }
   .ride-coins-wallet { font-size: 13px; color: rgba(255,255,255,0.75); }
   .lobby-wallet { color: #ffd23f; font-weight: 800; margin-left: 6px; }
   /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
