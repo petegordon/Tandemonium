@@ -232,6 +232,40 @@ for (const [key, files] of Object.entries(EXPECT)) {
   await page.screenshot({ path: path.join(OUT, `smoke-goose-outfit-${key}.png`) });
 }
 await page.evaluate(() => window._game._setShowSolo(false));
+// Goose Colours: every colourway of every pair recolours both geese (shader remap / flat colour), the Options row
+// shows that pair's colourway names, and 'Original' puts every material back
+for (const key of Object.keys(EXPECT)) {
+  const r = await page.evaluate(async (key) => {
+    const gm = window._game, b = gm.bike;
+    gm._setGooseOutfit(key);
+    await b._gooseSwap;
+    const count = () => {
+      let on = 0, flat = 0;
+      const seen = new Set();
+      for (const rr of Object.values(b.goose.riders)) rr.root.traverse(o => {
+        if (!o.isMesh) return;
+        for (const m of [].concat(o.material)) {
+          if (!m || seen.has(m) || !m.userData.cw) continue;
+          seen.add(m);
+          if (m.userData.cw.u.cwOn.value > 0.5) on++;
+          else if (m.color && !m.color.equals(m.userData.cw.color)) flat++;
+        }
+      });
+      return on + flat;
+    };
+    const res = [];
+    for (let i = 1; i < 4; i++) {
+      gm._setGooseColourway(i);
+      await new Promise(r_ => setTimeout(r_, 400));
+      res.push({ label: document.getElementById('opt-colour-' + i).textContent,
+                 active: document.getElementById('opt-colour-' + i).classList.contains('active'), changed: count() });
+    }
+    gm._setGooseColourway(0);
+    return { ways: res, original: count(), label0: document.getElementById('opt-colour-0').textContent };
+  }, key);
+  check(`Goose Colours '${key}': 3 colourways recolour both geese, Original restores`,
+    r.ways.every(w => w.active && w.changed >= 6 && w.label && w.label !== '-') && r.original === 0 && r.label0 === 'Original', r);
+}
 { const realAll = errors.filter(e => !/Failed to load resource/.test(e)); check('no script errors', realAll.length === 0, realAll.slice(0, 5)); }
 check('every goose asset served', !missing.some(u => /goose/.test(u)), missing);
 
