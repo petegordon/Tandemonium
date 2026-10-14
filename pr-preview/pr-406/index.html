@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'b19b758',pr:406,time:'10-13-2026 21:08'}</script><base href="/pr-preview/pr-406/">
+<head><script>window.__BUILD={sha:'7c35c59',pr:406,time:'10-13-2026 21:50'}</script><base href="/pr-preview/pr-406/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
@@ -388,6 +388,8 @@
   .ride-coins { width: 100%; max-width: 320px; margin: 8px auto 4px; text-align: center; }
   .ride-coins-head { font-size: 22px; font-weight: 900; color: #ffd23f; }
   .ride-coins .sling-rows { margin: 4px auto 6px; }
+  /* the end screens set no text colour: the rows fell back to black on the dark overlay (blank lines) */
+  .ride-coins .sling-rows .row:not(.total) { color: rgba(255,255,255,0.88); }
   .ride-coins-wallet { font-size: 13px; color: rgba(255,255,255,0.75); }
   .lobby-wallet { color: #ffd23f; font-weight: 800; margin-left: 6px; }
   /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
@@ -6019,7 +6021,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b19b758 | 10-13-2026 21:08 (PR #406)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.7c35c59 | 10-13-2026 21:50 (PR #406)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
