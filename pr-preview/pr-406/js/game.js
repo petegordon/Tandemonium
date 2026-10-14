@@ -4,7 +4,8 @@
 
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowSolo, getGooseOutfit, getGooseRiderPaths, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { colourwaysFor } from './goose-colourways.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -5343,6 +5344,10 @@ class Game {
       const b = document.getElementById('opt-outfit-' + key);
       if (b) b.addEventListener('click', () => this._setGooseOutfit(key));
     }
+    for (let i = 0; i < 4; i++) {
+      const b = document.getElementById('opt-colour-' + i);
+      if (b) b.addEventListener('click', () => this._setGooseColourway(i));
+    }
 
     const fpsOnBtn  = document.getElementById('opt-fps-on');
     const fpsOffBtn = document.getElementById('opt-fps-off');
@@ -5502,6 +5507,31 @@ class Game {
       const b = document.getElementById('opt-outfit-' + key);
       if (b) b.classList.toggle('active', key === cur);
     }
+    this._updateOptionsGooseColourUI();
+  }
+
+  /** Goose Colours: the i-th colourway of the current outfit pair (0 = its own colours), saved per pair. */
+  _setGooseColourway(i) {
+    const outfit = getGooseOutfit();
+    const way = colourwaysFor(outfit)[i];
+    if (!way) return;
+    setGooseColourway(outfit, way.key);
+    this._updateOptionsGooseColourUI();
+    if (this.bike) this.bike.applyGooseColours();
+  }
+
+  _updateOptionsGooseColourUI() {
+    const outfit = getGooseOutfit();
+    const ways = colourwaysFor(outfit);
+    const cur = getGooseColourway(outfit);
+    for (let i = 0; i < 4; i++) {
+      const b = document.getElementById('opt-colour-' + i);
+      if (!b) continue;
+      const w = ways[i];
+      b.style.display = w ? '' : 'none';
+      if (w) b.textContent = w.label;
+      b.classList.toggle('active', !!w && w.key === cur);
+    }
   }
 
   _updateOptionsShowSoloUI() {
@@ -5636,6 +5666,10 @@ class Game {
       document.getElementById('opt-outfit-victorian'),
       document.getElementById('opt-outfit-cyclists'),
       document.getElementById('opt-outfit-fancy'),
+      document.getElementById('opt-colour-0'),
+      document.getElementById('opt-colour-1'),
+      document.getElementById('opt-colour-2'),
+      document.getElementById('opt-colour-3'),
       document.getElementById('opt-fps-on'),
       document.getElementById('opt-fps-off'),
       document.getElementById('opt-physics-on'),

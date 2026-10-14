@@ -3,6 +3,7 @@
 // ============================================================
 
 import { gooseOutfitPaths, normalizeGooseOutfit, DEFAULT_GOOSE_OUTFIT } from './goose-outfits.js';
+import { normalizeColourway, DEFAULT_COLOURWAY } from './goose-colourways.js';
 
 const _isElectron = navigator.userAgent.includes('Electron');
 export const isMobile = !_isElectron && (
@@ -58,6 +59,25 @@ export function getGooseOutfit() {
     if (q) return normalizeGooseOutfit(q);
     return normalizeGooseOutfit(localStorage.getItem('tandemonium_goose_outfit'));
   } catch (e) { return DEFAULT_GOOSE_OUTFIT; }
+}
+
+/**
+ * "Goose Colours" setting — a colourway per Goose Outfits pair ('default' = the outfit's own
+ * colours; js/goose-colourways.js), saved as {outfit: colourway}. Applies immediately.
+ */
+export function getGooseColourway(outfit) {
+  try {
+    const all = JSON.parse(localStorage.getItem('tandemonium_goose_colours') || '{}');
+    return normalizeColourway(outfit, all && all[outfit]);
+  } catch (e) { return DEFAULT_COLOURWAY; }
+}
+
+export function setGooseColourway(outfit, key) {
+  try {
+    const all = JSON.parse(localStorage.getItem('tandemonium_goose_colours') || '{}') || {};
+    all[outfit] = normalizeColourway(outfit, key);
+    localStorage.setItem('tandemonium_goose_colours', JSON.stringify(all));
+  } catch (e) {}
 }
 
 /** The {Captain, Stoker} rider GLBs of the current Goose Outfits choice. */

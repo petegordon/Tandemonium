@@ -7,7 +7,8 @@ import { COBBLES_SHAKE, COBBLES_DRAG } from './disruptions.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { BIKE_MODEL_PATH, getGooseRiderPaths, TUNE } from './config.js';
+import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway, TUNE } from './config.js';
+import { colourwayParams, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 
 // A-5 · where the safety clamp starts to be felt. The clamp itself is at ±1.0.
@@ -391,6 +392,7 @@ export class BikeModel {
         if (this._modelPath !== modelPath) return; // swapped away while loading
         this.goose = goose;
         this.setSoloRider(this._soloRider);
+        this.applyGooseColours();
         goose.update();
         model.updateMatrixWorld(true);
         const top = new THREE.Box3().setFromObject(model).max.y - model.position.y;
@@ -504,8 +506,17 @@ export class BikeModel {
     this._gooseSwap = goose.swapRiders(loader, paths, disposeOld && !this._sharedGeometry).then(() => {
       if (this.goose !== goose) return; // the bike model was swapped meanwhile
       this.setSoloRider(this._soloRider);
+      this.applyGooseColours();
     }).catch((err) => console.warn('Goose outfit failed to load; keeping the current geese:', err));
     return this._gooseSwap;
+  }
+
+  /** Goose Colours: the saved colourway of the current outfit pair on both geese (goose tandem only). */
+  applyGooseColours() {
+    if (!this.goose) return;
+    const outfit = getGooseOutfit();
+    const params = colourwayParams(outfit, getGooseColourway(outfit));
+    for (const [seat, r] of Object.entries(this.goose.riders)) applyColourway(r.root, params[seat] || {});
   }
 
   /** Show Solo: true shows only the captain goose (goose tandem only; kept until the geese load). */
