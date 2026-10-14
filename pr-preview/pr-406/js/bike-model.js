@@ -540,26 +540,31 @@ export class BikeModel {
     const model = this.group.children[0];
     if (!model) return;
 
+    // The bike's own meshes only: the goose riders sit in the model (on the seat sockets) but keep their
+    // materials -- cloning them dropped the Goose Colours shader hook (and the presets don't style the geese)
+    const bikeMeshes = (fn) => {
+      const walk = (o) => {
+        if (o.userData && o.userData.gooseSeat) return;
+        if (o.isMesh) fn(o);
+        for (const c of o.children) walk(c);
+      };
+      walk(model);
+    };
+
     // Store originals on first call
     if (!this._originalMats) {
       this._originalMats = new Map();
-      model.traverse(child => {
-        if (child.isMesh) {
-          this._originalMats.set(child.name, child.material.clone());
-        }
-      });
+      bikeMeshes(child => this._originalMats.set(child.name, child.material.clone()));
     }
 
     // Reset all materials to original (dispose old material to prevent leak)
-    model.traverse(child => {
-      if (child.isMesh) {
-        const orig = this._originalMats.get(child.name);
-        if (orig) {
-          if (child.material && child.material !== orig) child.material.dispose();
-          child.material = orig.clone();
-          if (this.spokeMeshes.includes(child)) {
-            child.material.transparent = true;
-          }
+    bikeMeshes(child => {
+      const orig = this._originalMats.get(child.name);
+      if (orig) {
+        if (child.material && child.material !== orig) child.material.dispose();
+        child.material = orig.clone();
+        if (this.spokeMeshes.includes(child)) {
+          child.material.transparent = true;
         }
       }
     });
@@ -567,8 +572,7 @@ export class BikeModel {
     if (!presetData) return; // null = default, just reset
 
     // Apply preset overrides
-    model.traverse(child => {
-      if (!child.isMesh) return;
+    bikeMeshes(child => {
       const entry = presetData[child.name];
       if (!entry) return;
       const mat = child.material;

@@ -59,13 +59,24 @@ vec3 cwRemap(vec3 c) {
 }
 `;
 
-/** The material's colourway state (installs the shader hook once; the program is shared by every hooked material). */
+// Per-material state, kept off the material itself: Material.clone() would copy userData as JSON (dead uniforms)
+// and drop onBeforeCompile, so a clone simply starts afresh here.
+const STATE = new WeakMap();
+
+/** The material's colourway state (the shader hook goes in once; the program is shared by every hooked material). */
 function state(m) {
-  if (m.userData.cw) return m.userData.cw;
-  const u = { cwHsv: { value: new THREE.Vector3(0.5, 1, 1) }, cwOn: { value: 0 } };
-  const cw = { u, color: m.color ? m.color.clone() : null, hooked: false };
-  m.userData.cw = cw;
+  let cw = STATE.get(m);
+  if (!cw) {
+    const u = { cwHsv: { value: new THREE.Vector3(0.5, 1, 1) }, cwOn: { value: 0 } };
+    cw = { u, color: m.color ? m.color.clone() : null, hooked: false };
+    STATE.set(m, cw);
+  }
   return cw;
+}
+
+/** Colourway state of a material, if it has been touched (tests / tools). */
+export function colourwayState(m) {
+  return STATE.get(m) || null;
 }
 
 function hook(m, cw) {
@@ -96,7 +107,7 @@ export function applyColourway(root, params) {
       if (!m || seen.has(m)) continue;
       seen.add(m);
       const p = params[baseName(m.name)];
-      if (!p && !m.userData.cw) continue;
+      if (!p && !STATE.has(m)) continue;
       const cw = state(m);
       if (cw.color && m.color) m.color.copy(cw.color);
       cw.u.cwOn.value = 0;
