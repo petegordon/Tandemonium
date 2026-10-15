@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goose Stage — Tandemonium</title>
+<style>
+  :root { --ink: #ece6dc; --muted: #9a907f; --bg: #1d1a17; --panel: #26221e; --line: #3a342d; --accent: #c8553d; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-columns: 1fr 300px; height: 100%; }
+  #view { position: relative; display: flex; align-items: center; justify-content: center; min-width: 0; }
+  #frame { position: relative; background: #000; box-shadow: 0 0 0 1px var(--line); }
+  canvas { display: block; width: 100%; height: 100%; }
+  #panel { background: var(--panel); border-left: 1px solid var(--line); padding: 14px; overflow-y: auto; }
+  h1 { font: 600 17px/1.2 Georgia, serif; margin: 0 0 10px; }
+  h2 { font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; }
+  label { display: block; color: var(--muted); margin: 6px 0 2px; }
+  select, button { font: inherit; color: var(--ink); background: #332d27; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  select { width: 100%; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.on { background: var(--accent); border-color: var(--accent); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  #time { font-variant-numeric: tabular-nums; color: var(--muted); margin-top: 8px; }
+  input[type=range] { width: 100%; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  body.capture #panel { display: none; }
+  body.capture #app { grid-template-columns: 1fr; }
+  body.capture #frame { box-shadow: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="view"><div id="frame"><canvas id="c"></canvas></div></div>
+  <div id="panel">
+    <h1>Goose Stage</h1>
+    <h2>Reel</h2>
+    <label>Reel</label><select id="reel"></select>
+    <label>Cast</label><select id="pair"><option value="victorian">Victorian pair</option><option value="cyclists">Cyclists</option><option value="fancy">Fancy</option></select>
+    <label>Goose (solo reels)</label><select id="goose"></select>
+    <label>Aspect</label><select id="aspect"><option value="9x16">9:16 (Shorts / Reels / TikTok)</option><option value="16x9">16:9 (Steam / X)</option></select>
+    <div class="row"><button id="restart">Restart</button><button id="pause">Pause</button><button id="sound">Sound off</button></div>
+    <input type="range" id="scrub" min="0" max="1000" value="0">
+    <div id="time">0.00 s</div>
+    <div class="note">Render a reel to MP4: <code>node scripts/goose-reel.mjs intro 9x16</code></div>
+    <h2>Clip lab</h2>
+    <div class="note">Plays on the first goose of the current reel.</div>
+    <div class="row" id="clips"></div>
+    <div class="row"><button id="honk">Honk</button><button id="blink">Blink</button><button id="lookcam">Look at camera</button></div>
+  </div>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { GooseActor, GEESE, seeded } from '../js/goose-studio/goose-actor.js';
+import { createStudio, Honker } from '../js/goose-studio/studio-scene.js';
+import { REELS } from './reels.js';
+
+const $ = (id) => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+const CAPTURE = q.has('capture');
+if (CAPTURE) document.body.classList.add('capture');
+const ASPECTS = { '9x16': [1080, 1920], '16x9': [1920, 1080] };
+
+for (const [k, r] of Object.entries(REELS)) $('reel').add(new Option(r.title, k));
+for (const [k, g] of Object.entries(GEESE)) $('goose').add(new Option(g.label, k));
+$('reel').value = REELS[q.get('reel')] ? q.get('reel') : 'intro';
+$('pair').value = q.get('pair') || 'victorian';
+$('goose').value = GEESE[q.get('goose')] ? q.get('goose') : 'goose_captain_fancy';
+$('aspect').value = ASPECTS[q.get('aspect')] ? q.get('aspect') : '9x16';
+
+const studio = createStudio($('c'));
+const { renderer, scene, camera } = studio;
+const loader = new GLTFLoader();
+const gltfCache = {};
+let stage = null;           // the running reel
+let paused = false, soundOn = false;
+
+function sizeFrame() {
+  const [W, H] = ASPECTS[$('aspect').value];
+  const frame = $('frame');
+  if (CAPTURE) {
+    frame.style.width = window.innerWidth + 'px'; frame.style.height = window.innerHeight + 'px';
+    studio.resize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(1);
+    studio.resize(window.innerWidth, window.innerHeight);
+    return;
+  }
+  const v = $('view'), s = Math.min((v.clientWidth - 24) / W, (v.clientHeight - 24) / H);
+  frame.style.width = Math.floor(W * s) + 'px'; frame.style.height = Math.floor(H * s) + 'px';
+  studio.resize(Math.floor(W * s), Math.floor(H * s));
+}
+
+/** Fresh actor per reel (a reel undresses / moves its geese): the GLB parse is cached, the scene graph cloned by reload. */
+async function loadActor(name, random) {
+  if (!gltfCache[name]) gltfCache[name] = Promise.all([
+    loader.loadAsync('../tandem-3d/goose/' + name + '.glb'),
+    loader.loadAsync('../tandem-3d/goose/show/' + name + '_clips.glb'),
+    fetch('../tandem-3d/goose/show/' + name + '_clips.json').then(r => r.json())]);
+  const [g, c, meta] = await gltfCache[name];
+  const { clone } = await import('three/addons/utils/SkeletonUtils.js');
+  const gl = { scene: clone(g.scene), animations: g.animations };
+  return new GooseActor(name, gl, c.animations, meta, { random });
+}
+
+async function startReel() {
+  if (stage) for (const a of stage.actors) scene.remove(a.root);
+  sizeFrame();
+  const key = $('reel').value;
+  const reel = Object.create(REELS[key]);
+  const random = seeded(1234);
+  const noiseR = seeded(99), noiseTab = Array.from({ length: 512 }, () => noiseR());
+  const honker = new Honker('../assets/goose-honk.mp3', seeded(777));
+  honker.muted = !soundOn || CAPTURE;
+  const ctx = {
+    scene, camera, pair: $('pair').value, goose: $('goose').value, actors: [], events: [], t: 0,
+    noise: (x) => { const i = Math.floor(x) & 511, f = x - Math.floor(x); return noiseTab[i] * (1 - f) + noiseTab[(i + 1) & 511] * f; },
+    setBackdrop: studio.setBackdrop,
+    at: (t, fn) => ctx.events.push([t, fn]),
+    honk: (a) => a.honk(),
+    async load(name) {
+      const a = await loadActor(name, random);
+      a.onHonk = () => honker.honk(ctx.t);
+      scene.add(a.root);
+      ctx.actors.push(a);
+      return a;
+    },
+  };
+  camera.fov = 30;
+  await honker.load();
+  await reel.setup(ctx);
+  ctx.events.sort((a, b) => a[0] - b[0]);
+  camera.updateProjectionMatrix();
+  const duration = reel.duration || 8;
+  stage = { reel, ctx, actors: ctx.actors, honker, duration, next: 0, music: null };
+  // settle: one zero step so springs start at rest
+  for (const a of ctx.actors) a.update(0);
+  // pre-roll: a reel may start mid-action (reel.prerollUntil(ctx) true = start filming); simulated silently
+  stage.t0 = 0;
+  if (reel.prerollUntil) {
+    const mute = honker.muted; honker.muted = true;
+    while (!reel.prerollUntil(ctx) && ctx.t < 20) simulate(1 / 60);
+    honker.muted = mute;
+    stage.t0 = ctx.t;
+    honker.log.length = 0;
+  }
+  stage.duration = duration - stage.t0;
+  if (!CAPTURE && soundOn) playMusic(stage);
+  $('clips').innerHTML = '';
+  const lead = ctx.actors[0];
+  for (const n of lead.clipNames) {
+    const b = document.createElement('button'); b.textContent = n; b.onclick = () => lead.play(n);
+    $('clips').appendChild(b);
+  }
+  window.__stage.ready = true;
+  window.__stage.duration = duration;
+}
+
+function playMusic(st) {
+  stopMusic();
+  const m = st.reel.music;
+  if (!m) return;
+  const el = new Audio('../' + m.file);
+  el.volume = m.gain;
+  el.currentTime = Math.max(0, st.ctx.t - st.t0);
+  el.play().catch(() => {});
+  st.music = el;
+}
+function stopMusic() { if (stage && stage.music) { stage.music.pause(); stage.music = null; } }
+
+function simulate(dt) {
+  const { ctx } = stage;
+  ctx.t += dt;
+  while (stage.next < ctx.events.length && ctx.events[stage.next][0] <= ctx.t) ctx.events[stage.next++][1](ctx);
+  for (const a of ctx.actors) a.update(dt);
+}
+
+/** Advance the reel by dt and render one frame (reel time = ctx.t - t0, t0 = the pre-roll). */
+function step(dt) {
+  if (!stage) return;
+  const { ctx, reel } = stage;
+  simulate(dt);
+  reel.camera.call(reel, ctx, ctx.t);
+  camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
+  const t = ctx.t - stage.t0;
+  $('time').textContent = t.toFixed(2) + ' / ' + stage.duration.toFixed(2) + ' s';
+  $('scrub').value = Math.round(1000 * t / stage.duration);
+}
+
+window.__stage = {
+  ready: false, duration: 0, step,
+  get t() { return stage ? stage.ctx.t - stage.t0 : 0; },
+  audio: () => ({ honks: stage.honker.log.map(h => ({ ...h, t: +(h.t - stage.t0).toFixed(4) })),
+    music: stage.reel.music || null, duration: stage.duration }),
+};
+
+// ---------------------------------------------------------------- interactive controls
+$('restart').onclick = () => { window.__stage.ready = false; stopMusic(); startReel(); };
+for (const id of ['reel', 'pair', 'goose', 'aspect']) $(id).onchange = $('restart').onclick;
+$('pause').onclick = () => { paused = !paused; $('pause').classList.toggle('on', paused); if (stage && stage.music) paused ? stage.music.pause() : stage.music.play(); };
+$('sound').onclick = () => {
+  soundOn = !soundOn; $('sound').textContent = soundOn ? 'Sound on' : 'Sound off'; $('sound').classList.toggle('on', soundOn);
+  if (stage) { stage.honker.muted = !soundOn; if (soundOn) playMusic(stage); else stopMusic(); }
+};
+$('scrub').oninput = async () => {
+  // scrubbing replays from the start (the reel is a deterministic simulation)
+  const target = ($('scrub').value / 1000) * (stage ? stage.duration : 0);
+  stopMusic();
+  await startReel();
+  const mute = stage.honker.muted; stage.honker.muted = true;
+  while (stage.ctx.t - stage.t0 < target - 1e-6) step(Math.min(1 / 30, target - (stage.ctx.t - stage.t0)));
+  stage.honker.muted = mute;
+  paused = true; $('pause').classList.add('on');
+};
+$('honk').onclick = () => stage && stage.actors[0].honk();
+$('blink').onclick = () => stage && stage.actors[0].blink();
+$('lookcam').onclick = () => stage && stage.actors.forEach(a => a.lookAt(camera));
+window.addEventListener('resize', sizeFrame);
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (stage && !paused) {
+    step(dt);
+    if (stage.ctx.t - stage.t0 > stage.duration + 0.8) { stopMusic(); startReel(); }   // loop the reel
+  }
+  requestAnimationFrame(loop);
+}
+startReel().then(() => { if (!CAPTURE) requestAnimationFrame(loop); });
+</script>
+</body>
+</html>
