@@ -50,7 +50,7 @@ export function getShowSolo() {
 
 /**
  * "Goose Outfits" setting — which dressed pair rides the goose tandem: 'victorian'
- * (the default), 'cyclists' or 'fancy' (js/goose-outfits.js).
+ * (the default), 'cyclists', 'fancy' or 'georgian' (js/goose-outfits.js).
  * ?outfit=<key> overrides the saved choice (testing). Applies immediately.
  */
 export function getGooseOutfit() {
