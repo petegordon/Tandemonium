@@ -1,5 +1,5 @@
 // Render a Goose Stage reel to MP4, frame-exact (goose-stage/reels.js).
-//   node scripts/goose-reel.mjs <reel> [9x16|16x9] [--pair victorian|cyclists|fancy] [--goose <name>] [--fps 60]
+//   node scripts/goose-reel.mjs <reel> [9x16|16x9] [--pair victorian|cyclists|fancy|georgian] [--goose <name>] [--fps 60]
 //        [--headful] [--frames-only]
 // -> renders/goose-reels/<reel>_<pair|goose>_<aspect>.mp4 (H.264 + AAC: the game music + every honk, mixed offline)
 //

@@ -104,11 +104,13 @@ const honker = new Honker('../assets/goose-honk.mp3');
 const cache = {};            // name -> Promise<GooseActor>
 let actor = null, clock = new THREE.Clock(), busyMove = false;
 
-const PAIR_LABEL = { victorian: 'Victorian', cyclists: 'Cyclists', fancy: 'Fancy' };
+const PAIR_LABEL = { victorian: 'Victorian', cyclists: 'Cyclists', fancy: 'Fancy', georgian: 'Georgian' };
 const PIECE_LABEL = { hat: 'Hat', coat: 'Coat', jacket: 'Jacket', waistcoat: 'Waistcoat', shirt: 'Shirt',
   breeches: 'Breeches', boots: 'Boots', gloves: 'Gloves', bowtie: 'Bow tie', necktie: 'Necktie', socks: 'Socks',
-  skirt: 'Skirt', bodice: 'Bodice', collar: 'Collar', cuffs: 'Cuffs', cardigan: 'Cardigan', pancollar: 'Collar' };
-const label = (p) => PIECE_LABEL[p] || p[0].toUpperCase() + p.slice(1);
+  skirt: 'Skirt', bodice: 'Bodice', collar: 'Collar', cuffs: 'Cuffs', cardigan: 'Cardigan', pancollar: 'Collar',
+  coatskirt: 'Coat skirts', petticoat: 'Petticoat', jabot: 'Jabot', fichu: 'Fichu', lace: 'Lace' };
+// (a goose may rename a piece: the Georgian lady's 'bowtie' is her choker)
+const label = (p, name = actor?.name) => GEESE[name]?.pieceLabels?.[p] || PIECE_LABEL[p] || p[0].toUpperCase() + p.slice(1);
 
 function getActor(name) {
   if (!cache[name]) cache[name] = GooseActor.load(loader, name);
@@ -178,7 +180,7 @@ function buildWays() {
 }
 
 // ---------------------------------------------------------------- borrowing
-const BORROW_SLOTS = ['hat', 'bowtie', 'necktie'];
+const BORROW_SLOTS = ['hat', 'bowtie', 'necktie', 'jabot'];
 function buildBorrow() {
   const el = $('borrow'); el.innerHTML = '';
   for (const slot of BORROW_SLOTS) {

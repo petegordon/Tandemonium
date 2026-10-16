@@ -15,6 +15,7 @@ export const PAIRS = {
   victorian: { captain: 'goose_captain', stoker: 'goose_stoker_victorian' },
   cyclists: { captain: 'goose_captain_cyclist', stoker: 'goose_stoker_cyclist' },
   fancy: { captain: 'goose_captain_fancy', stoker: 'goose_stoker' },
+  georgian: { captain: 'goose_captain_georgian', stoker: 'goose_stoker_georgian' },
 };
 
 /** Half-width of the view at depth `dist` from the camera. */
