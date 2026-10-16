@@ -1185,5 +1185,395 @@ export default {
     }
    }
   ]
+ },
+ "georgian": {
+  "label": "Georgian",
+  "ways": [
+   {
+    "key": "default",
+    "label": "Original"
+   },
+   {
+    "key": "g_claret",
+    "label": "Claret + rose",
+    "Captain": {
+     "outfit_male_georgian_breeches": {
+      "hsv": [
+       0.83891,
+       1.1863,
+       2.57149
+      ]
+     },
+     "outfit_male_georgian_coat": {
+      "hsv": [
+       0.83864,
+       1.16986,
+       2.72267
+      ]
+     },
+     "outfit_male_georgian_coat_collar": {
+      "color": [
+       0.16203,
+       0.01161,
+       0.02122
+      ]
+     },
+     "outfit_male_georgian_coatskirt": {
+      "hsv": [
+       0.83864,
+       1.16986,
+       2.72267
+      ]
+     }
+    },
+    "Stoker": {
+     "boots_leather": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_boots_buckle_strap": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_bowtie_neckband": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_bowtie_bow_L": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_bowtie_bow_R": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_bowtie_knot": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_bowtie_tail_L": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_bowtie_tail_R": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_cuffs_lace": {
+      "color": [
+       0.55201,
+       0.18782,
+       0.23074
+      ]
+     },
+     "outfit_female_georgian_hat_band": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_jacket": {
+      "hsv": [
+       0.86326,
+       0.911,
+       1.19463
+      ]
+     },
+     "outfit_female_georgian_jacket_bow_satin": {
+      "color": [
+       0.43415,
+       0.08866,
+       0.12744
+      ]
+     },
+     "outfit_female_georgian_skirt": {
+      "hsv": [
+       0.86403,
+       0.91225,
+       1.22455
+      ]
+     }
+    }
+   },
+   {
+    "key": "g_green",
+    "label": "Bottle green + sage",
+    "Captain": {
+     "outfit_male_georgian_breeches": {
+      "hsv": [
+       0.23737,
+       0.90979,
+       0.972
+      ]
+     },
+     "outfit_male_georgian_coat": {
+      "hsv": [
+       0.2371,
+       0.89718,
+       1.02915
+      ]
+     },
+     "outfit_male_georgian_coat_collar": {
+      "color": [
+       0.01764,
+       0.06125,
+       0.0319
+      ]
+     },
+     "outfit_male_georgian_coatskirt": {
+      "hsv": [
+       0.2371,
+       0.89718,
+       1.02915
+      ]
+     }
+    },
+    "Stoker": {
+     "boots_leather": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_boots_buckle_strap": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_bowtie_neckband": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_bowtie_bow_L": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_bowtie_bow_R": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_bowtie_knot": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_bowtie_tail_L": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_bowtie_tail_R": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_cuffs_lace": {
+      "color": [
+       0.20864,
+       0.33245,
+       0.18116
+      ]
+     },
+     "outfit_female_georgian_hat_band": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_jacket": {
+      "hsv": [
+       0.18597,
+       0.62836,
+       0.71947
+      ]
+     },
+     "outfit_female_georgian_jacket_bow_satin": {
+      "color": [
+       0.08866,
+       0.18782,
+       0.08438
+      ]
+     },
+     "outfit_female_georgian_skirt": {
+      "hsv": [
+       0.18673,
+       0.62923,
+       0.73749
+      ]
+     }
+    }
+   },
+   {
+    "key": "g_grey",
+    "label": "Dove grey + lilac",
+    "Captain": {
+     "outfit_male_georgian_breeches": {
+      "hsv": [
+       0.49017,
+       0.28994,
+       2.19698
+      ]
+     },
+     "outfit_male_georgian_coat": {
+      "hsv": [
+       0.4899,
+       0.28592,
+       2.32614
+      ]
+     },
+     "outfit_male_georgian_coat_collar": {
+      "color": [
+       0.10702,
+       0.11193,
+       0.13843
+      ]
+     },
+     "outfit_male_georgian_coatskirt": {
+      "hsv": [
+       0.4899,
+       0.28592,
+       2.32614
+      ]
+     }
+    },
+    "Stoker": {
+     "boots_leather": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_boots_buckle_strap": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_bowtie_neckband": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_bowtie_bow_L": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_bowtie_bow_R": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_bowtie_knot": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_bowtie_tail_L": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_bowtie_tail_R": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_cuffs_lace": {
+      "color": [
+       0.33245,
+       0.2384,
+       0.49102
+      ]
+     },
+     "outfit_female_georgian_hat_band": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_jacket": {
+      "hsv": [
+       0.61162,
+       0.71041,
+       1.06264
+      ]
+     },
+     "outfit_female_georgian_jacket_bow_satin": {
+      "color": [
+       0.20156,
+       0.12744,
+       0.35153
+      ]
+     },
+     "outfit_female_georgian_skirt": {
+      "hsv": [
+       0.61238,
+       0.71139,
+       1.08926
+      ]
+     }
+    }
+   }
+  ]
  }
 };

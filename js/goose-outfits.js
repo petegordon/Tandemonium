@@ -9,6 +9,7 @@
 //              brown tweed walking dress cut in his style
 //   cyclists   1920s male cyclist (argyle vest, plus-fours) + 1920s lady cyclist (cardigan, pleated skirt)
 //   fancy      Victorian gent (swallowtail coat, top hat) + the lady in the red bustle dress
+//   georgian   1770s gentleman (navy frock coat, tricorne) + a lady in a blue damask robe a l'anglaise
 
 const DIR = 'tandem-3d/goose/';
 
@@ -16,6 +17,7 @@ export const GOOSE_OUTFITS = {
   victorian: { label: 'Victorian', Captain: DIR + 'goose_captain.glb', Stoker: DIR + 'goose_stoker_victorian.glb' },
   cyclists: { label: 'Cyclists', Captain: DIR + 'goose_captain_cyclist.glb', Stoker: DIR + 'goose_stoker_cyclist.glb' },
   fancy: { label: 'Fancy', Captain: DIR + 'goose_captain_fancy.glb', Stoker: DIR + 'goose_stoker.glb' },
+  georgian: { label: 'Georgian', Captain: DIR + 'goose_captain_georgian.glb', Stoker: DIR + 'goose_stoker_georgian.glb' },
 };
 
 export const DEFAULT_GOOSE_OUTFIT = 'victorian';
