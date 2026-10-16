@@ -112,8 +112,15 @@ async function loadActor(name, random) {
   return new GooseActor(name, gl, c.animations, meta, { random });
 }
 
+// Each start gets a generation number; a start overtaken by a newer one (loop restart, Restart, menus, scrub)
+// drops its geese instead of adding a second cast. Returns false when superseded.
+let generation = 0;
 async function startReel() {
+  const gen = ++generation;
+  window.__stage.ready = false;
+  stopMusic();
   if (stage) for (const a of stage.actors) scene.remove(a.root);
+  stage = null;                     // the loop idles until the new cast is ready
   sizeFrame();
   const key = $('reel').value;
   const reel = Object.create(REELS[key]);
@@ -129,6 +136,7 @@ async function startReel() {
     honk: (a) => a.honk(),
     async load(name) {
       const a = await loadActor(name, random);
+      if (gen !== generation) return a;     // superseded: never enters the scene
       a.onHonk = () => honker.honk(ctx.t);
       scene.add(a.root);
       ctx.actors.push(a);
@@ -138,6 +146,7 @@ async function startReel() {
   camera.fov = 30;
   await honker.load();
   await reel.setup(ctx);
+  if (gen !== generation) { for (const a of ctx.actors) scene.remove(a.root); return false; }
   ctx.events.sort((a, b) => a[0] - b[0]);
   camera.updateProjectionMatrix();
   const duration = reel.duration || 8;
@@ -163,6 +172,7 @@ async function startReel() {
   }
   window.__stage.ready = true;
   window.__stage.duration = duration;
+  return true;
 }
 
 function playMusic(st) {
@@ -198,14 +208,14 @@ function step(dt) {
 }
 
 window.__stage = {
-  ready: false, duration: 0, step,
+  ready: false, duration: 0, step, scene,
   get t() { return stage ? stage.ctx.t - stage.t0 : 0; },
   audio: () => ({ honks: stage.honker.log.map(h => ({ ...h, t: +(h.t - stage.t0).toFixed(4) })),
     music: stage.reel.music || null, duration: stage.duration }),
 };
 
 // ---------------------------------------------------------------- interactive controls
-$('restart').onclick = () => { window.__stage.ready = false; stopMusic(); startReel(); };
+$('restart').onclick = () => { startReel(); };
 for (const id of ['reel', 'pair', 'goose', 'aspect']) $(id).onchange = $('restart').onclick;
 $('pause').onclick = () => { paused = !paused; $('pause').classList.toggle('on', paused); if (stage && stage.music) paused ? stage.music.pause() : stage.music.play(); };
 $('sound').onclick = () => {
@@ -215,8 +225,7 @@ $('sound').onclick = () => {
 $('scrub').oninput = async () => {
   // scrubbing replays from the start (the reel is a deterministic simulation)
   const target = ($('scrub').value / 1000) * (stage ? stage.duration : 0);
-  stopMusic();
-  await startReel();
+  if (!(await startReel())) return;
   const mute = stage.honker.muted; stage.honker.muted = true;
   while (stage.ctx.t - stage.t0 < target - 1e-6) step(Math.min(1 / 30, target - (stage.ctx.t - stage.t0)));
   stage.honker.muted = mute;
@@ -232,7 +241,7 @@ function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (stage && !paused) {
     step(dt);
-    if (stage.ctx.t - stage.t0 > stage.duration + 0.8) { stopMusic(); startReel(); }   // loop the reel
+    if (stage.ctx.t - stage.t0 > stage.duration + 0.8) startReel();   // loop the reel (stage is null until ready)
   }
   requestAnimationFrame(loop);
 }
