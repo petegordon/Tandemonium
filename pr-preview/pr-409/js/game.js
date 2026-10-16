@@ -5340,7 +5340,7 @@ class Game {
     const soloOffBtn = document.getElementById('opt-solo-off');
     if (soloOnBtn)  soloOnBtn.addEventListener('click',  () => this._setShowSolo(true));
     if (soloOffBtn) soloOffBtn.addEventListener('click', () => this._setShowSolo(false));
-    for (const key of ['victorian', 'cyclists', 'fancy']) {
+    for (const key of ['victorian', 'cyclists', 'fancy', 'georgian']) {
       const b = document.getElementById('opt-outfit-' + key);
       if (b) b.addEventListener('click', () => this._setGooseOutfit(key));
     }
@@ -5503,7 +5503,7 @@ class Game {
 
   _updateOptionsGooseOutfitUI() {
     const cur = getGooseOutfit();
-    for (const key of ['victorian', 'cyclists', 'fancy']) {
+    for (const key of ['victorian', 'cyclists', 'fancy', 'georgian']) {
       const b = document.getElementById('opt-outfit-' + key);
       if (b) b.classList.toggle('active', key === cur);
     }
@@ -5666,6 +5666,7 @@ class Game {
       document.getElementById('opt-outfit-victorian'),
       document.getElementById('opt-outfit-cyclists'),
       document.getElementById('opt-outfit-fancy'),
+      document.getElementById('opt-outfit-georgian'),
       document.getElementById('opt-colour-0'),
       document.getElementById('opt-colour-1'),
       document.getElementById('opt-colour-2'),
