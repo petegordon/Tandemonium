@@ -337,6 +337,7 @@ export class Lobby {
     this._stepCenterItems.set(this.roleStep, roleItems);
     const versusItems = [
       document.getElementById('btn-versus-join-kb'),
+      document.getElementById('btn-versus-connect-hid'),
       document.getElementById('btn-versus-continue'),
       document.getElementById('btn-back-versus'),
     ];
@@ -1064,6 +1065,37 @@ export class Lobby {
       this._leaveVersus();
       this._showStep(this.roleStep);
     });
+    // VERSUS · PAIR A CONTROLLER: the WebHID grant versus never had. Ported
+    // from the host step's CONNECT A CONTROLLER (local co-op): a Steam
+    // Controller is HID-only and a second DualSense over Bluetooth never
+    // reaches the Gamepad API, so neither could join. No slot is named — the
+    // device is pooled and _detectVersusCandidates offers it as soon as it
+    // streams; its first A press seats it (the lab lobby works the same way).
+    const btnVersusHid = document.getElementById('btn-versus-connect-hid');
+    if (btnVersusHid) {
+      btnVersusHid.addEventListener('click', async () => {
+        const hintEl = document.getElementById('btn-versus-connect-hid-hint');
+        const say = (t) => { if (hintEl) { hintEl.textContent = t; hintEl.style.display = t ? '' : 'none'; } };
+        if (!this.controllerManager || !navigator.hid) { say('WebHID is not available in this browser'); return; }
+        if (btnVersusHid.disabled) return;
+        btnVersusHid.disabled = true;
+        say('Pick the controller in the browser prompt…');
+        this._publishHeldHidDevices();
+        try {
+          const device = await this.controllerManager.connectHidForSlot(null, { prompt: true });
+          say(device
+            ? `Paired ${device.productName || 'controller'} — press A on it to join`
+            : 'No new controller found — turn it on, then try again');
+          console.log('[versus] HID pair →', device ? (device.productName || 'device') : 'nothing new');
+        } catch (err) {
+          console.warn('[versus] HID pair failed:', err);
+          say('Pairing failed — try again');
+        } finally {
+          btnVersusHid.disabled = false;
+        }
+      });
+    }
+
     document.getElementById('btn-versus-join-kb').addEventListener('click', () => {
       this._versusJoinKeyboard();
     });
