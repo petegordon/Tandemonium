@@ -3230,9 +3230,11 @@
     color: rgba(255,255,255,0.4);
     font-size: 12px;
   }
-  .lobby-back {
+  /* id-scoped so it outranks the kit's uf-button[variant="ghost"] rule */
+  #lobby .lobby-back {
     background: none;
     border: none;
+    min-height: 0;
     color: rgba(255,255,255,0.4);
     font-size: 13px;
     cursor: pointer;
@@ -3240,7 +3242,7 @@
     font-family: var(--uf-font-ui);
     -webkit-tap-highlight-color: transparent;
   }
-  .lobby-back:active { color: rgba(255,255,255,0.7); }
+  #lobby .lobby-back:active { color: rgba(255,255,255,0.7); }
   .level-card-tutorial {
     border-color: rgba(68,255,102,0.25);
     border-style: dashed;
@@ -3514,10 +3516,12 @@
   /* Mobile ROOM step: collapse center column so toggles are close together.
      Room code is repositioned fixed between the PiP circles.
      These are mobile-only — desktop shows them normally via media query override. */
-  #lobby-room #room-partner-info { display: none; }
-  #lobby-room #room-video-area { display: none; }
+  /* class-scoped (not #lobby-room #…) so the desktop .lobby-card.room-active rules outrank them without !important */
+  .lobby-step #room-partner-info { display: none; }
+  .lobby-step #room-video-area { display: none; }
   #lobby-room #btn-play-game { width: 100%; }
   #lobby-room #btn-back-room { width: 100%; }
+  #room-code-label { font-size: calc(14 * var(--ls)); letter-spacing: calc(2 * var(--ls)); padding: calc(3 * var(--ls)) calc(8 * var(--ls)); }
 
   /* Mobile room code — body-level element positioned between PiP circles */
   #mobile-room-code {
@@ -4693,7 +4697,7 @@
     }
     .lobby-card.room-active .lobby-layout { display: contents; }
     .lobby-card.room-active .lobby-steps-col { display: contents; }
-    .lobby-card.room-active #lobby-room { display: contents !important; }
+    .lobby-card.room-active #lobby-room { display: contents; }   /* outranks uf-step.lobby-step:not([active]) by id */
     .lobby-card.room-active .lobby-left-col {
       grid-column: 1; grid-row: 1; align-self: center;
       justify-self: end;
@@ -4711,30 +4715,30 @@
       width: 100%;
     }
     .lobby-card.room-active #room-partner-info {
-      display: flex !important;
+      display: flex;
       flex-direction: column;
       align-items: center;
       text-align: center;
       margin-bottom: calc(2 * var(--ls));
     }
     .lobby-card.room-active #room-video-area {
-      display: flex !important;
+      display: flex;
       align-items: flex-start;
       justify-content: center;
       gap: calc(24 * var(--ls));
       padding: calc(2 * var(--ls)) calc(8 * var(--ls));
       width: 100%;
     }
+    /* The seat is taller than the video PiP centred on it, so its role / who
+       lines show in the band under the video. */
     .lobby-card.room-active .room-video-slot {
       width: calc(55 * var(--ls));
-      min-height: calc(70 * var(--ls));
+      min-height: calc(100 * var(--ls));
       display: flex;
       flex-direction: column;
       align-items: center;
-    }
-    .lobby-card.room-active .room-video-slot .pip-label {
-      font-size: calc(10 * var(--ls));
-      margin-top: calc(2 * var(--ls));
+      justify-content: flex-end;
+      padding-bottom: calc(3 * var(--ls));
     }
     .lobby-card.room-active #btn-play-game {
       grid-column: 1 / -1; grid-row: 2;
@@ -5681,7 +5685,7 @@ ON</button>
             <div id="tourist-preview" class="tourist-preview"></div>
             <uf-button variant="accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</uf-button>
           </div>
-          <button class="lobby-back" id="btn-back-tourist">&larr; Back</button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-tourist">&larr; Back</uf-button>
         </uf-step>
 
         <!-- ════════════════════════════════════════════════════
@@ -5696,7 +5700,7 @@ ON</button>
         <uf-step id="lobby-level" class="lobby-step">
           <p class="lobby-prompt" id="level-prompt" style="display:none;">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
-          <button class="lobby-back" id="btn-back-level">&larr; Back</button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-level">&larr; Back</uf-button>
         </uf-step>
 
         <!-- ════════════════════════════════════════════════════
@@ -5711,7 +5715,7 @@ ON</button>
           <!-- VERSUS: local split-screen team racing. Desktop-only (needs
                2-4 physical controllers); lobby.js shows it when !isMobile. -->
           <uf-button variant="versus" id="btn-versus" style="display:none;">VERSUS<br><span class="lobby-role-desc">Race side by side &middot; 2&ndash;4 players</span></uf-button>
-          <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-mode">&larr; Back</uf-button>
         </uf-step>
 
         <!-- ════════════════════════════════════════════════════
@@ -5742,7 +5746,7 @@ ON</button>
             <span class="btn-local-join-hint">Click or press Enter</span>
           </uf-button>
           <uf-button variant="accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</uf-button>
-          <button class="lobby-back" id="btn-back-versus">&larr; Back</button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-versus">&larr; Back</uf-button>
         </uf-step>
 
         <!-- ════════════════════════════════════════════════════
@@ -5783,7 +5787,7 @@ ON</button>
             </uf-button>
           </div>
           <p id="host-local-hint" class="lobby-hint" style="display:none;">Plug in a 2nd controller for local co-op</p>
-          <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-role-host">&larr; Back</uf-button>
         </uf-step>
 
         <!-- ════════════════════════════════════════════════════
@@ -5835,7 +5839,7 @@ ON</button>
           </div>
           <uf-button variant="accent" id="btn-join">JOIN</uf-button>
           <div id="join-status" class="conn-status"></div>
-          <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-role-join">&larr; Back</uf-button>
         </uf-step>
 
         <!-- ════════════════════════════════════════════════════
@@ -5845,29 +5849,24 @@ ON</button>
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-room" class="lobby-step">
-          <!-- Center cell: room code + video slots -->
+          <!-- Room (#173): built from the kit. Room code is a chip; the two
+               video slots are <uf-seat>s — who sits where, and whether they
+               are here — framing the body-level video PiPs that overlay them
+               (iOS constraint: <video> never moves; layout is CSS-only). -->
           <div id="room-center-wrap">
             <div id="room-partner-info">
-              <div id="room-code-label" class="room-code-label"></div>
+              <uf-chip tone="info" id="room-code-label" class="room-code-label"></uf-chip>
               <div id="room-partner-name"></div>
             </div>
-            <!-- Video slot containers
-                 Actual <video> elements live at <body> level (iOS constraint:
-                 appendChild kills video playback). These slots define layout
-                 positions; body-level PiPs overlay them via position:fixed. -->
             <div id="room-video-area">
-              <div id="room-video-slot-captain" class="room-video-slot">
-                <span class="pip-label">CAPTAIN</span>
-              </div>
-              <div id="room-video-slot-stoker" class="room-video-slot">
-                <span class="pip-label">STOKER</span>
-              </div>
+              <uf-seat id="room-video-slot-captain" class="room-video-slot" seat="Captain" tone="captain" who="OPEN" dev="waiting for partner…" state="open"></uf-seat>
+              <uf-seat id="room-video-slot-stoker" class="room-video-slot" seat="Stoker" tone="stoker" who="OPEN" dev="waiting for partner…" state="open"></uf-seat>
             </div>
           </div>
           <!-- Full-span rows below center -->
           <uf-button variant="accent" id="btn-play-game">PLAY GAME</uf-button>
           <p id="room-wait-text-room" class="conn-status" style="display:none;">Waiting for captain...</p>
-          <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-room">&larr; Leave Room</uf-button>
         </uf-step>
 
 
@@ -5973,7 +5972,7 @@ ON</button>
       <p id="level-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
     </div>
     <!-- Fixed back button row (non-gamepad, always at bottom of card) -->
-    <button class="lobby-back" id="lobby-fixed-back" style="visibility:hidden;">&larr; Back</button>
+    <uf-button variant="ghost" size="sm" class="lobby-back" id="lobby-fixed-back" style="visibility:hidden;">&larr; Back</uf-button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>

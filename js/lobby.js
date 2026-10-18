@@ -867,6 +867,36 @@ export class Lobby {
   }
 
   /** Position each PiP over its slot container in the room grid */
+  /**
+   * The room's two <uf-seat>s (#173): which seat is yours, who is in the
+   * other one, and whether they are here. Seats are keyed by role; 'self' /
+   * 'partner' resolve through this._roomRole.
+   * @param {'self'|'partner'} which
+   * @param {{ who?: string, dev?: string, state?: 'open'|'joined'|'ready' }} v
+   */
+  _setRoomSeat(which, v) {
+    const role = this._roomRole || 'captain';
+    const seatRole = which === 'self' ? role : (role === 'captain' ? 'stoker' : 'captain');
+    const el = document.getElementById(`room-video-slot-${seatRole}`);
+    if (!el) return;
+    if (v.who !== undefined) el.setAttribute('who', v.who);
+    if (v.dev !== undefined) el.setAttribute('dev', v.dev);
+    if (v.state !== undefined) el.setAttribute('state', v.state);
+  }
+
+  /** Both room seats from current state: me in my seat, the partner's seat open until they arrive. */
+  _syncRoomSeats(role) {
+    this._roomRole = role;
+    const user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
+    this._setRoomSeat('self', { who: (user && user.name) || 'You', dev: role === 'captain' ? 'front seat' : 'back seat', state: 'joined' });
+    const nameEl = document.getElementById('room-partner-name');
+    const partnerName = nameEl ? nameEl.textContent.trim() : '';
+    const connected = !!(this.net && this.net.connected);
+    this._setRoomSeat('partner', connected
+      ? { who: partnerName || 'Partner', dev: role === 'captain' ? 'back seat' : 'front seat', state: 'joined' }
+      : { who: 'OPEN', dev: 'waiting for partner…', state: 'open' });
+  }
+
   _positionPipToVideoArea() {
     const captainSlot = document.getElementById('room-video-slot-captain');
     const stokerSlot = document.getElementById('room-video-slot-stoker');
@@ -4002,6 +4032,7 @@ export class Lobby {
     const partnerLabel = document.getElementById('partner-pip-label');
     if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
     if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+    this._syncRoomSeats(role);
 
     // Register gamepad nav for room step
     const roomItems = (role === 'captain')
@@ -4043,6 +4074,7 @@ export class Lobby {
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
       document.getElementById('btn-play-game').style.display = 'none';
       document.getElementById('btn-start-ride').style.display = 'none';
+      this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
         if (this.net) { this.net.destroy(); this.net = null; }
         this._removePipLobbyMode();
@@ -4276,6 +4308,7 @@ export class Lobby {
       const partnerNameEl = document.getElementById('room-partner-name');
       if (partnerNameEl && profile && profile.name) {
         partnerNameEl.textContent = profile.name;
+        this._setRoomSeat('partner', { who: profile.name, state: 'joined' });
         // Save partner name for recent rooms display
         if (this.net && this.net.roomCode && this._roomRole) {
           this._roomStore.save(this.net.roomCode, this._roomRole, profile.name);
@@ -5983,6 +6016,7 @@ export class Lobby {
     const partnerLabel = document.getElementById('partner-pip-label');
     if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
     if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+    this._syncRoomSeats(role);
 
     // Register gamepad nav for room step
     const roomItems = (role === 'captain')
@@ -6053,6 +6087,7 @@ export class Lobby {
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
       document.getElementById('btn-play-game').style.display = 'none';
       document.getElementById('btn-start-ride').style.display = 'none';
+      this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
         if (this.net) { this.net.destroy(); this.net = null; }
         this._removePipLobbyMode();
