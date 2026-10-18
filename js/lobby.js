@@ -5501,6 +5501,21 @@ export class Lobby {
     this._showStep(this.versusStep); // starts the monitor
   }
 
+  /**
+   * A joined pad leaves its seat (B): the slot goes back to the pool so the
+   * pad is a CONNECTED candidate again and can rejoin with A. Never the host.
+   */
+  _versusUnseat(p) {
+    if (!p || p.slotId === 'P1' || p.input === this.input) return;
+    this._versusPlayers = this._versusPlayers.filter(x => x !== p);
+    if (p.input) p.input.steamInputHandle = null;
+    if (p.type === 'gamepad' && p.slotId) this.controllerManager?.releaseSlotToPool(p.slotId);
+    this._versusPrevButtons.delete('member:' + p.n);
+    this._versusLastCardsKey = null;
+    console.log(`[versus] P${p.n} left their seat (${p.name})`);
+    analytics.trackEvent('versus_player_left', { source: p.type, players: this._versusPlayers.length });
+  }
+
   /** Leave versus setup: release joined slots (not P1's) and clear state. */
   _leaveVersus() {
     this._stopVersusMonitor();
@@ -5594,11 +5609,18 @@ export class Lobby {
         const gp = p.input.getGamepadState();
         if (!gp || !gp.buttons) continue;
         const key = 'member:' + p.n;
-        const prev = this._versusPrevButtons.get(key) || { a: false, left: false, right: false };
+        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false };
         const left = !!(gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] || 0) < -0.6;
         const right = !!(gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] || 0) > 0.6;
+        // B on a joined pad = leave your seat (back to CONNECTED). Not the host:
+        // P1's B is "back" through the step's FocusController. `b` primes true
+        // so a B held from before the join can't fire on the first frame.
+        const bIdx = p.input._gpSwapAB ? 0 : 1;
+        const b = !!(gp.buttons[bIdx] && gp.buttons[bIdx].pressed);
         if (left && !prev.left) this._versusSwitchTeam(p, 'A');
         if (right && !prev.right) this._versusSwitchTeam(p, 'B');
+        if (b && !prev.b && p.input !== this.input && p.slotId !== 'P1') { prev.b = b; this._versusPrevButtons.set(key, prev); this._versusUnseat(p); continue; }
+        prev.b = b;
         prev.left = left;
         prev.right = right;
         this._versusPrevButtons.set(key, prev);
