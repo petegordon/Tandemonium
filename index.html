@@ -2750,12 +2750,14 @@
   }
 
   /* ── COMPONENT: Lobby Steps & Buttons ── */
+  #lobby-flow { display: contents; }   /* the steps stay direct grid/flex items of .lobby-steps-col */
   .lobby-step {
     display: flex;
     flex-direction: column;
     gap: 12px;
     align-items: center;
   }
+  uf-step.lobby-step:not([active]) { display: none; }   /* uf-flow toggles [active]; nothing else hides a step */
   #btn-start-ride, #btn-play-game {
     padding: 6px 12px;
     font-size: 13px;
@@ -5639,6 +5641,9 @@ ON</button>
 
       <!-- Center: all lobby steps -->
       <div class="lobby-steps-col">
+        <!-- One owner of "which step is showing" (@usersfirst/ui uf-flow): lobby.js
+             asks flow.go(id) and runs each step's side effects from uf-flow:change. -->
+        <uf-flow id="lobby-flow" current="lobby-mode">
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Mode Selection (#lobby-mode)
@@ -5646,7 +5651,7 @@ ON</button>
              Gamepad nav: _modeColumns[1] (center column)
              Back: none (root step)
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-mode" class="lobby-step">
+        <uf-step id="lobby-mode" class="lobby-step">
           <div class="lobby-mode-buttons">
             <uf-button variant="accent" id="btn-together">RIDE TOGETHER</uf-button>
             <uf-button id="btn-solo">SOLO RIDE</uf-button>
@@ -5655,14 +5660,14 @@ ON</button>
             <!-- E-6 · Tourist ("ride the distance between you") is a card in
                  the SOLO level list (#400), shown only with a Maps key. -->
           </div>
-        </div>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Tourist route (#lobby-tourist)  — E-6
              Two addresses become a ride over real photogrammetry.
              Back: #lobby-level (opened from the SOLO list's Tourist card)
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-tourist" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-tourist" class="lobby-step">
           <p class="lobby-prompt">Where are you two?</p>
           <div id="tourist-form">
             <input id="tourist-from" class="tourist-input" type="text"
@@ -5679,7 +5684,7 @@ ON</button>
             <uf-button variant="accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</uf-button>
           </div>
           <button class="lobby-back" id="btn-back-tourist">&larr; Back</button>
-        </div>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Level Selection (#lobby-level)
@@ -5690,18 +5695,18 @@ ON</button>
              Gamepad nav: level cards → tutorial → difficulty → [START RIDE] → back
              Back: #lobby-mode (solo) or #lobby-room (multiplayer)
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-level" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-level" class="lobby-step">
           <p class="lobby-prompt" id="level-prompt" style="display:none;">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
           <button class="lobby-back" id="btn-back-level">&larr; Back</button>
-        </div>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Role Selection (#lobby-role)
              Multiplayer — Captain (start a ride) or Stoker (join).
              Back: #lobby-mode
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-role" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-role" class="lobby-step">
           <p class="lobby-prompt">Choose your seat:</p>
           <uf-button variant="accent" id="btn-captain">START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span></uf-button>
           <uf-button id="btn-stoker">JOIN A RIDE<br><span class="lobby-role-desc">Stoker &middot; Back seat</span></uf-button>
@@ -5709,7 +5714,7 @@ ON</button>
                2-4 physical controllers); lobby.js shows it when !isMobile. -->
           <uf-button variant="versus" id="btn-versus" style="display:none;">VERSUS<br><span class="lobby-role-desc">Race side by side &middot; 2&ndash;4 players</span></uf-button>
           <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
-        </div>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Versus Team Setup (#lobby-versus)
@@ -5720,7 +5725,7 @@ ON</button>
              with _pendingMode='versus'.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-versus" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-versus" class="lobby-step">
           <p class="lobby-prompt">Build your teams:</p>
           <div class="versus-teams">
             <div class="versus-team versus-team-a">
@@ -5740,14 +5745,14 @@ ON</button>
           </uf-button>
           <uf-button variant="accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</uf-button>
           <button class="lobby-back" id="btn-back-versus">&larr; Back</button>
-        </div>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Captain Waiting Room (#lobby-host)
              Displays room code + QR + URL for stoker to join.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-host" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-host" class="lobby-step">
           <p class="lobby-prompt">Your room code:</p>
           <div id="room-code-display" class="room-code">----</div>
           <div id="room-qr"></div>
@@ -5781,7 +5786,7 @@ ON</button>
           </div>
           <p id="host-local-hint" class="lobby-hint" style="display:none;">Plug in a 2nd controller for local co-op</p>
           <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
-        </div>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Stoker Join Room (#lobby-join)
@@ -5789,7 +5794,7 @@ ON</button>
              Toggle columns hidden on this step.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-join" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-join" class="lobby-step">
           <p class="lobby-prompt">Enter room code:</p>
           <div class="room-code-join-wrap">
             <span class="room-code-prefix-vert"><span>T</span><span>N</span><span>D</span><span>M</span></span>
@@ -5833,7 +5838,7 @@ ON</button>
           <uf-button variant="accent" id="btn-join">JOIN</uf-button>
           <div id="join-status" class="conn-status"></div>
           <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
-        </div>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Multiplayer Room (#lobby-room)
@@ -5841,7 +5846,7 @@ ON</button>
              Captain sees PLAY GAME, stoker sees "Waiting..."
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-room" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-room" class="lobby-step">
           <!-- Center cell: room code + video slots -->
           <div id="room-center-wrap">
             <div id="room-partner-info">
@@ -5865,9 +5870,10 @@ ON</button>
           <uf-button variant="accent" id="btn-play-game">PLAY GAME</uf-button>
           <p id="room-wait-text-room" class="conn-status" style="display:none;">Waiting for captain...</p>
           <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
-        </div>
+        </uf-step>
 
 
+        </uf-flow>
       </div>
 
       <!-- ── COMPONENT: Right Toggle Column ──

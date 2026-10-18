@@ -39,6 +39,8 @@ export class UfFlow extends UfElement {
   /** @type {string[]} */ #history = [];
   #wired = false;
   #applying = false;
+  /** the id whose step currently carries [active]; '' before the first apply */
+  #applied = '';
 
   /** @returns {string} */ get current() { return this.get('current'); }
   /** @param {string} v */ set current(v) { this.set('current', v); }
@@ -46,8 +48,8 @@ export class UfFlow extends UfElement {
   /** The flow's step elements, in document order. */
   steps() { return /** @type {HTMLElement[]} */ (Array.from(this.querySelectorAll(':scope > uf-step'))); }
 
-  /** @param {string} id */
-  step(id) { return this.steps().find((s) => s.id === id) || null; }
+  /** @param {string} id @returns {import('./uf-step.js').UfStep | null} */
+  step(id) { return /** @type {import('./uf-step.js').UfStep | null} */ (this.steps().find((s) => s.id === id) || null); }
 
   /** @returns {readonly string[]} ids visited before the current one */
   get history() { return this.#history; }
@@ -60,7 +62,7 @@ export class UfFlow extends UfElement {
   go(id, opts = {}) {
     const to = this.step(id);
     if (!to) { console.warn(`[uf-flow] no step "${id}"`); return false; }
-    const from = this.current;
+    const from = this.#applied;
     if (from === id) return true;
     if (from && opts.push !== false) this.#history.push(from);
     this.#apply(id);
@@ -72,7 +74,7 @@ export class UfFlow extends UfElement {
   back() {
     const prev = this.#history.pop();
     if (!prev) return false;
-    const from = this.current;
+    const from = this.#applied;
     this.#apply(prev);
     this.emit('uf-flow:change', { from, to: prev, back: true });
     return true;
@@ -81,11 +83,42 @@ export class UfFlow extends UfElement {
   /** Forget the history (e.g. after a hand-off to the game). */
   reset() { this.#history = []; }
 
+  /** @type {import('../focus-controller.js').FocusController | null} */ #focus = null;
+
+  /**
+   * Bind a FocusController: on every step change the active step's
+   * focusables() become the controller's spatial scope, and B (back) walks the
+   * flow's history unless the controller has its own onBack. Call poll() on
+   * the controller from your frame loop as usual. Pass null to detach.
+   * @param {import('../focus-controller.js').FocusController | null} controller
+   */
+  attachFocus(controller) {
+    this.#focus = controller;
+    if (controller) this.#syncFocus();
+    return this;
+  }
+
+  /** Rebuild the focus scope for the current step (after its focusables changed). */
+  refreshFocus() {
+    const step = this.step(this.current);
+    if (this.#focus && step) this.#focus.refreshSpatial(step.focusables());
+  }
+
+  #syncFocus() {
+    const step = this.step(this.current);
+    if (!this.#focus || !step) return;
+    // Layout settles after the step shows (display toggles): take the scope on the next frame.
+    const take = () => { const s = this.step(this.current); if (this.#focus && s === step) this.#focus.setSpatial(step.focusables()); };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(take); else take();
+  }
+
   /** @param {string} id */
   #apply(id) {
     for (const s of this.steps()) s.toggleAttribute('active', s.id === id);
+    this.#applied = id;
     this.#applying = true;
     try { this.current = id; } finally { this.#applying = false; }
+    this.#syncFocus();
   }
 
   /** @override */
@@ -107,9 +140,22 @@ export class UfFlow extends UfElement {
     });
   }
 
-  /** `current` set from outside (attribute or property) navigates without stacking. @override @param {Set<string>} changed */
+  /**
+   * `current` set from outside (attribute or property) navigates without
+   * stacking. By the time this runs the prop already holds the new id, so the
+   * step is applied directly against the last APPLIED id (not via go(), which
+   * would see from === to and do nothing).
+   * @override @param {Set<string>} changed
+   */
   update(changed) {
-    if (changed.has('current') && !this.#applying && this.current) this.go(this.current, { push: false });
+    if (changed.has('current') && !this.#applying) {
+      const to = this.current, from = this.#applied;
+      if (to && to !== from) {
+        if (!this.step(to)) { console.warn(`[uf-flow] no step "${to}"`); return true; }
+        this.#apply(to);
+        this.emit('uf-flow:change', { from, to, back: false });
+      }
+    }
     return true;
   }
 }

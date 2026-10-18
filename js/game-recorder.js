@@ -5,7 +5,7 @@
 // iOS Safari: canvas.captureStream() produces blank video (WebKit bugs 229611, 181663).
 // Detect iOS and use WebCodecs VideoEncoder + mp4-muxer instead.
 import * as analytics from './analytics.js';
-import { FocusController } from './nav/focus-controller.js';
+import { FocusController } from '../shared/ui/focus-controller.js';
 import { isMediaEnabled } from './edition.js';
 
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
