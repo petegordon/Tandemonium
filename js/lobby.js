@@ -58,7 +58,7 @@ import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achieve
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
-import { FocusController } from './nav/focus-controller.js';
+import { FocusController } from '../shared/ui/focus-controller.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
@@ -260,6 +260,15 @@ export class Lobby {
 
     // Gamepad navigation state
     this._currentStep = null;
+    // <uf-flow id="lobby-flow"> owns which step is visible. _showStep() asks it
+    // to navigate; the change event runs that step's side effects
+    // (_onStepShown) — so a step shown by any route gets the same treatment.
+    /** @type {import('../shared/ui/elements/uf-flow.js').UfFlow} */
+    this._flow = /** @type {any} */ (document.getElementById('lobby-flow'));
+    this._flow.addEventListener('uf-flow:change', (e) => {
+      const d = /** @type {CustomEvent} */ (e).detail;
+      this._onStepShown(document.getElementById(d.to), d.from ? document.getElementById(d.from) : null);
+    });
     this._pollRafId = null;
     // Step navigation (mode/level/role/host/join/room) now uses the shared
     // nav-core FocusController in spatial mode (#318): directions move to the
@@ -696,7 +705,18 @@ export class Lobby {
    * card header update, and initial gamepad focus.
    * @param {HTMLElement} step — the step div to show (e.g. this.levelStep)
    */
+  /**
+   * Show a lobby step. The flow does the showing; _onStepShown (via the
+   * flow's change event) does everything else. Re-showing the current step
+   * re-runs its side effects, as it always did (cards rebuilt, then shown).
+   */
   _showStep(step) {
+    if (!step) return;
+    if (this._flow.current === step.id) { this._onStepShown(step, step); return; }
+    this._flow.go(step.id, { push: false });   // lobby back buttons own "back"; no flow history
+  }
+
+  _onStepShown(step, prevStep) {
     // Restore toggle columns and clean up spinners if leaving join step
     if (this._currentStep === this.joinStep && step !== this.joinStep) {
       this._lastFailedCode = null;
@@ -709,13 +729,7 @@ export class Lobby {
       const backHint = document.getElementById('gamepad-back-hint');
       if (backHint) { backHint.style.display = ''; backHint.style.visibility = ''; }
     }
-    [this.modeStep, this.levelStep, this.roleStep, this.hostStep, this.joinStep, this.roomStep,
-     this.versusStep, this.touristStep]
-      .filter(Boolean)
-      .forEach(s => s.style.display = 'none');
-    step.style.display = 'flex';
     this._clearFocusHighlight();
-    const prevStep = this._currentStep;
     this._currentStep = step;
 
     // B-3: cards are built once at boot, but bests change every ride — refresh

@@ -45,7 +45,9 @@
     "smoke:achievements": "node scripts/smoke-achievements.mjs",
     "smoke:helping-hand": "node scripts/smoke-helping-hand.mjs",
     "sync-ui": "node scripts/sync-ui.js",
-    "check:ui": "node scripts/check-ui.js"
+    "check:ui": "node scripts/check-ui.js",
+    "docs:screen-flow": "node scripts/gen-screen-flow.mjs",
+    "typecheck": "tsc -p jsconfig.json"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",

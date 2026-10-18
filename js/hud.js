@@ -1,3 +1,4 @@
+// @ts-check
 // ============================================================
 // HUD — on-screen display
 // ============================================================
@@ -22,6 +23,8 @@ export class HUD {
     this.statusEl = document.getElementById('status');
     this.crashOverlay = document.getElementById('crash-overlay');
     this.crashFlash = 0;
+    // Set by js/slingshot-mode.js: no pedal prompts, and a crash ends the run.
+    this.suppressRidePrompts = false;
 
     // Partner pedal indicators. The YOU / BIKE / PARTNER lean gauges that used
     // to sit beside them were removed from the HUD entirely — see index.html.
@@ -557,7 +560,7 @@ export class HUD {
       this.countdownOverlay.classList.add('visible');
       if (secs !== this._lastCountdownSec) {
         this._lastCountdownSec = secs;
-        this.countdownNumber.textContent = secs;
+        this.countdownNumber.textContent = String(secs);
         this.countdownNumber.className = 'tick-' + secs;
         // Re-trigger animation
         this.countdownNumber.style.animation = 'none';
@@ -628,7 +631,7 @@ export class HUD {
     // Speed number + color coding (skip DOM write when unchanged)
     if (kmh !== this._prevKmh) {
       this._prevKmh = kmh;
-      this.speedValueEl.textContent = kmh;
+      this.speedValueEl.textContent = String(kmh);
       const pct = Math.min(100, (kmh / maxKmh) * 100);
       this.speedBarFill.style.width = pct + '%';
     }
@@ -783,6 +786,8 @@ export class HUD {
       this.crashFlash -= dt * 1.0;
       if (this.crashFlash <= 0) {
         this.crashFlash = 0;
+    // Set by js/slingshot-mode.js: no pedal prompts, and a crash ends the run.
+    this.suppressRidePrompts = false;
         this._setCrashVignette(0);
       } else {
         this._setCrashVignette(this.crashFlash);

@@ -1,3 +1,4 @@
+// @ts-check
 // ============================================================
 // SLINGSHOT UI — garage, results, in-ride strip and pull meter
 // ============================================================
@@ -231,7 +232,7 @@ let _hudText = '';
 /** A Chaos Coin was grabbed: bump the counter and float the payout up from it. */
 export function coinPop(amount) {
   const c = document.querySelector('#sling-hud .sling-coins');
-  if (c) { c.classList.remove('pop'); void c.offsetWidth; c.classList.add('pop'); }
+  if (c) { c.classList.remove('pop'); void /** @type {HTMLElement} */ (c).offsetWidth; c.classList.add('pop'); }
   const f = document.createElement('div');
   f.className = 'sling-coin-float';
   f.textContent = `+${amount} ${COIN}`;
@@ -316,7 +317,7 @@ let _tally = null;
  * Coins they pay. `onTick(kind)` fires as the numbers roll ('m' / 'coin') for
  * sound; `onDone` fires once, after ~2.5 s or on a tap/click/key.
  */
-export function showTally({ distance, coins, label = '' }, { onTick = () => {}, onDone = () => {} } = {}) {
+export function showTally({ distance, coins, label = '' }, { onTick = (/** @type {string} */ _kind) => {}, onDone = () => {} } = {}) {
   hideTally();
   const root = $('sling-tally');
   root.innerHTML =
