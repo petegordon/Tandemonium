@@ -41,7 +41,7 @@ jobs:
       # or a stale sync fails the PR instead of drifting silently.
       - name: UI kit drift check (shared/ui vs the lab at its pinned commit)
         run: |
-          ref=$(node -p "require(./shared/ui/UI_VERSION.json).sourceCommit")
+          ref=$(node -e 'process.stdout.write(require("./shared/ui/UI_VERSION.json").sourceCommit)')
           git clone --quiet --filter=blob:none --no-checkout https://github.com/UsersFirst/tandemonium-controller-lab.git ../tandemonium-controller-lab
           git -C ../tandemonium-controller-lab sparse-checkout set packages/ui
           git -C ../tandemonium-controller-lab checkout --quiet "$ref"
