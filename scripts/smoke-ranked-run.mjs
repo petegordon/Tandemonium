@@ -30,7 +30,7 @@ async function open(query='') {
 async function pickDaily(page) {
   await page.evaluate(() => {
     document.getElementById('tap-to-start')?.click();
-    (document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button')).find(x=>/solo/i.test(x.textContent)))?.click();
+    (document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent)))?.click();
   });
   await new Promise(r=>setTimeout(r,600));
   await page.evaluate(() => document.querySelector('.level-card[data-level-id="daily"]')?.click());

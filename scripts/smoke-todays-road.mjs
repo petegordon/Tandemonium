@@ -58,7 +58,7 @@ console.log('player 2:', b.key, b.seed, JSON.stringify(b.road[1]));
 const card = await p1.evaluate(() => {
   const l = window._game.lobby;
   document.getElementById('tap-to-start')?.click();
-  (document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button')).find(x=>/solo/i.test(x.textContent)))?.click();
+  (document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent)))?.click();
   const c = document.querySelector('.level-card[data-level-id="daily"]');
   if (!c) return { present: false };
   const text = c.textContent.replace(/\s+/g,' ').trim();

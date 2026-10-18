@@ -45,11 +45,11 @@ stamp('clicked the veil');
 // 2. solo ride
 await page.waitForSelector('#btn-solo, [id*="solo" i]', { timeout: 10000 });
 const soloSel = await page.evaluate(() => {
-  const b = document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button')).find(x=>/solo/i.test(x.textContent));
+  const b = document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent));
   return b ? (b.id ? '#'+b.id : null) : null;
 });
 await page.evaluate(() => {
-  const b = document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button')).find(x=>/solo/i.test(x.textContent));
+  const b = document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent));
   b && b.click();
 });
 stamp('clicked SOLO RIDE', { selector: soloSel });
@@ -57,19 +57,19 @@ stamp('clicked SOLO RIDE', { selector: soloSel });
 await new Promise(r=>setTimeout(r,900));
 const afterSolo = await page.evaluate(() => ({
   state: window._game?.state,
-  visibleButtons: Array.from(document.querySelectorAll('button')).filter(b=>b.offsetParent!==null).map(b=>(b.textContent||'').replace(/\s+/g,' ').trim()).filter(t=>t&&t.length<40).slice(0,12)
+  visibleButtons: Array.from(document.querySelectorAll('button, uf-button')).filter(b=>b.offsetParent!==null).map(b=>(b.textContent||'').replace(/\s+/g,' ').trim()).filter(t=>t&&t.length<40).slice(0,12)
 }));
 stamp('after SOLO RIDE', afterSolo);
 
 // 3. pick a level, then press START RIDE
 await page.evaluate(() => {
-  const cards = Array.from(document.querySelectorAll('button, .level-card, [class*="level"]'))
+  const cards = Array.from(document.querySelectorAll('button, uf-button, .level-card, [class*="level"]'))
     .filter(el => el.offsetParent !== null && /grandma/i.test(el.textContent || ''));
   (cards[0] || document.querySelector('.level-card'))?.click();
 });
 await new Promise(r=>setTimeout(r,500));
 await page.evaluate(() => {
-  const b = Array.from(document.querySelectorAll('button')).find(x => /start ride/i.test(x.textContent||''));
+  const b = Array.from(document.querySelectorAll('button, uf-button')).find(x => /start ride/i.test(x.textContent||''));
   b && b.click();
 });
 await new Promise(r=>setTimeout(r,800));

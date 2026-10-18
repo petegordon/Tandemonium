@@ -34,7 +34,7 @@ const seeded = await page.evaluate(async () => {
 console.log('seeded:', JSON.stringify(seeded.best));
 
 await page.click('#tap-to-start').catch(()=>{});
-await page.evaluate(()=>{const b=document.getElementById('btn-solo')||Array.from(document.querySelectorAll('button')).find(x=>/solo/i.test(x.textContent)); b&&b.click();});
+await page.evaluate(()=>{const b=document.getElementById('btn-solo')||Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent)); b&&b.click();});
 await new Promise(r=>setTimeout(r,800));
 const cards = await page.evaluate(()=>Array.from(document.querySelectorAll('.level-card')).map(c=>({
   level: c.dataset.levelId, record: c.querySelector('.level-card-record')?.textContent })));

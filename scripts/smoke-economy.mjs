@@ -74,7 +74,7 @@ await page.evaluate(() => {
   const d = Array.from(document.querySelectorAll('.difficulty-btn')).find(x => x.dataset.difficulty === 'chill'); d && d.click();
 });
 await new Promise(r => setTimeout(r, 300));
-await clickText('button', /start ride/);
+await clickText('button, uf-button', /start ride/);
 await page.waitForFunction(() => window._game?.state === 'playing', { timeout: 120000 });
 
 // 3. Crash out at 140 m: the game-over screen pays the distance.
@@ -112,8 +112,8 @@ await shot('2-victory-coins');
 await page.evaluate(() => document.getElementById('btn-victory-garage').click());
 await waitState('slingGarage', 20000);
 const g1 = await page.evaluate(() => ({
-  launch: Array.from(document.querySelectorAll('#sling-garage button')).some(b => /^LAUNCH!$/.test(b.textContent.trim())),
-  back: Array.from(document.querySelectorAll('#sling-garage button')).some(b => /BACK/.test(b.textContent)),
+  launch: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /^LAUNCH!$/.test(b.textContent.trim())),
+  back: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /BACK/.test(b.textContent)),
   gain: document.querySelector('#sling-garage .sling-up[data-up="sling"] .gain')?.textContent,
   ups: Array.from(document.querySelectorAll('#sling-garage .sling-up')).map(b => b.dataset.up).join(','),
 }));
@@ -127,14 +127,14 @@ check(w3.coins === before - 40 && w3.lv.sling === 1, `buying debits the shared w
 await shot('3-garage');
 
 // 6. BACK → the lobby shows the new balance; the lobby's GARAGE opens the same garage.
-await clickText('#sling-garage button', /BACK/);
+await clickText('#sling-garage button, #sling-garage uf-button', /BACK/);
 await waitState('lobby', 20000);
 const chip = await page.evaluate(() => document.getElementById('lobby-wallet').textContent);
 check(chip.includes(String(w3.coins)), `the lobby shows the wallet after spending ("${chip}")`);
 await page.evaluate(() => document.getElementById('btn-garage').click());
 await waitState('slingGarage', 20000);
 check(await page.evaluate(() => document.getElementById('sling-garage').classList.contains('visible')), 'the lobby GARAGE button opens the garage');
-await clickText('#sling-garage button', /BACK/);
+await clickText('#sling-garage button, #sling-garage uf-button', /BACK/);
 await waitState('lobby', 20000);
 
 // 7. A stage gate (D11a): stage 6 needs a finished Today's Road; its button goes there.
@@ -143,10 +143,10 @@ await page.evaluate(() => window._game._openSlingGarage());
 await waitState('slingGarage', 20000);
 const lock = await page.evaluate(() => ({
   text: document.querySelector('#sling-garage .sling-lock')?.textContent || '',
-  launch: Array.from(document.querySelectorAll('#sling-garage button')).some(b => /^LAUNCH!$/.test(b.textContent.trim())),
+  launch: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /^LAUNCH!$/.test(b.textContent.trim())),
 }));
 check(/Today's Road/.test(lock.text) && !lock.launch, `a locked stage says why and offers no launch ("${lock.text}")`);
-await clickText('#sling-garage button', /RIDE TODAY'S ROAD/);
+await clickText('#sling-garage button, #sling-garage uf-button', /RIDE TODAY'S ROAD/);
 await new Promise(r => setTimeout(r, 800));
 const went = await page.evaluate(() => ({ state: window._game.state, level: window._game.lobby.selectedLevel?.id,
   step: document.getElementById('lobby-level').style.display }));
@@ -156,7 +156,7 @@ check(went.state === 'lobby' && went.level === 'daily' && went.step !== 'none', 
 await setLS('tandemonium_slingshot', { v: 3, best: 300, runs: 2, stage: 2, daily: null });
 await page.evaluate(() => window._game._openSlingGarage());
 await waitState('slingGarage', 20000);
-await clickText('#sling-garage button', /TODAY'S LAUNCH/);
+await clickText('#sling-garage button, #sling-garage uf-button', /TODAY'S LAUNCH/);
 await waitState('slingAim', 60000);
 const tl = await page.evaluate(() => ({ name: window._game.lobby.selectedLevel.name, daily: !!window._game._slingDaily,
   hud: document.querySelector('#sling-hud .sling-togo')?.textContent || '' }));
@@ -170,20 +170,20 @@ const tlSave = await slingSave();
 const tlW = await wallet();
 check(tlSave.daily && tlSave.daily.runs === 1 && tlSave.daily.best >= 200 && tlSave.stage === 2 && tlW.coins > tlBefore,
   `Today's Launch pays (+${tlW.coins - tlBefore}) and keeps the day's best (${tlSave.daily && tlSave.daily.best} m), stage untouched`);
-await clickText('#sling-results button', /LOBBY/);
+await clickText('#sling-results button, #sling-results uf-button', /LOBBY/);
 await waitState('lobby', 20000);
 
 // 9. Prestige (D11c): everything maxed → REBUILD (two presses) → levels 0, +10% for good.
 await setLS('tandemonium_wallet', { v: 1, coins: 5000, earned: 30000, lv: { sling: 10, wheels: 10, magnet: 8 }, rebuilds: 0 });
 await page.evaluate(() => window._game._openSlingGarage(0, { standalone: true }));
 await waitState('slingGarage', 20000);
-await clickText('#sling-garage button', /REBUILD/);
-await clickText('#sling-garage button', /PRESS AGAIN/);
+await clickText('#sling-garage button, #sling-garage uf-button', /REBUILD/);
+await clickText('#sling-garage button, #sling-garage uf-button', /PRESS AGAIN/);
 const pw = await wallet();
 const badge = await page.evaluate(() => document.querySelector('#sling-garage .sling-rebuilds')?.textContent || '');
 check(pw.rebuilds === 1 && Object.keys(pw.lv).length === 0 && pw.coins === 5000 && /×1/.test(badge),
   `rebuilding the bike resets upgrades, keeps coins, shows the badge ("${badge}")`);
-await clickText('#sling-garage button', /BACK/);
+await clickText('#sling-garage button, #sling-garage uf-button', /BACK/);
 await waitState('lobby', 20000);
 
 // 10. The demo: the stage after the edition's cap is the demo's end, with WISHLIST; no Today's Launch.
@@ -194,8 +194,8 @@ await page.evaluate(() => window._game._openSlingGarage());
 await waitState('slingGarage', 20000);
 const demo = await page.evaluate(() => ({
   lock: document.querySelector('#sling-garage .sling-lock')?.textContent || '',
-  wish: Array.from(document.querySelectorAll('#sling-garage button')).some(b => /WISHLIST/.test(b.textContent)),
-  today: Array.from(document.querySelectorAll('#sling-garage button')).some(b => /TODAY'S LAUNCH/.test(b.textContent)),
+  wish: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /WISHLIST/.test(b.textContent)),
+  today: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /TODAY'S LAUNCH/.test(b.textContent)),
 }));
 check(/demo/i.test(demo.lock) && demo.wish && !demo.today, `the demo stops at its cap with WISHLIST, no Today's Launch ("${demo.lock}")`);
 await shot('4-demo-end');
@@ -206,11 +206,11 @@ await setLS('tandemonium_wallet', { v: 1, coins: 50, earned: 900, lv: { sling: 1
 await page.evaluate(() => window._game._openSlingGarage());
 await waitState('slingGarage', 20000);
 const demoGarage = await page.evaluate(() => ({
-  replay: Array.from(document.querySelectorAll('#sling-garage button')).some(b => /REPLAY STAGE 3/.test(b.textContent)),
+  replay: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /REPLAY STAGE 3/.test(b.textContent)),
   rebuild: !!document.querySelector('#sling-garage .sling-rebuild'),
 }));
 check(demoGarage.replay && !demoGarage.rebuild, `the demo's end offers REPLAY STAGE 3 and no Rebuild (${JSON.stringify(demoGarage)})`);
-await clickText('#sling-garage button', /REPLAY STAGE 3/);
+await clickText('#sling-garage button, #sling-garage uf-button', /REPLAY STAGE 3/);
 await waitState('slingAim', 20000);
 const replayRun = await page.evaluate(() => ({ name: window._game.lobby.selectedLevel.name, stage: window._game._slingSave.stage }));
 check(/Stage 3/.test(replayRun.name) && replayRun.stage === 4, `the replay launches stage 3 and the save stays on 4 (${JSON.stringify(replayRun)})`);

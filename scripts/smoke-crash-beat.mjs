@@ -23,17 +23,17 @@ await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium
 await page.goto(`http://127.0.0.1:${PORT}/index.html`,{waitUntil:'domcontentloaded'});
 await page.waitForFunction(()=>!!window._game,{timeout:30000});
 await page.click('#tap-to-start').catch(()=>{});
-await page.evaluate(()=>{const b=document.getElementById('btn-solo')||Array.from(document.querySelectorAll('button')).find(x=>/solo/i.test(x.textContent)); b&&b.click();});
+await page.evaluate(()=>{const b=document.getElementById('btn-solo')||Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent)); b&&b.click();});
 await new Promise(r=>setTimeout(r,600));
 // pick Grandma's + Adventurous (so crashes are possible), then start
 await page.evaluate(()=>{
-  const lvl=Array.from(document.querySelectorAll('button,.level-card,[class*="level"]')).filter(e=>e.offsetParent&&/grandma/i.test(e.textContent||''));
+  const lvl=Array.from(document.querySelectorAll('button,uf-button,.level-card,[class*="level"]')).filter(e=>e.offsetParent&&/grandma/i.test(e.textContent||''));
   lvl[0]&&lvl[0].click();
-  const diff=Array.from(document.querySelectorAll('button,[class*="diff"]')).filter(e=>e.offsetParent&&/adventurous/i.test(e.textContent||''));
+  const diff=Array.from(document.querySelectorAll('button,uf-button,[class*="diff"]')).filter(e=>e.offsetParent&&/adventurous/i.test(e.textContent||''));
   diff[0]&&diff[0].click();
 });
 await new Promise(r=>setTimeout(r,400));
-await page.evaluate(()=>{const b=Array.from(document.querySelectorAll('button')).find(x=>/start ride/i.test(x.textContent||'')); b&&b.click();});
+await page.evaluate(()=>{const b=Array.from(document.querySelectorAll('button, uf-button')).find(x=>/start ride/i.test(x.textContent||'')); b&&b.click();});
 await page.waitForFunction(()=>window._game?.state==='playing',{timeout:120000});
 console.log('riding; safety =', await page.evaluate(()=>window._game.safetyMode));
 

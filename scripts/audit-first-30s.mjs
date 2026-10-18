@@ -86,7 +86,7 @@ for (const prof of PROFILES) {
 
   const screen = await page.evaluate(() => {
     const visible = (el) => el && el.offsetParent !== null;
-    const buttons = Array.from(document.querySelectorAll('button, .lobby-btn, [role="button"]'))
+    const buttons = Array.from(document.querySelectorAll('button, uf-button, [role="button"]'))
       .filter(visible)
       .map(b => (b.textContent || '').replace(/\s+/g, ' ').trim())
       .filter(t => t.length > 0 && t.length < 40);

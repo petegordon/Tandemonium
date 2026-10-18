@@ -2325,7 +2325,7 @@ export class Lobby {
   _updateRoleButtons() {
     const btnCaptain = document.getElementById('btn-captain');
     btnCaptain.classList.remove('role-locked');
-    btnCaptain.classList.add('lobby-btn-accent');
+    btnCaptain.variant = 'accent';
     btnCaptain.innerHTML = 'START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span>';
   }
 

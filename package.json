@@ -43,7 +43,9 @@
     "smoke:edition": "node scripts/smoke-edition.mjs",
     "smoke:economy": "node scripts/smoke-economy.mjs",
     "smoke:achievements": "node scripts/smoke-achievements.mjs",
-    "smoke:helping-hand": "node scripts/smoke-helping-hand.mjs"
+    "smoke:helping-hand": "node scripts/smoke-helping-hand.mjs",
+    "sync-ui": "node scripts/sync-ui.js",
+    "check:ui": "node scripts/check-ui.js"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",
