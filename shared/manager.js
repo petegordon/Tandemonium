@@ -542,6 +542,24 @@ export class ControllerManager {
     this.slots = slotIds.map((id) => new Slot(id, this.opts));
     this._slotById = Object.fromEntries(this.slots.map((s) => [s.id, s]));
     this._hidPool = new Map(); // HIDDevice -> HidEntry
+    /**
+     * While true, ingestFrame makes NO automatic decisions about who owns
+     * what: no activity-claim of an unclaimed pad or pooled HID entry into an
+     * empty slot, and no binding of a pooled HID entry (or an unowned Gamepad
+     * pad) to an already-claimed slot by vid:pid. Explicit calls
+     * (claimPadForSlot, claimHidDeviceForSlot, claimFirstAvailable,
+     * connectHidForSlot, releaseSlotToPool) still work, and a slot keeps the
+     * pad it already has (sticky reconnect by stable id is unaffected).
+     *
+     * A seat-select screen sets this so IT is the only claimer: with two
+     * identical pads (two DualSenses; two Steam Controllers on one Puck) the
+     * vid:pid bind would otherwise pull the second pad's stream into the
+     * first player's slot — the second pad then drives the host's menus.
+     * Tandemonium's versus step has set this flag since it was written; the
+     * manager now actually reads it.
+     * @type {boolean}
+     */
+    this.autoClaimSuspended = false;
     this._recentlyReleasedByIndex = new Map();
     this._recentlyReleasedBySlot = new Map();
     // Prev-frame axes per gamepad index — lets ingestFrame's claim path
@@ -1122,7 +1140,8 @@ export class ControllerManager {
       // (a) sticky reconnect: the SAME pad returning (matched by stable id).
       // (b) WebHID-claimed slot: adopt its device's own Gamepad pad (vid:pid)
       //     so one physical controller isn't split into a second phantom seat.
-      const gp = this._findReturningPadForSlot(s, pads) || (s._hidEntry ? this._findUnownedPadForHidSlot(s, pads) : null);
+      const gp = this._findReturningPadForSlot(s, pads)
+        || (s._hidEntry && !this.autoClaimSuspended ? this._findUnownedPadForHidSlot(s, pads) : null);
       if (gp) {
         s.gamepadIndex = gp.index;
         console.log(`[manager] ${s.id}: adopted Gamepad pad (buttons restored / deduped)`);
@@ -1136,6 +1155,7 @@ export class ControllerManager {
       this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex)
     );
     for (const gp of pads) {
+      if (this.autoClaimSuspended) break;   // the host is the only claimer right now
       if (!gp) continue;
       if (claimedIndices.has(gp.index)) continue;
       if (!this._padAllowed(gp)) continue;
@@ -1176,7 +1196,7 @@ export class ControllerManager {
     // needing input. Genuinely ambiguous same-vid:pid pairs correlate by live
     // input inside _pickPoolEntryForSlot, and defer until a button is pressed.
     for (const slot of this.slots) {
-      if (slot.state !== 'claimed' || slot._hidEntry) continue;
+      if (slot.state !== 'claimed' || slot._hidEntry || this.autoClaimSuspended) continue;
       const entry = this._pickPoolEntryForSlot(slot, pads);
       if (entry) this._attachEntryToSlot(slot, entry);
     }
@@ -1185,6 +1205,7 @@ export class ControllerManager {
     // iterate the HID pool, not slots. Any pool entry showing activity
     // promotes into an empty slot.
     for (const entry of this._hidPool.values()) {
+      if (this.autoClaimSuspended) break;   // the host is the only claimer right now
       // Require *fresh* input to claim via the HID pool — a button press that
       // wasn't stuck from the first report, OR a stick nudge past its baseline.
       // (Stuck buttons from a mis-parsed foreign layout, and drifted axes, are
