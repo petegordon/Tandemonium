@@ -5747,6 +5747,13 @@ ON</button>
             <span class="btn-local-join-main">JOIN WITH KEYBOARD</span>
             <span class="btn-local-join-hint">Click or press Enter</span>
           </uf-button>
+          <!-- The pairing path versus lacked: a Steam Controller (HID-only) or a
+               second DualSense over Bluetooth never reaches the Gamepad API, so
+               it could not join until WebHID had been granted for it from a
+               click. Same path as the host step's CONNECT A CONTROLLER; the
+               device is pooled and the join monitor seats it on its first A. -->
+          <uf-button size="sm" id="btn-versus-connect-hid" title="Approve another controller for this page (WebHID): a Steam Controller needs it, and so does a second DualSense">&#127918; PAIR A CONTROLLER</uf-button>
+          <p class="versus-join-hint" id="btn-versus-connect-hid-hint" style="display:none;"></p>
           <uf-button variant="accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</uf-button>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-versus">&larr; Back</uf-button>
         </uf-step>
