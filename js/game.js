@@ -4633,11 +4633,11 @@ class Game {
     }
     // Move accent style to "Next Level" when available
     if (hasNext) {
-      playAgainBtn.classList.remove('lobby-btn-accent');
-      nextBtn.classList.add('lobby-btn-accent');
+      playAgainBtn.variant = 'primary';
+      nextBtn.variant = 'accent';
     } else {
-      playAgainBtn.classList.add('lobby-btn-accent');
-      if (nextBtn) nextBtn.classList.remove('lobby-btn-accent');
+      playAgainBtn.variant = 'accent';
+      if (nextBtn) nextBtn.variant = 'primary';
     }
 
     // Show "Return to Room" in multiplayer
@@ -8532,7 +8532,7 @@ class Game {
     const soloNext = !this.net && !!nextBtn;
     if (nextBtn) nextBtn.style.display = soloNext ? '' : 'none';
     continueBtn.textContent = soloNext ? 'LOBBY' : "Let's RIDE!";
-    continueBtn.classList.toggle('lobby-btn-accent', !soloNext);
+    continueBtn.variant = soloNext ? 'primary' : 'accent';
 
     document.getElementById('tutorial-complete').classList.add('visible');
 
@@ -8580,7 +8580,7 @@ class Game {
     const nextBtn = document.getElementById('btn-tutorial-next');
     if (nextBtn) nextBtn.style.display = 'none';
     const continueBtn = document.getElementById('btn-tutorial-continue');
-    continueBtn.classList.add('lobby-btn-accent');
+    continueBtn.variant = 'accent';
     continueBtn.textContent = 'Continue';
     continueBtn.onclick = () => {
       document.getElementById('tutorial-complete').classList.remove('visible');

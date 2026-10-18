@@ -66,7 +66,7 @@ await page.evaluate(() => {
   const d = Array.from(document.querySelectorAll('.difficulty-btn')).find(x => x.dataset.difficulty === 'chill'); d && d.click();
 });
 await new Promise(r => setTimeout(r, 300));
-await clickText('button', /start ride/);
+await clickText('button, uf-button', /start ride/);
 await waitState('playing');
 check((await earned()).length === 0, 'nothing is earned before the ride does anything');
 
@@ -119,7 +119,7 @@ await page.evaluate(() => document.getElementById('btn-solo').click());
 await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card-slingshot'), { timeout: 20000 });
 await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
 await waitState('slingGarage', 20000);
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button')).find(b => /launch/i.test(b.textContent)).click());
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).find(b => /launch/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
 check(!(await earned()).includes('sling_first'), 'Fire! is not earned by aiming');
 await page.evaluate(() => { const g = window._game; g._slingRun.pull = 0.6; g._slingGo(); });

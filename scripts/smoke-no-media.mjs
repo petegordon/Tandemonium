@@ -172,13 +172,13 @@ async function runPass(media) {
     await page.evaluate(() => document.getElementById('btn-solo').click());
     await sleep(900);
     await page.evaluate(() => {
-      const cards = Array.from(document.querySelectorAll('button, .level-card, [class*="level"]'))
+      const cards = Array.from(document.querySelectorAll('button, uf-button, .level-card, [class*="level"]'))
         .filter(el => el.offsetParent !== null && /grandma/i.test(el.textContent || ''));
       (cards[0] || document.querySelector('.level-card'))?.click();
     });
     await sleep(500);
     await page.evaluate(() => {
-      const b = Array.from(document.querySelectorAll('button')).find(x => /start ride/i.test(x.textContent || '') && x.offsetParent !== null);
+      const b = Array.from(document.querySelectorAll('button, uf-button')).find(x => /start ride/i.test(x.textContent || '') && x.offsetParent !== null);
       b && b.click();
     });
     await sleep(800);

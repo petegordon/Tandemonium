@@ -72,7 +72,7 @@ check(afterBuy.coins === 60 && afterBuy.lv.sling === 1 && slingSave.coins === un
   `the old save's coins moved to the wallet; buying spends them (coins ${afterBuy.coins}, sling L${afterBuy.lv.sling})`);
 
 // 3. Launch → straight into the slingshot (no instructions screen, no countdown)
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button')).find(b => /launch/i.test(b.textContent)).click());
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).find(b => /launch/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
 // Pedal strokes, fed straight to the pedal controller (headless is ~1-2 fps).
 await page.evaluate(() => {
@@ -190,7 +190,7 @@ check(!/pedal|resetting/i.test(status), `no "tap pedals" prompt when the bike st
 await shot('4-results');
 
 // 8. Launch again → straight back into the slingshot → crash ends the run
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button, #sling-results uf-button')).find(b => /again/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
 check(Math.abs((await pose()).d - 5.2) < 0.01, 'launch again goes straight back to the slingshot');
 await drag(0, 300, true);
@@ -201,7 +201,7 @@ const r2 = await page.evaluate(() => ({ title: document.querySelector('#sling-re
 check(/crash/i.test(r2.title) && r2.runs === 2, `a crash ends the run ("${r2.title}")`);
 
 // 9. Reach the stage goal → stage cleared
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button, #sling-results uf-button')).find(b => /again/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
 await drag(0, 300, true);
 await waitState('playing', 120000);
@@ -217,7 +217,7 @@ check(/goal/i.test(r3.title) && r3.stage === 2, `reaching the goal clears the st
 await shot('5-goal');
 
 // 10. Stage 2 has a jackpot. First a hay bale: it slows the bike, the run goes on.
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button, #sling-results uf-button')).find(b => /again/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
 await drag(0, 300, true);
 await waitState('playing', 120000);
@@ -275,7 +275,7 @@ check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /Big air/.test(jp.
 
 // 14. Twenty relaunches on the same stage re-arm the ride instead of
 // rebuilding it, and leak nothing into the scene or the heap.
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /again/i.test(b.textContent)).click());
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button, #sling-results uf-button')).find(b => /again/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
 const loopStart = await page.evaluate(() => {
   const g = window._game;
@@ -301,7 +301,7 @@ check(loopEnd.children === loopStart.children, `no scene leak over 20 launches (
 check(heapMB < 25, `heap grew ${heapMB.toFixed(1)} MB over 20 launches (< 25)`);
 
 // 15. Lobby cleans up
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button')).find(b => /lobby/i.test(b.textContent)).click());
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button, #sling-results uf-button')).find(b => /lobby/i.test(b.textContent)).click());
 await new Promise(r => setTimeout(r, 1000));
 const clean = await page.evaluate(() => ({
   sling: window._game.isSlingshot, coast: window._game.bike.coast, rig: window._game._slingRig,

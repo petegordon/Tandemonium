@@ -109,7 +109,7 @@ async function endScreens(label, viewport) {
       root.scrollTop = 0;
       const top = Math.min(...parts.map(e => e.getBoundingClientRect().top));
       root.scrollTop = root.scrollHeight;
-      const buttons = parts.filter(e => e.tagName === 'BUTTON');
+      const buttons = parts.filter(e => e.tagName === 'BUTTON' || e.tagName === 'UF-BUTTON');
       const lastBtn = buttons[buttons.length - 1];
       const bottom = Math.max(...parts.map(e => e.getBoundingClientRect().bottom));
       const right = Math.max(...parts.map(e => e.getBoundingClientRect().right));
