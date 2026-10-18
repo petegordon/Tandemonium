@@ -315,7 +315,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage')].filter(Boolean),
+      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage'), document.getElementById('btn-mode-connect-hid')].filter(Boolean),
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
@@ -337,6 +337,7 @@ export class Lobby {
     this._stepCenterItems.set(this.roleStep, roleItems);
     const versusItems = [
       document.getElementById('btn-versus-join-kb'),
+      document.getElementById('btn-versus-controllers'),
       document.getElementById('btn-versus-connect-hid'),
       document.getElementById('btn-versus-continue'),
       document.getElementById('btn-back-versus'),
@@ -1065,34 +1066,23 @@ export class Lobby {
       this._leaveVersus();
       this._showStep(this.roleStep);
     });
-    // VERSUS · PAIR A CONTROLLER: the WebHID grant versus never had. Ported
-    // from the host step's CONNECT A CONTROLLER (local co-op): a Steam
-    // Controller is HID-only and a second DualSense over Bluetooth never
-    // reaches the Gamepad API, so neither could join. No slot is named — the
-    // device is pooled and _detectVersusCandidates offers it as soon as it
-    // streams; its first A press seats it (the lab lobby works the same way).
-    const btnVersusHid = document.getElementById('btn-versus-connect-hid');
-    if (btnVersusHid) {
-      btnVersusHid.addEventListener('click', async () => {
-        const hintEl = document.getElementById('btn-versus-connect-hid-hint');
-        const say = (t) => { if (hintEl) { hintEl.textContent = t; hintEl.style.display = t ? '' : 'none'; } };
-        if (!this.controllerManager || !navigator.hid) { say('WebHID is not available in this browser'); return; }
-        if (btnVersusHid.disabled) return;
-        btnVersusHid.disabled = true;
-        say('Pick the controller in the browser prompt…');
-        this._publishHeldHidDevices();
-        try {
-          const device = await this.controllerManager.connectHidForSlot(null, { prompt: true });
-          say(device
-            ? `Paired ${device.productName || 'controller'} — press A on it to join`
-            : 'No new controller found — turn it on, then try again');
-          console.log('[versus] HID pair →', device ? (device.productName || 'device') : 'nothing new');
-        } catch (err) {
-          console.warn('[versus] HID pair failed:', err);
-          say('Pairing failed — try again');
-        } finally {
-          btnVersusHid.disabled = false;
-        }
+    // PAIR A CONTROLLER (mode screen + versus step): the WebHID grant a pad the
+    // Gamepad API can't see needs — a Steam Controller is HID-only and a second
+    // DualSense over Bluetooth never surfaces. Ported from the host step's
+    // CONNECT A CONTROLLER. No slot is named: the device is pooled, and the
+    // seat screen offers it as soon as it streams (its first A press seats it).
+    // In Electron the main process picks the next un-granted device itself.
+    this._wireHidPairButton('btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'mode');
+    this._wireHidPairButton('btn-versus-connect-hid', 'btn-versus-connect-hid-hint', 'versus');
+    const btnVersusCtrl = document.getElementById('btn-versus-controllers');
+    if (btnVersusCtrl) {
+      btnVersusCtrl.addEventListener('click', () => {
+        const panel = document.getElementById('versus-controllers');
+        if (!panel) return;
+        panel.hidden = !panel.hidden;
+        btnVersusCtrl.setAttribute('aria-expanded', String(!panel.hidden));
+        btnVersusCtrl.textContent = 'Controllers ' + (panel.hidden ? '\u25BE' : '\u25B4');
+        this._versusLastCardsKey = null;   // re-render so the list is current
       });
     }
 
@@ -5404,6 +5394,37 @@ export class Lobby {
     return { type: 'keyboard', name: 'KEYBOARD' };
   }
 
+  /**
+   * Wire a PAIR A CONTROLLER button: requestDevice() from the click (user
+   * activation), pool the device, report in the hint line.
+   * @param {string} btnId @param {string} hintId @param {string} tag log prefix
+   */
+  _wireHidPairButton(btnId, hintId, tag) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const hintEl = document.getElementById(hintId);
+      const say = (t) => { if (hintEl) { hintEl.textContent = t; hintEl.style.display = t ? '' : 'none'; } };
+      if (!this.controllerManager || !navigator.hid) { say('WebHID is not available in this browser'); return; }
+      if (btn.hasAttribute('disabled')) return;
+      btn.setAttribute('disabled', '');
+      say('Pick the controller in the browser prompt…');
+      this._publishHeldHidDevices();
+      try {
+        const device = await this.controllerManager.connectHidForSlot(null, { prompt: true });
+        say(device
+          ? `Paired ${device.productName || 'controller'} — press a button on it`
+          : 'No new controller found — turn it on, then try again');
+        console.log(`[${tag}] HID pair →`, device ? (device.productName || 'device') : 'nothing new');
+      } catch (err) {
+        console.warn(`[${tag}] HID pair failed:`, err);
+        say('Pairing failed — try again');
+      } finally {
+        btn.removeAttribute('disabled');
+      }
+    });
+  }
+
   _enterVersusStep() {
     // Tear down any in-flight online session — versus is purely local.
     if (this.net) {
@@ -5986,7 +6007,7 @@ export class Lobby {
       for (const c of joinCardsFor[team]) {
         const card = document.createElement('button');
         card.className = 'versus-player-card vp-join';
-        card.innerHTML = `<span class="vp-name">JOIN — ${c.name}</span><span class="vp-device">Press ✕/A or click</span>`;
+        card.innerHTML = `<span class="vp-name">${c.name}</span><span class="vp-device">CONNECTED · press ✕/A to join</span>`;
         card.addEventListener('click', () => this._versusJoinCandidate(c));
         wrap.appendChild(card);
       }
@@ -5994,10 +6015,31 @@ export class Lobby {
       if (shown < 2 && this._versusPlayers.length + candidates.length < 4) {
         const empty = document.createElement('div');
         empty.className = 'versus-player-card vp-empty';
-        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">CONNECT A CONTROLLER</span>';
+        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">pair a controller below</span>';
         wrap.appendChild(empty);
       }
     }
+    this._renderVersusControllers(candidates);
+  }
+
+  /**
+   * The Controllers panel: every controller this step can see and its state,
+   * in the same words as the lab lobby — CONNECTED (can join) → SEATED (on a
+   * team). Keyboard and bots are listed so the roster is complete.
+   */
+  _renderVersusControllers(candidates) {
+    const panel = document.getElementById('versus-controllers');
+    if (!panel || panel.hidden) return;
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const rows = [];
+    for (const p of this._versusPlayers) {
+      const src = p.type === 'keyboard' ? 'keyboard' : p.type === 'bot' ? 'bot' : (p.input && p.input.steamInputHandle != null ? 'steam' : (p.input && p.input._slot && p.input._slot._hidEntry ? 'webhid' : 'gamepad'));
+      rows.push(`<div class="vc-row"><span class="vc-name">P${p.n} · ${esc(p.name)}</span><span class="vc-src">${src} · team ${p.team === 'A' ? 'blue' : 'red'}</span><uf-chip tone="accent">SEATED</uf-chip></div>`);
+    }
+    for (const c of candidates) {
+      rows.push(`<div class="vc-row"><span class="vc-name">${esc(c.name)}</span><span class="vc-src">${c.kind === 'hid' ? 'webhid' : c.kind}</span><uf-chip tone="info">CONNECTED</uf-chip></div>`);
+    }
+    panel.innerHTML = rows.join('') || '<div class="vc-row"><span class="vc-name">No controllers yet — press a button on one, or pair it below</span></div>';
   }
 
   _removePipLobbyMode() {
