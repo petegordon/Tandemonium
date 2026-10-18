@@ -31,7 +31,11 @@ const problems = [];
 for (const rel of expected) {
   const dest = path.join(shared, rel);
   if (!fs.existsSync(dest)) { problems.push(`missing in shared/ui/: ${rel}`); continue; }
-  if (!fs.readFileSync(path.join(src, rel)).equals(fs.readFileSync(dest))) problems.push(`differs from lab: shared/ui/${rel}`);
+  // Compare with line endings normalised: a Windows checkout with core.autocrlf
+  // rewrites the vendored text files to CRLF while the lab keeps LF, and that
+  // is not drift. (.gitattributes pins shared/ui to LF going forward.)
+  const lf = (buf) => buf.toString('utf8').replace(/\r\n/g, '\n');
+  if (lf(fs.readFileSync(path.join(src, rel))) !== lf(fs.readFileSync(dest))) problems.push(`differs from lab: shared/ui/${rel}`);
 }
 
 // 2. Nothing stale in shared/ui/ that the lab no longer has (the stamp is ours).
