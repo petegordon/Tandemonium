@@ -176,7 +176,7 @@ class EconomyMode {
     if (!card || !p) return;
     const box = document.createElement('div');
     box.className = 'ride-coins';
-    const btn = card.querySelector('button');
+    const btn = card.querySelector('uf-button, button');
     card.insertBefore(box, btn || null);
     this._renderRideCoins(box, p.score, p.wallet);
   }

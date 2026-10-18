@@ -19,6 +19,14 @@ function el(tag, cls, html) {
   return e;
 }
 
+// A kit button (shared/ui uf-button): the host element is the button, so the
+// click wiring, textContent writes and focus-controller handling below are unchanged.
+function btn(variant, html, cls) {
+  const b = el('uf-button', cls, html);
+  b.setAttribute('variant', variant);
+  return b;
+}
+
 function pips(level, max) {
   return '●'.repeat(level) + '○'.repeat(max - level);
 }
@@ -64,31 +72,31 @@ export function renderGarage(save, wallet, opts = {}) {
     top.appendChild(el('div', 'sling-lock', `🔒 Stage ${save.stage}: ${lock.label}`));
     if (lock.kind === 'demo') {
       if (canWishlist) {
-        const w = el('button', 'lobby-btn lobby-btn-accent cta-btn', '&#9829; WISHLIST ON STEAM');
+        const w = btn('accent', '&#9829; WISHLIST ON STEAM', 'cta-btn');
         w.addEventListener('click', () => opts.onWishlist && opts.onWishlist());
         top.appendChild(w);
         buttons.push(w);
       }
       if (replay) {
-        const again = el('button', 'lobby-btn', `LAUNCH · REPLAY STAGE ${replay}`);
+        const again = btn('primary', `LAUNCH · REPLAY STAGE ${replay}`);
         again.addEventListener('click', () => opts.onLaunch && opts.onLaunch());
         top.appendChild(again);
         buttons.push(again);
       }
     } else if (lock.level) {
-      const go = el('button', 'lobby-btn lobby-btn-accent', `${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`);
+      const go = btn('accent', `${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`);
       go.addEventListener('click', () => opts.onGoRide && opts.onGoRide(lock.level));
       top.appendChild(go);
       buttons.push(go);
     }
   } else if (!standalone) {
-    const launch = el('button', 'lobby-btn lobby-btn-accent', 'LAUNCH!');
+    const launch = btn('accent', 'LAUNCH!');
     launch.addEventListener('click', () => opts.onLaunch && opts.onLaunch());
     top.appendChild(launch);
     buttons.push(launch);
   }
   if (todays) {
-    const t = el('button', 'lobby-btn', `📅 TODAY'S LAUNCH${todays.best ? ` · best ${fmt(todays.best)} m` : ''}`);
+    const t = btn('primary', `📅 TODAY'S LAUNCH${todays.best ? ` · best ${fmt(todays.best)} m` : ''}`);
     t.addEventListener('click', () => opts.onToday && opts.onToday());
     top.appendChild(t);
     buttons.push(t);
@@ -123,7 +131,7 @@ export function renderGarage(save, wallet, opts = {}) {
     const label = capped
       ? `🔧 REBUILD THE BIKE · bonus maxed at +${Math.round(REBUILD_BONUS * REBUILD_CAP * 100)}%, adds nothing more`
       : `🔧 REBUILD THE BIKE · +${Math.round(REBUILD_BONUS * 100)}% coins forever`;
-    const r = el('button', 'lobby-btn sling-rebuild', label);
+    const r = btn('primary', label, 'sling-rebuild');
     let armed = false;
     r.addEventListener('click', () => {
       if (!armed) { armed = true; r.textContent = 'PRESS AGAIN: upgrades back to 0, coins + stages kept'; return; }
@@ -135,7 +143,7 @@ export function renderGarage(save, wallet, opts = {}) {
     buttons.push(r);
   }
 
-  const lobby = el('button', 'lobby-btn', standalone ? '← BACK' : 'LOBBY');
+  const lobby = btn('primary', standalone ? '← BACK' : 'LOBBY');
   lobby.addEventListener('click', () => opts.onLobby && opts.onLobby());
   const bottom = el('div', 'sling-buttons');
   bottom.appendChild(lobby);
@@ -192,21 +200,21 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
 
   const box = el('div', 'sling-buttons');
   const out = [];
-  const mk = (label, cls, fn) => { const b = el('button', cls, label); b.addEventListener('click', fn); box.appendChild(b); out.push(b); return b; };
+  const mk = (label, variant, fn, cls) => { const b = btn(variant, label, cls); b.addEventListener('click', fn); box.appendChild(b); out.push(b); return b; };
   if (lock) {
     box.appendChild(el('div', 'sling-lock', lock.kind === 'demo'
       ? `🎉 ${lock.label}` : `🔒 Next stage: ${lock.label}`));
     if (lock.kind === 'demo') {
-      if (canWishlist) mk('&#9829; WISHLIST ON STEAM', 'lobby-btn lobby-btn-accent cta-btn', () => onWishlist && onWishlist());
-      mk('LAUNCH AGAIN', 'lobby-btn', onAgain);   // m9: the demo replays its last stage
+      if (canWishlist) mk('&#9829; WISHLIST ON STEAM', 'accent', () => onWishlist && onWishlist(), 'cta-btn');
+      mk('LAUNCH AGAIN', 'primary', onAgain);   // m9: the demo replays its last stage
     } else if (lock.level) {
-      mk(`${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`, 'lobby-btn lobby-btn-accent', () => onGoRide && onGoRide(lock.level));
+      mk(`${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`, 'accent', () => onGoRide && onGoRide(lock.level));
     }
   } else {
-    mk('LAUNCH AGAIN', 'lobby-btn lobby-btn-accent', onAgain);
+    mk('LAUNCH AGAIN', 'accent', onAgain);
   }
-  mk('GARAGE', 'lobby-btn', onGarage);
-  mk('LOBBY', 'lobby-btn', onLobby);
+  mk('GARAGE', 'primary', onGarage);
+  mk('LOBBY', 'primary', onLobby);
   root.appendChild(box);
   root.classList.add('visible');
   // The tap that skipped the tally must not land on LAUNCH AGAIN.

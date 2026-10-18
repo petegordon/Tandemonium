@@ -152,8 +152,8 @@ export class VersusHud {
           ${line(winner, winner.raceManager.getElapsedFormatted())}
           ${line(loser, `DNF &mdash; ${Math.floor(loser.bike.distanceTraveled)}m`)}
         </div>
-        <button class="lobby-btn lobby-btn-accent" id="vr-rematch">REMATCH</button>
-        <button class="lobby-btn" id="vr-lobby">LOBBY</button>
+        <uf-button variant="accent" id="vr-rematch">REMATCH</uf-button>
+        <uf-button id="vr-lobby">LOBBY</uf-button>
       </div>`;
     document.body.appendChild(el);
     this.resultsEl = el;

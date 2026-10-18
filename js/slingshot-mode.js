@@ -446,7 +446,7 @@ class SlingshotMode {
       if (!this._slingAiming() || this._slingDrag) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       if (e.clientX < EDGE_PX || e.clientX > window.innerWidth - EDGE_PX) return;
-      if (e.target && e.target.closest && e.target.closest('button, a, input, #quick-menu-overlay, #quick-menu-btn')) return;
+      if (e.target && e.target.closest && e.target.closest('button, uf-button, a, input, #quick-menu-overlay, #quick-menu-btn')) return;
       this._slingDrag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, active: false };
       try { if (e.target && e.target.setPointerCapture) e.target.setPointerCapture(e.pointerId); } catch (_) { /* not capturable */ }
     });
