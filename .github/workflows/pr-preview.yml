@@ -35,6 +35,18 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # shared/ui is a vendored copy of @usersfirst/ui pinned by
+      # shared/ui/UI_VERSION.json. Check the lab out at that commit (sparse:
+      # only packages/ui) and compare byte for byte, so a hand-edit of shared/ui
+      # or a stale sync fails the PR instead of drifting silently.
+      - name: UI kit drift check (shared/ui vs the lab at its pinned commit)
+        run: |
+          ref=$(node -p "require(./shared/ui/UI_VERSION.json).sourceCommit")
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/UsersFirst/tandemonium-controller-lab.git ../tandemonium-controller-lab
+          git -C ../tandemonium-controller-lab sparse-checkout set packages/ui
+          git -C ../tandemonium-controller-lab checkout --quiet "$ref"
+          npm run check:ui
+
       # A-3 · the game has no build step, so a broken import only shows up when
       # someone opens the page. This opens it.
       - name: Lobby smoke test
