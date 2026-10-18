@@ -91,6 +91,12 @@ const w1 = await wallet();
 check(go.shown && /Distance \(140 m\)/.test(go.text) && w1.coins === 28 + 5 * go.pickups && go.garage,
   `game over pays the distance: ${w1.coins} coins ("${go.text.replace(/\s+/g, ' ').slice(0, 70)}…"), GARAGE → shown`);
 await shot('1-gameover-coins');
+// the tally rows are readable on the dark end screen (they had no colour: black text, blank-looking lines)
+const rowLum = await page.evaluate(() => [...document.querySelectorAll('#gameover-coins .sling-rows .row')].map(r => {
+  const [cr, cg, cb] = getComputedStyle(r).color.match(/[\d.]+/g).map(Number);
+  return Math.round(0.2126 * cr + 0.7152 * cg + 0.0722 * cb);
+}));
+check(rowLum.length >= 2 && rowLum.every(l => l >= 150), `coin tally rows are light text on the end screen (luminance ${rowLum.join(', ')})`);
 
 // 4. RESTART (from the checkpoint) and finish: only the new metres pay, plus the finish bonuses.
 await page.evaluate(() => document.getElementById('btn-restart').click());
