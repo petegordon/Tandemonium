@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoadPath } from './road-path.js';
 import { RoadChunkManager } from './road-chunks.js';
 import { isMobile } from './config.js';
@@ -23,6 +24,7 @@ const ROAD_CLEARANCE_OUTER = 16;    // back to flat by here
 const TREE_POOL_SIZE = 400;
 const TREE_AHEAD = 250;       // trees placed this far ahead
 const TREE_BEHIND = 50;       // keep trees this far behind
+const TREE_AHEAD_LOW = 120;   // Low tier: trees drawn this far ahead (the fog hides the edge)
 const TREE_BASE_OFFSET = 0.94; // model origin is this far above its base
 
 const CLOUD_COUNT = 100;
@@ -97,6 +99,12 @@ export class World {
   constructor(scene, options = {}) {
     this.scene = scene;
     this._lowEnd = !!options.lowEnd;
+    // Low quality tier: trees drawn as one instanced batch, and less far.
+    // Placement and collisions are the same at every tier (fair rides).
+    this._tier = options.tier || (this._lowEnd ? 'medium' : 'high');
+    this._treeAhead = this._tier === 'low' ? TREE_AHEAD_LOW : TREE_AHEAD;
+    this._treeBatch = null;   // InstancedMesh per tree part, when batched
+    this._treeTemplate = null;
     // Brighter, warmer lighting is part of the Show Riders experience (so the
     // riders' Victorian colors read); off = the original world lighting.
     this._showRiders = !!options.showRiders;
@@ -361,8 +369,10 @@ export class World {
       }
 
       this._treeModelReady = true;
+      this._treeTemplate = template;
       // Now place all trees for the loop
       this._placeTreesUpTo(this.roadPath.loopLength);
+      if (this._tier === 'low') this._setTreeBatch(true);
     }, undefined, (err) => {
       console.error('Failed to load pine tree model:', err);
     });
@@ -420,8 +430,79 @@ export class World {
   _updateTreeVisibility(anchors) {
     for (const slot of this._treePool) {
       if (!slot.active) continue;
-      slot.mesh.visible = this._nearAnyAnchor(slot.roadD, anchors, TREE_BEHIND, TREE_AHEAD);
+      slot.mesh.visible = this._nearAnyAnchor(slot.roadD, anchors, TREE_BEHIND, this._treeAhead);
     }
+  }
+
+  /**
+   * Quality tier, live. Low draws the trees as one instanced batch (a few
+   * draw calls instead of one per tree part) and only TREE_AHEAD_LOW ahead.
+   * @param {'low'|'medium'|'high'} tier
+   */
+  setTier(tier) {
+    this._tier = tier;
+    this._treeAhead = tier === 'low' ? TREE_AHEAD_LOW : TREE_AHEAD;
+    this._setTreeBatch(tier === 'low');
+    this._setCloudsMerged(tier === 'low');
+  }
+
+  /**
+   * Low: each cloud's puffs drawn as one merged mesh — one draw call per
+   * cloud instead of 10-18, and it looks the same (one material, no depth write).
+   * @param {boolean} on
+   */
+  _setCloudsMerged(on) {
+    for (const slot of this._cloudPool) {
+      if (!slot.puffs || !slot.puffs.length) continue;
+      if (on && !slot.merged) {
+        const geos = slot.puffs.map((p) => { p.updateMatrix(); return p.geometry.clone().applyMatrix4(p.matrix); });
+        slot.merged = new THREE.Mesh(mergeGeometries(geos), slot.puffs[0].material);
+        for (const g of geos) g.dispose();
+      }
+      const want = on ? [slot.merged] : slot.puffs;
+      if (slot.group.children[0] === want[0]) continue;
+      slot.group.clear();
+      slot.group.add(...want);
+    }
+  }
+
+  /** @param {boolean} on */
+  _setTreeBatch(on) {
+    if (!this._treeModelReady || on === !!this._treeBatch) return;
+    const parked = !!this._parkedObjects;
+    if (on) {
+      const parts = [];
+      this._treeTemplate.updateMatrixWorld(true);
+      this._treeTemplate.traverse((o) => { if (o.isMesh) parts.push(o); });
+      this._treeBatch = parts.map((p) => {
+        const im = new THREE.InstancedMesh(p.geometry, p.material, TREE_POOL_SIZE);
+        im.count = 0;
+        im.frustumCulled = false;   // instances spread along the road
+        im.userData.part = p.matrixWorld.clone();   // the part within one tree
+        if (!parked) this.scene.add(im);
+        return im;
+      });
+      // The slot meshes stay as placement/collision proxies, off the scene.
+      for (const s of this._treePool) this.scene.remove(s.mesh);
+    } else {
+      for (const im of this._treeBatch) { this.scene.remove(im); im.dispose(); }
+      this._treeBatch = null;
+      if (!parked) for (const s of this._treePool) this.scene.add(s.mesh);
+    }
+  }
+
+  /** Copy the visible trees into the batch (after visibility and heights). */
+  _syncTreeBatch() {
+    if (!this._treeBatch) return;
+    const m = this._treeMat || (this._treeMat = new THREE.Matrix4());
+    let n = 0;
+    for (const s of this._treePool) {
+      if (!s.active || !s.mesh.visible) continue;
+      s.mesh.updateMatrix();
+      for (const im of this._treeBatch) im.setMatrixAt(n, m.multiplyMatrices(s.mesh.matrix, im.userData.part));
+      n++;
+    }
+    for (const im of this._treeBatch) { im.count = n; im.instanceMatrix.needsUpdate = true; }
   }
 
   _updateTreeHeights(anchors) {
@@ -504,12 +585,15 @@ export class World {
       this.scene.add(group);
       this._cloudPool.push({
         group,
+        puffs: group.children.slice(),   // the separate puffs (High/Medium)
+        merged: null,                    // one mesh of all puffs (Low)
         roadD: -1,
         lateralOffset: 0,
         baseY: 0,
         active: false,
       });
     }
+    this._setCloudsMerged(this._tier === 'low');
 
     // Place all clouds for the loop
     this._placeCloudsUpTo(this.roadPath.loopLength);
@@ -1254,6 +1338,7 @@ export class World {
     const owned = [
       this.floor, this.floorB, this._ambient, this.sun, this.sun && this.sun.target, this._hemi, this._fill,
       ...this._treePool.map(t => t.mesh),
+      ...(this._treeBatch || []),
       ...this._cloudPool.map(c => c.group),
       ...this._balloons.map(b => b.group),
       ...(this.roadChunks ? this.roadChunks._chunks.map(c => c.group) : [])
@@ -1392,6 +1477,7 @@ export class World {
     if (!this._noTrees) {
       this._updateTreeVisibility(anchors);
       this._updateTreeHeights(anchors);
+      this._syncTreeBatch();
     }
 
     // Clouds & balloons

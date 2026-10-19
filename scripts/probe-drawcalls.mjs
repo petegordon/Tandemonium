@@ -1,0 +1,51 @@
+// probe-drawcalls.mjs — during a ride, count what one frame actually draws, by what it belongs to.
+// Usage: node scripts/probe-drawcalls.mjs [--quality=low|medium|high] [--shot=out.png]
+import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
+const Q = (process.argv.find(a => a.startsWith('--quality=')) || '--quality=low').split('=')[1];
+const ROOT = process.cwd(); const PORT = 8935;
+const MIME = { '.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml','.glb':'model/gltf-binary','.json':'application/json' };
+const server = http.createServer((req,res)=>{const u=decodeURIComponent(req.url.split('?')[0]);const f=path.join(ROOT,u==='/'?'index.html':u);
+  fs.stat(f,(e,st)=>{if(e||st.isDirectory())return res.writeHead(404).end();res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});fs.createReadStream(f).pipe(res);});});
+await new Promise(r=>server.listen(PORT,'127.0.0.1',r));
+const browser = await puppeteer.launch({headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--mute-audio']});
+const page = await browser.newPage(); await page.setViewport({width:1280,height:720});
+await page.setRequestInterception(true);
+page.on('request',(req)=>{const u=req.url(); if(u.startsWith(`http://127.0.0.1:${PORT}`))return req.continue();
+  let m=u.match(/three@[^/]+\/build\/three\.module\.js/);
+  if(m)return req.respond({status:200,contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:fs.readFileSync(path.join(ROOT,'node_modules/three/build/three.module.js'))});
+  m=u.match(/three@[^/]+\/examples\/jsm\/(.+)$/); const f=m&&path.join(ROOT,'node_modules/three/examples/jsm/'+m[1]);
+  if(f&&fs.existsSync(f))return req.respond({status:200,contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:fs.readFileSync(f)});
+  return req.abort();});
+await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'probe'); } catch {} });
+await page.goto(`http://127.0.0.1:${PORT}/index.html?quality=${Q}`,{waitUntil:'domcontentloaded'});
+await page.waitForFunction(()=>!!window._game,{timeout:60000});
+await page.click('#tap-to-start').catch(()=>{});
+await page.evaluate(() => document.getElementById('btn-solo')?.click()); await new Promise(r=>setTimeout(r,1500));
+await page.evaluate(() => Array.from(document.querySelectorAll('button, uf-button')).find(x => /start ride/i.test(x.textContent||''))?.click());
+await page.waitForFunction(() => window._game?.state === 'playing', { timeout: 120000 });
+await new Promise(r=>setTimeout(r,4000));
+const out = await page.evaluate(() => {
+  const G = window._game;
+  const groups = {};
+  const visibleChain = (o) => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
+  G.scene.traverse((o) => {
+    if (!(o.isMesh || o.isPoints || o.isLine || o.isSprite) || !visibleChain(o)) return;
+    let top = o; while (top.parent && top.parent !== G.scene) top = top.parent;
+    const W = G.world; const cat = W._cloudPool.some(c=>c.group===top)?'cloud':W._balloons.some(b=>b.group===top)?'balloon':(W.roadChunks&&W.roadChunks._chunks.some(c=>c.group===top))?'roadChunk':(G.bike&&(top===G.bike.group||top===G.bike.root))?'bike':(top.name||top.type); const key = cat + ' / ' + (o.isInstancedMesh ? 'Instanced' : (o.material?.type || '?'));
+    const g = groups[key] ||= { n: 0, mats: 0 };
+    g.n += 1; g.mats += Array.isArray(o.material) ? o.material.length : 1;
+  });
+  const drawn = {}; const hooks = [];
+  G.scene.traverse((o) => { if (!o.isMesh && !o.isSprite && !o.isPoints && !o.isLine) return;
+    let top = o; while (top.parent && top.parent !== G.scene) top = top.parent;
+    const W = G.world; const cat = W._cloudPool.some(c=>c.group===top)?'cloud':W._balloons.some(b=>b.group===top)?'balloon':(W.roadChunks&&W.roadChunks._chunks.some(c=>c.group===top))?'roadChunk':(top.name||top.type)+' ('+(o.type)+')';
+    const prev = o.onBeforeRender; hooks.push([o, prev]);
+    o.onBeforeRender = function (...a) { drawn[cat] = (drawn[cat]||0) + 1; return prev.apply(this, a); }; });
+  G.renderer.render(G.scene, G.camera);
+  for (const [o, p] of hooks) o.onBeforeRender = p;
+  return { calls: G.renderer.info.render.calls, groups: drawn };
+});
+console.log('renderer calls last frame:', out.calls);
+for (const [k, v] of Object.entries(out.groups).sort((a,b)=>b[1]-a[1]).slice(0, 25)) console.log(String(v).padStart(5), ' ', k);
+const shot=(process.argv.find(a=>a.startsWith('--shot='))||'').slice(7); if (shot) await page.screenshot({ path: shot });
+await browser.close(); server.close();

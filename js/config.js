@@ -4,6 +4,7 @@
 
 import { gooseOutfitPaths, normalizeGooseOutfit, DEFAULT_GOOSE_OUTFIT } from './goose-outfits.js';
 import { normalizeColourway, DEFAULT_COLOURWAY } from './goose-colourways.js';
+import { getCurrentTier } from './quality.js';
 
 const _isElectron = navigator.userAgent.includes('Electron');
 export const isMobile = !_isElectron && (
@@ -91,7 +92,9 @@ export function getShowRiders() {
     if (pref === 'on') return true;
     if (pref === 'off') return false;
   } catch (e) {}
-  return !isMobile;
+  // Default: on for desktop, off on phones — and off at the Low quality
+  // tier, where the riders' textures are most of the graphics memory.
+  return !isMobile && getCurrentTier() !== 'low';
 }
 
 /**
