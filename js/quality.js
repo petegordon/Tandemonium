@@ -92,7 +92,7 @@ export function saveLearnedAutoTier(tier, store = globalThis.localStorage, now =
 /**
  * The tier to run at. URL ?quality= wins, then the Options choice, then
  * Auto: what slow rides taught it, else hardware detection.
- * @param {{ param?: string|null, pref?: string, learned?: QualityTier|null, hwTier?: string|null }} o
+ * @param {{ param?: string|null, pref?: string, learned?: QualityTier|null, hwTier?: string|null, floor?: QualityTier }} o
  * @returns {{ tier: QualityTier, auto: boolean }}
  */
 export function resolveQualityTier({ param = null, pref = 'auto', learned = null, hwTier = null, floor = 'low' }) {

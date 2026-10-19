@@ -5715,6 +5715,7 @@ class Game {
     const shadows = !isMobile && !this._lowQuality;
     if (this.renderer.shadowMap.enabled !== shadows) {
       this.renderer.shadowMap.enabled = shadows;
+      if (shadows) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;   // as at a High boot
       // Compiled shaders keep their shadow code until the lights change;
       // without this a mid-ride switch leaves the last shadow stamped on the
       // road. Flipping the sun's castShadow changes the lights state, so
