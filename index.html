@@ -390,6 +390,8 @@
   .ride-coins { width: 100%; max-width: 320px; margin: 8px auto 4px; text-align: center; }
   .ride-coins-head { font-size: 22px; font-weight: 900; color: var(--uf-color-accent-2); }
   .ride-coins .sling-rows { margin: 4px auto 6px; }
+  /* the end screens set no text colour: the rows fell back to black on the dark overlay (blank lines) */
+  .ride-coins .sling-rows .row:not(.total) { color: rgba(255,255,255,0.88); }
   .ride-coins-wallet { font-size: 13px; color: rgba(255,255,255,0.75); }
   .lobby-wallet { color: var(--uf-color-accent-2); font-weight: 800; margin-left: 6px; }
   /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
@@ -6367,6 +6369,28 @@ ON</button>
       <button class="opt-btn" id="opt-riders-off">Off</button>
     </div>
     <div class="options-note">Canadian-goose riders + front camera — applies immediately</div>
+    <div class="label" id="opt-solo-label">Show Solo</div>
+    <div class="options-row" id="opt-solo-row">
+      <button class="opt-btn" id="opt-solo-on">On</button>
+      <button class="opt-btn" id="opt-solo-off">Off</button>
+    </div>
+    <div class="options-note">Solo rides show one goose (the captain) — applies immediately</div>
+    <div class="label" id="opt-outfit-label">Goose Outfits</div>
+    <div class="options-row" id="opt-outfit-row">
+      <button class="opt-btn" id="opt-outfit-victorian">Victorian</button>
+      <button class="opt-btn" id="opt-outfit-cyclists">Cyclists</button>
+      <button class="opt-btn" id="opt-outfit-fancy">Fancy</button>
+      <button class="opt-btn" id="opt-outfit-georgian">Georgian</button>
+    </div>
+    <div class="options-note">Which pair of geese rides the tandem — applies immediately</div>
+    <div class="label" id="opt-colour-label">Goose Colours</div>
+    <div class="options-row" id="opt-colour-row">
+      <button class="opt-btn" id="opt-colour-0">Original</button>
+      <button class="opt-btn" id="opt-colour-1">-</button>
+      <button class="opt-btn" id="opt-colour-2">-</button>
+      <button class="opt-btn" id="opt-colour-3">-</button>
+    </div>
+    <div class="options-note">Colour changes for the chosen pair (saved per pair) — applies immediately</div>
     <div class="label" id="opt-fps-label">FPS Display</div>
     <div class="options-row" id="opt-fps-row">
       <button class="opt-btn" id="opt-fps-on">On</button>

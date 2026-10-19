@@ -7,7 +7,9 @@ import { COBBLES_SHAKE, COBBLES_DRAG } from './disruptions.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { BIKE_MODEL_PATH, TUNE } from './config.js';
+import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway, TUNE } from './config.js';
+import { colourwayParams, applyColourway } from './goose-colourways.js';
+import { GooseRiders } from './goose-riders.js';
 
 // A-5 · where the safety clamp starts to be felt. The clamp itself is at ±1.0.
 export const EDGE_BAND_START = 0.8;
@@ -136,13 +138,20 @@ export class BikeModel {
     this._stokerLeanTarget = 0;  // [-1, 1] this frame's stoker input
     this._captainLeanNorm = 0;   // smoothed
     this._stokerLeanNorm = 0;    // smoothed
+    // The goose tandem (rigged bike + two separate goose riders, js/goose-riders.js):
+    // cranks / wheels from the bike's clips, each goose pedals with the crank and
+    // leans by its own rider's input. null on the other models.
+    this.goose = null;
+    this.riderViewScale = 1;     // rider height vs the fused riders model (front view)
+    this._soloRider = false;     // Show Solo: only the captain goose is shown
 
     // Versus spawns extra bikes by cloning an already-loaded one (instant, shares
     // geometry — no re-fetch/decode). A SKINNED riders model needs SkeletonUtils
     // so the clone gets its OWN Skeleton (a plain clone() shares the source's, so
     // every bike would pose/lean together); the plain frame uses the fast clone.
     if (cloneSource && cloneSource.modelLoaded) {
-      if (cloneSource.riderMixer) this._initFromCloneSkinned(cloneSource);
+      if (cloneSource.goose) this._initFromCloneGoose(cloneSource);
+      else if (cloneSource.riderMixer) this._initFromCloneSkinned(cloneSource);
       else this._initFromClone(cloneSource);
     } else {
       this._loadModel();
@@ -170,6 +179,25 @@ export class BikeModel {
     if (capClip) this.captainAction = this._makeScrubAction(capClip);
     if (stoClip) this.stokerAction = this._makeScrubAction(stoClip);
 
+    if (this._pendingPreset) {
+      this.applyPreset(this._pendingPreset);
+      this._pendingPreset = null;
+    }
+  }
+
+  /**
+   * Clone the goose tandem for versus: SkeletonUtils gives the clone's geese their
+   * own skeletons (geometry + textures shared); the clone gets its own mixers on the
+   * source's clips, so it pedals and leans by its own team's input.
+   */
+  _initFromCloneGoose(source) {
+    const model = cloneSkinned(source.group.children[0]);
+    this.group.add(model);
+    this.group.updateMatrixWorld(true);
+    this._sharedGeometry = true;
+    this.goose = GooseRiders.cloneFrom(source.goose, model);
+    this.riderViewScale = source.riderViewScale;
+    this.modelLoaded = true;
     if (this._pendingPreset) {
       this.applyPreset(this._pendingPreset);
       this._pendingPreset = null;
@@ -231,6 +259,8 @@ export class BikeModel {
     this.captainAction = null;
     this.stokerAction = null;
     this.riderClipDuration = 0;
+    this.goose = null;
+    this.riderViewScale = 1;
     this._originalMats = null;
     this._loadModel(() => {
       for (const c of oldChildren) {
@@ -258,10 +288,14 @@ export class BikeModel {
   /** @param {Function} [onAttached] runs once the new model is in the group
    *    and recentered, before it becomes children[0]-addressable state. */
   _loadModel(onAttached) {
+    const modelPath = this._modelPath;
     const loader = new GLTFLoader();
     loader.setDRACOLoader(getDracoLoader());
     loader.load(this._modelPath, (gltf) => {
       const model = gltf.scene;
+      // The goose tandem drives its cranks from its Pedal clip, so none of its
+      // nodes join pedalNodes (its pedal bones / sockets must not be spun).
+      const isGoose = GooseRiders.isGooseBike(gltf);
       model.traverse((child) => {
         if (child.isMesh) {
           child.castShadow = true;
@@ -276,18 +310,19 @@ export class BikeModel {
           this.spokeMeshes.push(child);
         }
 
-        if (n.includes('pedal')) {
+        if (n.includes('pedal') && !isGoose) {
           this.pedalNodes.push(child);
         }
       });
 
-      // The riders GLB ships a skinned armature + a lean clip; the plain frame
+      // The fused riders GLB ships a skinned armature + a lean clip; the plain frame
       // GLB ships neither. Detect it here to drive rider lean and orient it.
-      const isRiders = !!(gltf.animations && gltf.animations.length > 0);
+      const isRiders = !isGoose && !!(gltf.animations && gltf.animations.length > 0);
 
-      // Scale to ~4.4m long
+      // Scale to ~4.4m long (the goose tandem by its precise bounds: its nodes are
+      // baked, so the loose box is already exact, but say so; geese ride along).
       const targetLength = 4.4;
-      const preBox = new THREE.Box3().setFromObject(model);
+      const preBox = new THREE.Box3().setFromObject(model, isGoose);
       const preSize = preBox.getSize(new THREE.Vector3());
       const maxDim = Math.max(preSize.x, preSize.y, preSize.z);
       const scale = targetLength / maxDim;
@@ -328,19 +363,43 @@ export class BikeModel {
       model.position.x -= centerX;
       model.position.z -= centerZ;
 
-      // Swap path: retire the previous model now, so the new one is
-      // children[0] before applyPreset / _initFromClone can address it.
-      if (onAttached) onAttached(model);
+      const finish = () => {
+        // Swap path: retire the previous model now, so the new one is
+        // children[0] before applyPreset / _initFromClone can address it.
+        if (onAttached) onAttached(model);
 
-      this.modelLoaded = true;
-      if (isRiders) this._setupRiderLean(model, gltf.animations);
-      console.log('Bike loaded. Spokes:', this.spokeMeshes.length,
-        'Pedals:', this.pedalNodes.length, 'Riders:', isRiders);
+        this.modelLoaded = true;
+        if (isRiders) this._setupRiderLean(model, gltf.animations);
+        console.log('Bike loaded. Spokes:', this.spokeMeshes.length,
+          'Pedals:', this.pedalNodes.length, 'Riders:', isRiders, 'Geese:', isGoose);
 
-      if (this._pendingPreset) {
-        this.applyPreset(this._pendingPreset);
-        this._pendingPreset = null;
-      }
+        if (this._pendingPreset) {
+          this.applyPreset(this._pendingPreset);
+          this._pendingPreset = null;
+        }
+      };
+      if (!isGoose) { finish(); return; }
+
+      // The goose tandem: seat both geese before the bike counts as loaded, so a
+      // versus clone (taken once modelLoaded) carries them too.
+      const goose = new GooseRiders(model, gltf.animations);
+      goose.measureWheel();
+      const riderPaths = getGooseRiderPaths();
+      this._gooseRiderPaths = riderPaths;
+      goose.loadRiders(loader, riderPaths).catch((err) => {
+        console.warn('Goose riders failed to load; riding the bare bike:', err);
+      }).then(() => {
+        if (this._modelPath !== modelPath) return; // swapped away while loading
+        this.goose = goose;
+        this.setSoloRider(this._soloRider);
+        this.applyGooseColours();
+        goose.update();
+        model.updateMatrixWorld(true);
+        const top = new THREE.Box3().setFromObject(model).max.y - model.position.y;
+        // the fused riders model stood 3.24 m tall on its 4.4 m bike
+        this.riderViewScale = Math.max(0.5, Math.min(2, top / 3.24));
+        finish();
+      });
     }, undefined, (err) => {
       console.error('Failed to load bike model:', this._modelPath, err);
     });
@@ -397,11 +456,20 @@ export class BikeModel {
    * [0, duration].
    */
   _updateRiderLean(dt) {
-    if (!this.riderMixer) return;
+    if (!this.riderMixer && !this.goose) return;
     // Light smoothing so wobble/danger-shake doesn't make the riders twitch.
     const k = Math.min(1, 12 * (dt || 1 / 60));
     this._captainLeanNorm += (this._captainLeanTarget - this._captainLeanNorm) * k;
     this._stokerLeanNorm += (this._stokerLeanTarget - this._stokerLeanNorm) * k;
+    if (this.goose) {
+      // Each goose by its own rider's lean; + = the rider's right, the same sign as
+      // this.lean (the bike's tilt), so a rider leans into the side the bike tilts.
+      this.goose.setLeans(this._captainLeanNorm, this._stokerLeanNorm);
+      this.goose.setDistance(this.distanceTraveled);
+      this.goose.setCrank(this._crankDisplay);
+      this.goose.update();
+      return;
+    }
     // Map [-1, 1] -> the monotonic clip [0, duration], NEGATED so the riders
     // lean into the same side the bike tilts. (After the model's RIDER_MODEL_YAW,
     // the baked torso roll composes with the group's Z-tilt such that matching
@@ -420,6 +488,44 @@ export class BikeModel {
    * update(). captain = the captain's own lean, stoker = the stoker's own lean.
    * In solo play pass the single lean for both so the pair sways together.
    */
+  /**
+   * Goose Outfits: seat another pair of geese on the goose tandem (no-op on the other models,
+   * or when the pair is already riding). The bike, its physics and every reference stay.
+   * @param {{Captain: string, Stoker: string}} paths
+   * @param {boolean} [disposeOld] false while live versus clones share the current geese
+   * @returns {Promise|undefined} settles once the new geese are seated
+   */
+  setGooseRiders(paths, disposeOld = true) {
+    if (!this.goose) return;
+    const cur = this._gooseRiderPaths;
+    if (cur && cur.Captain === paths.Captain && cur.Stoker === paths.Stoker) return;
+    this._gooseRiderPaths = paths;
+    const goose = this.goose;
+    const loader = new GLTFLoader();
+    loader.setDRACOLoader(getDracoLoader());
+    this._gooseSwap = goose.swapRiders(loader, paths, disposeOld && !this._sharedGeometry).then(() => {
+      if (this.goose !== goose) return; // the bike model was swapped meanwhile
+      this.setSoloRider(this._soloRider);
+      this.applyGooseColours();
+    }).catch((err) => console.warn('Goose outfit failed to load; keeping the current geese:', err));
+    return this._gooseSwap;
+  }
+
+  /** Goose Colours: the saved colourway of the current outfit pair on both geese (goose tandem only). */
+  applyGooseColours() {
+    if (!this.goose) return;
+    const outfit = getGooseOutfit();
+    const params = colourwayParams(outfit, getGooseColourway(outfit));
+    for (const [seat, r] of Object.entries(this.goose.riders)) applyColourway(r.root, params[seat] || {});
+  }
+
+  /** Show Solo: true shows only the captain goose (goose tandem only; kept until the geese load). */
+  setSoloRider(on) {
+    this._soloRider = !!on;
+    const st = this.goose && this.goose.riders.Stoker;
+    if (st && st.root.visible === this._soloRider) st.root.visible = !this._soloRider;
+  }
+
   setRiderLeans(captain, stoker) {
     this._captainLeanTarget = Math.max(-1, Math.min(1, captain));
     this._stokerLeanTarget = Math.max(-1, Math.min(1, stoker));
@@ -434,26 +540,31 @@ export class BikeModel {
     const model = this.group.children[0];
     if (!model) return;
 
+    // The bike's own meshes only: the goose riders sit in the model (on the seat sockets) but keep their
+    // materials -- cloning them dropped the Goose Colours shader hook (and the presets don't style the geese)
+    const bikeMeshes = (fn) => {
+      const walk = (o) => {
+        if (o.userData && o.userData.gooseSeat) return;
+        if (o.isMesh) fn(o);
+        for (const c of o.children) walk(c);
+      };
+      walk(model);
+    };
+
     // Store originals on first call
     if (!this._originalMats) {
       this._originalMats = new Map();
-      model.traverse(child => {
-        if (child.isMesh) {
-          this._originalMats.set(child.name, child.material.clone());
-        }
-      });
+      bikeMeshes(child => this._originalMats.set(child.name, child.material.clone()));
     }
 
     // Reset all materials to original (dispose old material to prevent leak)
-    model.traverse(child => {
-      if (child.isMesh) {
-        const orig = this._originalMats.get(child.name);
-        if (orig) {
-          if (child.material && child.material !== orig) child.material.dispose();
-          child.material = orig.clone();
-          if (this.spokeMeshes.includes(child)) {
-            child.material.transparent = true;
-          }
+    bikeMeshes(child => {
+      const orig = this._originalMats.get(child.name);
+      if (orig) {
+        if (child.material && child.material !== orig) child.material.dispose();
+        child.material = orig.clone();
+        if (this.spokeMeshes.includes(child)) {
+          child.material.transparent = true;
         }
       }
     });
@@ -461,8 +572,7 @@ export class BikeModel {
     if (!presetData) return; // null = default, just reset
 
     // Apply preset overrides
-    model.traverse(child => {
-      if (!child.isMesh) return;
+    bikeMeshes(child => {
       const entry = presetData[child.name];
       if (!entry) return;
       const mat = child.material;
@@ -493,7 +603,7 @@ export class BikeModel {
     // provides it (coop: captainLean / stokerLean on balanceResult); otherwise
     // both sway with the single aggregate lean (solo). The bike's tilt itself is
     // unaffected — that still comes from this.lean in _applyTransform.
-    if (this.riderMixer) {
+    if (this.riderMixer || this.goose) {
       // Coop provides each rider's own lean; solo provides only the aggregate
       // leanInput, in which case the captain leans with it and the stoker (who
       // has no second input in solo) stays upright.
@@ -836,7 +946,7 @@ export class BikeModel {
 
   // A-3 · drive the visible cranks from crankAngle, not from speed.
   _updateCrank(dt) {
-    if (!this.pedalNodes || this.pedalNodes.length === 0) return;
+    if ((!this.pedalNodes || this.pedalNodes.length === 0) && !this.goose) return;
     const now = performance.now() / 1000;
 
     if (this.crankAngle !== this._crankTarget) {
