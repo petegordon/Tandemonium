@@ -60,6 +60,34 @@
     background: var(--uf-color-accent-soft, rgba(60,200,80,.25));
     border-color: var(--uf-color-accent, #44ff66); color: var(--uf-color-fg, #fff);
   }
+  /* Menu pad: d-pad left, OK / Back right — like holding a gamepad */
+  #menu-pad { flex: 1; display: none; align-items: center; justify-content: space-around; gap: 16px;
+    padding: 0 16px max(10px, env(safe-area-inset-bottom)); }
+  #screen-ride.menu #menu-pad { display: flex; }
+  #screen-ride.menu #pedals, #screen-ride.menu #btn-pause, #screen-ride.menu #btn-recenter { display: none; }
+  .dpad { display: grid; grid-template-columns: repeat(3, 76px); grid-template-rows: repeat(3, 76px); gap: 6px; }
+  .nav-btn {
+    font: inherit; font-size: 30px; font-weight: bold; border-radius: 16px;
+    color: var(--uf-color-fg, #fff); background: var(--uf-color-surface-2, rgba(255,255,255,.1));
+    border: 2px solid var(--uf-color-line-soft, rgba(255,255,255,.16));
+    display: flex; align-items: center; justify-content: center; touch-action: none;
+  }
+  .nav-btn.down { background: var(--uf-color-accent-soft, rgba(60,200,80,.25)); border-color: var(--uf-color-accent, #44ff66); }
+  .dpad [data-nav="up"] { grid-column: 2; grid-row: 1; }
+  .dpad [data-nav="left"] { grid-column: 1; grid-row: 2; }
+  .dpad [data-nav="right"] { grid-column: 3; grid-row: 2; }
+  .dpad [data-nav="down"] { grid-column: 2; grid-row: 3; }
+  .face { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .face [data-nav="ok"] { width: 150px; height: 120px; font-size: 32px;
+    color: var(--uf-color-fg-on-accent, #06140c); background: var(--uf-color-accent, #44ff66); border-color: var(--uf-color-accent, #44ff66); }
+  .face [data-nav="ok"].down { filter: brightness(.8); }
+  .face [data-nav="back"] { width: 150px; height: 64px; font-size: 20px; }
+  #ride-tools { display: flex; gap: 8px; }
+  #btn-pause {
+    font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 10px;
+    color: var(--uf-color-fg, #fff); background: var(--uf-color-surface-2, rgba(255,255,255,.1));
+    border: 1px solid var(--uf-color-line-soft, rgba(255,255,255,.16));
+  }
   #motion-note { color: var(--uf-color-warn, #ffd23f); font-size: 13px; padding: 0 14px 6px; }
   #motion-note:empty { display: none; }
 
@@ -86,12 +114,27 @@
     <p>Scan the QR code on the game screen again.</p>
   </section>
 
-  <section class="screen" id="screen-ride">
+  <section class="screen menu" id="screen-ride">
     <div id="ride-bar">
       <span id="status">Connecting…</span>
-      <button id="btn-recenter" type="button">&#8635; Recenter</button>
+      <span id="ride-tools">
+        <button id="btn-recenter" type="button">&#8635; Recenter</button>
+        <button id="btn-pause" type="button">&#10074;&#10074; Pause</button>
+      </span>
     </div>
     <div id="motion-note"></div>
+    <div id="menu-pad">
+      <div class="dpad">
+        <button class="nav-btn" data-nav="up" type="button" aria-label="Up">&#9650;</button>
+        <button class="nav-btn" data-nav="left" type="button" aria-label="Left">&#9664;</button>
+        <button class="nav-btn" data-nav="right" type="button" aria-label="Right">&#9654;</button>
+        <button class="nav-btn" data-nav="down" type="button" aria-label="Down">&#9660;</button>
+      </div>
+      <div class="face">
+        <button class="nav-btn" data-nav="ok" type="button">OK</button>
+        <button class="nav-btn" data-nav="back" type="button">BACK</button>
+      </div>
+    </div>
     <div id="pedals">
       <div class="pedal" id="pedal-l">LEFT</div>
       <div class="pedal" id="pedal-r">RIGHT</div>

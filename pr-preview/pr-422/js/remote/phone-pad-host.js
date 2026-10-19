@@ -10,12 +10,15 @@
 // is the InputManager's, so a remote phone steers exactly like a phone
 // playing the game.
 //
-// Phase 1: one seat (Player 1). Menus from the phone come in Phase 2.
+// Phase 2: the game tells the phone to show its menu pad or its pedals
+// (setMode); in menu mode the phone's held buttons become a gamepad on the
+// seat's InputManager (setRemoteNav). One seat (Player 1) until Phase 4.
 // ============================================================
 
 import {
   DEFAULT_PAD_RELAY, padSocketUrl, makePadCode, makePadSecret, sha256hex,
-  buildPadLink, decodeFrame, counterDelta, isNewerSeq, NAV, relayOverrideAllowed,
+  buildPadLink, decodeFrame, counterDelta, isNewerSeq, NAV, MENU_NAV_MASK, PAD_CUES,
+  relayOverrideAllowed,
 } from './pad-protocol.js';
 
 /** No frame for this long while connected = treat the phone as gone. */
@@ -33,17 +36,27 @@ export class PhonePadHost {
    * @param {string} [opts.relay]   relay base URL (wss://…)
    * @param {string} [opts.siteBase] folder URL the phone link points into
    * @param {(status: PadStatus) => void} [opts.onStatus]
-   * @param {(nav: number) => void} [opts.onNav]  nav button edges (Phase 2)
    * @param {() => void} [opts.onRecenter]
+   * @param {() => void} [opts.onPause]   the phone's Pause button while riding
+   * @param {() => void} [opts.onDrop]    a connected phone went away
+   * @param {() => void} [opts.onReturn]  ...and came back
    */
-  constructor({ input, seat = 1, relay, siteBase, onStatus, onNav, onRecenter }) {
+  constructor({ input, seat = 1, relay, siteBase, onStatus, onRecenter, onPause, onDrop, onReturn }) {
     this.input = input;
     this.seat = seat;
     this.relay = relay || resolveRelay();
     this.siteBase = siteBase || resolveSiteBase();
     this.onStatus = onStatus || null;
-    this.onNav = onNav || null;
     this.onRecenter = onRecenter || null;
+    this.onPause = onPause || null;
+    this.onDrop = onDrop || null;
+    this.onReturn = onReturn || null;
+    /** @type {'menu'|'ride'} */
+    this.mode = 'menu';
+    this._dropped = false;     // was connected, then lost
+    // Buttons held when the mode switched: ignored until released, so the
+    // press that paused (Pause = Start in menu mode) can't also un-pause.
+    this._navLatched = 0;
     /** @type {PadStatus} */
     this.status = 'idle';
     this.code = null;
@@ -77,6 +90,8 @@ export class PhonePadHost {
   /** Stop listening to the phone and release its input. */
   close() {
     this._closed = true;
+    this._phoneHere = false;
+    this._dropped = false;
     clearTimeout(this._retryTimer);
     clearInterval(this._watchdog);
     this._watchdog = null;
@@ -90,7 +105,26 @@ export class PhonePadHost {
 
   get connected() { return this.status === 'connected'; }
 
-  /** Send a control message to the phone (Phase 2: mode / cue). */
+  /**
+   * Menu pad or pedals. Cheap to call every frame: only a change is sent.
+   * @param {'menu'|'ride'} mode
+   */
+  setMode(mode) {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    this._navLatched = this._last ? this._last.nav : 0;
+    if (this._phoneHere) {
+      this.input.setRemoteNav(mode === 'menu', 0);
+      this.sendToPad({ type: 'mode', mode });
+    }
+  }
+
+  /** A short sound/buzz on the phone. @param {string} cue */
+  cue(cue) {
+    if (this._phoneHere && PAD_CUES.includes(cue)) this.sendToPad({ type: 'cue', cue });
+  }
+
+  /** Send a control message to the phone. */
   sendToPad(msg) {
     if (this._ws && this._ws.readyState === 1) {
       this._ws.send(JSON.stringify({ type: 'to-pad', seat: this.seat, msg }));
@@ -142,14 +176,10 @@ export class PhonePadHost {
     let m;
     try { m = JSON.parse(data); } catch { return; }
     if (m.type === 'pad-joined' && m.seat === this.seat) {
-      this._phoneHere = true;
       this._last = null;
-      this._setStatus('connected');
-      this.sendToPad({ type: 'seat', seat: this.seat, label: 'Player ' + this.seat });
+      this._arrive();
     } else if (m.type === 'pad-left' && m.seat === this.seat) {
-      this._phoneHere = false;
-      this._release();
-      this._setStatus('waiting');
+      this._leave();
     }
   }
 
@@ -159,27 +189,47 @@ export class PhonePadHost {
     if (prev && !isNewerSeq(prev.seq, f.seq)) return;   // late / duplicate
     this.framesReceived++;
     this._lastAt = performance.now();
-    if (!this._phoneHere) { this._phoneHere = true; this._setStatus('connected'); }
+    if (!this._phoneHere) this._arrive();
 
     if (f.tilt != null) this.input.feedRemoteTilt(f.tilt);
     const tapsL = prev ? counterDelta(prev.tapsL, f.tapsL) : 0;
     const tapsR = prev ? counterDelta(prev.tapsR, f.tapsR) : 0;
     this.input.setRemotePedals(f.left, f.right, tapsL, tapsR);
 
-    const pressed = f.nav & ~(prev ? prev.nav : 0);
+    // Menu mode: the held buttons are a gamepad for the menus.
+    this._navLatched &= f.nav;
+    const nav = f.nav & ~this._navLatched;
+    this.input.setRemoteNav(this.mode === 'menu', nav & MENU_NAV_MASK);
+    const pressed = nav & ~(prev ? prev.nav & ~this._navLatched : 0);
     if (pressed & NAV.recenter) {
       if (this.onRecenter) this.onRecenter();
       else this.input.startTiltCalibration();
     }
-    if (pressed && this.onNav) this.onNav(pressed);
+    if ((pressed & NAV.pause) && this.mode === 'ride' && this.onPause) this.onPause();
     this._last = f;
   }
 
   _checkStale() {
-    if (this._last && performance.now() - this._lastAt > STALE_MS) {
-      this._release();
-      this._last = null;
-    }
+    if (this._phoneHere && this._last && performance.now() - this._lastAt > STALE_MS) this._leave();
+  }
+
+  /** The phone is here (joined, or frames resumed). */
+  _arrive() {
+    this._phoneHere = true;
+    this._setStatus('connected');
+    this.sendToPad({ type: 'seat', seat: this.seat, label: 'Player ' + this.seat });
+    this.sendToPad({ type: 'mode', mode: this.mode });
+    this.input.setRemoteNav(this.mode === 'menu', 0);
+    if (this._dropped) { this._dropped = false; if (this.onReturn) this.onReturn(); }
+  }
+
+  /** The phone left, or went silent (asleep, out of range). */
+  _leave() {
+    const was = this._phoneHere;
+    this._phoneHere = false;
+    this._release();
+    this._setStatus('waiting');
+    if (was) { this._dropped = true; if (this.onDrop) this.onDrop(); }
   }
 
   _release() {

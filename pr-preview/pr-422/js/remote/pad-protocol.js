@@ -11,7 +11,7 @@
 //   [4] u8  flags          bit0 L held, bit1 R held, bit2 tilt valid
 //   [5] u8  tapsL          running press counter, wraps at 256
 //   [6] u8  tapsR
-//   [7] u8  nav            bit0 up 1 down 2 left 3 right 4 ok 5 back 6 recenter
+//   [7] u8  nav            bit0 up 1 down 2 left 3 right 4 ok 5 back 6 recenter 7 pause
 //
 // Through the relay the host receives it with a 1-byte seat prefix (9 bytes).
 // Control messages are JSON text. Pure module: runs in the browser, Node tests
@@ -23,8 +23,17 @@ export const FRAME_BYTES = 8;
 export const MAX_SEATS = 4;
 
 export const NAV = Object.freeze({
-  up: 1, down: 2, left: 4, right: 8, ok: 16, back: 32, recenter: 64,
+  up: 1, down: 2, left: 4, right: 8, ok: 16, back: 32, recenter: 64, pause: 128,
 });
+
+/** Buttons that act on menus (held state is passed through as a pad). */
+export const MENU_NAV_MASK = NAV.up | NAV.down | NAV.left | NAV.right | NAV.ok | NAV.back | NAV.pause;
+
+/** What the phone shows: the menu pad or the pedals. */
+export const PAD_MODES = Object.freeze(['menu', 'ride']);
+
+/** Short sounds/buzzes the game asks the phone for. */
+export const PAD_CUES = Object.freeze(['countdown', 'go', 'crash', 'finish']);
 
 /**
  * @typedef {object} PadFrame

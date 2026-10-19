@@ -94,6 +94,10 @@ import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { installPhonePadUI } from './remote/phone-pad-ui.js'; // phone remote (#421)
 
+// #421 · game states where a phone remote shows its pedals (else its menu pad).
+const PHONE_RIDE_STATES = new Set(['countdown', 'calibrating', 'playing', 'finishCinematic', 'versusCinematic']);
+const PHONE_STATE_CUES = { countdown: 'countdown', playing: 'go', victory: 'finish', versusResults: 'finish' };
+
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 
@@ -274,8 +278,17 @@ class Game {
 
     // Components
     this.input = new InputManager({ slot: this.controllerManager.getSlot('P1') });
-    // #421 · a phone on another device can steer + pedal Player 1.
-    this.phonePad = installPhonePadUI(this.input);
+    // #421 · a phone on another device can steer + pedal Player 1, and work
+    // the menus (its menu pad is a gamepad on this.input). Its Pause button
+    // and a dropped phone both open the options overlay, which is the pause.
+    this.phonePad = installPhonePadUI(this.input, {
+      onPause: () => { if (!this._optionsOpen) this._openOptions(); },
+      onDrop: () => {
+        const local = this.mode === 'solo' || this.mode === 'local' || this.mode === 'versus';
+        if (local && PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen) this._openOptions();
+      },
+    });
+    this._phonePadState = null;
 
     // Controller overlay — live 3D tiles of each rider's pad (C, or the quick
     // menu's CONTROLLERS entry). Reads the same slots the InputManagers do; the
@@ -2488,6 +2501,24 @@ class Game {
   // Ti1 — noise-based crash impact used for crashes and tree hits.
   _playCrash(intensity = 1) {
     this.audioEngine.crash(intensity);
+    this.phonePad?.cue('crash');
+  }
+
+  /**
+   * #421 · keep the phone remote's screen in step with the game: pedals while
+   * riding, the menu pad everywhere else (and while paused), plus a cue on the
+   * moments a player holding a phone should feel.
+   */
+  _syncPhonePad() {
+    const pp = this.phonePad;
+    if (!pp || pp.status === 'idle') return;
+    const riding = PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen && !this._inputChoiceOpen;
+    pp.setMode(riding ? 'ride' : 'menu');
+    if (this.state !== this._phonePadState) {
+      const cue = PHONE_STATE_CUES[this.state];
+      if (cue) pp.cue(cue);
+      this._phonePadState = this.state;
+    }
   }
 
   _onTimerExpired() {
@@ -6077,6 +6108,8 @@ class Game {
         }
       }
     }
+
+    this._syncPhonePad();
 
     // Start button → options overlay (available in all states)
     this._pollStartButton();

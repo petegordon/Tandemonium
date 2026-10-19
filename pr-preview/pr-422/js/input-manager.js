@@ -179,6 +179,37 @@ export function readGyroRollMode() {
 // reads the slot's effective gamepad + fusion orientation each frame and
 // turns them into tilt/lean/trigger state for the game loop.
 
+// Phone remote NAV bits (js/remote/pad-protocol.js NAV) → standard-mapping
+// gamepad buttons: 12-15 d-pad, A/B (honouring the GameSir A/B swap), 9 Start.
+const NAV_BUTTONS = [[1, 12], [2, 13], [4, 14], [8, 15], [128, 9]];
+const _PRESSED = Object.freeze({ pressed: true, touched: true, value: 1 });
+const _RELEASED = Object.freeze({ pressed: false, touched: false, value: 0 });
+
+/**
+ * A gamepad snapshot with the phone's held menu buttons OR-ed in. With no real
+ * pad it is a synthetic one (stick centred, no shoulders) so only navigation
+ * changes. Exported for tests.
+ * @param {any} real  a Gamepad-like snapshot, or null
+ * @param {number} nav @param {boolean} swapAB
+ */
+export function mergeRemoteNavPad(real, nav, swapAB) {
+  const n = Math.max(17, real ? real.buttons.length : 0);
+  const buttons = new Array(n);
+  for (let i = 0; i < n; i++) buttons[i] = (real && real.buttons[i]) || _RELEASED;
+  for (const [bit, idx] of NAV_BUTTONS) if (nav & bit) buttons[idx] = _PRESSED;
+  if (nav & 16) buttons[swapAB ? 1 : 0] = _PRESSED;   // OK = A
+  if (nav & 32) buttons[swapAB ? 0 : 1] = _PRESSED;   // Back = B
+  return {
+    id: real ? real.id : 'Phone remote',
+    index: real ? real.index : -1,
+    connected: true,
+    mapping: 'standard',
+    timestamp: performance.now(),
+    axes: real ? real.axes : [0, 0, 0, 0],
+    buttons,
+  };
+}
+
 export class InputManager {
   /**
    * @param {Object} [options]
@@ -350,6 +381,8 @@ export class InputManager {
   // owns the lifecycle; InputManager is a pure consumer.
   get gamepadConnected() {
     if (this._slot?.state === 'claimed') return true;
+    // A phone remote showing its menu pad (#421) is a gamepad to the menus.
+    if (this._remoteMenu) return true;
     if (!this._steamInputActive) return false;
     // Handle-bound managers (versus multi-pad) are only "connected" while
     // their specific controller is still in the Steam snapshot.
@@ -689,8 +722,23 @@ export class InputManager {
     this._remoteRight = right;
   }
 
+  /**
+   * The phone remote's menu pad (#421): while `active`, the phone shows a
+   * D-pad + OK/Back and this InputManager reports a gamepad whose buttons are
+   * the phone's (see mergeRemoteNavPad), so every menu, overlay and the
+   * "tap to start" screen work from the phone with no per-screen code.
+   * Off while riding, so ride-time "is a pad here?" checks are unchanged.
+   * @param {boolean} active @param {number} [nav] NAV bits held right now
+   */
+  setRemoteNav(active, nav = 0) {
+    this._remoteMenu = !!active;
+    this._remoteNav = active ? nav : 0;
+  }
+
   /** The phone remote went away: release its pedals and its lean. */
   detachRemote() {
+    this._remoteMenu = false;
+    this._remoteNav = 0;
     this._remoteLeft = false;
     this._remoteRight = false;
     if (!this._remoteTilt) return;
@@ -1190,6 +1238,11 @@ export class InputManager {
    * @returns {Gamepad|null}
    */
   getGamepadState() {
+    const real = this._realGamepadState();
+    return this._remoteMenu ? mergeRemoteNavPad(real, this._remoteNav || 0, !!this._gpSwapAB) : real;
+  }
+
+  _realGamepadState() {
     if (this._slot) {
       const pads = navigator.getGamepads ? navigator.getGamepads() : [];
       const slotPad = this._slot.effectiveGamepad(pads);
