@@ -28,7 +28,8 @@ async function boot({ query = '', storage = {} } = {}) {
     if(f&&fs.existsSync(f))return req.respond({status:200,contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:fs.readFileSync(f)});
     return req.abort();});
   page.on('pageerror', (e) => console.log('   pageerror:', String(e).slice(0, 160)));
-  await page.evaluateOnNewDocument((s) => { try { localStorage.clear(); localStorage.setItem('tandemonium_tutorial_done', 'smoke'); for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, storage);
+  // Seed storage once per tab; a reload (Display Testing) keeps what the page saved.
+  await page.evaluateOnNewDocument((s) => { try { if (sessionStorage.getItem('smoke_seeded')) return; sessionStorage.setItem('smoke_seeded', '1'); localStorage.clear(); localStorage.setItem('tandemonium_tutorial_done', 'smoke'); for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, storage);
   await page.goto(`http://127.0.0.1:${PORT}/index.html${query}`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!window._game, { timeout: 60000 });
   await page.waitForFunction(() => window._game.world._treeModelReady, { timeout: 60000 });
@@ -136,6 +137,39 @@ console.log('TV test switches: ?lines= and ?aa=');
   const r = await page.evaluate(() => ({ ratio: window._game.renderer.getPixelRatio(), h: innerHeight, aa: window._game.renderer.getContext().getContextAttributes().antialias, tier: window._game._quality }));
   check(r.tier === 'low' && Math.abs(r.ratio * r.h - 540) < 1, '?lines=540 renders Low at 540 lines', r);
   check(r.aa === true, '?aa=1 turns edge smoothing on', r.aa);
+  await page.close();
+}
+
+console.log('Display Testing in Options: overrides apply after a reload; Reset goes back to the tier');
+{
+  const page = await boot({ query: '?quality=medium' });
+  const dstate = () => page.evaluate(() => ({
+    lines: Math.round(window._game.renderer.getPixelRatio() * innerHeight),
+    aa: window._game.renderer.getContext().getContextAttributes().antialias,
+    readout: document.getElementById('perf-readout')?.textContent || '',
+    tier: window._game._quality,
+    url: location.search,
+  }));
+  const clickReload = async (id) => {
+    await page.evaluate(() => window._game._openOptions());
+    await Promise.all([page.waitForNavigation({ waitUntil: 'domcontentloaded' }), page.evaluate((i) => document.getElementById(i).click(), id)]);
+    await page.waitForFunction(() => window._game && window._game.world && window._game.world._treeModelReady, { timeout: 60000 });
+  };
+  await clickReload('opt-lines-720');
+  let d = await dstate();
+  check(d.lines === 720 && d.tier === 'medium' && !/lines=/.test(d.url), 'Render lines 720: reloads and renders 720 lines, tier unchanged', d);
+  await clickReload('opt-aa-on');
+  await clickReload('opt-perfhud-on');
+  d = await dstate();
+  check(d.aa === true && d.lines === 720, 'Edge smoothing On sticks with the lines override', d);
+  check(/FPS/.test(d.readout) && /GPU/.test(d.readout) && /draws/.test(d.readout), 'perf readout shows FPS, GPU and draw calls', d.readout.split(String.fromCharCode(10))[0]);
+  const notes = await page.evaluate(() => { window._game._openOptions(); return { q: document.getElementById('opt-quality-note').textContent, d: document.getElementById('opt-dtest-note').textContent, active: ['opt-lines-720', 'opt-aa-on', 'opt-perfhud-on'].every((i) => document.getElementById(i).classList.contains('active')) }; });
+  check(/overrides are on/.test(notes.q) && /720 lines/.test(notes.d) && notes.active, 'Options says the overrides are on, under Graphics Quality too', notes);
+  await clickReload('opt-dtest-reset');
+  d = await dstate();
+  check(d.lines === Math.round(0.5 * 720) && d.aa === false && !d.readout, 'Reset to quality defaults: back to Medium as it was', d);
+  const stored = await page.evaluate(() => localStorage.getItem('tandemonium_display_test'));
+  check(stored === null, 'Reset clears the saved overrides', stored);
   await page.close();
 }
 

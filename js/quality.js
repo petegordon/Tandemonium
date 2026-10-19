@@ -150,3 +150,66 @@ export class AutoTierWatcher {
     return null;
   }
 }
+
+// ── Display testing (Options → Display Testing, or ?lines= / ?aa= / ?debug=perf) ──
+// For tuning weak screens like a TV: render lines, edge smoothing and an
+// on-screen perf readout. Saved settings apply on load; the page reloads
+// when one changes (edge smoothing can only be set when the renderer is made).
+
+const DISPLAY_TEST_KEY = 'tandemonium_display_test';
+export const DISPLAY_TEST_LINES = [0, 540, 720, 1080];   // 0 = the tier's own
+
+/**
+ * @typedef {{ lines: number, aa: 'tier'|'on'|'off', perf: boolean }} DisplayTest
+ */
+
+/** @param {any} n @returns {number} 0, or a line count in 180..2160 */
+const cleanLines = (n) => { const v = parseInt(n, 10); return v >= 180 && v <= 2160 ? v : 0; };
+
+/** @returns {DisplayTest} */
+export function getDisplayTest(store = globalThis.localStorage) {
+  let s = null;
+  try { s = JSON.parse(store.getItem(DISPLAY_TEST_KEY) || 'null'); } catch { /* bad / no storage */ }
+  return {
+    lines: cleanLines(s && s.lines),
+    aa: s && (s.aa === 'on' || s.aa === 'off') ? s.aa : 'tier',
+    perf: !!(s && s.perf),
+  };
+}
+
+/** @param {Partial<DisplayTest>} patch @returns {DisplayTest} */
+export function setDisplayTest(patch, store = globalThis.localStorage) {
+  const next = { ...getDisplayTest(store), ...patch };
+  next.lines = cleanLines(next.lines);
+  try { store.setItem(DISPLAY_TEST_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+  return next;
+}
+
+/**
+ * The display test in effect: URL switches win over the saved settings.
+ * @param {URLSearchParams} params @param {DisplayTest} saved @returns {DisplayTest}
+ */
+export function resolveDisplayTest(params, saved) {
+  const aa = params.get('aa');
+  return {
+    lines: cleanLines(params.get('lines')) || saved.lines,
+    aa: aa === '1' ? 'on' : aa === '0' ? 'off' : saved.aa,
+    perf: params.get('debug') === 'perf' || saved.perf,
+  };
+}
+
+/** Reload without the URL switches (so saved settings apply) and past the HTML cache. */
+export function reloadForDisplayTest(loc = globalThis.location) {
+  const url = new URL(loc.href);
+  for (const k of ['lines', 'aa', 'debug', '_r']) url.searchParams.delete(k);
+  url.searchParams.set('_r', String(Date.now()));
+  loc.replace(url.toString());
+}
+
+/** Back to the tier's own settings (Options → Display Testing → Reset). */
+export function clearDisplayTest(store = globalThis.localStorage) {
+  try { store.removeItem(DISPLAY_TEST_KEY); } catch { /* storage unavailable */ }
+}
+
+/** @param {DisplayTest} t */
+export const displayTestActive = (t) => !!(t.lines || t.aa !== 'tier' || t.perf);
