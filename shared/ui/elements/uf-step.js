@@ -45,6 +45,22 @@ export class UfStep extends UfElement {
   /** @returns {boolean} */ get active() { return this.get('active'); }
   /** @param {boolean} v */ set active(v) { this.set('active', v); }
 
+  /**
+   * The controller-navigable items on this screen, in document order:
+   * every visible uf-button, native button, range input, or [data-focusable]
+   * that is not disabled. What a FocusController's spatial scope is built from
+   * (see uf-flow.attachFocus).
+   * @returns {HTMLElement[]}
+   */
+  focusables() {
+    const sel = 'uf-button, button, input[type="range"], [data-focusable]';
+    return /** @type {HTMLElement[]} */ (Array.from(this.querySelectorAll(sel))).filter((el) => {
+      if (el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true') return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+  }
+
   /** @override */
   render() { return null; }   // keep the authored children
 

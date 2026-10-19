@@ -30,7 +30,7 @@ export class UfButton extends UfElement {
   /** @override */ static props = {
     label: prop.string(''),
     variant: prop.enum(/** @type {const} */ (['primary', 'accent', 'ghost', 'danger', 'versus']), 'primary'),
-    size: prop.enum(/** @type {const} */ (['sm', 'md', 'lg']), 'md'),
+    size: prop.enum(/** @type {const} */ (['xs', 'sm', 'md', 'lg']), 'md'),
     disabled: prop.boolean(false),
     selected: prop.boolean(false),
   };
@@ -50,6 +50,8 @@ export class UfButton extends UfElement {
       transition: transform var(--uf-motion-fast) var(--uf-ease), box-shadow var(--uf-motion-fast) var(--uf-ease), background var(--uf-motion-fast), border-color var(--uf-motion-fast);
     }
     uf-button[size="sm"] { font-size: var(--uf-size-sm); font-weight: 400; padding: var(--uf-space-1) var(--uf-space-3); min-height: 32px; border-radius: var(--uf-radius-sm); }
+    /* xs: icon / close buttons (×, ⚙) whose host page sets an explicit size; no minimum, no backdrop. */
+    uf-button[size="xs"] { font-size: var(--uf-size-xs); font-weight: 400; padding: 2px 6px; min-height: 0; border-width: 1px; border-radius: var(--uf-radius-sm); backdrop-filter: none; -webkit-backdrop-filter: none; }
     uf-button[size="lg"] { font-size: var(--uf-size-lg); font-weight: 800; padding: var(--uf-space-4) var(--uf-space-5); min-height: 56px; width: 100%; }
     uf-button[variant="accent"]  { background: var(--uf-color-accent-soft); border-color: var(--uf-color-accent-line); }
     uf-button[variant="accent"][selected], uf-button[variant="accent"].ready { background: var(--uf-color-accent); border-color: var(--uf-color-accent); color: var(--uf-color-fg-on-accent); }
@@ -74,14 +76,23 @@ export class UfButton extends UfElement {
   /** @returns {'primary' | 'accent' | 'ghost' | 'danger' | 'versus'} */ get variant() { return this.get('variant'); }
   /** @param {'primary' | 'accent' | 'ghost' | 'danger' | 'versus'} v */ set variant(v) { this.set('variant', v); }
 
-  /** @returns {'sm' | 'md' | 'lg'} */ get size() { return this.get('size'); }
-  /** @param {'sm' | 'md' | 'lg'} v */ set size(v) { this.set('size', v); }
+  /** @returns {'xs' | 'sm' | 'md' | 'lg'} */ get size() { return this.get('size'); }
+  /** @param {'xs' | 'sm' | 'md' | 'lg'} v */ set size(v) { this.set('size', v); }
 
+  // disabled / selected sync their ARIA + tabindex synchronously (not on the
+  // batched DOM pass): a focus engine reading aria-disabled right after
+  // `btn.disabled = true` must see it.
   /** @returns {boolean} */ get disabled() { return this.get('disabled'); }
-  /** @param {boolean} v */ set disabled(v) { this.set('disabled', v); }
+  /** @param {boolean} v */ set disabled(v) { this.set('disabled', v); this.#syncA11y(); }
 
   /** @returns {boolean} */ get selected() { return this.get('selected'); }
-  /** @param {boolean} v */ set selected(v) { this.set('selected', v); }
+  /** @param {boolean} v */ set selected(v) { this.set('selected', v); this.#syncA11y(); }
+
+  /** @override @param {string} attr @param {string|null} old @param {string|null} val */
+  attributeChangedCallback(attr, old, val) {
+    super.attributeChangedCallback(attr, old, val);
+    if (attr === 'disabled' || attr === 'selected') this.#syncA11y();
+  }
 
   #wired = false;
 

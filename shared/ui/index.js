@@ -4,6 +4,8 @@
 // host page (<link rel="stylesheet" href=".../tokens.css">), not by JS, so a
 // host can override tokens before any element paints.
 export { UfElement, prop, coerce, esc, kebab } from './uf-element.js';
+export { FocusController } from './focus-controller.js';
+export { GamepadInput, ManualInput } from './inputs.js';
 // uf:elements — the scaffolder appends one line per element below this marker.
 export { UfChip } from './elements/uf-chip.js';
 export { UfSeat } from './elements/uf-seat.js';

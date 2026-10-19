@@ -1,3 +1,4 @@
+// @ts-check
 // ============================================================
 // QUICK MENU — the single in-ride control button + its sheet
 // ============================================================
@@ -123,8 +124,8 @@ export class QuickMenu {
     // D-pad never gave them.
     const rideControls = this.sideButtons && this.sideButtons.style.display !== 'none';
     // M4: a ranked run locks SAFETY and SPEED (their buttons are disabled).
-    this._show('qm-safety', rideControls && !(this.safetyBtn && this.safetyBtn.disabled));
-    this._show('qm-speed', rideControls && !(this.speedBtn && this.speedBtn.disabled));
+    this._show('qm-safety', rideControls && !(this.safetyBtn && this.safetyBtn.hasAttribute('disabled')));
+    this._show('qm-speed', rideControls && !(this.speedBtn && this.speedBtn.hasAttribute('disabled')));
     this._show('qm-reset', rideControls);
     this._show('qm-lobby', rideControls);
 
@@ -151,7 +152,7 @@ export class QuickMenu {
     const clipReady = this.shareBtn && this.shareBtn.style.display !== 'none';
     const clip = document.getElementById('qm-clip');
     if (clip) {
-      clip.disabled = !clipReady;
+      clip.toggleAttribute('disabled', !clipReady);
       clip.querySelector('.qm-state').textContent = clipReady ? '' : 'N/A';
     }
   }
@@ -160,7 +161,7 @@ export class QuickMenu {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener('click', () => {
-      if (el.disabled || !target) return;
+      if (el.hasAttribute('disabled') || !target) return;
       target.click();
       if (closeAfter) this.close();
       else this.sync();
