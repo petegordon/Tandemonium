@@ -315,7 +315,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage')].filter(Boolean),
+      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage'), document.getElementById('btn-mode-connect-hid')].filter(Boolean),
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
@@ -337,6 +337,8 @@ export class Lobby {
     this._stepCenterItems.set(this.roleStep, roleItems);
     const versusItems = [
       document.getElementById('btn-versus-join-kb'),
+      document.getElementById('btn-versus-controllers'),
+      document.getElementById('btn-versus-connect-hid'),
       document.getElementById('btn-versus-continue'),
       document.getElementById('btn-back-versus'),
     ];
@@ -867,6 +869,36 @@ export class Lobby {
   }
 
   /** Position each PiP over its slot container in the room grid */
+  /**
+   * The room's two <uf-seat>s (#173): which seat is yours, who is in the
+   * other one, and whether they are here. Seats are keyed by role; 'self' /
+   * 'partner' resolve through this._roomRole.
+   * @param {'self'|'partner'} which
+   * @param {{ who?: string, dev?: string, state?: 'open'|'joined'|'ready' }} v
+   */
+  _setRoomSeat(which, v) {
+    const role = this._roomRole || 'captain';
+    const seatRole = which === 'self' ? role : (role === 'captain' ? 'stoker' : 'captain');
+    const el = document.getElementById(`room-video-slot-${seatRole}`);
+    if (!el) return;
+    if (v.who !== undefined) el.setAttribute('who', v.who);
+    if (v.dev !== undefined) el.setAttribute('dev', v.dev);
+    if (v.state !== undefined) el.setAttribute('state', v.state);
+  }
+
+  /** Both room seats from current state: me in my seat, the partner's seat open until they arrive. */
+  _syncRoomSeats(role) {
+    this._roomRole = role;
+    const user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
+    this._setRoomSeat('self', { who: (user && user.name) || 'You', dev: role === 'captain' ? 'front seat' : 'back seat', state: 'joined' });
+    const nameEl = document.getElementById('room-partner-name');
+    const partnerName = nameEl ? nameEl.textContent.trim() : '';
+    const connected = !!(this.net && this.net.connected);
+    this._setRoomSeat('partner', connected
+      ? { who: partnerName || 'Partner', dev: role === 'captain' ? 'back seat' : 'front seat', state: 'joined' }
+      : { who: 'OPEN', dev: 'waiting for partner…', state: 'open' });
+  }
+
   _positionPipToVideoArea() {
     const captainSlot = document.getElementById('room-video-slot-captain');
     const stokerSlot = document.getElementById('room-video-slot-stoker');
@@ -1034,6 +1066,26 @@ export class Lobby {
       this._leaveVersus();
       this._showStep(this.roleStep);
     });
+    // PAIR A CONTROLLER (mode screen + versus step): the WebHID grant a pad the
+    // Gamepad API can't see needs — a Steam Controller is HID-only and a second
+    // DualSense over Bluetooth never surfaces. Ported from the host step's
+    // CONNECT A CONTROLLER. No slot is named: the device is pooled, and the
+    // seat screen offers it as soon as it streams (its first A press seats it).
+    // In Electron the main process picks the next un-granted device itself.
+    this._wireHidPairButton('btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'mode');
+    this._wireHidPairButton('btn-versus-connect-hid', 'btn-versus-connect-hid-hint', 'versus');
+    const btnVersusCtrl = document.getElementById('btn-versus-controllers');
+    if (btnVersusCtrl) {
+      btnVersusCtrl.addEventListener('click', () => {
+        const panel = document.getElementById('versus-controllers');
+        if (!panel) return;
+        panel.hidden = !panel.hidden;
+        btnVersusCtrl.setAttribute('aria-expanded', String(!panel.hidden));
+        btnVersusCtrl.textContent = 'Controllers ' + (panel.hidden ? '\u25BE' : '\u25B4');
+        this._versusLastCardsKey = null;   // re-render so the list is current
+      });
+    }
+
     document.getElementById('btn-versus-join-kb').addEventListener('click', () => {
       this._versusJoinKeyboard();
     });
@@ -4002,6 +4054,7 @@ export class Lobby {
     const partnerLabel = document.getElementById('partner-pip-label');
     if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
     if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+    this._syncRoomSeats(role);
 
     // Register gamepad nav for room step
     const roomItems = (role === 'captain')
@@ -4043,6 +4096,7 @@ export class Lobby {
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
       document.getElementById('btn-play-game').style.display = 'none';
       document.getElementById('btn-start-ride').style.display = 'none';
+      this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
         if (this.net) { this.net.destroy(); this.net = null; }
         this._removePipLobbyMode();
@@ -4276,6 +4330,7 @@ export class Lobby {
       const partnerNameEl = document.getElementById('room-partner-name');
       if (partnerNameEl && profile && profile.name) {
         partnerNameEl.textContent = profile.name;
+        this._setRoomSeat('partner', { who: profile.name, state: 'joined' });
         // Save partner name for recent rooms display
         if (this.net && this.net.roomCode && this._roomRole) {
           this._roomStore.save(this.net.roomCode, this._roomRole, profile.name);
@@ -4527,6 +4582,27 @@ export class Lobby {
         }).catch(() => {});
       }
       const state = this._detectLocalP2State();
+      // Every CONNECTED controller that could be Player 2 (same detector as
+      // versus; owner = Player 1). One JOIN button each; any button on that
+      // pad joins. The single legacy button only shows when this list is empty.
+      const candidates = this._detectLocalJoinCandidates();
+      this._renderLocalJoinCandidates(candidates);
+      for (const c of candidates) {
+        const gp = c.pollGp;
+        if (!gp || !gp.buttons) continue;
+        const key = 'local:' + c.key;
+        const prev = this._versusPrevButtons.get(key) || { any: true };
+        let any = false;
+        for (let i = 0; i < gp.buttons.length; i++) if (gp.buttons[i] && gp.buttons[i].pressed) { any = true; break; }
+        if (any && !prev.any) {
+          this._versusPrevButtons.set(key, { any });
+          this._diag(`[local] join press on ${c.name} (${c.kind})`, 'join-press');
+          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle });
+          return;
+        }
+        this._versusPrevButtons.set(key, { any });
+      }
+      const listed = candidates.length > 0;
 
       // Dirty-check the visible state before touching the DOM (avoids layout
       // churn every frame when nothing has changed).
@@ -4541,7 +4617,7 @@ export class Lobby {
       // steering needs WebHID, so pairing is a real upgrade even when the
       // buttons do work.
       const p2OnWebHid = !!(state.hidLive && state.hidLive.streaming);
-      const canPairHid = !!navigator.hid && !p2OnWebHid;
+      const canPairHid = !!navigator.hid && !p2OnWebHid && !navigator.userAgent.includes('Electron');   // browser-only fallback
       const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.slotId || ''}|${state.steamHandle || ''}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}|${canPairHid}|${!!state.gpSilent}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
@@ -4550,7 +4626,7 @@ export class Lobby {
           joinSection.style.display = (state.available || canPairHid) ? '' : 'none';
         }
         if (btnConnect) btnConnect.style.display = canPairHid ? '' : 'none';
-        btnGp.style.display = state.hasGamepad ? '' : 'none';
+        btnGp.style.display = (state.hasGamepad && !listed) ? '' : 'none';
         btnKb.style.display = state.hasKeyboard ? '' : 'none';
         if (state.hasGamepad && gpNameEl) {
           gpNameEl.textContent = state.gpName || 'CONTROLLER';
@@ -5339,6 +5415,40 @@ export class Lobby {
     return { type: 'keyboard', name: 'KEYBOARD' };
   }
 
+  /**
+   * Wire a PAIR A CONTROLLER button: requestDevice() from the click (user
+   * activation), pool the device, report in the hint line.
+   * @param {string} btnId @param {string} hintId @param {string} tag log prefix
+   */
+  _wireHidPairButton(btnId, hintId, tag) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    // Desktop builds grant every HID device in main (setDevicePermissionHandler)
+    // and pool them at boot — the button is a browser-only fallback.
+    if (navigator.userAgent.includes('Electron')) { btn.style.display = 'none'; return; }
+    btn.addEventListener('click', async () => {
+      const hintEl = document.getElementById(hintId);
+      const say = (t) => { if (hintEl) { hintEl.textContent = t; hintEl.style.display = t ? '' : 'none'; } };
+      if (!this.controllerManager || !navigator.hid) { say('WebHID is not available in this browser'); return; }
+      if (btn.hasAttribute('disabled')) return;
+      btn.setAttribute('disabled', '');
+      say('Pick the controller in the browser prompt…');
+      this._publishHeldHidDevices();
+      try {
+        const device = await this.controllerManager.connectHidForSlot(null, { prompt: true });
+        say(device
+          ? `Paired ${device.productName || 'controller'} — press a button on it`
+          : 'No new controller found — turn it on, then try again');
+        console.log(`[${tag}] HID pair →`, device ? (device.productName || 'device') : 'nothing new');
+      } catch (err) {
+        console.warn(`[${tag}] HID pair failed:`, err);
+        say('Pairing failed — try again');
+      } finally {
+        btn.removeAttribute('disabled');
+      }
+    });
+  }
+
   _enterVersusStep() {
     // Tear down any in-flight online session — versus is purely local.
     if (this.net) {
@@ -5413,6 +5523,57 @@ export class Lobby {
     }
 
     this._showStep(this.versusStep); // starts the monitor
+  }
+
+  /**
+   * A joined pad leaves its seat (B): the slot goes back to the pool so the
+   * pad is a CONNECTED candidate again and can rejoin with A. Never the host.
+   */
+  _versusUnseat(p) {
+    if (!p || p.slotId === 'P1' || p.input === this.input) return;
+    this._versusPlayers = this._versusPlayers.filter(x => x !== p);
+    if (p.input) p.input.steamInputHandle = null;
+    if (p.type === 'gamepad' && p.slotId) this.controllerManager?.releaseSlotToPool(p.slotId);
+    this._versusPrevButtons.delete('member:' + p.n);
+    this._versusLastCardsKey = null;
+    console.log(`[versus] P${p.n} left their seat (${p.name})`);
+    analytics.trackEvent('versus_player_left', { source: p.type, players: this._versusPlayers.length });
+  }
+
+  /** CONNECTED controllers that could be Player 2: everything but what Player 1 holds. */
+  _detectLocalJoinCandidates() {
+    const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+    const owned = { handles: new Set(), devices: new Set(), indices: new Set(), slotIds: new Set(['P1']) };
+    if (this.input) {
+      if (this.input.gamepadIndex !== null) owned.indices.add(this.input.gamepadIndex);
+      if (this.input._slot?.hidDevice) owned.devices.add(this.input._slot.hidDevice);
+      if (this.input.steamInputHandle != null) owned.handles.add(this.input.steamInputHandle);
+      if (this.input._steamInputActive) { const e = this.input._selectedSteamEntry(); if (e) owned.handles.add(e.handle); }
+    }
+    return this._detectJoinCandidates(pads, owned);
+  }
+
+  /** One JOIN AS PLAYER 2 button per candidate, in the host step (dirty-checked). */
+  _renderLocalJoinCandidates(candidates) {
+    const wrap = document.getElementById('local-join-candidates');
+    if (!wrap) return;
+    const key = candidates.map(c => c.key + ':' + c.name).join('|');
+    if (key === this._localCandidatesKey) return;
+    this._localCandidatesKey = key;
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    wrap.innerHTML = '';
+    for (const c of candidates) {
+      const b = document.createElement('uf-button');
+      b.className = 'lobby-btn-p2-gp';
+      b.setAttribute('data-key', c.key);
+      b.innerHTML = `<span class="btn-local-join-main">JOIN AS PLAYER 2</span><span class="btn-local-join-padname">${esc(c.name)}</span><span class="btn-local-join-hint">CONNECTED · press any button on it, or click</span>`;
+      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle }));
+      wrap.appendChild(b);
+    }
+    const detectedEl = document.getElementById('local-join-detected');
+    if (detectedEl && candidates.length) detectedEl.style.display = '';
+    const joinSection = document.getElementById('local-join-section');
+    if (joinSection && candidates.length) joinSection.style.display = '';
   }
 
   /** Leave versus setup: release joined slots (not P1's) and clear state. */
@@ -5508,11 +5669,18 @@ export class Lobby {
         const gp = p.input.getGamepadState();
         if (!gp || !gp.buttons) continue;
         const key = 'member:' + p.n;
-        const prev = this._versusPrevButtons.get(key) || { a: false, left: false, right: false };
+        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false };
         const left = !!(gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] || 0) < -0.6;
         const right = !!(gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] || 0) > 0.6;
+        // B on a joined pad = leave your seat (back to CONNECTED). Not the host:
+        // P1's B is "back" through the step's FocusController. `b` primes true
+        // so a B held from before the join can't fire on the first frame.
+        const bIdx = p.input._gpSwapAB ? 0 : 1;
+        const b = !!(gp.buttons[bIdx] && gp.buttons[bIdx].pressed);
         if (left && !prev.left) this._versusSwitchTeam(p, 'A');
         if (right && !prev.right) this._versusSwitchTeam(p, 'B');
+        if (b && !prev.b && p.input !== this.input && p.slotId !== 'P1') { prev.b = b; this._versusPrevButtons.set(key, prev); this._versusUnseat(p); continue; }
+        prev.b = b;
         prev.left = left;
         prev.right = right;
         this._versusPrevButtons.set(key, prev);
@@ -5561,26 +5729,44 @@ export class Lobby {
   }
 
   _detectVersusCandidates(pads) {
-    const out = [];
     // Even with all four seats filled, a pad can still TAKE OVER a
     // keyboard-typed P1 seat (see _versusJoinCandidate), so keep
     // detecting while that escape hatch applies.
     const p1 = this._versusPlayers[0];
     const canConvertP1 = !!(p1 && p1.type === 'keyboard');
-    if (this._versusPlayers.length >= 4 && !canConvertP1) return out;
-    const mgr = this.controllerManager;
+    if (this._versusPlayers.length >= 4 && !canConvertP1) return [];
+    const owned = { handles: new Set(), devices: new Set(), indices: new Set(), slotIds: new Set() };
+    for (const p of this._versusPlayers) {
+      if (p.input && p.input.steamInputHandle !== null) owned.handles.add(p.input.steamInputHandle);
+      if (p.type !== 'gamepad' || !p.input) continue;
+      const slot = p.input._slot;
+      if (slot?.hidDevice) owned.devices.add(slot.hidDevice);
+      if (slot) owned.slotIds.add(slot.id);
+      if (p.input.gamepadIndex !== null) owned.indices.add(p.input.gamepadIndex);
+    }
+    // P1 unpinned (legacy default = first entry) still owns Steam entry [0].
+    if (this.input && this.input._steamInputActive) {
+      const p1Entry = this.input._selectedSteamEntry();
+      if (p1Entry && p1 && p1.type === 'gamepad') owned.handles.add(p1Entry.handle);
+    }
+    return this._detectJoinCandidates(pads, owned);
+  }
 
+  /**
+   * The CONNECTED controllers that could join: live Gamepad-API pads, pooled
+   * WebHID devices that are streaming, claimed-but-unowned HID slots, and
+   * Steam Input handles — minus everything `owned` already seats. Shared by
+   * the versus step (owners = its players) and the RIDE TOGETHER host step
+   * (owner = Player 1). Each candidate carries `pollGp` for a join press.
+   * @param {Gamepad[]} pads
+   * @param {{ handles: Set<any>, devices: Set<any>, indices: Set<number>, slotIds: Set<string> }} owned
+   */
+  _detectJoinCandidates(pads, owned) {
+    const out = [];
+    const mgr = this.controllerManager;
     // Steam Input active → snapshot handles are the truth.
     if (this.input && this.input._steamInputActive) {
-      const ownedHandles = new Set();
-      for (const p of this._versusPlayers) {
-        if (p.input && p.input.steamInputHandle !== null) ownedHandles.add(p.input.steamInputHandle);
-      }
-      // P1 unpinned (legacy default = first entry) still owns entry [0].
-      const p1Entry = this.input._selectedSteamEntry();
-      if (p1Entry && this._versusPlayers[0] && this._versusPlayers[0].type === 'gamepad') {
-        ownedHandles.add(p1Entry.handle);
-      }
+      const ownedHandles = owned.handles;
       for (const c of this.input._steamInputSnapshot) {
         if (ownedHandles.has(c.handle)) continue;
         out.push({
@@ -5593,22 +5779,13 @@ export class Lobby {
       }
       return out; // all live candidates — join-time logic enforces seats
     }
-
-    // Devices already owned by a pad-typed member (P1 included).
-    const ownedDevices = new Set();
-    const ownedIndices = new Set();
-    const ownedSlotIds = new Set();
-    for (const p of this._versusPlayers) {
-      if (p.type !== 'gamepad' || !p.input) continue;
-      const slot = p.input._slot;
-      if (slot?.hidDevice) ownedDevices.add(slot.hidDevice);
-      if (slot) ownedSlotIds.add(slot.id);
-      if (p.input.gamepadIndex !== null) ownedIndices.add(p.input.gamepadIndex);
-    }
-
+    const ownedDevices = owned.devices;
+    const ownedIndices = owned.indices;
+    const ownedSlotIds = owned.slotIds;
     // Gamepad API pads.
     for (const gp of pads) {
       if (!gp || ownedIndices.has(gp.index)) continue;
+      if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
       out.push({
         kind: 'gamepad',
         key: 'gp:' + gp.index,
@@ -5921,7 +6098,7 @@ export class Lobby {
       for (const c of joinCardsFor[team]) {
         const card = document.createElement('button');
         card.className = 'versus-player-card vp-join';
-        card.innerHTML = `<span class="vp-name">JOIN — ${c.name}</span><span class="vp-device">Press ✕/A or click</span>`;
+        card.innerHTML = `<span class="vp-name">${c.name}</span><span class="vp-device">CONNECTED · press ✕/A to join</span>`;
         card.addEventListener('click', () => this._versusJoinCandidate(c));
         wrap.appendChild(card);
       }
@@ -5929,10 +6106,31 @@ export class Lobby {
       if (shown < 2 && this._versusPlayers.length + candidates.length < 4) {
         const empty = document.createElement('div');
         empty.className = 'versus-player-card vp-empty';
-        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">CONNECT A CONTROLLER</span>';
+        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">pair a controller below</span>';
         wrap.appendChild(empty);
       }
     }
+    this._renderVersusControllers(candidates);
+  }
+
+  /**
+   * The Controllers panel: every controller this step can see and its state,
+   * in the same words as the lab lobby — CONNECTED (can join) → SEATED (on a
+   * team). Keyboard and bots are listed so the roster is complete.
+   */
+  _renderVersusControllers(candidates) {
+    const panel = document.getElementById('versus-controllers');
+    if (!panel || panel.hidden) return;
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const rows = [];
+    for (const p of this._versusPlayers) {
+      const src = p.type === 'keyboard' ? 'keyboard' : p.type === 'bot' ? 'bot' : (p.input && p.input.steamInputHandle != null ? 'steam' : (p.input && p.input._slot && p.input._slot._hidEntry ? 'webhid' : 'gamepad'));
+      rows.push(`<div class="vc-row"><span class="vc-name">P${p.n} · ${esc(p.name)}</span><span class="vc-src">${src} · team ${p.team === 'A' ? 'blue' : 'red'}</span><uf-chip tone="accent">SEATED</uf-chip></div>`);
+    }
+    for (const c of candidates) {
+      rows.push(`<div class="vc-row"><span class="vc-name">${esc(c.name)}</span><span class="vc-src">${c.kind === 'hid' ? 'webhid' : c.kind}</span><uf-chip tone="info">CONNECTED</uf-chip></div>`);
+    }
+    panel.innerHTML = rows.join('') || '<div class="vc-row"><span class="vc-name">No controllers yet — press a button on one, or pair it below</span></div>';
   }
 
   _removePipLobbyMode() {
@@ -5983,6 +6181,7 @@ export class Lobby {
     const partnerLabel = document.getElementById('partner-pip-label');
     if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
     if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+    this._syncRoomSeats(role);
 
     // Register gamepad nav for room step
     const roomItems = (role === 'captain')
@@ -6053,6 +6252,7 @@ export class Lobby {
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
       document.getElementById('btn-play-game').style.display = 'none';
       document.getElementById('btn-start-ride').style.display = 'none';
+      this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
         if (this.net) { this.net.destroy(); this.net = null; }
         this._removePipLobbyMode();
