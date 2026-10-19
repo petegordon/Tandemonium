@@ -35,15 +35,17 @@
   .seat { color: var(--uf-color-accent-2, #ffd23f); font-weight: bold; }
 
   /* One fixed layout, riding or in menus (the game decides what a press
-     means): a gamepad-style top (Pause / Recenter, a plus-shaped D-pad in
-     the middle with the House Tandem mark, OK / BACK) over the two pedals. */
+     means): a gamepad-style top (a plus-shaped D-pad on the left with the
+     House Tandem logo, status + Pause / Recenter in the middle, OK / BACK on
+     the right) over the two pedals. */
   #screen-ride { flex-direction: column; --cell: clamp(36px, 12vh, 46px); }
   #controls {
     display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
     padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 6px max(10px, env(safe-area-inset-left));
   }
   .side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-  .side.left { align-items: flex-start; }
+  .side.middle { align-items: center; }
+  .dpad { justify-self: start; }
   .side.right { align-items: flex-end; }
   .side .row { display: flex; gap: 8px; }
   #status {
@@ -135,19 +137,19 @@
 
   <section class="screen" id="screen-ride">
     <div id="controls">
-      <div class="side left">
-        <span id="status">Connecting…</span>
-        <div class="row">
-          <button class="nav-btn" id="btn-pause" data-nav="pause" type="button" aria-label="Pause">&#10074;&#10074;</button>
-          <button class="nav-btn" id="btn-recenter" data-nav="recenter" type="button" aria-label="Recenter steering">&#8635;</button>
-        </div>
-      </div>
       <div class="dpad">
         <button class="arm" data-nav="up" type="button" aria-label="Up">&#9650;</button>
         <button class="arm" data-nav="left" type="button" aria-label="Left">&#9664;</button>
         <div class="hub"><img src="img/housetandem-controller.svg" alt="House Tandem" draggable="false"></div>
         <button class="arm" data-nav="right" type="button" aria-label="Right">&#9654;</button>
         <button class="arm" data-nav="down" type="button" aria-label="Down">&#9660;</button>
+      </div>
+      <div class="side middle">
+        <span id="status">Connecting…</span>
+        <div class="row">
+          <button class="nav-btn" id="btn-pause" data-nav="pause" type="button" aria-label="Pause">&#10074;&#10074;</button>
+          <button class="nav-btn" id="btn-recenter" data-nav="recenter" type="button" aria-label="Recenter steering">&#8635;</button>
+        </div>
       </div>
       <div class="side right">
         <button class="nav-btn" data-nav="ok" type="button">OK</button>
