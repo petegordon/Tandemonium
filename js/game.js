@@ -83,6 +83,9 @@ import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
+import { PerfReadout } from './perf-readout.js';
+import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, reloadForDisplayTest, displayTestActive } from './quality.js';
+import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
@@ -141,22 +144,26 @@ const TUTORIAL_ITEMS = {
 
 class Game {
   constructor() {
-    // Renderer — quality resolution: user override > URL param > hardware detect > default
+    // Renderer — quality tier (js/quality.js): URL param > Options choice >
+    // Auto (what slow rides taught it, else hardware detection).
+    migrateQualityPref();
     const _qualityParam = new URLSearchParams(window.location.search).get('quality');
-    const _qualityPref = (() => { try { return localStorage.getItem('tandemonium_quality'); } catch(e) { return null; } })();
     const _hwCached = getCachedProfile();
-    this._autoLowEnd = false;
-
-    if (_qualityParam === 'low' || _qualityPref === 'low') {
-      this._lowQuality = true;
-    } else if (_qualityParam === 'high' || _qualityPref === 'high') {
-      this._lowQuality = false;
-    } else if (_hwCached && _hwCached.tier === 'low') {
-      this._lowQuality = true;
-      this._autoLowEnd = true;
-    } else {
-      this._lowQuality = false;
-    }
+    const _q = resolveQualityTier({
+      param: _qualityParam, pref: getQualityPref(), learned: getLearnedAutoTier(),
+      hwTier: _hwCached && _hwCached.tier, floor: autoFloorTier(isMobile),
+    });
+    /** @type {import('./quality.js').QualityTier} */
+    this._quality = _q.tier;
+    this._qualityAuto = _q.auto;
+    // Medium and Low both do everything the old two-tier "Low" did.
+    this._lowQuality = this._quality !== 'high';
+    setCurrentTier(this._quality);
+    // Auto steps down a tier when rides stay slow. Not under automation:
+    // headless smoke tests render at ~1 fps and would always step down.
+    this._autoWatcher = navigator.webdriver ? null : new AutoTierWatcher();
+    this._staticFrame = 0;
+    this._ridersPending = false;
 
     // "Show Riders" (Options; default on for desktop, off on phones) gates the whole riders experience:
     // the goose model + front selfie-cam AND the richer lighting/tone-mapping
@@ -164,9 +171,16 @@ class Game {
     // toggling in Options re-applies everything live (_applyShowRiders).
     this._showRiders = getShowRiders();
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile && !this._lowQuality, preserveDrawingBuffer: true });
+    // Display testing for weak screens (a TV): Options → Display Testing, or
+    // ?lines=N / ?aa=1|0 / ?debug=perf. Overrides on top of the quality tier:
+    // render at N lines (see _pixelRatio), force edge smoothing on/off, and
+    // show the perf readout. The URL wins over the saved settings.
+    this._displayTest = resolveDisplayTest(new URLSearchParams(window.location.search), getDisplayTest());
+    this._linesOverride = this._displayTest.lines;
+    const _aa = this._displayTest.aa === 'on' ? true : this._displayTest.aa === 'off' ? false : !isMobile && !this._lowQuality;
+    this.renderer = new THREE.WebGLRenderer({ antialias: _aa, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this._pixelRatio());
     this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
     if (!isMobile && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     if (this._showRiders) {
@@ -202,7 +216,7 @@ class Game {
       console.warn('WebGL context restored — resuming');
       try { analytics.trackEvent('gl_context_restored'); } catch (err) {}
       this.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.renderer.setPixelRatio(this._lowQuality ? 0.5 : Math.min(window.devicePixelRatio, 2));
+      this.renderer.setPixelRatio(this._pixelRatio());
       this._refreshGpuResources();
     });
 
@@ -303,16 +317,17 @@ class Game {
       }
       // Start on the procedural world so the game is up and playable, then
       // swap when the tiles module arrives (E-4).
-      this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, tier: this._quality, showRiders: this._showRiders });
       this.bike = new BikeModel(this.scene, bikeModelPath);
       this.bike.roadPath = this.world.roadPath;
       this._touristPending = true;
       this._loadTouristWorld(apiKey);
     } else {
-      this.world = new World(this.scene, { lowEnd: this._lowQuality, showRiders: this._showRiders });
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, tier: this._quality, showRiders: this._showRiders });
       this.bike = new BikeModel(this.scene, bikeModelPath);
       this.bike.roadPath = this.world.roadPath;
     }
+    this._applyTierView();
     this.chaseCamera = new ChaseCamera(this.camera);
     // Picture-in-picture front-facing "selfie cam" — only with the riders model
     // (it exists to show off their lean).
@@ -322,6 +337,7 @@ class Game {
     // every mode and state.
     this.fpsMeter = new FpsMeter();
     this.fpsMeter.setVisible(getShowFps());
+    this.perfReadout = this._displayTest.perf ? new PerfReadout(this) : null;
     this.grassParticles = new GrassParticles(this.scene);
     // E-2 · the wind you can see during a gust.
     this.gustVisual = new GustVisual(this.scene);
@@ -402,18 +418,12 @@ class Game {
     this._initVersusPedals();
 
     // Async hardware detection (first visit, no cache, no manual override)
-    if (!_hwCached && _qualityPref !== 'high' && _qualityPref !== 'low' && _qualityParam !== 'high' && _qualityParam !== 'low') {
+    if (!_hwCached && this._qualityAuto) {
       detectHardware().then(result => {
-        if (result.tier === 'low' && !this._lowQuality) {
-          this._autoLowEnd = true;
-          this._lowQuality = true;
-          this.renderer.setPixelRatio(0.5);
-          this.renderer.shadowMap.enabled = false;
-          // Don't disable clip recording here — the recorder's own GPU-readback
-          // probe is authoritative; auto low-end render quality shouldn't kill
-          // clips on a machine that can actually record. (Manual Low still does.)
-          this._updateOptionsQualityUI();
-        }
+        // A "low" GPU starts at Medium. Don't disable clip recording here —
+        // the recorder's own GPU-readback probe is authoritative; auto
+        // render quality shouldn't kill clips on a machine that can record.
+        if (result.tier === 'low' && this._qualityAuto && this._quality === 'high') this._setTier('medium');
       });
     }
 
@@ -1884,6 +1894,7 @@ class Game {
         if (done) return;
         done = true;
         this._inputChoiceOpen = false;
+        this._autoWatching = false;
         this._clearOverlayButtons();
         overlay.remove();
         resolve(result);
@@ -3481,10 +3492,12 @@ class Game {
     if (!force && isTouristMode()) return false;
     if (this.world && this.world !== proc && this.world.dispose) this.world.dispose();
     proc.unpark();
+    if (proc.setTier) proc.setTier(this._quality);   // the tier may have changed during the tour
     this.world = proc;
     this._proceduralWorld = null;
     if (this.bike) { this.bike.roadPath = proc.roadPath; this.bike.startHeading = 0; }
     this._restoreTouristView();
+    this._applyTierView();
     this.isTourist = false;
     this._touristPending = false;
     return true;
@@ -4593,6 +4606,8 @@ class Game {
         min_fps: fpsStats.min_fps,
         pixel_ratio: this.renderer.getPixelRatio(),
         low_quality: this._lowQuality ? 1 : 0,
+        quality: this._quality,
+        quality_auto: this._qualityAuto ? 1 : 0,
         show_riders: this._showRiders ? 1 : 0,
         recording: this.recorder && this.recorder.buffering ? 1 : 0,
         transport: this.net ? this.net.transport : null,
@@ -5306,6 +5321,7 @@ class Game {
 
     closeBtn.addEventListener('click', () => this._closeOptions());
     highBtn.addEventListener('click', () => this._setQuality('high'));
+    document.getElementById('opt-medium')?.addEventListener('click', () => this._setQuality('medium'));
     lowBtn.addEventListener('click', () => this._setQuality('low'));
     autoBtn.addEventListener('click', () => this._setQuality('auto'));
     devToolsBtn.addEventListener('click', () => { window.location.href = 'test/index.html'; });
@@ -5348,6 +5364,22 @@ class Game {
       const b = document.getElementById('opt-colour-' + i);
       if (b) b.addEventListener('click', () => this._setGooseColourway(i));
     }
+
+    // Display testing: save, then reload (edge smoothing is fixed when the
+    // renderer is made) without the URL switches so the saved choice applies.
+    const dtest = (patch) => {
+      if (patch) setDisplayTest(patch); else clearDisplayTest();
+      reloadForDisplayTest();
+    };
+    for (const n of [0, 540, 720, 1080]) {
+      document.getElementById('opt-lines-' + n)?.addEventListener('click', () => dtest({ lines: n }));
+    }
+    for (const a of ['tier', 'on', 'off']) {
+      document.getElementById('opt-aa-' + a)?.addEventListener('click', () => dtest({ aa: a }));
+    }
+    document.getElementById('opt-perfhud-on')?.addEventListener('click', () => dtest({ perf: true }));
+    document.getElementById('opt-perfhud-off')?.addEventListener('click', () => dtest({ perf: false }));
+    document.getElementById('opt-dtest-reset')?.addEventListener('click', () => dtest(null));
 
     const fpsOnBtn  = document.getElementById('opt-fps-on');
     const fpsOffBtn = document.getElementById('opt-fps-off');
@@ -5421,6 +5453,28 @@ class Game {
     try { localStorage.setItem('tandemonium_show_fps', on ? 'on' : 'off'); } catch (e) {}
     this.fpsMeter.setVisible(on);
     this._updateOptionsFpsUI();
+  }
+
+  /** Display Testing rows show what's in effect now (URL switches included). */
+  _updateOptionsDisplayTestUI() {
+    const t = this._displayTest;
+    if (!t) return;
+    for (const n of [0, 540, 720, 1080]) document.getElementById('opt-lines-' + n)?.classList.toggle('active', t.lines === n);
+    for (const a of ['tier', 'on', 'off']) document.getElementById('opt-aa-' + a)?.classList.toggle('active', t.aa === a);
+    document.getElementById('opt-perfhud-on')?.classList.toggle('active', t.perf);
+    document.getElementById('opt-perfhud-off')?.classList.toggle('active', !t.perf);
+    const active = displayTestActive(t);
+    const parts = [];
+    if (t.lines) parts.push(t.lines + ' lines');
+    if (t.aa !== 'tier') parts.push('edge smoothing ' + t.aa);
+    if (t.perf) parts.push('perf readout');
+    const note = document.getElementById('opt-dtest-note');
+    if (note) note.textContent = active ? 'In effect: ' + parts.join(', ') : 'None: Graphics Quality decides everything.';
+    // Say it under Graphics Quality too, so a tier never looks like it's ignored.
+    const qNote = document.getElementById('opt-quality-note');
+    if (qNote) qNote.textContent = active && (t.lines || t.aa !== 'tier')
+      ? 'Display Testing overrides are on (' + parts.filter((p) => p !== 'perf readout').join(', ') + '); see below'
+      : 'Some changes take effect on next restart';
   }
 
   _updateOptionsFpsUI() {
@@ -5603,43 +5657,91 @@ class Game {
   }
 
   _updateOptionsQualityUI() {
-    const pref = (() => { try { return localStorage.getItem('tandemonium_quality'); } catch(e) { return null; } })();
+    const pref = getQualityPref();
     const highBtn = document.getElementById('opt-high');
-    const lowBtn = document.getElementById('opt-low');
     const autoBtn = document.getElementById('opt-auto');
     if (!highBtn) return;
-
-    highBtn.classList.toggle('active', pref === 'high');
-    lowBtn.classList.toggle('active', pref === 'low');
-    autoBtn.classList.toggle('active', pref !== 'high' && pref !== 'low');
+    for (const t of ['high', 'medium', 'low']) {
+      document.getElementById('opt-' + t)?.classList.toggle('active', pref === t);
+    }
+    autoBtn.classList.toggle('active', pref === 'auto');
+    // Say what Auto picked, so a slow device's choice isn't a mystery.
+    const name = { high: 'High', medium: 'Medium', low: 'Low' }[this._quality];
+    autoBtn.textContent = pref === 'auto' ? `Auto (${name})` : 'Auto';
   }
 
   _setQuality(level) {
-    try {
-      if (level === 'auto') {
-        localStorage.setItem('tandemonium_quality', 'auto');
-        clearHardwareCache(); // re-detect on next load
-      } else {
-        localStorage.setItem('tandemonium_quality', level);
-      }
-    } catch(e) {}
-
-    // Apply what we can live
-    if (level === 'low') {
-      this._lowQuality = true;
-      this.renderer.setPixelRatio(0.5);
-      this.renderer.shadowMap.enabled = false;
+    setQualityPref(level);
+    if (level === 'auto') {
+      clearHardwareCache();   // re-detect on next load; slow rides step it down
+      this._qualityAuto = true;
+      if (this._autoWatcher) this._autoWatcher.reset();
+      this._updateOptionsQualityUI();
+      return;
+    }
+    if (level !== 'high') {
+      // A manual Medium/Low also turns clip recording off (as the old Low did).
       this.recorder.supported = false;
       if (this.recorder.shareBtn) this.recorder.shareBtn.style.display = 'none';
-    } else if (level === 'high') {
-      this._lowQuality = false;
-      this._autoLowEnd = false;
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      if (!isMobile) this.renderer.shadowMap.enabled = true;
     }
-    // Auto: changes apply on next reload after hardware detect runs
+    this._setTier(level, { auto: false });
+  }
 
+  /** Render resolution per tier. Low aims for a 360-line image: sharper than a flat half on a small, high-DPI screen like a TV. */
+  _pixelRatio() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Display testing: N lines at any tier (never above the screen's own).
+    if (this._linesOverride) return Math.min(dpr, this._linesOverride / Math.max(1, window.innerHeight));
+    if (this._quality === 'high') return dpr;
+    if (this._quality === 'medium') return 0.5;
+    return Math.max(0.35, Math.min(dpr, 1, 360 / Math.max(1, window.innerHeight)));
+  }
+
+  /** Low draws less far: closer fog and far plane (trees stop at the fog). Tourist Mode owns these while it runs. */
+  _applyTierView() {
+    if (this._preTouristView || !this.scene.fog) return;
+    const low = this._quality === 'low';
+    if (this.scene.fog.isFogExp2) this.scene.fog.density = low ? 0.012 : 0.006;
+    this.camera.far = low ? 220 : 500;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Switch quality tier live. Resolution, shadows, view distance, trees and
+   * the lobby preview change now; the riders model (Low defaults it off,
+   * an explicit Show Riders choice wins) swaps the next time the lobby is up,
+   * since that loads a different bike.
+   * @param {import('./quality.js').QualityTier} tier
+   */
+  _setTier(tier, { auto = this._qualityAuto } = {}) {
+    this._quality = tier;
+    this._qualityAuto = auto;
+    this._lowQuality = tier !== 'high';
+    setCurrentTier(tier);
+    this.renderer.setPixelRatio(this._pixelRatio());
+    this._staticFrame = 0;   // setPixelRatio cleared the canvas: draw the next frame
+    const shadows = !isMobile && !this._lowQuality;
+    if (this.renderer.shadowMap.enabled !== shadows) {
+      this.renderer.shadowMap.enabled = shadows;
+      if (shadows) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;   // as at a High boot
+      // Compiled shaders keep their shadow code until the lights change;
+      // without this a mid-ride switch leaves the last shadow stamped on the
+      // road. Flipping the sun's castShadow changes the lights state, so
+      // every lit material recompiles, including a world parked for a tour.
+      for (const w of [this.world, this._proceduralWorld]) if (w && w.sun) w.sun.castShadow = shadows;
+    }
+    if (this.world && this.world.setTier) this.world.setTier(tier);
+    this._applyTierView();
+    if (this.lobby && this.lobby.setQualityTier) this.lobby.setQualityTier(tier);
+    this._ridersPending = true;
+    if (this._autoWatcher) this._autoWatcher.reset();
     this._updateOptionsQualityUI();
+  }
+
+  /** The scene behind the lobby / pause menu barely moves; on Low redraw it a few times a second (the canvas keeps its last frame). */
+  _renderStatic() {
+    if (this._quality === 'low' && (this._staticFrame++ % 15) !== 0) return;
+    this.renderer.render(this.scene, this.camera);
   }
 
   _openOptions() {
@@ -5652,6 +5754,7 @@ class Game {
     // Set up gamepad navigation for overlay buttons
     const btns = [
       document.getElementById('opt-high'),
+      document.getElementById('opt-medium'),
       document.getElementById('opt-low'),
       document.getElementById('opt-auto'),
       document.getElementById('opt-ds-auto'),
@@ -5675,6 +5778,16 @@ class Game {
       document.getElementById('opt-fps-off'),
       document.getElementById('opt-physics-on'),
       document.getElementById('opt-physics-off'),
+      document.getElementById('opt-lines-0'),
+      document.getElementById('opt-lines-540'),
+      document.getElementById('opt-lines-720'),
+      document.getElementById('opt-lines-1080'),
+      document.getElementById('opt-aa-tier'),
+      document.getElementById('opt-aa-on'),
+      document.getElementById('opt-aa-off'),
+      document.getElementById('opt-perfhud-on'),
+      document.getElementById('opt-perfhud-off'),
+      document.getElementById('opt-dtest-reset'),
       document.getElementById('options-perf-btn'),
       document.getElementById('options-devtools-btn'),
       document.getElementById('options-browserdev-btn'),
@@ -5687,6 +5800,7 @@ class Game {
     this._updateOptionsGooseOutfitUI();
     this._updateOptionsFpsUI();
     this._updateOptionsPhysicsUI();
+    this._updateOptionsDisplayTestUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
   }
 
@@ -5695,6 +5809,7 @@ class Game {
     if (!overlay) return;
     overlay.classList.remove('visible');
     this._optionsOpen = false;
+    this._autoWatching = false;   // resuming (or a riders swap) hitches: a fresh Auto grace
     this._clearOverlayButtons();
   }
 
@@ -6057,6 +6172,18 @@ class Game {
     }
 
     this.fpsMeter.tick(timestamp);
+    if (this.perfReadout) this.perfReadout.tick(timestamp);
+    // Each ride starts the Auto watcher's grace period afresh (closing
+    // Options or the input choice does too, see _closeOptions).
+    if (this.state !== 'playing') this._autoWatching = false;
+
+    // A tier change that moves the riders default waits for the lobby (it
+    // loads a different bike). Options may be open over the lobby, so here.
+    if (this._ridersPending && this.state === 'lobby') {
+      this._ridersPending = false;
+      this._applyShowRiders(getShowRiders());
+      this._updateOptionsShowRidersUI();
+    }
 
     // Advance controller slot state machine once per frame — handles
     // Gamepad-API claim, HID-pool claim, release-ring, and orphan
@@ -6082,7 +6209,7 @@ class Game {
       this._pollOverlayGamepad();
       this.input.consumeTaps(); // drain buffered input so it doesn't fire when overlay closes
       if (this.mode === 'versus' && this.versusRigs) this._renderVersusViews();
-      else this.renderer.render(this.scene, this.camera);
+      else this._renderStatic();
       if (this.frontView) this.frontView.hide();
       return;
     }
@@ -6111,6 +6238,23 @@ class Game {
         this._fpsFrameCount++;
         if (rawDt < this._fpsMinDt) this._fpsMinDt = rawDt;
         if (rawDt > this._fpsMaxDt) this._fpsMaxDt = rawDt;
+      }
+      // Auto: a ride that stays slow steps the quality down a tier, and
+      // remembers it for next time.
+      // Versus (2+ views) and Tourist (streamed 3D tiles) are heavier than
+      // a normal ride; they don't teach Auto anything about normal rides.
+      // On a desktop Auto stops at Medium: Low hides the riders, so it stays
+      // a manual choice there (phones and TVs already ride without riders).
+      const autoFloor = autoFloorTier(isMobile);
+      const autoWatch = this._autoWatcher && this._qualityAuto && tierRank(this._quality) > tierRank(autoFloor) &&
+        this.mode !== 'versus' && !this.isTourist && !this._proceduralWorld;
+      if (autoWatch && !this._autoWatching) { this._autoWatcher.reset(); this._autoWatching = true; }
+      if (autoWatch && this._autoWatcher.sample(rawDt) === 'down') {
+        const next = tierBelow(this._quality);
+        console.log(`[QUALITY] rides are slow — Auto steps down to ${next}`);
+        saveLearnedAutoTier(next);
+        this._setTier(next);
+        try { analytics.trackEvent('quality_auto_down', { tier: next }); } catch (e) {}
       }
 
       // D-pad actions (safety/speed/reset/lobby) — singleton-bike shortcuts,
@@ -6167,9 +6311,11 @@ class Game {
         else this.chaseCamera.update(this.bike, dt, roadPath);
         if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
 
-        this.renderer.render(this.scene, this.camera);
+        if (this.state === 'lobby') this._renderStatic();
+        else this.renderer.render(this.scene, this.camera);
       }
     }
+
 
     // Show Solo: a solo ride shows only the captain goose (cached; the Options
     // toggle and a mode change both apply on the next frame).
@@ -6181,7 +6327,7 @@ class Game {
     // Only while a ride is on screen (not during the cinematic, which runs
     // its own camera choreography).
     if (this.frontView && this.frontView.enabled && this.bike &&
-        this.mode !== 'versus' &&
+        this.mode !== 'versus' && this._quality !== 'low' &&
         (this.state === 'playing' || this.state === 'countdown')) {
       this.frontView.update(this.bike, dt);
       this.frontView.render(this.renderer, this.scene);
@@ -8845,7 +8991,9 @@ class Game {
         rig.camera.updateProjectionMatrix();
       }
     }
+    this.renderer.setPixelRatio(this._pixelRatio());   // Low and ?lines= depend on window height
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this._staticFrame = 0;
   }
 }
 
