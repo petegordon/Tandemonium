@@ -6,8 +6,9 @@
 // (two browsers, so neither is a throttled background tab). The "phone" gets a
 // stand-in deviceorientation stream and mouse presses on its pedal halves.
 // Checks: pairing, tilt → the game's lean, pedals → the game's input, a wrong
-// secret is refused, the phone leaving releases the input, and a SOLO ride
-// pedalled only from the phone moves the bike.
+// secret is refused; then (Phase 2) the whole SOLO ride driven from the phone:
+// d-pad + OK through the lobby, pedals while riding, Pause / BACK, a dropped
+// phone pausing the ride and reconnecting, and the phone leaving releasing it.
 //
 //   npm run smoke:phone-pad
 import http from 'node:http';
@@ -151,39 +152,66 @@ try {
   check(leanL < -0.4, 'tilting left leans left', leanL.toFixed(2));
   await phone.evaluate(() => { window.__tilt = 0; });
 
-  // Pedals: press and hold the left half, then the right half.
-  await phone.mouse.move(150, 250); await phone.mouse.down();
-  await sleep(300);
-  const pl = await game.evaluate(() => [window._game.input.isPressed('ArrowLeft'), window._game.input.isPressed('ArrowRight')]);
-  await phone.mouse.up();
-  await phone.mouse.move(700, 250); await phone.mouse.down();
-  await sleep(300);
-  const pr = await game.evaluate(() => [window._game.input.isPressed('ArrowLeft'), window._game.input._remoteRight]);
-  await phone.mouse.up();
-  check(pl[0] && !pl[1], 'holding LEFT on the phone holds the left pedal', JSON.stringify(pl));
-  check(pr[1], 'holding RIGHT on the phone holds the right pedal', JSON.stringify(pr));
+  // ── Phase 2: drive the menus from the phone's menu pad ──
+  const phoneMode = () => phone.evaluate(() => (document.getElementById('screen-ride').classList.contains('menu') ? 'menu' : 'ride'));
+  check(await phoneMode() === 'menu', 'in the lobby the phone shows its menu pad');
+  check(await game.evaluate(() => window._game.input.gamepadConnected), 'the game sees the phone as a pad for the menus');
+  // Headless software rendering runs the game at a few fps: hold each press
+  // across several of its frames (a real phone press spans many).
+  const press = async (nav, holdMs = 700) => {
+    const el = await phone.$(`#menu-pad [data-nav="${nav}"]`);
+    const b = await el.boundingBox();
+    await phone.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await phone.mouse.down(); await sleep(holdMs); await phone.mouse.up(); await sleep(700);
+  };
+  const focused = () => game.evaluate(() => {
+    const el = document.querySelector('.gamepad-focus');
+    return el ? ((el.id ? '#' + el.id + ' ' : '') + (el.textContent || '').replace(/\s+/g, ' ').trim()).slice(0, 60) : '';
+  });
+  /** Move the game's focus with the phone d-pad until it matches `re`, then OK. */
+  const focusAndPick = async (re, label) => {
+    const dirs = ['down', 'right', 'up', 'left', 'down', 'right'];
+    let f = await focused();
+    const trail = [f];
+    for (const dir of dirs) {
+      for (let i = 0; i < 6 && !re.test(f); i++) { await press(dir); f = await focused(); trail.push(dir + '>' + f.slice(0, 24)); }
+      if (re.test(f)) break;
+    }
+    check(re.test(f), `phone d-pad reaches ${label}`, re.test(f) ? JSON.stringify(f) : JSON.stringify(trail));
+    await press('ok');
+    await sleep(700);
+  };
+  await focusAndPick(/btn-solo/i, 'SOLO RIDE');
+  // The level step opens on START RIDE with the default level (Grandma's) selected.
+  check(await game.evaluate(() => window._game.lobby.selectedLevel?.id) === 'grandma', "Grandma's is the selected level");
+  await focusAndPick(/start ride/i, 'START RIDE');
+  await game.waitForFunction(() => window._game?.state !== 'lobby', { timeout: 15000 }).catch(() => {});
+  const st = await game.evaluate(() => window._game.state);
+  check(st !== 'lobby', 'OK on the phone leaves the lobby for the ride', st);
+  if (st === 'instructions') { await press('ok'); }
 
-  // ── a SOLO ride pedalled only from the phone ──
-  await game.evaluate(() => document.getElementById('btn-solo').click());
-  await sleep(900);
-  await game.evaluate(() => {
-    const cards = Array.from(document.querySelectorAll('button, uf-button, .level-card, [class*="level"]'))
-      .filter((el) => el.offsetParent !== null && /grandma/i.test(el.textContent || ''));
-    (cards[0] || document.querySelector('.level-card'))?.click();
-  });
-  await sleep(500);
-  await game.evaluate(() => {
-    const b = Array.from(document.querySelectorAll('button, uf-button')).find((x) => /start ride/i.test(x.textContent || ''));
-    b && b.click();
-  });
-  await sleep(800);
-  await game.evaluate(() => { document.body.click(); document.getElementById('instructions')?.click(); });
   let playing = true;
   try { await game.waitForFunction(() => window._game?.state === 'playing', { timeout: 120000 }); }
   catch { playing = false; }
-  check(playing, 'SOLO Grandma\'s ride starts', await game.evaluate(() => window._game?.state));
+  check(playing, "SOLO Grandma's ride starts, driven from the phone", await game.evaluate(() => window._game?.state));
   if (playing) {
-    await sleep(1500);
+    await sleep(400);
+    check(await phoneMode() === 'ride', 'riding: the phone switches to its pedals');
+    check(await game.evaluate(() => !window._game.input.gamepadConnected), 'riding: the phone is not a pad (ride hints unchanged)');
+    check(await phone.evaluate(() => window.__pad.lastCue) === 'go', 'the phone got the GO cue', await phone.evaluate(() => window.__pad.lastCue));
+    // Pedals: press and hold the left half, then the right half.
+    await phone.mouse.move(150, 250); await phone.mouse.down();
+    await sleep(300);
+    const pl = await game.evaluate(() => [window._game.input.isPressed('ArrowLeft'), window._game.input.isPressed('ArrowRight')]);
+    await phone.mouse.up();
+    await phone.mouse.move(700, 250); await phone.mouse.down();
+    await sleep(300);
+    const pr = await game.evaluate(() => [window._game.input.isPressed('ArrowLeft'), window._game.input._remoteRight]);
+    await phone.mouse.up();
+    check(pl[0] && !pl[1], 'holding LEFT on the phone holds the left pedal', JSON.stringify(pl));
+    check(pr[1], 'holding RIGHT on the phone holds the right pedal', JSON.stringify(pr));
+
+    await sleep(1100);
     const before = await game.evaluate(() => window._game.bike?.speed);
     for (let i = 0; i < 16; i++) {
       const x = i % 2 ? 700 : 150;
@@ -194,6 +222,32 @@ try {
     }
     const ride = await game.evaluate(() => ({ speed: window._game.bike?.speed, dist: window._game.bike?.distanceTraveled }));
     check(ride.speed > before + 0.5, 'pedalling on the phone speeds the bike up', JSON.stringify({ before, ...ride }));
+
+    // Pause from the phone, resume with BACK.
+    await phone.click('#btn-pause');
+    await sleep(500);
+    check(await game.evaluate(() => window._game._optionsOpen), 'Pause on the phone pauses the game');
+    check(await phoneMode() === 'menu', 'paused: the phone shows its menu pad');
+    await press('back');
+    await sleep(500);
+    check(await game.evaluate(() => !window._game._optionsOpen), 'BACK on the phone resumes');
+    check(await phoneMode() === 'ride', 'resumed: pedals again');
+
+    // The phone drops mid-ride (asleep / closed), then comes back.
+    await phone.evaluate(() => { window.__pad.ws.onclose = null; window.__pad.ws.close(); window.__pad.ws = null; });
+    await game.waitForFunction(() => window._game._optionsOpen && document.getElementById('phone-pad-panel').classList.contains('open'), { timeout: 8000 }).catch(() => {});
+    const drop = await game.evaluate(() => ({ paused: window._game._optionsOpen, panel: document.getElementById('phone-pad-panel').classList.contains('open'), title: document.getElementById('ppp-title').textContent }));
+    check(drop.paused && drop.panel && /DISCONNECTED/.test(drop.title), 'a dropped phone pauses the ride and shows the QR again', JSON.stringify(drop));
+    // The phone page comes back to the foreground: it reconnects by itself.
+    await phone.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await game.waitForFunction(() => window.__phonePad.status === 'connected', { timeout: 15000 }).catch(() => {});
+    await game.waitForFunction(() => !document.getElementById('phone-pad-panel').classList.contains('open'), { timeout: 5000 }).catch(() => {});
+    const back = await game.evaluate(() => ({ status: window.__phonePad.status, panel: document.getElementById('phone-pad-panel').classList.contains('open'), paused: window._game._optionsOpen }));
+    check(back.status === 'connected' && !back.panel && back.paused, 'the phone reconnects; the QR closes and the game stays paused for the player', JSON.stringify(back));
+    check(await phoneMode() === 'menu', 'reconnected while paused: the phone shows its menu pad');
+    await press('back');
+    await sleep(500);
+    check(await game.evaluate(() => !window._game._optionsOpen && window._game.state === 'playing'), 'BACK resumes the ride');
   }
 
   // ── the phone leaves: input is released ──

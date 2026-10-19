@@ -9,6 +9,12 @@
 // computes when it runs on a phone) and the two pedal halves as 8-byte frames
 // at ~30 Hz, plus immediately on every pedal change.
 //
+// The game picks what this page shows ({type:'mode'}): the pedals while
+// riding, a menu pad (d-pad + OK / BACK) everywhere else. Menu buttons are
+// sent as HELD bits; the game turns them into a gamepad, so its menus need no
+// phone-specific code. {type:'cue'} plays a short sound + buzz, since the
+// player is watching the big screen, not the phone.
+//
 // No text inputs on this page: iOS "Shake to Undo" pops up after typing, and
 // here shaking is steering.
 // ============================================================
@@ -20,6 +26,7 @@ import {
 
 const SEND_MS = 33;          // ~30 Hz
 const PING_MS = 5000;
+const MIN_PRESS_MS = 100;  // shortest menu press the game is sent
 const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
 
 const state = {
@@ -39,6 +46,9 @@ const state = {
   dirty: false,
   lastSend: 0,
   wakeLock: /** @type {any} */ (null),
+  mode: 'menu',
+  lastCue: '',
+  audio: /** @type {AudioContext|null} */ (null),
 };
 
 // ── Boot: read the link, keep the secret out of the address bar ──
@@ -71,8 +81,10 @@ function onConnectTap() {
   perm.then((r) => {
     if (r !== 'granted') $('motion-note').textContent = 'Motion was blocked. Pedals work; to steer, allow Motion & Orientation for this site and reload.';
   }).catch(() => {}).finally(() => {
+    unlockAudio();
     startSensors();
     startTouch();
+    startMenuPad();
     requestWakeLock();
     try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch { /* iOS */ }
     showScreen('ride');
@@ -145,8 +157,88 @@ function startTouch() {
   pad.addEventListener('mousedown', (e) => { touches.set(-1, sideOf(e.clientX)); refresh(); });
   window.addEventListener('mouseup', () => { touches.delete(-1); refresh(); });
 
-  $('btn-recenter').addEventListener('touchstart', (e) => { e.stopPropagation(); pressNav(NAV.recenter); }, { passive: true });
-  $('btn-recenter').addEventListener('click', () => pressNav(NAV.recenter));
+  for (const [id, bit] of [['btn-recenter', NAV.recenter], ['btn-pause', NAV.pause]]) {
+    $(id).addEventListener('touchstart', (e) => { e.stopPropagation(); e.preventDefault(); pressNav(bit); }, { passive: false });
+    $(id).addEventListener('click', () => pressNav(bit));
+  }
+}
+
+// ── Menu pad: d-pad + OK / BACK, sent as held bits ──
+function startMenuPad() {
+  for (const el of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#menu-pad [data-nav]'))) {
+    const bit = NAV[/** @type {keyof typeof NAV} */ (el.dataset.nav)];
+    let downAt = 0;
+    let releaseTimer = 0;
+    const down = (e) => {
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+      clearTimeout(releaseTimer);
+      if (state.nav & bit) return;
+      downAt = performance.now();
+      state.nav |= bit; el.classList.add('down'); buzz(); state.dirty = true; tick();
+    };
+    const release = () => {
+      if (!(state.nav & bit)) return;
+      state.nav &= ~bit; el.classList.remove('down'); state.dirty = true; tick();
+    };
+    // A quick tap still lasts MIN_PRESS_MS, so the game's once-a-frame menu
+    // poll always sees it.
+    const up = () => {
+      const left = MIN_PRESS_MS - (performance.now() - downAt);
+      if (left > 0) releaseTimer = setTimeout(release, left); else release();
+    };
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    el.addEventListener('lostpointercapture', up);
+  }
+}
+
+/** @param {'menu'|'ride'} mode */
+function setMode(mode) {
+  if (mode !== 'menu' && mode !== 'ride') return;
+  state.mode = mode;
+  $('screen-ride').classList.toggle('menu', mode === 'menu');
+  // Nothing stays held across the switch.
+  state.nav = 0;
+  for (const el of document.querySelectorAll('.nav-btn.down')) el.classList.remove('down');
+  state.dirty = true;
+}
+
+// ── Cues: the player is looking at the big screen ──
+function unlockAudio() {
+  try {
+    const AC = window.AudioContext || /** @type {any} */ (window).webkitAudioContext;
+    if (AC && !state.audio) state.audio = new AC();
+    if (state.audio && state.audio.state === 'suspended') state.audio.resume();
+  } catch { /* no audio */ }
+}
+
+/** @param {number} freq @param {number} at seconds from now @param {number} dur */
+function tone(freq, at, dur, type = 'sine', gain = 0.18) {
+  const ac = state.audio;
+  if (!ac) return;
+  const t0 = ac.currentTime + at;
+  const osc = ac.createOscillator();
+  const g = ac.createGain();
+  osc.type = /** @type {OscillatorType} */ (type);
+  osc.frequency.setValueAtTime(freq, t0);
+  g.gain.setValueAtTime(gain, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  osc.connect(g).connect(ac.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.02);
+}
+
+const CUES = {
+  countdown: () => { tone(660, 0, 0.12); vibrate(30); },
+  go: () => { tone(990, 0, 0.25); vibrate([40, 30, 40]); },
+  crash: () => { tone(140, 0, 0.35, 'sawtooth', 0.14); vibrate([60, 40, 120]); },
+  finish: () => { tone(660, 0, 0.15); tone(880, 0.15, 0.15); tone(1320, 0.3, 0.35); vibrate([40, 40, 40, 40, 120]); },
+};
+
+function vibrate(pattern) {
+  try { navigator.vibrate?.(pattern); } catch { /* iOS has none */ }
 }
 
 /** Hold a nav bit for a few frames so the host sees the edge. */
@@ -196,6 +288,8 @@ function connect() {
     if (m.type === 'host-ready') { state.hostHere = true; setStatus('Connected', true); state.dirty = true; tick(); }
     else if (m.type === 'host-left' || m.type === 'waiting') { state.hostHere = false; setStatus('Waiting for the game…'); }
     else if (m.type === 'seat' && m.label) $('seat-label').textContent = m.label;
+    else if (m.type === 'mode') setMode(m.mode);
+    else if (m.type === 'cue' && CUES[m.cue]) { state.lastCue = m.cue; CUES[m.cue](); }
   };
   ws.onclose = (ev) => {
     clearInterval(pinger);
@@ -223,6 +317,7 @@ function connect() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   requestWakeLock();
+  unlockAudio();
   if (!state.ws && state.link && !state.closedForGood && $('screen-ride').classList.contains('on')) {
     state.retry = 0;
     connect();

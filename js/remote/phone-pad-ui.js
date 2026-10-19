@@ -3,9 +3,10 @@
 // phone-pad-ui — "Phone as controller" panel on the game screen (#421)
 // ============================================================
 //
-// Phase 1 entry point: a button on the mode screen opens a panel with a QR
-// for Player 1's phone remote and its live status. The phone-first flow
-// ("Grab your phone" before the title, D4) is Phase 3.
+// A button on the mode screen opens a panel with a QR for Player 1's phone
+// remote and its live status. If a connected phone drops, the panel comes back
+// as "Phone disconnected" (the game pauses, see game.js) and closes itself
+// when the phone returns. The phone-first flow (D4) is Phase 3.
 // ============================================================
 
 import { PhonePadHost } from './phone-pad-host.js';
@@ -38,9 +39,10 @@ const CSS = `
 /**
  * Wire the mode-screen button to a phone remote for `input` (Player 1).
  * @param {import('../input-manager.js').InputManager} input
+ * @param {{onDrop?: () => void, onReturn?: () => void, onPause?: () => void}} [hooks]
  * @returns {PhonePadHost}
  */
-export function installPhonePadUI(input) {
+export function installPhonePadUI(input, hooks = {}) {
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);
@@ -49,7 +51,7 @@ export function installPhonePadUI(input) {
   panel.id = 'phone-pad-panel';
   panel.innerHTML = `
     <div class="ppp-card" role="dialog" aria-label="Phone as controller">
-      <h2>&#128241; PHONE AS CONTROLLER</h2>
+      <h2 id="ppp-title">&#128241; PHONE AS CONTROLLER</h2>
       <div class="ppp-qr" id="ppp-qr"></div>
       <div class="ppp-link" id="ppp-link"></div>
       <div class="ppp-status" id="ppp-status"></div>
@@ -63,10 +65,26 @@ export function installPhonePadUI(input) {
   const btn = document.getElementById('btn-mode-phone');
   const statusEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-status'));
 
+  const titleEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-title'));
+  let dropped = false;
   const host = new PhonePadHost({
     input,
     seat: 1,
+    onPause: hooks.onPause,
+    onDrop: () => {
+      dropped = true;
+      titleEl.textContent = '📱 PHONE DISCONNECTED';
+      open();
+      statusEl.textContent = 'Open the controller page on your phone again (it reconnects by itself), or scan the code.';
+      hooks.onDrop?.();
+    },
+    onReturn: () => {
+      dropped = false;
+      titleEl.textContent = '📱 PHONE AS CONTROLLER';
+      hooks.onReturn?.();
+    },
     onStatus: (s) => {
+      if (dropped && s !== 'connected') return;   // keep the disconnected message
       statusEl.textContent = STATUS_TEXT[s] || '';
       statusEl.classList.toggle('ok', s === 'connected');
       if (btn) {
@@ -97,7 +115,7 @@ export function installPhonePadUI(input) {
       qrEl.dataset.link = link;
       linkEl.textContent = link.split('#')[0];
     }
-    statusEl.textContent = STATUS_TEXT[host.status] || '';
+    if (!dropped) statusEl.textContent = STATUS_TEXT[host.status] || '';
   };
   const close = () => panel.classList.remove('open');
 

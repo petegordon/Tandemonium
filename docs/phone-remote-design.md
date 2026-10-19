@@ -300,3 +300,33 @@ pause + QR prompt.
 **Deploy:** `cd worker && npx wrangler deploy --config wrangler-pad.toml`.
 Until it's live, the preview's QR opens the phone page, but the phone can't
 connect.
+
+## 11. Phase 2: built (this branch)
+
+**Menus from the phone.**
+- The game tells the phone what to show each frame (`Game._syncPhonePad`):
+  - **pedals** in `countdown`, `calibrating`, `playing` and the finish cinematics;
+  - the **menu pad** everywhere else, and whenever the options overlay is open (that overlay is the pause).
+- **Menu pad layout:** a D-pad on the left, with OK and BACK on the right, like holding a gamepad.
+- The phone sends menu buttons as *held* bits. While the menu pad is up, `InputManager.setRemoteNav` makes Player 1's input report a gamepad: `mergeRemoteNavPad` maps the D-pad to 12–15, OK/BACK to A/B (honouring the A/B swap) and Pause to Start.
+  - So every lobby step, overlay and the "tap to start" screen work through the existing `FocusController`, with no per-screen phone code.
+  - While riding, the phone is *not* a pad, so ride-time checks such as the "Alternate LB/RB" hint are unchanged.
+- **Held-button rule:** buttons held when the mode switches are ignored until they're released, so the Pause press that opens the menu can't also press Start and close it.
+- **Shortest press:** the phone keeps every menu press down for at least 100 ms, so the once-a-frame menu poll never misses a quick tap.
+
+**Pause and disconnect.**
+- **⏸ Pause** on the phone opens the options overlay; BACK resumes.
+- **If a connected phone drops** (closed, asleep, or silent for 1 s):
+  - In solo, local or versus play, the ride pauses (options overlay).
+  - The QR panel comes back as **PHONE DISCONNECTED**.
+- **When the phone returns:** it reconnects by itself on `visibilitychange`, and the panel closes. The game stays paused until the player presses BACK on the phone.
+- **Online rides** (captain or stoker) only show the panel. They don't pause, because the partner keeps riding.
+
+**Cues.** The phone plays a short tone and, on Android, a buzz for:
+- `countdown` and `go`;
+- `crash` (from `_playCrash`);
+- `finish` (victory / versus results).
+
+**Tests.**
+- `phone-pad.test.mjs` has 23 tests.
+- `smoke:phone-pad` now drives the whole SOLO run from the phone: D-pad + OK through the lobby, START RIDE, pedals, Pause/BACK, a mid-ride drop with reconnect, and release on close.

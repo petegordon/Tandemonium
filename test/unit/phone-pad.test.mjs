@@ -178,3 +178,132 @@ test('detach keeps motion on when the host device tilts by itself', () => {
   im.detachRemote();
   assert.equal(im.motionEnabled, true);
 });
+
+// ── Phase 2: menu pad, modes, drop / return, pause ──
+import { mergeRemoteNavPad } from '../../js/input-manager.js';
+import { PhonePadHost } from '../../js/remote/phone-pad-host.js';
+
+test('the phone menu pad is a standard gamepad: d-pad, A/B (with the swap), Start', () => {
+  const pad = mergeRemoteNavPad(null, NAV.up | NAV.ok | NAV.pause, false);
+  assert.equal(pad.buttons.length, 17);
+  assert.equal(pad.buttons[12].pressed, true);
+  assert.equal(pad.buttons[0].pressed, true, 'OK = A');
+  assert.equal(pad.buttons[9].pressed, true, 'Pause = Start');
+  assert.equal(pad.buttons[1].pressed, false);
+  assert.deepEqual(pad.axes, [0, 0, 0, 0], 'stick centred: no gamepad lean');
+  assert.equal(pad.buttons[4].pressed || pad.buttons[6].pressed, false, 'no pedal buttons');
+  const swapped = mergeRemoteNavPad(null, NAV.back, true);
+  assert.equal(swapped.buttons[0].pressed, true, 'Back = B, which is button 0 on a swapped pad');
+});
+
+test('a real pad keeps its buttons and stick; the phone only adds presses', () => {
+  const real = { id: 'X', index: 0, axes: [0.7, 0, 0, 0], buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === 5, touched: i === 5, value: i === 5 ? 1 : 0 })) };
+  const pad = mergeRemoteNavPad(real, NAV.down, false);
+  assert.equal(pad.buttons[5].pressed, true);
+  assert.equal(pad.buttons[13].pressed, true);
+  assert.equal(pad.axes[0], 0.7);
+});
+
+test('setRemoteNav makes the seat look like a gamepad only while the phone shows its menu', () => {
+  const im = bare();
+  assert.equal(im.gamepadConnected, false);
+  im.setRemoteNav(true, NAV.left);
+  assert.equal(im.gamepadConnected, true);
+  assert.equal(im.getGamepadState().buttons[14].pressed, true);
+  im.setRemoteNav(false);
+  assert.equal(im.gamepadConnected, false, 'riding: ride-time pad checks are unchanged');
+  assert.equal(im.getGamepadState(), null);
+  im.setRemoteNav(true, 0);
+  im.detachRemote();
+  assert.equal(im.gamepadConnected, false);
+});
+
+/** A PhonePadHost wired to a fake input + socket (no network). */
+function hostWithFakes(hooks = {}) {
+  const calls = [];
+  const input = {
+    feedRemoteTilt: (t) => calls.push(['tilt', t]),
+    setRemotePedals: (...a) => calls.push(['pedals', ...a]),
+    setRemoteNav: (on, nav) => calls.push(['nav', on, nav]),
+    startTiltCalibration: () => calls.push(['recenter']),
+    detachRemote: () => calls.push(['detach']),
+  };
+  const host = new PhonePadHost({ input, relay: 'ws://127.0.0.1:1', siteBase: 'http://127.0.0.1/', ...hooks });
+  const sent = [];
+  host._ws = { readyState: 1, send: (d) => sent.push(JSON.parse(d)) };
+  const frame = (f) => { const b = encodeFrame({ seq: 1, tilt: 0, left: false, right: false, tapsL: 0, tapsR: 0, nav: 0, ...f }); const w = new Uint8Array(9); w[0] = 1; w.set(b, 1); host._onMessage(w.buffer); };
+  return { host, input, calls, sent, frame };
+}
+
+test('host: a joining phone is told its seat and the current mode', () => {
+  const { host, sent } = hostWithFakes();
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  assert.equal(host.status, 'connected');
+  assert.deepEqual(sent.map((m) => m.msg.type), ['seat', 'mode']);
+  assert.equal(sent[1].msg.mode, 'menu');
+  host.setMode('ride');
+  assert.deepEqual(sent.at(-1).msg, { type: 'mode', mode: 'ride' });
+  const n = sent.length;
+  host.setMode('ride');
+  assert.equal(sent.length, n, 'no resend when the mode is unchanged');
+});
+
+test('host: menu buttons pass through only in menu mode; Pause fires only while riding', () => {
+  let paused = 0;
+  const { host, calls, frame } = hostWithFakes({ onPause: () => paused++ });
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  frame({ seq: 2, nav: NAV.ok });
+  assert.deepEqual(calls.filter((c) => c[0] === 'nav').at(-1), ['nav', true, NAV.ok]);
+  frame({ seq: 3, nav: NAV.pause });
+  assert.equal(paused, 0, 'Pause in menu mode is the Start button, not a second pause');
+  host.setMode('ride');
+  frame({ seq: 4, nav: 0 });
+  assert.deepEqual(calls.filter((c) => c[0] === 'nav').at(-1), ['nav', false, 0]);
+  frame({ seq: 5, nav: NAV.pause });
+  assert.equal(paused, 1);
+  frame({ seq: 6, nav: NAV.pause });
+  assert.equal(paused, 1, 'held Pause fires once');
+});
+
+test('host: a phone that drops calls onDrop once; coming back calls onReturn', () => {
+  let drops = 0, returns = 0;
+  const { host, calls, frame } = hostWithFakes({ onDrop: () => drops++, onReturn: () => returns++ });
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  frame({ seq: 2 });
+  host._lastAt -= 5000;          // silent for 5 s (asleep)
+  host._checkStale();
+  assert.equal(drops, 1);
+  assert.equal(host.status, 'waiting');
+  assert.ok(calls.some((c) => c[0] === 'detach'));
+  host._onMessage(JSON.stringify({ type: 'pad-left', seat: 1 }));
+  assert.equal(drops, 1, 'pad-left after going silent is not a second drop');
+  frame({ seq: 3 });
+  assert.equal(returns, 1);
+  assert.equal(host.status, 'connected');
+});
+
+test('host: cues are sent only to a connected phone, and only known ones', () => {
+  const { host, sent } = hostWithFakes();
+  host.cue('crash');
+  assert.equal(sent.length, 0);
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  host.cue('crash');
+  host.cue('confetti');
+  assert.deepEqual(sent.filter((m) => m.msg.type === 'cue').map((m) => m.msg.cue), ['crash']);
+});
+
+test('host: the Pause press that switched to the menu does not also press Start', () => {
+  let paused = 0;
+  const { host, calls, frame } = hostWithFakes({ onPause: () => paused++ });
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  host.setMode('ride');
+  frame({ seq: 2, nav: 0 });
+  frame({ seq: 3, nav: NAV.pause });
+  assert.equal(paused, 1);
+  host.setMode('menu');                      // the game paused
+  frame({ seq: 4, nav: NAV.pause });         // still held
+  assert.deepEqual(calls.filter((c) => c[0] === 'nav').at(-1), ['nav', true, 0], 'held Pause is not Start');
+  frame({ seq: 5, nav: 0 });                 // released
+  frame({ seq: 6, nav: NAV.pause });         // a fresh press in the menu = Start
+  assert.deepEqual(calls.filter((c) => c[0] === 'nav').at(-1), ['nav', true, NAV.pause]);
+});
