@@ -19,6 +19,8 @@ module.exports = {
       path.join(__dirname, 'steamworks_sdk'),
     ],
     name: 'Tandemonium',
+    // vr/ is the separate web-only VR app (#425), with its own node_modules.
+    ignore: [/^\/vr(\/|$)/],
   },
   hooks: {
     // After packaging, drop the Steam Input files next to the exe under
