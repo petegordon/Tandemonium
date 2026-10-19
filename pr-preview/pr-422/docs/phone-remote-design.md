@@ -297,8 +297,8 @@ which already ship a phone remote inside Discord.
 - The phone shows CONNECT (the iOS motion prompt), then LEFT | RIGHT pedal
   halves, a ↻ Recenter button, and a "turn sideways" prompt in portrait.
 
-**If the phone drops:** no frame for 1 s, or the phone leaves, releases the
-pedals and the lean. Keyboard and gamepad keep working. Phase 2 adds the
+**If the phone drops:** no frame for 2 s (see Phase 2), or the phone leaves,
+releases the pedals and the lean. Keyboard and gamepad keep working. Phase 2 adds the
 pause + QR prompt.
 
 **Deploy:** `cd worker && npx wrangler deploy --config wrangler-pad.toml`.
@@ -338,5 +338,12 @@ connect.
 - `finish` (victory / versus results).
 
 **Tests.**
-- `phone-pad.test.mjs` has 23 tests.
-- `smoke:phone-pad` now drives the whole SOLO run from the phone: D-pad + OK through the lobby, START RIDE, pedals, Pause/BACK, a mid-ride drop with reconnect, and release on close.
+- `phone-pad.test.mjs` covers the protocol, the relay routing, the InputManager remote paths and the host (drops, stalls, relay blips, latches, redial).
+- `smoke:phone-pad` now drives the whole SOLO run from the phone: D-pad + OK through the lobby, START RIDE, pedals, Pause/BACK, a mid-ride drop with reconnect, a refused host without the room key, a blip on the game's relay link that keeps the phone paired, and release on close.
+
+**Review fixes (2026-10-19, three rounds).**
+- **Liveness:** both ends ping every 5 s. If nothing comes back (not even a pong) for two pings, the socket is treated as dead and redialled, even if it still says "open". A dial that hasn't opened in 8 s is abandoned and retried. The game also redials when the phone goes silent, because from the game's side a dead socket and a silent phone look the same.
+- **After a drop,** only a real frame brings the phone back. A relay socket left over from an asleep phone doesn't flap the panel.
+- **Back from a lock,** the phone pings first and redials only if the relay doesn't answer within 1.5 s.
+- **Stop using phone** sends `bye`. The phone says the game stopped using it and stops redialling, so the room can expire.
+- **The QR panel takes B / Start** from a gamepad or TV remote. The game, the options overlay and the lobby skip their own pad polling while the panel is open.

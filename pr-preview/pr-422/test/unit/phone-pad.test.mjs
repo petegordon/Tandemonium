@@ -398,3 +398,19 @@ test('host: held input is released even while our own relay socket is down', () 
   host._checkStale();
   assert.deepEqual(calls.filter((c) => c[0] === 'pedals').at(-1), ['pedals', false, false]);
 });
+
+test('host: after a drop, a leftover relay socket joining is not the phone coming back', () => {
+  let drops = 0, returns = 0;
+  const { host, frame } = hostWithFakes({ onDrop: () => drops++, onReturn: () => returns++ });
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  frame({ seq: 2 });
+  host._lastAt -= 2500;
+  host._lastCheckAt = performance.now();
+  host._checkStale();
+  assert.equal(drops, 1);
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));   // after our redial
+  assert.equal(returns, 0, 'no frame yet: still disconnected');
+  assert.equal(host.status, 'waiting');
+  frame({ seq: 3 });
+  assert.equal(returns, 1);
+});

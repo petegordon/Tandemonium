@@ -319,6 +319,7 @@ function connect() {
     if (state.ws !== ws) return;
     state.ws = null;
     state.hostHere = false;
+    if (state.closedForGood) return;   // 'bye': keep its message, don't redial
     if (!opened) state.failed = (state.failed || 0) + 1;
     // 4001 = the game made a new link for this seat; 403 at upgrade shows as 1006.
     if (ev.code === 4001) {

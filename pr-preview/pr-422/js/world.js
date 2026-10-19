@@ -878,7 +878,9 @@ export class World {
 
     this.sun = new THREE.DirectionalLight(0xffffdd, riders ? 1.7 : 1.1);
     this.sun.position.set(30, 40, 20);
-    this.sun.castShadow = true;
+    // Off when the world starts without shadows (Medium/Low), so a live switch
+    // to High flips it and every lit material recompiles with shadows.
+    this.sun.castShadow = !this._lowEnd;
     this.sun.shadow.mapSize.width = 1024;
     this.sun.shadow.mapSize.height = 1024;
     this.sun.shadow.camera.near = 1;
