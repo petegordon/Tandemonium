@@ -479,10 +479,17 @@ export class World {
       });
       // The slot meshes stay as placement/collision proxies, off the scene.
       for (const s of this._treePool) this.scene.remove(s.mesh);
+      if (parked) {
+        const slots = new Set(this._treePool.map((s) => s.mesh));
+        this._parkedObjects = this._parkedObjects.filter((o) => !slots.has(o)).concat(this._treeBatch);
+      }
+      this._syncTreeBatch();   // draw now, even if the world isn't updating (Options open)
     } else {
+      const batch = new Set(this._treeBatch);
       for (const im of this._treeBatch) { this.scene.remove(im); im.dispose(); }
       this._treeBatch = null;
       if (!parked) for (const s of this._treePool) this.scene.add(s.mesh);
+      else this._parkedObjects = this._parkedObjects.filter((o) => !batch.has(o)).concat(this._treePool.map((s) => s.mesh));
     }
   }
 

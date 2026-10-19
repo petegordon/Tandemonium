@@ -83,7 +83,7 @@ import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
-import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, AutoTierWatcher } from './quality.js';
+import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, AutoTierWatcher } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
@@ -159,7 +159,6 @@ class Game {
     /** @type {import('./quality.js').QualityTier} */
     this._quality = _q.tier;
     this._qualityAuto = _q.auto;
-    this._autoLowEnd = _q.auto && _q.tier !== 'high';
     // Medium and Low both do everything the old two-tier "Low" did.
     this._lowQuality = this._quality !== 'high';
     setCurrentTier(this._quality);
@@ -3523,10 +3522,12 @@ class Game {
     if (!force && isTouristMode()) return false;
     if (this.world && this.world !== proc && this.world.dispose) this.world.dispose();
     proc.unpark();
+    if (proc.setTier) proc.setTier(this._quality);   // the tier may have changed during the tour
     this.world = proc;
     this._proceduralWorld = null;
     if (this.bike) { this.bike.roadPath = proc.roadPath; this.bike.startHeading = 0; }
     this._restoreTouristView();
+    this._applyTierView();
     this.isTourist = false;
     this._touristPending = false;
     return true;
@@ -5707,10 +5708,19 @@ class Game {
     this._quality = tier;
     this._qualityAuto = auto;
     this._lowQuality = tier !== 'high';
-    this._autoLowEnd = auto && tier !== 'high';
     setCurrentTier(tier);
     this.renderer.setPixelRatio(this._pixelRatio());
-    this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
+    this._staticFrame = 0;   // setPixelRatio cleared the canvas: draw the next frame
+    const shadows = !isMobile && !this._lowQuality;
+    if (this.renderer.shadowMap.enabled !== shadows) {
+      this.renderer.shadowMap.enabled = shadows;
+      // Compiled shaders keep their shadow code until recompiled; without
+      // this a mid-ride switch leaves the last shadow stamped on the road.
+      this.scene.traverse((o) => {
+        if (!o.material) return;
+        for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true;
+      });
+    }
     if (this.world && this.world.setTier) this.world.setTier(tier);
     this._applyTierView();
     if (this.lobby && this.lobby.setQualityTier) this.lobby.setQualityTier(tier);
@@ -6141,6 +6151,8 @@ class Game {
     }
 
     this.fpsMeter.tick(timestamp);
+    // Each ride (and each resume) starts the Auto watcher's grace period afresh.
+    if (this.state !== 'playing') this._autoWatching = false;
 
     // A tier change that moves the riders default waits for the lobby (it
     // loads a different bike). Options may be open over the lobby, so here.
@@ -6208,8 +6220,15 @@ class Game {
       }
       // Auto: a ride that stays slow steps the quality down a tier, and
       // remembers it for next time.
-      if (this._autoWatcher && this._qualityAuto && this._quality !== 'low' &&
-          this._autoWatcher.sample(rawDt) === 'down') {
+      // Versus (2+ views) and Tourist (streamed 3D tiles) are heavier than
+      // a normal ride; they don't teach Auto anything about normal rides.
+      // On a desktop Auto stops at Medium: Low hides the riders, so it stays
+      // a manual choice there (phones and TVs already ride without riders).
+      const autoFloor = autoFloorTier(isMobile);
+      const autoWatch = this._autoWatcher && this._qualityAuto && this._quality !== autoFloor &&
+        this.mode !== 'versus' && !this.isTourist && !this._proceduralWorld;
+      if (autoWatch && !this._autoWatching) { this._autoWatcher.reset(); this._autoWatching = true; }
+      if (autoWatch && this._autoWatcher.sample(rawDt) === 'down') {
         const next = tierBelow(this._quality);
         console.log(`[QUALITY] rides are slow — Auto steps down to ${next}`);
         saveLearnedAutoTier(next);
@@ -8951,7 +8970,9 @@ class Game {
         rig.camera.updateProjectionMatrix();
       }
     }
+    this.renderer.setPixelRatio(this._pixelRatio());   // Low and ?lines= depend on window height
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this._staticFrame = 0;
   }
 }
 
