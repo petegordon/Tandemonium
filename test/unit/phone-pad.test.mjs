@@ -237,17 +237,16 @@ function hostWithFakes(hooks = {}) {
   return { host, input, calls, sent, frame };
 }
 
-test('host: a joining phone is told its seat and the current mode', () => {
+test('host: a joining phone is told its seat; mode changes send nothing (the phone layout is fixed)', () => {
   const { host, sent } = hostWithFakes();
   host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
   assert.equal(host.status, 'connected');
-  assert.deepEqual(sent.map((m) => m.msg.type), ['seat', 'mode']);
-  assert.equal(sent[1].msg.mode, 'menu');
-  host.setMode('ride');
-  assert.deepEqual(sent.at(-1).msg, { type: 'mode', mode: 'ride' });
+  assert.deepEqual(sent.map((m) => m.msg.type), ['seat']);
   const n = sent.length;
   host.setMode('ride');
-  assert.equal(sent.length, n, 'no resend when the mode is unchanged');
+  host.setMode('menu');
+  assert.equal(sent.length, n, 'nothing to send: the game reads presses by its own mode');
+  assert.equal(host.mode, 'menu');
 });
 
 test('host: menu buttons pass through only in menu mode; Pause fires only while riding', () => {

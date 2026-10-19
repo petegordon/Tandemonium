@@ -153,13 +153,19 @@ try {
   await phone.evaluate(() => { window.__tilt = 0; });
 
   // ── Phase 2: drive the menus from the phone's menu pad ──
-  const phoneMode = () => phone.evaluate(() => (document.getElementById('screen-ride').classList.contains('menu') ? 'menu' : 'ride'));
-  check(await phoneMode() === 'menu', 'in the lobby the phone shows its menu pad');
+  // The phone's layout never changes; the game reads presses by its own mode.
+  const phoneLayoutFixed = () => phone.evaluate(() => {
+    const seen = (sel) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return !!r && r.width > 0 && r.height > 0; };
+    return seen('#nav-strip [data-nav="ok"]') && seen('#btn-pause') && seen('#pedal-l') && seen('#pedal-r');
+  });
+  const hostMode = () => game.evaluate(() => window._game.phonePad?.mode);
+  check(await phoneLayoutFixed(), 'in the lobby the phone shows its one layout (menu strip + pedals)');
+  check(await hostMode() === 'menu', 'in the lobby the game reads the phone as a menu pad');
   check(await game.evaluate(() => window._game.input.gamepadConnected), 'the game sees the phone as a pad for the menus');
   // Headless software rendering runs the game at a few fps: hold each press
   // across several of its frames (a real phone press spans many).
   const press = async (nav, holdMs = 700) => {
-    const el = await phone.$(`#menu-pad [data-nav="${nav}"]`);
+    const el = await phone.$(`#nav-strip [data-nav="${nav}"]`);
     const b = await el.boundingBox();
     await phone.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
     await phone.mouse.down(); await sleep(holdMs); await phone.mouse.up(); await sleep(700);
@@ -196,7 +202,7 @@ try {
   check(playing, "SOLO Grandma's ride starts, driven from the phone", await game.evaluate(() => window._game?.state));
   if (playing) {
     await sleep(400);
-    check(await phoneMode() === 'ride', 'riding: the phone switches to its pedals');
+    check(await phoneLayoutFixed() && await hostMode() === 'ride', 'riding: same phone layout; the game reads it as pedals');
     check(await game.evaluate(() => !window._game.input.gamepadConnected), 'riding: the phone is not a pad (ride hints unchanged)');
     check(await phone.evaluate(() => window.__pad.lastCue) === 'go', 'the phone got the GO cue', await phone.evaluate(() => window.__pad.lastCue));
     // Pedals: press and hold the left half, then the right half.
@@ -227,11 +233,11 @@ try {
     await phone.click('#btn-pause');
     await sleep(500);
     check(await game.evaluate(() => window._game._optionsOpen), 'Pause on the phone pauses the game');
-    check(await phoneMode() === 'menu', 'paused: the phone shows its menu pad');
+    check(await phoneLayoutFixed() && await hostMode() === 'menu', 'paused: same phone layout; the game reads it as a menu pad');
     await press('back');
     await sleep(500);
     check(await game.evaluate(() => !window._game._optionsOpen), 'BACK on the phone resumes');
-    check(await phoneMode() === 'ride', 'resumed: pedals again');
+    check(await phoneLayoutFixed() && await hostMode() === 'ride', 'resumed: same phone layout; pedals again');
 
     // The phone drops mid-ride (asleep / closed), then comes back.
     await phone.evaluate(() => { window.__pad.ws.onclose = null; window.__pad.ws.close(); window.__pad.ws = null; });
@@ -244,7 +250,7 @@ try {
     await game.waitForFunction(() => !document.getElementById('phone-pad-panel').classList.contains('open'), { timeout: 5000 }).catch(() => {});
     const back = await game.evaluate(() => ({ status: window.__phonePad.status, panel: document.getElementById('phone-pad-panel').classList.contains('open'), paused: window._game._optionsOpen }));
     check(back.status === 'connected' && !back.panel && back.paused, 'the phone reconnects; the QR closes and the game stays paused for the player', JSON.stringify(back));
-    check(await phoneMode() === 'menu', 'reconnected while paused: the phone shows its menu pad');
+    check(await phoneLayoutFixed() && await hostMode() === 'menu', 'reconnected while paused: same phone layout; read as a menu pad');
     await press('back');
     await sleep(500);
     check(await game.evaluate(() => !window._game._optionsOpen && window._game.state === 'playing'), 'BACK resumes the ride');

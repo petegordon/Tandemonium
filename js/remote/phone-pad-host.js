@@ -10,9 +10,10 @@
 // is the InputManager's, so a remote phone steers exactly like a phone
 // playing the game.
 //
-// Phase 2: the game tells the phone to show its menu pad or its pedals
-// (setMode); in menu mode the phone's held buttons become a gamepad on the
-// seat's InputManager (setRemoteNav). One seat (Player 1) until Phase 4.
+// Phase 2: the game tells us whether it's in menus or riding (setMode); in
+// menu mode the phone's held buttons become a gamepad on the seat's
+// InputManager (setRemoteNav). The phone's own layout never changes, so
+// nothing about the mode is sent to it. One seat (Player 1) until Phase 4.
 // ============================================================
 
 import {
@@ -150,17 +151,14 @@ export class PhonePadHost {
   get connected() { return this.status === 'connected'; }
 
   /**
-   * Menu pad or pedals. Cheap to call every frame: only a change is sent.
+   * Menus or riding: how the phone's buttons are read. Cheap every frame.
    * @param {'menu'|'ride'} mode
    */
   setMode(mode) {
     if (mode === this.mode) return;
     this.mode = mode;
     this._navLatched = this._last ? this._last.nav : 0;
-    if (this._phoneHere) {
-      this.input.setRemoteNav(mode === 'menu', 0);
-      this.sendToPad({ type: 'mode', mode });
-    }
+    if (this._phoneHere) this.input.setRemoteNav(mode === 'menu', 0);
   }
 
   /** A short sound/buzz on the phone. @param {string} cue */
@@ -317,10 +315,9 @@ export class PhonePadHost {
     if (this._dropped) { this._dropped = false; if (this.onReturn) this.onReturn(); }
   }
 
-  /** Tell the phone its seat and what to show. */
+  /** Tell the phone its seat. */
   _greet() {
     this.sendToPad({ type: 'seat', seat: this.seat, label: 'Player ' + this.seat });
-    this.sendToPad({ type: 'mode', mode: this.mode });
   }
 
   /** The phone left, or went silent (asleep, out of range). */
