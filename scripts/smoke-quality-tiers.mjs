@@ -104,6 +104,15 @@ console.log('An explicit Show Riders choice wins on Low');
   await page.close();
 }
 
+console.log('TV test switches: ?lines= and ?aa=');
+{
+  const page = await boot({ query: '?quality=low&lines=540&aa=1' });
+  const r = await page.evaluate(() => ({ ratio: window._game.renderer.getPixelRatio(), h: innerHeight, aa: window._game.renderer.getContext().getContextAttributes().antialias, tier: window._game._quality }));
+  check(r.tier === 'low' && Math.abs(r.ratio * r.h - 540) < 1, '?lines=540 renders Low at 540 lines', r);
+  check(r.aa === true, '?aa=1 turns edge smoothing on', r.aa);
+  await page.close();
+}
+
 await browser.close(); server.close();
 console.log(failed ? `\nquality tiers smoke: ${failed} FAILED` : '\nquality tiers smoke: all checks passed');
 process.exit(failed ? 1 : 0);
