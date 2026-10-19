@@ -241,7 +241,10 @@ export class PhonePadHost {
     try { m = JSON.parse(data); } catch { return; }
     if (m.type === 'pad-joined' && m.seat === this.seat) {
       this._last = null;
-      this._arrive();
+      // After a drop only a real frame brings the phone back: a socket the
+      // relay still holds for an asleep phone would otherwise flap the panel.
+      if (this._dropped) this._greet();
+      else this._arrive();
     } else if (m.type === 'pad-left' && m.seat === this.seat) {
       this._leave('left');
     }
@@ -309,10 +312,15 @@ export class PhonePadHost {
     this._phoneHere = true;
     this._lastAt = performance.now();   // frames must follow within STALE_MS
     this._setStatus('connected');
-    this.sendToPad({ type: 'seat', seat: this.seat, label: 'Player ' + this.seat });
-    this.sendToPad({ type: 'mode', mode: this.mode });
+    this._greet();
     this.input.setRemoteNav(this.mode === 'menu', 0);
     if (this._dropped) { this._dropped = false; if (this.onReturn) this.onReturn(); }
+  }
+
+  /** Tell the phone its seat and what to show. */
+  _greet() {
+    this.sendToPad({ type: 'seat', seat: this.seat, label: 'Player ' + this.seat });
+    this.sendToPad({ type: 'mode', mode: this.mode });
   }
 
   /** The phone left, or went silent (asleep, out of range). */
