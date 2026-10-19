@@ -68,7 +68,8 @@
     color: var(--uf-color-fg-on-accent, #06140c); background: var(--uf-color-accent, #44ff66); border-color: var(--uf-color-accent, #44ff66); }
   .nav-btn[data-nav="ok"].down { filter: brightness(.8); }
   .nav-btn[data-nav="back"] { min-width: 96px; font-size: 16px; }
-  .nav-btn[data-nav="pause"], .nav-btn[data-nav="recenter"] { font-size: 17px; }
+  .nav-btn[data-nav="pause"] { font-size: 17px; }
+  .nav-btn[data-nav="recenter"] { font-size: 24px; }
 
   /* The D-pad: one plus-shaped piece, arrows on the arms, logo in the hub. */
   .dpad {
@@ -148,7 +149,7 @@
         <span id="status">Connecting…</span>
         <div class="row">
           <button class="nav-btn" id="btn-pause" data-nav="pause" type="button" aria-label="Pause">&#10074;&#10074;</button>
-          <button class="nav-btn" id="btn-recenter" data-nav="recenter" type="button" aria-label="Recenter steering">&#8635;</button>
+          <button class="nav-btn" id="btn-recenter" data-nav="recenter" type="button" aria-label="Calibrate steering">&#127919;</button>
         </div>
       </div>
       <div class="side right">
