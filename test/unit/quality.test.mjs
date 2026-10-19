@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveQualityTier, migrateQualityPref, getQualityPref, setQualityPref,
-  getLearnedAutoTier, saveLearnedAutoTier, tierBelow, autoFloorTier, AutoTierWatcher,
+  getLearnedAutoTier, saveLearnedAutoTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher,
 } from '../../js/quality.js';
 
 function store(init = {}) {
@@ -61,6 +61,13 @@ test('tierBelow steps High → Medium → Low and stops', () => {
 test('Auto never steps a desktop down to Low (it would hide the riders); phones and TVs may', () => {
   assert.equal(autoFloorTier(false), 'medium');
   assert.equal(autoFloorTier(true), 'low');
+  assert.ok(tierRank('low') < tierRank('medium') && tierRank('medium') < tierRank('high'));
+});
+
+test('a learned Low on a desktop comes back up to Medium; a phone keeps it; a manual Low stays', () => {
+  assert.deepEqual(resolveQualityTier({ pref: 'auto', learned: 'low', floor: 'medium' }), { tier: 'medium', auto: true });
+  assert.deepEqual(resolveQualityTier({ pref: 'auto', learned: 'low', floor: 'low' }), { tier: 'low', auto: true });
+  assert.deepEqual(resolveQualityTier({ pref: 'low', learned: 'low', floor: 'medium' }), { tier: 'low', auto: false });
 });
 
 test('watcher: a slow ride steps down after the grace + one window; a fast one never does', () => {
