@@ -316,7 +316,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage'), document.getElementById('btn-mode-connect-hid')].filter(Boolean),
+      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage'), document.getElementById('btn-mode-connect-hid'), document.getElementById('btn-mode-phone')].filter(Boolean),
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
@@ -6589,6 +6589,10 @@ export class Lobby {
     this._stepNavRanLastFrame = false;
 
     if (!this.input || !this.input.gamepadConnected) return;
+
+    // ...or while the phone QR panel is on top (it takes B / Start itself);
+    // the next frame here re-primes, so the closing press isn't reused.
+    if (document.getElementById('phone-pad-panel')?.classList.contains('open')) return;
 
     // Don't process lobby navigation while options overlay is open
     const optOverlay = document.getElementById('options-overlay');
