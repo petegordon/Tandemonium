@@ -92,6 +92,7 @@ import { isBotTeam } from './versus/versus-bot.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
+import { installPhonePadUI } from './remote/phone-pad-ui.js'; // phone remote (#421)
 
 // Demo checkpoint limit removed — demo users play the tutorial instead
 const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
@@ -273,6 +274,8 @@ class Game {
 
     // Components
     this.input = new InputManager({ slot: this.controllerManager.getSlot('P1') });
+    // #421 · a phone on another device can steer + pedal Player 1.
+    this.phonePad = installPhonePadUI(this.input);
 
     // Controller overlay — live 3D tiles of each rider's pad (C, or the quick
     // menu's CONTROLLERS entry). Reads the same slots the InputManagers do; the

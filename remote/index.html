@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Tandemonium Phone Pad</title>
+<link rel="stylesheet" href="../shared/ui/tokens.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%; overflow: hidden; overscroll-behavior: none;
+    background: var(--uf-color-bg, #0b0d12); color: var(--uf-color-fg, #fff);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    touch-action: none;
+  }
+  .screen { display: none; position: fixed; inset: 0; }
+  .screen.on { display: flex; }
+
+  /* Connect / bad link */
+  .center {
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; padding: 24px; text-align: center;
+  }
+  .center h1 { font-size: 26px; letter-spacing: 1px; }
+  .center p { color: var(--uf-color-fg-muted, #8a93a6); font-size: 16px; line-height: 1.5; max-width: 420px; }
+  #btn-connect {
+    font: inherit; font-size: 22px; font-weight: bold; letter-spacing: 1px;
+    padding: 18px 40px; border-radius: 14px; cursor: pointer;
+    color: var(--uf-color-fg-on-accent, #06140c); background: var(--uf-color-accent, #44ff66);
+    border: none;
+  }
+  .seat { color: var(--uf-color-accent-2, #ffd23f); font-weight: bold; }
+
+  /* Ride: two pedal halves */
+  #screen-ride { flex-direction: column; }
+  #ride-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: max(8px, env(safe-area-inset-top)) 14px 8px; font-size: 14px;
+    color: var(--uf-color-fg-muted, #8a93a6);
+  }
+  #status.ok { color: var(--uf-color-accent, #44ff66); }
+  #btn-recenter {
+    font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 10px;
+    color: var(--uf-color-fg, #fff); background: var(--uf-color-surface-2, rgba(255,255,255,.1));
+    border: 1px solid var(--uf-color-line-soft, rgba(255,255,255,.16));
+  }
+  #pedals { flex: 1; display: flex; gap: 6px; padding: 0 6px max(6px, env(safe-area-inset-bottom)); }
+  .pedal {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    border-radius: 18px; font-size: 34px; font-weight: bold; letter-spacing: 2px;
+    background: var(--uf-color-surface-3, rgba(255,255,255,.04));
+    border: 2px solid var(--uf-color-line-soft, rgba(255,255,255,.16));
+    color: var(--uf-color-fg-muted, #8a93a6);
+    transition: background .05s;
+  }
+  .pedal.down {
+    background: var(--uf-color-accent-soft, rgba(60,200,80,.25));
+    border-color: var(--uf-color-accent, #44ff66); color: var(--uf-color-fg, #fff);
+  }
+  #motion-note { color: var(--uf-color-warn, #ffd23f); font-size: 13px; padding: 0 14px 6px; }
+  #motion-note:empty { display: none; }
+
+  /* Portrait: ask to turn sideways (D3: hold it like handlebars) */
+  #rotate { display: none; position: fixed; inset: 0; z-index: 5; background: var(--uf-color-bg, #0b0d12);
+    flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 24px; }
+  #rotate .phone { font-size: 64px; animation: turn 1.6s ease-in-out infinite; }
+  @keyframes turn { 0%, 30% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+  @media (orientation: portrait) {
+    body.riding #rotate { display: flex; }
+  }
+</style>
+</head>
+<body>
+  <section class="screen center" id="screen-connect">
+    <h1>TANDEMONIUM</h1>
+    <p>Your phone is the controller for <span class="seat" id="seat-label">Player 1</span>.</p>
+    <p>Hold it sideways like handlebars. <strong>Tilt</strong> to steer, tap <strong>LEFT</strong> and <strong>RIGHT</strong> to pedal.</p>
+    <button id="btn-connect" type="button">CONNECT</button>
+  </section>
+
+  <section class="screen center" id="screen-bad-link">
+    <h1>Link expired</h1>
+    <p>Scan the QR code on the game screen again.</p>
+  </section>
+
+  <section class="screen" id="screen-ride">
+    <div id="ride-bar">
+      <span id="status">Connecting…</span>
+      <button id="btn-recenter" type="button">&#8635; Recenter</button>
+    </div>
+    <div id="motion-note"></div>
+    <div id="pedals">
+      <div class="pedal" id="pedal-l">LEFT</div>
+      <div class="pedal" id="pedal-r">RIGHT</div>
+    </div>
+  </section>
+
+  <div id="rotate">
+    <div class="phone">&#128241;</div>
+    <p>Turn your phone sideways, like handlebars.</p>
+  </div>
+
+  <script>
+    // Portrait hint only once riding (the connect screen reads fine upright).
+    new MutationObserver(() => {
+      document.body.classList.toggle('riding', document.getElementById('screen-ride').classList.contains('on'));
+    }).observe(document.getElementById('screen-ride'), { attributes: true });
+  </script>
+  <script type="module" src="../js/remote/phone-pad.js"></script>
+</body>
+</html>
