@@ -1,0 +1,100 @@
+/* ============================================================
+   @usersfirst/ui tokens — the ONLY place a colour, size or radius is a literal
+   ============================================================
+
+   Seeded 2026-10-18 from design/audit: the dominant values already in the
+   game's index.html (the product) and the lab's overlay pages. Where the two
+   disagreed the GAME's value won (accent green, gold, team colours, font),
+   so adopting the kit changes nothing a player sees. This is a starting
+   inventory, not a palette decision — Pete picks the real palette (plan §3
+   D3) and this file is where it lands. Every element in src/elements/ reads
+   from here; none may carry its own hex.
+
+   Naming: --uf-<group>-<role>[-<state>]. Groups: color, font, size, space,
+   radius, shadow, motion, z. Semantic roles ("accent", "danger") not hues
+   ("green") so re-skins are one-file edits. "-soft" = translucent fill,
+   "-line" = translucent border, for the glassy button/card look both repos use.
+   ============================================================ */
+:root {
+  /* colour · surfaces */
+  --uf-color-bg:            #0b0d12;                 /* lab: page gradient base */
+  --uf-color-surface:       #1a1a2e;                 /* game: panels / cards */
+  --uf-color-surface-2:     rgba(255,255,255,.10);   /* game .lobby-btn fill */
+  --uf-color-surface-3:     rgba(255,255,255,.04);
+  --uf-color-line:          rgba(255,255,255,.40);   /* game .lobby-btn border */
+  --uf-color-line-soft:     rgba(255,255,255,.16);
+  --uf-color-scrim:         rgba(0,0,0,.60);
+
+  /* colour · text */
+  --uf-color-fg:            #ffffff;                 /* game: 61 uses of #fff */
+  --uf-color-fg-muted:      #8a93a6;
+  --uf-color-fg-on-accent:  #06140c;
+
+  /* colour · semantic (game accent = the 37-use #44ff66 green) */
+  --uf-color-accent:        #44ff66;
+  --uf-color-accent-soft:   rgba(60,200,80,.25);     /* game .lobby-btn-accent fill */
+  --uf-color-accent-line:   rgba(60,200,80,.60);
+  --uf-color-accent-2:      #ffd23f;                 /* game gold, 26 uses */
+  --uf-color-warn:          var(--uf-color-accent-2);
+  --uf-color-danger:        #ff4444;
+  --uf-color-danger-soft:   rgba(255,68,68,.18);
+  --uf-color-info:          #4488ff;                 /* shared by game + lab */
+  --uf-color-info-soft:     rgba(103,193,245,.16);   /* game .cta-btn fill */
+  --uf-color-info-line:     rgba(103,193,245,.50);
+  --uf-color-info-fg:       #bfe6ff;
+  --uf-color-versus:        #c898ff;                 /* game .lobby-btn-versus */
+  --uf-color-versus-soft:   rgba(160,64,255,.18);
+  --uf-color-versus-line:   rgba(160,64,255,.65);
+
+  /* colour · seats & teams (game values; the lab's lobby adopts them) */
+  --uf-color-captain:       #7ae09a;
+  --uf-color-stoker:        #ff9e6b;
+  --uf-color-team-a:        #4c7dff;                 /* game --versus-team-a · P1/P3 lightbar blue */
+  --uf-color-team-b:        #ff4560;                 /* game --versus-team-b · --tandem-player2 */
+
+  /* type */
+  --uf-font-ui:   'Helvetica Neue', Arial, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --uf-font-mono: ui-monospace, 'Cascadia Mono', SFMono-Regular, Menlo, monospace;
+  --uf-size-xs:  10px;   /* 24 uses */
+  --uf-size-sm:  12px;   /* 11px+12px+13px = 100 uses in the game: collapse to one */
+  --uf-size-md:  16px;   /* game .lobby-btn */
+  --uf-size-lg:  18px;
+  --uf-size-xl:  22px;
+  --uf-size-2xl: 28px;
+  --uf-size-hero: 64px;
+
+  /* spacing (4px grid) */
+  --uf-space-1: 4px;  --uf-space-2: 8px;  --uf-space-3: 12px;  --uf-space-4: 16px;
+  --uf-space-5: 24px; --uf-space-6: 32px; --uf-space-7: 48px;
+
+  /* radius (game today: 50%, 10px, 999px, 8px, 3px, 6px, 2px, 12px … 29 distinct) */
+  --uf-radius-sm: 6px;
+  --uf-radius-md: 10px;
+  --uf-radius-lg: 14px;   /* game .lobby-btn */
+  --uf-radius-pill: 999px;
+
+  /* elevation / focus */
+  --uf-shadow-card:  0 12px 34px -14px rgba(0,0,0,.8);
+  --uf-focus-ring:   0 0 0 3px var(--uf-color-accent);
+  --uf-glow-accent:  0 0 18px -4px var(--uf-color-accent);
+
+  /* motion */
+  --uf-motion-fast: 120ms;
+  --uf-motion-base: 180ms;
+  --uf-ease: cubic-bezier(.2,.8,.2,1);
+
+  /* layering (game today: ad-hoc 11 / 56 / 100 …) */
+  --uf-z-hud: 10;
+  --uf-z-sheet: 50;
+  --uf-z-modal: 60;
+  --uf-z-toast: 90;
+}
+
+/* Large-screen / TV scale: one knob instead of per-rule overrides. */
+@media (min-width: 1600px) {
+  :root { --uf-size-sm: 14px; --uf-size-md: 18px; --uf-size-lg: 22px; --uf-size-xl: 26px; --uf-size-2xl: 34px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --uf-motion-fast: 0ms; --uf-motion-base: 0ms; }
+}
