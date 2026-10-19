@@ -295,7 +295,7 @@ which already ship a phone remote inside Discord.
 - **📱 Phone as controller** on the mode screen opens a QR panel for Player 1.
 - The panel closes itself once the phone connects.
 - The phone shows CONNECT (the iOS motion prompt), then LEFT | RIGHT pedal
-  halves, a ↻ Recenter button, and a "turn sideways" prompt in portrait.
+  halves, a 🎯 Calibrate (recenter) button, and a "turn sideways" prompt in portrait.
 
 **If the phone drops:** no frame for 2 s (see Phase 2), or the phone leaves,
 releases the pedals and the lean. Keyboard and gamepad keep working. Phase 2 adds the
@@ -308,7 +308,7 @@ connect.
 ## 11. Phase 2: built (this branch)
 
 **Menus from the phone.**
-- **One fixed phone layout (2026-10-19, after playtest):** gamepad-style controls along the top (a plus-shaped D-pad on the left with the House Tandem controller logo (the lab's `brand/housetandem-controller.svg`) in its hub; status, ❚❚ Pause and ↻ Recenter in the middle; OK and BACK on the right) and the two pedal halves below, showing the game's pedal art (`remote/img/`, 320 px WebP copies of `images/pedal_*.png`). The phone never switches screens. The first version switched between a pedal screen and a menu pad on a `mode` message sent only when the game state changed, so one lost message left the phone on the wrong screen (the D-pad showing mid-ride).
+- **One fixed phone layout (2026-10-19, after playtest):** gamepad-style controls along the top (a plus-shaped D-pad on the left with the House Tandem controller logo (the lab's `brand/housetandem-controller.svg`) in its hub; status, ❚❚ Pause and 🎯 Calibrate (recenter) in the middle; OK and BACK on the right) and the two pedal halves below, showing the game's pedal art (`remote/img/`, 320 px WebP copies of `images/pedal_*.png`). The phone never switches screens. The first version switched between a pedal screen and a menu pad on a `mode` message sent only when the game state changed, so one lost message left the phone on the wrong screen (the D-pad showing mid-ride).
 - The game decides what the presses mean each frame (`Game._syncPhonePad` → `PhonePadHost.setMode`, local only, nothing sent to the phone):
   - **riding** in `countdown`, `calibrating`, `playing` and the finish cinematics: the pedals pedal, the arrows/OK/BACK do nothing;
   - **menus** everywhere else, and whenever the options overlay is open (that overlay is the pause): the arrows/OK/BACK are a gamepad. The pedals still count as ←/→ pedal keys, as touch pedals do when the game runs on a phone.
