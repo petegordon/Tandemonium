@@ -31,6 +31,10 @@ const HOST_LOST_MS = 5000;
 const RELEASE_MS = 400;
 /** Keep the game's relay socket from going idle. */
 const PING_MS = 5000;
+/** Nothing from the relay (not even a pong) this long = our socket is dead. */
+const DEAD_MS = PING_MS * 2 + 1000;
+/** A connection attempt that hasn't opened by now is abandoned and retried. */
+const CONNECT_TIMEOUT_MS = 8000;
 
 /**
  * @typedef {'idle'|'connecting'|'waiting'|'connected'|'error'} PadStatus
@@ -112,7 +116,12 @@ export class PhonePadHost {
     this._lastCheckAt = performance.now();
     this._watchdog = setInterval(() => this._checkStale(), 250);
     this._pinger = setInterval(() => {
-      if (this._ws && this._ws.readyState === 1) { try { this._ws.send('ping'); } catch { /* closed */ } }
+      const ws = this._ws;
+      if (!ws || ws.readyState !== 1) return;
+      // A socket can say "open" long after the network under it died (a Wi-Fi
+      // switch, a NAT drop). Then the phone looks silent while it's fine.
+      if (performance.now() - this._lastRecv > DEAD_MS) { this._redial(); return; }
+      try { ws.send('ping'); } catch { /* closed */ }
     }, PING_MS);
     return this.link;
   }
@@ -123,6 +132,7 @@ export class PhonePadHost {
     this._phoneHere = false;
     this._dropped = false;
     clearTimeout(this._retryTimer);
+    clearTimeout(this._openTimer);
     clearInterval(this._watchdog);
     clearInterval(this._pinger);
     this._watchdog = null;
@@ -177,21 +187,38 @@ export class PhonePadHost {
     }
     ws.binaryType = 'arraybuffer';
     this._ws = ws;
+    clearTimeout(this._openTimer);
+    const openTimer = this._openTimer = setTimeout(() => { if (ws.readyState === 0) { try { ws.close(); } catch { /* closed */ } } }, CONNECT_TIMEOUT_MS);
     ws.onopen = () => {
+      clearTimeout(openTimer);
+      this._lastRecv = performance.now();
       this._retry = 0;
       this._wsDownAt = 0;
       this._lastAt = performance.now();   // a fresh window for the phone's frames
       ws.send(JSON.stringify({ type: 'allow', seat: this.seat, hash: this._hash }));
       if (!this._phoneHere) this._setStatus('waiting');
     };
-    ws.onmessage = (ev) => this._onMessage(ev.data);
+    ws.onmessage = (ev) => { this._lastRecv = performance.now(); this._onMessage(ev.data); };
     ws.onclose = () => {
+      clearTimeout(openTimer);
       if (this._ws !== ws) return;
       this._ws = null;
       if (!this._wsDownAt) this._wsDownAt = performance.now();
       if (!this._closed) this._scheduleRetry();
     };
     ws.onerror = () => { /* onclose follows */ };
+  }
+
+  /** Drop our relay socket and dial again now. */
+  _redial() {
+    const ws = this._ws;
+    if (!ws || this._closed) return;
+    this._ws = null;
+    if (!this._wsDownAt) this._wsDownAt = performance.now();
+    try { ws.close(); } catch { /* closed */ }
+    this._retry = 0;
+    clearTimeout(this._retryTimer);
+    this._connect();
   }
 
   _scheduleRetry() {
@@ -252,6 +279,17 @@ export class PhonePadHost {
     const gap = now - this._lastCheckAt;
     this._lastCheckAt = now;
     if (!this._phoneHere) return;
+    const silent = now - this._lastAt;
+    // Any short silence (the phone, our socket, or a stall): let go of held
+    // pedals and menu buttons so nothing sticks. Frames resuming take over
+    // again; the tap counters carry on from _last.
+    if (silent > RELEASE_MS && !this._heldReleased) {
+      this._heldReleased = true;
+      // Buttons still held when frames resume are not a fresh press.
+      this._navLatched = this._last ? this._last.nav : 0;
+      this.input.setRemotePedals(false, false);
+      this.input.setRemoteNav(this.mode === 'menu', 0);
+    }
     // Our own relay socket is down: the phone's frames can't reach us, which
     // says nothing about the phone. Wait for the reconnect, up to a point.
     if (!this._ws || this._ws.readyState !== 1) {
@@ -261,22 +299,15 @@ export class PhonePadHost {
     // The game froze (a level load, a slow TV): the phone's frames are queued
     // behind us, not missing. Start a fresh window.
     if (gap > STALL_MS) { this._lastAt = now; return; }
-    if (!this._last) return;
-    const silent = now - this._lastAt;
-    if (silent > STALE_MS) { this._leave('silent'); return; }
-    // Frames resuming take over again; the tap counters carry on from _last.
-    if (silent > RELEASE_MS && !this._heldReleased) {
-      this._heldReleased = true;
-      // Buttons still held when frames resume are not a fresh press.
-      this._navLatched = this._last.nav;
-      this.input.setRemotePedals(false, false);
-      this.input.setRemoteNav(this.mode === 'menu', 0);
-    }
+    // Silent, or joined and never sent a frame: gone. Our socket may be the
+    // dead one (it can't tell), so dial again too.
+    if (silent > STALE_MS) { this._leave('silent'); this._redial(); }
   }
 
   /** The phone is here (joined, or frames resumed). */
   _arrive() {
     this._phoneHere = true;
+    this._lastAt = performance.now();   // frames must follow within STALE_MS
     this._setStatus('connected');
     this.sendToPad({ type: 'seat', seat: this.seat, label: 'Player ' + this.seat });
     this.sendToPad({ type: 'mode', mode: this.mode });

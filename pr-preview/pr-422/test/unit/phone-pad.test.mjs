@@ -231,6 +231,8 @@ function hostWithFakes(hooks = {}) {
   const host = new PhonePadHost({ input, relay: 'ws://127.0.0.1:1', siteBase: 'http://127.0.0.1/', ...hooks });
   const sent = [];
   host._ws = { readyState: 1, send: (d) => sent.push(JSON.parse(d)) };
+  host.redials = 0;
+  host._redial = () => { host.redials++; };   // no real sockets in unit tests
   const frame = (f) => { const b = encodeFrame({ seq: 1, tilt: 0, left: false, right: false, tapsL: 0, tapsR: 0, nav: 0, ...f }); const w = new Uint8Array(9); w[0] = 1; w.set(b, 1); host._onMessage(w.buffer); };
   return { host, input, calls, sent, frame };
 }
@@ -371,4 +373,28 @@ test('detach puts a gyro pad\'s motion back as it was', () => {
   assert.equal(im.motionEnabled, true);
   im.detachRemote();
   assert.equal(im.motionEnabled, false);
+});
+
+test('host: a silent phone also makes the game redial (its own socket may be the dead one)', () => {
+  let drops = 0;
+  const { host } = hostWithFakes({ onDrop: () => drops++ });
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  host._lastAt -= 2500;                    // joined, then never a frame
+  host._lastCheckAt = performance.now();
+  host._checkStale();
+  assert.equal(drops, 1, 'a phone that joins but never sends is not connected forever');
+  assert.equal(host.redials, 1);
+});
+
+test('host: held input is released even while our own relay socket is down', () => {
+  const { host, calls, frame } = hostWithFakes();
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  frame({ seq: 2, left: true });
+  host._ws = null;
+  host._wsDownAt = performance.now();
+  host._lastAt -= 500;
+  host._lastCheckAt = performance.now();
+  calls.length = 0;
+  host._checkStale();
+  assert.deepEqual(calls.filter((c) => c[0] === 'pedals').at(-1), ['pedals', false, false]);
 });
