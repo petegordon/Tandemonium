@@ -21,8 +21,14 @@ import {
   relayOverrideAllowed,
 } from './pad-protocol.js';
 
-/** No frame for this long while connected = treat the phone as gone. */
-const STALE_MS = 1000;
+/** No frame for this long (while the game is running freely) = the phone is gone. */
+const STALE_MS = 2000;
+/** The watchdog ran this late = the game itself froze; the phone isn't to blame. */
+const STALL_MS = 750;
+/** Our own link to the relay down this long = give up on the phone. */
+const HOST_LOST_MS = 5000;
+/** Keep the game's relay socket from going idle. */
+const PING_MS = 5000;
 
 /**
  * @typedef {'idle'|'connecting'|'waiting'|'connected'|'error'} PadStatus
@@ -70,7 +76,12 @@ export class PhonePadHost {
     this._lastAt = 0;
     this._phoneHere = false;
     this._watchdog = null;
+    this._lastCheckAt = 0;
+    this._wsDownAt = 0;       // when our relay socket went down (0 = up)
+    this._pinger = null;
     this.framesReceived = 0;
+    /** Why the phone was last dropped: 'left' | 'silent' | 'relay' (debug aid). */
+    this.drops = [];
   }
 
   /** Start (or keep) a pad room and return the link for the phone. */
@@ -83,7 +94,11 @@ export class PhonePadHost {
     const override = this.relay !== DEFAULT_PAD_RELAY ? this.relay : null;
     this.link = buildPadLink(this.siteBase, this.code, this.seat, this._secret, { relay: override });
     this._connect();
+    this._lastCheckAt = performance.now();
     this._watchdog = setInterval(() => this._checkStale(), 250);
+    this._pinger = setInterval(() => {
+      if (this._ws && this._ws.readyState === 1) { try { this._ws.send('ping'); } catch { /* closed */ } }
+    }, PING_MS);
     return this.link;
   }
 
@@ -94,7 +109,9 @@ export class PhonePadHost {
     this._dropped = false;
     clearTimeout(this._retryTimer);
     clearInterval(this._watchdog);
+    clearInterval(this._pinger);
     this._watchdog = null;
+    this._pinger = null;
     if (this._ws) { try { this._ws.close(1000, 'host closed'); } catch { /* closed */ } }
     this._ws = null;
     this._release();
@@ -145,6 +162,8 @@ export class PhonePadHost {
     this._ws = ws;
     ws.onopen = () => {
       this._retry = 0;
+      this._wsDownAt = 0;
+      this._lastAt = performance.now();   // a fresh window for the phone's frames
       ws.send(JSON.stringify({ type: 'allow', seat: this.seat, hash: this._hash }));
       if (!this._phoneHere) this._setStatus('waiting');
     };
@@ -152,6 +171,7 @@ export class PhonePadHost {
     ws.onclose = () => {
       if (this._ws !== ws) return;
       this._ws = null;
+      if (!this._wsDownAt) this._wsDownAt = performance.now();
       if (!this._closed) this._scheduleRetry();
     };
     ws.onerror = () => { /* onclose follows */ };
@@ -179,7 +199,7 @@ export class PhonePadHost {
       this._last = null;
       this._arrive();
     } else if (m.type === 'pad-left' && m.seat === this.seat) {
-      this._leave();
+      this._leave('left');
     }
   }
 
@@ -210,7 +230,20 @@ export class PhonePadHost {
   }
 
   _checkStale() {
-    if (this._phoneHere && this._last && performance.now() - this._lastAt > STALE_MS) this._leave();
+    const now = performance.now();
+    const gap = now - this._lastCheckAt;
+    this._lastCheckAt = now;
+    if (!this._phoneHere) return;
+    // Our own relay socket is down: the phone's frames can't reach us, which
+    // says nothing about the phone. Wait for the reconnect, up to a point.
+    if (!this._ws || this._ws.readyState !== 1) {
+      if (this._wsDownAt && now - this._wsDownAt > HOST_LOST_MS) this._leave('relay');
+      return;
+    }
+    // The game froze (a level load, a slow TV): the phone's frames are queued
+    // behind us, not missing. Start a fresh window.
+    if (gap > STALL_MS) { this._lastAt = now; return; }
+    if (this._last && now - this._lastAt > STALE_MS) this._leave('silent');
   }
 
   /** The phone is here (joined, or frames resumed). */
@@ -224,8 +257,10 @@ export class PhonePadHost {
   }
 
   /** The phone left, or went silent (asleep, out of range). */
-  _leave() {
+  /** @param {'left'|'silent'|'relay'} [reason] */
+  _leave(reason = 'left') {
     const was = this._phoneHere;
+    if (was) { this.drops.push({ reason, at: Date.now() }); if (this.drops.length > 10) this.drops.shift(); }
     this._phoneHere = false;
     this._release();
     this._setStatus('waiting');

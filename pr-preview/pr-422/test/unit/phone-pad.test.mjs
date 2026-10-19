@@ -271,8 +271,10 @@ test('host: a phone that drops calls onDrop once; coming back calls onReturn', (
   host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
   frame({ seq: 2 });
   host._lastAt -= 5000;          // silent for 5 s (asleep)
+  host._lastCheckAt = performance.now();
   host._checkStale();
   assert.equal(drops, 1);
+  assert.equal(host.drops.at(-1).reason, 'silent');
   assert.equal(host.status, 'waiting');
   assert.ok(calls.some((c) => c[0] === 'detach'));
   host._onMessage(JSON.stringify({ type: 'pad-left', seat: 1 }));
@@ -280,6 +282,31 @@ test('host: a phone that drops calls onDrop once; coming back calls onReturn', (
   frame({ seq: 3 });
   assert.equal(returns, 1);
   assert.equal(host.status, 'connected');
+});
+
+test('host: a game freeze or a relay blip is not the phone dropping', () => {
+  let drops = 0;
+  const { host, frame } = hostWithFakes({ onDrop: () => drops++ });
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  frame({ seq: 2 });
+  // The game froze for 3 s (watchdog ran late): frames were queued, not missing.
+  host._lastAt -= 3000;
+  host._lastCheckAt = performance.now() - 3000;
+  host._checkStale();
+  assert.equal(drops, 0, 'a freeze is not a drop');
+  // Our relay socket blipped for 3 s: still not the phone's fault.
+  host._lastCheckAt = performance.now();
+  host._ws = null;
+  host._wsDownAt = performance.now() - 3000;
+  host._lastAt -= 3000;
+  host._checkStale();
+  assert.equal(drops, 0, 'a short relay blip is not a drop');
+  // ...but down for good: give up on the phone.
+  host._wsDownAt = performance.now() - 6000;
+  host._lastCheckAt = performance.now();
+  host._checkStale();
+  assert.equal(drops, 1);
+  assert.equal(host.drops.at(-1).reason, 'relay');
 });
 
 test('host: cues are sent only to a connected phone, and only known ones', () => {

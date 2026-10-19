@@ -316,7 +316,7 @@ connect.
 
 **Pause and disconnect.**
 - **⏸ Pause** on the phone opens the options overlay; BACK resumes.
-- **If a connected phone drops** (closed, asleep, or silent for 1 s):
+- **If a connected phone drops** (closed, asleep, or silent for 2 s while the game is running freely; a game freeze or a blip on the game's own relay link does not count):
   - In solo, local or versus play, the ride pauses (options overlay).
   - The QR panel comes back as **PHONE DISCONNECTED**.
 - **When the phone returns:** it reconnects by itself on `visibilitychange`, and the panel closes. The game stays paused until the player presses BACK on the phone.
