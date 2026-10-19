@@ -443,27 +443,22 @@ export class World {
     this._tier = tier;
     this._treeAhead = tier === 'low' ? TREE_AHEAD_LOW : TREE_AHEAD;
     this._setTreeBatch(tier === 'low');
-    this._setCloudsMerged(tier === 'low');
   }
 
   /**
-   * Low: each cloud's puffs drawn as one merged mesh — one draw call per
-   * cloud instead of 10-18, and it looks the same (one material, no depth write).
-   * @param {boolean} on
+   * Each cloud's puffs drawn as one merged mesh: one draw call per cloud
+   * instead of 10-18 (clouds were the biggest draw-call cost at every
+   * tier). It looks the same — one material, no depth write.
+   * @param {THREE.Group} group
    */
-  _setCloudsMerged(on) {
-    for (const slot of this._cloudPool) {
-      if (!slot.puffs || !slot.puffs.length) continue;
-      if (on && !slot.merged) {
-        const geos = slot.puffs.map((p) => { p.updateMatrix(); return p.geometry.clone().applyMatrix4(p.matrix); });
-        slot.merged = new THREE.Mesh(mergeGeometries(geos), slot.puffs[0].material);
-        for (const g of geos) g.dispose();
-      }
-      const want = on ? [slot.merged] : slot.puffs;
-      if (slot.group.children[0] === want[0]) continue;
-      slot.group.clear();
-      slot.group.add(...want);
-    }
+  _mergeCloudPuffs(group) {
+    const puffs = group.children.slice();
+    if (puffs.length < 2) return;
+    const geos = puffs.map((p) => { p.updateMatrix(); return p.geometry.clone().applyMatrix4(p.matrix); });
+    const merged = new THREE.Mesh(mergeGeometries(geos), puffs[0].material);
+    for (const g of geos) g.dispose();
+    group.clear();
+    group.add(merged);
   }
 
   /** @param {boolean} on */
@@ -581,19 +576,17 @@ export class World {
         }
       }
 
+      this._mergeCloudPuffs(group);
       group.visible = false;
       this.scene.add(group);
       this._cloudPool.push({
         group,
-        puffs: group.children.slice(),   // the separate puffs (High/Medium)
-        merged: null,                    // one mesh of all puffs (Low)
         roadD: -1,
         lateralOffset: 0,
         baseY: 0,
         active: false,
       });
     }
-    this._setCloudsMerged(this._tier === 'low');
 
     // Place all clouds for the loop
     this._placeCloudsUpTo(this.roadPath.loopLength);
