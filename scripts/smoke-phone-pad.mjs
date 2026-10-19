@@ -250,6 +250,30 @@ try {
     check(await game.evaluate(() => !window._game._optionsOpen && window._game.state === 'playing'), 'BACK resumes the ride');
   }
 
+  // ── someone with only the room code can't take the game's place ──
+  {
+    const code = await game.evaluate(() => window.__phonePad.code);
+    const tryHost = (k) => new Promise((res) => {
+      const ws = new WebSocket(RELAY + '/pad?code=' + code + '&role=host' + (k ? '&k=' + k : ''));
+      ws.onopen = () => { ws.close(); res('open'); };
+      ws.onerror = () => res('refused');
+      setTimeout(() => res('timeout'), 5000);
+    });
+    const a = await tryHost(null), b = await tryHost('0'.repeat(32));
+    await sleep(1500);
+    const st = await game.evaluate(() => window.__phonePad.status);
+    check(a === 'refused' && b === 'refused' && st === 'connected', 'a host without the room key is refused; the game keeps its phone', JSON.stringify({ a, b, st }));
+  }
+
+  // ── the game's own relay link blips: the phone stays paired ──
+  {
+    await game.evaluate(() => window.__phonePad._ws.close());
+    await sleep(4000);
+    const g = await game.evaluate(() => ({ status: window.__phonePad.status, drops: window.__phonePad.drops.length }));
+    const p = await phone.evaluate(() => ({ host: window.__pad.hostHere, gone: window.__pad.closedForGood }));
+    check(g.status === 'connected' && p.host && !p.gone, 'the game reconnects to the relay and the phone stays paired', JSON.stringify({ ...g, ...p }));
+  }
+
   // ── the phone leaves: input is released ──
   await phone.evaluate(() => { window.__tilt = 35; });
   await phone.mouse.move(150, 250); await phone.mouse.down();

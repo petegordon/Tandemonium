@@ -27,6 +27,8 @@ const STALE_MS = 2000;
 const STALL_MS = 750;
 /** Our own link to the relay down this long = give up on the phone. */
 const HOST_LOST_MS = 5000;
+/** A short silence (a Wi-Fi hiccup): let go of held pedals / menu buttons so nothing sticks. */
+const RELEASE_MS = 400;
 /** Keep the game's relay socket from going idle. */
 const PING_MS = 5000;
 
@@ -84,13 +86,24 @@ export class PhonePadHost {
     this.drops = [];
   }
 
-  /** Start (or keep) a pad room and return the link for the phone. */
-  async open() {
-    if (!this._closed && this.link) return this.link;
+  /**
+   * Start (or keep) a pad room and return the link for the phone. A second
+   * call while opening gets the same room; null if close() came first.
+   * @returns {Promise<string|null>}
+   */
+  open() {
+    if (!this._closed && this.link) return Promise.resolve(this.link);
+    if (!this._opening) this._opening = this._open().finally(() => { this._opening = null; });
+    return this._opening;
+  }
+
+  async _open() {
     this._closed = false;
     this.code = makePadCode();
     this._secret = makePadSecret();
+    this._hostKey = makePadSecret();   // proves to the relay we are this room's host
     this._hash = await sha256hex(this._secret);
+    if (this._closed) return null;
     const override = this.relay !== DEFAULT_PAD_RELAY ? this.relay : null;
     this.link = buildPadLink(this.siteBase, this.code, this.seat, this._secret, { relay: override });
     this._connect();
@@ -153,7 +166,7 @@ export class PhonePadHost {
     this._setStatus(this._phoneHere ? 'connected' : 'connecting');
     let ws;
     try {
-      ws = new WebSocket(padSocketUrl(this.relay, /** @type {string} */ (this.code), 'host'));
+      ws = new WebSocket(padSocketUrl(this.relay, /** @type {string} */ (this.code), 'host', this._hostKey));
     } catch (e) {
       this._setStatus('error');
       return this._scheduleRetry();
@@ -209,6 +222,7 @@ export class PhonePadHost {
     if (prev && !isNewerSeq(prev.seq, f.seq)) return;   // late / duplicate
     this.framesReceived++;
     this._lastAt = performance.now();
+    this._heldReleased = false;
     if (!this._phoneHere) this._arrive();
 
     if (f.tilt != null) this.input.feedRemoteTilt(f.tilt);
@@ -243,7 +257,15 @@ export class PhonePadHost {
     // The game froze (a level load, a slow TV): the phone's frames are queued
     // behind us, not missing. Start a fresh window.
     if (gap > STALL_MS) { this._lastAt = now; return; }
-    if (this._last && now - this._lastAt > STALE_MS) this._leave('silent');
+    if (!this._last) return;
+    const silent = now - this._lastAt;
+    if (silent > STALE_MS) { this._leave('silent'); return; }
+    // Frames resuming take over again; the tap counters carry on from _last.
+    if (silent > RELEASE_MS && !this._heldReleased) {
+      this._heldReleased = true;
+      this.input.setRemotePedals(false, false);
+      this.input.setRemoteNav(this.mode === 'menu', 0);
+    }
   }
 
   /** The phone is here (joined, or frames resumed). */

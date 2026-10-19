@@ -100,29 +100,50 @@ export function installPhonePadUI(input, hooks = {}) {
   const open = async () => {
     panel.classList.add('open');
     const link = await host.open();
+    if (!link) return;   // stopped while opening
     const qrEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-qr'));
     const linkEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-link'));
     if (qrEl.dataset.link !== link) {
+      let qrOk = false;
       try {
         const qr = /** @type {any} */ (window).qrcode(0, 'M');
         qr.addData(link);
         qr.make();
         qrEl.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
-        qrEl.style.display = '';
-      } catch {
-        qrEl.style.display = 'none';
-      }
+        qrOk = true;
+      } catch { /* the QR script didn't load (offline, blocked) */ }
+      qrEl.style.display = qrOk ? '' : 'none';
       qrEl.dataset.link = link;
-      linkEl.textContent = link.split('#')[0];
+      // Without a QR the full link (with its secret) is the only way in.
+      linkEl.textContent = qrOk ? link.split('#')[0] : link;
     }
     if (!dropped) statusEl.textContent = STATUS_TEXT[host.status] || '';
+    watchPadClose();
   };
   const close = () => panel.classList.remove('open');
+
+  // A gamepad (or a TV remote) has no Escape key: B or Start closes the panel.
+  let padPoll = 0;
+  const watchPadClose = () => {
+    if (padPoll) return;
+    let held = true;   // ignore whatever was held as the panel opened
+    padPoll = window.setInterval(() => {
+      if (!panel.classList.contains('open')) { clearInterval(padPoll); padPoll = 0; return; }
+      let down = false;
+      for (const gp of navigator.getGamepads?.() || []) {
+        if (gp && (gp.buttons[1]?.pressed || gp.buttons[9]?.pressed)) down = true;
+      }
+      if (down && !held) close();
+      held = down;
+    }, 100);
+  };
 
   btn?.addEventListener('click', open);
   panel.querySelector('#btn-ppp-done')?.addEventListener('click', close);
   panel.querySelector('#btn-ppp-stop')?.addEventListener('click', () => {
     host.close();
+    dropped = false;
+    titleEl.textContent = '📱 PHONE AS CONTROLLER';
     const qrEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-qr'));
     qrEl.dataset.link = '';
     close();

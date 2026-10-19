@@ -126,7 +126,8 @@ Over the relay WebSocket that's well under 1 KB/s.
 The host tells the phone what to show, so the phone screen always matches the
 game:
 
-- `mode`: `menu` | `calibrate` | `ride` | `paused` | `results`
+- `mode`: `menu` | `ride` (built). `calibrate`, `paused` and `results` are
+  planned; paused and results use `menu` for now.
 - `cue`: `crash`, `coin`, `countdown`, `finish` → a buzz or sound on the phone
 - `seat`: "You are Player 1 — Captain" (name, colour)
 
@@ -227,7 +228,10 @@ which already ship a phone remote inside Discord.
   - Re-request the wake lock on `visibilitychange`.
   - Ping every 5 s, and reconnect with backoff (0.5 s doubling, capped at
     8 s).
-  - The relay evicts sockets silent for 16 s.
+  - The relay evicts sockets silent for 16 s. (Not built: rooms expire 30
+    minutes after the last socket leaves. Instead the phone redials when it
+    has heard nothing, not even a pong, for two pings, and when it comes back
+    from a lock with a socket that has been quiet for 3 s.)
   - Handle screen rotation with `screen.orientation.angle`. Orientation lock
     isn't available.
 - **No text fields on the phone page.** iOS "Shake to Undo" pops up after
@@ -313,6 +317,12 @@ connect.
   - While riding, the phone is *not* a pad, so ride-time checks such as the "Alternate LB/RB" hint are unchanged.
 - **Held-button rule:** buttons held when the mode switches are ignored until they're released, so the Pause press that opens the menu can't also press Start and close it.
 - **Shortest press:** the phone keeps every menu press down for at least 100 ms, so the once-a-frame menu poll never misses a quick tap.
+
+**Relay hardening (review, 2026-10-19).**
+- **Host key:** the first host socket claims the room with a random key (`?k=`, stored as SHA-256). Later host connections must present the same key, so someone with only the 6-letter code can't take the game's place.
+- **Same pairing, no kick:** the host re-sends `allow` on every reconnect. The relay drops the seat's phone only when the hash actually changes, so a blip on the game's link doesn't unpair the phone.
+- **Rate limit:** a token bucket per socket (90 messages/s, burst 180) drops floods. The room TTL refresh writes storage at most once a minute.
+- **Short silences:** after 400 ms with no frame, held pedals and menu buttons are released. Frames resuming take over again. The 2 s rule below still decides a drop.
 
 **Pause and disconnect.**
 - **⏸ Pause** on the phone opens the options overlay; BACK resumes.

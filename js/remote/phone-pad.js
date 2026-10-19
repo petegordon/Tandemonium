@@ -72,6 +72,8 @@ function boot() {
 
 // ── Connect tap: motion permission MUST be requested before any await ──
 function onConnectTap() {
+  if (state.started) return;   // a double tap would start everything twice
+  state.started = true;
   const DME = /** @type {any} */ (globalThis.DeviceMotionEvent);
   const DOE = /** @type {any} */ (globalThis.DeviceOrientationEvent);
   /** @type {Promise<any>} */
@@ -273,15 +275,27 @@ function connect() {
   if (state.closedForGood || !state.link) return;
   const { code, seat, secret } = state.link;
   setStatus('Connecting…');
+  clearTimeout(state.retryTimer);
   const ws = new WebSocket(padSocketUrl(state.relay, code, 'pad-' + seat, secret));
   ws.binaryType = 'arraybuffer';
   state.ws = ws;
   let pinger = 0;
+  let opened = false;
   ws.onopen = () => {
+    opened = true;
     state.retry = 0;
-    pinger = setInterval(() => { try { ws.send('ping'); } catch { /* closed */ } }, PING_MS);
+    state.failed = 0;
+    state.lastRecv = performance.now();
+    pinger = setInterval(() => {
+      if (ws.readyState !== 1) return;
+      // Nothing from the relay (not even a pong) for two pings: the socket is
+      // dead even though it says open (iOS after a lock or a network switch).
+      if (performance.now() - state.lastRecv > PING_MS * 2 + 1000) { dropSocket(ws); return; }
+      try { ws.send('ping'); } catch { /* closed */ }
+    }, PING_MS);
   };
   ws.onmessage = (ev) => {
+    state.lastRecv = performance.now();
     if (typeof ev.data !== 'string' || ev.data === 'pong') return;
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
@@ -296,6 +310,7 @@ function connect() {
     if (state.ws !== ws) return;
     state.ws = null;
     state.hostHere = false;
+    if (!opened) state.failed = (state.failed || 0) + 1;
     // 4001 = the game made a new link for this seat; 403 at upgrade shows as 1006.
     if (ev.code === 4001) {
       state.closedForGood = true;
@@ -307,10 +322,21 @@ function connect() {
       setStatus('Opened on another phone or tab.');
       return;
     }
-    setStatus('Reconnecting…');
+    // A link the relay refuses (403) never opens: after a few tries, say so.
+    setStatus(state.failed >= 4 ? 'Can’t connect. If the game shows a new code, scan it.' : 'Reconnecting…');
     const delay = Math.min(8000, 500 * 2 ** state.retry++);
-    setTimeout(connect, delay);
+    state.retryTimer = setTimeout(connect, delay);
   };
+}
+
+/** Give up on a socket that went quiet and dial again now. */
+function dropSocket(ws) {
+  if (state.ws !== ws) return;
+  state.ws = null;
+  state.hostHere = false;
+  try { ws.close(); } catch { /* closed */ }
+  state.retry = 0;
+  connect();
 }
 
 // A phone that slept comes back here: reconnect and re-take the wake lock.
@@ -318,10 +344,10 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   requestWakeLock();
   unlockAudio();
-  if (!state.ws && state.link && !state.closedForGood && $('screen-ride').classList.contains('on')) {
-    state.retry = 0;
-    connect();
-  }
+  if (!state.link || state.closedForGood || !$('screen-ride').classList.contains('on')) return;
+  // Back from a lock: a socket that has heard nothing lately is probably dead.
+  if (state.ws && performance.now() - (state.lastRecv || 0) > 3000) dropSocket(state.ws);
+  else if (!state.ws) { state.retry = 0; connect(); }
 });
 
 async function requestWakeLock() {
