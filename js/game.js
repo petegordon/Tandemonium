@@ -5801,6 +5801,8 @@ class Game {
     const start = gp.buttons[9] && gp.buttons[9].pressed;
     const bIdx = this.input._gpSwapAB ? 0 : 1;
     const b = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
+    // The phone QR panel is on top and takes B / Start itself.
+    if (this.phonePad && this.phonePad.panelOpen) { this._gpPrevStart = start; this._gpPrevB = b; return; }
 
     if (start && !this._gpPrevStart) {
       if (this._optionsOpen) this._closeOptions();
@@ -5919,6 +5921,10 @@ class Game {
   }
 
   _pollOverlayGamepad() {
+    // The phone QR panel is on top; when it closes, a button still held
+    // from closing it is not a fresh press here.
+    if (this.phonePad && this.phonePad.panelOpen) { this._overlayAfterPanel = true; return; }
+    if (this._overlayAfterPanel) { this._overlayAfterPanel = false; this._overlayFocus.reprime(); }
     this._overlayFocus.poll();
   }
 

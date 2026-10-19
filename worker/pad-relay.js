@@ -108,11 +108,14 @@ export class PadRoom {
 
     if (role === 'host') {
       const key = url.searchParams.get('k');
+      if (typeof key !== 'string' || !/^[0-9a-f]{32}$/.test(key)) return new Response('Host key required', { status: 403 });
+      // Hash first: no await other than storage between get and put, so two
+      // first hosts can't both claim the room.
+      const keyHash = await sha256hex(key);
       const claimed = await this.state.storage.get('hostkey');
       if (!claimed) {
-        if (typeof key !== 'string' || !/^[0-9a-f]{32}$/.test(key)) return new Response('Host key required', { status: 403 });
-        await this.state.storage.put('hostkey', await sha256hex(key));
-      } else if (!(await secretMatches(key, claimed))) {
+        await this.state.storage.put('hostkey', keyHash);
+      } else if (claimed !== keyHash) {
         return new Response('Not this room\'s host', { status: 403 });
       }
     } else {
