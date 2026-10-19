@@ -83,6 +83,8 @@ import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
+import { PerfReadout } from './perf-readout.js';
+import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, reloadForDisplayTest, displayTestActive } from './quality.js';
 import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
@@ -174,13 +176,13 @@ class Game {
     // toggling in Options re-applies everything live (_applyShowRiders).
     this._showRiders = getShowRiders();
 
-    // Test switches for weak screens (a TV): ?aa=1|0 forces edge smoothing on
-    // or off; ?lines=N renders Medium/Low at N lines (see _pixelRatio).
-    const _qp = new URLSearchParams(window.location.search);
-    const _aaParam = _qp.get('aa');
-    const _linesParam = parseInt(_qp.get('lines') || '', 10);
-    this._linesOverride = _linesParam >= 180 && _linesParam <= 2160 ? _linesParam : 0;
-    const _aa = _aaParam === '1' ? true : _aaParam === '0' ? false : !isMobile && !this._lowQuality;
+    // Display testing for weak screens (a TV): Options → Display Testing, or
+    // ?lines=N / ?aa=1|0 / ?debug=perf. Overrides on top of the quality tier:
+    // render at N lines (see _pixelRatio), force edge smoothing on/off, and
+    // show the perf readout. The URL wins over the saved settings.
+    this._displayTest = resolveDisplayTest(new URLSearchParams(window.location.search), getDisplayTest());
+    this._linesOverride = this._displayTest.lines;
+    const _aa = this._displayTest.aa === 'on' ? true : this._displayTest.aa === 'off' ? false : !isMobile && !this._lowQuality;
     this.renderer = new THREE.WebGLRenderer({ antialias: _aa, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(this._pixelRatio());
@@ -351,6 +353,7 @@ class Game {
     // every mode and state.
     this.fpsMeter = new FpsMeter();
     this.fpsMeter.setVisible(getShowFps());
+    this.perfReadout = this._displayTest.perf ? new PerfReadout(this) : null;
     this.grassParticles = new GrassParticles(this.scene);
     // E-2 · the wind you can see during a gust.
     this.gustVisual = new GustVisual(this.scene);
@@ -5396,6 +5399,22 @@ class Game {
       if (b) b.addEventListener('click', () => this._setGooseColourway(i));
     }
 
+    // Display testing: save, then reload (edge smoothing is fixed when the
+    // renderer is made) without the URL switches so the saved choice applies.
+    const dtest = (patch) => {
+      if (patch) setDisplayTest(patch); else clearDisplayTest();
+      reloadForDisplayTest();
+    };
+    for (const n of [0, 540, 720, 1080]) {
+      document.getElementById('opt-lines-' + n)?.addEventListener('click', () => dtest({ lines: n }));
+    }
+    for (const a of ['tier', 'on', 'off']) {
+      document.getElementById('opt-aa-' + a)?.addEventListener('click', () => dtest({ aa: a }));
+    }
+    document.getElementById('opt-perfhud-on')?.addEventListener('click', () => dtest({ perf: true }));
+    document.getElementById('opt-perfhud-off')?.addEventListener('click', () => dtest({ perf: false }));
+    document.getElementById('opt-dtest-reset')?.addEventListener('click', () => dtest(null));
+
     const fpsOnBtn  = document.getElementById('opt-fps-on');
     const fpsOffBtn = document.getElementById('opt-fps-off');
     if (fpsOnBtn)  fpsOnBtn.addEventListener('click',  () => this._setShowFps(true));
@@ -5468,6 +5487,28 @@ class Game {
     try { localStorage.setItem('tandemonium_show_fps', on ? 'on' : 'off'); } catch (e) {}
     this.fpsMeter.setVisible(on);
     this._updateOptionsFpsUI();
+  }
+
+  /** Display Testing rows show what's in effect now (URL switches included). */
+  _updateOptionsDisplayTestUI() {
+    const t = this._displayTest;
+    if (!t) return;
+    for (const n of [0, 540, 720, 1080]) document.getElementById('opt-lines-' + n)?.classList.toggle('active', t.lines === n);
+    for (const a of ['tier', 'on', 'off']) document.getElementById('opt-aa-' + a)?.classList.toggle('active', t.aa === a);
+    document.getElementById('opt-perfhud-on')?.classList.toggle('active', t.perf);
+    document.getElementById('opt-perfhud-off')?.classList.toggle('active', !t.perf);
+    const active = displayTestActive(t);
+    const parts = [];
+    if (t.lines) parts.push(t.lines + ' lines');
+    if (t.aa !== 'tier') parts.push('edge smoothing ' + t.aa);
+    if (t.perf) parts.push('perf readout');
+    const note = document.getElementById('opt-dtest-note');
+    if (note) note.textContent = active ? 'In effect: ' + parts.join(', ') : 'None: Graphics Quality decides everything.';
+    // Say it under Graphics Quality too, so a tier never looks like it's ignored.
+    const qNote = document.getElementById('opt-quality-note');
+    if (qNote) qNote.textContent = active && (t.lines || t.aa !== 'tier')
+      ? 'Display Testing overrides are on (' + parts.filter((p) => p !== 'perf readout').join(', ') + '); see below'
+      : 'Some changes take effect on next restart';
   }
 
   _updateOptionsFpsUI() {
@@ -5683,8 +5724,9 @@ class Game {
   /** Render resolution per tier. Low aims for a 360-line image: sharper than a flat half on a small, high-DPI screen like a TV. */
   _pixelRatio() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    if (this._quality === 'high') return dpr;
+    // Display testing: N lines at any tier (never above the screen's own).
     if (this._linesOverride) return Math.min(dpr, this._linesOverride / Math.max(1, window.innerHeight));
+    if (this._quality === 'high') return dpr;
     if (this._quality === 'medium') return 0.5;
     return Math.max(0.35, Math.min(dpr, 1, 360 / Math.max(1, window.innerHeight)));
   }
@@ -5770,6 +5812,16 @@ class Game {
       document.getElementById('opt-fps-off'),
       document.getElementById('opt-physics-on'),
       document.getElementById('opt-physics-off'),
+      document.getElementById('opt-lines-0'),
+      document.getElementById('opt-lines-540'),
+      document.getElementById('opt-lines-720'),
+      document.getElementById('opt-lines-1080'),
+      document.getElementById('opt-aa-tier'),
+      document.getElementById('opt-aa-on'),
+      document.getElementById('opt-aa-off'),
+      document.getElementById('opt-perfhud-on'),
+      document.getElementById('opt-perfhud-off'),
+      document.getElementById('opt-dtest-reset'),
       document.getElementById('options-perf-btn'),
       document.getElementById('options-devtools-btn'),
       document.getElementById('options-browserdev-btn'),
@@ -5782,6 +5834,7 @@ class Game {
     this._updateOptionsGooseOutfitUI();
     this._updateOptionsFpsUI();
     this._updateOptionsPhysicsUI();
+    this._updateOptionsDisplayTestUI();
     this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
   }
 
@@ -6159,6 +6212,7 @@ class Game {
     }
 
     this.fpsMeter.tick(timestamp);
+    if (this.perfReadout) this.perfReadout.tick(timestamp);
     // Each ride starts the Auto watcher's grace period afresh (closing
     // Options or the input choice does too, see _closeOptions).
     if (this.state !== 'playing') this._autoWatching = false;

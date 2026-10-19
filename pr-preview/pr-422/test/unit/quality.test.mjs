@@ -85,3 +85,20 @@ test('watcher: pauses and hitches over 1 s are not frames', () => {
   for (let i = 0; i < 20; i++) assert.equal(w.sample(5), null);   // a tab switch, repeatedly
   for (let i = 0; i < 8 * 30; i++) assert.equal(w.sample(1 / 30), null);
 });
+
+test('display testing: saved overrides, URL switches win, reset clears them', async () => {
+  const { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, displayTestActive } = await import('../../js/quality.js');
+  const s = store();
+  assert.deepEqual(getDisplayTest(s), { lines: 0, aa: 'tier', perf: false });
+  assert.equal(displayTestActive(getDisplayTest(s)), false);
+  setDisplayTest({ lines: 720, aa: 'on' }, s);
+  setDisplayTest({ perf: true }, s);
+  assert.deepEqual(getDisplayTest(s), { lines: 720, aa: 'on', perf: true });
+  setDisplayTest({ lines: 99999 }, s);
+  assert.equal(getDisplayTest(s).lines, 0, 'out-of-range lines fall back to the tier');
+  const saved = { lines: 720, aa: 'on', perf: false };
+  assert.deepEqual(resolveDisplayTest(new URLSearchParams('lines=540&aa=0&debug=perf'), saved), { lines: 540, aa: 'off', perf: true });
+  assert.deepEqual(resolveDisplayTest(new URLSearchParams(''), saved), saved);
+  clearDisplayTest(s);
+  assert.deepEqual(getDisplayTest(s), { lines: 0, aa: 'tier', perf: false });
+});
