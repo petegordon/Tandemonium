@@ -9,10 +9,13 @@
 // computes when it runs on a phone) and the two pedal halves as 8-byte frames
 // at ~30 Hz, plus immediately on every pedal change.
 //
-// The game picks what this page shows ({type:'mode'}): the pedals while
-// riding, a menu pad (d-pad + OK / BACK) everywhere else. Menu buttons are
-// sent as HELD bits; the game turns them into a gamepad, so its menus need no
-// phone-specific code. {type:'cue'} plays a short sound + buzz, since the
+// One fixed layout that never changes: a strip of menu buttons (arrows, OK,
+// BACK, Pause, Recenter) along the top and the two pedal halves below. Every
+// press is always sent; the game decides what it means from its own state
+// (pedals while riding, the menu buttons as a gamepad in menus). A layout
+// that switched on a message from the game could get stuck on the wrong one
+// if that message was lost. Menu buttons are sent as HELD bits, so the
+// game's menus need no phone-specific code. {type:'cue'} plays a short sound + buzz, since the
 // player is watching the big screen, not the phone.
 //
 // No text inputs on this page: iOS "Shake to Undo" pops up after typing, and
@@ -46,7 +49,6 @@ const state = {
   dirty: false,
   lastSend: 0,
   wakeLock: /** @type {any} */ (null),
-  mode: 'menu',
   lastCue: '',
   audio: /** @type {AudioContext|null} */ (null),
 };
@@ -158,16 +160,11 @@ function startTouch() {
   // Mouse, for testing on a desktop browser.
   pad.addEventListener('mousedown', (e) => { touches.set(-1, sideOf(e.clientX)); refresh(); });
   window.addEventListener('mouseup', () => { touches.delete(-1); refresh(); });
-
-  for (const [id, bit] of [['btn-recenter', NAV.recenter], ['btn-pause', NAV.pause]]) {
-    $(id).addEventListener('touchstart', (e) => { e.stopPropagation(); e.preventDefault(); pressNav(bit); }, { passive: false });
-    $(id).addEventListener('click', () => pressNav(bit));
-  }
 }
 
-// ── Menu pad: d-pad + OK / BACK, sent as held bits ──
+// ── Menu strip: arrows, OK / BACK, Pause, Recenter, sent as held bits ──
 function startMenuPad() {
-  for (const el of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#menu-pad [data-nav]'))) {
+  for (const el of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#nav-strip [data-nav]'))) {
     const bit = NAV[/** @type {keyof typeof NAV} */ (el.dataset.nav)];
     let downAt = 0;
     let releaseTimer = 0;
@@ -194,17 +191,6 @@ function startMenuPad() {
     el.addEventListener('pointercancel', up);
     el.addEventListener('lostpointercapture', up);
   }
-}
-
-/** @param {'menu'|'ride'} mode */
-function setMode(mode) {
-  if (mode !== 'menu' && mode !== 'ride') return;
-  state.mode = mode;
-  $('screen-ride').classList.toggle('menu', mode === 'menu');
-  // Nothing stays held across the switch.
-  state.nav = 0;
-  for (const el of document.querySelectorAll('.nav-btn.down')) el.classList.remove('down');
-  state.dirty = true;
 }
 
 // ── Cues: the player is looking at the big screen ──
@@ -241,14 +227,6 @@ const CUES = {
 
 function vibrate(pattern) {
   try { navigator.vibrate?.(pattern); } catch { /* iOS has none */ }
-}
-
-/** Hold a nav bit for a few frames so the host sees the edge. */
-function pressNav(bit) {
-  state.nav |= bit;
-  state.dirty = true;
-  tick();
-  setTimeout(() => { state.nav &= ~bit; state.dirty = true; }, 150);
 }
 
 function buzz() {
@@ -305,7 +283,7 @@ function connect() {
     if (m.type === 'host-ready') { state.hostHere = true; setStatus('Connected', true); state.dirty = true; tick(); }
     else if (m.type === 'host-left' || m.type === 'waiting') { state.hostHere = false; setStatus('Waiting for the game…'); }
     else if (m.type === 'seat' && m.label) $('seat-label').textContent = m.label;
-    else if (m.type === 'mode') setMode(m.mode);
+    // (An older game sends {type:'mode'}; the layout no longer changes.)
     else if (m.type === 'bye') {
       state.closedForGood = true;
       setStatus('The game stopped using this phone. Scan its code to connect again.');

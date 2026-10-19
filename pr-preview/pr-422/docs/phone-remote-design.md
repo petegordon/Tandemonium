@@ -308,11 +308,12 @@ connect.
 ## 11. Phase 2: built (this branch)
 
 **Menus from the phone.**
-- The game tells the phone what to show each frame (`Game._syncPhonePad`):
-  - **pedals** in `countdown`, `calibrating`, `playing` and the finish cinematics;
-  - the **menu pad** everywhere else, and whenever the options overlay is open (that overlay is the pause).
-- **Menu pad layout:** a D-pad on the left, with OK and BACK on the right, like holding a gamepad.
-- The phone sends menu buttons as *held* bits. While the menu pad is up, `InputManager.setRemoteNav` makes Player 1's input report a gamepad: `mergeRemoteNavPad` maps the D-pad to 12–15, OK/BACK to A/B (honouring the A/B swap) and Pause to Start.
+- **One fixed phone layout (2026-10-19, after playtest):** a strip along the top (◀ ▲ ▼ ▶, status, OK, BACK, ❚❚ Pause, ↻ Recenter) and the two pedal halves below. The phone never switches screens. The first version switched between a pedal screen and a menu pad on a `mode` message sent only when the game state changed, so one lost message left the phone on the wrong screen (the D-pad showing mid-ride).
+- The game decides what the presses mean each frame (`Game._syncPhonePad` → `PhonePadHost.setMode`, local only, nothing sent to the phone):
+  - **riding** in `countdown`, `calibrating`, `playing` and the finish cinematics: the pedals pedal, the arrows/OK/BACK do nothing;
+  - **menus** everywhere else, and whenever the options overlay is open (that overlay is the pause): the arrows/OK/BACK are a gamepad. The pedals still count as ←/→ pedal keys, as touch pedals do when the game runs on a phone.
+  - Pause and Recenter work in both.
+- The phone sends menu buttons as *held* bits. In menus, `InputManager.setRemoteNav` makes Player 1's input report a gamepad: `mergeRemoteNavPad` maps the D-pad to 12–15, OK/BACK to A/B (honouring the A/B swap) and Pause to Start.
   - So every lobby step, overlay and the "tap to start" screen work through the existing `FocusController`, with no per-screen phone code.
   - While riding, the phone is *not* a pad, so ride-time checks such as the "Alternate LB/RB" hint are unchanged.
 - **Held-button rule:** buttons held when the mode switches are ignored until they're released, so the Pause press that opens the menu can't also press Start and close it.

@@ -29,7 +29,7 @@ export const NAV = Object.freeze({
 /** Buttons that act on menus (held state is passed through as a pad). */
 export const MENU_NAV_MASK = NAV.up | NAV.down | NAV.left | NAV.right | NAV.ok | NAV.back | NAV.pause;
 
-/** What the phone shows: the menu pad or the pedals. */
+/** How the game reads the phone's buttons: as a menu pad, or riding. */
 export const PAD_MODES = Object.freeze(['menu', 'ride']);
 
 /** Short sounds/buzzes the game asks the phone for. */
