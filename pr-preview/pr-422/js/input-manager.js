@@ -749,7 +749,8 @@ export class InputManager {
     this.motionLean = 0;
     this.motionLeanVisual = 0;
     // Steering falls back to keyboard / pad, unless this device tilts itself.
-    if (!this.motionReady) this.motionEnabled = false;
+    // A gyro controller on this seat keeps its motion channel.
+    if (!this.motionReady && !this._steamInputActive && !this._slot?.fusion) this.motionEnabled = false;
   }
 
   startTiltCalibration() {
@@ -955,6 +956,9 @@ export class InputManager {
     // applied the DualSense Input Source preference to the cached snapshot
     // and updated this._steamInputActive. _steamInputPrevActive is the prior
     // frame's value so the edge-detect below still fires correctly.
+    // A phone remote steers this seat (#421): it owns the lean, so a gyro
+    // controller on the same seat doesn't fight it for motionLean.
+    if (this._remoteTilt) return;
     const hadSteamInput = this._steamInputPrevActive;
     // Design B applies ONLY when Steam Input has the pad AND WebHID does NOT.
     // A live WebHID fusion for this slot means our driver still opened the Steam

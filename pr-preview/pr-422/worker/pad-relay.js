@@ -9,6 +9,10 @@
 //   relay -> host: {type:'pad-joined'|'pad-left', seat}
 //   relay -> pad : {type:'host-ready'|'host-left'|'waiting'}
 //
+// Host: the first host socket claims the room with ?k=<host key> (its SHA-256
+// is stored); a reconnect must present the same key, so knowing the code alone
+// can't take over or wipe a game's room.
+//
 // Pairing: the host registers SHA-256(secret) per seat with
 // {type:'allow', seat, hash}. A pad connects with ?k=<secret>; the relay hashes
 // it and compares, so knowing the 6-letter code alone is not enough. The secret
@@ -22,6 +26,9 @@ import { parsePadRole, seatOfRole, isValidPadCode, sha256hex, MAX_SEATS } from '
 
 const ROOM_TTL_MS = 30 * 60 * 1000;   // like RIDE TOGETHER rooms
 const MAX_FRAME_BYTES = 64;           // input frames are 8 bytes
+const MSG_RATE = 90;                  // per socket, per second (phones send ~30)
+const MSG_BURST = 180;
+const ALARM_REFRESH_MS = 60 * 1000;   // TTL refresh: at most a storage write a minute
 
 /**
  * Where a message from `senderRole` goes. Pure; exported for tests.
@@ -76,6 +83,21 @@ export class PadRoom {
     this.env = env;
     // Answered by the runtime without waking the object (phones ping every 5 s).
     try { state.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong')); } catch { /* old runtime */ }
+    /** @type {WeakMap<WebSocket, {t: number, at: number}>} */
+    this._buckets = new WeakMap();
+    this._alarmAt = 0;
+  }
+
+  /** A token bucket per socket: a flood is dropped, not relayed or billed twice. */
+  _withinRate(ws) {
+    const now = Date.now();
+    let b = this._buckets.get(ws);
+    if (!b) { b = { t: MSG_BURST, at: now }; this._buckets.set(ws, b); }
+    b.t = Math.min(MSG_BURST, b.t + ((now - b.at) * MSG_RATE) / 1000);
+    b.at = now;
+    if (b.t < 1) return false;
+    b.t -= 1;
+    return true;
   }
 
   async fetch(request) {
@@ -84,7 +106,16 @@ export class PadRoom {
     if (!role) return new Response('Invalid role', { status: 400 });
     if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected WebSocket', { status: 426 });
 
-    if (role !== 'host') {
+    if (role === 'host') {
+      const key = url.searchParams.get('k');
+      const claimed = await this.state.storage.get('hostkey');
+      if (!claimed) {
+        if (typeof key !== 'string' || !/^[0-9a-f]{32}$/.test(key)) return new Response('Host key required', { status: 403 });
+        await this.state.storage.put('hostkey', await sha256hex(key));
+      } else if (!(await secretMatches(key, claimed))) {
+        return new Response('Not this room\'s host', { status: 403 });
+      }
+    } else {
       const allowed = await this.state.storage.get('allow:' + seatOfRole(role));
       if (!(await secretMatches(url.searchParams.get('k'), allowed))) {
         return new Response('Not paired', { status: 403 });
@@ -119,11 +150,16 @@ export class PadRoom {
   }
 
   async webSocketMessage(ws, message) {
+    if (!this._withinRate(ws)) return;
     const role = this.state.getTags(ws)[0];
     const r = routeMessage(role, message);
     if (!r) return;
     if ('allow' in r) {
-      await this.state.storage.put('allow:' + r.allow.seat, r.allow.hash);
+      const key = 'allow:' + r.allow.seat;
+      // A host reconnect re-sends the same pairing: that is not a new link,
+      // and must not drop the phone.
+      if ((await this.state.storage.get(key)) === r.allow.hash) return;
+      await this.state.storage.put(key, r.allow.hash);
       // A new secret for a seat drops the phone that used the old one.
       for (const p of this.state.getWebSockets('pad-' + r.allow.seat)) {
         try { p.close(4001, 'new link'); } catch { /* closed */ }
@@ -136,10 +172,14 @@ export class PadRoom {
       }
     }
     // Input streams constantly; refresh the TTL only on control traffic.
-    if (typeof message === 'string') await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
+    if (typeof message === 'string' && Date.now() - this._alarmAt > ALARM_REFRESH_MS) {
+      this._alarmAt = Date.now();
+      await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
+    }
   }
 
   async webSocketClose(ws) {
+    try { ws.close(1000); } catch { /* already closed */ }
     const role = this.state.getTags(ws)[0];
     // A socket closed because it was replaced must not report its seat as gone.
     if (this.state.getWebSockets(role).some((s) => s !== ws)) return;
