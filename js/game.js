@@ -175,7 +175,14 @@ class Game {
     // toggling in Options re-applies everything live (_applyShowRiders).
     this._showRiders = getShowRiders();
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: !isMobile && !this._lowQuality, preserveDrawingBuffer: true });
+    // Test switches for weak screens (a TV): ?aa=1|0 forces edge smoothing on
+    // or off; ?lines=N renders Medium/Low at N lines (see _pixelRatio).
+    const _qp = new URLSearchParams(window.location.search);
+    const _aaParam = _qp.get('aa');
+    const _linesParam = parseInt(_qp.get('lines') || '', 10);
+    this._linesOverride = _linesParam >= 180 && _linesParam <= 2160 ? _linesParam : 0;
+    const _aa = _aaParam === '1' ? true : _aaParam === '0' ? false : !isMobile && !this._lowQuality;
+    this.renderer = new THREE.WebGLRenderer({ antialias: _aa, preserveDrawingBuffer: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(this._pixelRatio());
     this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
@@ -5675,6 +5682,7 @@ class Game {
   _pixelRatio() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     if (this._quality === 'high') return dpr;
+    if (this._linesOverride) return Math.min(dpr, this._linesOverride / Math.max(1, window.innerHeight));
     if (this._quality === 'medium') return 0.5;
     return Math.max(0.35, Math.min(dpr, 1, 360 / Math.max(1, window.innerHeight)));
   }
