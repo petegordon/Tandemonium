@@ -195,6 +195,7 @@ npm run smoke:tutorial       # first SOLO lands in the tutorial; SKIP and return
 npm run smoke:slingshot      # Slingshot end to end: garage, aim, launch, reset, results
 npm run smoke:slingshot-aim  # the Slingshot aim on phones (portrait + landscape touch)
 npm run smoke:edition        # what the demo and the full game each offer in the menus
+npm run smoke:quality        # High / Medium / Low tiers: what each boots with, live switching
 npm run smoke:economy        # one Chaos Coin wallet: ride payouts, garage, stage gates
 npm run smoke:achievements   # achievements wired end to end, badge screen
 npm run smoke:helping-hand   # repeated checkpoint failures get easier, visibly
