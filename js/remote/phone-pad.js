@@ -281,7 +281,10 @@ function connect() {
   state.ws = ws;
   let pinger = 0;
   let opened = false;
+  // A dial that hangs (a network switch mid-handshake) is abandoned and retried.
+  const openTimer = setTimeout(() => { if (ws.readyState === 0) { try { ws.close(); } catch { /* closed */ } } }, 8000);
   ws.onopen = () => {
+    clearTimeout(openTimer);
     opened = true;
     state.retry = 0;
     state.failed = 0;
@@ -311,6 +314,7 @@ function connect() {
     else if (m.type === 'cue' && CUES[m.cue]) { state.lastCue = m.cue; CUES[m.cue](); }
   };
   ws.onclose = (ev) => {
+    clearTimeout(openTimer);
     clearInterval(pinger);
     if (state.ws !== ws) return;
     state.ws = null;
