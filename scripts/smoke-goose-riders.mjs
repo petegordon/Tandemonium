@@ -17,7 +17,9 @@ const MIME = { '.html':'text/html','.js':'text/javascript','.css':'text/css','.p
 const server = http.createServer((req,res)=>{const u=decodeURIComponent(req.url.split('?')[0]);const f=path.join(ROOT,u==='/'?'index.html':u);
   fs.stat(f,(e,st)=>{if(e||st.isDirectory())return res.writeHead(404).end();res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});fs.createReadStream(f).pipe(res);});});
 await new Promise(r=>server.listen(PORT,'127.0.0.1',r));
-const browser = await puppeteer.launch({headless:'new',args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--mute-audio']});
+// protocolTimeout: the outfit swaps and the pixel-sampled colourway checks are single
+// page.evaluate calls that take minutes under software rendering (bike + two geese).
+const browser = await puppeteer.launch({headless:'new',protocolTimeout:900000,args:['--no-sandbox','--use-gl=swiftshader','--enable-unsafe-swiftshader','--mute-audio']});
 const page = await browser.newPage();
 await page.setViewport({width:1280,height:800});
 await page.setRequestInterception(true);
@@ -42,11 +44,11 @@ await page.goto(`http://127.0.0.1:${PORT}/index.html`,{waitUntil:'domcontentload
 await page.waitForFunction(()=>!!window._game,{timeout:45000});
 await page.click('#tap-to-start').catch(()=>{});
 await page.waitForSelector('#btn-solo, [id*="solo" i]', { timeout: 10000 });
-await page.evaluate(() => { const b = document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button')).find(x=>/solo/i.test(x.textContent)); b && b.click(); });
+await page.evaluate(() => { const b = document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent)); b && b.click(); });
 await new Promise(r=>setTimeout(r,900));
-await page.evaluate(() => { const c = Array.from(document.querySelectorAll('button, .level-card, [class*="level"]')).filter(el => el.offsetParent !== null && /grandma/i.test(el.textContent || '')); (c[0] || document.querySelector('.level-card'))?.click(); });
+await page.evaluate(() => { const c = Array.from(document.querySelectorAll('button, uf-button, .level-card, [class*="level"]')).filter(el => el.offsetParent !== null && /grandma/i.test(el.textContent || '')); (c[0] || document.querySelector('.level-card'))?.click(); });
 await new Promise(r=>setTimeout(r,500));
-await page.evaluate(() => { const b = Array.from(document.querySelectorAll('button')).find(x => /start ride/i.test(x.textContent||'')); b && b.click(); });
+await page.evaluate(() => { const b = Array.from(document.querySelectorAll('button, uf-button')).find(x => /start ride/i.test(x.textContent||'')); b && b.click(); });
 await new Promise(r=>setTimeout(r,800));
 await page.evaluate(() => { document.body.click(); document.getElementById('instructions')?.click(); });
 await page.waitForFunction(()=>window._game?.state==='playing',{timeout:120000}).catch(()=>{});
@@ -123,7 +125,10 @@ const lean = await page.evaluate(async () => {
   const keep = b.setRiderLeans;
   b.setRiderLeans = () => {};                    // hold our inputs against the live controller
   b._captainLeanTarget = 1; b._stokerLeanTarget = -1;
-  await new Promise(r => setTimeout(r, 4000));   // ~5+ frames of smoothing at headless speed
+  // Wait for the smoothing to settle rather than a fixed 4 s: headless software
+  // rendering of the bike + two geese runs at ~1 fps here, and the per-frame
+  // smoothing (k = 12·dt, capped at 1) needs a handful of frames either way.
+  for (let i = 0; i < 60 && (Math.abs(b._captainLeanNorm - 1) > 0.02 || Math.abs(b._stokerLeanNorm + 1) > 0.02); i++) await new Promise(r => setTimeout(r, 500));
   const w = {};
   for (const [s, r] of Object.entries(g.riders)) {
     w[s] = { ride: +r.ride.getEffectiveWeight().toFixed(2), left: +r.leanL.getEffectiveWeight().toFixed(2),
