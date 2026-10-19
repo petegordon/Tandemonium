@@ -15,3 +15,8 @@ debug-*.png
 # Claude Code per-user local settings (machine-specific; shared config/skills stay tracked)
 .claude/settings.local.json
 out/
+
+# Rendered output: trailer captures (scripts/reel → renders/reel, hundreds of MB per
+# cut), smoke-test screenshots (scripts/smoke-* → renders/*.png). Regenerable; finished
+# trailers are published to Steam / YouTube / a GitHub Release, not committed.
+renders/
