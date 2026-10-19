@@ -6352,7 +6352,7 @@ ON</button>
       <button class="opt-btn" id="opt-low">Low</button>
       <button class="opt-btn" id="opt-auto">Auto</button>
     </div>
-    <div class="options-note">Some changes take effect on next restart</div>
+    <div class="options-note" id="opt-quality-note">Some changes take effect on next restart</div>
     <div class="label" id="opt-ds-label">DualSense Input Source</div>
     <div class="options-row" id="opt-ds-row">
       <button class="opt-btn" id="opt-ds-auto">Auto</button>
@@ -6411,6 +6411,32 @@ ON</button>
       <button class="opt-btn" id="opt-physics-off">Off</button>
     </div>
     <div class="options-note">Tumbling crashes, knocked pylons, goose strikes — next ride</div>
+    <!-- Display testing: overrides on top of Graphics Quality, for tuning a
+         weak screen like a TV. Same as ?lines= / ?aa= / ?debug=perf. -->
+    <div class="label" id="opt-dtest-label">Display Testing &mdash; overrides</div>
+    <div class="options-note">Overrides on top of Graphics Quality, for testing a TV or slow screen. The page reloads to apply.</div>
+    <div class="label">Render lines</div>
+    <div class="options-row" id="opt-lines-row">
+      <button class="opt-btn" id="opt-lines-0">Quality default</button>
+      <button class="opt-btn" id="opt-lines-540">540 lines</button>
+      <button class="opt-btn" id="opt-lines-720">720 lines</button>
+      <button class="opt-btn" id="opt-lines-1080">1080 lines</button>
+    </div>
+    <div class="label">Edge smoothing</div>
+    <div class="options-row" id="opt-aa-row">
+      <button class="opt-btn" id="opt-aa-tier">Quality default</button>
+      <button class="opt-btn" id="opt-aa-on">On</button>
+      <button class="opt-btn" id="opt-aa-off">Off</button>
+    </div>
+    <div class="label">Perf readout</div>
+    <div class="options-row" id="opt-perfhud-row">
+      <button class="opt-btn" id="opt-perfhud-on">On</button>
+      <button class="opt-btn" id="opt-perfhud-off">Off</button>
+    </div>
+    <div class="options-row">
+      <button class="opt-btn" id="opt-dtest-reset">Reset to quality defaults</button>
+    </div>
+    <div class="options-note" id="opt-dtest-note"></div>
     <button id="options-perf-btn">Run Perf Test</button>
     <div id="options-perf-result"></div>
     <button id="options-devtools-btn">Tools</button>
