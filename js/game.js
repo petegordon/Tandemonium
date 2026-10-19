@@ -40,7 +40,7 @@ import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
-import { FocusController } from './nav/focus-controller.js';
+import { FocusController } from '../shared/ui/focus-controller.js';
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
