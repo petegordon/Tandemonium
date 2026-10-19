@@ -104,6 +104,21 @@ console.log('An explicit Show Riders choice wins on Low');
   await page.close();
 }
 
+console.log('Medium → High live: the ground really gets shadows');
+{
+  const page = await boot({ storage: { tandemonium_quality: 'medium', tandemonium_quality_v: '3' } });
+  const shadowed = () => page.evaluate(() => {
+    const G = window._game, p = G.renderer.properties.get(G.world.floor.material).currentProgram;
+    return !!(p && p.getUniforms().map.directionalShadowMap);
+  });
+  const before = await shadowed();
+  await page.evaluate(() => { window._game._openOptions(); document.getElementById('opt-high').click(); window._game._closeOptions(); });
+  await new Promise((r) => setTimeout(r, 1500));
+  const after = await shadowed();
+  check(!before && after, 'switching to High recompiles the ground with shadows', { before, after });
+  await page.close();
+}
+
 console.log('Low keeps its 360-line target when the window is resized');
 {
   const page = await boot({ query: '?quality=low' });
