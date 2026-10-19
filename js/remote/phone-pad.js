@@ -9,8 +9,8 @@
 // computes when it runs on a phone) and the two pedal halves as 8-byte frames
 // at ~30 Hz, plus immediately on every pedal change.
 //
-// One fixed layout that never changes: a strip of menu buttons (arrows, OK,
-// BACK, Pause, Recenter) along the top and the two pedal halves below. Every
+// One fixed layout that never changes: gamepad-style controls along the top
+// (Pause / Recenter, a plus-shaped D-pad, OK / BACK) over the two pedals. Every
 // press is always sent; the game decides what it means from its own state
 // (pedals while riding, the menu buttons as a gamepad in menus). A layout
 // that switched on a message from the game could get stuck on the wrong one
@@ -162,9 +162,9 @@ function startTouch() {
   window.addEventListener('mouseup', () => { touches.delete(-1); refresh(); });
 }
 
-// ── Menu strip: arrows, OK / BACK, Pause, Recenter, sent as held bits ──
+// ── Top controls: D-pad, OK / BACK, Pause, Recenter, sent as held bits ──
 function startMenuPad() {
-  for (const el of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#nav-strip [data-nav]'))) {
+  for (const el of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#controls [data-nav]'))) {
     const bit = NAV[/** @type {keyof typeof NAV} */ (el.dataset.nav)];
     let downAt = 0;
     let releaseTimer = 0;

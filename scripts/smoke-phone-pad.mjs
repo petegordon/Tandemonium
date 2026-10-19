@@ -156,7 +156,7 @@ try {
   // The phone's layout never changes; the game reads presses by its own mode.
   const phoneLayoutFixed = () => phone.evaluate(() => {
     const seen = (sel) => { const r = document.querySelector(sel)?.getBoundingClientRect(); return !!r && r.width > 0 && r.height > 0; };
-    return seen('#nav-strip [data-nav="ok"]') && seen('#btn-pause') && seen('#pedal-l') && seen('#pedal-r');
+    return seen('#controls [data-nav="ok"]') && seen('#btn-pause') && seen('#pedal-l') && seen('#pedal-r');
   });
   const hostMode = () => game.evaluate(() => window._game.phonePad?.mode);
   check(await phoneLayoutFixed(), 'in the lobby the phone shows its one layout (menu strip + pedals)');
@@ -165,7 +165,7 @@ try {
   // Headless software rendering runs the game at a few fps: hold each press
   // across several of its frames (a real phone press spans many).
   const press = async (nav, holdMs = 700) => {
-    const el = await phone.$(`#nav-strip [data-nav="${nav}"]`);
+    const el = await phone.$(`#controls [data-nav="${nav}"]`);
     const b = await el.boundingBox();
     await phone.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
     await phone.mouse.down(); await sleep(holdMs); await phone.mouse.up(); await sleep(700);

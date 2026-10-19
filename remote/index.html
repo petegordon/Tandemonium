@@ -35,47 +35,78 @@
   .seat { color: var(--uf-color-accent-2, #ffd23f); font-weight: bold; }
 
   /* One fixed layout, riding or in menus (the game decides what a press
-     means): a strip of menu buttons along the top, the two pedal halves below. */
-  #screen-ride { flex-direction: column; }
-  #nav-strip {
-    display: flex; align-items: center; gap: 8px;
-    padding: max(6px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left));
+     means): a gamepad-style top (Pause / Recenter, a plus-shaped D-pad in
+     the middle with the House Tandem mark, OK / BACK) over the two pedals. */
+  #screen-ride { flex-direction: column; --cell: clamp(36px, 12vh, 46px); }
+  #controls {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
+    padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 6px max(10px, env(safe-area-inset-left));
   }
-  .nav-group { display: flex; gap: 6px; flex: none; }
+  .side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .side.left { align-items: flex-start; }
+  .side.right { align-items: flex-end; }
+  .side .row { display: flex; gap: 8px; }
   #status {
-    flex: 1; min-width: 0; text-align: center; font-size: 13px;
-    color: var(--uf-color-fg-muted, #8a93a6);
+    max-width: 100%; font-size: 13px; color: var(--uf-color-fg-muted, #8a93a6);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   #status.ok { color: var(--uf-color-accent, #44ff66); }
-  #pedals { flex: 1; display: flex; gap: 6px; padding: 0 6px max(6px, env(safe-area-inset-bottom)); }
-  .pedal {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    border-radius: 18px; font-size: 34px; font-weight: bold; letter-spacing: 2px;
-    background: var(--uf-color-surface-3, rgba(255,255,255,.04));
-    border: 2px solid var(--uf-color-line-soft, rgba(255,255,255,.16));
-    color: var(--uf-color-fg-muted, #8a93a6);
-    transition: background .05s;
-  }
-  .pedal.down {
-    background: var(--uf-color-accent-soft, rgba(60,200,80,.25));
-    border-color: var(--uf-color-accent, #44ff66); color: var(--uf-color-fg, #fff);
-  }
-  /* Menu buttons: held while touched; the game reads them only in menus
+
+  /* Buttons: held while touched; the game reads the menu ones only in menus
      (Pause and Recenter work any time). */
   .nav-btn {
-    font: inherit; font-size: 22px; font-weight: bold; border-radius: 14px;
-    min-width: 54px; height: 54px; padding: 0 10px;
+    font: inherit; font-size: 20px; font-weight: bold; border-radius: 14px;
+    min-width: 54px; height: var(--cell); padding: 0 12px;
     color: var(--uf-color-fg, #fff); background: var(--uf-color-surface-2, rgba(255,255,255,.1));
     border: 2px solid var(--uf-color-line-soft, rgba(255,255,255,.16));
     display: flex; align-items: center; justify-content: center; touch-action: none;
   }
   .nav-btn.down { background: var(--uf-color-accent-soft, rgba(60,200,80,.25)); border-color: var(--uf-color-accent, #44ff66); }
-  .nav-btn[data-nav="ok"] { min-width: 76px;
+  .nav-btn[data-nav="ok"] { min-width: 96px;
     color: var(--uf-color-fg-on-accent, #06140c); background: var(--uf-color-accent, #44ff66); border-color: var(--uf-color-accent, #44ff66); }
   .nav-btn[data-nav="ok"].down { filter: brightness(.8); }
-  .nav-btn[data-nav="back"] { min-width: 76px; font-size: 16px; }
-  .nav-btn[data-nav="pause"], .nav-btn[data-nav="recenter"] { font-size: 18px; }
+  .nav-btn[data-nav="back"] { min-width: 96px; font-size: 16px; }
+  .nav-btn[data-nav="pause"], .nav-btn[data-nav="recenter"] { font-size: 17px; }
+
+  /* The D-pad: one plus-shaped piece, arrows on the arms, logo in the hub. */
+  .dpad {
+    display: grid; grid-template-columns: var(--cell) calc(var(--cell) * 1.35) var(--cell);
+    grid-template-rows: repeat(3, var(--cell));
+    filter: drop-shadow(0 0 1px rgba(255,255,255,.35)) drop-shadow(0 2px 6px rgba(0,0,0,.6));
+  }
+  .dpad > * { background: #2a2e38; border: none; }
+  .dpad .arm {
+    font: inherit; font-size: 16px; color: var(--uf-color-fg-muted, #c3cad8);
+    display: flex; align-items: center; justify-content: center; touch-action: none;
+  }
+  .dpad .arm.down { background: var(--uf-color-accent-soft, #2f6b3a); color: var(--uf-color-fg, #fff); }
+  .dpad [data-nav="up"]    { grid-area: 1 / 2; border-radius: 10px 10px 0 0; }
+  .dpad [data-nav="left"]  { grid-area: 2 / 1; border-radius: 10px 0 0 10px; }
+  .dpad .hub               { grid-area: 2 / 2; display: flex; align-items: center; justify-content: center; }
+  .dpad [data-nav="right"] { grid-area: 2 / 3; border-radius: 0 10px 10px 0; }
+  .dpad [data-nav="down"]  { grid-area: 3 / 2; border-radius: 0 0 10px 10px; }
+  .dpad .hub img { width: 90%; height: 80%; object-fit: contain; pointer-events: none; }
+
+  /* Pedals: the game's pedal art, a little shorter than before. */
+  #pedals { flex: 1; min-height: 0; display: flex; gap: 6px; padding: 0 6px max(6px, env(safe-area-inset-bottom)); }
+  .pedal {
+    flex: 1; min-height: 0; overflow: hidden; padding: 8px 8px 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    border-radius: 18px; font-size: 16px; font-weight: bold; letter-spacing: 2px;
+    background: var(--uf-color-surface-3, rgba(255,255,255,.04));
+    border: 2px solid var(--uf-color-line-soft, rgba(255,255,255,.16));
+    color: var(--uf-color-fg-muted, #8a93a6);
+    transition: background .05s;
+  }
+  .pedal img {
+    flex: 1 1 0; min-height: 0; width: 100%; object-fit: contain;
+    pointer-events: none; -webkit-user-drag: none; transition: transform .05s;
+  }
+  .pedal.down {
+    background: var(--uf-color-accent-soft, rgba(60,200,80,.25));
+    border-color: var(--uf-color-accent, #44ff66); color: var(--uf-color-fg, #fff);
+  }
+  .pedal.down img { transform: scale(.94); }
   #motion-note { color: var(--uf-color-warn, #ffd23f); font-size: 13px; padding: 0 14px 6px; }
   #motion-note:empty { display: none; }
 
@@ -103,27 +134,30 @@
   </section>
 
   <section class="screen" id="screen-ride">
-    <div id="nav-strip">
-      <div class="nav-group">
-        <button class="nav-btn" data-nav="left" type="button" aria-label="Left">&#9664;</button>
-        <button class="nav-btn" data-nav="up" type="button" aria-label="Up">&#9650;</button>
-        <button class="nav-btn" data-nav="down" type="button" aria-label="Down">&#9660;</button>
-        <button class="nav-btn" data-nav="right" type="button" aria-label="Right">&#9654;</button>
+    <div id="controls">
+      <div class="side left">
+        <span id="status">Connecting…</span>
+        <div class="row">
+          <button class="nav-btn" id="btn-pause" data-nav="pause" type="button" aria-label="Pause">&#10074;&#10074;</button>
+          <button class="nav-btn" id="btn-recenter" data-nav="recenter" type="button" aria-label="Recenter steering">&#8635;</button>
+        </div>
       </div>
-      <span id="status">Connecting…</span>
-      <div class="nav-group">
+      <div class="dpad">
+        <button class="arm" data-nav="up" type="button" aria-label="Up">&#9650;</button>
+        <button class="arm" data-nav="left" type="button" aria-label="Left">&#9664;</button>
+        <div class="hub"><img src="img/housetandem-controller.svg" alt="House Tandem" draggable="false"></div>
+        <button class="arm" data-nav="right" type="button" aria-label="Right">&#9654;</button>
+        <button class="arm" data-nav="down" type="button" aria-label="Down">&#9660;</button>
+      </div>
+      <div class="side right">
         <button class="nav-btn" data-nav="ok" type="button">OK</button>
         <button class="nav-btn" data-nav="back" type="button">BACK</button>
-      </div>
-      <div class="nav-group">
-        <button class="nav-btn" id="btn-pause" data-nav="pause" type="button" aria-label="Pause">&#10074;&#10074;</button>
-        <button class="nav-btn" id="btn-recenter" data-nav="recenter" type="button" aria-label="Recenter steering">&#8635;</button>
       </div>
     </div>
     <div id="motion-note"></div>
     <div id="pedals">
-      <div class="pedal" id="pedal-l">LEFT</div>
-      <div class="pedal" id="pedal-r">RIGHT</div>
+      <div class="pedal" id="pedal-l"><img src="img/pedal_left.webp" alt="" draggable="false">LEFT</div>
+      <div class="pedal" id="pedal-r"><img src="img/pedal_right.webp" alt="" draggable="false">RIGHT</div>
     </div>
   </section>
 
