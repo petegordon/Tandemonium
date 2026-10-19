@@ -334,3 +334,41 @@ test('host: the Pause press that switched to the menu does not also press Start'
   frame({ seq: 6, nav: NAV.pause });         // a fresh press in the menu = Start
   assert.deepEqual(calls.filter((c) => c[0] === 'nav').at(-1), ['nav', true, NAV.pause]);
 });
+
+test('host: a short silence lets go of held pedals and buttons; a button still held after it is not a new press', () => {
+  const { host, calls, frame } = hostWithFakes();
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  frame({ seq: 2, left: true, nav: NAV.ok });
+  calls.length = 0;
+  host._lastAt -= 500;                     // 0.5 s: past the release, short of a drop
+  host._lastCheckAt = performance.now();
+  host._checkStale();
+  assert.deepEqual(calls.filter((c) => c[0] === 'pedals').at(-1), ['pedals', false, false]);
+  assert.deepEqual(calls.filter((c) => c[0] === 'nav').at(-1), ['nav', true, 0]);
+  frame({ seq: 3, left: true, nav: NAV.ok }); // frames resume, OK still held
+  assert.equal(calls.filter((c) => c[0] === 'nav').at(-1)[2] & NAV.ok, 0, 'held OK is latched');
+});
+
+test('host: opening twice makes one room; Stop says goodbye to the phone', async () => {
+  const { host, sent } = hostWithFakes();
+  const OrigWS = globalThis.WebSocket;
+  let sockets = 0;
+  globalThis.WebSocket = class { constructor() { sockets++; this.readyState = 0; } send() {} close() {} };
+  try {
+    const [a, b] = await Promise.all([host.open(), host.open()]);
+    assert.equal(a, b);
+    assert.equal(sockets, 1);
+    host._ws = { readyState: 1, send: (d) => sent.push(JSON.parse(d)), close() {} };
+    host.close();
+    assert.equal(sent.at(-1).msg.type, 'bye');
+  } finally { globalThis.WebSocket = OrigWS; host.close(); }
+});
+
+test('detach puts a gyro pad\'s motion back as it was', () => {
+  const im = bare();
+  im.motionEnabled = false;                // the player had pad motion off
+  feed(im, 0, 10);
+  assert.equal(im.motionEnabled, true);
+  im.detachRemote();
+  assert.equal(im.motionEnabled, false);
+});

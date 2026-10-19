@@ -6590,6 +6590,10 @@ export class Lobby {
 
     if (!this.input || !this.input.gamepadConnected) return;
 
+    // ...or while the phone QR panel is on top (it takes B / Start itself);
+    // the next frame here re-primes, so the closing press isn't reused.
+    if (document.getElementById('phone-pad-panel')?.classList.contains('open')) return;
+
     // Don't process lobby navigation while options overlay is open
     const optOverlay = document.getElementById('options-overlay');
     if (optOverlay && optOverlay.classList.contains('visible')) return;

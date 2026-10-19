@@ -83,7 +83,7 @@ import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
-import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, AutoTierWatcher } from './quality.js';
+import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
@@ -154,7 +154,7 @@ class Game {
     const _hwCached = getCachedProfile();
     const _q = resolveQualityTier({
       param: _qualityParam, pref: getQualityPref(), learned: getLearnedAutoTier(),
-      hwTier: _hwCached && _hwCached.tier,
+      hwTier: _hwCached && _hwCached.tier, floor: autoFloorTier(isMobile),
     });
     /** @type {import('./quality.js').QualityTier} */
     this._quality = _q.tier;
@@ -1907,6 +1907,7 @@ class Game {
         if (done) return;
         done = true;
         this._inputChoiceOpen = false;
+        this._autoWatching = false;
         this._clearOverlayButtons();
         overlay.remove();
         resolve(result);
@@ -5714,12 +5715,11 @@ class Game {
     const shadows = !isMobile && !this._lowQuality;
     if (this.renderer.shadowMap.enabled !== shadows) {
       this.renderer.shadowMap.enabled = shadows;
-      // Compiled shaders keep their shadow code until recompiled; without
-      // this a mid-ride switch leaves the last shadow stamped on the road.
-      this.scene.traverse((o) => {
-        if (!o.material) return;
-        for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true;
-      });
+      // Compiled shaders keep their shadow code until the lights change;
+      // without this a mid-ride switch leaves the last shadow stamped on the
+      // road. Flipping the sun's castShadow changes the lights state, so
+      // every lit material recompiles, including a world parked for a tour.
+      for (const w of [this.world, this._proceduralWorld]) if (w && w.sun) w.sun.castShadow = shadows;
     }
     if (this.world && this.world.setTier) this.world.setTier(tier);
     this._applyTierView();
@@ -5789,6 +5789,7 @@ class Game {
     if (!overlay) return;
     overlay.classList.remove('visible');
     this._optionsOpen = false;
+    this._autoWatching = false;   // resuming (or a riders swap) hitches: a fresh Auto grace
     this._clearOverlayButtons();
   }
 
@@ -5800,6 +5801,8 @@ class Game {
     const start = gp.buttons[9] && gp.buttons[9].pressed;
     const bIdx = this.input._gpSwapAB ? 0 : 1;
     const b = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
+    // The phone QR panel is on top and takes B / Start itself.
+    if (this.phonePad && this.phonePad.panelOpen) { this._gpPrevStart = start; this._gpPrevB = b; return; }
 
     if (start && !this._gpPrevStart) {
       if (this._optionsOpen) this._closeOptions();
@@ -5918,6 +5921,10 @@ class Game {
   }
 
   _pollOverlayGamepad() {
+    // The phone QR panel is on top; when it closes, a button still held
+    // from closing it is not a fresh press here.
+    if (this.phonePad && this.phonePad.panelOpen) { this._overlayAfterPanel = true; return; }
+    if (this._overlayAfterPanel) { this._overlayAfterPanel = false; this._overlayFocus.reprime(); }
     this._overlayFocus.poll();
   }
 
@@ -6151,7 +6158,8 @@ class Game {
     }
 
     this.fpsMeter.tick(timestamp);
-    // Each ride (and each resume) starts the Auto watcher's grace period afresh.
+    // Each ride starts the Auto watcher's grace period afresh (closing
+    // Options or the input choice does too, see _closeOptions).
     if (this.state !== 'playing') this._autoWatching = false;
 
     // A tier change that moves the riders default waits for the lobby (it
@@ -6225,7 +6233,7 @@ class Game {
       // On a desktop Auto stops at Medium: Low hides the riders, so it stays
       // a manual choice there (phones and TVs already ride without riders).
       const autoFloor = autoFloorTier(isMobile);
-      const autoWatch = this._autoWatcher && this._qualityAuto && this._quality !== autoFloor &&
+      const autoWatch = this._autoWatcher && this._qualityAuto && tierRank(this._quality) > tierRank(autoFloor) &&
         this.mode !== 'versus' && !this.isTourist && !this._proceduralWorld;
       if (autoWatch && !this._autoWatching) { this._autoWatcher.reset(); this._autoWatching = true; }
       if (autoWatch && this._autoWatcher.sample(rawDt) === 'down') {

@@ -82,6 +82,8 @@ export class PhonePadHost {
     this._wsDownAt = 0;       // when our relay socket went down (0 = up)
     this._pinger = null;
     this.framesReceived = 0;
+    /** The QR panel is on screen (set by phone-pad-ui); game pad polling waits. */
+    this.panelOpen = false;
     /** Why the phone was last dropped: 'left' | 'silent' | 'relay' (debug aid). */
     this.drops = [];
   }
@@ -125,6 +127,8 @@ export class PhonePadHost {
     clearInterval(this._pinger);
     this._watchdog = null;
     this._pinger = null;
+    // Tell the phone it's done, so it stops waiting (and lets the room expire).
+    this.sendToPad({ type: 'bye' });
     if (this._ws) { try { this._ws.close(1000, 'host closed'); } catch { /* closed */ } }
     this._ws = null;
     this._release();
@@ -263,6 +267,8 @@ export class PhonePadHost {
     // Frames resuming take over again; the tap counters carry on from _last.
     if (silent > RELEASE_MS && !this._heldReleased) {
       this._heldReleased = true;
+      // Buttons still held when frames resume are not a fresh press.
+      this._navLatched = this._last.nav;
       this.input.setRemotePedals(false, false);
       this.input.setRemoteNav(this.mode === 'menu', 0);
     }

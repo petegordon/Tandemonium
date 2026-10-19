@@ -39,6 +39,9 @@ export const tierBelow = (t) => (t === 'high' ? 'medium' : 'low');
  */
 export const autoFloorTier = (mobile) => (mobile ? 'low' : 'medium');
 
+/** Low 0, Medium 1, High 2. @param {QualityTier} t */
+export const tierRank = (t) => ({ low: 0, medium: 1, high: 2 })[t] ?? 2;
+
 /**
  * Before three tiers, "Low" meant what Medium means now. A saved "low" from
  * then is moved to "medium", once, so nobody's game gets uglier on update.
@@ -92,10 +95,12 @@ export function saveLearnedAutoTier(tier, store = globalThis.localStorage, now =
  * @param {{ param?: string|null, pref?: string, learned?: QualityTier|null, hwTier?: string|null }} o
  * @returns {{ tier: QualityTier, auto: boolean }}
  */
-export function resolveQualityTier({ param = null, pref = 'auto', learned = null, hwTier = null }) {
+export function resolveQualityTier({ param = null, pref = 'auto', learned = null, hwTier = null, floor = 'low' }) {
   if (isTier(param)) return { tier: param, auto: false };
   if (isTier(pref)) return { tier: pref, auto: false };
-  if (learned) return { tier: learned, auto: true };
+  // A learned tier below what Auto may pick here (one saved before the
+  // desktop floor existed) comes back up to the floor.
+  if (learned) return { tier: tierRank(learned) < tierRank(floor) ? floor : learned, auto: true };
   return { tier: hwTier === 'low' ? 'medium' : 'high', auto: true };
 }
 

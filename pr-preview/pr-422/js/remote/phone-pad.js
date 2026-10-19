@@ -303,6 +303,11 @@ function connect() {
     else if (m.type === 'host-left' || m.type === 'waiting') { state.hostHere = false; setStatus('Waiting for the game…'); }
     else if (m.type === 'seat' && m.label) $('seat-label').textContent = m.label;
     else if (m.type === 'mode') setMode(m.mode);
+    else if (m.type === 'bye') {
+      state.closedForGood = true;
+      setStatus('The game stopped using this phone. Scan its code to connect again.');
+      try { ws.close(1000, 'bye'); } catch { /* closed */ }
+    }
     else if (m.type === 'cue' && CUES[m.cue]) { state.lastCue = m.cue; CUES[m.cue](); }
   };
   ws.onclose = (ev) => {
@@ -323,7 +328,7 @@ function connect() {
       return;
     }
     // A link the relay refuses (403) never opens: after a few tries, say so.
-    setStatus(state.failed >= 4 ? 'Can’t connect. If the game shows a new code, scan it.' : 'Reconnecting…');
+    setStatus(state.failed >= 4 ? 'Can’t connect. Check your Wi-Fi, or scan the code on the game screen again.' : 'Reconnecting…');
     const delay = Math.min(8000, 500 * 2 ** state.retry++);
     state.retryTimer = setTimeout(connect, delay);
   };
@@ -345,9 +350,13 @@ document.addEventListener('visibilitychange', () => {
   requestWakeLock();
   unlockAudio();
   if (!state.link || state.closedForGood || !$('screen-ride').classList.contains('on')) return;
-  // Back from a lock: a socket that has heard nothing lately is probably dead.
-  if (state.ws && performance.now() - (state.lastRecv || 0) > 3000) dropSocket(state.ws);
-  else if (!state.ws) { state.retry = 0; connect(); }
+  // Back from a lock: ask the relay, and redial only if the socket can't answer.
+  const ws = state.ws;
+  if (ws && ws.readyState === 1) {
+    const asked = performance.now();
+    try { ws.send('ping'); } catch { /* closed */ }
+    setTimeout(() => { if (state.ws === ws && (state.lastRecv || 0) < asked) dropSocket(ws); }, 1500);
+  } else if (!ws) { state.retry = 0; connect(); }
 });
 
 async function requestWakeLock() {

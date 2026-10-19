@@ -99,6 +99,7 @@ export function installPhonePadUI(input, hooks = {}) {
 
   const open = async () => {
     panel.classList.add('open');
+    host.panelOpen = true;
     const link = await host.open();
     if (!link) return;   // stopped while opening
     const qrEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-qr'));
@@ -120,22 +121,23 @@ export function installPhonePadUI(input, hooks = {}) {
     if (!dropped) statusEl.textContent = STATUS_TEXT[host.status] || '';
     watchPadClose();
   };
-  const close = () => panel.classList.remove('open');
+  const close = () => { panel.classList.remove('open'); host.panelOpen = false; };
 
-  // A gamepad (or a TV remote) has no Escape key: B or Start closes the panel.
+  // A gamepad (or a TV remote) has no Escape key: B or Start closes the
+  // panel. The game and lobby skip their own pad polling while it's open
+  // (host.panelOpen), so the press doesn't also act on the menu underneath.
   let padPoll = 0;
   const watchPadClose = () => {
     if (padPoll) return;
     let held = true;   // ignore whatever was held as the panel opened
     padPoll = window.setInterval(() => {
       if (!panel.classList.contains('open')) { clearInterval(padPoll); padPoll = 0; return; }
-      let down = false;
-      for (const gp of navigator.getGamepads?.() || []) {
-        if (gp && (gp.buttons[1]?.pressed || gp.buttons[9]?.pressed)) down = true;
-      }
+      const gp = input.gamepadConnected ? input.getGamepadState() : null;
+      const bIdx = /** @type {any} */ (input)._gpSwapAB ? 0 : 1;
+      const down = !!gp && !!(gp.buttons[bIdx]?.pressed || gp.buttons[9]?.pressed);
       if (down && !held) close();
       held = down;
-    }, 100);
+    }, 50);
   };
 
   btn?.addEventListener('click', open);

@@ -704,6 +704,7 @@ export class InputManager {
 
   /** A tilt sample from a phone remote. @param {number} rawTilt degrees */
   feedRemoteTilt(rawTilt) {
+    if (!this._remoteTilt) this._motionBeforeRemote = this.motionEnabled;
     this._remoteTilt = true;
     this._onOrientationTilt(rawTilt);
   }
@@ -749,8 +750,9 @@ export class InputManager {
     this.motionLean = 0;
     this.motionLeanVisual = 0;
     // Steering falls back to keyboard / pad, unless this device tilts itself.
-    // A gyro controller on this seat keeps its motion channel.
-    if (!this.motionReady && !this._steamInputActive && !this._slot?.fusion) this.motionEnabled = false;
+    // Motion goes back to what it was before the phone (a gyro pad's own
+    // on/off choice, or this device's tilt).
+    this.motionEnabled = !!this._motionBeforeRemote || this.motionReady;
   }
 
   startTiltCalibration() {
