@@ -41,6 +41,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
 import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, weeklyKey } from './daily-seed.js';
 import { planRoute, planExplore, skipLabel, isValidPoint } from './tourist-route.js';
@@ -6816,16 +6817,18 @@ export class Lobby {
     const w = canvas.clientWidth || 220;
     const h = canvas.clientHeight || 132;
 
+    // Low quality tier: no anti-aliasing (fixed at creation), 1x resolution,
+    // no shadows and a slower redraw (setQualityTier).
+    const lowTier = getCurrentTier() === 'low';
     this._previewRenderer = new THREE.WebGLRenderer({
-      canvas, antialias: true
+      canvas, antialias: !lowTier
     });
-    this._previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this._previewRenderer.setSize(w, h);
     this._previewRenderer.setClearColor(0x8b7355, 1);
     this._previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
     this._previewRenderer.toneMappingExposure = 1.2;
-    this._previewRenderer.shadowMap.enabled = true;
     this._previewRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.setQualityTier(getCurrentTier());
 
     this._previewScene = new THREE.Scene();
     this._previewScene.fog = new THREE.Fog(0x8b7355, 6, 14);
@@ -7044,12 +7047,28 @@ export class Lobby {
     }
   }
 
+  /** Quality tier, live: Low drops the bike preview's shadows, resolution and frame rate. @param {'low'|'medium'|'high'} tier */
+  setQualityTier(tier) {
+    this._previewLow = tier === 'low';
+    const r = this._previewRenderer;
+    if (!r) return;
+    r.setPixelRatio(this._previewLow ? 1 : Math.min(window.devicePixelRatio, 2));
+    if (r.shadowMap.enabled === this._previewLow) {
+      r.shadowMap.enabled = !this._previewLow;
+      if (this._previewScene) this._previewScene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
+    }
+  }
+
   _startPreviewLoop() {
     if (this._previewRafId) return;
+    let frame = 0;
     const animate = () => {
       this._previewRafId = requestAnimationFrame(animate);
+      // Low: every third frame (~20 fps), turning three steps at a time.
+      const step = this._previewLow ? 3 : 1;
+      if (frame++ % step !== 0) return;
       if (this._previewPivot) {
-        this._previewPivot.rotation.y += 0.008;
+        this._previewPivot.rotation.y += 0.008 * step;
       }
       this._previewRenderer.render(this._previewScene, this._previewCamera);
     };
