@@ -42,7 +42,7 @@ const state = (page) => page.evaluate(() => {
     ratio: G.renderer.getPixelRatio(), shadows: G.renderer.shadowMap.enabled,
     far: G.camera.far, fog: G.scene.fog.density,
     treeBatch: !!W._treeBatch, treesInScene: W._treePool.filter((t) => t.mesh.parent === G.scene).length,
-    cloudsMerged: W._cloudPool.every((c) => c.group.children.length === 1 && c.group.children[0] === c.merged),
+    cloudsMerged: W._cloudPool.every((c) => c.group.children.length === 1),
     pref: localStorage.getItem('tandemonium_quality'),
     active: ['high', 'medium', 'low', 'auto'].filter((t) => document.getElementById('opt-' + t)?.classList.contains('active')),
     autoLabel: document.getElementById('opt-auto')?.textContent,
@@ -57,7 +57,7 @@ console.log('?quality=low boots the new Low');
   check(!s.riders, 'riders default off on Low');
   check(s.ratio <= 1 && !s.shadows, 'reduced resolution, no shadows', { ratio: s.ratio, shadows: s.shadows });
   check(s.treeBatch && s.treesInScene === 0, 'trees drawn as one batch');
-  check(s.cloudsMerged, 'each cloud is one merged mesh');
+  check(s.cloudsMerged, 'each cloud is one merged mesh (every tier)');
   check(s.far === 220 && s.fog === 0.012, 'shorter view distance + closer fog', { far: s.far, fog: s.fog });
   await page.close();
 }
@@ -67,7 +67,7 @@ console.log('A saved two-tier "Low" becomes Medium');
   const page = await boot({ storage: { tandemonium_quality: 'low' } });
   const s = await state(page);
   check(s.tier === 'medium' && s.pref === 'medium', 'old Low → Medium', { tier: s.tier, pref: s.pref });
-  check(s.riders && !s.treeBatch && !s.cloudsMerged && s.ratio === 0.5, 'Medium = the old Low: riders kept, half resolution, trees/clouds as before', s);
+  check(s.riders && !s.treeBatch && s.cloudsMerged && s.ratio === 0.5, 'Medium = the old Low: riders kept, half resolution, trees as before, clouds merged', s);
   await page.close();
 }
 
@@ -76,18 +76,19 @@ console.log('Explicit High, then switching live in Options');
   const page = await boot({ storage: { tandemonium_quality: 'high', tandemonium_quality_v: '3' } });
   let s = await state(page);
   check(s.tier === 'high' && !s.low && s.riders, 'High boots High with riders', { tier: s.tier, riders: s.riders });
+  check(s.cloudsMerged, 'clouds are merged on High too');
   await page.evaluate(() => window._game._openOptions());
   await page.evaluate(() => document.getElementById('opt-low').click());
   await page.waitForFunction(() => !window._game._showRiders, { timeout: 30000 }).catch(() => {});
   s = await state(page);
   check(s.tier === 'low' && s.pref === 'low', 'Options → Low applies and saves', { tier: s.tier, pref: s.pref });
-  check(s.treeBatch && s.cloudsMerged && s.far === 220, 'trees batched, clouds merged, view shortened — live');
+  check(s.treeBatch && s.far === 220, 'trees batched, view shortened — live');
   check(!s.riders, 'riders swap off in the lobby');
   check(s.active.join() === 'low', 'only Low is highlighted', s.active);
   await page.evaluate(() => document.getElementById('opt-medium').click());
   await page.waitForFunction(() => window._game._showRiders, { timeout: 30000 }).catch(() => {});
   s = await state(page);
-  check(s.tier === 'medium' && !s.treeBatch && s.treesInScene > 0 && !s.cloudsMerged && s.far === 500, 'Options → Medium restores trees, clouds, view', s);
+  check(s.tier === 'medium' && !s.treeBatch && s.treesInScene > 0 && s.cloudsMerged && s.far === 500, 'Options → Medium restores trees and view (clouds stay merged)', s);
   check(s.riders, 'riders come back above Low');
   await page.evaluate(() => document.getElementById('opt-auto').click());
   s = await state(page);
