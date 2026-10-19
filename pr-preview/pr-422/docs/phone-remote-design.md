@@ -1,7 +1,7 @@
 # Phone as Remote Controller — design (issue #421)
 
-Status: **DRAFT, awaiting Pete's sign-off.** Nothing here is built yet. Every
-`D#` below is a proposal with a recommendation; Pete picks.
+Status: **Signed off 2026-10-18 (D1–D10 as recommended; D3 landscape grip).**
+Phase 1 is built on this branch: see §10.
 
 ## 1. What we're building
 
@@ -53,13 +53,18 @@ motion**: Discord blocks motion sensors in Activities (§7).
 
 ### 3.1 Phone page `remote/index.html` (new, small)
 
-- It imports the **existing motion code**. I'll split the tilt part of
-  `InputManager._setupMotion` (iOS permission, calibration, filtering,
-  `getMotionLean()` / `getMotionLeanVisual()`) into a module both sides use,
-  so a phone remote steers the same as playing on the phone today, including
-  the steering-feel tuning from #399.
-- The phone sends **processed lean** (two floats: physics and visual), not raw
-  sensor angles. The host doesn't need to know anything about phones.
+- The phone sends its **raw tilt angle**, computed by `js/tilt-math.js`. That
+  is the same orientation-to-angle mapping `InputManager` uses when the game
+  runs on a phone; it was split out so both sides share it.
+- The game runs that angle through its **own** tilt pipeline:
+  `InputManager.feedRemoteTilt()` → low-pass → `_applyTilt`, which covers
+  calibration, drift, the response curve and the steering-feel tuning from
+  #399.
+  - This changed from the first draft, where the phone sent a finished lean.
+    The game side is where it belongs: the curve scales with bike speed, and
+    the tutorial and countdown calibrations already run there.
+  - The upshot: a phone remote steers exactly like playing on a phone, and
+    the tutorial's tilt lesson works unchanged.
 - Pedals: the whole screen is two halves. A tap counter per pedal goes in
   every frame, so a quick tap between frames is never lost (same idea as
   `_leftTapped` / `consumeTaps()`).
@@ -72,16 +77,16 @@ motion**: Discord blocks motion sensors in Activities (§7).
 ### 3.2 Input frame (phone → host)
 
 ```
-u8  type = PAD_INPUT
+u8  type = PAD_INPUT (0x50)
 u8  seq                  wraps around; host drops stale frames
-i16 lean   ×10000        getMotionLean()        (physics)
-i16 leanV  ×10000        getMotionLeanVisual()  (rider animation)
-u8  held                 bit0 L pedal, bit1 R pedal
+i16 tilt ×100            raw tilt degrees (tilt-math.js)
+u8  flags                bit0 L pedal, bit1 R pedal, bit2 tilt valid
 u8  tapsL, tapsR         running counters (host diffs them)
 u8  nav                  bit0 up, 1 down, 2 left, 3 right, 4 OK, 5 back, 6 recenter
 ```
 
-About 12 bytes, sent at 30 Hz and immediately on any pedal or nav change.
+8 bytes (`js/remote/pad-protocol.js`), sent at 30 Hz and immediately on any
+pedal or nav change.
 Over the relay WebSocket that's well under 1 KB/s.
 
 ### 3.3 Host side `js/remote/remote-input.js` (new)
@@ -99,9 +104,13 @@ Over the relay WebSocket that's well under 1 KB/s.
   with "Phone disconnected — reopen the page" plus the same QR. The phone
   reconnects with the same `pad` code and `seat`.
 
-### 3.4 Relay `PadRoom` (new DO class in `worker/relay.js`)
+### 3.4 Relay `PadRoom` (`worker/pad-relay.js`, its own Worker)
 
-- A new class, so `TandemRoom` (RIDE TOGETHER) stays exactly as it is.
+- It's a separate Worker, `tandemonium-pad`, deployed with
+  `wrangler-pad.toml`, so `TandemRoom` (RIDE TOGETHER) stays exactly as it is.
+- It deploys on its own. A new Durable Object class inside `relay.js`
+  deployed from a branch would make the next `main` deploy fail, because
+  that build wouldn't have the class.
 - Roles `host` and `pad-1` … `pad-4`. A pad's messages go only to the host,
   and host messages go to one pad or all of them. Duplicate roles replace the
   old socket, as `TandemRoom` already does.
@@ -265,3 +274,29 @@ which already ship a phone remote inside Discord.
 | D8 | Where the phone page lives: `tandemonium.jimandi.love/remote/` (same origin as the game, so the PR preview tests it too) | **Yes** |
 | D9 | Relay: a new `PadRoom` in our `worker/relay.js` (porting the dice ideas), or reuse the dice relay Worker as-is? | **New `PadRoom` in our worker.** One deploy, no cross-project coupling |
 | D10 | Discord co-op = RIDE TOGETHER between two Activity windows (each with a phone), with one shared screen + two phones (couch) later? | **Yes** |
+
+## 10. Phase 1 — built (this branch)
+
+| Piece | File |
+|---|---|
+| Wire format, pairing link, codes, secret hash | `js/remote/pad-protocol.js` |
+| Tilt mapping shared by game + phone | `js/tilt-math.js` (`InputManager` now uses it) |
+| Remote hooks on the seat's input | `InputManager.feedRemoteTilt / setRemotePedals / detachRemote` |
+| Game side | `js/remote/phone-pad-host.js`, panel `js/remote/phone-pad-ui.js` |
+| Phone page | `remote/index.html` + `js/remote/phone-pad.js` |
+| Relay | `worker/pad-relay.js` + `worker/wrangler-pad.toml` |
+| Tests | `test/unit/phone-pad.test.mjs`; `npm run smoke:phone-pad` (local relay via `wrangler dev`, two headless browsers) |
+
+**Entry (Phase 1 only):**
+- **📱 Phone as controller** on the mode screen opens a QR panel for Player 1.
+- The panel closes itself once the phone connects.
+- The phone shows CONNECT (the iOS motion prompt), then LEFT | RIGHT pedal
+  halves, a ↻ Recenter button, and a "turn sideways" prompt in portrait.
+
+**If the phone drops:** no frame for 1 s, or the phone leaves, releases the
+pedals and the lean. Keyboard and gamepad keep working. Phase 2 adds the
+pause + QR prompt.
+
+**Deploy:** `cd worker && npx wrangler deploy --config wrangler-pad.toml`.
+Until it's live, the preview's QR opens the phone page, but the phone can't
+connect.

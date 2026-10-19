@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { isMobile, TUNE, stickResponse } from './config.js';
+import { orientationToRawTilt, gravityToRawTilt } from './tilt-math.js';
 import * as analytics from './analytics.js';
 import { addHapticSource, removeHapticSource } from './haptics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
@@ -607,48 +608,8 @@ export class InputManager {
     // Primary: deviceorientation (browser sensor fusion — smoother)
     window.addEventListener('deviceorientation', (e) => {
       const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-      let rawTilt;
-      if (orient === 90) rawTilt = e.beta;
-      else if (orient === 270 || orient === -90) rawTilt = -e.beta;
-      else {
-        // When phone is tilted past vertical (|beta| > 90°, e.g. lying in bed
-        // with screen facing down at user), gamma's left-right direction inverts.
-        // Use a smooth blend zone (80°–100°) to avoid jitter at the boundary.
-        const absBeta = Math.abs(e.beta || 0);
-        if (absBeta > 100) {
-          rawTilt = -e.gamma;
-        } else if (absBeta > 80) {
-          const t = (absBeta - 80) / 20;
-          rawTilt = e.gamma * (1 - 2 * t);
-        } else {
-          rawTilt = e.gamma;
-        }
-      }
-
-      if (rawTilt != null) {
-        this._useOrientation = true;
-        if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
-        this.motionEnabled = true;
-
-        // Time-based low-pass pre-filter on raw gamma.
-        // This makes TUNE.lowPassK functional on the deviceorientation path.
-        // Without this, lowPassK only applied to the devicemotion fallback,
-        // which Android never uses (since deviceorientation events fire).
-        // Uses the same frame-rate-independent formula as the devicemotion
-        // fallback (line ~254) so behavior is consistent at any event rate.
-        const now = performance.now();
-        if (this._filteredRawTilt === null) {
-          this._filteredRawTilt = rawTilt;
-          this._lastOrientTime = now;
-        } else {
-          const dtSec = Math.min((now - this._lastOrientTime) / 1000, 0.1);
-          const k = 1 - Math.pow(1 - TUNE.lowPassK, dtSec * 60);
-          this._filteredRawTilt += (rawTilt - this._filteredRawTilt) * k;
-          this._lastOrientTime = now;
-        }
-
-        this._applyTilt(this._filteredRawTilt);
-      }
+      const rawTilt = orientationToRawTilt(e.beta, e.gamma, orient);
+      if (rawTilt != null) this._onOrientationTilt(rawTilt);
     });
 
     // Fallback: devicemotion (only if orientation events don't fire)
@@ -672,13 +633,75 @@ export class InputManager {
       }
 
       const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-      let rollRad;
-      if (orient === 90) rollRad = Math.atan2(this._gy, -this._gx);
-      else if (orient === 270 || orient === -90) rollRad = Math.atan2(-this._gy, this._gx);
-      else rollRad = Math.atan2(this._gx, this._gy);
-
-      this._applyTilt(-rollRad * 180 / Math.PI);
+      this._applyTilt(gravityToRawTilt(this._gx, this._gy, orient));
     });
+  }
+
+  /**
+   * One orientation-derived raw tilt sample (degrees), from this device's
+   * deviceorientation event or from a phone remote (#421). Time-based low-pass
+   * pre-filter on the raw angle, so TUNE.lowPassK works on this path too (the
+   * same frame-rate-independent formula as the devicemotion fallback), then
+   * the shared tilt pipeline.
+   * @param {number} rawTilt
+   */
+  _onOrientationTilt(rawTilt) {
+    this._useOrientation = true;
+    if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
+    this.motionEnabled = true;
+
+    const now = performance.now();
+    if (this._filteredRawTilt === null) {
+      this._filteredRawTilt = rawTilt;
+      this._lastOrientTime = now;
+    } else {
+      const dtSec = Math.min((now - this._lastOrientTime) / 1000, 0.1);
+      const k = 1 - Math.pow(1 - TUNE.lowPassK, dtSec * 60);
+      this._filteredRawTilt += (rawTilt - this._filteredRawTilt) * k;
+      this._lastOrientTime = now;
+    }
+
+    this._applyTilt(this._filteredRawTilt);
+  }
+
+  // ── Phone remote (#421) ──
+  // A phone on another device steers this InputManager: it sends the same raw
+  // tilt angle this device's own sensors would produce, and its pedal halves.
+  // The tilt pipeline (calibration, drift, curve, speed scaling) runs here.
+
+  /** A tilt sample from a phone remote. @param {number} rawTilt degrees */
+  feedRemoteTilt(rawTilt) {
+    this._remoteTilt = true;
+    this._onOrientationTilt(rawTilt);
+  }
+
+  /**
+   * Pedal state from a phone remote. `tapsL`/`tapsR` are presses since the
+   * last frame, so a tap shorter than a frame still pedals.
+   * @param {boolean} left @param {boolean} right
+   * @param {number} [tapsL] @param {number} [tapsR]
+   */
+  setRemotePedals(left, right, tapsL = 0, tapsR = 0) {
+    if (tapsL > 0) this._leftTapped = true;
+    if (tapsR > 0) this._rightTapped = true;
+    if (left !== !!this._remoteLeft || right !== !!this._remoteRight || tapsL || tapsR) this._markActive();
+    this._remoteLeft = left;
+    this._remoteRight = right;
+  }
+
+  /** The phone remote went away: release its pedals and its lean. */
+  detachRemote() {
+    this._remoteLeft = false;
+    this._remoteRight = false;
+    if (!this._remoteTilt) return;
+    this._remoteTilt = false;
+    this._filteredRawTilt = null;
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    // Steering falls back to keyboard / pad, unless this device tilts itself.
+    if (!this.motionReady) this.motionEnabled = false;
   }
 
   startTiltCalibration() {
@@ -1186,8 +1209,8 @@ export class InputManager {
     // "release" the keyboard to another instance (local MP: P1 on gamepad
     // stops reading keys when P2 is on keyboard).
     const keyDown = this.keyboardActive && !!this.keys[code];
-    if (code === 'ArrowLeft') return keyDown || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
-    if (code === 'ArrowRight') return keyDown || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
+    if (code === 'ArrowLeft') return keyDown || this.touchLeft || !!this._remoteLeft || this._leftTapped || this._gpTriggerLeftPressed;
+    if (code === 'ArrowRight') return keyDown || this.touchRight || !!this._remoteRight || this._rightTapped || this._gpTriggerRightPressed;
     return keyDown;
   }
 

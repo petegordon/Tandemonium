@@ -315,7 +315,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage'), document.getElementById('btn-mode-connect-hid')].filter(Boolean),
+      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage'), document.getElementById('btn-mode-connect-hid'), document.getElementById('btn-mode-phone')].filter(Boolean),
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
