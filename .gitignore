@@ -20,3 +20,7 @@ out/
 # cut), smoke-test screenshots (scripts/smoke-* → renders/*.png). Regenerable; finished
 # trailers are published to Steam / YouTube / a GitHub Release, not committed.
 renders/
+
+# VR app (#425) build output
+vr/dist/
+vr/.iwsdk/

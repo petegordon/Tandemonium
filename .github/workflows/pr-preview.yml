@@ -104,7 +104,7 @@ jobs:
           # it's all already excluded here.
           rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' \
                    --exclude='node_modules' --exclude='out' --exclude='desktop' \
-                   --exclude='electron' --exclude='scripts' --exclude='.env' \
+                   --exclude='electron' --exclude='scripts' --exclude='.env' --exclude='/vr' \
                    ./ _site/
           # Inject <base> tag so relative asset paths resolve from the repo root,
           # not from the /pr-preview/pr-N/ subdirectory
@@ -126,6 +126,25 @@ jobs:
           echo "{\"sha\":\"$HASH\",\"pr\":$PR,\"time\":\"$DATE\"}" > _site/version.json
           sed -i "s|<head>|<head><script>window.__BUILD={sha:'$HASH',pr:$PR,time:'$DATE'}</script>|" _site/index.html
           sed -i "s|%%MODULE_SHA%%|$HASH|" _site/js/build-badge.js
+
+      - name: Set up Node (VR app build)
+        if: github.event.action != 'closed'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # VR SOLO RIDE (#425): its own Vite + IWSDK app in vr/ (not the import-map
+      # game), built here and published at vr/. It loads the game's models
+      # from ../ (vr/src/asset-base.ts).
+      - name: Build VR app
+        if: github.event.action != 'closed'
+        run: |
+          cd vr
+          npm ci --no-audit --no-fund
+          npm run build
+          cd ..
+          mkdir -p _site/vr
+          cp -r vr/dist/. _site/vr/
 
       # Tourist Mode (#333) reads window.__TOURIST_MAPS_KEY__ from the gitignored
       # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).

@@ -24,6 +24,7 @@ Open `http://localhost:8888` in your browser.
 - **Front view**: A small window in the lower-right shows a front-facing "selfie cam" of the bike as you ride. Toggle it with `V`.
 - **Controllers**: Press `C` (or CONTROLLERS in the in-ride quick menu) to see each rider's controller as a live 3D model in a bottom corner — buttons, sticks, triggers and gyro, straight from the same input the game is steering with. One tile lower-right in solo; P1 lower-right / P2 lower-left in local co-op; each team's pads under their own half in versus. See [`docs/controller-overlay.md`](docs/controller-overlay.md).
 - **Crash physics**: Crashes tumble, struck pylons go spinning, and a goose clipped on the way up gets thrown properly — an optional Rapier layer that is purely visual and never touches handling. Toggle it under Options → Crash Physics. See [`docs/physics-fx.md`](docs/physics-fx.md).
+- **VR SOLO RIDE** (Quest, work in progress, #425): a separate example game in `vr/` on the Meta Immersive Web SDK, served at `/vr/`. Ride Grandma's road seated and steer by tilting the handlebars you hold. `cd vr && npm install && npm run dev`. See [`docs/vr-solo-ride.md`](docs/vr-solo-ride.md).
 - **Multiplayer**: Click RIDE TOGETHER — one player creates a room, the other joins with the room code
 
 ## Multiplayer
