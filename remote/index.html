@@ -57,6 +57,7 @@
   /* Buttons: held while touched; the game reads the menu ones only in menus
      (Pause and Recenter work any time). */
   .nav-btn {
+    -webkit-appearance: none; appearance: none; -webkit-tap-highlight-color: transparent;
     font: inherit; font-size: 20px; font-weight: bold; border-radius: 14px;
     min-width: 54px; height: var(--cell); padding: 0 12px;
     color: var(--uf-color-fg, #fff); background: var(--uf-color-surface-2, rgba(255,255,255,.1));
@@ -78,10 +79,18 @@
     filter: drop-shadow(0 0 1px rgba(255,255,255,.35)) drop-shadow(0 2px 6px rgba(0,0,0,.6));
   }
   .dpad > * { background: #2a2e38; border: none; }
+  /* Arrows are one drawn triangle, turned per arm: text arrows (◀ ▶) show as
+     colour emoji on some phones. */
   .dpad .arm {
-    font: inherit; font-size: 16px; color: var(--uf-color-fg-muted, #c3cad8);
+    -webkit-appearance: none; appearance: none; padding: 0; margin: 0;
+    color: var(--uf-color-fg-muted, #c3cad8);
     display: flex; align-items: center; justify-content: center; touch-action: none;
+    -webkit-tap-highlight-color: transparent;
   }
+  .dpad .arm svg { width: 38%; height: 38%; fill: currentColor; pointer-events: none; }
+  .dpad [data-nav="left"] svg  { transform: rotate(-90deg); }
+  .dpad [data-nav="right"] svg { transform: rotate(90deg); }
+  .dpad [data-nav="down"] svg  { transform: rotate(180deg); }
   .dpad .arm.down { background: var(--uf-color-accent-soft, #2f6b3a); color: var(--uf-color-fg, #fff); }
   .dpad [data-nav="up"]    { grid-area: 1 / 2; border-radius: 10px 10px 0 0; }
   .dpad [data-nav="left"]  { grid-area: 2 / 1; border-radius: 10px 0 0 10px; }
@@ -139,11 +148,11 @@
   <section class="screen" id="screen-ride">
     <div id="controls">
       <div class="dpad">
-        <button class="arm" data-nav="up" type="button" aria-label="Up">&#9650;</button>
-        <button class="arm" data-nav="left" type="button" aria-label="Left">&#9664;</button>
+        <button class="arm" data-nav="up" type="button" aria-label="Up"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.5 9 8.5H1z"/></svg></button>
+        <button class="arm" data-nav="left" type="button" aria-label="Left"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.5 9 8.5H1z"/></svg></button>
         <div class="hub"><img src="img/housetandem-controller.svg" alt="House Tandem" draggable="false"></div>
-        <button class="arm" data-nav="right" type="button" aria-label="Right">&#9654;</button>
-        <button class="arm" data-nav="down" type="button" aria-label="Down">&#9660;</button>
+        <button class="arm" data-nav="right" type="button" aria-label="Right"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.5 9 8.5H1z"/></svg></button>
+        <button class="arm" data-nav="down" type="button" aria-label="Down"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.5 9 8.5H1z"/></svg></button>
       </div>
       <div class="side middle">
         <span id="status">Connecting…</span>
