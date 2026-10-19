@@ -10,7 +10,7 @@
 // at ~30 Hz, plus immediately on every pedal change.
 //
 // One fixed layout that never changes: gamepad-style controls along the top
-// (Pause / Recenter, a plus-shaped D-pad, OK / BACK) over the two pedals. Every
+// (plus-shaped D-pad, Pause / Recenter, OK / BACK) over the two pedals. Every
 // press is always sent; the game decides what it means from its own state
 // (pedals while riding, the menu buttons as a gamepad in menus). A layout
 // that switched on a message from the game could get stuck on the wrong one
