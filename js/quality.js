@@ -32,6 +32,14 @@ export const isTier = (v) => QUALITY_TIERS.includes(v);
 export const tierBelow = (t) => (t === 'high' ? 'medium' : 'low');
 
 /**
+ * The lowest tier Auto steps down to. Low turns the riders off by default,
+ * so on a desktop it stays a manual choice; phones and TVs already ride
+ * without riders and get everything Low saves.
+ * @param {boolean} mobile @returns {QualityTier}
+ */
+export const autoFloorTier = (mobile) => (mobile ? 'low' : 'medium');
+
+/**
  * Before three tiers, "Low" meant what Medium means now. A saved "low" from
  * then is moved to "medium", once, so nobody's game gets uglier on update.
  * @param {Storage} [store]

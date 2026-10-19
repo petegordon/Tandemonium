@@ -104,6 +104,17 @@ console.log('An explicit Show Riders choice wins on Low');
   await page.close();
 }
 
+console.log('Low keeps its 360-line target when the window is resized');
+{
+  const page = await boot({ query: '?quality=low' });
+  await page.setViewport({ width: 1280, height: 900 });
+  await page.waitForFunction(() => innerHeight === 900, { timeout: 10000 });
+  await new Promise((r) => setTimeout(r, 300));
+  const r = await page.evaluate(() => ({ ratio: window._game.renderer.getPixelRatio(), h: innerHeight }));
+  check(Math.abs(r.ratio * r.h - 360) < 1, 'resize recomputes the render resolution', r);
+  await page.close();
+}
+
 console.log('TV test switches: ?lines= and ?aa=');
 {
   const page = await boot({ query: '?quality=low&lines=540&aa=1' });

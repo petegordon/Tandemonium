@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveQualityTier, migrateQualityPref, getQualityPref, setQualityPref,
-  getLearnedAutoTier, saveLearnedAutoTier, tierBelow, AutoTierWatcher,
+  getLearnedAutoTier, saveLearnedAutoTier, tierBelow, autoFloorTier, AutoTierWatcher,
 } from '../../js/quality.js';
 
 function store(init = {}) {
@@ -56,6 +56,11 @@ test('tierBelow steps High → Medium → Low and stops', () => {
   assert.equal(tierBelow('high'), 'medium');
   assert.equal(tierBelow('medium'), 'low');
   assert.equal(tierBelow('low'), 'low');
+});
+
+test('Auto never steps a desktop down to Low (it would hide the riders); phones and TVs may', () => {
+  assert.equal(autoFloorTier(false), 'medium');
+  assert.equal(autoFloorTier(true), 'low');
 });
 
 test('watcher: a slow ride steps down after the grace + one window; a fast one never does', () => {
