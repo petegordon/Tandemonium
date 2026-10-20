@@ -1,5 +1,9 @@
 # Tandemonium
 
+> **Victorian geese, one wobbly tandem, and Grandma's waiting. Pedal, lean, try not to crash.**
+>
+> Grab presents, dodge cones, crash spectacularly, and earn Chaos Coins along the way, alone or with a friend.
+
 ![Tandemonium](images/tandemonium_title.png)
 
 ![Tandemonium Actions](images/tandemonium_three_actions.png)
