@@ -1,0 +1,18 @@
+/* extends: a-hero-right, _a2, _toggle-labels */
+/* A2 · bottom bar: Back on the left, labelled pills on the right, like a console's system bar.
+   "All on/off" is dropped (it only flips the others); credits move into Help. */
+#lobby { --bar-h: 64px; }
+#lobby::after {
+  content: ''; position: fixed; left: 0; right: var(--art-w); bottom: 0; height: 84px; z-index: 3;
+  background: rgba(255,255,255,.035); border-top: 1px solid rgba(255,255,255,.08);
+}
+#lobby .lobby-left-col, #lobby .lobby-right-col { top: auto !important; bottom: 14px; gap: 12px !important; }
+#lobby .lobby-right-col { right: calc(var(--art-w) + var(--gutter)); }
+#lobby .lobby-left-col { right: auto !important; left: calc(var(--gutter) + 170px); }
+#lobby .lobby-toggle {
+  width: auto !important; height: 56px !important; border-radius: 999px !important;
+  display: inline-flex !important; align-items: center; gap: 10px; padding: 0 20px 0 16px !important;
+}
+#lobby .lobby-toggle::after { font-size: 18px; }
+#lobby #toggle-all { display: none !important; }
+#lobby .lobby-credits { display: none !important; }

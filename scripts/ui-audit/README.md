@@ -24,3 +24,5 @@ The report built from these captures is in `docs/ui-review-2026-10-19/`.
 - `a-hero-right.css`: the painting fixed on the right at its natural shape (535×1080).
 - `b-bleed.css`: the painting blurred behind everything and sharp on the right.
 - `c-art-mode-only.css`: the painting on the mode screen only; the other steps use the full width.
+
+Round 2 (`a2-*.css`) builds on A with `extends:` partials: `_a2.css` (wordmark on the painting, two-line mode buttons, bigger bike chooser, redesigned phone-QR sheet and captain's room) and `_toggle-labels.css`. The three files differ only in where the toggles go: `a2-bottom` (bottom bar), `a2-top`, `a2-rail`. Screens: `--screens=mode,level,versus,host,phone`.

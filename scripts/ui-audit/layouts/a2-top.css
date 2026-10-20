@@ -1,0 +1,5 @@
+/* extends: a-hero-right, _a2, _toggle-labels */
+/* A2 · toggles top-right: one labelled row across the top of the menus. */
+#lobby .lobby-toggle::after { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); }
+#lobby .lobby-left-col, #lobby .lobby-right-col { gap: 34px !important; top: 26px; }
+#lobby .lobby-left-col { right: calc(var(--art-w) + var(--gutter) + 4 * 64px + 3 * 34px + 60px); }
