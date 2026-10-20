@@ -1,0 +1,17 @@
+/* B · Bleed: the painting fills the screen as a dark, blurred backdrop and sits
+   crisp on the right, fading into the menus. Menus keep 1620px. */
+#lobby { --art-w: 440px; background: #07090c !important; isolation: isolate; }
+#lobby::before {
+  content: ''; position: fixed; inset: -40px; z-index: -1;
+  background: url(images/large_action_facing.png) center 30% / cover no-repeat;
+  filter: blur(28px) brightness(.32) saturate(1.2);
+}
+#lobby-img-right {
+  position: fixed !important; top: 0; right: 0; height: 100vh !important; width: auto !important;
+  aspect-ratio: 504 / 1017; z-index: 0;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 45%);
+          mask-image: linear-gradient(to right, transparent 0, #000 45%);
+}
+#lobby .lobby-card, #bike-carousel { position: relative; z-index: 1; }
+/* Menus sit on the art, so give buttons and cards a solid enough fill to read. */
+#lobby uf-button:not([variant="accent"]):not([size]), #lobby .level-card, #lobby-versus .versus-player-card { background: rgba(14,17,23,.82) !important; backdrop-filter: blur(6px); }

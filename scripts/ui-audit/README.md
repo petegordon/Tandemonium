@@ -16,3 +16,11 @@ Scenarios: `boot lobby ctrltest firstsolo solo together joinglyphs localcoop ver
 Use the real GPU (the default, `--use-angle=d3d11`). SwiftShader (`UI_AUDIT_SWIFTSHADER=1`) runs at about 4 fps and misses button presses. Most scenarios fake the desktop app's user agent, but `window.steam` (Steam Input) isn't present.
 
 The report built from these captures is in `docs/ui-review-2026-10-19/`.
+
+## Layout mockups
+
+`layout-mock.mjs <outDir> [variant...]` screenshots mode select, level select and 4-player versus with each stylesheet in `layouts/` applied over the live game (no game code changes). `layouts/_wide.css` holds the reflow shared by every variant (TV type scale through `--uf-size-*`, a top bar, a step footer, level cards in one row, four seat cards across). Each variant only places the right painting:
+
+- `a-hero-right.css`: the painting fixed on the right at its natural shape (535×1080).
+- `b-bleed.css`: the painting blurred behind everything and sharp on the right.
+- `c-art-mode-only.css`: the painting on the mode screen only; the other steps use the full width.
