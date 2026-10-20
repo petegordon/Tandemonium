@@ -104,13 +104,13 @@ const screen = await page.evaluate(() => {
     hidden: item('false_start')?.querySelector('.lb-ach-name')?.textContent,
     hiddenIcon: item('false_start')?.querySelector('.lb-ach-icon')?.textContent,
     earned: item('first_finish')?.classList.contains('earned'),
-    retired: !!item('grandma_default'),
+    colour: !!item('grandma_default'),
     progress: item('rides_10')?.querySelector('.lb-ach-progress')?.textContent || '',
   };
 });
-check(screen.sections === 14 && screen.rows === 93, `the badge screen has 14 sections, 93 badges ("${screen.count}")`);
+check(screen.sections === 15 && screen.rows === 100, `the badge screen has 15 sections, 100 badges ("${screen.count}")`);
 check(screen.hidden === '???' && screen.hiddenIcon === '❔', `a hidden achievement shows as ??? until earned (${screen.hidden})`);
-check(screen.earned && !screen.retired, 'earned ones light up; retired colours never show');
+check(screen.earned && screen.colour, 'earned ones light up; the bike colours show');
 check(screen.progress === '1/10', `counters show their progress (Regular Rider "${screen.progress}")`);
 await shot('2-badges');
 

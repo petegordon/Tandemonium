@@ -3219,7 +3219,7 @@ export class Lobby {
   }
 
   /**
-   * #401 · the badge screen: the 93 visible achievements grouped by section,
+   * #401 · the badge screen: all 100 achievements grouped by section,
    * counters with their progress (3/7 days), hidden ones as ??? until earned.
    */
   _renderAchievements() {
