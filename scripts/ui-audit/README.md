@@ -26,3 +26,5 @@ The report built from these captures is in `docs/ui-review-2026-10-19/`.
 - `c-art-mode-only.css`: the painting on the mode screen only; the other steps use the full width.
 
 Round 2 (`a2-*.css`) builds on A with `extends:` partials: `_a2.css` (wordmark on the painting, two-line mode buttons, bigger bike chooser, redesigned phone-QR sheet and captain's room) and `_toggle-labels.css`. The three files differ only in where the toggles go: `a2-bottom` (bottom bar), `a2-top`, `a2-rail`. Screens: `--screens=mode,level,versus,host,phone`.
+
+Round 3 (`a3.css`, extends `a2-bottom`) adds proposal-only DOM through `/* script: … */` files (`_controls.js`: one Controls pill that names the controller, plus the Controls sheet on `--screens=controls`; `_join.js`: the stoker's join screen with an 8×4 on-screen keyboard on `--screens=join`). Script-made elements carry the class `mock-dom` and are removed between variants.

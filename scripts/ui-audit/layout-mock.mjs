@@ -29,6 +29,14 @@ function cssFor(name, seen = new Set()) {
 const variants = ['current', ...fs.readdirSync(DIR).filter((f) => /^[a-z].*\.css$/.test(f)).map((f) => f.slice(0, -4))]
   .filter((v) => !want.length || want.includes(v));
 const css = (v) => (v === 'current' ? '' : cssFor('_wide') + cssFor(v));
+// A variant's CSS (or anything it extends) may name proposal-only scripts:
+// `/* script: _controls */` runs layouts/_controls.js in the page. Scripts add
+// elements with class "mock-dom", which are removed before the next variant.
+const scriptsFor = (v) => {
+  if (v === 'current') return [];
+  const names = [...css(v).matchAll(/\/\*\s*script:\s*([^*]+)\*\//g)].flatMap((m) => m[1].split(',').map((x) => x.trim()));
+  return [...new Set(names)].map((n) => fs.readFileSync(path.join(DIR, n + '.js'), 'utf8'));
+};
 
 const h = await start({ out });
 const open = (pads, pucks) => h.open({ setup: (pg) => pg.setUserAgent(UA), storage: RETURNING, pads, pucks });
@@ -48,6 +56,14 @@ const SCREENS = {
     await click(p, '#btn-together'); await wait(1200); await click(p, '#btn-captain'); await wait(3000);
     return p;
   },
+  // Stoker: enter the captain's code with a DualSense.
+  async join() {
+    const p = await open(['dualsense']);
+    await click(p, '#btn-together'); await wait(1200); await click(p, '#btn-stoker'); await wait(1500);
+    return p;
+  },
+  // The Controls sheet (proposal): the mode screen; the variant's script opens it.
+  async controls() { const p = await open(['dualsense']); await wait(1000); return p; },
   // Phone as controller: the QR sheet over the mode screen.
   async phone() { const p = await open(['dualsense']); await wait(800); await click(p, '#btn-mode-phone'); await wait(3000); return p; },
 };
@@ -61,7 +77,11 @@ for (const name of screens) {
       if (!s) { s = document.createElement('style'); s.id = 'mock-layout'; document.head.appendChild(s); }
       s.textContent = text;
       window.dispatchEvent(new Event('resize'));
+      document.querySelectorAll('.mock-dom').forEach((e) => e.remove());
     }, css(v));
+    await p.evaluate((n) => { window.__mockScreen = n; }, name);
+    for (const js of scriptsFor(v)) await p.evaluate(`(() => { ${js}
+})()`);
     await wait(400);
     // The bike preview sizes its renderer once at startup; resize it to the new box.
     await p.evaluate(() => {
