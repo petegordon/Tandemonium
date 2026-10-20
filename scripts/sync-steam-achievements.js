@@ -24,8 +24,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const DEBUG = process.argv.includes('--debug');
 
 // ── Read achievements from the definitions module ────────────────
-// #401: all 100 (the 7 retired colours included — they stay on Steam so
-// nobody loses one). js/achievement-defs.js is ESM, so import it.
+// #401: all 100. js/achievement-defs.js is ESM, so import it.
 async function parseAchievementsFromCode() {
   const { pathToFileURL } = require('url');
   const defs = await import(pathToFileURL(path.join(__dirname, '..', 'js', 'achievement-defs.js')).href);
@@ -66,10 +65,7 @@ function describeCondition(id, fallback) {
     grandma_yellow: "Finish Grandma's House on the yellow bike",
     perfect_1k: "Finish Grandma's House with no crashes or restarts",
     team_player: '80%+ safe riding in multiplayer',
-    // F-1 · the loops the value & appeal plan built. The seven grandma_* entries
-    // above are retired from the in-game list but stay here: a Steam
-    // achievement that already exists must not be deleted out from under the
-    // people who earned it.
+    // F-1 · the loops the value & appeal plan built.
     daily_first: "Ride Today's Road",
     daily_streak_7: "Ride Today's Road seven days running",
     daily_streak_30: "Ride Today's Road thirty days running",
