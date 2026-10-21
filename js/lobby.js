@@ -2918,6 +2918,24 @@ export class Lobby {
       this._helpCredits = copy;
     }
 
+    // ── Join with a code (desktop keypad) ──
+    const joinCode = /** @type {any} */ ($('join-code-tv'));
+    if (joinCode) {
+      joinCode.addEventListener('submit', (e) => {
+        const status = $('join-status');
+        if (status) { status.textContent = 'Connecting...'; status.className = 'conn-status'; status.style.display = ''; }
+        this._joinRoom('TNDM-' + e.detail.code);
+      });
+      // A physical keyboard types straight in while the keypad is up.
+      window.addEventListener('keydown', (e) => {
+        if (!$('join-tv')?.classList.contains('on') || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.target instanceof HTMLInputElement) return;
+        if (e.key === 'Backspace') { joinCode.backspace(); e.preventDefault(); }
+        else if (e.key === 'Enter' && joinCode.complete) { joinCode.submit(); e.preventDefault(); }
+        else if (e.key.length === 1 && joinCode.type(e.key)) e.preventDefault();
+      });
+    }
+
     // ── Controls sheet ──
     const sheet = this._controlsSheet;
     sheet.attachFocus(this._stepFocus);
@@ -6495,6 +6513,24 @@ export class Lobby {
     const spinnerWrap = document.getElementById('gamepad-code-spinners');
     const inputWrap = document.querySelector('.room-code-join-wrap');
     if (!spinnerWrap || !inputWrap) return;
+    // Desktop/TV (#428): the kit keypad replaces the spinners. The step's
+    // spatial focus drives its keys (_applyStepSpatialFocus); Done joins.
+    const tvJoin = document.getElementById('join-tv');
+    if (tvJoin && this._tvQuery && this._tvQuery.matches) {
+      this._spinnerActive = false;
+      spinnerWrap.style.display = 'none';
+      inputWrap.style.display = show ? 'none' : '';
+      tvJoin.classList.toggle('on', show);
+      const joinBtn = document.getElementById('btn-join');
+      if (joinBtn) joinBtn.style.display = show ? 'none' : '';
+      if (show) {
+        const code = /** @type {any} */ (document.getElementById('join-code-tv'));
+        if (code) code.clear();
+        this._applyStepSpatialFocus(this.joinStep);
+      }
+      return;
+    }
+    if (tvJoin) tvJoin.classList.remove('on');
     this._spinnerActive = show;
     spinnerWrap.style.display = show ? '' : 'none';
     inputWrap.style.display = show ? 'none' : '';
@@ -7014,7 +7050,10 @@ export class Lobby {
   _applyStepSpatialFocus(step) {
     if (!step) return;
     if (this.input && this.input.gamepadConnected) {
-      const centerItems = this._stepCenterItems.get(step) || [];
+      // Desktop join step: the keypad's keys + Delete / Join are the scope.
+      const tvJoin = step === this.joinStep && document.getElementById('join-tv');
+      const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
+      const centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
       this._modeColumns[1] = centerItems;
       const defaultEl = centerItems[this._stepDefaultFocus.get(step) || 0] || null;
       this._stepFocus.setSpatial(this._modeColumns.flat(), defaultEl);

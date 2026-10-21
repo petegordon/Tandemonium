@@ -168,3 +168,18 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-host .host-tv p { margin: var(--uf-space-1) 0 0; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); max-width: 26em; }
   #lobby-host #host-team { margin-top: var(--uf-space-2); }
 }
+
+/* ── Join with a code: kit keypad (#428 round 3) ── */
+.join-tv { display: none; }
+@media (min-width: 1024px) {
+  #lobby-join .join-tv.on { display: grid; justify-items: center; gap: var(--uf-space-4); }
+  #lobby-join .join-tv h3 { margin: 0; font: 800 var(--uf-size-2xl)/1.15 var(--uf-font-ui); color: var(--uf-color-fg); }
+  #lobby-join .join-tv p { margin: calc(var(--uf-space-3) * -1) 0 0; font-size: var(--uf-size-md); color: var(--uf-color-fg-muted); }
+  #lobby-join:has(.join-tv.on) .lobby-prompt, #lobby-join:has(.join-tv.on) #gamepad-code-spinners { display: none !important; }
+}
+
+/* Ride Together's seat choice: a readable column, not full width. */
+@media (min-width: 1024px) {
+  #lobby-role[active] { max-width: 30em; margin: 0 auto !important; font-size: var(--uf-size-md); }
+  #lobby-role uf-button { font-size: var(--uf-size-lg); padding: var(--uf-space-4) var(--uf-space-5) !important; }
+}

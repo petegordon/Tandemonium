@@ -5880,6 +5880,15 @@ ON</button>
               <span class="spinner-submit-hint"><span id="spinner-back-icon" class="spinner-back-icon">B</span> Back</span>
             </div>
           </div>
+          <!-- Desktop/TV (#428): the joiner types the captain's code on an 8×4 kit keypad
+               (the 32 room-code characters) instead of four spinners that started at
+               "AAAA". Shown by lobby._showSpinners on desktop; Done joins. -->
+          <div id="join-tv" class="join-tv">
+            <h3>Join a ride</h3>
+            <p>Enter the code on the captain’s screen.</p>
+            <uf-join-code id="join-code-tv" mode="entry" code-prefix="TNDM–"></uf-join-code>
+            <uf-keypad id="join-keypad-tv" for="join-code-tv"></uf-keypad>
+          </div>
           <uf-button variant="accent" id="btn-join">JOIN</uf-button>
           <div id="join-status" class="conn-status"></div>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-role-join">&larr; Back</uf-button>
