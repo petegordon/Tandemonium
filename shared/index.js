@@ -37,6 +37,18 @@ export { SteamControllerDriver } from './drivers/steam-controller-driver.js';
 
 export { DEVICES, PENDING_DEVICES, PROTOCOLS } from './devices.js';
 
+export {
+  GLYPH_FAMILIES,
+  KEYBOARD_IDENTITY,
+  glyphFamilyOf,
+  shortNameOf,
+  identityOf,
+  identifyGamepadId,
+  identifyHidDevice,
+  readableGamepadName,
+  connectionOf,
+} from './device-identity.js';
+
 export { analyzeImuStep } from './imu-analysis.js';
 
 export {
