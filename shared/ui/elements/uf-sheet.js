@@ -52,7 +52,7 @@ export class UfSheet extends UfElement {
     uf-sheet[placement="side"][open] { place-items: stretch end; }
     uf-sheet[placement="bottom"][open] { place-items: end stretch; }
     uf-sheet > .uf-sheet__card { box-sizing: border-box; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: var(--uf-space-4);
-      width: min(var(--_w), calc(100% - 2 * var(--uf-space-5))); max-height: calc(100% - 2 * var(--uf-space-5));
+      width: min(var(--_w), calc(100% - 2 * var(--uf-space-5))); max-height: calc(100dvh - 2 * var(--uf-space-5));   /* dvh, not %: the sheet's grid row is auto-sized, so % never limited it */
       padding: var(--uf-space-5) var(--uf-space-6); border-radius: var(--uf-radius-lg); font-size: var(--uf-size-md);
       background: var(--uf-color-surface); border: 1px solid var(--uf-color-line-soft); box-shadow: var(--uf-shadow-card), 0 30px 80px rgba(0,0,0,.55); }
     uf-sheet[size="sm"] { --_w: 26em; } uf-sheet[size="md"] { --_w: 36em; } uf-sheet[size="lg"] { --_w: 52em; }

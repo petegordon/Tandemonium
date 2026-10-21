@@ -186,27 +186,26 @@ class EconomyMode {
    * bonuses, the multiplier, and the count rolling up to what was earned.
    */
   _renderRideCoins(box, s, wallet) {
-    const rows = [];
-    const row = (label, v, cls = 'row') => rows.push(`<div class="${cls}"><span>${label}</span><span>${v}</span></div>`);
-    row(`Distance (${fmt(s.metres)} m)`, `${COIN} ${fmt(s.distPay)}`);
-    if (s.pickupPay) row(`Pickups (${s.pickups})`, `${COIN} ${fmt(s.pickupPay)}`);
-    if (s.finishPay) row('Finished', `${COIN} ${fmt(s.finishPay)}`);
-    if (s.medalPay) row(`${s.medal[0].toUpperCase()}${s.medal.slice(1)} medal`, `${COIN} ${fmt(s.medalPay)}`);
-    if (s.bestPay) row('New best', `${COIN} ${fmt(s.bestPay)}`);
-    if (s.multiplier !== 1) row('Multiplier', `×${s.multiplier.toFixed(2)}`);
-    row('Earned', `${COIN} <span class="ride-coins-earned">0</span>`, 'row total');
-    box.innerHTML =
-      `<div class="ride-coins-head">+<span class="ride-coins-big">0</span> ${COIN} Chaos Coins</div>` +
-      `<div class="sling-rows">${rows.join('')}</div>` +
-      `<div class="ride-coins-wallet">Wallet: ${COIN} ${fmt(wallet.coins)}</div>`;
+    // A kit <uf-ledger> (#428): one coin breakdown for every end screen.
+    const items = [{ label: `Distance (${fmt(s.metres)} m)`, amount: s.distPay }];
+    if (s.pickupPay) items.push({ label: `Pickups (${s.pickups})`, amount: s.pickupPay });
+    if (s.finishPay) items.push({ label: 'Finished', amount: s.finishPay });
+    if (s.medalPay) items.push({ label: `${s.medal[0].toUpperCase()}${s.medal.slice(1)} medal`, amount: s.medalPay });
+    if (s.bestPay) items.push({ label: 'New best', amount: s.bestPay });
+    if (s.multiplier !== 1) items.push({ label: 'Multiplier', display: `×${s.multiplier.toFixed(2)}` });
+    box.replaceChildren();
+    const ledger = /** @type {any} */ (document.createElement('uf-ledger'));
+    Object.assign(ledger, { heading: 'Chaos Coins', unit: COIN });
+    ledger.items = items;
+    ledger.balance = wallet.coins;
+    ledger.total = 0;
+    box.appendChild(ledger);
     box.style.display = '';
-    const big = box.querySelector('.ride-coins-big'), earned = box.querySelector('.ride-coins-earned');
+    // Count the total up to what was earned.
     const total = s.total, t0 = performance.now(), DUR = 1100;
     const step = () => {
       const k = Math.min(1, (performance.now() - t0) / DUR);
-      const v = fmt(Math.round(total * (1 - Math.pow(1 - k, 3))));
-      big.textContent = v;
-      earned.textContent = v;
+      ledger.total = Math.round(total * (1 - Math.pow(1 - k, 3)));
       if (k < 1 && box.isConnected) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);

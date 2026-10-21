@@ -30,7 +30,7 @@ export class UfAchievement extends UfElement {
   };
 
   /** @override */ static styles = `
-    uf-achievement { --_tone: var(--uf-color-line-soft); display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--uf-space-3); align-items: center;
+    uf-achievement { --_tone: var(--uf-color-line-soft); text-align: left; display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--uf-space-3); align-items: center;
       padding: var(--uf-space-2) var(--uf-space-3); border-radius: var(--uf-radius-md); border: 1.5px solid var(--_tone); background: var(--uf-color-surface-3);
       font-family: var(--uf-font-ui); color: var(--uf-color-fg); min-width: 0; }
     uf-achievement[state="new"] { --_tone: var(--uf-color-accent-2); background: color-mix(in srgb, var(--uf-color-accent-2) 10%, var(--uf-color-surface-3)); }

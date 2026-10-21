@@ -16,7 +16,7 @@
 
 import { UfElement, prop, esc } from '../uf-element.js';
 
-/** @typedef {{ label: string, amount: number }} LedgerItem */
+/** @typedef {{ label: string, amount?: number, display?: string }} LedgerItem  `display` shows text instead of an amount (e.g. '×1.25') and is left out of the sum */
 
 export class UfLedger extends UfElement {
   /** @override */ static tag = 'uf-ledger';
@@ -53,7 +53,7 @@ export class UfLedger extends UfElement {
   /** @returns {LedgerItem[]} */ get items() { return this.#items; }
   /** @param {LedgerItem[]} v */ set items(v) { this.#items = Array.isArray(v) ? v : []; this.requestUpdate(); }
   /** Explicit total (defaults to the sum of the items). @returns {number} */
-  get total() { return this.#total ?? this.#items.reduce((a, i) => a + (Number(i.amount) || 0), 0); }
+  get total() { return this.#total ?? this.#items.reduce((a, i) => a + (i.display != null ? 0 : (Number(i.amount) || 0)), 0); }
   /** @param {number|null} v */ set total(v) { this.#total = v == null ? null : Number(v); this.requestUpdate(); }
   /** @returns {number|null} */ get balance() { return this.#balance; }
   /** @param {number|null} v */ set balance(v) { this.#balance = v == null ? null : Number(v); this.requestUpdate(); }
@@ -62,7 +62,7 @@ export class UfLedger extends UfElement {
   render() {
     const u = this.unit ? ` ${esc(this.unit)}` : '';
     const sign = this.total >= 0 ? '+' : '';
-    const rows = this.#items.map((i) => `<div class="ul-row"><span>${esc(i.label)}</span><b>${esc(i.amount)}${u}</b></div>`).join('');
+    const rows = this.#items.map((i) => `<div class="ul-row"><span>${esc(i.label)}</span><b>${i.display != null ? esc(i.display) : esc(i.amount) + u}</b></div>`).join('');
     return `<div class="ul-head">${sign}${esc(this.total)}${u} ${esc(this.heading)}</div>` + rows +
       (this.#items.length ? `<div class="ul-row ul-total"><span>${esc(this.totalLabel)}</span><b>${esc(this.total)}${u}</b></div>` : '') +
       (this.#balance != null ? `<div class="ul-balance">${esc(this.balanceLabel)}: ${esc(this.#balance)}${u}</div>` : '');

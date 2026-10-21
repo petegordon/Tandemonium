@@ -31,7 +31,7 @@ export class UfStat extends UfElement {
   };
 
   /** @override */ static styles = `
-    uf-stat { --_tone: var(--uf-color-fg); display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "icon value" "icon label";
+    uf-stat { --_tone: var(--uf-color-fg); text-align: left; display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "icon value" "icon label";
       column-gap: var(--uf-space-3); align-items: center; font-family: var(--uf-font-ui); color: var(--uf-color-fg); min-width: 0; }
     uf-stat[tone="accent"] { --_tone: var(--uf-color-accent); } uf-stat[tone="gold"] { --_tone: var(--uf-color-accent-2); }
     uf-stat[tone="danger"] { --_tone: var(--uf-color-danger); } uf-stat[tone="team-a"] { --_tone: var(--uf-color-team-a); } uf-stat[tone="team-b"] { --_tone: var(--uf-color-team-b); }
