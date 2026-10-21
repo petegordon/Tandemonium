@@ -7,6 +7,11 @@ export { UfElement, prop, coerce, esc, kebab } from './uf-element.js';
 export { FocusController } from './focus-controller.js';
 export { GamepadInput, ManualInput } from './inputs.js';
 // uf:elements — the scaffolder appends one line per element below this marker.
+export { UfPips } from './elements/uf-pips.js';
+export { UfPlayerCard } from './elements/uf-player-card.js';
+export { UfAchievement } from './elements/uf-achievement.js';
+export { UfLedger } from './elements/uf-ledger.js';
+export { UfStat } from './elements/uf-stat.js';
 export { UfQr, qrSvg } from './elements/uf-qr.js';
 export { UfKeypad } from './elements/uf-keypad.js';
 export { UfJoinCode, ROOM_CODE_ALPHABET } from './elements/uf-join-code.js';

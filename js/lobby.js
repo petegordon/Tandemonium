@@ -561,6 +561,12 @@ export class Lobby {
           ? ControllerRegistry.identifyFromGamepadId(slot.controllerLabel)
           : null;
         if (info?.hasGyro) {
+          // Gyro on by default (#428): bind an already-granted device now, no
+          // gesture needed (connectHidForSlot with prompt:false only pools what
+          // getDevices returns). 'hid-bound' below then switches motion on.
+          if (!slot._hidEntry && navigator.hid && this.controllerManager.connectHidForSlot) {
+            this.controllerManager.connectHidForSlot('P1', { prompt: false }).catch(() => {});
+          }
           this._showMotionToggle();
           // Reflect HID state in the active class: green when bound, off
           // (greyed) otherwise so the user knows it needs a click.
@@ -838,7 +844,12 @@ export class Lobby {
     // Hidden on all other steps (base CSS display:none).
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
-    if (selfieWrap && partnerWrap) {
+    // #428: no video PiPs unless media sharing is on (?media=1, #400 D7) — the
+    // room shows player cards instead.
+    if (selfieWrap && partnerWrap && !this._mediaEnabled) {
+      for (const w of [selfieWrap, partnerWrap]) w.classList.remove('pip-lobby-mode', 'pip-level-mode');
+      if (step === this.roomStep) this._renderRoomPlayers();
+    } else if (selfieWrap && partnerWrap) {
       const isRoom = (step === this.roomStep);
       const isMultiplayerLevel = (step === this.levelStep && this._pendingMode === 'multiplayer');
       selfieWrap.classList.toggle('pip-lobby-mode', isRoom);
@@ -883,31 +894,52 @@ export class Lobby {
    * @param {{ who?: string, dev?: string, state?: 'open'|'joined'|'ready' }} v
    */
   _setRoomSeat(which, v) {
-    const role = this._roomRole || 'captain';
-    const seatRole = which === 'self' ? role : (role === 'captain' ? 'stoker' : 'captain');
-    const el = document.getElementById(`room-video-slot-${seatRole}`);
-    if (!el) return;
-    if (v.who !== undefined) el.setAttribute('who', v.who);
-    if (v.dev !== undefined) el.setAttribute('dev', v.dev);
-    if (v.state !== undefined) el.setAttribute('state', v.state);
+    // #428: the room's seats are <uf-player-card>s now; the name is all a
+    // caller ever set here. The cards re-render from state.
+    if (which === 'partner' && v.who !== undefined) this._roomPartnerName = v.who;
+    this._renderRoomPlayers();
   }
 
   /** Both room seats from current state: me in my seat, the partner's seat open until they arrive. */
   _syncRoomSeats(role) {
     this._roomRole = role;
+    this._renderRoomPlayers();
+  }
+
+  /**
+   * The room's two player cards (#428; video sharing is off since #400 D7):
+   * my profile and recent achievements in my seat, the partner's once their
+   * profile message arrives, "Waiting for partner…" until then.
+   */
+  _renderRoomPlayers() {
+    const role = this._roomRole || 'captain';
+    const mine = document.getElementById(`room-player-${role}`);
+    const theirs = document.getElementById(`room-player-${role === 'captain' ? 'stoker' : 'captain'}`);
+    if (!mine || !theirs) return;
     const user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
-    this._setRoomSeat('self', { who: (user && user.name) || 'You', dev: role === 'captain' ? 'front seat' : 'back seat', state: 'joined' });
-    const nameEl = document.getElementById('room-partner-name');
-    const partnerName = nameEl ? nameEl.textContent.trim() : '';
+    const recent = (list) => (list || []).slice().sort((a, b) => (b.earnedAt || 0) - (a.earnedAt || 0)).slice(0, 3);
+    const fill = (card, { name, avatar, achievements, here, badge }) => {
+      Object.assign(card, { name, avatar: avatar || '', state: here ? 'here' : 'waiting', badge: badge || '' });
+      card.stats = here && achievements ? [{ value: achievements.length, label: 'Achievements' }] : [];
+      const box = card.extra;
+      box.replaceChildren(...(here ? recent(achievements) : []).map((a) => {
+        const el = document.createElement('uf-achievement');
+        Object.assign(el, { icon: a.icon || '🏅', name: a.name || a.id, size: 'sm', state: 'earned' });
+        return el;
+      }));
+    };
+    const myAch = this._achievements ? this._achievements.getEarned() : [];
+    fill(mine, { name: (user && user.name) || 'You', avatar: user && user.avatar, achievements: myAch, here: true, badge: 'You' });
     const connected = !!(this.net && this.net.connected);
-    this._setRoomSeat('partner', connected
-      ? { who: partnerName || 'Partner', dev: role === 'captain' ? 'back seat' : 'front seat', state: 'joined' }
-      : { who: 'OPEN', dev: 'waiting for partner…', state: 'open' });
+    const partnerName = this._roomPartnerName || (document.getElementById('room-partner-name')?.textContent || '').trim();
+    fill(theirs, connected
+      ? { name: partnerName || 'Partner', avatar: this._partnerAvatarUrl, achievements: this._partnerAchievements || [], here: true }
+      : { name: 'Waiting for partner…', here: false });
   }
 
   _positionPipToVideoArea() {
-    const captainSlot = document.getElementById('room-video-slot-captain');
-    const stokerSlot = document.getElementById('room-video-slot-stoker');
+    const captainSlot = document.getElementById('room-player-captain');
+    const stokerSlot = document.getElementById('room-player-stoker');
     if (!captainSlot || !stokerSlot) return;
     const cRect = captainSlot.getBoundingClientRect();
     const sRect = stokerSlot.getBoundingClientRect();
@@ -2918,6 +2950,24 @@ export class Lobby {
       this._helpCredits = copy;
     }
 
+    // ── Esc = Back for keyboard / mouse players (#428) ──
+    // Closes whatever is open first (a kit sheet handles its own Esc and
+    // marks the event; help, leaderboard, profile and volume popups here),
+    // then steps back like ◯ / B. A text field keeps its own Esc.
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (!this.lobbyEl || this.lobbyEl.style.display === 'none') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (document.querySelector('#phone-pad-panel.open')) return;   // the phone panel closes itself
+      if (this.helpModal && this.helpModal.classList.contains('visible')) { this._closeHelp(); e.preventDefault(); return; }
+      const lb = $('leaderboard-modal');
+      if (lb && lb.style.display !== 'none') { this._closeLeaderboard(); e.preventDefault(); return; }
+      if (this.profilePopup && this.profilePopup.classList.contains('visible')) { this.profilePopup.classList.remove('visible'); e.preventDefault(); return; }
+      if (this._volumePicker && this._volumePicker.classList.contains('visible')) { this._hideVolumePicker(); e.preventDefault(); return; }
+      const flow = $('lobby-flow');
+      if (flow && flow.current && flow.current !== 'lobby-mode') { this._goBack(); e.preventDefault(); }
+    });
+
     // ── Join with a code (desktop keypad) ──
     const joinCode = /** @type {any} */ ($('join-code-tv'));
     if (joinCode) {
@@ -3032,7 +3082,13 @@ export class Lobby {
     const set = (sid, prop, v) => { const el = document.getElementById(sid); if (el && el[prop] !== v) el[prop] = v; };
     set('set-stick', 'checked', stick);
     set('set-gyro', 'checked', gyro);
-    set('set-gyro', 'description', this._motionAvailable() || (this.input && this.input.gamepadConnected && navigator.hid) ? 'Tilt the controller to lean' : 'Not available on this controller');
+    // Gyro defaults on whenever the controller's motion sensors are bound
+    // (the desktop app grants every controller, so that's automatic there).
+    // A browser that hasn't granted this controller yet needs one click.
+    const gyroCapable = !!(id && id.entry && id.entry.capabilities && id.entry.capabilities.gyro);
+    set('set-gyro', 'description', !gyroCapable ? 'Not available on this controller'
+      : (gyro || this._motionPermitted) ? 'Tilt the controller to lean'
+      : 'Turn on to connect the gyro (your browser asks once)');
     const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
     const roster = document.getElementById('controls-roster');
     if (roster && this.controllerManager?.controllerRoster) {
@@ -4524,6 +4580,7 @@ export class Lobby {
         this._partnerAchievements = profile.achievements;
         const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
         updateBadgeDisplay('partner-badges', profile.achievements, shape);
+        this._renderRoomPlayers();
       }
       if (profile) this._notePartnerRoom(profile);   // PR #397 M1
       return;

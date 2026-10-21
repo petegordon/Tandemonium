@@ -40,6 +40,9 @@ export class UfSheet extends UfElement {
     placement: prop.enum(/** @type {const} */ (['center', 'side', 'bottom']), 'center'),
     size: prop.enum(/** @type {const} */ (['sm', 'md', 'lg']), 'md'),
     dismissible: prop.boolean(true),
+    // A result screen's headline: big, centred, in the tone's colour ('YOU MADE IT!', 'TEAM BLUE WINS!').
+    tone: prop.enum(/** @type {const} */ (['neutral', 'accent', 'danger', 'gold', 'team-a', 'team-b']), 'neutral'),
+    headline: prop.boolean(false),
   };
 
   /** @override */ static styles = `
@@ -56,7 +59,12 @@ export class UfSheet extends UfElement {
     uf-sheet[placement="side"] > .uf-sheet__card { height: 100%; max-height: none; border-radius: 0; width: min(var(--_w), 100%); }
     uf-sheet[placement="bottom"] > .uf-sheet__card { width: 100%; border-radius: var(--uf-radius-lg) var(--uf-radius-lg) 0 0; }
     uf-sheet .uf-sheet__head { display: flex; align-items: center; justify-content: space-between; gap: var(--uf-space-4); }
-    uf-sheet .uf-sheet__title { margin: 0; font: 800 var(--uf-size-xl)/1.15 var(--uf-font-ui); }
+    uf-sheet .uf-sheet__title { margin: 0; font: 800 var(--uf-size-xl)/1.15 var(--uf-font-ui); color: var(--_tone, var(--uf-color-fg)); }
+    uf-sheet[tone="accent"] { --_tone: var(--uf-color-accent); } uf-sheet[tone="danger"] { --_tone: var(--uf-color-danger); } uf-sheet[tone="gold"] { --_tone: var(--uf-color-accent-2); }
+    uf-sheet[tone="team-a"] { --_tone: var(--uf-color-team-a); } uf-sheet[tone="team-b"] { --_tone: var(--uf-color-team-b); }
+    uf-sheet[headline] .uf-sheet__head { justify-content: center; position: relative; }
+    uf-sheet[headline] .uf-sheet__title { font-size: calc(var(--uf-size-2xl) * 1.35); letter-spacing: .04em; text-align: center; text-transform: uppercase; }
+    uf-sheet[headline] .uf-sheet__close { position: absolute; right: 0; top: 0; }
     uf-sheet .uf-sheet__close { display: inline-flex; align-items: center; gap: .45em; padding: .3em .6em; border-radius: var(--uf-radius-sm);
       font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); cursor: pointer; background: none; border: none; font-family: inherit; }
     uf-sheet .uf-sheet__close:hover { color: var(--uf-color-fg); }
@@ -88,6 +96,11 @@ export class UfSheet extends UfElement {
 
   /** @returns {'sm' | 'md' | 'lg'} */ get size() { return this.get('size'); }
   /** @param {'sm' | 'md' | 'lg'} v */ set size(v) { this.set('size', v); }
+
+  /** @returns {'neutral' | 'accent' | 'danger' | 'gold' | 'team-a' | 'team-b'} */ get tone() { return this.get('tone'); }
+  /** @param {'neutral' | 'accent' | 'danger' | 'gold' | 'team-a' | 'team-b'} v */ set tone(v) { this.set('tone', v); }
+  /** @returns {boolean} */ get headline() { return this.get('headline'); }
+  /** @param {boolean} v */ set headline(v) { this.set('headline', v); }
 
   /** @returns {boolean} */ get dismissible() { return this.get('dismissible'); }
   /** @param {boolean} v */ set dismissible(v) { this.set('dismissible', v); }

@@ -5901,18 +5901,18 @@ ON</button>
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-room" class="lobby-step">
-          <!-- Room (#173): built from the kit. Room code is a chip; the two
-               video slots are <uf-seat>s — who sits where, and whether they
-               are here — framing the body-level video PiPs that overlay them
-               (iOS constraint: <video> never moves; layout is CSS-only). -->
+          <!-- Room (#173, #428): no video (sharing is off since #400 D7). Two kit
+               <uf-player-card>s — who sits where, their profile and recently earned
+               achievements (<uf-achievement size=sm>) — filled by lobby._syncRoomSeats
+               and the partner's profile message. -->
           <div id="room-center-wrap">
             <div id="room-partner-info">
               <uf-chip tone="info" id="room-code-label" class="room-code-label"></uf-chip>
               <div id="room-partner-name"></div>
             </div>
-            <div id="room-video-area">
-              <uf-seat id="room-video-slot-captain" class="room-video-slot" seat="Captain" tone="captain" who="OPEN" dev="waiting for partner…" state="open"></uf-seat>
-              <uf-seat id="room-video-slot-stoker" class="room-video-slot" seat="Stoker" tone="stoker" who="OPEN" dev="waiting for partner…" state="open"></uf-seat>
+            <div id="room-players">
+              <uf-player-card id="room-player-captain" subtitle="Captain · front seat" tone="captain" name="Waiting for partner…" state="waiting"></uf-player-card>
+              <uf-player-card id="room-player-stoker" subtitle="Stoker · back seat" tone="stoker" name="Waiting for partner…" state="waiting"></uf-player-card>
             </div>
           </div>
           <!-- Full-span rows below center -->
