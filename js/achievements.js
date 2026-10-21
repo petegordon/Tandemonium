@@ -405,10 +405,20 @@ export function showAchievementToast(achievement) {
     }
   }
 
+  // A kit <uf-achievement state="new"> (#428). While an end-of-ride sheet is
+  // up, it joins that sheet's "unlocked this ride" list instead of floating
+  // over the headline.
+  const badge = /** @type {any} */ (document.createElement('uf-achievement'));
+  Object.assign(badge, { icon: achievement.icon || '🏅', name: achievement.name || '', state: 'new', size: 'sm' });
+  const endList = document.querySelector('#victory-overlay.visible #victory-unlocked, #gameover-overlay:not([style*="none"]) #gameover-unlocked');
+  if (endList) {
+    endList.hidden = false;
+    endList.appendChild(badge);
+    return;
+  }
   const toast = document.createElement('div');
   toast.className = 'achievement-toast';
-  toast.innerHTML = '<span class="toast-icon">' + achievement.icon + '</span>' +
-    '<div class="toast-text"><strong>' + achievement.name + '</strong><br><small>Achievement Unlocked!</small></div>';
+  toast.appendChild(badge);
 
   _toastContainer.appendChild(toast);
 

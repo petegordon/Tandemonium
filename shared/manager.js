@@ -20,6 +20,7 @@
 // ============================================================
 
 import { ControllerRegistry } from './drivers/controller-registry.js';
+import { identityOf, identifyGamepadId, identifyHidDevice, connectionOf, KEYBOARD_IDENTITY } from './device-identity.js';
 // NOTE: SensorFusion (and its `three` dependency) is loaded lazily in
 // poolDevice — the only place a real fusion is constructed — so importing
 // this module for its slot/claim/reconnect logic doesn't drag in `three`.
@@ -1426,4 +1427,171 @@ export class ControllerManager {
     this._hidConnectHandler = null;
     this._hidDisconnectHandler = null;
   }
+
+  // ── Display identity + roster (docs/UI-KIT-TV-COMPONENTS.md §1–2) ──
+
+  /**
+   * What to call the controller in a slot. Prefers the bound HID driver's
+   * entry: a GameSir Super Nova claims over the Gamepad API as a Sony pad, but
+   * once its HID handle is bound the driver knows what it is. Then the
+   * Gamepad-API label, then the raw HID product string.
+   * @param {Slot|string} slotOrId
+   * @returns {import('./device-identity.js').DeviceIdentity}
+   */
+  slotIdentity(slotOrId) {
+    const s = typeof slotOrId === 'string' ? this.getSlot(slotOrId) : slotOrId;
+    if (!s) return identityOf(null);
+    if (s.driver && s.driver.entry) return identityOf(s.driver.entry);
+    if (s.controllerLabel) {
+      const byLabel = identifyGamepadId(s.controllerLabel);
+      if (byLabel.entry) return byLabel;
+    }
+    if (s.hidDevice) return identifyHidDevice(s.hidDevice);
+    return s.controllerLabel ? identifyGamepadId(s.controllerLabel) : identityOf(null);
+  }
+
+  /**
+   * Every controller this page can see, one row each, in the words the seat
+   * screens use: CONNECTED (paired or plugged in, no slot) → JOINED (claimed a
+   * slot) → SEATED → READY. Seats are the app's business, so the app answers
+   * `seatOf(slotId)`; core only reports.
+   *
+   * Three sources, the same buckets the lab lobby's Controllers panel listed:
+   *   claimed slots          → joined / seated / ready
+   *   pooled WebHID entries  → connected  (idle Puck receiver siblings hidden)
+   *   unclaimed Gamepad pads → connected  (stuck-stick BT ghosts and pads the
+   *                            host's padFilter rejects are skipped; a pad whose
+   *                            vid:pid is already a pooled entry isn't repeated)
+   * plus an optional keyboard row.
+   *
+   * @param {Array<Gamepad|null>} pads navigator.getGamepads() snapshot
+   * @param {{
+   *   seatOf?: (slotId: string) => (RosterSeatInfo|null|undefined),
+   *   keyboard?: boolean | RosterSeatInfo,
+   * }} [opts]
+   * @returns {RosterEntry[]}
+   */
+  controllerRoster(pads = [], { seatOf, keyboard } = {}) {
+    const list = Array.isArray(pads) ? pads : [...(pads || [])];
+    /** @type {RosterEntry[]} */
+    const rows = [];
+    const claimedIdx = new Set();
+
+    const withSeat = (row, info) => {
+      if (info && info.player != null) row.player = info.player;
+      if (info && info.seat) {
+        // The app's own seat description, passed through: core knows nothing
+        // about a game's roles or teams (team / role / label / tone are the
+        // app's words — e.g. { team: 'red', role: 'player', label: 'P2' }).
+        row.seat = { team: null, role: null, ...info.seat };
+        row.state = info.ready ? 'ready' : 'seated';
+      }
+      return row;
+    };
+
+    for (const s of this.slots) {
+      if (s.state !== 'claimed') continue;
+      if (s.gamepadIndex != null) claimedIdx.add(s.gamepadIndex);
+      const id = this.slotIdentity(s);
+      const dev = s.hidDevice;
+      const row = {
+        key: 's:' + s.id, kind: 'slot', slotId: s.id, gamepadIndex: s.gamepadIndex,
+        state: 'joined', player: null, seat: null,
+        name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB,
+        connection: connectionOf({ driver: s.driver, device: dev }),
+        vendorId: dev ? dev.vendorId : (ControllerRegistry.parseGamepadVendorProduct(s.controllerLabel)?.vendorId ?? null),
+        productId: dev ? dev.productId : (ControllerRegistry.parseGamepadVendorProduct(s.controllerLabel)?.productId ?? null),
+        hwName: (dev && dev.productName) || '',
+        active: gamepadHasActivity(s.effectiveGamepad(list), 0.5),
+        device: dev || null,
+      };
+      rows.push(withSeat(row, typeof seatOf === 'function' ? seatOf(s.id) : null));
+    }
+
+    let hi = 0;
+    const pooledVp = new Set();
+    for (const entry of this.presentablePoolEntries()) {
+      const dev = entry.device || null;
+      if (dev) pooledVp.add(dev.vendorId + ':' + dev.productId);
+      const id = entry.driver && entry.driver.entry ? identityOf(entry.driver.entry) : identifyHidDevice(dev);
+      rows.push({
+        // index in the key: two identical-vid:pid devices (real DS4 + GameSir
+        // spoof) would otherwise collide to one row.
+        key: 'h:' + (hi++) + ':' + (dev ? dev.vendorId : 0) + ':' + (dev ? dev.productId : 0),
+        kind: 'pool', slotId: null, gamepadIndex: null,
+        state: 'connected', player: null, seat: null,
+        name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB,
+        connection: connectionOf({ driver: entry.driver, device: dev }),
+        vendorId: dev ? dev.vendorId : null, productId: dev ? dev.productId : null,
+        hwName: (dev && dev.productName) || '',
+        active: gamepadHasActivity(entry.synthetic, 0.5),
+        device: dev,
+      });
+    }
+
+    for (const gp of list) {
+      if (!gp || claimedIdx.has(gp.index)) continue;
+      if (!this._padAllowed(gp)) continue;
+      const axes = gp.axes || [];
+      if (Math.max(0, ...axes.slice(0, 4).map((a) => Math.abs(a || 0))) > 0.5) continue;   // stuck-stick BT ghost
+      const vp = ControllerRegistry.parseGamepadVendorProduct(gp.id);
+      if (vp && pooledVp.has(vp.vendorId + ':' + vp.productId)) continue;   // already a pooled row
+      const id = identifyGamepadId(gp.id);
+      rows.push({
+        key: 'g:' + gp.index, kind: 'pad', slotId: null, gamepadIndex: gp.index,
+        state: 'connected', player: null, seat: null,
+        name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB,
+        connection: 'gamepad',
+        vendorId: vp ? vp.vendorId : null, productId: vp ? vp.productId : null,
+        hwName: '', active: gamepadHasActivity(gp, 0.5), device: null,
+      });
+    }
+
+    if (keyboard) {
+      const k = KEYBOARD_IDENTITY;
+      rows.push(withSeat({
+        key: 'k', kind: 'keyboard', slotId: null, gamepadIndex: null,
+        state: 'connected', player: null, seat: null,
+        name: k.name, shortName: k.shortName, glyphFamily: k.glyphFamily, swapAB: false,
+        connection: 'keyboard', vendorId: null, productId: null, hwName: '', active: false, device: null,
+      }, typeof keyboard === 'object' ? keyboard : null));
+    }
+    return rows;
+  }
 }
+
+/**
+ * A seat, in the app's own words. Core passes it through untouched; it never
+ * interprets team or role names (a game might use teams 'red' / 'blue' and
+ * roles 'player', 'driver', 'gunner' …). `label` and `tone` are hints for a UI
+ * (uf-controller-roster shows `label` on the seat badge and colours it by
+ * `tone`); any other fields are carried along too.
+ * @typedef {{ team?: string|null, role?: string|null, label?: string, tone?: string, [key: string]: any }} RosterSeat
+ */
+/**
+ * What the app tells controllerRoster about a slot it has seated.
+ * @typedef {object} RosterSeatInfo
+ * @property {number} [player]  1-based player number, if the app numbers players
+ * @property {RosterSeat} [seat]  present only when seated
+ * @property {boolean} [ready]
+ */
+/**
+ * @typedef {object} RosterEntry
+ * @property {string} key  stable per row ('s:P1', 'h:0:1356:3302', 'g:2', 'k')
+ * @property {'slot' | 'pool' | 'pad' | 'keyboard'} kind
+ * @property {string|null} slotId
+ * @property {number|null} gamepadIndex
+ * @property {'connected' | 'joined' | 'seated' | 'ready'} state
+ * @property {number|null} player
+ * @property {RosterSeat|null} seat
+ * @property {string} name
+ * @property {string} shortName
+ * @property {import('./device-identity.js').GlyphFamily} glyphFamily
+ * @property {boolean} swapAB
+ * @property {'usb' | 'bluetooth' | 'puck' | 'webhid' | 'gamepad' | 'keyboard'} connection
+ * @property {number|null} vendorId
+ * @property {number|null} productId
+ * @property {string} hwName  raw HID product string (tells two same-vid:pid pads apart)
+ * @property {boolean} active  input in this frame
+ * @property {object|null} device  the HIDDevice, when there is one
+ */

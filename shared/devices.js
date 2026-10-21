@@ -133,8 +133,8 @@ const HAPTICS = {
 export const DEVICES = [
   // ── Sony DualSense (PS5) ──
   // imuSignature: 'sony-ds5' — IMU at byte 15 (DualSense layout)
-  { name: 'Sony DualSense',         vendorId: 0x054c, productId: 0x0ce6, protocol: 'dualsense', mode: 'ds5', imuSignature: 'sony-ds5', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds5, gamepadIdPattern: PLAYSTATION_ID },
-  { name: 'Sony DualSense Edge',    vendorId: 0x054c, productId: 0x0df2, protocol: 'dualsense', mode: 'ds5', imuSignature: 'sony-ds5', capabilities: PS_CAPS, features: PS_EDGE_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds5, gamepadIdPattern: PLAYSTATION_ID },
+  { name: 'Sony DualSense', shortName: 'DualSense',         vendorId: 0x054c, productId: 0x0ce6, protocol: 'dualsense', mode: 'ds5', imuSignature: 'sony-ds5', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds5, gamepadIdPattern: PLAYSTATION_ID },
+  { name: 'Sony DualSense Edge', shortName: 'DualSense Edge',    vendorId: 0x054c, productId: 0x0df2, protocol: 'dualsense', mode: 'ds5', imuSignature: 'sony-ds5', capabilities: PS_CAPS, features: PS_EDGE_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds5, gamepadIdPattern: PLAYSTATION_ID },
 
   // ── Sony DualShock 4 (PS4) ──
   // Same protocol class as DualSense; mode='ds4' selects the DS4 input-report
@@ -145,8 +145,8 @@ export const DEVICES = [
   // default offset, overriding only when it scores implausibly. imuSignature
   // 'sony-ds4' is retained but cannot distinguish a real DS4 from a GameSir at
   // the same vid:pid (identical IMU layout).
-  { name: 'Sony DualShock 4 v1',    vendorId: 0x054c, productId: 0x05c4, protocol: 'dualsense', mode: 'ds4', imuSignature: 'sony-ds4', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds4, gamepadIdPattern: PLAYSTATION_ID },
-  { name: 'Sony DualShock 4 v2',    vendorId: 0x054c, productId: 0x09cc, protocol: 'dualsense', mode: 'ds4', imuSignature: 'sony-ds4', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds4, gamepadIdPattern: PLAYSTATION_ID },
+  { name: 'Sony DualShock 4 v1', shortName: 'DualShock 4',    vendorId: 0x054c, productId: 0x05c4, protocol: 'dualsense', mode: 'ds4', imuSignature: 'sony-ds4', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds4, gamepadIdPattern: PLAYSTATION_ID },
+  { name: 'Sony DualShock 4 v2', shortName: 'DualShock 4',    vendorId: 0x054c, productId: 0x09cc, protocol: 'dualsense', mode: 'ds4', imuSignature: 'sony-ds4', capabilities: PS_CAPS, features: PS_FEATURES, trackpadCount: 1, haptics: HAPTICS.ds4, gamepadIdPattern: PLAYSTATION_ID },
 
   // ── GameSir DS4-mode family ──
   // Both Super Nova and Cyclone 2 spoof Sony's DS4 v2 USB identity
@@ -164,6 +164,7 @@ export const DEVICES = [
   // offset 12) — the spoof-picker UI handles that final disambiguation.
   {
     name: 'GameSir Super Nova (DS4 mode)',
+    shortName: 'Super Nova',
     vendorId: 0x054c, productId: 0x09cc,
     protocol: 'dualsense', mode: 'ds4', imuSignature: 'gamesir-ds4',
     capabilities: PS_CAPS,
@@ -179,6 +180,7 @@ export const DEVICES = [
   },
   {
     name: 'GameSir Cyclone 2 (DS4 mode)',
+    shortName: 'Cyclone 2',
     vendorId: 0x054c, productId: 0x09cc,
     protocol: 'dualsense', mode: 'ds4', imuSignature: 'gamesir-ds4',
     capabilities: PS_CAPS,
@@ -190,7 +192,7 @@ export const DEVICES = [
   },
 
   // ── Nintendo Switch Pro ──
-  { name: 'Nintendo Switch Pro',    vendorId: 0x057e, productId: 0x2009, protocol: 'switch-pro', capabilities: SWITCH_CAPS, features: SWITCH_FEATURES, trackpadCount: 0, haptics: HAPTICS.switchPro, gamepadIdPattern: SWITCH_PRO_ID },
+  { name: 'Nintendo Switch Pro', shortName: 'Switch Pro',    vendorId: 0x057e, productId: 0x2009, protocol: 'switch-pro', capabilities: SWITCH_CAPS, features: SWITCH_FEATURES, trackpadCount: 0, haptics: HAPTICS.switchPro, gamepadIdPattern: SWITCH_PRO_ID },
 
   // ── GameSir Cyclone (Switch mode) ──
   // Same vid:pid as Switch Pro but reports gamepad.id as "Gamepad" rather
@@ -198,6 +200,7 @@ export const DEVICES = [
   // Nintendo A/B button order, hence the swapAB quirk.
   {
     name: 'GameSir Cyclone (Switch mode)',
+    shortName: 'Cyclone',
     vendorId: 0x057e, productId: 0x2009,
     protocol: 'switch-pro',
     capabilities: SWITCH_CAPS,
@@ -211,11 +214,11 @@ export const DEVICES = [
   },
 
   // ── Xbox family (identity-only — Gamepad API handles input) ──
-  { name: 'Xbox Wireless (BT)',     vendorId: 0x045e, productId: 0x0b12, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
-  { name: 'Xbox Series X|S',        vendorId: 0x045e, productId: 0x0b13, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
-  { name: 'Xbox Elite v2',          vendorId: 0x045e, productId: 0x02fd, protocol: 'xbox', capabilities: NO_CAPS, features: { ...XBOX_FEATURES, backPaddles: true }, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
-  { name: 'Xbox One',               vendorId: 0x045e, productId: 0x02e0, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
-  { name: 'Xbox 360',               vendorId: 0x045e, productId: 0x028e, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox360, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox Wireless (BT)', shortName: 'Xbox Wireless',     vendorId: 0x045e, productId: 0x0b12, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox Series X|S', shortName: 'Xbox Series',        vendorId: 0x045e, productId: 0x0b13, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox Elite v2', shortName: 'Xbox Elite',          vendorId: 0x045e, productId: 0x02fd, protocol: 'xbox', capabilities: NO_CAPS, features: { ...XBOX_FEATURES, backPaddles: true }, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox One', shortName: 'Xbox One',               vendorId: 0x045e, productId: 0x02e0, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox, gamepadIdPattern: XBOX_ID },
+  { name: 'Xbox 360', shortName: 'Xbox 360',               vendorId: 0x045e, productId: 0x028e, protocol: 'xbox', capabilities: NO_CAPS, features: XBOX_FEATURES, trackpadCount: 0, haptics: HAPTICS.xbox360, gamepadIdPattern: XBOX_ID },
 
   // ── Steam Controller (2026) — two USB identities for one physical pad ──
   //
@@ -255,6 +258,7 @@ export const DEVICES = [
   // the driver (it accepts whichever id the firmware actually emits).
   {
     name: 'Steam Controller 2026 (direct USB-C)',
+    shortName: 'Steam Controller',
     vendorId: 0x28de, productId: 0x1302,
     protocol: 'steam-controller',
     capabilities: PS_CAPS,
@@ -266,6 +270,7 @@ export const DEVICES = [
   },
   {
     name: 'Steam Controller 2026 (via Puck)',
+    shortName: 'Steam Controller',
     vendorId: 0x28de, productId: 0x1304,
     protocol: 'steam-controller',
     capabilities: PS_CAPS,
