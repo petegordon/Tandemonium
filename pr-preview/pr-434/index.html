@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'4127382',pr:434,time:'10-20-2026 22:12'}</script><base href="/pr-preview/pr-434/">
+<head><script>window.__BUILD={sha:'cb7c995',pr:434,time:'10-20-2026 23:10'}</script><base href="/pr-preview/pr-434/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
@@ -364,19 +364,7 @@
   .sling-wallet { font-size: 18px; font-weight: 800; color: var(--uf-color-accent-2); margin-bottom: 4px; }
   .sling-sub { font-size: 13px; color: rgba(255,255,255,0.75); margin-bottom: 10px; max-width: 420px; }
   .sling-list { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 420px; margin-bottom: 12px; }
-  .sling-up {
-    display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
-    padding: 8px 10px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.06); color: #fff; font: inherit; cursor: pointer;
-  }
-  .sling-up:focus, .sling-up.gamepad-focus { outline: none; border-color: var(--uf-color-accent-2); }
-  .sling-up[disabled] { opacity: 0.45; cursor: default; }
-  .sling-up .ico { font-size: 22px; }
-  .sling-up .txt { flex: 1; }
-  .sling-up .txt b { display: block; font-size: 14px; }
-  .sling-up .txt small { font-size: 11px; color: rgba(255,255,255,0.65); }
-  .sling-up .pips { font-size: 10px; letter-spacing: 1px; color: var(--uf-color-accent-2); }
-  .sling-up .price { font-weight: 800; color: var(--uf-color-accent-2); white-space: nowrap; }
+  /* upgrade rows are kit <uf-card layout="row"> (#428); only the list width lives here */
   .sling-rows { width: 100%; max-width: 300px; margin: 8px 0 12px; }
   .sling-rows .row { display: flex; justify-content: space-between; font-size: 14px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
   .sling-rows .row.total { font-weight: 800; color: var(--uf-color-accent-2); border-bottom: none; font-size: 16px; }
@@ -385,7 +373,6 @@
   .sling-buttons { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 300px; margin: 6px 0 12px; }
   /* #400 D4/D5 · one garage for every mode, and every ride's coin tally */
   .sling-lock { font-size: 14px; font-weight: 700; color: var(--uf-color-accent-2); padding: 6px 10px; border: 1px dashed rgba(255,210,63,0.6); border-radius: 8px; }
-  .sling-up .price small.gain { display: block; font-size: 11px; font-weight: 700; color: #9dff9d; text-align: right; }
   .sling-rebuilds { background: var(--uf-color-accent-2); vertical-align: middle; }
   .ride-coins { width: 100%; max-width: 320px; margin: 8px auto 4px; text-align: center; }
   .ride-coins-head { font-size: 22px; font-weight: 900; color: var(--uf-color-accent-2); }
@@ -3119,51 +3106,9 @@
     text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
     pointer-events: none;
   }
-  /* Results overlay */
-  #versus-results {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.65);
-  }
-  .vr-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 14px;
-    padding: 28px 36px;
-    border-radius: 16px;
-    background: rgba(20, 24, 40, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    text-align: center;
-  }
-  .vr-title {
-    font-size: clamp(22px, 4vw, 40px);
-    font-weight: 900;
-    letter-spacing: 0.08em;
-  }
-  .vr-teams {
-    display: flex;
-    gap: 28px;
-  }
-  .vr-team {
-    min-width: 130px;
-    padding: 10px 14px;
-    border-radius: 10px;
-    border: 1px solid var(--vh-color);
-  }
-  .vr-team-name {
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    color: var(--vh-color);
-  }
-  .vr-outcome { font-size: 20px; font-weight: 800; margin: 4px 0; }
-  .vr-detail { font-size: 11px; opacity: 0.7; }
+  /* Results overlay: a kit <uf-sheet headline> (#428); only the body layout lives here. */
+  #versus-results .vr-card { display: grid; gap: var(--uf-space-4); justify-items: center; }
+  #versus-results .vr-teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--uf-space-4); width: 100%; }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -5069,6 +5014,7 @@
 </style>
 <!-- Desktop/TV layout A (#428): after the inline styles so it wins at equal specificity. -->
 <link rel="stylesheet" href="css/lobby-tv.css">
+<link rel="stylesheet" href="css/end-screens.css">
 </head>
 <body>
 
@@ -5901,18 +5847,18 @@ ON</button>
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-room" class="lobby-step">
-          <!-- Room (#173): built from the kit. Room code is a chip; the two
-               video slots are <uf-seat>s — who sits where, and whether they
-               are here — framing the body-level video PiPs that overlay them
-               (iOS constraint: <video> never moves; layout is CSS-only). -->
+          <!-- Room (#173, #428): no video (sharing is off since #400 D7). Two kit
+               <uf-player-card>s — who sits where, their profile and recently earned
+               achievements (<uf-achievement size=sm>) — filled by lobby._syncRoomSeats
+               and the partner's profile message. -->
           <div id="room-center-wrap">
             <div id="room-partner-info">
               <uf-chip tone="info" id="room-code-label" class="room-code-label"></uf-chip>
               <div id="room-partner-name"></div>
             </div>
-            <div id="room-video-area">
-              <uf-seat id="room-video-slot-captain" class="room-video-slot" seat="Captain" tone="captain" who="OPEN" dev="waiting for partner…" state="open"></uf-seat>
-              <uf-seat id="room-video-slot-stoker" class="room-video-slot" seat="Stoker" tone="stoker" who="OPEN" dev="waiting for partner…" state="open"></uf-seat>
+            <div id="room-players">
+              <uf-player-card id="room-player-captain" subtitle="Captain · front seat" tone="captain" name="Waiting for partner…" state="waiting"></uf-player-card>
+              <uf-player-card id="room-player-stoker" subtitle="Stoker · back seat" tone="stoker" name="Waiting for partner…" state="waiting"></uf-player-card>
             </div>
           </div>
           <!-- Full-span rows below center -->
@@ -6028,7 +5974,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.4127382 | 10-20-2026 22:12 (PR #434)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.cb7c995 | 10-20-2026 23:10 (PR #434)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6293,73 +6239,83 @@ ON</button>
 
 <!-- Game Over overlay -->
 <div id="gameover-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p id="gameover-title" style="color:var(--uf-color-danger)">GAME OVER</p>
-    <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
-    <div id="gameover-help" class="help-announce" style="display:none;"></div>
-    <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
-    <div id="gameover-coins" class="ride-coins" style="display:none;"></div>
-    <uf-button id="btn-gameover-clip" style="margin-bottom:10px;display:none;">&#x1F3AC; SAVE CLIP</uf-button>
-    <uf-button variant="accent" id="btn-restart">RESTART</uf-button>
-    <uf-button id="btn-skip-checkpoint" style="margin-top:10px;display:none;">&#x1F451; Take the Royal Shortcut</uf-button>
-    <!-- #403 · a failed ranked run: the attempt is spent; ride the road as practice. -->
-    <uf-button id="btn-practice-help" style="margin-top:10px;display:none;">&#x1F6DF; Ride it as practice — with a helping hand</uf-button>
-    <uf-button id="btn-gameover-room" style="margin-top:10px;display:none;">RETURN TO ROOM</uf-button>
-    <uf-button id="btn-gameover-lobby" style="margin-top:10px;">END RIDE TOGETHER</uf-button>
-    <uf-button id="btn-gameover-garage" style="margin-top:10px;display:none;">GARAGE &rarr;</uf-button>
-    <!-- B-5 · the two things a demo player should be able to do next. Shown by
-         _updateCtaButtons(); hidden in the full Steam build. -->
-    <!-- D-3 · see the victory overlay. -->
-    <uf-button class="cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</uf-button>
-    <uf-button class="cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
-    <uf-button class="cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
-  </div>
+  <!-- #428: kit sheet shell; the heading mirrors #gameover-title (game.js). -->
+  <uf-sheet id="gameover-sheet" open dismissible="false" headline tone="danger" heading="Game over" size="md">
+      <p id="gameover-title" hidden>GAME OVER</p>
+      <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
+      <div id="gameover-help" class="help-announce" style="display:none;"></div>
+      <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
+      <div id="gameover-coins" class="ride-coins" style="display:none;"></div>
+      <div id="gameover-unlocked" class="end-unlocked" hidden></div>
+      <!-- #403 · a failed ranked run: the attempt is spent; ride the road as practice. -->
+      <!-- B-5 · the two things a demo player should be able to do next. Shown by
+           _updateCtaButtons(); hidden in the full Steam build. -->
+      <!-- D-3 · see the victory overlay. -->
+    <div slot="actions">
+      <uf-button id="btn-gameover-clip" style="display:none;">&#x1F3AC; SAVE CLIP</uf-button>
+      <uf-button variant="accent" id="btn-restart">RESTART</uf-button>
+      <uf-button id="btn-skip-checkpoint" style="display:none;">&#x1F451; Take the Royal Shortcut</uf-button>
+      <uf-button id="btn-practice-help" style="display:none;">&#x1F6DF; Ride it as practice — with a helping hand</uf-button>
+      <uf-button id="btn-gameover-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-gameover-lobby">END RIDE TOGETHER</uf-button>
+      <uf-button id="btn-gameover-garage" style="display:none;">GARAGE &rarr;</uf-button>
+      <uf-button class="cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</uf-button>
+      <uf-button class="cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button class="cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Victory overlay -->
 <div id="victory-overlay">
-  <div id="victory-left">
-    <canvas id="victory-video" width="360" height="360"></canvas>
-    <h2 id="victory-title">YOU MADE IT!</h2>
-  </div>
-  <div id="victory-right">
-    <p id="victory-destination"></p>
-    <div id="victory-stats"></div>
-    <!-- #400 D4 · what the ride paid. Filled by js/economy-mode.js. -->
-    <div id="victory-coins" class="ride-coins" style="display:none;"></div>
-  </div>
-  <!-- D-8 · what the two of you have done together. -->
-  <div id="pair-panel" style="display:none;"></div>
-  <div id="victory-buttons">
-    <uf-button variant="accent" id="btn-play-again">PLAY AGAIN</uf-button>
-    <uf-button id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</uf-button>
-    <uf-button id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</uf-button>
-    <uf-button id="btn-victory-lobby" style="margin-top:6px;">END RIDE TOGETHER</uf-button>
-    <uf-button id="btn-victory-garage" style="margin-top:6px;display:none;">GARAGE &rarr;</uf-button>
-    <!-- B-5 · see the game-over overlay. -->
-    <!-- D-3 · share the day's result (Today's Road only). -->
-    <uf-button class="cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</uf-button>
-    <uf-button class="cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
-    <uf-button class="cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
-  </div>
+  <!-- #428: kit sheet shell; the heading mirrors #victory-title (game.js). -->
+  <uf-sheet id="victory-sheet" open dismissible="false" headline tone="accent" heading="You made it!" size="lg">
+    <div id="victory-body">
+      <div id="victory-left">
+        <canvas id="victory-video" width="360" height="360"></canvas>
+        <h2 id="victory-title" hidden>YOU MADE IT!</h2>
+      </div>
+      <div id="victory-right">
+        <p id="victory-destination"></p>
+        <div id="victory-stats"></div>
+        <!-- #400 D4 · what the ride paid. Filled by js/economy-mode.js. -->
+        <div id="victory-coins" class="ride-coins" style="display:none;"></div>
+        <!-- #428: achievements unlocked this ride (kit uf-achievement, js/achievements.js). -->
+        <div id="victory-unlocked" class="end-unlocked" hidden></div>
+      </div>
+      <!-- D-8 · what the two of you have done together. -->
+      <div id="pair-panel" style="display:none;"></div>
+    </div>
+    <div slot="actions" id="victory-buttons">
+      <uf-button variant="accent" id="btn-play-again">PLAY AGAIN</uf-button>
+      <uf-button id="btn-next-level" style="display:none;">NEXT LEVEL</uf-button>
+      <uf-button id="btn-victory-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-victory-lobby">END RIDE TOGETHER</uf-button>
+      <uf-button id="btn-victory-garage" style="display:none;">GARAGE &rarr;</uf-button>
+      <uf-button class="cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</uf-button>
+      <uf-button class="cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button class="cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Slingshot mode · spend Chaos Coins between launches. Filled by js/slingshot-ui.js. -->
-<div id="sling-garage"></div>
+<div id="sling-garage"><uf-sheet id="sling-garage-sheet" open dismissible="false" headline tone="gold" heading="Garage" size="md"><div id="sling-garage-body"></div></uf-sheet></div>
 <!-- Slingshot mode · one launch's payout. -->
-<div id="sling-results"></div>
+<div id="sling-results"><uf-sheet id="sling-results-sheet" open dismissible="false" headline tone="gold" heading="" size="md"><div id="sling-results-body"></div></uf-sheet></div>
 <!-- Slingshot mode · the end-of-ride signal: distance, then the coins it pays. -->
 <div id="sling-tally"></div>
 
 <!-- #400 · Demo end: NEXT LEVEL after the last road the demo includes. -->
 <div id="demo-end-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p style="color:var(--uf-color-accent);font-size:1.2em;margin-bottom:4px;">That's the demo!</p>
-    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">The full game has a new road every day, ranked runs and every Slingshot stage.</p>
-    <uf-button variant="accent" class="cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</uf-button>
-    <uf-button id="btn-demo-room" style="margin-top:10px;display:none;">RETURN TO ROOM</uf-button>
-    <uf-button id="btn-demo-lobby" style="margin-top:10px;">BACK TO LOBBY</uf-button>
-  </div>
+  <uf-sheet id="demo-end-sheet" open dismissible="false" headline tone="accent" heading="That's the demo!" size="md">
+      <p>The full game has a new road every day, ranked runs and every Slingshot stage.</p>
+    <div slot="actions">
+      <uf-button variant="accent" class="cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button id="btn-demo-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-demo-lobby">BACK TO LOBBY</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Stoker CTA overlay (shown after unlicensed stoker finishes a ride) -->

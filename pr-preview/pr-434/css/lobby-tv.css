@@ -5,8 +5,8 @@
    535×1080) with the wordmark on its sky; the menus get the rest of the
    screen. Text sizes come from the kit's automatic ramp (shared/ui/tokens.css:
    phone sizes below 1024px, TV sizes at 1920px), so nothing here is a
-   per-screen pixel size. The room step keeps its own video grid and toggles
-   (its .room-active layout) and is left alone.
+   per-screen pixel size. The room step (no video since #400) uses it too.
+   
 
    Loaded after the page's inline <style>, so equal-specificity rules win;
    !important is used only where the old desktop block sets the same property
@@ -23,7 +23,7 @@ uf-system-bar#lobby-bar { display: none; }
   :root:has(#lobby:not([style*="none"])) { --uf-stage-inset: 535px; }
 
   /* ── Frame ── */
-  #lobby:not(:has(.room-active)) {
+  #lobby {
     --gutter: clamp(24px, 2.5vw, 64px);
     --bar-h: calc(var(--uf-size-md) * 3.3 + 16px);   /* matches <uf-system-bar> */
     display: grid;   /* not !important: the game hides the lobby with an inline display:none */
@@ -32,15 +32,15 @@ uf-system-bar#lobby-bar { display: none; }
     gap: 0 !important; padding: 0 !important; align-items: center !important; overflow: hidden !important;
     background: radial-gradient(120% 90% at 30% 40%, #161b24 0%, #0a0c11 70%) !important;
   }
-  #lobby:not(:has(.room-active)) #lobby-img-left { display: none !important; }
-  #lobby:not(:has(.room-active)) #lobby-img-right {
+  #lobby #lobby-img-left { display: none !important; }
+  #lobby #lobby-img-right {
     grid-column: 3 !important; grid-row: 1 / -1 !important; object-position: center !important;
     box-shadow: -24px 0 48px rgba(0, 0, 0, .55);
   }
   #lobby-wordmark { display: none; }
   /* tandemonium_title.png at 0.435× (wordmark ≈ 470px wide), centred on the
      wordmark; the dirt splash and pedals fade into the sky through the mask. */
-  #lobby:not(:has(.room-active)) #lobby-wordmark {
+  #lobby #lobby-wordmark {
     display: block; position: fixed; z-index: 3; top: 10px; right: 0; width: var(--uf-stage-inset); height: 200px; pointer-events: none;
     background: url(../images/tandemonium_title.png) no-repeat;
     background-size: 668px auto; background-position: calc(var(--uf-stage-inset) / 2 - 334px) -70px;
@@ -50,40 +50,39 @@ uf-system-bar#lobby-bar { display: none; }
   }
 
   /* ── Stage: the mode screen pairs the bike chooser with the buttons; every other step gets the full width ── */
-  #lobby:not(:has(.room-active)) #bike-carousel {
+  #lobby #bike-carousel {
     grid-column: 1 !important; grid-row: 2 !important;
     width: calc(100% - var(--gutter)) !important; margin: 0 0 0 var(--gutter) !important;
     justify-self: stretch !important; align-self: center !important; border-radius: var(--uf-radius-lg);
   }
-  #lobby:not(:has(.room-active)) #bike-preview-wrap { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; }
-  #lobby:not(:has(.room-active)) #bike-preview-canvas { width: 100% !important; height: min(470px, 48vh) !important; }
-  #lobby:not(:has(.room-active)) #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 2.4) !important; font-size: var(--uf-size-2xl) !important; }
-  #lobby:not(:has(.room-active)) #bike-name { font-size: var(--uf-size-2xl) !important; line-height: 1.2 !important; top: calc(var(--uf-size-2xl) * -1.7) !important; }
-  #lobby:has(#lobby-mode[active]):not(:has(.room-active)) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }
+  #lobby #bike-preview-wrap { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; }
+  #lobby #bike-preview-canvas { width: 100% !important; height: min(470px, 48vh) !important; }
+  #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 2.4) !important; font-size: var(--uf-size-2xl) !important; }
+  #lobby #bike-name { font-size: var(--uf-size-2xl) !important; line-height: 1.2 !important; top: calc(var(--uf-size-2xl) * -1.7) !important; }
+  #lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }
   #lobby:not(:has(#lobby-mode[active])) #bike-carousel { display: none !important; }
 
-  #lobby:not(:has(.room-active)) .lobby-card {
+  #lobby .lobby-card {
     grid-column: 2 !important; grid-row: 2 !important;
     max-width: none !important; width: 100% !important; height: auto !important; max-height: 100% !important;
     padding: 0 var(--gutter) !important; margin: 0 !important; overflow: visible !important;
     display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important;
     align-self: center !important; justify-self: stretch !important;
   }
-  #lobby:not(:has(#lobby-mode[active])):not(:has(.room-active)) .lobby-card { grid-column: 1 / 3 !important; }
-  #lobby:not(:has(.room-active)) .lobby-layout { display: block !important; width: 100%; flex: 0 0 auto !important; }
-  #lobby:not(:has(.room-active)) .lobby-steps-col { width: 100% !important; max-width: none !important; min-width: 0 !important; overflow: visible !important; }
-  #lobby:not(:has(.room-active)) .lobby-step { overflow: visible !important; }
-  #lobby:not(:has(.room-active)) .lobby-prompt { font-size: var(--uf-size-xl) !important; margin: 0 0 var(--uf-space-4) !important; }
+  #lobby:not(:has(#lobby-mode[active])) .lobby-card { grid-column: 1 / 3 !important; }
+  #lobby .lobby-layout { display: block !important; width: 100%; flex: 0 0 auto !important; }
+  #lobby .lobby-steps-col { width: 100% !important; max-width: none !important; min-width: 0 !important; overflow: visible !important; }
+  #lobby .lobby-step { overflow: visible !important; }
+  #lobby .lobby-prompt { font-size: var(--uf-size-xl) !important; margin: 0 0 var(--uf-space-4) !important; }
 
   /* The system bar replaces the round toggle columns, the Back hint and the
      credits footer on every step but the room (css below + lobby-tv.js). */
-  #lobby:not(:has(.room-active)) .lobby-toggle-col,
-  #lobby:not(:has(.room-active)) .lobby-toggles,
-  #lobby:not(:has(.room-active)) .gamepad-back-hint,
-  #lobby:not(:has(.room-active)) #lobby-fixed-back,
-  #lobby:not(:has(.room-active)) .lobby-step .lobby-back,
-  #lobby:not(:has(.room-active)) .lobby-credits { display: none !important; }
-  #lobby:has(.room-active) > uf-system-bar#lobby-bar { display: none; }
+  #lobby .lobby-toggle-col,
+  #lobby .lobby-toggles,
+  #lobby .gamepad-back-hint,
+  #lobby #lobby-fixed-back,
+  #lobby .lobby-step .lobby-back,
+  #lobby .lobby-credits { display: none !important; }
 
   /* ── Mode screen: narrower two-line buttons (sub lines set in index.html) ── */
   #lobby-mode .lobby-mode-buttons { width: 100% !important; max-width: 22em; gap: var(--uf-space-4) !important; margin: 0 auto; font-size: var(--uf-size-md); }
@@ -206,3 +205,26 @@ uf-system-bar#lobby-bar { display: none; }
   body #phone-pad-panel .ppp-row { grid-area: row; justify-content: flex-start; align-self: end; gap: var(--uf-space-3); }
   body #phone-pad-panel #btn-ppp-done { min-width: 8em; font-size: var(--uf-size-lg); }
 }
+
+/* ── Room (#428): two kit player cards instead of video seats ── */
+#room-players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--uf-space-4); width: 100%; }
+@media (min-width: 1024px) {
+  #lobby .lobby-card.room-active { display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; grid-template-columns: none !important; grid-template-rows: none !important; }
+  #lobby .lobby-card.room-active .lobby-layout, #lobby .lobby-card.room-active .lobby-steps-col { display: block !important; width: 100% !important; }
+  #lobby .lobby-card.room-active #lobby-room[active] { display: grid !important; gap: var(--uf-space-4); justify-items: center; width: 100%; max-width: 64em; margin: 0 auto; }
+  #lobby .lobby-card.room-active #room-center-wrap { display: grid !important; gap: var(--uf-space-3); width: 100%; }
+  #lobby .lobby-card.room-active #room-partner-info { display: flex !important; flex-direction: column; align-items: center; gap: var(--uf-space-1); }
+  #lobby .lobby-card.room-active #room-code-label { font-size: var(--uf-size-md); padding: .35em .8em; }
+  #lobby .lobby-card.room-active #room-partner-name { display: none; }
+  #lobby .lobby-card.room-active #btn-play-game { min-width: 14em !important; max-width: none !important; font-size: var(--uf-size-lg) !important; padding: var(--uf-space-4) var(--uf-space-6) !important; border-radius: var(--uf-radius-lg) !important; }
+  #lobby .lobby-card.room-active #room-wait-text-room { font-size: var(--uf-size-md); }
+}
+@media (max-width: 1023px) { #room-players { gap: 8px; } }
+@media (min-width: 1024px) {
+  #lobby .lobby-card.room-active #lobby-room[active] > *, #lobby .lobby-card.room-active #room-center-wrap > * { grid-column: auto !important; grid-row: auto !important; margin: 0 !important; justify-self: center; }
+  #lobby .lobby-card.room-active #room-center-wrap { justify-self: stretch !important; }
+  #lobby .lobby-card.room-active #room-players { justify-self: stretch !important; }
+}
+#room-players uf-player-card { text-align: left; }
+#room-code-label:empty { display: none; }
+@media (min-width: 1024px) { #lobby .lobby-card.room-active #btn-play-game { width: auto !important; } }

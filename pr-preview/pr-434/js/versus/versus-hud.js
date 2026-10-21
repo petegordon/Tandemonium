@@ -139,22 +139,26 @@ export class VersusHud {
     this.hideResults();
     const el = document.createElement('div');
     el.id = 'versus-results';
-    const line = (rig, outcome) => `
-      <div class="vr-team" style="--vh-color:${rig.color.hex}">
-        <div class="vr-team-name">${rig.color.name}</div>
-        <div class="vr-outcome">${outcome}</div>
-        <div class="vr-detail">${rig.crashCount} crash${rig.crashCount === 1 ? '' : 'es'} &middot; 🎁 ${rig.collectibles}</div>
-      </div>`;
+    // Kit pieces (#428): a headline <uf-sheet> in the winner's colour, one
+    // <uf-stat variant=card> per team, the actions in the sheet's action row.
+    // .vr-card stays the body container (economy-mode adds the coin ledger to it).
+    const tone = (rig) => (/blue/i.test(rig.color.name) ? 'team-a' : 'team-b');
+    const card = (rig, outcome) =>
+      `<uf-stat variant="card" tone="${tone(rig)}" label="${rig.color.name}" value="${outcome}"` +
+      ` detail="${rig.crashCount} crash${rig.crashCount === 1 ? '' : 'es'} · 🎁 ${rig.collectibles}"></uf-stat>`;
     el.innerHTML = `
-      <div class="vr-card">
-        <div class="vr-title" style="color:${winner.color.hex}">${winner.color.name} WINS!</div>
-        <div class="vr-teams">
-          ${line(winner, winner.raceManager.getElapsedFormatted())}
-          ${line(loser, `DNF &mdash; ${Math.floor(loser.bike.distanceTraveled)}m`)}
+      <uf-sheet open dismissible="false" headline tone="${tone(winner)}" heading="${winner.color.name} wins!" size="md">
+        <div class="vr-card">
+          <div class="vr-teams">
+            ${card(winner, winner.raceManager.getElapsedFormatted())}
+            ${card(loser, `DNF · ${Math.floor(loser.bike.distanceTraveled)} m`)}
+          </div>
         </div>
-        <uf-button variant="accent" id="vr-rematch">REMATCH</uf-button>
-        <uf-button id="vr-lobby">LOBBY</uf-button>
-      </div>`;
+        <div slot="actions">
+          <uf-button id="vr-lobby">LOBBY</uf-button>
+          <uf-button variant="accent" id="vr-rematch">REMATCH</uf-button>
+        </div>
+      </uf-sheet>`;
     document.body.appendChild(el);
     this.resultsEl = el;
     return {

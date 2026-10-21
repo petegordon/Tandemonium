@@ -19,6 +19,7 @@
 // daily gold) (docs/UI-KIT-TV-COMPONENTS.md §11; #428 finding 1).
 
 import { UfElement, prop, esc } from '../uf-element.js';
+import './uf-pips.js';
 
 export class UfCard extends UfElement {
   /** @override */ static tag = 'uf-card';
@@ -31,6 +32,12 @@ export class UfCard extends UfElement {
     tone: prop.enum(/** @type {const} */ (['neutral', 'accent', 'gold', 'muted']), 'neutral'),
     selected: prop.boolean(false),
     locked: prop.boolean(false),
+    // Row layout (Garage upgrades, settings-like lists): icon | text | meta.
+    layout: prop.enum(/** @type {const} */ (['column', 'row']), 'column'),
+    meta: prop.string(''),         // right-hand figure, e.g. '🪙 40'
+    metaDetail: prop.string(''),   // under it, e.g. '+42 m'
+    level: prop.number(0),         // with levelMax: a <uf-pips> row under the description
+    levelMax: prop.number(0),
   };
 
   /** @override */ static styles = `
@@ -50,9 +57,29 @@ export class UfCard extends UfElement {
     uf-card .uf-card__desc { font-size: var(--uf-size-md); line-height: 1.35; color: var(--uf-color-fg-muted); }
     uf-card .uf-card__foot { font: 700 var(--uf-size-md)/1.3 var(--uf-font-ui); color: var(--uf-color-fg); }
     uf-card .uf-card__foot:empty, uf-card .uf-card__icon:empty { display: none; }
+    uf-card .uf-card__meta { display: none; }
+    uf-card[layout="row"] { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: none; grid-template-areas: "icon title meta" "icon desc meta" "icon foot meta"; column-gap: var(--uf-space-4); row-gap: 2px; align-items: center; padding: var(--uf-space-3) var(--uf-space-4); }
+    uf-card[layout="row"] .uf-card__icon { grid-area: icon; font-size: var(--uf-size-2xl); }
+    uf-card[layout="row"] .uf-card__title { grid-area: title; font-size: var(--uf-size-lg); }
+    uf-card[layout="row"] .uf-card__desc { grid-area: desc; font-size: var(--uf-size-sm); }
+    uf-card[layout="row"] .uf-card__foot { grid-area: foot; font-size: var(--uf-size-sm); }
+    uf-card[layout="row"] .uf-card__meta { grid-area: meta; display: grid; justify-items: end; gap: 2px; font: 800 var(--uf-size-lg)/1.1 var(--uf-font-ui); color: var(--uf-color-accent-2); font-variant-numeric: tabular-nums; }
+    uf-card .uf-card__meta small { font: 600 var(--uf-size-xs)/1.2 var(--uf-font-ui); color: var(--uf-color-accent); }
+    uf-card .uf-card__meta:empty { display: none; }
   `;
 
   #wired = false;
+
+  /** @returns {'column' | 'row'} */ get layout() { return this.get('layout'); }
+  /** @param {'column' | 'row'} v */ set layout(v) { this.set('layout', v); }
+  /** @returns {string} */ get meta() { return this.get('meta'); }
+  /** @param {string} v */ set meta(v) { this.set('meta', v); }
+  /** @returns {string} */ get metaDetail() { return this.get('metaDetail'); }
+  /** @param {string} v */ set metaDetail(v) { this.set('metaDetail', v); }
+  /** @returns {number} */ get level() { return this.get('level'); }
+  /** @param {number} v */ set level(v) { this.set('level', v); }
+  /** @returns {number} */ get levelMax() { return this.get('levelMax'); }
+  /** @param {number} v */ set levelMax(v) { this.set('levelMax', v); }
 
   /** @returns {string} */ get heading() { return this.get('heading'); }
   /** @param {string} v */ set heading(v) { this.set('heading', v); }
@@ -88,7 +115,8 @@ export class UfCard extends UfElement {
     return `<span class="uf-card__icon" aria-hidden="true">${esc(this.icon)}</span>` +
       `<div class="uf-card__title" role="heading" aria-level="3">${esc(this.heading)}</div>` +
       `<span class="uf-card__desc">${esc(this.description)}</span>` +
-      `<span class="uf-card__foot">${esc(this.footer)}</span>`;
+      (this.levelMax > 0 ? `<span class="uf-card__foot"><uf-pips value="${esc(this.level)}" max="${esc(this.levelMax)}"></uf-pips>${this.footer ? ' ' + esc(this.footer) : ''}</span>` : `<span class="uf-card__foot">${esc(this.footer)}</span>`) +
+      `<span class="uf-card__meta">${this.meta ? esc(this.meta) + (this.metaDetail ? `<small>${esc(this.metaDetail)}</small>` : '') : ''}</span>`;
   }
 
   /** @override @param {Set<string>} _changed */
