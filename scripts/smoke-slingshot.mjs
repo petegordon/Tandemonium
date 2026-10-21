@@ -183,7 +183,7 @@ check(tally.visible && tally.flag && Number(tally.m.replace(/,/g, '')) === Math.
   `end of ride: a flag, "${tally.m} m" counted up, then "+${tally.c} 🪙"`);
 if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '4a-tally.png') });
 await waitState('slingResults', 60000);
-const r1 = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, save: JSON.parse(localStorage.getItem('tandemonium_slingshot')), wallet: JSON.parse(localStorage.getItem('tandemonium_wallet')) }));
+const r1 = await page.evaluate(() => ({ title: document.getElementById('sling-results-sheet').heading, save: JSON.parse(localStorage.getItem('tandemonium_slingshot')), wallet: JSON.parse(localStorage.getItem('tandemonium_wallet')) }));
 check(/stop/i.test(r1.title) && r1.save.runs === 1 && r1.wallet.coins > 60, `stalling ends the run and pays into the wallet ("${r1.title}", wallet ${r1.wallet.coins})`);
 const status = await page.evaluate(() => document.getElementById('status').textContent);
 check(!/pedal|resetting/i.test(status), `no "tap pedals" prompt when the bike stops ("${status}")`);
@@ -197,7 +197,7 @@ await drag(0, 300, true);
 await waitState('playing', 120000);
 await page.evaluate(() => window._game.bike._fall());
 await waitState('slingResults', 60000);
-const r2 = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, runs: JSON.parse(localStorage.getItem('tandemonium_slingshot')).runs }));
+const r2 = await page.evaluate(() => ({ title: document.getElementById('sling-results-sheet').heading, runs: JSON.parse(localStorage.getItem('tandemonium_slingshot')).runs }));
 check(/crash/i.test(r2.title) && r2.runs === 2, `a crash ends the run ("${r2.title}")`);
 
 // 9. Reach the stage goal → stage cleared
@@ -212,7 +212,7 @@ if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '5a-goal-tally.png') }
 const goalTally = await page.evaluate(() => ({ label: document.querySelector('#sling-tally .tally-label')?.textContent, m: document.querySelector('#sling-tally .tally-m').textContent, c: document.querySelector('#sling-tally .tally-c').textContent }));
 check(/goal/i.test(goalTally.label || '') && Number(goalTally.m.replace(/,/g, '')) >= 300 && Number(goalTally.c.replace(/,/g, '')) > 100, `the goal run tallies "${goalTally.label} ${goalTally.m} m +${goalTally.c} 🪙"`);
 await waitState('slingResults', 60000);
-const r3 = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, stage: JSON.parse(localStorage.getItem('tandemonium_slingshot')).stage }));
+const r3 = await page.evaluate(() => ({ title: document.getElementById('sling-results-sheet').heading, stage: JSON.parse(localStorage.getItem('tandemonium_slingshot')).stage }));
 check(/goal/i.test(r3.title) && r3.stage === 2, `reaching the goal clears the stage ("${r3.title}", now stage ${r3.stage})`);
 await shot('5-goal');
 
@@ -270,7 +270,7 @@ check(air.cleared, 'flying off the ramp sails clean over the hay bale behind it'
 const walletBefore = (await wallet()).coins;
 await rollInto('jackpot');
 await waitState('slingResults', 60000);
-const jp = await page.evaluate(() => ({ title: document.querySelector('#sling-results h2').textContent, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_wallet')).coins }));
+const jp = await page.evaluate(() => ({ title: document.getElementById('sling-results-sheet').heading, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_wallet')).coins }));
 check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /Big air/.test(jp.rows) && /×2/.test(jp.rows) && jp.coins > walletBefore, `the jackpot ends the run at double pay ("${jp.title}", +${jp.coins - walletBefore})`);
 
 // 14. Twenty relaunches on the same stage re-arm the ride instead of

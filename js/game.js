@@ -2879,6 +2879,8 @@ class Game {
     if (tooSlow) tooSlow.classList.remove('visible');
     const title = document.getElementById('gameover-title');
     if (title) title.textContent = opts.timeout ? 'TOO SLOW!' : 'GAME OVER';
+    { const sh = /** @type {any} */ (document.getElementById('gameover-sheet')); if (sh) sh.heading = opts.timeout ? 'Too slow!' : 'Game over'; }   // #428 kit sheet
+    { const u = document.getElementById('gameover-unlocked'); if (u) { u.replaceChildren(); u.hidden = true; } }
 
     // Crash analytics already recorded at impact time in _recordCrash()
     this._lastCrashCause = null;
@@ -3441,6 +3443,7 @@ class Game {
     const title = document.getElementById('victory-title');
     const dest = document.getElementById('victory-destination');
     if (title) title.textContent = 'YOU MADE IT TO THEM!';
+    { const sh = /** @type {any} */ (document.getElementById('victory-sheet')); if (sh) sh.heading = 'You made it to them!'; }
     if (dest) dest.textContent = '📍 ' + (plan.to.label || 'their door');
 
     this._dailyStripText = [
@@ -4438,6 +4441,9 @@ class Game {
     document.getElementById('victory-destination').textContent =
       level.icon + ' ' + level.name;
 
+    { const sh = /** @type {any} */ (document.getElementById('victory-sheet')); if (sh) sh.heading = victoryTitle.textContent; }   // #428 kit sheet
+    { const u = document.getElementById('victory-unlocked'); if (u) { u.replaceChildren(); u.hidden = true; } }
+
     // Animated chromakey destination video at top of victory screen
     this._startVictoryVideo(level);
 
@@ -4472,24 +4478,24 @@ class Game {
 
       // Build left and right column stats
       const left = [
-        { icon: '\u23F1\uFE0F', value: summary.timeFormatted },          // ⏱️ Time
-        { icon: '\uD83D\uDEB4', value: distStr },                         // 🚴 Distance
+        { icon: '\u23F1\uFE0F', value: summary.timeFormatted, label: 'Time' },          // ⏱️ Time
+        { icon: '\uD83D\uDEB4', value: distStr, label: 'Distance' },                         // 🚴 Distance
       ];
       const inputSourceEmoji = { keyboard: '\uD83D\uDCBB', gamepad: '\uD83D\uDD79\uFE0F', motion: '\uD83D\uDCF1', 'gamepad-gyro': '\uD83C\uDFAE' };
       const diffNames = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil', tutorial: 'Tutorial' };
       const diffName = diffNames[this.lobby.selectedDifficulty] || this.lobby.selectedDifficulty;
-      left.push({ icon: '\u26A1', value: diffName }); // ⚡ Difficulty
+      left.push({ icon: '\u26A1', value: diffName, label: 'Difficulty' }); // ⚡ Difficulty
       const right = [
-        { icon: '\u2601\uFE0F', value: summary.checkpointsPassed + '/' + summary.checkpointsTotal }, // ☁️ Checkpoints
+        { icon: '\u2601\uFE0F', value: summary.checkpointsPassed + '/' + summary.checkpointsTotal, label: 'Checkpoints' }, // ☁️ Checkpoints
       ];
       if (summary.collectibles > 0) {
-        right.push({ icon: collectIcon, value: '' + summary.collectibles });
+        right.push({ icon: collectIcon, value: '' + summary.collectibles, label: 'Presents' });
       }
       // Top grid shows a single input source for solo / online MP. In local
       // mode we skip it here because the contribution breakdown below shows
       // BOTH players' input sources per-column (no need to duplicate P1's).
       if (this.mode !== 'local' && summary.inputSource && summary.inputSource !== 'none') {
-        right.push({ icon: inputSourceEmoji[summary.inputSource] || '', value: summary.inputSource });
+        right.push({ icon: inputSourceEmoji[summary.inputSource] || '', value: summary.inputSource, label: 'Steering' });
       }
 
       // Solo performance stats
@@ -4498,34 +4504,27 @@ class Game {
         if (contribData.mode !== 'multiplayer') {
           const solo = contribData.solo;
           const pedalPct = solo.totalTaps > 0 ? Math.round((solo.correctTaps / solo.totalTaps) * 100) : 0;
-          left.push({ icon: '\uD83E\uDDB6', value: pedalPct + '%' });       // 🦶 Pedal accuracy
-          right.push({ icon: '\u2696\uFE0F', value: solo.safePct + '%' });   // ⚖️ Balance
+          left.push({ icon: '\uD83E\uDDB6', value: pedalPct + '%', label: 'Pedalling' });       // 🦶 Pedal accuracy
+          right.push({ icon: '\u2696\uFE0F', value: solo.safePct + '%', label: 'Balance' });   // ⚖️ Balance
         } else {
           soloStats = contribData;
         }
       }
 
-      // Render two-column grid
-      const maxRows = Math.max(left.length, right.length);
-      let html = '<div class="victory-stats-grid">';
-      for (let i = 0; i < maxRows; i++) {
-        const l = left[i];
-        const r = right[i];
-        html += '<div class="vs-cell">' + (l ? '<span class="vs-icon">' + l.icon + '</span> <strong>' + l.value + '</strong>' : '') + '</div>';
-        html += '<div class="vs-cell">' + (r ? '<span class="vs-icon">' + r.icon + '</span> <strong>' + r.value + '</strong>' : '') + '</div>';
-      }
-      html += '</div>';
+      // A grid of kit <uf-stat>s (#428): icon, value and what it measures.
+      const stat = (x) => '<uf-stat icon="' + x.icon + '" value="' + x.value + '" label="' + x.label + '"></uf-stat>';
+      let html = '<div class="victory-stats-grid">' + [...left, ...right].map(stat).join('') + '</div>';
 
       // Geese scattered (#363). Only shown when some were actually startled,
       // so a rider who kept to the road doesn't get a "0" they can't read.
       const geeseScattered = this.geeseManager ? this.geeseManager.getDisruptedCount() : 0;
       if (geeseScattered > 0) {
-        html += '<div class="victory-stat">🪿 Geese Scattered: <strong>' + geeseScattered + '</strong></div>';
+        html += stat({ icon: '🪿', value: '' + geeseScattered, label: 'Geese scattered' });
       }
 
       // Perfect ride / crashes
       if (summary.crashes > 0) {
-        html += '<div class="victory-stat">\uD83D\uDCA5 Crashes: <strong>' + summary.crashes + '</strong></div>';
+        html += stat({ icon: '\uD83D\uDCA5', value: '' + summary.crashes, label: 'Crashes' });
       } else {
         html += '<div class="victory-stat victory-perfect">\u2B50 No Crashes! \u2B50</div>';
       }
@@ -4537,7 +4536,7 @@ class Game {
       // E-7 · on a tourist ride, what the ride was about.
       if (this._touristRoute) html += this._touristVictoryHtml(summary.distance);
       if (summary.restarts > 0) {
-        html += '<div class="victory-stat">\uD83C\uDFC1 Restarts: <strong>' + summary.restarts + '</strong></div>';
+        html += stat({ icon: '\uD83C\uDFC1', value: '' + summary.restarts, label: 'Restarts' });
       }
 
       statsEl.innerHTML = html;

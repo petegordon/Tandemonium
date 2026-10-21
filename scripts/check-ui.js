@@ -44,6 +44,20 @@ if (fs.existsSync(shared)) {
   for (const rel of actual) if (!expected.includes(rel)) problems.push(`stale (not in lab): shared/ui/${rel}`);
 }
 
+// 2b. Nothing vendored may be git-ignored here: an ignored file exists on the
+//     developer's disk (so the game runs locally) but never reaches a deploy —
+//     a .gitignore `vendor/` rule once dropped the kit's QR encoder, the whole
+//     kit module failed to load and the game would not start on the preview.
+try {
+  const { execFileSync } = require('child_process');
+  const rels = expected.map((rel) => path.posix.join('shared/ui', rel));
+  const out = execFileSync('git', ['check-ignore', '--no-index', ...rels], { cwd: U.repoRoot(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  for (const line of out.split(/\r?\n/).filter(Boolean)) problems.push(`git-ignored (would never deploy): ${line}`);
+} catch (e) {
+  // git check-ignore exits 1 when nothing is ignored — that's the pass case.
+  if (e && e.status !== 1 && e.status !== undefined) problems.push(`could not run git check-ignore: ${e.message}`);
+}
+
 // 3. Provenance stamp version must match the lab's package version.
 const labVer = U.labVersion();
 let stampVer = null;

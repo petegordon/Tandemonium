@@ -92,7 +92,7 @@ check(go.shown && /Distance \(140 m\)/.test(go.text) && w1.coins === 28 + 5 * go
   `game over pays the distance: ${w1.coins} coins ("${go.text.replace(/\s+/g, ' ').slice(0, 70)}…"), GARAGE → shown`);
 await shot('1-gameover-coins');
 // the tally rows are readable on the dark end screen (they had no colour: black text, blank-looking lines)
-const rowLum = await page.evaluate(() => [...document.querySelectorAll('#gameover-coins .sling-rows .row')].map(r => {
+const rowLum = await page.evaluate(() => [...document.querySelectorAll('#gameover-coins uf-ledger .ul-row')].map(r => {
   const [cr, cg, cb] = getComputedStyle(r).color.match(/[\d.]+/g).map(Number);
   return Math.round(0.2126 * cr + 0.7152 * cg + 0.0722 * cb);
 }));
@@ -120,7 +120,7 @@ await waitState('slingGarage', 20000);
 const g1 = await page.evaluate(() => ({
   launch: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /^LAUNCH!$/.test(b.textContent.trim())),
   back: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /BACK/.test(b.textContent)),
-  gain: document.querySelector('#sling-garage .sling-up[data-up="sling"] .gain')?.textContent,
+  gain: document.querySelector('#sling-garage .sling-up[data-up="sling"] .uf-card__meta small')?.textContent,
   ups: Array.from(document.querySelectorAll('#sling-garage .sling-up')).map(b => b.dataset.up).join(','),
 }));
 check(!g1.launch && g1.back && /^\+\d+ m$/.test(g1.gain || '') && g1.ups === 'sling,wheels,magnet',

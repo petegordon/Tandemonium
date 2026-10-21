@@ -18,6 +18,8 @@
 // Markup:   <uf-button variant="accent" size="lg" id="btn-start">START RIDE</uf-button>
 //           <uf-button label="PLAY AGAIN"></uf-button>          (label prop wins over children)
 //           <uf-button selected data-mode="versus"><b>VERSUS</b><small>2v2</small></uf-button>
+//           <uf-button size="lg" align="start" sub="Couch co-op, online or versus">RIDE TOGETHER</uf-button>
+//           <uf-button size="pill"><svg …></svg>Help</uf-button>          (system-bar pill: icon + label)
 // Script:   const b = document.createElement('uf-button'); b.variant = 'ghost';
 //           (typed: 'primary' | 'accent' | 'ghost' | 'danger' | 'versus' — see elements.d.ts)
 // Events:   a plain `click` (mouse, touch, Enter/Space, or el.click()); suppressed while disabled.
@@ -30,7 +32,12 @@ export class UfButton extends UfElement {
   /** @override */ static props = {
     label: prop.string(''),
     variant: prop.enum(/** @type {const} */ (['primary', 'accent', 'ghost', 'danger', 'versus']), 'primary'),
-    size: prop.enum(/** @type {const} */ (['xs', 'sm', 'md', 'lg']), 'md'),
+    size: prop.enum(/** @type {const} */ (['xs', 'sm', 'md', 'lg', 'pill']), 'md'),
+    // A second, smaller line under the label (mode buttons, CTAs). Rendered as a
+    // trailing <small class="uf-button__sub"> the element owns, so it survives
+    // `label` changes; a host that rewrites textContent should set sub again.
+    sub: prop.string(''),
+    align: prop.enum(/** @type {const} */ (['center', 'start']), 'center'),
     disabled: prop.boolean(false),
     selected: prop.boolean(false),
   };
@@ -53,6 +60,12 @@ export class UfButton extends UfElement {
     /* xs: icon / close buttons (×, ⚙) whose host page sets an explicit size; no minimum, no backdrop. */
     uf-button[size="xs"] { font-size: var(--uf-size-xs); font-weight: 400; padding: 2px 6px; min-height: 0; border-width: 1px; border-radius: var(--uf-radius-sm); backdrop-filter: none; -webkit-backdrop-filter: none; }
     uf-button[size="lg"] { font-size: var(--uf-size-lg); font-weight: 800; padding: var(--uf-space-4) var(--uf-space-5); min-height: 56px; width: 100%; }
+    /* pill: the system-bar button — leading icon (svg or uf-controller-glyph) + label, one row. */
+    uf-button[size="pill"] { display: inline-flex; align-items: center; gap: var(--uf-space-2); border-radius: 999px; min-height: calc(var(--uf-size-md) * 2.2); padding: 0 var(--uf-space-4) 0 var(--uf-space-3); font-size: var(--uf-size-md); font-weight: 600; white-space: nowrap; }
+    uf-button[size="pill"] > svg { width: 1.1em; height: 1.1em; flex: none; }
+    uf-button[align="start"] { text-align: left; }
+    uf-button > .uf-button__sub { display: block; width: 100%; margin-top: .2em; font-size: .62em; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--uf-color-fg-muted); }
+    uf-button[variant="accent"][selected] > .uf-button__sub { color: inherit; opacity: .8; }
     uf-button[variant="accent"]  { background: var(--uf-color-accent-soft); border-color: var(--uf-color-accent-line); }
     uf-button[variant="accent"][selected], uf-button[variant="accent"].ready { background: var(--uf-color-accent); border-color: var(--uf-color-accent); color: var(--uf-color-fg-on-accent); }
     uf-button[variant="ghost"]   { background: transparent; border-color: transparent; color: var(--uf-color-fg-muted); backdrop-filter: none; -webkit-backdrop-filter: none; }
@@ -76,8 +89,14 @@ export class UfButton extends UfElement {
   /** @returns {'primary' | 'accent' | 'ghost' | 'danger' | 'versus'} */ get variant() { return this.get('variant'); }
   /** @param {'primary' | 'accent' | 'ghost' | 'danger' | 'versus'} v */ set variant(v) { this.set('variant', v); }
 
-  /** @returns {'xs' | 'sm' | 'md' | 'lg'} */ get size() { return this.get('size'); }
-  /** @param {'xs' | 'sm' | 'md' | 'lg'} v */ set size(v) { this.set('size', v); }
+  /** @returns {'xs' | 'sm' | 'md' | 'lg' | 'pill'} */ get size() { return this.get('size'); }
+  /** @param {'xs' | 'sm' | 'md' | 'lg' | 'pill'} v */ set size(v) { this.set('size', v); }
+
+  /** @returns {string} */ get sub() { return this.get('sub'); }
+  /** @param {string} v */ set sub(v) { this.set('sub', v); }
+
+  /** @returns {'center' | 'start'} */ get align() { return this.get('align'); }
+  /** @param {'center' | 'start'} v */ set align(v) { this.set('align', v); }
 
   // disabled / selected sync their ARIA + tabindex synchronously (not on the
   // batched DOM pass): a focus engine reading aria-disabled right after
@@ -124,12 +143,22 @@ export class UfButton extends UfElement {
   /** @override @param {Set<string>} changed */
   update(changed) {
     if (changed.has('label') && this.label) this.textContent = this.label;
+    if (changed.has('label') || changed.has('sub')) this.#syncSub();
     if (changed.has('disabled') || changed.has('selected')) this.#syncA11y();
     return true;   // variant/size are styled off the host attributes; nothing to patch
   }
 
   /** @override @param {Set<string>} _changed */
-  afterRender(_changed) { this.#syncA11y(); }
+  afterRender(_changed) { this.#syncA11y(); this.#syncSub(); }
+
+  /** Keep exactly one trailing .uf-button__sub matching the `sub` prop. */
+  #syncSub() {
+    let el = /** @type {HTMLElement|null} */ (this.querySelector(':scope > .uf-button__sub'));
+    if (!this.sub) { el?.remove(); return; }
+    if (!el) { el = document.createElement('small'); el.className = 'uf-button__sub'; }
+    if (el.textContent !== this.sub) el.textContent = this.sub;
+    if (el !== this.lastElementChild || el.nextSibling) this.appendChild(el);
+  }
 
   /** @override */
   click() { if (!this.disabled) super.click(); }

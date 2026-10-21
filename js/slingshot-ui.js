@@ -28,10 +28,6 @@ function btn(variant, html, cls) {
   return b;
 }
 
-function pips(level, max) {
-  return '●'.repeat(level) + '○'.repeat(max - level);
-}
-
 /**
  * The garage — one for every mode (#400 D4): the wallet every ride pays into,
  * the upgrades it buys, and (from the Slingshot) the next launch.
@@ -51,11 +47,17 @@ function pips(level, max) {
  */
 export function renderGarage(save, wallet, opts = {}) {
   const { standalone = false, lock = null, todays = null, canWishlist = false, replay = null, rebuildOffered = true } = opts;
-  const root = $('sling-garage');
+  // The kit sheet (#428) draws the card and headline; content goes in its body.
+  const shell = $('sling-garage');
+  const root = $('sling-garage-body') || shell;
   root.innerHTML = '';
   const mult = coinMultiplier(wallet);
   const rebuilt = wallet.rebuilds ? ` <span class="sling-badge sling-rebuilds" title="Bike rebuilds">🔧×${wallet.rebuilds}</span>` : '';
-  root.appendChild(el('h2', null, `🛠️ GARAGE${rebuilt}`));
+  const gSheet = /** @type {any} */ ($('sling-garage-sheet'));
+  if (gSheet) {
+    gSheet.heading = '🛠️ Garage';
+    if (rebuilt) root.appendChild(el('div', null, rebuilt.trim()));   // the rebuild badge, under the headline
+  } else root.appendChild(el('h2', null, `🛠️ GARAGE${rebuilt}`));
   root.appendChild(el('div', 'sling-wallet', `${COIN} ${fmt(wallet.coins)} Chaos Coins`));
   const multLine = `Every ride in every mode pays ×${mult.toFixed(2)}`;
   root.appendChild(el('div', 'sling-sub', standalone
@@ -113,12 +115,16 @@ export function renderGarage(save, wallet, opts = {}) {
     const gain = maxed ? '' : (u.id === 'magnet'
       ? '+0.25× coins'
       : `+${fmt(upgradeGain(wallet.lv, u.id))} m`);
-    const b = el('button', 'sling-up',
-      `<span class="ico">${u.icon}</span>` +
-      `<span class="txt"><b>${u.name}</b><small>${u.desc}</small><br><span class="pips">${pips(lvl, u.max)}</span></span>` +
-      `<span class="price">${maxed ? 'MAX' : `${COIN} ${fmt(price)}<small class="gain">${gain}</small>`}</span>`);
+    // A kit row card (shared/ui uf-card layout=row, #428): icon | name, what it
+    // does, level pips | price and gain. `locked` = maxed or not affordable.
+    const b = /** @type {any} */ (document.createElement('uf-card'));
+    b.className = 'sling-up';
+    Object.assign(b, {
+      layout: 'row', icon: u.icon, heading: u.name, description: u.desc, level: lvl, levelMax: u.max,
+      meta: maxed ? 'MAX' : `${COIN} ${fmt(price)}`, metaDetail: gain,
+      locked: maxed || wallet.coins < price,
+    });
     b.dataset.up = u.id;
-    b.disabled = maxed || wallet.coins < price;
     b.addEventListener('click', () => opts.onBuy && opts.onBuy(u.id));
     list.appendChild(b);
     buttons.push(b);
@@ -151,7 +157,7 @@ export function renderGarage(save, wallet, opts = {}) {
   root.appendChild(bottom);
   buttons.push(lobby);
 
-  root.classList.add('visible');
+  shell.classList.add('visible');
   return buttons;
 }
 
@@ -172,13 +178,15 @@ const CAUSE = {
  */
 export function renderResults({ cause, score, run, save, wallet, stageCleared, daily = false, lock = null, canWishlist = false },
                               { onAgain, onGarage, onLobby, onWishlist, onGoRide }) {
-  const root = $('sling-results');
+  const shell = $('sling-results');
+  const root = $('sling-results-body') || shell;
   root.innerHTML = '';
   // B5: a jackpot already cashed (this stage, or today) ends the run but pays like any other.
   const title = daily && cause === 'goal' ? "Today's Launch: all the way!"
     : cause === 'jackpot' && !score.jackpotPaid ? (daily ? "Jackpot! (already cashed today)" : 'Jackpot! (already cashed on this stage)')
     : (CAUSE[cause] || CAUSE.stall);
-  root.appendChild(el('h2', null, title));
+  const rSheet = /** @type {any} */ ($('sling-results-sheet'));
+  if (rSheet) rSheet.heading = title; else root.appendChild(el('h2', null, title));
   root.appendChild(el('div', 'sling-big', `${fmt(score.distance)} m`));
   const badges = el('div');
   if (score.isRecord) badges.appendChild(el('span', 'sling-badge', daily ? "TODAY'S BEST" : 'NEW RECORD'));
@@ -217,10 +225,10 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
   mk('GARAGE', 'primary', onGarage);
   mk('LOBBY', 'primary', onLobby);
   root.appendChild(box);
-  root.classList.add('visible');
+  shell.classList.add('visible');
   // The tap that skipped the tally must not land on LAUNCH AGAIN.
-  root.style.pointerEvents = 'none';
-  setTimeout(() => { root.style.pointerEvents = ''; }, 400);
+  shell.style.pointerEvents = 'none';
+  setTimeout(() => { shell.style.pointerEvents = ''; }, 400);
   return out;
 }
 

@@ -59,6 +59,7 @@ import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achieve
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
+import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
@@ -269,6 +270,7 @@ export class Lobby {
     this._flow.addEventListener('uf-flow:change', (e) => {
       const d = /** @type {CustomEvent} */ (e).detail;
       this._onStepShown(document.getElementById(d.to), d.from ? document.getElementById(d.from) : null);
+      this._syncSystemBar();
     });
     this._pollRafId = null;
     // Step navigation (mode/level/role/host/join/room) now uses the shared
@@ -372,6 +374,9 @@ export class Lobby {
     // Default focus index per step (0 if not specified)
     this._stepDefaultFocus = new Map();
     this._stepDefaultFocus.set(this.modeStep, 0); // RIDE TOGETHER
+
+    // Desktop/TV system bar + Controls sheet (#428 layout A).
+    this._initSystemBar();
 
     // Bike carousel state
     this.selectedPreset = null; // null = default, or preset data object
@@ -556,6 +561,12 @@ export class Lobby {
           ? ControllerRegistry.identifyFromGamepadId(slot.controllerLabel)
           : null;
         if (info?.hasGyro) {
+          // Gyro on by default (#428): bind an already-granted device now, no
+          // gesture needed (connectHidForSlot with prompt:false only pools what
+          // getDevices returns). 'hid-bound' below then switches motion on.
+          if (!slot._hidEntry && navigator.hid && this.controllerManager.connectHidForSlot) {
+            this.controllerManager.connectHidForSlot('P1', { prompt: false }).catch(() => {});
+          }
           this._showMotionToggle();
           // Reflect HID state in the active class: green when bound, off
           // (greyed) otherwise so the user knows it needs a click.
@@ -833,7 +844,12 @@ export class Lobby {
     // Hidden on all other steps (base CSS display:none).
     const selfieWrap = document.getElementById('selfie-pip-wrap');
     const partnerWrap = document.getElementById('partner-pip-wrap');
-    if (selfieWrap && partnerWrap) {
+    // #428: no video PiPs unless media sharing is on (?media=1, #400 D7) — the
+    // room shows player cards instead.
+    if (selfieWrap && partnerWrap && !this._mediaEnabled) {
+      for (const w of [selfieWrap, partnerWrap]) w.classList.remove('pip-lobby-mode', 'pip-level-mode');
+      if (step === this.roomStep) this._renderRoomPlayers();
+    } else if (selfieWrap && partnerWrap) {
       const isRoom = (step === this.roomStep);
       const isMultiplayerLevel = (step === this.levelStep && this._pendingMode === 'multiplayer');
       selfieWrap.classList.toggle('pip-lobby-mode', isRoom);
@@ -878,31 +894,52 @@ export class Lobby {
    * @param {{ who?: string, dev?: string, state?: 'open'|'joined'|'ready' }} v
    */
   _setRoomSeat(which, v) {
-    const role = this._roomRole || 'captain';
-    const seatRole = which === 'self' ? role : (role === 'captain' ? 'stoker' : 'captain');
-    const el = document.getElementById(`room-video-slot-${seatRole}`);
-    if (!el) return;
-    if (v.who !== undefined) el.setAttribute('who', v.who);
-    if (v.dev !== undefined) el.setAttribute('dev', v.dev);
-    if (v.state !== undefined) el.setAttribute('state', v.state);
+    // #428: the room's seats are <uf-player-card>s now; the name is all a
+    // caller ever set here. The cards re-render from state.
+    if (which === 'partner' && v.who !== undefined) this._roomPartnerName = v.who;
+    this._renderRoomPlayers();
   }
 
   /** Both room seats from current state: me in my seat, the partner's seat open until they arrive. */
   _syncRoomSeats(role) {
     this._roomRole = role;
+    this._renderRoomPlayers();
+  }
+
+  /**
+   * The room's two player cards (#428; video sharing is off since #400 D7):
+   * my profile and recent achievements in my seat, the partner's once their
+   * profile message arrives, "Waiting for partner…" until then.
+   */
+  _renderRoomPlayers() {
+    const role = this._roomRole || 'captain';
+    const mine = document.getElementById(`room-player-${role}`);
+    const theirs = document.getElementById(`room-player-${role === 'captain' ? 'stoker' : 'captain'}`);
+    if (!mine || !theirs) return;
     const user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
-    this._setRoomSeat('self', { who: (user && user.name) || 'You', dev: role === 'captain' ? 'front seat' : 'back seat', state: 'joined' });
-    const nameEl = document.getElementById('room-partner-name');
-    const partnerName = nameEl ? nameEl.textContent.trim() : '';
+    const recent = (list) => (list || []).slice().sort((a, b) => (b.earnedAt || 0) - (a.earnedAt || 0)).slice(0, 3);
+    const fill = (card, { name, avatar, achievements, here, badge }) => {
+      Object.assign(card, { name, avatar: avatar || '', state: here ? 'here' : 'waiting', badge: badge || '' });
+      card.stats = here && achievements ? [{ value: achievements.length, label: 'Achievements' }] : [];
+      const box = card.extra;
+      box.replaceChildren(...(here ? recent(achievements) : []).map((a) => {
+        const el = document.createElement('uf-achievement');
+        Object.assign(el, { icon: a.icon || '🏅', name: a.name || a.id, size: 'sm', state: 'earned' });
+        return el;
+      }));
+    };
+    const myAch = this._achievements ? this._achievements.getEarned() : [];
+    fill(mine, { name: (user && user.name) || 'You', avatar: user && user.avatar, achievements: myAch, here: true, badge: 'You' });
     const connected = !!(this.net && this.net.connected);
-    this._setRoomSeat('partner', connected
-      ? { who: partnerName || 'Partner', dev: role === 'captain' ? 'back seat' : 'front seat', state: 'joined' }
-      : { who: 'OPEN', dev: 'waiting for partner…', state: 'open' });
+    const partnerName = this._roomPartnerName || (document.getElementById('room-partner-name')?.textContent || '').trim();
+    fill(theirs, connected
+      ? { name: partnerName || 'Partner', avatar: this._partnerAvatarUrl, achievements: this._partnerAchievements || [], here: true }
+      : { name: 'Waiting for partner…', here: false });
   }
 
   _positionPipToVideoArea() {
-    const captainSlot = document.getElementById('room-video-slot-captain');
-    const stokerSlot = document.getElementById('room-video-slot-stoker');
+    const captainSlot = document.getElementById('room-player-captain');
+    const stokerSlot = document.getElementById('room-player-stoker');
     if (!captainSlot || !stokerSlot) return;
     const cRect = captainSlot.getBoundingClientRect();
     const sRect = stokerSlot.getBoundingClientRect();
@@ -1017,6 +1054,7 @@ export class Lobby {
       this._leaveLocalP2('back from host page');
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
+      { const tv = /** @type {any} */ (document.getElementById('room-qr-tv')); if (tv) tv.value = ''; }
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
@@ -1075,17 +1113,6 @@ export class Lobby {
     // In Electron the main process picks the next un-granted device itself.
     this._wireHidPairButton('btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'mode');
     this._wireHidPairButton('btn-versus-connect-hid', 'btn-versus-connect-hid-hint', 'versus');
-    const btnVersusCtrl = document.getElementById('btn-versus-controllers');
-    if (btnVersusCtrl) {
-      btnVersusCtrl.addEventListener('click', () => {
-        const panel = document.getElementById('versus-controllers');
-        if (!panel) return;
-        panel.hidden = !panel.hidden;
-        btnVersusCtrl.setAttribute('aria-expanded', String(!panel.hidden));
-        btnVersusCtrl.textContent = 'Controllers ' + (panel.hidden ? '\u25BE' : '\u25B4');
-        this._versusLastCardsKey = null;   // re-render so the list is current
-      });
-    }
 
     document.getElementById('btn-versus-join-kb').addEventListener('click', () => {
       this._versusJoinKeyboard();
@@ -2367,9 +2394,10 @@ export class Lobby {
     const access = this.license.accessLevel;
 
     // All players get full access during playtest
-    btnSolo.textContent = 'SOLO RIDE';
+    // `label` (not textContent): uf-button keeps its `sub` second line across it.
+    btnSolo.label = 'SOLO RIDE';
     btnTogether.classList.remove('role-locked');
-    btnTogether.innerHTML = 'RIDE TOGETHER';
+    btnTogether.label = 'RIDE TOGETHER';
 
     // License status icon next to version: 🔒 not licensed, ✅ licensed, 🆓 free play
     const licIcon = document.getElementById('lobby-license-icon');
@@ -2789,33 +2817,14 @@ export class Lobby {
     const slider = document.getElementById('lobby-feel-slider');
     const currentFeel = TUNE.steeringFeel != null ? TUNE.steeringFeel : 0.5;
     slider.value = Math.round(currentFeel * 100);
-    slider.oninput = () => {
-      const feel = slider.value / 100;
-      const oldFeel = TUNE.steeringFeel;
-      applySteeringFeel(feel);
-      analytics.trackEvent('steering_feel_change', { value: feel, from_value: oldFeel });
-      // Save immediately
-      try {
-        const tuningKey = this._tuningKey();
-        const saved = localStorage.getItem(tuningKey);
-        if (saved) {
-          const data = JSON.parse(saved);
-          data.steeringFeel = feel;
-          localStorage.setItem(tuningKey, JSON.stringify(data));
-        }
-      } catch {}
-    };
+    slider.oninput = () => this._applySteeringFeel(slider.value / 100);
 
     const dismiss = () => {
       popup.classList.remove('visible');
       document.removeEventListener('click', outsideClick, true);
     };
 
-    document.getElementById('btn-recalibrate').onclick = () => {
-      try { localStorage.removeItem(this._tuningKey()); } catch {}
-      this._forceWizard = true;
-      dismiss();
-    };
+    document.getElementById('btn-recalibrate').onclick = () => { this._recalibrateSteering(); dismiss(); };
     document.getElementById('btn-recal-cancel').onclick = dismiss;
 
     // Click outside to dismiss
@@ -2865,6 +2874,229 @@ export class Lobby {
       el.classList.remove('active');
     }
     this._updateAllToggle();
+    this._syncSystemBar();
+  }
+
+  // ============================================================
+  // DESKTOP / TV SYSTEM BAR + CONTROLS SHEET (#428 layout A)
+  // ============================================================
+  // At ≥1024px the round toggle columns, the Back hint and the credits footer
+  // give way to <uf-system-bar id="lobby-bar"> (css/lobby-tv.css). Its pills
+  // run the same handlers as the toggles; Stick / Gyro steering live in the
+  // Controls sheet (<uf-sheet id="controls-sheet">) behind one pill that names
+  // the controller in use. Below 1024px none of this shows and the toggles
+  // work as before.
+
+  _initSystemBar() {
+    const $ = (id) => document.getElementById(id);
+    this._bar = $('lobby-bar');
+    this._controlsSheet = $('controls-sheet');
+    if (!this._bar || !this._controlsSheet) return;
+    this._tvQuery = window.matchMedia('(min-width: 1024px)');
+    const pill = (id, fn) => {
+      const el = $(id);
+      // stopPropagation: the popups' "click outside closes" listeners must not
+      // see the pill click that just opened them.
+      el?.addEventListener('click', (e) => { e.stopPropagation(); fn(el); });
+      return el;
+    };
+    this._barPills = {
+      help: pill('bar-help', () => this._openHelp()),
+      leaderboard: pill('bar-leaderboard', () => this._openLeaderboard()),
+      profile: pill('bar-profile', (el) => { this._anchorPopup(this.profilePopup, el); this._toggleProfile(); }),
+      controls: pill('bar-controls', () => this._openControlsSheet()),
+      music: pill('bar-music', (el) => {
+        if (this._volumePicker.classList.contains('visible')) { this._hideVolumePicker(); return; }
+        this._anchorPopup(this._volumePicker, el);
+        this._showVolumePicker();
+      }),
+      settings: pill('bar-settings', () => $('ctrl-settings-btn')?.click()),
+    };
+    this._bar.addEventListener('uf-system-bar:back', () => this._goBack());
+
+    // Spatial focus: the pills join the toggle columns (hidden toggles and,
+    // below 1024px, the hidden bar are skipped by the FocusController).
+    const p = this._barPills;
+    this._modeColumns[0].push(p.help, p.leaderboard, p.profile);
+    this._modeColumns[2].push(p.controls, p.music, p.settings);
+
+    // Popups that lived inside the (now hidden) toggle columns move to <body>
+    // on desktop and anchor above their pill; back in place on a phone.
+    this._barPopups = ['profile-popup', 'volume-picker', 'keyboard-confirm-popup'].map((id) => {
+      const el = $(id);
+      return el ? { el, parent: el.parentNode, next: el.nextSibling } : null;
+    }).filter(Boolean);
+    const place = () => {
+      for (const p2 of this._barPopups) {
+        if (this._tvQuery.matches) { if (p2.el.parentNode !== document.body) { document.body.appendChild(p2.el); p2.el.classList.add('bar-popup'); } }
+        else if (p2.el.parentNode !== p2.parent) { p2.parent.insertBefore(p2.el, p2.next); p2.el.classList.remove('bar-popup'); p2.el.style.left = p2.el.style.bottom = ''; }
+      }
+    };
+    place();
+    this._tvQuery.addEventListener('change', place);
+
+    // Credits + version move into Help on desktop (the footer is hidden there).
+    const credits = document.querySelector('#lobby .lobby-credits');
+    const helpInner = $('help-modal-inner');
+    if (credits && helpInner) {
+      const copy = credits.cloneNode(true);
+      copy.className = 'help-credits';   // not .lobby-credits: the old desktop CSS pins that to the screen bottom
+      copy.querySelectorAll('[id]').forEach((el) => {
+        const orig = $(el.id);
+        el.removeAttribute('id');
+        if (orig && (el.tagName === 'BUTTON')) el.addEventListener('click', () => orig.click());
+      });
+      helpInner.appendChild(copy);
+      this._helpCredits = copy;
+    }
+
+    // ── Esc = Back for keyboard / mouse players (#428) ──
+    // Closes whatever is open first (a kit sheet handles its own Esc and
+    // marks the event; help, leaderboard, profile and volume popups here),
+    // then steps back like ◯ / B. A text field keeps its own Esc.
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (!this.lobbyEl || this.lobbyEl.style.display === 'none') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (document.querySelector('#phone-pad-panel.open')) return;   // the phone panel closes itself
+      if (this.helpModal && this.helpModal.classList.contains('visible')) { this._closeHelp(); e.preventDefault(); return; }
+      const lb = $('leaderboard-modal');
+      if (lb && lb.style.display !== 'none') { this._closeLeaderboard(); e.preventDefault(); return; }
+      if (this.profilePopup && this.profilePopup.classList.contains('visible')) { this.profilePopup.classList.remove('visible'); e.preventDefault(); return; }
+      if (this._volumePicker && this._volumePicker.classList.contains('visible')) { this._hideVolumePicker(); e.preventDefault(); return; }
+      const flow = $('lobby-flow');
+      if (flow && flow.current && flow.current !== 'lobby-mode') { this._goBack(); e.preventDefault(); }
+    });
+
+    // ── Join with a code (desktop keypad) ──
+    const joinCode = /** @type {any} */ ($('join-code-tv'));
+    if (joinCode) {
+      joinCode.addEventListener('submit', (e) => {
+        const status = $('join-status');
+        if (status) { status.textContent = 'Connecting...'; status.className = 'conn-status'; status.style.display = ''; }
+        this._joinRoom('TNDM-' + e.detail.code);
+      });
+      // A physical keyboard types straight in while the keypad is up.
+      window.addEventListener('keydown', (e) => {
+        if (!$('join-tv')?.classList.contains('on') || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.target instanceof HTMLInputElement) return;
+        if (e.key === 'Backspace') { joinCode.backspace(); e.preventDefault(); }
+        else if (e.key === 'Enter' && joinCode.complete) { joinCode.submit(); e.preventDefault(); }
+        else if (e.key.length === 1 && joinCode.type(e.key)) e.preventDefault();
+      });
+    }
+
+    // ── Controls sheet ──
+    const sheet = this._controlsSheet;
+    sheet.attachFocus(this._stepFocus);
+    $('controls-done')?.addEventListener('click', () => sheet.close());
+    $('set-stick')?.addEventListener('change', () => { this._toggleJoystick(); this._syncSystemBar(); });
+    $('set-gyro')?.addEventListener('change', () => { this._toggleMotion(); this._syncSystemBar(); });
+    $('set-phone')?.addEventListener('uf-setting:open', () => { sheet.close(); $('btn-mode-phone')?.click(); });
+    const slider = /** @type {HTMLInputElement|null} */ ($('set-feel-slider'));
+    if (slider) slider.addEventListener('input', () => this._applySteeringFeel(slider.value / 100));
+    $('set-recalibrate')?.addEventListener('click', () => { this._recalibrateSteering(); sheet.close(); });
+    sheet.addEventListener('uf-sheet:close', () => this._syncSystemBar());
+    this._syncSystemBar();
+  }
+
+  /** Put a popup that now lives in <body> just above the pill that opened it. */
+  _anchorPopup(popup, anchor) {
+    if (!popup || !anchor || !popup.classList.contains('bar-popup')) return;
+    const r = anchor.getBoundingClientRect();
+    popup.style.left = `${Math.round(r.left + r.width / 2)}px`;
+    popup.style.bottom = `${Math.round(window.innerHeight - r.top + 12)}px`;
+  }
+
+  _openControlsSheet() {
+    this._syncSystemBar();
+    const slider = /** @type {HTMLInputElement|null} */ (document.getElementById('set-feel-slider'));
+    if (slider) slider.value = String(Math.round((TUNE.steeringFeel != null ? TUNE.steeringFeel : 0.5) * 100));
+    this._controlsSheet.show();
+  }
+
+  /** Steering feel, shared by the Motion popup's slider and the Controls sheet's. */
+  _applySteeringFeel(feel) {
+    const oldFeel = TUNE.steeringFeel;
+    applySteeringFeel(feel);
+    analytics.trackEvent('steering_feel_change', { value: feel, from_value: oldFeel });
+    try {
+      const tuningKey = this._tuningKey();
+      const saved = localStorage.getItem(tuningKey);
+      if (saved) {
+        const data = JSON.parse(saved);
+        data.steeringFeel = feel;
+        localStorage.setItem(tuningKey, JSON.stringify(data));
+      }
+    } catch {}
+  }
+
+  /** Forget the saved gyro tuning so the calibration wizard runs on the next ride. */
+  _recalibrateSteering() {
+    try { localStorage.removeItem(this._tuningKey()); } catch {}
+    this._forceWizard = true;
+  }
+
+  /** P1's controller identity (core), or null before anyone has pressed a button. */
+  _p1Identity() {
+    const mgr = this.controllerManager;
+    const slot = mgr && mgr.getSlot && mgr.getSlot('P1');
+    return slot && slot.state === 'claimed' && mgr.slotIdentity ? mgr.slotIdentity(slot) : null;
+  }
+
+  /**
+   * Bring the bar, the Controls sheet and every family="auto" button prompt in
+   * line with P1's controller and the steering toggles. Cheap; called from
+   * _setToggleActive, step changes, the sheet, and ~1 Hz from the nav loop.
+   */
+  _syncSystemBar() {
+    if (!this._bar) return;
+    const id = this._p1Identity();
+    const stick = !!this.joystickActive, gyro = !!this.motionActive;
+    const mode = [stick && 'stick', gyro && 'gyro'].filter(Boolean).join(' + ') || 'buttons';
+    const label = document.getElementById('bar-controls-label');
+    if (label) {
+      const text = id ? `${id.shortName} · ${mode}` : 'Controls';
+      if (label.textContent !== text) label.textContent = text;
+    }
+    const Glyph = customElements.get('uf-controller-glyph');
+    const key = id ? `${id.glyphFamily}${id.swapAB ? '/swap' : ''}` : 'generic';
+    if (Glyph && key !== this._glyphKey) {
+      this._glyphKey = key;
+      Glyph.setDefault({ family: id ? id.glyphFamily : 'generic', swap: !!(id && id.swapAB) });
+    }
+    this._barPills?.music?.classList.toggle('active', !!this.musicActive);
+    // Back shows on every step but the first.
+    const flow = document.getElementById('lobby-flow');
+    this._bar.back = flow && flow.current && flow.current !== 'lobby-mode' ? 'show' : 'hide';
+    // The sheet, when open.
+    const sheet = this._controlsSheet;
+    if (!sheet || !sheet.open) return;
+    const seat = document.getElementById('controls-seat');
+    if (seat) {
+      seat.who = id ? id.shortName : 'No controller yet';
+      seat.dev = id ? `Player 1 · ${id.name}` : 'Press a button on a controller';
+      seat.state = id ? 'joined' : 'open';
+      seat.badge = id ? 'P1' : '';
+    }
+    const set = (sid, prop, v) => { const el = document.getElementById(sid); if (el && el[prop] !== v) el[prop] = v; };
+    set('set-stick', 'checked', stick);
+    set('set-gyro', 'checked', gyro);
+    // Gyro defaults on whenever the controller's motion sensors are bound
+    // (the desktop app grants every controller, so that's automatic there).
+    // A browser that hasn't granted this controller yet needs one click.
+    const gyroCapable = !!(id && id.entry && id.entry.capabilities && id.entry.capabilities.gyro);
+    set('set-gyro', 'description', !gyroCapable ? 'Not available on this controller'
+      : (gyro || this._motionPermitted) ? 'Tilt the controller to lean'
+      : 'Turn on to connect the gyro (your browser asks once)');
+    const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+    const roster = document.getElementById('controls-roster');
+    if (roster && this.controllerManager?.controllerRoster) {
+      roster.rows = this.controllerManager.controllerRoster(pads, {
+        seatOf: (slotId) => (slotId === 'P1' ? { player: 1, seat: { role: 'player', label: 'P1 · you', tone: 'captain' } } : null),
+        keyboard: true,
+      });
+    }
   }
 
   _applyVideoTrackState(enabled) {
@@ -4348,6 +4580,7 @@ export class Lobby {
         this._partnerAchievements = profile.achievements;
         const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
         updateBadgeDisplay('partner-badges', profile.achievements, shape);
+        this._renderRoomPlayers();
       }
       if (profile) this._notePartnerRoom(profile);   // PR #397 M1
       return;
@@ -4588,6 +4821,7 @@ export class Lobby {
       // pad joins. The single legacy button only shows when this list is empty.
       const candidates = this._detectLocalJoinCandidates();
       this._renderLocalJoinCandidates(candidates);
+      this._renderHostSeats(candidates);
       for (const c of candidates) {
         const gp = c.pollGp;
         if (!gp || !gp.buttons) continue;
@@ -5554,6 +5788,40 @@ export class Lobby {
     return this._detectJoinCandidates(pads, owned);
   }
 
+  /**
+   * Desktop/TV captain's room (#428 round 5): the co-op <uf-team> (captain
+   * seated, stoker waiting for any controller — the first one to press
+   * joins, via the monitor's edge poll) and a <uf-controller-roster> strip of
+   * every controller that could take the back seat. Dirty-checked; the phone
+   * layout keeps its JOIN AS PLAYER 2 buttons.
+   */
+  _renderHostSeats(candidates) {
+    const strip = document.getElementById('host-roster');
+    const cap = document.getElementById('host-seat-captain');
+    if (!strip || !cap) return;
+    const p1 = this._p1Identity() || (this.input && this.input.gamepadIndex == null ? KEYBOARD_IDENTITY : null);
+    const key = (p1 ? p1.shortName : '') + '§' + candidates.map(c => c.key).join('|');
+    if (key === this._hostSeatsKey) return;
+    this._hostSeatsKey = key;
+    cap.who = p1 ? p1.shortName : 'You';
+    const rows = [];
+    if (p1) rows.push({ key: 'p1', name: p1.name, shortName: p1.shortName, glyphFamily: p1.glyphFamily, swapAB: p1.swapAB, state: 'seated', player: 1, seat: { team: 'coop', role: 'captain', label: 'Captain', tone: 'captain' } });
+    for (const c of candidates) {
+      const id = this._versusIdentity(c);
+      rows.push({ key: c.key, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB, state: 'connected', player: null, seat: null });
+    }
+    strip.rows = rows;
+    // A mouse user can still seat someone: clicking the open seat joins the first candidate.
+    const sto = document.getElementById('host-seat-stoker');
+    if (sto && !sto._wired) {
+      sto._wired = true;
+      sto.addEventListener('click', () => {
+        const c = (this._detectLocalJoinCandidates() || [])[0];
+        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle });
+      });
+    }
+  }
+
   /** One JOIN AS PLAYER 2 button per candidate, in the host step (dirty-checked). */
   _renderLocalJoinCandidates(candidates) {
     const wrap = document.getElementById('local-join-candidates');
@@ -6057,81 +6325,112 @@ export class Lobby {
   }
 
   /**
-   * Re-render team columns when membership/teams/candidates change
-   * (dirty-checked). Detected-but-unjoined controllers render as live
-   * join cards (mouse-clickable; their own ✕/A press also joins via the
-   * monitor's edge poll) distributed to teams with room; leftover open
-   * seats show the passive placeholder.
+   * Re-render the versus seats when membership/teams/candidates change
+   * (dirty-checked). #428: two kit <uf-team>s of <uf-seat>s — seated players,
+   * then joinable controllers offered for the open seats ("press ✕ to join",
+   * clickable; their own A press also joins via the monitor's edge poll),
+   * then open seats — and a <uf-controller-roster> strip under them listing
+   * EVERY controller the step can see (a fifth one used to appear nowhere).
    */
   _renderVersusCards() {
     const candidates = this._versusCandidates || [];
-    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}`).join('|')
+    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}:${p.slotId || ''}`).join('|')
       + '§' + candidates.map(c => `${c.key}:${c.name}`).join('|');
     if (key === this._versusLastCardsKey) return;
     this._versusLastCardsKey = key;
 
-    // Distribute join cards: fill the emptier team first (mirrors the
-    // team auto-assignment a join will actually make).
+    // Offer joinable controllers to the emptier team first (mirrors the team
+    // auto-assignment a join will actually make).
     const roomIn = (team) => 2 - this._versusPlayers.filter(p => p.team === team).length;
-    const queue = [...candidates];
-    const joinCardsFor = { A: [], B: [] };
-    let roomA = roomIn('A');
-    let roomB = roomIn('B');
-    for (const c of queue) {
-      const sizeA = this._versusPlayers.filter(p => p.team === 'A').length + joinCardsFor.A.length;
-      const sizeB = this._versusPlayers.filter(p => p.team === 'B').length + joinCardsFor.B.length;
-      if (roomB > 0 && (sizeB < sizeA || roomA <= 0)) { joinCardsFor.B.push(c); roomB--; }
-      else if (roomA > 0) { joinCardsFor.A.push(c); roomA--; }
+    const joinFor = { A: [], B: [] };
+    let roomA = roomIn('A'), roomB = roomIn('B');
+    for (const c of candidates) {
+      const sizeA = this._versusPlayers.filter(p => p.team === 'A').length + joinFor.A.length;
+      const sizeB = this._versusPlayers.filter(p => p.team === 'B').length + joinFor.B.length;
+      if (roomB > 0 && (sizeB < sizeA || roomA <= 0)) { joinFor.B.push(c); roomB--; }
+      else if (roomA > 0) { joinFor.A.push(c); roomA--; }
     }
 
+    const glyph = (id) => `<uf-controller-glyph size="sm" button="confirm" family="${id.glyphFamily}"${id.swapAB ? ' swap' : ''}></uf-controller-glyph>`;
     for (const team of ['A', 'B']) {
-      const wrap = document.getElementById(`versus-team-${team.toLowerCase()}-slots`);
-      if (!wrap) continue;
-      wrap.innerHTML = '';
-      const members = this._versusPlayers.filter(p => p.team === team);
-      for (const p of members) {
-        const card = document.createElement('div');
-        card.className = 'versus-player-card';
-        const icon = p.type === 'keyboard' ? '⌨️ ' : (p.type === 'bot' ? '🤖 ' : '🎮 ');
-        card.innerHTML = `<span class="vp-name">PLAYER ${p.n}</span><span class="vp-device">${icon}${p.name}</span>`;
-        wrap.appendChild(card);
+      const box = document.getElementById(`versus-team-${team.toLowerCase()}`);
+      if (!box) continue;
+      const tone = team === 'A' ? 'team-a' : 'team-b';
+      const seats = [];
+      for (const p of this._versusPlayers.filter(pl => pl.team === team)) {
+        const id = this._versusIdentity(p);
+        const seat = document.createElement('uf-seat');
+        Object.assign(seat, { seat: `Player ${p.n}`, tone, who: id.shortName, state: 'joined', badge: `P${p.n}` });
+        seats.push(seat);
       }
-      for (const c of joinCardsFor[team]) {
-        const card = document.createElement('button');
-        card.className = 'versus-player-card vp-join';
-        card.innerHTML = `<span class="vp-name">${c.name}</span><span class="vp-device">CONNECTED · press ✕/A to join</span>`;
-        card.addEventListener('click', () => this._versusJoinCandidate(c));
-        wrap.appendChild(card);
+      for (const c of joinFor[team]) {
+        const id = this._versusIdentity(c);
+        const seat = document.createElement('uf-seat');
+        Object.assign(seat, { seat: team === 'A' ? 'Join team blue' : 'Join team red', tone, who: id.shortName, state: 'candidate', hint: `press ${glyph(id)} to join` });
+        seat.addEventListener('click', () => this._versusJoinCandidate(c));
+        seats.push(seat);
       }
-      const shown = members.length + joinCardsFor[team].length;
-      if (shown < 2 && this._versusPlayers.length + candidates.length < 4) {
-        const empty = document.createElement('div');
-        empty.className = 'versus-player-card vp-empty';
-        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">pair a controller below</span>';
-        wrap.appendChild(empty);
+      while (seats.length < 2) {
+        const seat = document.createElement('uf-seat');
+        Object.assign(seat, { seat: 'Open seat', tone, who: 'Open', state: 'open', hint: 'press <uf-controller-glyph size="sm" button="confirm"></uf-controller-glyph> on any controller' });
+        seats.push(seat);
       }
+      box.querySelectorAll(':scope > uf-seat').forEach((el) => el.remove());
+      box.append(...seats);
     }
     this._renderVersusControllers(candidates);
   }
 
   /**
-   * The Controllers panel: every controller this step can see and its state,
-   * in the same words as the lab lobby — CONNECTED (can join) → SEATED (on a
-   * team). Keyboard and bots are listed so the roster is complete.
+   * What to call a versus player or candidate, and which prompts to draw for
+   * it — core's identity (shortName, glyphFamily, swapAB), from whatever the
+   * versus detection knows about it: a manager slot, a Gamepad-API pad, a
+   * WebHID device, a Steam Input handle, or the keyboard.
+   */
+  _versusIdentity(x) {
+    if (x.type === 'keyboard') return KEYBOARD_IDENTITY;
+    if (x.type === 'bot') return identityOf(null, 'Bot');
+    if (x.kind === 'gamepad' && x.gp) return identifyGamepadId(x.gp.id);
+    if (x.kind === 'hid' && x.device) return identifyHidDevice(x.device);
+    if (x.kind === 'steam' || (x.input && x.input.steamInputHandle != null)) return { ...identityOf(null, x.name || 'Steam Controller'), glyphFamily: 'steam' };
+    const mgr = this.controllerManager;
+    if (x.slotId && mgr && mgr.slotIdentity) {
+      const id = mgr.slotIdentity(x.slotId);
+      if (id.entry) return id;
+    }
+    const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+    const pad = x.gpIndex != null ? pads[x.gpIndex] : null;
+    if (pad) return identifyGamepadId(pad.id);
+    return identityOf(null, x.name ? x.name.charAt(0) + x.name.slice(1).toLowerCase() : 'Controller');
+  }
+
+  /**
+   * The versus controller strip: every controller this step can see — seated
+   * players (badge P1–P4 in team colour) and every joinable controller
+   * ("press ✕ to join", or "seats full" once four are seated). Rows use the
+   * shape core's controllerRoster() returns, built from versus's own
+   * detection (it also sees Steam Input handles core doesn't).
    */
   _renderVersusControllers(candidates) {
-    const panel = document.getElementById('versus-controllers');
-    if (!panel || panel.hidden) return;
-    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const strip = document.getElementById('versus-roster');
+    if (!strip) return;
+    const connection = (x) => (x.type === 'keyboard' ? 'keyboard'
+      : (x.kind === 'steam' || (x.input && x.input.steamInputHandle != null)) ? 'steam-input'
+      : (x.kind === 'hid' || (x.input && x.input._slot && x.input._slot._hidEntry)) ? 'webhid' : 'gamepad');
     const rows = [];
     for (const p of this._versusPlayers) {
-      const src = p.type === 'keyboard' ? 'keyboard' : p.type === 'bot' ? 'bot' : (p.input && p.input.steamInputHandle != null ? 'steam' : (p.input && p.input._slot && p.input._slot._hidEntry ? 'webhid' : 'gamepad'));
-      rows.push(`<div class="vc-row"><span class="vc-name">P${p.n} · ${esc(p.name)}</span><span class="vc-src">${src} · team ${p.team === 'A' ? 'blue' : 'red'}</span><uf-chip tone="accent">SEATED</uf-chip></div>`);
+      const id = this._versusIdentity(p);
+      rows.push({
+        key: 'p' + p.n, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB,
+        state: 'seated', player: p.n, connection: connection(p),
+        seat: { team: p.team === 'A' ? 'a' : 'b', role: 'player', label: `P${p.n}`, tone: p.team === 'A' ? 'team-a' : 'team-b' },
+      });
     }
     for (const c of candidates) {
-      rows.push(`<div class="vc-row"><span class="vc-name">${esc(c.name)}</span><span class="vc-src">${c.kind === 'hid' ? 'webhid' : c.kind}</span><uf-chip tone="info">CONNECTED</uf-chip></div>`);
+      const id = this._versusIdentity(c);
+      rows.push({ key: c.key, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB, state: 'connected', player: null, seat: null, connection: connection(c) });
     }
-    panel.innerHTML = rows.join('') || '<div class="vc-row"><span class="vc-name">No controllers yet — press a button on one, or pair it below</span></div>';
+    strip.rows = rows;
   }
 
   _removePipLobbyMode() {
@@ -6271,6 +6570,24 @@ export class Lobby {
     const spinnerWrap = document.getElementById('gamepad-code-spinners');
     const inputWrap = document.querySelector('.room-code-join-wrap');
     if (!spinnerWrap || !inputWrap) return;
+    // Desktop/TV (#428): the kit keypad replaces the spinners. The step's
+    // spatial focus drives its keys (_applyStepSpatialFocus); Done joins.
+    const tvJoin = document.getElementById('join-tv');
+    if (tvJoin && this._tvQuery && this._tvQuery.matches) {
+      this._spinnerActive = false;
+      spinnerWrap.style.display = 'none';
+      inputWrap.style.display = show ? 'none' : '';
+      tvJoin.classList.toggle('on', show);
+      const joinBtn = document.getElementById('btn-join');
+      if (joinBtn) joinBtn.style.display = show ? 'none' : '';
+      if (show) {
+        const code = /** @type {any} */ (document.getElementById('join-code-tv'));
+        if (code) code.clear();
+        this._applyStepSpatialFocus(this.joinStep);
+      }
+      return;
+    }
+    if (tvJoin) tvJoin.classList.remove('on');
     this._spinnerActive = show;
     spinnerWrap.style.display = show ? '' : 'none';
     inputWrap.style.display = show ? 'none' : '';
@@ -6580,6 +6897,12 @@ export class Lobby {
    * B backs out). (#318)
    */
   _pollGamepadNav() {
+    // Bar label / glyph family / an open Controls sheet: a few times a second is plenty.
+    const nowSync = performance.now();
+    if (!this._lastBarSync || nowSync - this._lastBarSync > (this._controlsSheet && this._controlsSheet.open ? 200 : 1000)) {
+      this._lastBarSync = nowSync;
+      this._syncSystemBar();
+    }
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
 
     // Whether the step-nav section ran last frame. Reset each frame; set true
@@ -6784,7 +7107,10 @@ export class Lobby {
   _applyStepSpatialFocus(step) {
     if (!step) return;
     if (this.input && this.input.gamepadConnected) {
-      const centerItems = this._stepCenterItems.get(step) || [];
+      // Desktop join step: the keypad's keys + Delete / Join are the scope.
+      const tvJoin = step === this.joinStep && document.getElementById('join-tv');
+      const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
+      const centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
       this._modeColumns[1] = centerItems;
       const defaultEl = centerItems[this._stepDefaultFocus.get(step) || 0] || null;
       this._stepFocus.setSpatial(this._modeColumns.flat(), defaultEl);
@@ -6839,6 +7165,21 @@ export class Lobby {
     this._previewCamera = new THREE.PerspectiveCamera(28, w / h, 0.1, 100);
     this._previewCamera.position.set(0, 1.4, 4.2);
     this._previewCamera.lookAt(0, 0.5, 0);
+
+    // Follow the canvas's CSS box (#428): the renderer used to be sized once
+    // here, so a window or TV-size change (or the desktop layout giving the
+    // preview a different box) stretched it. setSize(…, false) leaves the CSS
+    // size to the stylesheet.
+    if (typeof ResizeObserver !== 'undefined') {
+      this._previewResize = new ResizeObserver(() => {
+        const cw = canvas.clientWidth, ch = canvas.clientHeight;
+        if (!cw || !ch || !this._previewRenderer) return;
+        this._previewRenderer.setSize(cw, ch, false);
+        this._previewCamera.aspect = cw / ch;
+        this._previewCamera.updateProjectionMatrix();
+      });
+      this._previewResize.observe(canvas);
+    }
 
     // Lights
     this._previewScene.add(new THREE.AmbientLight(0xffffff, 0.7));
