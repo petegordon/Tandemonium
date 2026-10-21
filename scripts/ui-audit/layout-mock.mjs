@@ -69,6 +69,19 @@ const SCREENS = {
     for (const [f, ...a] of [['press', 0, 'a'], ['pressHid', 0, 'a'], ['press', 1, 'a'], ['press', 2, 'a']]) { await fake(p, f, ...a); await wait(1200); }
     return p;
   },
+  // Local co-op with four controllers: two seats, four controllers.
+  async host4() {
+    const p = await open(['dualsense', 'switch', 'supernova'], 1);
+    await click(p, '#btn-together'); await wait(1200); await click(p, '#btn-captain'); await wait(3000);
+    return p;
+  },
+  // Versus with eight controllers (seven pads/HID + keyboard): four seats.
+  async versus8() {
+    const p = await open(['dualsense', 'switch', 'supernova', 'xbox', 'generic', 'dualsense'], 1);
+    await click(p, '#btn-together'); await wait(1200); await click(p, '#btn-versus'); await wait(2000);
+    for (const [f, ...a] of [['press', 0, 'a'], ['pressHid', 0, 'a'], ['press', 1, 'a'], ['press', 2, 'a']]) { await fake(p, f, ...a); await wait(1200); }
+    return p;
+  },
   // Stoker: enter the captain's code with a DualSense.
   async join() {
     const p = await open(['dualsense']);
