@@ -17,7 +17,7 @@
 // (docs/UI-KIT-TV-COMPONENTS.md §13; decided: lives in the lab).
 
 import { UfElement, prop, esc } from '../uf-element.js';
-import qrcode from '../vendor/qrcode-generator.js';
+import qrcode from '../third_party/qrcode-generator.js';
 
 /**
  * QR SVG markup for `text` (or '' if it can't be encoded).
