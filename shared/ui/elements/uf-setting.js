@@ -48,7 +48,7 @@ export class UfSetting extends UfElement {
     uf-setting[checked] .uf-setting__pill { background: var(--uf-color-accent-soft); color: var(--uf-color-accent); }
     uf-setting .uf-setting__value { font-size: var(--uf-size-md); color: var(--uf-color-fg); white-space: nowrap; }
     uf-setting > .uf-setting__detail { padding: var(--uf-space-2) var(--uf-space-4) var(--uf-space-1) calc(var(--uf-space-4) * 2.5); display: flex; align-items: center; gap: var(--uf-space-3); flex-wrap: wrap; font-size: var(--uf-size-sm); }
-    uf-setting[kind="toggle"]:not([checked]) > .uf-setting__detail { display: none; }
+    uf-setting:not([kind="value"]):not([checked]) > .uf-setting__detail { display: none; }
     uf-setting > .uf-setting__detail:empty { display: none; }
     uf-setting[disabled] { opacity: .45; pointer-events: none; }
   `;

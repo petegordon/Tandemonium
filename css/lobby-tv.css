@@ -1,0 +1,138 @@
+/* ============================================================
+   Desktop / TV lobby — layout A (#428, mockups on #429)
+   ============================================================
+   The right painting is a fixed panel at its natural shape (504×1017 →
+   535×1080) with the wordmark on its sky; the menus get the rest of the
+   screen. Text sizes come from the kit's automatic ramp (shared/ui/tokens.css:
+   phone sizes below 1024px, TV sizes at 1920px), so nothing here is a
+   per-screen pixel size. The room step keeps its own video grid and toggles
+   (its .room-active layout) and is left alone.
+
+   Loaded after the page's inline <style>, so equal-specificity rules win;
+   !important is used only where the old desktop block sets the same property
+   with higher specificity or !important of its own.                        */
+
+/* The system bar and the mode buttons' second lines are desktop/TV only. */
+uf-system-bar#lobby-bar { display: none; }
+#lobby-mode .uf-button__sub { display: none; }
+
+@media (min-width: 1024px) {
+  uf-system-bar#lobby-bar { display: flex; }
+  #lobby-mode .uf-button__sub { display: block; }
+  /* The art panel's width, for the stage and for kit sheets / the system bar. */
+  :root:has(#lobby:not([style*="none"])) { --uf-stage-inset: 535px; }
+
+  /* ── Frame ── */
+  #lobby:not(:has(.room-active)) {
+    --gutter: clamp(24px, 2.5vw, 64px);
+    --bar-h: calc(var(--uf-size-md) * 3.3 + 16px);   /* matches <uf-system-bar> */
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--uf-stage-inset) !important;
+    grid-template-rows: var(--gutter) minmax(0, 1fr) var(--bar-h) !important;
+    gap: 0 !important; padding: 0 !important; align-items: center !important; overflow: hidden !important;
+    background: radial-gradient(120% 90% at 30% 40%, #161b24 0%, #0a0c11 70%) !important;
+  }
+  #lobby:not(:has(.room-active)) #lobby-img-left { display: none !important; }
+  #lobby:not(:has(.room-active)) #lobby-img-right {
+    grid-column: 3 !important; grid-row: 1 / -1 !important; object-position: center !important;
+    box-shadow: -24px 0 48px rgba(0, 0, 0, .55);
+  }
+  #lobby-wordmark { display: none; }
+  /* tandemonium_title.png at 0.435× (wordmark ≈ 470px wide), centred on the
+     wordmark; the dirt splash and pedals fade into the sky through the mask. */
+  #lobby:not(:has(.room-active)) #lobby-wordmark {
+    display: block; position: fixed; z-index: 3; top: 10px; right: 0; width: var(--uf-stage-inset); height: 200px; pointer-events: none;
+    background: url(../images/tandemonium_title.png) no-repeat;
+    background-size: 668px auto; background-position: calc(var(--uf-stage-inset) / 2 - 334px) -70px;
+    -webkit-mask-image: radial-gradient(ellipse 64% 46% at 50% 46%, #000 72%, transparent 100%);
+            mask-image: radial-gradient(ellipse 64% 46% at 50% 46%, #000 72%, transparent 100%);
+    filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .45));
+  }
+
+  /* ── Stage: the mode screen pairs the bike chooser with the buttons; every other step gets the full width ── */
+  #lobby:not(:has(.room-active)) #bike-carousel {
+    grid-column: 1 !important; grid-row: 2 !important;
+    width: calc(100% - var(--gutter)) !important; margin: 0 0 0 var(--gutter) !important;
+    justify-self: stretch !important; align-self: center !important; border-radius: var(--uf-radius-lg);
+  }
+  #lobby:not(:has(.room-active)) #bike-preview-wrap { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; }
+  #lobby:not(:has(.room-active)) #bike-preview-canvas { width: 100% !important; height: min(470px, 48vh) !important; }
+  #lobby:not(:has(.room-active)) #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 2.4) !important; font-size: var(--uf-size-2xl) !important; }
+  #lobby:not(:has(.room-active)) #bike-name { font-size: var(--uf-size-2xl) !important; line-height: 1.2 !important; top: calc(var(--uf-size-2xl) * -1.7) !important; }
+  #lobby:has(#lobby-mode[active]):not(:has(.room-active)) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }
+  #lobby:not(:has(#lobby-mode[active])) #bike-carousel { display: none !important; }
+
+  #lobby:not(:has(.room-active)) .lobby-card {
+    grid-column: 2 !important; grid-row: 2 !important;
+    max-width: none !important; width: 100% !important; height: auto !important; max-height: 100% !important;
+    padding: 0 var(--gutter) !important; margin: 0 !important; overflow: visible !important;
+    display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important;
+    align-self: center !important; justify-self: stretch !important;
+  }
+  #lobby:not(:has(#lobby-mode[active])):not(:has(.room-active)) .lobby-card { grid-column: 1 / 3 !important; }
+  #lobby:not(:has(.room-active)) .lobby-layout { display: block !important; width: 100%; flex: 0 0 auto !important; }
+  #lobby:not(:has(.room-active)) .lobby-steps-col { width: 100% !important; max-width: none !important; min-width: 0 !important; overflow: visible !important; }
+  #lobby:not(:has(.room-active)) .lobby-step { overflow: visible !important; }
+  #lobby:not(:has(.room-active)) .lobby-prompt { font-size: var(--uf-size-xl) !important; margin: 0 0 var(--uf-space-4) !important; }
+
+  /* The system bar replaces the round toggle columns, the Back hint and the
+     credits footer on every step but the room (css below + lobby-tv.js). */
+  #lobby:not(:has(.room-active)) .lobby-toggle-col,
+  #lobby:not(:has(.room-active)) .lobby-toggles,
+  #lobby:not(:has(.room-active)) .gamepad-back-hint,
+  #lobby:not(:has(.room-active)) #lobby-fixed-back,
+  #lobby:not(:has(.room-active)) .lobby-step .lobby-back,
+  #lobby:not(:has(.room-active)) .lobby-credits { display: none !important; }
+  #lobby:has(.room-active) > uf-system-bar#lobby-bar { display: none; }
+
+  /* ── Mode screen: narrower two-line buttons (sub lines set in index.html) ── */
+  #lobby-mode .lobby-mode-buttons { width: 100% !important; max-width: 22em; gap: var(--uf-space-4) !important; margin: 0 auto; font-size: var(--uf-size-md); }
+  #lobby-mode .lobby-mode-buttons > uf-button:not([size]) {
+    display: block; text-align: left; min-height: 0; padding: var(--uf-space-4) var(--uf-space-5) !important;
+    font-size: var(--uf-size-lg); border-radius: var(--uf-radius-lg);
+  }
+  #lobby-mode #btn-mode-phone, #lobby-mode #btn-mode-connect-hid { align-self: flex-start; font-size: var(--uf-size-sm); }
+
+  /* ── Level select: every card in one row, START RIDE on screen (#428 finding 1) ── */
+  #lobby #level-cards {
+    flex-direction: row !important; width: 100% !important; max-width: none !important;
+    gap: var(--uf-space-5) !important; align-items: stretch !important; padding: var(--uf-space-2) 0 !important;
+  }
+  #lobby .level-card { flex: 1 1 0 !important; min-width: 0 !important; width: auto !important; min-height: 0; padding: var(--uf-space-5) var(--uf-space-5) !important; text-align: left; }
+  #lobby .level-card-top { flex-direction: column !important; align-items: flex-start !important; gap: var(--uf-space-3) !important; }
+  #lobby .level-card-icon { font-size: calc(var(--uf-size-2xl) * 1.25) !important; }
+  #lobby .level-card-name { font-size: var(--uf-size-xl) !important; }
+  #lobby .level-card-desc { font-size: var(--uf-size-md) !important; line-height: 1.35 !important; margin-top: var(--uf-space-2) !important; display: block !important; }
+  #lobby .level-card-daily-rule { font-size: var(--uf-size-xs) !important; display: block; margin-top: 6px; }
+  #lobby .level-card-record { font-size: var(--uf-size-md) !important; margin-top: var(--uf-space-3) !important; }
+  #lobby .difficulty-selector { margin-top: var(--uf-space-5) !important; font-size: var(--uf-size-md) !important; }
+  #lobby #level-extras { margin-top: var(--uf-space-5) !important; }
+  #lobby #btn-start-ride { min-width: 14em; font-size: var(--uf-size-lg) !important; }
+}
+
+/* ── Popups the system bar opens (moved to <body> on desktop; lobby.js _initSystemBar
+      anchors each just above its pill) ── */
+@media (min-width: 1024px) {
+  body > .bar-popup { position: fixed !important; top: auto !important; right: auto !important; transform: translateX(-50%) !important; z-index: 120 !important; }
+  body > #keyboard-confirm-popup.bar-popup { left: calc((100vw - var(--uf-stage-inset)) / 2) !important; bottom: 50vh !important; transform: translate(-50%, 50%) !important; z-index: 130 !important; }
+  #bar-music.active { border-color: var(--uf-color-accent-line); color: var(--uf-color-accent); }
+  #help-modal .help-credits { margin-top: var(--uf-space-4); padding-top: var(--uf-space-3); border-top: 1px solid var(--uf-color-line-soft); justify-content: flex-start; }
+  /* Controls sheet extras */
+  #controls-sheet .set-feel-end { color: var(--uf-color-fg-muted); font-size: var(--uf-size-xs); }
+  #controls-sheet #set-feel-slider { width: 12em; accent-color: var(--uf-color-accent); }
+}
+#help-modal .help-credits { display: none; }
+@media (min-width: 1024px) { #help-modal .help-credits { display: flex; } }
+
+/* Profile popup in <body>: a compact column at the kit's text sizes (its old
+   desktop rules sized it from the toggle column's --ls scale). */
+@media (min-width: 1024px) {
+  body > #profile-popup.bar-popup { min-width: 0 !important; width: min(22em, 36vw); padding: var(--uf-space-4) !important; border-radius: var(--uf-radius-lg) !important; font-size: var(--uf-size-sm); }
+  body > #profile-popup.bar-popup .profile-popup-content { gap: var(--uf-space-2) !important; }
+  body > #profile-popup.bar-popup .profile-popup-name { font-size: var(--uf-size-md) !important; }
+  body > #profile-popup.bar-popup .profile-popup-email { font-size: var(--uf-size-xs) !important; }
+  body > #profile-popup.bar-popup button { display: block; width: 100%; box-sizing: border-box; font-size: var(--uf-size-sm) !important; padding: .6em 1em !important; margin: var(--uf-space-2) 0 0 !important; border-radius: var(--uf-radius-md) !important; }
+  body > #profile-popup.bar-popup #profile-popup-signin { padding: 0 !important; }
+}
+#help-modal .help-credits { align-items: center; gap: var(--uf-space-3); flex-wrap: wrap; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); }
+#help-modal .help-credits button { background: none; border: none; color: inherit; font: inherit; cursor: pointer; }

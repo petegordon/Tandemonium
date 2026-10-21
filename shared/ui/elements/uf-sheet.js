@@ -211,7 +211,13 @@ export class UfSheet extends UfElement {
     const fc = this.#focus;
     if (!fc) return;
     this.#prevScope = { items: fc.items.slice(), el: fc.focusedEl, spatial: fc._spatial, index: fc.index };
-    const take = () => { if (this.open && this.#focus === fc) fc.setSpatial(this.focusables()); };
+    // Start on the first thing in the body (a setting, a button), not the
+    // header's Close: B already closes, so Close is the last resort.
+    const take = () => {
+      if (!this.open || this.#focus !== fc) return;
+      const items = this.focusables();
+      fc.setSpatial(items, items.find((el) => !el.classList.contains('uf-sheet__close')) || null);
+    };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(take); else take();
   }
 

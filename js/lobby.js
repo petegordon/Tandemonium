@@ -269,6 +269,7 @@ export class Lobby {
     this._flow.addEventListener('uf-flow:change', (e) => {
       const d = /** @type {CustomEvent} */ (e).detail;
       this._onStepShown(document.getElementById(d.to), d.from ? document.getElementById(d.from) : null);
+      this._syncSystemBar();
     });
     this._pollRafId = null;
     // Step navigation (mode/level/role/host/join/room) now uses the shared
@@ -372,6 +373,9 @@ export class Lobby {
     // Default focus index per step (0 if not specified)
     this._stepDefaultFocus = new Map();
     this._stepDefaultFocus.set(this.modeStep, 0); // RIDE TOGETHER
+
+    // Desktop/TV system bar + Controls sheet (#428 layout A).
+    this._initSystemBar();
 
     // Bike carousel state
     this.selectedPreset = null; // null = default, or preset data object
@@ -2367,9 +2371,10 @@ export class Lobby {
     const access = this.license.accessLevel;
 
     // All players get full access during playtest
-    btnSolo.textContent = 'SOLO RIDE';
+    // `label` (not textContent): uf-button keeps its `sub` second line across it.
+    btnSolo.label = 'SOLO RIDE';
     btnTogether.classList.remove('role-locked');
-    btnTogether.innerHTML = 'RIDE TOGETHER';
+    btnTogether.label = 'RIDE TOGETHER';
 
     // License status icon next to version: 🔒 not licensed, ✅ licensed, 🆓 free play
     const licIcon = document.getElementById('lobby-license-icon');
@@ -2789,33 +2794,14 @@ export class Lobby {
     const slider = document.getElementById('lobby-feel-slider');
     const currentFeel = TUNE.steeringFeel != null ? TUNE.steeringFeel : 0.5;
     slider.value = Math.round(currentFeel * 100);
-    slider.oninput = () => {
-      const feel = slider.value / 100;
-      const oldFeel = TUNE.steeringFeel;
-      applySteeringFeel(feel);
-      analytics.trackEvent('steering_feel_change', { value: feel, from_value: oldFeel });
-      // Save immediately
-      try {
-        const tuningKey = this._tuningKey();
-        const saved = localStorage.getItem(tuningKey);
-        if (saved) {
-          const data = JSON.parse(saved);
-          data.steeringFeel = feel;
-          localStorage.setItem(tuningKey, JSON.stringify(data));
-        }
-      } catch {}
-    };
+    slider.oninput = () => this._applySteeringFeel(slider.value / 100);
 
     const dismiss = () => {
       popup.classList.remove('visible');
       document.removeEventListener('click', outsideClick, true);
     };
 
-    document.getElementById('btn-recalibrate').onclick = () => {
-      try { localStorage.removeItem(this._tuningKey()); } catch {}
-      this._forceWizard = true;
-      dismiss();
-    };
+    document.getElementById('btn-recalibrate').onclick = () => { this._recalibrateSteering(); dismiss(); };
     document.getElementById('btn-recal-cancel').onclick = dismiss;
 
     // Click outside to dismiss
@@ -2865,6 +2851,187 @@ export class Lobby {
       el.classList.remove('active');
     }
     this._updateAllToggle();
+    this._syncSystemBar();
+  }
+
+  // ============================================================
+  // DESKTOP / TV SYSTEM BAR + CONTROLS SHEET (#428 layout A)
+  // ============================================================
+  // At ≥1024px the round toggle columns, the Back hint and the credits footer
+  // give way to <uf-system-bar id="lobby-bar"> (css/lobby-tv.css). Its pills
+  // run the same handlers as the toggles; Stick / Gyro steering live in the
+  // Controls sheet (<uf-sheet id="controls-sheet">) behind one pill that names
+  // the controller in use. Below 1024px none of this shows and the toggles
+  // work as before.
+
+  _initSystemBar() {
+    const $ = (id) => document.getElementById(id);
+    this._bar = $('lobby-bar');
+    this._controlsSheet = $('controls-sheet');
+    if (!this._bar || !this._controlsSheet) return;
+    this._tvQuery = window.matchMedia('(min-width: 1024px)');
+    const pill = (id, fn) => {
+      const el = $(id);
+      // stopPropagation: the popups' "click outside closes" listeners must not
+      // see the pill click that just opened them.
+      el?.addEventListener('click', (e) => { e.stopPropagation(); fn(el); });
+      return el;
+    };
+    this._barPills = {
+      help: pill('bar-help', () => this._openHelp()),
+      leaderboard: pill('bar-leaderboard', () => this._openLeaderboard()),
+      profile: pill('bar-profile', (el) => { this._anchorPopup(this.profilePopup, el); this._toggleProfile(); }),
+      controls: pill('bar-controls', () => this._openControlsSheet()),
+      music: pill('bar-music', (el) => {
+        if (this._volumePicker.classList.contains('visible')) { this._hideVolumePicker(); return; }
+        this._anchorPopup(this._volumePicker, el);
+        this._showVolumePicker();
+      }),
+      settings: pill('bar-settings', () => $('ctrl-settings-btn')?.click()),
+    };
+    this._bar.addEventListener('uf-system-bar:back', () => this._goBack());
+
+    // Spatial focus: the pills join the toggle columns (hidden toggles and,
+    // below 1024px, the hidden bar are skipped by the FocusController).
+    const p = this._barPills;
+    this._modeColumns[0].push(p.help, p.leaderboard, p.profile);
+    this._modeColumns[2].push(p.controls, p.music, p.settings);
+
+    // Popups that lived inside the (now hidden) toggle columns move to <body>
+    // on desktop and anchor above their pill; back in place on a phone.
+    this._barPopups = ['profile-popup', 'volume-picker', 'keyboard-confirm-popup'].map((id) => {
+      const el = $(id);
+      return el ? { el, parent: el.parentNode, next: el.nextSibling } : null;
+    }).filter(Boolean);
+    const place = () => {
+      for (const p2 of this._barPopups) {
+        if (this._tvQuery.matches) { if (p2.el.parentNode !== document.body) { document.body.appendChild(p2.el); p2.el.classList.add('bar-popup'); } }
+        else if (p2.el.parentNode !== p2.parent) { p2.parent.insertBefore(p2.el, p2.next); p2.el.classList.remove('bar-popup'); p2.el.style.left = p2.el.style.bottom = ''; }
+      }
+    };
+    place();
+    this._tvQuery.addEventListener('change', place);
+
+    // Credits + version move into Help on desktop (the footer is hidden there).
+    const credits = document.querySelector('#lobby .lobby-credits');
+    const helpInner = $('help-modal-inner');
+    if (credits && helpInner) {
+      const copy = credits.cloneNode(true);
+      copy.className = 'help-credits';   // not .lobby-credits: the old desktop CSS pins that to the screen bottom
+      copy.querySelectorAll('[id]').forEach((el) => {
+        const orig = $(el.id);
+        el.removeAttribute('id');
+        if (orig && (el.tagName === 'BUTTON')) el.addEventListener('click', () => orig.click());
+      });
+      helpInner.appendChild(copy);
+      this._helpCredits = copy;
+    }
+
+    // ── Controls sheet ──
+    const sheet = this._controlsSheet;
+    sheet.attachFocus(this._stepFocus);
+    $('controls-done')?.addEventListener('click', () => sheet.close());
+    $('set-stick')?.addEventListener('change', () => { this._toggleJoystick(); this._syncSystemBar(); });
+    $('set-gyro')?.addEventListener('change', () => { this._toggleMotion(); this._syncSystemBar(); });
+    $('set-phone')?.addEventListener('uf-setting:open', () => { sheet.close(); $('btn-mode-phone')?.click(); });
+    const slider = /** @type {HTMLInputElement|null} */ ($('set-feel-slider'));
+    if (slider) slider.addEventListener('input', () => this._applySteeringFeel(slider.value / 100));
+    $('set-recalibrate')?.addEventListener('click', () => { this._recalibrateSteering(); sheet.close(); });
+    sheet.addEventListener('uf-sheet:close', () => this._syncSystemBar());
+    this._syncSystemBar();
+  }
+
+  /** Put a popup that now lives in <body> just above the pill that opened it. */
+  _anchorPopup(popup, anchor) {
+    if (!popup || !anchor || !popup.classList.contains('bar-popup')) return;
+    const r = anchor.getBoundingClientRect();
+    popup.style.left = `${Math.round(r.left + r.width / 2)}px`;
+    popup.style.bottom = `${Math.round(window.innerHeight - r.top + 12)}px`;
+  }
+
+  _openControlsSheet() {
+    this._syncSystemBar();
+    const slider = /** @type {HTMLInputElement|null} */ (document.getElementById('set-feel-slider'));
+    if (slider) slider.value = String(Math.round((TUNE.steeringFeel != null ? TUNE.steeringFeel : 0.5) * 100));
+    this._controlsSheet.show();
+  }
+
+  /** Steering feel, shared by the Motion popup's slider and the Controls sheet's. */
+  _applySteeringFeel(feel) {
+    const oldFeel = TUNE.steeringFeel;
+    applySteeringFeel(feel);
+    analytics.trackEvent('steering_feel_change', { value: feel, from_value: oldFeel });
+    try {
+      const tuningKey = this._tuningKey();
+      const saved = localStorage.getItem(tuningKey);
+      if (saved) {
+        const data = JSON.parse(saved);
+        data.steeringFeel = feel;
+        localStorage.setItem(tuningKey, JSON.stringify(data));
+      }
+    } catch {}
+  }
+
+  /** Forget the saved gyro tuning so the calibration wizard runs on the next ride. */
+  _recalibrateSteering() {
+    try { localStorage.removeItem(this._tuningKey()); } catch {}
+    this._forceWizard = true;
+  }
+
+  /** P1's controller identity (core), or null before anyone has pressed a button. */
+  _p1Identity() {
+    const mgr = this.controllerManager;
+    const slot = mgr && mgr.getSlot && mgr.getSlot('P1');
+    return slot && slot.state === 'claimed' && mgr.slotIdentity ? mgr.slotIdentity(slot) : null;
+  }
+
+  /**
+   * Bring the bar, the Controls sheet and every family="auto" button prompt in
+   * line with P1's controller and the steering toggles. Cheap; called from
+   * _setToggleActive, step changes, the sheet, and ~1 Hz from the nav loop.
+   */
+  _syncSystemBar() {
+    if (!this._bar) return;
+    const id = this._p1Identity();
+    const stick = !!this.joystickActive, gyro = !!this.motionActive;
+    const mode = [stick && 'stick', gyro && 'gyro'].filter(Boolean).join(' + ') || 'buttons';
+    const label = document.getElementById('bar-controls-label');
+    if (label) {
+      const text = id ? `${id.shortName} · ${mode}` : 'Controls';
+      if (label.textContent !== text) label.textContent = text;
+    }
+    const Glyph = customElements.get('uf-controller-glyph');
+    const key = id ? `${id.glyphFamily}${id.swapAB ? '/swap' : ''}` : 'generic';
+    if (Glyph && key !== this._glyphKey) {
+      this._glyphKey = key;
+      Glyph.setDefault({ family: id ? id.glyphFamily : 'generic', swap: !!(id && id.swapAB) });
+    }
+    this._barPills?.music?.classList.toggle('active', !!this.musicActive);
+    // Back shows on every step but the first.
+    const flow = document.getElementById('lobby-flow');
+    this._bar.back = flow && flow.current && flow.current !== 'lobby-mode' ? 'show' : 'hide';
+    // The sheet, when open.
+    const sheet = this._controlsSheet;
+    if (!sheet || !sheet.open) return;
+    const seat = document.getElementById('controls-seat');
+    if (seat) {
+      seat.who = id ? id.shortName : 'No controller yet';
+      seat.dev = id ? `Player 1 · ${id.name}` : 'Press a button on a controller';
+      seat.state = id ? 'joined' : 'open';
+      seat.badge = id ? 'P1' : '';
+    }
+    const set = (sid, prop, v) => { const el = document.getElementById(sid); if (el && el[prop] !== v) el[prop] = v; };
+    set('set-stick', 'checked', stick);
+    set('set-gyro', 'checked', gyro);
+    set('set-gyro', 'description', this._motionAvailable() || (this.input && this.input.gamepadConnected && navigator.hid) ? 'Tilt the controller to lean' : 'Not available on this controller');
+    const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+    const roster = document.getElementById('controls-roster');
+    if (roster && this.controllerManager?.controllerRoster) {
+      roster.rows = this.controllerManager.controllerRoster(pads, {
+        seatOf: (slotId) => (slotId === 'P1' ? { player: 1, seat: { role: 'player', label: 'P1 · you', tone: 'captain' } } : null),
+        keyboard: true,
+      });
+    }
   }
 
   _applyVideoTrackState(enabled) {
@@ -6580,6 +6747,12 @@ export class Lobby {
    * B backs out). (#318)
    */
   _pollGamepadNav() {
+    // Bar label / glyph family / an open Controls sheet: a few times a second is plenty.
+    const nowSync = performance.now();
+    if (!this._lastBarSync || nowSync - this._lastBarSync > (this._controlsSheet && this._controlsSheet.open ? 200 : 1000)) {
+      this._lastBarSync = nowSync;
+      this._syncSystemBar();
+    }
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
 
     // Whether the step-nav section ran last frame. Reset each frame; set true
@@ -6839,6 +7012,21 @@ export class Lobby {
     this._previewCamera = new THREE.PerspectiveCamera(28, w / h, 0.1, 100);
     this._previewCamera.position.set(0, 1.4, 4.2);
     this._previewCamera.lookAt(0, 0.5, 0);
+
+    // Follow the canvas's CSS box (#428): the renderer used to be sized once
+    // here, so a window or TV-size change (or the desktop layout giving the
+    // preview a different box) stretched it. setSize(…, false) leaves the CSS
+    // size to the stylesheet.
+    if (typeof ResizeObserver !== 'undefined') {
+      this._previewResize = new ResizeObserver(() => {
+        const cw = canvas.clientWidth, ch = canvas.clientHeight;
+        if (!cw || !ch || !this._previewRenderer) return;
+        this._previewRenderer.setSize(cw, ch, false);
+        this._previewCamera.aspect = cw / ch;
+        this._previewCamera.updateProjectionMatrix();
+      });
+      this._previewResize.observe(canvas);
+    }
 
     // Lights
     this._previewScene.add(new THREE.AmbientLight(0xffffff, 0.7));
