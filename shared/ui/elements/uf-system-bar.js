@@ -102,7 +102,7 @@ export class UfSystemBar extends UfElement {
   #syncBack() {
     const btn = this.#backBtn;
     if (!btn) return;
-    const label = /** @type {HTMLElement} */ (btn.querySelector('span'));
+    const label = /** @type {HTMLElement} */ (btn.querySelector(':scope > span'));   // not the glyph's own span
     label.textContent = this.backLabel;
     const f = /** @type {any} */ (this.#flowEl);
     btn.hidden = this.back === 'hide' || (this.back === 'auto' && !(f && f.canBack));

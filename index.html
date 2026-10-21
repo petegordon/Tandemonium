@@ -5744,23 +5744,19 @@ ON</button>
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-versus" class="lobby-step">
-          <p class="lobby-prompt">Build your teams:</p>
+          <p class="lobby-prompt">Local versus</p>
+          <!-- #428: two kit team boxes of <uf-seat>s (built by _renderVersusCards) and,
+               under them, every controller the step can see in a <uf-controller-roster>
+               strip — seated (P1–P4 in team colour), joinable ("press ✕ to join"), or
+               "seats full". Replaces the hand-built .versus-player-card grid and the
+               collapsible Controllers list. -->
           <div class="versus-teams">
-            <div class="versus-team versus-team-a">
-              <div class="versus-team-title">TEAM BLUE</div>
-              <div class="versus-team-slots" id="versus-team-a-slots"></div>
-            </div>
+            <uf-team id="versus-team-a" tone="team-a" heading="Team blue" layout="row"></uf-team>
             <div class="versus-vs">VS</div>
-            <div class="versus-team versus-team-b">
-              <div class="versus-team-title">TEAM RED</div>
-              <div class="versus-team-slots" id="versus-team-b-slots"></div>
-            </div>
+            <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
           </div>
-          <p class="versus-join-hint" id="versus-join-hint">Press <strong>A</strong> on a controller to join &middot; <strong>&#x25C0;/&#x25B6;</strong> switch team &middot; <strong>B</strong> leave your seat</p>
-          <!-- Every controller the step can see, with its state (CONNECTED → SEATED),
-               like the lab lobby's Controllers panel. Built by _renderVersusCards. -->
-          <uf-button variant="ghost" size="sm" id="btn-versus-controllers" aria-expanded="true">Controllers &#x25B4;</uf-button>
-          <div id="versus-controllers" class="versus-controllers"></div>
+          <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
+          <p class="versus-join-hint" id="versus-join-hint"><uf-controller-glyph button="confirm" size="sm"></uf-controller-glyph> on a controller to join &middot; <uf-controller-glyph button="dpad-h" size="sm"></uf-controller-glyph> switch team &middot; <uf-controller-glyph button="back" size="sm"></uf-controller-glyph> leave your seat</p>
           <uf-button class="lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
             <span class="btn-local-join-main">JOIN WITH KEYBOARD</span>
             <span class="btn-local-join-hint">Click or press Enter</span>

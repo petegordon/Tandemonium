@@ -59,6 +59,7 @@ import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achieve
 import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
+import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
@@ -1079,17 +1080,6 @@ export class Lobby {
     // In Electron the main process picks the next un-granted device itself.
     this._wireHidPairButton('btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'mode');
     this._wireHidPairButton('btn-versus-connect-hid', 'btn-versus-connect-hid-hint', 'versus');
-    const btnVersusCtrl = document.getElementById('btn-versus-controllers');
-    if (btnVersusCtrl) {
-      btnVersusCtrl.addEventListener('click', () => {
-        const panel = document.getElementById('versus-controllers');
-        if (!panel) return;
-        panel.hidden = !panel.hidden;
-        btnVersusCtrl.setAttribute('aria-expanded', String(!panel.hidden));
-        btnVersusCtrl.textContent = 'Controllers ' + (panel.hidden ? '\u25BE' : '\u25B4');
-        this._versusLastCardsKey = null;   // re-render so the list is current
-      });
-    }
 
     document.getElementById('btn-versus-join-kb').addEventListener('click', () => {
       this._versusJoinKeyboard();
@@ -6224,81 +6214,112 @@ export class Lobby {
   }
 
   /**
-   * Re-render team columns when membership/teams/candidates change
-   * (dirty-checked). Detected-but-unjoined controllers render as live
-   * join cards (mouse-clickable; their own ✕/A press also joins via the
-   * monitor's edge poll) distributed to teams with room; leftover open
-   * seats show the passive placeholder.
+   * Re-render the versus seats when membership/teams/candidates change
+   * (dirty-checked). #428: two kit <uf-team>s of <uf-seat>s — seated players,
+   * then joinable controllers offered for the open seats ("press ✕ to join",
+   * clickable; their own A press also joins via the monitor's edge poll),
+   * then open seats — and a <uf-controller-roster> strip under them listing
+   * EVERY controller the step can see (a fifth one used to appear nowhere).
    */
   _renderVersusCards() {
     const candidates = this._versusCandidates || [];
-    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}`).join('|')
+    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}:${p.slotId || ''}`).join('|')
       + '§' + candidates.map(c => `${c.key}:${c.name}`).join('|');
     if (key === this._versusLastCardsKey) return;
     this._versusLastCardsKey = key;
 
-    // Distribute join cards: fill the emptier team first (mirrors the
-    // team auto-assignment a join will actually make).
+    // Offer joinable controllers to the emptier team first (mirrors the team
+    // auto-assignment a join will actually make).
     const roomIn = (team) => 2 - this._versusPlayers.filter(p => p.team === team).length;
-    const queue = [...candidates];
-    const joinCardsFor = { A: [], B: [] };
-    let roomA = roomIn('A');
-    let roomB = roomIn('B');
-    for (const c of queue) {
-      const sizeA = this._versusPlayers.filter(p => p.team === 'A').length + joinCardsFor.A.length;
-      const sizeB = this._versusPlayers.filter(p => p.team === 'B').length + joinCardsFor.B.length;
-      if (roomB > 0 && (sizeB < sizeA || roomA <= 0)) { joinCardsFor.B.push(c); roomB--; }
-      else if (roomA > 0) { joinCardsFor.A.push(c); roomA--; }
+    const joinFor = { A: [], B: [] };
+    let roomA = roomIn('A'), roomB = roomIn('B');
+    for (const c of candidates) {
+      const sizeA = this._versusPlayers.filter(p => p.team === 'A').length + joinFor.A.length;
+      const sizeB = this._versusPlayers.filter(p => p.team === 'B').length + joinFor.B.length;
+      if (roomB > 0 && (sizeB < sizeA || roomA <= 0)) { joinFor.B.push(c); roomB--; }
+      else if (roomA > 0) { joinFor.A.push(c); roomA--; }
     }
 
+    const glyph = (id) => `<uf-controller-glyph size="sm" button="confirm" family="${id.glyphFamily}"${id.swapAB ? ' swap' : ''}></uf-controller-glyph>`;
     for (const team of ['A', 'B']) {
-      const wrap = document.getElementById(`versus-team-${team.toLowerCase()}-slots`);
-      if (!wrap) continue;
-      wrap.innerHTML = '';
-      const members = this._versusPlayers.filter(p => p.team === team);
-      for (const p of members) {
-        const card = document.createElement('div');
-        card.className = 'versus-player-card';
-        const icon = p.type === 'keyboard' ? '⌨️ ' : (p.type === 'bot' ? '🤖 ' : '🎮 ');
-        card.innerHTML = `<span class="vp-name">PLAYER ${p.n}</span><span class="vp-device">${icon}${p.name}</span>`;
-        wrap.appendChild(card);
+      const box = document.getElementById(`versus-team-${team.toLowerCase()}`);
+      if (!box) continue;
+      const tone = team === 'A' ? 'team-a' : 'team-b';
+      const seats = [];
+      for (const p of this._versusPlayers.filter(pl => pl.team === team)) {
+        const id = this._versusIdentity(p);
+        const seat = document.createElement('uf-seat');
+        Object.assign(seat, { seat: `Player ${p.n}`, tone, who: id.shortName, state: 'joined', badge: `P${p.n}` });
+        seats.push(seat);
       }
-      for (const c of joinCardsFor[team]) {
-        const card = document.createElement('button');
-        card.className = 'versus-player-card vp-join';
-        card.innerHTML = `<span class="vp-name">${c.name}</span><span class="vp-device">CONNECTED · press ✕/A to join</span>`;
-        card.addEventListener('click', () => this._versusJoinCandidate(c));
-        wrap.appendChild(card);
+      for (const c of joinFor[team]) {
+        const id = this._versusIdentity(c);
+        const seat = document.createElement('uf-seat');
+        Object.assign(seat, { seat: team === 'A' ? 'Join team blue' : 'Join team red', tone, who: id.shortName, state: 'candidate', hint: `press ${glyph(id)} to join` });
+        seat.addEventListener('click', () => this._versusJoinCandidate(c));
+        seats.push(seat);
       }
-      const shown = members.length + joinCardsFor[team].length;
-      if (shown < 2 && this._versusPlayers.length + candidates.length < 4) {
-        const empty = document.createElement('div');
-        empty.className = 'versus-player-card vp-empty';
-        empty.innerHTML = '<span class="vp-name">OPEN</span><span class="vp-device">pair a controller below</span>';
-        wrap.appendChild(empty);
+      while (seats.length < 2) {
+        const seat = document.createElement('uf-seat');
+        Object.assign(seat, { seat: 'Open seat', tone, who: 'Open', state: 'open', hint: 'press <uf-controller-glyph size="sm" button="confirm"></uf-controller-glyph> on any controller' });
+        seats.push(seat);
       }
+      box.querySelectorAll(':scope > uf-seat').forEach((el) => el.remove());
+      box.append(...seats);
     }
     this._renderVersusControllers(candidates);
   }
 
   /**
-   * The Controllers panel: every controller this step can see and its state,
-   * in the same words as the lab lobby — CONNECTED (can join) → SEATED (on a
-   * team). Keyboard and bots are listed so the roster is complete.
+   * What to call a versus player or candidate, and which prompts to draw for
+   * it — core's identity (shortName, glyphFamily, swapAB), from whatever the
+   * versus detection knows about it: a manager slot, a Gamepad-API pad, a
+   * WebHID device, a Steam Input handle, or the keyboard.
+   */
+  _versusIdentity(x) {
+    if (x.type === 'keyboard') return KEYBOARD_IDENTITY;
+    if (x.type === 'bot') return identityOf(null, 'Bot');
+    if (x.kind === 'gamepad' && x.gp) return identifyGamepadId(x.gp.id);
+    if (x.kind === 'hid' && x.device) return identifyHidDevice(x.device);
+    if (x.kind === 'steam' || (x.input && x.input.steamInputHandle != null)) return { ...identityOf(null, x.name || 'Steam Controller'), glyphFamily: 'steam' };
+    const mgr = this.controllerManager;
+    if (x.slotId && mgr && mgr.slotIdentity) {
+      const id = mgr.slotIdentity(x.slotId);
+      if (id.entry) return id;
+    }
+    const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+    const pad = x.gpIndex != null ? pads[x.gpIndex] : null;
+    if (pad) return identifyGamepadId(pad.id);
+    return identityOf(null, x.name ? x.name.charAt(0) + x.name.slice(1).toLowerCase() : 'Controller');
+  }
+
+  /**
+   * The versus controller strip: every controller this step can see — seated
+   * players (badge P1–P4 in team colour) and every joinable controller
+   * ("press ✕ to join", or "seats full" once four are seated). Rows use the
+   * shape core's controllerRoster() returns, built from versus's own
+   * detection (it also sees Steam Input handles core doesn't).
    */
   _renderVersusControllers(candidates) {
-    const panel = document.getElementById('versus-controllers');
-    if (!panel || panel.hidden) return;
-    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const strip = document.getElementById('versus-roster');
+    if (!strip) return;
+    const connection = (x) => (x.type === 'keyboard' ? 'keyboard'
+      : (x.kind === 'steam' || (x.input && x.input.steamInputHandle != null)) ? 'steam-input'
+      : (x.kind === 'hid' || (x.input && x.input._slot && x.input._slot._hidEntry)) ? 'webhid' : 'gamepad');
     const rows = [];
     for (const p of this._versusPlayers) {
-      const src = p.type === 'keyboard' ? 'keyboard' : p.type === 'bot' ? 'bot' : (p.input && p.input.steamInputHandle != null ? 'steam' : (p.input && p.input._slot && p.input._slot._hidEntry ? 'webhid' : 'gamepad'));
-      rows.push(`<div class="vc-row"><span class="vc-name">P${p.n} · ${esc(p.name)}</span><span class="vc-src">${src} · team ${p.team === 'A' ? 'blue' : 'red'}</span><uf-chip tone="accent">SEATED</uf-chip></div>`);
+      const id = this._versusIdentity(p);
+      rows.push({
+        key: 'p' + p.n, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB,
+        state: 'seated', player: p.n, connection: connection(p),
+        seat: { team: p.team === 'A' ? 'a' : 'b', role: 'player', label: `P${p.n}`, tone: p.team === 'A' ? 'team-a' : 'team-b' },
+      });
     }
     for (const c of candidates) {
-      rows.push(`<div class="vc-row"><span class="vc-name">${esc(c.name)}</span><span class="vc-src">${c.kind === 'hid' ? 'webhid' : c.kind}</span><uf-chip tone="info">CONNECTED</uf-chip></div>`);
+      const id = this._versusIdentity(c);
+      rows.push({ key: c.key, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB, state: 'connected', player: null, seat: null, connection: connection(c) });
     }
-    panel.innerHTML = rows.join('') || '<div class="vc-row"><span class="vc-name">No controllers yet — press a button on one, or pair it below</span></div>';
+    strip.rows = rows;
   }
 
   _removePipLobbyMode() {

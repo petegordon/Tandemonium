@@ -26,7 +26,7 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby:not(:has(.room-active)) {
     --gutter: clamp(24px, 2.5vw, 64px);
     --bar-h: calc(var(--uf-size-md) * 3.3 + 16px);   /* matches <uf-system-bar> */
-    display: grid !important;
+    display: grid;   /* not !important: the game hides the lobby with an inline display:none */
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--uf-stage-inset) !important;
     grid-template-rows: var(--gutter) minmax(0, 1fr) var(--bar-h) !important;
     gap: 0 !important; padding: 0 !important; align-items: center !important; overflow: hidden !important;
@@ -136,3 +136,13 @@ uf-system-bar#lobby-bar { display: none; }
 }
 #help-modal .help-credits { align-items: center; gap: var(--uf-space-3); flex-wrap: wrap; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); }
 #help-modal .help-credits button { background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
+
+/* ── Versus: two kit team boxes side by side, every controller in the strip under them ── */
+#lobby-versus .versus-teams { display: flex; align-items: stretch; gap: var(--uf-space-4); width: 100%; margin: 0; }
+#lobby-versus .versus-teams > uf-team { flex: 1 1 0; min-width: 0; }
+#lobby-versus .versus-vs { align-self: center; font: 800 var(--uf-size-xl)/1 var(--uf-font-ui); color: var(--uf-color-fg-muted); opacity: 1; }
+#lobby-versus #versus-roster { width: 100%; margin-top: var(--uf-space-4); }
+#lobby-versus .versus-join-hint { font-size: var(--uf-size-md); color: var(--uf-color-fg); opacity: .85; margin: var(--uf-space-4) 0; }
+@media (min-width: 1024px) {
+  #lobby-versus #btn-versus-continue { min-width: 14em; font-size: var(--uf-size-lg); }
+}
