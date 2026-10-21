@@ -56,6 +56,19 @@ const SCREENS = {
     await click(p, '#btn-together'); await wait(1200); await click(p, '#btn-captain'); await wait(3000);
     return p;
   },
+  // Captain's room with three controllers: who takes the back seat?
+  async host3() {
+    const p = await open(['dualsense', 'switch'], 1);
+    await click(p, '#btn-together'); await wait(1200); await click(p, '#btn-captain'); await wait(3000);
+    return p;
+  },
+  // Versus with five controllers: four seated, one left over.
+  async versus5() {
+    const p = await open(['dualsense', 'switch', 'supernova', 'xbox'], 1);
+    await click(p, '#btn-together'); await wait(1200); await click(p, '#btn-versus'); await wait(2000);
+    for (const [f, ...a] of [['press', 0, 'a'], ['pressHid', 0, 'a'], ['press', 1, 'a'], ['press', 2, 'a']]) { await fake(p, f, ...a); await wait(1200); }
+    return p;
+  },
   // Stoker: enter the captain's code with a DualSense.
   async join() {
     const p = await open(['dualsense']);
@@ -63,7 +76,7 @@ const SCREENS = {
     return p;
   },
   // The Controls sheet (proposal): the mode screen; the variant's script opens it.
-  async controls() { const p = await open(['dualsense']); await wait(1000); return p; },
+  async controls() { const p = await open(['dualsense', 'switch'], 1); await wait(1000); return p; },
   // Phone as controller: the QR sheet over the mode screen.
   async phone() { const p = await open(['dualsense']); await wait(800); await click(p, '#btn-mode-phone'); await wait(3000); return p; },
 };

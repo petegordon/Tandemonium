@@ -1,0 +1,34 @@
+/* extends: a3 */
+/* script: _seats */
+/* A4 · one seat component: the captain's local join reuses the versus team box,
+   "Also connected" replaces the expandable Controllers list on both screens,
+   and the full list moves into the Controls sheet. */
+
+/* Captain's room: the co-op team box in column 2 */
+#lobby-host[active] #local-join-section { display: none !important; }
+#lobby-host[active] #mock-coop { grid-column: 2; grid-row: 2 / span 4; display: grid; gap: 16px; align-content: start; }
+#mock-coop h3 { margin: 0; font: 800 30px/1.2 var(--uf-font-ui); color: #fff; }
+.versus-team-coop { border-color: rgba(122,224,154,.5) !important; background: rgba(122,224,154,.07) !important; padding: 18px !important; border-radius: 18px !important; gap: 14px !important; }
+.versus-team-coop .versus-team-title { font-size: 22px !important; color: var(--uf-color-captain); letter-spacing: .14em; }
+.versus-team-coop .versus-team-slots { flex-direction: row !important; gap: 16px !important; }
+.versus-team-coop .versus-player-card { flex: 1 1 0; min-height: 170px; justify-content: center; gap: 8px; padding: 18px !important; border-radius: 14px !important; }
+.versus-team-coop .vp-role { font-size: 14px; font-weight: 700; letter-spacing: .08em; white-space: nowrap; }
+.versus-team-coop .seat-captain .vp-role { color: var(--uf-color-captain); }
+.versus-team-coop .seat-stoker .vp-role { color: var(--uf-color-stoker); }
+.versus-team-coop .vp-name { font-size: 24px !important; color: #fff !important; text-align: center; }
+.versus-team-coop .vp-device { font-size: 17px !important; opacity: .85; text-align: center; }
+.versus-team-coop .vp-join { animation: none !important; background: rgba(255,158,107,.14) !important; border: 1px solid rgba(255,158,107,.7) !important; }
+.versus-team-coop .vp-join.focus { border: 3px solid #44ff66 !important; box-shadow: 0 0 18px -4px #44ff66; }
+.mock-also { margin: 6px 0 0; font: 400 20px/1.45 var(--uf-font-ui); color: rgba(255,255,255,.78); max-width: 1100px; text-align: center; }
+#mock-coop .mock-also { text-align: left; }
+.mock-also b { color: #fff; }
+
+/* Controls sheet: compact list of every controller */
+.mcs-card { gap: 10px !important; padding-top: 28px !important; padding-bottom: 22px !important; }
+.mcs-row { padding: 12px 20px !important; }
+.mcs-devs { display: grid; gap: 6px; }
+.mcs-dev { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 18px; padding: 9px 16px; border-radius: 10px; background: rgba(255,255,255,.04); font-size: 19px; }
+.mcs-dev small { font: 500 15px var(--uf-font-mono); color: #9aa5b8; }
+.mcs-dev span { font-size: 15px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: rgba(103,193,245,.16); color: #bfe6ff; }
+.mcs-dev.me span { background: rgba(76,125,255,.3); color: #fff; }
+.mcs-change { display: none; }

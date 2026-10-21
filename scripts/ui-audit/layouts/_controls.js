@@ -24,6 +24,14 @@ if (rc) {
 
 if (window.__mockScreen === 'controls') {
   const confirm = SONY ? '✕' : 'A', back = SONY ? '◯' : 'B';
+  // Every controller the game can see, with how it's connected and its state.
+  const all = (navigator.getGamepads ? [...navigator.getGamepads()] : []).filter(Boolean).map((g, i) => {
+    const k = /Vendor:\s*([0-9a-f]{4}).*Product:\s*([0-9a-f]{4})/i.exec(g.id) || [];
+    return { name: NAMES[`${k[1]}:${k[2]}`] || 'Controller', via: 'Gamepad', state: i === 0 ? 'P1 · you' : 'Connected' };
+  });
+  (window.__fake?.state().hid || []).forEach(() => all.push({ name: 'Steam Controller', via: 'WebHID · gyro', state: 'Connected' }));
+  all.push({ name: 'Keyboard', via: 'Keys', state: 'Connected' });
+  const list = all.map((c) => `<div class="mcs-dev${c.state.startsWith('P1') ? ' me' : ''}"><b>${c.name}</b><small>${c.via}</small><span>${c.state}</span></div>`).join('');
   const sheet = document.createElement('div');
   sheet.className = 'mock-dom';
   sheet.id = 'mock-controls-sheet';
@@ -31,6 +39,8 @@ if (window.__mockScreen === 'controls') {
     <div class="mcs-card" role="dialog" aria-label="Controls">
       <header><h2>Controls</h2><span class="mcs-close"><i>${back}</i> Close</span></header>
       <div class="mcs-seat"><span class="mcs-p">P1</span>${icon}<div><b>${name}</b><small>Player 1 · connected</small></div><span class="mcs-change">Change controller</span></div>
+      <h3>Connected controllers</h3>
+      <div class="mcs-devs">${list}</div>
       <h3>Steering</h3>
       <div class="mcs-row focus"><div><b>Stick steering</b><small>Lean with the left stick</small></div><span class="mcs-switch ${stick ? 'on' : ''}">${stick ? 'On' : 'Off'}</span></div>
       <div class="mcs-row"><div><b>Gyro steering</b><small>Tilt the controller to lean</small></div><span class="mcs-switch ${gyro ? 'on' : ''}">${gyro ? 'On' : 'Off'}</span></div>
