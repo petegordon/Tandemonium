@@ -183,3 +183,26 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-role[active] { max-width: 30em; margin: 0 auto !important; font-size: var(--uf-size-md); }
   #lobby-role uf-button { font-size: var(--uf-size-lg); padding: var(--uf-space-4) var(--uf-space-5) !important; }
 }
+
+/* ── Phone as controller: a large card over the menus only, QR sized for the
+      couch (#428 round 2). The panel's own CSS is injected at runtime, so these
+      rules carry a leading `body` to outrank it. ── */
+@media (min-width: 1024px) {
+  body #phone-pad-panel { right: var(--uf-stage-inset); }
+  body #phone-pad-panel .ppp-card {
+    width: min(58em, calc(100% - 2 * var(--uf-space-6))); padding: var(--uf-space-6); border-radius: var(--uf-radius-lg); text-align: left;
+    display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--uf-space-6); row-gap: var(--uf-space-3); align-items: start;
+    grid-template-areas: "qr title" "qr steps" "qr status" "qr link" "qr row"; font-size: var(--uf-size-md);
+  }
+  body #phone-pad-panel h2 { grid-area: title; margin: 0; font-size: var(--uf-size-xl); }
+  body #phone-pad-panel .ppp-qr { grid-area: qr; padding: var(--uf-space-4); border-radius: var(--uf-radius-lg); }
+  body #phone-pad-panel .ppp-qr svg { width: min(400px, 38vh); height: min(400px, 38vh); }
+  body #phone-pad-panel .ppp-card::after {
+    grid-area: steps; white-space: pre-line; line-height: 1.7; color: var(--uf-color-fg);
+    content: '1  Open your phone’s camera\A 2  Point it at the code\A 3  Steer and pedal on your phone';
+  }
+  body #phone-pad-panel .ppp-status { grid-area: status; font-size: var(--uf-size-md); min-height: 0; }
+  body #phone-pad-panel .ppp-link { grid-area: link; font-size: var(--uf-size-xs); }
+  body #phone-pad-panel .ppp-row { grid-area: row; justify-content: flex-start; align-self: end; gap: var(--uf-space-3); }
+  body #phone-pad-panel #btn-ppp-done { min-width: 8em; font-size: var(--uf-size-lg); }
+}
