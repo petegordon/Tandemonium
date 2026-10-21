@@ -40,6 +40,10 @@ export function renderRoomQR(code) {
     qrEl.style.display = 'none';
   }
 
+  // Desktop/TV: the couch-sized kit <uf-qr> beside the room code (#428).
+  const tv = /** @type {any} */ (document.getElementById('room-qr-tv'));
+  if (tv) { tv.value = url; tv.link = url.replace(/^https?:\/\//, ''); }
+
   // Show full URL
   if (urlEl) urlEl.textContent = url;
 

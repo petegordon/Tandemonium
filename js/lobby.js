@@ -1022,6 +1022,7 @@ export class Lobby {
       this._leaveLocalP2('back from host page');
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
+      { const tv = /** @type {any} */ (document.getElementById('room-qr-tv')); if (tv) tv.value = ''; }
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
@@ -4745,6 +4746,7 @@ export class Lobby {
       // pad joins. The single legacy button only shows when this list is empty.
       const candidates = this._detectLocalJoinCandidates();
       this._renderLocalJoinCandidates(candidates);
+      this._renderHostSeats(candidates);
       for (const c of candidates) {
         const gp = c.pollGp;
         if (!gp || !gp.buttons) continue;
@@ -5709,6 +5711,40 @@ export class Lobby {
       if (this.input._steamInputActive) { const e = this.input._selectedSteamEntry(); if (e) owned.handles.add(e.handle); }
     }
     return this._detectJoinCandidates(pads, owned);
+  }
+
+  /**
+   * Desktop/TV captain's room (#428 round 5): the co-op <uf-team> (captain
+   * seated, stoker waiting for any controller — the first one to press
+   * joins, via the monitor's edge poll) and a <uf-controller-roster> strip of
+   * every controller that could take the back seat. Dirty-checked; the phone
+   * layout keeps its JOIN AS PLAYER 2 buttons.
+   */
+  _renderHostSeats(candidates) {
+    const strip = document.getElementById('host-roster');
+    const cap = document.getElementById('host-seat-captain');
+    if (!strip || !cap) return;
+    const p1 = this._p1Identity() || (this.input && this.input.gamepadIndex == null ? KEYBOARD_IDENTITY : null);
+    const key = (p1 ? p1.shortName : '') + '§' + candidates.map(c => c.key).join('|');
+    if (key === this._hostSeatsKey) return;
+    this._hostSeatsKey = key;
+    cap.who = p1 ? p1.shortName : 'You';
+    const rows = [];
+    if (p1) rows.push({ key: 'p1', name: p1.name, shortName: p1.shortName, glyphFamily: p1.glyphFamily, swapAB: p1.swapAB, state: 'seated', player: 1, seat: { team: 'coop', role: 'captain', label: 'Captain', tone: 'captain' } });
+    for (const c of candidates) {
+      const id = this._versusIdentity(c);
+      rows.push({ key: c.key, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB, state: 'connected', player: null, seat: null });
+    }
+    strip.rows = rows;
+    // A mouse user can still seat someone: clicking the open seat joins the first candidate.
+    const sto = document.getElementById('host-seat-stoker');
+    if (sto && !sto._wired) {
+      sto._wired = true;
+      sto.addEventListener('click', () => {
+        const c = (this._detectLocalJoinCandidates() || [])[0];
+        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle });
+      });
+    }
   }
 
   /** One JOIN AS PLAYER 2 button per candidate, in the host step (dirty-checked). */

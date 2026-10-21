@@ -5784,6 +5784,21 @@ ON</button>
           <div id="room-url" class="room-url"></div>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
+          <!-- Desktop/TV (#428 round 5): Online multiplayer (code + couch-sized <uf-qr>)
+               on the left, Local multiplayer on the right — a kit <uf-team> with the
+               captain seated and the stoker seat waiting for any controller, then every
+               connected controller in a <uf-controller-roster> strip. Filled by
+               lobby._renderHostSeats; css/lobby-tv.css lays the step out. -->
+          <div id="host-online-head" class="host-tv"><h3>Online multiplayer</h3><p>Your partner enters this code, or scans the QR code, on their own device.</p></div>
+          <uf-qr id="room-qr-tv" class="host-tv" caption="" size="400"></uf-qr>
+          <div id="host-local" class="host-tv">
+            <h3>Local multiplayer</h3><p>Two controllers on this screen, one bike.</p>
+            <uf-team id="host-team" tone="coop" heading="Your tandem" layout="row">
+              <uf-seat id="host-seat-captain" seat="Captain · front seat" tone="captain" who="You" state="joined" badge="P1"></uf-seat>
+              <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller"></uf-seat>
+            </uf-team>
+            <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
+          </div>
           <!-- Local multiplayer: join section shown when P2 input is available.
                The monitor (lobby._startLocalJoinMonitor) shows/hides each
                button based on connected devices. Each button commits to a
