@@ -29,6 +29,21 @@ export function key(levelId, difficulty, mode = 'solo') {
   return `${levelId}|${difficulty}|${mode}`;
 }
 
+/**
+ * The level id a record is kept under. Today's Road (and the weekly road) is a
+ * different road every day/week, so its record carries the day: yesterday's
+ * best is not a target for today's road. The game writes with the resolved
+ * level's own key; the lobby card passes today's key (the card's level is the
+ * unresolved base). Both MUST go through here, or the card reads a key the
+ * game never writes and says "No ride yet" after a ride.
+ * @param {{id:string, isDaily?:boolean, key?:string}} level
+ * @param {string} [roadKey]  'YYYY-MM-DD' day (or week) key; defaults to level.key
+ */
+export function levelRecordId(level, roadKey) {
+  const k = roadKey || level.key;
+  return level.isDaily && k ? `daily:${k}` : level.id;
+}
+
 /** The best run for a key, or null. */
 export function getBest(store, k) {
   const rec = store && store[k];

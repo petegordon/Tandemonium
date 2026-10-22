@@ -1380,7 +1380,10 @@ export class Lobby {
     if (level.isTutorial || level.timerEnabled === false) return '';
     const cardMode = mode === 'versus' ? 'versus' : (mode === 'solo' || !mode ? 'solo' : 'coop');
     const store = records.load();
-    const best = records.getBest(store, records.key(level.id, this.selectedDifficulty, cardMode));
+    // Today's Road is recorded under today's day (or week) key; the card's
+    // level is the unresolved base, so pass the key it would ride today.
+    const roadKey = level.isWeekly ? weeklyKey() : level.isDaily ? dailyKey() : undefined;
+    const best = records.getBest(store, records.key(records.levelRecordId(level, roadKey), this.selectedDifficulty, cardMode));
     const thresholds = getMedals(level.id, this.selectedDifficulty);
     if (!best) {
       return thresholds
@@ -1776,13 +1779,34 @@ export class Lobby {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  /** B-3 · re-render the record line on every visible level card. */
+  /**
+   * C-2 · Today's Road (or the weekly road) card text: which day it is, what
+   * you've done on it (practice and the ranked run, #398), and when it changes.
+   */
+  _roadDescHtml(level) {
+    if (level.isWeekly) {
+      const key = weeklyKey();
+      return weeklyDescription(dailyStatus(browserStore(), key), key) +
+        '<br><span class="level-card-daily-rule">' + WEEKLY_RULES_LINE + '</span>';
+    }
+    const key = dailyKey();
+    return dailyDescription(dailyStatus(browserStore(), key), key) +
+      '<br><span class="level-card-daily-rule">' + DAILY_RULES_LINE + '</span>';
+  }
+
+  /** B-3 · re-render the record line (and Today's Road's day line) on every visible level card. */
   _refreshRecordLines() {
     document.querySelectorAll('.level-card').forEach(card => {
       const line = card.querySelector('.level-card-record');
       if (!line) return;
-      const level = LEVELS.find(l => l.id === card.dataset.levelId);
-      if (!level) return;
+      const base = LEVELS.find(l => l.id === card.dataset.levelId);
+      if (!base) return;
+      // Same swap as the card builder: in the demo the shared road is This Week's Road.
+      const level = base.isDaily && this.roomRules().weeklyRoad ? asWeeklyRoad(base) : base;
+      // The day line changes after every ride on Today's Road (a practice
+      // count, the ranked time), and the cards are built once at boot.
+      const desc = level.isDaily && card.querySelector('.level-card-desc');
+      if (desc) desc.innerHTML = this._roadDescHtml(level);
       const inVersus = !!card.closest('#versus-level-list, [id*="versus"]');
       line.textContent = this._recordLine(level, inVersus ? 'versus' : (this.net ? 'coop' : 'solo'));
     });
@@ -1845,15 +1869,7 @@ export class Lobby {
         // C-2: Today's Road says which day it is, what you have done on it, and
         // when the next road arrives \u2014 a daily thing nobody knows is daily is
         // just a level.
-        if (level.isWeekly) {
-          const key = weeklyKey();
-          desc = weeklyDescription(dailyStatus(browserStore(), key), key) +
-            '<br><span class="level-card-daily-rule">' + WEEKLY_RULES_LINE + '</span>';
-        } else if (level.isDaily) {
-          const key = dailyKey();
-          desc = dailyDescription(dailyStatus(browserStore(), key), key) +
-            '<br><span class="level-card-daily-rule">' + DAILY_RULES_LINE + '</span>';
-        }
+        if (level.isDaily) desc = this._roadDescHtml(level);
         card.innerHTML =
           '<div class="level-card-top">' +
             '<span class="level-card-icon">' + level.icon + '</span>' +
