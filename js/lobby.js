@@ -40,7 +40,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
-import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, weeklyKey } from './daily-seed.js';
@@ -2996,7 +2996,7 @@ export class Lobby {
     const slider = /** @type {HTMLInputElement|null} */ ($('set-feel-slider'));
     if (slider) slider.addEventListener('input', () => this._applySteeringFeel(slider.value / 100));
     $('set-recalibrate')?.addEventListener('click', () => { this._recalibrateSteering(); sheet.close(); });
-    sheet.addEventListener('uf-sheet:close', () => this._syncSystemBar());
+    sheet.addEventListener('uf-sheet:close', () => { this._stepFocus.setSlider(null); this._syncSystemBar(); });
     this._syncSystemBar();
   }
 
@@ -3011,7 +3011,10 @@ export class Lobby {
   _openControlsSheet() {
     this._syncSystemBar();
     const slider = /** @type {HTMLInputElement|null} */ (document.getElementById('set-feel-slider'));
-    if (slider) slider.value = String(Math.round((TUNE.steeringFeel != null ? TUNE.steeringFeel : 0.5) * 100));
+    if (slider) slider.value = String(Math.round((TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel) * 100));
+    // #430: on a controller, left/right moves the Steering feel slider (the
+    // sheet is a vertical list, so up/down still moves between rows).
+    if (slider) this._stepFocus.setSlider(slider);
     this._controlsSheet.show();
   }
 
@@ -3019,6 +3022,7 @@ export class Lobby {
   _applySteeringFeel(feel) {
     const oldFeel = TUNE.steeringFeel;
     applySteeringFeel(feel);
+    saveSteeringFeelPref(feel);   // #430: kept even with no calibration saved
     analytics.trackEvent('steering_feel_change', { value: feel, from_value: oldFeel });
     try {
       const tuningKey = this._tuningKey();
