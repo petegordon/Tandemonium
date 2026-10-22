@@ -2238,7 +2238,9 @@ class Game {
     this._dailyStripText = null;
 
     // E-2: plan what the road is going to do to this pair.
-    if (this._rideSystemOn('disruptions')) this._startDisruptions(level, difficultyName);
+    // Map Tourist has no road line to lay cobbles, gusts or goose crossings
+    // along; they would all land at the start (#432).
+    if (this._rideSystemOn('disruptions') && !level.isTourist) this._startDisruptions(level, difficultyName);
     else this._disruptions = [];
     if (this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
 
