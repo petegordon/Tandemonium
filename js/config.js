@@ -460,10 +460,29 @@ export function applySteeringFeel(feel) {
   TUNE.gyroResponseCurve = Math.min(2.0, Math.max(1.0, TUNING_BASE.gyroResponseCurve + rcShift));
 }
 
+// #430: the player's Steering feel choice, kept on its own so it survives
+// without a gyro calibration save, a switch between phone and controller, and
+// Recalibrate (which deletes the calibration save).
+const STEERING_FEEL_KEY = 'tandemonium_steering_feel';
+
+/** The saved Steering feel (0..1), or null when the player never chose one. */
+export function loadSteeringFeelPref() {
+  try {
+    const v = Number(localStorage.getItem(STEERING_FEEL_KEY));
+    return localStorage.getItem(STEERING_FEEL_KEY) != null && Number.isFinite(v)
+      ? Math.min(1, Math.max(0, v)) : null;
+  } catch { return null; }
+}
+
+/** Remember the player's Steering feel (0..1). */
+export function saveSteeringFeelPref(feel) {
+  try { localStorage.setItem(STEERING_FEEL_KEY, String(Math.round(feel * 100) / 100)); } catch {}
+}
+
 // #399: the default feel has to shape the defaults, not just the slider. With
 // nothing saved (no tutorial yet) this is what a first-time player rides with;
-// a saved preference re-applies over it in Game._loadSavedTuning.
-applySteeringFeel(TUNE.steeringFeel);
+// a saved preference (#430) re-applies over it here and in Game._loadSavedTuning.
+applySteeringFeel(loadSteeringFeelPref() ?? TUNE.steeringFeel);
 
 /**
  * Gamepad left-stick X → lean input (#399). Inside the dead zone → 0; past it

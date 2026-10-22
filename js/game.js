@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
-import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave } from './config.js';   // B2: un-feeled calibration base
+import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import * as records from './records.js';
@@ -7814,7 +7814,9 @@ class Game {
       // back out (or falls back to defaults) and the save is rewritten once.
       const { values, migrated } = migrateSavedTuning(data);
       setTuningBase(tuningBaseFromSave(data, values));
-      applySteeringFeel(Number.isFinite(data.steeringFeel) ? data.steeringFeel
+      // #430: the player's own choice wins over the copy inside the calibration save.
+      const pref = loadSteeringFeelPref();
+      applySteeringFeel(pref != null ? pref : Number.isFinite(data.steeringFeel) ? data.steeringFeel
         : TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
       if (migrated) {
         try {
@@ -8943,6 +8945,7 @@ class Game {
     // Save the final steering feel value
     const slider = document.getElementById('steering-feel-slider');
     const feel = (slider ? slider.value : BALANCE_DEFAULTS.steeringFeel * 100) / 100;
+    saveSteeringFeelPref(feel);   // #430: the same choice the Controls sheet shows
     try {
       const saved = localStorage.getItem(this._tuningKey());
       if (saved) {
