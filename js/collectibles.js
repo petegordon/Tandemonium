@@ -219,6 +219,7 @@ export class CollectibleManager {
 
   _placeItems() {
     if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
+    if (this.level.isTourist) return; // no road line in Map Tourist (#432, see obstacles.js)
     // B-4: see ObstacleManager._placeItems for the seeding rules.
     const rng = makeRng(itemSeed(this.level, SALT.collectibles, this.placementSalt,
       this.level.id.charCodeAt(0) * 1000 + 7));
