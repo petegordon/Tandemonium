@@ -572,6 +572,7 @@ export class GeeseManager {
   // ---- placement ------------------------------------------------------
 
   _placeGeese() {
+    if (this.level?.isTourist) return; // no road line in Map Tourist (#432, see obstacles.js)
     // B-4: see ObstacleManager._placeItems for the seeding rules.
     const rng = makeRng(itemSeed(this.level, SALT.geese, this.placementSalt,
       Math.floor((this.level?.distance || 1000) * 7) + 991));

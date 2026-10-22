@@ -103,7 +103,23 @@ const ride = await page.evaluate(async () => {
   // The victory screen's tourist block, as _showVictory calls it.
   const html = g._touristVictoryHtml(plan.route.ridableM);
 
+  // #432: Tourist has no road line (its roadPath puts every distance at the
+  // start), so nothing is laid along the road — no cones, geese, presents or
+  // road events piled up where you start. A normal level still gets its cones.
+  const { ObstacleManager } = await import('./js/obstacles.js');
+  const { GeeseManager } = await import('./js/geese.js');
+  const { CollectibleManager } = await import('./js/collectibles.js');
+  const placed = (M, lvl) => { const m = new M(g.scene, g.world.roadPath, lvl, g.camera,
+      M === GeeseManager ? null : 'daredevil');   // geese take the audio engine there
+    const n = m._items.length; m.destroy?.(); return n; };
+  const roadItems = {
+    cones: placed(ObstacleManager, level), geese: placed(GeeseManager, level),
+    presents: placed(CollectibleManager, level),
+    grandmaCones: placed(ObstacleManager, { id: 'grandma', name: "Grandma's", distance: 250, checkpointInterval: 62 })
+  };
+
   return {
+    roadItems,
     atStart,
     levelId: level.id,
     levelIsTourist: !!level.isTourist,
@@ -124,7 +140,9 @@ const ok = !hidden.visible && flow.shown && flow.stepShown && flow.savedOk
   && ride.levelId === 'tourist' && ride.levelIsTourist && ride.timerEnabled === false
   && ride.finishesAtDestination
   && /MADE IT TO THEM/.test(ride.title) && /Theirs/.test(ride.dest)
-  && /km of real streets/.test(ride.strip);
+  && /km of real streets/.test(ride.strip)
+  && ride.roadItems.cones === 0 && ride.roadItems.geese === 0 && ride.roadItems.presents === 0
+  && ride.roadItems.grandmaCones > 0;
 console.log(ok ? '✔ hidden without a key; plans, remembers, counts down, and arrives with a shareable result'
                : '✖ tourist flow wrong');
 await browser.close(); server.close(); process.exit(ok?0:1);

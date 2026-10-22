@@ -581,6 +581,21 @@ export class HUD {
     this._lastCountdownSec = -1;
     this.elapsedEl.textContent = '';
     this._prevElapsedText = '';
+    // Every ride-end path (finish, game over, quit, lobby, tutorial, Slingshot)
+    // calls hideTimer, so the boost ribbon and centre glow are cleared here too:
+    // update() stops running when the ride ends, so a ride that ended mid-boost
+    // left BOOST! on screen over the lobby (#431).
+    this.clearSpeedSignals();
+  }
+
+  /** Hide the BOOST! ribbon and the centre-strip glow (#431). */
+  clearSpeedSignals() {
+    const boostEl = this._boostEl || (this._boostEl = document.getElementById('boost-ribbon'));
+    const glowEl = this._glowEl || (this._glowEl = document.getElementById('center-strip-glow'));
+    if (boostEl) boostEl.classList.remove('show');
+    if (glowEl) glowEl.classList.remove('show');
+    this._prevBoosting = false;
+    this._prevOnStrip = false;
   }
 
   showCollectibles(level, total) {
