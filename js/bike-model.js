@@ -10,6 +10,10 @@ import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway, TUNE } from './config.js';
 import { colourwayParams, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
+import { CrankMotion } from './crank-motion.js';
+
+/** #441 · seconds over which a stroke's speed gain eases in (time constant). */
+const ACCEL_EASE_S = 0.1;
 
 // A-5 · where the safety clamp starts to be felt. The clamp itself is at ±1.0.
 export const EDGE_BAND_START = 0.8;
@@ -54,13 +58,15 @@ export class BikeModel {
     this.distanceTraveled = 0;
     this.crankAngle = 0;
 
-    // A-3 · the crank follows YOUR taps. crankAngle jumps a quarter turn per
-    // tap (pedal controllers own it); the display angle chases it fast enough
-    // to read as a kick, and falls back to a slow speed-driven idle spin while
-    // coasting so the crank-to-wheel ratio still looks plausible.
+    // A-3 · the crank follows YOUR taps: crankAngle gains a quarter turn per
+    // stroke (pedal controllers own it). #441 · CrankMotion turns that into a
+    // smooth circle at the riders' cadence, falling back to a speed-driven idle
+    // spin while coasting so the crank-to-wheel ratio still looks plausible.
+    this._crankMotion = new CrankMotion();
     this._crankDisplay = 0;
-    this._crankTarget = 0;
-    this._crankLastTapAt = 0;
+    // #441 · each stroke's speed gain eases in over ~0.3 s instead of landing
+    // in one frame, so speed climbs smoothly while the riders pedal.
+    this._pendingAccel = 0;
 
     // Fall state
     this.fallen = false;
@@ -642,10 +648,16 @@ export class BikeModel {
     if (pedalResult.braking) {
       this.speed *= (1 - 2.5 * dt);
       if (this.speed < 0.05) this.speed = 0;
+      this._pendingAccel = 0;
     }
 
-    // Acceleration
-    this.speed += pedalResult.acceleration;
+    // Acceleration, eased in (#441). Same total per stroke, about 95% of it
+    // within 0.3 s, and the first frame still gets a share so a press is felt.
+    this._pendingAccel += pedalResult.acceleration || 0;
+    const accelNow = this._pendingAccel * Math.min(1, dt / ACCEL_EASE_S);
+    this._pendingAccel -= accelNow;
+    if (this._pendingAccel < 1e-4) this._pendingAccel = 0;
+    this.speed += accelNow;
 
     // Collectible speed boost
     if (this.boostTimer > 0) {
@@ -948,18 +960,7 @@ export class BikeModel {
   _updateCrank(dt) {
     if ((!this.pedalNodes || this.pedalNodes.length === 0) && !this.goose) return;
     const now = performance.now() / 1000;
-
-    if (this.crankAngle !== this._crankTarget) {
-      this._crankTarget = this.crankAngle;
-      this._crankLastTapAt = now;
-    } else if (this.speed > 0.01 && now - this._crankLastTapAt > 1.5) {
-      // Coasting: keep it turning with the wheels rather than freezing.
-      this._crankTarget += this.speed * dt * 1.5;
-    }
-
-    // >= 20 rad/s means a quarter turn lands in about 80 ms: a kick, not a drift.
-    const step = Math.min(1, 20 * dt);
-    this._crankDisplay += (this._crankTarget - this._crankDisplay) * step;
+    this._crankDisplay = this._crankMotion.update(this.crankAngle, dt, now, this.speed * 1.5);
 
     for (const node of this.pedalNodes) {
       if (node.userData._crankBase === undefined) node.userData._crankBase = node.rotation.z;
@@ -1024,6 +1025,7 @@ export class BikeModel {
   }
 
   _reset() {
+    this._pendingAccel = 0;   // #441 · a crash drops any stroke still easing in
     this.air = null;
     // Hand the visual group back before restoring the upright pose, or the
     // tumble keeps driving it and the reset is invisible.
@@ -1043,6 +1045,7 @@ export class BikeModel {
   }
 
   resetToDistance(distance) {
+    this._pendingAccel = 0;
     this.air = null;
     if (this.onReset) this.onReset(this);
     this.fallen = false;
