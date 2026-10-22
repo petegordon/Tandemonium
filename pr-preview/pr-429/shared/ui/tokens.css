@@ -90,10 +90,25 @@
   --uf-z-toast: 90;
 }
 
-/* Large-screen / TV scale: one knob instead of per-rule overrides. */
-@media (min-width: 1600px) {
-  :root { --uf-size-sm: 14px; --uf-size-md: 18px; --uf-size-lg: 22px; --uf-size-xl: 26px; --uf-size-2xl: 34px; }
+/* Large-screen / TV scale (decided 2026-10-20, docs/UI-KIT-TV-COMPONENTS.md):
+   automatic, no opt-in. Below 1024px the phone sizes above hold; from 1024px the
+   sizes ramp linearly with the viewport and reach the couch-readable TV sizes at
+   1920px (xs 16 · sm 20 · md 26 · lg 30 · xl 36 · 2xl 44), then keep growing to
+   4K. Each size is base + (100vw − 1024px) × (TV − base) / 896. */
+@media (min-width: 1024px) {
+  :root {
+    --uf-size-xs:  calc(10px + (100vw - 1024px) * 6 / 896);
+    --uf-size-sm:  calc(12px + (100vw - 1024px) * 8 / 896);
+    --uf-size-md:  calc(16px + (100vw - 1024px) * 10 / 896);
+    --uf-size-lg:  calc(18px + (100vw - 1024px) * 12 / 896);
+    --uf-size-xl:  calc(22px + (100vw - 1024px) * 14 / 896);
+    --uf-size-2xl: calc(28px + (100vw - 1024px) * 16 / 896);
+  }
 }
+
+/* Reserved width for an art panel beside the stage (Tandemonium: 535px).
+   <uf-sheet> and <uf-system-bar> keep clear of it. 0 unless a page sets it. */
+:root { --uf-stage-inset: 0px; }
 
 @media (prefers-reduced-motion: reduce) {
   :root { --uf-motion-fast: 0ms; --uf-motion-base: 0ms; }

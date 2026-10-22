@@ -101,14 +101,30 @@ export class UfFlow extends UfElement {
   /** Rebuild the focus scope for the current step (after its focusables changed). */
   refreshFocus() {
     const step = this.step(this.current);
-    if (this.#focus && step) this.#focus.refreshSpatial(step.focusables());
+    if (this.#focus && step) this.#focus.refreshSpatial(this.#scope(step));
+  }
+
+  /**
+   * The active step's focusables plus the pills of any <uf-system-bar> linked
+   * to this flow (flow="<id>"): the bar is a focus row under the step, reached
+   * with ↓ and left with ↑ (spatial nearest-neighbour does the rest).
+   * @param {import('./uf-step.js').UfStep} step @returns {HTMLElement[]}
+   */
+  #scope(step) {
+    const items = step.focusables();
+    if (!this.id) return items;
+    for (const bar of Array.from(document.querySelectorAll(`uf-system-bar[flow="${CSS.escape(this.id)}"]`))) {
+      const fn = /** @type {any} */ (bar).focusables;
+      if (typeof fn === 'function') items.push(...fn.call(bar));
+    }
+    return items;
   }
 
   #syncFocus() {
     const step = this.step(this.current);
     if (!this.#focus || !step) return;
     // Layout settles after the step shows (display toggles): take the scope on the next frame.
-    const take = () => { const s = this.step(this.current); if (this.#focus && s === step) this.#focus.setSpatial(step.focusables()); };
+    const take = () => { const s = this.step(this.current); if (this.#focus && s === step) this.#focus.setSpatial(this.#scope(step)); };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(take); else take();
   }
 

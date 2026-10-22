@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'8888bef',pr:429,time:'10-20-2026 20:28'}</script><base href="/pr-preview/pr-429/">
+<head><script>window.__BUILD={sha:'afdef9e',pr:429,time:'10-22-2026 08:16'}</script><base href="/pr-preview/pr-429/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
@@ -364,19 +364,7 @@
   .sling-wallet { font-size: 18px; font-weight: 800; color: var(--uf-color-accent-2); margin-bottom: 4px; }
   .sling-sub { font-size: 13px; color: rgba(255,255,255,0.75); margin-bottom: 10px; max-width: 420px; }
   .sling-list { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 420px; margin-bottom: 12px; }
-  .sling-up {
-    display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
-    padding: 8px 10px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.06); color: #fff; font: inherit; cursor: pointer;
-  }
-  .sling-up:focus, .sling-up.gamepad-focus { outline: none; border-color: var(--uf-color-accent-2); }
-  .sling-up[disabled] { opacity: 0.45; cursor: default; }
-  .sling-up .ico { font-size: 22px; }
-  .sling-up .txt { flex: 1; }
-  .sling-up .txt b { display: block; font-size: 14px; }
-  .sling-up .txt small { font-size: 11px; color: rgba(255,255,255,0.65); }
-  .sling-up .pips { font-size: 10px; letter-spacing: 1px; color: var(--uf-color-accent-2); }
-  .sling-up .price { font-weight: 800; color: var(--uf-color-accent-2); white-space: nowrap; }
+  /* upgrade rows are kit <uf-card layout="row"> (#428); only the list width lives here */
   .sling-rows { width: 100%; max-width: 300px; margin: 8px 0 12px; }
   .sling-rows .row { display: flex; justify-content: space-between; font-size: 14px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
   .sling-rows .row.total { font-weight: 800; color: var(--uf-color-accent-2); border-bottom: none; font-size: 16px; }
@@ -385,7 +373,6 @@
   .sling-buttons { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 300px; margin: 6px 0 12px; }
   /* #400 D4/D5 · one garage for every mode, and every ride's coin tally */
   .sling-lock { font-size: 14px; font-weight: 700; color: var(--uf-color-accent-2); padding: 6px 10px; border: 1px dashed rgba(255,210,63,0.6); border-radius: 8px; }
-  .sling-up .price small.gain { display: block; font-size: 11px; font-weight: 700; color: #9dff9d; text-align: right; }
   .sling-rebuilds { background: var(--uf-color-accent-2); vertical-align: middle; }
   .ride-coins { width: 100%; max-width: 320px; margin: 8px auto 4px; text-align: center; }
   .ride-coins-head { font-size: 22px; font-weight: 900; color: var(--uf-color-accent-2); }
@@ -3119,51 +3106,9 @@
     text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
     pointer-events: none;
   }
-  /* Results overlay */
-  #versus-results {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.65);
-  }
-  .vr-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 14px;
-    padding: 28px 36px;
-    border-radius: 16px;
-    background: rgba(20, 24, 40, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    text-align: center;
-  }
-  .vr-title {
-    font-size: clamp(22px, 4vw, 40px);
-    font-weight: 900;
-    letter-spacing: 0.08em;
-  }
-  .vr-teams {
-    display: flex;
-    gap: 28px;
-  }
-  .vr-team {
-    min-width: 130px;
-    padding: 10px 14px;
-    border-radius: 10px;
-    border: 1px solid var(--vh-color);
-  }
-  .vr-team-name {
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    color: var(--vh-color);
-  }
-  .vr-outcome { font-size: 20px; font-weight: 800; margin: 4px 0; }
-  .vr-detail { font-size: 11px; opacity: 0.7; }
+  /* Results overlay: a kit <uf-sheet headline> (#428); only the body layout lives here. */
+  #versus-results .vr-card { display: grid; gap: var(--uf-space-4); justify-items: center; }
+  #versus-results .vr-teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--uf-space-4); width: 100%; }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -5067,6 +5012,9 @@
     #share-btn, #music-btn { background: rgba(0,0,0,0.55); }
   }
 </style>
+<!-- Desktop/TV layout A (#428): after the inline styles so it wins at equal specificity. -->
+<link rel="stylesheet" href="css/lobby-tv.css">
+<link rel="stylesheet" href="css/end-screens.css">
 </head>
 <body>
 
@@ -5663,10 +5611,10 @@ ON</button>
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-mode" class="lobby-step">
           <div class="lobby-mode-buttons">
-            <uf-button variant="accent" id="btn-together">RIDE TOGETHER</uf-button>
-            <uf-button id="btn-solo">SOLO RIDE</uf-button>
+            <uf-button variant="accent" id="btn-together" sub="Couch co-op, online or versus">RIDE TOGETHER</uf-button>
+            <uf-button id="btn-solo" sub="Levels, Today’s Road and Slingshot">SOLO RIDE</uf-button>
             <!-- #400 D4 · the one garage every mode's Chaos Coins are spent in, and the wallet. -->
-            <uf-button id="btn-garage">&#128736; GARAGE<span id="lobby-wallet" class="lobby-wallet"></span></uf-button>
+            <uf-button id="btn-garage" sub="Bikes and upgrades">&#128736; GARAGE<span id="lobby-wallet" class="lobby-wallet"></span></uf-button>
             <!-- E-6 · Tourist ("ride the distance between you") is a card in
                  the SOLO level list (#400), shown only with a Maps key. -->
             <!-- WebHID grant for a pad the Gamepad API can't see (Steam Controller;
@@ -5742,23 +5690,19 @@ ON</button>
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-versus" class="lobby-step">
-          <p class="lobby-prompt">Build your teams:</p>
+          <p class="lobby-prompt">Local versus</p>
+          <!-- #428: two kit team boxes of <uf-seat>s (built by _renderVersusCards) and,
+               under them, every controller the step can see in a <uf-controller-roster>
+               strip — seated (P1–P4 in team colour), joinable ("press ✕ to join"), or
+               "seats full". Replaces the hand-built .versus-player-card grid and the
+               collapsible Controllers list. -->
           <div class="versus-teams">
-            <div class="versus-team versus-team-a">
-              <div class="versus-team-title">TEAM BLUE</div>
-              <div class="versus-team-slots" id="versus-team-a-slots"></div>
-            </div>
+            <uf-team id="versus-team-a" tone="team-a" heading="Team blue" layout="row"></uf-team>
             <div class="versus-vs">VS</div>
-            <div class="versus-team versus-team-b">
-              <div class="versus-team-title">TEAM RED</div>
-              <div class="versus-team-slots" id="versus-team-b-slots"></div>
-            </div>
+            <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
           </div>
-          <p class="versus-join-hint" id="versus-join-hint">Press <strong>A</strong> on a controller to join &middot; <strong>&#x25C0;/&#x25B6;</strong> switch team &middot; <strong>B</strong> leave your seat</p>
-          <!-- Every controller the step can see, with its state (CONNECTED → SEATED),
-               like the lab lobby's Controllers panel. Built by _renderVersusCards. -->
-          <uf-button variant="ghost" size="sm" id="btn-versus-controllers" aria-expanded="true">Controllers &#x25B4;</uf-button>
-          <div id="versus-controllers" class="versus-controllers"></div>
+          <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
+          <p class="versus-join-hint" id="versus-join-hint"><uf-controller-glyph button="confirm" size="sm"></uf-controller-glyph> on a controller to join &middot; <uf-controller-glyph button="dpad-h" size="sm"></uf-controller-glyph> switch team &middot; <uf-controller-glyph button="back" size="sm"></uf-controller-glyph> leave your seat</p>
           <uf-button class="lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
             <span class="btn-local-join-main">JOIN WITH KEYBOARD</span>
             <span class="btn-local-join-hint">Click or press Enter</span>
@@ -5786,6 +5730,21 @@ ON</button>
           <div id="room-url" class="room-url"></div>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
+          <!-- Desktop/TV (#428 round 5): Online multiplayer (code + couch-sized <uf-qr>)
+               on the left, Local multiplayer on the right — a kit <uf-team> with the
+               captain seated and the stoker seat waiting for any controller, then every
+               connected controller in a <uf-controller-roster> strip. Filled by
+               lobby._renderHostSeats; css/lobby-tv.css lays the step out. -->
+          <div id="host-online-head" class="host-tv"><h3>Online multiplayer</h3><p>Your partner enters this code, or scans the QR code, on their own device.</p></div>
+          <uf-qr id="room-qr-tv" class="host-tv" caption="" size="400"></uf-qr>
+          <div id="host-local" class="host-tv">
+            <h3>Local multiplayer</h3><p>Two controllers on this screen, one bike.</p>
+            <uf-team id="host-team" tone="coop" heading="Your tandem" layout="row">
+              <uf-seat id="host-seat-captain" seat="Captain · front seat" tone="captain" who="You" state="joined" badge="P1"></uf-seat>
+              <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller"></uf-seat>
+            </uf-team>
+            <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
+          </div>
           <!-- Local multiplayer: join section shown when P2 input is available.
                The monitor (lobby._startLocalJoinMonitor) shows/hides each
                button based on connected devices. Each button commits to a
@@ -5867,6 +5826,15 @@ ON</button>
               <span class="spinner-submit-hint"><span id="spinner-back-icon" class="spinner-back-icon">B</span> Back</span>
             </div>
           </div>
+          <!-- Desktop/TV (#428): the joiner types the captain's code on an 8×4 kit keypad
+               (the 32 room-code characters) instead of four spinners that started at
+               "AAAA". Shown by lobby._showSpinners on desktop; Done joins. -->
+          <div id="join-tv" class="join-tv">
+            <h3>Join a ride</h3>
+            <p>Enter the code on the captain’s screen.</p>
+            <uf-join-code id="join-code-tv" mode="entry" code-prefix="TNDM–"></uf-join-code>
+            <uf-keypad id="join-keypad-tv" for="join-code-tv"></uf-keypad>
+          </div>
           <uf-button variant="accent" id="btn-join">JOIN</uf-button>
           <div id="join-status" class="conn-status"></div>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-role-join">&larr; Back</uf-button>
@@ -5879,18 +5847,18 @@ ON</button>
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-room" class="lobby-step">
-          <!-- Room (#173): built from the kit. Room code is a chip; the two
-               video slots are <uf-seat>s — who sits where, and whether they
-               are here — framing the body-level video PiPs that overlay them
-               (iOS constraint: <video> never moves; layout is CSS-only). -->
+          <!-- Room (#173, #428): no video (sharing is off since #400 D7). Two kit
+               <uf-player-card>s — who sits where, their profile and recently earned
+               achievements (<uf-achievement size=sm>) — filled by lobby._syncRoomSeats
+               and the partner's profile message. -->
           <div id="room-center-wrap">
             <div id="room-partner-info">
               <uf-chip tone="info" id="room-code-label" class="room-code-label"></uf-chip>
               <div id="room-partner-name"></div>
             </div>
-            <div id="room-video-area">
-              <uf-seat id="room-video-slot-captain" class="room-video-slot" seat="Captain" tone="captain" who="OPEN" dev="waiting for partner…" state="open"></uf-seat>
-              <uf-seat id="room-video-slot-stoker" class="room-video-slot" seat="Stoker" tone="stoker" who="OPEN" dev="waiting for partner…" state="open"></uf-seat>
+            <div id="room-players">
+              <uf-player-card id="room-player-captain" subtitle="Captain · front seat" tone="captain" name="Waiting for partner…" state="waiting"></uf-player-card>
+              <uf-player-card id="room-player-stoker" subtitle="Stoker · back seat" tone="stoker" name="Waiting for partner…" state="waiting"></uf-player-card>
             </div>
           </div>
           <!-- Full-span rows below center -->
@@ -6006,11 +5974,42 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.8888bef | 10-20-2026 20:28 (PR #429)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.afdef9e | 10-22-2026 08:16 (PR #429)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
   <img id="lobby-img-right" class="lobby-desktop-img" src="images/large_action_facing.png?v=geese" alt="">
+  <!-- Desktop/TV layout A (#428): the wordmark sits on the painting's sky. Styled by css/lobby-tv.css. -->
+  <div id="lobby-wordmark" class="lobby-desktop-img" role="img" aria-label="Tandemonium"></div>
+
+  <!-- Desktop/TV system bar (#428, kit <uf-system-bar>): Back on the left, every
+       lobby-wide control as a labelled pill. Replaces the round toggle columns,
+       the Back hint and the credits footer at ≥1024px (css/lobby-tv.css); the
+       pills drive the same handlers as the toggles (lobby.js _initSystemBar).
+       Reached with ↓ from a step (d-pad or stick); no dedicated button. -->
+  <uf-system-bar id="lobby-bar" back="hide">
+    <uf-button size="pill" slot="start" id="bar-help"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="8"/><path d="M7.8 7.6a2.3 2.3 0 1 1 3.3 2.1c-.8.4-1.1.9-1.1 1.7M10 14.2v.1"/></svg>Help</uf-button>
+    <uf-button size="pill" slot="start" id="bar-leaderboard"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5"/></svg>Leaderboard</uf-button>
+    <uf-button size="pill" slot="start" id="bar-profile"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>Profile</uf-button>
+    <uf-button size="pill" slot="end" id="bar-controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h12a4 4 0 0 1 3.9 4.9l-.8 3.4a2.5 2.5 0 0 1-4.3 1.1L15 16H9l-1.8 2.4a2.5 2.5 0 0 1-4.3-1.1l-.8-3.4A4 4 0 0 1 6 9z"/><path d="M8 12v3M6.5 13.5h3"/></svg><span id="bar-controls-label">Controls</span></uf-button>
+    <uf-button size="pill" slot="end" id="bar-music"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 17V6l9-3v11"/><circle cx="5.5" cy="17" r="2.5"/><circle cx="14.5" cy="14" r="2.5"/></svg>Music</uf-button>
+    <uf-button size="pill" slot="end" id="bar-settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg>Settings</uf-button>
+  </uf-system-bar>
+
+  <!-- Controls sheet (#428 round 3, kit <uf-sheet>): the controller in use, every
+       connected controller, steering, prompts, and phone-as-controller. Opened
+       from the bar's Controls pill; wired in lobby.js _initSystemBar. -->
+  <uf-sheet id="controls-sheet" heading="Controls" size="md">
+    <uf-seat id="controls-seat" seat="You" tone="captain" who="No controller yet" dev="Press a button on a controller" state="open"></uf-seat>
+    <uf-controller-roster id="controls-roster" variant="list" heading="Connected controllers"></uf-controller-roster>
+    <uf-setting id="set-stick" label="Stick steering" description="Lean with the left stick"></uf-setting>
+    <uf-setting id="set-gyro" label="Gyro steering" description="Tilt the controller to lean">
+      <div slot="detail">Steering feel <span class="set-feel-end">Stable</span><input type="range" id="set-feel-slider" min="0" max="100" value="50" aria-label="Steering feel"><span class="set-feel-end">Responsive</span><uf-button size="sm" id="set-recalibrate">Recalibrate</uf-button></div>
+    </uf-setting>
+    <uf-setting id="set-prompts" kind="value" label="Button prompts" description="Picked from the controller in use" value="Automatic"></uf-setting>
+    <uf-setting id="set-phone" kind="value" label="Use your phone instead" description="Scan a code to steer and pedal with your phone" value="Open"></uf-setting>
+    <div slot="actions"><uf-button variant="accent" id="controls-done">DONE</uf-button></div>
+  </uf-sheet>
 </div>
 
 <!-- Leaderboard modal -->
@@ -6240,73 +6239,83 @@ ON</button>
 
 <!-- Game Over overlay -->
 <div id="gameover-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p id="gameover-title" style="color:var(--uf-color-danger)">GAME OVER</p>
-    <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
-    <div id="gameover-help" class="help-announce" style="display:none;"></div>
-    <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
-    <div id="gameover-coins" class="ride-coins" style="display:none;"></div>
-    <uf-button id="btn-gameover-clip" style="margin-bottom:10px;display:none;">&#x1F3AC; SAVE CLIP</uf-button>
-    <uf-button variant="accent" id="btn-restart">RESTART</uf-button>
-    <uf-button id="btn-skip-checkpoint" style="margin-top:10px;display:none;">&#x1F451; Take the Royal Shortcut</uf-button>
-    <!-- #403 · a failed ranked run: the attempt is spent; ride the road as practice. -->
-    <uf-button id="btn-practice-help" style="margin-top:10px;display:none;">&#x1F6DF; Ride it as practice — with a helping hand</uf-button>
-    <uf-button id="btn-gameover-room" style="margin-top:10px;display:none;">RETURN TO ROOM</uf-button>
-    <uf-button id="btn-gameover-lobby" style="margin-top:10px;">END RIDE TOGETHER</uf-button>
-    <uf-button id="btn-gameover-garage" style="margin-top:10px;display:none;">GARAGE &rarr;</uf-button>
-    <!-- B-5 · the two things a demo player should be able to do next. Shown by
-         _updateCtaButtons(); hidden in the full Steam build. -->
-    <!-- D-3 · see the victory overlay. -->
-    <uf-button class="cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</uf-button>
-    <uf-button class="cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
-    <uf-button class="cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
-  </div>
+  <!-- #428: kit sheet shell; the heading mirrors #gameover-title (game.js). -->
+  <uf-sheet id="gameover-sheet" open dismissible="false" headline tone="danger" heading="Game over" size="md">
+      <p id="gameover-title" hidden>GAME OVER</p>
+      <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
+      <div id="gameover-help" class="help-announce" style="display:none;"></div>
+      <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
+      <div id="gameover-coins" class="ride-coins" style="display:none;"></div>
+      <div id="gameover-unlocked" class="end-unlocked" hidden></div>
+      <!-- #403 · a failed ranked run: the attempt is spent; ride the road as practice. -->
+      <!-- B-5 · the two things a demo player should be able to do next. Shown by
+           _updateCtaButtons(); hidden in the full Steam build. -->
+      <!-- D-3 · see the victory overlay. -->
+    <div slot="actions">
+      <uf-button id="btn-gameover-clip" style="display:none;">&#x1F3AC; SAVE CLIP</uf-button>
+      <uf-button variant="accent" id="btn-restart">RESTART</uf-button>
+      <uf-button id="btn-skip-checkpoint" style="display:none;">&#x1F451; Take the Royal Shortcut</uf-button>
+      <uf-button id="btn-practice-help" style="display:none;">&#x1F6DF; Ride it as practice — with a helping hand</uf-button>
+      <uf-button id="btn-gameover-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-gameover-lobby">END RIDE TOGETHER</uf-button>
+      <uf-button id="btn-gameover-garage" style="display:none;">GARAGE &rarr;</uf-button>
+      <uf-button class="cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</uf-button>
+      <uf-button class="cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button class="cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Victory overlay -->
 <div id="victory-overlay">
-  <div id="victory-left">
-    <canvas id="victory-video" width="360" height="360"></canvas>
-    <h2 id="victory-title">YOU MADE IT!</h2>
-  </div>
-  <div id="victory-right">
-    <p id="victory-destination"></p>
-    <div id="victory-stats"></div>
-    <!-- #400 D4 · what the ride paid. Filled by js/economy-mode.js. -->
-    <div id="victory-coins" class="ride-coins" style="display:none;"></div>
-  </div>
-  <!-- D-8 · what the two of you have done together. -->
-  <div id="pair-panel" style="display:none;"></div>
-  <div id="victory-buttons">
-    <uf-button variant="accent" id="btn-play-again">PLAY AGAIN</uf-button>
-    <uf-button id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</uf-button>
-    <uf-button id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</uf-button>
-    <uf-button id="btn-victory-lobby" style="margin-top:6px;">END RIDE TOGETHER</uf-button>
-    <uf-button id="btn-victory-garage" style="margin-top:6px;display:none;">GARAGE &rarr;</uf-button>
-    <!-- B-5 · see the game-over overlay. -->
-    <!-- D-3 · share the day's result (Today's Road only). -->
-    <uf-button class="cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</uf-button>
-    <uf-button class="cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
-    <uf-button class="cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
-  </div>
+  <!-- #428: kit sheet shell; the heading mirrors #victory-title (game.js). -->
+  <uf-sheet id="victory-sheet" open dismissible="false" headline tone="accent" heading="You made it!" size="lg">
+    <div id="victory-body">
+      <div id="victory-left">
+        <canvas id="victory-video" width="360" height="360"></canvas>
+        <h2 id="victory-title" hidden>YOU MADE IT!</h2>
+      </div>
+      <div id="victory-right">
+        <p id="victory-destination"></p>
+        <div id="victory-stats"></div>
+        <!-- #400 D4 · what the ride paid. Filled by js/economy-mode.js. -->
+        <div id="victory-coins" class="ride-coins" style="display:none;"></div>
+        <!-- #428: achievements unlocked this ride (kit uf-achievement, js/achievements.js). -->
+        <div id="victory-unlocked" class="end-unlocked" hidden></div>
+      </div>
+      <!-- D-8 · what the two of you have done together. -->
+      <div id="pair-panel" style="display:none;"></div>
+    </div>
+    <div slot="actions" id="victory-buttons">
+      <uf-button variant="accent" id="btn-play-again">PLAY AGAIN</uf-button>
+      <uf-button id="btn-next-level" style="display:none;">NEXT LEVEL</uf-button>
+      <uf-button id="btn-victory-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-victory-lobby">END RIDE TOGETHER</uf-button>
+      <uf-button id="btn-victory-garage" style="display:none;">GARAGE &rarr;</uf-button>
+      <uf-button class="cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</uf-button>
+      <uf-button class="cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button class="cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Slingshot mode · spend Chaos Coins between launches. Filled by js/slingshot-ui.js. -->
-<div id="sling-garage"></div>
+<div id="sling-garage"><uf-sheet id="sling-garage-sheet" open dismissible="false" headline tone="gold" heading="Garage" size="md"><div id="sling-garage-body"></div></uf-sheet></div>
 <!-- Slingshot mode · one launch's payout. -->
-<div id="sling-results"></div>
+<div id="sling-results"><uf-sheet id="sling-results-sheet" open dismissible="false" headline tone="gold" heading="" size="md"><div id="sling-results-body"></div></uf-sheet></div>
 <!-- Slingshot mode · the end-of-ride signal: distance, then the coins it pays. -->
 <div id="sling-tally"></div>
 
 <!-- #400 · Demo end: NEXT LEVEL after the last road the demo includes. -->
 <div id="demo-end-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p style="color:var(--uf-color-accent);font-size:1.2em;margin-bottom:4px;">That's the demo!</p>
-    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">The full game has a new road every day, ranked runs and every Slingshot stage.</p>
-    <uf-button variant="accent" class="cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</uf-button>
-    <uf-button id="btn-demo-room" style="margin-top:10px;display:none;">RETURN TO ROOM</uf-button>
-    <uf-button id="btn-demo-lobby" style="margin-top:10px;">BACK TO LOBBY</uf-button>
-  </div>
+  <uf-sheet id="demo-end-sheet" open dismissible="false" headline tone="accent" heading="That's the demo!" size="md">
+      <p>The full game has a new road every day, ranked runs and every Slingshot stage.</p>
+    <div slot="actions">
+      <uf-button variant="accent" class="cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button id="btn-demo-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-demo-lobby">BACK TO LOBBY</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Stoker CTA overlay (shown after unlicensed stoker finishes a ride) -->
