@@ -212,7 +212,10 @@ export class CobblesVisual {
 
       const mesh = new THREE.Mesh(geo, material);
       mesh.receiveShadow = true;
-      mesh.renderOrder = 1;    // after the road, before the riders' transparent bits
+      // First of the transparent things: the stones lie flat on the road, so
+      // every billboard (Grandma's house, the Your Home video), goose, present
+      // and dust puff must draw over them, never under (#404 review).
+      mesh.renderOrder = -1;
       this.scene.add(mesh);
       this.meshes.push(mesh);
     }
