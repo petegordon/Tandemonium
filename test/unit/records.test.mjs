@@ -3,8 +3,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   key, getBest, recordRun, trim, splitDelta, formatDelta, formatTime,
-  medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON, betterMedal
+  medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON, betterMedal, levelRecordId
 } from '../../js/records.js';
+
+test("Today's Road: the game and the lobby card agree on the record key", () => {
+  const base = { id: 'daily', isDaily: true };                       // what the card holds
+  const resolved = { ...base, key: '2026-10-22' };                  // what the ride holds
+  assert.equal(levelRecordId(resolved), 'daily:2026-10-22');
+  assert.equal(levelRecordId(base, '2026-10-22'), levelRecordId(resolved),
+    "the card, passing today's key, reads what the ride wrote");
+  assert.notEqual(levelRecordId(base, '2026-10-21'), levelRecordId(resolved), "yesterday's best is not today's");
+  assert.equal(levelRecordId({ id: 'grandma' }, '2026-10-22'), 'grandma', 'a fixed road ignores the day');
+  assert.equal(levelRecordId({ id: 'daily', isDaily: true, isWeekly: true, key: '2026-10-19' }), 'daily:2026-10-19',
+    'the weekly road keys by its week');
+});
 
 test('keys separate level, difficulty and mode', () => {
   assert.equal(key('grandma', 'chill', 'solo'), 'grandma|chill|solo');

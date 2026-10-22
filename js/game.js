@@ -4116,8 +4116,7 @@ class Game {
       : (this.mode === 'solo' ? 'solo' : 'coop');
     // C-2: Today's Road is a different road every day, so its record key
     // carries the day — yesterday's best is not a target for today's road.
-    const levelId = level.isDaily && level.key ? `daily:${level.key}` : level.id;
-    return records.key(levelId, this.lobby.selectedDifficulty || 'adventurous', mode);
+    return records.key(records.levelRecordId(level), this.lobby.selectedDifficulty || 'adventurous', mode);
   }
 
   /** The best for this ride's key, read once at the start of the ride. */
