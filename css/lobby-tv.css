@@ -107,6 +107,11 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby .difficulty-selector { margin-top: var(--uf-space-5) !important; font-size: var(--uf-size-md) !important; }
   #lobby #level-extras { margin-top: var(--uf-space-5) !important; }
   #lobby #btn-start-ride { min-width: 14em; font-size: var(--uf-size-lg) !important; }
+  /* Level select needs the whole width for the cards: drop the art panel
+     (and the wordmark over it); kit sheets and the system bar follow the inset. */
+  :root:has(#lobby:not([style*="none"]) #lobby-level[active]) { --uf-stage-inset: 0px; }
+  #lobby:has(#lobby-level[active]) #lobby-img-right,
+  #lobby:has(#lobby-level[active]) #lobby-wordmark { display: none !important; }
 }
 
 /* ── Popups the system bar opens (moved to <body> on desktop; lobby.js _initSystemBar
