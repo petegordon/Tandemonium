@@ -7,13 +7,13 @@ const Q = Math.PI / 2;
 const DT = 1 / 60;
 
 /** Ride `seconds`, tapping every `gap` s; returns the per-frame angle steps. */
-function ride(c, { seconds, gap, start = 0, raw0 = 0, coast = 0 }) {
+function ride(c, { seconds, gap, start = 0, raw0 = 0 }) {
   let raw = raw0, t = start, nextTap = start, prev = c.angle;
   const steps = [];
   for (let i = 0; i < Math.round(seconds / DT); i++) {
     t += DT;
     if (gap && t >= nextTap) { raw += Q; nextTap += gap; }
-    c.update(raw, DT, t, coast);
+    c.update(raw, DT, t);
     steps.push(c.angle - prev);
     prev = c.angle;
   }
@@ -50,26 +50,29 @@ test('faster pedaling spins it faster', () => {
   assert.ok(fast.omega > slow.omega * 2, `fast ${fast.omega.toFixed(1)} rad/s vs slow ${slow.omega.toFixed(1)} rad/s`);
 });
 
-test('when the presses stop it eases to a stop, not past one quarter turn ahead', () => {
+test('when the presses stop, the feet run on and slow quickly, not a dead stop', () => {
   const c = new CrankMotion();
-  const { raw, t } = ride(c, { seconds: 3, gap: 0.2 });
-  const { steps } = ride(c, { seconds: 1.2, start: t, raw0: raw });
-  assert.ok(c.angle <= raw + Q, 'never more than a quarter turn ahead of the strokes');
-  assert.ok(steps[steps.length - 1] < 1e-3, 'it has come to rest');
+  const { raw, t } = ride(c, { seconds: 3, gap: 0.15 });
+  const cruising = c.omega;
+  const { steps } = ride(c, { seconds: 1.5, start: t, raw0: raw });
+  const rate = i => steps[i] / DT;
+  const late = Math.round((0.15 * 1.25 + 0.03) / DT) + 1;     // by now it knows they stopped
+  assert.ok(rate(late) > cruising * 0.4, `no dead stop: still at ${rate(late).toFixed(1)} of ${cruising.toFixed(1)} rad/s`);
+  assert.ok(rate(late + 30) < cruising * 0.25, `slowed quickly: ${rate(late + 30).toFixed(1)} rad/s half a second later`);
+  assert.equal(steps[steps.length - 1], 0, 'at rest');
   for (let i = 1; i < steps.length; i++) {
-    assert.ok(steps[i] <= steps[i - 1] + 0.02, `slows down smoothly (frame ${i})`);
+    assert.ok(steps[i] <= steps[i - 1] + 1e-9, `only ever slowing (frame ${i})`);
   }
 });
 
-test('coasting turns with the wheels, and the next press never spins it backwards', () => {
+test('after a stop, the next press moves it on and never spins it backwards', () => {
   const c = new CrankMotion();
   const { raw, t } = ride(c, { seconds: 1, gap: 0.25 });
-  const coasted = ride(c, { seconds: 3, start: t, raw0: raw, coast: 6 });
-  assert.ok(coasted.steps.slice(-30).every(s => s > 0.05), 'turning while coasting');
+  const rest = ride(c, { seconds: 3, start: t, raw0: raw });
   const before = c.angle;
-  const back = ride(c, { seconds: 0.5, gap: 0.25, start: coasted.t, raw0: raw });
+  const back = ride(c, { seconds: 0.5, gap: 0.25, start: rest.t, raw0: raw });
   assert.ok(back.steps.every(s => s >= 0), 'never backwards');
-  assert.ok(c.angle > before, 'and the press moves it on');
+  assert.ok(c.angle > before + 0.5, 'and the press moves it on');
 });
 
 test('a controller reset (new ride) stops the crank where it is', () => {

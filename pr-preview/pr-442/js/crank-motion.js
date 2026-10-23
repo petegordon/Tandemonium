@@ -11,7 +11,8 @@
 // turn to the goal and updates the cadence (quarter turns per second, from the
 // gap between strokes). Between strokes the crank keeps turning at the cadence,
 // and may run a little ahead of the goal, expecting the next stroke. If that
-// stroke doesn't come, it eases to a stop. The faster the riders pedal, the
+// stroke doesn't come, the feet run on and slow quickly to rest (a freewheel:
+// no idle spin with the wheels, and no dead stop). The faster the riders pedal, the
 // faster it spins. A press still pulls it forward at once, so it still follows
 // the buttons. Velocity changes are eased, so the motion never jerks.
 
@@ -22,7 +23,8 @@ const CATCH_UP = 7;            // rad/s of extra spin per radian off the smooth 
 const EASE = 10;               // 1/s: how fast the spin rate follows the wanted rate
 const MAX_OMEGA = 40;          // rad/s, a ~6 rev/s blur
 const MAX_GAP = 1.2;           // s: a slower stroke than this is a fresh start, not a cadence
-const COAST_AFTER = 1.5;       // s without a stroke: turn with the wheels instead
+const COAST_AFTER = 1.5;       // s without a stroke: stopped, even with no cadence yet
+const SLOW_S = 0.3;            // s: time constant the feet slow down with once pedaling stops
 
 export class CrankMotion {
   constructor() { this.reset(0); }
@@ -36,16 +38,16 @@ export class CrankMotion {
     this.omega = 0;          // rad/s, current spin
     this.cadence = 0;        // rad/s, from the strokes
     this._lastStrokeAt = -Infinity;
+    this._stopped = true;    // slowing to rest until the next stroke
   }
 
   /**
    * @param {number} raw         the pedal controller's crankAngle
    * @param {number} dt          seconds this frame
    * @param {number} now         seconds (any clock, only differences matter)
-   * @param {number} coastOmega  rad/s to turn at while coasting (from road speed)
    * @returns {number} the angle to draw
    */
-  update(raw, dt, now, coastOmega = 0) {
+  update(raw, dt, now) {
     if (!(dt > 0)) return this.angle;
     raw = raw || 0;
     if (raw < this._raw - 1e-6) {
@@ -68,6 +70,7 @@ export class CrankMotion {
       this.cadence = this.cadence > 0 && rate > 0 ? this.cadence * 0.4 + rate * 0.6 : rate;
       this.cadence = Math.min(this.cadence, MAX_OMEGA);
       this._lastStrokeAt = now;
+      this._stopped = false;
       // A press after coasting starts from where the crank is now.
       const base = Math.max(this.goal, this.angle - LEAD);
       this._from = base + delta * PHASE;
@@ -75,29 +78,35 @@ export class CrankMotion {
     }
 
     const since = now - this._lastStrokeAt;
-    let want;
-    if (since > COAST_AFTER) {
-      // Coasting: turn with the wheels.
-      this.cadence = 0;
-      want = Math.max(0, coastOmega);
-      this.goal = this.angle;
-    } else {
-      // Follow the smooth path the cadence predicts: from part-way into the
-      // latest stroke, turning at the cadence, through the next stroke's due
-      // time to at most LEAD past the goal. Chasing the stroke goal itself pulses the spin every press.
-      // No cadence yet (the first stroke): the path is the goal itself.
-      const cap = this.goal + LEAD;
-      const path = this.cadence > 0 ? Math.min(cap, this._from + this.cadence * since) : this.goal;
-      const onPath = this.cadence > 0 && path < cap;
-      // Off the end of the path (the next stroke is late): ease to a stop at it.
-      want = (onPath ? this.cadence : 0) + CATCH_UP * (path - this.angle);
+    // The next stroke is late (or there hasn't been one for a while): the
+    // riders have stopped pedaling. The feet don't stop dead; they run on and
+    // slow quickly to rest, like a freewheel.
+    const expected = this.cadence > 0 ? QUARTER / this.cadence : 0;
+    // Also once the predicted path runs out, so the crank never meets the
+    // LEAD limit at speed and freezes for a frame before slowing.
+    const pathEnd = this._from + this.cadence * since >= this.goal + LEAD;
+    if (!this._stopped) this._stopped = since > COAST_AFTER || (this.cadence > 0 && (since > expected * 1.25 + 0.03 || pathEnd));
+    if (this._stopped) {
+      this.omega *= Math.exp(-dt / SLOW_S);
+      if (this.omega < 0.3) { this.omega = 0; this.cadence = 0; }   // settle, no endless creep
+      this.angle += this.omega * dt;
+      this.goal = this.angle;            // nothing to catch up on when they pedal again
+      return this.angle;
     }
-    want = Math.min(MAX_OMEGA, want);
+
+    // Follow the smooth path the cadence predicts: from part-way into the
+    // latest stroke, turning at the cadence, through the next stroke's due
+    // time. Chasing the stroke goal itself pulses the spin every press.
+    // No cadence yet (the first stroke): the path is the goal itself.
+    const cap = this.goal + LEAD;
+    const path = this.cadence > 0 ? Math.min(cap, this._from + this.cadence * since) : this.goal;
+    const onPath = this.cadence > 0 && path < cap;
+    const want = Math.min(MAX_OMEGA, (onPath ? this.cadence : 0) + CATCH_UP * (path - this.angle));
 
     this.omega += (want - this.omega) * Math.min(1, EASE * dt);
-    let next = this.angle + Math.max(0, this.omega) * dt;
-    if (since <= COAST_AFTER) next = Math.min(next, this.goal + LEAD);
-    this.angle = Math.max(this.angle, next);   // the crank only ever turns forwards
+    // Only ever forwards. No hard limit ahead of the strokes: the path already
+    // holds it to LEAD, and a hard stop at speed shows as a one-frame freeze.
+    this.angle += Math.max(0, this.omega) * dt;
     return this.angle;
   }
 }
