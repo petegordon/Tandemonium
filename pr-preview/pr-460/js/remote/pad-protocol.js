@@ -242,7 +242,10 @@ export function relayOverrideAllowed(hostname) {
 }
 
 /** The phone-pad relay Worker (worker/pad-relay.js, deployed separately). */
-export const DEFAULT_PAD_RELAY = 'wss://tandemonium-pad.pete-872.workers.dev';
+// #454 · Q5: the custom domain on the tandemonium-pad Worker. The old
+// tandemonium-pad.pete-872.workers.dev address reaches the same Worker and rooms,
+// so older builds that still dial it pair fine with newer ones.
+export const DEFAULT_PAD_RELAY = 'wss://tandemonium-remote.housetandem.com';
 
 /** WebSocket URL for one role in one pad room. */
 export function padSocketUrl(relay, code, role, secret = null) {
