@@ -1054,8 +1054,8 @@ export class World {
     const destD = level.distance % L;
     const destPt = this.roadPath.getPointAtDistance(destD);
 
-    if (level.id === 'grandma') {
-      // Grandma's House: chromakey video billboard
+    if (level.id === 'grandma' || level.isDaily) {
+      // Grandma's House (and Today's Road, which also rides to Grandma's): chromakey video billboard
       const marker = this._createVideoBillboard({
         videoSrc: 'assets/grandma_house_chromakey.mp4',
         trimStart: 0.00, trimEnd: 5.50,
