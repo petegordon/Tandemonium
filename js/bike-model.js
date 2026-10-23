@@ -60,8 +60,8 @@ export class BikeModel {
 
     // A-3 · the crank follows YOUR taps: crankAngle gains a quarter turn per
     // stroke (pedal controllers own it). #441 · CrankMotion turns that into a
-    // smooth circle at the riders' cadence, falling back to a speed-driven idle
-    // spin while coasting so the crank-to-wheel ratio still looks plausible.
+    // smooth circle at the riders' cadence; when they stop pedaling the feet
+    // run on and slow quickly to rest, like a freewheel.
     this._crankMotion = new CrankMotion();
     this._crankDisplay = 0;
     // #441 · each stroke's speed gain eases in over ~0.3 s instead of landing
@@ -960,7 +960,7 @@ export class BikeModel {
   _updateCrank(dt) {
     if ((!this.pedalNodes || this.pedalNodes.length === 0) && !this.goose) return;
     const now = performance.now() / 1000;
-    this._crankDisplay = this._crankMotion.update(this.crankAngle, dt, now, this.speed * 1.5);
+    this._crankDisplay = this._crankMotion.update(this.crankAngle, dt, now);
 
     for (const node of this.pedalNodes) {
       if (node.userData._crankBase === undefined) node.userData._crankBase = node.rotation.z;
