@@ -3,7 +3,8 @@ name: Deploy Workers
 on:
   push:
     branches: [main]
-    paths: ['worker/**']
+    # pad-protocol.js is bundled into the pad relay (worker/pad-relay.js).
+    paths: ['worker/**', 'js/remote/pad-protocol.js']
   workflow_dispatch:
 
 jobs:
@@ -32,3 +33,13 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: worker
           command: deploy --config wrangler-store.toml
+
+      # Phone-remote relay (#421, #454). Its own Worker, so RIDE TOGETHER's
+      # relay is untouched. A deploy drops the open pad rooms' sockets; games
+      # and phones redial by themselves.
+      - name: Deploy Pad Relay Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: worker
+          command: deploy --config wrangler-pad.toml
