@@ -11,6 +11,7 @@ import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway,
 import { colourwayParams, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 import { CrankMotion } from './crank-motion.js';
+import { rebatch } from './bike-batch.js';
 
 /** #441 · seconds over which a stroke's speed gain eases in (time constant). */
 const ACCEL_EASE_S = 0.1;
@@ -122,6 +123,8 @@ export class BikeModel {
     // Preset support
     this._pendingPreset = null;
     this._originalMats = null; // Map<meshName, clonedMaterial>
+    // #395 · marks the merged frame meshes this bike made (see _rebatch)
+    this._batchId = 'bike-' + Math.random().toString(36).slice(2);
 
     // Reusable temporaries for _applyTransform (avoid per-frame allocations)
     this._tmpQYaw = new THREE.Quaternion();
@@ -208,6 +211,7 @@ export class BikeModel {
       this.applyPreset(this._pendingPreset);
       this._pendingPreset = null;
     }
+    this._rebatch();
   }
 
   /**
@@ -383,6 +387,7 @@ export class BikeModel {
           this.applyPreset(this._pendingPreset);
           this._pendingPreset = null;
         }
+        this._rebatch();
       };
       if (!isGoose) { finish(); return; }
 
@@ -551,7 +556,7 @@ export class BikeModel {
     const bikeMeshes = (fn) => {
       const walk = (o) => {
         if (o.userData && o.userData.gooseSeat) return;
-        if (o.isMesh) fn(o);
+        if (o.isMesh && !(o.userData && o.userData.bikeBatch)) fn(o);
         for (const c of o.children) walk(c);
       };
       walk(model);
@@ -575,7 +580,7 @@ export class BikeModel {
       }
     });
 
-    if (!presetData) return; // null = default, just reset
+    if (!presetData) { this._rebatch(); return; } // null = default, just reset
 
     // Apply preset overrides
     bikeMeshes(child => {
@@ -600,6 +605,19 @@ export class BikeModel {
         mat.transparent = true;
       }
     });
+    this._rebatch();
+  }
+
+  /**
+   * #395 · draw the goose tandem's frame as a few merged meshes instead of
+   * 69 (see bike-batch.js). Re-run whenever the frame's materials change.
+   * The plain bike is left alone: its pedal meshes turn by themselves.
+   */
+  _rebatch() {
+    if (!this.goose || !this.modelLoaded) return;
+    const model = this.group.children[0];
+    if (!model) return;
+    this.batchStats = rebatch(model, { keep: this.spokeMeshes, batchId: this._batchId });
   }
 
   update(pedalResult, balanceResult, dt, safetyMode, autoSpeed) {

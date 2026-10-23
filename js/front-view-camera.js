@@ -244,7 +244,13 @@ export class FrontViewCamera {
     renderer.setScissorTest(true);
     renderer.setScissor(x, y, r.size, r.size);
     renderer.setViewport(x, y, r.size, r.size);
+    // #395 · the main view was drawn just before this, with the sun already
+    // placed on this bike, so its shadow map is still right. Without this,
+    // three.js redraws every shadow caster again for the small corner view.
+    const autoShadows = renderer.shadowMap.autoUpdate;
+    renderer.shadowMap.autoUpdate = false;
     renderer.render(scene, this.camera);
+    renderer.shadowMap.autoUpdate = autoShadows;
 
     // Restore full-screen viewport for the next main render.
     renderer.setScissorTest(false);
