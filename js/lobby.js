@@ -221,6 +221,11 @@ export class Lobby {
       this._hasCamera = false;
       this.toggleCamera.style.display = 'none';
       this.toggleAudio.style.display = 'none';
+    } else {
+      // #167: re-place the room PiPs on rotate / resize.
+      window.addEventListener('resize', () => {
+        if (this._currentStep === this.roomStep) requestAnimationFrame(() => this._positionPipToVideoArea());
+      });
     }
 
     // Hide camera toggle if no camera hardware exists
@@ -948,6 +953,33 @@ export class Lobby {
     root.setProperty('--pip-captain-top', (cRect.top + cRect.height / 2) + 'px');
     root.setProperty('--pip-stoker-left', (sRect.left + sRect.width / 2) + 'px');
     root.setProperty('--pip-stoker-top', (sRect.top + sRect.height / 2) + 'px');
+
+    // #167: on phones the partner circle sits at 50% + 20vw, which with its
+    // badges runs into the right toggle column (ALL / music). Cap its left
+    // edge so circle + badges end just short of that column, and keep the
+    // room code centred in the gap between the two circles.
+    const selfieWrap = document.getElementById('selfie-pip-wrap');
+    const partnerWrap = document.getElementById('partner-pip-wrap');
+    const rightCol = this.lobbyEl && this.lobbyEl.querySelector('.lobby-right-col');
+    const colRect = rightCol && rightCol.getBoundingClientRect();
+    const wRect = partnerWrap && partnerWrap.getBoundingClientRect();
+    if (!selfieWrap || !wRect || wRect.width === 0 || !colRect || colRect.width === 0) {
+      root.removeProperty('--pip-partner-max-left');
+      root.removeProperty('--pip-room-code-left');
+      root.removeProperty('--pip-room-code-lift');
+      return;
+    }
+    let right = wRect.right;
+    for (const b of partnerWrap.querySelectorAll('.pip-badge')) right = Math.max(right, b.getBoundingClientRect().right);
+    const maxLeft = Math.max(0, colRect.left - (right - wRect.left) - 6);
+    root.setProperty('--pip-partner-max-left', maxLeft + 'px');
+    const partnerLeft = Math.min(window.innerWidth * 0.7, maxLeft); // 50% + 20vw
+    const selfieRight = selfieWrap.getBoundingClientRect().right;
+    root.setProperty('--pip-room-code-left', ((selfieRight + partnerLeft) / 2) + 'px');
+    // Too narrow for the code between them (e.g. 320px phones): lift it above the circles.
+    const code = document.getElementById('mobile-room-code');
+    const codeW = code ? code.getBoundingClientRect().width : 0;
+    root.setProperty('--pip-room-code-lift', (partnerLeft - selfieRight - 40 < codeW ? 60 : 0) + 'px');
   }
 
   _hideLobby() {

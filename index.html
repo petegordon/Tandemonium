@@ -3418,7 +3418,8 @@
     top: auto !important;
     right: auto !important;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
-    left: calc(50% + 20vw) !important;
+    /* #167: capped by JS so circle + badges stay clear of the right toggle column */
+    left: min(calc(50% + 20vw), var(--pip-partner-max-left, 100vw)) !important;
     transform: none;
   }
   .pip-wrap.pip-lobby-mode .pip-label {
@@ -3481,8 +3482,8 @@
     position: fixed;
     z-index: 57;
     /* Same bottom as PiP circles + half circle height (40px) to vertically center */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px);
-    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px + var(--pip-room-code-lift, 0px));
+    left: var(--pip-room-code-left, 50%); /* #167: follows the capped partner circle */
     transform: translateX(-50%);
     font-size: 10px;
     color: var(--uf-color-accent);
@@ -5972,7 +5973,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.0cfc187 | 10-23-2026 05:53</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.be9c858 | 10-23-2026 05:57</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6453,8 +6454,6 @@ ON</button>
   </div>
 </div>
 
-<!-- QR code generator (sets window.qrcode) -->
-<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
 <!-- PeerJS (sets window.Peer) -->
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
 
