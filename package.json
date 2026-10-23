@@ -50,7 +50,8 @@
     "check:ui": "node scripts/check-ui.js",
     "docs:screen-flow": "node scripts/gen-screen-flow.mjs",
     "typecheck": "tsc -p jsconfig.json",
-    "smoke:phone-pad": "node scripts/smoke-phone-pad.mjs"
+    "smoke:phone-pad": "node scripts/smoke-phone-pad.mjs",
+    "smoke:host-room": "node scripts/smoke-host-room.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",
