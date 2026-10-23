@@ -1021,17 +1021,11 @@ export class Lobby {
         // Back to team setup — players stay joined, monitor restarts via _showStep.
         this._showStep(this.versusStep);
       } else if (this._pendingMode === 'multiplayer') {
-        // Reset multiplayer elements when leaving level step
-        const startBtn = document.getElementById('btn-start-ride');
-        const waitText = document.getElementById('level-wait-text');
-        const prompt = document.getElementById('level-prompt');
-        if (startBtn) startBtn.style.display = 'none';
-        if (waitText) waitText.style.display = 'none';
-        if (prompt) prompt.style.display = 'none';
-        // Reset difficulty selector interactivity
-        const diffSel = document.getElementById('difficulty-selector');
-        if (diffSel) { diffSel.style.opacity = ''; diffSel.style.pointerEvents = ''; }
-        this._showStep(this.roomStep);
+        // #167 · the captain takes the stoker back with them.
+        if (this._roomRole === 'captain' && this.net && this.net.connected) {
+          this.net.sendProfile(RoomProtocol.backToRoom());
+        }
+        this._levelsToRoom();
       } else {
         // Local co-op: backing out abandons the setup, so give P2's seat back.
         // The online room was already destroyed when they joined, so there is
@@ -4577,6 +4571,21 @@ export class Lobby {
     }
   }
 
+  /** Online room: leave level select for the room step, resetting the
+   *  multiplayer bits of the level step. */
+  _levelsToRoom() {
+    const startBtn = document.getElementById('btn-start-ride');
+    const waitText = document.getElementById('level-wait-text');
+    const prompt = document.getElementById('level-prompt');
+    if (startBtn) startBtn.style.display = 'none';
+    if (waitText) waitText.style.display = 'none';
+    if (prompt) prompt.style.display = 'none';
+    // Reset difficulty selector interactivity
+    const diffSel = document.getElementById('difficulty-selector');
+    if (diffSel) { diffSel.style.opacity = ''; diffSel.style.pointerEvents = ''; }
+    this._showStep(this.roomStep);
+  }
+
   _handleRoomMessage(profile) {
     if (!profile || !profile.type) {
       // Profile message (avatar, name, achievements)
@@ -4662,6 +4671,9 @@ export class Lobby {
     } else if (profile.type === ROOM_MSG.LEVEL_REFUSED) {
       // PR #397 m17 · Captain: the stoker's edition can't ride that level.
       this._onLevelRefused(profile);
+    } else if (profile.type === ROOM_MSG.BACK_TO_ROOM) {
+      // #167 · Stoker: the captain went back from level select; follow them.
+      if (this._currentStep === this.levelStep) this._levelsToRoom();
     } else if (profile.type === ROOM_MSG.PLAY_GAME) {
       // Stoker: captain clicked PLAY GAME → go to levels step
       this._showRoomLevelsStep();
