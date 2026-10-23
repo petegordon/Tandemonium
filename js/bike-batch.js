@@ -15,6 +15,10 @@
 //
 // Left out: the geese (they have their own skeletons), skinned meshes, and any
 // mesh in `keep` (the spokes, whose opacity changes every frame).
+//
+// The plain bike has no bones: its pedal nodes turn by themselves (#456). Pass
+// them as `movers` and they count as bones: parts under a pedal merge onto
+// that pedal, and a pedal that is itself a mesh is left as it is.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -40,10 +44,10 @@ function geometryKey(g) {
     (Object.keys(g.morphAttributes).length ? '|morph' + g.id : '');
 }
 
-/** The nearest bone above `o` (what moves it), or `root`. */
-function ownerOf(o, root) {
+/** The nearest bone or mover above `o` (what moves it), or `root`. */
+function ownerOf(o, root, movers) {
   let p = o.parent;
-  while (p && p !== root && !p.isBone) p = p.parent;
+  while (p && p !== root && !p.isBone && !movers.has(p)) p = p.parent;
   return p || root;
 }
 
@@ -65,12 +69,14 @@ export function unbatch(root, batchId) {
  * @param {THREE.Object3D} root   the bike model
  * @param {object} [opts]
  * @param {Set<THREE.Object3D>|THREE.Object3D[]} [opts.keep]  meshes to leave as they are
+ * @param {Set<THREE.Object3D>|THREE.Object3D[]} [opts.movers]  nodes the game turns itself (like bones)
  * @param {string} [opts.batchId]  marks the merged meshes this bike owns
  * @returns {{ before: number, after: number }} meshes drawn before and after
  */
 export function rebatch(root, opts = {}) {
   const batchId = opts.batchId || 'bike';
   const keep = new Set(opts.keep || []);
+  const movers = new Set(opts.movers || []);
   unbatch(root, batchId);
   root.updateMatrixWorld(true);
 
@@ -82,8 +88,8 @@ export function rebatch(root, opts = {}) {
     if (o.isMesh && o.visible) {
       before++;
       const mk = materialKey(o.material);
-      if (!o.isSkinnedMesh && !o.isInstancedMesh && !keep.has(o) && mk !== null && o.geometry) {
-        const owner = ownerOf(o, root);
+      if (!o.isSkinnedMesh && !o.isInstancedMesh && !keep.has(o) && !movers.has(o) && mk !== null && o.geometry) {
+        const owner = ownerOf(o, root, movers);
         const key = mk + '#' + geometryKey(o.geometry) + '#' + o.castShadow + o.receiveShadow;
         if (!groups.has(owner)) groups.set(owner, new Map());
         const byKey = groups.get(owner);
@@ -117,7 +123,7 @@ export function rebatch(root, opts = {}) {
       merged.computeBoundingBox();
       const first = meshes[0];
       const mesh = new THREE.Mesh(merged, first.material);
-      mesh.name = 'bikeBatch_' + (owner.name || 'root');
+      mesh.name = 'bikeBatch_' + added;   // not the owner's name: a pedal's would look like a pedal
       mesh.castShadow = first.castShadow;
       mesh.receiveShadow = first.receiveShadow;
       mesh.userData.bikeBatch = batchId;

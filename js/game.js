@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -74,7 +74,7 @@ import { GrassParticles } from './grass-particles.js';
 import { GustVisual } from './gust-visual.js';
 import { CobblesVisual } from './cobbles-visual.js';
 import { Lobby } from './lobby.js';
-import { GameRecorder } from './game-recorder.js';
+import { GameRecorder, canRecordClips } from './game-recorder.js';
 import { QuickMenu } from './quick-menu.js';
 import { ArchIndicator } from './arch-indicator.js';
 import { AudioEngine, MOTIF } from './audio-engine.js';
@@ -85,7 +85,7 @@ import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { PerfReadout } from './perf-readout.js';
 import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, reloadForDisplayTest, displayTestActive } from './quality.js';
-import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher } from './quality.js';
+import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
@@ -183,7 +183,12 @@ class Game {
     this._displayTest = resolveDisplayTest(new URLSearchParams(window.location.search), getDisplayTest());
     this._linesOverride = this._displayTest.lines;
     const _aa = this._displayTest.aa === 'on' ? true : this._displayTest.aa === 'off' ? false : !isMobile && !this._lowQuality;
-    this.renderer = new THREE.WebGLRenderer({ antialias: _aa, preserveDrawingBuffer: true });
+    // #456 · keeping the last frame's buffer costs a full-screen copy per frame
+    // on TV / phone GPUs. Only clip recording wants it, so Low drops it when
+    // clips are off. A context flag: it holds until the page reloads.
+    this._preserveBuffer = keepDrawingBuffer(this._quality,
+      clipsOffAtBoot({ search: window.location.search, canRecord: canRecordClips() }));
+    this.renderer = new THREE.WebGLRenderer({ antialias: _aa, preserveDrawingBuffer: this._preserveBuffer });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(this._pixelRatio());
     this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
@@ -229,15 +234,11 @@ class Game {
     this.scene = new THREE.Scene();
 
     this._riderEnvTex = null; // cached PMREM env, reused when Show Riders re-toggles
+    // #456 · 'full' or 'lean' riders lighting (a dev switch, see getRidersLight)
+    this._ridersLight = getRidersLight();
     if (this._showRiders) {
-      // Soft image-based lighting: PBR materials expect an environment to
-      // reflect; without one they read muddy. RoomEnvironment is generated
-      // procedurally (no asset files), so brass, silk, and the coat pick up
-      // gentle reflections and their colors pop.
-      const _pmrem = new THREE.PMREMGenerator(this.renderer);
-      this._riderEnvTex = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-      this.scene.environment = this._riderEnvTex;
-      _pmrem.dispose();
+      this._ensureRiderEnv();
+      this.scene.environment = this._ridersLight === 'lean' ? null : this._riderEnvTex;
     }
 
     // Sky gradient: rich blue top → soft light blue at horizon
@@ -333,17 +334,18 @@ class Game {
       }
       // Start on the procedural world so the game is up and playable, then
       // swap when the tiles module arrives (E-4).
-      this.world = new World(this.scene, { lowEnd: this._lowQuality, tier: this._quality, showRiders: this._showRiders });
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, tier: this._quality, showRiders: this._showRiders, ridersLight: this._ridersLight });
       this.bike = new BikeModel(this.scene, bikeModelPath);
       this.bike.roadPath = this.world.roadPath;
       this._touristPending = true;
       this._loadTouristWorld(apiKey);
     } else {
-      this.world = new World(this.scene, { lowEnd: this._lowQuality, tier: this._quality, showRiders: this._showRiders });
+      this.world = new World(this.scene, { lowEnd: this._lowQuality, tier: this._quality, showRiders: this._showRiders, ridersLight: this._ridersLight });
       this.bike = new BikeModel(this.scene, bikeModelPath);
       this.bike.roadPath = this.world.roadPath;
     }
     this._applyTierView();
+    this._applyRidersEnv();
     this.chaseCamera = new ChaseCamera(this.camera);
     // Picture-in-picture front-facing "selfie cam" — only with the riders model
     // (it exists to show off their lean).
@@ -467,6 +469,8 @@ class Game {
     this._fpsFrameCount = 0;   // frames sampled this ride
     this._fpsMinDt = Infinity; // shortest frame time seen during ride
     this._fpsMaxDt = 0;        // longest frame time seen during ride
+    this._rideStartTier = null; // #456 · the tier this ride's first sampled frame ran at
+    this._rideAutoChanged = false; // #456 · Auto stepped the tier down during this ride
 
     // DDA (Dynamic Difficulty Adjustment)
     this.ddaManager = null;
@@ -3541,6 +3545,7 @@ class Game {
     if (this.world && this.world !== proc && this.world.dispose) this.world.dispose();
     proc.unpark();
     if (proc.setTier) proc.setTier(this._quality);   // the tier may have changed during the tour
+    if (proc.setShowRiders) proc.setShowRiders(this._showRiders);   // ...and Show Riders (#456)
     this.world = proc;
     this._proceduralWorld = null;
     if (this.bike) { this.bike.roadPath = proc.roadPath; this.bike.startHeading = 0; }
@@ -4651,6 +4656,10 @@ class Game {
         low_quality: this._lowQuality ? 1 : 0,
         quality: this._quality,
         quality_auto: this._qualityAuto ? 1 : 0,
+        // #456 · this ride's fps is a mix of two tiers: Auto stepped down mid-ride
+        // (quality is where it ended, quality_start where it began)
+        auto_changed: this._rideAutoChanged ? 1 : 0,
+        quality_start: this._rideStartTier || this._quality,
         show_riders: this._showRiders ? 1 : 0,
         recording: this.recorder && this.recorder.buffering ? 1 : 0,
         transport: this.net ? this.net.transport : null,
@@ -5557,26 +5566,20 @@ class Game {
     this.renderer.toneMapping = on ? THREE.AgXToneMapping : THREE.NoToneMapping;
     this.renderer.toneMappingExposure = on ? 1.3 : 1.0;
 
-    if (on) {
-      if (!this._riderEnvTex) {
-        const _pmrem = new THREE.PMREMGenerator(this.renderer);
-        this._riderEnvTex = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-        _pmrem.dispose();
-      }
-      this.scene.environment = this._riderEnvTex;
-    } else {
-      this.scene.environment = null;
-    }
+    if (on) this._ensureRiderEnv();
+    this._applyRidersEnv();
 
-    this.world.setShowRiders(on);
+    // #456 · the world's lights, including a procedural world parked for a
+    // tour (it gets them when it comes back, in _restoreProceduralWorld); the
+    // tiles world has no riders lighting of its own.
+    if (this.world.setShowRiders) this.world.setShowRiders(on);
 
-    // Tone-mapping lives in the compiled shader program — every material in
-    // the scene must recompile to pick up the change.
-    this.scene.traverse((obj) => {
-      if (!obj.material) return;
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      for (const m of mats) if (m) m.needsUpdate = true;
-    });
+    // No material needs a manual recompile here, unlike the shadows in
+    // _setTier: three.js compares each material's tone mapping and
+    // environment map with the renderer's every time it draws it, and the
+    // fill light changes the lights state. So everything recompiles when it
+    // is next drawn, including what's off-screen or parked right now (the
+    // smoke:quality check audits every drawn material after a mid-ride switch).
 
     this.bike.swapModel(
       on ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH,
@@ -5589,6 +5592,41 @@ class Game {
       this.frontView.dispose();
       this.frontView = null;
     }
+  }
+
+  /**
+   * Soft image-based lighting for Show Riders: PBR materials expect an
+   * environment to reflect; without one they read muddy. RoomEnvironment is
+   * generated procedurally (no asset files), so brass, silk, and the coat pick
+   * up gentle reflections and their colors pop. Made once, kept.
+   */
+  _ensureRiderEnv() {
+    if (this._riderEnvTex) return this._riderEnvTex;
+    const _pmrem = new THREE.PMREMGenerator(this.renderer);
+    this._riderEnvTex = _pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this._riderEnvTex.userData.riderEnv = true;   // shared: a geese swap must not dispose it
+    _pmrem.dispose();
+    return this._riderEnvTex;
+  }
+
+  /**
+   * #456 · where the riders' reflections go: on every PBR material in the
+   * scene ('full', as before), or only on the bike and geese ('lean').
+   */
+  _applyRidersEnv() {
+    const env = this._showRiders ? this._riderEnvTex : null;
+    const lean = this._ridersLight === 'lean';
+    this.scene.environment = lean ? null : env;
+    if (this.bike) this.bike.setEnvMap(lean ? env : null);
+  }
+
+  /** #456 · switch riders lighting live ('full' | 'lean'); saved for the next boot. */
+  _setRidersLight(mode) {
+    mode = mode === 'lean' ? 'lean' : 'full';
+    try { localStorage.setItem('tandemonium_riders_light', mode); } catch (e) {}
+    this._ridersLight = mode;
+    for (const w of [this.world, this._proceduralWorld]) if (w && w.setRidersLight) w.setRidersLight(mode);
+    this._applyRidersEnv();
   }
 
   _setShowSolo(on) {
@@ -6015,6 +6053,8 @@ class Game {
     this._fpsFrameCount = 0;
     this._fpsMinDt = Infinity;
     this._fpsMaxDt = 0;
+    this._rideStartTier = null;
+    this._rideAutoChanged = false;
   }
 
   // ============================================================
@@ -6291,6 +6331,7 @@ class Game {
       // ≥20, hiding the worst phone lag — #390); gaps over 1s are tab/app
       // pauses, not frames.
       if (rawDt > 0 && rawDt < 1) {
+        if (this._fpsFrameCount === 0) this._rideStartTier = this._quality;
         this._fpsDtSum += rawDt;
         this._fpsFrameCount++;
         if (rawDt < this._fpsMinDt) this._fpsMinDt = rawDt;
@@ -6311,6 +6352,7 @@ class Game {
         console.log(`[QUALITY] rides are slow — Auto steps down to ${next}`);
         saveLearnedAutoTier(next);
         this._setTier(next);
+        this._rideAutoChanged = true;
         try { analytics.trackEvent('quality_auto_down', { tier: next }); } catch (e) {}
       }
 

@@ -107,6 +107,30 @@ export function resolveQualityTier({ param = null, pref = 'auto', learned = null
 // ── The current tier, shared with modules that build their own renderers ──
 
 /** @type {QualityTier} */
+// ── Keeping the drawing buffer (#456) ──
+// preserveDrawingBuffer keeps each frame's buffer for the next one, which on
+// TV / phone GPUs costs a full-screen copy every frame. Only clip recording
+// wants it, and it's a context-creation flag, so it's decided once at boot.
+
+/** The last clip GPU probe said clips are too slow here ('1' / '0'), saved for the next boot. */
+export const CLIP_SLOW_KEY = 'tandemonium_clip_gpu_slow';
+
+/**
+ * Will clip recording be off this session, as far as the game can tell before
+ * the WebGL canvas exists? ?noclip, no way to record here, or the GPU probe
+ * failed last time. (A probe that passes this time still records fine without
+ * the kept buffer: the recorder copies the canvas right after each render, in
+ * the same task, the way the probe itself does.)
+ * @param {{ search?: string, canRecord?: boolean, store?: Storage }} [o]
+ */
+export function clipsOffAtBoot({ search = '', canRecord = true, store = globalThis.localStorage } = {}) {
+  if (new URLSearchParams(search).has('noclip') || !canRecord) return true;
+  try { return store.getItem(CLIP_SLOW_KEY) === '1'; } catch { return false; }
+}
+
+/** Keep the drawing buffer? Only Low gives it up, and only when clips are off. @param {QualityTier} tier @param {boolean} clipsOff */
+export const keepDrawingBuffer = (tier, clipsOff) => !(tier === 'low' && clipsOff);
+
 let _current = 'high';
 export const getCurrentTier = () => _current;
 /** @param {QualityTier} t */
