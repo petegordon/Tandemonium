@@ -148,12 +148,7 @@ class EconomyMode {
     if (!box) return [];
     if (!p) { box.innerHTML = ''; box.style.display = 'none'; return []; }
     this._renderRideCoins(box, p.score, p.wallet);
-    // The garage is a solo screen: leaving a shared ride for it would end the
-    // ride for the partner too.
-    if (garage && !this.net && this.mode !== 'versus') {
-      garage.style.display = '';
-      return [garage];
-    }
+    // The garage lives in Slingshot only, which has its own results screen.
     return [];
   }
 
