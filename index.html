@@ -3418,7 +3418,8 @@
     top: auto !important;
     right: auto !important;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
-    left: calc(50% + 20vw) !important;
+    /* #167: capped by JS so circle + badges stay clear of the right toggle column */
+    left: min(calc(50% + 20vw), var(--pip-partner-max-left, 100vw)) !important;
     transform: none;
   }
   .pip-wrap.pip-lobby-mode .pip-label {
@@ -3481,8 +3482,8 @@
     position: fixed;
     z-index: 57;
     /* Same bottom as PiP circles + half circle height (40px) to vertically center */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px);
-    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px + var(--pip-room-code-lift, 0px));
+    left: var(--pip-room-code-left, 50%); /* #167: follows the capped partner circle */
     transform: translateX(-50%);
     font-size: 10px;
     color: var(--uf-color-accent);
