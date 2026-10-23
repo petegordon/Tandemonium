@@ -122,10 +122,28 @@ const ELEVATION_TIMEOUT_MS = 6000;
 
 let _mapsJsPromise = null;
 
+// #366: when the key is not authorised, Maps JS logs an error and calls
+// window.gm_authFailure, but pending requests never settle. This rejects once
+// that fires, so Google lookups raced against it fail fast instead of waiting
+// out ELEVATION_TIMEOUT_MS. Once rejected, Maps stays unusable for the session.
+let _rejectMapsAuth;
+const _mapsAuthFailed = new Promise((_, reject) => { _rejectMapsAuth = reject; });
+_mapsAuthFailed.catch(() => {});   // only ever observed through mapsCall()
+
+/** Race a Maps JS call against an auth failure. */
+function mapsCall(promise) {
+  return Promise.race([promise, _mapsAuthFailed]);
+}
+
 /** Inject the Maps JavaScript API once; resolves when its callback fires. */
 function loadMapsJs(apiKey) {
   if (_mapsJsPromise) return _mapsJsPromise;
   _mapsJsPromise = new Promise((resolve, reject) => {
+    const prevAuthFailure = window.gm_authFailure;
+    window.gm_authFailure = () => {
+      _rejectMapsAuth(new Error('Maps JS auth failed'));
+      if (typeof prevAuthFailure === 'function') prevAuthFailure();
+    };
     const CB = '__touristMapsReady';
     window[CB] = () => { delete window[CB]; resolve(); };
     const script = document.createElement('script');
@@ -158,9 +176,12 @@ export async function geocodeAddress(address, apiKey = getMapsApiKey()) {
   if (!query) throw new Error('empty address');
   if (!apiKey) throw new Error('no Maps API key available');
 
-  await loadMapsJs(apiKey);
-  const { Geocoder } = await google.maps.importLibrary('geocoding');
-  const { results } = await new Geocoder().geocode({ address: query });
+  // #366: fail fast on auth failure, with the same timeout backstop as elevation.
+  const { results } = await withTimeout(mapsCall((async () => {
+    await loadMapsJs(apiKey);
+    const { Geocoder } = await google.maps.importLibrary('geocoding');
+    return new Geocoder().geocode({ address: query });
+  })()), 'Google Geocoder');
   const best = results && results[0];
   if (!best || !best.geometry || !best.geometry.location) {
     throw new Error(`could not find "${query}"`);
@@ -303,7 +324,7 @@ async function lookupElevation(lat, lon) {
   let source = null;
   try {
     elevation = await withTimeout(
-      elevationFromGoogle(lat, lon, getMapsApiKey()), 'Google ElevationService');
+      mapsCall(elevationFromGoogle(lat, lon, getMapsApiKey())), 'Google ElevationService');
     source = 'Google ElevationService';
   } catch (err) {
     console.warn(`[Tourist] Google ElevationService unavailable (${err.message}). ` +
