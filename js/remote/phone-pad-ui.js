@@ -10,6 +10,7 @@
 // ============================================================
 
 import { PhonePadHost } from './phone-pad-host.js';
+import qrcode from '../../shared/ui/third_party/qrcode-generator.js';   // #424: vendored, no CDN
 
 const STATUS_TEXT = {
   idle: '',
@@ -107,7 +108,7 @@ export function installPhonePadUI(input, hooks = {}) {
     if (qrEl.dataset.link !== link) {
       let qrOk = false;
       try {
-        const qr = /** @type {any} */ (window).qrcode(0, 'M');
+        const qr = qrcode(0, 'M');
         qr.addData(link);
         qr.make();
         qrEl.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
