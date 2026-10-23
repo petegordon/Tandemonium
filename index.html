@@ -5507,6 +5507,18 @@ ON</button>
   if (isDesktop) {
     // Poll for gamepad input to dismiss the overlay
     var overlay = document.getElementById('tap-to-start');
+    // #428 · 16: once the game has booted, the veil is waiting on the player,
+    // not on loading, so say so. A key press dismisses it too.
+    var readyPoll = setInterval(function () {
+      if (!overlay.isConnected) { clearInterval(readyPoll); return; }
+      if (!window._game) return;
+      clearInterval(readyPoll);
+      if (textEl) textEl.textContent = 'Press any button to start';
+      window.addEventListener('keydown', function onKey() {
+        window.removeEventListener('keydown', onKey);
+        if (overlay.isConnected) overlay.click();
+      });
+    }, 150);
     function pollForButton() {
       var gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
       for (var i = 0; i < gamepads.length; i++) {
@@ -5973,7 +5985,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.be9c858 | 10-23-2026 05:57</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.7b54910 | 10-23-2026 15:40</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
