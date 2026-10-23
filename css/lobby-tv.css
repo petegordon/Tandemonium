@@ -105,6 +105,12 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby .level-card-daily-rule { font-size: var(--uf-size-xs) !important; display: block; margin-top: 6px; }
   #lobby .level-card-record { font-size: var(--uf-size-md) !important; margin-top: var(--uf-space-3) !important; }
   #lobby .difficulty-selector { margin-top: var(--uf-space-5) !important; font-size: var(--uf-size-md) !important; }
+  /* Three equal difficulty buttons, each wide enough for its one-line description
+     (the phone rule caps the row at 160 × --ls, which wrapped them at 1080p). */
+  #lobby .difficulty-selector { width: auto !important; max-width: 100%; }
+  #lobby .difficulty-buttons { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--uf-space-4) !important; }
+  #lobby .difficulty-btn { padding: var(--uf-space-3) var(--uf-space-5) !important; }
+  #lobby .diff-desc { white-space: nowrap; }
   #lobby #level-extras { margin-top: var(--uf-space-5) !important; }
   #lobby #btn-start-ride { min-width: 14em; font-size: var(--uf-size-lg) !important; }
   /* Level select needs the whole width for the cards: drop the art panel
