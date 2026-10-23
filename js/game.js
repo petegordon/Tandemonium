@@ -1808,6 +1808,7 @@ class Game {
     }
 
     const choice = await this._showStokerInputChoice();
+    if (!choice) return;   // #165 · cancelled: the ride ended (back to the room) before they picked
     this._chosenInputMethod = choice.method;
     this._readyWithInput(choice);
   }
@@ -1913,8 +1914,15 @@ class Game {
         this._autoWatching = false;
         this._clearOverlayButtons();
         overlay.remove();
+        if (this._cancelInputChoice === cancel) this._cancelInputChoice = null;
         resolve(result);
       };
+      // #165 · the captain only waits 30 s for this answer, then rides without
+      // it. If nobody picks, the overlay (85% black, z-index 9999) used to stay
+      // up through the ride and over the room: a black screen that eats taps.
+      // Leaving the ride cancels it (resolves null).
+      const cancel = () => finish(null);
+      this._cancelInputChoice = cancel;
       const noteEl = overlay.querySelector('#input-choice-note');
       btnEls.forEach((btn) => {
         btn.addEventListener('click', async () => {
@@ -2971,6 +2979,7 @@ class Game {
   /** Dismiss any stray full-screen overlays that sit above the lobby (z-index 60)
    *  and cancel pending timers that would re-show them. */
   _hideAllOverlays() {
+    if (this._cancelInputChoice) this._cancelInputChoice();   // #165 · "How will you steer?"
     for (const id of ['stoker-cta-overlay', 'disconnect-overlay']) {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
@@ -5093,6 +5102,9 @@ class Game {
     this._payoutAbandon();   // #400 D4
     this._endRankedRun();   // #398
     this._helpEndRide();    // #403
+    // A short ride can end before the first-ride coach card does; don't carry
+    // it over the room (_returnToLobby does the same).
+    if (this._coachVisible) this._dismissCoachCard();
     this._musicBtn.style.display = 'none';
     this.quickMenu.setVisible(false);
     if (!this.net) {
