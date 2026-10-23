@@ -2745,7 +2745,7 @@
     align-items: center;
   }
   uf-step.lobby-step:not([active]) { display: none; }   /* uf-flow toggles [active]; nothing else hides a step */
-  #btn-start-ride, #btn-play-game {
+  #btn-start-ride {
     padding: 6px 12px;
     font-size: 13px;
     font-weight: 400;
@@ -3471,11 +3471,7 @@
      Room code is repositioned fixed between the PiP circles.
      These are mobile-only — desktop shows them normally via media query override. */
   /* class-scoped (not #lobby-room #…) so the desktop .lobby-card.room-active rules outrank them without !important */
-  .lobby-step #room-partner-info { display: none; }
   .lobby-step #room-video-area { display: none; }
-  #lobby-room #btn-play-game { width: 100%; }
-  #lobby-room #btn-back-room { width: 100%; }
-  #room-code-label { font-size: calc(14 * var(--ls)); letter-spacing: calc(2 * var(--ls)); padding: calc(3 * var(--ls)) calc(8 * var(--ls)); }
 
   /* Mobile room code — body-level element positioned between PiP circles */
   #mobile-room-code {
@@ -3498,8 +3494,7 @@
     background: rgba(60,200,80,0.15);
     box-shadow: 0 0 8px rgba(60,200,80,0.25);
   }
-  #level-wait-text,
-  #room-wait-text-room {
+  #level-wait-text {
     color: rgba(255,255,255,0.6);
     font-size: 14px;
   }
@@ -4487,8 +4482,7 @@
 
     /* Host/Join steps: compact for TV layout */
     #lobby-host uf-button,
-    #lobby-join uf-button,
-    #lobby-room uf-button {
+    #lobby-join uf-button {
       min-width: auto;
     }
     /* All sub-steps: hide back buttons (B-button handles it) and compact layout */
@@ -4496,7 +4490,6 @@
     #lobby-host .lobby-back,
     #lobby-join .lobby-back,
     #lobby-level .lobby-back { display: none; }
-    /* Room step: back button handled by grid layout (.room-active) */
     #lobby-fixed-back { font-size: calc(10 * var(--ls)); padding: calc(4 * var(--ls)) calc(8 * var(--ls)); order: 99; }
 
     #lobby-role .lobby-prompt,
@@ -4632,91 +4625,6 @@
     #lobby-host { gap: calc(3 * var(--ls)); }
     #lobby-join { gap: calc(4 * var(--ls)); padding-top: calc(8 * var(--ls)); }
 
-    /* ── Room step: CSS Grid layout ──
-       .room-active on lobby-card switches to a 3-row grid:
-       Row 1: left toggles | room-center-wrap (code + videos) | right toggles
-       Row 2: PLAY GAME (full span)
-       Row 3: Leave Room (full span) */
-    .lobby-card.room-active {
-      display: grid !important;
-      grid-template-columns: 1fr auto 1fr;
-      grid-template-rows: 1fr auto auto;
-      gap: calc(2 * var(--ls));
-      align-items: center;
-      justify-items: center;
-      padding: calc(4 * var(--ls)) calc(10 * var(--ls)) calc(6 * var(--ls));
-      height: auto;
-      max-width: none;
-      justify-self: stretch;
-    }
-    .lobby-card.room-active .lobby-layout { display: contents; }
-    .lobby-card.room-active .lobby-steps-col { display: contents; }
-    .lobby-card.room-active #lobby-room { display: contents; }   /* outranks uf-step.lobby-step:not([active]) by id */
-    .lobby-card.room-active .lobby-left-col {
-      grid-column: 1; grid-row: 1; align-self: center;
-      justify-self: end;
-    }
-    .lobby-card.room-active .lobby-right-col {
-      grid-column: 3; grid-row: 1; align-self: center;
-      justify-self: start;
-    }
-    /* Center wrapper: room code above video rects, all in one grid cell */
-    .lobby-card.room-active #room-center-wrap {
-      grid-column: 2; grid-row: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      width: 100%;
-    }
-    .lobby-card.room-active #room-partner-info {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-      margin-bottom: calc(2 * var(--ls));
-    }
-    .lobby-card.room-active #room-video-area {
-      display: flex;
-      align-items: flex-start;
-      justify-content: center;
-      gap: calc(24 * var(--ls));
-      padding: calc(2 * var(--ls)) calc(8 * var(--ls));
-      width: 100%;
-    }
-    /* The seat is taller than the video PiP centred on it, so its role / who
-       lines show in the band under the video. */
-    .lobby-card.room-active .room-video-slot {
-      width: calc(55 * var(--ls));
-      min-height: calc(100 * var(--ls));
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: flex-end;
-      padding-bottom: calc(3 * var(--ls));
-    }
-    .lobby-card.room-active #btn-play-game {
-      grid-column: 1 / -1; grid-row: 2;
-      justify-self: center;
-      min-width: calc(140 * var(--ls));
-      max-width: calc(140 * var(--ls));
-      /* Override mobile compact style — match other lobby buttons */
-      font-size: calc(13 * var(--ls));
-      padding: calc(10 * var(--ls)) calc(13 * var(--ls));
-      border-radius: calc(11 * var(--ls));
-      width: auto;
-    }
-    .lobby-card.room-active #room-wait-text-room {
-      grid-column: 1 / -1; grid-row: 2;
-    }
-    .lobby-card.room-active #btn-back-room {
-      grid-column: 1 / -1; grid-row: 3;
-      display: inline-block;
-      font-size: calc(10 * var(--ls));
-      justify-self: center;
-      min-height: calc(16 * var(--ls));
-    }
-    /* Hide other steps' elements that leak through display:contents */
-    .lobby-card.room-active .lobby-card-header { display: none; }
 
     /* Desktop ROOM: video as rectangles with small rounded corners */
     .pip-wrap.pip-lobby-mode .pip-video {
@@ -4737,8 +4645,7 @@
       top: calc(30 * var(--ls));
       left: calc(22.5 * var(--ls));
     }
-    #level-wait-text,
-    #room-wait-text-room { font-size: calc(14 * var(--ls)); }
+    #level-wait-text { font-size: calc(14 * var(--ls)); }
     /* Hide mobile room code overlay on desktop (created by JS when isMobile is true on Mac trackpad) */
     #mobile-room-code { display: none !important; }
     /* ROOM step — each PiP positioned over its slot container via per-slot CSS vars */
@@ -5668,7 +5575,7 @@ ON</button>
              Shared #difficulty-selector shown via _showStep().
              Multiplayer elements (START RIDE, wait text) hidden by default.
              Gamepad nav: level cards → tutorial → difficulty → [START RIDE] → back
-             Back: #lobby-mode (solo) or #lobby-room (multiplayer)
+             Back: #lobby-mode (solo), #lobby-host (online captain, local), or leave (online stoker)
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-level" class="lobby-step">
           <p class="lobby-prompt" id="level-prompt" style="display:none;">Choose your ride:</p>
@@ -5731,7 +5638,10 @@ ON</button>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Captain Waiting Room (#lobby-host)
-             Displays room code + QR + URL for stoker to join.
+             Displays room code + QR + URL for stoker to join, and (desktop/TV)
+             the local stoker seat. Online / Local CHOOSE LEVEL enable once
+             there are two players; this is also the online room (the old
+             #lobby-room step was merged in, 2026-10-23).
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-host" class="lobby-step">
@@ -5741,6 +5651,7 @@ ON</button>
           <div id="room-url" class="room-url"></div>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
+          <uf-button variant="accent" id="btn-host-online-next" disabled>CHOOSE LEVEL</uf-button>
           <!-- Desktop/TV (#428 round 5): Online multiplayer (code + couch-sized <uf-qr>)
                on the left, Local multiplayer on the right — a kit <uf-team> with the
                captain seated and the stoker seat waiting for any controller, then every
@@ -5755,6 +5666,7 @@ ON</button>
               <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller"></uf-seat>
             </uf-team>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
+            <uf-button variant="accent" id="btn-host-local-next" disabled>CHOOSE LEVEL</uf-button>
           </div>
           <!-- Local multiplayer: join section shown when P2 input is available.
                The monitor (lobby._startLocalJoinMonitor) shows/hides each
@@ -5851,32 +5763,6 @@ ON</button>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-role-join">&larr; Back</uf-button>
         </uf-step>
 
-        <!-- ════════════════════════════════════════════════════
-             SCREEN: Multiplayer Room (#lobby-room)
-             Social/video prep — PiP video exchange.
-             Captain sees PLAY GAME, stoker sees "Waiting..."
-             Back: leave room (disconnect)
-             ════════════════════════════════════════════════════ -->
-        <uf-step id="lobby-room" class="lobby-step">
-          <!-- Room (#173, #428): no video (sharing is off since #400 D7). Two kit
-               <uf-player-card>s — who sits where, their profile and recently earned
-               achievements (<uf-achievement size=sm>) — filled by lobby._syncRoomSeats
-               and the partner's profile message. -->
-          <div id="room-center-wrap">
-            <div id="room-partner-info">
-              <uf-chip tone="info" id="room-code-label" class="room-code-label"></uf-chip>
-              <div id="room-partner-name"></div>
-            </div>
-            <div id="room-players">
-              <uf-player-card id="room-player-captain" subtitle="Captain · front seat" tone="captain" name="Waiting for partner…" state="waiting"></uf-player-card>
-              <uf-player-card id="room-player-stoker" subtitle="Stoker · back seat" tone="stoker" name="Waiting for partner…" state="waiting"></uf-player-card>
-            </div>
-          </div>
-          <!-- Full-span rows below center -->
-          <uf-button variant="accent" id="btn-play-game">PLAY GAME</uf-button>
-          <p id="room-wait-text-room" class="conn-status" style="display:none;">Waiting for captain...</p>
-          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-room">&larr; Leave Room</uf-button>
-        </uf-step>
 
 
         </uf-flow>

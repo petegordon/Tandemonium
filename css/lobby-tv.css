@@ -177,7 +177,17 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-host h3 { margin: 0; font: 800 var(--uf-size-xl)/1.2 var(--uf-font-ui); color: var(--uf-color-fg); }
   #lobby-host .host-tv p { margin: var(--uf-space-1) 0 0; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); max-width: 26em; }
   #lobby-host #host-team { margin-top: var(--uf-space-2); }
+  #lobby-host[active] #btn-host-online-next { grid-row: 5; }
+  #lobby-host[active] #btn-host-online-next, #lobby-host[active] #btn-host-local-next { min-width: 14em; font-size: var(--uf-size-lg); justify-self: start; }
+  /* Whichever side has the stoker dims the other (2026-10-23). */
+  #lobby-host.host-local-on #host-online-head, #lobby-host.host-local-on #room-code-display,
+  #lobby-host.host-local-on #room-qr-tv, #lobby-host.host-local-on #host-status,
+  #lobby-host.host-local-on #btn-host-online-next,
+  #lobby-host.host-online-on #host-local > h3, #lobby-host.host-online-on #host-local > p,
+  #lobby-host.host-online-on #host-roster, #lobby-host.host-online-on #btn-host-local-next { opacity: .4; }
 }
+/* Narrow layouts have no local seats: the Local button never shows there. */
+@media (max-width: 1023px) { #btn-host-local-next { display: none; } }
 
 /* ── Join with a code: kit keypad (#428 round 3) ── */
 .join-tv { display: none; }
@@ -217,25 +227,3 @@ uf-system-bar#lobby-bar { display: none; }
   body #phone-pad-panel #btn-ppp-done { min-width: 8em; font-size: var(--uf-size-lg); }
 }
 
-/* ── Room (#428): two kit player cards instead of video seats ── */
-#room-players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--uf-space-4); width: 100%; }
-@media (min-width: 1024px) {
-  #lobby .lobby-card.room-active { display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; grid-template-columns: none !important; grid-template-rows: none !important; }
-  #lobby .lobby-card.room-active .lobby-layout, #lobby .lobby-card.room-active .lobby-steps-col { display: block !important; width: 100% !important; }
-  #lobby .lobby-card.room-active #lobby-room[active] { display: grid !important; gap: var(--uf-space-4); justify-items: center; width: 100%; max-width: 64em; margin: 0 auto; }
-  #lobby .lobby-card.room-active #room-center-wrap { display: grid !important; gap: var(--uf-space-3); width: 100%; }
-  #lobby .lobby-card.room-active #room-partner-info { display: flex !important; flex-direction: column; align-items: center; gap: var(--uf-space-1); }
-  #lobby .lobby-card.room-active #room-code-label { font-size: var(--uf-size-md); padding: .35em .8em; }
-  #lobby .lobby-card.room-active #room-partner-name { display: none; }
-  #lobby .lobby-card.room-active #btn-play-game { min-width: 14em !important; max-width: none !important; font-size: var(--uf-size-lg) !important; padding: var(--uf-space-4) var(--uf-space-6) !important; border-radius: var(--uf-radius-lg) !important; }
-  #lobby .lobby-card.room-active #room-wait-text-room { font-size: var(--uf-size-md); }
-}
-@media (max-width: 1023px) { #room-players { gap: 8px; } }
-@media (min-width: 1024px) {
-  #lobby .lobby-card.room-active #lobby-room[active] > *, #lobby .lobby-card.room-active #room-center-wrap > * { grid-column: auto !important; grid-row: auto !important; margin: 0 !important; justify-self: center; }
-  #lobby .lobby-card.room-active #room-center-wrap { justify-self: stretch !important; }
-  #lobby .lobby-card.room-active #room-players { justify-self: stretch !important; }
-}
-#room-players uf-player-card { text-align: left; }
-#room-code-label:empty { display: none; }
-@media (min-width: 1024px) { #lobby .lobby-card.room-active #btn-play-game { width: auto !important; } }
