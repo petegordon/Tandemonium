@@ -86,6 +86,22 @@ export function getGooseRiderPaths() {
   return gooseOutfitPaths(getGooseOutfit());
 }
 
+/**
+ * #456 · how Show Riders lights the scene. 'full' (the default): a second,
+ * warm fill light and environment reflections on every lit material. 'lean':
+ * reflections on the bike and geese only, and the fill folded into the
+ * hemisphere light. A dev switch for comparing the two: ?riderslight=lean|full
+ * (saved), or localStorage tandemonium_riders_light.
+ * @returns {'full'|'lean'}
+ */
+export function getRidersLight() {
+  try {
+    const p = new URLSearchParams(location.search).get('riderslight');
+    if (p === 'lean' || p === 'full') localStorage.setItem('tandemonium_riders_light', p);
+    return localStorage.getItem('tandemonium_riders_light') === 'lean' ? 'lean' : 'full';
+  } catch (e) { return 'full'; }
+}
+
 export function getShowRiders() {
   try {
     const pref = localStorage.getItem('tandemonium_show_riders');

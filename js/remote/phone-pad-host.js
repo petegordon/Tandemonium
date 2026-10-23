@@ -12,14 +12,25 @@
 //
 // Phase 2: the game tells us whether it's in menus or riding (setMode); in
 // menu mode the phone's held buttons become a gamepad on the seat's
-// InputManager (setRemoteNav). The phone's own layout never changes, so
-// nothing about the mode is sent to it. One seat (Player 1) until Phase 4.
+// InputManager (setRemoteNav). The phone's own layout never changes. A phone
+// that said hello (v2+, #454) is told the mode only so it can send less in
+// menus (on change plus a heartbeat); one that didn't is sent nothing new.
+// One seat (Player 1) until Phase 4.
+//
+// Single-use QR (#454), when the relay and the phone both speak v2+: a phone
+// that joins with the QR's secret is given its own key over the relay
+// ({type:'rekey', k}). Once it acks ({type:'rekeyed', k}) the host registers
+// that key and moves the QR to a new secret ({type:'pair'}), so the old QR no
+// longer opens the seat, while the paired phone reconnects with its key. A
+// phone joining with the QR while another phone holds a key is a takeover:
+// the old phone's key is revoked and onTakeover fires. With an older relay or
+// phone none of this happens, and the QR keeps working as before.
 // ============================================================
 
 import {
   DEFAULT_PAD_RELAY, padSocketUrl, makePadCode, makePadSecret, sha256hex,
   buildPadLink, decodeFrame, counterDelta, isNewerSeq, NAV, MENU_NAV_MASK, PAD_CUES,
-  relayOverrideAllowed,
+  relayOverrideAllowed, PAD_PROTOCOL, peerVersion,
 } from './pad-protocol.js';
 
 /** No frame for this long (while the game is running freely) = the phone is gone. */
@@ -57,9 +68,10 @@ export class PhonePadHost {
    * @param {() => void} [opts.onPause]   the phone's Pause button while riding
    * @param {() => void} [opts.onDrop]    a connected phone went away
    * @param {() => void} [opts.onReturn]  ...and came back
-   * @param {(link: string) => void} [opts.onLink]  the room moved to a new code (redraw the QR)
+   * @param {(link: string) => void} [opts.onLink]  the QR's link changed (new code or new secret): redraw it
+   * @param {() => void} [opts.onTakeover]  another phone took this seat over with the QR
    */
-  constructor({ input, seat = 1, relay, siteBase, onStatus, onRecenter, onPause, onDrop, onReturn, onLink }) {
+  constructor({ input, seat = 1, relay, siteBase, onStatus, onRecenter, onPause, onDrop, onReturn, onLink, onTakeover }) {
     this.input = input;
     this.seat = seat;
     this.relay = relay || resolveRelay();
@@ -70,6 +82,14 @@ export class PhonePadHost {
     this.onDrop = onDrop || null;
     this.onReturn = onReturn || null;
     this.onLink = onLink || null;
+    this.onTakeover = onTakeover || null;
+    // #454 versions: 1 = the other side never said hello (an older build).
+    this.relayVersion = 1;
+    this.phoneVersion = 1;
+    this.takeovers = 0;       // times another phone took the seat (debug aid)
+    this._padVia = null;      // how the seat's phone joined: 'qr' | 'paired' | null (old relay)
+    this._phoneHash = null;   // SHA-256 of the key the seat's phone holds (single-use QR)
+    this._rekey = null;       // a key offered to the phone, not yet acked
     this._failedOpens = 0;    // connects in a row that closed before opening
     this.rekeys = 0;          // times the room moved to a new code (debug aid)
     /** @type {'menu'|'ride'} */
@@ -140,10 +160,58 @@ export class PhonePadHost {
     this._secret = secret;
     this._hostKey = hostKey;
     this._hash = hash;
-    const override = this.relay !== DEFAULT_PAD_RELAY ? this.relay : null;
-    this.link = buildPadLink(this.siteBase, this.code, this.seat, this._secret, { relay: override });
+    this._phoneHash = null;
+    this._rekey = null;
+    this._padVia = null;
+    this._buildLink();
     this._failedOpens = 0;
     return true;
+  }
+
+  _buildLink() {
+    const override = this.relay !== DEFAULT_PAD_RELAY ? this.relay : null;
+    this.link = buildPadLink(this.siteBase, /** @type {string} */ (this.code), this.seat, /** @type {string} */ (this._secret), { relay: override });
+  }
+
+  /** Register this seat's secrets: 'pair' (QR + phone key) on a v2+ relay, else the old 'allow'. */
+  _sendPairing() {
+    const ws = this._ws;
+    if (!ws || ws.readyState !== 1) return;
+    const msg = this.relayVersion >= 2
+      ? { type: 'pair', seat: this.seat, qr: this._hash, phone: this._phoneHash }
+      : { type: 'allow', seat: this.seat, hash: this._hash };
+    ws.send(JSON.stringify(msg));
+  }
+
+  /** Give the phone that joined with the QR its own key (it acks with 'rekeyed'). */
+  async _offerKey() {
+    const k = makePadSecret();
+    const qr = makePadSecret();
+    const [kHash, qrHash] = await Promise.all([sha256hex(k), sha256hex(qr)]);
+    if (this._closed || this._padVia !== 'qr') return;
+    this._rekey = { k, kHash, qr, qrHash };
+    this.sendToPad({ type: 'rekey', k });
+  }
+
+  /** The phone stored its key: register it and move the QR to a fresh secret. */
+  _keyAcked() {
+    const r = /** @type {{k: string, kHash: string, qr: string, qrHash: string}} */ (this._rekey);
+    this._rekey = null;
+    this._phoneHash = r.kHash;
+    this._secret = r.qr;
+    this._hash = r.qrHash;
+    this._padVia = 'paired';
+    this._buildLink();
+    this._sendPairing();
+    if (this.onLink && this.link) this.onLink(this.link);
+  }
+
+  /** A phone joined with the QR while another phone held the seat's key. */
+  _takenOver() {
+    this.takeovers++;
+    this._phoneHash = null;   // the old phone's key stops working
+    this._sendPairing();
+    if (this.onTakeover) this.onTakeover();
   }
 
   /**
@@ -189,6 +257,10 @@ export class PhonePadHost {
     this._release();
     this.code = null;
     this.link = null;
+    this._phoneHash = null;
+    this._rekey = null;
+    this._padVia = null;
+    this.phoneVersion = 1;
     this._setStatus('idle');
   }
 
@@ -203,6 +275,8 @@ export class PhonePadHost {
     this.mode = mode;
     this._navLatched = this._last ? this._last.nav : 0;
     if (this._phoneHere) this.input.setRemoteNav(mode === 'menu', 0);
+    // #454: only a phone that said hello is told (it sends less in menus).
+    if (this.phoneVersion >= 2) this.sendToPad({ type: 'mode', mode });
   }
 
   /** A short sound/buzz on the phone. @param {string} cue */
@@ -240,7 +314,7 @@ export class PhonePadHost {
       this._failedOpens = 0;
       this._wsDownAt = 0;
       this._lastAt = performance.now();   // a fresh window for the phone's frames
-      ws.send(JSON.stringify({ type: 'allow', seat: this.seat, hash: this._hash }));
+      this._sendPairing();
       if (!this._phoneHere) this._setStatus('waiting');
     };
     ws.onmessage = (ev) => { this._lastRecv = performance.now(); this._onMessage(ev.data); };
@@ -289,7 +363,16 @@ export class PhonePadHost {
     }
     let m;
     try { m = JSON.parse(data); } catch { return; }
-    if (m.type === 'pad-joined' && m.seat === this.seat) {
+    if (m.type === 'relay') {
+      this.relayVersion = peerVersion(m);
+    } else if (m.type === 'from-pad' && m.seat === this.seat) {
+      this._onPadMessage(m.msg);
+    } else if (m.type === 'pad-joined' && m.seat === this.seat) {
+      const via = m.via === 'qr' || m.via === 'paired' ? m.via : null;
+      if (via === 'qr' && this._phoneHash) this._takenOver();
+      this._padVia = via;
+      this._rekey = null;
+      this.phoneVersion = 1;   // until this phone says hello
       this._last = null;
       // After a drop only a real frame brings the phone back: a socket the
       // relay still holds for an asleep phone would otherwise flap the panel.
@@ -297,6 +380,19 @@ export class PhonePadHost {
       else this._arrive();
     } else if (m.type === 'pad-left' && m.seat === this.seat) {
       this._leave('left');
+    }
+  }
+
+  /** JSON from the seat's phone (via the relay's from-pad). @param {any} msg */
+  _onPadMessage(msg) {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'hello') {
+      this.phoneVersion = peerVersion(msg);
+      this.sendToPad({ type: 'hello', v: PAD_PROTOCOL });
+      if (this.phoneVersion >= 2) this.sendToPad({ type: 'mode', mode: this.mode });
+      if (this._padVia === 'qr' && this.relayVersion >= 2 && this.phoneVersion >= 2) this._offerKey();
+    } else if (msg.type === 'rekeyed' && this._rekey && msg.k === this._rekey.k) {
+      this._keyAcked();
     }
   }
 

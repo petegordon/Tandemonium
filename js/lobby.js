@@ -191,7 +191,6 @@ export class Lobby {
     this.roleStep = document.getElementById('lobby-role');
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
-    this.roomStep = document.getElementById('lobby-room');
     this.versusStep = document.getElementById('lobby-versus');
     this.touristStep = document.getElementById('lobby-tourist');   // E-6
     this._roomRole = null; // 'captain' | 'stoker'
@@ -221,11 +220,6 @@ export class Lobby {
       this._hasCamera = false;
       this.toggleCamera.style.display = 'none';
       this.toggleAudio.style.display = 'none';
-    } else {
-      // #167: re-place the room PiPs on rotate / resize.
-      window.addEventListener('resize', () => {
-        if (this._currentStep === this.roomStep) requestAnimationFrame(() => this._positionPipToVideoArea());
-      });
     }
 
     // Hide camera toggle if no camera hardware exists
@@ -355,6 +349,8 @@ export class Lobby {
     const hostItems = [
       document.getElementById('btn-back-role-host'),
     ];
+    // Online / Local CHOOSE LEVEL: enabled once there are two players
+    // (_refreshHostNext rebuilds this list when one becomes usable).
     this._stepItems.set(this.hostStep, hostItems);
     this._stepCenterItems.set(this.hostStep, hostItems);
     const joinItems = [
@@ -753,7 +749,7 @@ export class Lobby {
 
     // B-3: cards are built once at boot, but bests change every ride — refresh
     // the record lines whenever a level list comes back into view.
-    if (step === this.levelStep || step === this.versusStep || step === this.roomStep) {
+    if (step === this.levelStep || step === this.versusStep) {
       this._refreshRecordLines();
     }
     if (step === this.levelStep) this._refreshTouristCard();
@@ -772,10 +768,6 @@ export class Lobby {
     } else if (prevStep === this.versusStep) {
       this._stopVersusMonitor();
     }
-
-    // Room step: toggle grid layout on lobby-card
-    const lobbyCardEl = document.querySelector('.lobby-card');
-    if (lobbyCardEl) lobbyCardEl.classList.toggle('room-active', step === this.roomStep);
 
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
@@ -819,14 +811,9 @@ export class Lobby {
     // Show/hide fixed back button at bottom (use visibility to always reserve space)
     const hasBack = this._stepBack.get(step);
     if (hasBack && !(this.input && this.input.gamepadConnected)) {
-      this._fixedBackBtn.textContent = (step === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
+      this._fixedBackBtn.textContent = '\u2190 Back';
       this._fixedBackBtn.style.visibility = 'visible';
     } else {
-      this._fixedBackBtn.style.visibility = 'hidden';
-    }
-    // On desktop room step, hide fixed-back (grid layout shows #btn-back-room instead)
-    // Also hide #btn-back-room when gamepad is connected (B button handles it)
-    if (step === this.roomStep && window.matchMedia('(min-width: 1024px)').matches) {
       this._fixedBackBtn.style.visibility = 'hidden';
     }
     this._updateBackHint(step);
@@ -853,9 +840,8 @@ export class Lobby {
     // room shows player cards instead.
     if (selfieWrap && partnerWrap && !this._mediaEnabled) {
       for (const w of [selfieWrap, partnerWrap]) w.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      if (step === this.roomStep) this._renderRoomPlayers();
     } else if (selfieWrap && partnerWrap) {
-      const isRoom = (step === this.roomStep);
+      const isRoom = false;   // the room step is gone (merged into the host step)
       const isMultiplayerLevel = (step === this.levelStep && this._pendingMode === 'multiplayer');
       selfieWrap.classList.toggle('pip-lobby-mode', isRoom);
       selfieWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
@@ -899,10 +885,10 @@ export class Lobby {
    * @param {{ who?: string, dev?: string, state?: 'open'|'joined'|'ready' }} v
    */
   _setRoomSeat(which, v) {
-    // #428: the room's seats are <uf-player-card>s now; the name is all a
-    // caller ever set here. The cards re-render from state.
+    // The partner's name, shown in the captain's host-step stoker seat.
     if (which === 'partner' && v.who !== undefined) this._roomPartnerName = v.who;
     this._renderRoomPlayers();
+    if (this._roomRole === 'captain') this._refreshHostNext();
   }
 
   /** Both room seats from current state: me in my seat, the partner's seat open until they arrive. */
@@ -936,7 +922,7 @@ export class Lobby {
     const myAch = this._achievements ? this._achievements.getEarned() : [];
     fill(mine, { name: (user && user.name) || 'You', avatar: user && user.avatar, achievements: myAch, here: true, badge: 'You' });
     const connected = !!(this.net && this.net.connected);
-    const partnerName = this._roomPartnerName || (document.getElementById('room-partner-name')?.textContent || '').trim();
+    const partnerName = this._roomPartnerName || '';
     fill(theirs, connected
       ? { name: partnerName || 'Partner', avatar: this._partnerAvatarUrl, achievements: this._partnerAchievements || [], here: true }
       : { name: 'Waiting for partner…', here: false });
@@ -1054,11 +1040,17 @@ export class Lobby {
         // Back to team setup — players stay joined, monitor restarts via _showStep.
         this._showStep(this.versusStep);
       } else if (this._pendingMode === 'multiplayer') {
-        // #167 · the captain takes the stoker back with them.
-        if (this._roomRole === 'captain' && this.net && this.net.connected) {
-          this.net.sendProfile(RoomProtocol.backToRoom());
+        if (this._roomRole === 'captain') {
+          // #167 · the captain takes the stoker back with them.
+          if (this.net && this.net.connected) this.net.sendProfile(RoomProtocol.backToRoom());
+          this._levelsToRoom();
+        } else {
+          // The stoker's level screen is their room now: Back leaves the ride.
+          this._leaveRoomAsStoker();
         }
-        this._levelsToRoom();
+      } else if (this._pendingMode === 'local' && this._localSeatedOnHost) {
+        // Back to the captain's screen with Player 2 still in the stoker seat.
+        this._showStep(this.hostStep);
       } else {
         // Local co-op: backing out abandons the setup, so give P2's seat back.
         // The online room was already destroyed when they joined, so there is
@@ -1079,6 +1071,10 @@ export class Lobby {
       // explicit "New Room" (rejoin prompt / stale-room timer) clears. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
       this._leaveLocalP2('back from host page');
+      this._roomPartnerName = null;
+      this._refreshHostNext();
+      const hostStatus = document.getElementById('host-status');
+      if (hostStatus) { hostStatus.textContent = ''; hostStatus.className = 'conn-status'; }
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
       { const tv = /** @type {any} */ (document.getElementById('room-qr-tv')); if (tv) tv.value = ''; }
@@ -1166,14 +1162,20 @@ export class Lobby {
       }
     });
 
-    // Room step: PLAY GAME button (captain only)
-    document.getElementById('btn-play-game').addEventListener('click', () => {
-      if (this._roomRole !== 'captain') return;
-      if (this.net && this.net.connected) {
-        this.net.sendProfile(RoomProtocol.playGame());
-        this.net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
-      }
+    // Host step: CHOOSE LEVEL under Online (the partner on their own device
+    // has connected) and under Local (a second controller took the stoker seat).
+    // Replaces the old room step's PLAY GAME (Pete, 2026-10-23). PLAY_GAME is
+    // still sent, so a stoker on an older build leaves its room step too.
+    document.getElementById('btn-host-online-next').addEventListener('click', () => {
+      if (this._roomRole !== 'captain' || !(this.net && this.net.connected)) return;
+      this.net.sendProfile(RoomProtocol.playGame());
+      this.net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
       this._showRoomLevelsStep();
+    });
+    document.getElementById('btn-host-local-next').addEventListener('click', () => {
+      if (!this._localSeatedOnHost || !this._localP2InputManager) return;
+      this._pendingMode = 'local';
+      this._showStep(this.levelStep);
     });
 
     // D-2 · Today's Road asks one question before the ride: practice, or the
@@ -1293,22 +1295,6 @@ export class Lobby {
         this._onLocalJoinClick('keyboard', null);
       });
     }
-
-    document.getElementById('btn-back-room').addEventListener('click', () => {
-      // Leave room — destroy connection, return to role step
-      if (this.net) { this.net.destroy(); this.net = null; }
-      this._removePipLobbyMode();
-      // Stop selfie video
-      const selfieVideo = document.getElementById('selfie-pip');
-      if (selfieVideo) selfieVideo.srcObject = null;
-      const selfieWrap = document.getElementById('selfie-pip-wrap');
-      if (selfieWrap) selfieWrap.style.display = 'none';
-      const partnerVideo = document.getElementById('partner-pip');
-      if (partnerVideo) partnerVideo.srcObject = null;
-      const partnerWrap = document.getElementById('partner-pip-wrap');
-      if (partnerWrap) partnerWrap.style.display = 'none';
-      this._showStep(this.roleStep);
-    });
 
     // Permission toggles
     this.toggleAll.addEventListener('click', () => this._toggleAll());
@@ -3831,16 +3817,12 @@ export class Lobby {
         // If a gamepad reconnected during the debounce window, bail out
         if (this.input && this.input.gamepadConnected) return;
 
-        // Restore grid Leave Room button on desktop room step
         this._updateBackHint(this._currentStep);
         // Show fixed back button when gamepad disconnects
         const hasBack = this._stepBack.get(this._currentStep);
         if (hasBack) {
-          this._fixedBackBtn.textContent = (this._currentStep === this.roomStep) ? '\u2190 Leave Room' : '\u2190 Back';
+          this._fixedBackBtn.textContent = '\u2190 Back';
           this._fixedBackBtn.style.visibility = 'visible';
-        }
-        if (this._currentStep === this.roomStep && window.matchMedia('(min-width: 1024px)').matches) {
-          this._fixedBackBtn.style.visibility = 'hidden'; // desktop uses grid button, not fixed
         }
         // Switch back to text input if on join step
         if (this._currentStep === this.joinStep) {
@@ -4309,25 +4291,16 @@ export class Lobby {
 
   // ── Room Step (shared multiplayer lobby) ─────────────────────
 
+  /**
+   * The partner connected: set up the room session. There is no room step any
+   * more (Pete, 2026-10-23): the captain stays on the host step, which now
+   * shows the partner and enables Online CHOOSE LEVEL; the stoker goes
+   * straight to level select, waiting for the captain.
+   */
   _showRoomStep(role) {
     this._roomRole = role;
+    this._pendingMode = 'multiplayer';
     this._partnerCameraOn = true; // assume on until cameraToggle received
-
-    const roomCodeLabel = document.getElementById('room-code-label');
-    if (roomCodeLabel && this.net && this.net.roomCode) {
-      roomCodeLabel.textContent = this.net.roomCode;
-    }
-
-    // Show/hide play game button vs waiting text based on role
-    const playBtn = document.getElementById('btn-play-game');
-    const waitTextRoom = document.getElementById('room-wait-text-room');
-    if (role === 'captain') {
-      playBtn.style.display = '';
-      waitTextRoom.style.display = 'none';
-    } else {
-      playBtn.style.display = 'none';
-      waitTextRoom.style.display = '';
-    }
 
     // Set role labels on PiP circles
     const selfieLabel = document.getElementById('selfie-pip-label');
@@ -4336,15 +4309,12 @@ export class Lobby {
     if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
     this._syncRoomSeats(role);
 
-    // Register gamepad nav for room step
-    const roomItems = (role === 'captain')
-      ? [document.getElementById('btn-play-game'), document.getElementById('btn-back-room')]
-      : [document.getElementById('btn-back-room')];
-    this._stepItems.set(this.roomStep, roomItems);
-    this._stepCenterItems.set(this.roomStep, roomItems);
-    this._stepBack.set(this.roomStep, document.getElementById('btn-back-room'));
-
-    this._showStep(this.roomStep);
+    if (role === 'captain') {
+      if (this._currentStep !== this.hostStep) this._showStep(this.hostStep);
+      this._refreshHostNext();
+    } else {
+      this._showRoomLevelsStep();
+    }
 
     // Start media
     this._startRoomMedia();
@@ -4370,11 +4340,10 @@ export class Lobby {
 
     // Handle partner disconnect while in room or levels
     this.net.onDisconnected = (reason) => {
-      const waitTextRoom = document.getElementById('room-wait-text-room');
       const waitText = document.getElementById('level-wait-text');
-      if (waitTextRoom) { waitTextRoom.textContent = 'Partner disconnected'; waitTextRoom.style.display = ''; }
+      const hostStatus = document.getElementById('host-status');
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
-      document.getElementById('btn-play-game').style.display = 'none';
+      if (hostStatus) { hostStatus.textContent = 'Partner disconnected'; hostStatus.className = 'conn-status error'; }
       document.getElementById('btn-start-ride').style.display = 'none';
       this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
@@ -4604,8 +4573,9 @@ export class Lobby {
     }
   }
 
-  /** Online room: leave level select for the room step, resetting the
-   *  multiplayer bits of the level step. */
+  /** Online room: leave level select, resetting its multiplayer bits. The
+   *  captain goes back to the host step (partner still shown); the stoker's
+   *  level screen is its room, so it stays there, waiting. */
   _levelsToRoom() {
     const startBtn = document.getElementById('btn-start-ride');
     const waitText = document.getElementById('level-wait-text');
@@ -4616,15 +4586,65 @@ export class Lobby {
     // Reset difficulty selector interactivity
     const diffSel = document.getElementById('difficulty-selector');
     if (diffSel) { diffSel.style.opacity = ''; diffSel.style.pointerEvents = ''; }
-    this._showStep(this.roomStep);
+    if (this._roomRole === 'captain') {
+      this._showStep(this.hostStep);
+      this._refreshHostNext();
+    } else {
+      this._showRoomLevelsStep();
+    }
+  }
+
+  /** The stoker backs out of the ride: leave the room for the role screen. */
+  _leaveRoomAsStoker() {
+    if (this.net) { this.net.destroy(); this.net = null; }
+    this._removePipLobbyMode();
+    for (const id of ['selfie-pip', 'partner-pip']) { const v = /** @type {any} */ (document.getElementById(id)); if (v) v.srcObject = null; }
+    for (const id of ['selfie-pip-wrap', 'partner-pip-wrap']) { const w = document.getElementById(id); if (w) w.style.display = 'none'; }
+    const waitText = document.getElementById('level-wait-text');
+    if (waitText) waitText.style.display = 'none';
+    this._showStep(this.roleStep);
+  }
+
+  /**
+   * The host step's two CHOOSE LEVEL buttons and the stoker seat, from state:
+   * Online is enabled once the partner on their own device is connected,
+   * Local once a second controller sits in the stoker seat. Whichever side
+   * has the stoker dims the other (Pete, 2026-10-23).
+   */
+  _refreshHostNext() {
+    const step = this.hostStep;
+    const onBtn = /** @type {any} */ (document.getElementById('btn-host-online-next'));
+    const locBtn = /** @type {any} */ (document.getElementById('btn-host-local-next'));
+    const back = document.getElementById('btn-back-role-host');
+    if (!step || !onBtn || !locBtn) return;
+    const online = !!(this.net && this.net.connected && this._roomRole === 'captain');
+    const local = !online && !!(this._localSeatedOnHost && this._localP2InputManager);
+    onBtn.disabled = !online;
+    locBtn.disabled = !local;
+    step.classList.toggle('host-online-on', online);
+    step.classList.toggle('host-local-on', local);
+    const sto = /** @type {any} */ (document.getElementById('host-seat-stoker'));
+    if (sto) {
+      if (!sto._openHint) sto._openHint = sto.hint;
+      if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: '' });
+      else if (local) Object.assign(sto, { who: this._localP2Name || 'Player 2', dev: '', state: 'joined', hint: '' });
+      else Object.assign(sto, { who: 'Waiting for partner…', dev: '', state: 'open', hint: sto._openHint || '' });
+    }
+    const cands = this._currentStep === step && this._detectLocalJoinCandidates ? (this._detectLocalJoinCandidates() || []) : [];
+    this._renderHostSeats(cands);
+    const status = document.getElementById('host-status');
+    if (status && local) { status.textContent = 'Online room closed: riding on this screen'; status.className = 'conn-status'; }
+    const items = [online && onBtn, local && locBtn, back].filter(Boolean);
+    this._stepItems.set(step, items);
+    this._stepCenterItems.set(step, items);
+    this._stepDefaultFocus.set(step, 0);
+    if (this._currentStep === step) this._applyStepSpatialFocus(step);
   }
 
   _handleRoomMessage(profile) {
     if (!profile || !profile.type) {
       // Profile message (avatar, name, achievements)
-      const partnerNameEl = document.getElementById('room-partner-name');
-      if (partnerNameEl && profile && profile.name) {
-        partnerNameEl.textContent = profile.name;
+      if (profile && profile.name) {
         this._setRoomSeat('partner', { who: profile.name, state: 'joined' });
         // Save partner name for recent rooms display
         if (this.net && this.net.roomCode && this._roomRole) {
@@ -4708,7 +4728,8 @@ export class Lobby {
       // #167 · Stoker: the captain went back from level select; follow them.
       if (this._currentStep === this.levelStep) this._levelsToRoom();
     } else if (profile.type === ROOM_MSG.PLAY_GAME) {
-      // Stoker: captain clicked PLAY GAME → go to levels step
+      // Stoker: captain pressed CHOOSE LEVEL. A new stoker is already on level
+      // select; this re-syncs it (and moves an older build off its room step).
       this._showRoomLevelsStep();
     } else if (profile.type === ROOM_MSG.TOURIST_PLAN) {
       // #400 · Stoker: the captain planned a Tourist route. Rebuild the same
@@ -4887,6 +4908,8 @@ export class Lobby {
       const candidates = this._detectLocalJoinCandidates();
       this._renderLocalJoinCandidates(candidates);
       this._renderHostSeats(candidates);
+      // The stoker seat is taken (online partner, or a local Player 2): presses don't join.
+      const seatOpen = !(this.net && this.net.connected) && !this._localSeatedOnHost;
       for (const c of candidates) {
         const gp = c.pollGp;
         if (!gp || !gp.buttons) continue;
@@ -4894,10 +4917,12 @@ export class Lobby {
         const prev = this._versusPrevButtons.get(key) || { any: true };
         let any = false;
         for (let i = 0; i < gp.buttons.length; i++) if (gp.buttons[i] && gp.buttons[i].pressed) { any = true; break; }
-        if (any && !prev.any) {
+        if (seatOpen && any && !prev.any) {
           this._versusPrevButtons.set(key, { any });
           this._diag(`[local] join press on ${c.name} (${c.kind})`, 'join-press');
-          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle });
+          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name });
+          // Desktop/TV: still on this step with Player 2 seated; keep watching.
+          if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
           return;
         }
         this._versusPrevButtons.set(key, { any });
@@ -5514,6 +5539,8 @@ export class Lobby {
     if (im) this._diag(`[local] P2 left (${reason}): released ${slot ? slot.id : 'no slot'}`, 'leave');
     this._localP2InputManager = null;
     this._localP2Type = null;
+    this._localSeatedOnHost = false;
+    this._localP2Name = null;
     if (this._pendingMode === 'local') this._pendingMode = null;
     // Force the host page to re-render its join UI next time it is shown.
     this._localLastJoinState = null;
@@ -5585,6 +5612,9 @@ export class Lobby {
       `hid=${hidDevice ? (hidDevice.productName || 'device') : '-'} slot=${opts.slotId || '-'} steam=${opts.steamHandle || '-'}`, 'join-fired');
     // Guard: if the monitor hasn't seen a P2 path, bail.
     if (sourceType !== 'gamepad' && sourceType !== 'keyboard') return;
+    // The stoker seat is taken: by the online partner, or by a local Player 2.
+    if (this.net && this.net.connected) return;
+    if (this._localSeatedOnHost && this._localP2InputManager) return;
     // Record that local JOIN RIDE won the race vs. any pending online stoker.
     analytics.trackEvent('room_local_claimed', {
       p2_source: sourceType,
@@ -5666,7 +5696,15 @@ export class Lobby {
     this._diag(`[local] JOIN seated: P2 on ${this._localP2Type}` +
       (this._localP2InputManager && this._localP2InputManager._slot ? ` slot=${this._localP2InputManager._slot.id}` : ' slot=none') +
       ' — advancing to level select', 'join-seated');
-    // Skip the room step; local co-op doesn't need social video prep.
+    // Desktop/TV: Player 2 sits in the stoker seat and the captain presses
+    // Local CHOOSE LEVEL (Pete, 2026-10-23). The narrow layout has no seats,
+    // so it still goes straight to level select.
+    if (window.matchMedia('(min-width: 1024px)').matches && this._currentStep === this.hostStep) {
+      this._localSeatedOnHost = true;
+      this._localP2Name = opts.name || (sourceType === 'keyboard' ? 'Keyboard' : 'Player 2');
+      this._refreshHostNext();
+      return;
+    }
     this._showStep(this.levelStep);
   }
 
@@ -5865,15 +5903,33 @@ export class Lobby {
     const cap = document.getElementById('host-seat-captain');
     if (!strip || !cap) return;
     const p1 = this._p1Identity() || (this.input && this.input.gamepadIndex == null ? KEYBOARD_IDENTITY : null);
-    const key = (p1 ? p1.shortName : '') + '§' + candidates.map(c => c.key).join('|');
+    // Who holds the stoker seat: the online partner, or a local Player 2 (2026-10-23).
+    const online = !!(this.net && this.net.connected && this._roomRole === 'captain');
+    const p2Im = this._localSeatedOnHost ? this._localP2InputManager : null;
+    const p2Slot = p2Im && p2Im._slot ? p2Im._slot.id : null;
+    const stokerSeat = { team: 'coop', role: 'stoker', label: 'Stoker', tone: 'stoker' };
+    const key = (p1 ? p1.shortName : '') + '§' + candidates.map(c => c.key).join('|') +
+      '§' + (online ? 'online:' + (this._roomPartnerName || '') : '') + (p2Im ? 'p2:' + (p2Slot || this._localP2Type) : '');
     if (key === this._hostSeatsKey) return;
     this._hostSeatsKey = key;
     cap.who = p1 ? p1.shortName : 'You';
     const rows = [];
     if (p1) rows.push({ key: 'p1', name: p1.name, shortName: p1.shortName, glyphFamily: p1.glyphFamily, swapAB: p1.swapAB, state: 'seated', player: 1, seat: { team: 'coop', role: 'captain', label: 'Captain', tone: 'captain' } });
+    let p2Listed = false;
     for (const c of candidates) {
       const id = this._versusIdentity(c);
-      rows.push({ key: c.key, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB, state: 'connected', player: null, seat: null });
+      const isP2 = !!p2Slot && c.slotId === p2Slot;
+      if (isP2) p2Listed = true;
+      rows.push({ key: c.key, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB,
+        state: isP2 ? 'seated' : 'connected', player: isP2 ? 2 : null, seat: isP2 ? stokerSeat : null });
+    }
+    if (p2Im && !p2Listed) {
+      const n = this._localP2Name || (this._localP2Type === 'keyboard' ? 'Keyboard' : 'Player 2');
+      rows.push({ key: 'p2', name: n, shortName: n, glyphFamily: this._localP2Type === 'keyboard' ? 'keyboard' : 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat });
+    }
+    if (online) {
+      const n = this._roomPartnerName || 'Partner';
+      rows.push({ key: 'online', name: n + ' (online)', shortName: n, glyphFamily: 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat });
     }
     strip.rows = rows;
     // A mouse user can still seat someone: clicking the open seat joins the first candidate.
@@ -5882,7 +5938,7 @@ export class Lobby {
       sto._wired = true;
       sto.addEventListener('click', () => {
         const c = (this._detectLocalJoinCandidates() || [])[0];
-        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle });
+        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name });
       });
     }
   }
@@ -5901,7 +5957,7 @@ export class Lobby {
       b.className = 'lobby-btn-p2-gp';
       b.setAttribute('data-key', c.key);
       b.innerHTML = `<span class="btn-local-join-main">JOIN AS PLAYER 2</span><span class="btn-local-join-padname">${esc(c.name)}</span><span class="btn-local-join-hint">CONNECTED · press any button on it, or click</span>`;
-      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle }));
+      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name }));
       wrap.appendChild(b);
     }
     const detectedEl = document.getElementById('local-join-detected');
@@ -6517,29 +6573,13 @@ export class Lobby {
   }
 
   showRoom(net, role) {
-    // Called by game.js _returnToRoom() to re-show the lobby at roomStep
+    // Called by game.js _returnToRoom() after a ride together: back to level select
     this.net = net;
     this._roomRole = role;
     this._pendingMode = 'multiplayer';
 
-    const roomCodeLabel = document.getElementById('room-code-label');
-    if (roomCodeLabel && this.net && this.net.roomCode) {
-      roomCodeLabel.textContent = this.net.roomCode;
-    }
-
     this.lobbyEl.style.display = '';
     if (this._previewModel) this._startPreviewLoop();
-
-    // Show/hide play game button vs waiting text
-    const playBtn = document.getElementById('btn-play-game');
-    const waitTextRoom = document.getElementById('room-wait-text-room');
-    if (role === 'captain') {
-      playBtn.style.display = '';
-      waitTextRoom.style.display = 'none';
-    } else {
-      playBtn.style.display = 'none';
-      waitTextRoom.style.display = '';
-    }
 
     // Set role labels on PiP circles
     const selfieLabel = document.getElementById('selfie-pip-label');
@@ -6548,16 +6588,14 @@ export class Lobby {
     if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
     this._syncRoomSeats(role);
 
-    // Register gamepad nav for room step
-    const roomItems = (role === 'captain')
-      ? [document.getElementById('btn-play-game'), document.getElementById('btn-back-room')]
-      : [document.getElementById('btn-back-room')];
-    this._stepItems.set(this.roomStep, roomItems);
-    this._stepCenterItems.set(this.roomStep, roomItems);
-    this._stepBack.set(this.roomStep, document.getElementById('btn-back-room'));
-
-    // Show room step directly (not levels)
-    this._showStep(this.roomStep);
+    // After a ride together both land on level select (Pete, 2026-10-23): the
+    // captain picks the next level, the stoker waits. The captain also sends
+    // PLAY_GAME so a stoker on an older build leaves its room step.
+    this._showRoomLevelsStep();
+    if (role === 'captain' && this.net && this.net.connected) {
+      this.net.sendProfile(RoomProtocol.playGame());
+      this.net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
+    }
 
     // Delay gamepad init to let held buttons from game controls release
     setTimeout(() => this._startGamepadNav(), 500);
@@ -6581,7 +6619,6 @@ export class Lobby {
     // Return to room: video streams are already playing from room → game.
     // Don't touch srcObject, don't initiate new calls, don't call play().
     // Just switch the CSS class for lobby positioning.
-    // PiP class is managed by _showStep(roomStep) above — no manual toggle needed
 
     // Re-register handlers (game.js replaced these during gameplay)
     this.net.onRemoteStream = (remoteStream) => {
@@ -6611,11 +6648,10 @@ export class Lobby {
 
     // Re-register disconnect handler for room
     this.net.onDisconnected = (reason) => {
-      const waitTextRoom = document.getElementById('room-wait-text-room');
       const waitText = document.getElementById('level-wait-text');
-      if (waitTextRoom) { waitTextRoom.textContent = 'Partner disconnected'; waitTextRoom.style.display = ''; }
+      const hostStatus = document.getElementById('host-status');
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
-      document.getElementById('btn-play-game').style.display = 'none';
+      if (hostStatus) { hostStatus.textContent = 'Partner disconnected'; hostStatus.className = 'conn-status error'; }
       document.getElementById('btn-start-ride').style.display = 'none';
       this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
@@ -6817,7 +6853,6 @@ export class Lobby {
     if (!hint) return;
     const hasBack = this._stepBack.get(step);
     const hasGamepad = this.input && this.input.gamepadConnected;
-    const isDesktopRoom = step === this.roomStep && window.matchMedia('(min-width: 1024px)').matches;
 
     if (hasBack && hasGamepad) {
       const icon = document.getElementById('gamepad-back-icon');
@@ -6837,31 +6872,9 @@ export class Lobby {
         icon.innerHTML = this._makeDiamondHTML('right');
       }
 
-      // On desktop room step, show gamepad back hint inside the grid btn-back-room
-      if (isDesktopRoom) {
-        hint.style.visibility = 'hidden';
-        const backRoom = document.getElementById('btn-back-room');
-        if (backRoom) {
-          backRoom.innerHTML = icon.outerHTML + ' Back';
-          backRoom.style.pointerEvents = 'none';
-          backRoom.style.visibility = '';
-          backRoom.style.border = 'none';
-        }
-      } else {
-        hint.style.visibility = 'visible';
-      }
+      hint.style.visibility = 'visible';
     } else {
       hint.style.visibility = 'hidden';
-      // Restore btn-back-room on desktop room step
-      if (isDesktopRoom) {
-        const backRoom = document.getElementById('btn-back-room');
-        if (backRoom) {
-          backRoom.innerHTML = '\u2190 Leave Room';
-          backRoom.style.pointerEvents = '';
-          backRoom.style.visibility = '';
-          backRoom.style.border = '';
-        }
-      }
     }
   }
 
@@ -6870,7 +6883,7 @@ export class Lobby {
     if (!header) return;
     const codeEl = document.getElementById('room-code-display');
     const code = codeEl ? codeEl.textContent : '';
-    if ((step === this.hostStep || step === this.roomStep || (step === this.levelStep && this._pendingMode === 'multiplayer')) && code && code !== '----') {
+    if ((step === this.hostStep || (step === this.levelStep && this._pendingMode === 'multiplayer')) && code && code !== '----') {
       header.textContent = code;
     } else {
       header.textContent = '';
@@ -7452,7 +7465,7 @@ export class Lobby {
   }
 
   _sendBikeSyncIfInRoom() {
-    if ((this._currentStep === this.roomStep || (this._currentStep === this.levelStep && this._pendingMode === 'multiplayer')) && this.net && this.net.connected) {
+    if ((this._currentStep === this.hostStep || (this._currentStep === this.levelStep && this._pendingMode === 'multiplayer')) && this.net && this.net.connected) {
       this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
     }
   }

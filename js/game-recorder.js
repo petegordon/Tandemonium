@@ -7,9 +7,21 @@
 import * as analytics from './analytics.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
 import { isMediaEnabled } from './edition.js';
+import { CLIP_SLOW_KEY } from './quality.js';
 
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+/**
+ * #456 · can this browser record clips at all (MediaRecorder + canvas capture,
+ * or WebCodecs on iOS)? Asked before the renderer is made: see clipsOffAtBoot.
+ */
+export function canRecordClips() {
+  const webCodecs = _isIOS && typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
+  const mediaRecorder = typeof MediaRecorder !== 'undefined' &&
+    typeof HTMLCanvasElement.prototype.captureStream === 'function';
+  return webCodecs || mediaRecorder;
+}
 
 // iOS clip resolution cap (long side, px) for the composite + H.264 encode.
 const WC_MAX_LONG_SIDE = 1280;
@@ -144,6 +156,7 @@ function _runGpuProbe(testImg, resolve) {
     // At 60 FPS each frame has ~16.6ms.  If render + readback together
     // take >4ms, the compositing pipeline will steal too much budget.
     _lowEndResult = avg > 4;
+    try { localStorage.setItem(CLIP_SLOW_KEY, _lowEndResult ? '1' : '0'); } catch (e) {}   // #456 · for the next boot
     _dbg(`GPU probe: ${avg.toFixed(2)}ms avg render+readback (${W}×${H}) → lowEnd=${_lowEndResult}`);
     resolve(_lowEndResult);
   } catch (e) {

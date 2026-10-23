@@ -92,3 +92,28 @@ test('material keys tell apart what draws differently', () => {
   assert.notEqual(materialKey(a), materialKey(c));
   assert.equal(materialKey([a, a]), null, 'multi-material meshes are left alone');
 });
+
+// #456 · the plain bike has no bones: its pedal nodes turn by themselves.
+test('movers count as bones: parts under a pedal merge onto it and turn with it', () => {
+  const root = new THREE.Group();
+  const mat = () => new THREE.MeshStandardMaterial({ color: 0x333333 });
+  const box = () => new THREE.BoxGeometry(0.2, 0.2, 0.2);
+  const pedal = new THREE.Object3D(); pedal.name = 'pedal_low'; pedal.position.set(1, 0.5, 0); root.add(pedal);
+  const pedalMesh = new THREE.Mesh(box(), mat()); pedalMesh.name = 'pedal_low_cycle_0'; pedal.add(pedalMesh);
+  const crankA = new THREE.Mesh(box(), mat()); crankA.position.set(0, 0.3, 0); pedal.add(crankA);
+  const crankB = new THREE.Mesh(box(), mat()); crankB.position.set(0, -0.3, 0); pedal.add(crankB);
+  const frame1 = new THREE.Mesh(box(), mat()); frame1.position.x = -1; root.add(frame1);
+  const frame2 = new THREE.Mesh(box(), mat()); frame2.position.x = -2; root.add(frame2);
+  const r = rebatch(root, { movers: [pedal, pedalMesh], batchId: 'plain' });
+  // before: pedalMesh, crankA, crankB, frame1, frame2 = 5; after: pedalMesh, [cranks], [frame] = 3
+  assert.deepEqual(r, { before: 5, after: 3 });
+  assert.equal(pedalMesh.visible, true, 'a pedal that is itself a mesh is left alone');
+  const onPedal = batches(root).find(m => m.parent === pedal);
+  assert.ok(onPedal, 'the cranks ride on their pedal');
+  assert.ok(!/pedal/i.test(onPedal.name), 'not named like a pedal (a versus clone looks pedals up by name)');
+  pedal.rotation.z = 1.2;
+  root.updateMatrixWorld(true);
+  const want = new THREE.Box3().setFromObject(crankA, true).union(new THREE.Box3().setFromObject(crankB, true));
+  const got = new THREE.Box3().setFromObject(onPedal, true);
+  assert.ok(got.min.distanceTo(want.min) < 1e-6 && got.max.distanceTo(want.max) < 1e-6, 'still where the cranks are after the pedal turns');
+});

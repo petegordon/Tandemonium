@@ -126,6 +126,9 @@ export class BikeModel {
     this._originalMats = null; // Map<meshName, clonedMaterial>
     // #395 · marks the merged frame meshes this bike made (see _rebatch)
     this._batchId = 'bike-' + Math.random().toString(36).slice(2);
+    // #456 · lean riders lighting: reflections on this bike only (setEnvMap)
+    this._envMap = null;
+    this._envApplied = false;
 
     // Reusable temporaries for _applyTransform (avoid per-frame allocations)
     this._tmpQYaw = new THREE.Quaternion();
@@ -242,6 +245,7 @@ export class BikeModel {
       this.applyPreset(this._pendingPreset);
       this._pendingPreset = null;
     }
+    this._rebatch();   // drops the source's merged meshes it copied, and merges its own
   }
 
   /**
@@ -519,6 +523,7 @@ export class BikeModel {
       if (this.goose !== goose) return; // the bike model was swapped meanwhile
       this.setSoloRider(this._soloRider);
       this.applyGooseColours();
+      this._applyEnvMap();
     }).catch((err) => console.warn('Goose outfit failed to load; keeping the current geese:', err));
     return this._gooseSwap;
   }
@@ -612,13 +617,41 @@ export class BikeModel {
   /**
    * #395 · draw the goose tandem's frame as a few merged meshes instead of
    * 69 (see bike-batch.js). Re-run whenever the frame's materials change.
-   * The plain bike is left alone: its pedal meshes turn by themselves.
+   * #456 · the plain bike too (65 meshes): its pedals turn by themselves, so
+   * they count as bones. The fused riders model is left alone.
    */
   _rebatch() {
-    if (!this.goose || !this.modelLoaded) return;
+    if (!this.modelLoaded || this.riderMixer) return;
     const model = this.group.children[0];
     if (!model) return;
-    this.batchStats = rebatch(model, { keep: this.spokeMeshes, batchId: this._batchId });
+    this.batchStats = rebatch(model, { keep: this.spokeMeshes, movers: this.pedalNodes, batchId: this._batchId });
+    this._applyEnvMap();
+  }
+
+  /**
+   * #456 · lean riders lighting: the environment reflections go on this bike's
+   * own materials (frame + geese) instead of the whole scene. null takes them
+   * off again. Re-applied after anything that replaces materials (presets,
+   * a new model, new geese).
+   * @param {THREE.Texture|null} tex  marked userData.riderEnv, so a geese swap never disposes it
+   */
+  setEnvMap(tex) {
+    this._envMap = tex || null;
+    this._applyEnvMap();
+  }
+
+  _applyEnvMap() {
+    if (!this._envMap && !this._envApplied) return;   // never set: leave shared materials alone
+    const tex = this._envMap;
+    this.group.traverse((o) => {
+      if (!o.material) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (!m || !m.isMeshStandardMaterial) continue;
+        const ours = !m.envMap || (m.envMap.userData && m.envMap.userData.riderEnv);
+        if (ours && m.envMap !== tex) m.envMap = tex;
+      }
+    });
+    this._envApplied = !!tex;
   }
 
   update(pedalResult, balanceResult, dt, safetyMode, autoSpeed) {

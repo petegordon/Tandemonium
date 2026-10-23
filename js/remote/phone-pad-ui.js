@@ -35,12 +35,20 @@ const CSS = `
 #phone-pad-panel .ppp-status.ok { color: var(--uf-color-accent, #44ff66); }
 #phone-pad-panel .ppp-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 #btn-mode-phone.phone-on { color: var(--uf-color-accent, #44ff66); }
+#phone-pad-note { position: fixed; left: 50%; top: 18px; transform: translateX(-50%); z-index: 9001;
+  max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 10px; font-size: 15px;
+  background: var(--uf-color-surface, #1a1a2e); color: var(--uf-color-fg, #fff);
+  border: 1px solid var(--uf-color-line-soft, rgba(255,255,255,.16)); display: none; }
+#phone-pad-note.on { display: block; }
 `;
+
+/** How long the "another phone took over" note stays up. */
+const NOTE_MS = 4000;
 
 /**
  * Wire the mode-screen button to a phone remote for `input` (Player 1).
  * @param {import('../input-manager.js').InputManager} input
- * @param {{onDrop?: () => void, onReturn?: () => void, onPause?: () => void}} [hooks]
+ * @param {{onDrop?: () => void, onReturn?: () => void, onPause?: () => void, onTakeover?: () => void}} [hooks]
  * @returns {PhonePadHost}
  */
 export function installPhonePadUI(input, hooks = {}) {
@@ -62,6 +70,19 @@ export function installPhonePadUI(input, hooks = {}) {
       </div>
     </div>`;
   document.body.appendChild(panel);
+
+  // #454: a short note when another phone takes the seat over with the QR.
+  const note = document.createElement('div');
+  note.id = 'phone-pad-note';
+  note.setAttribute('role', 'status');
+  document.body.appendChild(note);
+  let noteTimer = 0;
+  const showNote = (text) => {
+    note.textContent = text;
+    note.classList.add('on');
+    clearTimeout(noteTimer);
+    noteTimer = window.setTimeout(() => note.classList.remove('on'), NOTE_MS);
+  };
 
   const btn = document.getElementById('btn-mode-phone');
   const statusEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-status'));
@@ -98,7 +119,12 @@ export function installPhonePadUI(input, hooks = {}) {
     },
     // #424: the relay refused our room and the host moved to a new code. The
     // old QR is dead, so redraw it (shown now if the panel is open, else next open).
+    // #454: the QR is single-use, so it is also redrawn after a phone pairs.
     onLink: (link) => drawLink(link),
+    onTakeover: () => {
+      showNote('\u{1F4F1} Another phone (or tab) took over Player 1.');
+      hooks.onTakeover?.();
+    },
   });
 
   /** Draw the QR + link for `link` (no-op if it's already shown). @param {string} link */
