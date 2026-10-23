@@ -318,7 +318,7 @@ export class Lobby {
     // Column-based navigation for mode step
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
-      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-garage'), document.getElementById('btn-mode-connect-hid'), document.getElementById('btn-mode-phone')].filter(Boolean),
+      [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-mode-connect-hid'), document.getElementById('btn-mode-phone')].filter(Boolean),
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
@@ -965,14 +965,15 @@ export class Lobby {
   }
 
   _setup() {
-    // #400 D4 · GARAGE: spend every mode's Chaos Coins.
-    const garageBtn = document.getElementById('btn-garage');
-    if (garageBtn) {
-      this._refreshWallet();
-      garageBtn.addEventListener('click', () => {
-        this._hideLobby();
-        this.onGarage();
-      });
+    // The garage lives in Slingshot only (no lobby button).
+
+    // On a phone, the phone IS the controller: no WebHID pairing (phones have
+    // no WebHID) and no "phone as controller" (that's a remote for a big screen).
+    if (isMobile) {
+      for (const id of ['btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'btn-mode-phone', 'set-phone']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      }
     }
 
     // SOLO → always show level selection
