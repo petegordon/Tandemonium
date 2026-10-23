@@ -9,6 +9,10 @@
 // secret is refused; then (Phase 2) the whole SOLO ride driven from the phone:
 // d-pad + OK through the lobby, pedals while riding, Pause / BACK, a dropped
 // phone pausing the ride and reconnecting, and the phone leaving releasing it.
+// #454: the QR is single-use (an old QR is refused, the paired phone still
+// reconnects with its own key), menus send less, a takeover is reported, and
+// the version mixes: this game with an older phone (a script that never says
+// hello) and an older game (a script host) with this phone page.
 //
 //   npm run smoke:phone-pad
 import http from 'node:http';
@@ -16,6 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
 import puppeteer from 'puppeteer';
+import { encodeFrame, makePadCode, makePadSecret, sha256hex, buildPadLink, PAD_INPUT } from '../js/remote/pad-protocol.js';
 
 const ROOT = process.cwd();
 const PORT = 8931;
@@ -132,6 +137,26 @@ try {
   await game.waitForFunction(() => !document.getElementById('phone-pad-panel').classList.contains('open'), { timeout: 5000 }).catch(() => {});
   check(await game.evaluate(() => !document.getElementById('phone-pad-panel').classList.contains('open')), 'the QR panel closes itself once the phone is in');
 
+  // ── #454: single-use QR ──
+  {
+    await game.waitForFunction((l) => window.__phonePad.link !== l, { timeout: 8000 }, link).catch(() => {});
+    const g = await game.evaluate(() => ({ link: window.__phonePad.link, phoneV: window.__phonePad.phoneVersion, relayV: window.__phonePad.relayVersion }));
+    const keys = await phone.evaluate(() => window.__pad.keys.slice());
+    const qrSecret = link.split('#k=')[1];
+    check(g.link !== link && g.phoneV >= 2 && g.relayV >= 2, 'after pairing, the QR moves to a new secret', JSON.stringify({ ...g, link: g.link.replace(/#k=.*/, '#k=…') }));
+    // The QR secret stays as a fallback until the phone's own key has worked once.
+    check(keys[0] !== qrSecret && keys[1] === qrSecret, 'the phone holds its own key first, the QR secret as fallback', String(keys.length));
+    const reuse = await phoneBrowser.newPage();
+    await wire(reuse);
+    await reuse.goto(link, { waitUntil: 'domcontentloaded' });
+    await reuse.click('#btn-connect');
+    await sleep(2500);
+    const r = await reuse.evaluate(() => window.__pad.hostHere);
+    const still = await game.evaluate(() => ({ status: window.__phonePad.status, takeovers: window.__phonePad.takeovers }));
+    check(!r && still.status === 'connected' && still.takeovers === 0, 'the old QR no longer opens the seat; the phone keeps it', JSON.stringify({ reused: r, ...still }));
+    await reuse.close();
+  }
+
   // Stand-in sensors: a steady deviceorientation stream the test can tilt.
   await phone.evaluate(() => {
     window.__tilt = 0;
@@ -151,6 +176,18 @@ try {
   const leanL = await game.evaluate(() => window._game.input.getMotionLeanVisual());
   check(leanL < -0.4, 'tilting left leans left', leanL.toFixed(2));
   await phone.evaluate(() => { window.__tilt = 0; });
+
+  // ── #454: in menus a still phone sends only the heartbeat ──
+  {
+    await sleep(1000);
+    const n0 = await phone.evaluate(() => window.__pad.framesSent);
+    const f0 = await game.evaluate(() => window.__phonePad.framesReceived);
+    await sleep(2000);
+    const n = (await phone.evaluate(() => window.__pad.framesSent)) - n0;
+    const f = (await game.evaluate(() => window.__phonePad.framesReceived)) - f0;
+    const st = await game.evaluate(() => window.__phonePad.status);
+    check(n >= 2 && n <= 8 && f >= 2 && st === 'connected', 'menus, phone still: a heartbeat (~2/s) instead of 30/s, and the game keeps the phone', JSON.stringify({ sent: n, received: f, st }));
+  }
 
   // ── Phase 2: drive the menus from the phone's menu pad ──
   // The phone's layout never changes; the game reads presses by its own mode.
@@ -187,6 +224,19 @@ try {
     await press('ok');
     await sleep(700);
   };
+  // #454: a held button in menus streams at the full rate, so the game's
+  // 400 ms "let go" rule doesn't cut it.
+  {
+    const el = await phone.$('#controls [data-nav="down"]');
+    const b = await el.boundingBox();
+    await phone.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await phone.mouse.down();
+    await sleep(1200);
+    const held = await game.evaluate(() => (window._game.input._remoteNav & 2) !== 0);
+    await phone.mouse.up();
+    await sleep(700);
+    check(held, 'menus: a d-pad press held for over a second is still held in the game');
+  }
   await focusAndPick(/btn-solo/i, 'SOLO RIDE');
   // The level step opens on START RIDE with the default level (Grandma's) selected.
   check(await game.evaluate(() => window._game.lobby.selectedLevel?.id) === 'grandma', "Grandma's is the selected level");
@@ -205,6 +255,12 @@ try {
     check(await phoneLayoutFixed() && await hostMode() === 'ride', 'riding: same phone layout; the game reads it as pedals');
     check(await game.evaluate(() => !window._game.input.gamepadConnected), 'riding: the phone is not a pad (ride hints unchanged)');
     check(await phone.evaluate(() => window.__pad.lastCue) === 'go', 'the phone got the GO cue', await phone.evaluate(() => window.__pad.lastCue));
+    {
+      const n0 = await phone.evaluate(() => window.__pad.framesSent);
+      await sleep(1000);
+      const n = (await phone.evaluate(() => window.__pad.framesSent)) - n0;
+      check(n >= 20, 'riding: the phone streams at the full rate', `${n} frames/s`);
+    }
     // Pedals: press and hold the left half, then the right half.
     await phone.mouse.move(150, 250); await phone.mouse.down();
     await sleep(300);
@@ -250,6 +306,9 @@ try {
     await game.waitForFunction(() => !document.getElementById('phone-pad-panel').classList.contains('open'), { timeout: 5000 }).catch(() => {});
     const back = await game.evaluate(() => ({ status: window.__phonePad.status, panel: document.getElementById('phone-pad-panel').classList.contains('open'), paused: window._game._optionsOpen }));
     check(back.status === 'connected' && !back.panel && back.paused, 'the phone reconnects; the QR closes and the game stays paused for the player', JSON.stringify(back));
+    const k = await phone.evaluate(() => ({ n: window.__pad.keys.length }));
+    const t = await game.evaluate(() => window.__phonePad.takeovers);
+    check(k.n === 1 && t === 0, '#454: it came back with its own key (the old QR secret is dropped), not as a takeover', JSON.stringify({ keys: k.n, takeovers: t }));
     check(await phoneLayoutFixed() && await hostMode() === 'menu', 'reconnected while paused: same phone layout; read as a menu pad');
     await press('back');
     await sleep(500);
@@ -289,6 +348,62 @@ try {
   await sleep(400);   // #424: the lean eases to 0 over 300 ms rather than snapping
   const after = await game.evaluate(() => ({ status: window.__phonePad.status, left: window._game.input.isPressed('ArrowLeft'), lean: window._game.input.getMotionLean() }));
   check(after.status === 'waiting' && !after.left && after.lean === 0, 'closing the phone page releases the pedal and the lean', JSON.stringify(after));
+
+  /** A script WebSocket that records what it gets. */
+  const scriptSocket = (url) => new Promise((res, rej) => {
+    const ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    ws.got = [];
+    ws.onmessage = (ev) => ws.got.push(typeof ev.data === 'string' ? JSON.parse(ev.data) : new Uint8Array(ev.data));
+    ws.onopen = () => res(ws);
+    ws.onerror = () => rej(new Error('script socket refused: ' + url.replace(/k=[^&]+/, 'k=…')));
+  });
+
+  // ── #454 mix: this game + an OLDER phone (never says hello) — also a takeover ──
+  {
+    const cur = await game.evaluate(() => ({ link: window.__phonePad.link, code: window.__phonePad.code }));
+    const secret = cur.link.split('#k=')[1];
+    const old = await scriptSocket(`${RELAY}/pad?code=${cur.code}&role=pad-1&k=${secret}`);
+    let seq = 0;
+    const pump = setInterval(() => old.send(encodeFrame({ seq: ++seq & 0xff, tilt: 0, left: false, right: false, tapsL: 0, tapsR: 0, nav: 0 })), 33);
+    await game.waitForFunction(() => window.__phonePad.status === 'connected', { timeout: 10000 }).catch(() => {});
+    await sleep(1500);
+    const g = await game.evaluate(() => ({
+      status: window.__phonePad.status, phoneV: window.__phonePad.phoneVersion, link: window.__phonePad.link,
+      takeovers: window.__phonePad.takeovers, note: document.getElementById('phone-pad-note')?.classList.contains('on'),
+    }));
+    const types = old.got.filter((m) => !(m instanceof Uint8Array)).map((m) => m.type);
+    check(g.status === 'connected' && g.phoneV === 1, 'an older phone (no hello) still pairs and drives the game', JSON.stringify({ status: g.status, phoneV: g.phoneV }));
+    check(!types.some((t) => t === 'rekey' || t === 'mode' || t === 'hello') && g.link === cur.link, 'an older phone is sent nothing new, and its QR keeps working', JSON.stringify(types));
+    check(g.takeovers === 1 && g.note, 'it took the seat from the phone that had a key: the game says so', JSON.stringify({ takeovers: g.takeovers, note: g.note }));
+    clearInterval(pump);
+    old.close();
+  }
+
+  // ── #454 mix: an OLDER game (a script host: no hello, 'allow' only) + this phone page ──
+  {
+    const code = makePadCode(), hostKey = makePadSecret(), secret = makePadSecret();
+    const oldHost = await scriptSocket(`${RELAY}/pad?code=${code}&role=host&k=${hostKey}`);
+    oldHost.send(JSON.stringify({ type: 'allow', seat: 1, hash: await sha256hex(secret) }));
+    // A much older game also told the phone its mode; without hello it must change nothing.
+    const p = await phoneBrowser.newPage();
+    await p.setViewport({ width: 844, height: 390, isMobile: true, hasTouch: false });
+    await wire(p);
+    await p.goto(buildPadLink(`http://127.0.0.1:${PORT}/`, code, 1, secret, { relay: RELAY }), { waitUntil: 'domcontentloaded' });
+    await p.click('#btn-connect');
+    for (let i = 0; i < 40 && !oldHost.got.some((m) => m.type === 'pad-joined'); i++) await sleep(250);
+    oldHost.send(JSON.stringify({ type: 'to-pad', seat: 1, msg: { type: 'seat', seat: 1, label: 'Player 1' } }));
+    oldHost.send(JSON.stringify({ type: 'to-pad', seat: 1, msg: { type: 'mode', mode: 'menu' } }));
+    await sleep(500);
+    const from = oldHost.got.length;
+    await sleep(1500);
+    const frames = oldHost.got.slice(from).filter((m) => m instanceof Uint8Array);
+    const ph = await p.evaluate(() => ({ host: window.__pad.hostHere, v: window.__pad.hostVersion, keys: window.__pad.keys.length }));
+    check(ph.host && ph.v === 1 && ph.keys === 1, 'this phone page pairs with an older game', JSON.stringify(ph));
+    check(frames.length >= 30 && frames.every((f) => f[0] === 1 && f[1] === PAD_INPUT), 'an older game gets 30 Hz frames in the layout it reads (0x50), even after an old "mode"', `${frames.length} frames in 1.5 s`);
+    await p.close();
+    oldHost.close();
+  }
 } catch (e) {
   console.log('  FAIL', e.message);
   failures++;
