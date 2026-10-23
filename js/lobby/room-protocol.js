@@ -20,6 +20,7 @@ export const ROOM_MSG = {
   LEVEL_SYNC:      'levelSync',
   DIFFICULTY_SYNC: 'difficultySync',
   PLAY_GAME:       'playGame',
+  BACK_TO_ROOM:    'backToRoom',     // #167 · captain left level select for the room
   START_RIDE:      'startRide',
   CAMERA_TOGGLE:   'cameraToggle',
   BIKE_SYNC:       'bikeSync',
@@ -55,6 +56,13 @@ export const RoomProtocol = {
 
   /** Captain advanced the room to level selection. */
   playGame: () => ({ type: ROOM_MSG.PLAY_GAME }),
+
+  /**
+   * #167 · Captain pressed Back on level select: the stoker follows to the
+   * room. Without it the captain sat in the room while the stoker stayed on
+   * level select until the next PLAY GAME. An old stoker drops the unknown type.
+   */
+  backToRoom: () => ({ type: ROOM_MSG.BACK_TO_ROOM }),
 
   /**
    * Captain started the ride — both peers transition to the game.
