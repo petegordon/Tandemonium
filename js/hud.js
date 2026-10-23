@@ -7,6 +7,16 @@ import { isMobile } from './config.js';
 import { formatDelta } from './records.js';
 import { LOOKAHEAD_M } from './lookahead.js';
 import { pingLabel } from './sync-ping.js';
+import { UfControllerGlyph, resolveGlyph } from '../shared/ui/elements/uf-controller-glyph.js';
+
+/** #428 · 13: name P1's shoulder buttons as printed on their pad (L1/R1 on
+ *  PlayStation, L/R and ZL/ZR on Switch) instead of always Xbox's LB/RB.
+ *  @param {string} [family] glyph family; defaults to P1's (set by the lobby) */
+export function pedalHint(family = UfControllerGlyph.getDefault().family) {
+  const fam = /** @type {any} */ (family === 'keyboard' ? 'generic' : family);
+  const t = (/** @type {any} */ b) => resolveGlyph(b, fam).text;
+  return `Pedal! Alternate ${t('lb')}/${t('rb')} or ${t('lt')}/${t('rt')}`;
+}
 
 export class HUD {
   constructor(input) {
@@ -748,7 +758,7 @@ export class HUD {
       statusColor = '#ff4444';
     } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {
       statusText = isMobile ? 'Tap pedals to ride!' :
-        (input.gamepadConnected ? 'Pedal! Alternate LB/RB or LT/RT' : 'Pedal! Alternate \u2190 \u2192');
+        (input.gamepadConnected ? pedalHint() : 'Pedal! Alternate \u2190 \u2192');
       statusColor = '#ffdd44';
     }
     if (statusText !== this._prevStatusText) {

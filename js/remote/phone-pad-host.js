@@ -36,6 +36,10 @@ const PING_MS = 5000;
 const DEAD_MS = PING_MS * 2 + 1000;
 /** A connection attempt that hasn't opened by now is abandoned and retried. */
 const CONNECT_TIMEOUT_MS = 8000;
+/** This many connects in a row that never open, with the relay reachable =
+ *  the relay is refusing this room (a code collision, or another host took the
+ *  code after ours expired): make a new code. */
+const REFUSED_TRIES = 4;
 
 /**
  * @typedef {'idle'|'connecting'|'waiting'|'connected'|'error'} PadStatus
@@ -53,8 +57,9 @@ export class PhonePadHost {
    * @param {() => void} [opts.onPause]   the phone's Pause button while riding
    * @param {() => void} [opts.onDrop]    a connected phone went away
    * @param {() => void} [opts.onReturn]  ...and came back
+   * @param {(link: string) => void} [opts.onLink]  the room moved to a new code (redraw the QR)
    */
-  constructor({ input, seat = 1, relay, siteBase, onStatus, onRecenter, onPause, onDrop, onReturn }) {
+  constructor({ input, seat = 1, relay, siteBase, onStatus, onRecenter, onPause, onDrop, onReturn, onLink }) {
     this.input = input;
     this.seat = seat;
     this.relay = relay || resolveRelay();
@@ -64,6 +69,9 @@ export class PhonePadHost {
     this.onPause = onPause || null;
     this.onDrop = onDrop || null;
     this.onReturn = onReturn || null;
+    this.onLink = onLink || null;
+    this._failedOpens = 0;    // connects in a row that closed before opening
+    this.rekeys = 0;          // times the room moved to a new code (debug aid)
     /** @type {'menu'|'ride'} */
     this.mode = 'menu';
     this._dropped = false;     // was connected, then lost
@@ -106,13 +114,7 @@ export class PhonePadHost {
 
   async _open() {
     this._closed = false;
-    this.code = makePadCode();
-    this._secret = makePadSecret();
-    this._hostKey = makePadSecret();   // proves to the relay we are this room's host
-    this._hash = await sha256hex(this._secret);
-    if (this._closed) return null;
-    const override = this.relay !== DEFAULT_PAD_RELAY ? this.relay : null;
-    this.link = buildPadLink(this.siteBase, this.code, this.seat, this._secret, { relay: override });
+    if (!(await this._newRoom())) return null;
     this._connect();
     this._lastCheckAt = performance.now();
     this._watchdog = setInterval(() => this._checkStale(), 250);
@@ -125,6 +127,48 @@ export class PhonePadHost {
       try { ws.send('ping'); } catch { /* closed */ }
     }, PING_MS);
     return this.link;
+  }
+
+  /** A fresh code, pairing secret and host key, and the link for them. False if closed meanwhile. */
+  async _newRoom() {
+    const code = makePadCode();
+    const secret = makePadSecret();
+    const hostKey = makePadSecret();   // proves to the relay we are this room's host
+    const hash = await sha256hex(secret);
+    if (this._closed) return false;
+    this.code = code;
+    this._secret = secret;
+    this._hostKey = hostKey;
+    this._hash = hash;
+    const override = this.relay !== DEFAULT_PAD_RELAY ? this.relay : null;
+    this.link = buildPadLink(this.siteBase, this.code, this.seat, this._secret, { relay: override });
+    this._failedOpens = 0;
+    return true;
+  }
+
+  /**
+   * Several connects failed before opening. A refusal (HTTP 403) and a dead
+   * network look the same to a WebSocket, so ask the relay over plain HTTP:
+   * if it answers, the room is refused and we move to a new code. If it
+   * doesn't, keep the code so an already-paired phone can still come back.
+   */
+  async _checkRefused() {
+    if (this._checkingRefused || this._closed) return;
+    this._checkingRefused = true;
+    try {
+      const reachable = await relayReachable(this.relay);
+      if (!reachable || this._closed || (this._ws && this._ws.readyState === 1)) return;
+      if (!(await this._newRoom())) return;
+      this.rekeys++;
+      // The old room's phone can't reach us anyway; it has to scan the new code.
+      if (this._phoneHere) this._leave('relay');
+      this._retry = 0;
+      clearTimeout(this._retryTimer);
+      this._connect();
+      if (this.onLink && this.link) this.onLink(this.link);
+    } finally {
+      this._checkingRefused = false;
+    }
   }
 
   /** Stop listening to the phone and release its input. */
@@ -187,10 +231,13 @@ export class PhonePadHost {
     this._ws = ws;
     clearTimeout(this._openTimer);
     const openTimer = this._openTimer = setTimeout(() => { if (ws.readyState === 0) { try { ws.close(); } catch { /* closed */ } } }, CONNECT_TIMEOUT_MS);
+    let opened = false;
     ws.onopen = () => {
+      opened = true;
       clearTimeout(openTimer);
       this._lastRecv = performance.now();
       this._retry = 0;
+      this._failedOpens = 0;
       this._wsDownAt = 0;
       this._lastAt = performance.now();   // a fresh window for the phone's frames
       ws.send(JSON.stringify({ type: 'allow', seat: this.seat, hash: this._hash }));
@@ -202,7 +249,12 @@ export class PhonePadHost {
       if (this._ws !== ws) return;
       this._ws = null;
       if (!this._wsDownAt) this._wsDownAt = performance.now();
-      if (!this._closed) this._scheduleRetry();
+      if (this._closed) return;
+      if (!opened && ++this._failedOpens >= REFUSED_TRIES) {
+        this._failedOpens = 0;
+        this._checkRefused();
+      }
+      this._scheduleRetry();
     };
     ws.onerror = () => { /* onclose follows */ };
   }
@@ -341,6 +393,27 @@ export class PhonePadHost {
     if (this.status === s) return;
     this.status = s;
     if (this.onStatus) this.onStatus(s);
+  }
+}
+
+/**
+ * Does the relay answer plain HTTP? Any response at all counts (no-cors: we
+ * can't read it, and don't need to). Used to tell "refused" from "offline".
+ * @param {string} relay  wss://… or ws://…
+ * @param {number} [timeoutMs]
+ */
+export async function relayReachable(relay, timeoutMs = 4000) {
+  if (typeof fetch !== 'function') return false;
+  const url = relay.replace(/^ws/, 'http');
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
+  try {
+    await fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctl ? ctl.signal : undefined });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

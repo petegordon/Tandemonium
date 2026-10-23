@@ -1,14 +1,15 @@
 #!/bin/bash
-# Manually updates the version stamp in lobby screens
-# The post-commit hook does this automatically, but this script
-# can be run manually if needed.
+# Stamp the current commit + time into the lobby footer (#lobby-version) of a
+# local checkout, e.g. before a hand-made build. CI does the same in
+# deploy.yml, pr-preview.yml and build-windows.yml; without a stamp the footer
+# reads "v.dev (local build)". Don't commit the result.
 
 HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
 DATETIME=$(date +"%m-%d-%Y %H:%M")
 VERSION="v.${HASH} | ${DATETIME}"
 
-# Update both HTML files (use # delimiter to avoid conflicts with | and /)
-sed -i '' "s#>v\.[^<]*<#>${VERSION}<#" portrait-game/index.html
-sed -i '' "s#>v\.[^<]*<#>${VERSION}<#" index.html
+# Portable in-place edit (GNU and BSD sed differ on -i).
+FILE="$(dirname "$0")/../index.html"
+sed -E "s#id=\"lobby-version\">[^<]*#id=\"lobby-version\">${VERSION}#" "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
 
 echo "Updated version to: ${VERSION}"
