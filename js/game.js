@@ -5535,6 +5535,9 @@ class Game {
   _setShowRiders(on) {
     try { localStorage.setItem('tandemonium_show_riders', on ? 'on' : 'off'); } catch (e) {}
     this._updateOptionsShowRidersUI();
+    // Swapping the bike model mid-ride can stop the bike and end the ride.
+    // It's a debug option, so mid-ride it waits for the lobby (the next ride).
+    if (this.state !== 'lobby') { this._ridersPending = true; return; }
     this._applyShowRiders(on);
   }
 
