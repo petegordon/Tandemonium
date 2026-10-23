@@ -70,6 +70,20 @@ const load = await page.evaluate(() => {
            wheelCirc: +g.wheelCircumference.toFixed(3), viewScale: +b.riderViewScale.toFixed(3), seats };
 });
 check('goose bike + both geese loaded', load && load.seats.Captain && load.seats.Stoker, load);
+
+// #456 · the rider cam draws the scene into its own picture every other frame and copies it in
+const riderCam = await page.evaluate(() => new Promise((res) => requestAnimationFrame(() => {
+  const G = window._game, fv = G.frontView, R = G.renderer, gl = R.getContext();
+  if (!fv || !fv._rect) return res(null);
+  // draw it now (the canvas keeps its buffer at this tier), then read the corner's middle
+  R.render(G.scene, G.camera); fv._stale = true; fv.render(R, G.scene);
+  const r = fv._rect, pr = R.getPixelRatio(), s = Math.round(r.size * pr);
+  const x = Math.round(r.cssLeft * pr), y = Math.round((innerHeight - r.cssTop - r.size) * pr);
+  const px = new Uint8Array(s * s * 4); gl.readPixels(x, y, s, s, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  let lit = 0; for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] > 60) lit++;
+  res({ every: fv.renderEvery, target: !!fv._rt && fv._rt.width === s, litFrac: +(lit / (s * s)).toFixed(2), frame: fv.frame.style.display });
+})));
+check('rider cam: drawn every other frame into its own picture, copied into the corner', riderCam && riderCam.every === 2 && riderCam.target && riderCam.litFrac > 0.5 && riderCam.frame === 'block', riderCam);
 check('no node spun as a pedal (cranks come from the Pedal clip)', load && load.pedalNodes === 0 && load.bikePedal);
 for (const s of ['Captain', 'Stoker']) {
   const r = load?.seats?.[s];

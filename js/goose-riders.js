@@ -26,7 +26,8 @@ function disposeTree(root) {
     if (o.geometry) o.geometry.dispose();
     for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
       if (!m) continue;
-      for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+      // not the shared riders environment map (#456), which outlives any one pair of geese
+      for (const v of Object.values(m)) if (v && v.isTexture && !(v.userData && v.userData.riderEnv)) v.dispose();
       m.dispose();
     }
   });
