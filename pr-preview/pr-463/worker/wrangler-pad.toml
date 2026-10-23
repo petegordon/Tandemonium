@@ -1,0 +1,14 @@
+# Phone-pad relay (#421). Separate from wrangler.toml (the RIDE TOGETHER relay)
+# so either can deploy without the other.
+name = "tandemonium-pad"
+main = "pad-relay.js"
+compatibility_date = "2024-09-23"
+
+[durable_objects]
+bindings = [
+    { name = "PAD_ROOM", class_name = "PadRoom" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PadRoom"]
