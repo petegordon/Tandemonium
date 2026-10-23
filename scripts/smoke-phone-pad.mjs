@@ -286,6 +286,7 @@ try {
   await sleep(600);
   await phone.close();
   await game.waitForFunction(() => window.__phonePad.status === 'waiting', { timeout: 10000 }).catch(() => {});
+  await sleep(400);   // #424: the lean eases to 0 over 300 ms rather than snapping
   const after = await game.evaluate(() => ({ status: window.__phonePad.status, left: window._game.input.isPressed('ArrowLeft'), lean: window._game.input.getMotionLean() }));
   check(after.status === 'waiting' && !after.left && after.lean === 0, 'closing the phone page releases the pedal and the lean', JSON.stringify(after));
 } catch (e) {

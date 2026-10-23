@@ -181,6 +181,9 @@ export function readGyroRollMode() {
 
 // Phone remote NAV bits (js/remote/pad-protocol.js NAV) → standard-mapping
 // gamepad buttons: 12-15 d-pad, A/B (honouring the GameSir A/B swap), 9 Start.
+/** #424 · how long a dropped phone remote's lean takes to ease back to 0. */
+export const REMOTE_LEAN_EASE_MS = 300;
+
 const NAV_BUTTONS = [[1, 12], [2, 13], [4, 14], [8, 15], [128, 9]];
 const _PRESSED = Object.freeze({ pressed: true, touched: true, value: 1 });
 const _RELEASED = Object.freeze({ pressed: false, touched: false, value: 0 });
@@ -706,6 +709,7 @@ export class InputManager {
   feedRemoteTilt(rawTilt) {
     if (!this._remoteTilt) this._motionBeforeRemote = this.motionEnabled;
     this._remoteTilt = true;
+    this._leanEase = null;   // the phone is back: it steers again
     this._onOrientationTilt(rawTilt);
   }
 
@@ -744,6 +748,10 @@ export class InputManager {
     this._remoteRight = false;
     if (!this._remoteTilt) return;
     this._remoteTilt = false;
+    // #424 · design §3.3: ease the lean back to 0 instead of snapping it, so
+    // a dropped phone doesn't yank the bike upright. The getters fade this out.
+    const lean = this.getMotionLean(), visual = this.getMotionLeanVisual();
+    this._leanEase = (lean || visual) ? { lean, visual, t0: performance.now() } : null;
     this._filteredRawTilt = null;
     this._smoothedLean = 0;
     this._prevLeanRaw = 0;
@@ -1312,6 +1320,7 @@ export class InputManager {
 
   /** Full lean-input reset for tutorial/demo restarts. */
   resetLeanState() {
+    this._leanEase = null;
     this._smoothedLean = 0;
     this._prevLeanRaw = 0;
     this.motionLean = 0;
@@ -1327,7 +1336,16 @@ export class InputManager {
 
 
   getMotionLean() {
-    return this.motionEnabled ? this.motionLean : 0;
+    const live = this.motionEnabled ? this.motionLean : 0;
+    return this._leanEase ? this._eased('lean', live) : live;
+  }
+
+  /** A dropped phone's last lean, fading into whatever steers now. */
+  _eased(key, live) {
+    const e = this._leanEase;
+    const f = 1 - (performance.now() - e.t0) / REMOTE_LEAN_EASE_MS;
+    if (f <= 0) { this._leanEase = null; return live; }
+    return e[key] * f + live * (1 - f);
   }
 
   /**
@@ -1336,7 +1354,8 @@ export class InputManager {
    * doesn't make the geese look stiff. Physics uses getMotionLean().
    */
   getMotionLeanVisual() {
-    return this.motionEnabled ? this.motionLeanVisual : 0;
+    const live = this.motionEnabled ? this.motionLeanVisual : 0;
+    return this._leanEase ? this._eased('visual', live) : live;
   }
 
   /** Stamp this controller as "in use right now". */

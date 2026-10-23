@@ -96,29 +96,36 @@ export function installPhonePadUI(input, hooks = {}) {
       // looking at the phone by then, and the menu needs the screen.
       if (s === 'connected') setTimeout(() => close(), 1500);
     },
+    // #424: the relay refused our room and the host moved to a new code. The
+    // old QR is dead, so redraw it (shown now if the panel is open, else next open).
+    onLink: (link) => drawLink(link),
   });
+
+  /** Draw the QR + link for `link` (no-op if it's already shown). @param {string} link */
+  const drawLink = (link) => {
+    const qrEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-qr'));
+    const linkEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-link'));
+    if (qrEl.dataset.link === link) return;
+    let qrOk = false;
+    try {
+      const qr = qrcode(0, 'M');
+      qr.addData(link);
+      qr.make();
+      qrEl.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
+      qrOk = true;
+    } catch { /* QR generation failed: fall back to the plain link */ }
+    qrEl.style.display = qrOk ? '' : 'none';
+    qrEl.dataset.link = link;
+    // Without a QR the full link (with its secret) is the only way in.
+    linkEl.textContent = qrOk ? link.split('#')[0] : link;
+  };
 
   const open = async () => {
     panel.classList.add('open');
     host.panelOpen = true;
     const link = await host.open();
     if (!link) return;   // stopped while opening
-    const qrEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-qr'));
-    const linkEl = /** @type {HTMLElement} */ (panel.querySelector('#ppp-link'));
-    if (qrEl.dataset.link !== link) {
-      let qrOk = false;
-      try {
-        const qr = qrcode(0, 'M');
-        qr.addData(link);
-        qr.make();
-        qrEl.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
-        qrOk = true;
-      } catch { /* the QR script didn't load (offline, blocked) */ }
-      qrEl.style.display = qrOk ? '' : 'none';
-      qrEl.dataset.link = link;
-      // Without a QR the full link (with its secret) is the only way in.
-      linkEl.textContent = qrOk ? link.split('#')[0] : link;
-    }
+    drawLink(link);
     if (!dropped) statusEl.textContent = STATUS_TEXT[host.status] || '';
     watchPadClose();
   };

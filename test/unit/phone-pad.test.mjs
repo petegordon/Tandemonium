@@ -9,7 +9,7 @@ import {
 } from '../../js/remote/pad-protocol.js';
 import { orientationToRawTilt, gravityToRawTilt } from '../../js/tilt-math.js';
 import { routeMessage, secretMatches } from '../../worker/pad-relay.js';
-import { InputManager } from '../../js/input-manager.js';
+import { InputManager, REMOTE_LEAN_EASE_MS } from '../../js/input-manager.js';
 
 test('an input frame round-trips in 8 bytes', () => {
   const f = { seq: 255, tilt: -37.25, left: true, right: false, tapsL: 3, tapsR: 200, nav: NAV.ok | NAV.recenter };
@@ -133,6 +133,13 @@ function bare() {
   return im;
 }
 
+/** Run fn with performance.now() pinned to t. */
+function atTime(t, fn) {
+  const realNow = performance.now;
+  performance.now = () => t;
+  try { return fn(); } finally { performance.now = realNow; }
+}
+
 function feed(im, deg, n) {
   const realNow = performance.now;
   let t = im.__t || 1000;
@@ -165,9 +172,9 @@ test('remote pedals press, taps survive a short press, detach releases everythin
 
   feed(im, 0, 10); feed(im, 30, 60);
   im.setRemotePedals(true, true);
-  im.detachRemote();
+  atTime(im.__t, () => im.detachRemote());
   assert.equal(im.isPressed('ArrowLeft'), false);
-  assert.equal(im.getMotionLean(), 0);
+  atTime(im.__t + REMOTE_LEAN_EASE_MS + 1, () => assert.equal(im.getMotionLean(), 0, 'lean has eased out'));
   assert.equal(im.motionEnabled, false, 'a desktop host falls back to keyboard steering');
 });
 
@@ -412,4 +419,78 @@ test('host: after a drop, a leftover relay socket joining is not the phone comin
   assert.equal(host.status, 'waiting');
   frame({ seq: 3 });
   assert.equal(returns, 1);
+});
+
+// ── #424 follow-ups: lean eases out on a drop; a refused room gets a new code ──
+
+test("a dropped phone's lean eases to 0 instead of snapping", () => {
+  const im = bare();
+  feed(im, 0, 10); feed(im, 30, 60);
+  const lean = im.getMotionLean(), visual = im.getMotionLeanVisual();
+  assert.ok(lean > 0 && visual > 0);
+  const t = im.__t;
+  atTime(t, () => im.detachRemote());
+  atTime(t, () => assert.ok(Math.abs(im.getMotionLean() - lean) < 1e-9, 'no snap at the drop'));
+  atTime(t + REMOTE_LEAN_EASE_MS / 2, () => {
+    assert.ok(Math.abs(im.getMotionLean() - lean / 2) < 1e-6, 'halfway');
+    assert.ok(Math.abs(im.getMotionLeanVisual() - visual / 2) < 1e-6, 'visual too');
+  });
+  atTime(t + REMOTE_LEAN_EASE_MS, () => assert.equal(im.getMotionLean(), 0));
+  atTime(t + REMOTE_LEAN_EASE_MS, () => assert.equal(im.getMotionLeanVisual(), 0));
+});
+
+test('the phone coming back, or a lean reset, cancels the ease', () => {
+  const im = bare();
+  feed(im, 0, 10); feed(im, 30, 60);
+  atTime(im.__t, () => im.detachRemote());
+  im.resetLeanState();
+  atTime(im.__t + 10, () => assert.equal(im.getMotionLean(), 0, 'reset'));
+  feed(im, 30, 60);
+  atTime(im.__t, () => im.detachRemote());
+  feed(im, 0, 1);   // the phone is back
+  assert.equal(im._leanEase, null);
+});
+
+/** Open a host whose relay sockets never open (each close is a refusal or a dead network). */
+async function refusedHost({ reachable }) {
+  const links = [];
+  const { host } = hostWithFakes({ onLink: (l) => links.push(l) });
+  const OrigWS = globalThis.WebSocket, origFetch = globalThis.fetch;
+  const sockets = [];
+  globalThis.WebSocket = class { constructor(url) { this.url = url; this.readyState = 0; sockets.push(this); } send() {} close() {} };
+  globalThis.fetch = async () => { if (!reachable) throw new TypeError('offline'); return {}; };
+  host._scheduleRetry = () => {};   // the test dials by hand
+  const restore = () => { globalThis.WebSocket = OrigWS; globalThis.fetch = origFetch; host.close(); };
+  try {
+    await host.open();
+    const firstCode = host.code, firstLink = host.link;
+    for (let i = 0; i < 4; i++) {
+      const ws = sockets.at(-1);
+      ws.readyState = 3;
+      ws.onclose();
+      if (i < 3) host._connect();
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    return { host, links, sockets, firstCode, firstLink, restore };
+  } catch (e) { restore(); throw e; }
+}
+
+test('host: repeated refusals with the relay reachable move the room to a new code', async () => {
+  const r = await refusedHost({ reachable: true });
+  try {
+    assert.notEqual(r.host.code, r.firstCode);
+    assert.notEqual(r.host.link, r.firstLink);
+    assert.deepEqual(r.links, [r.host.link], 'the UI is told to redraw the QR');
+    assert.equal(r.host.rekeys, 1);
+    assert.ok(r.sockets.at(-1).url.includes('code=' + r.host.code), 'dials the new room');
+  } finally { r.restore(); }
+});
+
+test('host: failures while the relay is unreachable keep the code (a paired phone can come back)', async () => {
+  const r = await refusedHost({ reachable: false });
+  try {
+    assert.equal(r.host.code, r.firstCode);
+    assert.deepEqual(r.links, []);
+  } finally { r.restore(); }
 });
