@@ -12,6 +12,7 @@ import { colourwayParams, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 import { CrankMotion } from './crank-motion.js';
 import { rebatch } from './bike-batch.js';
+import { dracoDecoderPath } from './draco-path.js';
 
 /** #441 · seconds over which a stroke's speed gain eases in (time constant). */
 const ACCEL_EASE_S = 0.1;
@@ -21,13 +22,13 @@ export const EDGE_BAND_START = 0.8;
 
 // The riders GLB ships Draco-compressed geometry to keep it small; the plain
 // frame GLB isn't compressed, so the decoder is only fetched when a Draco mesh
-// is actually encountered. Version-matched to the CDN three build. Shared across
-// all BikeModel loads.
+// is actually encountered. The decoder comes from wherever three/addons resolves
+// (CDN on web, node_modules on desktop — #353). Shared across all BikeModel loads.
 let _dracoLoader = null;
 function getDracoLoader() {
   if (!_dracoLoader) {
     _dracoLoader = new DRACOLoader();
-    _dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/libs/draco/');
+    _dracoLoader.setDecoderPath(dracoDecoderPath('libs/draco/'));
   }
   return _dracoLoader;
 }
