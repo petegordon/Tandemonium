@@ -65,8 +65,11 @@ jobs:
           name: tandemonium-win32-x64
           path: builds/windows/
 
+      # No continue-on-error: a failed upload (e.g. the saved Steam login in
+      # STEAM_CONFIG_VDF expiring, about every 2 weeks) must turn the run red.
+      # Refresh it: steamcmd +login <user> (Steam Guard), then
+      # base64 -w0 <steamcmd>/config/config.vdf | gh secret set STEAM_CONFIG_VDF
       - name: Upload to Steam (Playtest)
-        continue-on-error: true
         uses: game-ci/steam-deploy@v3
         with:
           username: ${{ secrets.STEAM_USERNAME }}
