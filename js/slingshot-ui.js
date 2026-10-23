@@ -1,3 +1,4 @@
+// @ts-check
 // ============================================================
 // SLINGSHOT UI — garage, results, in-ride strip and pull meter
 // ============================================================
@@ -19,8 +20,12 @@ function el(tag, cls, html) {
   return e;
 }
 
-function pips(level, max) {
-  return '●'.repeat(level) + '○'.repeat(max - level);
+// A kit button (shared/ui uf-button): the host element is the button, so the
+// click wiring, textContent writes and focus-controller handling below are unchanged.
+function btn(variant, html, cls) {
+  const b = el('uf-button', cls, html);
+  b.setAttribute('variant', variant);
+  return b;
 }
 
 /**
@@ -42,11 +47,17 @@ function pips(level, max) {
  */
 export function renderGarage(save, wallet, opts = {}) {
   const { standalone = false, lock = null, todays = null, canWishlist = false, replay = null, rebuildOffered = true } = opts;
-  const root = $('sling-garage');
+  // The kit sheet (#428) draws the card and headline; content goes in its body.
+  const shell = $('sling-garage');
+  const root = $('sling-garage-body') || shell;
   root.innerHTML = '';
   const mult = coinMultiplier(wallet);
   const rebuilt = wallet.rebuilds ? ` <span class="sling-badge sling-rebuilds" title="Bike rebuilds">🔧×${wallet.rebuilds}</span>` : '';
-  root.appendChild(el('h2', null, `🛠️ GARAGE${rebuilt}`));
+  const gSheet = /** @type {any} */ ($('sling-garage-sheet'));
+  if (gSheet) {
+    gSheet.heading = '🛠️ Garage';
+    if (rebuilt) root.appendChild(el('div', null, rebuilt.trim()));   // the rebuild badge, under the headline
+  } else root.appendChild(el('h2', null, `🛠️ GARAGE${rebuilt}`));
   root.appendChild(el('div', 'sling-wallet', `${COIN} ${fmt(wallet.coins)} Chaos Coins`));
   const multLine = `Every ride in every mode pays ×${mult.toFixed(2)}`;
   root.appendChild(el('div', 'sling-sub', standalone
@@ -64,31 +75,31 @@ export function renderGarage(save, wallet, opts = {}) {
     top.appendChild(el('div', 'sling-lock', `🔒 Stage ${save.stage}: ${lock.label}`));
     if (lock.kind === 'demo') {
       if (canWishlist) {
-        const w = el('button', 'lobby-btn lobby-btn-accent cta-btn', '&#9829; WISHLIST ON STEAM');
+        const w = btn('accent', '&#9829; WISHLIST ON STEAM', 'cta-btn');
         w.addEventListener('click', () => opts.onWishlist && opts.onWishlist());
         top.appendChild(w);
         buttons.push(w);
       }
       if (replay) {
-        const again = el('button', 'lobby-btn', `LAUNCH · REPLAY STAGE ${replay}`);
+        const again = btn('primary', `LAUNCH · REPLAY STAGE ${replay}`);
         again.addEventListener('click', () => opts.onLaunch && opts.onLaunch());
         top.appendChild(again);
         buttons.push(again);
       }
     } else if (lock.level) {
-      const go = el('button', 'lobby-btn lobby-btn-accent', `${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`);
+      const go = btn('accent', `${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`);
       go.addEventListener('click', () => opts.onGoRide && opts.onGoRide(lock.level));
       top.appendChild(go);
       buttons.push(go);
     }
   } else if (!standalone) {
-    const launch = el('button', 'lobby-btn lobby-btn-accent', 'LAUNCH!');
+    const launch = btn('accent', 'LAUNCH!');
     launch.addEventListener('click', () => opts.onLaunch && opts.onLaunch());
     top.appendChild(launch);
     buttons.push(launch);
   }
   if (todays) {
-    const t = el('button', 'lobby-btn', `📅 TODAY'S LAUNCH${todays.best ? ` · best ${fmt(todays.best)} m` : ''}`);
+    const t = btn('primary', `📅 TODAY'S LAUNCH${todays.best ? ` · best ${fmt(todays.best)} m` : ''}`);
     t.addEventListener('click', () => opts.onToday && opts.onToday());
     top.appendChild(t);
     buttons.push(t);
@@ -104,12 +115,16 @@ export function renderGarage(save, wallet, opts = {}) {
     const gain = maxed ? '' : (u.id === 'magnet'
       ? '+0.25× coins'
       : `+${fmt(upgradeGain(wallet.lv, u.id))} m`);
-    const b = el('button', 'sling-up',
-      `<span class="ico">${u.icon}</span>` +
-      `<span class="txt"><b>${u.name}</b><small>${u.desc}</small><br><span class="pips">${pips(lvl, u.max)}</span></span>` +
-      `<span class="price">${maxed ? 'MAX' : `${COIN} ${fmt(price)}<small class="gain">${gain}</small>`}</span>`);
+    // A kit row card (shared/ui uf-card layout=row, #428): icon | name, what it
+    // does, level pips | price and gain. `locked` = maxed or not affordable.
+    const b = /** @type {any} */ (document.createElement('uf-card'));
+    b.className = 'sling-up';
+    Object.assign(b, {
+      layout: 'row', icon: u.icon, heading: u.name, description: u.desc, level: lvl, levelMax: u.max,
+      meta: maxed ? 'MAX' : `${COIN} ${fmt(price)}`, metaDetail: gain,
+      locked: maxed || wallet.coins < price,
+    });
     b.dataset.up = u.id;
-    b.disabled = maxed || wallet.coins < price;
     b.addEventListener('click', () => opts.onBuy && opts.onBuy(u.id));
     list.appendChild(b);
     buttons.push(b);
@@ -123,7 +138,7 @@ export function renderGarage(save, wallet, opts = {}) {
     const label = capped
       ? `🔧 REBUILD THE BIKE · bonus maxed at +${Math.round(REBUILD_BONUS * REBUILD_CAP * 100)}%, adds nothing more`
       : `🔧 REBUILD THE BIKE · +${Math.round(REBUILD_BONUS * 100)}% coins forever`;
-    const r = el('button', 'lobby-btn sling-rebuild', label);
+    const r = btn('primary', label, 'sling-rebuild');
     let armed = false;
     r.addEventListener('click', () => {
       if (!armed) { armed = true; r.textContent = 'PRESS AGAIN: upgrades back to 0, coins + stages kept'; return; }
@@ -135,14 +150,14 @@ export function renderGarage(save, wallet, opts = {}) {
     buttons.push(r);
   }
 
-  const lobby = el('button', 'lobby-btn', standalone ? '← BACK' : 'LOBBY');
+  const lobby = btn('primary', standalone ? '← BACK' : 'LOBBY');
   lobby.addEventListener('click', () => opts.onLobby && opts.onLobby());
   const bottom = el('div', 'sling-buttons');
   bottom.appendChild(lobby);
   root.appendChild(bottom);
   buttons.push(lobby);
 
-  root.classList.add('visible');
+  shell.classList.add('visible');
   return buttons;
 }
 
@@ -163,13 +178,15 @@ const CAUSE = {
  */
 export function renderResults({ cause, score, run, save, wallet, stageCleared, daily = false, lock = null, canWishlist = false },
                               { onAgain, onGarage, onLobby, onWishlist, onGoRide }) {
-  const root = $('sling-results');
+  const shell = $('sling-results');
+  const root = $('sling-results-body') || shell;
   root.innerHTML = '';
   // B5: a jackpot already cashed (this stage, or today) ends the run but pays like any other.
   const title = daily && cause === 'goal' ? "Today's Launch: all the way!"
     : cause === 'jackpot' && !score.jackpotPaid ? (daily ? "Jackpot! (already cashed today)" : 'Jackpot! (already cashed on this stage)')
     : (CAUSE[cause] || CAUSE.stall);
-  root.appendChild(el('h2', null, title));
+  const rSheet = /** @type {any} */ ($('sling-results-sheet'));
+  if (rSheet) rSheet.heading = title; else root.appendChild(el('h2', null, title));
   root.appendChild(el('div', 'sling-big', `${fmt(score.distance)} m`));
   const badges = el('div');
   if (score.isRecord) badges.appendChild(el('span', 'sling-badge', daily ? "TODAY'S BEST" : 'NEW RECORD'));
@@ -192,26 +209,26 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
 
   const box = el('div', 'sling-buttons');
   const out = [];
-  const mk = (label, cls, fn) => { const b = el('button', cls, label); b.addEventListener('click', fn); box.appendChild(b); out.push(b); return b; };
+  const mk = (label, variant, fn, cls) => { const b = btn(variant, label, cls); b.addEventListener('click', fn); box.appendChild(b); out.push(b); return b; };
   if (lock) {
     box.appendChild(el('div', 'sling-lock', lock.kind === 'demo'
       ? `🎉 ${lock.label}` : `🔒 Next stage: ${lock.label}`));
     if (lock.kind === 'demo') {
-      if (canWishlist) mk('&#9829; WISHLIST ON STEAM', 'lobby-btn lobby-btn-accent cta-btn', () => onWishlist && onWishlist());
-      mk('LAUNCH AGAIN', 'lobby-btn', onAgain);   // m9: the demo replays its last stage
+      if (canWishlist) mk('&#9829; WISHLIST ON STEAM', 'accent', () => onWishlist && onWishlist(), 'cta-btn');
+      mk('LAUNCH AGAIN', 'primary', onAgain);   // m9: the demo replays its last stage
     } else if (lock.level) {
-      mk(`${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`, 'lobby-btn lobby-btn-accent', () => onGoRide && onGoRide(lock.level));
+      mk(`${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`, 'accent', () => onGoRide && onGoRide(lock.level));
     }
   } else {
-    mk('LAUNCH AGAIN', 'lobby-btn lobby-btn-accent', onAgain);
+    mk('LAUNCH AGAIN', 'accent', onAgain);
   }
-  mk('GARAGE', 'lobby-btn', onGarage);
-  mk('LOBBY', 'lobby-btn', onLobby);
+  mk('GARAGE', 'primary', onGarage);
+  mk('LOBBY', 'primary', onLobby);
   root.appendChild(box);
-  root.classList.add('visible');
+  shell.classList.add('visible');
   // The tap that skipped the tally must not land on LAUNCH AGAIN.
-  root.style.pointerEvents = 'none';
-  setTimeout(() => { root.style.pointerEvents = ''; }, 400);
+  shell.style.pointerEvents = 'none';
+  setTimeout(() => { shell.style.pointerEvents = ''; }, 400);
   return out;
 }
 
@@ -223,7 +240,7 @@ let _hudText = '';
 /** A Chaos Coin was grabbed: bump the counter and float the payout up from it. */
 export function coinPop(amount) {
   const c = document.querySelector('#sling-hud .sling-coins');
-  if (c) { c.classList.remove('pop'); void c.offsetWidth; c.classList.add('pop'); }
+  if (c) { c.classList.remove('pop'); void /** @type {HTMLElement} */ (c).offsetWidth; c.classList.add('pop'); }
   const f = document.createElement('div');
   f.className = 'sling-coin-float';
   f.textContent = `+${amount} ${COIN}`;
@@ -308,7 +325,7 @@ let _tally = null;
  * Coins they pay. `onTick(kind)` fires as the numbers roll ('m' / 'coin') for
  * sound; `onDone` fires once, after ~2.5 s or on a tap/click/key.
  */
-export function showTally({ distance, coins, label = '' }, { onTick = () => {}, onDone = () => {} } = {}) {
+export function showTally({ distance, coins, label = '' }, { onTick = (/** @type {string} */ _kind) => {}, onDone = () => {} } = {}) {
   hideTally();
   const root = $('sling-tally');
   root.innerHTML =

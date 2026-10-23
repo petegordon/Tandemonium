@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { isMobile, TUNE, stickResponse } from './config.js';
+import { orientationToRawTilt, gravityToRawTilt } from './tilt-math.js';
 import * as analytics from './analytics.js';
 import { addHapticSource, removeHapticSource } from './haptics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
@@ -178,6 +179,40 @@ export function readGyroRollMode() {
 // reads the slot's effective gamepad + fusion orientation each frame and
 // turns them into tilt/lean/trigger state for the game loop.
 
+// Phone remote NAV bits (js/remote/pad-protocol.js NAV) → standard-mapping
+// gamepad buttons: 12-15 d-pad, A/B (honouring the GameSir A/B swap), 9 Start.
+/** #424 · how long a dropped phone remote's lean takes to ease back to 0. */
+export const REMOTE_LEAN_EASE_MS = 300;
+
+const NAV_BUTTONS = [[1, 12], [2, 13], [4, 14], [8, 15], [128, 9]];
+const _PRESSED = Object.freeze({ pressed: true, touched: true, value: 1 });
+const _RELEASED = Object.freeze({ pressed: false, touched: false, value: 0 });
+
+/**
+ * A gamepad snapshot with the phone's held menu buttons OR-ed in. With no real
+ * pad it is a synthetic one (stick centred, no shoulders) so only navigation
+ * changes. Exported for tests.
+ * @param {any} real  a Gamepad-like snapshot, or null
+ * @param {number} nav @param {boolean} swapAB
+ */
+export function mergeRemoteNavPad(real, nav, swapAB) {
+  const n = Math.max(17, real ? real.buttons.length : 0);
+  const buttons = new Array(n);
+  for (let i = 0; i < n; i++) buttons[i] = (real && real.buttons[i]) || _RELEASED;
+  for (const [bit, idx] of NAV_BUTTONS) if (nav & bit) buttons[idx] = _PRESSED;
+  if (nav & 16) buttons[swapAB ? 1 : 0] = _PRESSED;   // OK = A
+  if (nav & 32) buttons[swapAB ? 0 : 1] = _PRESSED;   // Back = B
+  return {
+    id: real ? real.id : 'Phone remote',
+    index: real ? real.index : -1,
+    connected: true,
+    mapping: 'standard',
+    timestamp: performance.now(),
+    axes: real ? real.axes : [0, 0, 0, 0],
+    buttons,
+  };
+}
+
 export class InputManager {
   /**
    * @param {Object} [options]
@@ -349,6 +384,8 @@ export class InputManager {
   // owns the lifecycle; InputManager is a pure consumer.
   get gamepadConnected() {
     if (this._slot?.state === 'claimed') return true;
+    // A phone remote showing its menu pad (#421) is a gamepad to the menus.
+    if (this._remoteMenu) return true;
     if (!this._steamInputActive) return false;
     // Handle-bound managers (versus multi-pad) are only "connected" while
     // their specific controller is still in the Steam snapshot.
@@ -607,48 +644,8 @@ export class InputManager {
     // Primary: deviceorientation (browser sensor fusion — smoother)
     window.addEventListener('deviceorientation', (e) => {
       const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-      let rawTilt;
-      if (orient === 90) rawTilt = e.beta;
-      else if (orient === 270 || orient === -90) rawTilt = -e.beta;
-      else {
-        // When phone is tilted past vertical (|beta| > 90°, e.g. lying in bed
-        // with screen facing down at user), gamma's left-right direction inverts.
-        // Use a smooth blend zone (80°–100°) to avoid jitter at the boundary.
-        const absBeta = Math.abs(e.beta || 0);
-        if (absBeta > 100) {
-          rawTilt = -e.gamma;
-        } else if (absBeta > 80) {
-          const t = (absBeta - 80) / 20;
-          rawTilt = e.gamma * (1 - 2 * t);
-        } else {
-          rawTilt = e.gamma;
-        }
-      }
-
-      if (rawTilt != null) {
-        this._useOrientation = true;
-        if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
-        this.motionEnabled = true;
-
-        // Time-based low-pass pre-filter on raw gamma.
-        // This makes TUNE.lowPassK functional on the deviceorientation path.
-        // Without this, lowPassK only applied to the devicemotion fallback,
-        // which Android never uses (since deviceorientation events fire).
-        // Uses the same frame-rate-independent formula as the devicemotion
-        // fallback (line ~254) so behavior is consistent at any event rate.
-        const now = performance.now();
-        if (this._filteredRawTilt === null) {
-          this._filteredRawTilt = rawTilt;
-          this._lastOrientTime = now;
-        } else {
-          const dtSec = Math.min((now - this._lastOrientTime) / 1000, 0.1);
-          const k = 1 - Math.pow(1 - TUNE.lowPassK, dtSec * 60);
-          this._filteredRawTilt += (rawTilt - this._filteredRawTilt) * k;
-          this._lastOrientTime = now;
-        }
-
-        this._applyTilt(this._filteredRawTilt);
-      }
+      const rawTilt = orientationToRawTilt(e.beta, e.gamma, orient);
+      if (rawTilt != null) this._onOrientationTilt(rawTilt);
     });
 
     // Fallback: devicemotion (only if orientation events don't fire)
@@ -672,13 +669,98 @@ export class InputManager {
       }
 
       const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
-      let rollRad;
-      if (orient === 90) rollRad = Math.atan2(this._gy, -this._gx);
-      else if (orient === 270 || orient === -90) rollRad = Math.atan2(-this._gy, this._gx);
-      else rollRad = Math.atan2(this._gx, this._gy);
-
-      this._applyTilt(-rollRad * 180 / Math.PI);
+      this._applyTilt(gravityToRawTilt(this._gx, this._gy, orient));
     });
+  }
+
+  /**
+   * One orientation-derived raw tilt sample (degrees), from this device's
+   * deviceorientation event or from a phone remote (#421). Time-based low-pass
+   * pre-filter on the raw angle, so TUNE.lowPassK works on this path too (the
+   * same frame-rate-independent formula as the devicemotion fallback), then
+   * the shared tilt pipeline.
+   * @param {number} rawTilt
+   */
+  _onOrientationTilt(rawTilt) {
+    this._useOrientation = true;
+    if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
+    this.motionEnabled = true;
+
+    const now = performance.now();
+    if (this._filteredRawTilt === null) {
+      this._filteredRawTilt = rawTilt;
+      this._lastOrientTime = now;
+    } else {
+      const dtSec = Math.min((now - this._lastOrientTime) / 1000, 0.1);
+      const k = 1 - Math.pow(1 - TUNE.lowPassK, dtSec * 60);
+      this._filteredRawTilt += (rawTilt - this._filteredRawTilt) * k;
+      this._lastOrientTime = now;
+    }
+
+    this._applyTilt(this._filteredRawTilt);
+  }
+
+  // ── Phone remote (#421) ──
+  // A phone on another device steers this InputManager: it sends the same raw
+  // tilt angle this device's own sensors would produce, and its pedal halves.
+  // The tilt pipeline (calibration, drift, curve, speed scaling) runs here.
+
+  /** A tilt sample from a phone remote. @param {number} rawTilt degrees */
+  feedRemoteTilt(rawTilt) {
+    if (!this._remoteTilt) this._motionBeforeRemote = this.motionEnabled;
+    this._remoteTilt = true;
+    this._leanEase = null;   // the phone is back: it steers again
+    this._onOrientationTilt(rawTilt);
+  }
+
+  /**
+   * Pedal state from a phone remote. `tapsL`/`tapsR` are presses since the
+   * last frame, so a tap shorter than a frame still pedals.
+   * @param {boolean} left @param {boolean} right
+   * @param {number} [tapsL] @param {number} [tapsR]
+   */
+  setRemotePedals(left, right, tapsL = 0, tapsR = 0) {
+    if (tapsL > 0) this._leftTapped = true;
+    if (tapsR > 0) this._rightTapped = true;
+    if (left !== !!this._remoteLeft || right !== !!this._remoteRight || tapsL || tapsR) this._markActive();
+    this._remoteLeft = left;
+    this._remoteRight = right;
+  }
+
+  /**
+   * The phone remote's menu pad (#421): while `active`, the phone shows a
+   * D-pad + OK/Back and this InputManager reports a gamepad whose buttons are
+   * the phone's (see mergeRemoteNavPad), so every menu, overlay and the
+   * "tap to start" screen work from the phone with no per-screen code.
+   * Off while riding, so ride-time "is a pad here?" checks are unchanged.
+   * @param {boolean} active @param {number} [nav] NAV bits held right now
+   */
+  setRemoteNav(active, nav = 0) {
+    this._remoteMenu = !!active;
+    this._remoteNav = active ? nav : 0;
+  }
+
+  /** The phone remote went away: release its pedals and its lean. */
+  detachRemote() {
+    this._remoteMenu = false;
+    this._remoteNav = 0;
+    this._remoteLeft = false;
+    this._remoteRight = false;
+    if (!this._remoteTilt) return;
+    this._remoteTilt = false;
+    // #424 · design §3.3: ease the lean back to 0 instead of snapping it, so
+    // a dropped phone doesn't yank the bike upright. The getters fade this out.
+    const lean = this.getMotionLean(), visual = this.getMotionLeanVisual();
+    this._leanEase = (lean || visual) ? { lean, visual, t0: performance.now() } : null;
+    this._filteredRawTilt = null;
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    // Steering falls back to keyboard / pad, unless this device tilts itself.
+    // Motion goes back to what it was before the phone (a gyro pad's own
+    // on/off choice, or this device's tilt).
+    this.motionEnabled = !!this._motionBeforeRemote || this.motionReady;
   }
 
   startTiltCalibration() {
@@ -884,6 +966,9 @@ export class InputManager {
     // applied the DualSense Input Source preference to the cached snapshot
     // and updated this._steamInputActive. _steamInputPrevActive is the prior
     // frame's value so the edge-detect below still fires correctly.
+    // A phone remote steers this seat (#421): it owns the lean, so a gyro
+    // controller on the same seat doesn't fight it for motionLean.
+    if (this._remoteTilt) return;
     const hadSteamInput = this._steamInputPrevActive;
     // Design B applies ONLY when Steam Input has the pad AND WebHID does NOT.
     // A live WebHID fusion for this slot means our driver still opened the Steam
@@ -1167,6 +1252,11 @@ export class InputManager {
    * @returns {Gamepad|null}
    */
   getGamepadState() {
+    const real = this._realGamepadState();
+    return this._remoteMenu ? mergeRemoteNavPad(real, this._remoteNav || 0, !!this._gpSwapAB) : real;
+  }
+
+  _realGamepadState() {
     if (this._slot) {
       const pads = navigator.getGamepads ? navigator.getGamepads() : [];
       const slotPad = this._slot.effectiveGamepad(pads);
@@ -1186,8 +1276,8 @@ export class InputManager {
     // "release" the keyboard to another instance (local MP: P1 on gamepad
     // stops reading keys when P2 is on keyboard).
     const keyDown = this.keyboardActive && !!this.keys[code];
-    if (code === 'ArrowLeft') return keyDown || this.touchLeft || this._leftTapped || this._gpTriggerLeftPressed;
-    if (code === 'ArrowRight') return keyDown || this.touchRight || this._rightTapped || this._gpTriggerRightPressed;
+    if (code === 'ArrowLeft') return keyDown || this.touchLeft || !!this._remoteLeft || this._leftTapped || this._gpTriggerLeftPressed;
+    if (code === 'ArrowRight') return keyDown || this.touchRight || !!this._remoteRight || this._rightTapped || this._gpTriggerRightPressed;
     return keyDown;
   }
 
@@ -1230,6 +1320,7 @@ export class InputManager {
 
   /** Full lean-input reset for tutorial/demo restarts. */
   resetLeanState() {
+    this._leanEase = null;
     this._smoothedLean = 0;
     this._prevLeanRaw = 0;
     this.motionLean = 0;
@@ -1245,7 +1336,16 @@ export class InputManager {
 
 
   getMotionLean() {
-    return this.motionEnabled ? this.motionLean : 0;
+    const live = this.motionEnabled ? this.motionLean : 0;
+    return this._leanEase ? this._eased('lean', live) : live;
+  }
+
+  /** A dropped phone's last lean, fading into whatever steers now. */
+  _eased(key, live) {
+    const e = this._leanEase;
+    const f = 1 - (performance.now() - e.t0) / REMOTE_LEAN_EASE_MS;
+    if (f <= 0) { this._leanEase = null; return live; }
+    return e[key] * f + live * (1 - f);
   }
 
   /**
@@ -1254,7 +1354,8 @@ export class InputManager {
    * doesn't make the geese look stiff. Physics uses getMotionLean().
    */
   getMotionLeanVisual() {
-    return this.motionEnabled ? this.motionLeanVisual : 0;
+    const live = this.motionEnabled ? this.motionLeanVisual : 0;
+    return this._leanEase ? this._eased('visual', live) : live;
   }
 
   /** Stamp this controller as "in use right now". */

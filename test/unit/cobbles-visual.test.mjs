@@ -31,7 +31,11 @@ test('a cobbled stretch puts a mesh on the road', () => {
   assert.equal(scene.children.length, 1);
 });
 
-test('the stones span exactly the stretch, and the width of the road', () => {
+// #404: stones scatter FEATHER_M past each end and cover the whole visible road
+// (±4.2 m; the dirt runs to ±4.5 where the grass starts), not just the middle 5 m.
+const FEATHER_M = 3.5, HALF_WIDTH = 4.2;
+
+test('the stones span the stretch plus its feathered ends, and the whole visible road', () => {
   const cv = new CobblesVisual(fakeScene());
   cv.build(straightRoad, [{ startD: 100, endD: 132 }]);
   const pos = cv.meshes[0].geometry.attributes.position.array;
@@ -41,10 +45,9 @@ test('the stones span exactly the stretch, and the width of the road', () => {
     minX = Math.min(minX, pos[i]); maxX = Math.max(maxX, pos[i]);
     minZ = Math.min(minZ, pos[i + 2]); maxZ = Math.max(maxZ, pos[i + 2]);
   }
-  assert.ok(Math.abs(minZ - 100) < 0.01, `starts at 100, got ${minZ}`);
-  assert.ok(Math.abs(maxZ - 132) < 0.01, `ends at 132, got ${maxZ}`);
-  // Road half width is 2.5 either side of the centre line.
-  assert.ok(Math.abs(minX + 2.5) < 0.01 && Math.abs(maxX - 2.5) < 0.01,
+  assert.ok(Math.abs(minZ - (100 - FEATHER_M)) < 0.01, `starts at ${100 - FEATHER_M}, got ${minZ}`);
+  assert.ok(Math.abs(maxZ - (132 + FEATHER_M)) < 0.01, `ends at ${132 + FEATHER_M}, got ${maxZ}`);
+  assert.ok(Math.abs(minX + HALF_WIDTH) < 0.01 && Math.abs(maxX - HALF_WIDTH) < 0.01,
     `spans the road, got ${minX}..${maxX}`);
 });
 
@@ -63,11 +66,25 @@ test('it follows a curving road rather than cutting the corner', () => {
   const cv = new CobblesVisual(fakeScene());
   cv.build(curved, [{ startD: 0, endD: 32 }]);
   const pos = cv.meshes[0].geometry.attributes.position.array;
-  // Every rung should still be ~5 m wide even though the road is turning.
+  // Every rung should still be the full width even though the road is turning.
   for (let i = 0; i < pos.length; i += 6) {
     const w = Math.hypot(pos[i] - pos[i + 3], pos[i + 2] - pos[i + 5]);
-    assert.ok(Math.abs(w - 5) < 0.05, `rung width ${w.toFixed(3)} should be 5`);
+    assert.ok(Math.abs(w - HALF_WIDTH * 2) < 0.05, `rung width ${w.toFixed(3)} should be ${HALF_WIDTH * 2}`);
   }
+});
+
+test('each stretch gets its own drawn texture, freed on clear', () => {
+  const cv = new CobblesVisual(fakeScene());
+  cv.build(straightRoad, [{ startD: 100, endD: 132 }, { startD: 300, endD: 332 }]);
+  const [a, b] = cv.meshes.map(m => m.material.map);
+  assert.ok(a && b && a !== b, 'two stretches, two textures');
+  let freed = 0;
+  for (const m of cv.meshes) {
+    const map = m.material.map, orig = map.dispose.bind(map);
+    map.dispose = () => { freed++; orig(); };
+  }
+  cv.clear();
+  assert.equal(freed, 2, 'both textures disposed');
 });
 
 test('several stretches in one ride each get their own mesh', () => {

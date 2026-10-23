@@ -72,19 +72,6 @@ export class FrontViewCamera {
       'box-sizing:border-box',
     ].join(';');
 
-    const label = document.createElement('div');
-    label.textContent = 'FRONT VIEW';
-    label.style.cssText = [
-      'position:absolute',
-      'left:8px',
-      'top:6px',
-      'font:600 11px/1 system-ui,sans-serif',
-      'letter-spacing:0.08em',
-      'color:rgba(255,255,255,0.95)',
-      'text-shadow:0 1px 3px rgba(0,0,0,0.8)',
-    ].join(';');
-    frame.appendChild(label);
-
     document.body.appendChild(frame);
     this.frame = frame;
   }
@@ -199,10 +186,13 @@ export class FrontViewCamera {
     this._desiredPos.copy(bike.position);
     this._desiredPos.x += fwd.x * this.frontDist;
     this._desiredPos.z += fwd.z * this.frontDist;
-    this._desiredPos.y += this.height;
+    // Riders taller or shorter than the fused riders model this rig was tuned on
+    // (the goose tandem's geese are ~14% taller at the game's 4.4 m bike length).
+    const s = bike.riderViewScale || 1;
+    this._desiredPos.y += this.height * s;
 
     this._desiredLook.copy(bike.position);
-    this._desiredLook.y += this.lookHeight;
+    this._desiredLook.y += this.lookHeight * s;
 
     if (!this._initialized) {
       this._pos.copy(this._desiredPos);
@@ -254,7 +244,13 @@ export class FrontViewCamera {
     renderer.setScissorTest(true);
     renderer.setScissor(x, y, r.size, r.size);
     renderer.setViewport(x, y, r.size, r.size);
+    // #395 · the main view was drawn just before this, with the sun already
+    // placed on this bike, so its shadow map is still right. Without this,
+    // three.js redraws every shadow caster again for the small corner view.
+    const autoShadows = renderer.shadowMap.autoUpdate;
+    renderer.shadowMap.autoUpdate = false;
     renderer.render(scene, this.camera);
+    renderer.shadowMap.autoUpdate = autoShadows;
 
     // Restore full-screen viewport for the next main render.
     renderer.setScissorTest(false);

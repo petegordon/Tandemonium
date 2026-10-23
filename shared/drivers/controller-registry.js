@@ -110,12 +110,15 @@ export class ControllerRegistry {
    * the broader entry it shares vid:pid with (Switch Pro) sees it.
    *
    * @param {string} idString
-   * @returns {{ driverName: string, protocol: string, hasGyro: boolean, hasTouchpad: boolean, hasAccel: boolean }|null}
+   * @returns {{ entry: object, driverName: string, protocol: string, controllerProfile: string, hasGyro: boolean, hasTouchpad: boolean, hasAccel: boolean }|null}
    */
   static identifyFromGamepadId(idString) {
     if (!idString) return null;
 
     const toResult = (entry) => ({
+      // The full DEVICES entry, for callers that need more than the summary
+      // (device-identity.js reads shortName / glyphFamily / quirks from it).
+      entry,
       driverName: entry.name,
       protocol: entry.protocol,
       // The visualizer profile key. Defaults to protocol so existing

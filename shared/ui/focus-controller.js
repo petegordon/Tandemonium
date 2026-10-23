@@ -1,46 +1,47 @@
+// @ts-check
 // ============================================================
-// FocusController — controller-driven focus engine (nav-core)
+// FocusController — controller-driven focus engine
 // ============================================================
 //
-// A single, framework-agnostic abstraction for "poll gamepad → edge-detect →
-// move a focus index → toggle .gamepad-focus", replacing the copy-pasted
-// polling loops across the lobby, in-game overlays, and the clip preview.
-// See issue #318 (Step 1, @usersfirst/nav-core). In-repo first; this is the
-// seam that later lifts to its own package.
+// Lifted verbatim in behaviour from Tandemonium js/nav/focus-controller.js
+// (#318 step 1) into the kit, so the lab and the game share one engine for
+// "poll gamepad → edge-detect → move focus → toggle .gamepad-focus".
 //
-// Design notes:
-//  - Fed by an InputManager (getGamepadState() + the _gpSwapAB A/B-swap
-//    quirk), NOT a per-call-site navigator.getGamepads(). One input owner.
+// Design notes (unchanged):
+//  - Fed by an input object (`gamepadConnected`, `getGamepadState()`, and the
+//    `_gpSwapAB` A/B-swap quirk) — Tandemonium's InputManager, or the kit's
+//    GamepadInput / ManualInput (inputs.js). One input owner per host.
 //  - Caller-driven: it exposes poll() and the caller decides scheduling (a
-//    self-scheduling RAF loop, or the game loop) — RAF ownership varies across
-//    the existing call sites, so the controller never owns it.
-//  - Linear list semantics (up/left = previous, down/right = next, clamped) —
-//    this matches every flat-list call site. Richer geometries (2D grids,
-//    multi-column, sliders) layer on top in later migrations.
-// ============================================================
+//    self-scheduling RAF loop, or the game loop) — the controller never owns it.
+//  - Linear list semantics (up/left = previous, down/right = next, clamped)
+//    for setItems(); spatial (nearest visible neighbour, or data-nav-* overrides)
+//    for setSpatial(). <uf-flow>.attachFocus() uses the spatial mode with each
+//    <uf-step>'s focusables().
+//
+// Typing: the only additions versus the game copy are JSDoc types so the kit's
+// `tsc --checkJs` accepts it; no logic changed.
 
-const NO_EDGES = { up: false, down: false, left: false, right: false, a: false, b: false };
+/** @typedef {{ up: boolean, down: boolean, left: boolean, right: boolean, a: boolean, b: boolean, axisX: number }} Edges */
+/** @typedef {{ gamepadConnected: boolean, getGamepadState: () => (Gamepad | import('./inputs.js').ManualPad | null), _gpSwapAB?: boolean }} FocusInput */
+/** @typedef {'up'|'down'|'left'|'right'} Dir */
+
+/** @type {Edges} */
+const NO_EDGES = { up: false, down: false, left: false, right: false, a: false, b: false, axisX: 0 };
 
 export class FocusController {
   /**
    * @param {Object} opts
-   * @param {Object} opts.input — InputManager: needs `gamepadConnected`,
+   * @param {FocusInput} opts.input input source: needs `gamepadConnected`,
    *   `getGamepadState()`, and the `_gpSwapAB` quirk flag.
-   * @param {string} [opts.focusClass='gamepad-focus'] — CSS class toggled on
-   *   the focused element.
-   * @param {(el:Element, index:number)=>void} [opts.onConfirm] — A-button
-   *   action. Defaults to `el.click()`.
-   * @param {()=>void} [opts.onBack] — B-button action. No-op if omitted.
-   * @param {(el:Element, index:number)=>void} [opts.onChange] — fired after
-   *   focus moves to a new item.
-   * @param {'both'|'vertical'} [opts.orientation='both'] — which axes move
-   *   focus. 'both' (default): up/down AND left/right step the flat list (for
-   *   narrow button stacks). 'vertical': only up/down move focus, leaving
-   *   left/right for a registered slider.
-   * @param {()=>boolean} [opts.canConfirm] — optional gate; confirm is ignored
-   *   while it returns false (e.g. an overlay's "can't dismiss yet" cooldown).
+   * @param {string} [opts.focusClass] CSS class toggled on the focused element (default 'gamepad-focus').
+   * @param {((el: HTMLElement, index: number) => void) | null} [opts.onConfirm] A-button action. Defaults to `el.click()`.
+   * @param {(() => void) | null} [opts.onBack] B-button action. No-op if omitted.
+   * @param {((el: HTMLElement, index: number) => void) | null} [opts.onChange] fired after focus moves to a new item.
+   * @param {'both'|'vertical'} [opts.orientation] which axes move focus (default 'both'):
+   *   'both' = up/down AND left/right step the flat list; 'vertical' leaves left/right for a registered slider.
+   * @param {(() => boolean) | null} [opts.canConfirm] optional gate; confirm is ignored while it returns false.
    */
-  constructor({ input, focusClass = 'gamepad-focus', onConfirm = null, onBack = null, onChange = null, orientation = 'both', canConfirm = null } = {}) {
+  constructor({ input, focusClass = 'gamepad-focus', onConfirm = null, onBack = null, onChange = null, orientation = 'both', canConfirm = null }) {
     this.input = input;
     this.focusClass = focusClass;
     this._onConfirm = onConfirm;
@@ -48,17 +49,17 @@ export class FocusController {
     this._onChange = onChange;
     this._orientation = orientation;
     this._canConfirm = canConfirm;
-    this.items = [];
+    /** @type {HTMLElement[]} */ this.items = [];
     this.index = 0;
-    this._edge = { ...NO_EDGES };
+    /** @type {Edges} */ this._edge = { ...NO_EDGES };
     // Optional range <input> driven by left/right (analog + d-pad repeat).
-    this._slider = null;
+    /** @type {HTMLInputElement | null} */ this._slider = null;
     this._sliderRepeatAt = 0;
     // Spatial (neighbor) mode: focus tracked by element, directions resolve to
     // the nearest visible focusable on-screen (with optional data-nav-*
     // overrides) instead of index math. Used for 2-D screens like the lobby.
     this._spatial = false;
-    this.focusedEl = null;
+    /** @type {HTMLElement | null} */ this.focusedEl = null;
     // One-confirm-per-press latch (#318): when true, confirm is suppressed
     // until the A button is observed released. Armed on scope entry
     // (setItems/setSpatial) and after every confirm, so a single held press
@@ -74,10 +75,11 @@ export class FocusController {
    * — dissolving column/row/sibling special-casing — or follow an explicit
    * `data-nav-up|down|left|right="targetId"` if present. Hidden items are
    * skipped automatically at move time. Confirm/back behave as in linear mode.
+   * @param {(HTMLElement | null | undefined)[]} items @param {HTMLElement | null} [initialEl]
    */
   setSpatial(items, initialEl = null) {
     this._clearSpatialFocus();
-    this.items = (items || []).filter(Boolean);
+    this.items = /** @type {HTMLElement[]} */ ((items || []).filter(Boolean));
     this._spatial = true;
     this.focusedEl =
       (initialEl && this.items.indexOf(initialEl) >= 0 && this._visible(initialEl)) ? initialEl :
@@ -92,6 +94,7 @@ export class FocusController {
    * Register (or clear) a range <input> that left/right drives instead of
    * moving focus — analog stick is continuous/proportional, d-pad steps with a
    * press-then-repeat cadence. Pass null to detach.
+   * @param {HTMLInputElement | null} el
    */
   setSlider(el) {
     this._slider = el || null;
@@ -104,12 +107,13 @@ export class FocusController {
    * dropped (callers can pass a sparse list of maybe-hidden buttons). Primes
    * edge-state from the current pad so a button already held when the scope
    * opens doesn't immediately fire.
+   * @param {(HTMLElement | null | undefined)[]} items @param {number} [initialIndex]
    */
   setItems(items, initialIndex = 0) {
     this._clearFocus();
     this._clearSpatialFocus();
     this._spatial = false; // linear mode (in case this controller was spatial)
-    this.items = (items || []).filter(Boolean);
+    this.items = /** @type {HTMLElement[]} */ ((items || []).filter(Boolean));
     this.index = this._clamp(initialIndex);
     this._edge = this._readEdges() || { ...NO_EDGES };
     this._awaitConfirmRelease = true; // require A release before first confirm
@@ -122,10 +126,11 @@ export class FocusController {
    * that element is still present+visible (else re-default). For screens whose
    * focusables rebuild while open (e.g. the leaderboard's sub-tabs). Call each
    * frame; cheap. Does NOT re-prime edges (keeps an in-progress press intact).
+   * @param {(HTMLElement | null | undefined)[]} items
    */
   refreshSpatial(items) {
     this._spatial = true;
-    this.items = (items || []).filter(Boolean);
+    this.items = /** @type {HTMLElement[]} */ ((items || []).filter(Boolean));
     if (!this.focusedEl || this.items.indexOf(this.focusedEl) < 0 || !this._visible(this.focusedEl)) {
       if (this.focusedEl) this.focusedEl.classList.remove(this.focusClass);
       this.focusedEl = this.items.find((el) => this._visible(el)) || null;
@@ -156,7 +161,7 @@ export class FocusController {
     const prev = this._edge;
 
     // One-confirm-per-press latch: clear only on an observed A release, then
-    // a fresh A-down edge confirms. `_confirmReady` is the single source of
+    // a fresh A-down edge confirms. `confirmReady` is the single source of
     // truth for "may fire a confirm this frame". (#318)
     if (this._awaitConfirmRelease && !e.a) this._awaitConfirmRelease = false;
     const confirmReady = e.a && !prev.a && !this._awaitConfirmRelease
@@ -188,25 +193,26 @@ export class FocusController {
     this._edge = e;
   }
 
-  /** Drive the registered slider from the horizontal axis (analog + d-pad). */
+  /** Drive the registered slider from the horizontal axis (analog + d-pad). @param {Edges} e @param {Edges} prev */
   _driveSlider(e, prev) {
     const s = this._slider;
+    if (!s) return;
     const min = Number(s.min), max = Number(s.max);
-    const clampS = (v) => Math.min(max, Math.max(min, v));
+    const clampS = (/** @type {number} */ v) => Math.min(max, Math.max(min, v));
     let changed = false;
 
     // Analog stick: continuous proportional movement (~full sweep in ~1s @60Hz).
     if (Math.abs(e.axisX) > 0.12) {
-      s.value = clampS(Number(s.value) + e.axisX * 1.5);
+      s.value = String(clampS(Number(s.value) + e.axisX * 1.5));
       changed = true;
     }
     // D-pad: discrete step on press, then repeat while held (400ms → 80ms).
     const now = performance.now();
-    const step = (dir, firstMag, repMag) => {
+    const step = (/** @type {-1|1} */ dir, /** @type {number} */ firstMag, /** @type {number} */ repMag) => {
       if (!(dir === -1 ? e.left : e.right)) return;
       const held = dir === -1 ? prev.left : prev.right;
-      if (!held) { s.value = clampS(Number(s.value) + dir * firstMag); changed = true; this._sliderRepeatAt = now + 400; }
-      else if (now > this._sliderRepeatAt) { s.value = clampS(Number(s.value) + dir * repMag); changed = true; this._sliderRepeatAt = now + 80; }
+      if (!held) { s.value = String(clampS(Number(s.value) + dir * firstMag)); changed = true; this._sliderRepeatAt = now + 400; }
+      else if (now > this._sliderRepeatAt) { s.value = String(clampS(Number(s.value) + dir * repMag)); changed = true; this._sliderRepeatAt = now + 80; }
     };
     step(-1, 3, 2);
     step(1, 3, 2);
@@ -214,7 +220,7 @@ export class FocusController {
     if (changed) s.dispatchEvent(new Event('input'));
   }
 
-  /** Move focus by `dir` (clamped — no wrap, matching the existing loops). */
+  /** Move focus by `dir` (clamped — no wrap, matching the existing loops). @param {number} dir */
   move(dir) {
     if (!this.items.length) return;
     this._clearFocus();
@@ -254,7 +260,7 @@ export class FocusController {
 
   // ── spatial (neighbor) mode ──
 
-  /** Move focus to the nearest visible neighbor in `dir` (or a data-nav override). */
+  /** Move focus to the nearest visible neighbor in `dir` (or a data-nav override). @param {Dir} dir */
   _moveDir(dir) {
     if (!this.focusedEl) {
       this.focusedEl = this.items.find((el) => this._visible(el)) || null;
@@ -276,7 +282,7 @@ export class FocusController {
     else el.click();
   }
 
-  /** Follow an explicit data-nav-{dir}="targetId" neighbor if it's valid+visible. */
+  /** Follow an explicit data-nav-{dir}="targetId" neighbor if it's valid+visible. @param {HTMLElement} el @param {Dir} dir */
   _explicitNeighbor(el, dir) {
     const key = 'nav' + dir.charAt(0).toUpperCase() + dir.slice(1); // navUp/navDown/...
     const id = el.dataset && el.dataset[key];
@@ -285,11 +291,12 @@ export class FocusController {
     return (target && this.items.indexOf(target) >= 0 && this._visible(target)) ? target : null;
   }
 
-  /** Nearest visible focusable in `dir` by center-to-center geometry. */
+  /** Nearest visible focusable in `dir` by center-to-center geometry. @param {HTMLElement} el @param {Dir} dir */
   _spatialNeighbor(el, dir) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    let best = null, bestScore = Infinity;
+    /** @type {HTMLElement | null} */ let best = null;
+    let bestScore = Infinity;
     for (const other of this.items) {
       if (other === el || !this._visible(other)) continue;
       const rr = other.getBoundingClientRect();
@@ -310,6 +317,7 @@ export class FocusController {
     return best;
   }
 
+  /** @param {HTMLElement | null} el */
   _visible(el) {
     if (!el) return false;
     const r = el.getBoundingClientRect();
@@ -323,11 +331,12 @@ export class FocusController {
 
   // ── internals ──
 
+  /** @param {number} i */
   _clamp(i) {
     return Math.max(0, Math.min(this.items.length - 1, i));
   }
 
-  /** Read the current pad into a normalized edge snapshot, honoring A/B swap. */
+  /** Read the current pad into a normalized edge snapshot, honoring A/B swap. @returns {Edges | null} */
   _readEdges() {
     if (!this.input || !this.input.gamepadConnected) return null;
     const gp = this.input.getGamepadState();

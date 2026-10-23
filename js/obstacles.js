@@ -171,6 +171,9 @@ export class ObstacleManager {
 
   _placeItems() {
     if (this.level.isTutorial) return; // tutorial items placed via replaceItems()
+    // Map Tourist has no road line: its roadPath stub puts every distance at the
+    // start point, so anything placed along the road piled up where you start (#432).
+    if (this.level.isTourist) return;
     // Use a different seed than collectibles so they don't overlap.
     // B-4: a seeded level (Today's Road) derives from its own seed, and a
     // placement salt varies WHERE the items go from run to run without moving

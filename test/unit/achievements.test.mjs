@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 import {
-  ACHIEVEMENTS, RETIRED_IDS, SECTIONS, DEMO_UNEARNABLE, MEDAL_LEVELS,
+  ACHIEVEMENTS, SECTIONS, DEMO_UNEARNABLE, MEDAL_LEVELS,
   emptyStats, migrateStats, applyEvent, RideTracker, versusResult, opensMedalGate,
   STATS_VERSION, stageForDistance,
 } from '../../js/achievement-defs.js';
@@ -34,18 +34,14 @@ const SPEC_FULL_ONLY = [
 
 // Rows per section, in the spec's order.
 const SPEC_SECTIONS = { first: 7, distance: 7, back: 4, medals: 9, clean: 6, speed: 4, collect: 4, sling: 16,
-  coins: 10, daily: 6, together: 7, versus: 6, chaos: 5, explore: 2, retired: 7 };
+  coins: 10, daily: 6, together: 7, versus: 6, chaos: 5, explore: 2, colours: 7 };
 
-test('exactly 100 achievements, unique ids, 93 visible + 7 retired', () => {
+test('exactly 100 achievements, unique ids, 7 bike colours', () => {
   assert.equal(ACHIEVEMENTS.length, 100);
   assert.equal(new Set(ACHIEVEMENTS.map(a => a.id)).size, 100);
-  const visible = ACHIEVEMENTS.filter(a => !RETIRED_IDS.has(a.id));
-  assert.equal(visible.length, 93);
-  assert.equal(RETIRED_IDS.size, 7);
-  for (const id of RETIRED_IDS) {
-    assert.match(id, /^grandma_/);
-    assert.ok(ACHIEVEMENTS.some(a => a.id === id), `${id} must stay defined`);
-  }
+  const colours = ACHIEVEMENTS.filter(a => a.section === 'colours');
+  assert.equal(colours.length, 7);
+  for (const a of colours) assert.match(a.id, /^grandma_/);
 });
 
 test('the 23 existing ids are kept unchanged (77 new)', () => {
@@ -355,20 +351,20 @@ test('manager: an old save keeps everything earned; v1 stats migrate', async () 
   assert.ok(m.getEarnedIds().includes('grandma_red'));
 });
 
-test('manager: badge screen — 93 rows, hidden as ???, retired never, progress', async () => {
+test('manager: badge screen — 100 rows, hidden as ???, colours show, progress', async () => {
   globalThis.localStorage = fakeStorage({ tandemonium_achievements: JSON.stringify([{ id: 'grandma_blue', earnedAt: 1 }]) });
   const { AchievementManager } = await import('../../js/achievements.js');
   const m = new AchievementManager();
   m.demo = false;
   m.record('ride', { mode: 'solo', newRide: true, metres: 50 });
   const defs = m.getAllDefinitions();
-  assert.equal(defs.length, 93);
-  assert.ok(!defs.some(d => RETIRED_IDS.has(d.id)), 'retired never show, even when earned');
+  assert.equal(defs.length, 100);
+  assert.equal(defs.find(d => d.id === 'grandma_blue').earned, true, 'an earned bike colour shows lit');
   const fs10 = defs.find(d => d.id === 'false_start');
   assert.equal(fs10.name, '???');
   assert.equal(fs10.secret, true);
   assert.deepEqual(defs.find(d => d.id === 'days_7').progress, [1, 7]);
-  assert.equal(m.getSections().length, 14);
+  assert.equal(m.getSections().length, 15);
   m.record('crash', { falseStart: true });
   assert.equal(m.getAllDefinitions().find(d => d.id === 'false_start').name, 'False Start');
 });

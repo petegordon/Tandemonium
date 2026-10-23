@@ -2,6 +2,10 @@
 // CONFIG — shared constants
 // ============================================================
 
+import { gooseOutfitPaths, normalizeGooseOutfit, DEFAULT_GOOSE_OUTFIT } from './goose-outfits.js';
+import { normalizeColourway, DEFAULT_COLOURWAY } from './goose-colourways.js';
+import { getCurrentTier } from './quality.js';
+
 const _isElectron = navigator.userAgent.includes('Electron');
 export const isMobile = !_isElectron && (
     /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
@@ -9,10 +13,19 @@ export const isMobile = !_isElectron && (
 export const isAndroid = /Android/i.test(navigator.userAgent);
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-// Riders model: the fused tandem + Victorian goose captain & stoker, skinned so
-// their torsos lean with the balance. See BikeModel rider-lean wiring. The older
-// rider-less frame lives at 'tandem-3d/tandem_bicycle.glb'.
-export const BIKE_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
+// Riders model: the goose tandem — a rigged tandem built to fit the geese (its Pedal /
+// WheelSpin clips drive the cranks and wheels) with the dressed goose captain and stoker
+// seated on its sockets; each goose pedals with the crank and leans by its own rider's input
+// (js/goose-riders.js). Built in petegordon/tandemonium-claude-3d (P4/P5). ?riders=fused
+// brings back the previous fused tandem + geese model for comparison. The rider-less frame
+// lives at 'tandem-3d/tandem_bicycle.glb'.
+export const FUSED_RIDERS_MODEL_PATH = 'tandem-3d/tandem_riders.glb';
+export const GOOSE_BIKE_MODEL_PATH = 'tandem-3d/goose/goose_tandem.glb';
+// The riders on it come from the "Goose Outfits" setting (js/goose-outfits.js).
+export const GOOSE_RIDER_PATHS = gooseOutfitPaths(DEFAULT_GOOSE_OUTFIT);
+const _ridersParam = (typeof location !== 'undefined')
+  ? new URLSearchParams(location.search).get('riders') : null;
+export const BIKE_MODEL_PATH = _ridersParam === 'fused' ? FUSED_RIDERS_MODEL_PATH : GOOSE_BIKE_MODEL_PATH;
 
 // The bike chooser / lobby preview keeps the original recolorable frame so the
 // color presets still take effect there. The in-game bike uses the riders model
@@ -27,13 +40,61 @@ export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
  * and the PBR lighting made phone rides lag badly (issue #390). An explicit
  * 'on' / 'off' from Options always wins. Read at boot (see Game constructor).
  */
+/**
+ * "Show Solo" setting — when on, a solo ride (one player) shows only the captain
+ * goose on the goose tandem; co-op, local and versus always show both. Off by
+ * default. Cached by the game; toggling in Options applies on the next frame.
+ */
+export function getShowSolo() {
+  try { return localStorage.getItem('tandemonium_show_solo') === 'on'; } catch (e) { return false; }
+}
+
+/**
+ * "Goose Outfits" setting — which dressed pair rides the goose tandem: 'victorian'
+ * (the default), 'cyclists', 'fancy' or 'georgian' (js/goose-outfits.js).
+ * ?outfit=<key> overrides the saved choice (testing). Applies immediately.
+ */
+export function getGooseOutfit() {
+  try {
+    const q = (typeof location !== 'undefined') ? new URLSearchParams(location.search).get('outfit') : null;
+    if (q) return normalizeGooseOutfit(q);
+    return normalizeGooseOutfit(localStorage.getItem('tandemonium_goose_outfit'));
+  } catch (e) { return DEFAULT_GOOSE_OUTFIT; }
+}
+
+/**
+ * "Goose Colours" setting — a colourway per Goose Outfits pair ('default' = the outfit's own
+ * colours; js/goose-colourways.js), saved as {outfit: colourway}. Applies immediately.
+ */
+export function getGooseColourway(outfit) {
+  try {
+    const all = JSON.parse(localStorage.getItem('tandemonium_goose_colours') || '{}');
+    return normalizeColourway(outfit, all && all[outfit]);
+  } catch (e) { return DEFAULT_COLOURWAY; }
+}
+
+export function setGooseColourway(outfit, key) {
+  try {
+    const all = JSON.parse(localStorage.getItem('tandemonium_goose_colours') || '{}') || {};
+    all[outfit] = normalizeColourway(outfit, key);
+    localStorage.setItem('tandemonium_goose_colours', JSON.stringify(all));
+  } catch (e) {}
+}
+
+/** The {Captain, Stoker} rider GLBs of the current Goose Outfits choice. */
+export function getGooseRiderPaths() {
+  return gooseOutfitPaths(getGooseOutfit());
+}
+
 export function getShowRiders() {
   try {
     const pref = localStorage.getItem('tandemonium_show_riders');
     if (pref === 'on') return true;
     if (pref === 'off') return false;
   } catch (e) {}
-  return !isMobile;
+  // Default: on for desktop, off on phones — and off at the Low quality
+  // tier, where the riders' textures are most of the graphics memory.
+  return !isMobile && getCurrentTier() !== 'low';
 }
 
 /**
@@ -399,10 +460,29 @@ export function applySteeringFeel(feel) {
   TUNE.gyroResponseCurve = Math.min(2.0, Math.max(1.0, TUNING_BASE.gyroResponseCurve + rcShift));
 }
 
+// #430: the player's Steering feel choice, kept on its own so it survives
+// without a gyro calibration save, a switch between phone and controller, and
+// Recalibrate (which deletes the calibration save).
+const STEERING_FEEL_KEY = 'tandemonium_steering_feel';
+
+/** The saved Steering feel (0..1), or null when the player never chose one. */
+export function loadSteeringFeelPref() {
+  try {
+    const v = Number(localStorage.getItem(STEERING_FEEL_KEY));
+    return localStorage.getItem(STEERING_FEEL_KEY) != null && Number.isFinite(v)
+      ? Math.min(1, Math.max(0, v)) : null;
+  } catch { return null; }
+}
+
+/** Remember the player's Steering feel (0..1). */
+export function saveSteeringFeelPref(feel) {
+  try { localStorage.setItem(STEERING_FEEL_KEY, String(Math.round(feel * 100) / 100)); } catch {}
+}
+
 // #399: the default feel has to shape the defaults, not just the slider. With
 // nothing saved (no tutorial yet) this is what a first-time player rides with;
-// a saved preference re-applies over it in Game._loadSavedTuning.
-applySteeringFeel(TUNE.steeringFeel);
+// a saved preference (#430) re-applies over it here and in Game._loadSavedTuning.
+applySteeringFeel(loadSteeringFeelPref() ?? TUNE.steeringFeel);
 
 /**
  * Gamepad left-stick X → lean input (#399). Inside the dead zone → 0; past it

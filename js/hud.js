@@ -1,3 +1,4 @@
+// @ts-check
 // ============================================================
 // HUD — on-screen display
 // ============================================================
@@ -6,6 +7,16 @@ import { isMobile } from './config.js';
 import { formatDelta } from './records.js';
 import { LOOKAHEAD_M } from './lookahead.js';
 import { pingLabel } from './sync-ping.js';
+import { UfControllerGlyph, resolveGlyph } from '../shared/ui/elements/uf-controller-glyph.js';
+
+/** #428 · 13: name P1's shoulder buttons as printed on their pad (L1/R1 on
+ *  PlayStation, L/R and ZL/ZR on Switch) instead of always Xbox's LB/RB.
+ *  @param {string} [family] glyph family; defaults to P1's (set by the lobby) */
+export function pedalHint(family = UfControllerGlyph.getDefault().family) {
+  const fam = /** @type {any} */ (family === 'keyboard' ? 'generic' : family);
+  const t = (/** @type {any} */ b) => resolveGlyph(b, fam).text;
+  return `Pedal! Alternate ${t('lb')}/${t('rb')} or ${t('lt')}/${t('rt')}`;
+}
 
 export class HUD {
   constructor(input) {
@@ -22,6 +33,8 @@ export class HUD {
     this.statusEl = document.getElementById('status');
     this.crashOverlay = document.getElementById('crash-overlay');
     this.crashFlash = 0;
+    // Set by js/slingshot-mode.js: no pedal prompts, and a crash ends the run.
+    this.suppressRidePrompts = false;
 
     // Partner pedal indicators. The YOU / BIKE / PARTNER lean gauges that used
     // to sit beside them were removed from the HUD entirely — see index.html.
@@ -557,7 +570,7 @@ export class HUD {
       this.countdownOverlay.classList.add('visible');
       if (secs !== this._lastCountdownSec) {
         this._lastCountdownSec = secs;
-        this.countdownNumber.textContent = secs;
+        this.countdownNumber.textContent = String(secs);
         this.countdownNumber.className = 'tick-' + secs;
         // Re-trigger animation
         this.countdownNumber.style.animation = 'none';
@@ -578,6 +591,21 @@ export class HUD {
     this._lastCountdownSec = -1;
     this.elapsedEl.textContent = '';
     this._prevElapsedText = '';
+    // Every ride-end path (finish, game over, quit, lobby, tutorial, Slingshot)
+    // calls hideTimer, so the boost ribbon and centre glow are cleared here too:
+    // update() stops running when the ride ends, so a ride that ended mid-boost
+    // left BOOST! on screen over the lobby (#431).
+    this.clearSpeedSignals();
+  }
+
+  /** Hide the BOOST! ribbon and the centre-strip glow (#431). */
+  clearSpeedSignals() {
+    const boostEl = this._boostEl || (this._boostEl = document.getElementById('boost-ribbon'));
+    const glowEl = this._glowEl || (this._glowEl = document.getElementById('center-strip-glow'));
+    if (boostEl) boostEl.classList.remove('show');
+    if (glowEl) glowEl.classList.remove('show');
+    this._prevBoosting = false;
+    this._prevOnStrip = false;
   }
 
   showCollectibles(level, total) {
@@ -628,7 +656,7 @@ export class HUD {
     // Speed number + color coding (skip DOM write when unchanged)
     if (kmh !== this._prevKmh) {
       this._prevKmh = kmh;
-      this.speedValueEl.textContent = kmh;
+      this.speedValueEl.textContent = String(kmh);
       const pct = Math.min(100, (kmh / maxKmh) * 100);
       this.speedBarFill.style.width = pct + '%';
     }
@@ -730,7 +758,7 @@ export class HUD {
       statusColor = '#ff4444';
     } else if (bike.speed < 0.3 && bike.distanceTraveled > 0.5) {
       statusText = isMobile ? 'Tap pedals to ride!' :
-        (input.gamepadConnected ? 'Pedal! Alternate LB/RB or LT/RT' : 'Pedal! Alternate \u2190 \u2192');
+        (input.gamepadConnected ? pedalHint() : 'Pedal! Alternate \u2190 \u2192');
       statusColor = '#ffdd44';
     }
     if (statusText !== this._prevStatusText) {
@@ -783,6 +811,8 @@ export class HUD {
       this.crashFlash -= dt * 1.0;
       if (this.crashFlash <= 0) {
         this.crashFlash = 0;
+    // Set by js/slingshot-mode.js: no pedal prompts, and a crash ends the run.
+    this.suppressRidePrompts = false;
         this._setCrashVignette(0);
       } else {
         this._setCrashVignette(this.crashFlash);

@@ -23,6 +23,7 @@ import {
   ReorientationPlugin,
 } from '3d-tiles-renderer/plugins';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { dracoDecoderPath } from './draco-path.js';
 import { getTouristOrigin, TOURIST_TUNE, TOURIST_MAX_RADIUS_M } from './tourist-config.js';
 import { isMobile } from './config.js';
 
@@ -61,9 +62,9 @@ export class TouristWorld {
     this.scene.add(this._sun);
 
     // Google Photorealistic Tiles ship Draco-compressed glTF; the decoder is
-    // required or tiles fail to parse.
+    // required or tiles fail to parse. Local on desktop, CDN on web (#353).
     const draco = new DRACOLoader();
-    draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/libs/draco/gltf/');
+    draco.setDecoderPath(dracoDecoderPath('libs/draco/gltf/'));
     this._draco = draco;
 
     const tiles = new TilesRenderer();

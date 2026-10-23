@@ -7,7 +7,7 @@
 //
 // 100 achievements in the 15 sections of issue #401:
 //   - 23 existing ids, kept unchanged (anything already earned, and its Steam
-//     id, carries over) — 16 visible + the 7 retired per-bike-colour ones;
+//     id, carries over) — including the 7 per-bike-colour Grandma's ones;
 //   - 77 new ones.
 //
 // A condition is (s, L) => boolean:
@@ -45,7 +45,7 @@ export const SECTIONS = [
   { id: 'versus',   title: 'Versus' },
   { id: 'chaos',    title: 'Chaos' },
   { id: 'explore',  title: 'Exploring' },
-  { id: 'retired',  title: 'Retired bike colours' },
+  { id: 'colours',  title: "Grandma's in every colour" },
 ];
 
 const MEDAL_RANK = { bronze: 1, silver: 2, gold: 3 };
@@ -227,27 +227,17 @@ export const ACHIEVEMENTS = [
   { id: 'distance_between_us', section: 'explore', name: 'The Distance Between Us', icon: '📍', desc: 'Finish a Tourist ride', condition: s => s.touristFinished === true, demo: false, full: 'tourist' },
   { id: 'grand_tour',     section: 'explore', name: 'Grand Tour',        icon: '🗺️', desc: 'Ride 5 km in total in Tourist',       ...count('touristDistance', 5000), unit: 'm', demo: false, full: 'tourist' },
 
-  // ── 15. Retired bike colours (F-1) ───────────────────────
-  // Hidden from the lobby (RETIRED_IDS) but still defined, so anyone who
-  // earned one keeps it and Steam still recognises it.
-  { id: 'grandma_default', section: 'retired', name: "Grandma's Classic",   icon: '🚲', desc: "Finish Grandma's on the default bike", condition: grandmaBike('default') },
-  { id: 'grandma_orange',  section: 'retired', name: 'Marmalade Delivery',  icon: '🍊', desc: "Finish Grandma's on the orange bike",  condition: grandmaBike('bike_orange') },
-  { id: 'grandma_magenta', section: 'retired', name: 'Berry Special Visit', icon: '🫐', desc: "Finish Grandma's on the magenta bike", condition: grandmaBike('bike_magenta') },
-  { id: 'grandma_red',     section: 'retired', name: 'Cherry on Top',       icon: '🍒', desc: "Finish Grandma's on the red bike",     condition: grandmaBike('bike_red') },
-  { id: 'grandma_blue',    section: 'retired', name: "Ocean to Grandma's",  icon: '🌊', desc: "Finish Grandma's on the blue bike",    condition: grandmaBike('bike_blue') },
-  { id: 'grandma_green',   section: 'retired', name: 'Jungle Express',      icon: '🌿', desc: "Finish Grandma's on the green bike",   condition: grandmaBike('bike_green') },
-  { id: 'grandma_yellow',  section: 'retired', name: 'Banana Delivery',     icon: '🍌', desc: "Finish Grandma's on the yellow bike",  condition: grandmaBike('bike_yellow') },
+  // ── 15. Grandma's in every colour ────────────────────────
+  // F-1 hid these (riding the same 250 m seven times); restored 2026-10-20
+  // so all 100 show: a short, gentle goal and a ready-made reel series.
+  { id: 'grandma_default', section: 'colours', name: "Grandma's Classic",   icon: '🚲', desc: "Finish Grandma's on the default bike", condition: grandmaBike('default') },
+  { id: 'grandma_orange',  section: 'colours', name: 'Marmalade Delivery',  icon: '🍊', desc: "Finish Grandma's on the orange bike",  condition: grandmaBike('bike_orange') },
+  { id: 'grandma_magenta', section: 'colours', name: 'Berry Special Visit', icon: '🫐', desc: "Finish Grandma's on the magenta bike", condition: grandmaBike('bike_magenta') },
+  { id: 'grandma_red',     section: 'colours', name: 'Cherry on Top',       icon: '🍒', desc: "Finish Grandma's on the red bike",     condition: grandmaBike('bike_red') },
+  { id: 'grandma_blue',    section: 'colours', name: "Ocean to Grandma's",  icon: '🌊', desc: "Finish Grandma's on the blue bike",    condition: grandmaBike('bike_blue') },
+  { id: 'grandma_green',   section: 'colours', name: 'Jungle Express',      icon: '🌿', desc: "Finish Grandma's on the green bike",   condition: grandmaBike('bike_green') },
+  { id: 'grandma_yellow',  section: 'colours', name: 'Banana Delivery',     icon: '🍌', desc: "Finish Grandma's on the yellow bike",  condition: grandmaBike('bike_yellow') },
 ].map(a => ({ demo: true, hidden: false, ...a }));
-
-/**
- * F-1 · the seven per-bike-colour Grandma's achievements are retired from the
- * VISIBLE list. They rewarded riding the same 250 m seven times to see seven
- * colours. The ids stay defined (earned ones are kept; Steam knows them).
- */
-export const RETIRED_IDS = new Set([
-  'grandma_default', 'grandma_orange', 'grandma_magenta', 'grandma_red',
-  'grandma_blue', 'grandma_green', 'grandma_yellow'
-]);
 
 /** The ids the demo never awards (the spec's Demo column "—"). */
 export const DEMO_UNEARNABLE = ACHIEVEMENTS.filter(a => !a.demo).map(a => a.id);

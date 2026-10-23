@@ -41,7 +41,7 @@ async function open() {
 async function rideDaily(page, mode) {
   await page.evaluate(() => {
     document.getElementById('tap-to-start')?.click();
-    (document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button')).find(x=>/solo/i.test(x.textContent)))?.click();
+    (document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent)))?.click();
   });
   await sleep(600);
   await page.evaluate(() => document.querySelector('.level-card[data-level-id="daily"]')?.click());

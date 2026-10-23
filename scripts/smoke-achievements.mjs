@@ -66,7 +66,7 @@ await page.evaluate(() => {
   const d = Array.from(document.querySelectorAll('.difficulty-btn')).find(x => x.dataset.difficulty === 'chill'); d && d.click();
 });
 await new Promise(r => setTimeout(r, 300));
-await clickText('button', /start ride/);
+await clickText('button, uf-button', /start ride/);
 await waitState('playing');
 check((await earned()).length === 0, 'nothing is earned before the ride does anything');
 
@@ -104,13 +104,13 @@ const screen = await page.evaluate(() => {
     hidden: item('false_start')?.querySelector('.lb-ach-name')?.textContent,
     hiddenIcon: item('false_start')?.querySelector('.lb-ach-icon')?.textContent,
     earned: item('first_finish')?.classList.contains('earned'),
-    retired: !!item('grandma_default'),
+    colour: !!item('grandma_default'),
     progress: item('rides_10')?.querySelector('.lb-ach-progress')?.textContent || '',
   };
 });
-check(screen.sections === 14 && screen.rows === 93, `the badge screen has 14 sections, 93 badges ("${screen.count}")`);
+check(screen.sections === 15 && screen.rows === 100, `the badge screen has 15 sections, 100 badges ("${screen.count}")`);
 check(screen.hidden === '???' && screen.hiddenIcon === '❔', `a hidden achievement shows as ??? until earned (${screen.hidden})`);
-check(screen.earned && !screen.retired, 'earned ones light up; retired colours never show');
+check(screen.earned && screen.colour, 'earned ones light up; the bike colours show');
 check(screen.progress === '1/10', `counters show their progress (Regular Rider "${screen.progress}")`);
 await shot('2-badges');
 
@@ -119,7 +119,7 @@ await page.evaluate(() => document.getElementById('btn-solo').click());
 await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card-slingshot'), { timeout: 20000 });
 await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
 await waitState('slingGarage', 20000);
-await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button')).find(b => /launch/i.test(b.textContent)).click());
+await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).find(b => /launch/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
 check(!(await earned()).includes('sling_first'), 'Fire! is not earned by aiming');
 await page.evaluate(() => { const g = window._game; g._slingRun.pull = 0.6; g._slingGo(); });

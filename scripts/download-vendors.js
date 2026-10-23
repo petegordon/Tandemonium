@@ -9,10 +9,7 @@ const path = require('path');
 const VENDOR_DIR = path.join(__dirname, '..', 'vendor');
 
 const DOWNLOADS = [
-  {
-    url: 'https://unpkg.com/qrcode-generator@1.4.4/qrcode.js',
-    dest: 'qrcode-generator.js',
-  },
+  // (qrcode-generator is vendored in the repo at shared/ui/third_party, #424.)
   {
     url: 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',
     dest: 'peerjs.min.js',

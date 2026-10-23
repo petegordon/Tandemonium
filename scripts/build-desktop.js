@@ -19,14 +19,11 @@ const DEST = path.join(DEST_DIR, 'index.html');
 let html = fs.readFileSync(SRC, 'utf-8');
 
 // 1. Replace CDN script tags with local vendor paths
-html = html.replace(
-  /<script src="https:\/\/unpkg\.com\/qrcode-generator@1\.4\.4\/qrcode\.js"><\/script>/,
-  '<script src="../vendor/qrcode-generator.js"></script>'
-);
-html = html.replace(
-  /<script src="https:\/\/unpkg\.com\/peerjs@1\.5\.4\/dist\/peerjs\.min\.js"><\/script>/,
-  '<script src="../vendor/peerjs.min.js"></script>'
-);
+// (The QR generator is an ES import of shared/ui/third_party now, #424.)
+// The tag carries integrity/crossorigin attributes, so match any attributes.
+const peerTag = /<script src="https:\/\/unpkg\.com\/peerjs@1\.5\.4\/dist\/peerjs\.min\.js"[^>]*><\/script>/;
+if (!peerTag.test(html)) throw new Error('build-desktop: PeerJS <script> tag not found in index.html');
+html = html.replace(peerTag, '<script src="../vendor/peerjs.min.js"></script>');
 
 // 2. Replace importmap CDN URLs with local node_modules paths
 html = html.replace(

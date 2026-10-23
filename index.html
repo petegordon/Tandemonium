@@ -5,12 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<!-- @usersfirst/ui design tokens (vendored from the controller lab: npm run sync-ui). Loaded before the page CSS so every var(--uf-*) below resolves. -->
+<link rel="stylesheet" href="shared/ui/tokens.css">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;
     background: #000; touch-action: none;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     -webkit-user-select: none; user-select: none;
   }
   canvas { display: block; width: 100%; height: 100%; }
@@ -214,7 +216,7 @@
   }
   .pair-panel-title { font-size: 13px; font-weight: 800; color: #fff; }
   .pair-panel-line { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 2px; }
-  .pair-panel-best { margin-top: 4px; font-size: 12px; font-weight: 800; color: #ffd23f; }
+  .pair-panel-best { margin-top: 4px; font-size: 12px; font-weight: 800; color: var(--uf-color-accent-2); }
   /* E-6 · the two-address form. */
   #tourist-form {
     display: flex;
@@ -255,7 +257,7 @@
     color: rgba(255,255,255,0.8);
     text-align: center;
   }
-  .tourist-preview strong { color: #ffd23f; }
+  .tourist-preview strong { color: var(--uf-color-accent-2); }
   /* E-7 · the distance, on screen for the whole ride. */
   #tourist-goal {
     position: fixed;
@@ -274,7 +276,7 @@
     z-index: 55;
   }
   #tourist-goal.visible { display: block; }
-  #tourist-goal .tourist-togo { color: #ffd23f; }
+  #tourist-goal .tourist-togo { color: var(--uf-color-accent-2); }
   /* Slingshot mode · in-ride strip, garage and results. */
   #sling-hud {
     position: fixed; top: 92px; left: 50%; transform: translateX(-50%);
@@ -284,12 +286,12 @@
     pointer-events: none; z-index: 55;
   }
   #sling-hud.visible { display: flex; }
-  #sling-hud .sling-coins { color: #ffd23f; font-size: 17px; display: inline-block; }
+  #sling-hud .sling-coins { color: var(--uf-color-accent-2); font-size: 17px; display: inline-block; }
   #sling-hud .sling-coins.pop { animation: sling-coin-pop 0.45s ease-out; }
-  @keyframes sling-coin-pop { 0% { transform: scale(1); } 35% { transform: scale(1.7); text-shadow: 0 0 12px #ffd23f; } 100% { transform: scale(1); } }
+  @keyframes sling-coin-pop { 0% { transform: scale(1); } 35% { transform: scale(1.7); text-shadow: 0 0 12px var(--uf-color-accent-2); } 100% { transform: scale(1); } }
   .sling-coin-float {
     position: fixed; left: 50%; top: 118px; transform: translateX(-50%);
-    color: #ffd23f; font-weight: 900; font-size: 20px; pointer-events: none; z-index: 57;
+    color: var(--uf-color-accent-2); font-weight: 900; font-size: 20px; pointer-events: none; z-index: 57;
     text-shadow: 0 0 10px rgba(255,210,63,0.8), 0 2px 4px rgba(0,0,0,0.6);
     animation: sling-coin-float 0.9s ease-out forwards;
   }
@@ -310,7 +312,7 @@
   }
   #sling-pull .sling-hint { transition: opacity 0.6s; }
   #sling-pull.pulling .sling-hint { opacity: 0; }
-  #sling-pull .sling-predict { margin-top: 4px; font-size: 13px; color: #ffd23f; min-height: 1em; }
+  #sling-pull .sling-predict { margin-top: 4px; font-size: 13px; color: var(--uf-color-accent-2); min-height: 1em; }
   #sling-pull.learned .sling-hint { opacity: 0; height: 0; overflow: hidden; }
   #sling-toast {
     position: fixed; left: 50%; top: 40%; transform: translateX(-50%);
@@ -322,7 +324,7 @@
   #sling-finger {
     position: fixed; transform: translate(-50%, -100%); display: none;
     padding: 3px 9px; border-radius: 999px; background: rgba(0,0,0,0.55);
-    color: #ffd23f; font-weight: 900; font-size: 14px; white-space: nowrap;
+    color: var(--uf-color-accent-2); font-weight: 900; font-size: 14px; white-space: nowrap;
     pointer-events: none; z-index: 58;
   }
   #sling-finger.visible { display: block; }
@@ -335,7 +337,7 @@
   @keyframes sling-tally-in { from { opacity: 0; transform: translate(-50%, 16px) scale(0.9); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
   #sling-tally .tally-label { font-size: 20px; font-weight: 900; color: #ff8a3c; letter-spacing: 2px; }
   #sling-tally .tally-dist { font-size: 64px; font-weight: 900; line-height: 1; }
-  #sling-tally .tally-coins { font-size: 34px; font-weight: 900; color: #ffd23f; opacity: 0; transition: opacity 0.2s; }
+  #sling-tally .tally-coins { font-size: 34px; font-weight: 900; color: var(--uf-color-accent-2); opacity: 0; transition: opacity 0.2s; }
   #sling-tally .tally-coins.shown { opacity: 1; }
   #sling-tally .tally-skip { margin-top: 10px; font-size: 12px; opacity: 0.7; }
   /* Preview builds only (js/build-badge.js): which commit is on screen. */
@@ -347,49 +349,38 @@
   }
   #build-stale {
     position: fixed; left: 50%; top: calc(8px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
-    padding: 8px 14px; border: 0; border-radius: 999px; background: #ffd23f; color: #000;
+    padding: 8px 14px; border: 0; border-radius: 999px; background: var(--uf-color-accent-2); color: #000;
     font-weight: 800; font-size: 13px; z-index: 10000; cursor: pointer;
   }
   #sling-pull .bar { height: 14px; margin-top: 6px; border-radius: 7px; background: rgba(0,0,0,0.5); overflow: hidden; border: 2px solid rgba(255,255,255,0.7); }
-  #sling-pull .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #ffd23f, #ff5a3c); }
+  #sling-pull .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--uf-color-accent-2), #ff5a3c); }
   #sling-garage, #sling-results {
     position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none;
     flex-direction: column; align-items: center; justify-content: flex-start;
     z-index: 60; padding: 16px; overflow-y: auto; color: #fff; text-align: center;
   }
   #sling-garage.visible, #sling-results.visible { display: flex; }
-  #sling-garage h2, #sling-results h2 { font-size: 24px; margin: 6px 0 2px; color: #ffd23f; }
-  .sling-wallet { font-size: 18px; font-weight: 800; color: #ffd23f; margin-bottom: 4px; }
+  #sling-garage h2, #sling-results h2 { font-size: 24px; margin: 6px 0 2px; color: var(--uf-color-accent-2); }
+  .sling-wallet { font-size: 18px; font-weight: 800; color: var(--uf-color-accent-2); margin-bottom: 4px; }
   .sling-sub { font-size: 13px; color: rgba(255,255,255,0.75); margin-bottom: 10px; max-width: 420px; }
   .sling-list { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 420px; margin-bottom: 12px; }
-  .sling-up {
-    display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
-    padding: 8px 10px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.06); color: #fff; font: inherit; cursor: pointer;
-  }
-  .sling-up:focus, .sling-up.gamepad-focus { outline: none; border-color: #ffd23f; }
-  .sling-up[disabled] { opacity: 0.45; cursor: default; }
-  .sling-up .ico { font-size: 22px; }
-  .sling-up .txt { flex: 1; }
-  .sling-up .txt b { display: block; font-size: 14px; }
-  .sling-up .txt small { font-size: 11px; color: rgba(255,255,255,0.65); }
-  .sling-up .pips { font-size: 10px; letter-spacing: 1px; color: #ffd23f; }
-  .sling-up .price { font-weight: 800; color: #ffd23f; white-space: nowrap; }
+  /* upgrade rows are kit <uf-card layout="row"> (#428); only the list width lives here */
   .sling-rows { width: 100%; max-width: 300px; margin: 8px 0 12px; }
   .sling-rows .row { display: flex; justify-content: space-between; font-size: 14px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
-  .sling-rows .row.total { font-weight: 800; color: #ffd23f; border-bottom: none; font-size: 16px; }
+  .sling-rows .row.total { font-weight: 800; color: var(--uf-color-accent-2); border-bottom: none; font-size: 16px; }
   .sling-big { font-size: 40px; font-weight: 800; }
-  .sling-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #44ff66; color: #000; font-size: 12px; font-weight: 800; margin: 2px; }
+  .sling-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; background: var(--uf-color-accent); color: #000; font-size: 12px; font-weight: 800; margin: 2px; }
   .sling-buttons { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 300px; margin: 6px 0 12px; }
   /* #400 D4/D5 · one garage for every mode, and every ride's coin tally */
-  .sling-lock { font-size: 14px; font-weight: 700; color: #ffd23f; padding: 6px 10px; border: 1px dashed rgba(255,210,63,0.6); border-radius: 8px; }
-  .sling-up .price small.gain { display: block; font-size: 11px; font-weight: 700; color: #9dff9d; text-align: right; }
-  .sling-rebuilds { background: #ffd23f; vertical-align: middle; }
+  .sling-lock { font-size: 14px; font-weight: 700; color: var(--uf-color-accent-2); padding: 6px 10px; border: 1px dashed rgba(255,210,63,0.6); border-radius: 8px; }
+  .sling-rebuilds { background: var(--uf-color-accent-2); vertical-align: middle; }
   .ride-coins { width: 100%; max-width: 320px; margin: 8px auto 4px; text-align: center; }
-  .ride-coins-head { font-size: 22px; font-weight: 900; color: #ffd23f; }
+  .ride-coins-head { font-size: 22px; font-weight: 900; color: var(--uf-color-accent-2); }
   .ride-coins .sling-rows { margin: 4px auto 6px; }
+  /* the end screens set no text colour: the rows fell back to black on the dark overlay (blank lines) */
+  .ride-coins .sling-rows .row:not(.total) { color: rgba(255,255,255,0.88); }
   .ride-coins-wallet { font-size: 13px; color: rgba(255,255,255,0.75); }
-  .lobby-wallet { color: #ffd23f; font-weight: 800; margin-left: 6px; }
+  .lobby-wallet { color: var(--uf-color-accent-2); font-weight: 800; margin-left: 6px; }
   /* E-2 · the three-second warning. Loud enough to act on, gone once it has. */
   #disruption-banner {
     position: fixed;
@@ -399,7 +390,7 @@
     padding: 6px 16px;
     border-radius: 999px;
     background: rgba(0,0,0,0.6);
-    color: #ffd23f;
+    color: var(--uf-color-accent-2);
     font-size: clamp(14px, 3.6vw, 20px);
     font-weight: 800;
     letter-spacing: 0.5px;
@@ -446,7 +437,7 @@
     font-size: clamp(28px, 8vw, 60px);
     font-weight: 900;
     letter-spacing: 2px;
-    color: #ffd23f;
+    color: var(--uf-color-accent-2);
     text-shadow: 0 3px 16px rgba(0,0,0,0.65);
     pointer-events: none;
     opacity: 0;
@@ -605,8 +596,8 @@
   }
   #daily-mode-box h2 { margin: 0 0 4px; font-size: 20px; color: #fff; }
   #daily-mode-sub { margin: 0 0 16px; font-size: 12px; color: rgba(255,255,255,0.6); }
-  #daily-mode-box .lobby-btn { width: 100%; margin-top: 8px; }
-  #daily-mode-box .lobby-btn:disabled { opacity: 0.45; cursor: default; }
+  #daily-mode-box uf-button { width: 100%; margin-top: 8px; }
+  #daily-mode-box uf-button[disabled] { opacity: 0.45; cursor: default; }
   .daily-mode-hint {
     display: block;
     margin-top: 3px;
@@ -634,10 +625,10 @@
      them so they read as "what next", not "play again". */
   .cta-btn {
     margin-top: 6px;
-    background: rgba(103, 193, 245, 0.16);
-    border-color: rgba(103, 193, 245, 0.5);
-    color: #bfe6ff;
-    font-size: 13px;
+    background: var(--uf-color-info-soft);
+    border-color: var(--uf-color-info-line);
+    color: var(--uf-color-info-fg);
+    font-size: var(--uf-size-sm);
   }
   .cta-btn:hover { background: rgba(103, 193, 245, 0.28); }
   /* B-4 · the two speed sources the game never showed you. */
@@ -648,7 +639,7 @@
     transform: translateX(-50%);
     padding: 5px 16px;
     border-radius: 999px;
-    background: linear-gradient(90deg, #ffd23f, #ff8a3f);
+    background: linear-gradient(90deg, var(--uf-color-accent-2), #ff8a3f);
     color: #201a00;
     font-size: 15px;
     font-weight: 900;
@@ -727,7 +718,7 @@
     background: rgba(255,255,255,0.16);
   }
   #coach-steer-line { font-size: 12px; color: rgba(255,255,255,0.75); }
-  #coach-boost-line { font-size: 12px; color: #ffd23f; }
+  #coach-boost-line { font-size: 12px; color: var(--uf-color-accent-2); }
   #coach-dots { display: flex; gap: 6px; }
   .coach-dot {
     width: 10px;
@@ -767,14 +758,14 @@
     min-width: 4ch;
     font-size: 16px;
     font-weight: 700;
-    color: #44ff66;
+    color: var(--uf-color-accent);
     font-variant-numeric: tabular-nums;
     line-height: 1;
     transition: color 0.2s;
   }
   #segment-timer.normal { color: #fff; }
   #segment-timer.warning { color: #ffd700; }
-  #segment-timer.danger { color: #ff4444; animation: timerPulse 0.5s infinite; }
+  #segment-timer.danger { color: var(--uf-color-danger); animation: timerPulse 0.5s infinite; }
   @keyframes timerPulse { 50% { opacity: 0.5; } }
 
   /* Narrow phones: trim the strip rather than let it wrap for ordinary
@@ -818,12 +809,12 @@
   }
   #countdown-overlay.visible { display: block; }
   #countdown-number {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-weight: 900;
     font-size: 120px;
     line-height: 1;
     text-align: center;
-    color: #ff4444;
+    color: var(--uf-color-danger);
     text-shadow:
       0 0 30px rgba(255,50,50,0.8),
       0 0 60px rgba(255,50,50,0.4),
@@ -874,7 +865,7 @@
     margin-bottom: 8px;
   }
   #countdown-flavor-num {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-weight: 900;
     font-size: 120px;
     line-height: 1;
@@ -893,12 +884,12 @@
     font-size: 140px;
   }
   #countdown-flavor-num.tick-1 {
-    color: #44ff66;
+    color: var(--uf-color-accent);
     text-shadow: 0 0 30px rgba(68,255,102,0.7), 0 0 60px rgba(68,255,102,0.3), 0 2px 4px rgba(0,0,0,0.6);
     font-size: 160px;
   }
   #countdown-flavor-num.tick-go {
-    color: #44ff66;
+    color: var(--uf-color-accent);
     text-shadow: 0 0 40px rgba(68,255,102,0.9), 0 0 80px rgba(68,255,102,0.4), 0 2px 4px rgba(0,0,0,0.6);
     font-size: 160px;
   }
@@ -924,7 +915,7 @@
   }
   #tutorial-prompt.visible { display: block; }
   #tutorial-prompt-text {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-weight: 700;
     font-size: 22px;
     color: #fff;
@@ -947,7 +938,7 @@
     background: rgba(255,255,255,0.3);
     transition: background 0.3s;
   }
-  .tutorial-dot.active { background: #44ff66; }
+  .tutorial-dot.active { background: var(--uf-color-accent); }
   .tutorial-dot.done { background: #ffd700; }
   #btn-tutorial-skip {
     /* Right edge, under the quick-menu button: clear of the pedals (bottom)
@@ -957,7 +948,7 @@
     right: 14px;
     z-index: 210;
     display: none;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-weight: 700;
     font-size: 14px;
     letter-spacing: 0.06em;
@@ -1112,14 +1103,14 @@
   }
   #tutorial-crash.visible { display: block; }
   #tutorial-crash-text {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-weight: 700;
     font-size: 28px;
     color: #ff6644;
     text-shadow: 0 2px 8px rgba(0,0,0,0.7);
   }
   #tutorial-crash-hint {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-size: 15px;
     color: rgba(255,255,255,0.8);
     margin-top: 6px;
@@ -1140,7 +1131,7 @@
   #tutorial-complete h2 {
     font-size: 28px;
     font-weight: 700;
-    color: #44ff66;
+    color: var(--uf-color-accent);
     margin: 0 0 12px;
     text-shadow: 0 0 20px rgba(68,255,102,0.5);
   }
@@ -1193,7 +1184,7 @@
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: #44ff66;
+    background: var(--uf-color-accent);
     cursor: pointer;
     box-shadow: 0 2px 8px rgba(68,255,102,0.4);
     margin-top: -9px; /* center 24px thumb on 6px track: -(24-6)/2 */
@@ -1205,11 +1196,11 @@
     background: rgba(255,255,255,0.15);
   }
   #steering-feel-slider.gamepad-focus {
-    outline: 3px solid #44ff66;
+    outline: 3px solid var(--uf-color-accent);
     outline-offset: 6px;
     border-radius: 6px;
   }
-  #tutorial-complete .lobby-btn {
+  #tutorial-complete uf-button {
     max-width: 280px;
     width: 280px;
     font-size: 15px;
@@ -1230,7 +1221,7 @@
     bottom: calc(100% + 8px);
     left: 50%;
     transform: translateX(-50%);
-    background: #1a1a2e;
+    background: var(--uf-color-surface);
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 10px;
     padding: 14px;
@@ -1254,7 +1245,7 @@
     bottom: calc(100% + 8px);
     left: 50%;
     transform: translateX(-50%);
-    background: #1a1a2e;
+    background: var(--uf-color-surface);
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 10px;
     padding: 14px;
@@ -1287,13 +1278,13 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #44ff66;
+    background: var(--uf-color-accent);
     cursor: pointer;
   }
   #motion-recal-popup button {
     display: block;
     width: 100%;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-size: 13px;
     font-weight: 600;
     border: none;
@@ -1304,7 +1295,7 @@
   }
   #motion-recal-popup button:last-child { margin-bottom: 0; }
   #btn-recalibrate {
-    background: linear-gradient(135deg, #44ff66, #22cc44);
+    background: linear-gradient(135deg, var(--uf-color-accent), #22cc44);
     color: #000;
   }
   #btn-recal-cancel {
@@ -1328,7 +1319,7 @@
     height: 100%;
     width: 0%;
     border-radius: 3px;
-    background: linear-gradient(90deg, #44ff66, #66ffaa);
+    background: linear-gradient(90deg, var(--uf-color-accent), #66ffaa);
     transition: width 0.3s;
   }
   #progress-bar-bike {
@@ -1419,7 +1410,7 @@
   #victory-overlay h2 {
     font-size: 24px;
     font-weight: 700;
-    color: #44ff66;
+    color: var(--uf-color-accent);
     margin-top: 0;
     margin-bottom: 2px;
     text-shadow: 0 0 20px rgba(68,255,102,0.4);
@@ -1530,7 +1521,7 @@
 
   /* ── Level selector ── */
   #lobby-level {
-    display: none;
+    /* visibility is uf-flow's (uf-step[active]); no display here */
     padding: 70px 0 6px;  /* top: space for pip-level-mode circles; bottom: gamepad outline */
   }
 
@@ -1552,7 +1543,7 @@
     color: #fff;
     cursor: pointer;
     text-align: left;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     -webkit-tap-highlight-color: transparent;
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
@@ -1579,7 +1570,7 @@
     display: inline-block;
     font-size: 10px;
     font-weight: 700;
-    background: #44ff66;
+    background: var(--uf-color-accent);
     color: #000;
     padding: 1px 6px;
     border-radius: 4px;
@@ -1622,7 +1613,7 @@
     cursor: default;
     pointer-events: none;
   }
-  .lobby-btn.role-locked {
+  uf-button.role-locked {
     opacity: 0.5;
     border-color: rgba(255,255,255,0.15);
     background: rgba(255,255,255,0.03);
@@ -1684,7 +1675,7 @@
     margin-top: 1px;
   }
   .difficulty-btn.gamepad-focus {
-    outline: 3px solid #44ff66;
+    outline: 3px solid var(--uf-color-accent);
     outline-offset: 2px;
     box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
   }
@@ -1786,10 +1777,10 @@
     animation: timeoutIconIn 0.5s ease-out 0.1s forwards;
   }
   #timeout-text {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-weight: 900;
     font-size: 42px;
-    color: #ff4444;
+    color: var(--uf-color-danger);
     text-transform: uppercase;
     letter-spacing: 4px;
     text-shadow:
@@ -1913,15 +1904,6 @@
     padding-top: 6px;
     margin-bottom: -18px;
     background: linear-gradient(to bottom, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
-  }
-  #lobby-btn {
-    grid-area: lobby;
-    clip-path: polygon(0% 0%, 100% 28%, 100% 72%, 0% 100%);
-    align-items: center;
-    justify-content: flex-start;
-    padding-left: 6px;
-    margin-right: -18px;
-    background: linear-gradient(to right, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
   #reset-btn {
     grid-area: reset;
@@ -2339,7 +2321,7 @@
     font-weight: 700;
     border: 0;
     border-radius: 10px;
-    background: #ffd23f;
+    background: var(--uf-color-accent-2);
     color: #201a00;
     cursor: pointer;
   }
@@ -2463,7 +2445,7 @@
   }
   .lb-rank { font-weight: 700; color: #ffcc00; min-width: 28px; text-align: left; }
   .lb-name { flex: 1; text-align: left; }
-  .lb-time { font-variant-numeric: tabular-nums; color: #44ff66; }
+  .lb-time { font-variant-numeric: tabular-nums; color: var(--uf-color-accent); }
   #leaderboard-video {
     width: 100%;
     max-width: 320px;
@@ -2544,7 +2526,7 @@
     box-shadow: 0 0 8px rgba(60,200,80,0.25);
   }
   .lb-ach-item.earned .lb-ach-name {
-    color: #44ff66;
+    color: var(--uf-color-accent);
   }
   .lb-ach-item.locked {
     opacity: 0.35;
@@ -2576,7 +2558,7 @@
     margin-bottom: 8px;
   }
   .lb-ach-count span {
-    color: #44ff66;
+    color: var(--uf-color-accent);
     font-weight: 700;
   }
   .lb-section-title {
@@ -2593,7 +2575,7 @@
     font-size: 13px;
   }
   .lb-tab.gamepad-focus {
-    outline: 2px solid #44ff66;
+    outline: 2px solid var(--uf-color-accent);
     outline-offset: 2px;
     box-shadow: 0 0 10px rgba(68, 255, 102, 0.4);
   }
@@ -2612,7 +2594,7 @@
     text-transform: uppercase;
     flex-shrink: 0;
   }
-  .lb-mode-solo { background: rgba(68,255,102,0.2); color: #44ff66; }
+  .lb-mode-solo { background: rgba(68,255,102,0.2); color: var(--uf-color-accent); }
   .lb-mode-captain { background: rgba(68,136,255,0.2); color: #4488ff; }
   .lb-mode-stoker { background: rgba(170,68,255,0.2); color: #aa44ff; }
   .lb-collectibles {
@@ -2621,13 +2603,13 @@
     flex-shrink: 0;
   }
   .lb-entry.lb-you {
-    border-left: 3px solid #44ff66;
+    border-left: 3px solid var(--uf-color-accent);
     background: rgba(68,255,102,0.06);
   }
   .lb-you-tag {
     font-size: 9px;
     font-weight: 700;
-    color: #44ff66;
+    color: var(--uf-color-accent);
     margin-left: 2px;
   }
   .lb-date {
@@ -2745,7 +2727,7 @@
     line-height: 1;
     transition: all 0.15s;
     -webkit-tap-highlight-color: transparent;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     flex-shrink: 0;
     touch-action: manipulation;
   }
@@ -2755,32 +2737,14 @@
   }
 
   /* ── COMPONENT: Lobby Steps & Buttons ── */
+  #lobby-flow { display: contents; }   /* the steps stay direct grid/flex items of .lobby-steps-col */
   .lobby-step {
     display: flex;
     flex-direction: column;
     gap: 12px;
     align-items: center;
   }
-  .lobby-btn {
-    width: 100%;
-    padding: 14px 16px;
-    border-radius: 14px;
-    border: 2px solid rgba(255,255,255,0.4);
-    background: rgba(255,255,255,0.1);
-    color: #fff;
-    font-size: 16px;
-    font-weight: 700;
-    cursor: pointer;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    text-align: center;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
-    line-height: 1.4;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .lobby-btn:active {
-    background: rgba(255,255,255,0.2);
-  }
+  uf-step.lobby-step:not([active]) { display: none; }   /* uf-flow toggles [active]; nothing else hides a step */
   #btn-start-ride, #btn-play-game {
     padding: 6px 12px;
     font-size: 13px;
@@ -2789,16 +2753,9 @@
     border-radius: 8px;
     align-self: center;
   }
-  .lobby-btn-accent {
-    background: rgba(60,200,80,0.25);
-    border-color: rgba(60,200,80,0.6);
-  }
-  .lobby-btn-accent:active {
-    background: rgba(60,200,80,0.4);
-  }
   /* Player 2 color token for local multiplayer (JOIN RIDE, contribution bar, etc.) */
   :root {
-    --tandem-player2: #ff4560;
+    --tandem-player2: var(--uf-color-team-b);
   }
   /* Gamepad-P2 JOIN RIDE button: coral-red, two-line stacked layout (label + icon on top, device name below in smaller type) */
   .lobby-btn-p2-gp {
@@ -2884,16 +2841,9 @@
   }
   /* ── VERSUS mode: lobby team-setup screen ── */
   :root {
-    --versus-team-a: #4c7dff;  /* matches ControllerManager P1/P3 lightbar blue */
-    --versus-team-b: #ff4560;  /* matches P2/P4 red + existing player-2 token */
+    --versus-team-a: var(--uf-color-team-a);  /* matches ControllerManager P1/P3 lightbar blue */
+    --versus-team-b: var(--uf-color-team-b);  /* matches P2/P4 red + existing player-2 token */
   }
-  .lobby-btn-versus {
-    background: rgba(160, 64, 255, 0.18);
-    border-color: rgba(160, 64, 255, 0.65);
-    color: #c898ff;
-  }
-  .lobby-btn-versus:hover { background: rgba(160, 64, 255, 0.32); border-color: rgba(160, 64, 255, 0.9); }
-  .lobby-btn-versus:active { background: rgba(160, 64, 255, 0.45); }
   .versus-teams {
     display: flex;
     align-items: stretch;
@@ -2975,6 +2925,12 @@
     border-color: rgba(255, 69, 96, 0.95);
   }
   .versus-player-card.vp-join .vp-name { color: var(--tandem-player2); }
+  .local-join-candidates { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+  .local-join-candidates:empty { display: none; }
+  .versus-controllers { width: 100%; display: flex; flex-direction: column; gap: 4px; margin: 2px 0 6px; }
+  .versus-controllers .vc-row { display: flex; align-items: center; gap: 8px; padding: 5px 9px; border-radius: var(--uf-radius-sm); background: var(--uf-color-surface-3); border: 1px solid var(--uf-color-line-soft); font-size: var(--uf-size-sm); }
+  .versus-controllers .vc-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .versus-controllers .vc-src { font: var(--uf-size-xs) var(--uf-font-mono); color: var(--uf-color-fg-muted); }
   .versus-join-hint {
     font-size: 0.62em;
     opacity: 0.65;
@@ -3150,51 +3106,9 @@
     text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
     pointer-events: none;
   }
-  /* Results overlay */
-  #versus-results {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.65);
-  }
-  .vr-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 14px;
-    padding: 28px 36px;
-    border-radius: 16px;
-    background: rgba(20, 24, 40, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    text-align: center;
-  }
-  .vr-title {
-    font-size: clamp(22px, 4vw, 40px);
-    font-weight: 900;
-    letter-spacing: 0.08em;
-  }
-  .vr-teams {
-    display: flex;
-    gap: 28px;
-  }
-  .vr-team {
-    min-width: 130px;
-    padding: 10px 14px;
-    border-radius: 10px;
-    border: 1px solid var(--vh-color);
-  }
-  .vr-team-name {
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    color: var(--vh-color);
-  }
-  .vr-outcome { font-size: 20px; font-weight: 800; margin: 4px 0; }
-  .vr-detail { font-size: 11px; opacity: 0.7; }
+  /* Results overlay: a kit <uf-sheet headline> (#428); only the body layout lives here. */
+  #versus-results .vr-card { display: grid; gap: var(--uf-space-4); justify-items: center; }
+  #versus-results .vr-teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--uf-space-4); width: 100%; }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -3243,7 +3157,7 @@
   .lobby-toggle.active {
     background: rgba(60,200,80,0.25);
     border-color: rgba(60,200,80,0.6);
-    color: #44ff66;
+    color: var(--uf-color-accent);
   }
   .lobby-toggle:disabled {
     opacity: 0.3;
@@ -3269,17 +3183,19 @@
     color: rgba(255,255,255,0.4);
     font-size: 12px;
   }
-  .lobby-back {
+  /* id-scoped so it outranks the kit's uf-button[variant="ghost"] rule */
+  #lobby .lobby-back {
     background: none;
     border: none;
+    min-height: 0;
     color: rgba(255,255,255,0.4);
     font-size: 13px;
     cursor: pointer;
     padding: 8px;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     -webkit-tap-highlight-color: transparent;
   }
-  .lobby-back:active { color: rgba(255,255,255,0.7); }
+  #lobby .lobby-back:active { color: rgba(255,255,255,0.7); }
   .level-card-tutorial {
     border-color: rgba(68,255,102,0.25);
     border-style: dashed;
@@ -3290,14 +3206,14 @@
     flex-shrink: 0;
   }
   .gamepad-focus {
-    outline: 3px solid #44ff66;
+    outline: 3px solid var(--uf-color-accent);
     outline-offset: 3px;
     box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
   }
   .room-code {
     font-size: 36px;
     font-weight: 700;
-    color: #44ff66;
+    color: var(--uf-color-accent);
     letter-spacing: 4px;
     margin: 8px 0;
     text-shadow: 0 0 20px rgba(68,255,102,0.4);
@@ -3323,14 +3239,14 @@
     max-width: 180px;
     outline: none;
     text-transform: uppercase;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
   }
   .room-code-input::placeholder {
     color: rgba(255,255,255,0.2);
     letter-spacing: 8px;
   }
   .room-code-input:focus {
-    border-color: #44ff66;
+    border-color: var(--uf-color-accent);
   }
   .room-code-join-wrap {
     display: flex;
@@ -3347,7 +3263,7 @@
     font-weight: 600;
     color: rgba(255,255,255,0.35);
     line-height: 1.3;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
   }
   .room-code-dash {
     font-size: 16px;
@@ -3360,7 +3276,7 @@
     font-weight: 600;
     color: rgba(255,255,255,0.35);
     letter-spacing: 2px;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
   }
   /* Gamepad code spinners */
   #gamepad-code-spinners {
@@ -3392,7 +3308,7 @@
     transition: border-color 0.15s, box-shadow 0.15s;
   }
   .code-spinner.active {
-    border-color: #44ff66;
+    border-color: var(--uf-color-accent);
     box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
   }
   .spinner-char {
@@ -3401,7 +3317,7 @@
     color: #fff;
     letter-spacing: 0;
     line-height: 1.2;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
   }
   .spinner-arrow {
     font-size: 10px;
@@ -3437,12 +3353,12 @@
     line-height: 1;
   }
   .spinner-submit-icon {
-    color: #44ff66;
-    border-color: #44ff66;
+    color: var(--uf-color-accent);
+    border-color: var(--uf-color-accent);
   }
   .spinner-back-icon {
-    color: #ff4444;
-    border-color: #ff4444;
+    color: var(--uf-color-danger);
+    border-color: var(--uf-color-danger);
   }
 
   .conn-status {
@@ -3451,8 +3367,8 @@
     min-height: 20px;
     animation: pulse 1.5s infinite;
   }
-  .conn-status.connected { color: #44ff66; animation: none; }
-  .conn-status.error { color: #ff4444; animation: none; }
+  .conn-status.connected { color: var(--uf-color-accent); animation: none; }
+  .conn-status.error { color: var(--uf-color-danger); animation: none; }
   #room-qr {
     width: 128px; height: 128px;
     margin: 12px auto;
@@ -3476,7 +3392,7 @@
     user-select: none;
   }
   .room-url-copied {
-    color: #44ff66 !important;
+    color: var(--uf-color-accent) !important;
     font-weight: 700;
   }
 
@@ -3502,7 +3418,8 @@
     top: auto !important;
     right: auto !important;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
-    left: calc(50% + 20vw) !important;
+    /* #167: capped by JS so circle + badges stay clear of the right toggle column */
+    left: min(calc(50% + 20vw), var(--pip-partner-max-left, 100vw)) !important;
     transform: none;
   }
   .pip-wrap.pip-lobby-mode .pip-label {
@@ -3553,21 +3470,23 @@
   /* Mobile ROOM step: collapse center column so toggles are close together.
      Room code is repositioned fixed between the PiP circles.
      These are mobile-only — desktop shows them normally via media query override. */
-  #lobby-room #room-partner-info { display: none; }
-  #lobby-room #room-video-area { display: none; }
+  /* class-scoped (not #lobby-room #…) so the desktop .lobby-card.room-active rules outrank them without !important */
+  .lobby-step #room-partner-info { display: none; }
+  .lobby-step #room-video-area { display: none; }
   #lobby-room #btn-play-game { width: 100%; }
   #lobby-room #btn-back-room { width: 100%; }
+  #room-code-label { font-size: calc(14 * var(--ls)); letter-spacing: calc(2 * var(--ls)); padding: calc(3 * var(--ls)) calc(8 * var(--ls)); }
 
   /* Mobile room code — body-level element positioned between PiP circles */
   #mobile-room-code {
     position: fixed;
     z-index: 57;
     /* Same bottom as PiP circles + half circle height (40px) to vertically center */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px);
-    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px + var(--pip-room-code-lift, 0px));
+    left: var(--pip-room-code-left, 50%); /* #167: follows the capped partner circle */
     transform: translateX(-50%);
     font-size: 10px;
-    color: #44ff66;
+    color: var(--uf-color-accent);
     font-weight: 700;
     letter-spacing: 1px;
     text-shadow: 0 0 8px rgba(68,255,102,0.4);
@@ -3653,7 +3572,7 @@
     pointer-events: none;
     margin-top: 4px;
   }
-  #conn-badge #conn-type { color: #44ff66; font-weight: 700; margin-right: 4px; }
+  #conn-badge #conn-type { color: var(--uf-color-accent); font-weight: 700; margin-right: 4px; }
   #conn-badge #conn-reconnect-text { display: none; color: #ffaa33; font-weight: 700; }
   #conn-badge.reconnecting {
     background: rgba(80,50,0,0.7);
@@ -3724,7 +3643,7 @@
     background: none;
     border: none;
     color: rgba(255,255,255,0.4);
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-size: 11px;
     cursor: pointer;
     padding: 0 2px;
@@ -3755,7 +3674,7 @@
     max-height: 80vh;
     overflow-y: auto;
     width: 90%;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     font-size: 14px;
     line-height: 1.6;
     color: rgba(255,255,255,0.8);
@@ -3769,7 +3688,7 @@
     text-align: center;
   }
   #help-modal-inner a {
-    color: #44ff66;
+    color: var(--uf-color-accent);
     text-decoration: none;
   }
   #help-modal-inner a:hover {
@@ -3797,7 +3716,7 @@
   }
   .help-toggle-row svg, .help-toggle-row span.help-icon {
     flex-shrink: 0;
-    color: #44ff66;
+    color: var(--uf-color-accent);
     width: 28px;
     height: 28px;
     border: 1.5px solid rgba(255,255,255,0.25);
@@ -3874,7 +3793,7 @@
     z-index: 100;
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
   }
   #profile-popup.visible { display: block; }
   .profile-popup-content {
@@ -4063,7 +3982,7 @@
   .vol-btn.active {
     background: rgba(60,200,80,0.25);
     border-color: rgba(60,200,80,0.6);
-    color: #44ff66;
+    color: var(--uf-color-accent);
   }
 
   /* ── Selfie / Partner PiP ── */
@@ -4163,7 +4082,7 @@
   }
   #options-overlay.visible { display: flex; }
   .options-card {
-    background: #1a1a2e;
+    background: var(--uf-color-surface);
     border: 1.5px solid rgba(255,255,255,0.15);
     border-radius: 16px;
     padding: 28px 32px;
@@ -4197,7 +4116,7 @@
     width: 100%;
   }
   .opt-btn:hover { background: rgba(255,255,255,0.15); }
-  .opt-btn.active { background: rgba(60,200,80,0.2); border-color: rgba(60,200,80,0.6); color: #44ff66; }
+  .opt-btn.active { background: rgba(60,200,80,0.2); border-color: rgba(60,200,80,0.6); color: var(--uf-color-accent); }
   .opt-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
   #options-perf-btn, #options-devtools-btn, #options-browserdev-btn {
     padding: 10px 20px;
@@ -4296,7 +4215,7 @@
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
-    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--uf-font-ui);
     -webkit-tap-highlight-color: transparent;
     white-space: nowrap;
   }
@@ -4321,7 +4240,7 @@
     margin-top: 4px;
     font-size: 10px;
     font-weight: 700;
-    color: #44ff66;
+    color: var(--uf-color-accent);
     background: rgba(0,0,0,0.4);
     border: 1px solid rgba(68,255,102,0.3);
     border-radius: 10px;
@@ -4535,13 +4454,6 @@
 
     /* ── Scaled lobby elements (20% smaller than before) ── */
     #lobby h1 { font-size: calc(22 * var(--ls)); }
-    .lobby-btn {
-      font-size: calc(13 * var(--ls));
-      padding: calc(11 * var(--ls)) calc(13 * var(--ls));
-      border-radius: calc(11 * var(--ls));
-      white-space: nowrap;
-      min-width: calc(140 * var(--ls));
-    }
     .lobby-step { gap: calc(6 * var(--ls)); align-items: stretch; width: 100%; min-height: 0; }
     .lobby-card.carousel-hidden .lobby-step { overflow: hidden; }
     .lobby-card.carousel-hidden #lobby-level { overflow: visible; }
@@ -4574,9 +4486,9 @@
     #lobby-role .lobby-back { display: none; }
 
     /* Host/Join steps: compact for TV layout */
-    #lobby-host .lobby-btn,
-    #lobby-join .lobby-btn,
-    #lobby-room .lobby-btn {
+    #lobby-host uf-button,
+    #lobby-join uf-button,
+    #lobby-room uf-button {
       min-width: auto;
     }
     /* All sub-steps: hide back buttons (B-button handles it) and compact layout */
@@ -4739,7 +4651,7 @@
     }
     .lobby-card.room-active .lobby-layout { display: contents; }
     .lobby-card.room-active .lobby-steps-col { display: contents; }
-    .lobby-card.room-active #lobby-room { display: contents !important; }
+    .lobby-card.room-active #lobby-room { display: contents; }   /* outranks uf-step.lobby-step:not([active]) by id */
     .lobby-card.room-active .lobby-left-col {
       grid-column: 1; grid-row: 1; align-self: center;
       justify-self: end;
@@ -4757,30 +4669,30 @@
       width: 100%;
     }
     .lobby-card.room-active #room-partner-info {
-      display: flex !important;
+      display: flex;
       flex-direction: column;
       align-items: center;
       text-align: center;
       margin-bottom: calc(2 * var(--ls));
     }
     .lobby-card.room-active #room-video-area {
-      display: flex !important;
+      display: flex;
       align-items: flex-start;
       justify-content: center;
       gap: calc(24 * var(--ls));
       padding: calc(2 * var(--ls)) calc(8 * var(--ls));
       width: 100%;
     }
+    /* The seat is taller than the video PiP centred on it, so its role / who
+       lines show in the band under the video. */
     .lobby-card.room-active .room-video-slot {
       width: calc(55 * var(--ls));
-      min-height: calc(70 * var(--ls));
+      min-height: calc(100 * var(--ls));
       display: flex;
       flex-direction: column;
       align-items: center;
-    }
-    .lobby-card.room-active .room-video-slot .pip-label {
-      font-size: calc(10 * var(--ls));
-      margin-top: calc(2 * var(--ls));
+      justify-content: flex-end;
+      padding-bottom: calc(3 * var(--ls));
     }
     .lobby-card.room-active #btn-play-game {
       grid-column: 1 / -1; grid-row: 2;
@@ -5101,6 +5013,9 @@
     #share-btn, #music-btn { background: rgba(0,0,0,0.55); }
   }
 </style>
+<!-- Desktop/TV layout A (#428): after the inline styles so it wins at equal specificity. -->
+<link rel="stylesheet" href="css/lobby-tv.css">
+<link rel="stylesheet" href="css/end-screens.css">
 </head>
 <body>
 
@@ -5315,13 +5230,13 @@ ON</button>
   <div id="daily-mode-box">
     <h2 id="daily-mode-title">Today&rsquo;s Road</h2>
     <p id="daily-mode-sub"></p>
-    <button class="lobby-btn lobby-btn-accent" id="btn-daily-ranked">RANKED RUN
+    <uf-button variant="accent" id="btn-daily-ranked">RANKED RUN
       <span class="daily-mode-hint" id="daily-ranked-hint">One per day. Crashes are fine; ending early is not.</span>
-    </button>
-    <button class="lobby-btn" id="btn-daily-practice">PRACTICE
+    </uf-button>
+    <uf-button id="btn-daily-practice">PRACTICE
       <span class="daily-mode-hint">Unlimited. Nothing recorded but your best.</span>
-    </button>
-    <button class="lobby-btn" id="btn-daily-cancel">&larr; Back</button>
+    </uf-button>
+    <uf-button id="btn-daily-cancel">&larr; Back</uf-button>
   </div>
 </div>
 
@@ -5592,6 +5507,18 @@ ON</button>
   if (isDesktop) {
     // Poll for gamepad input to dismiss the overlay
     var overlay = document.getElementById('tap-to-start');
+    // #428 · 16: once the game has booted, the veil is waiting on the player,
+    // not on loading, so say so. A key press dismisses it too.
+    var readyPoll = setInterval(function () {
+      if (!overlay.isConnected) { clearInterval(readyPoll); return; }
+      if (!window._game) return;
+      clearInterval(readyPoll);
+      if (textEl) textEl.textContent = 'Press any button to start';
+      window.addEventListener('keydown', function onKey() {
+        window.removeEventListener('keydown', onKey);
+        if (overlay.isConnected) overlay.click();
+      });
+    }, 150);
     function pollForButton() {
       var gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
       for (var i = 0; i < gamepads.length; i++) {
@@ -5685,6 +5612,9 @@ ON</button>
 
       <!-- Center: all lobby steps -->
       <div class="lobby-steps-col">
+        <!-- One owner of "which step is showing" (@usersfirst/ui uf-flow): lobby.js
+             asks flow.go(id) and runs each step's side effects from uf-flow:change. -->
+        <uf-flow id="lobby-flow" current="lobby-mode">
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Mode Selection (#lobby-mode)
@@ -5692,23 +5622,27 @@ ON</button>
              Gamepad nav: _modeColumns[1] (center column)
              Back: none (root step)
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-mode" class="lobby-step">
+        <uf-step id="lobby-mode" class="lobby-step">
           <div class="lobby-mode-buttons">
-            <button class="lobby-btn lobby-btn-accent" id="btn-together">RIDE TOGETHER</button>
-            <button class="lobby-btn" id="btn-solo">SOLO RIDE</button>
-            <!-- #400 D4 · the one garage every mode's Chaos Coins are spent in, and the wallet. -->
-            <button class="lobby-btn" id="btn-garage">&#128736; GARAGE<span id="lobby-wallet" class="lobby-wallet"></span></button>
+            <uf-button variant="accent" id="btn-together" sub="Couch co-op, online or versus">RIDE TOGETHER</uf-button>
+            <uf-button id="btn-solo" sub="Levels, Today’s Road and Slingshot">SOLO RIDE</uf-button>
             <!-- E-6 · Tourist ("ride the distance between you") is a card in
                  the SOLO level list (#400), shown only with a Maps key. -->
+            <!-- WebHID grant for a pad the Gamepad API can't see (Steam Controller;
+                 a second DualSense over Bluetooth). Same handler as the versus step's. -->
+            <uf-button variant="ghost" size="sm" id="btn-mode-connect-hid" title="Approve a controller for this page (WebHID) — browser only; the desktop app sees every controller by itself">Don&rsquo;t see your controller? Pair it</uf-button>
+            <p class="versus-join-hint" id="btn-mode-connect-hid-hint" style="display:none;"></p>
+            <!-- #421 · a phone on another device steers Player 1 (tilt + pedal halves). -->
+            <uf-button variant="ghost" size="sm" id="btn-mode-phone" title="Scan a QR code to steer and pedal with your phone">&#128241; Phone as controller</uf-button>
           </div>
-        </div>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Tourist route (#lobby-tourist)  — E-6
              Two addresses become a ride over real photogrammetry.
              Back: #lobby-level (opened from the SOLO list's Tourist card)
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-tourist" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-tourist" class="lobby-step">
           <p class="lobby-prompt">Where are you two?</p>
           <div id="tourist-form">
             <input id="tourist-from" class="tourist-input" type="text"
@@ -5722,10 +5656,10 @@ ON</button>
             <button type="button" class="tourist-add-to" id="btn-tourist-add-to">+ ADD A SECOND ADDRESS</button>
             <div id="tourist-error" class="tourist-error"></div>
             <div id="tourist-preview" class="tourist-preview"></div>
-            <button class="lobby-btn lobby-btn-accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</button>
+            <uf-button variant="accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</uf-button>
           </div>
-          <button class="lobby-back" id="btn-back-tourist">&larr; Back</button>
-        </div>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-tourist">&larr; Back</uf-button>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Level Selection (#lobby-level)
@@ -5736,26 +5670,26 @@ ON</button>
              Gamepad nav: level cards → tutorial → difficulty → [START RIDE] → back
              Back: #lobby-mode (solo) or #lobby-room (multiplayer)
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-level" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-level" class="lobby-step">
           <p class="lobby-prompt" id="level-prompt" style="display:none;">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
-          <button class="lobby-back" id="btn-back-level">&larr; Back</button>
-        </div>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-level">&larr; Back</uf-button>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Role Selection (#lobby-role)
              Multiplayer — Captain (start a ride) or Stoker (join).
              Back: #lobby-mode
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-role" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-role" class="lobby-step">
           <p class="lobby-prompt">Choose your seat:</p>
-          <button class="lobby-btn lobby-btn-accent" id="btn-captain">START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span></button>
-          <button class="lobby-btn" id="btn-stoker">JOIN A RIDE<br><span class="lobby-role-desc">Stoker &middot; Back seat</span></button>
+          <uf-button variant="accent" id="btn-captain">START A RIDE<br><span class="lobby-role-desc">Captain &middot; Front seat</span></uf-button>
+          <uf-button id="btn-stoker">JOIN A RIDE<br><span class="lobby-role-desc">Stoker &middot; Back seat</span></uf-button>
           <!-- VERSUS: local split-screen team racing. Desktop-only (needs
                2-4 physical controllers); lobby.js shows it when !isMobile. -->
-          <button class="lobby-btn lobby-btn-versus" id="btn-versus" style="display:none;">VERSUS<br><span class="lobby-role-desc">Race side by side &middot; 2&ndash;4 players</span></button>
-          <button class="lobby-back" id="btn-back-mode">&larr; Back</button>
-        </div>
+          <uf-button variant="versus" id="btn-versus" style="display:none;">VERSUS<br><span class="lobby-role-desc">Race side by side &middot; 2&ndash;4 players</span></uf-button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-mode">&larr; Back</uf-button>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Versus Team Setup (#lobby-versus)
@@ -5766,40 +5700,62 @@ ON</button>
              with _pendingMode='versus'.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-versus" class="lobby-step" style="display:none;">
-          <p class="lobby-prompt">Build your teams:</p>
+        <uf-step id="lobby-versus" class="lobby-step">
+          <p class="lobby-prompt">Local versus</p>
+          <!-- #428: two kit team boxes of <uf-seat>s (built by _renderVersusCards) and,
+               under them, every controller the step can see in a <uf-controller-roster>
+               strip — seated (P1–P4 in team colour), joinable ("press ✕ to join"), or
+               "seats full". Replaces the hand-built .versus-player-card grid and the
+               collapsible Controllers list. -->
           <div class="versus-teams">
-            <div class="versus-team versus-team-a">
-              <div class="versus-team-title">TEAM BLUE</div>
-              <div class="versus-team-slots" id="versus-team-a-slots"></div>
-            </div>
+            <uf-team id="versus-team-a" tone="team-a" heading="Team blue" layout="row"></uf-team>
             <div class="versus-vs">VS</div>
-            <div class="versus-team versus-team-b">
-              <div class="versus-team-title">TEAM RED</div>
-              <div class="versus-team-slots" id="versus-team-b-slots"></div>
-            </div>
+            <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
           </div>
-          <p class="versus-join-hint" id="versus-join-hint">Press <strong>A</strong> on a controller to join &middot; <strong>&#x25C0;/&#x25B6;</strong> switch team</p>
-          <button class="lobby-btn lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
+          <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
+          <p class="versus-join-hint" id="versus-join-hint"><uf-controller-glyph button="confirm" size="sm"></uf-controller-glyph> on a controller to join &middot; <uf-controller-glyph button="dpad-h" size="sm"></uf-controller-glyph> switch team &middot; <uf-controller-glyph button="back" size="sm"></uf-controller-glyph> leave your seat</p>
+          <uf-button class="lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
             <span class="btn-local-join-main">JOIN WITH KEYBOARD</span>
             <span class="btn-local-join-hint">Click or press Enter</span>
-          </button>
-          <button class="lobby-btn lobby-btn-accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</button>
-          <button class="lobby-back" id="btn-back-versus">&larr; Back</button>
-        </div>
+          </uf-button>
+          <!-- The pairing path versus lacked: a Steam Controller (HID-only) or a
+               second DualSense over Bluetooth never reaches the Gamepad API, so
+               it could not join until WebHID had been granted for it from a
+               click. Same path as the host step's CONNECT A CONTROLLER; the
+               device is pooled and the join monitor seats it on its first A. -->
+          <uf-button variant="ghost" size="sm" id="btn-versus-connect-hid" title="Approve another controller for this page (WebHID) — browser only; the desktop app sees every controller by itself">Don&rsquo;t see your controller? Pair it</uf-button>
+          <p class="versus-join-hint" id="btn-versus-connect-hid-hint" style="display:none;"></p>
+          <uf-button variant="accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</uf-button>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-versus">&larr; Back</uf-button>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Captain Waiting Room (#lobby-host)
              Displays room code + QR + URL for stoker to join.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-host" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-host" class="lobby-step">
           <p class="lobby-prompt">Your room code:</p>
           <div id="room-code-display" class="room-code">----</div>
           <div id="room-qr"></div>
           <div id="room-url" class="room-url"></div>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
+          <!-- Desktop/TV (#428 round 5): Online multiplayer (code + couch-sized <uf-qr>)
+               on the left, Local multiplayer on the right — a kit <uf-team> with the
+               captain seated and the stoker seat waiting for any controller, then every
+               connected controller in a <uf-controller-roster> strip. Filled by
+               lobby._renderHostSeats; css/lobby-tv.css lays the step out. -->
+          <div id="host-online-head" class="host-tv"><h3>Online multiplayer</h3><p>Your partner enters this code, or scans the QR code, on their own device.</p></div>
+          <uf-qr id="room-qr-tv" class="host-tv" caption="" size="400"></uf-qr>
+          <div id="host-local" class="host-tv">
+            <h3>Local multiplayer</h3><p>Two controllers on this screen, one bike.</p>
+            <uf-team id="host-team" tone="coop" heading="Your tandem" layout="row">
+              <uf-seat id="host-seat-captain" seat="Captain · front seat" tone="captain" who="You" state="joined" badge="P1"></uf-seat>
+              <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller"></uf-seat>
+            </uf-team>
+            <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
+          </div>
           <!-- Local multiplayer: join section shown when P2 input is available.
                The monitor (lobby._startLocalJoinMonitor) shows/hides each
                button based on connected devices. Each button commits to a
@@ -5809,25 +5765,30 @@ ON</button>
               Player 1: <span id="local-join-captain-name">—</span>
             </p>
             <p id="local-join-detected" class="local-join-detected">2nd controller detected!</p>
-            <button class="lobby-btn lobby-btn-p2-gp" id="btn-local-join-gp" style="display:none;">
+            <!-- One JOIN per CONNECTED controller (Gamepad API, WebHID, Steam Input) —
+                 the same candidate list the versus step uses. Built by the host
+                 step's join monitor; the single legacy button below is the
+                 fallback when the list is empty. -->
+            <div id="local-join-candidates" class="local-join-candidates"></div>
+            <uf-button class="lobby-btn-p2-gp" id="btn-local-join-gp" style="display:none;">
               <span class="btn-local-join-main">JOIN AS PLAYER 2</span>
               <span class="btn-local-join-padname" id="btn-local-join-gp-name">CONTROLLER</span>
               <span class="btn-local-join-hint" id="btn-local-join-gp-hint">Press <strong>&#10005;</strong> to join</span>
-            </button>
-            <button class="lobby-btn lobby-btn-p2-gp" id="btn-local-connect-hid" style="display:none;">
+            </uf-button>
+            <uf-button class="lobby-btn-p2-gp" id="btn-local-connect-hid" style="display:none;">
               <span class="btn-local-join-main">CONNECT A CONTROLLER</span>
               <span class="btn-local-join-padname">FOR PLAYER 2</span>
               <span class="btn-local-join-hint" id="btn-local-connect-hid-hint">Pair over USB or Bluetooth &mdash; adds gyro steering</span>
-            </button>
-            <button class="lobby-btn lobby-btn-p2-kb" id="btn-local-join-kb" style="display:none;">
+            </uf-button>
+            <uf-button class="lobby-btn-p2-kb" id="btn-local-join-kb" style="display:none;">
               <span class="btn-local-join-main">JOIN AS PLAYER 2</span>
               <span class="btn-local-join-padname">KEYBOARD</span>
               <span class="btn-local-join-hint">Click or press Enter</span>
-            </button>
+            </uf-button>
           </div>
           <p id="host-local-hint" class="lobby-hint" style="display:none;">Plug in a 2nd controller for local co-op</p>
-          <button class="lobby-back" id="btn-back-role-host">&larr; Back</button>
-        </div>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-role-host">&larr; Back</uf-button>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Stoker Join Room (#lobby-join)
@@ -5835,7 +5796,7 @@ ON</button>
              Toggle columns hidden on this step.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-join" class="lobby-step" style="display:none;">
+        <uf-step id="lobby-join" class="lobby-step">
           <p class="lobby-prompt">Enter room code:</p>
           <div class="room-code-join-wrap">
             <span class="room-code-prefix-vert"><span>T</span><span>N</span><span>D</span><span>M</span></span>
@@ -5876,10 +5837,19 @@ ON</button>
               <span class="spinner-submit-hint"><span id="spinner-back-icon" class="spinner-back-icon">B</span> Back</span>
             </div>
           </div>
-          <button class="lobby-btn lobby-btn-accent" id="btn-join">JOIN</button>
+          <!-- Desktop/TV (#428): the joiner types the captain's code on an 8×4 kit keypad
+               (the 32 room-code characters) instead of four spinners that started at
+               "AAAA". Shown by lobby._showSpinners on desktop; Done joins. -->
+          <div id="join-tv" class="join-tv">
+            <h3>Join a ride</h3>
+            <p>Enter the code on the captain’s screen.</p>
+            <uf-join-code id="join-code-tv" mode="entry" code-prefix="TNDM–"></uf-join-code>
+            <uf-keypad id="join-keypad-tv" for="join-code-tv"></uf-keypad>
+          </div>
+          <uf-button variant="accent" id="btn-join">JOIN</uf-button>
           <div id="join-status" class="conn-status"></div>
-          <button class="lobby-back" id="btn-back-role-join">&larr; Back</button>
-        </div>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-role-join">&larr; Back</uf-button>
+        </uf-step>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Multiplayer Room (#lobby-room)
@@ -5887,33 +5857,29 @@ ON</button>
              Captain sees PLAY GAME, stoker sees "Waiting..."
              Back: leave room (disconnect)
              ════════════════════════════════════════════════════ -->
-        <div id="lobby-room" class="lobby-step" style="display:none;">
-          <!-- Center cell: room code + video slots -->
+        <uf-step id="lobby-room" class="lobby-step">
+          <!-- Room (#173, #428): no video (sharing is off since #400 D7). Two kit
+               <uf-player-card>s — who sits where, their profile and recently earned
+               achievements (<uf-achievement size=sm>) — filled by lobby._syncRoomSeats
+               and the partner's profile message. -->
           <div id="room-center-wrap">
             <div id="room-partner-info">
-              <div id="room-code-label" class="room-code-label"></div>
+              <uf-chip tone="info" id="room-code-label" class="room-code-label"></uf-chip>
               <div id="room-partner-name"></div>
             </div>
-            <!-- Video slot containers
-                 Actual <video> elements live at <body> level (iOS constraint:
-                 appendChild kills video playback). These slots define layout
-                 positions; body-level PiPs overlay them via position:fixed. -->
-            <div id="room-video-area">
-              <div id="room-video-slot-captain" class="room-video-slot">
-                <span class="pip-label">CAPTAIN</span>
-              </div>
-              <div id="room-video-slot-stoker" class="room-video-slot">
-                <span class="pip-label">STOKER</span>
-              </div>
+            <div id="room-players">
+              <uf-player-card id="room-player-captain" subtitle="Captain · front seat" tone="captain" name="Waiting for partner…" state="waiting"></uf-player-card>
+              <uf-player-card id="room-player-stoker" subtitle="Stoker · back seat" tone="stoker" name="Waiting for partner…" state="waiting"></uf-player-card>
             </div>
           </div>
           <!-- Full-span rows below center -->
-          <button class="lobby-btn lobby-btn-accent" id="btn-play-game">PLAY GAME</button>
+          <uf-button variant="accent" id="btn-play-game">PLAY GAME</uf-button>
           <p id="room-wait-text-room" class="conn-status" style="display:none;">Waiting for captain...</p>
-          <button class="lobby-back" id="btn-back-room">&larr; Leave Room</button>
-        </div>
+          <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-room">&larr; Leave Room</uf-button>
+        </uf-step>
 
 
+        </uf-flow>
       </div>
 
       <!-- ── COMPONENT: Right Toggle Column ──
@@ -6011,19 +5977,50 @@ ON</button>
     </div>
     <!-- Level-step extras — scoped by wrapper visibility, toggled atomically in _showStep -->
     <div id="level-extras" style="display:none;">
-      <button class="lobby-btn lobby-btn-accent btn-start-ride" id="btn-start-ride" disabled>START RIDE</button>
+      <uf-button variant="accent" class="btn-start-ride" id="btn-start-ride" disabled>START RIDE</uf-button>
       <p id="level-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
     </div>
     <!-- Fixed back button row (non-gamepad, always at bottom of card) -->
-    <button class="lobby-back" id="lobby-fixed-back" style="visibility:hidden;">&larr; Back</button>
+    <uf-button variant="ghost" size="sm" class="lobby-back" id="lobby-fixed-back" style="visibility:hidden;">&larr; Back</uf-button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.351-versus | 07-02-2026</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.dev (local build)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
   <img id="lobby-img-right" class="lobby-desktop-img" src="images/large_action_facing.png?v=geese" alt="">
+  <!-- Desktop/TV layout A (#428): the wordmark sits on the painting's sky. Styled by css/lobby-tv.css. -->
+  <div id="lobby-wordmark" class="lobby-desktop-img" role="img" aria-label="Tandemonium"></div>
+
+  <!-- Desktop/TV system bar (#428, kit <uf-system-bar>): Back on the left, every
+       lobby-wide control as a labelled pill. Replaces the round toggle columns,
+       the Back hint and the credits footer at ≥1024px (css/lobby-tv.css); the
+       pills drive the same handlers as the toggles (lobby.js _initSystemBar).
+       Reached with ↓ from a step (d-pad or stick); no dedicated button. -->
+  <uf-system-bar id="lobby-bar" back="hide">
+    <uf-button size="pill" slot="start" id="bar-help"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="8"/><path d="M7.8 7.6a2.3 2.3 0 1 1 3.3 2.1c-.8.4-1.1.9-1.1 1.7M10 14.2v.1"/></svg>Help</uf-button>
+    <uf-button size="pill" slot="start" id="bar-leaderboard"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5"/></svg>Leaderboard</uf-button>
+    <uf-button size="pill" slot="start" id="bar-profile"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>Profile</uf-button>
+    <uf-button size="pill" slot="end" id="bar-controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h12a4 4 0 0 1 3.9 4.9l-.8 3.4a2.5 2.5 0 0 1-4.3 1.1L15 16H9l-1.8 2.4a2.5 2.5 0 0 1-4.3-1.1l-.8-3.4A4 4 0 0 1 6 9z"/><path d="M8 12v3M6.5 13.5h3"/></svg><span id="bar-controls-label">Controls</span></uf-button>
+    <uf-button size="pill" slot="end" id="bar-music"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 17V6l9-3v11"/><circle cx="5.5" cy="17" r="2.5"/><circle cx="14.5" cy="14" r="2.5"/></svg>Music</uf-button>
+    <uf-button size="pill" slot="end" id="bar-settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg>Settings</uf-button>
+  </uf-system-bar>
+
+  <!-- Controls sheet (#428 round 3, kit <uf-sheet>): the controller in use, every
+       connected controller, steering, prompts, and phone-as-controller. Opened
+       from the bar's Controls pill; wired in lobby.js _initSystemBar. -->
+  <uf-sheet id="controls-sheet" heading="Controls" size="md">
+    <uf-seat id="controls-seat" seat="You" tone="captain" who="No controller yet" dev="Press a button on a controller" state="open"></uf-seat>
+    <uf-controller-roster id="controls-roster" variant="list" heading="Connected controllers"></uf-controller-roster>
+    <uf-setting id="set-stick" label="Stick steering" description="Lean with the left stick"></uf-setting>
+    <uf-setting id="set-gyro" label="Gyro steering" description="Tilt the controller to lean">
+      <div slot="detail">Steering feel <span class="set-feel-end">Stable</span><input type="range" id="set-feel-slider" min="0" max="100" value="50" aria-label="Steering feel"><span class="set-feel-end">Responsive</span><uf-button size="sm" id="set-recalibrate">Recalibrate</uf-button></div>
+    </uf-setting>
+    <uf-setting id="set-prompts" kind="value" label="Button prompts" description="Picked from the controller in use" value="Automatic"></uf-setting>
+    <uf-setting id="set-phone" kind="value" label="Use your phone instead" description="Scan a code to steer and pedal with your phone" value="Open"></uf-setting>
+    <div slot="actions"><uf-button variant="accent" id="controls-done">DONE</uf-button></div>
+  </uf-sheet>
 </div>
 
 <!-- Leaderboard modal -->
@@ -6036,7 +6033,7 @@ ON</button>
     <div class="lb-tabs lb-sub-tabs" id="lb-sub-tabs"></div>
     <div id="lb-achievements"></div>
     <div id="leaderboard-list"></div>
-    <button class="lobby-btn" id="leaderboard-close" style="margin-top:12px;">Close</button>
+    <uf-button id="leaderboard-close" style="margin-top:12px;">Close</uf-button>
   </div>
 </div>
 
@@ -6209,7 +6206,7 @@ ON</button>
 <button id="btn-tutorial-skip" type="button">SKIP TUTORIAL</button>
 <div id="coaching-dodge-arrow">
   <svg width="100" height="100" viewBox="0 0 256 256" fill="none">
-    <path fill="#44ff66" d="
+    <path fill="var(--uf-color-accent)" d="
       M160 210 L160 170
       C160 130 145 105 120 90
       C100 78 85 72 70 70
@@ -6247,89 +6244,99 @@ ON</button>
     <a class="lobby-btn" id="btn-steam-store" href="https://store.steampowered.com/app/4482940/Tandemonium/" target="_blank" rel="noopener" style="display:inline-block;margin-top:16px;color:#67c1f5;text-decoration:none;max-width:280px;width:280px;">View on Steam Store &rarr;</a>
   </div>
   <!-- D6 (#400): solo goes straight on to the first real level in one tap. -->
-  <button class="lobby-btn lobby-btn-accent" id="btn-tutorial-next" style="margin-top:16px;display:none;">NEXT: GRANDMA'S</button>
-  <button class="lobby-btn lobby-btn-accent" id="btn-tutorial-continue" style="margin-top:16px;">Let's RIDE!</button>
+  <uf-button variant="accent" id="btn-tutorial-next" style="margin-top:16px;display:none;">NEXT: GRANDMA'S</uf-button>
+  <uf-button variant="accent" id="btn-tutorial-continue" style="margin-top:16px;">Let's RIDE!</uf-button>
 </div>
 
 <!-- Game Over overlay -->
 <div id="gameover-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p id="gameover-title" style="color:#ff4444">GAME OVER</p>
-    <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
-    <div id="gameover-help" class="help-announce" style="display:none;"></div>
-    <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
-    <div id="gameover-coins" class="ride-coins" style="display:none;"></div>
-    <button class="lobby-btn" id="btn-gameover-clip" style="margin-bottom:10px;display:none;">&#x1F3AC; SAVE CLIP</button>
-    <button class="lobby-btn lobby-btn-accent" id="btn-restart">RESTART</button>
-    <button class="lobby-btn" id="btn-skip-checkpoint" style="margin-top:10px;display:none;">&#x1F451; Take the Royal Shortcut</button>
-    <!-- #403 · a failed ranked run: the attempt is spent; ride the road as practice. -->
-    <button class="lobby-btn" id="btn-practice-help" style="margin-top:10px;display:none;">&#x1F6DF; Ride it as practice — with a helping hand</button>
-    <button class="lobby-btn" id="btn-gameover-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
-    <button class="lobby-btn" id="btn-gameover-lobby" style="margin-top:10px;">END RIDE TOGETHER</button>
-    <button class="lobby-btn" id="btn-gameover-garage" style="margin-top:10px;display:none;">GARAGE &rarr;</button>
-    <!-- B-5 · the two things a demo player should be able to do next. Shown by
-         _updateCtaButtons(); hidden in the full Steam build. -->
-    <!-- D-3 · see the victory overlay. -->
-    <button class="lobby-btn cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</button>
-    <button class="lobby-btn cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</button>
-    <button class="lobby-btn cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</button>
-  </div>
+  <!-- #428: kit sheet shell; the heading mirrors #gameover-title (game.js). -->
+  <uf-sheet id="gameover-sheet" open dismissible="false" headline tone="danger" heading="Game over" size="md">
+      <p id="gameover-title" hidden>GAME OVER</p>
+      <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
+      <div id="gameover-help" class="help-announce" style="display:none;"></div>
+      <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
+      <div id="gameover-coins" class="ride-coins" style="display:none;"></div>
+      <div id="gameover-unlocked" class="end-unlocked" hidden></div>
+      <!-- #403 · a failed ranked run: the attempt is spent; ride the road as practice. -->
+      <!-- B-5 · the two things a demo player should be able to do next. Shown by
+           _updateCtaButtons(); hidden in the full Steam build. -->
+      <!-- D-3 · see the victory overlay. -->
+    <div slot="actions">
+      <uf-button id="btn-gameover-clip" style="display:none;">&#x1F3AC; SAVE CLIP</uf-button>
+      <uf-button variant="accent" id="btn-restart">RESTART</uf-button>
+      <uf-button id="btn-skip-checkpoint" style="display:none;">&#x1F451; Take the Royal Shortcut</uf-button>
+      <uf-button id="btn-practice-help" style="display:none;">&#x1F6DF; Ride it as practice — with a helping hand</uf-button>
+      <uf-button id="btn-gameover-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-gameover-lobby">END RIDE TOGETHER</uf-button>
+      <uf-button id="btn-gameover-garage" style="display:none;">GARAGE &rarr;</uf-button>
+      <uf-button class="cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</uf-button>
+      <uf-button class="cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button class="cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Victory overlay -->
 <div id="victory-overlay">
-  <div id="victory-left">
-    <canvas id="victory-video" width="360" height="360"></canvas>
-    <h2 id="victory-title">YOU MADE IT!</h2>
-  </div>
-  <div id="victory-right">
-    <p id="victory-destination"></p>
-    <div id="victory-stats"></div>
-    <!-- #400 D4 · what the ride paid. Filled by js/economy-mode.js. -->
-    <div id="victory-coins" class="ride-coins" style="display:none;"></div>
-  </div>
-  <!-- D-8 · what the two of you have done together. -->
-  <div id="pair-panel" style="display:none;"></div>
-  <div id="victory-buttons">
-    <button class="lobby-btn lobby-btn-accent" id="btn-play-again">PLAY AGAIN</button>
-    <button class="lobby-btn" id="btn-next-level" style="margin-top:6px;display:none;">NEXT LEVEL</button>
-    <button class="lobby-btn" id="btn-victory-room" style="margin-top:6px;display:none;">RETURN TO ROOM</button>
-    <button class="lobby-btn" id="btn-victory-lobby" style="margin-top:6px;">END RIDE TOGETHER</button>
-    <button class="lobby-btn" id="btn-victory-garage" style="margin-top:6px;display:none;">GARAGE &rarr;</button>
-    <!-- B-5 · see the game-over overlay. -->
-    <!-- D-3 · share the day's result (Today's Road only). -->
-    <button class="lobby-btn cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</button>
-    <button class="lobby-btn cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</button>
-    <button class="lobby-btn cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</button>
-  </div>
+  <!-- #428: kit sheet shell; the heading mirrors #victory-title (game.js). -->
+  <uf-sheet id="victory-sheet" open dismissible="false" headline tone="accent" heading="You made it!" size="lg">
+    <div id="victory-body">
+      <div id="victory-left">
+        <canvas id="victory-video" width="360" height="360"></canvas>
+        <h2 id="victory-title" hidden>YOU MADE IT!</h2>
+      </div>
+      <div id="victory-right">
+        <p id="victory-destination"></p>
+        <div id="victory-stats"></div>
+        <!-- #400 D4 · what the ride paid. Filled by js/economy-mode.js. -->
+        <div id="victory-coins" class="ride-coins" style="display:none;"></div>
+        <!-- #428: achievements unlocked this ride (kit uf-achievement, js/achievements.js). -->
+        <div id="victory-unlocked" class="end-unlocked" hidden></div>
+      </div>
+      <!-- D-8 · what the two of you have done together. -->
+      <div id="pair-panel" style="display:none;"></div>
+    </div>
+    <div slot="actions" id="victory-buttons">
+      <uf-button variant="accent" id="btn-play-again">PLAY AGAIN</uf-button>
+      <uf-button id="btn-next-level" style="display:none;">NEXT LEVEL</uf-button>
+      <uf-button id="btn-victory-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-victory-lobby">END RIDE TOGETHER</uf-button>
+      <uf-button id="btn-victory-garage" style="display:none;">GARAGE &rarr;</uf-button>
+      <uf-button class="cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</uf-button>
+      <uf-button class="cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button class="cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Slingshot mode · spend Chaos Coins between launches. Filled by js/slingshot-ui.js. -->
-<div id="sling-garage"></div>
+<div id="sling-garage"><uf-sheet id="sling-garage-sheet" open dismissible="false" headline tone="gold" heading="Garage" size="md"><div id="sling-garage-body"></div></uf-sheet></div>
 <!-- Slingshot mode · one launch's payout. -->
-<div id="sling-results"></div>
+<div id="sling-results"><uf-sheet id="sling-results-sheet" open dismissible="false" headline tone="gold" heading="" size="md"><div id="sling-results-body"></div></uf-sheet></div>
 <!-- Slingshot mode · the end-of-ride signal: distance, then the coins it pays. -->
 <div id="sling-tally"></div>
 
 <!-- #400 · Demo end: NEXT LEVEL after the last road the demo includes. -->
 <div id="demo-end-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p style="color:#44ff66;font-size:1.2em;margin-bottom:4px;">That's the demo!</p>
-    <p style="font-size:0.85em;opacity:0.8;margin-bottom:16px;">The full game has a new road every day, ranked runs and every Slingshot stage.</p>
-    <button class="lobby-btn lobby-btn-accent cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</button>
-    <button class="lobby-btn" id="btn-demo-room" style="margin-top:10px;display:none;">RETURN TO ROOM</button>
-    <button class="lobby-btn" id="btn-demo-lobby" style="margin-top:10px;">BACK TO LOBBY</button>
-  </div>
+  <uf-sheet id="demo-end-sheet" open dismissible="false" headline tone="accent" heading="That's the demo!" size="md">
+      <p>The full game has a new road every day, ranked runs and every Slingshot stage.</p>
+    <div slot="actions">
+      <uf-button variant="accent" class="cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</uf-button>
+      <uf-button id="btn-demo-room" style="display:none;">RETURN TO ROOM</uf-button>
+      <uf-button id="btn-demo-lobby">BACK TO LOBBY</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Stoker CTA overlay (shown after unlicensed stoker finishes a ride) -->
 <div id="stoker-cta-overlay" style="display:none;">
   <div class="disconnect-box">
-    <p style="color:#44ff66;font-size:1.1em;margin-bottom:4px;">Great ride!</p>
+    <p style="color:var(--uf-color-accent);font-size:1.1em;margin-bottom:4px;">Great ride!</p>
     <p style="font-size:0.85em;opacity:0.8;margin-bottom:12px;">Wishlist Tandemonium on Steam to get notified at launch!</p>
     <iframe src="https://store.steampowered.com/widget/4482940/" frameborder="0" width="100%" height="190" style="max-width:646px;border-radius:8px;"></iframe>
     <a href="https://store.steampowered.com/app/4482940/Tandemonium/" target="_blank" rel="noopener" style="display:inline-block;margin:8px 0;color:#67c1f5;font-size:0.82em;text-decoration:none;">View on Steam Store &rarr;</a>
-    <button class="lobby-btn" id="btn-stoker-cta-continue" style="margin-top:10px;">CONTINUE</button>
+    <uf-button id="btn-stoker-cta-continue" style="margin-top:10px;">CONTINUE</uf-button>
   </div>
 </div>
 
@@ -6337,8 +6344,8 @@ ON</button>
 <div id="disconnect-overlay" style="display:none;">
   <div class="disconnect-box">
     <p id="disconnect-msg">Partner disconnected</p>
-    <button class="lobby-btn lobby-btn-accent" id="btn-try-reconnect">Try Again</button>
-    <button class="lobby-btn" id="btn-return-lobby" style="margin-top:10px;">Return to Lobby</button>
+    <uf-button variant="accent" id="btn-try-reconnect">Try Again</uf-button>
+    <uf-button id="btn-return-lobby" style="margin-top:10px;">Return to Lobby</uf-button>
   </div>
 </div>
 
@@ -6361,10 +6368,11 @@ ON</button>
     <div class="label">Graphics Quality</div>
     <div class="options-row">
       <button class="opt-btn" id="opt-high">High</button>
+      <button class="opt-btn" id="opt-medium">Medium</button>
       <button class="opt-btn" id="opt-low">Low</button>
       <button class="opt-btn" id="opt-auto">Auto</button>
     </div>
-    <div class="options-note">Some changes take effect on next restart</div>
+    <div class="options-note" id="opt-quality-note">Some changes take effect on next restart</div>
     <div class="label" id="opt-ds-label">DualSense Input Source</div>
     <div class="options-row" id="opt-ds-row">
       <button class="opt-btn" id="opt-ds-auto">Auto</button>
@@ -6384,6 +6392,28 @@ ON</button>
       <button class="opt-btn" id="opt-riders-off">Off</button>
     </div>
     <div class="options-note">Canadian-goose riders + front camera — applies immediately</div>
+    <div class="label" id="opt-solo-label">Show Solo</div>
+    <div class="options-row" id="opt-solo-row">
+      <button class="opt-btn" id="opt-solo-on">On</button>
+      <button class="opt-btn" id="opt-solo-off">Off</button>
+    </div>
+    <div class="options-note">Solo rides show one goose (the captain) — applies immediately</div>
+    <div class="label" id="opt-outfit-label">Goose Outfits</div>
+    <div class="options-row" id="opt-outfit-row">
+      <button class="opt-btn" id="opt-outfit-victorian">Victorian</button>
+      <button class="opt-btn" id="opt-outfit-cyclists">Cyclists</button>
+      <button class="opt-btn" id="opt-outfit-fancy">Fancy</button>
+      <button class="opt-btn" id="opt-outfit-georgian">Georgian</button>
+    </div>
+    <div class="options-note">Which pair of geese rides the tandem — applies immediately</div>
+    <div class="label" id="opt-colour-label">Goose Colours</div>
+    <div class="options-row" id="opt-colour-row">
+      <button class="opt-btn" id="opt-colour-0">Original</button>
+      <button class="opt-btn" id="opt-colour-1">-</button>
+      <button class="opt-btn" id="opt-colour-2">-</button>
+      <button class="opt-btn" id="opt-colour-3">-</button>
+    </div>
+    <div class="options-note">Colour changes for the chosen pair (saved per pair) — applies immediately</div>
     <div class="label" id="opt-fps-label">FPS Display</div>
     <div class="options-row" id="opt-fps-row">
       <button class="opt-btn" id="opt-fps-on">On</button>
@@ -6401,6 +6431,32 @@ ON</button>
       <button class="opt-btn" id="opt-physics-off">Off</button>
     </div>
     <div class="options-note">Tumbling crashes, knocked pylons, goose strikes — next ride</div>
+    <!-- Display testing: overrides on top of Graphics Quality, for tuning a
+         weak screen like a TV. Same as ?lines= / ?aa= / ?debug=perf. -->
+    <div class="label" id="opt-dtest-label">Display Testing &mdash; overrides</div>
+    <div class="options-note">Overrides on top of Graphics Quality, for testing a TV or slow screen. The page reloads to apply.</div>
+    <div class="label">Render lines</div>
+    <div class="options-row" id="opt-lines-row">
+      <button class="opt-btn" id="opt-lines-0">Quality default</button>
+      <button class="opt-btn" id="opt-lines-540">540 lines</button>
+      <button class="opt-btn" id="opt-lines-720">720 lines</button>
+      <button class="opt-btn" id="opt-lines-1080">1080 lines</button>
+    </div>
+    <div class="label">Edge smoothing</div>
+    <div class="options-row" id="opt-aa-row">
+      <button class="opt-btn" id="opt-aa-tier">Quality default</button>
+      <button class="opt-btn" id="opt-aa-on">On</button>
+      <button class="opt-btn" id="opt-aa-off">Off</button>
+    </div>
+    <div class="label">Perf readout</div>
+    <div class="options-row" id="opt-perfhud-row">
+      <button class="opt-btn" id="opt-perfhud-on">On</button>
+      <button class="opt-btn" id="opt-perfhud-off">Off</button>
+    </div>
+    <div class="options-row">
+      <button class="opt-btn" id="opt-dtest-reset">Reset to quality defaults</button>
+    </div>
+    <div class="options-note" id="opt-dtest-note"></div>
     <button id="options-perf-btn">Run Perf Test</button>
     <div id="options-perf-result"></div>
     <button id="options-devtools-btn">Tools</button>
@@ -6410,8 +6466,6 @@ ON</button>
   </div>
 </div>
 
-<!-- QR code generator (sets window.qrcode) -->
-<script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
 <!-- PeerJS (sets window.Peer) -->
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
 
@@ -6449,6 +6503,8 @@ document.addEventListener('touchmove', function(e) {
 <!-- Tourist Mode: required Google attribution overlay (populated when tiles stream). -->
 <div id="tourist-credits" style="position:fixed;left:8px;bottom:6px;z-index:50;max-width:60vw;color:#fff;font:11px/1.3 system-ui,sans-serif;text-shadow:0 1px 2px rgba(0,0,0,.8);pointer-events:none;"></div>
 
+<!-- @usersfirst/ui elements (uf-button, …). Registered before game.js runs so the lobby finds upgraded elements. -->
+<script type="module" src="shared/ui/index.js"></script>
 <script type="module" src="js/game.js"></script>
 
 </body>

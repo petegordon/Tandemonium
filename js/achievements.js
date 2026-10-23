@@ -16,11 +16,11 @@ import { STORAGE_KEY as RECORDS_KEY } from './records.js';
 import { loadSave as loadSlingSave, STORAGE_KEY as SLING_KEY } from './slingshot.js';
 import { WALLET_KEY, sanitizeWallet, canRebuild } from './wallet.js';
 import {
-  ACHIEVEMENTS, RETIRED_IDS, SECTIONS, STATS_VERSION,
+  ACHIEVEMENTS, SECTIONS, STATS_VERSION,
   migrateStats, applyEvent, seedStats, RideTracker, versusResult,
 } from './achievement-defs.js';
 
-export { ACHIEVEMENTS, RETIRED_IDS, SECTIONS };
+export { ACHIEVEMENTS, SECTIONS };
 
 const STORAGE_KEY = 'tandemonium_achievements';
 const STATS_KEY = 'tandemonium_achievement_stats';
@@ -321,8 +321,8 @@ export class AchievementManager {
   }
 
   /**
-   * What the lobby's badge screen lists: the 93 visible achievements (the
-   * retired colours never show). Hidden ones read "???" until earned; counters
+   * What the lobby's badge screen lists: all 100 achievements. Hidden ones
+   * read "???" until earned; counters
    * carry [current, goal] progress; demoLocked marks full-game-only rows.
    */
   getAllDefinitions() {
@@ -331,7 +331,6 @@ export class AchievementManager {
     let live = { dailyStreak: 0 };
     try { live = { dailyStreak: computeStreak(browserStore(), dailyKey()).current }; } catch (e) {}
     return ACHIEVEMENTS
-      .filter(a => !RETIRED_IDS.has(a.id))
       .map(a => {
         const earned = this._earned.has(a.id);
         const secret = a.hidden && !earned;
@@ -348,7 +347,6 @@ export class AchievementManager {
           earned,
           hidden: !!a.hidden,
           secret,
-          retired: false,
           progress,
           unit: a.unit || '',
           demoLocked: demo && !a.demo,
@@ -407,10 +405,20 @@ export function showAchievementToast(achievement) {
     }
   }
 
+  // A kit <uf-achievement state="new"> (#428). While an end-of-ride sheet is
+  // up, it joins that sheet's "unlocked this ride" list instead of floating
+  // over the headline.
+  const badge = /** @type {any} */ (document.createElement('uf-achievement'));
+  Object.assign(badge, { icon: achievement.icon || '🏅', name: achievement.name || '', state: 'new', size: 'sm' });
+  const endList = document.querySelector('#victory-overlay.visible #victory-unlocked, #gameover-overlay:not([style*="none"]) #gameover-unlocked');
+  if (endList) {
+    endList.hidden = false;
+    endList.appendChild(badge);
+    return;
+  }
   const toast = document.createElement('div');
   toast.className = 'achievement-toast';
-  toast.innerHTML = '<span class="toast-icon">' + achievement.icon + '</span>' +
-    '<div class="toast-text"><strong>' + achievement.name + '</strong><br><small>Achievement Unlocked!</small></div>';
+  toast.appendChild(badge);
 
   _toastContainer.appendChild(toast);
 

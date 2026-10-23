@@ -1,3 +1,4 @@
+// @ts-check
 // ============================================================
 // room-qr — captain's shareable join QR + URL (with long-press copy)
 // ============================================================
@@ -5,9 +6,10 @@
 // Self-contained UI extracted from lobby.js _createRoom (#318 Step 3): build
 // the join URL for a room code, render the QR into #room-qr, show the URL in
 // #room-url, and wire long-press / right-click to copy. Logic is faithful to
-// the previous inline block. `qrcode` is a global loaded via <script>.
+// the previous inline block. #424: qrcode is the vendored copy (no CDN, works offline).
 // ============================================================
 
+import qrcode from '../../shared/ui/third_party/qrcode-generator.js';
 import { SITE_URL } from '../config.js';
 import { buildJoinUrl, isDemoEdition, isMediaEnabled } from '../edition.js';
 
@@ -38,6 +40,10 @@ export function renderRoomQR(code) {
   } catch (_) {
     qrEl.style.display = 'none';
   }
+
+  // Desktop/TV: the couch-sized kit <uf-qr> beside the room code (#428).
+  const tv = /** @type {any} */ (document.getElementById('room-qr-tv'));
+  if (tv) { tv.value = url; tv.link = url.replace(/^https?:\/\//, ''); }
 
   // Show full URL
   if (urlEl) urlEl.textContent = url;

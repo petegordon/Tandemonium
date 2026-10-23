@@ -97,7 +97,7 @@ async function toSlingshot(first) {
     await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card-slingshot'), { timeout: 20000 });
     await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
     await waitState('slingGarage', 20000);
-    await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button')).find(b => /launch/i.test(b.textContent)).click());
+    await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).find(b => /launch/i.test(b.textContent)).click());
   } else {
     await page.evaluate(() => window._game._resetGame());
   }
