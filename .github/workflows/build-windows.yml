@@ -65,23 +65,62 @@ jobs:
           name: tandemonium-win32-x64
           path: builds/windows/
 
-      # No continue-on-error: a failed upload (e.g. the saved Steam login in
-      # STEAM_CONFIG_VDF expiring, about every 2 weeks) must turn the run red.
+      # steamcmd runs natively on the runner. game-ci/steam-deploy's Docker
+      # container started failing on 2026-10-23 before login ("Steamcmd needs to
+      # be online to update"), so the upload is done by hand with the same
+      # inputs: the saved login in STEAM_CONFIG_VDF and depot 4510251 (app + 1).
+      # No continue-on-error: a failed upload (e.g. the saved Steam login
+      # expiring, about every 2 weeks) must turn the run red.
       # Refresh it: steamcmd +login <user> (Steam Guard), then
       # base64 -w0 <steamcmd>/config/config.vdf | gh secret set STEAM_CONFIG_VDF
+      - name: Install steamcmd
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lib32gcc-s1 lib32stdc++6 >/dev/null
+          mkdir -p "$HOME/steamcmd"
+          curl -fsSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar zxf - -C "$HOME/steamcmd"
+          # First run self-updates steamcmd (retry: Valve's CDN can blip).
+          for i in 1 2 3; do "$HOME/steamcmd/steamcmd.sh" +quit && break; sleep 10; done
+
       - name: Upload to Steam (Playtest)
-        uses: game-ci/steam-deploy@v3
-        with:
-          username: ${{ secrets.STEAM_USERNAME }}
-          configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
-          appId: 4510250
-          buildDescription: 'Build ${{ github.sha }} from ${{ github.ref_name }}'
-          rootPath: builds
-          depot1Path: windows
+        env:
+          STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
+          STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
           # Push-triggered builds go to dev-private, NOT default. `default` is
-          # the public branch real playtesters are on, and a plain push carries
-          # no steam_branch input — so the previous `|| 'default'` fallback set
-          # every steam-publishing push live for everyone. Promoting a build to
+          # the public branch real playtesters are on. Promoting a build to
           # default stays a deliberate act: dispatch this workflow and pick it,
           # or flip the live build in Steamworks.
-          releaseBranch: ${{ inputs.steam_branch || 'dev-private' }}
+          STEAM_BRANCH: ${{ inputs.steam_branch || 'dev-private' }}
+          BUILD_DESC: 'Build ${{ github.sha }} from ${{ github.ref_name }}'
+        run: |
+          set -o pipefail
+          mkdir -p "$HOME/steamcmd/config" "$HOME/Steam/config"
+          echo "$STEAM_CONFIG_VDF" | base64 -d > "$HOME/steamcmd/config/config.vdf"
+          cp "$HOME/steamcmd/config/config.vdf" "$HOME/Steam/config/config.vdf"
+          VDF="$RUNNER_TEMP/app_build.vdf"
+          cat > "$VDF" <<VDF
+          "AppBuild"
+          {
+            "AppID" "4510250"
+            "Desc" "$BUILD_DESC"
+            "SetLive" "$STEAM_BRANCH"
+            "ContentRoot" "$GITHUB_WORKSPACE/builds"
+            "BuildOutput" "$RUNNER_TEMP/steam-output"
+            "Depots"
+            {
+              "4510251"
+              {
+                "FileMapping"
+                {
+                  "LocalPath" "./windows/*"
+                  "DepotPath" "."
+                  "recursive" "1"
+                }
+              }
+            }
+          }
+          VDF
+          "$HOME/steamcmd/steamcmd.sh" +login "$STEAM_USERNAME" +run_app_build "$VDF" +quit | tee "$RUNNER_TEMP/steamcmd.log"
+          # steamcmd can exit 0 on a failed login or build.
+          grep -q "Successfully finished AppID 4510250 build" "$RUNNER_TEMP/steamcmd.log"
