@@ -10,6 +10,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { localizeThree, installedThreeVersion } = require('../electron/local-vendors');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'index.html');
@@ -25,15 +26,17 @@ const peerTag = /<script src="https:\/\/unpkg\.com\/peerjs@1\.5\.4\/dist\/peerjs
 if (!peerTag.test(html)) throw new Error('build-desktop: PeerJS <script> tag not found in index.html');
 html = html.replace(peerTag, '<script src="../vendor/peerjs.min.js"></script>');
 
-// 2. Replace importmap CDN URLs with local node_modules paths
-html = html.replace(
-  '"https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js"',
-  '"../node_modules/three/build/three.module.js"'
-);
-html = html.replace(
-  '"https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"',
-  '"../node_modules/three/examples/jsm/"'
-);
+// 2. Replace importmap CDN URLs with local node_modules paths — every three
+//    entry (three, three/addons/, three/examples/jsm/), so the Draco decoder
+//    under three/addons/libs/draco/ is local too (#353). Same rewrite
+//    electron/main.js applies when it serves the root index.html.
+const threeVersion = installedThreeVersion(ROOT);
+const local = localizeThree(html, { prefix: '../', installedVersion: threeVersion });
+if (local.count === 0) {
+  throw new Error(`build-desktop: no three@${threeVersion || '?'} CDN URLs to localize in index.html ` +
+    '(is node_modules/three installed at the version the importmap pins?)');
+}
+html = local.html;
 
 // 3. Fix relative paths — desktop/index.html is one level deeper than root
 //    js/game.js → ../js/game.js
