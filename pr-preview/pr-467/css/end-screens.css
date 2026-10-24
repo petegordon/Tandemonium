@@ -1,0 +1,54 @@
+/* ============================================================
+   End-of-ride screens on the kit (#428)
+   ============================================================
+   Game over, victory, demo end, versus results and the Garage each hold a
+   <uf-sheet open dismissible="false" headline> (the game still shows/hides the
+   overlay divs and handles B). The sheet draws the scrim, the card, the toned
+   headline and the action row; this file only lays out what's inside. The old
+   overlay rules (inline <style>) keep positioning the wrappers; the wrappers'
+   own backgrounds and padding are neutralised so the sheet's scrim is the one. */
+
+#gameover-overlay, #victory-overlay, #demo-end-overlay, #versus-results, #sling-garage, #sling-results {
+  background: transparent !important; padding: 0 !important;
+}
+/* The game shows these with display:flex/grid on the wrapper; the sheet is fixed
+   inside it, so the wrapper needs no layout of its own. */
+#victory-overlay.visible { display: block !important; }
+
+/* Action rows: one row of buttons, the primary on the right (kit sheet actions). */
+uf-sheet .uf-sheet__actions > div[slot="actions"] { display: contents; }
+uf-sheet .uf-sheet__actions uf-button { margin: 0 !important; width: auto; }
+
+/* Victory: destination video + stats side by side on wide screens. */
+#victory-body { display: grid; gap: var(--uf-space-4); align-items: start; }
+#victory-body #victory-left, #victory-body #victory-right { display: grid; gap: var(--uf-space-3); width: 100%; align-items: start; justify-items: center; }
+#victory-body #victory-video { width: min(260px, 60vw); height: auto; aspect-ratio: 1; border-radius: var(--uf-radius-lg); }
+#victory-body #victory-destination { margin: 0; font: 800 var(--uf-size-xl)/1.2 var(--uf-font-ui); color: var(--uf-color-fg); }
+#victory-body #victory-stats { display: grid; gap: var(--uf-space-3); width: 100%; }
+.victory-stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); gap: var(--uf-space-3); width: 100%; }
+#victory-body #victory-coins, #gameover-coins { width: 100%; max-width: 26em; justify-self: center; }
+@media (min-width: 1024px) {
+  #victory-body { grid-template-columns: auto minmax(0, 1fr); }
+  #victory-body #pair-panel { grid-column: 1 / -1; }
+}
+
+/* Game over / demo end: centred body. */
+#gameover-sheet .uf-sheet__body, #demo-end-sheet .uf-sheet__body { justify-items: center; text-align: center; }
+#demo-end-sheet p { margin: 0; color: var(--uf-color-fg-muted); font-size: var(--uf-size-md); }
+
+/* Garage / slingshot results bodies (filled by js/slingshot-ui.js). */
+#sling-garage-body, #sling-results-body { display: grid; gap: var(--uf-space-3); justify-items: center; text-align: center; }
+#sling-garage-body .sling-list { max-width: none; width: 100%; }
+#sling-garage-body .sling-buttons, #sling-results-body .sling-buttons { max-width: 28em; }
+
+/* The old #victory-buttons rule (an id) stacks the buttons; the sheet's action row lays them out. */
+#victory-buttons { display: contents !important; }
+/* Record / perfect-ride lines at the kit's sizes. */
+#victory-stats .victory-stat { font-size: var(--uf-size-md) !important; text-align: center; }
+#victory-stats .victory-perfect { font-size: var(--uf-size-lg) !important; color: var(--uf-color-accent-2); }
+/* Achievements unlocked this ride. */
+.end-unlocked { display: grid; grid-template-columns: repeat(auto-fill, minmax(14em, 1fr)); gap: var(--uf-space-2); width: 100%; }
+.end-unlocked[hidden] { display: none; }
+/* The floating toast is now a kit badge: the wrapper only animates it. */
+.achievement-toast { padding: 0 !important; background: none !important; border: none !important; backdrop-filter: none !important; }
+.achievement-toast uf-achievement { background: var(--uf-color-surface); min-width: 15em; }
