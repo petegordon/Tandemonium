@@ -85,7 +85,7 @@ import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { PerfReadout } from './perf-readout.js';
 import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, reloadForDisplayTest, displayTestActive } from './quality.js';
-import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
+import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAuto, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, autoStepUpTarget, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
@@ -109,6 +109,13 @@ const TUNING_KEY_PREFIX = 'tandemonium_motion_tuning';
 // reconnect + the partner force-reconnects on unlock), so debouncing the
 // presentation avoids a jarring freeze-flash for blips. See #320.
 const RECONNECT_GRACE_MS = 2000;
+
+// Disconnect pause (2026-10-23): a dropped controller or partner pauses the
+// ride. After this long the player who's still here may ride on without them
+// (in co-op the stoker can take over the bike).
+export const DROP_TAKEOVER_MS = 20000;
+// A pad must stay gone this long before the ride pauses (USB / BT blips).
+const DROP_DEBOUNCE_MS = 300;
 
 // Tutorial phase boundaries — sequential layout so all phases are visible ahead.
 // D6 (#400): cut to about a minute — pedal (runway) → lean to collect → both
@@ -154,13 +161,18 @@ class Game {
     migrateQualityPref();
     const _qualityParam = new URLSearchParams(window.location.search).get('quality');
     const _hwCached = getCachedProfile();
+    const _learned = getLearnedAuto();
     const _q = resolveQualityTier({
-      param: _qualityParam, pref: getQualityPref(), learned: getLearnedAutoTier(),
+      param: _qualityParam, pref: getQualityPref(), learned: _learned && _learned.tier,
       hwTier: _hwCached && _hwCached.tier, floor: autoFloorTier(isMobile),
     });
     /** @type {import('./quality.js').QualityTier} */
     this._quality = _q.tier;
     this._qualityAuto = _q.auto;
+    // #456 Q2 · the tier rides proved too slow: Auto won't step back up to it
+    // until the learned record expires (AUTO_TIER_DAYS).
+    /** @type {import('./quality.js').QualityTier|null} */
+    this._autoSlowTier = _learned ? _learned.slow : null;
     // Medium and Low both do everything the old two-tier "Low" did.
     this._lowQuality = this._quality !== 'high';
     setCurrentTier(this._quality);
@@ -417,6 +429,12 @@ class Game {
     this._stokerTimeoutShown = false;
     this._reconnecting = false;
     this._reconnectGraceTimer = null; // debounce timer for _showReconnecting (#320)
+    this._drop = null;          // disconnect pause: { who, since, ... } or null
+    this._netLost = false;      // the room transport gave up (onDisconnected)
+    this._p1PadSeen = false;    // P1 rode on a pad this ride (so a drop pauses)
+    this._p1PadWaived = false;  // P1 chose Resume without their pad
+    this._dropCandidate = null; // { who, since } while debouncing
+    this._takeoverSaved = null; // P1's input + balance while P2 has taken over
 
     // Recording partner pedal flash tracking
     this._recLastTapTime = 0;
@@ -471,6 +489,7 @@ class Game {
     this._fpsMaxDt = 0;        // longest frame time seen during ride
     this._rideStartTier = null; // #456 · the tier this ride's first sampled frame ran at
     this._rideAutoChanged = false; // #456 · Auto stepped the tier down during this ride
+    this._rideAutoUp = false;      // #456 Q2 · Auto stepped the tier up during this ride (at most once)
 
     // DDA (Dynamic Difficulty Adjustment)
     this.ddaManager = null;
@@ -567,6 +586,11 @@ class Game {
 
     // Try Again from disconnect overlay
     this._onTap('btn-try-reconnect', () => {
+      if (this._drop) {
+        // Paused mid-ride: stay paused while it reconnects.
+        if (this.net) this.net.retryConnection();
+        return;
+      }
       document.getElementById('disconnect-overlay').style.display = 'none';
       this._clearOverlayButtons();
       if (this.net) this.net.retryConnection();
@@ -576,8 +600,18 @@ class Game {
     this._onTap('btn-return-lobby', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
       this._clearOverlayButtons();
+      this._drop = null;
       this._returnToLobby();
     });
+
+    // Disconnect pause: keep riding without the controller (solo / P1).
+    this._onTap('btn-drop-resume', () => {
+      if (!this._drop) return;
+      this._p1PadWaived = true;
+      this._endDropPause();
+    });
+    // Disconnect pause, after DROP_TAKEOVER_MS: ride on without them.
+    this._onTap('btn-ride-alone', () => this._rideOnAlone());
 
     // Game Over: save clip
     this._onTap('btn-gameover-clip', () => {
@@ -1222,6 +1256,7 @@ class Game {
 
     this.net.onConnected = () => {
       this._hideReconnecting();
+      this._netLost = false;
       document.getElementById('disconnect-overlay').style.display = 'none';
       // PR #397 M1: profile messages sent while disconnected were dropped —
       // resend this side's room profile and the captain's helping-hand state.
@@ -1266,7 +1301,12 @@ class Game {
       if (this.net.roomCode) {
         analytics.trackRoomUpdate(this.net.roomCode, { disconnect_count_increment: 1 });
       }
-      if (this.state !== 'lobby') {
+      this._netLost = true;
+      if (this.state === 'playing') {
+        // The ride is (or is about to be) on the disconnect pause; it now
+        // offers Try Again as well.
+        if (this._drop) this._renderDropOverlay();
+      } else if (this.state !== 'lobby') {
         this._showDisconnect(reason);
       }
     };
@@ -2872,13 +2912,196 @@ class Game {
     const msg = document.getElementById('disconnect-msg');
     overlay.style.display = 'flex';
     msg.textContent = reason || 'Partner disconnected';
+    for (const id of ['disconnect-sub', 'btn-drop-resume', 'btn-ride-alone']) document.getElementById(id).hidden = true;
+    const retry = document.getElementById('btn-try-reconnect');
+    retry.hidden = !this.net;
 
     // Register buttons for gamepad navigation
-    const btns = [
-      document.getElementById('btn-try-reconnect'),
-      document.getElementById('btn-return-lobby')
-    ];
+    const btns = [retry, document.getElementById('btn-return-lobby')].filter((b) => !b.hidden);
     this._setOverlayButtons(btns);
+  }
+
+  // ============================================================
+  // DISCONNECT PAUSE (2026-10-23)
+  // A controller or the online partner drops mid-ride: the ride pauses
+  // (physics and the race clock stop) until they come back. After
+  // DROP_TAKEOVER_MS the player still here can ride on alone; in co-op that
+  // means the remaining rider takes over the bike as a solo ride.
+  // ============================================================
+
+  /** Who has dropped out of the ride right now, or null. */
+  _dropWho() {
+    const p1Pad = this.input.gamepadConnected && !this.input._remoteMenu;
+    if (p1Pad) { this._p1PadSeen = true; this._p1PadWaived = false; }
+    if (this.mode === 'local' && this._localP2Type === 'gamepad' && this.inputP2 && !this.inputP2.gamepadConnected) return 'p2';
+    if ((this.mode === 'solo' || this.mode === 'local') && this._p1PadSeen && !p1Pad && !this._p1PadWaived) return 'p1';
+    if ((this.mode === 'captain' || this.mode === 'stoker') && (this._reconnecting || this._netLost)) return 'partner';
+    return null;
+  }
+
+  /**
+   * Run once per playing frame (not versus, which has its own freeze).
+   * @returns {boolean} true while the ride is paused (skip the mode update)
+   */
+  _tickDropPause() {
+    let who = this._dropWho();
+    // Pads must stay gone a moment (a BT blip shouldn't flash the pause).
+    if (who && who !== 'partner' && (!this._drop || this._drop.who !== who)) {
+      const now = performance.now();
+      if (!this._dropCandidate || this._dropCandidate.who !== who) this._dropCandidate = { who, since: now };
+      if (now - this._dropCandidate.since < DROP_DEBOUNCE_MS) who = this._drop ? this._drop.who : null;
+    } else if (!who) {
+      this._dropCandidate = null;
+    }
+    if (who && (!this._drop || this._drop.who !== who)) this._startDropPause(who);
+    else if (!who && this._drop) this._endDropPause();
+    if (!this._drop) return false;
+
+    const d = this._drop;
+    if (d.canTakeover && !d.takeoverReady) {
+      const left = Math.max(0, Math.ceil((DROP_TAKEOVER_MS - (performance.now() - d.since)) / 1000));
+      if (left === 0) { d.takeoverReady = true; this._renderDropOverlay(); }
+      else if (left !== d.shownLeft) {
+        d.shownLeft = left;
+        document.getElementById('disconnect-sub').textContent = `${d.waitText} ${d.takeoverWho} can ${d.takeoverVerb} in ${left}s.`;
+      }
+    }
+    this.input.consumeTaps();
+    if (this.inputP2) this.inputP2.consumeTaps();
+    this._pollOverlayGamepad();
+    this._renderStatic();
+    return true;
+  }
+
+  _startDropPause(who) {
+    const local = this.mode === 'local';
+    const d = {
+      who, since: performance.now(), takeoverReady: false, shownLeft: null,
+      canResume: who === 'p1',
+      // Riding on alone needs someone left to ride: not a solo player, and
+      // not mid-tutorial (it's scripted for its own seat).
+      canTakeover: (who === 'p2' || who === 'partner' || (who === 'p1' && local)) && !this._tutorialActive,
+      title: '', waitText: '', takeoverWho: '', takeoverVerb: '', takeoverLabel: '',
+    };
+    if (who === 'p1' && !local) {
+      d.title = 'Your controller disconnected';
+      d.waitText = 'Reconnect it to keep riding, or resume without it.';
+    } else if (who === 'p1') {
+      d.title = "Player 1's controller disconnected";
+      d.waitText = 'Reconnect it to keep riding together.';
+      d.takeoverWho = 'Player 2'; d.takeoverVerb = 'take over'; d.takeoverLabel = 'Player 2: take over';
+    } else if (who === 'p2') {
+      d.title = "Player 2's controller disconnected";
+      d.waitText = 'Reconnect it to keep riding together.';
+      d.takeoverWho = 'Player 1'; d.takeoverVerb = 'ride on alone'; d.takeoverLabel = 'Ride on alone';
+    } else if (this.mode === 'stoker') {
+      d.title = 'The captain lost connection';
+      d.waitText = 'Waiting for them to reconnect.';
+      d.takeoverWho = 'You'; d.takeoverVerb = 'take over the bike'; d.takeoverLabel = 'Take over the bike';
+    } else {
+      d.title = 'Your partner lost connection';
+      d.waitText = 'Waiting for them to reconnect.';
+      d.takeoverWho = 'You'; d.takeoverVerb = 'ride on alone'; d.takeoverLabel = 'Ride on alone';
+    }
+    this._drop = d;
+    if (this.mode === 'local') { this._localP2Disconnected = who === 'p2'; }
+    // Either local player may press the buttons (P1's pad may be the one gone).
+    this._overlayFocus.input = this._dropFocusInput();
+    this._renderDropOverlay();
+    try { analytics.trackEvent('ride_drop_pause', { who, mode: this.mode }); } catch (e) {}
+  }
+
+  _renderDropOverlay() {
+    const d = this._drop;
+    if (!d) return;
+    document.getElementById('disconnect-overlay').style.display = 'flex';
+    document.getElementById('disconnect-msg').textContent = d.title;
+    const sub = document.getElementById('disconnect-sub');
+    sub.hidden = false;
+    sub.textContent = d.canTakeover && !d.takeoverReady
+      ? `${d.waitText} ${d.takeoverWho} can ${d.takeoverVerb} in ${Math.ceil(DROP_TAKEOVER_MS / 1000)}s.`
+      : d.waitText;
+    const resume = document.getElementById('btn-drop-resume');
+    const alone = document.getElementById('btn-ride-alone');
+    const retry = document.getElementById('btn-try-reconnect');
+    resume.hidden = !d.canResume;
+    alone.hidden = !(d.canTakeover && d.takeoverReady);
+    alone.textContent = d.takeoverLabel || 'Ride on alone';
+    retry.hidden = !(d.who === 'partner' && this._netLost && this.net);
+    const btns = [resume, alone, retry, document.getElementById('btn-return-lobby')].filter((b) => !b.hidden);
+    this._setOverlayButtons(btns, 0);
+  }
+
+  _endDropPause() {
+    this._drop = null;
+    this._dropCandidate = null;
+    this._localP2Disconnected = false;
+    document.getElementById('disconnect-overlay').style.display = 'none';
+    this._clearOverlayButtons();
+    this._overlayFocus.input = this.input;
+    this._overlayFocus.reprime();
+    // A button held to resume isn't a pedal stroke.
+    this.input.consumeTaps();
+    if (this.inputP2) this.inputP2.consumeTaps();
+  }
+
+  /** A focus input that reads whichever local pad is still connected. */
+  _dropFocusInput() {
+    const inputs = [this.input, this.inputP2].filter(Boolean);
+    const pick = () => inputs.find((i) => i.gamepadConnected) || this.input;
+    return {
+      get gamepadConnected() { return inputs.some((i) => i.gamepadConnected); },
+      getGamepadState: () => pick().getGamepadState(),
+      get _gpSwapAB() { return pick()._gpSwapAB; },
+    };
+  }
+
+  /**
+   * The disconnect pause's "ride on alone" / "take over": the rest of the
+   * ride is a solo ride for whoever is still here.
+   */
+  _rideOnAlone() {
+    const d = this._drop;
+    if (!d || !d.canTakeover || !d.takeoverReady) return;
+    const from = this.mode;
+    if (from === 'local') {
+      if (d.who === 'p1') {
+        // Player 2 takes over the captain's seat. P1's input comes back at
+        // the lobby (_returnToLobby).
+        this._takeoverSaved = { input: this.input, balanceCtrl: this.balanceCtrl };
+        this.input = this.inputP2;
+        this.balanceCtrl = this.balanceCtrlP2 || new BalanceController(this.input);
+      }
+      this.input.keyboardActive = true;   // local co-op may have parked it
+      this.inputP2 = null;
+      this.balanceCtrlP2 = null;
+      this._localP2Type = null;
+      this._localP2Disconnected = false;
+      document.body.classList.remove('mode-local');
+    }
+    if (this.net) {
+      this.net.destroy();
+      this.net = null;
+      this.recorder.clearPartnerStream();
+      updateBadgeDisplay('partner-badges', []);
+      document.getElementById('conn-badge').style.display = 'none';
+    }
+    this._hideReconnecting();
+    this._netLost = false;
+    this.mode = 'solo';
+    this.sharedPedal = null;
+    this.remoteBikeState = null;
+    this.remoteLean = 0;
+    this._remoteLastFoot = null;
+    this._remoteLastTapTime = 0;
+    this._stokerWasFallen = false;
+    this._p1PadSeen = false;
+    this._p1PadWaived = false;
+    this.pedalCtrl = new PedalController(this.input);
+    this.hud.setSeat('captain', false);
+    setHapticSources([this.input]);
+    try { analytics.trackEvent('ride_takeover', { from, who: d.who }); } catch (e) {}
+    this._endDropPause();
   }
 
   _showGameOver(fromRemote = false, opts = {}) {
@@ -2958,7 +3181,9 @@ class Game {
     const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, practiceBtn, roomBtn,
       document.getElementById('btn-gameover-lobby'), ...this._showRideCoins('gameover', 'crash'), ...gameoverCtas]
       .filter(el => el && el.style.display !== 'none');
-    this._setOverlayButtons(btns);
+    // #458 item 10: focus starts on RESTART (the retry), not SAVE CLIP above it.
+    const restartIdx = btns.indexOf(document.getElementById('btn-restart'));
+    this._setOverlayButtons(btns, restartIdx >= 0 ? restartIdx : btns.findIndex(b => b !== clipBtn));
 
     // Input cooldown: on mobile, pedal taps and button taps share the same
     // touch area. On desktop/TV, pedal inputs are separate from selection.
@@ -4656,9 +4881,11 @@ class Game {
         low_quality: this._lowQuality ? 1 : 0,
         quality: this._quality,
         quality_auto: this._qualityAuto ? 1 : 0,
-        // #456 · this ride's fps is a mix of two tiers: Auto stepped down mid-ride
+        // #456 · this ride's fps is a mix of two tiers: Auto changed tier mid-ride
         // (quality is where it ended, quality_start where it began)
-        auto_changed: this._rideAutoChanged ? 1 : 0,
+        auto_changed: this._rideAutoChanged || this._rideAutoUp ? 1 : 0,
+        // #456 Q2 · which way: 'down', 'up', 'both' (up, then too slow), or null
+        auto_step: this._rideAutoUp ? (this._rideAutoChanged ? 'both' : 'up') : (this._rideAutoChanged ? 'down' : null),
         quality_start: this._rideStartTier || this._quality,
         show_riders: this._showRiders ? 1 : 0,
         recording: this.recorder && this.recorder.buffering ? 1 : 0,
@@ -4963,6 +5190,17 @@ class Game {
   }
 
   _returnToLobby() {
+    if (this._drop) this._endDropPause();
+    this._netLost = false;
+    this._p1PadSeen = false;
+    this._p1PadWaived = false;
+    if (this._takeoverSaved) {
+      // Player 2 had taken over the bike: P1's input goes back in the seat.
+      this.input = this._takeoverSaved.input;
+      this.balanceCtrl = this._takeoverSaved.balanceCtrl;
+      this._takeoverSaved = null;
+      this._overlayFocus.input = this.input;
+    }
     this._payoutAbandon();   // #400 D4: an abandoned ride still pays its distance
     this._endRankedRun();   // #398
     this._helpEndRide();    // #403
@@ -5762,6 +6000,7 @@ class Game {
     if (level === 'auto') {
       clearHardwareCache();   // re-detect on next load; slow rides step it down
       this._qualityAuto = true;
+      this._autoSlowTier = null;   // setQualityPref('auto') forgot what rides taught it
       if (this._autoWatcher) this._autoWatcher.reset();
       this._updateOptionsQualityUI();
       return;
@@ -6055,6 +6294,7 @@ class Game {
     this._fpsMaxDt = 0;
     this._rideStartTier = null;
     this._rideAutoChanged = false;
+    this._rideAutoUp = false;
   }
 
   // ============================================================
@@ -6338,26 +6578,43 @@ class Game {
         if (rawDt > this._fpsMaxDt) this._fpsMaxDt = rawDt;
       }
       // Auto: a ride that stays slow steps the quality down a tier, and
-      // remembers it for next time.
+      // remembers it for next time (and that the tier it left was too slow).
+      // A ride that stays well above target for about a minute steps up one
+      // tier (#456 Q2): once per ride, and never back to a tier rides proved
+      // too slow while that's remembered (AUTO_TIER_DAYS in js/quality.js).
       // Versus (2+ views) and Tourist (streamed 3D tiles) are heavier than
       // a normal ride; they don't teach Auto anything about normal rides.
       // On a desktop Auto stops at Medium: Low hides the riders, so it stays
       // a manual choice there (phones and TVs already ride without riders).
       const autoFloor = autoFloorTier(isMobile);
-      const autoWatch = this._autoWatcher && this._qualityAuto && tierRank(this._quality) > tierRank(autoFloor) &&
+      const canDown = tierRank(this._quality) > tierRank(autoFloor);
+      const autoUp = this._rideAutoUp ? null : autoStepUpTarget({ tier: this._quality, slow: this._autoSlowTier });
+      const autoWatch = this._autoWatcher && this._qualityAuto && (canDown || autoUp) &&
         this.mode !== 'versus' && !this.isTourist && !this._proceduralWorld;
       if (autoWatch && !this._autoWatching) { this._autoWatcher.reset(); this._autoWatching = true; }
-      if (autoWatch && this._autoWatcher.sample(rawDt) === 'down') {
+      const autoStep = autoWatch ? this._autoWatcher.sample(rawDt, { canDown, canUp: !!autoUp }) : null;
+      if (autoStep === 'down') {
         const next = tierBelow(this._quality);
         console.log(`[QUALITY] rides are slow — Auto steps down to ${next}`);
-        saveLearnedAutoTier(next);
+        this._autoSlowTier = this._quality;
+        saveLearnedAutoTier(next, undefined, undefined, this._autoSlowTier);
         this._setTier(next);
         this._rideAutoChanged = true;
         try { analytics.trackEvent('quality_auto_down', { tier: next }); } catch (e) {}
+      } else if (autoStep === 'up' && autoUp) {
+        console.log(`[QUALITY] rides are fast — Auto tries ${autoUp}`);
+        saveLearnedAutoTier(autoUp, undefined, undefined, this._autoSlowTier);
+        this._setTier(autoUp);
+        this._rideAutoUp = true;
+        try { analytics.trackEvent('quality_auto_up', { tier: autoUp }); } catch (e) {}
       }
 
       // D-pad actions (safety/speed/reset/lobby) — singleton-bike shortcuts,
       // skipped in versus (reset/safety would only act on the parked bike).
+      // Disconnect pause: a dropped controller / partner freezes the ride.
+      if (this.mode !== 'versus' && this._tickDropPause()) {
+        // paused — nothing else runs this frame
+      } else {
       if (this.mode !== 'versus') this._pollDpad();
 
       // Playing state — dispatch by mode
@@ -6371,6 +6628,7 @@ class Game {
         this._updateLocal(dt);
       } else if (this.mode === 'versus') {
         this._updateVersus(dt);
+      }
       }
     } else if (this.state === 'finishCinematic') {
       // Cinematic finish camera owns its own world/bike updates and
@@ -6717,27 +6975,8 @@ class Game {
   // ============================================================
 
   _updateLocal(dt) {
-    // Mid-ride disconnect: if P2 is on a gamepad that just dropped, pause the
-    // ride and show a reconnect overlay. Physics + race timer freeze until the
-    // gamepad comes back (or the player quits via the overlay's Return button).
-    if (this._localP2Type === 'gamepad' && !this.inputP2.gamepadConnected) {
-      if (!this._localP2Disconnected) {
-        this._localP2Disconnected = true;
-        this._reconnecting = true; // pauses local co-op (this fn early-returns below)
-        this._showDisconnect('Player 2 controller disconnected');
-      }
-      // Render a still frame so the world doesn't look crashed, but skip
-      // physics, race progress, input reads, and P2 polling entirely.
-      this.renderer.render(this.scene, this.camera);
-      return;
-    }
-    if (this._localP2Disconnected) {
-      // Gamepad came back — hide overlay and resume.
-      this._localP2Disconnected = false;
-      this._reconnecting = false;
-      document.getElementById('disconnect-overlay').style.display = 'none';
-      if (this._clearOverlayButtons) this._clearOverlayButtons();
-    }
+    // (The disconnect pause in the main loop handles a dropped pad — see
+    // _tickDropPause — so this only runs while both seats are here.)
 
     // Feed bike speed to P2 input for velocity-dependent sensitivity
     this.inputP2.bikeSpeed = this.bike.speed;

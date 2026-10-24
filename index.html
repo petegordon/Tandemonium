@@ -3210,6 +3210,12 @@
     outline-offset: 3px;
     box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
   }
+  /* #458 item 10: the round toggles take the same focus ring as <uf-button>
+     (the kit's --uf-focus-ring), not the offset outline + glow. */
+  .lobby-toggle.gamepad-focus {
+    outline: none;
+    box-shadow: var(--uf-focus-ring);
+  }
   .room-code {
     font-size: 36px;
     font-weight: 700;
@@ -3550,6 +3556,14 @@
     font-weight: 700;
     margin-bottom: 20px;
   }
+  .disconnect-box #disconnect-sub {
+    color: rgba(255,255,255,0.75);
+    font-size: 16px;
+    font-weight: 400;
+    margin: -10px 0 20px;
+  }
+  .disconnect-box uf-button[hidden] { display: none; }
+  .disconnect-box uf-button { margin: 5px 4px !important; }   /* one row, wraps on phones */
 
   /* ── Connection badge ── */
   #conn-badge {
@@ -5871,7 +5885,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.3b867b1 | 10-23-2026 22:40</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.e284ef4 | 10-24-2026 07:43</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6230,6 +6244,9 @@ ON</button>
 <div id="disconnect-overlay" style="display:none;">
   <div class="disconnect-box">
     <p id="disconnect-msg">Partner disconnected</p>
+    <p id="disconnect-sub" hidden></p>
+    <uf-button variant="accent" id="btn-drop-resume" hidden>Resume</uf-button>
+    <uf-button variant="accent" id="btn-ride-alone" hidden>Ride on alone</uf-button>
     <uf-button variant="accent" id="btn-try-reconnect">Try Again</uf-button>
     <uf-button id="btn-return-lobby" style="margin-top:10px;">Return to Lobby</uf-button>
   </div>

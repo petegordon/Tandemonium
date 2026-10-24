@@ -5,6 +5,7 @@ import {
   resolveQualityTier, migrateQualityPref, getQualityPref, setQualityPref,
   getLearnedAutoTier, saveLearnedAutoTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher,
   clipsOffAtBoot, keepDrawingBuffer, CLIP_SLOW_KEY,
+  getLearnedAuto, tierAbove, autoStepUpTarget, AUTO_TIER_DAYS,
 } from '../../js/quality.js';
 
 function store(init = {}) {
@@ -42,15 +43,76 @@ test('migrate: a saved "low" from the two-tier days becomes "medium", once', () 
   assert.equal(getQualityPref(fresh), 'auto');
 });
 
-test('learned Auto tier: saved, expires after a week, and choosing Auto again forgets it', () => {
+test('learned Auto tier: saved, expires after AUTO_TIER_DAYS, and choosing Auto again forgets it', () => {
   const s = store();
   const now = 1_000_000_000_000;
+  const day = 86400000;
   saveLearnedAutoTier('low', s, now);
-  assert.equal(getLearnedAutoTier(s, now + 86400000), 'low');
-  assert.equal(getLearnedAutoTier(s, now + 8 * 86400000), null);
+  assert.equal(getLearnedAutoTier(s, now + day), 'low');
+  assert.equal(getLearnedAutoTier(s, now + AUTO_TIER_DAYS * day), 'low');
+  assert.equal(getLearnedAutoTier(s, now + AUTO_TIER_DAYS * day + 1), null, 'expired: back to hardware detection');
+  assert.equal(getLearnedAutoTier(s, now + 8 * day), null);
   saveLearnedAutoTier('medium', s, now);
   setQualityPref('auto', s);
   assert.equal(getLearnedAutoTier(s, now), null);
+});
+
+test('learned Auto record keeps the tier that proved slow, and it expires with the tier', () => {
+  const s = store();
+  const now = 1_000_000_000_000;
+  saveLearnedAutoTier('medium', s, now, 'high');
+  assert.deepEqual(getLearnedAuto(s, now), { tier: 'medium', slow: 'high' });
+  assert.equal(getLearnedAuto(s, now + (AUTO_TIER_DAYS + 1) * 86400000), null);
+  // A record saved before #456 Q2 has no slow tier.
+  const old = store({ tandemonium_auto_tier: JSON.stringify({ tier: 'low', at: now }) });
+  assert.deepEqual(getLearnedAuto(old, now), { tier: 'low', slow: null });
+  // Junk / a missing timestamp is not fresh.
+  assert.equal(getLearnedAuto(store({ tandemonium_auto_tier: '{"tier":"low"}' }), now), null);
+  assert.equal(getLearnedAuto(store({ tandemonium_auto_tier: 'nope' }), now), null);
+});
+
+test('step-up target: one tier at a time, never past High, never back to a tier that proved slow', () => {
+  assert.equal(tierAbove('low'), 'medium');
+  assert.equal(tierAbove('medium'), 'high');
+  assert.equal(tierAbove('high'), 'high');
+  assert.equal(autoStepUpTarget({ tier: 'low' }), 'medium');
+  assert.equal(autoStepUpTarget({ tier: 'medium' }), 'high');
+  assert.equal(autoStepUpTarget({ tier: 'high' }), null);
+  assert.equal(autoStepUpTarget({ tier: 'medium', slow: 'high' }), null, 'High was too slow');
+  assert.equal(autoStepUpTarget({ tier: 'low', slow: 'medium' }), null, 'Medium was too slow');
+  assert.equal(autoStepUpTarget({ tier: 'low', slow: 'high' }), 'medium', 'Medium is still worth a try');
+});
+
+test('watcher: a long fast stretch says up only when allowed, and only after upWindows fast windows in a row', () => {
+  const w = new AutoTierWatcher({ windowSec: 8, graceSec: 6, upFps: 50, upWindows: 8 });
+  let out = null, t = 0;
+  while (!out && t < 200) { out = w.sample(1 / 60, { canUp: true }); t += 1 / 60; }
+  assert.equal(out, 'up');
+  assert.ok(t >= 6 + 64 - 0.1 && t < 6 + 64 + 0.5, `stepped up at ${t.toFixed(1)} s`);
+  // Not allowed (already at the top, or the next tier proved slow): never.
+  const no = new AutoTierWatcher();
+  for (let i = 0; i < 60 * 300; i++) assert.equal(no.sample(1 / 60), null);
+});
+
+test('watcher: a single slower window restarts the step-up count (hysteresis)', () => {
+  const w = new AutoTierWatcher({ windowSec: 8, graceSec: 0, upFps: 50, upWindows: 3 });
+  const run = (fps, sec) => { let r = null; for (let i = 0; i < fps * sec; i++) r = w.sample(1 / fps, { canUp: true }) || r; return r; };
+  assert.equal(run(64, 16), null);        // two fast windows (64 / 32 fps: exact in binary)
+  assert.equal(run(32, 8), null);         // 32 fps: fine, not "comfortably fast": count restarts
+  assert.equal(run(64, 16), null);        // two again, not three
+  assert.equal(run(64, 8), 'up');         // third in a row
+});
+
+test('watcher: between minFps and upFps nothing happens; slow still steps down while up is allowed', () => {
+  const mid = new AutoTierWatcher({ graceSec: 0 });
+  for (let i = 0; i < 35 * 300; i++) assert.equal(mid.sample(1 / 35, { canUp: true }), null);
+  const slow = new AutoTierWatcher({ graceSec: 0 });
+  let out = null;
+  for (let i = 0; i < 10 * 20 && !out; i++) out = slow.sample(1 / 10, { canUp: true });
+  assert.equal(out, 'down');
+  // At the floor (canDown false) a slow ride says nothing.
+  const floor = new AutoTierWatcher({ graceSec: 0 });
+  for (let i = 0; i < 10 * 60; i++) assert.equal(floor.sample(1 / 10, { canDown: false, canUp: true }), null);
 });
 
 test('tierBelow steps High → Medium → Low and stops', () => {

@@ -51,6 +51,7 @@
     "docs:screen-flow": "node scripts/gen-screen-flow.mjs",
     "typecheck": "tsc -p jsconfig.json",
     "smoke:phone-pad": "node scripts/smoke-phone-pad.mjs",
+    "smoke:disconnect": "node scripts/smoke-disconnect-pause.mjs",
     "smoke:host-room": "node scripts/smoke-host-room.mjs"
   },
   "dependencies": {

@@ -15,6 +15,9 @@
 // Auto starts from hardware detection (a "low" GPU starts at Medium) and
 // then watches the real frame rate during rides, stepping down a tier
 // when a ride stays slow (AutoTierWatcher). The step down is remembered.
+// When rides stay well above target for about a minute, Auto tries one tier
+// up (#456 Q2), but never back up to a tier rides proved too slow while that
+// lesson is fresh (AUTO_TIER_DAYS), so it can't ping-pong.
 // ============================================================
 
 /** @typedef {'low'|'medium'|'high'} QualityTier */
@@ -23,7 +26,8 @@ export const QUALITY_TIERS = /** @type {const} */ (['low', 'medium', 'high']);
 const PREF_KEY = 'tandemonium_quality';
 const PREF_VERSION_KEY = 'tandemonium_quality_v';
 const AUTO_TIER_KEY = 'tandemonium_auto_tier';
-const AUTO_TIER_DAYS = 7;
+/** How long what Auto learned (its tier, and the tier that proved too slow) lasts. #456 Q2: was 7. */
+export const AUTO_TIER_DAYS = 3;
 
 /** @param {any} v @returns {v is QualityTier} */
 export const isTier = (v) => QUALITY_TIERS.includes(v);
@@ -38,6 +42,9 @@ export const tierBelow = (t) => (t === 'high' ? 'medium' : 'low');
  * @param {boolean} mobile @returns {QualityTier}
  */
 export const autoFloorTier = (mobile) => (mobile ? 'low' : 'medium');
+
+/** One step up (High stays High). @param {QualityTier} t @returns {QualityTier} */
+export const tierAbove = (t) => (t === 'low' ? 'medium' : 'high');
 
 /** Low 0, Medium 1, High 2. @param {QualityTier} t */
 export const tierRank = (t) => ({ low: 0, medium: 1, high: 2 })[t] ?? 2;
@@ -73,20 +80,47 @@ export function setQualityPref(pref, store = globalThis.localStorage) {
   } catch { /* storage unavailable */ }
 }
 
-/** The tier Auto learned from slow rides, if still fresh. @param {Storage} [store] @returns {QualityTier|null} */
-export function getLearnedAutoTier(store = globalThis.localStorage, now = Date.now()) {
+/**
+ * What Auto learned from rides, if still fresh (saved under AUTO_TIER_DAYS
+ * ago): the tier to start at, and the tier rides proved too slow (or null),
+ * which Auto won't step back up to. Once it expires Auto starts over from
+ * hardware detection, so no device is stuck on a low tier for good.
+ * @param {Storage} [store] @returns {{ tier: QualityTier, slow: QualityTier|null }|null}
+ */
+export function getLearnedAuto(store = globalThis.localStorage, now = Date.now()) {
   try {
     const raw = store.getItem(AUTO_TIER_KEY);
     if (!raw) return null;
-    const { tier, at } = JSON.parse(raw);
-    if (!isTier(tier) || now - at > AUTO_TIER_DAYS * 86400000) return null;
-    return tier;
+    const { tier, at, slow } = JSON.parse(raw);
+    if (!isTier(tier) || !(now - at <= AUTO_TIER_DAYS * 86400000)) return null;
+    return { tier, slow: isTier(slow) ? slow : null };
   } catch { return null; }
 }
 
-/** @param {QualityTier} tier @param {Storage} [store] */
-export function saveLearnedAutoTier(tier, store = globalThis.localStorage, now = Date.now()) {
-  try { store.setItem(AUTO_TIER_KEY, JSON.stringify({ tier, at: now })); } catch { /* storage unavailable */ }
+/** The tier Auto learned from rides, if still fresh. @param {Storage} [store] @returns {QualityTier|null} */
+export function getLearnedAutoTier(store = globalThis.localStorage, now = Date.now()) {
+  const l = getLearnedAuto(store, now);
+  return l ? l.tier : null;
+}
+
+/**
+ * @param {QualityTier} tier @param {Storage} [store] @param {number} [now]
+ * @param {QualityTier|null} [slow] the tier rides proved too slow
+ */
+export function saveLearnedAutoTier(tier, store = globalThis.localStorage, now = Date.now(), slow = null) {
+  try { store.setItem(AUTO_TIER_KEY, JSON.stringify({ tier, at: now, slow })); } catch { /* storage unavailable */ }
+}
+
+/**
+ * The tier Auto may try stepping up to, or null: one tier at a time, never
+ * past High, and never to (or past) a tier rides proved too slow.
+ * @param {{ tier: QualityTier, slow?: QualityTier|null }} o @returns {QualityTier|null}
+ */
+export function autoStepUpTarget({ tier, slow = null }) {
+  if (tier === 'high') return null;
+  const up = tierAbove(tier);
+  if (slow && tierRank(up) >= tierRank(slow)) return null;
+  return up;
 }
 
 /**
@@ -138,15 +172,21 @@ export const setCurrentTier = (t) => { _current = t; };
 
 /**
  * Watches ride frame rate for Auto. Feed it every frame while a ride is on
- * screen; it says 'down' once a full window averages under MIN_FPS.
+ * screen; it says 'down' once a full window averages under minFps, and (if
+ * the caller allows a step up) 'up' once upWindows windows in a row each
+ * average at least upFps: about a minute of comfortably fast riding. The
+ * wide gap between minFps and upFps is the hysteresis; the caller adds the
+ * rest (never back up to a tier that proved slow, one step up per ride).
  * Long gaps (a tab switch, a load hitch) are skipped, and after a change it
  * waits a grace period for the new settings to settle.
  */
 export class AutoTierWatcher {
-  constructor({ minFps = 24, windowSec = 8, graceSec = 6 } = {}) {
+  constructor({ minFps = 24, windowSec = 8, graceSec = 6, upFps = 50, upWindows = 8 } = {}) {
     this.minFps = minFps;
     this.windowSec = windowSec;
     this.graceSec = graceSec;
+    this.upFps = upFps;
+    this.upWindows = upWindows;
     this.reset();   // the first seconds of a ride warm up shaders
   }
 
@@ -155,13 +195,15 @@ export class AutoTierWatcher {
     this._grace = grace;
     this._time = 0;
     this._frames = 0;
+    this._fastWindows = 0;
   }
 
   /**
    * @param {number} dt seconds since the last frame (unclamped)
-   * @returns {'down'|null}
+   * @param {{ canDown?: boolean, canUp?: boolean }} [o] which steps the caller would take now
+   * @returns {'down'|'up'|null}
    */
-  sample(dt) {
+  sample(dt, { canDown = true, canUp = false } = {}) {
     if (!(dt > 0) || dt > 1) return null;       // a pause, not a frame
     if (this._grace > 0) { this._grace -= dt; return null; }
     this._time += dt;
@@ -170,7 +212,9 @@ export class AutoTierWatcher {
     const fps = this._frames / this._time;
     this._time = 0;
     this._frames = 0;
-    if (fps < this.minFps) { this.reset(); return 'down'; }
+    if (fps < this.minFps && canDown) { this.reset(); return 'down'; }
+    this._fastWindows = fps >= this.upFps ? this._fastWindows + 1 : 0;
+    if (canUp && this._fastWindows >= this.upWindows) { this.reset(); return 'up'; }
     return null;
   }
 }
