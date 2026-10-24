@@ -248,7 +248,7 @@ const fail = {
   ms: Date.now() - t0, abortedWhileLoading,
   cap: { ...(await worldState(cap)), why: await cap.evaluate(() => window._game._lastTouristAbort) },
   sto: { ...(await worldState(sto)), why: await sto.evaluate(() => window._game._lastTouristAbort) },
-  capInRoom: await cap.evaluate(() => window._game.lobby._currentStep === window._game.lobby.roomStep),
+  capInRoom: await cap.evaluate(() => window._game.lobby._currentStep === window._game.lobby.levelStep),
 };
 console.log('no key on the stoker:', JSON.stringify(fail, null, 1));
 const failOk = fail.abortedWhileLoading && fail.cap.state === 'lobby' && fail.sto.state === 'lobby' &&
@@ -429,10 +429,10 @@ await cap.evaluate(async (planJs) => {
   l._startTouristRide(await eval(planJs));
 }, PLAN_FAST_JS);
 await cap.waitForFunction(() => !!window._game._lastTouristAbort, { timeout: 30000, polling: 100 }).catch(() => null);
-await sto.waitForFunction(() => window._game.state === 'lobby' && window._game.lobby._currentStep === window._game.lobby.roomStep,
+await sto.waitForFunction(() => window._game.state === 'lobby' && window._game.lobby._currentStep === window._game.lobby.levelStep,
   { timeout: 30000, polling: 100 }).catch(() => null);
 const capFail = { ms: Date.now() - t0, cap: await worldState(cap), sto: await worldState(sto),
-  stoInRoom: await sto.evaluate(() => window._game.lobby._currentStep === window._game.lobby.roomStep) };
+  stoInRoom: await sto.evaluate(() => window._game.lobby._currentStep === window._game.lobby.levelStep) };
 console.log('captain load fails:', JSON.stringify(capFail, null, 1));
 const capFailOk = capFail.cap.state === 'lobby' && capFail.sto.state === 'lobby' &&
   capFail.sto.kind === 'World' && capFail.stoInRoom;

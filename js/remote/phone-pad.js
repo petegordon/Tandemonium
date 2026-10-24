@@ -20,11 +20,21 @@
 //
 // No text inputs on this page: iOS "Shake to Undo" pops up after typing, and
 // here shaking is steering.
+//
+// #454, only with a game that answers our hello (v2+; an older game gets
+// exactly what it always got):
+//   - {type:'mode'} 'menu': send on a change plus a slow heartbeat instead
+//     of 30 Hz (anything held still streams at 30 Hz).
+//   - {type:'rekey', k}: the game gives this phone its own key and then
+//     retires the QR's secret. We keep the new key first and the one we
+//     joined with as a fallback (in case the game never got our ack), and a
+//     dial that fails tries the other one.
 // ============================================================
 
 import { orientationToRawTilt, gravityToRawTilt } from '../tilt-math.js';
 import {
   parsePadLink, padSocketUrl, encodeFrame, NAV, DEFAULT_PAD_RELAY, relayOverrideAllowed,
+  PAD_PROTOCOL, peerVersion, shouldSendFrame, MENU_TILT_STEP, padKeysOnBoot, padKeysAfterRekey,
 } from './pad-protocol.js';
 
 const SEND_MS = 33;          // ~30 Hz
@@ -48,23 +58,39 @@ const state = {
   nav: 0,
   dirty: false,
   lastSend: 0,
+  lastChange: 0,
+  sentTilt: /** @type {number|null} */ (null),
   wakeLock: /** @type {any} */ (null),
   lastCue: '',
   audio: /** @type {AudioContext|null} */ (null),
+  // #454
+  hostVersion: 1,        // 1 until the game answers our hello
+  mode: 'ride',          // what the game last said; only used with hostVersion >= 2
+  keys: /** @type {string[]} */ ([]),   // secrets to try, newest first
+  keyIdx: 0,
+  storeKey: '',
+  framesSent: 0,         // (smoke-test aid)
 };
+
+function saveKeys() {
+  try {
+    sessionStorage.setItem(state.storeKey, state.keys[0] || '');
+    if (state.keys[1]) sessionStorage.setItem(state.storeKey + '_prev', state.keys[1]);
+    else sessionStorage.removeItem(state.storeKey + '_prev');
+  } catch { /* private mode */ }
+}
 
 // ── Boot: read the link, keep the secret out of the address bar ──
 function boot() {
   const parsed = parsePadLink(location.href);
   if (!parsed) return showScreen('bad-link');
-  const key = 'tandemonium_pad_' + parsed.code + '_' + parsed.seat;
-  if (parsed.secret) {
-    try { sessionStorage.setItem(key, parsed.secret); } catch { /* private mode */ }
-    history.replaceState(null, '', location.pathname + location.search);
-  } else {
-    try { parsed.secret = sessionStorage.getItem(key); } catch { /* private mode */ }
-  }
-  if (!parsed.secret) return showScreen('bad-link');
+  state.storeKey = 'tandemonium_pad_' + parsed.code + '_' + parsed.seat;
+  let stored = null, prev = null;
+  try { stored = sessionStorage.getItem(state.storeKey); prev = sessionStorage.getItem(state.storeKey + '_prev'); } catch { /* private mode */ }
+  state.keys = padKeysOnBoot(parsed.secret, stored, prev);
+  if (parsed.secret) history.replaceState(null, '', location.pathname + location.search);
+  if (!state.keys.length) return showScreen('bad-link');
+  saveKeys();
   state.link = parsed;
   if (parsed.relay && relayOverrideAllowed(location.hostname)) state.relay = parsed.relay;
   $('seat-label').textContent = 'Player ' + parsed.seat;
@@ -238,7 +264,17 @@ function tick() {
   const ws = state.ws;
   if (!ws || ws.readyState !== 1 || !state.hostHere) return;
   const now = performance.now();
-  if (!state.dirty && now - state.lastSend < SEND_MS - 2) return;
+  const light = state.hostVersion >= 2 && state.mode === 'menu';
+  if (light && !state.dirty) {
+    // In menus a moving phone still counts as a change; a still one is idle.
+    const t = state.tilt, s = state.sentTilt;
+    if ((t == null) !== (s == null) || (t != null && s != null && Math.abs(t - s) >= MENU_TILT_STEP)) state.lastChange = now;
+  }
+  if (state.dirty) state.lastChange = now;
+  const held = state.left || state.right || state.nav !== 0;
+  if (!shouldSendFrame({ dirty: state.dirty, light, held, now, lastSend: state.lastSend, lastChange: state.lastChange, sendMs: SEND_MS })) return;
+  state.sentTilt = state.tilt;
+  state.framesSent++;
   state.seq = (state.seq + 1) & 0xff;
   ws.send(encodeFrame({
     seq: state.seq, tilt: state.tilt, left: state.left, right: state.right,
@@ -251,9 +287,11 @@ function tick() {
 // ── Relay connection ──
 function connect() {
   if (state.closedForGood || !state.link) return;
-  const { code, seat, secret } = state.link;
+  const { code, seat } = state.link;
   setStatus('Connecting…');
   clearTimeout(state.retryTimer);
+  if (state.keyIdx >= state.keys.length) state.keyIdx = 0;
+  const secret = state.keys[state.keyIdx];
   const ws = new WebSocket(padSocketUrl(state.relay, code, 'pad-' + seat, secret));
   ws.binaryType = 'arraybuffer';
   state.ws = ws;
@@ -266,6 +304,8 @@ function connect() {
     opened = true;
     state.retry = 0;
     state.failed = 0;
+    // This secret works: the others are stale.
+    if (state.keys.length > 1 || state.keyIdx) { state.keys = [secret]; state.keyIdx = 0; saveKeys(); }
     state.lastRecv = performance.now();
     pinger = setInterval(() => {
       if (ws.readyState !== 1) return;
@@ -280,10 +320,26 @@ function connect() {
     if (typeof ev.data !== 'string' || ev.data === 'pong') return;
     let m;
     try { m = JSON.parse(ev.data); } catch { return; }
-    if (m.type === 'host-ready') { state.hostHere = true; setStatus('Connected', true); state.dirty = true; tick(); }
-    else if (m.type === 'host-left' || m.type === 'waiting') { state.hostHere = false; setStatus('Waiting for the game…'); }
+    if (m.type === 'host-ready') {
+      state.hostHere = true;
+      setStatus('Connected', true);
+      // #454: an older game ignores this, and never answers.
+      try { ws.send(JSON.stringify({ type: 'hello', v: PAD_PROTOCOL })); } catch { /* closed */ }
+      state.dirty = true; tick();
+    }
+    else if (m.type === 'host-left' || m.type === 'waiting') { state.hostHere = false; forgetHost(); setStatus('Waiting for the game…'); }
     else if (m.type === 'seat' && m.label) $('seat-label').textContent = m.label;
-    // (An older game sends {type:'mode'}; the layout no longer changes.)
+    else if (m.type === 'hello') state.hostVersion = peerVersion(m);
+    // The layout never changes on 'mode'; it only sets how often we send.
+    // (A much older game also sent 'mode', without hello: ignored.)
+    else if (m.type === 'mode' && state.hostVersion >= 2) { state.mode = m.mode === 'menu' ? 'menu' : 'ride'; state.dirty = true; tick(); }
+    else if (m.type === 'rekey' && state.hostVersion >= 2) {
+      const next = padKeysAfterRekey(secret, m.k);
+      if (next) {
+        state.keys = next; state.keyIdx = 0; saveKeys();
+        try { ws.send(JSON.stringify({ type: 'rekeyed', k: m.k })); } catch { /* closed */ }
+      }
+    }
     else if (m.type === 'bye') {
       state.closedForGood = true;
       setStatus('The game stopped using this phone. Scan its code to connect again.');
@@ -297,8 +353,13 @@ function connect() {
     if (state.ws !== ws) return;
     state.ws = null;
     state.hostHere = false;
+    forgetHost();
     if (state.closedForGood) return;   // 'bye': keep its message, don't redial
-    if (!opened) state.failed = (state.failed || 0) + 1;
+    if (!opened) {
+      state.failed = (state.failed || 0) + 1;
+      // Refused, maybe: the next dial tries our other secret (if we have one).
+      state.keyIdx = (state.keyIdx + 1) % Math.max(1, state.keys.length);
+    }
     // 4001 = the game made a new link for this seat; 403 at upgrade shows as 1006.
     if (ev.code === 4001) {
       state.closedForGood = true;
@@ -317,11 +378,18 @@ function connect() {
   };
 }
 
+/** Until the game says hello again, assume an older one (full rate, no rekey). */
+function forgetHost() {
+  state.hostVersion = 1;
+  state.mode = 'ride';
+}
+
 /** Give up on a socket that went quiet and dial again now. */
 function dropSocket(ws) {
   if (state.ws !== ws) return;
   state.ws = null;
   state.hostHere = false;
+  forgetHost();
   try { ws.close(); } catch { /* closed */ }
   state.retry = 0;
   connect();

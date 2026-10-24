@@ -173,6 +173,58 @@ console.log('Display Testing in Options: overrides apply after a reload; Reset g
   await page.close();
 }
 
+console.log('#456 · Low with clips off gives up the kept drawing buffer; the canvas still shows');
+{
+  const preserve = (page) => page.evaluate(() => window._game.renderer.getContext().getContextAttributes().preserveDrawingBuffer);
+  let page = await boot({ query: '?quality=low&noclip' });
+  check((await preserve(page)) === false, 'Low + ?noclip: preserveDrawingBuffer off');
+  // a ride, paused: Low redraws the scene behind the pause menu only every 15th
+  // frame, and between redraws the page must still show the last one
+  await page.click('#tap-to-start').catch(() => {});
+  await page.evaluate(() => document.getElementById('btn-solo')?.click()); await new Promise((r) => setTimeout(r, 1500));
+  await page.evaluate(() => Array.from(document.querySelectorAll('button, uf-button')).find((x) => /start ride/i.test(x.textContent || ''))?.click());
+  await new Promise((r) => setTimeout(r, 800));
+  await page.evaluate(() => { document.body.click(); document.getElementById('instructions')?.click(); });
+  await page.waitForFunction(() => window._game.state === 'playing', { timeout: 120000 }).catch(() => {});
+  await page.evaluate(() => window._game._openOptions());
+  await new Promise((r) => setTimeout(r, 1500));
+  const strip = () => page.screenshot({ encoding: 'base64', clip: { x: 0, y: 0, width: 1280, height: 720 } });
+  const shown = await strip();
+  await page.evaluate(() => { window._game.renderer.domElement.style.visibility = 'hidden'; });
+  const without = await strip();
+  await page.evaluate(() => { window._game.renderer.domElement.style.visibility = ''; });
+  check(shown !== without && Math.abs(shown.length - without.length) > 20000, 'the paused ride still shows between Low redraws (the page differs with the canvas hidden)', { shown: shown.length, without: without.length });
+  await page.close();
+  page = await boot({ query: '?quality=low' });
+  check((await preserve(page)) === true, 'Low with clips possible: kept (the recorder may need it)');
+  await page.close();
+  page = await boot({ query: '?quality=high&noclip' });
+  check((await preserve(page)) === true, 'High keeps it');
+  await page.close();
+}
+
+console.log('#456 · Show Riders switched live: everything drawn next has the new tone mapping');
+{
+  const page = await boot({ query: '?quality=medium', storage: { tandemonium_show_riders: 'off' } });
+  const audit = () => page.evaluate(() => {
+    const G = window._game, R = G.renderer, drawn = new Set(), hooks = [];
+    G.scene.traverse((o) => { if (!o.material) return; const prev = o.onBeforeRender; hooks.push([o, prev]);
+      o.onBeforeRender = function (...a) { for (const m of [].concat(o.material)) drawn.add(m); return prev.apply(this, a); }; });
+    R.render(G.scene, G.camera);
+    for (const [o, p] of hooks) o.onBeforeRender = p;
+    const stale = [...drawn].filter((m) => R.properties.get(m).toneMapping !== (m.toneMapped ? R.toneMapping : 0)).map((m) => m.type);
+    return { drawn: drawn.size, stale, toneMapping: R.toneMapping, env: !!G.scene.environment };
+  });
+  const before = await audit();
+  await page.evaluate(() => window._game._applyShowRiders(true));
+  await page.waitForFunction(() => window._game.bike.modelLoaded && window._game.bike.goose, { timeout: 120000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 500));
+  const after = await audit();
+  check(before.toneMapping === 0 && after.toneMapping !== 0 && after.env, 'riders on: tone mapping + reflections on', { before: before.toneMapping, after: after.toneMapping });
+  check(after.drawn > 20 && after.stale.length === 0, 'every drawn material recompiled for it', after);
+  await page.close();
+}
+
 await browser.close(); server.close();
 console.log(failed ? `\nquality tiers smoke: ${failed} FAILED` : '\nquality tiers smoke: all checks passed');
 process.exit(failed ? 1 : 0);

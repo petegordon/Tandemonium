@@ -9,6 +9,7 @@ import { RoadPath } from './road-path.js';
 import { RoadChunkManager } from './road-chunks.js';
 import { isMobile } from './config.js';
 import { deriveSeed, SALT } from './daily-seed.js';
+import { buildArchPuffs, archTime } from './arch-puffs.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS_FULL = 120;    // ~4.2-unit vertex spacing — covers visible road/tree range
@@ -108,6 +109,8 @@ export class World {
     // Brighter, warmer lighting is part of the Show Riders experience (so the
     // riders' Victorian colors read); off = the original world lighting.
     this._showRiders = !!options.showRiders;
+    // #456 · 'lean' riders lighting: no fill light, a brighter hemisphere instead
+    this._leanRidersLight = options.ridersLight === 'lean';
     this.tileSize = 4;
 
     // Road path (deterministic). The seed the whole world is built from —
@@ -892,18 +895,53 @@ export class World {
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
 
-    this._hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, riders ? 0.6 : 0.35);
+    this._hemi = new THREE.HemisphereLight(0x99bbff, 0x44aa44, 0.35);
     this.scene.add(this._hemi);
+    this._fill = null;
+    this._applyRidersLight();
+  }
 
-    if (riders) {
+  /** Light levels for Show Riders on/off, and the fill light (#456: or not, when lean). */
+  _applyRidersLight() {
+    const on = this._showRiders;
+    this._ambient.intensity = on ? 0.8 : 0.5;
+    this.sun.intensity = on ? 1.7 : 1.1;
+    this._hemi.intensity = on ? 0.6 : 0.35;
+    this._hemi.color.set(0x99bbff);
+    this._hemi.groundColor.set(0x44aa44);
+    if (on && this._leanRidersLight) {
+      // Fold the fill into the hemisphere: a second hemisphere light in the
+      // fill's colour, lit from above only, adds the same light to the ground
+      // as the fill did (its 35° elevation gives 0.6 x 0.58 = 0.35). One
+      // hemisphere can carry both: sky = the two skies summed, ground = ours.
+      const fill = new THREE.Color(0xfff2e0).multiplyScalar(World.LEAN_FILL);
+      const sum = 0.6 + World.LEAN_FILL;
+      this._hemi.color.multiplyScalar(0.6).add(fill).multiplyScalar(1 / sum);
+      this._hemi.groundColor.multiplyScalar(0.6 / sum);
+      this._hemi.intensity = sum;
+    }
+    const wantFill = on && !this._leanRidersLight;
+    if (wantFill && !this._fill) {
       // Warm fill opposite the sun so the riders' shadowed front (facing the
       // chase camera) still reads its Victorian colors instead of going murky.
       this._fill = new THREE.DirectionalLight(0xfff2e0, 0.6);
       this._fill.position.set(-25, 25, -25);
-      this.scene.add(this._fill);
-    } else {
+      // a parked world gets it back with everything else in unpark()
+      if (this._parkedObjects) this._parkedObjects.push(this._fill);
+      else this.scene.add(this._fill);
+    } else if (!wantFill && this._fill) {
+      this.scene.remove(this._fill);
+      if (this._parkedObjects) this._parkedObjects = this._parkedObjects.filter((o) => o !== this._fill);
       this._fill = null;
     }
+  }
+
+  /** #456 · 'full' or 'lean' riders lighting (see getRidersLight). */
+  setRidersLight(mode) {
+    const lean = mode === 'lean';
+    if (lean === this._leanRidersLight) return;
+    this._leanRidersLight = lean;
+    this._applyRidersLight();
   }
 
   /** Re-tune the lighting rig for Show Riders toggled at runtime. */
@@ -911,17 +949,7 @@ export class World {
     on = !!on;
     if (on === this._showRiders) return;
     this._showRiders = on;
-    this._ambient.intensity = on ? 0.8 : 0.5;
-    this.sun.intensity = on ? 1.7 : 1.1;
-    this._hemi.intensity = on ? 0.6 : 0.35;
-    if (on && !this._fill) {
-      this._fill = new THREE.DirectionalLight(0xfff2e0, 0.6);
-      this._fill.position.set(-25, 25, -25);
-      this.scene.add(this._fill);
-    } else if (!on && this._fill) {
-      this.scene.remove(this._fill);
-      this._fill = null;
-    }
+    this._applyRidersLight();
   }
 
   checkTreeCollision(bikePos, bikeD, bikeHeading) {
@@ -995,23 +1023,7 @@ export class World {
       const pt = this.roadPath.getPointAtDistance(roadD);
 
       const group = new THREE.Group();
-
-      // Place puffs along a semicircular arch over the road
-      const archRadius = 2.8;   // half the road width
-      const archCenterY = 0.2;  // arch base just above ground
-      const puffCount = 16;
-      for (let i = 0; i < puffCount; i++) {
-        const angle = (i / (puffCount - 1)) * Math.PI; // 0 (right) to PI (left)
-        const x = Math.cos(angle) * archRadius;
-        const y = archCenterY + Math.sin(angle) * archRadius;
-        const puff = new THREE.Sprite(archMat.clone());
-        const s = 1.6 + Math.random() * 0.8;
-        puff.scale.set(s, s, 1);
-        puff.position.set(x, y, (Math.random() - 0.5) * 0.6);
-        puff.userData.baseY = y;
-        puff.userData.phase = Math.random() * Math.PI * 2;
-        group.add(puff);
-      }
+      this._addArchPuffs(group, archMat);
 
       group.position.set(pt.x, pt.y, pt.z);
       group.rotation.y = pt.heading;
@@ -1115,11 +1127,30 @@ export class World {
     const roadD = distance % loopLen;
     const pt = this.roadPath.getPointAtDistance(roadD);
     const group = new THREE.Group();
+    this._addArchPuffs(group, archMat);
+    group.position.set(pt.x, pt.y, pt.z);
+    group.rotation.y = pt.heading;
+    group.visible = false;
+    this.scene.add(group);
+    this._raceMarkers.push({ mesh: group, roadD, type: 'checkpoint' });
+  }
+
+  /**
+   * The gold cloud puffs along a semicircular arch over the road (half the
+   * road wide, base just above the ground). #456 · one merged mesh (one draw,
+   * see arch-puffs.js); World.SPRITE_ARCH_PUFFS = true builds the old 16
+   * sprites instead, for comparing the two.
+   */
+  _addArchPuffs(group, archMat) {
+    if (!World.SPRITE_ARCH_PUFFS) {
+      group.add(buildArchPuffs(archMat.map, { color: archMat.color.getHex(), opacity: archMat.opacity }));
+      return;
+    }
     const archRadius = 2.8;
     const archCenterY = 0.2;
     const puffCount = 16;
     for (let i = 0; i < puffCount; i++) {
-      const angle = (i / (puffCount - 1)) * Math.PI;
+      const angle = (i / (puffCount - 1)) * Math.PI; // 0 (right) to PI (left)
       const x = Math.cos(angle) * archRadius;
       const y = archCenterY + Math.sin(angle) * archRadius;
       const puff = new THREE.Sprite(archMat.clone());
@@ -1130,11 +1161,6 @@ export class World {
       puff.userData.phase = Math.random() * Math.PI * 2;
       group.add(puff);
     }
-    group.position.set(pt.x, pt.y, pt.z);
-    group.rotation.y = pt.heading;
-    group.visible = false;
-    this.scene.add(group);
-    this._raceMarkers.push({ mesh: group, roadD, type: 'checkpoint' });
   }
 
   /** Create a checkered finish-line stripe on the road at the given distance. */
@@ -1424,6 +1450,7 @@ export class World {
 
   _updateRaceMarkerHeights(bikeD) {
     const t = performance.now() * 0.001;
+    archTime.value = t;
     for (const marker of this._raceMarkers) {
       if (!marker.mesh.visible) continue;
       const pt = this.roadPath.getPointAtDistance(marker.roadD);
@@ -1441,6 +1468,7 @@ export class World {
       }
 
       // Animate checkpoint cloud puffs: gentle bob from stored base position
+      // (the merged arches bob in their shader, on archTime)
       if (marker.type === 'checkpoint') {
         for (const child of marker.mesh.children) {
           if (child.userData.baseY === undefined) continue;
@@ -1564,3 +1592,6 @@ export class World {
     this._lastSnapZB = NaN;
   }
 }
+
+World.LEAN_FILL = 0.35;   // #456 · lean riders lighting: the fill's share folded into the hemisphere
+World.SPRITE_ARCH_PUFFS = false;   // #456 · true = the old 16-sprite arches (for A/B)

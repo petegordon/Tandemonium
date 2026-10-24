@@ -49,6 +49,15 @@ export class FrontViewCamera {
     // Last values written to the DOM frame, so steady frames write nothing.
     this._applied = { size: -1, cssLeft: NaN, cssTop: NaN };
 
+    // #456 · redraw the scene for the corner only every Nth frame (1 = every
+    // frame). In between, the last picture is copied back in, which is one
+    // cheap draw instead of the bike, geese and world again.
+    this.renderEvery = 2;
+    this._rt = null;        // the corner's last picture
+    this._blit = null;      // a full-viewport quad that copies it to the screen
+    this._stale = true;     // draw a fresh picture on the next frame
+    this._skipped = 0;
+
     this._buildFrame();
     this._onResize();
     this._resizeHandler = () => this._onResize();
@@ -161,6 +170,7 @@ export class FrontViewCamera {
    *  into the corner. */
   _showFrame(on) {
     if (!this.frame) return;
+    if (!on) this._stale = true;   // the picture is old by the time it's back
     const display = on ? 'block' : 'none';
     if (this.frame.style.display !== display) {
       // Re-measure on show — the HUD pedal bar isn't laid out until gameplay.
@@ -212,6 +222,52 @@ export class FrontViewCamera {
   /** Re-seat the camera instantly (e.g. after a reset/teleport). */
   reset() {
     this._initialized = false;
+    this._stale = true;
+  }
+
+  /**
+   * The render target for the corner picture, sized to `cssSize` device
+   * pixels.
+   *
+   * It must draw with exactly the shaders the main view just used. three.js
+   * gives an ordinary render target no tone mapping and linear colour, so
+   * every material in the corner would switch shader program twice a frame
+   * (into the target and back), and that switch costs more CPU than the
+   * skipped frame saves. Marked as an XR target, three.js tone-maps and
+   * encodes into it as it does for the screen (`isXRRenderTarget` is what
+   * three.js r161 checks; see setProgram / getParameters). Storage is plain
+   * RGBA8 holding the already-encoded colour, as the canvas does, so the copy
+   * is a raw texel copy with no colour conversion.
+   */
+  _target(renderer, cssSize) {
+    if (!this._rt) {
+      const aa = !!(renderer.getContext().getContextAttributes() || {}).antialias;
+      this._rt = new THREE.WebGLRenderTarget(1, 1, {
+        samples: aa ? 4 : 0,   // match the main view's edge smoothing
+      });
+      this._rt.isXRRenderTarget = true;
+      this._rt.texture.colorSpace = THREE.SRGBColorSpace;   // the shaders encode to sRGB, as for the canvas
+      this._rt.texture.internalFormat = 'RGBA8';            // ...into plain storage: no second encode
+      const mat = new THREE.ShaderMaterial({
+        uniforms: { map: { value: this._rt.texture } },
+        vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: 'uniform sampler2D map; varying vec2 vUv; void main() { gl_FragColor = texture2D(map, vUv); }',
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
+      quad.frustumCulled = false;
+      const scene = new THREE.Scene();
+      scene.add(quad);
+      this._blit = { scene, camera: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), quad };
+    }
+    const px = Math.max(1, Math.round(cssSize * renderer.getPixelRatio()));
+    if (this._rt.width !== px || this._rt.height !== px) {
+      this._rt.setSize(px, px);
+      this._stale = true;
+    }
+    return this._rt;
   }
 
   /**
@@ -241,15 +297,34 @@ export class FrontViewCamera {
     this.camera.aspect = 1;
     this.camera.updateProjectionMatrix();
 
-    renderer.setScissorTest(true);
-    renderer.setScissor(x, y, r.size, r.size);
-    renderer.setViewport(x, y, r.size, r.size);
     // #395 · the main view was drawn just before this, with the sun already
     // placed on this bike, so its shadow map is still right. Without this,
     // three.js redraws every shadow caster again for the small corner view.
     const autoShadows = renderer.shadowMap.autoUpdate;
     renderer.shadowMap.autoUpdate = false;
-    renderer.render(scene, this.camera);
+    // (WebGL1 draws every frame, as before: no RGBA8 render targets to copy from.)
+    const rt = this.renderEvery > 1 && renderer.capabilities.isWebGL2 ? this._target(renderer, r.size) : null;
+    if (rt) {
+      // #456 · draw the scene into a small picture every other frame, and
+      // copy that picture into the corner every frame (the main view clears
+      // the whole canvas, so the corner has to be redrawn each frame).
+      if (this._stale || ++this._skipped >= this.renderEvery) {
+        renderer.setRenderTarget(rt);
+        renderer.render(scene, this.camera);
+        renderer.setRenderTarget(null);
+        this._stale = false;
+        this._skipped = 0;
+      }
+      renderer.setScissorTest(true);
+      renderer.setScissor(x, y, r.size, r.size);
+      renderer.setViewport(x, y, r.size, r.size);
+      renderer.render(this._blit.scene, this._blit.camera);
+    } else {
+      renderer.setScissorTest(true);
+      renderer.setScissor(x, y, r.size, r.size);
+      renderer.setViewport(x, y, r.size, r.size);
+      renderer.render(scene, this.camera);
+    }
     renderer.shadowMap.autoUpdate = autoShadows;
 
     // Restore full-screen viewport for the next main render.
@@ -308,5 +383,12 @@ export class FrontViewCamera {
     window.removeEventListener('orientationchange', this._resizeHandler);
     if (this.frame && this.frame.parentNode) this.frame.parentNode.removeChild(this.frame);
     this.frame = null;
+    if (this._rt) {
+      this._rt.dispose();
+      this._blit.quad.geometry.dispose();
+      this._blit.quad.material.dispose();
+      this._rt = null;
+      this._blit = null;
+    }
   }
 }

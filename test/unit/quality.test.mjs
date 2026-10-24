@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   resolveQualityTier, migrateQualityPref, getQualityPref, setQualityPref,
   getLearnedAutoTier, saveLearnedAutoTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher,
+  clipsOffAtBoot, keepDrawingBuffer, CLIP_SLOW_KEY,
 } from '../../js/quality.js';
 
 function store(init = {}) {
@@ -101,4 +102,22 @@ test('display testing: saved overrides, URL switches win, reset clears them', as
   assert.deepEqual(resolveDisplayTest(new URLSearchParams(''), saved), saved);
   clearDisplayTest(s);
   assert.deepEqual(getDisplayTest(s), { lines: 0, aa: 'tier', perf: false });
+});
+
+// #456 · Low gives up preserveDrawingBuffer only when clip recording is off.
+test('clips are off at boot with ?noclip, no way to record, or a slow probe last time', () => {
+  assert.equal(clipsOffAtBoot({ search: '', canRecord: true, store: store() }), false);
+  assert.equal(clipsOffAtBoot({ search: '?quality=low&noclip', canRecord: true, store: store() }), true);
+  assert.equal(clipsOffAtBoot({ search: '', canRecord: false, store: store() }), true);
+  assert.equal(clipsOffAtBoot({ search: '', canRecord: true, store: store({ [CLIP_SLOW_KEY]: '1' }) }), true);
+  assert.equal(clipsOffAtBoot({ search: '', canRecord: true, store: store({ [CLIP_SLOW_KEY]: '0' }) }), false);
+  const broken = { getItem() { throw new Error('no storage'); } };
+  assert.equal(clipsOffAtBoot({ search: '', canRecord: true, store: /** @type {any} */ (broken) }), false);
+});
+
+test('only Low with clips off drops the kept drawing buffer', () => {
+  assert.equal(keepDrawingBuffer('low', true), false);
+  assert.equal(keepDrawingBuffer('low', false), true);
+  assert.equal(keepDrawingBuffer('medium', true), true);
+  assert.equal(keepDrawingBuffer('high', true), true);
 });

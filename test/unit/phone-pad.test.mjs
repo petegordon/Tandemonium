@@ -494,3 +494,215 @@ test('host: failures while the relay is unreachable keep the code (a paired phon
     assert.deepEqual(r.links, []);
   } finally { r.restore(); }
 });
+
+// ── #454: versions, single-use QR, menu traffic, rate limit ──
+import {
+  PAD_INPUT, PAD_PROTOCOL, peerVersion, shouldSendFrame, MENU_HEARTBEAT_MS, MENU_ACTIVE_TAIL_MS,
+  padKeysOnBoot, padKeysAfterRekey,
+} from '../../js/remote/pad-protocol.js';
+import { padCredential, padRateOk } from '../../worker/pad-relay.js';
+
+test('byte 0 is type + layout: layout 0 (what every phone sends) decodes, a newer layout is skipped', () => {
+  const buf = encodeFrame({ seq: 3, tilt: 1, left: false, right: false, tapsL: 0, tapsR: 0, nav: 0 });
+  assert.equal(buf[0], PAD_INPUT, 'phones still send 0x50, so old games read them');
+  const newer = buf.slice(); newer[0] = PAD_INPUT | 1;
+  assert.equal(decodeFrame(newer), null);
+  const other = buf.slice(); other[0] = 0x60;
+  assert.equal(decodeFrame(other), null);
+});
+
+test('a side that never says hello is version 1', () => {
+  assert.equal(peerVersion(null), 1);
+  assert.equal(peerVersion({ type: 'hello' }), 1);
+  assert.equal(peerVersion({ type: 'hello', v: 'x' }), 1);
+  assert.equal(peerVersion({ type: 'hello', v: 2 }), 2);
+  assert.equal(peerVersion({ type: 'relay', v: 7 }), 7);
+  assert.ok(PAD_PROTOCOL >= 2);
+});
+
+test('menu traffic: idle sends only the heartbeat; changes, held buttons and riding stream', () => {
+  const base = { dirty: false, held: false, lastSend: 1000, lastChange: 0, sendMs: 33 };
+  // Riding, or a game that never said hello: 30 Hz as before.
+  assert.equal(shouldSendFrame({ ...base, light: false, now: 1040 }), true);
+  assert.equal(shouldSendFrame({ ...base, light: false, now: 1020 }), false);
+  // Menus, idle: nothing until the heartbeat.
+  assert.equal(shouldSendFrame({ ...base, light: true, now: 1040 }), false);
+  assert.equal(shouldSendFrame({ ...base, light: true, now: 1000 + MENU_HEARTBEAT_MS - 1 }), false);
+  assert.equal(shouldSendFrame({ ...base, light: true, now: 1000 + MENU_HEARTBEAT_MS }), true);
+  // A change goes at once, and the full rate carries on a moment after it.
+  assert.equal(shouldSendFrame({ ...base, light: true, dirty: true, now: 1001 }), true);
+  assert.equal(shouldSendFrame({ ...base, light: true, lastChange: 1030, now: 1040 }), true);
+  assert.equal(shouldSendFrame({ ...base, light: true, lastChange: 1040 - MENU_ACTIVE_TAIL_MS, now: 1040 }), false);
+  // A held button keeps streaming, so the game's 400 ms release never cuts it.
+  assert.equal(shouldSendFrame({ ...base, light: true, held: true, now: 1040 }), true);
+});
+
+test("the heartbeat is well inside the game's stale rule (2 s)", () => {
+  assert.ok(MENU_HEARTBEAT_MS * 3 < 2000);
+});
+
+test('phone keys: own key first, the QR as fallback; a rekey keeps the joining key as fallback', () => {
+  const q = 'a'.repeat(32), p = 'b'.repeat(32), old = 'c'.repeat(32);
+  assert.deepEqual(padKeysOnBoot(q, null, null), [q], 'first scan');
+  assert.deepEqual(padKeysOnBoot(q, p, null), [p, q], 'a re-scan in the same tab tries its own key first');
+  assert.deepEqual(padKeysOnBoot(q, q, null), [q]);
+  assert.deepEqual(padKeysOnBoot(null, p, q), [p, q], 'a reload keeps both');
+  assert.deepEqual(padKeysOnBoot(null, 'junk', null), []);
+  assert.deepEqual(padKeysAfterRekey(q, p), [p, q]);
+  assert.deepEqual(padKeysAfterRekey(p, p), [p]);
+  assert.equal(padKeysAfterRekey(old, 'nope'), null);
+});
+
+test('relay: pair sets the QR and phone key; malformed pairs are dropped', () => {
+  const qr = 'd'.repeat(64), phone = 'e'.repeat(64);
+  assert.deepEqual(routeMessage('host', JSON.stringify({ type: 'pair', seat: 1, qr, phone })), { pair: { seat: 1, qr, phone } });
+  assert.deepEqual(routeMessage('host', JSON.stringify({ type: 'pair', seat: 2, qr, phone: null })), { pair: { seat: 2, qr, phone: null } });
+  assert.equal(routeMessage('host', JSON.stringify({ type: 'pair', seat: 1, qr: 'x', phone })), null);
+  assert.equal(routeMessage('host', JSON.stringify({ type: 'pair', seat: 1, qr, phone: 'x' })), null);
+  assert.equal(routeMessage('host', JSON.stringify({ type: 'pair', seat: 5, qr })), null);
+  assert.deepEqual(routeMessage('pad-1', JSON.stringify({ type: 'pair', seat: 1, qr })).to, ['host'], 'a pad cannot pair: it is only relayed as from-pad');
+});
+
+test('relay: a pad joins with its own key (paired) or the QR (qr), nothing else', async () => {
+  const q = makePadSecret(), p = makePadSecret();
+  const hashes = { qr: await sha256hex(q), phone: await sha256hex(p) };
+  assert.equal(await padCredential(p, hashes), 'paired');
+  assert.equal(await padCredential(q, hashes), 'qr');
+  assert.equal(await padCredential(makePadSecret(), hashes), null);
+  assert.equal(await padCredential(q, { qr: hashes.qr }), 'qr', 'an old room (no phone key) still pairs by QR');
+  assert.equal(await padCredential(null, hashes), null);
+});
+
+test('relay rate limit: by IP through the binding, and open when the binding is missing or fails', async () => {
+  const req = (ip) => ({ headers: new Map(ip ? [['CF-Connecting-IP', ip]] : []) });
+  const keys = [];
+  const limiter = (success) => ({ limit: async ({ key }) => { keys.push(key); return { success }; } });
+  assert.equal(await padRateOk({}, req('1.2.3.4')), true, 'no binding (local dev)');
+  assert.equal(await padRateOk(undefined, req('1.2.3.4')), true);
+  assert.equal(await padRateOk({ PAD_LIMITER: limiter(true) }, req('1.2.3.4')), true);
+  assert.equal(await padRateOk({ PAD_LIMITER: limiter(false) }, req('1.2.3.4')), false);
+  assert.deepEqual(keys, ['1.2.3.4', '1.2.3.4']);
+  assert.equal(await padRateOk({ PAD_LIMITER: limiter(false) }, req(null)), true, 'no IP: not limited');
+  assert.equal(await padRateOk({ PAD_LIMITER: { limit: async () => { throw new Error('down'); } } }, req('1.2.3.4')), true, 'a binding error fails open');
+});
+
+/** A host with a room already set up (no network). */
+function roomHost(hooks = {}) {
+  const h = hostWithFakes(hooks);
+  h.host.code = 'ABCDEF';
+  h.host._secret = 'f'.repeat(32);
+  h.host._hash = 'f'.repeat(64);
+  h.host._closed = false;
+  h.host._buildLink();
+  return h;
+}
+const flush = () => new Promise((r) => setTimeout(r, 0));
+const toPad = (sent, type) => sent.filter((m) => m.type === 'to-pad' && m.msg.type === type).map((m) => m.msg);
+
+test('mix: new game + older phone (no hello) works as before: no mode, no rekey, the QR stays', async () => {
+  const { host, sent, frame } = roomHost();
+  host._onMessage(JSON.stringify({ type: 'relay', v: 2 }));
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1, via: 'qr' }));
+  frame({ seq: 2, left: true });
+  assert.equal(host.status, 'connected');
+  host.setMode('ride'); host.setMode('menu');
+  await flush();
+  assert.deepEqual(toPad(sent, 'mode'), [], 'an older phone is never sent mode');
+  assert.deepEqual(toPad(sent, 'rekey'), []);
+  assert.deepEqual(toPad(sent, 'hello'), [], 'we only answer a hello');
+  assert.equal(host.phoneVersion, 1);
+  assert.ok(host.link.endsWith('#k=' + 'f'.repeat(32)), 'the QR keeps working');
+});
+
+test('mix: new game + new phone through an older relay: hello + mode, but no rekey; pairs with allow', async () => {
+  const { host, sent } = roomHost();
+  host._sendPairing();
+  assert.equal(sent.at(-1).type, 'allow', 'no relay hello: the old message');
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));   // no via
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'hello', v: 2 } }));
+  await flush();
+  assert.deepEqual(toPad(sent, 'hello'), [{ type: 'hello', v: PAD_PROTOCOL }]);
+  assert.deepEqual(toPad(sent, 'mode'), [{ type: 'mode', mode: 'menu' }]);
+  assert.deepEqual(toPad(sent, 'rekey'), [], 'an old relay has no phone keys');
+  host.setMode('ride');
+  assert.deepEqual(toPad(sent, 'mode').at(-1), { type: 'mode', mode: 'ride' });
+});
+
+test('single-use QR: a QR phone gets its own key, then the QR moves to a new secret', async () => {
+  const links = [];
+  const { host, sent } = roomHost({ onLink: (l) => links.push(l) });
+  host._onMessage(JSON.stringify({ type: 'relay', v: 2 }));
+  host._sendPairing();
+  assert.deepEqual([sent.at(-1).type, sent.at(-1).phone], ['pair', null]);
+  const firstLink = host.link;
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1, via: 'qr' }));
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'hello', v: 2 } }));
+  await flush();
+  const [rekey] = toPad(sent, 'rekey');
+  assert.match(rekey.k, /^[0-9a-f]{32}$/);
+  assert.equal(host.link, firstLink, 'nothing changes before the phone acks');
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'rekeyed', k: 'a'.repeat(32) } }));
+  assert.equal(host.link, firstLink, 'a wrong ack is ignored');
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'rekeyed', k: rekey.k } }));
+  const pair = sent.at(-1);
+  assert.equal(pair.type, 'pair');
+  assert.equal(pair.phone, await sha256hex(rekey.k), 'the phone key is registered');
+  assert.notEqual(pair.qr, 'f'.repeat(64), 'the QR secret moved');
+  assert.notEqual(host.link, firstLink);
+  assert.deepEqual(links, [host.link], 'the UI redraws the QR');
+  // The paired phone reconnecting is just a reconnect.
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1, via: 'paired' }));
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'hello', v: 2 } }));
+  await flush();
+  assert.equal(toPad(sent, 'rekey').length, 1, 'no second key for a paired phone');
+  assert.equal(host.takeovers, 0);
+});
+
+test('takeover: a phone joining with the QR while another holds the key is reported, and the old key revoked', async () => {
+  let takeovers = 0;
+  const { host, sent } = roomHost({ onTakeover: () => takeovers++ });
+  host._onMessage(JSON.stringify({ type: 'relay', v: 2 }));
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1, via: 'qr' }));
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'hello', v: 2 } }));
+  await flush();
+  const k = toPad(sent, 'rekey')[0].k;
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'rekeyed', k } }));
+  assert.equal(takeovers, 0);
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1, via: 'qr' }));   // someone scanned the (new) QR
+  assert.equal(takeovers, 1);
+  assert.equal(host.takeovers, 1);
+  assert.equal(sent.filter((m) => m.type === 'pair').at(-1).phone, null, "the first phone's key stops working");
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1, via: 'qr' }));   // our relay link blipped: re-announced
+  assert.equal(takeovers, 1, 'reported once');
+  // The new phone is offered its own key in turn.
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'hello', v: 2 } }));
+  await flush();
+  assert.equal(toPad(sent, 'rekey').length, 2);
+});
+
+test("an older relay's pad-joined (no via) never counts as a takeover", () => {
+  let takeovers = 0;
+  const { host } = roomHost({ onTakeover: () => takeovers++ });
+  host._phoneHash = 'e'.repeat(64);
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  assert.equal(takeovers, 0);
+});
+
+test('a phone sending only the menu heartbeat stays connected; silent past 2 s it is gone', () => {
+  let drops = 0;
+  const { host, frame } = hostWithFakes({ onDrop: () => drops++ });
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  let seq = 2;
+  for (let i = 0; i < 6; i++) {             // 3 s of heartbeats
+    host._lastAt -= MENU_HEARTBEAT_MS;
+    host._lastCheckAt = performance.now();
+    host._checkStale();
+    frame({ seq: seq++ });
+  }
+  assert.equal(drops, 0);
+  assert.equal(host.status, 'connected');
+  host._lastAt -= 2100;
+  host._lastCheckAt = performance.now();
+  host._checkStale();
+  assert.equal(drops, 1);
+});
