@@ -3210,6 +3210,12 @@
     outline-offset: 3px;
     box-shadow: 0 0 15px rgba(68, 255, 102, 0.4);
   }
+  /* #458 item 10: the round toggles take the same focus ring as <uf-button>
+     (the kit's --uf-focus-ring), not the offset outline + glow. */
+  .lobby-toggle.gamepad-focus {
+    outline: none;
+    box-shadow: var(--uf-focus-ring);
+  }
   .room-code {
     font-size: 36px;
     font-weight: 700;
