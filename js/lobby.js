@@ -60,6 +60,8 @@ import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
+import { steamTypeIdentity } from './controller-overlay-hud.js';
+import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, steamTypeGlyphIdentity, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
@@ -2058,7 +2060,7 @@ export class Lobby {
       // reset to the step default, which would jump focus off a toggle the
       // user just pressed (e.g. ALL/gyro rebuilds the cards). (#318)
       if (this.input && this.input.gamepadConnected) {
-        this._stepFocus.refreshSpatial(this._modeColumns.flat());
+        this._stepFocus.refreshSpatial(this._stepNavItems());
       }
     }
   }
@@ -3074,7 +3076,20 @@ export class Lobby {
   _p1Identity() {
     const mgr = this.controllerManager;
     const slot = mgr && mgr.getSlot && mgr.getSlot('P1');
-    return slot && slot.state === 'claimed' && mgr.slotIdentity ? mgr.slotIdentity(slot) : null;
+    const claimed = !!(slot && slot.state === 'claimed' && mgr.slotIdentity);
+    // #458: a WebHID binding's vid:pid names the pad (a Puck-paired Steam
+    // Controller was "direct USB-C"); core's label-first lookup is the fallback.
+    const hidId = claimed ? (slot.driver && slot.driver.entry ? identityOf(slot.driver.entry) : hidDeviceIdentity(slot.hidDevice)) : null;
+    if (hidId) return hidId;
+    // Steam Input owns the pad (desktop build under Steam): there may be no
+    // slot at all, or only Steam's virtual XInput twin. Steam's controller type
+    // says what's in hand, so the prompts match it (#458 item 13).
+    const inp = this.input;
+    if (inp && inp._steamInputActive && typeof inp._selectedSteamEntry === 'function') {
+      const e = inp._selectedSteamEntry();
+      if (e) return steamTypeGlyphIdentity(e.type);
+    }
+    return claimed ? slotIdentityHidFirst(slot, (s) => mgr.slotIdentity(s)) : null;
   }
 
   /**
@@ -3125,10 +3140,11 @@ export class Lobby {
     const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
     const roster = document.getElementById('controls-roster');
     if (roster && this.controllerManager?.controllerRoster) {
+      // fixRosterRow: a slot row's WebHID vid:pid names it (#458 item 14).
       roster.rows = this.controllerManager.controllerRoster(pads, {
         seatOf: (slotId) => (slotId === 'P1' ? { player: 1, seat: { role: 'player', label: 'P1 · you', tone: 'captain' } } : null),
         keyboard: true,
-      });
+      }).map(fixRosterRow);
     }
   }
 
@@ -5245,7 +5261,7 @@ export class Lobby {
           hidDevice: hid ? hid.device : null,
           hidLive: this._hidLiveness(hid),
           via: 'seat',
-          gpName: this._prettyGamepadName(raw),
+          gpName: hid ? prettyHidName(hid.device, raw) : this._prettyGamepadName(raw),
           gpRawId: s.controllerLabel || raw,
           p1GpName,
         };
@@ -5263,7 +5279,7 @@ export class Lobby {
           hidDevice: d,
           hidLive: this._hidLiveness(pooled),
           via: 'pool',
-          gpName: this._prettyGamepadName(d.productName || (reg && reg.name) || 'Controller'),
+          gpName: prettyHidName(d, (reg && reg.name) || 'Controller'),
           gpRawId: d.productName || '',
           p1GpName,
         };
@@ -5305,7 +5321,7 @@ export class Lobby {
           const pooled = mgr._hidPool ? mgr._hidPool.get(d) : null;
           if (pooled && !isPresentableEntry(pooled)) continue;
         }
-        const name = this._prettyGamepadName(d.productName || entry.name);
+        const name = prettyHidName(d, entry.name);
         return {
           available: true,
           hasGamepad: true,
@@ -5353,14 +5369,8 @@ export class Lobby {
    * suffix browsers add to generic ids.
    */
   _prettyGamepadName(rawId) {
-    if (!rawId) return 'CONTROLLER';
-    const info = ControllerRegistry.identifyFromGamepadId(rawId);
-    if (info && info.driverName) return info.driverName.toUpperCase();
-    // Unknown device — strip the parenthetical suffix and uppercase.
-    let name = String(rawId).replace(/\s*\(.*\)\s*$/, '').trim();
-    if (!name) name = 'CONTROLLER';
-    if (name.length > 20) name = name.slice(0, 20) + '…';
-    return name.toUpperCase();
+    // #458: a pattern-only match names the family, not one variant (js/lobby/controller-labels.js).
+    return prettyGamepadName(rawId);
   }
 
   /**
@@ -5735,7 +5745,11 @@ export class Lobby {
       SteamController: 'STEAM CONTROLLER',
       SteamDeckController: 'STEAM DECK',
     };
-    return map[t] || (t ? t.toUpperCase().slice(0, 20) : 'CONTROLLER');
+    if (map[t]) return map[t];
+    // main.js stringifies the enum ('13' = DualSense): name it from the type table.
+    const st = steamTypeIdentity(t);
+    if (st.profile) return st.name.toUpperCase();
+    return t ? t.toUpperCase().slice(0, 20) : 'CONTROLLER';
   }
 
   _versusP1Descriptor() {
@@ -5747,7 +5761,8 @@ export class Lobby {
     }
     if (inp.gamepadConnected) {
       const slot = inp._slot;
-      const raw = slot?.hidDevice?.productName || inp._gpName || slot?.controllerLabel;
+      if (slot?.hidDevice) return { type: 'gamepad', name: prettyHidName(slot.hidDevice, inp._gpName || slot.controllerLabel) };
+      const raw = inp._gpName || slot?.controllerLabel;
       return { type: 'gamepad', name: this._prettyGamepadName(raw) };
     }
     return { type: 'keyboard', name: 'KEYBOARD' };
@@ -6209,7 +6224,7 @@ export class Lobby {
           kind: 'hid',
           key: 'hid:' + this._deviceKeyId(entry.device),
           device: entry.device,
-          name: this._prettyGamepadName(entry.device.productName),
+          name: prettyHidName(entry.device),
           pollGp: entry.synthetic,
         });
       }
@@ -6224,7 +6239,7 @@ export class Lobby {
           key: 'hidslot:' + s.id,
           device: s.hidDevice,
           slotId: s.id,
-          name: this._prettyGamepadName(s.hidDevice.productName || s.controllerLabel),
+          name: prettyHidName(s.hidDevice, s.controllerLabel),
           pollGp: s.synthetic,
         });
       }
@@ -6298,6 +6313,19 @@ export class Lobby {
       return true;
     };
 
+    // #458 item 2: an empty P1 (keyboard placeholder) is the first seat a pad
+    // fills, not the last one.
+    const seat = versusJoinSeat(this._versusPlayers, {
+      p1SlotEmpty: !!(mgr && mgr.getSlot('P1') && mgr.getSlot('P1').state === 'empty'),
+      kind: c.kind,
+    });
+    if (seat.takeP1 && canConvertP1) {
+      const took = c.kind === 'hid'
+        ? convertP1(() => mgr.claimHidDeviceForSlot('P1', c.device))
+        : (c.gp ? convertP1(() => mgr.claimPadForSlot('P1', c.gp)) : false);
+      if (took) return;
+    }
+
     const usedSlots = new Set(this._versusPlayers.map(p => p.slotId).filter(Boolean));
     usedSlots.add('P1'); // regular joiners never take P1's slot (see convertP1)
     let input = null;
@@ -6317,8 +6345,10 @@ export class Lobby {
       let slot = null;
       if (seatsLeft) {
         if (c.slotId && !usedSlots.has(c.slotId)) {
-          // Adopt the slot ingestFrame claimed before this screen opened.
+          // Adopt the slot ingestFrame claimed before this screen opened
+          // (still claimed: a failed P1 takeover releases it).
           slot = mgr?.getSlot(c.slotId) || null;
+          if (slot && slot.state !== 'claimed') slot = null;
         }
         if (!slot && mgr) {
           for (const id of ['P2', 'P3', 'P4']) {
@@ -6374,8 +6404,9 @@ export class Lobby {
 
     const sizeA = this._versusPlayers.filter(p => p.team === 'A').length;
     const sizeB = this._versusPlayers.filter(p => p.team === 'B').length;
+    const n = seat.n ?? this._versusPlayers.length + 1;
     this._versusPlayers.push({
-      n: this._versusPlayers.length + 1,
+      n,
       type: 'gamepad',
       gpIndex,
       slotId,
@@ -6383,7 +6414,8 @@ export class Lobby {
       team: sizeB < sizeA ? 'B' : 'A',
       input,
     });
-    console.log(`[versus] ${c.name} joined as player ${this._versusPlayers.length} (${c.kind}${slotId ? ', slot ' + slotId : ''})`);
+    this._versusPlayers.sort((a, b) => a.n - b.n);
+    console.log(`[versus] ${c.name} joined as player ${n} (${c.kind}${slotId ? ', slot ' + slotId : ''})`);
     analytics.trackEvent('versus_player_joined', {
       source: c.kind,
       players: this._versusPlayers.length,
@@ -6402,7 +6434,7 @@ export class Lobby {
     const sizeA = this._versusPlayers.filter(p => p.team === 'A').length;
     const sizeB = this._versusPlayers.filter(p => p.team === 'B').length;
     this._versusPlayers.push({
-      n: this._versusPlayers.length + 1,
+      n: lowestFreePlayerNumber(this._versusPlayers) ?? this._versusPlayers.length + 1,
       type: 'keyboard',
       gpIndex: null,
       slotId: null,
@@ -6410,6 +6442,7 @@ export class Lobby {
       team: sizeB < sizeA ? 'B' : 'A',
       input,
     });
+    this._versusPlayers.sort((a, b) => a.n - b.n);
     analytics.trackEvent('versus_player_joined', {
       source: 'keyboard',
       players: this._versusPlayers.length,
@@ -6512,12 +6545,24 @@ export class Lobby {
     if (x.type === 'keyboard') return KEYBOARD_IDENTITY;
     if (x.type === 'bot') return identityOf(null, 'Bot');
     if (x.kind === 'gamepad' && x.gp) return identifyGamepadId(x.gp.id);
-    if (x.kind === 'hid' && x.device) return identifyHidDevice(x.device);
-    if (x.kind === 'steam' || (x.input && x.input.steamInputHandle != null)) return { ...identityOf(null, x.name || 'Steam Controller'), glyphFamily: 'steam' };
+    if (x.kind === 'hid' && x.device) return hidDeviceIdentity(x.device) || identifyHidDevice(x.device);
+    if (x.slotId === 'P1' && x.input === this.input) {
+      const p1 = this._p1Identity();
+      if (p1 && (p1.entry || p1.glyphFamily !== 'generic')) return p1;
+    }
+    if (x.kind === 'steam' || (x.input && x.input.steamInputHandle != null)) {
+      // Steam Input type → that pad's own prompts (a Switch Pro under Steam is Nintendo).
+      const handle = x.kind === 'steam' ? x.handle : x.input.steamInputHandle;
+      const snap = (this.input && this.input._steamInputSnapshot) || [];
+      const entry = snap.find((e) => e.handle === handle);
+      return entry ? steamTypeGlyphIdentity(entry.type, x.name || 'Steam Controller')
+        : { ...identityOf(null, x.name || 'Steam Controller'), glyphFamily: 'steam' };
+    }
     const mgr = this.controllerManager;
     if (x.slotId && mgr && mgr.slotIdentity) {
-      const id = mgr.slotIdentity(x.slotId);
-      if (id.entry) return id;
+      const slot = mgr.getSlot ? mgr.getSlot(x.slotId) : null;
+      const id = slot ? slotIdentityHidFirst(slot, (s) => mgr.slotIdentity(s)) : mgr.slotIdentity(x.slotId);
+      if (id.entry || id.glyphFamily !== 'generic') return id;
     }
     const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
     const pad = x.gpIndex != null ? pads[x.gpIndex] : null;
@@ -7176,11 +7221,42 @@ export class Lobby {
   }
 
   /**
+   * Every step focusable, center column first and the help / leaderboard /
+   * profile column last. Spatial nav moves by geometry, so the order only
+   * decides the fallback when the wanted element isn't visible: it is never
+   * Help (#458 item 10).
+   */
+  _stepNavItems() {
+    const [left = [], center = [], ...rest] = this._modeColumns;
+    return [...center, ...rest.flat(), ...left];
+  }
+
+  /**
+   * Where a step's focus starts: its primary action (#458 item 10). Versus
+   * starts on CHOOSE LEVEL even while it waits for a second team (joiners
+   * press on their own pads; P1's confirm used to open Help). Otherwise the
+   * step's registered default when it is visible and enabled, else the first
+   * visible, enabled center item. The host step's CHOOSE LEVEL buttons come
+   * and go through _refreshHostNext.
+   */
+  _stepPrimaryFocus(step, centerItems) {
+    const shown = (el) => !!el && el.getBoundingClientRect().width > 0;
+    const usable = (el) => shown(el) && !el.disabled && !el.hasAttribute('disabled');
+    if (step === this.versusStep) {
+      const cont = document.getElementById('btn-versus-continue');
+      if (shown(cont)) return cont;
+    }
+    const preferred = centerItems[this._stepDefaultFocus.get(step) || 0] || null;
+    if (usable(preferred)) return preferred;
+    return centerItems.find(usable) || preferred;
+  }
+
+  /**
    * Hand the current step's full focusable set (all toggle columns + the
    * active step's center items) to the spatial FocusController, focusing the
-   * step's default item. Only highlights when a gamepad is connected (matching
-   * the old _applyFocusHighlight gate). Called from _showStep and on gamepad
-   * hot-connect. (#318)
+   * step's primary action. Only highlights when a gamepad is connected
+   * (matching the old _applyFocusHighlight gate). Called from _showStep and on
+   * gamepad hot-connect. (#318)
    */
   _applyStepSpatialFocus(step) {
     if (!step) return;
@@ -7190,8 +7266,8 @@ export class Lobby {
       const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
       const centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
       this._modeColumns[1] = centerItems;
-      const defaultEl = centerItems[this._stepDefaultFocus.get(step) || 0] || null;
-      this._stepFocus.setSpatial(this._modeColumns.flat(), defaultEl);
+      const defaultEl = this._stepPrimaryFocus(step, centerItems);
+      this._stepFocus.setSpatial(this._stepNavItems(), defaultEl);
     } else {
       this._stepFocus.clear();
     }

@@ -2964,7 +2964,9 @@ class Game {
     const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, practiceBtn, roomBtn,
       document.getElementById('btn-gameover-lobby'), ...this._showRideCoins('gameover', 'crash'), ...gameoverCtas]
       .filter(el => el && el.style.display !== 'none');
-    this._setOverlayButtons(btns);
+    // #458 item 10: focus starts on RESTART (the retry), not SAVE CLIP above it.
+    const restartIdx = btns.indexOf(document.getElementById('btn-restart'));
+    this._setOverlayButtons(btns, restartIdx >= 0 ? restartIdx : btns.findIndex(b => b !== clipBtn));
 
     // Input cooldown: on mobile, pedal taps and button taps share the same
     // touch area. On desktop/TV, pedal inputs are separate from selection.
