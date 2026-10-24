@@ -1,6 +1,7 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { localizeThree, installedThreeVersion } = require('./local-vendors');
 
 // Diagnostic file logger for Steam Input troubleshooting.
 // Writes to %USERPROFILE%\tandemonium-diag.log so we can see main-
@@ -758,6 +759,8 @@ app.whenReady().then(async () => {
 
   // Register custom protocol handler to serve game files without a network socket
   const rootDir = path.join(__dirname, '..');
+  const _threeVersion = installedThreeVersion(rootDir);
+  _diagLog(`[vendors] three ${_threeVersion ? _threeVersion + ' from node_modules' : 'not installed locally — CDN'}`);
   protocol.handle('tandemonium', async (request) => {
     const url = new URL(request.url);
     let filePath = decodeURIComponent(url.pathname);
@@ -766,6 +769,22 @@ app.whenReady().then(async () => {
     // Security: prevent path traversal
     if (!fullPath.startsWith(rootDir)) {
       return new Response('Forbidden', { status: 403 });
+    }
+    // #353: the root page's importmap pulls three from jsdelivr. Point it at
+    // the packaged node_modules/three instead, so three — and the Draco
+    // decoder, which js/draco-path.js resolves next to three/addons/ — load
+    // offline. Left on the CDN if the installed three isn't the pinned version.
+    if (filePath === '/index.html') {
+      try {
+        const html = await fs.promises.readFile(fullPath, 'utf-8');
+        const { html: localHtml } = localizeThree(html, { prefix: '/', installedVersion: _threeVersion });
+        return new Response(localHtml, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+        });
+      } catch (e) {
+        _diagLog(`[vendors] index.html rewrite failed, serving as-is: ${e && e.message}`);
+      }
     }
     // Serve via net.fetch for proper streaming and MIME handling.
     // no-store: the scheme is registered as 'standard', so without cache
