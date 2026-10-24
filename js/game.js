@@ -85,7 +85,7 @@ import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { PerfReadout } from './perf-readout.js';
 import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, reloadForDisplayTest, displayTestActive } from './quality.js';
-import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAutoTier, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
+import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAuto, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, autoStepUpTarget, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig } from './versus/team-rig.js';
@@ -154,13 +154,18 @@ class Game {
     migrateQualityPref();
     const _qualityParam = new URLSearchParams(window.location.search).get('quality');
     const _hwCached = getCachedProfile();
+    const _learned = getLearnedAuto();
     const _q = resolveQualityTier({
-      param: _qualityParam, pref: getQualityPref(), learned: getLearnedAutoTier(),
+      param: _qualityParam, pref: getQualityPref(), learned: _learned && _learned.tier,
       hwTier: _hwCached && _hwCached.tier, floor: autoFloorTier(isMobile),
     });
     /** @type {import('./quality.js').QualityTier} */
     this._quality = _q.tier;
     this._qualityAuto = _q.auto;
+    // #456 Q2 · the tier rides proved too slow: Auto won't step back up to it
+    // until the learned record expires (AUTO_TIER_DAYS).
+    /** @type {import('./quality.js').QualityTier|null} */
+    this._autoSlowTier = _learned ? _learned.slow : null;
     // Medium and Low both do everything the old two-tier "Low" did.
     this._lowQuality = this._quality !== 'high';
     setCurrentTier(this._quality);
@@ -471,6 +476,7 @@ class Game {
     this._fpsMaxDt = 0;        // longest frame time seen during ride
     this._rideStartTier = null; // #456 · the tier this ride's first sampled frame ran at
     this._rideAutoChanged = false; // #456 · Auto stepped the tier down during this ride
+    this._rideAutoUp = false;      // #456 Q2 · Auto stepped the tier up during this ride (at most once)
 
     // DDA (Dynamic Difficulty Adjustment)
     this.ddaManager = null;
@@ -4656,9 +4662,11 @@ class Game {
         low_quality: this._lowQuality ? 1 : 0,
         quality: this._quality,
         quality_auto: this._qualityAuto ? 1 : 0,
-        // #456 · this ride's fps is a mix of two tiers: Auto stepped down mid-ride
+        // #456 · this ride's fps is a mix of two tiers: Auto changed tier mid-ride
         // (quality is where it ended, quality_start where it began)
-        auto_changed: this._rideAutoChanged ? 1 : 0,
+        auto_changed: this._rideAutoChanged || this._rideAutoUp ? 1 : 0,
+        // #456 Q2 · which way: 'down', 'up', 'both' (up, then too slow), or null
+        auto_step: this._rideAutoUp ? (this._rideAutoChanged ? 'both' : 'up') : (this._rideAutoChanged ? 'down' : null),
         quality_start: this._rideStartTier || this._quality,
         show_riders: this._showRiders ? 1 : 0,
         recording: this.recorder && this.recorder.buffering ? 1 : 0,
@@ -5762,6 +5770,7 @@ class Game {
     if (level === 'auto') {
       clearHardwareCache();   // re-detect on next load; slow rides step it down
       this._qualityAuto = true;
+      this._autoSlowTier = null;   // setQualityPref('auto') forgot what rides taught it
       if (this._autoWatcher) this._autoWatcher.reset();
       this._updateOptionsQualityUI();
       return;
@@ -6055,6 +6064,7 @@ class Game {
     this._fpsMaxDt = 0;
     this._rideStartTier = null;
     this._rideAutoChanged = false;
+    this._rideAutoUp = false;
   }
 
   // ============================================================
@@ -6338,22 +6348,35 @@ class Game {
         if (rawDt > this._fpsMaxDt) this._fpsMaxDt = rawDt;
       }
       // Auto: a ride that stays slow steps the quality down a tier, and
-      // remembers it for next time.
+      // remembers it for next time (and that the tier it left was too slow).
+      // A ride that stays well above target for about a minute steps up one
+      // tier (#456 Q2): once per ride, and never back to a tier rides proved
+      // too slow while that's remembered (AUTO_TIER_DAYS in js/quality.js).
       // Versus (2+ views) and Tourist (streamed 3D tiles) are heavier than
       // a normal ride; they don't teach Auto anything about normal rides.
       // On a desktop Auto stops at Medium: Low hides the riders, so it stays
       // a manual choice there (phones and TVs already ride without riders).
       const autoFloor = autoFloorTier(isMobile);
-      const autoWatch = this._autoWatcher && this._qualityAuto && tierRank(this._quality) > tierRank(autoFloor) &&
+      const canDown = tierRank(this._quality) > tierRank(autoFloor);
+      const autoUp = this._rideAutoUp ? null : autoStepUpTarget({ tier: this._quality, slow: this._autoSlowTier });
+      const autoWatch = this._autoWatcher && this._qualityAuto && (canDown || autoUp) &&
         this.mode !== 'versus' && !this.isTourist && !this._proceduralWorld;
       if (autoWatch && !this._autoWatching) { this._autoWatcher.reset(); this._autoWatching = true; }
-      if (autoWatch && this._autoWatcher.sample(rawDt) === 'down') {
+      const autoStep = autoWatch ? this._autoWatcher.sample(rawDt, { canDown, canUp: !!autoUp }) : null;
+      if (autoStep === 'down') {
         const next = tierBelow(this._quality);
         console.log(`[QUALITY] rides are slow — Auto steps down to ${next}`);
-        saveLearnedAutoTier(next);
+        this._autoSlowTier = this._quality;
+        saveLearnedAutoTier(next, undefined, undefined, this._autoSlowTier);
         this._setTier(next);
         this._rideAutoChanged = true;
         try { analytics.trackEvent('quality_auto_down', { tier: next }); } catch (e) {}
+      } else if (autoStep === 'up' && autoUp) {
+        console.log(`[QUALITY] rides are fast — Auto tries ${autoUp}`);
+        saveLearnedAutoTier(autoUp, undefined, undefined, this._autoSlowTier);
+        this._setTier(autoUp);
+        this._rideAutoUp = true;
+        try { analytics.trackEvent('quality_auto_up', { tier: autoUp }); } catch (e) {}
       }
 
       // D-pad actions (safety/speed/reset/lobby) — singleton-bike shortcuts,
