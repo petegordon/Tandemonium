@@ -96,7 +96,9 @@ try {
 
   // ── the game ──
   const game = await gameBrowser.newPage();
-  await game.setViewport({ width: 1280, height: 800 });
+  // A smaller window: on a CI runner software WebGL draws ~1-2 fps at 1280x800,
+  // and the phone's timing checks need the game to keep up.
+  await game.setViewport({ width: 960, height: 600 });
   await wire(game);
   await game.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
   await game.goto(`http://127.0.0.1:${PORT}/index.html?padRelay=${encodeURIComponent(RELAY)}`, { waitUntil: 'domcontentloaded' });
@@ -167,13 +169,19 @@ try {
     }, 16);
   });
   await sleep(800);   // level: lets the game's tilt pipeline calibrate its centre
+  // The lean eases in over the game's frames; at headless frame rates that can
+  // take a few seconds, so poll (up to 8 s) instead of one fixed wait.
+  const leanWait = async (ok) => {
+    const t0 = Date.now(); let v;
+    do { await sleep(300); v = await game.evaluate(() => window._game.input.getMotionLeanVisual()); } while (!ok(v) && Date.now() - t0 < 8000);
+    return v;
+  };
   await phone.evaluate(() => { window.__tilt = 35; });
-  await sleep(1500);
-  const lean = await game.evaluate(() => ({ visual: window._game.input.getMotionLeanVisual(), motion: window._game.input.motionEnabled, frames: window.__phonePad.framesReceived }));
+  const leanR = await leanWait((v) => v > 0.4);
+  const lean = await game.evaluate((v) => ({ visual: v, motion: window._game.input.motionEnabled, frames: window.__phonePad.framesReceived }), leanR);
   check(lean.motion && lean.visual > 0.4, 'tilting the phone right leans the game right', JSON.stringify(lean));
   await phone.evaluate(() => { window.__tilt = -35; });
-  await sleep(1500);
-  const leanL = await game.evaluate(() => window._game.input.getMotionLeanVisual());
+  const leanL = await leanWait((v) => v < -0.4);
   check(leanL < -0.4, 'tilting left leans left', leanL.toFixed(2));
   await phone.evaluate(() => { window.__tilt = 0; });
 
