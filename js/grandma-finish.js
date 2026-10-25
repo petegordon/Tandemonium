@@ -40,7 +40,7 @@ const GRANDMA_HEIGHT = 1.6 * UNITS_PER_M;
  * π faces back toward the riders.
  */
 export const LAYOUT = {
-  grandma: { along: -7, lateral: 3.8, face: Math.PI },
+  grandma: { along: -4, lateral: 3.8, face: Math.PI },
   woodpile: { along: -2, lateral: 10.5, face: Math.PI / 2 },
   outhouse: { along: 6, lateral: 12, face: -Math.PI / 2 },
   tree: { along: 11, lateral: 8.5, face: 0 },
@@ -57,7 +57,7 @@ const WAVE_FROM = 70;
  * She walks on real time, not the cinematic's slow motion (see World.update),
  * so `speed` (units/s) is a grandma's stroll that gets her there as the shot lands.
  */
-export const WALK = { toAlong: -0.8, speed: 1.6, turnTime: 0.8, returnGap: 2 };
+export const WALK = { toAlong: -0.8, speed: 2.6, turnTime: 0.6, returnGap: 2 };
 
 // ── shared helpers (ported from timber-tandem public/js/screen/scene) ──
 

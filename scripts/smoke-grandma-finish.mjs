@@ -81,9 +81,9 @@ console.log("Grandma's");
   await h.shot(page, '2-waving-45');
   await nearFinish(page, 18);
   await h.shot(page, '3-close-18');
-  await nearFinish(page, 6);
-  await h.shot(page, '4-at-grandma-6');
-  // Past her now (she stands 7 before the finish): she turns round and walks to the finish line.
+  await nearFinish(page, 3);
+  await h.shot(page, '4-at-grandma-3');
+  // Past her now (she stands 4 before the finish): she turns round and walks to the finish line.
   const walk = () => page.evaluate(() => {
     const w = window._game.world, r = w._grandmaFinish.route, L = w.roadPath.loopLength;
     const dest = w._raceMarkers.find((m) => m.type === 'destination');
