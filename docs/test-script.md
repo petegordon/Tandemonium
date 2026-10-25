@@ -65,8 +65,10 @@ Run all of these first. A failure here stops the run.
 | PF-06 | UI and controller-core vendored copies match the lab | A | `check:ui`, `check:controller-core` |
 | PF-07 | Steam upload log says `Successfully finished AppID 4510250 build` | A | build-windows.yml |
 
-CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes; `smokes.yml`
-runs every smoke on each PR and push to main, in six parallel groups.
+CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
+`smokes.yml` runs every smoke in parallel groups on each push to main, on a PR
+labelled `run-smokes`, and before every Steam upload: `build-windows.yml`'s
+upload job needs it to pass.
 
 ## 1. Boot and lobby
 
