@@ -213,7 +213,15 @@ try {
     const el = await phone.$(`#controls [data-nav="${nav}"]`);
     const b = await el.boundingBox();
     await phone.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
-    await phone.mouse.down(); await sleep(holdMs); await phone.mouse.up(); await sleep(700);
+    await phone.mouse.down(); await sleep(holdMs);
+    // Hold until the game has seen the press for two of its frames: on a slow
+    // runner (~1 fps) a whole tap can otherwise fall between two frames.
+    const bit = { up: 1, down: 2, left: 4, right: 8, ok: 16, back: 32 }[nav] || 0;
+    if (bit) {
+      await game.waitForFunction((b) => (window._game.input._remoteNav & b) !== 0, { timeout: 5000 }, bit).catch(() => {});
+      await game.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    }
+    await phone.mouse.up(); await sleep(700);
   };
   const focused = () => game.evaluate(() => {
     const el = document.querySelector('.gamepad-focus');
