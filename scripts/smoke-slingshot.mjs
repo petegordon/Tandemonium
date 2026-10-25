@@ -169,22 +169,31 @@ check(flick.state === 'slingAim' && flick.pull === 0 && Math.abs(flick.d - 5.2) 
 // 7. Straight shot, then a stall → results with a payout
 await drag(0, 300, true);
 await waitState('playing', 60000);
+// Let the launch carry the bike a few metres first, so there is something to
+// count (on a slow runner the stall could otherwise land before it moves).
+await page.waitForFunction(() => window._game.bike.distanceTraveled - 5.2 >= 5, { timeout: 60000 }).catch(() => {});
 await page.evaluate(() => { const g = window._game; g._slingRun.coins = 3; g.bike.speed = 0; g.bike.coast.decel = () => 50; });
 // The end-of-ride signal comes first: a flag where it stopped, the metres, the coins they pay.
 await waitState('slingTally', 60000);
-await new Promise(r => setTimeout(r, 1900));
-// The metres count up over the game's frames; on a slow runner give it time.
-await page.waitForFunction(() => {
-  const m = document.querySelector('#sling-tally .tally-m');
-  return !!m && Number(m.textContent.replace(/,/g, '')) === Math.max(0, Math.round(window._game.bike.distanceTraveled - 5.2));
-}, { timeout: 15000 }).catch(() => {});
-const tally = await page.evaluate(() => ({
-  visible: document.getElementById('sling-tally').classList.contains('visible'),
-  m: document.querySelector('#sling-tally .tally-m').textContent,
-  c: document.querySelector('#sling-tally .tally-c').textContent,
-  flag: !!window._game._slingFlag, dist: Math.round(window._game.bike.distanceTraveled - 5.2),
-}));
-check(tally.visible && tally.flag && Number(tally.m.replace(/,/g, '')) === Math.max(0, tally.dist) && Number(tally.c.replace(/,/g, '')) >= 0,
+// Watch the tally while it's up: the metres count up over the game's frames,
+// and the card gives way to the results on its own, so poll rather than
+// reading once after a fixed wait.
+const tally = { visible: false, m: '0', c: '0', flag: false, dist: 0 };
+for (const t0 = Date.now(); Date.now() - t0 < 15000;) {
+  const s = await page.evaluate(() => ({
+    visible: document.getElementById('sling-tally').classList.contains('visible'),
+    m: document.querySelector('#sling-tally .tally-m').textContent,
+    c: document.querySelector('#sling-tally .tally-c').textContent,
+    flag: !!window._game._slingFlag, dist: Math.round(window._game.bike.distanceTraveled - 5.2),
+  }));
+  tally.flag = tally.flag || s.flag; tally.dist = s.dist;
+  if (s.visible) { tally.visible = true; tally.m = s.m; tally.c = s.c; }
+  if (tally.visible && Math.abs(Number(tally.m.replace(/,/g, '')) - Math.max(0, tally.dist)) <= 1) break;
+  if (tally.visible && !s.visible) break;   // the card is gone: keep the last values it showed
+  await new Promise(r => setTimeout(r, 100));
+}
+// The card counts to the score distance, which rounds the stop point its own way: ±1 m.
+check(tally.visible && tally.flag && Math.abs(Number(tally.m.replace(/,/g, '')) - Math.max(0, tally.dist)) <= 1 && Number(tally.c.replace(/,/g, '')) >= 0,
   `end of ride: a flag, "${tally.m} m" counted up, then "+${tally.c} 🪙"  ${JSON.stringify(tally)}`);
 if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '4a-tally.png') });
 await waitState('slingResults', 60000);
