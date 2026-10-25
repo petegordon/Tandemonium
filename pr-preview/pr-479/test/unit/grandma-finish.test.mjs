@@ -32,12 +32,12 @@ test('once the riders pass, Grandma turns round and walks to the finish line', (
   assert.equal(set.route.mode, 'home', 'waits while they approach');
 
   // The bike passes her and crosses the finish.
-  run(set, destD - 6, WALK.turnTime / 2);
+  run(set, destD - 3, WALK.turnTime / 2);
   assert.equal(set.route.mode, 'turn');
   assert.ok(Math.abs(g.rotation.y - 1.5 * Math.PI) < 0.05, 'half-way round she faces the road (−lateral side)');
   assert.ok(Math.abs(g.position.z - (destD + LAYOUT.grandma.along)) < 1e-9, 'turns on the spot');
 
-  run(set, destD + 2, WALK.turnTime / 2 + 1.5);
+  run(set, destD + 2, WALK.turnTime / 2 + 0.5);
   assert.equal(set.route.mode, 'walk');
   assert.ok(Math.abs(Math.sin(g.rotation.y)) < 1e-9 && Math.cos(g.rotation.y) > 0.99, 'walking toward the finish');
   assert.ok(g.position.z > destD + LAYOUT.grandma.along + 1, 'and getting closer');
