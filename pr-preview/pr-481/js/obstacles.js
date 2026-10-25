@@ -6,8 +6,10 @@ import * as THREE from 'three';
 import { buildConeGeometry, coneMaterial, buildSpiritGeometry, spiritMaterial, CONE_COLLIDER, SkullBurst } from './props-3d.js';
 
 const POOL_SIZE = 30;
-/** Skull spirits orbiting each standing cone (#478). */
-const SPIRITS = 2;
+/** Skulls circling each standing cone (#478, #481), each with SKULL_TRAIL copies in all. */
+const SKULLS = 6;
+const SKULL_TRAIL = 3;
+const SPIRITS = SKULLS * SKULL_TRAIL;
 const HIT_RADIUS = 0.75;
 const VISIBLE_AHEAD = 200;
 const VISIBLE_BEHIND = 40;
@@ -78,8 +80,14 @@ export class ObstacleManager {
     this._time = { value: 0 };
     const spiritGeo = buildSpiritGeometry();
     const phases = new Float32Array(POOL_SIZE * SPIRITS);
-    for (let i = 0; i < phases.length; i++) phases[i] = (i % SPIRITS) / SPIRITS;
+    const lags = new Float32Array(POOL_SIZE * SPIRITS);
+    for (let i = 0; i < phases.length; i++) {
+      const k = i % SPIRITS;
+      phases[i] = Math.floor(k / SKULL_TRAIL) / SKULLS;
+      lags[i] = k % SKULL_TRAIL;
+    }
     spiritGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+    spiritGeo.setAttribute('aLag', new THREE.InstancedBufferAttribute(lags, 1));
     this._spiritGeo = spiritGeo;
     this._spiritMat = spiritMaterial(this._time);
     this._spirits = new THREE.InstancedMesh(spiritGeo, this._spiritMat, POOL_SIZE * SPIRITS);
@@ -234,19 +242,25 @@ export class ObstacleManager {
         this._pool[freeSlot].itemIdx = i;
       }
 
-      // Position the cone on the road surface, skull towards the oncoming
-      // riders, with a slow uneasy wobble (the billboard's cone swayed).
+      // The billboard's cone (#481): it spins and hops off the road now and
+      // then, skulls circling it. Each cone keeps its own beat.
       const slot = this._pool[item.poolIdx];
       const t = performance.now() / 1000;
-      slot.mesh.position.set(item._worldX, item._worldY, item._worldZ);
+      const cyc = (t * 0.55 + i * 0.37) % 1;
+      const hopU = cyc / 0.34;                          // the hop is the first third of the beat
+      const hop = cyc < 0.34 ? 0.42 * Math.sin(Math.PI * hopU) : 0;
+      const tip = cyc < 0.34 ? 0.14 * Math.sin(2 * Math.PI * hopU) : 0;
+      slot.mesh.position.set(item._worldX, item._worldY + hop, item._worldZ);
       slot.mesh.rotation.set(
-        Math.sin(t * 2.1 + i * 1.3) * 0.03,
-        pt.heading + Math.PI + Math.sin(i * 2.7) * 0.25,
-        Math.cos(t * 1.7 + i * 0.9) * 0.03,
+        Math.sin(t * 2.1 + i * 1.3) * 0.04 + tip,
+        pt.heading + Math.PI + Math.sin(i * 2.7) * 0.25 + t * 1.5,
+        Math.cos(t * 1.7 + i * 0.9) * 0.04,
       );
       slot.mesh.visible = true;
-      // Shadow sits just above ground
+      slot.groundY = item._worldY;
+      // Shadow stays on the ground, shrinking while the cone is up
       slot.shadow.position.set(item._worldX, item._worldY + 0.02, item._worldZ);
+      slot.shadow.scale.setScalar(1 - hop * 0.7);
       slot.shadow.visible = true;
     }
     this._sync();
@@ -269,8 +283,9 @@ export class ObstacleManager {
         slot.shadow.updateMatrix();
         this._shadows.setMatrixAt(ns++, slot.shadow.matrix);
       }
-      // spirits: just the cone's base position (orbit + rise are in the shader)
-      m4.makeTranslation(slot.mesh.position.x, slot.mesh.position.y, slot.mesh.position.z);
+      // skulls: the cone's ground position (the orbit is in the shader); they
+      // keep circling while the cone hops
+      m4.makeTranslation(slot.mesh.position.x, slot.groundY != null ? slot.groundY : slot.mesh.position.y, slot.mesh.position.z);
       for (let k = 0; k < SPIRITS; k++) this._spirits.setMatrixAt(n * SPIRITS + k, m4);
       n++;
     }

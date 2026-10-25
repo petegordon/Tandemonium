@@ -999,7 +999,18 @@ export class ControllerManager {
     // never fall back to a non-correlated presser (that cross-wires to an idle
     // real unit).
     const silent = candidates.filter((e) => !e._everPressed);
-    if (silent.length === 1) return silent[0];
+    // ...but not while a press is in flight: a presser's own report stream
+    // shows a press (within the fold window) that the seat's pad hasn't shown
+    // yet. The HID report and the Gamepad sample of one press land a frame or
+    // two apart, so this is that seat's unit about to correlate — binding the
+    // silent handle now would hand the seat the OTHER player's identical unit.
+    // Defer a frame; Tier 1 matches once the pad catches up.
+    if (silent.length === 1) {
+      const padNow = gp ? this._recentPressed(this._recentPadBtns.get(gp.index)) : new Set();
+      const inFlight = padNow.size === 0 && pressers.some((e) => this._recentPressed(e._recentBtns).size > 0);
+      if (inFlight) return null;
+      return silent[0];
+    }
     return null;
   }
 

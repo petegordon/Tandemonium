@@ -10,7 +10,7 @@ import { RoadChunkManager } from './road-chunks.js';
 import { isMobile } from './config.js';
 import { deriveSeed, SALT } from './daily-seed.js';
 import { buildArchPuffs, archTime } from './arch-puffs.js';
-import { buildGrandmaFinish, shouldWave } from './grandma-finish.js';
+import { buildGrandmaFinish } from './grandma-finish.js';
 import { buildGrandmaHouse, HOUSE } from './props-3d.js';
 
 const GROUND_SIZE = 500;
@@ -1140,6 +1140,14 @@ export class World {
         if (dx * dx + dz * dz < 16) { slot.mesh.visible = false; slot.active = false; }
       }
     }
+    // #481 · the finish swing passes the far side of the road: keep it clear of
+    // pines too, so the camera never flies through one.
+    const L = this.roadPath.loopLength;
+    for (const slot of this._treePool) {
+      if (!slot.active || slot.lateralOffset == null) continue;
+      let dd = Math.abs(slot.roadD - destD); if (dd > L / 2) dd = L - dd;
+      if (dd < 9 && slot.lateralOffset < 0 && slot.lateralOffset > -12) { slot.mesh.visible = false; slot.active = false; }
+    }
     this._grandmaFinish = set;
     set.grandma.load().catch((e) => console.warn('[grandma] model did not load:', e && e.message));
   }
@@ -1558,8 +1566,10 @@ export class World {
    *   second deformable floor so both viewports look right when the bikes
    *   separate. Sun positioning stays on the primary here; versus
    *   repositions the sun per render pass in game.js.
+   * @param {number} [actorDt] clock for characters that shouldn't slow down
+   *   with the finish cinematic's slow motion (Grandma, #475). Defaults to dt.
    */
-  update(bikePos, bikeD, dt, anchorB = null) {
+  update(bikePos, bikeD, dt, anchorB = null, actorDt = dt) {
     // Default bikeD from position if not provided (backward compat)
     if (bikeD === undefined) {
       bikeD = Math.max(0, bikePos.z);
@@ -1594,12 +1604,12 @@ export class World {
       this._updateRaceMarkerHeights(bikeD);
     }
 
-    // #475 · Grandma waves the riders in on the final approach.
+    // #475 · Grandma waves the riders in on the final approach, then walks to
+    // the finish line. She runs on actorDt (real time during the finish cinematic).
     const gf = this._grandmaFinish;
-    if (gf && gf.grandma.group.visible && dt) {
+    if (gf && gf.grandma.group.visible && actorDt) {
       const L = this.roadPath.loopLength;
-      gf.grandma.setWaving(shouldWave(((bikeD % L) + L) % L, gf.grandmaD, L));
-      gf.grandma.update(dt);
+      gf.update(((bikeD % L) + L) % L, actorDt, bikePos);
     }
 
     // Floor snap-follow + deform (snap at tileSize to reduce visual pop)

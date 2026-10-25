@@ -69,7 +69,7 @@ import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
 const TOURIST_READY_TIMEOUT_MS = 20000;
-import { HUD } from './hud.js';
+import { HUD, pedalButtonNames } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { GustVisual } from './gust-visual.js';
 import { CobblesVisual } from './cobbles-visual.js';
@@ -4654,9 +4654,10 @@ class Game {
     }
 
     // Keep the world streaming so terrain/scenery don't pop while the
-    // bike rolls forward, but at slow-motion pace.
+    // bike rolls forward, but at slow-motion pace. Grandma (#475) keeps real
+    // time, so she can walk to the finish line before the front view lands.
     if (this.world) {
-      this.world.update(this.bike.position, this.bike.roadD, slowDt);
+      this.world.update(this.bike.position, this.bike.roadD, slowDt, null, dt);
     }
     if (this.grassParticles) {
       this.grassParticles.update(this.bike, slowDt);
@@ -8057,9 +8058,11 @@ class Game {
       if (localStorage.getItem(this._coachKeyFor(method))) return;
     } catch { /* private mode: show it, it is only 20 seconds */ }
 
+    // The pad's own shoulder-button names (L1/R1, L/R…), not always Xbox's (#472).
+    const pb = method === 'gamepad' ? pedalButtonNames() : null;
     const pedal = {
       keyboard: 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>',
-      gamepad:  'Pedal: alternate <b>LB</b> and <b>RB</b> (or <b>LT</b>/<b>RT</b>)',
+      gamepad:  pb ? `Pedal: alternate <b>${pb.lb}</b> and <b>${pb.rb}</b> (or <b>${pb.lt}</b>/<b>${pb.rt}</b>)` : '',
       touch:    'Pedal: tap the <b>left</b> and <b>right</b> halves in turn'
     }[method] || 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>';
     const steer = {
