@@ -52,7 +52,13 @@
     "typecheck": "tsc -p jsconfig.json",
     "smoke:phone-pad": "node scripts/smoke-phone-pad.mjs",
     "smoke:disconnect": "node scripts/smoke-disconnect-pause.mjs",
-    "smoke:host-room": "node scripts/smoke-host-room.mjs"
+    "smoke:host-room": "node scripts/smoke-host-room.mjs",
+    "smoke:local-coop": "node scripts/smoke-local-coop.mjs",
+    "smoke:versus": "node scripts/smoke-versus.mjs",
+    "smoke:webhid": "node scripts/smoke-webhid.mjs",
+    "smoke:flows": "node scripts/smoke-flows.mjs",
+    "smoke:steam-input": "node scripts/smoke-steam-input.mjs",
+    "smoke:all": "node scripts/run-smokes.mjs"
   },
   "dependencies": {
     "steamworks-ffi-node": "0.10.3",
