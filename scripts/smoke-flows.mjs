@@ -31,7 +31,12 @@ const known = (ok, name, detail) => {
 
 const page = await h.gamePage({
   storage: { tandemonium_tutorial_done: 'smoke' },
-  before: (p) => installFakeGamepads(p, { atBoot: ['xbox'] }),
+  before: async (p) => {
+    await installFakeGamepads(p, { atBoot: ['xbox'] });
+    // Tourist is off without a Maps key, and CI has no js/tourist-key.local.js
+    // (gitignored). A fake key turns it on everywhere; nothing is fetched.
+    await p.evaluateOnNewDocument(() => { if (!window.__TOURIST_MAPS_KEY__) window.__TOURIST_MAPS_KEY__ = 'test-key-not-real'; });
+  },
 });
 const pads = fakePads(page);
 await sleep(2000);
