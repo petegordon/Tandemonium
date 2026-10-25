@@ -173,6 +173,11 @@ await page.evaluate(() => { const g = window._game; g._slingRun.coins = 3; g.bik
 // The end-of-ride signal comes first: a flag where it stopped, the metres, the coins they pay.
 await waitState('slingTally', 60000);
 await new Promise(r => setTimeout(r, 1900));
+// The metres count up over the game's frames; on a slow runner give it time.
+await page.waitForFunction(() => {
+  const m = document.querySelector('#sling-tally .tally-m');
+  return !!m && Number(m.textContent.replace(/,/g, '')) === Math.max(0, Math.round(window._game.bike.distanceTraveled - 5.2));
+}, { timeout: 15000 }).catch(() => {});
 const tally = await page.evaluate(() => ({
   visible: document.getElementById('sling-tally').classList.contains('visible'),
   m: document.querySelector('#sling-tally .tally-m').textContent,

@@ -270,13 +270,18 @@ try {
       check(n >= 20, 'riding: the phone streams at the full rate', `${n} frames/s`);
     }
     // Pedals: press and hold the left half, then the right half.
+    // While held, poll (up to 3 s): on a slow runner the first frame can lag.
+    const heldUntil = async (read, ok) => {
+      const t0 = Date.now(); let v;
+      do { await sleep(150); v = await game.evaluate(read); } while (!ok(v) && Date.now() - t0 < 3000);
+      return v;
+    };
     await phone.mouse.move(150, 250); await phone.mouse.down();
-    await sleep(300);
-    const pl = await game.evaluate(() => [window._game.input.isPressed('ArrowLeft'), window._game.input.isPressed('ArrowRight')]);
+    const pl = await heldUntil(() => [window._game.input.isPressed('ArrowLeft'), window._game.input.isPressed('ArrowRight')], (v) => v[0] && !v[1]);
     await phone.mouse.up();
-    await phone.mouse.move(700, 250); await phone.mouse.down();
     await sleep(300);
-    const pr = await game.evaluate(() => [window._game.input.isPressed('ArrowLeft'), window._game.input._remoteRight]);
+    await phone.mouse.move(700, 250); await phone.mouse.down();
+    const pr = await heldUntil(() => [window._game.input.isPressed('ArrowLeft'), window._game.input._remoteRight], (v) => v[1]);
     await phone.mouse.up();
     check(pl[0] && !pl[1], 'holding LEFT on the phone holds the left pedal', JSON.stringify(pl));
     check(pr[1], 'holding RIGHT on the phone holds the right pedal', JSON.stringify(pr));
