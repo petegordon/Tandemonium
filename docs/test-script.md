@@ -112,6 +112,8 @@ runs every smoke on each PR and push to main, in six parallel groups.
 | SR-21 | Garage: bike colours and outfits apply in the ride | M→A | — |
 | SR-22 | PB ghost rides your best line | M→A | — |
 | SR-23 | 10-minute ride: no fps decay, no memory climb | M | `probe-memory.mjs` (manual run) |
+| SR-24 | Grandma's and Today's Road finish: Grandma waves at the roadside on the final approach; outhouse, woodpile and a Timber pine by the house (#475) | A | `smoke:grandma`, `test/unit/grandma-finish` |
+| SR-24h | SR-24 looks right: scale, placement, wave reads from the chase camera, no frame drop on Low | M | — |
 
 ## 3. Ride feel (manual only)
 
