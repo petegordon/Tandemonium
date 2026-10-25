@@ -6,7 +6,8 @@
 // bike moved close to the finish: the four pieces are race markers near the
 // finish on the right of the road, Grandma's model loads and stands on the
 // ground, she idles until the final approach and waves on it (her right arm
-// moves), and a level that doesn't end at Grandma's gets none of it.
+// moves), once they pass she turns round and walks to the finish line, and a
+// level that doesn't end at Grandma's gets none of it.
 // Screenshots: OS temp folder, tandemonium-grandma/.
 import { startHarness, sleep, clickId, waitState } from './lib/smoke-harness.mjs';
 
@@ -82,6 +83,21 @@ console.log("Grandma's");
   await h.shot(page, '3-close-18');
   await nearFinish(page, 6);
   await h.shot(page, '4-at-grandma-6');
+  // Past her now (she stands 7 before the finish): she turns round and walks to the finish line.
+  const walk = () => page.evaluate(() => {
+    const w = window._game.world, r = w._grandmaFinish.route, L = w.roadPath.loopLength;
+    const dest = w._raceMarkers.find((m) => m.type === 'destination');
+    let along = r.marker.roadD - dest.roadD; if (along > L / 2) along -= L; if (along < -L / 2) along += L;
+    return { mode: r.mode, along: +along.toFixed(2), clip: w._grandmaFinish.grandma.clip };
+  });
+  await page.waitForFunction(() => window._game.world._grandmaFinish.route.mode === 'walk', { timeout: 60000 }).catch(() => {});
+  let wk = await walk();
+  check(wk.mode === 'walk' && wk.clip === 'walk', 'once the riders pass, Grandma turns round and walks', wk);
+  await page.waitForFunction(() => window._game.world._grandmaFinish.route.mode === 'arrived', { timeout: 120000 }).catch(() => {});
+  wk = await walk();
+  check(wk.mode === 'arrived' && Math.abs(wk.along - -0.8) < 0.01, 'she stops just short of the finish line', wk);
+  check((await state(page)).props[0].y === 0, 'still standing on the ground there', (await state(page)).props[0]);
+  await h.shot(page, '5-grandma-at-the-line');
   await page.close();
 }
 
