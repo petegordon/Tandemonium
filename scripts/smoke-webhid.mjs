@@ -82,8 +82,8 @@ console.log('IN-06 DualSense USB');
   check(p1.streaming && p1.accelOk && s.gyroP1, 'IN-06: reports streaming, accel ≈ 1 g, P1 gyro live', { streaming: p1.streaming, accelOk: p1.accelOk, gyro: s.gyroP1 });
   check(s.p1 && s.p1.name === 'Sony DualSense' && s.p1.glyph === 'playstation', 'IN-06: lobby names it "Sony DualSense" with PlayStation prompts', s.p1);
   await ctx.hid.hold('ds', FACE_A.ds5Usb, true);
-  await sleep(300);
-  s = await snap(ctx.page);
+  // Poll (up to 3 s): on a slow runner the next parsed report can lag.
+  for (const t0 = Date.now(); Date.now() - t0 < 3000;) { await sleep(150); s = await snap(ctx.page); if (slot(s, 'P1').btnA) break; }
   check(slot(s, 'P1').btnA, 'IN-06: cross in the HID report reads as button 0 on the seat');
   await ctx.hid.hold('ds', FACE_A.ds5Usb, false);
   check(!s.pool.some((e) => e.hid === 'ds'), 'IN-06: one entry for the device (none left in the pool)', s.pool);
