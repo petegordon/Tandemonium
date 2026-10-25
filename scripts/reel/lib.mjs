@@ -25,6 +25,7 @@ export async function launch({ width = 1920, height = 1080, port = 8931, query =
   await new Promise(r => server.listen(port, '127.0.0.1', r));
   const browser = await puppeteer.launch({
     headless: false,
+    protocolTimeout: 1800000,   // a long advance() on a busy GPU outlives the 180 s default
     defaultViewport: null,
     args: [`--window-size=${width},${height + 140}`, '--autoplay-policy=no-user-gesture-required', '--mute-audio',
       '--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-background-timer-throttling',
@@ -89,7 +90,7 @@ export async function launch({ width = 1920, height = 1080, port = 8931, query =
       };
     }
   }, storage);
-  await page.goto(`http://127.0.0.1:${port}/index.html${query}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`http://127.0.0.1:${port}/index.html${query}`, { waitUntil: 'domcontentloaded', timeout: 180000 });
   await page.waitForFunction(() => !!window._game, { timeout: 60000 });
   await page.addScriptTag({ type: 'module', url: `http://127.0.0.1:${port}/scripts/reel/page-bot.js` });
   await page.waitForFunction(() => !!window.__reel, { timeout: 10000 });

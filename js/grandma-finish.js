@@ -23,13 +23,15 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-export const GRANDMA_MODEL_PATH = 'tandem-3d/goose/goose_grandma.glb';
-export const GRANDMA_CLIPS_PATH = 'tandem-3d/goose/show/goose_stoker_georgian_clips.glb';
+// Trailer branch: the 3D Grandma from tandemonium-claude-3d (outfit_grandma: mob cap, shawl, apron), with her own
+// studio clips baked on her own bones (show_clips.py --char outfit_grandma) and her face clips (honk, blink).
+export const GRANDMA_MODEL_PATH = 'tandem-3d/goose/goose_grandma3d.glb';
+export const GRANDMA_CLIPS_PATH = 'tandem-3d/goose/show/goose_grandma3d_clips.glb';
 
 /** World units per metre: the tandem (≈2.4 m) is modelled 4.4 units long. */
 const UNITS_PER_M = 1.8;
 /** Grandma's world height: the 1.72 m rig at Timber Tandem's true-size scale. */
-const GRANDMA_HEIGHT = 1.6 * UNITS_PER_M;
+const GRANDMA_HEIGHT = 1.6 * UNITS_PER_M;   // (cap to boots; the mob cap stands well above her head)
 
 /**
  * Where everything stands, relative to the finish (roadD) and the road
@@ -223,7 +225,7 @@ let _assets = null;
 export function loadGrandmaAssets(loader = new GLTFLoader()) {
   if (!_assets) {
     _assets = Promise.all([loader.loadAsync(GRANDMA_MODEL_PATH), loader.loadAsync(GRANDMA_CLIPS_PATH)])
-      .then(([model, clips]) => ({ scene: model.scene, clips: clips.animations }))
+      .then(([model, clips]) => ({ scene: model.scene, clips: clips.animations, faceClips: model.animations || [] }))
       .catch((e) => { _assets = null; throw e; });
   }
   return _assets;
@@ -245,9 +247,14 @@ export class GrandmaGoose {
 
   /** Load and attach the model; resolves when she's in the scene graph. */
   async load(loader) {
-    const { scene, clips } = await loadGrandmaAssets(loader);
+    const { scene, clips, faceClips } = await loadGrandmaAssets(loader);
     if (this.disposed) return;
     const model = /** @type {THREE.Object3D} */ (cloneSkinned(scene));
+    // layered body pieces ("body__skirt", "jacket__skirt"): hidden under what she wears, so drop them before merging
+    /** @type {THREE.Object3D[]} */
+    const covered = [];
+    model.traverse((o) => { if (o.name.includes('__')) covered.push(o); });
+    for (const o of covered) o.parent?.remove(o);
     mergeSkinned(model);
     // Scale to GRANDMA_HEIGHT, feet on the ground.
     const box = new THREE.Box3().setFromObject(model);
@@ -268,7 +275,60 @@ export class GrandmaGoose {
     }
     const idle = this.actions.idle_shift || this.actions.wave;
     if (idle) idle.play();
+    this._prepFace(faceClips);
     this.ready = true;
+  }
+
+  /** Face layer (as the Goose Studio actor): random blinks on the lids, honk = jaw + tongue, neck additive. */
+  _prepFace(faceClips) {
+    const byName = (n) => faceClips.find((c) => c.name === n);
+    const bone = (t) => t.name.slice(0, t.name.lastIndexOf('.'));
+    const cut = (clip, keep) => {
+      if (!clip) return null;
+      const c = clip.clone();
+      c.tracks = c.tracks.filter((t) => keep(bone(t)) && !t.name.endsWith('.scale'));
+      return c;
+    };
+    const mk = (clip, additive) => {
+      if (!clip || !this.mixer) return null;
+      if (additive) THREE.AnimationUtils.makeClipAdditive(clip);
+      const a = this.mixer.clipAction(clip);
+      if (additive) a.blendMode = THREE.AdditiveAnimationBlendMode;
+      a.play(); a.paused = true; a.weight = 0;
+      return a;
+    };
+    this.blinkA = mk(cut(byName('blink'), (b) => /Eyelid/.test(b)));
+    this.honkMouth = mk(cut(byName('honk'), (b) => b === 'Jaw' || b === 'Tongue'));
+    this.honkNeck = mk(cut(byName('honk'), (b) => b === 'Neck' || b === 'Neck1' || b === 'Head'), true);
+    this.blinkDur = byName('blink') ? byName('blink').duration : 0.5;
+    this.honkDur = byName('honk') ? byName('honk').duration : 1.25;
+    this.blinkT = -1; this.nextBlink = 1.5; this.honkT = -1;
+    /** @type {((g: GrandmaGoose) => void)|null} */
+    this.onHonk = null;
+  }
+
+  /** HONK: beak open, tongue out, neck up. */
+  honk() {
+    if (!this.ready) return;
+    this.honkT = 0;
+    if (this.onHonk) this.onHonk(this);
+  }
+
+  _updateFace(dt) {
+    this.nextBlink -= dt;
+    if (this.nextBlink <= 0 && this.honkT < 0) { this.blinkT = 0; this._nb = ((this._nb || 0) + 1) % 4; this.nextBlink = 2.0 + this._nb * 0.9; }
+    if (this.blinkA) {
+      if (this.blinkT >= 0) {
+        this.blinkT += dt;
+        this.blinkA.time = Math.min(this.blinkT, this.blinkDur - 1e-3); this.blinkA.weight = 1;
+        if (this.blinkT >= this.blinkDur) { this.blinkT = -1; this.blinkA.weight = 0; }
+      } else this.blinkA.weight = 0;
+    }
+    for (const a of [this.honkMouth, this.honkNeck]) {
+      if (!a) continue;
+      if (this.honkT >= 0) { a.time = Math.min(this.honkT, this.honkDur - 1e-3); a.weight = 1; } else a.weight = 0;
+    }
+    if (this.honkT >= 0) { this.honkT += dt; if (this.honkT >= this.honkDur) this.honkT = -1; }
   }
 
   /** Wave (true) or idle (false), with a short crossfade. */
@@ -282,7 +342,11 @@ export class GrandmaGoose {
     from.crossFadeTo(to, 0.35, false);
   }
 
-  update(dt) { if (this.mixer) this.mixer.update(dt); }
+  update(dt) {
+    if (!this.mixer) return;
+    if (this.honkMouth !== undefined) this._updateFace(dt);
+    this.mixer.update(dt);
+  }
 
   dispose() {
     this.disposed = true;

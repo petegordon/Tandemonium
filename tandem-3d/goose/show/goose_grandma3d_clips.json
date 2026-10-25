@@ -1,0 +1,44 @@
+{
+ "goose": "goose_grandma3d",
+ "char": "outfit_grandma",
+ "dressed_tag": "full",
+ "fps": 24,
+ "forward": "+Z (three.js)",
+ "hips_rest_m": [
+  0.0,
+  0.0498,
+  0.5929
+ ],
+ "clips": {
+  "idle_shift": {
+   "duration": 4.0,
+   "loop": true,
+   "frames": 97,
+   "max_reach": 1.009
+  },
+  "wave": {
+   "duration": 2.1,
+   "loop": false,
+   "frames": 51,
+   "max_reach": 1.0
+  },
+  "admire": {
+   "duration": 2.5,
+   "loop": false,
+   "frames": 61,
+   "max_reach": 1.0
+  },
+  "celebrate": {
+   "duration": 1.5,
+   "loop": false,
+   "frames": 37,
+   "max_reach": 1.0
+  },
+  "flap_startle": {
+   "duration": 1.0,
+   "loop": false,
+   "frames": 25,
+   "max_reach": 1.065
+  }
+ }
+}
