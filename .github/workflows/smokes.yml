@@ -1,0 +1,77 @@
+name: Smokes
+
+# Every headless smoke (docs/test-script.md PF-05), split into groups that run
+# side by side, one Chrome per runner. pr-preview.yml's `tests` job still runs
+# the unit tests and the fast lobby smokes; this is the full set, including the
+# fake-controller smokes (disconnect, local-coop, versus, webhid, steam-input).
+#
+# Not a merge gate by itself: making `smokes` required is a branch-protection
+# setting. A group's log is in its job; each smoke is a collapsible section,
+# and the job summary has a pass/fail table.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: smokes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smokes:
+    name: smokes (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: lobby
+            smokes: lobby boot edition ctas tutorial records seed daily ranked flows
+          - group: ride
+            smokes: ride crash helping-hand disruptions lookahead ping economy
+          - group: ride-2
+            smokes: achievements quality layout geese physics no-media controller-overlay
+          - group: modes
+            smokes: slingshot slingshot-aim tourist host-room
+          - group: controllers
+            smokes: disconnect local-coop versus
+          - group: controllers-2
+            smokes: webhid steam-input
+          - group: phone
+            smokes: phone-pad
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # --ignore-scripts skips Electron's and Puppeteer's postinstall downloads;
+      # only Puppeteer's Chrome is needed, installed on the next line.
+      - name: Install dependencies
+        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
+
+      - name: Install Chrome for Puppeteer
+        run: npx puppeteer browsers install chrome
+
+      - name: Run smokes
+        env:
+          SMOKE_LOG_DIR: ${{ runner.temp }}/smoke-logs
+          SMOKE_TIMEOUT_MS: '900000'
+        run: node scripts/run-smokes.mjs ${{ matrix.smokes }}
+
+      - name: Upload logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-${{ matrix.group }}
+          path: |
+            ${{ runner.temp }}/smoke-logs
+            /tmp/tandemonium-*
+          if-no-files-found: ignore
+          retention-days: 7

@@ -357,6 +357,20 @@ test('host: a short silence lets go of held pedals and buttons; a button still h
   assert.equal(calls.filter((c) => c[0] === 'nav').at(-1)[2] & NAV.ok, 0, 'held OK is latched');
 });
 
+test('host: a game stall past the release window does not let go of a held button', () => {
+  const { host, calls, frame } = hostWithFakes();
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  frame({ seq: 2, left: true, nav: NAV.down });
+  calls.length = 0;
+  // One 600 ms game frame: the watchdog ran late, the phone's frames are queued.
+  host._lastAt -= 600;
+  host._lastCheckAt = performance.now() - 600;
+  host._checkStale();
+  assert.equal(calls.filter((c) => c[0] === 'pedals' || c[0] === 'nav').length, 0, 'nothing released');
+  frame({ seq: 3, left: true, nav: NAV.down });
+  assert.equal(calls.filter((c) => c[0] === 'nav').at(-1)[2] & NAV.down, NAV.down, 'DOWN still held');
+});
+
 test('host: opening twice makes one room; Stop says goodbye to the phone', async () => {
   const { host, sent } = hostWithFakes();
   const OrigWS = globalThis.WebSocket;

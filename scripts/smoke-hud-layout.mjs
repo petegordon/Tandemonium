@@ -101,24 +101,34 @@ async function endScreens(label, viewport) {
     const ui = await import('./js/slingshot-ui.js');
     const show = (...ids) => ids.forEach(id => { const e = document.getElementById(id); if (e) e.style.display = ''; });
     const visible = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; };
-    // Top of the first and bottom of the last visible thing in the overlay, at
-    // the top of its scroll and at the bottom of it.
+    // The edges of everything visible in the overlay. A thing inside a
+    // scrolling box (the overlay itself, or the kit sheet's body since #428) is
+    // reachable by scrolling, so it counts at that box's edges; the box itself
+    // still has to be on screen.
+    const scroller = (e, root) => {
+      for (let a = e.parentElement; a; a = a.parentElement) {
+        const oy = getComputedStyle(a).overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && a.scrollHeight > a.clientHeight + 1) return a;
+        if (a === root) break;
+      }
+      return null;
+    };
     const measure = (root) => {
       const parts = Array.from(root.querySelectorAll('*')).filter(e => visible(e) && !e.closest('svg'));
       const vh = window.innerHeight, vw = window.innerWidth;
-      root.scrollTop = 0;
-      const top = Math.min(...parts.map(e => e.getBoundingClientRect().top));
-      root.scrollTop = root.scrollHeight;
+      const box = (e) => { const s = scroller(e, root); return (s || e).getBoundingClientRect(); };
+      const rects = parts.map(box);
+      const top = Math.min(...rects.map(r => r.top));
       const buttons = parts.filter(e => e.tagName === 'BUTTON' || e.tagName === 'UF-BUTTON');
       const lastBtn = buttons[buttons.length - 1];
-      const bottom = Math.max(...parts.map(e => e.getBoundingClientRect().bottom));
-      const right = Math.max(...parts.map(e => e.getBoundingClientRect().right));
-      const left = Math.min(...parts.map(e => e.getBoundingClientRect().left));
-      const lb = lastBtn ? lastBtn.getBoundingClientRect() : null;
+      const bottom = Math.max(...rects.map(r => r.bottom));
+      const right = Math.max(...rects.map(r => r.right));
+      const left = Math.min(...rects.map(r => r.left));
+      const lb = lastBtn ? box(lastBtn) : null;
       const out = { top: Math.round(top), bottom: Math.round(bottom), left: Math.round(left), right: Math.round(right),
                     buttons: buttons.length, lastBtn: lastBtn ? lastBtn.textContent.trim().slice(0, 24) : null,
                     lastBtnTop: lb ? Math.round(lb.top) : null, lastBtnBottom: lb ? Math.round(lb.bottom) : null,
-                    scrolls: root.scrollHeight > root.clientHeight };
+                    scrolls: parts.some(e => !!scroller(e, root)) };
       out.fits = top >= -1 && bottom <= vh + 1 && left >= -1 && right <= vw + 1 &&
                  !!lb && lb.top >= -1 && lb.bottom <= vh + 1;
       root.scrollTop = 0;

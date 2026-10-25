@@ -428,6 +428,10 @@ export class PhonePadHost {
     const gap = now - this._lastCheckAt;
     this._lastCheckAt = now;
     if (!this._phoneHere) return;
+    // The game itself stalled (a slow frame, a level load, a slow TV): the
+    // phone's frames are queued behind us, not missing, so the silence is ours.
+    // Start a fresh window rather than letting go of a button still held.
+    if (gap > RELEASE_MS) { this._lastAt = now; return; }
     const silent = now - this._lastAt;
     // Any short silence (the phone, our socket, or a stall): let go of held
     // pedals and menu buttons so nothing sticks. Frames resuming take over

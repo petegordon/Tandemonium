@@ -543,6 +543,11 @@ export class ControllerManager {
     this.slots = slotIds.map((id) => new Slot(id, this.opts));
     this._slotById = Object.fromEntries(this.slots.map((s) => [s.id, s]));
     this._hidPool = new Map(); // HIDDevice -> HidEntry
+    // HIDDevice -> Promise<HidEntry|null> while its driver is still connecting.
+    // poolDevice awaits driver init; a second caller in that window (the lobby's
+    // connectHidForSlot racing autoPoolApprovedHid at boot) must share this
+    // promise, not pool the same controller twice and seat it in two slots.
+    this._pooling = new Map();
     /**
      * While true, ingestFrame makes NO automatic decisions about who owns
      * what: no activity-claim of an unclaimed pad or pooled HID entry into an
@@ -770,6 +775,14 @@ export class ControllerManager {
   /** Create a HidEntry for `device` and add it to the pool. */
   async poolDevice(device) {
     if (this._isDeviceInPoolOrSlot(device)) return this._hidPool.get(device) || null;
+    const inFlight = this._pooling.get(device);
+    if (inFlight) return inFlight;
+    const p = this._poolDeviceNow(device);
+    this._pooling.set(device, p);
+    try { return await p; } finally { this._pooling.delete(device); }
+  }
+
+  async _poolDeviceNow(device) {
     try {
       const driver = await ControllerRegistry.connect(device);
       // Lazy-load SensorFusion (pulls in `three`) only here, where a real
