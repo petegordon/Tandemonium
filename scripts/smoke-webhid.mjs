@@ -175,11 +175,6 @@ console.log('IN-10 Steam Controller via Puck');
 }
 
 // ── MC-11 two identical DualSense keep their own seats across a reconnect ──
-// Core note (controller-core 0.6.1, _pickPoolEntryForSlot "Tier 2"): when a
-// seated pad has no HID unit yet and one of two identical units shows a press
-// that the pad's Gamepad sample doesn't show in the same frame, core binds the
-// OTHER, never-pressed unit to that seat. Pressing both in one task (setBoth)
-// keeps this smoke off that one-frame window; real hardware can still hit it.
 console.log('MC-11 two identical DualSense');
 {
   const ctx = await open([hidDevice.dualsenseUsb('ds-a'), hidDevice.dualsenseUsb('ds-b')], { pads: ['dualsense', 'dualsense'] });
@@ -209,6 +204,43 @@ console.log('MC-11 two identical DualSense');
   check(slot(s, 'P1').hid === 'ds-a' && slot(s, 'P1').pad === a, 'MC-11: P1 still on unit A', slot(s, 'P1'));
   const seated = s.slots.filter((x) => x.hid).map((x) => x.hid);
   check(new Set(seated).size === seated.length, 'MC-11: no unit holds two seats', seated);
+  await ctx.page.close();
+}
+
+// ── MC-11b the press reaches the HID stream a frame before the pad sample ──
+// Real pads do this: one press lands in the unit's own HID report a frame or
+// two before Chrome's Gamepad sample shows it. With P1 seated by its pad and
+// no unit bound yet, core 0.6.1 bound the OTHER (never-pressed) identical unit
+// on that frame (Tier 2). Core 0.6.2 waits for the pad to catch up.
+console.log('MC-11b press lands on HID a frame early');
+{
+  const ctx = await open([hidDevice.dualsenseUsb('ds-a'), hidDevice.dualsenseUsb('ds-b')], { pads: ['dualsense'] });
+  const a = ctx.idx[0];
+  // P1 seated by pad A alone (boot auto-claim, or a pad-only press): two identical
+  // candidate units and no HID press, so core binds neither yet.
+  const p1Claimed = (x) => slot(x, 'P1').state === 'claimed' && slot(x, 'P1').pad === a;
+  if (!p1Claimed(await waitFor(ctx.page, p1Claimed, 3000))) {
+    await ctx.pads.hold(a, 'A', true);
+    await waitFor(ctx.page, p1Claimed);
+    await ctx.pads.hold(a, 'A', false);
+  }
+  let s = await waitFor(ctx.page, (x) => !x.slots.some((y) => y.btnA));
+  check(p1Claimed(s) && !slot(s, 'P1').hid, 'MC-11b: P1 seated by its pad, no unit bound yet (two identical candidates)', slot(s, 'P1'));
+  const b = await ctx.pads.plug('dualsense');
+  // Unit A's HID report shows cross; hold it for two game frames before pad A's sample does.
+  await ctx.hid.hold('ds-a', FACE_A.ds5Usb, true);
+  await ctx.page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  s = await snap(ctx.page);
+  check(slot(s, 'P1').hid !== 'ds-b', "MC-11b: the HID press alone doesn't bind P1 to the other player's unit", slot(s, 'P1'));
+  await ctx.pads.hold(a, 'A', true);
+  s = await waitFor(ctx.page, (x) => !!slot(x, 'P1').hid);
+  await ctx.pads.hold(a, 'A', false);
+  await ctx.hid.hold('ds-a', FACE_A.ds5Usb, false);
+  check(slot(s, 'P1').hid === 'ds-a', 'MC-11b: once the pad shows the press, P1 binds its own unit A', slot(s, 'P1'));
+  await waitFor(ctx.page, (x) => !x.slots.some((y) => y.btnA), 5000);
+  await holdUntil(ctx, b, 'ds-b', FACE_A.ds5Usb, (x) => slot(x, 'P2').state === 'claimed' && !!slot(x, 'P2').hid);
+  s = await snap(ctx.page);
+  check(slot(s, 'P2').pad === b && slot(s, 'P2').hid === 'ds-b', 'MC-11b: P2 joins on pad B with unit B', slot(s, 'P2'));
   await ctx.page.close();
 }
 
