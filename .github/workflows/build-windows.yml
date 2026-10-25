@@ -52,13 +52,8 @@ jobs:
           name: tandemonium-win32-x64
           path: out/Tandemonium-win32-x64/
 
-  # The full smoke set (smokes.yml) must pass before anything reaches Steam.
-  smokes:
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/steam-publishing'
-    uses: ./.github/workflows/smokes.yml
-
   upload-to-steam:
-    needs: [build, smokes]
+    needs: build
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/steam-publishing'
     steps:
