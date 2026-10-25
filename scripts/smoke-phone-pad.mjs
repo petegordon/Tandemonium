@@ -300,11 +300,12 @@ try {
 
     // Pause from the phone, resume with BACK.
     await phone.click('#btn-pause');
-    await sleep(500);
+    // Poll (up to 4 s): on a slow runner the tap can take a few game frames to land.
+    await game.waitForFunction(() => window._game._optionsOpen, { timeout: 4000 }).catch(() => {});
     check(await game.evaluate(() => window._game._optionsOpen), 'Pause on the phone pauses the game');
     check(await phoneLayoutFixed() && await hostMode() === 'menu', 'paused: same phone layout; the game reads it as a menu pad');
     await press('back');
-    await sleep(500);
+    await game.waitForFunction(() => !window._game._optionsOpen, { timeout: 4000 }).catch(() => {});
     check(await game.evaluate(() => !window._game._optionsOpen), 'BACK on the phone resumes');
     check(await phoneLayoutFixed() && await hostMode() === 'ride', 'resumed: same phone layout; pedals again');
 
