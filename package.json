@@ -58,6 +58,7 @@
     "smoke:webhid": "node scripts/smoke-webhid.mjs",
     "smoke:flows": "node scripts/smoke-flows.mjs",
     "smoke:steam-input": "node scripts/smoke-steam-input.mjs",
+    "smoke:grandma": "node scripts/smoke-grandma-finish.mjs",
     "smoke:all": "node scripts/run-smokes.mjs"
   },
   "dependencies": {

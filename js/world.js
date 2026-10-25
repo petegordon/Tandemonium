@@ -10,6 +10,7 @@ import { RoadChunkManager } from './road-chunks.js';
 import { isMobile } from './config.js';
 import { deriveSeed, SALT } from './daily-seed.js';
 import { buildArchPuffs, archTime } from './arch-puffs.js';
+import { buildGrandmaFinish, shouldWave } from './grandma-finish.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS_FULL = 120;    // ~4.2-unit vertex spacing — covers visible road/tree range
@@ -171,6 +172,8 @@ export class World {
 
     // Race markers (checkpoints + destination)
     this._raceMarkers = [];  // { mesh, roadD, type }
+    /** @type {ReturnType<typeof buildGrandmaFinish>|null} #475 Grandma + props at her house */
+    this._grandmaFinish = null;
   }
 
   _buildGround() {
@@ -987,6 +990,7 @@ export class World {
   setRaceMarkers(level, camera) {
     // Remove old markers + clean up video if any
     this._cleanupDestVideo();
+    this._disposeGrandmaFinish();
     this._raceMarkers.forEach(m => {
       this.scene.remove(m.mesh);
       // Dispose materials and textures to prevent GPU memory leaks
@@ -1077,6 +1081,7 @@ export class World {
         type: 'destination'
       });
       this._raceMarkers.push(marker);
+      this._addGrandmaFinish(destD);
     } else {
       // Other levels: simple house shape (box + pyramid roof)
       const destGroup = new THREE.Group();
@@ -1120,6 +1125,33 @@ export class World {
         this._createCloudArch(d, archMat, L);
       }
     }
+  }
+
+  /**
+   * #475 · Grandma waving at the roadside, plus her outhouse, woodpile and a
+   * Timber Tandem pine near the house. Her model loads in the background;
+   * until it's in, her marker is an empty group.
+   */
+  _addGrandmaFinish(destD) {
+    const set = buildGrandmaFinish(this.roadPath, destD);
+    for (const m of set.markers) {
+      this.scene.add(m.mesh);
+      this._raceMarkers.push(m);
+      // Clear roadside pines that would stand inside a piece.
+      const px = m.mesh.position.x, pz = m.mesh.position.z;
+      for (const slot of this._treePool) {
+        if (!slot.active) continue;
+        const dx = slot.mesh.position.x - px, dz = slot.mesh.position.z - pz;
+        if (dx * dx + dz * dz < 16) { slot.mesh.visible = false; slot.active = false; }
+      }
+    }
+    this._grandmaFinish = set;
+    set.grandma.load().catch((e) => console.warn('[grandma] model did not load:', e && e.message));
+  }
+
+  _disposeGrandmaFinish() {
+    if (this._grandmaFinish) this._grandmaFinish.grandma.dispose();
+    this._grandmaFinish = null;
   }
 
   /** Create a gold cloud arch at the given distance (same as checkpoint arches). */
@@ -1385,6 +1417,7 @@ export class World {
 
   clearRaceMarkers() {
     this._cleanupDestVideo();
+    this._disposeGrandmaFinish();
     this._raceMarkers.forEach(m => {
       this.scene.remove(m.mesh);
       // Dispose materials/textures/geometries on the way out. Without
@@ -1521,6 +1554,14 @@ export class World {
     if (this._raceMarkers.length > 0) {
       this._updateRaceMarkerVisibility(anchors);
       this._updateRaceMarkerHeights(bikeD);
+    }
+
+    // #475 · Grandma waves the riders in on the final approach.
+    const gf = this._grandmaFinish;
+    if (gf && gf.grandma.group.visible && dt) {
+      const L = this.roadPath.loopLength;
+      gf.grandma.setWaving(shouldWave(((bikeD % L) + L) % L, gf.grandmaD, L));
+      gf.grandma.update(dt);
     }
 
     // Floor snap-follow + deform (snap at tileSize to reduce visual pop)
