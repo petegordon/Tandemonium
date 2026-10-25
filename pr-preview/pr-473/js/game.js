@@ -1570,7 +1570,7 @@ class Game {
    * over both teams with their pre-constructed InputManagers.
    *
    * @param {Object} opts
-   * @param {Array<{id: 'A'|'B', members: Array<{input, type, slotId, name, isP1}>}>} opts.teams
+   * @param {Array<{id: 'A'|'B', members: Array<{input, type, slotId, name, label?: string|null, isP1}>}>} opts.teams
    */
   _onVersusReady({ teams }) {
     this.mode = 'versus';
@@ -5613,6 +5613,15 @@ class Game {
     const isElectron = !!window.electronApp;
 
     closeBtn.addEventListener('click', () => this._closeOptions());
+    // Esc closes Options (#472). Capture phase, so it runs before the lobby's
+    // Esc = Back and marks the event handled: the step under it stays put.
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this._optionsOpen) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this._closeOptions();
+    }, true);
     highBtn.addEventListener('click', () => this._setQuality('high'));
     document.getElementById('opt-medium')?.addEventListener('click', () => this._setQuality('medium'));
     lowBtn.addEventListener('click', () => this._setQuality('low'));
@@ -7257,7 +7266,9 @@ class Game {
     if (dropped) {
       if (!this._versusPaused) {
         this._versusPaused = true;
-        this._showDisconnect(`${dropped.name || 'A'} controller disconnected`);
+        // The seat card's name ("Steam Controller"), not the shouted HUD label (#472).
+        const who = dropped.label || dropped.name;
+        this._showDisconnect(who ? `${who} disconnected` : 'A controller disconnected');
       }
       this._renderVersusViews();
       return;

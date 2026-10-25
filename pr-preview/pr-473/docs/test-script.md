@@ -79,7 +79,7 @@ runs every smoke on each PR and push to main, in six parallel groups.
 | BL-05 | First-time SOLO lands in the tutorial with SKIP; returning player goes to levels | A | `smoke:tutorial` |
 | BL-06 | Level cards show best time and medal for the chosen difficulty | A | `smoke:records` |
 | BL-07 | Difficulty selector: Chill / Adventurous / Daredevil change the card text and bests | A | `smoke:records` |
-| BL-08 | Options opens and closes from lobby with mouse, pad and Esc | A | `smoke:flows` (Esc: known bug, reported) |
+| BL-08 | Options opens and closes from lobby with mouse, pad and Esc | A | `smoke:flows` |
 | BL-09 | Pad focus starts on a visible control on every lobby step | A | `smoke:flows` |
 | BL-10 | Lobby at 390×844, 844×390, 1920×1080 and 4K: nothing clipped or overlapping | M→A | `smoke:layout` (HUD only) |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
@@ -149,7 +149,7 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-11h | IN-11 on a real Super Nova | M | — |
 | IN-12 | Steam Input holds the pad: seat connects, Confirm and pedals work, gyro lean from Steam motion, Steer fallback, Options names the source | A | `smoke:steam-input`, `test/unit/steam-steer-curve` |
 | IN-12h | IN-12 in the real Steam client: lean feels right | M | — |
-| IN-13 | Options → DS source Auto / WebHID / Steam is saved and applies on next launch | A | `smoke:steam-input` (WebHID ignored for a Steam DualSense: known bug, reported) |
+| IN-13 | Options → DS source Auto / WebHID / Steam is saved and applies on next launch | A | `smoke:steam-input` |
 | IN-14 | Options → gyro Euler / Gravity changes lean feel | M | `test/unit/tuning-save-gyro` |
 | IN-15 | Recalibrate from the quick menu mid-ride | M→A | — |
 | IN-16 | Button prompts match the pad in use (Xbox / PlayStation / Switch / Steam) | M→A | `test/unit/controller-labels` |
@@ -177,8 +177,8 @@ real-hardware rows stay manual.
 | MC-11 | Two identical pads (two DualSense): each keeps its own seat after one drops and reconnects | A | `smoke:webhid` |
 | MC-12 | Two Steam Controller bodies on one Puck: two seats, no cross-wiring; the idle interface takes no seat | A | `smoke:webhid` |
 | MC-12h | MC-12 on a real Puck with two controllers | M | — |
-| MC-13 | Mixed families (DualSense + Switch Pro): each seat's prompts use its own glyphs | A | `smoke:local-coop` (seated Switch P2 shows a generic glyph: known bug, reported) |
-| MC-14 | Menu focus: P1's pad moves focus one step per press; no double moves. P2's pad does not drive menus (by design today) | A | `smoke:local-coop` |
+| MC-13 | Mixed families (DualSense + Switch Pro): each seat's prompts use its own glyphs | A | `smoke:local-coop` |
+| MC-14 | Menu focus: P1's pad moves focus one step per press; no double moves. P2's pad does not drive menus (decided 2026-10-25) | A | `smoke:local-coop` |
 | MC-15 | Phone remote as P2 next to a pad as P1 | M→A | `smoke:phone-pad` (single) |
 
 ### Versus (split screen)

@@ -16,6 +16,8 @@ import { SensorFusion } from '../shared/sensor-fusion.js';
 // it. These defaults are overridable LIVE via window.__steamMotionTune (no
 // rebuild) so the frame can be locked on hardware — see docs/steam-input-design.md
 // open question #3. e.g. window.__steamMotionTune = { gyroSign:[1,-1,1] }.
+/** Step for feeding one Steam motion reading across a long frame (see _ingestSteamMotion). */
+const STEAM_MOTION_STEP_MS = 50;
 const STEAM_MOTION_DEFAULTS = {
   gyroScale: 1.0,          // getMotionData rotVel is already rad/s
   accelScale: 1 / 16384,   // Steam Controller accel ~ 16384/g (from live capture)
@@ -67,6 +69,13 @@ const STEAM_FAMILY_TYPE_IDS = new Set(['1', '14']);
 export function isSteamFamilyType(type) {
   const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
   return STEAM_FAMILY_TYPE_IDS.has(t) || /^steam/i.test(t);
+}
+
+// The DualSense in Steam's type enum: 13 = k_ESteamInputType_PS5Controller.
+// Like the Steam family above it arrives as the number, so match both forms.
+export function isDualSenseSteamType(type) {
+  const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
+  return t === '13' || /ps5/i.test(t);
 }
 
 /**
@@ -1130,11 +1139,23 @@ export class InputManager {
       ...(typeof window !== 'undefined' ? window.__steamMotionTune : null) };
     const rv = motion.rotVel, ac = motion.accel;
     const g = t.gyroOrder, a = t.accelOrder;
-    fusion.ingest(
+    const feed = (at) => fusion.ingest(
       rv[g[0]] * t.gyroSign[0], rv[g[1]] * t.gyroSign[1], rv[g[2]] * t.gyroSign[2],
       ac[a[0]] * t.accelSign[0], ac[a[1]] * t.accelSign[1], ac[a[2]] * t.accelSign[2],
-      t.gyroScale, t.accelScale, performance.now(),
+      t.gyroScale, t.accelScale, at,
     );
+    // Steam motion is read once per game frame, but SensorFusion drops any
+    // sample 100 ms or more after the last (a gap that long is usually a
+    // stall). Below 10 fps that dropped every sample and the lean stayed at 0.
+    // Steam's latest reading stands for the whole frame, so feed it in 50 ms
+    // steps up to now. Gaps over a second are a real pause: let the fusion
+    // restart its clock as before.
+    const now = performance.now();
+    const last = fusion._lastGyroTime || 0;
+    if (last > 0 && now - last >= STEAM_MOTION_STEP_MS * 2 && now - last <= 1000) {
+      for (let at = last + STEAM_MOTION_STEP_MS; at < now; at += STEAM_MOTION_STEP_MS) feed(at);
+    }
+    feed(now);
   }
 
   /** Drop per-handle Steam fusions when Steam Input capture ends. */
@@ -1157,7 +1178,7 @@ export class InputManager {
       ? window.steam.input.getLatest()
       : null;
     let filtered = (raw && this._dualsenseSource === 'webhid')
-      ? raw.filter(c => !(c.type || '').toString().toLowerCase().includes('ps5'))
+      ? raw.filter(c => !isDualSenseSteamType(c.type))
       : raw;
     // WebHID-first arbitration (#347). Steam Input and raw HID are mutually
     // exclusive per controller, but the Puck is a multi-receiver: Steam grabs
