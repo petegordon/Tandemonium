@@ -415,6 +415,10 @@ export class BikeModel {
         // the fused riders model stood 3.24 m tall on its 4.4 m bike
         this.riderViewScale = Math.max(0.5, Math.min(2, top / 3.24));
         finish();
+        // An outfit picked while these geese were loading (#472): seat it now.
+        const want = this._pendingGooseRiders || getGooseRiderPaths();
+        this._pendingGooseRiders = null;
+        if (want && (want.Captain !== riderPaths.Captain || want.Stoker !== riderPaths.Stoker)) this.setGooseRiders(want);
       });
     }, undefined, (err) => {
       console.error('Failed to load bike model:', this._modelPath, err);
@@ -512,7 +516,8 @@ export class BikeModel {
    * @returns {Promise|undefined} settles once the new geese are seated
    */
   setGooseRiders(paths, disposeOld = true) {
-    if (!this.goose) return;
+    // Still loading the first geese: remember the choice; the load seats it.
+    if (!this.goose) { this._pendingGooseRiders = paths; return; }
     const cur = this._gooseRiderPaths;
     if (cur && cur.Captain === paths.Captain && cur.Stoker === paths.Stoker) return;
     this._gooseRiderPaths = paths;

@@ -109,18 +109,19 @@ function browserFakeHid(specs) {
   };
   function startStream(rec) {
     if (rec.timer || !rec.reports.length) return;   // an idle interface (Puck sibling) never streams
-    rec.timer = setInterval(() => {
-      const d = rec.device;
-      if (!d || !d.opened || !rec.connected) return;
-      const { reportId, data } = reportFor(rec);
-      rec.stats.emitted++;
-      const ev = new Event('inputreport');
-      Object.defineProperty(ev, 'reportId', { value: reportId });
-      Object.defineProperty(ev, 'data', { value: data });
-      Object.defineProperty(ev, 'device', { value: d });
-      if (typeof d.oninputreport === 'function') d.oninputreport(ev);
-      d.dispatchEvent(ev);
-    }, rec.spec.intervalMs || 8);
+    rec.timer = setInterval(() => emit(rec), rec.spec.intervalMs || 8);
+  }
+  function emit(rec) {
+    const d = rec.device;
+    if (!d || !d.opened || !rec.connected || !rec.reports.length) return;
+    const { reportId, data } = reportFor(rec);
+    rec.stats.emitted++;
+    const ev = new Event('inputreport');
+    Object.defineProperty(ev, 'reportId', { value: reportId });
+    Object.defineProperty(ev, 'data', { value: data });
+    Object.defineProperty(ev, 'device', { value: d });
+    if (typeof d.oninputreport === 'function') d.oninputreport(ev);
+    d.dispatchEvent(ev);
   }
   function stopStream(rec) { if (rec.timer) { clearInterval(rec.timer); rec.timer = null; } }
 
@@ -165,6 +166,10 @@ function browserFakeHid(specs) {
       const r = recs.get(key); if (!r) return false;
       const id = offset + ':' + mask;
       if (on) r.overrides.set(id, { offset, mask }); else r.overrides.delete(id);
+      // A real pad streams at ~250 Hz, so a press reaches its HID stream within
+      // a few ms. Send one report now rather than waiting for the next tick,
+      // which on a throttled page can land after the game's next frame.
+      emit(r);
       return true;
     },
     press(key, offset, mask, ms = 200) {

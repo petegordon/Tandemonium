@@ -20,7 +20,8 @@ export const SMOKES = [
   'daily', 'ranked', 'ride', 'crash', 'helping-hand', 'disruptions', 'lookahead',
   'ping', 'economy', 'achievements', 'quality', 'layout', 'geese', 'physics',
   'slingshot', 'slingshot-aim', 'tourist', 'grandma', 'host-room', 'disconnect',
-  'local-coop', 'versus', 'webhid', 'flows', 'steam-input', 'phone-pad',
+  'local-coop', 'versus', 'webhid', 'flows', 'steam-input', 'input', 'solo-extras',
+  'options', 'lobby-layout', 'online', 'phone-pad', 'phone-coop',
   'controller-overlay',
 ];
 

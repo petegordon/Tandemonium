@@ -5,15 +5,14 @@ name: Smokes
 # the unit tests and the fast lobby smokes; this is the full set, including the
 # fake-controller smokes (disconnect, local-coop, versus, webhid, steam-input).
 #
-# Not a merge gate by itself: making `smokes` required is a branch-protection
-# setting. A group's log is in its job; each smoke is a collapsible section,
-# and the job summary has a pass/fail table.
+# Manual only: Actions → Smokes → Run workflow, on main or any branch
+# (`gh workflow run smokes.yml --ref main`). Nothing runs it automatically;
+# pr-preview.yml's `tests` job still runs the unit tests and the quick lobby
+# smokes on every PR. Locally: `npm run smoke:all`.
+# A group's log is in its job; each smoke is a collapsible section, and the
+# job summary has a pass/fail table.
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -41,8 +40,14 @@ jobs:
             smokes: disconnect local-coop versus
           - group: controllers-2
             smokes: webhid steam-input
+          - group: input
+            smokes: input solo-extras
+          - group: ui
+            smokes: options lobby-layout
+          - group: online
+            smokes: online
           - group: phone
-            smokes: phone-pad
+            smokes: phone-pad phone-coop
     steps:
       - uses: actions/checkout@v4
 

@@ -5,6 +5,8 @@
 //   h.check(ok, 'name', detail);
 //   await h.finish();            // closes Chrome + server, exits 1 on any FAIL / page error
 //
+// SMOKE_CPU_THROTTLE=6 node scripts/smoke-x.mjs   runs the game pages ~CI-slow.
+//
 // Serves the repo over http on 127.0.0.1, answers three.js CDN requests from
 // node_modules and aborts every other off-host request, so a smoke never needs
 // the network. Chrome runs headless with software WebGL (swiftshader).
@@ -77,6 +79,10 @@ export async function startHarness({ port, outDir = null, headless = 'new' } = {
     const seed = { tandemonium_started: '1', ...storage };
     await page.evaluateOnNewDocument((s) => { try { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, seed);
     if (before) await before(page);
+    // SMOKE_CPU_THROTTLE=<n> slows the page n× (CDP), to reproduce a CI runner's
+    // ~1-3 fps locally before trusting a timing-sensitive check.
+    const throttle = Number(process.env.SMOKE_CPU_THROTTLE || 0);
+    if (throttle > 1) { const cdp = await page.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle }); }
     await page.goto(`${origin}/index.html${query}`, { waitUntil: 'domcontentloaded' });
     if (waitGame) await page.waitForFunction(() => !!window._game && !!window._game.lobby, { timeout: 90000 });
     await page.click('#tap-to-start').catch(() => {});

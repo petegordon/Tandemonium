@@ -59,6 +59,12 @@
     "smoke:flows": "node scripts/smoke-flows.mjs",
     "smoke:steam-input": "node scripts/smoke-steam-input.mjs",
     "smoke:grandma": "node scripts/smoke-grandma-finish.mjs",
+    "smoke:input": "node scripts/smoke-input.mjs",
+    "smoke:options": "node scripts/smoke-options.mjs",
+    "smoke:lobby-layout": "node scripts/smoke-lobby-layout.mjs",
+    "smoke:online": "node scripts/smoke-online.mjs",
+    "smoke:phone-coop": "node scripts/smoke-phone-coop.mjs",
+    "smoke:solo-extras": "node scripts/smoke-solo-extras.mjs",
     "smoke:all": "node scripts/run-smokes.mjs"
   },
   "dependencies": {

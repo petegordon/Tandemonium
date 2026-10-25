@@ -13,9 +13,17 @@ import { UfControllerGlyph, resolveGlyph } from '../shared/ui/elements/uf-contro
  *  PlayStation, L/R and ZL/ZR on Switch) instead of always Xbox's LB/RB.
  *  @param {string} [family] glyph family; defaults to P1's (set by the lobby) */
 export function pedalHint(family = UfControllerGlyph.getDefault().family) {
+  const b = pedalButtonNames(family);
+  return `Pedal! Alternate ${b.lb}/${b.rb} or ${b.lt}/${b.rt}`;
+}
+
+/** The shoulder buttons' printed names for a glyph family (P1's by default).
+ *  Names come from the lab UI kit's glyph table (resolveGlyph).
+ *  @param {string} [family] */
+export function pedalButtonNames(family = UfControllerGlyph.getDefault().family) {
   const fam = /** @type {any} */ (family === 'keyboard' ? 'generic' : family);
   const t = (/** @type {any} */ b) => resolveGlyph(b, fam).text;
-  return `Pedal! Alternate ${t('lb')}/${t('rb')} or ${t('lt')}/${t('rt')}`;
+  return { lb: t('lb'), rb: t('rb'), lt: t('lt'), rt: t('rt') };
 }
 
 export class HUD {
