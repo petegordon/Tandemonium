@@ -70,7 +70,7 @@ export const WALK = { toAlong: 2.2, toLateral: 3.4, speed: 2.6, turnTime: 0.6, r
  * top of whatever clip plays), and while she waves her body turns up to
  * bodyYaw off facing straight back up the road. ease is how fast (1/s).
  */
-export const LOOK = { maxYaw: 1.2, bodyYaw: 0.8, ease: 5 };
+export const LOOK = { maxYaw: 0.8, bodyYaw: 0.8, ease: 4 };
 const _v1 = new THREE.Vector3();
 const _vUp = new THREE.Vector3(0, 1, 0);
 const _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _q4 = new THREE.Quaternion();
@@ -295,7 +295,7 @@ export class GrandmaGoose {
     /** @type {Record<string, THREE.Bone>} */
     const byName = {};
     model.traverse((o) => { if (/** @type {any} */ (o).isBone) { bones.add(o.name); byName[o.name] = /** @type {any} */ (o); } });
-    this._lookBones = ['Neck1', 'Neck2', 'Neck3', 'Head'].map((n) => byName[n]).filter(Boolean);
+    this._lookBones = ['Neck2', 'Neck3', 'Head'].map((n) => byName[n]).filter(Boolean);
     this.mixer = new THREE.AnimationMixer(model);
     for (const name of ['idle_shift', 'wave', 'walk']) {
       const src = clips.find((c) => c.name === name);
@@ -326,6 +326,10 @@ export class GrandmaGoose {
   }
 
   update(dt) {
+    // Undo last frame's head turn first. The clips don't key every neck bone,
+    // and a bone the mixer doesn't write would otherwise keep each frame's
+    // turn and add the next on top: the head spun round and round (#481).
+    if (this._preLook) for (let i = 0; i < this._lookBones.length; i++) this._lookBones[i].quaternion.copy(this._preLook[i]);
     if (this.mixer) this.mixer.update(dt);
     this._applyLook(dt);
   }
@@ -346,6 +350,9 @@ export class GrandmaGoose {
       want = Math.max(-LOOK.maxYaw, Math.min(LOOK.maxYaw, want));
     }
     this._lookYaw += (want - this._lookYaw) * Math.min(1, dt * LOOK.ease);
+    // remember the pose the clip left, so next frame starts from it, not from this turn
+    if (!this._preLook) this._preLook = this._lookBones.map(() => new THREE.Quaternion());
+    for (let i = 0; i < this._lookBones.length; i++) this._preLook[i].copy(this._lookBones[i].quaternion);
     if (Math.abs(this._lookYaw) < 1e-4) return;
     const share = this._lookYaw / this._lookBones.length;
     const up = _vUp;
@@ -451,8 +458,11 @@ export class GrandmaRoute {
   update(bikeD, dt, bikePos = null) {
     const L = this.roadPath.loopLength;
     const cue = grandmaCue(bikeD, this.homeD, L);
-    // #481 · she watches the riders all the way in and on to the line
-    this.grandma.lookTarget = bikePos && cue !== 'idle' ? bikePos : null;
+    // #481 · she watches the riders while she waits and waves, and again once
+    // she's arrived; not while turning round or walking (the head swung
+    // against the body's turn and looked like it spun).
+    const watching = (this.mode === 'home' && cue === 'wave') || this.mode === 'arrived';
+    this.grandma.lookTarget = bikePos && watching ? bikePos : null;
     if (this.mode === 'home') {
       if (cue === 'leave') { this.mode = 'turn'; this.t = 0; this._turnFrom = this.grandma.group.rotation.y; this.grandma.play('walk'); }
       else {
