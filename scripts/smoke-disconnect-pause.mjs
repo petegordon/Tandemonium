@@ -1,54 +1,24 @@
 #!/usr/bin/env node
-// smoke:disconnect · the disconnect pause (2026-10-23). A dropped controller or
-// online partner pauses the ride (clock + physics stop); after DROP_TAKEOVER_MS
-// the player still here can ride on alone / take over the bike.
-// Solo pad drop → Resume; local co-op P2 drop + P1 drop (P2 takes over); online
-// captain + stoker partner loss (fake net) → ride on alone / take over.
-import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
-import { createRequire } from 'node:module';
-import os from 'node:os';
-const ROOT = process.cwd();
-const require = createRequire(ROOT + '/package.json');
-const puppeteer = require('puppeteer');
-const PORT = 8957;
-const OUT = path.join(os.tmpdir(), 'tandemonium-disconnect'); fs.mkdirSync(OUT, { recursive: true });
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.glb': 'model/gltf-binary', '.mp3': 'audio/mpeg', '.json': 'application/json', '.webp': 'image/webp' };
-const server = http.createServer((q, r) => { const u = decodeURIComponent(q.url.split('?')[0]); const f = path.join(ROOT, u === '/' ? 'index.html' : u);
-  fs.stat(f, (e, st) => { if (e || st.isDirectory()) return r.writeHead(404).end(); r.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(r); }); });
-await new Promise(r => server.listen(PORT, '127.0.0.1', r));
-const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio'] });
-const errors = [];
-const results = [];
-const check = (ok, name, detail) => { results.push(!!ok); console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${detail !== undefined ? '  ' + JSON.stringify(detail) : ''}`); };
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// smoke:disconnect · the disconnect pause (#468). A dropped controller or online
+// partner pauses the ride (clock + physics stop); after DROP_TAKEOVER_MS the
+// player still here can ride on alone / take over the bike.
+//
+// Pads are fake Gamepad API pads (scripts/lib/fake-gamepads.mjs) that go through
+// the real ControllerManager: unplugging empties the pad's getGamepads() slot,
+// the manager orphans the seat, and the game sees the drop the same way it
+// would a real cable pull. Local co-op is seated through the real lobby join
+// (Player 2 presses a button on the host step).
+//
+//   solo     pad drop → pause → replug resumes; Resume rides on without it
+//   local    P2 drop → "Ride on alone"; P1 drop → "Player 2: take over";
+//            replug inside 20 s resumes with the same seats
+//   online   captain + stoker partner loss (fake net) → ride on alone / take over
+import { startHarness, sleep, clickId, waitState } from './lib/smoke-harness.mjs';
+import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
-async function rideSolo() {
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 800 });
-  await page.setRequestInterception(true);
-  page.on('request', (req) => { const u = req.url(); if (u.startsWith(`http://127.0.0.1:${PORT}`)) return req.continue();
-    let m = u.match(/three@[^/]+\/build\/three\.module\.js/);
-    if (m) return req.respond({ status: 200, contentType: 'text/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: fs.readFileSync(path.join(ROOT, 'node_modules/three/build/three.module.js')) });
-    m = u.match(/three@[^/]+\/examples\/jsm\/(.+)$/); const f = m && path.join(ROOT, 'node_modules/three/examples/jsm/' + m[1]);
-    if (f && fs.existsSync(f)) return req.respond({ status: 200, contentType: 'text/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: fs.readFileSync(f) });
-    return req.abort(); });
-  page.on('pageerror', e => { errors.push(e.message); console.log('  PAGEERROR:', e.message); });
-  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); localStorage.setItem('tandemonium_started', '1'); } catch {} });
-  await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => !!window._game, { timeout: 60000 });
-  await page.click('#tap-to-start').catch(() => {});
-  await page.evaluate(() => { const b = document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button, uf-button')).find(x => /solo/i.test(x.textContent)); b && b.click(); });
-  await sleep(600);
-  await page.evaluate(() => { const b = Array.from(document.querySelectorAll('button, uf-button')).find(x => /start ride/i.test(x.textContent || '')); b && b.click(); });
-  await page.waitForFunction(() => window._game?.state === 'playing', { timeout: 120000 });
-  // A fake pad for P1 that the test can unplug.
-  await page.evaluate(() => {
-    window.__p1pad = true;
-    Object.defineProperty(window._game.input, 'gamepadConnected', { configurable: true, get: () => window.__p1pad });
-  });
-  await sleep(800);
-  return page;
-}
+const h = await startHarness({ port: 8957, outDir: 'tandemonium-disconnect' });
+const { check } = h;
+const STORAGE = { tandemonium_tutorial_done: 'smoke' };
 
 const overlay = (page) => page.evaluate(() => {
   const g = window._game;
@@ -60,37 +30,130 @@ const overlay = (page) => page.evaluate(() => {
     resume: shown('btn-drop-resume'), alone: shown('btn-ride-alone'), retry: shown('btn-try-reconnect'),
     aloneText: document.getElementById('btn-ride-alone').textContent,
     who: g._drop ? g._drop.who : null, mode: g.mode, state: g.state,
-    timer: g.raceManager ? g.raceManager.segmentTimeRemaining : null,
   };
 });
 const skipWait = (page) => page.evaluate(() => { window._game._drop.since -= 20000; });
+const p1Slot = (page) => page.evaluate(() => { const s = window.__controllerManager.getSlot('P1'); return { state: s.state, index: s.gamepadIndex }; });
+
+/** Count race-manager steps, to prove the clock + progress stop while paused. */
+const countRaceSteps = (page) => page.evaluate(() => {
+  const rm = window._game.raceManager;
+  if (!rm.__counted) { const up = rm.update.bind(rm); rm.update = (...a) => { window.__rmCalls++; return up(...a); }; rm.__counted = true; }
+  window.__rmCalls = 0;
+});
+
+/** Solo ride with one fake Xbox pad, plugged in before the page loads. */
+async function rideSolo() {
+  const page = await h.gamePage({ storage: STORAGE, before: (p) => installFakeGamepads(p, { atBoot: ['xbox'] }) });
+  await sleep(1200);
+  await clickId(page, 'btn-solo');
+  await sleep(600);
+  await clickId(page, 'btn-start-ride');
+  await waitState(page, 'playing');
+  await sleep(800);
+  return page;
+}
 
 // ── Solo: pad drop pauses; reconnect resumes; Resume rides on ──
 console.log('solo');
 {
   const page = await rideSolo();
+  const pads = fakePads(page);
+  check((await p1Slot(page)).state === 'claimed', 'solo: the manager claimed the fake pad as P1', await p1Slot(page));
   check(await page.evaluate(() => window._game._p1PadSeen), 'solo: P1 pad seen while riding');
-  await page.evaluate(() => { window.__p1pad = false; });
+  await pads.unplug(0);
   await sleep(1200);
   let o = await overlay(page);
+  check((await p1Slot(page)).state === 'orphan', 'solo: unplugging orphans the P1 seat');
   check(o.visible && o.who === 'p1' && /Your controller/.test(o.msg), 'solo: unplugging pauses with "Your controller disconnected"', o.msg);
   check(o.resume && !o.alone, 'solo: Resume shown, no ride-on-alone', o);
-  // The race manager (clock + progress) isn't stepped while paused.
-  await page.evaluate(() => { const rm = window._game.raceManager; const up = rm.update.bind(rm); window.__rmCalls = 0; rm.update = (...a) => { window.__rmCalls++; return up(...a); }; });
+  await countRaceSteps(page);
   await sleep(1500);
   const pausedCalls = await page.evaluate(() => window.__rmCalls);
   check(pausedCalls === 0, 'solo: race clock + physics not stepped while paused', pausedCalls);
-  await page.evaluate(() => { window.__p1pad = true; });
-  await sleep(600); o = await overlay(page);
-  check(!o.visible && !o.who && o.state === 'playing', 'solo: reconnecting resumes the ride');
+  await pads.replug(0);
   await sleep(800);
-  const runCalls = await page.evaluate(() => window.__rmCalls);
-  check(runCalls > 0, 'solo: race steps again after resume', runCalls);
-  await page.evaluate(() => { window.__p1pad = false; });
+  o = await overlay(page);
+  check((await p1Slot(page)).state === 'claimed', 'solo: replugging reclaims the same seat', await p1Slot(page));
+  check(!o.visible && !o.who && o.state === 'playing', 'solo: reconnecting resumes the ride', o);
+  await sleep(800);
+  check(await page.evaluate(() => window.__rmCalls) > 0, 'solo: race steps again after resume');
+  await pads.unplug(0);
   await sleep(1200);
-  await page.evaluate(() => document.getElementById('btn-drop-resume').click());
-  await sleep(800); o = await overlay(page);
+  await clickId(page, 'btn-drop-resume');
+  await sleep(800);
+  o = await overlay(page);
   check(!o.visible && o.state === 'playing', 'solo: Resume rides on without the pad', o);
+  await page.close();
+}
+
+// ── Local co-op through the lobby: two pads, P2 joins by pressing a button ──
+async function rideLocal() {
+  const page = await h.gamePage({ storage: STORAGE, before: (p) => installFakeGamepads(p, { atBoot: ['xbox'] }) });
+  const pads = fakePads(page);
+  await sleep(1200);
+  await page.evaluate(() => {
+    const l = window._game.lobby;
+    document.getElementById('room-code-display').textContent = 'TNDM-LOCL';
+    l._pendingMode = 'multiplayer'; l._roomRole = 'captain';
+    l._showStep(l.hostStep); l._refreshHostNext();
+  });
+  await sleep(500);
+  const p2 = await pads.plug('dualsense');
+  await sleep(600);
+  await pads.tap(p2, 'A');
+  await sleep(800);
+  const seated = await page.evaluate(() => ({ p2: !!window._game.lobby._localP2InputManager, type: window._game.lobby._localP2Type }));
+  check(seated.p2 && seated.type === 'gamepad', 'local: Player 2 seated by pressing a button on the second pad', seated);
+  await clickId(page, 'btn-host-local-next');
+  await sleep(700);
+  await clickId(page, 'btn-start-ride');
+  await waitState(page, 'playing');
+  await sleep(1000);
+  const ride = await page.evaluate(() => ({ mode: window._game.mode, p2: !!window._game.inputP2, p2pad: window._game.inputP2?.gamepadConnected }));
+  check(ride.mode === 'local' && ride.p2 && ride.p2pad, 'local: ride started in local co-op with P2 on its pad', ride);
+  await page.evaluate(() => { window.__p1Input = window._game.input; window.__p2Input = window._game.inputP2; });
+  return { page, pads, p2 };
+}
+
+for (const who of ['p2', 'p1']) {
+  console.log('local ' + who);
+  const { page, pads, p2 } = await rideLocal();
+  const idx = who === 'p2' ? p2 : 0;
+  await pads.unplug(idx);
+  await sleep(1200);
+  let o = await overlay(page);
+  const want = who === 'p2' ? /Player 2's controller/ : /Player 1's controller/;
+  check(o.visible && o.who === who && want.test(o.msg), `local ${who}: drop pauses`, o.msg);
+  check(o.resume === (who === 'p1') && !o.alone && !o.retry, `local ${who}: buttons before 20 s`, o);
+  if (who === 'p2') {
+    // Replug inside the 20 s: the ride resumes with the same seats.
+    await pads.replug(idx);
+    await pads.tap(idx, 'A');
+    await sleep(900);
+    o = await overlay(page);
+    const seats = await page.evaluate(() => ({ p1: window._game.input === window.__p1Input, p2: window._game.inputP2 === window.__p2Input, p2pad: window._game.inputP2?.gamepadConnected }));
+    check(!o.visible && o.mode === 'local' && seats.p1 && seats.p2 && seats.p2pad, 'local p2: replug inside 20 s resumes with the same seats', { ...o, ...seats });
+    await pads.unplug(idx);
+    await sleep(1200);
+  }
+  await skipWait(page);
+  await sleep(800);
+  o = await overlay(page);
+  const label = who === 'p2' ? /Ride on alone/ : /Player 2: take over/;
+  await h.shot(page, `local-${who}-after-20s`);
+  check(o.alone && label.test(o.aloneText), `local ${who}: after 20 s "${who === 'p2' ? 'Ride on alone' : 'Player 2: take over'}"`, o.aloneText);
+  await clickId(page, 'btn-ride-alone');
+  await sleep(1500);
+  o = await overlay(page);
+  const seat = await page.evaluate(() => ({ p2: !!window._game.inputP2, isP2: window._game.input === window.__p2Input, isP1: window._game.input === window.__p1Input }));
+  check(!o.visible && o.mode === 'solo' && o.state === 'playing' && !seat.p2 && (who === 'p1' ? seat.isP2 : seat.isP1),
+    `local ${who}: ${who === 'p1' ? 'Player 2 rides the bike solo' : 'Player 1 rides on solo'}`, { ...o, ...seat });
+  if (who === 'p1') {
+    await page.evaluate(() => window._game._returnToLobby());
+    await sleep(500);
+    check(await page.evaluate(() => window._game.input === window.__p1Input), 'local p1: P1 input back in the seat at the lobby');
+  }
   await page.close();
 }
 
@@ -110,67 +173,23 @@ for (const role of ['captain', 'stoker']) {
   const want = role === 'stoker' ? /captain lost connection/ : /partner lost connection/;
   check(o.visible && o.who === 'partner' && want.test(o.msg), `${role}: partner loss pauses`, o.msg);
   check(!o.alone && /in \d+s/.test(o.sub), `${role}: take-over waits with a countdown`, o.sub);
-  await page.screenshot({ path: path.join(OUT, `online-${role}-waiting.png`) });
+  await h.shot(page, `online-${role}-waiting`);
   // The transport gives up → Try Again appears too.
   await page.evaluate(() => { const g = window._game; g._netLost = true; g._renderDropOverlay(); });
   o = await overlay(page);
   check(o.retry, `${role}: Try Again offered once the connection gave up`);
-  await skipWait(page); await sleep(800); o = await overlay(page);
+  await skipWait(page);
+  await sleep(800);
+  o = await overlay(page);
   const label = role === 'stoker' ? /Take over the bike/ : /Ride on alone/;
   check(o.alone && label.test(o.aloneText), `${role}: after 20 s "${role === 'stoker' ? 'Take over the bike' : 'Ride on alone'}"`, o.aloneText);
-  await page.evaluate(() => document.getElementById('btn-ride-alone').click());
-  await sleep(1500); o = await overlay(page);
+  await clickId(page, 'btn-ride-alone');
+  await sleep(1500);
+  o = await overlay(page);
   const after = await page.evaluate(() => ({ net: window._game.net, destroyed: window.__destroyed }));
   check(!o.visible && o.mode === 'solo' && o.state === 'playing' && after.net === null && after.destroyed === 1, `${role}: rides on as a solo ride`, { ...o, ...after });
   await page.close();
 }
 
-// ── Local co-op: P2 drop → ride on alone; P1 drop → Player 2 takes over ──
-for (const who of ['p2', 'p1']) {
-  console.log('local ' + who);
-  const page = await rideSolo();
-  // Turn the solo ride into a local co-op ride with a fake-pluggable P2 pad.
-  const ok = await page.evaluate(async () => {
-    const g = window._game;
-    const InputManager = g.input.constructor;
-    const inputP2 = new InputManager({ enableKeyboard: false, enableTouch: false, enableMotion: false });
-    window.__p2pad = true;
-    Object.defineProperty(inputP2, 'gamepadConnected', { configurable: true, get: () => window.__p2pad });
-    const { SharedPedalController } = await import('/js/shared-pedal-controller.js');
-    const { BalanceController } = await import('/js/balance-controller.js');
-    g.mode = 'local'; g.inputP2 = inputP2; g._localP2Type = 'gamepad';
-    g.balanceCtrlP2 = new BalanceController(inputP2);
-    g.sharedPedal = new SharedPedalController();
-    window.__p1Input = g.input; window.__p2Input = inputP2;
-    return true;
-  });
-  check(ok, `local ${who}: set up a local co-op ride`);
-  await sleep(800);
-  await page.evaluate((who) => { if (who === 'p2') window.__p2pad = false; else window.__p1pad = false; }, who);
-  await sleep(1200);
-  let o = await overlay(page);
-  const want = who === 'p2' ? /Player 2's controller/ : /Player 1's controller/;
-  check(o.visible && o.who === who && want.test(o.msg), `local ${who}: drop pauses`, o.msg);
-  check(o.resume === (who === 'p1') && !o.alone && !o.retry, `local ${who}: buttons before 20 s`, o);
-  await skipWait(page); await sleep(800); o = await overlay(page);
-  const label = who === 'p2' ? /Ride on alone/ : /Player 2: take over/;
-  await page.screenshot({ path: path.join(OUT, `local-${who}-after-20s.png`) });
-  check(o.alone && label.test(o.aloneText), `local ${who}: after 20 s "${who === 'p2' ? 'Ride on alone' : 'Player 2: take over'}"`, o.aloneText);
-  await page.evaluate(() => document.getElementById('btn-ride-alone').click());
-  await sleep(1500); o = await overlay(page);
-  const seat = await page.evaluate(() => ({ p2: window._game.inputP2, isP2: window._game.input === window.__p2Input, isP1: window._game.input === window.__p1Input }));
-  check(!o.visible && o.mode === 'solo' && o.state === 'playing' && seat.p2 === null && (who === 'p1' ? seat.isP2 : seat.isP1),
-    `local ${who}: ${who === 'p1' ? 'Player 2 rides the bike solo' : 'Player 1 rides on solo'}`, { ...o, ...seat, p2: !!seat.p2 });
-  if (who === 'p1') {
-    await page.evaluate(() => window._game._returnToLobby());
-    await sleep(500);
-    check(await page.evaluate(() => window._game.input === window.__p1Input), 'local p1: P1 input back in the seat at the lobby');
-  }
-  await page.close();
-}
-
-check(errors.length === 0, 'no page errors', errors);
-await browser.close(); server.close();
-const failed = results.filter((r) => !r).length;
-console.log(failed ? `\n${failed} FAILED` : `\nall ${results.length} passed`);
-process.exit(failed ? 1 : 0);
+check(h.errors.length === 0, 'no page errors', h.errors);
+await h.finish();
