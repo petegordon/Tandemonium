@@ -10,7 +10,7 @@
 //   BL-09  with a pad, each step's focus ring starts on a visible, enabled
 //          control of that step (its primary action where it has one)
 //   BL-08  Options opens/closes by mouse (gear / Close), by pad (Start / B),
-//          and by Esc — see KNOWN below
+//          and by Esc
 //   SR-09  game-over: RESTART rides again, END RIDE goes to the lobby, SAVE CLIP
 //          shows only while recording (and opens the preview), no GARAGE
 //   SR-10  victory: NEXT LEVEL rides the next level, PLAY AGAIN rides the same
@@ -140,14 +140,14 @@ console.log('options');
   check((await look()).step === 'lobby-mode', 'BL-08 pad: B closing Options does not also step the lobby back');
   await clickId(page, 'ctrl-settings-btn'); await sleep(500);
   await esc();
-  known(!(await opts()), 'BL-08 Esc: Esc closes Options (no Esc handler for Options in js/game.js)');
+  check(!(await opts()), 'BL-08 Esc: Esc closes Options');
   await clickId(page, 'options-close-btn'); await sleep(400);
   // With Options open on level select, Esc steps the lobby back underneath it.
   await clickId(page, 'btn-solo'); await sleep(700);
   await clickId(page, 'ctrl-settings-btn'); await sleep(500);
   await esc();
   const under = await look();
-  known(under.step === 'lobby-level', 'BL-08 Esc: Esc with Options open leaves the lobby step alone (it goes back to mode select under the overlay)', under.step);
+  check(under.step === 'lobby-level', 'BL-08 Esc: Esc with Options open leaves the lobby step alone', under.step);
   await clickId(page, 'options-close-btn'); await sleep(400);
   await show('modeStep'); await sleep(400);
 }

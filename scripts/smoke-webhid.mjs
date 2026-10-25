@@ -18,11 +18,9 @@
 //   MC-12  two Steam Controller bodies on one Puck (+ an idle receiver
 //          interface): two seats, each its own body, idle interface unseated
 //
-// KNOWN (reported, does not fail the run): a pad + already-granted HID device
-// present at boot can be pooled twice (autoPoolApprovedHid and the lobby's
-// connectHidForSlot race in core poolDevice), and the duplicate entry lets the
-// same controller seat P2. The main checks plug pads after the pool settles so
-// they don't depend on that race.
+//   boot   a pad + already-granted HID device present at boot: the controller
+//          is held once and seats once (the core poolDevice race, fixed in
+//          controller-core 0.6.1)
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 import { installFakeWebHid, fakeHid, hidDevice, FACE_A } from './lib/fake-webhid.mjs';
@@ -187,27 +185,31 @@ console.log('MC-12 two Steam Controllers on one Puck');
   await ctx.page.close();
 }
 
-// ── KNOWN: duplicate pool entry when pad + granted HID are both present at boot ──
-console.log('KNOWN duplicate pool entry at boot');
+// ── Pad + granted HID both present at boot: the controller is held once ──
+// (Was a KNOWN bug: autoPoolApprovedHid and the lobby's connectHidForSlot raced
+// in core poolDevice and pooled it twice. Fixed in controller-core 0.6.1.)
+console.log('pad + granted HID at boot');
 {
-  let dup = 0, doubleSeat = 0;
   const runs = 3;
+  let dup = 0, doubleSeat = 0;
   for (let r = 0; r < runs; r++) {
     const page = await h.gamePage({ storage: STORAGE, before: async (p) => { await installFakeWebHid(p, [hidDevice.dualsenseUsb('ds')]); await installFakeGamepads(p, { atBoot: ['dualsense'] }); } });
     await sleep(3500);
-    const n = await page.evaluate(() => [...window.__controllerManager._hidPool.values()].filter((e) => e.device.__fakeKey === 'ds').length);
-    if (n) {
-      dup++;
-      const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
-      await pressBoth(ctx, 0, 'ds', FACE_A.ds5Usb, 600);
-      const s = await snap(page);
-      if (s.slots.filter((x) => x.hid === 'ds').length > 1) doubleSeat++;
-    }
+    // Held = pool entries + seats for this one unit. One controller, one holder.
+    const held = await page.evaluate(() => {
+      const m = window.__controllerManager;
+      return [...m._hidPool.values()].filter((e) => e.device.__fakeKey === 'ds').length
+        + m.slots.filter((s) => s.hidDevice && s.hidDevice.__fakeKey === 'ds').length;
+    });
+    if (held > 1) dup++;
+    const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
+    await pressBoth(ctx, 0, 'ds', FACE_A.ds5Usb, 600);
+    const s = await snap(page);
+    if (s.slots.filter((x) => x.hid === 'ds').length > 1) doubleSeat++;
     await page.close();
   }
-  const msg = `${dup}/${runs} boots pooled the DualSense twice; ${doubleSeat} of those seated it as P1 and P2`;
-  console.log(`  ${dup ? 'KNOWN' : 'ok  '} ${msg}`);
-  if (dup) known.push(msg);
+  check(dup === 0, `boot: the DualSense is held once (pool or seat), never twice (${runs} boots)`, { dup });
+  check(doubleSeat === 0, `boot: pressing A seats it once, never as P1 and P2 (${runs} boots)`, { doubleSeat });
 }
 
 check(h.errors.length === 0, 'no page errors', h.errors);

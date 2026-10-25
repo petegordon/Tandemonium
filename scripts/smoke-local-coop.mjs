@@ -142,10 +142,9 @@ console.log('MC-13 / MC-05 DualSense + Switch Pro');
   const sto = s.rows.find((r) => r.role === 'stoker');
   check(s.p2Seated && s.p2.index === i, 'MC-13: Switch Pro seated as P2', s.p2);
   check(cap && cap.glyph === 'playstation' && !cap.swapAB, 'MC-13: captain seat shows PlayStation glyphs', cap);
-  // KNOWN BUG (found by this smoke): once seated, the Switch Pro drops out of the
-  // join candidates and _renderHostSeats' fallback row hardcodes 'generic'
-  // (js/lobby.js, the `p2Im && !p2Listed` row). Expected 'nintendo'.
-  knownBug(sto && sto.glyph === 'nintendo', 'MC-13: stoker seat shows Nintendo glyphs for the seated Switch Pro', sto);
+  // Once seated, the Switch Pro drops out of the join candidates; the seated
+  // row takes its identity from P2's slot (#472, was hardcoded 'generic').
+  check(sto && sto.glyph === 'nintendo', 'MC-13: stoker seat shows Nintendo glyphs for the seated Switch Pro', sto);
   // Chrome's STANDARD mapping already places Switch buttons by position, so no
   // A/B swap on either seat (registry quirk is for non-standard mappings).
   const ids = await page.evaluate(() => {

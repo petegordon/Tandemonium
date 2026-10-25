@@ -132,7 +132,7 @@ console.log('seats');
       alone: shown('btn-ride-alone'), resume: shown('btn-drop-resume'), mode: window._game.mode,
     };
   });
-  check(o.visible && o.paused && /controller disconnected/i.test(o.msg), 'drop: versus freezes with its own notice', o);
+  check(o.visible && o.paused && /disconnected/.test(o.msg) && !/[A-Z]{5,}/.test(o.msg), 'drop: versus freezes with its own notice, naming the pad as its seat card does', o);
   check(o.drop === null && !o.alone && !o.resume && o.mode === 'versus', 'drop: no co-op pause, no 20 s take-over, still versus', o);
   // Count team physics steps: none while frozen, some again after the replug.
   await page.evaluate(() => { const g = window._game; const st = g._stepTeam.bind(g); window.__steps = 0; g._stepTeam = (...a) => { window.__steps++; return st(...a); }; });

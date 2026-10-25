@@ -2990,6 +2990,7 @@ export class Lobby {
       if (!this.lobbyEl || this.lobbyEl.style.display === 'none') return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (document.querySelector('#phone-pad-panel.open')) return;   // the phone panel closes itself
+      if (document.querySelector('#options-overlay.visible')) return; // Options closes itself (game.js)
       if (this.helpModal && this.helpModal.classList.contains('visible')) { this._closeHelp(); e.preventDefault(); return; }
       const lb = $('leaderboard-modal');
       if (lb && lb.style.display !== 'none') { this._closeLeaderboard(); e.preventDefault(); return; }
@@ -5939,8 +5940,15 @@ export class Lobby {
         state: isP2 ? 'seated' : 'connected', player: isP2 ? 2 : null, seat: isP2 ? stokerSeat : null });
     }
     if (p2Im && !p2Listed) {
-      const n = this._localP2Name || (this._localP2Type === 'keyboard' ? 'Keyboard' : 'Player 2');
-      rows.push({ key: 'p2', name: n, shortName: n, glyphFamily: this._localP2Type === 'keyboard' ? 'keyboard' : 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat });
+      // A seated pad drops out of the join candidates; name and glyph come from
+      // its own slot so a Switch Pro shows Nintendo prompts, not generic (#472).
+      const mgr = this.controllerManager;
+      const p2SlotObj = p2Im._slot && p2Im._slot.state === 'claimed' ? p2Im._slot : null;
+      const pid = this._localP2Type !== 'keyboard' && p2SlotObj && mgr ? slotIdentityHidFirst(p2SlotObj, (s) => mgr.slotIdentity(s)) : null;
+      const n = this._localP2Name || (this._localP2Type === 'keyboard' ? 'Keyboard' : (pid ? pid.shortName : 'Player 2'));
+      rows.push({ key: 'p2', name: this._localP2Name || (pid ? pid.name : n), shortName: n,
+        glyphFamily: this._localP2Type === 'keyboard' ? 'keyboard' : (pid ? pid.glyphFamily : 'generic'),
+        swapAB: pid ? !!pid.swapAB : false, state: 'seated', player: 2, seat: stokerSeat });
     }
     if (online) {
       const n = this._roomPartnerName || 'Partner';
@@ -6470,6 +6478,8 @@ export class Lobby {
       type: p.type,
       slotId: p.slotId,
       name: p.name,
+      // The seat card's own name ("Steam Controller"), for messages in sentences.
+      label: (() => { try { return this._versusIdentity(p).shortName || null; } catch { return null; } })(),
       isP1: p.slotId === 'P1',
     });
     return [

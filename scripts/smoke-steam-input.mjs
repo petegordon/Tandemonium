@@ -97,20 +97,17 @@ console.log('IN-12 gyro from Steam');
     return !!f && !f.calibrating;
   }, { timeout: 180000, polling: 500 }, H).then(() => true).catch(() => false);
   check(calibrated, 'IN-12 Steam motion calibrates (one-shot bias capture)');
-  // SensorFusion.ingest (shared/sensor-fusion.js) drops any sample >= 100 ms
-  // after the previous one, and the game feeds Steam motion once per render
-  // frame, so below 10 fps every sample is dropped and the lean stays 0. A
-  // hosted CI runner renders at ~3 fps: there the lean checks report as KNOWN
-  // (a real low-frame-rate limit of the Steam motion path), not as failures.
+  // SensorFusion drops a sample 100 ms or more after the last; below 10 fps
+  // (a hosted CI runner renders at ~3 fps) the game now feeds Steam's reading
+  // across the frame in 50 ms steps, so the lean checks hold at any frame rate.
   const frameMs = await page.evaluate(() => new Promise((res) => {
     const ts = []; const step = (t) => { ts.push(t); if (ts.length < 12) requestAnimationFrame(step); else {
       const d = ts.slice(1).map((x, i) => x - ts[i]).sort((a, b) => a - b); res(d[Math.floor(d.length / 2)]); } };
     requestAnimationFrame(step);
   }));
   const slow = frameMs >= 100;
-  console.log(`  (median frame ${frameMs.toFixed(0)} ms${slow ? ': under 10 fps, a missed gyro lean check is KNOWN' : ''})`);
-  // Slow: a pass still counts as a check; only a miss is reported as KNOWN.
-  const leanCheck = slow ? (ok, name, d) => (ok ? check(true, name, d) : known(false, name + ' (under 10 fps every Steam motion sample is dropped)', d)) : check;
+  console.log(`  (median frame ${frameMs.toFixed(0)} ms${slow ? ': under 10 fps' : ''})`);
+  const leanCheck = check;
   await steam.tilt(H, 40);
   const right = await leanUntil(page, (v) => v < -0.04, slow ? 8000 : 30000);
   s = await input(page);
@@ -190,10 +187,9 @@ for (const [pref, steamWants] of [['auto', true], ['steam-input', true], ['webhi
   const s = await input(page);
   const name = `IN-13 relaunch with "${pref}": Steam's DualSense ${steamWants ? 'is used' : 'is ignored (left to WebHID)'}`;
   if (pref === 'webhid') {
-    // js/input-manager.js _refreshSteamInputSnapshot filters with
-    // type.includes('ps5'), but main.js sends the numeric enum ('13'); the
-    // filter never matches, so WebHID mode still takes the DualSense from Steam.
-    known(s.source === 'webhid' && s.steamActive === steamWants, name + ' (filter matches "ps5" but Steam sends "13")', s);
+    // main.js sends Steam's numeric type ('13' = PS5Controller); the filter
+    // matches it via isDualSenseSteamType (#472).
+    check(s.source === 'webhid' && s.steamActive === steamWants, name, s);
   } else {
     check(s.source === pref && s.steamActive === steamWants, name, s);
   }

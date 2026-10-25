@@ -309,6 +309,8 @@
      the hint moves to the left edge, beside the fork. */
   @media (orientation: landscape) and (max-height: 500px) {
     #sling-pull { top: 50%; left: 12px; transform: translateY(-50%); width: 170px; text-align: left; }
+    /* ...and the coin/distance strip rides up to the top edge, off the bike (#472). */
+    #sling-hud { top: 8px; }
   }
   #sling-pull .sling-hint { transition: opacity 0.6s; }
   #sling-pull.pulling .sling-hint { opacity: 0; }
