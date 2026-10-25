@@ -1140,6 +1140,14 @@ export class World {
         if (dx * dx + dz * dz < 16) { slot.mesh.visible = false; slot.active = false; }
       }
     }
+    // #481 · the finish swing passes the far side of the road: keep it clear of
+    // pines too, so the camera never flies through one.
+    const L = this.roadPath.loopLength;
+    for (const slot of this._treePool) {
+      if (!slot.active || slot.lateralOffset == null) continue;
+      let dd = Math.abs(slot.roadD - destD); if (dd > L / 2) dd = L - dd;
+      if (dd < 9 && slot.lateralOffset < 0 && slot.lateralOffset > -12) { slot.mesh.visible = false; slot.active = false; }
+    }
     this._grandmaFinish = set;
     set.grandma.load().catch((e) => console.warn('[grandma] model did not load:', e && e.message));
   }
@@ -1601,7 +1609,7 @@ export class World {
     const gf = this._grandmaFinish;
     if (gf && gf.grandma.group.visible && actorDt) {
       const L = this.roadPath.loopLength;
-      gf.update(((bikeD % L) + L) % L, actorDt);
+      gf.update(((bikeD % L) + L) % L, actorDt, bikePos);
     }
 
     // Floor snap-follow + deform (snap at tileSize to reduce visual pop)

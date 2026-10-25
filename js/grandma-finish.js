@@ -48,21 +48,32 @@ export const LAYOUT = {
   outhouse: { along: 6, lateral: 12, face: -Math.PI / 2 },
   tree: { along: 11, lateral: 8.5, face: 0 },
   // #478 · the ride's presents pile up here, at Grandma's side (the riders reach it just before her)
-  stack: { along: -10, lateral: 4.2, face: Math.PI },
+  stack: { along: 0.2, lateral: 3.9, face: Math.PI },   // #481: in front of the door, beside where Grandma ends up, in the finish shot
 };
 
 /** Start waving when the bike is this many units from Grandma. */
 const WAVE_FROM = 70;
 
 /**
- * Once the riders pass her, Grandma turns round and walks along the shoulder
- * to just short of the finish line (`toAlong`, same frame as LAYOUT). That's
- * where the finish cinematic's front view sees her: behind the captain's
- * shoulder, beside her house. Any further back and the riders hide her.
+ * Once the riders pass her, Grandma turns round and walks along the shoulder,
+ * drifting out toward her house, to just past the finish line (`toAlong`,
+ * `toLateral`, same frame as LAYOUT), then turns to the riders. #481: that's
+ * where the finish cinematic's front view sees her beside the bike, between
+ * it and her house with the present pile; nearer the road the captain hid her.
  * She walks on real time, not the cinematic's slow motion (see World.update),
  * so `speed` (units/s) is a grandma's stroll that gets her there as the shot lands.
  */
-export const WALK = { toAlong: -0.8, speed: 2.6, turnTime: 0.6, returnGap: 2 };
+export const WALK = { toAlong: 2.2, toLateral: 3.4, speed: 2.6, turnTime: 0.6, returnGap: 2 };
+
+/**
+ * #481 · she watches the riders: her head turns up to maxYaw toward them (on
+ * top of whatever clip plays), and while she waves her body turns up to
+ * bodyYaw off facing straight back up the road. ease is how fast (1/s).
+ */
+export const LOOK = { maxYaw: 1.2, bodyYaw: 0.8, ease: 5 };
+const _v1 = new THREE.Vector3();
+const _vUp = new THREE.Vector3(0, 1, 0);
+const _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion(), _q4 = new THREE.Quaternion();
 
 // ── shared helpers (ported from timber-tandem public/js/screen/scene) ──
 
@@ -260,6 +271,11 @@ export class GrandmaGoose {
     this.clip = null;
     this.ready = false;
     this.disposed = false;
+    /** World point she watches (the riders), or null. @type {THREE.Vector3|null} */
+    this.lookTarget = null;
+    this._lookYaw = 0;        // smoothed head turn (rad), relative to her body
+    /** @type {THREE.Bone[]} neck → head, sharing the turn */
+    this._lookBones = [];
   }
 
   /** Load and attach the model; resolves when she's in the scene graph. */
@@ -276,7 +292,10 @@ export class GrandmaGoose {
     model.traverse((o) => { if (/** @type {any} */ (o).isMesh) /** @type {any} */ (o).frustumCulled = false; });
     this.group.add(model);
     const bones = new Set();
-    model.traverse((o) => { if (/** @type {any} */ (o).isBone) bones.add(o.name); });
+    /** @type {Record<string, THREE.Bone>} */
+    const byName = {};
+    model.traverse((o) => { if (/** @type {any} */ (o).isBone) { bones.add(o.name); byName[o.name] = /** @type {any} */ (o); } });
+    this._lookBones = ['Neck1', 'Neck2', 'Neck3', 'Head'].map((n) => byName[n]).filter(Boolean);
     this.mixer = new THREE.AnimationMixer(model);
     for (const name of ['idle_shift', 'wave', 'walk']) {
       const src = clips.find((c) => c.name === name);
@@ -306,7 +325,40 @@ export class GrandmaGoose {
     this.play(on ? 'wave' : 'idle_shift');
   }
 
-  update(dt) { if (this.mixer) this.mixer.update(dt); }
+  update(dt) {
+    if (this.mixer) this.mixer.update(dt);
+    this._applyLook(dt);
+  }
+
+  /**
+   * #481 · turn her head toward lookTarget (the riders) on top of the clip:
+   * the yaw to the target, relative to where her body faces, clamped to
+   * LOOK.maxYaw and eased, shared out along the neck and head.
+   */
+  _applyLook(dt) {
+    if (!this.ready || !this._lookBones.length) return;
+    let want = 0;
+    if (this.lookTarget) {
+      this.group.updateMatrixWorld(true);
+      // the riders in her own frame (she faces +z): the yaw that turns +z to them
+      const local = this.group.worldToLocal(_v1.copy(this.lookTarget));
+      want = Math.atan2(local.x, local.z);
+      want = Math.max(-LOOK.maxYaw, Math.min(LOOK.maxYaw, want));
+    }
+    this._lookYaw += (want - this._lookYaw) * Math.min(1, dt * LOOK.ease);
+    if (Math.abs(this._lookYaw) < 1e-4) return;
+    const share = this._lookYaw / this._lookBones.length;
+    const up = _vUp;
+    for (const b of this._lookBones) {
+      if (!b.parent) continue;
+      b.parent.updateMatrixWorld(true);
+      // a turn about world up, expressed in the bone's parent frame
+      const pw = b.parent.getWorldQuaternion(_q2);
+      const turn = _q3.setFromAxisAngle(up, share);
+      const local = _q4.copy(pw).invert().multiply(turn).multiply(pw);
+      b.quaternion.premultiply(local);
+    }
+  }
 
   dispose() {
     this.disposed = true;
@@ -319,7 +371,7 @@ export class GrandmaGoose {
  * Build the whole set for a finish at road distance `destD`.
  * @param {{ getPointAtDistance: (d: number) => {x: number, y: number, z: number, heading: number}, loopLength: number }} roadPath
  * @param {number} destD
- * @returns {{ markers: Array<{mesh: THREE.Object3D, roadD: number, type: string}>, grandma: GrandmaGoose, grandmaD: number, update: (bikeD: number, dt: number) => void, route: GrandmaRoute, stack: PresentStack }}
+ * @returns {{ markers: Array<{mesh: THREE.Object3D, roadD: number, type: string}>, grandma: GrandmaGoose, grandmaD: number, update: (bikeD: number, dt: number, bikePos?: THREE.Vector3|null) => void, route: GrandmaRoute, stack: PresentStack }}
  */
 export function buildGrandmaFinish(roadPath, destD) {
   const L = roadPath.loopLength;
@@ -341,7 +393,7 @@ export function buildGrandmaFinish(roadPath, destD) {
   const stackMarker = at(LAYOUT.stack, stack.group);
   stackMarker.type = 'present-stack';
   markers.push(stackMarker);
-  return { markers, grandma, grandmaD: markers[0].roadD, route, stack, update: (bikeD, dt) => route.update(bikeD, dt) };
+  return { markers, grandma, grandmaD: markers[0].roadD, route, stack, update: (bikeD, dt, bikePos) => route.update(bikeD, dt, bikePos) };
 }
 
 /** Stand `obj` beside the road at distance d, `lateral` units to the right, turned by `face`. */
@@ -396,17 +448,23 @@ export class GrandmaRoute {
     this.walked = 0;     // units along the shoulder
   }
 
-  update(bikeD, dt) {
+  update(bikeD, dt, bikePos = null) {
     const L = this.roadPath.loopLength;
     const cue = grandmaCue(bikeD, this.homeD, L);
+    // #481 · she watches the riders all the way in and on to the line
+    this.grandma.lookTarget = bikePos && cue !== 'idle' ? bikePos : null;
     if (this.mode === 'home') {
-      if (cue === 'leave') { this.mode = 'turn'; this.t = 0; this.grandma.play('walk'); }
-      else this.grandma.setWaving(cue === 'wave');
+      if (cue === 'leave') { this.mode = 'turn'; this.t = 0; this._turnFrom = this.grandma.group.rotation.y; this.grandma.play('walk'); }
+      else {
+        this.grandma.setWaving(cue === 'wave');
+        if (bikePos && cue === 'wave') this._faceRiders(bikePos, dt);
+      }
     } else if (cue !== 'leave' && aheadOf(bikeD, this.homeD, L) > WALK.returnGap) {
       this.goHome();
     }
     if (this.mode === 'turn') this._turn(dt);
     else if (this.mode === 'walk') this._walk(dt);
+    else if (this.mode === 'arrived' && bikePos) this._turnToward(bikePos, dt);
     this.grandma.update(dt);
   }
 
@@ -420,13 +478,43 @@ export class GrandmaRoute {
     this.grandma.setWaving(false);
   }
 
-  /** Turn on the spot from facing the riders (π) to facing the finish (2π ≡ 0), by way of the road. */
+  /** While waving, turn her body (up to LOOK.bodyYaw off facing the riders) toward the bike. */
+  _faceRiders(bikePos, dt) {
+    const g = this.grandma.group;
+    const pt = this.roadPath.getPointAtDistance(this.homeD);
+    const home = pt.heading + LAYOUT.grandma.face;
+    // yaw that points her +z at the bike
+    const want = Math.atan2(bikePos.x - g.position.x, bikePos.z - g.position.z);
+    let off = want - home;
+    off = Math.atan2(Math.sin(off), Math.cos(off));
+    off = Math.max(-LOOK.bodyYaw, Math.min(LOOK.bodyYaw, off));
+    let cur = g.rotation.y - home;
+    cur = Math.atan2(Math.sin(cur), Math.cos(cur));
+    g.rotation.y = home + cur + (off - cur) * Math.min(1, dt * LOOK.ease * 0.6);
+  }
+
+  /** Arrived: turn round, easing, to face the riders (she waves them in). */
+  _turnToward(bikePos, dt) {
+    const g = this.grandma.group;
+    const want = Math.atan2(bikePos.x - g.position.x, bikePos.z - g.position.z);
+    let off = want - g.rotation.y;
+    off = Math.atan2(Math.sin(off), Math.cos(off));
+    g.rotation.y += off * Math.min(1, dt * LOOK.ease * 0.5);
+  }
+
+  /** Turn on the spot from where she faces (the riders) to facing the finish, by way of the road. */
   _turn(dt) {
     this.t += dt;
     const k = Math.min(1, this.t / WALK.turnTime);
     const e = k * k * (3 - 2 * k);
     const pt = this.roadPath.getPointAtDistance(this.homeD);
-    this.grandma.group.rotation.y = pt.heading + Math.PI * (1 + e);
+    const to = pt.heading + Math.PI * 2;
+    const from0 = this._turnFrom != null ? this._turnFrom : pt.heading + Math.PI;
+    // unwrap so she turns the short way round, toward the road
+    let from = from0;
+    while (from > to) from -= Math.PI * 2;
+    while (to - from > Math.PI * 2) from += Math.PI * 2;
+    this.grandma.group.rotation.y = from + (to - from) * e;
     if (k >= 1) this.mode = 'walk';
   }
 
@@ -434,9 +522,13 @@ export class GrandmaRoute {
   _walk(dt) {
     this.walked = Math.min(this.length, this.walked + WALK.speed * dt);
     const d = ((this.homeD + this.walked) % this.roadPath.loopLength + this.roadPath.loopLength) % this.roadPath.loopLength;
-    placeBeside(this.roadPath, d, LAYOUT.grandma.lateral, 0, this.grandma.group);
+    const k = this.length > 0 ? this.walked / this.length : 1;
+    const lat = LAYOUT.grandma.lateral + (WALK.toLateral - LAYOUT.grandma.lateral) * k;
+    // face her way: along the road, angled out by the drift
+    const drift = Math.atan2(WALK.toLateral - LAYOUT.grandma.lateral, this.length || 1);
+    placeBeside(this.roadPath, d, lat, -drift, this.grandma.group);
     this.marker.roadD = d;
-    if (this.walked >= this.length) { this.mode = 'arrived'; this.grandma.play('idle_shift'); }
+    if (this.walked >= this.length) { this.mode = 'arrived'; this.grandma.play('wave'); }
   }
 }
 

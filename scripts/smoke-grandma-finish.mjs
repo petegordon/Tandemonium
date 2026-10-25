@@ -95,7 +95,7 @@ console.log("Grandma's");
   check(wk.mode === 'walk' && wk.clip === 'walk', 'once the riders pass, Grandma turns round and walks', wk);
   await page.waitForFunction(() => window._game.world._grandmaFinish.route.mode === 'arrived', { timeout: 120000 }).catch(() => {});
   wk = await walk();
-  check(wk.mode === 'arrived' && Math.abs(wk.along - -0.8) < 0.01, 'she stops just short of the finish line', wk);
+  check(wk.mode === 'arrived' && Math.abs(wk.along - 2.2) < 0.01 && wk.clip === 'wave', 'she walks to just past the line, beside the bike, and waves (#481)', wk);
   check((await state(page)).props[0].y === 0, 'still standing on the ground there', (await state(page)).props[0]);
   await h.shot(page, '5-grandma-at-the-line');
   await page.close();

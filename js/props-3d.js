@@ -86,8 +86,9 @@ export const PRESENT = {
   CREAM: 0xfff8e8,
   GOLD: 0xffb71c,
   GOLD_DARK: 0xe08f10,
-  /** On the road a present is drawn this much bigger, to read from the chase camera like the billboard did. */
-  ROAD_SCALE: 1.4,
+  /** On the road a present is drawn at this scale: the billboard's box was
+   *  about 0.6 units across (Pete, #481: 1.4 read far too big). */
+  ROAD_SCALE: 0.7,
 };
 
 /**
@@ -387,9 +388,12 @@ export function coneMaterial() {
 }
 
 /**
- * Skull spirits that orbit up off every standing cone, instanced: each
- * instance's matrix is just its cone's base position; the orbit, the rise
- * and the fade are in the shader. aPhase spreads the spirits of one cone.
+ * Skull spirits circling every standing cone, instanced (the billboard's
+ * look, #481): six big ghostly skulls ring the cone at different heights,
+ * bobbing, each trailed by two fainter copies for the swirl. Each instance's
+ * matrix is just its cone's ground position; the orbit is in the shader.
+ * aPhase picks the skull (0..1 round the ring), aLag its trail copy (0 = the
+ * skull itself, 1 and 2 behind it).
  */
 export function buildSpiritGeometry() {
   const g = new THREE.BufferGeometry();
@@ -403,26 +407,31 @@ export function buildSpiritGeometry() {
 const SPIRIT_VERT = /* glsl */`
   attribute vec2 aCorner;
   attribute float aPhase;
+  attribute float aLag;
   uniform float uTime;
   varying vec2 vUv;
   varying float vA;
+  varying float vLag;
   void main() {
     mat4 im = mat4(1.0);
     #ifdef USE_INSTANCING
       im = instanceMatrix;
     #endif
     float seed = fract(sin(dot(im[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
-    float cyc = fract(uTime * 0.32 + aPhase + seed);
-    float ang = uTime * 1.7 + aPhase * 6.283 + seed * 6.283;
-    float r = 0.38 + cyc * 0.3;
-    vec3 c = vec3(cos(ang) * r, 0.7 + cyc * 1.3, sin(ang) * r);
+    float lagT = aLag * 0.11;                       // trail copies run this far behind
+    float tt = uTime - lagT;
+    float ang = tt * 2.1 + aPhase * 6.283 + seed * 6.283;
+    float r = 0.66 + 0.1 * sin(tt * 1.3 + aPhase * 9.0);
+    float y = 0.3 + aPhase * 1.25 + 0.22 * sin(tt * 2.4 + aPhase * 11.0 + seed * 6.0);
+    vec3 c = vec3(cos(ang) * r, y, sin(ang) * r);
     vec4 mv = modelViewMatrix * im * vec4(c, 1.0);
-    float size = 0.11 + 0.07 * sin(cyc * 3.1416);
-    float wob = sin(uTime * 5.0 + aPhase * 7.0) * 0.25;
+    float size = 0.21 * (1.0 - aLag * 0.18);
+    float wob = sin(tt * 4.0 + aPhase * 7.0) * 0.3;
     vec2 k = vec2(aCorner.x * cos(wob) - aCorner.y * sin(wob), aCorner.x * sin(wob) + aCorner.y * cos(wob));
     mv.xy += k * size;
     vUv = aCorner * 0.5 + 0.5;
-    vA = sin(cyc * 3.1416) * 0.55;
+    vA = aLag < 0.5 ? 0.95 : (aLag < 1.5 ? 0.32 : 0.14);
+    vLag = aLag;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -430,12 +439,13 @@ const SPIRIT_FRAG = /* glsl */`
   uniform sampler2D map;
   varying vec2 vUv;
   varying float vA;
+  varying float vLag;
   void main() {
     vec4 t = texture2D(map, vUv);
     float a = t.a * vA;
     if (a < 0.02) discard;
-    // ghostly: a pale wash of the skull
-    gl_FragColor = vec4(mix(vec3(0.85, 0.9, 1.0), t.rgb, 0.6), a);
+    // the skull itself reads clearly; its trail copies are a pale ghostly wash
+    gl_FragColor = vec4(mix(vec3(0.85, 0.9, 1.0), t.rgb, vLag < 0.5 ? 0.85 : 0.25), a);
   }
 `;
 

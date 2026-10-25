@@ -77,8 +77,8 @@ console.log("Grandma's (Daredevil)");
   check(!s.giftVideo && !s.pylonVideo && !s.houseVideo, 'no gift, pylon or house video', { gift: s.giftVideo, pylon: s.pylonVideo, house: s.houseVideo });
   check(s.presentsVisible > 0 && s.presents.count === s.presentsVisible && s.presentsFx.count === s.presentsVisible,
     `every visible present is one instance (${s.presentsVisible} out, one draw)`, { visible: s.presentsVisible, inst: s.presents.count });
-  check(s.conesVisible > 0 && s.cones.count === s.conesVisible && s.spirits.count === s.conesVisible * 2,
-    `every standing cone is one instance with two spirits (${s.conesVisible} out)`, { visible: s.conesVisible, inst: s.cones.count, spirits: s.spirits.count });
+  check(s.conesVisible > 0 && s.cones.count === s.conesVisible && s.spirits.count === s.conesVisible * 18,
+    `every standing cone is one instance with six circling skulls, three copies each (${s.conesVisible} out)`, { visible: s.conesVisible, inst: s.cones.count, spirits: s.spirits.count });
   await h.shot(page, '1-road');
 
   // a present: ride onto it
