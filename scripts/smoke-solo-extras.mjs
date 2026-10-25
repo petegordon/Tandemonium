@@ -171,9 +171,19 @@ const geese = (page) => page.evaluate(async () => {
 });
 const openOptions = (page) => page.evaluate(() => window._game._openOptions());
 const closeOptions = (page) => page.evaluate(() => window._game._closeOptions());
+/** Cyclists captain seated on the bike with its colourway remap live (polled: the swap loads GLBs). */
+const cyclistsLive = (page, timeout) => page.waitForFunction(async () => {
+  const b = window._game.bike, r = b.goose?.riders?.Captain?.root;
+  if (!r || r.parent?.name !== 'Seat_Captain' || !/cyclist/i.test(b._gooseRiderPaths?.Captain || '')) return false;
+  const { colourwayState } = await import('/js/goose-colourways.js');
+  let n = 0;
+  r.traverse((o) => { if (o.isMesh) for (const m of [].concat(o.material)) { const st = m && colourwayState(m); if (st && st.u.cwOn.value === 1) n++; } });
+  return n > 0;
+}, { timeout }).then(() => true).catch(() => false);
 {
   const page = await h.gamePage({ storage: { tandemonium_tutorial_done: 'smoke', tandemonium_goose_outfit: 'victorian' } });
-  await sleep(500);
+  // The lobby has settled: the bike's geese are loaded before the player opens Options.
+  await page.waitForFunction(() => !!window._game.bike?.goose?.riders?.Captain, { timeout: 120000 }).catch(() => {});
   // Chosen in the lobby: Cyclists, then its second colourway.
   await openOptions(page);
   await clickId(page, 'opt-outfit-cyclists');
@@ -189,7 +199,7 @@ const closeOptions = (page) => page.evaluate(() => window._game._closeOptions())
   await sleep(400);
   await clickId(page, 'btn-start-ride');
   await waitState(page, 'playing');
-  await page.waitForFunction(() => /cyclist/i.test(window._game.bike._gooseRiderPaths?.Captain || '') && window._game.bike.goose?.riders?.Captain, { timeout: 120000 }).catch(() => {});
+  await cyclistsLive(page, 120000);
   let s = await geese(page);
   check(s.ready && /cyclist/i.test(s.captainPath || '') && s.seated, 'SR-21: the ride starts with the Cyclists captain seated on the bike', s);
   check(s.remapped > 0, 'SR-21: the chosen colourway is live on the captain goose materials', { remapped: s.remapped, of: s.total });
@@ -219,6 +229,39 @@ const closeOptions = (page) => page.evaluate(() => window._game._closeOptions())
   check(s.remapped === 0, "SR-21: \"own colours\" turns the remap off again", { remapped: s.remapped });
   await closeOptions(page);
   check(await page.evaluate(() => localStorage.getItem('tandemonium_goose_outfit')) === 'georgian', 'SR-21: the outfit choice is saved for the next ride');
+  await page.close();
+}
+
+// Found by this smoke in CI (#472): an outfit chosen while the bike's geese
+// were still loading was lost (setGooseRiders returned early with no goose).
+// BikeModel now remembers it and seats it when the load ends. Reproduced by
+// holding the default captain GLB back for 5 s.
+console.log('SR-21 outfit chosen while the geese load');
+{
+  const page = await h.gamePage({
+    storage: { tandemonium_tutorial_done: 'smoke', tandemonium_goose_outfit: 'victorian' },
+    before: (p) => p.evaluateOnNewDocument(() => {
+      const orig = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (/\/goose_captain\.glb(\?|$)/.test(url)) return new Promise((r) => setTimeout(r, 5000)).then(() => orig(input, init));
+        return orig(input, init);
+      };
+    }),
+  });
+  const loading = await page.evaluate(() => !window._game.bike?.goose);
+  await openOptions(page);
+  await clickId(page, 'opt-outfit-cyclists');
+  await clickId(page, 'opt-colour-1');
+  await closeOptions(page);
+  await clickId(page, 'btn-solo');
+  await sleep(400);
+  await clickId(page, 'btn-start-ride');
+  await waitState(page, 'playing');
+  const ok = await cyclistsLive(page, 30000);
+  const s = await geese(page);
+  if (loading) check(ok, 'SR-21: an outfit picked while the geese are still loading reaches the ride', { captainPath: s.captainPath, remapped: s.remapped });
+  else console.log('  (race not reproduced: the geese had loaded before Options opened)');
   await page.close();
 }
 

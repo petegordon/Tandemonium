@@ -168,26 +168,60 @@ try {
     check(riding && c0.mode === 'captain' && s0.mode === 'stoker', 'both ride: captain and stoker in the same ride', { cap: c0, sto: s0 });
 
     // OC-07: the captain's relay socket drops and comes straight back.
+    // Pause watchers on both sides (the reconnect overlay or a drop pause), with
+    // the wall-clock time of the first pause and of it clearing.
+    const watch = (k) => {
+      const w = window[k] = { pausedSeen: false, pausedAt: 0, clearedAt: 0 };
+      setInterval(() => {
+        const p = !!(window._game._drop || window._game._reconnecting);
+        if (p && !w.pausedSeen) { w.pausedSeen = true; w.pausedAt = Date.now(); }
+        if (!p && w.pausedSeen && !w.clearedAt) w.clearedAt = Date.now();
+      }, 30);
+    };
+    await sto.evaluate(watch, '__oc07sto');
+    await cap.evaluate(watch, '__oc07cap');
     await cap.evaluate(() => {
       const n = window._game.net;
-      window.__oc07 = { reconnecting: 0, connectedAgain: false };
+      const o = window.__oc07 = { reconnecting: 0, t0: Date.now(), downAt: 0, backAt: 0 };
       const prev = n.onReconnecting;
-      n.onReconnecting = (...a) => { window.__oc07.reconnecting++; if (prev) prev(...a); };
+      n.onReconnecting = (...a) => { o.reconnecting++; if (prev) prev(...a); };
+      // When the transport went down and when it came back (wall clock).
+      setInterval(() => {
+        if (!n.connected && !o.downAt) o.downAt = Date.now();
+        if (n.connected && o.downAt && !o.backAt) o.backAt = Date.now();
+      }, 30);
       // A blip: the transport's own resume-recovery path (what a tab resume or
       // an "online" event triggers) closes the socket and dials again.
       n.retryConnection();
     });
-    await sto.evaluate(() => { window.__oc07sto = { pausedSeen: false }; setInterval(() => { if (window._game._drop || window._game._reconnecting) window.__oc07sto.pausedSeen = true; }, 30); });
-    await cap.evaluate(() => { window.__oc07cap = { pausedSeen: false }; setInterval(() => { if (window._game._drop || window._game._reconnecting) window.__oc07cap.pausedSeen = true; }, 30); });
-    const back = await waitFor(cap, () => !!window._game.net.connected && window._game.net.transport === 'relay', null, 20000);
-    const backSto = await waitFor(sto, () => !!window._game.net.connected, null, 20000);
-    // Watch a few more seconds past the 2 s grace.
+    const back = await waitFor(cap, () => !!window.__oc07.backAt && window._game.net.transport === 'relay', null, 30000);
+    const backSto = await waitFor(sto, () => !!window._game.net.connected, null, 30000);
+    // Watch past the 2 s grace, and until any pause has cleared.
     await sleep(3500);
+    await waitFor(cap, () => !window._game._drop && !window._game._reconnecting, null, 30000);
+    await waitFor(sto, () => !window._game._drop && !window._game._reconnecting, null, 30000);
     const blip = await cap.evaluate(() => ({ ...window.__oc07, ...window.__oc07cap, state: window._game.state, connected: window._game.net.connected }));
     const blipSto = await sto.evaluate(() => ({ ...window.__oc07sto, state: window._game.state, connected: window._game.net.connected }));
-    check(blip.reconnecting >= 1 && back && backSto, 'OC-07 the captain\'s relay socket drops and reconnects', { cap: blip, sto: blipSto });
-    check(!blip.pausedSeen && !blipSto.pausedSeen && blip.state === 'playing' && blipSto.state === 'playing',
-      'OC-07 a short drop (< 2 s) shows no pause on either side', { cap: blip, sto: blipSto });
+    const reconnectMs = blip.backAt && blip.t0 ? blip.backAt - blip.t0 : null;
+    check(blip.reconnecting >= 1 && back && backSto, 'OC-07 the captain\'s relay socket drops and reconnects', { reconnectMs, cap: blip, sto: blipSto });
+    // The 2 s grace (RECONNECT_GRACE_MS) is wall-clock, but the redial (1 s
+    // backoff + connect) is JS work that a 1-3 fps CI runner stretches past it.
+    // So: back within the grace → no pause on either side (the point of the
+    // grace). Back later (a slow box, not a short drop any more) → the pause
+    // shows and clears once reconnected, both still riding.
+    const GRACE = 2000;
+    const riding2 = blip.state === 'playing' && blipSto.state === 'playing';
+    if (reconnectMs !== null && reconnectMs < GRACE) {
+      check(!blip.pausedSeen && !blipSto.pausedSeen && riding2,
+        `OC-07 a short drop (back in ${reconnectMs} ms, under the 2 s grace) shows no pause on either side`, { cap: blip, sto: blipSto });
+    } else {
+      const cleared = (w) => !w.pausedSeen || (w.clearedAt > 0 && w.clearedAt >= w.pausedAt);
+      const notEarly = !blip.pausedSeen || blip.pausedAt - blip.t0 >= GRACE - 100;
+      console.log(`  (slow box: the redial took ${reconnectMs} ms, past the 2 s grace)`);
+      check(cleared(blip) && cleared(blipSto) && notEarly && riding2 && blip.connected,
+        `OC-07 a drop that outlasts the 2 s grace (${reconnectMs} ms here) pauses no sooner than the grace, then clears once reconnected; both ride on`,
+        { cap: blip, sto: blipSto });
+    }
 
     // OC-07b: a raw socket close (the server side or a NAT drops it) while the
     // transport still thinks it's connected — the common real-world blip.
