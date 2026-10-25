@@ -176,7 +176,7 @@ test('a ranked solo finish reads exactly as specified', () => {
     "Tandemonium · Today's Road · Sep 8",
     '2:41 · 🥈 · 🎁 9/12 · 💥 1',
     '▰▰▰▰▰▰▰▰▰▰▰▰ 500m',
-    'https://tandemonium.jimandi.love/?daily=2026-09-08'
+    'https://tandemonium.housetandem.com/?daily=2026-09-08'
   ].join('\n'));
 });
 

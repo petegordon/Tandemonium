@@ -8,7 +8,7 @@ database_name = "tandemonium-leaderboard"
 database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
 
 [vars]
-CORS_ORIGIN = "https://tandemonium.jimandi.love"
+CORS_ORIGIN = "https://tandemonium.housetandem.com,https://tandemonium.jimandi.love"
 # Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
 
 [[analytics_engine_datasets]]

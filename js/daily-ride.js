@@ -435,7 +435,7 @@ function shiftKey(key, days) {
  * @param {object} opts { origin }
  */
 export function buildShareStrip(r, opts = {}) {
-  const origin = opts.origin || 'https://tandemonium.jimandi.love';
+  const origin = opts.origin || 'https://tandemonium.housetandem.com';
   const MEDALS = { gold: '🥇', silver: '🥈', bronze: '🥉' };
 
   // Line 1 — what, when, and who with.

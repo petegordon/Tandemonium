@@ -3,8 +3,8 @@
 // <uf-qr> — a QR code sized to scan from the couch.
 // ============================================================
 //
-//   <uf-qr value="https://tandemonium.jimandi.love?room=TNDM-K9NE" caption="Scan to join" link="tandemonium.jimandi.love"></uf-qr>
-//   <uf-qr value="https://…/remote/?pad=AS64W5&seat=1#secret" link="tandemonium.jimandi.love/remote" reveal></uf-qr>
+//   <uf-qr value="https://tandemonium.housetandem.com?room=TNDM-K9NE" caption="Scan to join" link="tandemonium.housetandem.com"></uf-qr>
+//   <uf-qr value="https://…/remote/?pad=AS64W5&seat=1#secret" link="tandemonium.housetandem.com/remote" reveal></uf-qr>
 //
 // Draws `value` with the vendored qrcode-generator (MIT) into an SVG on a white
 // quiet zone, `size` px square (default 420 — readable by a phone 2–3 m from a

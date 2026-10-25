@@ -7,8 +7,8 @@ test('m19: versusbot only on a local server, file:, or with ?dev=1', () => {
   assert.equal(versusBotAllowed('?versusbot=1', 'localhost', 'http:'), true);
   assert.equal(versusBotAllowed('?versusbot=1', '127.0.0.1', 'http:'), true);
   assert.equal(versusBotAllowed('?versusbot=1', '', 'file:'), true);
-  assert.equal(versusBotAllowed('?versusbot=1', 'tandemonium.jimandi.love', 'https:'), false, 'never in production');
-  assert.equal(versusBotAllowed('?versusbot=1&dev=1', 'tandemonium.jimandi.love', 'https:'), true);
+  assert.equal(versusBotAllowed('?versusbot=1', 'tandemonium.housetandem.com', 'https:'), false, 'never in production');
+  assert.equal(versusBotAllowed('?versusbot=1&dev=1', 'tandemonium.housetandem.com', 'https:'), true);
   assert.equal(versusBotAllowed('', 'localhost', 'http:'), false, 'only when asked for');
   assert.equal(versusBotAllowed('?versusbot=0', 'localhost', 'http:'), false);
 });
