@@ -5,28 +5,26 @@ name: Smokes
 # the unit tests and the fast lobby smokes; this is the full set, including the
 # fake-controller smokes (disconnect, local-coop, versus, webhid, steam-input).
 #
-# When it runs:
-#   - every push to main (a merge), so a failure shows before promotion;
+# When it runs (never automatically on a merge):
 #   - from build-windows.yml before every Steam upload (workflow_call): the
 #     upload job needs this to pass, so a red build never reaches Steam;
 #   - on a PR only when it carries the `run-smokes` label (risky changes:
 #     controllers, network). Plain PRs get pr-preview.yml's unit tests and
 #     lobby smokes, a few minutes;
-#   - by hand (workflow_dispatch).
+#   - by hand: Actions → Smokes → Run workflow, on main or any branch
+#     (`gh workflow run smokes.yml --ref main`).
 # A group's log is in its job; each smoke is a collapsible section, and the
 # job summary has a pass/fail table.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-  push:
-    branches: [main]
   workflow_call:
   workflow_dispatch:
 
 concurrency:
   # github.workflow is the caller's name under workflow_call, so the Steam
-  # gate and the main-push run never cancel each other.
+  # gate and a hand-started run never cancel each other.
   group: smokes-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
