@@ -27,7 +27,7 @@ export const SMOKES = [
 const argv = process.argv.slice(2);
 const skipArg = argv.indexOf('--skip');
 const skip = new Set(skipArg >= 0 ? (argv[skipArg + 1] || '').split(',').filter(Boolean) : []);
-const named = argv.filter((a, i) => !a.startsWith('--') && i !== skipArg + 1);
+const named = argv.filter((a, i) => !a.startsWith('--') && !(skipArg >= 0 && i === skipArg + 1));
 const list = (named.length ? named : SMOKES).filter(n => !skip.has(n));
 
 const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));

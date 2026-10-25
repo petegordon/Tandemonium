@@ -9,29 +9,20 @@
 // model is up), no two tiles overlap, and no tile covers a front view / PiP /
 // pedal bar stand-in. Screenshots land in $SMOKE_OUT (default: ./out/smoke).
 //
-// Needs: a local three (npm i --no-save three@0.161.0 — the sandbox can't
-// reach the CDN), Playwright resolvable from node, and a static server for
-// the repo root — this script starts `python3 -m http.server` itself.
+// Puppeteer + the shared harness server; three comes from node_modules.
 //
 //   node scripts/smoke-controller-overlay.mjs
 
-import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import { startHarness, sleep } from './lib/smoke-harness.mjs';
 
-const require = createRequire(import.meta.url);
-let chromium;
-try { ({ chromium } = require('playwright')); }
-catch { ({ chromium } = require(path.join(process.env.NPM_GLOBAL_ROOT || '/opt/node22/lib/node_modules', 'playwright'))); }
-
-const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = process.cwd();
 const PORT = Number(process.env.SMOKE_PORT || 8899);
 const OUT = process.env.SMOKE_OUT || path.join(ROOT, 'out', 'smoke');
 mkdirSync(OUT, { recursive: true });
 
-const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: ROOT, stdio: 'ignore' });
-await new Promise((r) => setTimeout(r, 800));
+const h = await startHarness({ port: PORT });
 
 // P2 in the harness is the Steam case: an XInput gamepad id with a real
 // DualSense bound over WebHID — it must resolve to the DualSense, not Xbox.
@@ -68,10 +59,9 @@ const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bot
 const failures = [];
 const note = (ok, msg) => { console.log(`${ok ? '  ✓' : '  ✗'} ${msg}`); if (!ok) failures.push(msg); };
 
-let browser;
 try {
-  browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  const page = await h.browser.newPage();
+  await page.setViewport({ width: 1280, height: 720 });
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', (e) => consoleErrors.push(String(e)));
@@ -86,7 +76,7 @@ try {
     await page.waitForFunction((n) => {
       const tiles = window.__tiles();
       return tiles.length === n && tiles.every((t) => t.kind !== 'gamepad' || t.hasModel);
-    }, expect.tiles.length, { timeout: 30000 })
+    }, { timeout: 30000 }, expect.tiles.length)
       .catch(() => note(false, `${name}: expected ${expect.tiles.length} tiles with models within 30s`));
     const tiles = await page.evaluate(() => window.__tiles());
     note(tiles.length === expect.tiles.length, `${name}: ${tiles.length} tiles (expected ${expect.tiles.length})`);
@@ -101,13 +91,13 @@ try {
       if (ex.profile) note(t.profile === ex.profile, `${name}: ${ex.label} ${ex.seat || ''} profile ${t.profile} (expected ${ex.profile})`);
       if (ex.name) note(t.name === ex.name, `${name}: ${ex.label} ${ex.seat || ''} named "${t.name}" (expected "${ex.name}")`);
     }
-    await page.waitForTimeout(600);
+    await sleep(600);
     for (const t of await page.evaluate(() => window.__tiles())) {
       if (t.kind === 'gamepad') note(t.finiteQuat, `${name}: ${t.label} ${t.seat || ''} orientation still finite after animating`);
     }
     for (const set of OBSTACLE_SETS) {
       for (const k of ['frontview', 'pip', 'pedals']) await page.evaluate(([k, on]) => window.__setObstacle(k, on), [k, set.includes(k)]);
-      await page.waitForTimeout(400); // > LAYOUT_INTERVAL_MS so the tiles re-measure
+      await sleep(400); // > LAYOUT_INTERVAL_MS so the tiles re-measure
       const rects = await page.evaluate(() => window.__tiles().map((t) => ({ id: `${t.label} ${t.seat}`.trim(), ...t.rect, right: t.rect.left + t.rect.width, bottom: t.rect.top + t.rect.height })));
       const obs = await page.evaluate(() => window.__obstacles());
       const tag = set.length ? set.join('+') : 'no obstacles';
@@ -127,17 +117,18 @@ try {
   await page.evaluate(() => window.__hud.setEnabled(false, { persist: false }));
   note((await page.evaluate(() => window.__tiles().length)) === 0, 'disabled: all tiles disposed');
   await page.evaluate(() => window.__hud.setEnabled(true, { persist: false }));
-  await page.waitForFunction(() => window.__tiles().length > 0 && window.__tiles().every((t) => t.kind !== 'gamepad' || t.hasModel), null, { timeout: 30000 })
+  await page.waitForFunction(() => window.__tiles().length > 0 && window.__tiles().every((t) => t.kind !== 'gamepad' || t.hasModel), { timeout: 30000 })
     .catch(() => note(false, 're-enable: tiles did not come back'));
   note(true, 're-enable: tiles rebuilt');
 
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   note(real.length === 0, `console errors: ${real.length}${real.length ? '\n    ' + real.join('\n    ') : ''}`);
-} finally {
-  if (browser) await browser.close();
-  server.kill();
+} catch (e) {
+  note(false, `crashed: ${e && e.message}`);
 }
 
 console.log(`\nScreenshots: ${OUT}`);
+await h.browser.close().catch(() => {});
+h.server.close();
 if (failures.length) { console.error(`\n${failures.length} check(s) failed`); process.exit(1); }
 console.log('\nAll checks passed');

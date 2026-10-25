@@ -34,11 +34,13 @@ jobs:
           - group: ride
             smokes: ride crash helping-hand disruptions lookahead ping economy
           - group: ride-2
-            smokes: achievements quality layout geese physics no-media
+            smokes: achievements quality layout geese physics no-media controller-overlay
           - group: modes
             smokes: slingshot slingshot-aim tourist host-room
           - group: controllers
-            smokes: disconnect local-coop versus webhid steam-input
+            smokes: disconnect local-coop versus
+          - group: controllers-2
+            smokes: webhid steam-input
           - group: phone
             smokes: phone-pad
     steps:

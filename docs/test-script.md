@@ -61,26 +61,26 @@ Run all of these first. A failure here stops the run.
 | PF-02 | Typecheck clean | A | `npm run typecheck` |
 | PF-03 | Game loads, no console errors at the lobby | A | `npm run smoke`, `npm run audit:first30` |
 | PF-04 | Boot failure shows a readable message, not a blank screen | A | `smoke:boot` |
-| PF-05 | All smokes pass: `ride crash records seed daily ctas ranked tutorial lookahead ping disruptions tourist layout slingshot slingshot-aim edition quality economy achievements helping-hand phone-pad disconnect host-room geese physics no-media controller-overlay` | A | each `smoke:*` |
+| PF-05 | All smokes pass | A | `npm run smoke:all` (list in `scripts/run-smokes.mjs`); CI: `smokes.yml` |
 | PF-06 | UI and controller-core vendored copies match the lab | A | `check:ui`, `check:controller-core` |
 | PF-07 | Steam upload log says `Successfully finished AppID 4510250 build` | A | build-windows.yml |
 
-**Gap:** CI runs only PF-01. The smokes run locally. Moving them into CI is item 1
-of the automation plan.
+CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes; `smokes.yml`
+runs every smoke on each PR and push to main, in six parallel groups.
 
 ## 1. Boot and lobby
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
 | BL-01 | Cold start to mode select in under 10 s on the Steam build | M | — |
-| BL-02 | Mode select shows SOLO, TOGETHER, VERSUS; SOLO lists the levels and the Slingshot card | A | `smoke`, `smoke:edition` |
+| BL-02 | Mode select shows SOLO and TOGETHER (VERSUS is on the TOGETHER step); SOLO lists the levels and the Slingshot card | A | `smoke`, `smoke:edition` |
 | BL-03 | Build badge shows the expected version | M→A | — |
-| BL-04 | Back button and B / Esc go back one step on every lobby step; root has no back | M→A | — |
+| BL-04 | Back button and B / Esc go back one step on every lobby step; root has no back | A | `smoke:flows` |
 | BL-05 | First-time SOLO lands in the tutorial with SKIP; returning player goes to levels | A | `smoke:tutorial` |
 | BL-06 | Level cards show best time and medal for the chosen difficulty | A | `smoke:records` |
 | BL-07 | Difficulty selector: Chill / Adventurous / Daredevil change the card text and bests | A | `smoke:records` |
-| BL-08 | Options opens and closes from lobby with mouse, pad and Esc | M→A | — |
-| BL-09 | Focus ring is visible on the first control of every screen when using a pad | M→A | — |
+| BL-08 | Options opens and closes from lobby with mouse, pad and Esc | A | `smoke:flows` (Esc: known bug, reported) |
+| BL-09 | Pad focus starts on a visible control on every lobby step | A | `smoke:flows` |
 | BL-10 | Lobby at 390×844, 844×390, 1920×1080 and 4K: nothing clipped or overlapping | M→A | `smoke:layout` (HUD only) |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
 
@@ -96,8 +96,9 @@ of the automation plan.
 | SR-06 | Helping hand: repeated failure on a checkpoint makes it visibly easier | A | `smoke:helping-hand` |
 | SR-07 | Disruptions warn before they act and leave Chill alone | A | `smoke:disruptions` |
 | SR-08 | Geese and obstacles appear, collide and react | M | `smoke:geese` (riders only) |
-| SR-09 | Game-over buttons: RESTART, Garage, Lobby, Clip all do what they say | M→A | — |
-| SR-10 | Victory buttons: Next level, Play again, Garage, Lobby | M→A | — |
+| SR-09 | Game-over buttons: RESTART, END RIDE, SAVE CLIP (only while recording) do what they say; no GARAGE outside Slingshot | A | `smoke:flows`, `smoke:economy` |
+| SR-09h | SAVE CLIP opens the clip preview after a recorded ride | M | — |
+| SR-10 | Victory buttons: NEXT LEVEL, PLAY AGAIN, END RIDE | A | `smoke:flows` |
 | SR-11 | Today's Road: same road for two players on the same day; difficulty locked | A | `smoke:daily` |
 | SR-12 | Today's Road ranked: chooser on web, never in demo; share strip has no road spoilers | A | `smoke:ranked` |
 | SR-13 | Expired `?daily=` link lands on today | A | `smoke:daily` |
@@ -137,18 +138,22 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-03 | Phone motion, iOS: permission prompt, calibration, lean by tilt | M | `test/unit/tilt-calibration` |
 | IN-04 | Phone motion, Android: same as IN-03 | M | — |
 | IN-05 | Xbox pad: pedals on triggers/bumpers, lean on stick, menu A/B | M→A | — |
-| IN-06 | DualSense USB: buttons, gyro lean via WebHID | M | lab `playstation-driver` |
+| IN-06 | DualSense USB: seat binds the HID device, buttons parse, gyro live, PlayStation prompts | A | `smoke:webhid` |
+| IN-06h | IN-06 on a real DualSense: gyro lean feels right | M | — |
 | IN-07 | DualSense BT: same as IN-06, including the grant toggle | M | lab `playstation-bt-handshake` |
-| IN-08 | DualShock 4: buttons and gyro | M | lab fixtures |
-| IN-09 | Switch Pro: buttons with A/B swap, Switch glyphs on prompts | M→A | `test/unit/controller-labels` |
-| IN-10 | Steam Controller via Puck: name reads "Steam Controller 2026 (via Puck)", Steam glyphs, gyro | M | `test/unit/controller-labels`, lab `steam-controller-*` |
-| IN-11 | GameSir Super Nova: buttons and gyro | M | lab fixture |
-| IN-12 | Steam Input on (Steam build): gyro comes from Steam Input; Options shows the source | M | `test/unit/steam-steer-curve` |
-| IN-13 | Options → DS source Auto / WebHID / Steam switches live | M→A | — |
+| IN-08 | DualShock 4 (BT): BT detected, feature read sent, reports parse, gyro live | A | `smoke:webhid` |
+| IN-09 | Switch Pro: Switch glyphs on prompts (no A/B swap under Chrome's standard mapping) | A | `smoke:local-coop`, `test/unit/controller-labels` |
+| IN-10 | Steam Controller via Puck: lizard-mode handshake, seats on A, "Steam Controller 2026 (via Puck)", Steam glyphs, gyro live | A | `smoke:webhid` |
+| IN-10h | IN-10 on a real Puck + controller | M | — |
+| IN-11 | GameSir Super Nova: IMU layout, gyro live (WebHID can't tell it from a DS4 v2, so it's named "Sony DualShock 4 v2") | A | `smoke:webhid` |
+| IN-11h | IN-11 on a real Super Nova | M | — |
+| IN-12 | Steam Input holds the pad: seat connects, Confirm and pedals work, gyro lean from Steam motion, Steer fallback, Options names the source | A | `smoke:steam-input`, `test/unit/steam-steer-curve` |
+| IN-12h | IN-12 in the real Steam client: lean feels right | M | — |
+| IN-13 | Options → DS source Auto / WebHID / Steam is saved and applies on next launch | A | `smoke:steam-input` (WebHID ignored for a Steam DualSense: known bug, reported) |
 | IN-14 | Options → gyro Euler / Gravity changes lean feel | M | `test/unit/tuning-save-gyro` |
 | IN-15 | Recalibrate from the quick menu mid-ride | M→A | — |
 | IN-16 | Button prompts match the pad in use (Xbox / PlayStation / Switch / Steam) | M→A | `test/unit/controller-labels` |
-| IN-17 | Unplug the only pad mid-ride: "Your controller disconnected" pause; replug resumes | A | `smoke:disconnect` (faked pad) |
+| IN-17 | Unplug the only pad mid-ride: "Your controller disconnected" pause; replug resumes | A | `smoke:disconnect` |
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
 
 ## 5. Multi-controller (local co-op and versus)
@@ -160,33 +165,34 @@ real-hardware rows stay manual.
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
-| MC-01 | P1 on keyboard, P2 joins with a pad press; P2 takes the stoker seat | M→A | `smoke:host-room` (seat only) |
-| MC-02 | Two pads: first press is P1, second is P2 | M→A | — |
-| MC-03 | P1 is a keyboard placeholder; the first pad takes P1 (#467) | M→A | — |
-| MC-04 | P2 joins on keyboard while P1 has a pad | M→A | — |
-| MC-05 | Each seat's pedals and lean drive only that rider | M→A | — |
+| MC-01 | One pad + keyboard: the pad is always P1 (captain); the keyboard joins as Player 2 in the stoker seat | A | `smoke:local-coop` |
+| MC-02 | Two pads: the boot pad is P1; the second pad's first press seats P2; a second press doesn't reseat | A | `smoke:local-coop` |
+| MC-04 | P2 joins on keyboard while P1 has a pad; the keyboard pedals only P2 | A | `smoke:local-coop` |
+| MC-05 | Each seat's pedals and lean drive only that rider | A | `smoke:local-coop` |
 | MC-06 | Captain and stoker geese lean independently by their own input | M | — |
 | MC-07 | Unplug P2 mid-ride: pause, 20 s countdown, "Ride on alone" works | A | `smoke:disconnect` |
 | MC-08 | Unplug P1 mid-ride: "Player 2: take over" after 20 s; P2 now rides | A | `smoke:disconnect` |
 | MC-09 | Replug within 20 s: ride resumes, same seats | A | `smoke:disconnect` |
 | MC-10 | MC-07 to MC-09 with real pads, USB and BT | M | — |
-| MC-11 | Two identical pads (two DualSense): each keeps its own seat after replug | M→A | lab `manager-duplicate-controllers` |
-| MC-12 | Two Steam Controller bodies on one Puck: two seats, no cross-wiring | M | lab `manager-multi-steam-claim` |
-| MC-13 | Mixed families (DualSense + Switch Pro): each seat's prompts use its own glyphs | M→A | — |
-| MC-14 | Menu focus: either pad can drive menus; no double moves | M→A | — |
+| MC-11 | Two identical pads (two DualSense): each keeps its own seat after one drops and reconnects | A | `smoke:webhid` |
+| MC-12 | Two Steam Controller bodies on one Puck: two seats, no cross-wiring; the idle interface takes no seat | A | `smoke:webhid` |
+| MC-12h | MC-12 on a real Puck with two controllers | M | — |
+| MC-13 | Mixed families (DualSense + Switch Pro): each seat's prompts use its own glyphs | A | `smoke:local-coop` (seated Switch P2 shows a generic glyph: known bug, reported) |
+| MC-14 | Menu focus: P1's pad moves focus one step per press; no double moves. P2's pad does not drive menus (by design today) | A | `smoke:local-coop` |
 | MC-15 | Phone remote as P2 next to a pad as P1 | M→A | `smoke:phone-pad` (single) |
 
 ### Versus (split screen)
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
-| VS-01 | Team setup: seats fill in join order; team sizes balance | M→A | — |
-| VS-02 | 1v1, 1v2, 2v2 all start and render the right number of views | M→A | — |
-| VS-03 | Keyboard join button seats a keyboard player | M→A | — |
-| VS-04 | Each seat shows its own controller name and glyph | M→A | `test/unit/controller-labels` |
+| VS-01 | Team setup: seats fill in join order; teams alternate and balance; a fifth pad is refused | A | `smoke:versus` |
+| VS-02 | 1v1, 1v2, 2v2 all start and render two half-width views | A | `smoke:versus` |
+| VS-03 | Keyboard join seats one keyboard player | A | `smoke:versus` |
+| VS-03b | P1 is a keyboard placeholder; the first pad takes P1 (#467) | A | `smoke:versus`, `smoke:local-coop` |
+| VS-04 | Each seat shows its own controller name and glyph | A | `smoke:versus` |
 | VS-05 | Versus bot fills an empty seat | A | `test/unit/versus-bot` |
-| VS-06 | Race finishes; results show the winning team | M→A | — |
-| VS-07 | Pad unplug in versus does not trigger the co-op drop pause | M→A | — |
+| VS-06 | Race finishes; results show the winning team; LOBBY returns | A | `smoke:versus` (finish fast-forwarded) |
+| VS-07 | Pad unplug in versus freezes both teams with versus's own notice (no co-op 20 s take-over); replug resumes | A | `smoke:versus` |
 | VS-08 | 2v2 at 1080p holds frame rate on the target PC | M | — |
 
 ## 6. Online co-op (TOGETHER → online)
@@ -283,30 +289,23 @@ Two devices on different networks for the M rows.
 
 ## Automation plan
 
-Most of the remaining **M→A** rows are input and flow checks, and most of those
-are multi-controller. They need four mocks. Two exist already.
+The mocks, all in `scripts/lib/`:
 
-| Mock | What it fakes | Status |
+| Mock | What it fakes | Used by |
 |---|---|---|
-| **Fake net** | Two pages wired together in place of the room transport | Exists (`smoke:host-room`, `smoke:tourist`, `smoke:disconnect`) |
-| **Pad relay** | Real `worker/pad-relay.js` under `wrangler dev` | Exists (`smoke:phone-pad`) |
-| **Fake Gamepad API** | `navigator.getGamepads()` returning scripted pads with a given id string (so each family's name and glyph is picked), plus `gamepadconnected` / `gamepaddisconnected` events and a per-frame button/axis script | To build |
-| **Fake WebHID** | `navigator.hid` handing out devices that replay the lab's recorded reports (`controller-lab/packages/core/test/fixtures`), including duplicates and the Puck's two interfaces | To build; the lab's manager tests already use this pattern |
-| **Fake Steam bridge** | The Electron preload's Steam Input calls (handles, type, gyro) | To build |
+| `smoke-harness.mjs` | Local server, three.js from node_modules, no network; Chrome with software WebGL | the new smokes |
+| `fake-gamepads.mjs` | `navigator.getGamepads()` with real model id strings; plug, unplug, replug, press, stick | `disconnect`, `local-coop`, `versus`, `flows`, `webhid` |
+| `fake-webhid.mjs` | `navigator.hid` replaying recorded reports (`scripts/fixtures/hid/`, copied from the controller lab) | `webhid` |
+| `fake-steam.mjs` | The Electron preload's `steam`, `electronApp`, `tandemoniumSteam` globals | `steam-input` |
+| Fake net | Two pages wired together in place of the room transport | `host-room`, `tourist`, `disconnect` |
+| Pad relay | Real `worker/pad-relay.js` under `wrangler dev` | `phone-pad` |
 
-Order of work:
+Run everything with `npm run smoke:all`, or some with
+`node scripts/run-smokes.mjs local-coop versus`. CI runs the same runner.
 
-1. **Smokes in CI.** Run PF-05 on every PR (headless Chrome is already what they
-   use). The phone-pad smoke needs `wrangler dev` on the runner.
-2. **Fake Gamepad API helper** in `scripts/lib/`, then a `smoke:local-coop` covering
-   MC-01 to MC-05, MC-13, MC-14 and a `smoke:versus` covering VS-01 to VS-04,
-   VS-06, VS-07. Move `smoke:disconnect` from its property overrides onto the
-   helper so it tests the real connect / disconnect path.
-3. **Fake WebHID** with the lab fixtures: IN-06 to IN-11 at the parsing level and
-   MC-11 duplicate seats. Gyro *feel* stays manual.
-4. **Flow sweeps**: one smoke that walks every lobby step with B / Esc (BL-04,
-   BL-08, BL-09) and every game-over and victory button (SR-09, SR-10).
-5. **Fake Steam bridge**: IN-12, IN-13.
+**Known bugs** are printed as `KNOWN BUG` without failing the run, and print
+`FIXED` once the game behaves; then turn them into normal checks. Open ones are
+listed in #472.
 
 What stays manual for good: ride feel (section 3), real Bluetooth and USB
 pairing, phone sensors, the Steam client, Google TV, two real networks, frame

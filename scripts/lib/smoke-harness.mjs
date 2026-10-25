@@ -28,6 +28,7 @@ export async function startHarness({ port, outDir = null, headless = 'new' } = {
   const puppeteer = require('puppeteer');
   const server = http.createServer((q, r) => {
     const u = decodeURIComponent(q.url.split('?')[0]);
+    if (u === '/favicon.ico') return r.writeHead(204).end();   // no console 404 noise
     const f = path.join(ROOT, u === '/' ? 'index.html' : u);
     fs.stat(f, (e, st) => {
       if (e || st.isDirectory()) return r.writeHead(404).end();

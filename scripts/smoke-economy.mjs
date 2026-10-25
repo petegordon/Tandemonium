@@ -62,9 +62,9 @@ await page.evaluateOnNewDocument(() => {
 });
 await boot();
 
-// 1. The lobby shows the wallet on a GARAGE button.
-const lobby0 = await page.evaluate(() => ({ btn: !!document.getElementById('btn-garage'), chip: document.getElementById('lobby-wallet')?.textContent }));
-check(lobby0.btn && /🪙 0/.test(lobby0.chip || ''), `the lobby has GARAGE with the wallet ("${lobby0.chip}")`);
+// 1. #446: the garage lives in Slingshot only, so the lobby has no GARAGE button.
+const lobby0 = await page.evaluate(() => ({ btn: !!document.getElementById('btn-garage') }));
+check(!lobby0.btn, 'the lobby has no GARAGE button (#446: the garage is in Slingshot)');
 
 // 2. A regular solo ride on Grandma's.
 await page.evaluate(() => document.getElementById('btn-solo').click());
@@ -88,8 +88,8 @@ const go = await page.evaluate(() => ({
   pickups: window._game.collectibleManager ? window._game.collectibleManager.collected : 0,
 }));
 const w1 = await wallet();
-check(go.shown && /Distance \(140 m\)/.test(go.text) && w1.coins === 28 + 5 * go.pickups && go.garage,
-  `game over pays the distance: ${w1.coins} coins ("${go.text.replace(/\s+/g, ' ').slice(0, 70)}…"), GARAGE → shown`);
+check(go.shown && /Distance \(140 m\)/.test(go.text) && w1.coins === 28 + 5 * go.pickups && !go.garage,
+  `game over pays the distance: ${w1.coins} coins ("${go.text.replace(/\s+/g, ' ').slice(0, 70)}…"), no GARAGE (#446)`);
 await shot('1-gameover-coins');
 // the tally rows are readable on the dark end screen (they had no colour: black text, blank-looking lines)
 const rowLum = await page.evaluate(() => [...document.querySelectorAll('#gameover-coins uf-ledger .ul-row')].map(r => {
@@ -110,12 +110,12 @@ const vic = await page.evaluate(() => ({
 }));
 const w2 = await wallet();
 const gained = w2.coins - w1.coins;
-check(/Finished/.test(vic.text) && /Distance \(110 m\)/.test(vic.text) && gained >= 22 + 25 && vic.garage,
+check(/Finished/.test(vic.text) && /Distance \(110 m\)/.test(vic.text) && gained >= 22 + 25 && !vic.garage,
   `the finish pays the rest of the road once + finishing (+${gained}: "${vic.text.replace(/\s+/g, ' ').slice(0, 90)}…")`);
 await shot('2-victory-coins');
 
-// 5. GARAGE → : the one garage, standalone; a purchase debits the shared wallet.
-await page.evaluate(() => document.getElementById('btn-victory-garage').click());
+// 5. The one garage, standalone (the way Slingshot opens it); a purchase debits the shared wallet.
+await page.evaluate(() => window._game._openSlingGarage(0, { standalone: true }));
 await waitState('slingGarage', 20000);
 const g1 = await page.evaluate(() => ({
   launch: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /^LAUNCH!$/.test(b.textContent.trim())),
@@ -132,14 +132,13 @@ const w3 = await wallet();
 check(w3.coins === before - 40 && w3.lv.sling === 1, `buying debits the shared wallet (${before} → ${w3.coins}, sling L${w3.lv.sling})`);
 await shot('3-garage');
 
-// 6. BACK → the lobby shows the new balance; the lobby's GARAGE opens the same garage.
+// 6. BACK → the lobby; opening the garage again shows the spent balance.
 await clickText('#sling-garage button, #sling-garage uf-button', /BACK/);
 await waitState('lobby', 20000);
-const chip = await page.evaluate(() => document.getElementById('lobby-wallet').textContent);
-check(chip.includes(String(w3.coins)), `the lobby shows the wallet after spending ("${chip}")`);
-await page.evaluate(() => document.getElementById('btn-garage').click());
+await page.evaluate(() => window._game._openSlingGarage(0, { standalone: true }));
 await waitState('slingGarage', 20000);
-check(await page.evaluate(() => document.getElementById('sling-garage').classList.contains('visible')), 'the lobby GARAGE button opens the garage');
+const garageText = await page.evaluate(() => document.getElementById('sling-garage').textContent);
+check(garageText.includes(String(w3.coins)), `the garage shows the wallet after spending (${w3.coins})`);
 await clickText('#sling-garage button, #sling-garage uf-button', /BACK/);
 await waitState('lobby', 20000);
 
