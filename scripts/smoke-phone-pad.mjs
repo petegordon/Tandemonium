@@ -333,8 +333,16 @@ try {
     check(k.n === 1 && t === 0, '#454: it came back with its own key (the old QR secret is dropped), not as a takeover', JSON.stringify({ keys: k.n, takeovers: t }));
     check(await phoneLayoutFixed() && await hostMode() === 'menu', 'reconnected while paused: same phone layout; read as a menu pad');
     await press('back');
-    await sleep(500);
+    await game.waitForFunction(() => !window._game._optionsOpen && window._game.state === 'playing', { timeout: 8000 }).catch(() => {});
     check(await game.evaluate(() => !window._game._optionsOpen && window._game.state === 'playing'), 'BACK resumes the ride');
+    // PR-05: after the reconnect the phone drives the ride again (pedal + lean).
+    await phone.evaluate(() => { window.__tilt = 30; });
+    await phone.mouse.move(150, 250); await phone.mouse.down();
+    await game.waitForFunction(() => window._game.input.isPressed('ArrowLeft') && window._game.input.getMotionLean() > 0.1, { timeout: 8000 }).catch(() => {});
+    const again = await game.evaluate(() => ({ left: window._game.input.isPressed('ArrowLeft'), lean: +window._game.input.getMotionLean().toFixed(2) }));
+    await phone.mouse.up();
+    await phone.evaluate(() => { window.__tilt = 0; });
+    check(again.left && again.lean > 0.1, 'PR-05: after the reconnect the phone pedals and steers the ride again', JSON.stringify(again));
   }
 
   // ── someone with only the room code can't take the game's place ──
@@ -364,12 +372,33 @@ try {
   // ── the phone leaves: input is released ──
   await phone.evaluate(() => { window.__tilt = 35; });
   await phone.mouse.move(150, 250); await phone.mouse.down();
-  await sleep(600);
+  await game.waitForFunction(() => window._game.input.getMotionLean() > 0.1, { timeout: 8000 }).catch(() => {});
+  // PR-05 / #424: when the phone goes, the lean eases to 0 over
+  // REMOTE_LEAN_EASE_MS (300) instead of snapping. The ease is read from the
+  // clock, so sample it inside the drop itself, at fixed times after it, and
+  // the result doesn't depend on the game's frame rate.
+  await game.evaluate(() => {
+    const im = window._game.input, orig = im.detachRemote.bind(im);
+    im.detachRemote = (...a) => {
+      const r = orig(...a);
+      if (!window.__leanEase) {
+        const t0 = performance.now(), spin = (ms) => { while (performance.now() - t0 < ms) { /* wait */ } };
+        const s = [];
+        for (const ms of [0, 100, 200, 360]) { spin(ms); s.push(+im.getMotionLean().toFixed(3)); }
+        window.__leanEase = s;
+      }
+      return r;
+    };
+  });
   await phone.close();
   await game.waitForFunction(() => window.__phonePad.status === 'waiting', { timeout: 10000 }).catch(() => {});
   await sleep(400);   // #424: the lean eases to 0 over 300 ms rather than snapping
   const after = await game.evaluate(() => ({ status: window.__phonePad.status, left: window._game.input.isPressed('ArrowLeft'), lean: window._game.input.getMotionLean() }));
   check(after.status === 'waiting' && !after.left && after.lean === 0, 'closing the phone page releases the pedal and the lean', JSON.stringify(after));
+  const ease = await game.evaluate(() => window.__leanEase || null);
+  // [at the drop, +100 ms, +200 ms, +360 ms]: from the held lean, falling, same side, then 0.
+  check(!!ease && ease[0] > 0.1 && ease[1] < ease[0] && ease[1] > 0 && ease[2] < ease[1] && ease[2] > 0 && ease[3] === 0,
+    'PR-05: the lean eases back to centre over ~300 ms (no snap)', JSON.stringify(ease));
 
   /** A script WebSocket that records what it gets. */
   const scriptSocket = (url) => new Promise((res, rej) => {

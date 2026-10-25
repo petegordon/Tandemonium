@@ -538,6 +538,15 @@ export class RoomTransport {
         return;
       }
       if (this.transport === 'relay' || this.transport === 'none') {
+        // The relay was carrying a live connection and its socket closed (a
+        // server or network drop): we are no longer connected. Without this
+        // the redial below was skipped (it checks !this.connected) and the
+        // drop waited for the 8 s heartbeat timeout, while the partner,
+        // told by the relay, paused (#472).
+        if (this.connected) {
+          this.connected = false;
+          this._stopHeartbeat();
+        }
         // Try relay reconnection with backoff before falling back to disconnect
         if (this._relayReconnectAttempts < 3) {
           this._relayReconnectAttempts++;
@@ -577,6 +586,12 @@ export class RoomTransport {
   _attemptP2PUpgrade() {
     if (!this.roomCode || !this.role) return;
     if (this.transport === 'p2p') return; // already on P2P
+    // PeerJS comes from a CDN; when it didn't load (blocked, offline) stay on
+    // the relay instead of throwing on every upgrade attempt (#472).
+    if (typeof window === 'undefined' || typeof window.Peer !== 'function') {
+      if (!this._peerMissingWarned) { this._peerMissingWarned = true; console.warn('NET: PeerJS not loaded; staying on the relay'); }
+      return;
+    }
 
     // Destroy stale peer from previous session to free the ID on the signaling server
     if (this.peer) {

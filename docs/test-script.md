@@ -74,21 +74,22 @@ runs every smoke on each PR and push to main, in six parallel groups.
 |---|---|---|---|
 | BL-01 | Cold start to mode select in under 10 s on the Steam build | M | — |
 | BL-02 | Mode select shows SOLO and TOGETHER (VERSUS is on the TOGETHER step); SOLO lists the levels and the Slingshot card | A | `smoke`, `smoke:edition` |
-| BL-03 | Build badge shows the expected version | M→A | — |
+| BL-03 | Build badge: none on a local build; "PR #n · sha" on a preview; a newer deploy offers a reload | A | `smoke:options` |
 | BL-04 | Back button and B / Esc go back one step on every lobby step; root has no back | A | `smoke:flows` |
 | BL-05 | First-time SOLO lands in the tutorial with SKIP; returning player goes to levels | A | `smoke:tutorial` |
 | BL-06 | Level cards show best time and medal for the chosen difficulty | A | `smoke:records` |
 | BL-07 | Difficulty selector: Chill / Adventurous / Daredevil change the card text and bests | A | `smoke:records` |
 | BL-08 | Options opens and closes from lobby with mouse, pad and Esc | A | `smoke:flows` |
 | BL-09 | Pad focus starts on a visible control on every lobby step | A | `smoke:flows` |
-| BL-10 | Lobby at 390×844, 844×390, 1920×1080 and 4K: nothing clipped or overlapping | M→A | `smoke:layout` (HUD only) |
+| BL-10 | Every lobby step at 390×844, 844×390, 1920×1080 and 4K: every control reachable, none overlapping | A | `smoke:lobby-layout` |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
 
 ## 2. Solo rides
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
-| SR-01 | Tutorial: each step advances; calibration results and steering feel show at the end | M→A | `smoke:tutorial` (entry only) |
+| SR-01 | Tutorial: runway, phase 1 (collect) and phase 2 (collect + dodge) prompts advance; all presents and pylons count; the end screen shows the tally, saves the calibration, the feel slider sets the feel; NEXT offered | A | `smoke:solo-extras` |
+| SR-01h | Lean-steering onto the tutorial presents feels learnable | M | — |
 | SR-02 | Tutorial: you cannot fall | A | `test/unit/crash-policy` |
 | SR-03 | Grandma's: clock is held until the first pedal taps, then runs | A | `smoke:ride` |
 | SR-04 | Grandma's: ride to the finish; victory overlay shows time, medal, coins | A | `smoke:economy`, `smoke:achievements` |
@@ -109,8 +110,8 @@ runs every smoke on each PR and push to main, in six parallel groups.
 | SR-18 | Tourist on real Google 3D tiles: loads, rides, no holes in the road | M | — |
 | SR-19 | Achievements unlock during a ride and appear in the list | A | `smoke:achievements` |
 | SR-20 | Chaos Coins: one wallet across modes; payout on game-over and victory | A | `smoke:economy` |
-| SR-21 | Garage: bike colours and outfits apply in the ride | M→A | — |
-| SR-22 | PB ghost rides your best line | M→A | — |
+| SR-21 | Options → goose outfit and colourway apply to the geese on the bike, chosen in the lobby or live mid-ride; "own colours" restores; saved for the next ride | A | `smoke:solo-extras` |
+| SR-22 | (PB ghost removed in #400) old saved ghost tracks are dropped, times kept | A | `test/unit/records` |
 | SR-23 | 10-minute ride: no fps decay, no memory climb | M | `probe-memory.mjs` (manual run) |
 | SR-24 | Grandma's and Today's Road finish: Grandma waves at the roadside on the final approach; outhouse, woodpile and a Timber pine by the house (#475) | A | `smoke:grandma`, `test/unit/grandma-finish` |
 | SR-24h | SR-24 looks right: scale, placement, wave reads from the chase camera, no frame drop on Low | M | — |
@@ -135,11 +136,11 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
-| IN-01 | Keyboard: pedals, lean, menu navigation, Esc | M→A | `smoke:ride` (taps) |
-| IN-02 | Touch (phone): on-screen pedals and joystick | M→A | — |
+| IN-01 | Keyboard: ←/→ pedal, A/D lean; Tab/Enter move and pick in the lobby, Esc backs out (arrows are pedals, not menu keys) | A | `smoke:input` |
+| IN-02 | Touch (phone): the on-screen pedal bar pedals (one half per pedal; lifting releases). Phone steering is tilt (IN-03/04) | A | `smoke:input` |
 | IN-03 | Phone motion, iOS: permission prompt, calibration, lean by tilt | M | `test/unit/tilt-calibration` |
 | IN-04 | Phone motion, Android: same as IN-03 | M | — |
-| IN-05 | Xbox pad: pedals on triggers/bumpers, lean on stick, menu A/B | M→A | — |
+| IN-05 | Xbox pad: triggers and bumpers pedal, left stick leans, D-pad moves menu focus, A picks, B backs | A | `smoke:input` |
 | IN-06 | DualSense USB: seat binds the HID device, buttons parse, gyro live, PlayStation prompts | A | `smoke:webhid` |
 | IN-06h | IN-06 on a real DualSense: gyro lean feels right | M | — |
 | IN-07 | DualSense BT: same as IN-06, including the grant toggle | M | lab `playstation-bt-handshake` |
@@ -153,8 +154,8 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-12h | IN-12 in the real Steam client: lean feels right | M | — |
 | IN-13 | Options → DS source Auto / WebHID / Steam is saved and applies on next launch | A | `smoke:steam-input` |
 | IN-14 | Options → gyro Euler / Gravity changes lean feel | M | `test/unit/tuning-save-gyro` |
-| IN-15 | Recalibrate from the quick menu mid-ride | M→A | — |
-| IN-16 | Button prompts match the pad in use (Xbox / PlayStation / Switch / Steam) | M→A | `test/unit/controller-labels` |
+| IN-15 | Recenter from the quick menu mid-ride (tilt steering): the held tilt becomes the new centre; the ride carries on | A | `smoke:input` |
+| IN-16 | Button prompts follow P1's pad (Xbox / PlayStation / Switch / Steam): lobby glyphs, coach card, stopped-bike hint | A | `smoke:input`, `test/unit/controller-labels` |
 | IN-17 | Unplug the only pad mid-ride: "Your controller disconnected" pause; replug resumes | A | `smoke:disconnect` |
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
 
@@ -181,7 +182,8 @@ real-hardware rows stay manual.
 | MC-12h | MC-12 on a real Puck with two controllers | M | — |
 | MC-13 | Mixed families (DualSense + Switch Pro): each seat's prompts use its own glyphs | A | `smoke:local-coop` |
 | MC-14 | Menu focus: P1's pad moves focus one step per press; no double moves. P2's pad does not drive menus (decided 2026-10-25) | A | `smoke:local-coop` |
-| MC-15 | Phone remote as P2 next to a pad as P1 | M→A | `smoke:phone-pad` (single) |
+| MC-15 | Phone remote as local Player 2 next to a pad as P1: not built yet (P4 phase, #455) | M | `smoke:phone-coop` prints NOT BUILT |
+| MC-15b | A phone next to a pad: both drive P1's seat (what the game does today) | A | `smoke:phone-coop` |
 
 ### Versus (split screen)
 
@@ -203,19 +205,21 @@ Two devices on different networks for the M rows.
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
-| OC-01 | Captain hosts, gets a room code; stoker joins with it | M→A | `smoke:host-room` (fake net) |
+| OC-01 | Captain hosts and gets a room code; the stoker joins with it; both connected over the real relay; the partner shows on the host step | A | `smoke:online` |
 | OC-02 | Room step: both players shown, seat labels right, Start enabled for captain | A | `smoke:host-room` |
 | OC-03 | Camera and mic off by default; turning them on shows PiP both sides | A / M | `smoke:no-media` / — |
 | OC-04 | Ride stays in sync: stoker sees the captain's bike, no rubber-banding | M | `test/unit/remote-bike-state` |
 | OC-05 | Stoker lookahead shows road past the captain view; Chill turns it off | A | `smoke:lookahead` |
 | OC-06 | Sync sprint and emotes reach the other seat | A | `smoke:ping` |
-| OC-07 | Short drop (< 2 s): no pause | M→A | — |
+| OC-07 | A short transport drop (< 2 s) mid-ride redials with no pause on either side | A | `smoke:online` |
+| OC-07b | A raw relay socket close (server/network drop) is redialled at once, no pause on either side | A | `smoke:online` |
 | OC-08 | Drop > 2 s: both pause with "lost connection"; reconnect resumes | A | `smoke:disconnect` (fake net) |
 | OC-09 | Drop > 20 s: captain "Ride on alone", stoker "Take over the bike"; ride becomes solo | A | `smoke:disconnect` |
 | OC-10 | OC-07 to OC-09 on two real devices (pull the network on one) | M | — |
-| OC-11 | End ride / Back to room returns both to the room; media keeps flowing | M→A | — |
+| OC-11 | BACK TO ROOM after a ride returns both to level select on the same room, still connected; captain picks, stoker waits | A | `smoke:online` |
+| OC-11h | Camera/mic PiP keep flowing across the return (PeerJS: needs its CDN and signalling server) | M | — |
 | OC-12 | Rejoin after closing the tab | M | — |
-| OC-13 | Co-op tutorial: captain and stoker flows | M→A | — |
+| OC-13 | Co-op tutorial: the stoker waits for the captain's countdown, both ride, it completes on both, both return to the room | A | `smoke:online` |
 | OC-14 | Co-op Tourist: both see the same world | A | `smoke:tourist` |
 | OC-15 | Steam build ↔ web build in the same room | M | `test/unit/room-edition` |
 
@@ -224,12 +228,12 @@ Two devices on different networks for the M rows.
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
 | PR-01 | QR shows from mode select; phone scans and pairs | A / M | `smoke:phone-pad` / real phone |
-| PR-02 | QR is single-use; a second phone gets refused and the game shows a takeover notice | M→A | `test/unit/phone-pad` |
+| PR-02 | QR is single-use; a second phone gets refused and the game shows a takeover notice | A | `smoke:phone-pad`, `test/unit/phone-pad` |
 | PR-03 | Phone menu pad drives lobby focus | A | `smoke:phone-pad` |
 | PR-04 | Phone pedal and lean drive a ride | A | `smoke:phone-pad` |
-| PR-05 | Phone drop mid-ride: lean eases to centre, reconnect resumes | M→A | — |
-| PR-06 | B / Start closes the QR panel; "Stop using phone" releases it | M→A | — |
-| PR-07 | Old Steam build pairs with the newest `/remote/` page (`hello {v}`) | M→A | `test/unit/phone-pad` |
+| PR-05 | Phone drop mid-ride: lean eases to centre over ~300 ms (no snap); reconnect, and the phone drives again | A | `smoke:phone-pad` |
+| PR-06 | With a pad, B / Start close the QR panel (the menu stays put); "Stop using phone" lets the phone go (game stops reading it, the phone is told) | A | `smoke:phone-coop` |
+| PR-07 | Old Steam build pairs with the newest `/remote/` page; an older phone pairs with this game (`hello {v}`) | A | `smoke:phone-pad`, `test/unit/phone-pad` |
 | PR-08 | Google TV: PR-01, PR-05, PR-06 (deferred from #454) | M | — |
 
 ## 8. Options and quality
@@ -239,11 +243,12 @@ Two devices on different networks for the M rows.
 | OP-01 | High / Medium / Low boot correctly and switch live | A | `smoke:quality` |
 | OP-02 | Auto steps down when slow and back up after steady 50+ fps (#466) | A | `test/unit/quality` |
 | OP-03 | A learned tier expires after 3 days | A | `test/unit/quality` |
-| OP-04 | FPS readout, perf HUD, AA, line-resolution options each apply | M→A | — |
-| OP-05 | Riders on / off, outfits, colours apply without a reload | M→A | — |
+| OP-04 | FPS readout (live), perf readout, edge smoothing and render lines each apply | A | `smoke:options` |
+| OP-05 | Riders on / off, outfits, colours apply without a reload | A | `smoke:options` |
 | OP-06 | Physics FX on / off | A | `smoke:physics` |
-| OP-07 | Display Testing overrides apply and Reset clears them | M→A | — |
-| OP-08 | Settings survive a restart (web and Steam) | M→A | — |
+| OP-07 | Display Testing overrides apply after the self-reload; Reset clears them | A | `smoke:options` |
+| OP-08 | Settings survive a restart (web) and are in effect | A | `smoke:options` |
+| OP-08h | OP-08 in the Steam build (Electron storage) | M | — |
 | OP-09 | Visual check of each tier on the target PC and a weak laptop | M | — |
 
 ## 9. Steam build specifics
@@ -273,7 +278,7 @@ Two devices on different networks for the M rows.
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
 | LY-01 | Every in-ride overlay at once: no overlap at desktop and phone sizes | A | `smoke:layout` |
-| LY-02 | Disconnect overlay buttons line up at every size | M→A | `smoke:disconnect` (screenshots) |
+| LY-02 | Disconnect overlay in each button set: on screen, in its box, no overlaps, rows aligned and centred | A | `smoke:lobby-layout` |
 | LY-03 | TV at 3 m: all text readable, focus ring obvious | M | — |
 | LY-04 | Phone portrait and landscape: HUD clear of notches and home bar | M | — |
 | LY-05 | A non-gamer can start a ride without help (playtest protocol) | M | `docs/playtests/2026-11-protocol.md` |
@@ -285,7 +290,7 @@ Two devices on different networks for the M rows.
 | DB-01 | Dashboard SQL valid against the schema | A | `check:dashboard-sql` |
 | DB-02 | A ride's analytics events (`ride_start`, `crash_recover`, `ride_takeover`, …) reach the dashboard | M | — |
 | DB-03 | Today's Road leaderboard records a ranked run | M | — |
-| DB-04 | Pad relay rate limit refuses scripted room floods | M→A | — |
+| DB-04 | Pad relay rate limit refuses a scripted room flood (30/min per IP; refused requests never reach a room) | A | `test/unit/pad-relay-ratelimit` |
 
 ---
 

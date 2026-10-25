@@ -41,8 +41,14 @@ jobs:
             smokes: disconnect local-coop versus
           - group: controllers-2
             smokes: webhid steam-input
+          - group: input
+            smokes: input solo-extras
+          - group: ui
+            smokes: options lobby-layout
+          - group: online
+            smokes: online
           - group: phone
-            smokes: phone-pad
+            smokes: phone-pad phone-coop
     steps:
       - uses: actions/checkout@v4
 
