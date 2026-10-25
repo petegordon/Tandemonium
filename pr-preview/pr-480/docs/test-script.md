@@ -66,9 +66,9 @@ Run all of these first. A failure here stops the run.
 | PF-07 | Steam upload log says `Successfully finished AppID 4510250 build` | A | build-windows.yml |
 
 CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
-`smokes.yml` runs every smoke in parallel groups on each push to main, on a PR
-labelled `run-smokes`, and before every Steam upload: `build-windows.yml`'s
-upload job needs it to pass.
+`smokes.yml` runs every smoke in parallel groups only when asked: by hand
+(`gh workflow run smokes.yml --ref main`), on a PR labelled `run-smokes`, and
+before every Steam upload (`build-windows.yml`'s upload job needs it to pass).
 
 ## 1. Boot and lobby
 
