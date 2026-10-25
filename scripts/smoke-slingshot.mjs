@@ -185,7 +185,7 @@ const tally = await page.evaluate(() => ({
   flag: !!window._game._slingFlag, dist: Math.round(window._game.bike.distanceTraveled - 5.2),
 }));
 check(tally.visible && tally.flag && Number(tally.m.replace(/,/g, '')) === Math.max(0, tally.dist) && Number(tally.c.replace(/,/g, '')) >= 0,
-  `end of ride: a flag, "${tally.m} m" counted up, then "+${tally.c} 🪙"`);
+  `end of ride: a flag, "${tally.m} m" counted up, then "+${tally.c} 🪙"  ${JSON.stringify(tally)}`);
 if (SHOTS) await page.screenshot({ path: path.join(SHOTS, '4a-tally.png') });
 await waitState('slingResults', 60000);
 const r1 = await page.evaluate(() => ({ title: document.getElementById('sling-results-sheet').heading, save: JSON.parse(localStorage.getItem('tandemonium_slingshot')), wallet: JSON.parse(localStorage.getItem('tandemonium_wallet')) }));
