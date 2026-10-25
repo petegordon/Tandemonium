@@ -12,7 +12,7 @@ export const ROOT = process.cwd();
 export const OUT = path.join(ROOT, 'renders', 'reel');
 const MIME = { '.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml','.glb':'model/gltf-binary','.mp3':'audio/mpeg','.mp4':'video/mp4','.json':'application/json','.wasm':'application/wasm' };
 
-export async function launch({ width = 1920, height = 1080, port = 8931, query = '', storage = {} } = {}) {
+export async function launch({ width = 1920, height = 1080, port = 8931, query = '', storage = {}, scale = 1 } = {}) {
   const server = http.createServer((req, res) => {
     const u = decodeURIComponent(req.url.split('?')[0]);
     const f = path.join(ROOT, u === '/' ? 'index.html' : u);
@@ -31,7 +31,9 @@ export async function launch({ width = 1920, height = 1080, port = 8931, query =
       '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
   });
   const page = (await browser.pages())[0] || await browser.newPage();
-  await page.setViewport({ width, height });
+  // scale: device pixels per CSS pixel (2 = a phone-sized layout captured at twice the resolution)
+  await page.setViewport({ width, height, deviceScaleFactor: scale });
+  page.__reelClip = scale !== 1 ? { x: 0, y: 0, width, height, scale } : null;   // CDP captures CSS px unless clipped + scaled
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const u = req.url();
@@ -49,7 +51,8 @@ export async function launch({ width = 1920, height = 1080, port = 8931, query =
   await page.evaluateOnNewDocument((storage) => {
     try {
       localStorage.setItem('tandemonium_tutorial_done', 'reel');
-      for (const [k, v] of Object.entries(storage)) localStorage.setItem(k, v);
+      // null removes a key (e.g. tandemonium_tutorial_done: null = a brand-new player, for the tutorial)
+      for (const [k, v] of Object.entries(storage)) { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); }
     } catch {}
     installVirtualClock();
     function installVirtualClock() {
@@ -112,7 +115,8 @@ export async function record(page, name, seconds, { fps = 60, perFrame = null, q
   for (let i = 0; i < n; i++) {
     if (perFrame) await perFrame(i, i / fps);
     await page.evaluate((ms) => { window.__reel.tick(ms / 1000); window.__vclock.step(ms); }, 1000 / fps);
-    const { data } = await client.send('Page.captureScreenshot', { format: 'jpeg', quality, optimizeForSpeed: true });
+    const { data } = await client.send('Page.captureScreenshot', { format: 'jpeg', quality, optimizeForSpeed: true,
+      ...(page.__reelClip ? { clip: page.__reelClip } : {}) });
     fs.writeFileSync(path.join(dir, String(i).padStart(5, '0') + '.jpg'), Buffer.from(data, 'base64'));
     if (i % 120 === 0) process.stdout.write(`  ${name} ${i}/${n} (${((Date.now() - t0) / 1000).toFixed(0)}s)\n`);
   }

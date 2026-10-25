@@ -76,7 +76,10 @@ const reel = {
     const g = this.gains;
     const ahead = rp.getPointAtDistance(bike.roadD + Math.max(1, bike.speed * g.look));
     // lane: dodge the next obstacle, else go for the next present / coin, else b.offset; slewed so it weaves
-    const want0 = b.dodge === false ? (b.offset || 0) : this._lane(b, bike);
+    // b.path [[distance, lateral], ...]: a scripted line (e.g. the tutorial's exact weave) from its first
+    // distance on; before that (and with no path) the bot dodges / collects
+    const want0 = (b.path && bike.distanceTraveled >= b.path[0][0]) ? this._pathAt(b.path, bike.distanceTraveled)
+      : b.dodge === false ? (b.offset || 0) : this._lane(b, bike);
     b._lane = b._lane == null ? want0 : b._lane + clamp(want0 - b._lane, -g.slew * dt, g.slew * dt);
     const lat = bike._lateralOffset - b._lane;
     const want = ahead.heading - Math.atan(g.kl * lat);
@@ -86,6 +89,14 @@ const reel = {
     // feed-forward: the input that holds leanCmd against the bike's self-righting (gyro - gravity)
     const ff = leanCmd * (Math.min(bike.speed * 0.8, 6) - 2.5) / 12;
     return ff + g.kp * (leanCmd - (bike.lean || 0)) - g.kv * (bike.leanVelocity || 0);
+  },
+  _pathAt(path, d) {
+    if (d <= path[0][0]) return path[0][1];
+    for (let i = 0; i < path.length - 1; i++) {
+      const [d0, x0] = path[i], [d1, x1] = path[i + 1];
+      if (d <= d1) return lerp(x0, x1, ease((d - d0) / Math.max(1e-6, d1 - d0)));
+    }
+    return path[path.length - 1][1];
   },
   gains: { kh: 0.4, kl: 0.08, look: 0.5, kp: 1.5, kv: 0.25, maxLean: 0.45, slew: 2.5 },
 
