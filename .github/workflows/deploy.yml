@@ -67,7 +67,7 @@ jobs:
       # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).
       # That file never enters git, so recreate it here from the GOOGLE_MAPS_API_KEY
       # secret — mirrors scripts/gen-tourist-key.js. The Map Tiles key is client-
-      # side by design; keep it locked to the tandemonium.jimandi.love referrer +
+      # side by design; keep it locked to the tandemonium.housetandem.com referrer +
       # Map Tiles API in Google Cloud so publishing it here is safe.
       - name: Inject Tourist Maps key
         env:
@@ -108,7 +108,7 @@ jobs:
           # No exclude_assets for pr-preview: we now restore it INTO _site (see
           # the preserve step), so it must be published rather than excluded.
           keep_files: true
-          cname: tandemonium.jimandi.love
+          cname: tandemonium.housetandem.com
 
       # Re-read the previews after the racing preview push so the retry
       # republishes its new pr-preview/ content instead of reverting it.
@@ -130,4 +130,4 @@ jobs:
           publish_dir: ./_site
           publish_branch: gh-pages
           keep_files: true
-          cname: tandemonium.jimandi.love
+          cname: tandemonium.housetandem.com

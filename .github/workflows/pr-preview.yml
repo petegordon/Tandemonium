@@ -131,7 +131,7 @@ jobs:
       # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).
       # That file never enters git, so recreate it here from the GOOGLE_MAPS_API_KEY
       # secret — mirrors scripts/gen-tourist-key.js. The Map Tiles key is client-
-      # side by design; keep it locked to the tandemonium.jimandi.love referrer +
+      # side by design; keep it locked to the tandemonium.housetandem.com referrer +
       # Map Tiles API in Google Cloud so publishing it here is safe.
       - name: Inject Tourist Maps key
         if: github.event.action != 'closed'

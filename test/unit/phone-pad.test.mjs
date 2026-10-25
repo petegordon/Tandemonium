@@ -62,8 +62,8 @@ test('roles: host and pad-1..pad-4 only', () => {
 });
 
 test('the phone link keeps the secret in the #fragment and parses back', () => {
-  const link = buildPadLink('https://tandemonium.jimandi.love/pr-preview/pr-422/', 'ABCDEF', 1, 'a'.repeat(32));
-  assert.equal(link, 'https://tandemonium.jimandi.love/pr-preview/pr-422/remote/?pad=ABCDEF&seat=1#k=' + 'a'.repeat(32));
+  const link = buildPadLink('https://tandemonium.housetandem.com/pr-preview/pr-422/', 'ABCDEF', 1, 'a'.repeat(32));
+  assert.equal(link, 'https://tandemonium.housetandem.com/pr-preview/pr-422/remote/?pad=ABCDEF&seat=1#k=' + 'a'.repeat(32));
   assert.deepEqual(parsePadLink(link), { code: 'ABCDEF', seat: 1, secret: 'a'.repeat(32), relay: null });
   assert.equal(parsePadLink('https://x/remote/?pad=AB&seat=1'), null);
   assert.equal(parsePadLink('https://x/remote/?pad=ABCDEF&seat=9#k=' + 'a'.repeat(32)), null);
@@ -72,7 +72,7 @@ test('the phone link keeps the secret in the #fragment and parses back', () => {
 
 test('a relay override is only honoured on localhost', () => {
   assert.equal(relayOverrideAllowed('127.0.0.1'), true);
-  assert.equal(relayOverrideAllowed('tandemonium.jimandi.love'), false);
+  assert.equal(relayOverrideAllowed('tandemonium.housetandem.com'), false);
   assert.equal(padSocketUrl('ws://127.0.0.1:8787', 'ABCDEF', 'pad-1', 'ff'), 'ws://127.0.0.1:8787/pad?code=ABCDEF&role=pad-1&k=ff');
 });
 

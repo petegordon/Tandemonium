@@ -140,11 +140,12 @@ async function verifyJWT(token, secret) {
 
 function getCorsHeaders(request) {
     const origin = request.headers.get('Origin') || '';
-    const allowed = origin === 'https://tandemonium.jimandi.love'
+    const allowed = origin === 'https://tandemonium.housetandem.com'
+        || origin === 'https://tandemonium.jimandi.love'
         || /^https?:\/\/localhost(:\d+)?$/.test(origin)
         || /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
     return {
-        'Access-Control-Allow-Origin': allowed ? origin : 'https://tandemonium.jimandi.love',
+        'Access-Control-Allow-Origin': allowed ? origin : 'https://tandemonium.housetandem.com',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
     };

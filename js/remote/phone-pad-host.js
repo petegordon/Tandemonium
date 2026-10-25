@@ -532,6 +532,6 @@ export function resolveRelay(loc = globalThis.location) {
  */
 export function resolveSiteBase() {
   const isDesktop = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron');
-  if (isDesktop) return 'https://tandemonium.jimandi.love/';
+  if (isDesktop) return 'https://tandemonium.housetandem.com/';
   return new URL('./', document.baseURI).toString();
 }
