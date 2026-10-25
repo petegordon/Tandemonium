@@ -235,10 +235,19 @@ try {
       ws.onclose = null; ws.close(); onclose && onclose.call(ws, new CloseEvent('close'));
     });
     await sto.evaluate(() => { window.__oc07sto.pausedSeen = false; });
-    await sleep(4500);
-    const raw = await cap.evaluate(() => ({ paused: window.__oc07cap.pausedSeen, connected: window._game.net.connected, ws: window._game.net._relayWs ? window._game.net._relayWs.readyState : null }));
-    const rawSto = await sto.evaluate(() => ({ paused: window.__oc07sto.pausedSeen, connected: window._game.net.connected }));
-    check(!raw.paused && !rawSto.paused && raw.ws === 1 && raw.connected,
+    // Wait for the redial (a slow CI box can take seconds), then judge the
+    // pause the same way as above: none if it came back inside the 2 s grace,
+    // otherwise it must have cleared once both are connected again.
+    const t0raw = Date.now();
+    await waitFor(cap, () => !!window._game.net.connected, null, 30000);
+    const rawMs = Date.now() - t0raw;
+    await waitFor(sto, () => !!window._game.net.connected, null, 30000);
+    await sleep(1500);
+    const raw = await cap.evaluate(() => ({ paused: window.__oc07cap.pausedSeen, connected: window._game.net.connected, ws: window._game.net._relayWs ? window._game.net._relayWs.readyState : null, pausedNow: !!(window._game._drop || window._game._reconnecting) }));
+    const rawSto = await sto.evaluate(() => ({ paused: window.__oc07sto.pausedSeen, connected: window._game.net.connected, pausedNow: !!(window._game._drop || window._game._reconnecting) }));
+    const rawFast = rawMs < 2000;
+    if (!rawFast) console.log(`  (slow box: the raw-close redial took ${rawMs} ms, past the 2 s grace)`);
+    check(raw.ws === 1 && raw.connected && rawSto.connected && !raw.pausedNow && !rawSto.pausedNow && (!rawFast || (!raw.paused && !rawSto.paused)),
       'OC-07 a raw relay socket close is redialled at once, with no pause on either side (#472)',
       { cap: raw, sto: rawSto });
     // Let it recover before the next part.

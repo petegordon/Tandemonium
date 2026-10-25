@@ -296,12 +296,15 @@ try {
 
     await sleep(1100);
     const before = await game.evaluate(() => window._game.bike?.speed);
-    for (let i = 0; i < 16; i++) {
+    // Alternate strokes until the bike picks up (up to ~60): on a slow runner
+    // the game sees only a few of them per second.
+    for (let i = 0; i < 60; i++) {
       const x = i % 2 ? 700 : 150;
       await phone.mouse.move(x, 250); await phone.mouse.down();
       await sleep(140);
       await phone.mouse.up();
       await sleep(140);
+      if (i >= 15 && i % 4 === 3 && (await game.evaluate(() => window._game.bike?.speed)) > before + 0.5) break;
     }
     const ride = await game.evaluate(() => ({ speed: window._game.bike?.speed, dist: window._game.bike?.distanceTraveled }));
     check(ride.speed > before + 0.5, 'pedalling on the phone speeds the bike up', JSON.stringify({ before, ...ride }));
