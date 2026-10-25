@@ -87,10 +87,13 @@ test('the three props build into meshes on the ground', () => {
   }
 });
 
-test('the set: four markers at the finish on the house side, off the road', () => {
+test('the set: five markers at the finish on the house side, off the road', () => {
   const roadPath = { loopLength: 1000, getPointAtDistance: (d) => ({ x: 0, y: 0, z: d, heading: 0 }) };
-  const { markers, grandmaD } = buildGrandmaFinish(roadPath, 500);
-  assert.equal(markers.length, 4);
+  const { markers, grandmaD, stack } = buildGrandmaFinish(roadPath, 500);
+  // Grandma, woodpile, outhouse, tree, and (#478) the present pile
+  assert.equal(markers.length, 5);
+  assert.deepEqual(markers.map((m) => m.type), ['grandma-prop', 'grandma-prop', 'grandma-prop', 'grandma-prop', 'present-stack']);
+  assert.ok(stack && markers[4].mesh === stack.group, 'the pile is the last marker');
   assert.equal(grandmaD, 500 + LAYOUT.grandma.along);
   for (const m of markers) {
     assert.ok(Math.abs(m.mesh.position.x) > 2.5, `${m.mesh.name} is off the 5-unit road`);

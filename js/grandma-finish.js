@@ -9,6 +9,8 @@
 //     cinematic's front view catches her behind the riders (GrandmaRoute).
 //   - Three Timber Tandem props near the house: her outhouse (the privy with
 //     a crescent moon on the door), a woodpile and a big pine.
+//   - #478 · the present stack: after the finish, the ride's presents fly
+//     off the bike into a pile at Grandma's feet (present-stack.js).
 //
 // Grandma is tandem-3d/goose/goose_grandma.glb (from timber-tandem, commit
 // ea16087). She has no gestures of her own, so she borrows the studio clips
@@ -24,6 +26,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import { PresentStack } from './present-stack.js';
 
 export const GRANDMA_MODEL_PATH = 'tandem-3d/goose/goose_grandma.glb';
 export const GRANDMA_CLIPS_PATH = 'tandem-3d/goose/show/goose_stoker_georgian_clips.glb';
@@ -44,6 +47,8 @@ export const LAYOUT = {
   woodpile: { along: -2, lateral: 10.5, face: Math.PI / 2 },
   outhouse: { along: 6, lateral: 12, face: -Math.PI / 2 },
   tree: { along: 11, lateral: 8.5, face: 0 },
+  // #478 · the ride's presents pile up here, at Grandma's side (the riders reach it just before her)
+  stack: { along: -10, lateral: 4.2, face: Math.PI },
 };
 
 /** Start waving when the bike is this many units from Grandma. */
@@ -314,7 +319,7 @@ export class GrandmaGoose {
  * Build the whole set for a finish at road distance `destD`.
  * @param {{ getPointAtDistance: (d: number) => {x: number, y: number, z: number, heading: number}, loopLength: number }} roadPath
  * @param {number} destD
- * @returns {{ markers: Array<{mesh: THREE.Object3D, roadD: number, type: string}>, grandma: GrandmaGoose, grandmaD: number, update: (bikeD: number, dt: number) => void, route: GrandmaRoute }}
+ * @returns {{ markers: Array<{mesh: THREE.Object3D, roadD: number, type: string}>, grandma: GrandmaGoose, grandmaD: number, update: (bikeD: number, dt: number) => void, route: GrandmaRoute, stack: PresentStack }}
  */
 export function buildGrandmaFinish(roadPath, destD) {
   const L = roadPath.loopLength;
@@ -332,7 +337,11 @@ export function buildGrandmaFinish(roadPath, destD) {
     at(LAYOUT.tree, buildTimberTree()),
   ];
   const route = new GrandmaRoute(roadPath, grandma, markers[0], destD);
-  return { markers, grandma, grandmaD: markers[0].roadD, route, update: (bikeD, dt) => route.update(bikeD, dt) };
+  const stack = new PresentStack();
+  const stackMarker = at(LAYOUT.stack, stack.group);
+  stackMarker.type = 'present-stack';
+  markers.push(stackMarker);
+  return { markers, grandma, grandmaD: markers[0].roadD, route, stack, update: (bikeD, dt) => route.update(bikeD, dt) };
 }
 
 /** Stand `obj` beside the road at distance d, `lateral` units to the right, turned by `face`. */

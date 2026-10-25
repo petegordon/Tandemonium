@@ -11,6 +11,7 @@ import { isMobile } from './config.js';
 import { deriveSeed, SALT } from './daily-seed.js';
 import { buildArchPuffs, archTime } from './arch-puffs.js';
 import { buildGrandmaFinish } from './grandma-finish.js';
+import { buildGrandmaHouse, HOUSE } from './props-3d.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS_FULL = 120;    // ~4.2-unit vertex spacing — covers visible road/tree range
@@ -1071,15 +1072,9 @@ export class World {
     const destPt = this.roadPath.getPointAtDistance(destD);
 
     if (level.id === 'grandma' || level.isDaily) {
-      // Grandma's House (and Today's Road, which also rides to Grandma's): chromakey video billboard
-      const marker = this._createVideoBillboard({
-        videoSrc: 'assets/grandma_house_chromakey.mp4',
-        trimStart: 0.00, trimEnd: 5.50,
-        threshold: -0.02, smoothness: 0.110,
-        maskSrc: 'assets/grandma_house_chromakey_mask.png',
-        roadPt: destPt, roadD: destD, lateralOffset: 6,
-        type: 'destination'
-      });
+      // Grandma's House (and Today's Road, which also rides to Grandma's).
+      // #478 · a 3D timber cabin, door turned towards the oncoming riders.
+      const marker = this._buildGrandmaHouse(destPt, destD);
       this._raceMarkers.push(marker);
       this._addGrandmaFinish(destD);
     } else {
@@ -1150,8 +1145,48 @@ export class World {
   }
 
   _disposeGrandmaFinish() {
-    if (this._grandmaFinish) this._grandmaFinish.grandma.dispose();
+    if (this._grandmaFinish) {
+      this._grandmaFinish.grandma.dispose();
+      if (this._grandmaFinish.stack) this._grandmaFinish.stack.dispose();
+    }
     this._grandmaFinish = null;
+  }
+
+  /**
+   * #478 · Grandma's house as a 3D timber cabin (props-3d.js), standing where
+   * the video billboard stood: 6 units off the road on the house's side, set
+   * back so its front sits that far out, door angled towards the riders.
+   */
+  _buildGrandmaHouse(destPt, destD) {
+    if (!this._houseTime) this._houseTime = { value: 0 };
+    const house = buildGrandmaHouse(this._houseTime);
+    const fwdX = Math.sin(destPt.heading), fwdZ = Math.cos(destPt.heading);
+    const rightX = fwdZ, rightZ = -fwdX;
+    const lateral = World.HOUSE_LATERAL + HOUSE.D / 2;
+    house.position.set(destPt.x + rightX * lateral, destPt.y, destPt.z + rightZ * lateral);
+    // door (+z) faces the road (-right), turned World.HOUSE_TURN towards the riders
+    house.rotation.y = destPt.heading - Math.PI / 2 - World.HOUSE_TURN;
+    house.visible = false;
+    this.scene.add(house);
+    return { mesh: house, roadD: destD, type: 'destination', house: true };
+  }
+
+  /**
+   * #478 · the ride's presents fly into the pile at Grandma's. Call at the
+   * finish with how many were collected and where they fly from (the bike).
+   * @returns {boolean} false when this level has no pile (not Grandma's)
+   */
+  startPresentStack(count, fromWorld) {
+    const st = this._grandmaFinish && this._grandmaFinish.stack;
+    if (!st || !(count > 0)) return false;
+    st.start(count, fromWorld);
+    return true;
+  }
+
+  /** Real-time finish effects (the pile), outside the slow-mo world update. */
+  updateFinishFx(dt) {
+    const st = this._grandmaFinish && this._grandmaFinish.stack;
+    if (st) st.update(dt);
   }
 
   /** Create a gold cloud arch at the given distance (same as checkpoint arches). */
@@ -1488,6 +1523,9 @@ export class World {
       if (!marker.mesh.visible) continue;
       const pt = this.roadPath.getPointAtDistance(marker.roadD);
 
+      // #478 · the house's sparkle runs on its own clock
+      if (marker.house && this._houseTime) this._houseTime.value = t;
+
       // Billboard destination video: offset Y so bottom sits on ground, face camera
       if (marker.billboard) {
         marker.mesh.position.y = pt.y + 3; // half of 6-unit billboard
@@ -1638,3 +1676,5 @@ export class World {
 
 World.LEAN_FILL = 0.35;   // #456 · lean riders lighting: the fill's share folded into the hemisphere
 World.SPRITE_ARCH_PUFFS = false;   // #456 · true = the old 16-sprite arches (for A/B)
+World.HOUSE_LATERAL = 4.6;   // #478 · Grandma's house: its front this far off the road centre (house's side)
+World.HOUSE_TURN = 0.5;      // #478 · and turned this far (radians) towards the oncoming riders

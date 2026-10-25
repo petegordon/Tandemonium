@@ -3,8 +3,11 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { buildConeGeometry, coneMaterial, buildSpiritGeometry, spiritMaterial, CONE_COLLIDER, SkullBurst } from './props-3d.js';
 
 const POOL_SIZE = 30;
+/** Skull spirits orbiting each standing cone (#478). */
+const SPIRITS = 2;
 const HIT_RADIUS = 0.75;
 const VISIBLE_AHEAD = 200;
 const VISIBLE_BEHIND = 40;
@@ -19,45 +22,6 @@ function makeRng(seed) {
     return s / 233280;
   };
 }
-
-// Chromakey shaders (same as collectibles)
-const chromakeyVertex = `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const chromakeyFragment = `
-  uniform sampler2D map;
-  uniform vec3 keyColor;
-  uniform float similarity;
-  uniform float smoothness;
-  uniform float videoReady;
-  uniform vec3 fallbackColor;
-  varying vec2 vUv;
-  void main() {
-    if (videoReady < 0.5) {
-      // Video not playing yet — show colored fallback instead of black
-      float cx = abs(vUv.x - 0.5);
-      float cy = 1.0 - vUv.y;
-      float cone = smoothstep(0.4, 0.2, cx - cy * 0.15);
-      if (cone < 0.01) discard;
-      gl_FragColor = vec4(fallbackColor, cone);
-      return;
-    }
-    vec4 texColor = texture2D(map, vUv);
-    float d = distance(texColor.rgb, keyColor);
-    float alpha = smoothstep(similarity, similarity + smoothness, d);
-    if (alpha < 0.01) discard;
-    // Spill suppression: reduce green where it exceeds average of R and B
-    vec3 col = texColor.rgb;
-    float spillMax = 0.5 * (col.r + col.b) + 0.05;
-    col.g = min(col.g, spillMax);
-    gl_FragColor = vec4(col, alpha);
-  }
-`;
 
 export class ObstacleManager {
   constructor(scene, roadPath, level, camera, difficulty, placementSalt = 0) {
@@ -77,57 +41,18 @@ export class ObstacleManager {
     this._knocked = [];
     this._loopLen = roadPath.loopLength;
 
-    // Create shared video element for the pylon animation
-    this._video = document.createElement('video');
-    this._video.src = 'assets/pylon_200.mp4';
-    this._video.loop = true;
-    this._video.muted = true;
-    this._video.playsInline = true;
+    // #478 · the death cone is a 3D model now, not a video billboard. Every
+    // standing cone is one InstancedMesh (one draw), their blob shadows a
+    // second, and the skull spirits rising off them a third. The pool keeps
+    // a plain Object3D per slot for the cone and its shadow; _sync() copies
+    // the visible ones into the instances.
+    this._coneGeo = buildConeGeometry();
+    this._coneMat = coneMaterial();
+    this._cones = new THREE.InstancedMesh(this._coneGeo, this._coneMat, POOL_SIZE);
+    this._cones.name = 'death-cones';
+    this._cones.castShadow = true;
 
-    const videoTexture = new THREE.VideoTexture(this._video);
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-    this._videoTexture = videoTexture;
-
-    // videoReady flips to 1.0 once the video is actually playing
-    const videoReadyUniform = { value: 0.0 };
-    this._video.addEventListener('playing', () => { videoReadyUniform.value = 1.0; });
-
-    // Attempt autoplay; log errors and retry on user gesture
-    this._video.play().catch(err => {
-      console.warn('Obstacle video autoplay blocked:', err.message);
-      const retry = () => {
-        if (!this._video) return;   // disposed before the first gesture
-        this._video.play().then(() => {
-          document.removeEventListener('touchstart', retry);
-          document.removeEventListener('click', retry);
-        }).catch(() => {});
-      };
-      document.addEventListener('touchstart', retry, { once: true });
-      document.addEventListener('click', retry, { once: true });
-    });
-
-    // Aspect ratio: 200x320 — sized to be visible on the road
-    const w = 1.2, h = 1.2 * (320 / 200);
-    const geo = new THREE.PlaneGeometry(w, h);
-
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        map: { value: videoTexture },
-        keyColor: { value: new THREE.Color(58 / 255, 180 / 255, 38 / 255) },
-        similarity: { value: 0.4 },
-        smoothness: { value: 0.15 },
-        videoReady: videoReadyUniform,
-        fallbackColor: { value: new THREE.Color(1.0, 0.55, 0.0) } // orange
-      },
-      vertexShader: chromakeyVertex,
-      fragmentShader: chromakeyFragment,
-      transparent: true,
-      side: THREE.DoubleSide,
-      depthWrite: false
-    });
-
-    // Ground shadow — triangular cone shadow using a radial-gradient circle texture
+    // Ground shadow — a soft dark disc under each cone
     const shadowCanvas = document.createElement('canvas');
     shadowCanvas.width = 64;
     shadowCanvas.height = 64;
@@ -140,28 +65,43 @@ export class ObstacleManager {
     sctx.fillRect(0, 0, 64, 64);
     const shadowTex = new THREE.CanvasTexture(shadowCanvas);
     const shadowGeo = new THREE.PlaneGeometry(1.6, 1.6);
+    shadowGeo.rotateX(-Math.PI / 2);   // lay flat on the ground
     const shadowMat = new THREE.MeshBasicMaterial({
       map: shadowTex,
       transparent: true,
       depthWrite: false
     });
+    this._shadows = new THREE.InstancedMesh(shadowGeo, shadowMat, POOL_SIZE);
+    this._shadows.name = 'death-cone-shadows';
+
+    // Skull spirits: SPIRITS per cone, phases spread round the orbit
+    this._time = { value: 0 };
+    const spiritGeo = buildSpiritGeometry();
+    const phases = new Float32Array(POOL_SIZE * SPIRITS);
+    for (let i = 0; i < phases.length; i++) phases[i] = (i % SPIRITS) / SPIRITS;
+    spiritGeo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
+    this._spiritGeo = spiritGeo;
+    this._spiritMat = spiritMaterial(this._time);
+    this._spirits = new THREE.InstancedMesh(spiritGeo, this._spiritMat, POOL_SIZE * SPIRITS);
+    this._spirits.name = 'death-cone-spirits';
+
+    for (const m of [this._cones, this._shadows, this._spirits]) {
+      m.count = 0;
+      m.frustumCulled = false;
+      scene.add(m);
+    }
 
     // Hold refs to the shared GPU resources so destroy() can dispose them.
-    this._pylonGeo = geo;
-    this._pylonMat = mat;
     this._shadowGeo = shadowGeo;
     this._shadowMat = shadowMat;
     this._shadowTex = shadowTex;
 
-    // Create mesh pool (pylon + shadow per slot)
+    // Pool of transform proxies (cone + shadow per slot)
     for (let i = 0; i < POOL_SIZE; i++) {
-      const mesh = new THREE.Mesh(geo, mat);
+      const mesh = new THREE.Object3D();
       mesh.visible = false;
-      scene.add(mesh);
-      const shadow = new THREE.Mesh(shadowGeo, shadowMat);
-      shadow.rotation.x = -Math.PI / 2; // lay flat on ground
+      const shadow = new THREE.Object3D();
       shadow.visible = false;
-      scene.add(shadow);
       this._pool.push({ mesh, shadow, itemIdx: -1 });
     }
 
@@ -219,6 +159,7 @@ export class ObstacleManager {
       slot.shadow.visible = false;
       slot.itemIdx = -1;
     }
+    this._sync();
     this._items = [];
     for (const p of positions) {
       this._items.push({
@@ -293,29 +234,63 @@ export class ObstacleManager {
         this._pool[freeSlot].itemIdx = i;
       }
 
-      // Position mesh — sits on the road surface
+      // Position the cone on the road surface, skull towards the oncoming
+      // riders, with a slow uneasy wobble (the billboard's cone swayed).
       const slot = this._pool[item.poolIdx];
-      const h = 1.2 * (320 / 200); // plane height
-      slot.mesh.position.set(item._worldX, item._worldY + h * 0.5, item._worldZ);
-      if (this.camera) {
-        slot.mesh.quaternion.copy(this.camera.quaternion);
-      }
+      const t = performance.now() / 1000;
+      slot.mesh.position.set(item._worldX, item._worldY, item._worldZ);
+      slot.mesh.rotation.set(
+        Math.sin(t * 2.1 + i * 1.3) * 0.03,
+        pt.heading + Math.PI + Math.sin(i * 2.7) * 0.25,
+        Math.cos(t * 1.7 + i * 0.9) * 0.03,
+      );
       slot.mesh.visible = true;
       // Shadow sits just above ground
       slot.shadow.position.set(item._worldX, item._worldY + 0.02, item._worldZ);
       slot.shadow.visible = true;
     }
+    this._sync();
   }
 
-  /** Re-face visible billboarded pylons per split-screen render pass. */
-  faceCamera(camera) {
-    if (!camera) return;
+  /**
+   * #478 · copy the visible slots into the instanced cones, shadows and
+   * spirits. Called after every update and anything that hides a slot.
+   */
+  _sync() {
+    if (!this._cones) return;
+    this._time.value = performance.now() / 1000;
+    let n = 0, ns = 0;
+    const m4 = this._m4 || (this._m4 = new THREE.Matrix4());
     for (const slot of this._pool) {
-      if (slot.itemIdx >= 0 && slot.mesh.visible) {
-        slot.mesh.quaternion.copy(camera.quaternion);
+      if (!slot.mesh.visible) continue;
+      slot.mesh.updateMatrix();
+      this._cones.setMatrixAt(n, slot.mesh.matrix);
+      if (slot.shadow.visible) {
+        slot.shadow.updateMatrix();
+        this._shadows.setMatrixAt(ns++, slot.shadow.matrix);
       }
+      // spirits: just the cone's base position (orbit + rise are in the shader)
+      m4.makeTranslation(slot.mesh.position.x, slot.mesh.position.y, slot.mesh.position.z);
+      for (let k = 0; k < SPIRITS; k++) this._spirits.setMatrixAt(n * SPIRITS + k, m4);
+      n++;
     }
+    this._cones.count = n;
+    this._shadows.count = ns;
+    this._spirits.count = n * SPIRITS;
+    for (const m of [this._cones, this._shadows, this._spirits]) m.instanceMatrix.needsUpdate = true;
   }
+
+  /** Standing cones drawn right now (tests, perf probes). */
+  visibleCount() {
+    return this._pool.filter((s) => s.itemIdx >= 0 && s.mesh.visible).length;
+  }
+
+  /**
+   * Kept for the split-screen render passes, which call it per camera. The
+   * cones were camera-facing billboards; since #478 they are 3D and need no
+   * re-facing.
+   */
+  faceCamera() {}
 
   /**
    * The pylon the bike is currently inside, if any.
@@ -340,14 +315,15 @@ export class ObstacleManager {
   }
 
   /**
-   * Retire a struck pylon and hand back its billboard for the debris sim.
+   * Retire a struck cone and hand back a cone for the debris sim.
    *
-   * The pool slot is released immediately — the returned mesh is the POOLED
-   * one, so the caller must clone it rather than hand it to the simulation
-   * directly, or the next pylon down the road will yank it back mid-flight.
+   * The pool slot is released immediately. The returned mesh is a fresh,
+   * standalone cone (sharing this manager's geometry and material) standing
+   * exactly where the instance stood; physics-fx clones it and tumbles the
+   * clone as a solid body (userData.solid), with the skull burst.
    *
-   * @returns {THREE.Mesh|null} the pooled billboard to copy, or null if the
-   *   item wasn't being rendered (too far away to have a slot)
+   * @returns {THREE.Mesh|null} the cone to copy, or null if the item wasn't
+   *   being rendered (too far away to have a slot)
    */
   knockOut(item) {
     if (!item || item._hidden) return null;
@@ -355,11 +331,18 @@ export class ObstacleManager {
     this._knocked.push(item);
     if (item.poolIdx < 0) return null;
     const slot = this._pool[item.poolIdx];
+    const cone = new THREE.Mesh(this._coneGeo, this._coneMat);
+    cone.name = 'knocked-cone';
+    cone.position.copy(slot.mesh.position);
+    cone.quaternion.copy(slot.mesh.quaternion);
+    cone.castShadow = true;
+    cone.userData.solid = { ...CONE_COLLIDER, burst: (target, scene) => new SkullBurst(target, scene) };
     slot.mesh.visible = false;
     slot.shadow.visible = false;
     slot.itemIdx = -1;
     item.poolIdx = -1;
-    return slot.mesh;
+    this._sync();
+    return cone;
   }
 
   /**
@@ -446,27 +429,23 @@ export class ObstacleManager {
         }
       }
     }
+    this._sync();
   }
 
   destroy() {
-    for (const slot of this._pool) {
-      this.scene.remove(slot.mesh);
-      this.scene.remove(slot.shadow);
+    for (const m of [this._cones, this._shadows, this._spirits]) {
+      if (!m) continue;
+      this.scene.remove(m);
+      m.dispose();
     }
-    if (this._video) {
-      this._video.pause();
-      this._video.removeAttribute('src');
-      this._video.load();
-      this._video = null;
-    }
-    if (this._videoTexture) { this._videoTexture.dispose(); this._videoTexture = null; }
-    // Dispose shared GPU resources — the pool meshes share these so we
-    // dispose once. Without this, every race-restart leaks a PlaneGeometry,
-    // a ShaderMaterial, another PlaneGeometry, a MeshBasicMaterial, and a
-    // CanvasTexture, which on iOS Chrome accumulates fast enough to OOM
-    // the renderer after a few races.
-    if (this._pylonGeo)  { this._pylonGeo.dispose();  this._pylonGeo = null; }
-    if (this._pylonMat)  { this._pylonMat.dispose();  this._pylonMat = null; }
+    this._cones = this._shadows = this._spirits = null;
+    // Shared GPU resources: without this every race-restart leaks them, which
+    // on iOS Chrome accumulates fast enough to OOM the renderer. The cone's
+    // atlas and the skull texture are shared module-wide and kept.
+    if (this._coneGeo)   { this._coneGeo.dispose();   this._coneGeo = null; }
+    if (this._coneMat)   { this._coneMat.dispose();   this._coneMat = null; }
+    if (this._spiritGeo) { this._spiritGeo.dispose(); this._spiritGeo = null; }
+    if (this._spiritMat) { this._spiritMat.dispose(); this._spiritMat = null; }
     if (this._shadowGeo) { this._shadowGeo.dispose(); this._shadowGeo = null; }
     if (this._shadowMat) { this._shadowMat.dispose(); this._shadowMat = null; }
     if (this._shadowTex) { this._shadowTex.dispose(); this._shadowTex = null; }

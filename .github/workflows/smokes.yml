@@ -35,7 +35,7 @@ jobs:
           - group: ride-2
             smokes: achievements quality layout geese physics no-media controller-overlay
           - group: modes
-            smokes: slingshot slingshot-aim tourist host-room grandma
+            smokes: slingshot slingshot-aim tourist host-room grandma props
           - group: controllers
             smokes: disconnect local-coop versus
           - group: controllers-2
