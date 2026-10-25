@@ -610,7 +610,9 @@ function roomHost(hooks = {}) {
   h.host._buildLink();
   return h;
 }
-const flush = () => new Promise((r) => setTimeout(r, 0));
+// The host hashes keys with crypto.subtle, which settles off the main thread:
+// one tick isn't always enough on a loaded CI runner, so give it ~100 ms of turns.
+const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5)); };
 const toPad = (sent, type) => sent.filter((m) => m.type === 'to-pad' && m.msg.type === type).map((m) => m.msg);
 
 test('mix: new game + older phone (no hello) works as before: no mode, no rekey, the QR stays', async () => {
