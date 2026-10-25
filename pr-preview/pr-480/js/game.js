@@ -4633,9 +4633,10 @@ class Game {
     }
 
     // Keep the world streaming so terrain/scenery don't pop while the
-    // bike rolls forward, but at slow-motion pace.
+    // bike rolls forward, but at slow-motion pace. Grandma (#475) keeps real
+    // time, so she can walk to the finish line before the front view lands.
     if (this.world) {
-      this.world.update(this.bike.position, this.bike.roadD, slowDt);
+      this.world.update(this.bike.position, this.bike.roadD, slowDt, null, dt);
     }
     if (this.grassParticles) {
       this.grassParticles.update(this.bike, slowDt);

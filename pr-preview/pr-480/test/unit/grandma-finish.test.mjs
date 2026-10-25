@@ -3,15 +3,68 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { shouldWave, retargetClip, buildWoodpile, buildOuthouse, buildTimberTree, buildGrandmaFinish, LAYOUT } from '../../js/grandma-finish.js';
+import { grandmaCue, retargetClip, buildWoodpile, buildOuthouse, buildTimberTree, buildGrandmaFinish, LAYOUT, WALK } from '../../js/grandma-finish.js';
 
-test('shouldWave: idle far off, wave on the final approach and just past her', () => {
+test('grandmaCue: idle far off, wave on the final approach, leave once they pass', () => {
   const L = 1000;
-  assert.equal(shouldWave(100, 300, L), false, '200 ahead: still idling');
-  assert.equal(shouldWave(250, 300, L), true, '50 ahead: waving');
-  assert.equal(shouldWave(305, 300, L), true, 'just past her: still waving');
-  assert.equal(shouldWave(330, 300, L), false, 'well past: back to idle');
-  assert.equal(shouldWave(980, 20, L), true, 'across the loop seam');
+  assert.equal(grandmaCue(100, 300, L), 'idle', '200 ahead: still idling');
+  assert.equal(grandmaCue(250, 300, L), 'wave', '50 ahead: waving');
+  assert.equal(grandmaCue(300, 300, L), 'wave', 'level with her: still waving');
+  assert.equal(grandmaCue(300.5, 300, L), 'leave', 'just past her: off she goes');
+  assert.equal(grandmaCue(980, 20, L), 'wave', 'across the loop seam');
+  assert.equal(grandmaCue(25, 20, L), 'leave', 'past her across the seam');
+});
+
+/** A straight road up a 6% grade along +z (heading 0), so the house side (+lateral) is +x. */
+const straightRoad = { loopLength: 10000, getPointAtDistance: (d) => ({ x: 0, y: 0.06 * d, z: d, heading: 0 }) };
+
+/** Step the walk at 60 fps for `secs` with the bike at `bikeD`. */
+function run(set, bikeD, secs) { for (let i = 0; i < secs * 60; i++) set.update(bikeD, 1 / 60); }
+
+test('once the riders pass, Grandma turns round and walks to the finish line', () => {
+  const destD = 500;
+  const set = buildGrandmaFinish(straightRoad, destD);
+  const g = set.grandma.group, marker = set.markers[0];
+  assert.equal(g.position.z, destD + LAYOUT.grandma.along, 'starts at her spot');
+  assert.ok(Math.abs(g.rotation.y - Math.PI) < 1e-9, 'facing the oncoming riders');
+
+  run(set, destD - 40, 1);
+  assert.equal(set.route.mode, 'home', 'waits while they approach');
+
+  // The bike passes her and crosses the finish.
+  run(set, destD - 3, WALK.turnTime / 2);
+  assert.equal(set.route.mode, 'turn');
+  assert.ok(Math.abs(g.rotation.y - 1.5 * Math.PI) < 0.05, 'half-way round she faces the road (−lateral side)');
+  assert.ok(Math.abs(g.position.z - (destD + LAYOUT.grandma.along)) < 1e-9, 'turns on the spot');
+
+  run(set, destD + 2, WALK.turnTime / 2 + 0.5);
+  assert.equal(set.route.mode, 'walk');
+  assert.ok(Math.abs(Math.sin(g.rotation.y)) < 1e-9 && Math.cos(g.rotation.y) > 0.99, 'walking toward the finish');
+  assert.ok(g.position.z > destD + LAYOUT.grandma.along + 1, 'and getting closer');
+  assert.equal(g.position.x, LAYOUT.grandma.lateral, 'along the shoulder, off the road');
+  assert.equal(marker.roadD, g.position.z, 'her marker moves with her, so World grounds her on the slope');
+
+  run(set, destD + 2, 10);
+  assert.equal(set.route.mode, 'arrived');
+  assert.ok(Math.abs(g.position.z - (destD + WALK.toAlong)) < 1e-9, 'stops just short of the finish line');
+});
+
+test('she gets there within the finish cinematic, even after a fast finish', () => {
+  // Fastest case: the bike is at top speed (16 u/s) from her spot to the line,
+  // then the cinematic runs 4.7 s of real time (her clock).
+  const walkTime = WALK.turnTime + (WALK.toAlong - LAYOUT.grandma.along) / WALK.speed;
+  assert.ok(walkTime <= -LAYOUT.grandma.along / 16 + 4.7, `walk takes ${walkTime.toFixed(2)} s`);
+});
+
+test('a reset that puts the bike back before her sends her home', () => {
+  const destD = 500;
+  const set = buildGrandmaFinish(straightRoad, destD);
+  run(set, destD + 1, 3);
+  assert.notEqual(set.route.mode, 'home');
+  run(set, destD - 30, 0.1);
+  assert.equal(set.route.mode, 'home');
+  assert.equal(set.grandma.group.position.z, destD + LAYOUT.grandma.along);
+  assert.equal(set.markers[0].roadD, destD + LAYOUT.grandma.along);
 });
 
 test('retargetClip keeps rotations for her bones, drops positions and unknown bones', () => {

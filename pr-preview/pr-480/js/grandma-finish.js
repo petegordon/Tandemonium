@@ -5,6 +5,8 @@
 // At the end of Grandma's (and Today's Road, which rides to Grandma's too):
 //   - Grandma stands at the roadside on the house's side, just before the
 //     finish, facing the riders. She idles, and waves while the bike is on its final approach.
+//     Once they pass, she turns round and walks to the finish line, so the finish
+//     cinematic's front view catches her behind the riders (GrandmaRoute).
 //   - Three Timber Tandem props near the house: her outhouse (the privy with
 //     a crescent moon on the door), a woodpile and a big pine.
 //
@@ -38,14 +40,24 @@ const GRANDMA_HEIGHT = 1.6 * UNITS_PER_M;
  * π faces back toward the riders.
  */
 export const LAYOUT = {
-  grandma: { along: -7, lateral: 3.8, face: Math.PI },
+  grandma: { along: -4, lateral: 3.8, face: Math.PI },
   woodpile: { along: -2, lateral: 10.5, face: Math.PI / 2 },
   outhouse: { along: 6, lateral: 12, face: -Math.PI / 2 },
   tree: { along: 11, lateral: 8.5, face: 0 },
 };
 
-/** Start waving when the bike is this many units from Grandma; stop once it's this far past her. */
-const WAVE_FROM = 70, WAVE_UNTIL = 12;
+/** Start waving when the bike is this many units from Grandma. */
+const WAVE_FROM = 70;
+
+/**
+ * Once the riders pass her, Grandma turns round and walks along the shoulder
+ * to just short of the finish line (`toAlong`, same frame as LAYOUT). That's
+ * where the finish cinematic's front view sees her: behind the captain's
+ * shoulder, beside her house. Any further back and the riders hide her.
+ * She walks on real time, not the cinematic's slow motion (see World.update),
+ * so `speed` (units/s) is a grandma's stroll that gets her there as the shot lands.
+ */
+export const WALK = { toAlong: -0.8, speed: 2.6, turnTime: 0.6, returnGap: 2 };
 
 // ── shared helpers (ported from timber-tandem public/js/screen/scene) ──
 
@@ -239,6 +251,8 @@ export class GrandmaGoose {
     /** @type {Record<string, THREE.AnimationAction>} */
     this.actions = {};
     this.waving = false;
+    /** @type {string|null} the clip playing now */
+    this.clip = null;
     this.ready = false;
     this.disposed = false;
   }
@@ -259,27 +273,32 @@ export class GrandmaGoose {
     const bones = new Set();
     model.traverse((o) => { if (/** @type {any} */ (o).isBone) bones.add(o.name); });
     this.mixer = new THREE.AnimationMixer(model);
-    for (const name of ['idle_shift', 'wave']) {
+    for (const name of ['idle_shift', 'wave', 'walk']) {
       const src = clips.find((c) => c.name === name);
       if (!src) continue;
       const a = this.mixer.clipAction(retargetClip(src, bones));
       a.setLoop(THREE.LoopRepeat, Infinity);
       this.actions[name] = a;
     }
-    const idle = this.actions.idle_shift || this.actions.wave;
-    if (idle) idle.play();
     this.ready = true;
+    this.play(this.actions.idle_shift ? 'idle_shift' : 'wave');
+  }
+
+  /** Crossfade to one of her clips ('idle_shift' | 'wave' | 'walk'). */
+  play(name) {
+    if (!this.ready || name === this.clip) return;
+    const to = this.actions[name];
+    if (!to) return;
+    const from = this.clip ? this.actions[this.clip] : null;
+    to.reset().play();
+    if (from) from.crossFadeTo(to, 0.35, false);
+    this.clip = name;
+    this.waving = name === 'wave';
   }
 
   /** Wave (true) or idle (false), with a short crossfade. */
   setWaving(on) {
-    if (!this.ready || on === this.waving) return;
-    const wave = this.actions.wave, idle = this.actions.idle_shift;
-    if (!wave || !idle) return;
-    this.waving = on;
-    const from = on ? idle : wave, to = on ? wave : idle;
-    to.reset().play();
-    from.crossFadeTo(to, 0.35, false);
+    this.play(on ? 'wave' : 'idle_shift');
   }
 
   update(dt) { if (this.mixer) this.mixer.update(dt); }
@@ -295,17 +314,13 @@ export class GrandmaGoose {
  * Build the whole set for a finish at road distance `destD`.
  * @param {{ getPointAtDistance: (d: number) => {x: number, y: number, z: number, heading: number}, loopLength: number }} roadPath
  * @param {number} destD
- * @returns {{ markers: Array<{mesh: THREE.Object3D, roadD: number, type: string}>, grandma: GrandmaGoose, grandmaD: number }}
+ * @returns {{ markers: Array<{mesh: THREE.Object3D, roadD: number, type: string}>, grandma: GrandmaGoose, grandmaD: number, update: (bikeD: number, dt: number) => void, route: GrandmaRoute }}
  */
 export function buildGrandmaFinish(roadPath, destD) {
   const L = roadPath.loopLength;
   const at = (piece, obj) => {
     const d = ((destD + piece.along) % L + L) % L;
-    const pt = roadPath.getPointAtDistance(d);
-    const fwdX = Math.sin(pt.heading), fwdZ = Math.cos(pt.heading);
-    const rightX = fwdZ, rightZ = -fwdX;
-    obj.position.set(pt.x + rightX * piece.lateral, pt.y, pt.z + rightZ * piece.lateral);
-    obj.rotation.y = pt.heading + piece.face;
+    placeBeside(roadPath, d, piece.lateral, piece.face, obj);
     obj.visible = false;
     return { mesh: obj, roadD: d, type: 'grandma-prop' };
   };
@@ -316,13 +331,103 @@ export function buildGrandmaFinish(roadPath, destD) {
     at(LAYOUT.outhouse, buildOuthouse()),
     at(LAYOUT.tree, buildTimberTree()),
   ];
-  return { markers, grandma, grandmaD: markers[0].roadD };
+  const route = new GrandmaRoute(roadPath, grandma, markers[0], destD);
+  return { markers, grandma, grandmaD: markers[0].roadD, route, update: (bikeD, dt) => route.update(bikeD, dt) };
 }
 
-/** Should Grandma be waving, with the bike at road distance bikeD? (loop-aware) */
-export function shouldWave(bikeD, grandmaD, loopLength) {
-  let ahead = grandmaD - bikeD;          // > 0: she's still ahead of the bike
-  if (ahead > loopLength / 2) ahead -= loopLength;
-  if (ahead < -loopLength / 2) ahead += loopLength;
-  return ahead <= WAVE_FROM && ahead >= -WAVE_UNTIL;
+/** Stand `obj` beside the road at distance d, `lateral` units to the right, turned by `face`. */
+function placeBeside(roadPath, d, lateral, face, obj) {
+  const pt = roadPath.getPointAtDistance(d);
+  const fwdX = Math.sin(pt.heading), fwdZ = Math.cos(pt.heading);
+  const rightX = fwdZ, rightZ = -fwdX;
+  obj.position.set(pt.x + rightX * lateral, pt.y, pt.z + rightZ * lateral);
+  obj.rotation.y = pt.heading + face;
 }
+
+/** How far Grandma's spot is ahead of the bike (> 0: still ahead), loop-aware. */
+function aheadOf(bikeD, d, L) {
+  let ahead = d - bikeD;
+  if (ahead > L / 2) ahead -= L;
+  if (ahead < -L / 2) ahead += L;
+  return ahead;
+}
+
+/**
+ * What Grandma should be doing with the bike at road distance bikeD:
+ * 'idle' while the riders are far off, 'wave' on their final approach, and
+ * 'leave' once they've passed her (turn round and walk to the finish line).
+ */
+export function grandmaCue(bikeD, grandmaD, loopLength) {
+  const ahead = aheadOf(bikeD, grandmaD, loopLength);
+  if (ahead < 0) return 'leave';
+  return ahead <= WAVE_FROM ? 'wave' : 'idle';
+}
+
+/**
+ * Grandma's little walk: waits at home (idling, then waving), and once the
+ * riders pass she turns round toward the road and walks along the shoulder to
+ * WALK.toAlong, keeping her marker's roadD in step so World grounds her on the
+ * road's height as she goes. If the bike ends up back before her spot (a
+ * reset), she's home again.
+ */
+export class GrandmaRoute {
+  /**
+   * @param {{ getPointAtDistance: (d: number) => {x: number, y: number, z: number, heading: number}, loopLength: number }} roadPath
+   * @param {GrandmaGoose} grandma @param {{ roadD: number }} marker @param {number} destD
+   */
+  constructor(roadPath, grandma, marker, destD) {
+    this.roadPath = roadPath;
+    this.grandma = grandma;
+    this.marker = marker;
+    this.homeD = marker.roadD;
+    this.length = Math.max(0, WALK.toAlong - LAYOUT.grandma.along);   // how far she walks
+    /** 'home' | 'turn' | 'walk' | 'arrived' */
+    this.mode = 'home';
+    this.t = 0;          // seconds into the turn
+    this.walked = 0;     // units along the shoulder
+  }
+
+  update(bikeD, dt) {
+    const L = this.roadPath.loopLength;
+    const cue = grandmaCue(bikeD, this.homeD, L);
+    if (this.mode === 'home') {
+      if (cue === 'leave') { this.mode = 'turn'; this.t = 0; this.grandma.play('walk'); }
+      else this.grandma.setWaving(cue === 'wave');
+    } else if (cue !== 'leave' && aheadOf(bikeD, this.homeD, L) > WALK.returnGap) {
+      this.goHome();
+    }
+    if (this.mode === 'turn') this._turn(dt);
+    else if (this.mode === 'walk') this._walk(dt);
+    this.grandma.update(dt);
+  }
+
+  /** Back to where she stood at the start, facing the riders. */
+  goHome() {
+    this.mode = 'home';
+    this.t = 0;
+    this.walked = 0;
+    this.marker.roadD = this.homeD;
+    placeBeside(this.roadPath, this.homeD, LAYOUT.grandma.lateral, LAYOUT.grandma.face, this.grandma.group);
+    this.grandma.setWaving(false);
+  }
+
+  /** Turn on the spot from facing the riders (π) to facing the finish (2π ≡ 0), by way of the road. */
+  _turn(dt) {
+    this.t += dt;
+    const k = Math.min(1, this.t / WALK.turnTime);
+    const e = k * k * (3 - 2 * k);
+    const pt = this.roadPath.getPointAtDistance(this.homeD);
+    this.grandma.group.rotation.y = pt.heading + Math.PI * (1 + e);
+    if (k >= 1) this.mode = 'walk';
+  }
+
+  /** Stroll along the shoulder toward the finish line, following the road's curve. */
+  _walk(dt) {
+    this.walked = Math.min(this.length, this.walked + WALK.speed * dt);
+    const d = ((this.homeD + this.walked) % this.roadPath.loopLength + this.roadPath.loopLength) % this.roadPath.loopLength;
+    placeBeside(this.roadPath, d, LAYOUT.grandma.lateral, 0, this.grandma.group);
+    this.marker.roadD = d;
+    if (this.walked >= this.length) { this.mode = 'arrived'; this.grandma.play('idle_shift'); }
+  }
+}
+
