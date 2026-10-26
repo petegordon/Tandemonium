@@ -79,6 +79,8 @@ js/physics/physics-fx.js       the three effects + billboardRoll()
 js/physics/crash-scene.js      #484: one crash = bike + two goose rag dolls + hats, its own world
 js/physics/ragdoll-spec.js     #484 (pure): rag doll segments, the crash throw, the hat throw
 js/crash-slowmo.js             #484 (pure): the slow-mo schedule, the held race clock
+js/physics/bike-parts.js       #484: which goose-tandem mesh flies off as which part; part launches
+js/crash-wobble.js             #484 (pure): versus — a part that hits the other team: kick, shake, aim
 test/physics-smoke.html        headless assertions (no WebGL, no game)
 scripts/smoke-physics-fx.mjs   runner
 ```
@@ -114,6 +116,45 @@ in simulated seconds (`simSecondsFor(2.0)` ≈ 1.34). Online co-op keeps the
 
 At the reset (`releaseCrash`) the scene restores every bone to its seated pose
 and frees its world. Still purely visual: nothing reads the rag dolls back.
+
+### The tandem comes apart (#484 step 3)
+
+On the goose tandem (the rig with `Wheel_F` / `Wheel_R` bones), every crash
+scene also takes the bike apart: **front wheel, rear wheel, front bars (with the
+fork), stoker bars, both saddles** each get their own body; the frame, cranks and
+chain stay on the frame body (its collider is now the frame's own box, so it lies
+on the road instead of on invisible wheels). `bike-parts.js` classifies meshes by
+name (pure, unit-tested): the Bike_root parts by mesh name, the rest by the
+nearest rig bone (`Wheel_F` before `Steer`).
+
+- The bike's own meshes for those parts are hidden and a copy of each (same
+  geometry and material, so no new GPU memory and the same draw count) rides the
+  part's body; dispose shows them again and drops the copies.
+- `rebatch()` takes a `split` so the saddles and stoker bars merge on their own
+  instead of into the frame (+3 draws on the goose tandem, 15 meshes after
+  batching). The wheels and bars already batch per bone.
+- Wheels are cylinders launched ROLLING (spin = forward speed / radius, low
+  angular damping): head-on, the front wheel carries on down the road alone.
+  Bars and saddles pop up tumbling.
+- 6 more bodies per crash (29 + 6 = 35 full, 13 + 6 = 19 lite); the plain bike
+  and the fused riders model have no parts rig and keep the one-piece tumble.
+
+### Versus: parts wobble the other team (#484 step 4)
+
+The one piece of gameplay in the crash. In local versus only, `crashTumble` is
+handed the other team's bike(s). The crash scene throws one heavy part (the rear
+wheel) at the nearest team still riding within 30 m, along an arc that lands
+**before the cut to the checkpoint** (`aimAt` + `realSecondsFor`: the crash runs
+slow while the other team rides in real time, so a team just ahead at full speed
+is out of reach; a team beside or behind rides into the debris). Each step, any
+part inside another tandem's box (riders included) is a hit, once per team per
+crash: `BikeModel.addHitWobble(kick, shake)` adds a lean-velocity kick away from
+the hit and a decaying shake (`crash-wobble.js`: kick = 0.08 × mass ×
+max(4 m/s, relative speed), capped at 0.85 rad/s; a wheel ≈ 0.8, a saddle ≈ 0.26).
+Not scaled by `wobbleMultiplier` (that is the presets' random wobble, ~0 on the
+easy ones); the presets' auto-correction helps the easy ones recover. It is a
+disturbance, not a crash: a steady team rides it out (~±7° in the review), one
+already leaning hard or over-correcting can go down. Never in online modes.
 
 ## Billboards
 
