@@ -116,7 +116,7 @@ export class CrashScene {
   /**
    * A lean-out leaves the bike lying on the verge, often lower than the road height the ground is sampled
    * from, so a goose can start partly UNDER the ground, and a body that starts under it stays there. Lift
-   * the whole rag doll (and its hat) clear on the impact frame; at most a metre, mid-launch nobody sees it.
+   * the whole rag doll (and its hat) clear on the impact frame; at most 2 m, mid-launch nobody sees it.
    */
   _lift(rd) {
     let dy = 0;
@@ -124,7 +124,7 @@ export class CrashScene {
       const t = sg.body.translation();
       dy = Math.max(dy, this.groundHeight(t.x, t.z) + sg.rad - t.y);
     }
-    dy = Math.min(dy, 1);
+    dy = Math.min(dy, 2);
     if (dy <= 0) return;
     for (const b of [...rd.segs.map(sg => sg.body), ...(rd.hat ? [rd.hat.body] : [])]) {
       const t = b.translation();
