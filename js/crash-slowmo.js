@@ -48,3 +48,14 @@ export function simSecondsFor(realSeconds, s = SLOWMO) {
 export function clockHeld(realElapsed, s = SLOWMO) {
   return Number.isFinite(realElapsed) && realElapsed >= 0 && realElapsed < s.hold + s.ramp;
 }
+
+/** The inverse of simSecondsFor: real seconds until `simSeconds` have been simulated (bisection; monotone). */
+export function realSecondsFor(simSeconds, s = SLOWMO) {
+  const target = Math.max(0, simSeconds);
+  let lo = 0, hi = target / s.scale + s.hold + s.ramp + 1;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (simSecondsFor(mid, s) < target) lo = mid; else hi = mid;
+  }
+  return hi;
+}

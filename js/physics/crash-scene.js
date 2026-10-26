@@ -25,6 +25,9 @@
 
 import * as THREE from 'three';
 import { segmentsFor, throwFor, hatThrow } from './ragdoll-spec.js';
+import { PARTS, hasParts, visibleMeshesByPart, boundsIn, partLaunch } from './bike-parts.js';
+import { hitWobble, onBike, kickSign, aimAt } from '../crash-wobble.js';
+import { realSecondsFor } from '../crash-slowmo.js';
 
 const GROUND = 1, DEBRIS = 2;   // collision membership bits
 const grp = (member, filter) => ((member << 16) | filter) >>> 0;
@@ -63,8 +66,12 @@ export class CrashScene {
    * @param {'full'|'lite'} [o.budget]
    * @param {string} [o.cause] 'balance' | 'obstacle' | 'tree'
    * @param {() => number} [o.rand]
+   * @param {object[]} [o.others] versus: the OTHER team's bikes (a part that hits one sends it into a wobble)
+   * @param {boolean} [o.slowMo] this crash's view runs slow at first (the throw at another team allows for it)
+   * @param {boolean} [o.parts] the tandem comes apart (default: whenever the model has the parts rig)
    */
-  constructor(RAPIER, { bike, groundAt, budget = 'full', cause = 'balance', rand = Math.random }) {
+  constructor(RAPIER, { bike, groundAt, budget = 'full', cause = 'balance', rand = Math.random, others = [],
+    slowMo = false, parts = true }) {
     this.R = RAPIER;
     this.bike = bike;
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -72,6 +79,11 @@ export class CrashScene {
     // the joints hold under a hard throw: more solver iterations than the default
     const ip = this.world.integrationParameters;
     if (ip && 'numSolverIterations' in ip) ip.numSolverIterations = 8;
+    this.parts = [];       // { part, body, group, mass, rad } (#484 step 3: the tandem comes apart)
+    this._hidden = [];     // the bike's own meshes hidden while their part flies
+    this._others = others.filter(o => o && o !== bike && o.group);
+    this._hitTeams = new Set();
+    this.hits = [];        // [{ part, bike, kick }] (tests, the review capture)
     this.joints = [];      // [parentBody, childBody, anchorInParent, anchorInChild] (the joint-gap check)
     this.riders = [];      // { seat, rider, snap, segs:[{bone, body, O}], hat:{bone, body, O} }
     this.bodyCount = 0;
@@ -100,9 +112,20 @@ export class CrashScene {
       .setAngvel({ x: fx * roll + fz * pitch, y: (rand() - 0.5) * 1.6, z: fz * roll - fx * pitch })
       .setLinearDamping(0.55).setAngularDamping(headOn ? 0.35 : 0.9).setCcdEnabled(true);
     this.bikeBody = this.world.createRigidBody(bd);
-    this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.28, 0.55, 1.35).setTranslation(0, 0.55, 0)
-      .setFriction(1.1).setRestitution(0.12).setCollisionGroups(DEBRIS_GROUPS), this.bikeBody);
+    const model = bike.group.children[0];
+    const byPart = parts && model && hasParts(model) ? visibleMeshesByPart(model) : null;
+    const fb = byPart ? boundsIn(byPart.frame, bike.group.matrixWorld) : null;
+    if (fb) {
+      // the frame alone (the wheels are leaving): its own box, so it lies on the road, not on air wheels
+      const c = fb.getCenter(new THREE.Vector3()), h = fb.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid(Math.max(0.06, h.x), Math.max(0.08, h.y), Math.max(0.3, h.z))
+        .setTranslation(c.x, c.y, c.z).setFriction(1.1).setRestitution(0.12).setCollisionGroups(DEBRIS_GROUPS), this.bikeBody);
+    } else {
+      this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.28, 0.55, 1.35).setTranslation(0, 0.55, 0)
+        .setFriction(1.1).setRestitution(0.12).setCollisionGroups(DEBRIS_GROUPS), this.bikeBody);
+    }
     this.bodyCount++;
+    if (byPart) this._detach(byPart, { headOn, speed, heading, lean, rand, slowMo });
 
     const riders = (bike.goose && bike.goose.riders) || {};
     for (const [seat, rider] of Object.entries(riders)) {
@@ -223,6 +246,131 @@ export class CrashScene {
     return out;
   }
 
+  /**
+   * #484 step 3: the wheels, the bars and the saddles leave the frame, each its own body. The bike's own
+   * meshes for those parts are hidden and a copy of each (same geometry and material: no new GPU memory, the
+   * same draw calls) rides the part's body until the checkpoint puts the bike back together.
+   */
+  _detach(byPart, { headOn, speed, heading, lean, rand, slowMo }) {
+    const R = this.R, gw = this.bike.group.matrixWorld, root = this.bike.group.parent;
+    if (!root) return;
+    const gq = this.bike.group.quaternion;
+    const fwd = { x: Math.sin(heading), z: Math.cos(heading) };
+    const right = { x: Math.cos(heading), z: -Math.sin(heading) };   // the bike's own +x
+    const side = lean >= 0 ? -1 : 1;                                   // the side it falls to, in +x terms
+    const bv = this.bikeBody.linvel(), bw = this.bikeBody.angvel(), bt = this.bikeBody.translation();
+    const c = new THREE.Vector3(), h = new THREE.Vector3();
+    for (const part of Object.keys(PARTS)) {
+      const meshes = byPart[part];
+      const b = meshes && meshes.length ? boundsIn(meshes, gw) : null;
+      if (!b) continue;
+      b.getCenter(c); b.getSize(h).multiplyScalar(0.5);
+      const wc = c.clone().applyMatrix4(gw);
+      const B0 = new THREE.Matrix4().compose(wc, gq, ONE);
+      const inv = B0.clone().invert();
+      const group = new THREE.Group();
+      group.name = 'crashPart_' + part;
+      for (const m of meshes) {
+        const k = new THREE.Mesh(m.geometry, m.material);
+        k.castShadow = m.castShadow; k.receiveShadow = m.receiveShadow;
+        k.matrixAutoUpdate = false;
+        k.matrix.multiplyMatrices(inv, m.matrixWorld);
+        group.add(k);
+        m.visible = false;
+        this._hidden.push(m);
+      }
+      group.position.copy(wc); group.quaternion.copy(gq);
+      root.add(group);
+      const wheel = PARTS[part].kind === 'wheel';
+      const rad = wheel ? Math.max(h.y, h.z) : Math.max(h.x, h.y, h.z);
+      const L = partLaunch({ part, how: headOn ? 'head-on' : 'lean', speed, fwd, side, right, radius: rad, rand });
+      // plus some of the frame's own motion at that point (v + w x r), so the parts leave the bike as it moves
+      const rx = wc.x - bt.x, ry = wc.y - bt.y, rz = wc.z - bt.z;
+      const lv = {
+        x: L.linvel.x + bv.x * 0.5 + (bw.y * rz - bw.z * ry) * 0.3,
+        y: L.linvel.y + bv.y * 0.5 + (bw.z * rx - bw.x * rz) * 0.3,
+        z: L.linvel.z + bv.z * 0.5 + (bw.x * ry - bw.y * rx) * 0.3,
+      };
+      const body = this.world.createRigidBody(R.RigidBodyDesc.dynamic()
+        .setTranslation(wc.x, wc.y, wc.z).setRotation({ x: gq.x, y: gq.y, z: gq.z, w: gq.w })
+        .setLinvel(lv.x, lv.y, lv.z).setAngvel(L.angvel)
+        .setLinearDamping(wheel ? 0.15 : 0.3).setAngularDamping(wheel ? 0.08 : 0.5).setCcdEnabled(true));
+      const cd = wheel
+        // a cylinder's axis is its Y: turn it onto the axle (the bike's x)
+        ? R.ColliderDesc.cylinder(Math.max(0.03, h.x), Math.max(0.15, rad))
+          .setRotation({ x: 0, y: 0, z: -Math.SQRT1_2, w: Math.SQRT1_2 }).setFriction(1.2).setRestitution(0.35)
+        : R.ColliderDesc.cuboid(Math.max(0.03, h.x), Math.max(0.03, h.y), Math.max(0.03, h.z))
+          .setFriction(0.8).setRestitution(0.25);
+      this.world.createCollider(cd.setMass(PARTS[part].mass).setCollisionGroups(DEBRIS_GROUPS), body);
+      this.bodyCount++;
+      this.parts.push({ part, body, group, mass: PARTS[part].mass, rad });
+    }
+    if (this._others.length) this._aim(rand, slowMo);
+  }
+
+  /**
+   * Versus: throw one heavy part (the rear wheel; else the bars) at the nearest other team still riding
+   * within reach, so the bike coming apart now and then lands on them. A plausible arc, or nothing.
+   */
+  _aim(rand, slowMo) {
+    const t0 = this.bikeBody.translation();
+    let best = null, bd = 30;
+    for (const o of this._others) {
+      if (o.fallen) continue;
+      const d = Math.hypot(o.position.x - t0.x, o.position.z - t0.z);
+      if (d < bd) { bd = d; best = o; }
+    }
+    if (!best) return;
+    const p = this.parts.find(x => x.part === 'wheelR') || this.parts.find(x => x.part === 'bars') || this.parts[0];
+    if (!p) return;
+    const from = p.body.translation();
+    const hv = { x: Math.sin(best.heading) * best.speed, z: Math.cos(best.heading) * best.speed };
+    // at the riders' middle, a little off so it doesn't look guided
+    const tgt = { x: best.position.x + (rand() - 0.5) * 0.5, y: best.position.y + 1.0, z: best.position.z + (rand() - 0.5) * 0.8 };
+    // The other team rides on in real time while this crash runs slow, so a quick throw has to be a rocket:
+    // try flights from short to long and take the gentlest one that gets there.
+    let v = null, vs = Infinity;
+    for (let T = 0.45; T <= 1.8; T += 0.15) {
+      const c = aimAt(from, tgt, hv, T, slowMo ? realSecondsFor(T) : T);
+      const s = c ? Math.hypot(c.x, c.y, c.z) : Infinity;
+      if (s < vs) { vs = s; v = c; }
+    }
+    if (v) { p.body.setLinvel(v, true); this.aimed = { part: p.part, bike: best }; }
+  }
+
+  /** Versus: a part that reaches another team's tandem sends it into a wobble (once per team per crash). */
+  _hitOthers() {
+    for (const o of this._others) {
+      if (this._hitTeams.has(o) || o.fallen || !o.group) continue;
+      _inv.copy(o.group.matrixWorld).invert();
+      for (const p of this.parts) {
+        const t = p.body.translation();
+        _a.set(t.x, t.y, t.z).applyMatrix4(_inv);
+        if (!onBike(_a, Math.min(0.6, p.rad))) continue;
+        const v = p.body.linvel();
+        const ox = Math.sin(o.heading) * o.speed, oz = Math.cos(o.heading) * o.speed;
+        const rel = Math.hypot(v.x - ox, v.y, v.z - oz);
+        const w = hitWobble(p.mass, rel);
+        this._hitTeams.add(o);
+        if (w.kick > 0 && typeof o.addHitWobble === 'function') o.addHitWobble(w.kick * kickSign(_a.x), w.shake);
+        this.hits.push({ part: p.part, bike: o, kick: w.kick });
+        // it bounced off them: most of its own speed gone, carried along with them
+        p.body.setLinvel({ x: ox * 0.6 - (v.x - ox) * 0.25, y: Math.abs(v.y) * 0.3 + 1, z: oz * 0.6 - (v.z - oz) * 0.25 }, true);
+        break;
+      }
+    }
+  }
+
+  /** How far the lowest part's centre is above the simulated ground (metres; tests: >= 0 = not sunk). */
+  partClearance() {
+    let m = Infinity;
+    for (const p of this.parts) {
+      const t = p.body.translation();
+      m = Math.min(m, t.y - this.groundHeight(t.x, t.z));
+    }
+    return m;
+  }
+
   /** Advance by the crashing view's dt (already slowed in the slow-mo moment) and pose everything. */
   step(dt) {
     if (!this.world) return;
@@ -231,6 +379,7 @@ export class CrashScene {
     // whole substeps, then one partial so a slow-mo frame (dt < SUBSTEP) still moves
     while (this._acc >= SUBSTEP) { this.world.timestep = SUBSTEP; this.world.step(); this._acc -= SUBSTEP; }
     if (this._acc > 1e-5) { this.world.timestep = this._acc; this.world.step(); this._acc = 0; }
+    if (this._others.length && this.parts.length) this._hitOthers();
     this._pose();
   }
 
@@ -239,6 +388,12 @@ export class CrashScene {
     g.position.set(t.x, t.y, t.z);
     g.quaternion.set(r.x, r.y, r.z, r.w);
     g.updateMatrixWorld(true);
+    for (const p of this.parts) {
+      const pt = p.body.translation(), pr = p.body.rotation();
+      p.group.position.set(pt.x, pt.y, pt.z);
+      p.group.quaternion.set(pr.x, pr.y, pr.z, pr.w);
+      p.group.updateMatrixWorld(true);
+    }
     for (const rd of this.riders) {
       for (const s of rd.segs) this._drive(s);
       if (rd.hat) this._drive(rd.hat);
@@ -324,6 +479,10 @@ export class CrashScene {
       rd.rider.ragdoll = false;
     }
     this.riders = [];
+    for (const p of this.parts) if (p.group.parent) p.group.parent.remove(p.group);
+    this.parts = [];
+    for (const m of this._hidden) m.visible = true;
+    this._hidden = [];
     if (this.world) { this.world.free(); this.world = null; }
   }
 }
