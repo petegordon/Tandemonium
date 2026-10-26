@@ -1,11 +1,11 @@
 // ============================================================
-// ACHIEVEMENT DEFINITIONS — the 100, their stats, and the rules (#401)
+// ACHIEVEMENT DEFINITIONS — the 101, their stats, and the rules (#401, #500)
 // ============================================================
 //
 // Pure and DOM-free so the unit tests can import it. js/achievements.js holds
 // the manager (persistence, toasts, Steam, server sync) and the game glue.
 //
-// 100 achievements in the 15 sections of issue #401:
+// 101 achievements in the 15 sections of issue #401 (+ #500 Look, No Thumbs):
 //   - 23 existing ids, kept unchanged (anything already earned, and its Steam
 //     id, carries over) — including the 7 per-bike-colour Grandma's ones;
 //   - 77 new ones.
@@ -63,6 +63,21 @@ export function stageForDistance(metres) {
 const n = v => (Number.isFinite(v) ? v : 0);
 const len = a => (Array.isArray(a) ? a.length : 0);
 const fin = s => !!(s && s.finishedLevel);
+
+/** Gyro frames a rider needs before a ride counts as steered by tilt (~5 s at 60 fps). */
+export const GYRO_ONLY_MIN_FRAMES = 300;
+
+/**
+ * #500 · Look, No Thumbs: did this rider steer the whole ride by CONTROLLER gyro?
+ * frames = BalanceController.steerFrames for the ride. Phone tilt ('motion'),
+ * keys and the stick/D-pad ('gamepad') each disqualify; controller gyro must
+ * have steered for at least GYRO_ONLY_MIN_FRAMES.
+ */
+export function gyroOnlySteer(frames) {
+  if (!frames) return false;
+  const f = k => Number(frames[k]) || 0;
+  return f('gamepad-gyro') >= GYRO_ONLY_MIN_FRAMES && f('keyboard') === 0 && f('gamepad') === 0 && f('motion') === 0;
+}
 
 /** A counter achievement: condition + lobby progress from one lifetime stat. */
 function count(stat, goal) {
@@ -141,6 +156,7 @@ export const ACHIEVEMENTS = [
   { id: 'no_offroad',     section: 'clean', name: 'Stayed on the Road',  icon: '🛤️', desc: 'Finish a level without going off-road',                 condition: s => fin(s) && s.offroadT === 0 },
   { id: 'no_trees_daily', section: 'clean', name: 'No Trees Were Harmed', icon: '🌳', desc: "Finish Today's Road without hitting a tree",           condition: s => s.finishedLevel === 'daily' && s.treeHits === 0 },
   { id: 'new_best',       section: 'clean', name: 'Personal Best',       icon: '⭐', desc: 'Set a new personal best',                              condition: (s, L) => s.newBest === true || n(L.personalBests) >= 1 },
+  { id: 'look_no_thumbs', section: 'clean', name: 'Look, No Thumbs',     icon: '🎮', desc: 'Finish a ride steering only by tilting your controller', condition: s => fin(s) && s.gyroOnly === true },
   { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: "Turn down ASSIST when it's offered, then finish",       condition: s => fin(s) && s.assistDeclined === true },
 
   // ── 6. Speed and boost ───────────────────────────────────
@@ -251,7 +267,7 @@ export function getDefinition(id) {
 // ============================================================
 //
 // v1 (no `v`) was { cumulativeDistance } — metres from completed rides. v2
-// keeps that number and adds every counter the 100 need. Distance now counts
+// keeps that number and adds every counter the 101 need. Distance now counts
 // every metre of every regular ride (the payout ledger's new metres), so a
 // crashed ride counts too; nothing already counted is lost.
 
@@ -315,7 +331,7 @@ export function opensMedalGate(levelId, medal) {
 
 /**
  * m21 · retroactive credit. A player whose stats predate v2 already has saves
- * that prove some of the 100: personal bests and medals (tandemonium_records),
+ * that prove some of the 101: personal bests and medals (tandemonium_records),
  * Slingshot progress (tandemonium_slingshot), Today's Road days
  * (tandemonium_daily) and the wallet. Fold them in as LOWER BOUNDS: every
  * counter only ever goes up, every list only gains, nothing is lost.
