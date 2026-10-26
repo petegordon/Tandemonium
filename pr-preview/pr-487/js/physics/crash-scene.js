@@ -78,17 +78,20 @@ export class CrashScene {
     const fx = Math.sin(heading), fz = Math.cos(heading);
     this._ground(bike.position, groundAt);
 
-    // The bike: the same box and launch the plain tumble uses (physics-fx crashTumble).
+    // The bike: the plain tumble's box (physics-fx crashTumble). A lean-out rolls over onto its side; a
+    // head-on hit stops the front wheel dead, so the bike PITCHES forward over it (an endo, rear wheel up)
+    // with a little roll: that is what makes "it hit something" read, rather than just falling over.
     bike.group.updateMatrixWorld(true);
-    const roll = (3.2 + speed * 0.35) * (lean >= 0 ? 1 : -1);
     const headOn = cause === 'obstacle' || cause === 'tree';
+    const roll = (headOn ? 1.2 : 3.2 + speed * 0.35) * (lean >= 0 ? 1 : -1);
+    const pitch = headOn ? 3.5 + speed * 0.3 : 0;              // about -right: the top goes forward
     const carry = headOn ? 0.3 : 0.55;   // a pylon stops the bike; the geese keep going
     const bq = bike.group.quaternion;
     const bd = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(bike.group.position.x, bike.group.position.y, bike.group.position.z)
       .setRotation({ x: bq.x, y: bq.y, z: bq.z, w: bq.w })
-      .setLinvel(fx * speed * carry, 1.1, fz * speed * carry)
-      .setAngvel({ x: fx * roll, y: (rand() - 0.5) * 1.6, z: fz * roll })
+      .setLinvel(fx * speed * carry, headOn ? 2.4 : 1.1, fz * speed * carry)
+      .setAngvel({ x: fx * roll + fz * pitch, y: (rand() - 0.5) * 1.6, z: fz * roll - fx * pitch })
       .setLinearDamping(0.55).setAngularDamping(0.9).setCcdEnabled(true);
     this.bikeBody = this.world.createRigidBody(bd);
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.28, 0.55, 1.35).setTranslation(0, 0.55, 0)
