@@ -231,7 +231,6 @@ class SlingshotMode {
     if (this.physicsFx) this.physicsFx.clear();
     if (this.chaseCamera) this.chaseCamera.initialized = false;
     this.hud.initProgress(level);
-    this.audioEngine.startBike();
     this._setupSlingRun(level);
   }
 
@@ -666,7 +665,6 @@ class SlingshotMode {
     this.state = 'slingTally';
     this.quickMenu.setVisible(false);
     this.hud.hideTimer();
-    this.audioEngine.stopBike();
     this._lastCrashCause = null;     // the crash latch is only cleared by the game-over modal
     slingUI.hideHud();
     slingUI.hidePull();
