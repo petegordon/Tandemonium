@@ -494,6 +494,9 @@ ipcMain.handle('steam:input:xinputMap', () => steamXInputMap);
 // B4c: preload reads this synchronously at load so js/edition.js sees
 // window.tandemoniumSteam.isDemo before the first getEditionRules() call.
 ipcMain.on('app:isDemo', (e) => { e.returnValue = _resolveIsDemo(); });
+// #172: the lobby's QUIT pill (js/app-quit.js via preload's electronApp.quit).
+// app.quit() closes the window and runs will-quit like the window's close box.
+ipcMain.on('app:quit', () => { _diagLog('[app] quit requested from the lobby'); app.quit(); });
 
 // Full-diagnostic dump for the in-game Steam Input test page. Queries Steam
 // on demand for every piece of state we can read (handles, controllers,

@@ -63,6 +63,7 @@ import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } f
 import { steamTypeIdentity } from './controller-overlay-hud.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, steamTypeGlyphIdentity, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
+import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
@@ -2942,13 +2943,16 @@ export class Lobby {
         this._showVolumePicker();
       }),
       settings: pill('bar-settings', () => $('ctrl-settings-btn')?.click()),
+      // #172: desktop app only; _syncSystemBar shows it on the mode step.
+      quit: pill('bar-quit', () => this._openQuitSheet()),
     };
     this._bar.addEventListener('uf-system-bar:back', () => this._goBack());
+    this._canQuit = canQuitApp(window);
 
     // Spatial focus: the pills join the toggle columns (hidden toggles and,
     // below 1024px, the hidden bar are skipped by the FocusController).
     const p = this._barPills;
-    this._modeColumns[0].push(p.help, p.leaderboard, p.profile);
+    this._modeColumns[0].push(p.help, p.quit, p.leaderboard, p.profile);
     this._modeColumns[2].push(p.controls, p.music, p.settings);
 
     // Popups that lived inside the (now hidden) toggle columns move to <body>
@@ -3029,7 +3033,28 @@ export class Lobby {
     if (slider) slider.addEventListener('input', () => this._applySteeringFeel(slider.value / 100));
     $('set-recalibrate')?.addEventListener('click', () => { this._recalibrateSteering(); sheet.close(); });
     sheet.addEventListener('uf-sheet:close', () => { this._stepFocus.setSlider(null); this._syncSystemBar(); });
+
+    // ── Quit confirm (#172) ── desktop app only. The kit sheet handles B /
+    // Esc / scrim / its Close control; QUIT asks main to app.quit().
+    this._quitSheet = $('quit-sheet');
+    if (this._quitSheet && this._canQuit) {
+      this._quitSheet.attachFocus(this._stepFocus);
+      $('quit-cancel')?.addEventListener('click', () => this._quitSheet.close());
+      $('quit-confirm')?.addEventListener('click', () => {
+        const btn = $('quit-confirm');
+        if (btn) btn.setAttribute('disabled', '');   // one request: the window is on its way out
+        analytics.trackEvent('app_quit', { from: 'lobby' });
+        if (!requestAppQuit(window) && btn) btn.removeAttribute('disabled');
+      });
+    }
     this._syncSystemBar();
+  }
+
+  _openQuitSheet() {
+    if (!this._quitSheet || !this._canQuit) return;
+    const btn = document.getElementById('quit-confirm');
+    if (btn) btn.removeAttribute('disabled');
+    this._quitSheet.show();
   }
 
   /** Put a popup that now lives in <body> just above the pill that opened it. */
@@ -3118,6 +3143,13 @@ export class Lobby {
     // Back shows on every step but the first.
     const flow = document.getElementById('lobby-flow');
     this._bar.back = flow && flow.current && flow.current !== 'lobby-mode' ? 'show' : 'hide';
+    // #172: Quit sits next to Help on the mode step of the desktop app only
+    // (the web build has the tab's close box; a phone has no pad).
+    const quit = this._barPills?.quit;
+    if (quit) {
+      const want = this._canQuit && flow && flow.current === 'lobby-mode' ? '' : 'none';
+      if (quit.style.display !== want) quit.style.display = want;
+    }
     // The sheet, when open.
     const sheet = this._controlsSheet;
     if (!sheet || !sheet.open) return;

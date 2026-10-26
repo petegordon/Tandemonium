@@ -84,6 +84,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | BL-09 | Pad focus starts on a visible control on every lobby step | A | `smoke:flows` |
 | BL-10 | Every lobby step at 390×844, 844×390, 1920×1080 and 4K: every control reachable, none overlapping | A | `smoke:lobby-layout` |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
+| BL-12 | Quit (#172): the desktop app's mode step has a Quit pill next to Help; the pad reaches it, A opens "Quit Tandemonium?" with QUIT focused, B / Esc / CANCEL close it, QUIT asks Electron to quit once; the web build and phones have no Quit | A | `smoke:flows` (QT-01…07) |
 
 ## 2. Solo rides
 
