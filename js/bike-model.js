@@ -12,6 +12,8 @@ import { colourwayParams, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 import { CrankMotion } from './crank-motion.js';
 import { fallLean } from './crash-tumble.js';
+import { shakeAt } from './crash-wobble.js';
+import { batchSplit, hasParts } from './physics/bike-parts.js';
 import { rebatch } from './bike-batch.js';
 import { dracoDecoderPath } from './draco-path.js';
 
@@ -57,6 +59,8 @@ export class BikeModel {
     this.lean = 0;
     this.leanVelocity = 0;
     this._roughness = 0;   // E-2 cobbles, 0..1
+    this._hitShake = 0;    // #484 versus: a flying part's shake (rad/s², signed) and its age
+    this._hitShakeT = 0;
     this.speed = 0;
     this.distanceTraveled = 0;
     this.crankAngle = 0;
@@ -631,11 +635,35 @@ export class BikeModel {
    * #456 · the plain bike too (65 meshes): its pedals turn by themselves, so
    * they count as bones. The fused riders model is left alone.
    */
+  /**
+   * #484 versus: a part from the other team's crash hit us. A shove to the lean (`kick`, rad/s, signed) and a
+   * shake that dies away (`shake`, rad/s²). A disturbance, not a crash: ride it out, or over-correct and fall.
+   * NOT scaled by wobbleMultiplier: that is the presets' RANDOM wobble (0 on chill, 0.1 on adventurous) and
+   * would erase a hit you can see coming; the presets' auto-correction already helps the easy ones recover.
+   */
+  addHitWobble(kick, shake) {
+    if (this.fallen) return;
+    this.leanVelocity += kick || 0;
+    this._hitShake = Math.abs(shake || 0) * (kick < 0 ? -1 : 1);
+    this._hitShakeT = 0;
+  }
+
+  /** The hit's shake this frame (rad/s²); 0 once it has died away. */
+  _hitShakeForce(dt) {
+    if (!this._hitShake) return 0;
+    this._hitShakeT += dt;
+    const f = shakeAt(Math.abs(this._hitShake), this._hitShakeT) * Math.sign(this._hitShake);
+    if (this._hitShakeT > 2) this._hitShake = 0;
+    return f;
+  }
+
   _rebatch() {
     if (!this.modelLoaded || this.riderMixer) return;
     const model = this.group.children[0];
     if (!model) return;
-    this.batchStats = rebatch(model, { keep: this.spokeMeshes, movers: this.pedalNodes, batchId: this._batchId });
+    // #484: the parts that fly off in a crash merge on their own (physics/bike-parts.js)
+    this.batchStats = rebatch(model, { keep: this.spokeMeshes, movers: this.pedalNodes, batchId: this._batchId,
+      split: hasParts(model) ? batchSplit : null });
     this._applyEnvMap();
   }
 
@@ -828,7 +856,7 @@ export class BikeModel {
 
     this.leanVelocity += (gravity + playerLean + gyro + damping +
       pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble +
-      cobbleShake) * dt;
+      cobbleShake + this._hitShakeForce(dt)) * dt;
     this.lean += this.leanVelocity * dt;
 
     // Balance assist: proportional restoring force toward upright

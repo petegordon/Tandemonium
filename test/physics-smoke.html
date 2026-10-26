@@ -35,6 +35,9 @@ import { ensureRapier } from '../js/physics/rapier-runtime.js';
 import { DebrisWorld } from '../js/physics/debris-world.js';
 import { PhysicsFx, billboardRoll } from '../js/physics/physics-fx.js';
 import { CrashScene } from '../js/physics/crash-scene.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { rebatch } from '../js/bike-batch.js';
+import { batchSplit, PARTS } from '../js/physics/bike-parts.js';
 
 const results = [];
 function check(name, cond, detail = '') {
@@ -472,6 +475,66 @@ async function main() {
     lite.dispose();
     scene.remove(group);
     void hat0;
+  }
+
+  // ── #484 step 3–4: the real goose tandem comes apart, the parts land, and one wobbles the other team ──
+  {
+    const gltf = await new GLTFLoader().loadAsync('../tandem-3d/goose/goose_tandem.glb');
+    const model = gltf.scene;
+    // as BikeModel loads it: ~4.4 m long, wheels on the road, centred
+    const pre = new THREE.Box3().setFromObject(model, true), sz = pre.getSize(new THREE.Vector3());
+    model.scale.setScalar(4.4 / Math.max(sz.x, sz.y, sz.z));
+    const group = new THREE.Group();
+    group.add(model);
+    group.position.set(2, 0.3, -1);
+    group.rotation.y = 0.3;
+    scene.add(group);
+    group.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model, true);
+    model.position.y -= box.min.y - group.position.y;
+    group.updateMatrixWorld(true);
+    const stats = rebatch(model, { split: batchSplit, batchId: 'smoke' });
+    const drawnBefore = [];
+    model.traverse(o => { if (o.isMesh && o.visible) drawnBefore.push(o); });
+    // the other team, a few metres ahead and riding on
+    const other = { group: new THREE.Group(), position: new THREE.Vector3(), heading: 0.3, speed: 6, fallen: false,
+      kicks: [], addHitWobble(k, s) { this.kicks.push([k, s]); } };
+    other.position.set(2 + Math.sin(0.3) * 6, 0.3, -1 + Math.cos(0.3) * 6);
+    other.group.position.copy(other.position); other.group.rotation.y = 0.3;
+    scene.add(other.group);
+    const bike = { speed: 9, heading: 0.3, lean: 0.2, roadD: 0, group, position: group.position.clone(), goose: { riders: {} } };
+    const groundAt = (x, z) => 0.3;
+    const sc = new CrashScene(RAPIER, { bike, groundAt, cause: 'obstacle', rand: () => 0.5, others: [other] });
+    const names = sc.parts.map(p => p.part).sort().join(',');
+    check('bike apart: wheels, bars, stoker bars and both saddles leave the frame', names === Object.keys(PARTS).sort().join(','), names);
+    check('bike apart: one body per part (+ the frame)', sc.bodyCount === 1 + Object.keys(PARTS).length, sc.bodyCount);
+    const hidden = drawnBefore.filter(o => !o.visible).length, copies = sc.parts.reduce((n, p) => n + p.group.children.length, 0);
+    check('bike apart: the parts\' own meshes hide and their copies fly (same draw count)', hidden > 0 && hidden === copies, `${hidden} hidden, ${copies} copies`);
+    check('bike apart: batching left the frame merged', stats.after < stats.before, `${stats.before} -> ${stats.after} meshes`);
+    const wf = sc.parts.find(p => p.part === 'wheelF');
+    const w0 = wf.body.translation();
+    let low = Infinity, finite = true, otherMoved = 0;
+    for (let i = 0; i < 150; i++) {
+      // the other team rides on (real time: the scene's slow-mo is off here)
+      other.position.x += Math.sin(0.3) * 6 / 60; other.position.z += Math.cos(0.3) * 6 / 60; otherMoved += 0.1;
+      other.group.position.copy(other.position); other.group.updateMatrixWorld(true);
+      sc.step(1 / 60);
+      low = Math.min(low, sc.partClearance());
+      for (const p of sc.parts) { const t = p.body.translation(); if (!Number.isFinite(t.x + t.y + t.z)) finite = false; }
+    }
+    const w1 = wf.body.translation();
+    const rolled = (w1.x - w0.x) * Math.sin(0.3) + (w1.z - w0.z) * Math.cos(0.3);
+    check('bike apart: the front wheel rolls off down the road', rolled > 2, `${rolled.toFixed(2)} m`);
+    check('bike apart: parts stay finite', finite);
+    check('bike apart: no part sinks through the ground', low > -0.02, `lowest centre ${low.toFixed(3)} m above it`);
+    check('versus: a part was thrown at the other team', !!sc.aimed, sc.aimed ? sc.aimed.part : 'none');
+    check('versus: it hit them, once: a wobble, not a crash', sc.hits.length === 1 && other.kicks.length === 1 && Math.abs(other.kicks[0][0]) > 0,
+      JSON.stringify(other.kicks));
+    sc.dispose();
+    const back = drawnBefore.every(o => o.visible) && sc.parts.length === 0
+      && !scene.children.some(o => (o.name || '').startsWith('crashPart_'));
+    check('bike apart: dispose puts the bike back together (meshes shown, copies gone)', back);
+    scene.remove(group, other.group);
   }
 
   // ── a big frame gap must not stall the loop ──
