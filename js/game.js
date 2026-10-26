@@ -41,6 +41,7 @@ import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { gyroOnlySteer } from './achievement-defs.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
@@ -4544,6 +4545,10 @@ class Game {
       weekly,   // m5: the weekly road feeds no day streak
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
+    // #500 · Look, No Thumbs: earned by each rider on THIS device who steered the
+    // whole ride by controller gyro (local co-op: either seat; online: your own).
+    state.gyroOnly = [this.balanceCtrl, this.mode === 'local' ? this.balanceCtrlP2 : null]
+      .some(bc => !!bc && gyroOnlySteer(bc.steerFrames));
     this.achievements.finish(state);
   }
 
