@@ -436,6 +436,21 @@ export const TOURIST_TUNE = {
     ceilingProbe: 3,
     // Speed (m/s) the bike is cut to when resnapped out of geometry.
     resnapSpeed: 3,
+
+    // #402 §3 · what is just ahead (Pete: bump off walls and trees, go over
+    // cars and smaller shorter meshes). A forward ray from forwardLift above
+    // the ground looks aheadDist metres along the heading; anything it meets
+    // whose top is within rideOverHeight of the ground is ridden over (cars,
+    // kerbs, hedges, low walls); anything taller within bumpDist is a bump —
+    // the bike is pushed back to bumpDist + bumpClearance and the ride takes
+    // the tree-collision response (crash beat). aheadStepIn is how far past
+    // the met face the height probe drops.
+    forwardLift: 0.5,
+    aheadDist: 4,
+    aheadStepIn: 0.4,
+    rideOverHeight: 1.6,
+    bumpDist: 1.5,
+    bumpClearance: 0.6,
   },
 
   // Seconds of sustained "no ground found" (after tiles start streaming) before

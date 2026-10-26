@@ -172,10 +172,10 @@ export class PhysicsFx {
    *
    * @returns {boolean} true if the tumble was taken over
    */
-  crashTumble(bike, { cause = 'balance', slowMo = false } = {}) {
+  crashTumble(bike, { cause = 'balance', slowMo = false, others = [] } = {}) {
     if (!this.ready || !bike || !bike.group) return false;
     if (this.ragdolls && bike.goose && Object.keys(bike.goose.riders || {}).length) {
-      return this._crashScene(bike, cause, slowMo);
+      return this._crashScene(bike, cause, slowMo, others);
     }
 
     const speed = bike.speed;
@@ -232,11 +232,11 @@ export class PhysicsFx {
    * With slowMo, the bike stays down for SLOWMO.downReal REAL seconds; the game slows this bike's view
    * (crash-slowmo.js) for the first moment of it, so its fall timer is set in simulated seconds.
    */
-  _crashScene(bike, cause, slowMo) {
+  _crashScene(bike, cause, slowMo, others = []) {
     let scene;
     try {
       scene = new CrashScene(this._world.RAPIER, {
-        bike, cause,
+        bike, cause, slowMo, others,
         // a second crash while one is still live (versus): the lighter rag doll
         budget: this._scenes.size ? 'lite' : 'full',
         groundAt: (x, z) => this._groundAt(x, z, bike.roadD),

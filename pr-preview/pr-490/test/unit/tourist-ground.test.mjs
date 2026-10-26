@@ -59,12 +59,26 @@ function follower(tiles, probe = TOURIST_TUNE) {
   return new TouristGround({ tiles, tune: TOURIST_TUNE, probeUp: probe.spawnProbeHeight, probeRay: probe.rayLength });
 }
 
-/** Ride along +x at `speed` m/s for `metres`, applying groundY like the world does. */
-function ride(g, pos, metres, speed = 6, onStep = null) {
+/** Tree trunk: a closed cylinder of radius r, `h` tall, standing on y. */
+function trunk(x, r, h, y = 0) {
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 12), new THREE.MeshBasicMaterial());
+  mesh.position.set(x, y + h / 2, 0);
+  return mesh;
+}
+
+/** Bike yaw for travel along +x (bike-model: x += sin(heading), z += cos(heading)). */
+const EAST = Math.PI / 2;
+
+/**
+ * Ride along +x at `speed` m/s for `metres`, applying groundY like the world
+ * does. `heading` turns the forward probe on (undefined = the probe is off, as
+ * before the bike has a heading to give).
+ */
+function ride(g, pos, metres, speed = 6, onStep = null, heading = undefined) {
   const steps = Math.ceil(metres / (speed * DT));
   for (let i = 0; i < steps; i++) {
     pos.x += speed * DT;
-    const r = g.step(pos, DT);
+    const r = g.step(pos, DT, true, heading);
     pos.y = g.groundY;
     if (onStep) onStep(r, pos);
   }
@@ -100,9 +114,10 @@ test('riding under a tree keeps the bike on the ground', () => {
   assert.ok(g.breadcrumbs.length >= 10, `breadcrumbs recorded (${g.breadcrumbs.length})`);
 });
 
-test('riding into a building never climbs onto the roof; it resnaps to the street', () => {
-  // Long enough that the bike is still inside when the resnap timer fires (a
-  // short building is simply passed through — what a wall should do is #402 §3).
+test('inside a building (forward probe off) the bike never climbs onto the roof; it resnaps to the street', () => {
+  // The safety net under the wall bump: with no heading the forward probe is
+  // off and the bike ends up inside. Long enough that it is still inside when
+  // the resnap timer fires.
   const hole = { x0: 15, x1: 115, z0: -5, z1: 5 };
   const tiles = fakeTiles([ground(0, hole), building(15, 115, 12)]);
   const g = follower(tiles);
@@ -244,4 +259,62 @@ test('a low ceiling overhead with no ground under it resnaps immediately', () =>
   assert.equal(resnapped, 'crumb');
   assert.ok(frames * DT < TOURIST_TUNE.ground.resnapAfter / 2, `did not wait for the timer (${frames} frames, was ${before})`);
   assert.ok(pos.x < 10, `back outside (${pos.x.toFixed(1)})`);
+});
+
+// --- #402 §3 · Pete: "bump off walls and trees, go over cars and smaller shorter meshes" ---
+
+test('a 1 m car ahead is ridden over: Y rises onto it and comes back down', () => {
+  const hole = { x0: 20, x1: 24, z0: -1, z1: 1 };
+  const g = follower(fakeTiles([ground(0, hole), building(20, 24, 1.0)]));   // 4 m long, 1 m high
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST);
+  let maxY = -Infinity, bumps = 0;
+  ride(g, pos, 40, 6, (_, p) => { maxY = Math.max(maxY, p.y); if (g.bump) bumps++; }, EAST);
+  assert.equal(bumps, 0, 'a car is not a wall');
+  assert.ok(maxY > 1.0 + WHEEL - 0.05, `rose onto the roof (max Y ${maxY.toFixed(2)})`);
+  assert.ok(pos.x > 24, `rolled on past it (x=${pos.x.toFixed(1)})`);
+  assert.ok(Math.abs(g.groundY - WHEEL) < 0.05, `back on the street (${g.groundY.toFixed(2)})`);
+});
+
+test('a 4 m wall ahead is a bump: the bike is held off it and Y stays on the street', () => {
+  const G = TOURIST_TUNE.ground;
+  const hole = { x0: 20, x1: 30, z0: -5, z1: 5 };
+  const g = follower(fakeTiles([ground(0, hole), building(20, 30, 4)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST);
+  let maxY = -Infinity, bumps = 0, firstBump = null, maxX = -Infinity;
+  ride(g, pos, 40, 6, (_, p) => {
+    maxY = Math.max(maxY, p.y); maxX = Math.max(maxX, p.x);
+    if (g.bump) { bumps++; if (!firstBump) firstBump = { ...g.bump, x: p.x }; }
+  }, EAST);
+  assert.ok(bumps > 0, 'the wall bumped');
+  assert.ok(firstBump.distance <= G.bumpDist, `bumped within bumpDist (${firstBump.distance.toFixed(2)})`);
+  assert.ok(Math.abs(firstBump.x - (20 - G.bumpDist - G.bumpClearance)) < 0.05, `pushed back to clearance (x=${firstBump.x.toFixed(2)})`);
+  assert.ok(maxX < 20, `never entered the wall (max x ${maxX.toFixed(2)})`);
+  assert.ok(maxY < WHEEL + 0.05, `Y stayed on the street (max ${maxY.toFixed(2)})`);
+});
+
+test('a tree trunk bumps; its crown overhead does not', () => {
+  const hole = { x0: -20.5, x1: -19.5, z0: -0.5, z1: 0.5 };
+  const g = follower(fakeTiles([ground(0, hole), trunk(-20, 0.5, 2.5), tree(-20, 3, 2.5)]));
+  const pos = new THREE.Vector3(-40, WHEEL, 0);
+  g.step(pos, DT, true, EAST);
+  let bumps = 0, maxY = -Infinity, maxX = -Infinity;
+  ride(g, pos, 30, 6, (_, p) => { if (g.bump) bumps++; maxY = Math.max(maxY, p.y); maxX = Math.max(maxX, p.x); }, EAST);
+  assert.ok(bumps > 0, 'the trunk bumped');
+  assert.ok(maxX < -20.5, `held off the trunk (max x ${maxX.toFixed(2)})`);
+  assert.ok(maxY < WHEEL + 0.05, `never lifted into the crown (max Y ${maxY.toFixed(2)})`);
+});
+
+test('the forward probe sees nothing on open street and does not fire on a kerb', () => {
+  // A 0.15 m kerb: below forwardLift, so the forward ray passes over it and the
+  // step window alone takes the bike up it.
+  const hole = { x0: 10, x1: 60, z0: -5, z1: 5 };
+  const g = follower(fakeTiles([ground(0, hole), building(10, 60, 0.15)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST);
+  let bumps = 0;
+  ride(g, pos, 30, 6, () => { if (g.bump) bumps++; }, EAST);
+  assert.equal(bumps, 0);
+  assert.ok(Math.abs(g.groundY - (0.15 + WHEEL)) < 0.05, `up the kerb (${g.groundY.toFixed(2)})`);
 });

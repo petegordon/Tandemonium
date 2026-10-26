@@ -356,7 +356,7 @@ export class TouristWorld {
    */
   _groundFollow(bikePos, dt) {
     const ground = this._ground;
-    const r = ground.step(bikePos, dt, this._tilesStarted);
+    const r = ground.step(bikePos, dt, this._tilesStarted, this._bike ? this._bike.heading : undefined);
     this._groundY = ground.groundY;
 
     // Throttled ground-follow telemetry (~2/sec), only with ?ttdebug.
@@ -367,7 +367,8 @@ export class TouristWorld {
       console.log(`[Tourist GF] bikeXZ=(${bikePos.x.toFixed(0)},${bikePos.z.toFixed(0)}) ` +
         `bikeY=${bikePos.y.toFixed(1)} groundY=${this._groundY.toFixed(1)} ` +
         `hits=${r.hits} rejected=${r.rejected} pickedY=${picked} probeTop=${r.probeTop.toFixed(0)}` +
-        (r.resnapped ? ` RESNAP=${r.resnapped} crumbs=${ground.breadcrumbs.length}` : ''));
+        (r.resnapped ? ` RESNAP=${r.resnapped} crumbs=${ground.breadcrumbs.length}` : '') +
+        (ground.bump ? ` BUMP at ${ground.bump.distance.toFixed(1)}m` : ''));
     }
 
     const ease = Math.min(1, TOURIST_TUNE.groundLerp * dt);
@@ -415,7 +416,18 @@ export class TouristWorld {
   setRaceMarkers() {}
   clearRaceMarkers() {}
   setBalloonColor() {}
-  checkTreeCollision() { return { hit: false }; }
+  // #478/#484 · no Grandma's house or present pile on real streets (the
+  // victory path calls both every tourist ride; without them it threw).
+  startPresentStack() { return false; }
+  updateFinishFx() {}
+  /**
+   * #402 §3 · a wall, trunk or crown right ahead (TouristGround._probeAhead)
+   * is reported as a tree hit, so game.js gives it the same crash beat as a
+   * procedural tree. The ground follower has already pushed the bike back out
+   * of the face. Low things (cars, kerbs, hedges) are ridden over instead and
+   * never reach here.
+   */
+  checkTreeCollision() { return { hit: !!this._ground.bump, tree: null }; }
   // _startCountdown reseeds the world from the level; real streets have no seed.
   // (Without this _startCountdown threw before it built the RaceManager, so a
   // tourist ride rolled but never had a finish.)

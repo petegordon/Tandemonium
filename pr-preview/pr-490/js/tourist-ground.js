@@ -47,6 +47,11 @@ export class TouristGround {
     this._raycaster.firstHitOnly = false;
     this._ceilRay = new THREE.Raycaster();
     this._ceilRay.firstHitOnly = true;
+    this._fwdRay = new THREE.Raycaster();   // #402 §3: what is just ahead of the bike
+    this._fwdRay.firstHitOnly = true;
+    this._topRay = new THREE.Raycaster();   // …and how tall it is
+    this._topRay.firstHitOnly = false;
+    this._tmpDir = new THREE.Vector3();
     this._tmpOrigin = new THREE.Vector3();
     this._tmpNormalMat = new THREE.Matrix3();
     this._tmpNormal = new THREE.Vector3();
@@ -66,6 +71,14 @@ export class TouristGround {
     /** @type {{x:number,y:number,z:number}[]} accepted ground points, oldest first */
     this.breadcrumbs = [];
     this._resnapTries = 0;
+    /**
+     * #402 §3 · set by the last step() when a wall/trunk/crown is right ahead:
+     * {distance, point, top} — the world turns it into a tree-collision hit.
+     * @type {{distance:number, point:THREE.Vector3, top:number|null}|null}
+     */
+    this.bump = null;
+    /** A low obstacle ahead (car, kerb, hedge) the step window may climb onto. */
+    this._rideOver = null;
   }
 
   /**
@@ -74,11 +87,17 @@ export class TouristGround {
    * @param {THREE.Vector3} bikePos  live bike position
    * @param {number} dt
    * @param {boolean} tilesStarted  false while tile streaming is still gated (mobile): no-hit time is not counted
+   * @param {number} [heading]  bike yaw (x = sin, z = cos); when given, the forward probe runs
    */
-  step(bikePos, dt, tilesStarted = true) {
+  step(bikePos, dt, tilesStarted = true, heading = undefined) {
     const tune = this.tune;
     const g = tune.ground;
     const ray = this._raycaster;
+
+    // #402 §3 · look a few metres ahead BEFORE the ground probe, so a low
+    // obstacle it finds widens this frame's step window.
+    this.bump = null;
+    if (this.hasGround && Number.isFinite(heading)) this._probeAhead(bikePos, heading, g);
 
     // The ray starts above the bike, but never below the anchor plane + probeUp.
     // Without that floor the probe is a one-way trapdoor: accept one bad hit far
@@ -207,8 +226,15 @@ export class TouristGround {
    */
   _pickStep(candidates, bikePos, g) {
     const travelled = Math.hypot(bikePos.x - this._refX, bikePos.z - this._refZ);
-    const maxUp = Math.min(g.stepUpMax, g.stepUpBase + g.stepUpPerMetre * travelled);
+    let maxUp = Math.min(g.stepUpMax, g.stepUpBase + g.stepUpPerMetre * travelled);
     const maxDown = Math.min(g.stepDownMax, g.stepDownBase + g.stepDownPerMetre * travelled);
+    // A rideable obstacle was seen ahead: let the window reach its top until
+    // the bike has had the chance to roll onto it (then it expires).
+    const ro = this._rideOver;
+    if (ro) {
+      if (Math.hypot(bikePos.x - ro.x, bikePos.z - ro.z) > g.aheadDist * 2) this._rideOver = null;
+      else maxUp = Math.max(maxUp, ro.top - this._refY + g.stepUpBase);
+    }
     let chosen = null, best = Infinity;
     for (const h of candidates) {
       const dy = h.point.y - this._refY;
@@ -226,6 +252,60 @@ export class TouristGround {
     this._tmpNormal.copy(hit.face.normal).applyMatrix3(this._tmpNormalMat).normalize();
     if (this._tmpNormal.y < 0) this._tmpNormal.negate(); // face upward
     return this._tmpNormal.y;
+  }
+
+  /**
+   * #402 §3 (Pete, 2026-10-26: "bump off walls and trees, go over cars and
+   * smaller shorter meshes"). A short ray runs forward from just above the
+   * last accepted ground. If it meets a face within aheadDist, a second ray
+   * drops from rideOverHeight above the ground just past that face:
+   *   - it finds an upward-facing top (car roof, hedge, kerb, low wall)
+   *     → rideable: the step window is allowed up to that top (see _pickStep),
+   *       so Y rises onto it and comes back down after;
+   *   - it finds nothing (the thing is taller than rideOverHeight: a building
+   *     wall, a tree trunk under its crown) and the face is within bumpDist
+   *     → a bump: the bike is pushed back to bumpDist + bumpClearance and
+   *       `this.bump` is set for the world's checkTreeCollision.
+   * The forward ray starts forwardLift above the ground so kerbs and road
+   * texture never register, and runs at the last ACCEPTED height so a bike
+   * already on a car roof probes from the roof.
+   */
+  _probeAhead(bikePos, heading, g) {
+    const sx = Math.sin(heading), cz = Math.cos(heading);
+    this._tmpDir.set(sx, 0, cz);
+    this._tmpOrigin.set(bikePos.x, this._refY + g.forwardLift, bikePos.z);
+    this._fwdRay.set(this._tmpOrigin, this._tmpDir);
+    this._fwdRay.far = g.aheadDist;
+    const ahead = [];
+    this.tiles.raycast(this._fwdRay, ahead);
+    if (!ahead.length) return;
+    let near = ahead[0];
+    for (const h of ahead) if (h.distance < near.distance) near = h;
+
+    // How tall is it? Probe straight down just past the face.
+    const px = near.point.x + sx * g.aheadStepIn, pz = near.point.z + cz * g.aheadStepIn;
+    this._tmpOrigin.set(px, this._refY + g.rideOverHeight, pz);
+    this._topRay.set(this._tmpOrigin, DOWN);
+    this._topRay.far = g.rideOverHeight + g.stepDownBase;
+    const tops = [];
+    this.tiles.raycast(this._topRay, tops);
+    let top = null;
+    for (const h of tops) {
+      if (this._worldNormal(h) < g.minNormalY) continue;
+      if (top === null || h.point.y > top) top = h.point.y;
+    }
+
+    if (top !== null) {
+      // Rideable (or thinner than aheadStepIn, in which case the ground beyond
+      // is the top and the bike simply rolls through it).
+      this._rideOver = { x: bikePos.x, z: bikePos.z, top };
+      return;
+    }
+    if (near.distance > g.bumpDist) return;   // too tall, but not close yet
+    const back = (g.bumpDist + g.bumpClearance) - near.distance;
+    bikePos.x -= sx * back;
+    bikePos.z -= cz * back;
+    this.bump = { distance: near.distance, point: near.point, top };
   }
 
   _ceilingAbove(bikePos, g) {
