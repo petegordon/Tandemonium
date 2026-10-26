@@ -143,12 +143,13 @@ test('pause() stops the elapsed clock and resume() takes the pause out of it', (
   const t0 = rm.startTime;
   rm.pause(t0 + 1000);
   assert.equal(rm.paused, true);
-  assert.equal(rm.getElapsedMs(), 1000, 'frozen at the second it paused');
+  // performance.now() is a float, so the clock is compared to the millisecond.
+  assert.ok(Math.abs(rm.getElapsedMs() - 1000) < 0.01, 'frozen at the second it paused');
   rm.resume(t0 + 6000);
   assert.equal(rm.paused, false);
-  assert.equal(rm.startTime, t0 + 5000, 'five paused seconds leave the ride');
+  assert.ok(Math.abs(rm.startTime - (t0 + 5000)) < 0.01, 'five paused seconds leave the ride');
   rm.resume(t0 + 9000);   // idempotent
-  assert.equal(rm.startTime, t0 + 5000);
+  assert.ok(Math.abs(rm.startTime - (t0 + 5000)) < 0.01);
 });
 
 test('a ride that starts during a pause begins at the resume', () => {
