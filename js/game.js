@@ -4609,7 +4609,28 @@ class Game {
     // Briefly damp the chase cam's residual shake so the cinematic
     // starts from a clean pose.
     if (this.chaseCamera) this.chaseCamera.shakeAmount = 0;
-    this._finishCinematic = new FinishCameraAnimation(this.camera, this.bike);
+    // #478 · Grandma's 3D house stands on the bike's right at the finish: swing
+    // round the left so the camera never passes through it.
+    this._finishCinematic = new FinishCameraAnimation(this.camera, this.bike, { via: this._finishSwingSide() });
+    // #478 · the ride's presents fly off the bike into the pile at Grandma's
+    // (Grandma's and Today's Road only; World says no elsewhere).
+    if (this.world && this.bike) this.world.startPresentStack(this._presentsForStack(fromRemote), this.bike.position);
+  }
+
+  /** #478 · the finish swing goes round the left where Grandma's house stands on the right. */
+  _finishSwingSide() {
+    return this.world && this.world._grandmaFinish ? -1 : 1;
+  }
+
+  /**
+   * #478 · how many presents go on Grandma's pile: this ride's collected
+   * count. The stoker takes the captain's authoritative tally when it has it.
+   */
+  _presentsForStack(fromRemote = false) {
+    const remote = fromRemote && this._remoteFinishStats && this._remoteFinishStats.raceSummary;
+    if (remote && typeof remote.collectibles === 'number') return remote.collectibles;
+    if (this.raceManager) return this.raceManager.collectiblesCount || 0;
+    return this.collectibleManager ? this.collectibleManager.collected : 0;
   }
 
   /**
@@ -4645,8 +4666,9 @@ class Game {
     }
 
     // Camera moves at real time so the cinematic timing is consistent
-    // regardless of the bike's slow-mo wind-down.
+    // regardless of the bike's slow-mo wind-down. So does the present pile.
     const done = cinematic.update(dt);
+    if (this.world) this.world.updateFinishFx(dt);
 
     this.renderer.render(this.scene, this.camera);
 
@@ -6696,6 +6718,7 @@ class Game {
         this._renderVersusViews();
       } else {
         this.world.update(this.bike.position, this.bike.roadD, dt);
+        this.world.updateFinishFx(dt);   // #478 · a pile still landing when the victory screen opens
         if (this.state === 'slingAim') this._placeSlingCamera();
         else this.chaseCamera.update(this.bike, dt, roadPath);
         if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
@@ -7581,6 +7604,9 @@ class Game {
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';
+    // #478 · versus: the winners deliver to Grandma — their presents fly into
+    // her pile. The losers' don't (they never reach the house).
+    this.world.startPresentStack(winner.collectibles || 0, winner.bike.position);
     hapticFinish(); // everyone feels the finish
     this._playBeep(800, 0.3);
     setTimeout(() => this._playBeep(1000, 0.3), 150);
@@ -7625,7 +7651,7 @@ class Game {
     // Full-frame phase: hide the split-screen divider + per-half panels
     // (CSS keys off this class). Cleared at rematch countdown / teardown.
     document.body.classList.add('versus-fullframe');
-    this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike);
+    this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike, { via: this._finishSwingSide() });
 
     this.versusHud.showBanner(`${winner.color.name} WINS!`, winner.color.hex);
   }
@@ -7658,8 +7684,10 @@ class Game {
     );
     winner.grassParticles.update(winner.bike, slowDt);
 
-    // Camera orbits at real time for consistent cinematic pacing.
+    // Camera orbits at real time for consistent cinematic pacing; the
+    // winners' presents fly into Grandma's pile in real time too (#478).
     const done = cinematic.update(dt);
+    this.world.updateFinishFx(dt);
     this.renderer.render(this.scene, this.camera);
 
     if (done) {

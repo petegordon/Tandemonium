@@ -30,9 +30,17 @@ const END_LOOK_FWD = 1.4;
 const END_LOOK_Y = 1.55;
 
 export class FinishCameraAnimation {
-  constructor(camera, bike) {
+  /**
+   * @param {THREE.Camera} camera
+   * @param {object} bike
+   * @param {{ via?: 1 | -1 }} [opts] which side the swing passes: 1 (default)
+   *   round the bike's right, -1 round its left. #478: Grandma's 3D house
+   *   stands on the right at the finish, so those levels swing left.
+   */
+  constructor(camera, bike, { via = 1 } = {}) {
     this.camera = camera;
     this.bike = bike;
+    this.startTheta = via < 0 ? -Math.PI : Math.PI;
 
     // Capture the camera's starting pose so the swing eases out from
     // wherever the chase cam left it instead of snapping.
@@ -123,14 +131,15 @@ export class FinishCameraAnimation {
     return out;
   }
 
-  // Phase 1: orbit from behind (theta=π) around the right side (theta=π/2)
+  // Phase 1: orbit from behind (theta=±π) around the right side (theta=π/2;
+  // or the left, -π/2, when constructed with via: -1)
   // to a low frontal three-quarter view (theta ≈ -0.35), pulling in close
   // with a generous height drop.
   _updateSwing(t) {
     const e = this._easeInOut(t);
     const bikePos = this.bike.position;
 
-    const theta = this._lerp(Math.PI, END_THETA, e);
+    const theta = this._lerp(this.startTheta, END_THETA, e);
     const radius = this._lerp(11, END_RADIUS, e);
     const height = this._lerp(4.0, END_HEIGHT, e);
 

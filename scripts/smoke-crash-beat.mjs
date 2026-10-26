@@ -38,13 +38,25 @@ await page.waitForFunction(()=>window._game?.state==='playing',{timeout:120000})
 console.log('riding; safety =', await page.evaluate(()=>window._game.safetyMode));
 
 async function crashAndTime(n) {
-  const t0 = await page.evaluate(() => {
+  const t0 = await page.evaluate((n) => {
     const g = window._game;
     g._recordCrash('balance');
+    // #483: crash 1 goes over from a steep lean, the way a real lean crash
+    // does, and every frame of the tumble is watched until the reset.
+    if (n === 1) {
+      g.bike.lean = -1.38;
+      window.__fallMinLean = Infinity;
+      const watch = () => {
+        if (!g.bike.fallen) return;
+        window.__fallMinLean = Math.min(window.__fallMinLean, Math.abs(g.bike.lean));
+        requestAnimationFrame(watch);
+      };
+      requestAnimationFrame(watch);
+    }
     g.bike._fall();
     window.__t0 = performance.now();
     return window.__t0;
-  });
+  }, n);
   // wait until we're riding again (or a modal appears)
   const res = await page.waitForFunction(() => {
     const g = window._game;
@@ -56,11 +68,16 @@ async function crashAndTime(n) {
   return res;
 }
 const r1 = await crashAndTime(1);
+// #483: the tumble eases on from the crash lean; it never snaps back upright
+// (it went from the crash lean to ~0 and fell a second time).
+const minLean = await page.evaluate(() => window.__fallMinLean);
+const oneFall = minLean >= 1.3;
+console.log(`${oneFall ? '✔' : '✖'} one fall: the bike stays down from the crash lean until the reset (smallest lean while down ${minLean.toFixed(2)} rad)`);
 const r2 = await crashAndTime(2);
 const r3 = await crashAndTime(3);
 const state = await page.evaluate(()=>({ crashes: window._game._crashState, countdown: window._game.countdownTimer, gameoverVisible: document.getElementById('game-over')?.style.display }));
 console.log('crash state:', JSON.stringify(state));
-const ok = r1.outcome==='riding' && r2.outcome==='riding' && r3.outcome==='modal';
+const ok = oneFall && r1.outcome==='riding' && r2.outcome==='riding' && r3.outcome==='modal';
 console.log(ok ? '✔ two crashes resume, the third offers help' : '✖ policy did not hold');
 await browser.close(); server.close();
 process.exit(ok?0:1);

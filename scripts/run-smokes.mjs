@@ -19,7 +19,7 @@ export const SMOKES = [
   'lobby', 'boot', 'edition', 'ctas', 'no-media', 'tutorial', 'records', 'seed',
   'daily', 'ranked', 'ride', 'crash', 'helping-hand', 'disruptions', 'lookahead',
   'ping', 'economy', 'achievements', 'quality', 'layout', 'geese', 'physics',
-  'slingshot', 'slingshot-aim', 'tourist', 'grandma', 'host-room', 'disconnect',
+  'slingshot', 'slingshot-aim', 'tourist', 'grandma', 'props', 'host-room', 'disconnect',
   'local-coop', 'versus', 'webhid', 'flows', 'steam-input', 'input', 'solo-extras',
   'options', 'lobby-layout', 'online', 'phone-pad', 'phone-coop',
   'controller-overlay',
