@@ -51,4 +51,12 @@ uf-sheet .uf-sheet__actions uf-button { margin: 0 !important; width: auto; }
 .end-unlocked[hidden] { display: none; }
 /* The floating toast is now a kit badge: the wrapper only animates it. */
 .achievement-toast { padding: 0 !important; background: none !important; border: none !important; backdrop-filter: none !important; }
-.achievement-toast uf-achievement { background: var(--uf-color-surface); min-width: 15em; }
+/* #482: the kit's own uf-achievement[state="new"] fill is a 10% tint over
+   surface-3 (4% white), right on a panel but see-through over the road; its
+   rule ties this one on specificity and loads later, so name the state too.
+   Same tint, over the solid panel colour. */
+.achievement-toast uf-achievement,
+.achievement-toast uf-achievement[state] {
+  background: color-mix(in srgb, var(--uf-color-accent-2) 10%, var(--uf-color-surface));
+  min-width: 15em;
+}
