@@ -9,6 +9,7 @@ import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RE
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
+import { crashTimeScale, clockHeld } from './crash-slowmo.js';
 import * as records from './records.js';
 import './build-badge.js';   // preview builds: which commit is on screen
 import { installSlingshotMode } from './slingshot-mode.js';
@@ -6391,6 +6392,7 @@ class Game {
 
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
+    if (bike && !bike.fallen) bike._crashCause = cause;   // #484: read by the crash scene's throw (onFall)
     // #401: a Slingshot crash is not a ride crash (no Goose Down, So Close, False Start).
     if (this._rideSystemOn('achievements')) this.achievements.crash(cause, {   // #401
       ref: this.mode === 'versus' ? null : this.raceManager,
@@ -6435,9 +6437,29 @@ class Game {
 
     this._physicsBikes = bikes.filter(Boolean);
     for (const bike of this._physicsBikes) {
-      bike.onFall = (b) => { if (this.physicsFx) this.physicsFx.crashTumble(b); };
+      // #484: the crash scene (rag dolls, hats); slow-mo where the view is ours to slow (not online co-op,
+      // where the captain's frame pacing feeds the stoker)
+      bike.onFall = (b) => {
+        if (this.physicsFx) this.physicsFx.crashTumble(b, { cause: b._crashCause || 'balance', slowMo: this._crashSlowMoMode() });
+      };
       bike.onReset = (b) => { if (this.physicsFx) this.physicsFx.releaseCrash(b); };
     }
+  }
+
+  /** #484: modes whose crashing view may slow down (the slow-mo moment). */
+  _crashSlowMoMode() {
+    return this.mode === 'solo' || this.mode === 'local' || this.mode === 'versus';
+  }
+
+  /** #484: the time scale of this bike's view (1 unless it is in a crash's slow-mo moment). */
+  _crashScale(bike) {
+    if (!bike || !bike.fallen || !bike._slowMoStart) return 1;
+    return crashTimeScale((performance.now() - bike._slowMoStart) / 1000);
+  }
+
+  /** #484: the race clock is held while this bike's view is slowed. */
+  _crashClockHeld(bike) {
+    return !!(bike && bike.fallen && bike._slowMoStart && clockHeld((performance.now() - bike._slowMoStart) / 1000));
   }
 
   /** Tear the sidecar down and give every bike its own transform back. */
@@ -6651,13 +6673,13 @@ class Game {
 
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
-        this._updateSolo(dt);
+        this._updateSolo(dt * this._crashScale(this.bike));   // #484 slow-mo
       } else if (this.mode === 'captain') {
         this._updateCaptain(dt);
       } else if (this.mode === 'stoker') {
         this._updateStoker(dt);
       } else if (this.mode === 'local') {
-        this._updateLocal(dt);
+        this._updateLocal(dt * this._crashScale(this.bike));  // #484 slow-mo
       } else if (this.mode === 'versus') {
         this._updateVersus(dt);
       }
@@ -6823,7 +6845,8 @@ class Game {
       // Tourist Mode (#333): free-roam — no race timer / timeout.
       const timerEnabled = !this.isTourist &&
         (!this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false);
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled ? dt : 0);
+      // #484: the clock is held through a crash's slow-mo moment
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled && !this._crashClockHeld(this.bike) ? dt : 0);
       if (raceEvent) {
         if (raceEvent.event === 'timeout' && timerEnabled) { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
@@ -6929,7 +6952,7 @@ class Game {
     // phone-lock shouldn't pause the timer for both players. (#321 already
     // debounces the reconnect UI so quick blips don't even show.)
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, this._crashClockHeld(this.bike) ? 0 : dt);   // #484
       if (raceEvent) {
         if (raceEvent.event === 'timeout') { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
@@ -7303,7 +7326,8 @@ class Game {
       this._clearOverlayButtons();
     }
 
-    for (const rig of rigs) this._stepTeam(rig, dt);
+    // #484: a crashing team's half slows for its slow-mo moment; the other team races on
+    for (const rig of rigs) { rig._dt = dt * this._crashScale(rig.bike); this._stepTeam(rig, rig._dt); }
     this.achievements.ride.frame(dt, { ref: null, playing: true });   // #401 False Start: the clock since GO runs in versus too
     // m19: a race against the ?versusbot=1 rider earns no achievements.
     if (!rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
@@ -7335,7 +7359,7 @@ class Game {
     this.world.update(a.bike.position, a.bike.roadD, dt, { pos: b.bike.position, d: b.bike.roadD });
 
     for (const rig of rigs) {
-      rig.chaseCamera.update(rig.bike, dt, this.world.roadPath);
+      rig.chaseCamera.update(rig.bike, rig._dt != null ? rig._dt : dt, this.world.roadPath);
       if (rig.bike.fallen && rig.bike.fallElapsed < 0.35) {
         rig.chaseCamera.shakeAmount = 0.15;
       }

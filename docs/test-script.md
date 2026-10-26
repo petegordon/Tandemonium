@@ -95,6 +95,9 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-03 | Grandma's: clock is held until the first pedal taps, then runs | A | `smoke:ride` |
 | SR-04 | Grandma's: ride to the finish; victory overlay shows time, medal, coins | A | `smoke:economy`, `smoke:achievements` |
 | SR-05 | Crash: two crashes in a segment go straight back to riding; the third offers help | A | `smoke:crash` |
+| SR-05b | Crash: the bike falls once from the lean it crashed at — never pops upright and falls again (#483; Physics FX off shows it) | A | `test/unit/crash-tumble`, `node scripts/reel/crash-probe.mjs --fx off` (manual, GPU) |
+| SR-05c | Crash (Physics FX on): both geese are thrown as rag dolls, hats fly, the view slows for a moment with the clock held, then the riders are back in their seats at the checkpoint (#484) | A | `smoke:physics` (crash scene), `test/unit/crash-ragdoll`, `node scripts/reel/crash-probe.mjs` (manual, GPU) |
+| SR-05d | SR-05c looks right and is funny: no geese through the floor, no jitter, versus slows only the crashing half | M | `node scripts/reel/crash-review.mjs` (review video) |
 | SR-06 | Helping hand: repeated failure on a checkpoint makes it visibly easier | A | `smoke:helping-hand` |
 | SR-07 | Disruptions warn before they act and leave Chill alone | A | `smoke:disruptions` |
 | SR-08 | Geese and obstacles appear, collide and react | M | `smoke:geese` (riders only) |
