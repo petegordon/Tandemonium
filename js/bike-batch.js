@@ -71,12 +71,15 @@ export function unbatch(root, batchId) {
  * @param {Set<THREE.Object3D>|THREE.Object3D[]} [opts.keep]  meshes to leave as they are
  * @param {Set<THREE.Object3D>|THREE.Object3D[]} [opts.movers]  nodes the game turns itself (like bones)
  * @param {string} [opts.batchId]  marks the merged meshes this bike owns
+ * @param {(mesh: THREE.Object3D) => string} [opts.split]  meshes that answer differently never merge
+ *   together; the answer is kept on the merged mesh as userData.bikePart (#484: the parts that fly off)
  * @returns {{ before: number, after: number }} meshes drawn before and after
  */
 export function rebatch(root, opts = {}) {
   const batchId = opts.batchId || 'bike';
   const keep = new Set(opts.keep || []);
   const movers = new Set(opts.movers || []);
+  const split = opts.split || null;
   unbatch(root, batchId);
   root.updateMatrixWorld(true);
 
@@ -90,7 +93,8 @@ export function rebatch(root, opts = {}) {
       const mk = materialKey(o.material);
       if (!o.isSkinnedMesh && !o.isInstancedMesh && !keep.has(o) && !movers.has(o) && mk !== null && o.geometry) {
         const owner = ownerOf(o, root, movers);
-        const key = mk + '#' + geometryKey(o.geometry) + '#' + o.castShadow + o.receiveShadow;
+        const key = mk + '#' + geometryKey(o.geometry) + '#' + o.castShadow + o.receiveShadow +
+          (split ? '#' + split(o) : '');
         if (!groups.has(owner)) groups.set(owner, new Map());
         const byKey = groups.get(owner);
         if (!byKey.has(key)) byKey.set(key, []);
@@ -127,6 +131,7 @@ export function rebatch(root, opts = {}) {
       mesh.castShadow = first.castShadow;
       mesh.receiveShadow = first.receiveShadow;
       mesh.userData.bikeBatch = batchId;
+      if (split) mesh.userData.bikePart = split(first);
       owner.add(mesh);
       for (const m of meshes) { m.visible = false; m.userData.bikeBatched = true; }
       removed += meshes.length;

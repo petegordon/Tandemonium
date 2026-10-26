@@ -31,6 +31,8 @@
 import * as THREE from 'three';
 import { ensureRapier } from './rapier-runtime.js';
 import { DebrisWorld } from './debris-world.js';
+import { CrashScene } from './crash-scene.js';
+import { SLOWMO, simSecondsFor } from '../crash-slowmo.js';
 
 const _axis = new THREE.Vector3();
 const _camRight = new THREE.Vector3();
@@ -76,6 +78,13 @@ export class PhysicsFx {
     // orientation it was cloned with — going edge-on, and invisible, the
     // moment the camera moved past it. See faceCamera().
     this._billboards = [];
+    // #484: crashes with goose riders become a CrashScene (rag dolls + hats + the bike), one per crashing
+    // bike. Off = the plain one-box tumble below.
+    this.ragdolls = true;
+    this._scenes = new Set();
+    // #478 · short effects riding on debris (the knocked cone's skull burst).
+    // Each has update(dt) -> stillPlaying and dispose().
+    this._effects = [];
   }
 
   /** Live only once the WASM has landed AND the flag is on. */
@@ -112,6 +121,9 @@ export class PhysicsFx {
   /** Advance the sidecar. Free when nothing is live. */
   update(dt) {
     if (this._world) this._world.step(dt);
+    for (let i = this._effects.length - 1; i >= 0; i--) {
+      if (!this._effects[i].update(dt)) this._effects.splice(i, 1);
+    }
   }
 
   /**
@@ -160,8 +172,11 @@ export class PhysicsFx {
    *
    * @returns {boolean} true if the tumble was taken over
    */
-  crashTumble(bike) {
+  crashTumble(bike, { cause = 'balance', slowMo = false, others = [] } = {}) {
     if (!this.ready || !bike || !bike.group) return false;
+    if (this.ragdolls && bike.goose && Object.keys(bike.goose.riders || {}).length) {
+      return this._crashScene(bike, cause, slowMo, others);
+    }
 
     const speed = bike.speed;
     const heading = bike.heading;
@@ -212,9 +227,44 @@ export class PhysicsFx {
     return true;
   }
 
+  /**
+   * #484: the whole crash as one scene: the bike tumbles, both geese are thrown as rag dolls, the hats fly.
+   * With slowMo, the bike stays down for SLOWMO.downReal REAL seconds; the game slows this bike's view
+   * (crash-slowmo.js) for the first moment of it, so its fall timer is set in simulated seconds.
+   */
+  _crashScene(bike, cause, slowMo, others = []) {
+    let scene;
+    try {
+      scene = new CrashScene(this._world.RAPIER, {
+        bike, cause, slowMo, others,
+        // a second crash while one is still live (versus): the lighter rag doll
+        budget: this._scenes.size ? 'lite' : 'full',
+        groundAt: (x, z) => this._groundAt(x, z, bike.roadD),
+      });
+    } catch (err) {
+      console.warn('[physics] crash scene failed, plain tumble instead:', err && err.message);
+      if (scene) scene.dispose();
+      return false;
+    }
+    this._scenes.add(scene);
+    bike.crashScene = scene;
+    bike.transformOverride = true;
+    if (slowMo) {
+      bike._slowMoStart = performance.now();
+      bike._crashDownSim = simSecondsFor(SLOWMO.downReal);
+    }
+    return true;
+  }
+
   /** Hand a bike back to its normal transform. Safe to call unconditionally. */
   releaseCrash(bike) {
     if (!bike) return;
+    if (bike.crashScene) {
+      bike.crashScene.dispose();
+      this._scenes.delete(bike.crashScene);
+      bike.crashScene = null;
+    }
+    bike._slowMoStart = 0;
     if (bike._tumbleHandle && this._world) {
       this._world.release(bike._tumbleHandle);
     }
@@ -246,6 +296,9 @@ export class PhysicsFx {
     const mesh = sourceMesh.clone();
     mesh.visible = true;
     this.scene.add(mesh);
+    // #478 · a 3D cone (userData.solid) tumbles for real: the solver drives
+    // its rotation, its collider is its own size, and it bursts skulls.
+    const solid = sourceMesh.userData && sourceMesh.userData.solid;
 
     const fx = Math.sin(heading);
     const fz = Math.cos(heading);
@@ -258,9 +311,10 @@ export class PhysicsFx {
     let handle;
     handle = this._world.spawn({
       object3d: mesh,
-      halfExtents: { x: 0.22, y: 0.3, z: 0.22 },
-      colliderOffset: { x: 0, y: 0.3, z: 0 },
+      halfExtents: solid ? solid.halfExtents : { x: 0.22, y: 0.3, z: 0.22 },
+      colliderOffset: solid ? solid.colliderOffset : { x: 0, y: 0.3, z: 0 },
       position: { x: position.x, y: position.y, z: position.z },
+      quaternion: solid ? mesh.quaternion : null,
       linvel: {
         x: fx * launch + (Math.random() - 0.5) * 2,
         y: 3.2 + Math.random() * 1.6,
@@ -281,17 +335,21 @@ export class PhysicsFx {
       restitution: 0.42,
       friction: 0.55,
       // A billboard: the solver owns the arc, the caller keeps it facing the
-      // camera. See the header.
-      driveRotation: false,
+      // camera (see the header). A solid cone lets the solver turn it.
+      driveRotation: !!solid,
       onExpire: (obj) => {
         const i = this._billboards.indexOf(handle);
         if (i >= 0) this._billboards.splice(i, 1);
-        this.scene.remove(obj);
+        if (this.scene) this.scene.remove(obj);
       },
     });
     if (!handle) {
       this.scene.remove(mesh);
       return false;
+    }
+    if (solid) {
+      if (solid.burst) this._effects.push(solid.burst(mesh, this.scene));
+      return handle;
     }
     handle.roll = 0;
     this._billboards.push(handle);
@@ -353,17 +411,25 @@ export class PhysicsFx {
 
   /** Drop everything mid-ride (reset, level change, mode switch). */
   clear() {
+    for (const sc of this._scenes) sc.dispose();
+    this._scenes.clear();
     if (this._world) this._world.clear();   // onExpire drains _billboards
     this._billboards.length = 0;
+    for (const e of this._effects) e.dispose();
+    this._effects.length = 0;
   }
 
   /** End of ride: free the world and its WASM memory. */
   dispose() {
+    for (const sc of this._scenes) sc.dispose();
+    this._scenes.clear();
     if (this._world) {
       this._world.dispose();
       this._world = null;
     }
     this._billboards.length = 0;
+    for (const e of this._effects) e.dispose();
+    this._effects.length = 0;
     this.scene = null;
     this.roadPath = null;
   }

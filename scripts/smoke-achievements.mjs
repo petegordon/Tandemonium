@@ -76,6 +76,17 @@ await page.waitForFunction(() => !!document.querySelector('.achievement-toast'),
 const afterPedal = await earned();
 const toast = await page.evaluate(() => document.querySelector('.achievement-toast')?.textContent || '');
 check(afterPedal.includes('first_pedal') && /Kick Off/.test(toast), `the first stroke earns Kick Off, with a toast ("${toast.trim()}")`);
+// #482: the toast floats over the road, so its badge must be a solid panel.
+// The badge's computed fill, painted on a 1×1 canvas to read its alpha
+// (Chrome reports color-mix() results as color(srgb …), not rgba).
+const { toastBg, toastAlpha } = await page.evaluate(() => {
+  const b = document.querySelector('.achievement-toast uf-achievement');
+  const bg = b ? getComputedStyle(b).backgroundColor : '';
+  const c = document.createElement('canvas'); c.width = c.height = 1;
+  const x = c.getContext('2d'); x.fillStyle = bg || 'transparent'; x.fillRect(0, 0, 1, 1);
+  return { toastBg: bg, toastAlpha: x.getImageData(0, 0, 1, 1).data[3] / 255 };
+});
+check(toastAlpha >= 0.95, `the toast's badge is a solid panel over the road (${toastBg}, alpha ${toastAlpha.toFixed(2)})`);
 
 // 3. Finish → Made It + Home Sweet Home; the victory payout → Pocket Change.
 await page.evaluate(() => { const g = window._game; g.bike.distanceTraveled = g.lobby.selectedLevel.distance - 0.5; g.bike.speed = 10; });
