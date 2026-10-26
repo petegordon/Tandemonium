@@ -143,8 +143,9 @@ const shots = {
     const p = await nextPylon(page, start.d);
     console.log('  pylon at', JSON.stringify(p), 'from d', start.d);
     await lineUp(page, p, 16);
-    // 3/4 front-side, low and close: the cone sits between the camera and the oncoming bike
-    const clip = await film('crash-pylon', s, noCrash, CAM(38, 5.5, 0.35, 50, -0.35), 4.0, 'Head-on: pylon');
+    // front-side, low: the cone is in frame ahead of the bike; side-on enough that the captain, thrown
+    // forward over the bars, crosses the frame instead of flying into the lens
+    const clip = await film('crash-pylon', s, noCrash, CAM(62, 7, 0.45, 50, -0.3), 4.0, 'Head-on: pylon');
     await s.close();
     return clip;
   },
@@ -158,15 +159,18 @@ const shots = {
       for (const sl of g.world._treePool || []) {
         if (!sl.active || !sl.mesh.visible || !(sl.roadD > d + 30)) continue;
         const info = rp.getClosestRoadInfo(sl.mesh.position.x, sl.mesh.position.z, sl.roadD);
-        if (info && Math.abs(info.lateralOffset) < 6.5) out.push({ d: sl.roadD, x: info.lateralOffset });
+        if (info && Math.abs(info.lateralOffset) < 7) out.push({ d: sl.roadD, x: info.lateralOffset });
       }
-      out.sort((a, b) => a.d - b.d);
+      // the nearest tree close to the road edge (the bot can't ride far into the grass at speed)
+      out.sort((a, b) => Math.abs(a.x) - Math.abs(b.x) || a.d - b.d);
       return out[0] || null;
     }, start.d);
     console.log('  tree at', JSON.stringify(t), 'from d', start.d);
     // no pylons on the way in: the tree is the crash
     await page.evaluate(() => { const om = window._game.obstacleManager; for (const i of om._items) i._hidden = true; });
+    console.log('  trees considered: nearest-to-road first');
     await lineUp(page, t, 14);
+    console.log('  lined up: bike', JSON.stringify(await st(page)));
     const clip = await film('crash-tree', s, noCrash, CAM(-42, 6.5, 0.6, 50, -0.2), 4.0, 'Head-on: tree');
     await s.close();
     return clip;
