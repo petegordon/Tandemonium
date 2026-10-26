@@ -105,6 +105,9 @@ function browserFakeHid(specs) {
     const r = rec.reports[rec.i++ % rec.reports.length];
     const u8 = r.bytes.slice();
     for (const o of rec.overrides.values()) if (o.offset < u8.length) u8[o.offset] |= o.mask;
+    // optional live report writer (the reel's gyro rider): window.__fakeHidMutate[key](u8, reportId)
+    const mut = window.__fakeHidMutate && window.__fakeHidMutate[rec.spec.key];
+    if (mut) mut(u8, r.reportId);
     return { reportId: r.reportId, data: new DataView(u8.buffer) };
   };
   function startStream(rec) {

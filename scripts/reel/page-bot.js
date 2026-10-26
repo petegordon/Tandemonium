@@ -40,6 +40,7 @@ const reel = {
     if (fv && !fv.__reel) { fv.__reel = true; const fr = fv.render.bind(fv); fv.render = (...a) => (this.noPip ? undefined : fr(...a)); }
     if (this.noPip) this._clearRoad();
     for (const b of this.bots) if (b.enabled) this._drive(b, dt);
+    for (const h of this.hooks || []) h(dt);   // extra per-frame drivers (e.g. a gyro rider's HID reports)
   },
 
   _drive(b, dt) {

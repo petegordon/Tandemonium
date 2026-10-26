@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { launch, record, encode, advance, sleep, ROOT, OUT } from './lib.mjs';
+import { installFakeWebHid, hidDevice, FACE_A } from '../lib/fake-webhid.mjs';
 
 const PORT = 8951;   // beside attraction.mjs (8941) and the other reel scripts
 const ASPECT = process.argv.includes('--aspect') ? process.argv[process.argv.indexOf('--aspect') + 1] : '16x9';
@@ -313,6 +314,197 @@ SHOTS.probe_tutorial = async () => {
     console.log(' ', k + 1, JSON.stringify(p));
     if (p.state === 'gameover') break;
   }
+  await s.close();
+};
+
+// The controller tiles, big enough to read in the reel (capture-only).
+const GYRO_CSS = `
+  .cohud-tile { transition: none !important; }
+  .front-view-frame, #partner-pip-wrap { display: none !important; }
+`;
+
+// ── #500 LOOK, NO THUMBS: local co-op, P1 on a DualSense, P2 on a Steam Controller (2026), both steering by gyro ──
+// Both pads are simulated at the HID level (scripts/lib/fake-webhid.mjs) and run through the real drivers, the
+// ControllerManager, the sensor fusion and the in-game controller overlay. Each frame the rider bot's wanted lean
+// becomes a controller ROLL: gravity turned in the report's accelerometer + the matching gyro rate, closed-loop on
+// what the game reads back (InputManager.getMotionLean), so the steering is the game's own gyro path end to end.
+// Pedalling pulls the real triggers in the reports. No stick, D-pad or keyboard lean, ever.
+async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1] } = {}) {
+  const st = { ...BASE, ...others(keep), tandemonium_controller_overlay: 'on', ...storage };
+  const s = await launch({ ...VIEW, port: PORT, storage: st,
+    before: (p) => installFakeWebHid(p, [hidDevice.dualsenseUsb('ds'), hidDevice.steamPuck('sc')]) });
+  const { page } = s;
+  await page.evaluate((pre) => { window.__achPre = pre; }, IDS.filter(i => i !== keep));
+  // the live report writer: IMU (roll about the pad's forward axis) + analog triggers, per device
+  await page.evaluate(() => {
+    const W = (u8, o, v) => { const x = Math.round(Math.max(-32768, Math.min(32767, v))) & 0xffff; u8[o] = x & 0xff; u8[o + 1] = x >> 8; };
+    const G = window.__gy = { ds: { roll: 0, rate: 0, l: 0, r: 0, n: 0 }, sc: { roll: 0, rate: 0, l: 0, r: 0, n: 0 } };
+    const DPS = 32768 / 2000;   // raw per deg/s (both drivers: +-2000 dps)
+    window.__fakeHidMutate = {
+      ds(u8, id) {            // DualSense USB report 0x01: gyro x,y,z @15, accel x,y,z @21 (frame: gravity on +Y, roll about Z)
+        if (id !== 0x01) return;
+        const g = G.ds, k = 8192, nz = (g.n++ % 3) - 1;
+        W(u8, 15, nz); W(u8, 17, -nz); W(u8, 19, g.rate * DPS);
+        W(u8, 21, k * Math.sin(g.roll)); W(u8, 23, k * Math.cos(g.roll)); W(u8, 25, nz * 20);
+        u8[4] = Math.round(g.l * 255); u8[5] = Math.round(g.r * 255);
+        u8[8] = (u8[8] & ~0x0c) | (g.l > 0.5 ? 0x04 : 0) | (g.r > 0.5 ? 0x08 : 0);
+      },
+      sc(u8, id) {            // Steam STATE 0x45: accel raw x@33, y@35, z@37; gyro raw x@39, y@41, z@43; frame = (x, z, -y)
+        if (id !== 0x45 && id !== 0x42) return;
+        const g = G.sc, k = 16384, nz = (g.n++ % 3) - 1;
+        W(u8, 33, k * Math.sin(g.roll)); W(u8, 37, k * Math.cos(g.roll)); W(u8, 35, nz * 20);
+        W(u8, 39, nz); W(u8, 43, -nz); W(u8, 41, -g.rate * DPS);
+        W(u8, 5, g.l * 0x7fff); W(u8, 7, g.r * 0x7fff);
+      },
+    };
+  });
+  await page.click('#tap-to-start').catch(() => {});
+  await sleep(1500);
+  await page.addStyleTag({ content: TOAST_CSS + GYRO_CSS });
+  await installLogs(page);
+  // local co-op host step (no relay needed for a local ride), then each pad joins by pressing its A / cross
+  await page.evaluate(() => {
+    const l = window._game.lobby;
+    document.getElementById('room-code-display').textContent = 'TNDM-LOCL';
+    l._pendingMode = 'multiplayer'; l._roomRole = 'captain';
+    l._showStep(l.hostStep); l._refreshHostNext();
+  });
+  const seat = async (key, bit, pred, what) => {
+    for (let t0 = Date.now(); Date.now() - t0 < 45000;) {
+      await page.evaluate((k, o, m) => window.__fakeHid.hold(k, o, m, true), key, bit.offset, bit.mask);
+      await sleep(300);
+      await page.evaluate((k, o, m) => window.__fakeHid.hold(k, o, m, false), key, bit.offset, bit.mask);
+      await sleep(500);
+      if (await page.evaluate(pred)) return;
+    }
+    console.log('  seat debug', JSON.stringify(await page.evaluate(() => { const m = window.__controllerManager, l = window._game.lobby; return { P1: [m.getSlot('P1').state, m.getSlot('P1').hidDevice?.__fakeKey], P2: [m.getSlot('P2').state, m.getSlot('P2').hidDevice?.__fakeKey], seated: !!l._localSeatedOnHost, step: document.getElementById('lobby-flow')?.current, mobile: !!window._game.isMobile }; })));
+    throw new Error('could not seat ' + what);
+  };
+  await seat('ds', FACE_A.ds5Usb, () => window.__controllerManager.getSlot('P1').hidDevice?.__fakeKey === 'ds', 'P1 DualSense');
+  await seat('sc', FACE_A.steam, () => !!window._game.lobby._localP2InputManager && window.__controllerManager.getSlot('P2').hidDevice?.__fakeKey === 'sc', 'P2 Steam Controller');
+  console.log('  seated', JSON.stringify(await page.evaluate(() => ['P1', 'P2'].map(id => { const sl = window.__controllerManager.getSlot(id); return [id, sl.state, sl.driver?.entry?.name]; }))));
+  await page.evaluate(async (o) => {
+    const L = window._game.lobby, { getLevelById } = await import('/js/race-config.js');
+    if (document.getElementById('lobby-flow')?.current !== 'lobby-level') document.getElementById('btn-host-local-next').click();
+    L.selectedLevel = L.resolveRoadLevel ? L.resolveRoadLevel(getLevelById(o.level)) : getLevelById(o.level);
+    L.selectedDifficulty = o.difficulty;
+  }, { level, difficulty });
+  await sleep(800);
+  await page.evaluate((salt) => {
+    const real = Date.now;
+    Date.now = () => Math.floor(real() / 1e6) * 1e6 + salt;
+    document.getElementById('btn-start-ride').click();
+    Date.now = real;
+  }, SALT);
+  await page.waitForFunction(() => window._game.mode === 'local' && window._game.bike.modelLoaded && window._game.bike.goose, { timeout: 120000 });
+  // the rider bots work out the lean each rider wants; a hook turns that into a controller roll + trigger pulls
+  await page.evaluate((sign) => {
+    const g = window._game, R = window.__reel;
+    R.hooks = R.hooks || [];
+    const riders = [['ds', g.input, 'captain', 0, sign[0]], ['sc', g.inputP2, 'stoker', 0.5, sign[1]]].map(([key, input, role, ph, sg]) => {
+      const orig = input.getGamepadLean.bind(input);
+      const bot = R.attach(input, () => g.bike, { role, pedal: false, cadence: 2.8, sway: { amp: 0.32, freq: 0.27, phase: ph } });
+      input.getGamepadLean = orig;   // no stick lean: the bot's lean goes out through the gyro below
+      return { key, input, bot, acc: role === 'stoker' ? 0.5 : 0, foot: role === 'stoker' ? 1 : 0, pull: 0, sign: sg };
+    });
+    window.__gyRiders = riders;
+    R.hooks.push((dt) => {
+      if (dt <= 0) return;
+      // the fake HID streams on a REAL interval, which barely runs under the virtual clock: send one report per
+      // virtual frame, stamped with the frame time, so the fusion calibrates and integrates at 60 Hz
+      for (const k of ['ds', 'sc']) window.__fakeHid.hold(k, 0, 0, false);
+      for (const r of riders) {
+        const G = window.__gy[r.key];
+        const playing = g.state === 'playing';
+        // closed loop: turn the pad until the game reads the lean the rider wants
+        const want = playing ? r.bot.leanOut : 0;
+        const got = r.input.getMotionLean ? r.input.getMotionLean() : 0;
+        const prev = G.roll;
+        let roll = prev + r.sign * (want - got) * 1.6 * dt;
+        roll = Math.max(-0.75, Math.min(0.75, roll));
+        if (!playing) roll *= Math.max(0, 1 - dt * 3);   // level out between rides (the countdown recentres)
+        G.rate = ((roll - prev) / dt) * 180 / Math.PI; G.roll = roll;
+        // pedal: alternate trigger pulls at the cadence (a quick squeeze the overlay shows)
+        if (playing) {
+          r.acc += dt * 2.8;
+          if (r.acc >= 1) { r.acc -= 1; r.foot ^= 1; r.pull = 0.16; }
+          r.pull = Math.max(0, r.pull - dt);
+          const v = r.pull > 0 ? Math.min(1, (0.16 - r.pull) / 0.05 + 0.2) : 0;
+          G.l = r.foot === 0 ? v : 0; G.r = r.foot === 1 ? v : 0;
+        } else { G.l = G.r = 0; }
+      }
+    });
+  }, sign);
+  await sleep(500);
+  await page.evaluate(() => window.__reel.gameplayHud());
+  return s;
+}
+
+const gyState = (page) => page.evaluate(() => {
+  const g = window._game, b = g.bike;
+  const rd = (r) => ({ roll: +(window.__gy[r.key].roll * 57.3).toFixed(1), want: +r.bot.leanOut.toFixed(2),
+    got: +(r.input.getMotionLean() || 0).toFixed(2), gyro: r.input.gyroConnected, motion: r.input.motionEnabled,
+    cal: r.input._slot?.fusion?.calibrating, ml: +(r.input.motionLean || 0).toFixed(2), off: r.input.motionOffset, acc: +(r.input._accelRoll || 0).toFixed(1), mode: r.input._gyroRollMode, src: r.input._dualsenseSource, gv: r.input._slot?.fusion?._gravityVec && [r.input._slot.fusion._gravityVec.x.toFixed(2), r.input._slot.fusion._gravityVec.y.toFixed(2), r.input._slot.fusion._gravityVec.z.toFixed(2)] });
+  return { state: g.state, mode: g.mode, d: +(b.distanceTraveled || 0).toFixed(1), speed: +(b.speed || 0).toFixed(1),
+    x: +(b._lateralOffset || 0).toFixed(2), fallen: !!b.fallen,
+    p1: rd(window.__gyRiders[0]), p2: rd(window.__gyRiders[1]),
+    sf1: g.balanceCtrl.steerFrames, sf2: g.balanceCtrlP2 && g.balanceCtrlP2.steerFrames,
+    tiles: document.querySelectorAll('canvas').length,
+    earned: [...(g.achievements?._earned?.keys?.() || [])].filter(i => !window.__achPre.includes(i)) };
+});
+
+SHOTS.probe_gyro = async () => {
+  const sign = (process.env.GYSIGN || '1,1').split(',').map(Number);
+  const s = await gyroCoop({ sign });
+  for (let k = 0; k < 90; k++) {
+    await advance(s.page, 1);
+    const p = await gyState(s.page);
+    console.log(' ', k + 1, JSON.stringify(p));
+    if (['victory', 'gameover'].includes(p.state) && k > 5) break;
+    if (process.env.GYMAX && k + 1 >= +process.env.GYMAX) break;
+  }
+  if (s.errors.length) console.log('  page errors:', s.errors.slice(0, 3));
+  await s.close();
+};
+
+/** Capture-only: big controller tiles (they are the subject) with the lab's float layout on — triggers, bumpers
+ *  and the Steam Controller's back paddles popped clear of the body, so every pull reads. */
+const bigTiles = (page) => page.evaluate((tall) => {
+  const g = window._game, hud = g.controllerHud, R = window.__reel;
+  const m0 = hud.metrics.bind(hud);
+  hud.metrics = () => {
+    const m = m0();
+    const tileW = tall ? Math.floor((m.w - 3 * 14) / 2) : 470;
+    return { ...m, tileW, tileH: Math.round(tileW * (tall ? 0.95 : 0.72)), margin: tall ? 14 : 34, gap: 14 };
+  };
+  R.hooks.push(() => {
+    for (const t of hud.tiles.values()) {
+      if (t.overlay && !t.__float) { t.__float = true; try { t.overlay.setFloatParts(true); } catch (e) {} }
+    }
+  });
+  // the selfie / partner PiPs would push the tiles aside: the tiles own the bottom corners in this reel
+  R.noPip = true;
+  for (const el of document.querySelectorAll('.front-view-frame, #partner-pip-wrap')) el.style.display = 'none';
+}, TALL);
+
+// #101 LOOK, NO THUMBS: both riders steer by tilting their pads (DualSense + Steam Controller) all the way home
+SHOTS.nothumbs = async () => {
+  const s = await gyroCoop({ sign: [-1, -1] });
+  await bigTiles(s.page);
+  const go = await until(s.page, st => st.d >= Number(process.env.NT_FROM || 196) || ['finishCinematic', 'victory', 'gameover'].includes(st.state), 120, 0.25);
+  console.log('  from', JSON.stringify({ d: go.d, state: go.state }));
+  await take('nothumbs', s, Number(process.env.NT_SECS || 15));
+};
+
+SHOTS.probe_tiles = async () => {
+  const s = await gyroCoop({ sign: [-1, -1] });
+  await bigTiles(s.page);
+  await until(s.page, st => st.d >= 120, 120, 0.25);
+  await advance(s.page, 0.5);
+  const p = await s.page.evaluate(() => [...window._game.controllerHud.tiles.values()].map(t => ({ profile: t.profile, float: !!t.__float, rect: t.root ? t.root.getBoundingClientRect().toJSON() : null, sub: t.subEl && t.subEl.textContent })));
+  console.log(JSON.stringify(p));
+  const { data } = await (await s.page.createCDPSession()).send('Page.captureScreenshot', { format: 'jpeg', quality: 85, ...(s.page.__reelClip ? { clip: s.page.__reelClip } : {}) });
+  fs.writeFileSync(path.join(OUT, `probe_tiles_${ASPECT}.jpg`), Buffer.from(data, 'base64'));
   await s.close();
 };
 

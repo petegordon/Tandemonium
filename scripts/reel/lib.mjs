@@ -12,7 +12,7 @@ export const ROOT = process.cwd();
 export const OUT = path.join(ROOT, 'renders', 'reel');
 const MIME = { '.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml','.glb':'model/gltf-binary','.mp3':'audio/mpeg','.mp4':'video/mp4','.json':'application/json','.wasm':'application/wasm' };
 
-export async function launch({ width = 1920, height = 1080, port = 8931, query = '', storage = {}, scale = 1 } = {}) {
+export async function launch({ width = 1920, height = 1080, port = 8931, query = '', storage = {}, scale = 1, before = null } = {}) {
   const server = http.createServer((req, res) => {
     const u = decodeURIComponent(req.url.split('?')[0]);
     const f = path.join(ROOT, u === '/' ? 'index.html' : u);
@@ -92,6 +92,7 @@ export async function launch({ width = 1920, height = 1080, port = 8931, query =
       };
     }
   }, storage);
+  if (before) await before(page);   // e.g. scripts/lib/fake-webhid.mjs: simulated controllers, installed before boot
   await page.goto(`http://127.0.0.1:${port}/index.html${query}`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!window._game, { timeout: 60000 });
   await page.addScriptTag({ type: 'module', url: `http://127.0.0.1:${port}/scripts/reel/page-bot.js` });
