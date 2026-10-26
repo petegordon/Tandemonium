@@ -168,8 +168,13 @@ const shots = {
     console.log('  tree at', JSON.stringify(t), 'from d', start.d);
     // no pylons on the way in: the tree is the crash
     await page.evaluate(() => { const om = window._game.obstacleManager; for (const i of om._items) i._hidden = true; });
-    console.log('  trees considered: nearest-to-road first');
-    await lineUp(page, t, 14);
+    // Grandma's trees stand 5+ m off the road: ride the road until ~30 m out, ease off, then veer onto the
+    // grass at the tree (straight onto the grass at full speed, the bike goes down on its own first)
+    await lineUp(page, { d: t.d, x: 0 }, 55);
+    await page.evaluate(() => { for (const b of window.__reel.bots) b.cadence = 2.2; });
+    await lineUp(page, t, 9);
+    // the grass drags: pedal hard for the run-in
+    await page.evaluate(() => { for (const b of window.__reel.bots) b.cadence = 4.5; });
     console.log('  lined up: bike', JSON.stringify(await st(page)));
     const clip = await film('crash-tree', s, noCrash, CAM(-42, 6.5, 0.6, 50, -0.2), 4.0, 'Head-on: tree');
     await s.close();
