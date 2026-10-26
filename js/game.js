@@ -6440,7 +6440,10 @@ class Game {
       // #484: the crash scene (rag dolls, hats); slow-mo where the view is ours to slow (not online co-op,
       // where the captain's frame pacing feeds the stoker)
       bike.onFall = (b) => {
-        if (this.physicsFx) this.physicsFx.crashTumble(b, { cause: b._crashCause || 'balance', slowMo: this._crashSlowMoMode() });
+        if (!this.physicsFx) return;
+        // #484 versus: the parts can hit the other team (a wobble); never in online modes
+        const others = this.mode === 'versus' ? this._physicsBikes.filter(x => x !== b) : [];
+        this.physicsFx.crashTumble(b, { cause: b._crashCause || 'balance', slowMo: this._crashSlowMoMode(), others });
       };
       bike.onReset = (b) => { if (this.physicsFx) this.physicsFx.releaseCrash(b); };
     }
