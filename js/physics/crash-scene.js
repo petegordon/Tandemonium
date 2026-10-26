@@ -127,7 +127,14 @@ export class CrashScene {
         .setFriction(1.1).setRestitution(0.12).setCollisionGroups(DEBRIS_GROUPS), this.bikeBody);
     }
     this.bodyCount++;
-    if (byPart) this._detach(byPart, { headOn, speed, heading, lean, rand, slowMo });
+    if (byPart) {
+      // the bare frame is light and narrow: with the tumble's spin damping it could balance on its end for a
+      // second (it looked staged). Less damping and a nudge about its length, so it goes over.
+      this.bikeBody.setAngularDamping(0.25);
+      const av = this.bikeBody.angvel();
+      this.bikeBody.setAngvel({ x: av.x + fx * 1.5 * (lean >= 0 ? 1 : -1), y: av.y, z: av.z + fz * 1.5 * (lean >= 0 ? 1 : -1) }, true);
+      this._detach(byPart, { headOn, speed, heading, lean, rand, slowMo });
+    }
 
     const riders = (bike.goose && bike.goose.riders) || {};
     for (const [seat, rider] of Object.entries(riders)) {
