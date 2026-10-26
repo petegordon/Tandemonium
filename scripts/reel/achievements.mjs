@@ -471,7 +471,7 @@ SHOTS.probe_gyro = async () => {
  *  upper frame (the other tile parked off-screen); 'band' = both pads in a big bottom band (the bottom ~40% in 9:16,
  *  each tile half the width). The float layout (triggers, bumpers, Steam paddles popped off the body) is switched on
  *  and every tile's camera moves to a raised three-quarter view that shows the popped parts. */
-const CAM = (process.env.NT_CAM || '0.16,0.30,0.20').split(',').map(Number);
+const CAM = (process.env.NT_CAM || (TALL ? '0.16,0.30,0.20' : '0.12,0.225,0.15')).split(',').map(Number);   // 16:9 tiles are wide: sit closer
 const stageTiles = (page) => page.evaluate((tall, cam) => {
   const g = window._game, hud = g.controllerHud, R = window.__reel;
   window.__tileMode = 'band';
