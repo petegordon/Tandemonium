@@ -11,6 +11,7 @@ import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway,
 import { colourwayParams, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 import { CrankMotion } from './crank-motion.js';
+import { fallLean } from './crash-tumble.js';
 import { rebatch } from './bike-batch.js';
 import { dracoDecoderPath } from './draco-path.js';
 
@@ -683,10 +684,8 @@ export class BikeModel {
       this.fallElapsed = (this.fallElapsed || 0) + dt;
       // B-2 · the tumble: ease over to the fallen side in 0.4 s with a small
       // bounce at the end, instead of snapping flat on the impact frame.
-      const t = Math.min(1, this.fallElapsed / 0.4);
-      const eased = 1 - Math.pow(1 - t, 3);
-      const bounce = t >= 1 ? Math.sin((this.fallElapsed - 0.4) * 18) * 0.05 * Math.max(0, 1 - (this.fallElapsed - 0.4) * 3) : 0;
-      this.lean = (this._fallLeanTarget || 0) * eased + bounce;
+      // #483: from the lean it crashed at, not from upright (crash-tumble.js).
+      this.lean = fallLean(this._fallLeanStart || 0, this._fallLeanTarget || 0, this.fallElapsed);
       if (this.fallTimer <= 0) this._reset();
       this._applyTransform(dt);
       return;
@@ -1067,6 +1066,7 @@ export class BikeModel {
     this.fallTimer = 1.2;
     this.fallElapsed = 0;
     this.speed = 0;
+    this._fallLeanStart = this.lean || 0;
     this._fallLeanTarget = Math.sign(this.lean || 1) * Math.PI / 2.2;
     this.leanVelocity = 0;
     const terrainY = this.roadPath
