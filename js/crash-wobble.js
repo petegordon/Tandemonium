@@ -14,10 +14,11 @@
 // gameplay, and it never runs in online modes.
 
 export const WOBBLE = Object.freeze({
-  perKgMs: 0.03,     // lean-velocity kick (rad/s) per kg·m/s of the part's momentum relative to the bike
+  perKgMs: 0.08,     // lean-velocity kick (rad/s) per kg·m/s of the part's momentum relative to the bike
+  minImpact: 4,      // m/s: riding into a part that rolls along with you still shoves (it's in your wheels)
   maxKick: 0.85,     // rad/s: a wheel at full tilt (an upright bike rides it out; one near the edge doesn't)
   minKick: 0.12,     // below this it isn't felt: no wobble (a saddle tumbling past at walking pace)
-  shakePerKick: 5,   // the shake's amplitude (rad/s², a lean force like the danger wobble) per rad/s of kick
+  shakePerKick: 9,   // the shake's amplitude (rad/s², a lean force like the danger wobble) per rad/s of kick
   shakeTau: 0.5,     // s: the shake dies away
   shakeHz: 3.2,
   shakeFor: 1.6,     // s: then it's gone
@@ -29,7 +30,7 @@ export const WOBBLE = Object.freeze({
  * @param {number} relSpeed m/s, the part's speed relative to the bike it hits
  */
 export function hitWobble(mass, relSpeed, w = WOBBLE) {
-  const m = Math.max(0, mass || 0), s = Math.max(0, relSpeed || 0);
+  const m = Math.max(0, mass || 0), s = Number.isFinite(relSpeed) ? Math.max(w.minImpact, relSpeed) : 0;
   const kick = Math.min(w.maxKick, m * s * w.perKgMs);
   if (!(kick >= w.minKick)) return { kick: 0, shake: 0 };
   return { kick, shake: kick * w.shakePerKick };

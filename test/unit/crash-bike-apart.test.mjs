@@ -100,7 +100,8 @@ test('wheels roll away forward, spinning about the axle; the rest pops up', () =
 test('a wheel hits harder than a saddle; a slow brush is not felt; kicks are capped', () => {
   const wheel = hitWobble(PARTS.wheelR.mass, 8), saddle = hitWobble(PARTS.saddleC.mass, 8);
   assert.ok(wheel.kick > saddle.kick && saddle.kick > 0);
-  assert.equal(hitWobble(PARTS.saddleC.mass, 1).kick, 0);
+  assert.equal(hitWobble(0.2, 1).kick, 0, 'a light scrap brushing past is not felt');
+  assert.ok(hitWobble(PARTS.wheelR.mass, 1).kick >= 0.5, 'riding into a wheel that rolls along with you still shoves');
   assert.equal(hitWobble(PARTS.wheelR.mass, 100).kick, WOBBLE.maxKick);
   assert.deepEqual(hitWobble(NaN, 5), { kick: 0, shake: 0 });
 });

@@ -27,7 +27,7 @@ import * as THREE from 'three';
 import { segmentsFor, throwFor, hatThrow } from './ragdoll-spec.js';
 import { PARTS, hasParts, visibleMeshesByPart, boundsIn, partLaunch } from './bike-parts.js';
 import { hitWobble, onBike, kickSign, aimAt } from '../crash-wobble.js';
-import { realSecondsFor } from '../crash-slowmo.js';
+import { realSecondsFor, SLOWMO } from '../crash-slowmo.js';
 
 const GROUND = 1, DEBRIS = 2;   // collision membership bits
 const grp = (member, filter) => ((member << 16) | filter) >>> 0;
@@ -38,7 +38,9 @@ const DEBRIS_GROUPS = grp(DEBRIS, GROUND);     // debris meets the ground, never
 // past the edge a goose would fall forever: the patch reaches well beyond the furthest throw.
 const GROUND_HALF = 26;
 const GROUND_STEP = 1.0;   // the verge banks steeply off the road edge: a coarser grid cut its corners
-const SUBSTEP = 1 / 120;  // the joints want small steps; slow-mo gets them for free
+const SUBSTEP = 1 / 120;
+// (versus) a thrown part must reach the other team this many real seconds after impact: before the cut
+const LAND_BY = SLOWMO.downReal - 0.25;  // the joints want small steps; slow-mo gets them for free
 
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _inv = new THREE.Matrix4();
 const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1), _pq = new THREE.Quaternion();
@@ -317,7 +319,8 @@ export class CrashScene {
     let best = null, bd = 30;
     for (const o of this._others) {
       if (o.fallen) continue;
-      const d = Math.hypot(o.position.x - t0.x, o.position.z - t0.z);
+      // where it is DRAWN (the group carries the lane offset; bike.position is on the road's line)
+      const d = Math.hypot(o.group.position.x - t0.x, o.group.position.z - t0.z);
       if (d < bd) { bd = d; best = o; }
     }
     if (!best) return;
@@ -326,12 +329,16 @@ export class CrashScene {
     const from = p.body.translation();
     const hv = { x: Math.sin(best.heading) * best.speed, z: Math.cos(best.heading) * best.speed };
     // at the riders' middle, a little off so it doesn't look guided
-    const tgt = { x: best.position.x + (rand() - 0.5) * 0.5, y: best.position.y + 1.0, z: best.position.z + (rand() - 0.5) * 0.8 };
-    // The other team rides on in real time while this crash runs slow, so a quick throw has to be a rocket:
-    // try flights from short to long and take the gentlest one that gets there.
+    const gp = best.group.position;
+    const tgt = { x: gp.x + (rand() - 0.5) * 0.5, y: gp.y + 1.0, z: gp.z + (rand() - 0.5) * 0.8 };
+    // The other team rides on in real time while this crash runs slow, and the whole scene is cleared at the
+    // cut to the checkpoint (SLOWMO.downReal after impact). So only flights that land before the cut, and the
+    // gentlest of them: a team just ahead at full speed is out of reach; a team beside or behind rides into it.
     let v = null, vs = Infinity;
-    for (let T = 0.45; T <= 1.8; T += 0.15) {
-      const c = aimAt(from, tgt, hv, T, slowMo ? realSecondsFor(T) : T);
+    for (let T = 0.3; T <= 1.6; T += 0.05) {
+      const realT = slowMo ? realSecondsFor(T) : T;
+      if (realT > LAND_BY) break;
+      const c = aimAt(from, tgt, hv, T, realT);
       const s = c ? Math.hypot(c.x, c.y, c.z) : Infinity;
       if (s < vs) { vs = s; v = c; }
     }

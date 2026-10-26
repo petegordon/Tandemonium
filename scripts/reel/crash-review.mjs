@@ -76,6 +76,7 @@ async function film(name, s, crash, cam, seconds = 4.2, caption = '') {
   let hit = -1, locked = false;
   const log = [];
   await record(page, name, seconds, { perFrame: async (i, t) => {
+    if (s.everyFrame) await s.everyFrame(i, t);
     if (hit < 0 && await crash(i, t)) hit = t;
     const r = await page.evaluate(() => {
       const g = window._game, b = window.__filmBike ? window.__filmBike() : g.bike, sc = b.crashScene;
@@ -84,6 +85,11 @@ async function film(name, s, crash, cam, seconds = 4.2, caption = '') {
         clr: sc && sc.world ? +sc.minClearance().toFixed(3) : null,
         v: sc && sc.riders[0] ? (({ x, y, z }) => [+x.toFixed(1), +y.toFixed(1), +z.toFixed(1)])(sc.riders[0].segs[0].body.linvel()) : null,
         sp: +b.speed.toFixed(2), lean: +b.lean.toFixed(2),
+        rel: sc && sc.aimed ? (() => { const p = sc.parts.find(q => q.part === sc.aimed.part), t = p.body.translation(), M = sc.aimed.bike.group.matrixWorld.clone().invert();
+          const v = new (g.scene.position.constructor)(t.x, t.y, t.z).applyMatrix4(M); return [+v.x.toFixed(1), +v.y.toFixed(1), +v.z.toFixed(1)]; })() : null,
+        parts: sc ? sc.parts.length : 0, aimed: sc && sc.aimed ? sc.aimed.part : null, hits: sc ? sc.hits.map(h => h.part + ':' + h.kick.toFixed(2)) : [],
+        gap: g.versusRigs ? +(g.versusRigs[1].bike.distanceTraveled - g.versusRigs[0].bike.distanceTraveled).toFixed(1) : null,
+        oLean: g.versusRigs ? +g.versusRigs[1].bike.lean.toFixed(2) : null,
         cause: g._lastCrashCause || null,
         knocked: (g.physicsFx ? g.physicsFx._billboards.length : 0) + g.scene.children.filter(o => o.name === 'knocked-cone').length };   // billboard or #478 3D cone
     });
@@ -103,7 +109,11 @@ async function film(name, s, crash, cam, seconds = 4.2, caption = '') {
   } });
   const clip = await encode(name);
   console.log('  ->', clip, 'impact at', hit.toFixed(2), 's; cause', log[0] && log[0].cause, '; scene', log.some(l => l.scene),
-    '; knocked cones', Math.max(0, ...log.map(l => l.knocked)), '; errors', s.errors.slice(0, 2));
+    '; knocked cones', Math.max(0, ...log.map(l => l.knocked)), '; parts', Math.max(0, ...log.map(l => l.parts)),
+    '; aimed', (log.find(l => l.aimed) || {}).aimed, '; hits', JSON.stringify((log.find(l => l.hits.length) || { hits: [] }).hits),
+    '; rig gap', log[0] && log[0].gap, '; errors', s.errors.slice(0, 2));
+  if (log.some(l => l.rel)) console.log('  aimed part in the other bike frame', JSON.stringify(log.filter((l, i) => l.rel && i % 3 === 0).map(l => l.rel).slice(0, 30)));
+  if (log[0] && log[0].oLean != null) console.log('  other team lean', JSON.stringify(log.filter((l, i) => i % 3 === 0).map(l => l.oLean)));
   // the lowest any pelvis got below where it started (geese through the floor?)
   const ys = log.filter(l => l.pel).flatMap(l => l.pel.map(p => p[0]));
   if (ys.length) console.log('  pelvis y range', Math.min(...ys).toFixed(2), Math.max(...ys).toFixed(2));
@@ -125,7 +135,10 @@ const nextPylon = (page, d, ahead = 30) => page.evaluate((d, ahead) => {
 
 /** Ride the bot straight at lateral offset x (no dodging) until the filmed bike is `short` metres before d. */
 async function lineUp(page, target, short = 7) {
-  await page.evaluate((x) => { for (const b of window.__reel.bots) { b.dodge = false; b.offset = x; } }, target.x);
+  await page.evaluate((x) => {
+    const fb = window.__filmBike ? window.__filmBike() : window._game.bike;
+    for (const b of window.__reel.bots) if (b.getBike() === fb) { b.dodge = false; b.offset = x; }
+  }, target.x);
   for (let t = 0; t < 60; t += 1 / 30) {
     const d = await page.evaluate(() => (window.__filmBike ? window.__filmBike() : window._game.bike).distanceTraveled);
     if (d > target.d - short) return true;
@@ -220,6 +233,12 @@ const shots = {
       const g = window._game, rig = g.versusRigs[0];
       window.__filmBike = () => rig.bike;
       window.__reel.attach(rig.members[0].input, () => rig.bike, { role: 'captain', sway: { amp: 0, freq: 0, phase: 0 }, cadence: 3.8, pedal: true });
+      // Team B rides alongside on the other side of the road (the debug rider weaves and falls behind):
+      // our bot drives it instead, a touch slower, so it is just behind when Team A comes apart
+      const rb = g.versusRigs[1];
+      for (const m of rb.members) m.type = 'keyboard';   // its own taps off ('bot' taps and weaves); pad-less non-keyboard pauses
+      const bb = window.__reel.attach(rb.members[0].input, () => rb.bike, { role: 'captain', sway: { amp: 0, freq: 0, phase: 0 }, pedal: false });
+      bb.dodge = false; bb.offset = -1.4;
     });
     for (let i = 0; i < 80; i++) {
       await advance(page, 0.5);
@@ -227,11 +246,32 @@ const shots = {
         && g.versusRigs[0].bike.speed > 7 && g.versusRigs[0].bike.distanceTraveled > 40; });
       if (ok) break;
     }
+    // Team A rides the line of a pylon with Team B ~7 m behind in the other lane: when Team A comes apart,
+    // Team B rides into the parts
     const d = await page.evaluate(() => window._game.versusRigs[0].bike.distanceTraveled);
-    const p = await nextPylon(page, d, 25);
+    const p = (await nextPylon(page, d, 45)) || (await nextPylon(page, d, 32));
     console.log('  versus pylon at', JSON.stringify(p), 'from d', d.toFixed(1));
-    await lineUp(page, p, 14);
-    const clip = await film('crash-versus', s, noCrash, null, 4.0, 'Versus: Team A hits a pylon, only its half slows');
+    await page.evaluate((x) => { const a = window.__reel.bots[0]; a.dodge = false; a.offset = x; }, p.x);
+    // (the ?versusbot rider crawls at ~1.6 m/s and never keeps up: for this shot only, the capture puts
+    // Team B ~7 m behind Team A and keeps it rolling at Team A's pace. The crash, the parts, the hit and
+    // the wobble are all the game's own code.)
+    const keepB = () => page.evaluate(() => {
+      const g = window._game, A = g.versusRigs[0].bike, B = g.versusRigs[1].bike;
+      if (!A.fallen) window.__holdB = A.speed;   // after the crash Team B carries on at that pace
+      if (!B.fallen) B.speed = Math.max(B.speed, window.__holdB || 7.5);
+    });
+    await lineUp(page, { d: p.d, x: p.x }, 30);
+    await page.evaluate(() => { const g = window._game, A = g.versusRigs[0].bike; g.versusRigs[1].bike.resetToDistance(A.distanceTraveled - 7); });
+    for (let t = 0; t < 30; t += 1 / 30) {
+      await keepB();
+      const r = await page.evaluate(() => { const g = window._game, A = g.versusRigs[0].bike, B = g.versusRigs[1].bike;
+        return { dA: A.distanceTraveled, gap: B.distanceTraveled - A.distanceTraveled, sA: A.speed, sB: B.speed }; });
+      if (r.dA > p.d - 14) { console.log('  lined up', JSON.stringify(r)); break; }
+      await advance(page, 1 / 30);
+    }
+    s.everyFrame = keepB;
+    const clip = await film('crash-versus', s, noCrash, null, 4.2,
+      'Versus: Team A comes apart; a wheel wobbles Team B');
     await s.close();
     return clip;
   },

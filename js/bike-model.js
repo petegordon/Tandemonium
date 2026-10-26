@@ -638,21 +638,21 @@ export class BikeModel {
   /**
    * #484 versus: a part from the other team's crash hit us. A shove to the lean (`kick`, rad/s, signed) and a
    * shake that dies away (`shake`, rad/s²). A disturbance, not a crash: ride it out, or over-correct and fall.
-   * Scaled by wobbleMultiplier like the other wobbles.
+   * NOT scaled by wobbleMultiplier: that is the presets' RANDOM wobble (0 on chill, 0.1 on adventurous) and
+   * would erase a hit you can see coming; the presets' auto-correction already helps the easy ones recover.
    */
   addHitWobble(kick, shake) {
     if (this.fallen) return;
-    const mul = TUNE.wobbleMultiplier != null ? TUNE.wobbleMultiplier : 1.0;
-    this.leanVelocity += (kick || 0) * mul;
+    this.leanVelocity += kick || 0;
     this._hitShake = Math.abs(shake || 0) * (kick < 0 ? -1 : 1);
     this._hitShakeT = 0;
   }
 
   /** The hit's shake this frame (rad/s²); 0 once it has died away. */
-  _hitShakeForce(dt, mul) {
+  _hitShakeForce(dt) {
     if (!this._hitShake) return 0;
     this._hitShakeT += dt;
-    const f = shakeAt(Math.abs(this._hitShake), this._hitShakeT) * Math.sign(this._hitShake) * mul;
+    const f = shakeAt(Math.abs(this._hitShake), this._hitShakeT) * Math.sign(this._hitShake);
     if (this._hitShakeT > 2) this._hitShake = 0;
     return f;
   }
@@ -856,7 +856,7 @@ export class BikeModel {
 
     this.leanVelocity += (gravity + playerLean + gyro + damping +
       pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble +
-      cobbleShake + this._hitShakeForce(dt, wobbleMul)) * dt;
+      cobbleShake + this._hitShakeForce(dt)) * dt;
     this.lean += this.leanVelocity * dt;
 
     // Balance assist: proportional restoring force toward upright
