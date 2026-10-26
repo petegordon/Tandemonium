@@ -17,8 +17,8 @@ const SWAY = { cap: { amp: 0.6, freq: 0.31, phase: 0 }, sto: { amp: 0.6, freq: 0
 
 /** Start a co-op ride with bot riders; `warm` seconds of riding after the countdown (0 = still on the line). */
 async function ride({ level = 'grandma', difficulty = 'adventurous', outfit = 'victorian', sway = SWAY, warm = 6,
-  cadence = 3.2, pedal = true, hud = 'clean', collect = true, keepRoad = true } = {}) {
-  const s = await launch({ storage: STORAGE, port: PORT });
+  cadence = 3.2, pedal = true, hud = 'clean', collect = true, keepRoad = true, storage = {} } = {}) {
+  const s = await launch({ storage: { ...STORAGE, ...storage }, port: PORT });
   LAST = s;
   const { page } = s;
   page.on('console', (m) => { if (m.type() === 'error') s.errors.push('console: ' + m.text().slice(0, 300)); });
@@ -241,9 +241,19 @@ const SHOTS = {
     } });
   },
   // the crash: both lean the same way at once, over they go; the camera stops with them, they stay down
+  // (#484: Physics FX on: the geese are thrown as rag dolls, hats fly, the tandem comes apart, slow-mo moment)
   async crash() {
-    const s = await ride({ warm: 7, collect: 'avoid' });
-    await cam(s.page, { keys: [{ t: 0, deg: 140, dist: 4.4, h: 0.7, look: 0.15, fov: 40 }, { t: 3, deg: 115, dist: 3.9, h: 0.55, look: 0.05, fov: 40 }] });
+    const s = await ride({ warm: 7, collect: 'avoid', storage: { tandemonium_physics_fx: 'on' } });
+    const ready = await s.page.evaluate(() => !!(window._game.physicsFx && window._game.physicsFx.ready));
+    if (!ready) throw new Error('Physics FX not ready (vendor/rapier.mjs?)');
+    // no gold present lying in the foreground of the wreck (v1 flaw): the ones just ahead are taken off the road
+    await s.page.evaluate(() => {
+      const g = window._game, d = g.bike.distanceTraveled;
+      for (const it of g.collectibleManager._items) if (it.absoluteD > d - 5 && it.absoluteD < d + 90) it.collected = true;
+    });
+    // wider than v1: the geese are thrown several metres now
+    // (from the side they fall AWAY from: they cartwheel off into the frame, not into the lens)
+    await cam(s.page, { keys: [{ t: 0, deg: -130, dist: 6.0, h: 1.0, look: 0.15, fov: 44 }, { t: 3, deg: -110, dist: 6.5, h: 0.9, look: 0.05, fov: 44 }] });
     await take('crash', s, 8, { perFrame: async (i, t) => {
       if (i === 60) await bots(s.page, { extra: 1, steer: 0, sway: { amp: 0, freq: 0, phase: 0 } });
       if (i === 110) await lockCam(s.page);
