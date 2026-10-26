@@ -425,7 +425,9 @@ async function main() {
     scene.add(group);
     const riders = { Captain: { root: cap }, Stoker: { root: sto } };
     const bike = { speed: 9, heading: 0.3, lean: 0.1, roadD: 0, group, position: new THREE.Vector3(0, 0, 0), goose: { riders } };
-    const groundAt = (x, z) => 0.05 * z;   // a gentle hill: the rag dolls must land on it, not on y = 0
+    // a hill sloping both ways (and offset from the origin): the rag dolls must land ON it, not on y = 0,
+    // which also pins the heightfield's row / column orientation
+    const groundAt = (x, z) => 0.08 * z - 0.12 * x + 0.3;
     const before = [];
     cap.traverse(b => { if (b.isBone) before.push([b, b.position.clone(), b.quaternion.clone()]); });
     const sc = new CrashScene(RAPIER, { bike, groundAt, cause: 'obstacle', rand: () => 0.5 });
@@ -442,7 +444,7 @@ async function main() {
     const hips1 = cap.getObjectByName('Hips').getWorldPosition(new THREE.Vector3());
     const fwd = (hips1.x - hips0.x) * Math.sin(0.3) + (hips1.z - hips0.z) * Math.cos(0.3);
     check('head-on: the captain is thrown over the bars, metres down the road', fwd > 3, `${fwd.toFixed(2)} m`);
-    check('rag dolls stay on the (sloped) ground', lowest > -0.06, `lowest ${lowest.toFixed(3)} m`);
+    check('rag dolls stay on the (sloped) ground', lowest > -0.08, `deepest surface ${lowest.toFixed(3)} m`);
     check('rag doll bones stay finite', finite);
     const hat1 = cap.getObjectByName('HatSocket').getWorldPosition(new THREE.Vector3());
     const head1 = cap.getObjectByName('Head').getWorldPosition(new THREE.Vector3());
@@ -452,6 +454,13 @@ async function main() {
     check('dispose puts the geese back in their seated pose (and the hat on)', restored);
     check('dispose hands the riders back', !riders.Captain.ragdoll && !riders.Stoker.ragdoll);
     check('dispose is safe twice', (() => { try { sc.dispose(); sc.step(1 / 60); return true; } catch (e) { return false; } })());
+    {
+      const sunk = new CrashScene(RAPIER, { bike, groundAt: (x, z) => groundAt(x, z) + 1.2, cause: 'balance', rand: () => 0.5 });
+      let low = Infinity;
+      for (let i = 0; i < 120; i++) { sunk.step(1 / 60); low = Math.min(low, sunk.minClearance()); }
+      check('a goose that starts under the ground (lean-out on the verge) is lifted out, not lost', low > -0.08, `deepest ${low.toFixed(3)} m`);
+      sunk.dispose();
+    }
     const lite = new CrashScene(RAPIER, { bike, groundAt, budget: 'lite', rand: () => 0.5 });
     check('lite budget: bike + 2 x 5 bodies + 2 hats', lite.bodyCount === 13, lite.bodyCount);
     lite.dispose();

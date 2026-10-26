@@ -34,7 +34,7 @@ const DEBRIS_GROUPS = grp(DEBRIS, GROUND);     // debris meets the ground, never
 // Ground sampled around the crash, each way. A fast head-on throws the captain 10+ m down the road, and
 // past the edge a goose would fall forever: the patch reaches well beyond the furthest throw.
 const GROUND_HALF = 26;
-const GROUND_STEP = 1.3;
+const GROUND_STEP = 1.0;   // the verge banks steeply off the road edge: a coarser grid cut its corners
 const SUBSTEP = 1 / 120;  // the joints want small steps; slow-mo gets them for free
 
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _inv = new THREE.Matrix4();
@@ -73,7 +73,6 @@ export class CrashScene {
     this.bodyCount = 0;
     this._acc = 0;
     this.age = 0;
-    this.groundAt = groundAt;
 
     const speed = bike.speed, heading = bike.heading, lean = bike.lean;
     const fx = Math.sin(heading), fz = Math.cos(heading);
@@ -101,31 +100,48 @@ export class CrashScene {
       if (!rider || !rider.root) continue;
       const t = throwFor({ seat, cause, speed, heading, lean, rand });
       const r = this._ragdoll(seat, rider, segmentsFor(budget), t, rand);
-      if (r) this.riders.push(r);
+      if (r) { this._lift(r); this.riders.push(r); }
     }
   }
 
-  /** A terrain-following trimesh around the crash: geese land on the road's real height. */
+  /**
+   * A lean-out leaves the bike lying on the verge, often lower than the road height the ground is sampled
+   * from, so a goose can start partly UNDER the ground, and a body that starts under it stays there. Lift
+   * the whole rag doll (and its hat) clear on the impact frame; at most a metre, mid-launch nobody sees it.
+   */
+  _lift(rd) {
+    let dy = 0;
+    for (const sg of rd.segs) {
+      const t = sg.body.translation();
+      dy = Math.max(dy, this.groundHeight(t.x, t.z) + sg.rad - t.y);
+    }
+    dy = Math.min(dy, 1);
+    if (dy <= 0) return;
+    for (const b of [...rd.segs.map(sg => sg.body), ...(rd.hat ? [rd.hat.body] : [])]) {
+      const t = b.translation();
+      b.setTranslation({ x: t.x, y: t.y + dy + 0.01, z: t.z }, true);
+    }
+  }
+
+  /**
+   * The terrain around the crash as a Rapier HEIGHTFIELD: solid below its surface, so a thin limb shoved
+   * under it by a joint is pushed back up (a trimesh has no inside, and limbs fell through it on the verge).
+   * Rapier's heightfield is centred on its body, spans scale.x by scale.z, and reads heights[row + col *
+   * (nrows + 1)] with rows along Z and columns along X.
+   */
   _ground(pos, groundAt) {
-    const R = this.R, n = Math.round((2 * GROUND_HALF) / GROUND_STEP) + 1;
-    const verts = new Float32Array(n * n * 3), idx = new Uint32Array((n - 1) * (n - 1) * 6);
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        const x = pos.x - GROUND_HALF + i * GROUND_STEP, z = pos.z - GROUND_HALF + j * GROUND_STEP;
-        const k = (i * n + j) * 3;
-        verts[k] = x; verts[k + 1] = groundAt(x, z); verts[k + 2] = z;
+    const R = this.R, n = Math.round((2 * GROUND_HALF) / GROUND_STEP);   // cells per side
+    const span = n * GROUND_STEP;
+    const heights = new Float32Array((n + 1) * (n + 1));
+    for (let col = 0; col <= n; col++) {
+      for (let row = 0; row <= n; row++) {
+        const x = pos.x - span / 2 + col * GROUND_STEP, z = pos.z - span / 2 + row * GROUND_STEP;
+        heights[row + col * (n + 1)] = groundAt(x, z);
       }
     }
-    let w = 0;
-    for (let i = 0; i < n - 1; i++) {
-      for (let j = 0; j < n - 1; j++) {
-        const a = i * n + j, b = a + 1, c = a + n, d = c + 1;
-        idx[w++] = a; idx[w++] = b; idx[w++] = c;
-        idx[w++] = b; idx[w++] = d; idx[w++] = c;
-      }
-    }
-    const ground = this.world.createRigidBody(R.RigidBodyDesc.fixed());
-    this.world.createCollider(R.ColliderDesc.trimesh(verts, idx).setFriction(0.9)
+    this._hf = { x0: pos.x - span / 2, z0: pos.z - span / 2, n, heights };
+    const ground = this.world.createRigidBody(R.RigidBodyDesc.fixed().setTranslation(pos.x, 0, pos.z));
+    this.world.createCollider(R.ColliderDesc.heightfield(n, n, heights, { x: span, y: 1, z: span }).setFriction(0.9)
       .setCollisionGroups(GROUND_GROUPS), ground);
   }
 
@@ -165,7 +181,7 @@ export class CrashScene {
       const B0 = new THREE.Matrix4().compose(ctr, q, ONE);
       const O = B0.clone().invert().multiply(bone.matrixWorld);
       made[sg.id] = { body, B0, anchor: _a.clone() };
-      out.segs.push({ bone, body, O });
+      out.segs.push({ bone, body, O, rad });
       const p = sg.parent && made[sg.parent];
       if (p) {
         const la = _a.clone().applyMatrix4(_inv.copy(p.B0).invert());
@@ -235,12 +251,22 @@ export class CrashScene {
     });
   }
 
-  /** The lowest any rag doll body sits above the terrain (metres; tests and the review capture). */
+  /** The simulated ground's height at (x, z): the heightfield's own grid, bilinear (off it: -Infinity). */
+  groundHeight(x, z) {
+    const h = this._hf;
+    const u = (x - h.x0) / GROUND_STEP, v = (z - h.z0) / GROUND_STEP;
+    if (!(u >= 0 && v >= 0 && u <= h.n && v <= h.n)) return -Infinity;
+    const c = Math.min(h.n - 1, Math.floor(u)), r = Math.min(h.n - 1, Math.floor(v)), fu = u - c, fv = v - r;
+    const H = (cc, rr) => h.heights[rr + cc * (h.n + 1)];
+    return (H(c, r) * (1 - fu) + H(c + 1, r) * fu) * (1 - fv) + (H(c, r + 1) * (1 - fu) + H(c + 1, r + 1) * fu) * fv;
+  }
+
+  /** How far the deepest rag doll body's surface is above the simulated ground (metres; < 0 = sunk in). */
   minClearance() {
     let m = Infinity;
     for (const rd of this.riders) for (const sg of rd.segs) {
       const t = sg.body.translation();
-      m = Math.min(m, t.y - this.groundAt(t.x, t.z));
+      m = Math.min(m, t.y - sg.rad - this.groundHeight(t.x, t.z));
     }
     return m;
   }
