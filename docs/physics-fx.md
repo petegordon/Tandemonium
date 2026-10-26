@@ -76,9 +76,44 @@ disagree about this setting with no desync.
 js/physics/rapier-runtime.js   lazy, fail-open, single-init Rapier loader
 js/physics/debris-world.js     the one Rapier world; spawn/step/retire
 js/physics/physics-fx.js       the three effects + billboardRoll()
+js/physics/crash-scene.js      #484: one crash = bike + two goose rag dolls + hats, its own world
+js/physics/ragdoll-spec.js     #484 (pure): rag doll segments, the crash throw, the hat throw
+js/crash-slowmo.js             #484 (pure): the slow-mo schedule, the held race clock
 test/physics-smoke.html        headless assertions (no WebGL, no game)
 scripts/smoke-physics-fx.mjs   runner
 ```
+
+## Crash rag dolls and slow-mo (#484)
+
+With goose riders on the bike, `crashTumble()` builds a **CrashScene** instead of
+the one-box tumble: its own small Rapier world holding
+
+- a terrain-following trimesh ground (±26 m around the crash, sampled from the
+  road height, so a goose thrown down a hill lands on the hill);
+- the bike box (same size and launch as the plain tumble);
+- a **rag doll per goose**: 13 capsules on ball joints (pelvis, chest, two loose
+  neck segments, head, upper/lower arms, thighs, shins), each driving ONE bone
+  of the goose's own skeleton; the bones between (Spine1/2, Neck1/3, hands,
+  feet) keep their seated pose. A second crash while one is live (versus) gets
+  the 5-body "lite" doll (body + neck);
+- each **hat** as its own spinning body, on the HatSocket bone (GooseRiders
+  skins the hat to HatSocket instead of Head at load).
+
+Rag doll bodies never collide with each other or the bike, only the ground (no
+tangles, no explosions). The throw (`ragdoll-spec.js throwFor`): head-on (pylon,
+tree) the captain goes over the bars and the stoker off the back to a side; a
+lean-out cartwheels both toward the side the bike fell.
+
+**Slow-mo.** In solo, local co-op and versus, the crashing view runs at 0.25×
+for 0.8 s after impact, eases back over 0.15 s, and cuts to the checkpoint 2.0 s
+after impact. Only that view slows: in versus the other team's half (and the
+shared pylons and geese) stays real time. The race clock is held while slowed.
+The bike's `fallTimer` is stepped with the scaled dt, so the crash scene sets it
+in simulated seconds (`simSecondsFor(2.0)` ≈ 1.34). Online co-op keeps the
+1.2 s real-time fall (the captain's frame pacing feeds the stoker).
+
+At the reset (`releaseCrash`) the scene restores every bone to its seated pose
+and frees its world. Still purely visual: nothing reads the rag dolls back.
 
 ## Billboards
 

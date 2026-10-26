@@ -48,7 +48,8 @@ const sample = () => page.evaluate(() => {
   return { st: g.state, fallen: b.fallen, ft: +(b.fallTimer || 0).toFixed(3), lean: +b.lean.toFixed(3),
     upY: +up.y.toFixed(3), gx: +b.group.position.x.toFixed(2), gz: +b.group.position.z.toFixed(2),
     ov: !!b.transformOverride, tumble: !!b._tumbleHandle, cd: +(g.countdownTimer || 0).toFixed(2),
-    d: +b.distanceTraveled.toFixed(1), fx: !!(g.physicsFx && g.physicsFx.ready) };
+    d: +b.distanceTraveled.toFixed(1), fx: !!(g.physicsFx && g.physicsFx.ready),
+    clock: g.raceManager ? +g.raceManager.segmentTimeRemaining.toFixed(3) : null, scene: !!b.crashScene };
 });
 // #484: where the bones no clip animates (Hips, the hat's socket) sit in bike space: after the cut to the
 // checkpoint they must be exactly where they were (the riders put back in their seats, hats back on)
@@ -98,7 +99,13 @@ for (const r of log) {
 // #483 check: while fallen, the drawn bike never stands back up (upY = the group's up vector, 1 = upright)
 const down = log.filter(r => r.fallen && r.i > 0);
 const worst = Math.max(...down.map(r => r.upY));
-const ok = worst < Math.cos(Math.min(LEAN, 1.2)) + 0.05 && worstD < 0.01;
+// #484: with a rag doll scene the clock is held through the slow-mo moment (0.8 s + 0.15 s ramp, real time)
+const held = log.filter(r => r.i >= 1 && r.i <= 55 && r.scene).map(r => r.clock);
+const clockOk = !log[1] || !log[1].scene || (held.length > 10 && Math.max(...held) - Math.min(...held) < 1e-3);
+const later = log.filter(r => r.i >= 62 && r.i <= 110 && r.fallen).map(r => r.clock);
+console.log('race clock during the slow-mo:', held.length ? (Math.max(...held) - Math.min(...held)).toFixed(3) + ' s used' : 'n/a',
+  '| after it:', later.length ? (Math.max(...later) - Math.min(...later)).toFixed(3) + ' s used' : 'n/a');
+const ok = worst < Math.cos(Math.min(LEAN, 1.2)) + 0.05 && worstD < 0.01 && clockOk;
 console.log(ok ? '✔ stays down from the impact lean (max upY ' + worst + '), riders back in their seats'
   : '✖ pops upright while fallen (#483; max upY ' + worst + ') or riders not put back (#484; ' + worstD.toFixed(4) + ')');
 console.log('errors', s.errors.slice(0, 3));

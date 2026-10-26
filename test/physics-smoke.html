@@ -34,6 +34,7 @@ import * as THREE from 'three';
 import { ensureRapier } from '../js/physics/rapier-runtime.js';
 import { DebrisWorld } from '../js/physics/debris-world.js';
 import { PhysicsFx, billboardRoll } from '../js/physics/physics-fx.js';
+import { CrashScene } from '../js/physics/crash-scene.js';
 
 const results = [];
 function check(name, cond, detail = '') {
@@ -398,6 +399,64 @@ async function main() {
     } catch (err) {
       check('edited game modules resolve', false, String(err));
     }
+  }
+
+  // ── #484: a crash scene throws two goose rag dolls and their hats, and puts them back ──
+  {
+    // a goose skeleton with the rig's bone names, seated on a bike group (no GLB, no WebGL)
+    const goose = (z) => {
+      const root = new THREE.Object3D();
+      const B = (name, parent, x, y, zz) => { const b = new THREE.Bone(); b.name = name; b.position.set(x, y, zz); parent.add(b); return b; };
+      const hips = B('Hips', root, 0, 0.9, z);
+      const sp = B('Spine', hips, 0, 0.15, 0), s1 = B('Spine1', sp, 0, 0.15, 0), s2 = B('Spine2', s1, 0, 0.15, 0);
+      const n0 = B('Neck', s2, 0, 0.12, 0.02), n1 = B('Neck1', n0, 0, 0.12, 0.02), n2 = B('Neck2', n1, 0, 0.12, 0.02),
+        n3 = B('Neck3', n2, 0, 0.12, 0.02), hd = B('Head', n3, 0, 0.1, 0.03);
+      B('HatSocket', hd, 0, 0.12, 0); B('Jaw', hd, 0, 0, 0.08);
+      for (const [side, x] of [['Left', 0.18], ['Right', -0.18]]) {
+        const a = B(side + 'Arm', s2, x, 0.05, 0), fa = B(side + 'ForeArm', a, x * 1.2, -0.05, 0.1); B(side + 'Hand', fa, x, -0.05, 0.15);
+        const ul = B(side + 'UpLeg', hips, x * 0.6, -0.05, 0), lg = B(side + 'Leg', ul, 0, -0.1, 0.35); B(side + 'Foot', lg, 0, -0.4, 0);
+      }
+      root.userData.hatOnSocket = true;
+      return root;
+    };
+    const group = new THREE.Group();
+    const cap = goose(0.5), sto = goose(-0.5);
+    group.add(cap, sto);
+    scene.add(group);
+    const riders = { Captain: { root: cap }, Stoker: { root: sto } };
+    const bike = { speed: 9, heading: 0.3, lean: 0.1, roadD: 0, group, position: new THREE.Vector3(0, 0, 0), goose: { riders } };
+    const groundAt = (x, z) => 0.05 * z;   // a gentle hill: the rag dolls must land on it, not on y = 0
+    const before = [];
+    cap.traverse(b => { if (b.isBone) before.push([b, b.position.clone(), b.quaternion.clone()]); });
+    const sc = new CrashScene(RAPIER, { bike, groundAt, cause: 'obstacle', rand: () => 0.5 });
+    check('crash scene: bike + 2 x 13 rag doll bodies + 2 hats', sc.bodyCount === 29, sc.bodyCount);
+    check('crash scene: both riders handed to the rag doll', riders.Captain.ragdoll === true && riders.Stoker.ragdoll === true);
+    const hips0 = cap.getObjectByName('Hips').getWorldPosition(new THREE.Vector3());
+    const hat0 = cap.getObjectByName('HatSocket').getWorldPosition(new THREE.Vector3());
+    let lowest = Infinity, finite = true;
+    for (let i = 0; i < 150; i++) {
+      sc.step(1 / 60);
+      lowest = Math.min(lowest, sc.minClearance());
+      cap.traverse(b => { if (b.isBone && !Number.isFinite(b.matrixWorld.elements[12] + b.matrixWorld.elements[13])) finite = false; });
+    }
+    const hips1 = cap.getObjectByName('Hips').getWorldPosition(new THREE.Vector3());
+    const fwd = (hips1.x - hips0.x) * Math.sin(0.3) + (hips1.z - hips0.z) * Math.cos(0.3);
+    check('head-on: the captain is thrown over the bars, metres down the road', fwd > 3, `${fwd.toFixed(2)} m`);
+    check('rag dolls stay on the (sloped) ground', lowest > -0.06, `lowest ${lowest.toFixed(3)} m`);
+    check('rag doll bones stay finite', finite);
+    const hat1 = cap.getObjectByName('HatSocket').getWorldPosition(new THREE.Vector3());
+    const head1 = cap.getObjectByName('Head').getWorldPosition(new THREE.Vector3());
+    check('the hat leaves the head', hat1.distanceTo(head1) > 0.4, `${hat1.distanceTo(head1).toFixed(2)} m from the head`);
+    sc.dispose();
+    const restored = before.every(([b, p, q]) => b.position.distanceTo(p) < 1e-6 && Math.abs(b.quaternion.dot(q)) > 0.999999);
+    check('dispose puts the geese back in their seated pose (and the hat on)', restored);
+    check('dispose hands the riders back', !riders.Captain.ragdoll && !riders.Stoker.ragdoll);
+    check('dispose is safe twice', (() => { try { sc.dispose(); sc.step(1 / 60); return true; } catch (e) { return false; } })());
+    const lite = new CrashScene(RAPIER, { bike, groundAt, budget: 'lite', rand: () => 0.5 });
+    check('lite budget: bike + 2 x 5 bodies + 2 hats', lite.bodyCount === 13, lite.bodyCount);
+    lite.dispose();
+    scene.remove(group);
+    void hat0;
   }
 
   // ── a big frame gap must not stall the loop ──

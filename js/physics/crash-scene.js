@@ -31,8 +31,10 @@ const grp = (member, filter) => ((member << 16) | filter) >>> 0;
 const GROUND_GROUPS = grp(GROUND, DEBRIS);
 const DEBRIS_GROUPS = grp(DEBRIS, GROUND);     // debris meets the ground, never itself (no tangles)
 
-const GROUND_HALF = 14;   // metres of ground sampled around the crash, each way
-const GROUND_STEP = 1;
+// Ground sampled around the crash, each way. A fast head-on throws the captain 10+ m down the road, and
+// past the edge a goose would fall forever: the patch reaches well beyond the furthest throw.
+const GROUND_HALF = 26;
+const GROUND_STEP = 1.3;
 const SUBSTEP = 1 / 120;  // the joints want small steps; slow-mo gets them for free
 
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _inv = new THREE.Matrix4();
@@ -71,6 +73,7 @@ export class CrashScene {
     this.bodyCount = 0;
     this._acc = 0;
     this.age = 0;
+    this.groundAt = groundAt;
 
     const speed = bike.speed, heading = bike.heading, lean = bike.lean;
     const fx = Math.sin(heading), fz = Math.cos(heading);
@@ -230,6 +233,16 @@ export class CrashScene {
       const t = rd.segs.length ? rd.segs[0].body.translation() : null;
       return { seat: rd.seat, x: t ? t.x : 0, y: t ? t.y : 0, z: t ? t.z : 0 };
     });
+  }
+
+  /** The lowest any rag doll body sits above the terrain (metres; tests and the review capture). */
+  minClearance() {
+    let m = Infinity;
+    for (const rd of this.riders) for (const sg of rd.segs) {
+      const t = sg.body.translation();
+      m = Math.min(m, t.y - this.groundAt(t.x, t.z));
+    }
+    return m;
   }
 
   /** Put the geese back in their seated pose and free the world. Safe to call twice. */

@@ -69,18 +69,19 @@ async function film(name, s, crash, cam, seconds = 4.2) {
   await record(page, name, seconds, { perFrame: async (i, t) => {
     if (hit < 0 && await crash(i, t)) hit = t;
     const r = await page.evaluate(() => {
-      const g = window._game, b = g.bike, sc = b.crashScene;
+      const g = window._game, b = window.__filmBike ? window.__filmBike() : g.bike, sc = b.crashScene;
       return { st: g.state, fallen: b.fallen, scene: !!sc, ft: +(b.fallTimer || 0).toFixed(2),
         pel: sc ? sc.pelvisPositions().map(p => [+p.y.toFixed(2)]) : null,
+        clr: sc && sc.world ? +sc.minClearance().toFixed(3) : null,
         v: sc && sc.riders[0] ? (({ x, y, z }) => [+x.toFixed(1), +y.toFixed(1), +z.toFixed(1)])(sc.riders[0].segs[0].body.linvel()) : null,
         sp: +b.speed.toFixed(2), lean: +b.lean.toFixed(2) };
     });
     if (r.fallen) log.push(r);
     if (process.env.DEBUG && (r.fallen || i % 10 === 0)) console.log('   ', i, JSON.stringify(r));
     // back at the checkpoint: the game's own chase camera, as the player sees the countdown
-    if (locked && !r.fallen && r.st !== 'playing-crashed') await page.evaluate(() => { const R = window.__reel; if (R.__bf) R._bikeFrame = R.__bf; R.setCamera(null); });
+    if (locked && !r.fallen) await page.evaluate(() => { const R = window.__reel; if (R.__bf) R._bikeFrame = R.__bf; R.setCamera(null); });
     if (r.fallen && hit < 0) hit = t;
-    if (hit >= 0 && !locked) {
+    if (hit >= 0 && !locked && cam) {
       locked = true;   // hold the crash site: the seats are tumbling into the dirt
       await page.evaluate(() => {
         const R = window.__reel, cs = R.camState;
@@ -94,6 +95,8 @@ async function film(name, s, crash, cam, seconds = 4.2) {
   // the lowest any pelvis got below where it started (geese through the floor?)
   const ys = log.filter(l => l.pel).flatMap(l => l.pel.map(p => p[0]));
   if (ys.length) console.log('  pelvis y range', Math.min(...ys).toFixed(2), Math.max(...ys).toFixed(2));
+  const cl = log.map(l => l.clr).filter(v => v != null);
+  if (cl.length) console.log('  lowest body above the terrain', Math.min(...cl).toFixed(3), 'm', Math.min(...cl) < -0.05 ? '✖ THROUGH THE FLOOR' : '✔');
   return clip;
 }
 
@@ -132,7 +135,50 @@ const shots = {
         for (const b of window.__reel.bots) { b.steer = down ? 0.9 : 0; b.extra = down ? 0 : 1; }
       });
       return false;
-    }, CAM(-35, 10, 1.6));
+    }, null);   // the game's own chase camera: what the player sees
+    await s.close();
+    return clip;
+  },
+  // split-screen versus (?versusbot=1: Team B is the game's debug rider): Team A crashes into a pylon and
+  // only its half slows down; Team B races on in real time
+  async versus() {
+    const s = await launch({ width: W, height: H, port: PORT, query: '?versusbot=1',
+      storage: { tandemonium_show_riders: 'on', tandemonium_physics_fx: opt('--fx', 'on') } });
+    const { page } = s;
+    const click = (id) => page.evaluate((i) => document.getElementById(i)?.click(), id);
+    await page.click('#tap-to-start').catch(() => {});
+    await sleep(1200);
+    await click('btn-together'); await sleep(800);
+    await click('btn-versus');
+    await page.waitForFunction(() => window._game.lobby._currentStep === window._game.lobby.versusStep, { timeout: 20000 });
+    await sleep(800);
+    await click('btn-versus-continue'); await sleep(800);
+    await page.evaluate(async () => {   // Grandma's, Adventurous
+      const L = window._game.lobby, { getLevelById } = await import('/js/race-config.js');
+      L.selectedLevel = getLevelById('grandma'); L.selectedDifficulty = 'adventurous';
+    });
+    await click('btn-start-ride');
+    await page.waitForFunction(() => window._game.mode === 'versus' && !!window._game.versusRigs, { timeout: 180000 });
+    await page.evaluate(() => {
+      const g = window._game, rig = g.versusRigs[0];
+      window.__filmBike = () => rig.bike;
+      window.__reel.attach(rig.members[0].input, () => rig.bike, { role: 'captain', sway: { amp: 0, freq: 0, phase: 0 }, cadence: 3.8, pedal: true });
+    });
+    for (let i = 0; i < 80; i++) {
+      await advance(page, 0.5);
+      const ok = await page.evaluate(() => { const g = window._game; return g.state === 'playing' && !!(g.physicsFx && g.physicsFx.ready)
+        && g.versusRigs[0].bike.speed > 7 && g.versusRigs[0].bike.distanceTraveled > 40; });
+      if (ok) break;
+    }
+    const clip = await film('crash-versus', s, async (i, t) => {
+      if (t < 0.5) return false;
+      return page.evaluate(() => {
+        const g = window._game, b = g.versusRigs[0].bike;
+        if (b.fallen) return true;
+        g._recordCrash('obstacle', b); b._fall();
+        return true;
+      });
+    }, null, 4.0);
     await s.close();
     return clip;
   },
