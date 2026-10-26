@@ -440,6 +440,11 @@ export class TouristWorld {
   setRaceMarkers() {}
   clearRaceMarkers() {}
   setBalloonColor() {}
+  // #478 finish props (Grandma's present pile) belong to the procedural world;
+  // the finish cinematic and victory screen call these on whatever world is
+  // live, so a Tourist finish must not throw here.
+  startPresentStack() {}
+  updateFinishFx() {}
   checkTreeCollision() { return { hit: false }; }
   // _startCountdown reseeds the world from the level; real streets have no seed.
   // (Without this _startCountdown threw before it built the RaceManager, so a
