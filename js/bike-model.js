@@ -11,6 +11,7 @@ import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway,
 import { colourwayParams, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 import { CrankMotion } from './crank-motion.js';
+import { fallLean } from './crash-tumble.js';
 import { rebatch } from './bike-batch.js';
 import { dracoDecoderPath } from './draco-path.js';
 
@@ -99,6 +100,11 @@ export class BikeModel {
     // the HUD, the race logic and the cameras never see a difference.
     this.onFall = null;
     this.onReset = null;
+    // #484 crash scene (physics/crash-scene.js): rag dolls + hats; the slow-mo clock; the crash cause
+    this.crashScene = null;
+    this._slowMoStart = 0;
+    this._crashDownSim = 0;
+    this._crashCause = null;
     this.transformOverride = false;
     this._tumbleHandle = null;
 
@@ -683,14 +689,10 @@ export class BikeModel {
       this.fallElapsed = (this.fallElapsed || 0) + dt;
       // B-2 · the tumble: ease over to the fallen side in 0.4 s with a small
       // bounce at the end, instead of snapping flat on the impact frame.
-      // #483: from the lean it crashed at, not from upright, or the bike
-      // snapped back up the frame after it went over and then fell again.
-      const t = Math.min(1, this.fallElapsed / 0.4);
-      const eased = 1 - Math.pow(1 - t, 3);
-      const bounce = t >= 1 ? Math.sin((this.fallElapsed - 0.4) * 18) * 0.05 * Math.max(0, 1 - (this.fallElapsed - 0.4) * 3) : 0;
-      const from = this._fallLeanStart || 0, to = this._fallLeanTarget || 0;
-      this.lean = from + (to - from) * eased + bounce;
+      // #483: from the lean it crashed at, not from upright (crash-tumble.js).
+      this.lean = fallLean(this._fallLeanStart || 0, this._fallLeanTarget || 0, this.fallElapsed);
       if (this.fallTimer <= 0) this._reset();
+      else if (this.crashScene) this.crashScene.step(dt);   // #484: rag dolls + hats + the bike
       this._applyTransform(dt);
       return;
     }
@@ -1067,11 +1069,13 @@ export class BikeModel {
     // bike actually crashed at, and the next four lines destroy both.
     if (this.onFall) this.onFall(this);
     this.fallen = true;
-    this.fallTimer = 1.2;
+    // #484: a slow-mo crash scene asks for longer, in simulated seconds (crash-slowmo.js)
+    this.fallTimer = this._crashDownSim || 1.2;
+    this._crashDownSim = 0;
     this.fallElapsed = 0;
     this.speed = 0;
+    this._fallLeanStart = this.lean || 0;
     this._fallLeanTarget = Math.sign(this.lean || 1) * Math.PI / 2.2;
-    this._fallLeanStart = this.lean || 0;   // #483: the tumble starts where it crashed
     this.leanVelocity = 0;
     const terrainY = this.roadPath
       ? this.roadPath.getHeightAtWorld(this.position.x, this.position.z, this.roadD)
@@ -1092,6 +1096,8 @@ export class BikeModel {
     // tumble keeps driving it and the reset is invisible.
     if (this.onReset) this.onReset(this);
     this.fallen = false;
+    this._crashCause = null;
+    this._slowMoStart = 0;
     this.lean = 0;
     this.leanVelocity = 0;
     this.speed = 0;
@@ -1110,6 +1116,8 @@ export class BikeModel {
     this.air = null;
     if (this.onReset) this.onReset(this);
     this.fallen = false;
+    this._crashCause = null;
+    this._slowMoStart = 0;
     this.lean = 0;
     this.leanVelocity = 0;
     this.speed = 0;

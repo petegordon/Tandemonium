@@ -148,8 +148,33 @@ export class GooseRiders {
       root.position.set(o.x, o.y, o.z);
     }
     root.userData.gooseSeat = seat;
+    if (GooseRiders.hatToSocket(root)) root.userData.hatOnSocket = true;
     socket.add(root);
     this._bindRider(seat, root);
+  }
+
+  /**
+   * #484: skin the hat to the HatSocket bone instead of Head (as the Goose Studio does), so a crash can
+   * throw the hat off the head. HatSocket is a child of Head that no clip animates, so the hat looks the
+   * same until something moves the socket. Returns true when the goose has a hat on its socket.
+   */
+  static hatToSocket(root) {
+    let ok = false;
+    root.traverse((m) => {
+      if (!m.isSkinnedMesh || !/^hat/i.test(m.name)) return;
+      const bones = m.skeleton.bones;
+      const hi = bones.findIndex(b => b.name === 'Head'), si = bones.findIndex(b => b.name === 'HatSocket');
+      if (hi < 0 || si < 0) return;
+      const g = m.geometry;
+      if (!g.userData.hatOnSocket) {
+        const a = g.attributes.skinIndex;
+        for (let i = 0; i < a.array.length; i++) if (a.array[i] === hi) a.array[i] = si;
+        a.needsUpdate = true;
+        g.userData.hatOnSocket = true;
+      }
+      ok = true;
+    });
+    return ok;
   }
 
   _bindRider(seat, root) {
@@ -181,6 +206,7 @@ export class GooseRiders {
     }
     this.bikeMixer.update(0);
     for (const [seat, r] of Object.entries(this.riders)) {
+      if (r.ragdoll) continue;   // #484: a crash's rag doll owns this goose's bones (physics/crash-scene.js)
       if (r.pedal) r.pedal.time = turnTime(this._crank, r.pedal.getClip().duration);
       const w = leanWeights(this._lean[seat]);
       if (r.ride) r.ride.setEffectiveWeight(w.ride);
