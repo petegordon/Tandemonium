@@ -52,8 +52,8 @@ const state = (page) => page.evaluate(() => {
 
 /** Fresh player, solo. tutorial: true = the first-ride tutorial (as a new player gets), else `level`. */
 async function solo({ keep, tutorial = false, level = 'grandma', difficulty = 'chill', cadence = 3.0,
-  sway = { amp: 0.25, freq: 0.3, phase: 0 }, collect = true } = {}) {
-  const st = { ...BASE, ...others(keep) };
+  sway = { amp: 0.25, freq: 0.3, phase: 0 }, collect = true, storage = {} } = {}) {
+  const st = { ...BASE, ...others(keep), ...storage };
   if (tutorial) st.tandemonium_tutorial_done = null;
   const s = await launch({ ...VIEW, port: PORT, storage: st });
   const { page } = s;
@@ -249,45 +249,46 @@ const SHOTS = {
     console.log('  at', JSON.stringify(await until(s.page, st => st.d >= 212, 120, 0.5)));
     await take('madeit', s, 13.5);
   },
-  // #5 GOOSE DOWN: off the road into a gaggle (honks, feathers) and over the bike goes
+  // #5 GOOSE DOWN: head-on into a pylon (#478's 3D cone, a real collision): the cone flies, the tandem comes apart,
+  // both geese are thrown with their hats in the crash's slow-mo moment (#484), and the toast lands
   async goosedown() {
-    const side = Number(process.env.SIDE || -1);
-    // the bot's dodging is not quite deterministic: a ride that already crashed before the gaggle is ridden again
-    let s;
-    for (let attempt = 1; ; attempt++) {
-      s = await solo({ keep: 'first_crash', level: 'grandma', difficulty: 'adventurous', sway: STILL, cadence: 3.8 });
-      // the gaggle on the right verge at 118-125 m, ~3-4.5 m out (seeded, so the same every ride)
-      await bots(s.page, { path: [[101, 0], [107, 1.2], [114, 2.6], [119, 3.5], [126, 3.8]] });   // dodging as usual until 101 m
-      const at = await until(s.page, st => st.d >= 99 || st.earned.length > 0 || (st.state !== 'playing' && st.d > 1), 120, 0.5);
-      console.log('  at', JSON.stringify(at));
-      if (!at.earned.length && at.state === 'playing') break;
-      await s.close();
-      if (attempt >= 5) throw new Error('crashed before the gaggle 5 times');
-    }
-    await cam(s.page, { stiff: 0.25, keys: [{ t: 0, deg: TALL ? 22 : 38, dist: TALL ? 9.5 : 8.5, h: 0.9, look: 0.1, fov: TALL ? 50 : 36 },
-      { t: 2.5, deg: TALL ? 18 : 30, dist: TALL ? 9.0 : 8.0, h: 0.8, look: 0.0, fov: TALL ? 50 : 36 }] });
-    let tip = null, locked = false;
+    const s = await solo({ keep: 'first_crash', level: 'grandma', difficulty: 'adventurous', sway: STILL, cadence: 3.8,
+      storage: { tandemonium_physics_fx: 'on' } });
+    const { page } = s;
+    // Rapier is fetched during the countdown (vendor/rapier.mjs: the capture blocks the CDN)
+    await until(page, st => st.state === 'playing' && st.d > 40 && st.speed > 6, 120, 0.5);
+    const ready = await page.evaluate(() => !!(window._game.physicsFx && window._game.physicsFx.ready));
+    if (!ready) throw new Error('Physics FX not ready: is vendor/rapier.mjs there?');
+    const d0 = (await state(page)).d;
+    const p = await page.evaluate((d) => {
+      const items = (window._game.obstacleManager._items || []).filter(i => i.absoluteD > d + 30 && !i._hidden)
+        .sort((x, y) => x.absoluteD - y.absoluteD);
+      return items[0] ? { d: items[0].absoluteD, x: items[0].lateralOffset } : null;
+    }, d0);
+    if (!p) throw new Error('no pylon ahead');
+    console.log('  pylon at', JSON.stringify(p), 'from d', d0);
+    await bots(page, { dodge: false, offset: p.x, path: null });
+    await until(page, st => st.d > p.d - 30 || st.fallen, 60, 1 / 30);
+    // front-side and low: the cone in frame before the hit; the captain crosses the frame over the bars
+    await cam(page, { stiff: 0.3, keys: [{ t: 0, deg: TALL ? 40 : 58, dist: TALL ? 13 : 9, h: TALL ? 1.1 : 0.6, look: -0.3, fov: TALL ? 56 : 50 }] });
+    let locked = false;
     await take('goosedown', s, 7.5, async (i, t) => {
-      const st = await s.page.evaluate(() => {
-        // the gold-cloud checkpoint arch sits by the gaggle and fills the lens: hidden (as page-bot's clean shots do)
+      const st = await page.evaluate(() => {
         for (const mk of (window._game.world && window._game.world._raceMarkers) || [])
           if (mk.type === 'checkpoint') { mk._permanentlyHidden = true; mk.mesh.visible = false; }
         const b = window._game.bike;
-        return { d: b.distanceTraveled, fallen: b.fallen, lean: b.lean };
+        return { d: b.distanceTraveled, fallen: b.fallen, scene: !!b.crashScene, parts: b.crashScene ? b.crashScene.parts.length : 0 };
       });
       if (i % 15 === 0) console.log('   ', t.toFixed(2), JSON.stringify(st));
-      if (tip == null && st.d >= 118.5) {
-        tip = t;
-        await s.page.evaluate((side) => { for (const b of window.__reel.bots) { b.extra = side; b.steer = 0; b.pedal = false; b.path = null; b.dodge = false; } }, side);
-      }
-      if (tip != null && !locked && t > tip + 0.35) {
-        locked = true;   // hold the frame: the rig would follow the seats into the dirt
-        await s.page.evaluate(() => {
+      if (st.fallen && !locked) {
+        locked = true;   // hold the crash site: the rig would follow the seats into the dirt
+        await page.evaluate(() => {
           const R = window.__reel, cs = R.camState;
-          if (cs && cs.ctr) { const ctr = cs.ctr.clone(), fwd = cs.fwd.clone(); R._bikeFrame = () => ({ ctr: ctr.clone(), fwd: fwd.clone() }); }
+          if (cs && cs.ctr) { const ctr = cs.ctr.clone().addScaledVector(cs.fwd, 4.5), fwd = cs.fwd.clone(); R._bikeFrame = () => ({ ctr: ctr.clone(), fwd: fwd.clone() }); }
         });
       }
-      if (st.fallen) await s.page.evaluate(() => { window._game.bike.fallTimer = 99; });   // stays down for the toast
+      // stays down for the toast and the end card (simulated seconds: past the slow-mo, the parts settle)
+      if (st.fallen) await page.evaluate(() => { const b = window._game.bike; if (b.fallTimer < 50) b.fallTimer = 99; });
     });
   },
 };
