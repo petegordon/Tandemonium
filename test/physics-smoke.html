@@ -435,10 +435,12 @@ async function main() {
     check('crash scene: both riders handed to the rag doll', riders.Captain.ragdoll === true && riders.Stoker.ragdoll === true);
     const hips0 = cap.getObjectByName('Hips').getWorldPosition(new THREE.Vector3());
     const hat0 = cap.getObjectByName('HatSocket').getWorldPosition(new THREE.Vector3());
-    let lowest = Infinity, finite = true;
+    let lowest = Infinity, finite = true, stretch = 0, gap = 0;
     for (let i = 0; i < 150; i++) {
       sc.step(1 / 60);
       lowest = Math.min(lowest, sc.minClearance());
+      stretch = Math.max(stretch, sc.maxBoneStretch());
+      gap = Math.max(gap, sc.maxJointGap());
       cap.traverse(b => { if (b.isBone && !Number.isFinite(b.matrixWorld.elements[12] + b.matrixWorld.elements[13])) finite = false; });
     }
     const hips1 = cap.getObjectByName('Hips').getWorldPosition(new THREE.Vector3());
@@ -446,6 +448,10 @@ async function main() {
     check('head-on: the captain is thrown over the bars, metres down the road', fwd > 3, `${fwd.toFixed(2)} m`);
     check('rag dolls stay on the (sloped) ground', lowest > -0.08, `deepest surface ${lowest.toFixed(3)} m`);
     check('rag doll bones stay finite', finite);
+    // Pete: "legs are separating from the body". Bones below the pelvis are only turned, never moved, so
+    // every bone stays exactly its seated distance from its parent; and the ball joints themselves hold.
+    check('no limb separates: every bone stays its seated length from its parent', stretch < 1e-4, `max ${stretch.toExponential(2)} m`);
+    check('the ball joints hold under the throw', gap < 0.05, `widest gap ${gap.toFixed(3)} m`);
     const hat1 = cap.getObjectByName('HatSocket').getWorldPosition(new THREE.Vector3());
     const head1 = cap.getObjectByName('Head').getWorldPosition(new THREE.Vector3());
     check('the hat leaves the head', hat1.distanceTo(head1) > 0.4, `${hat1.distanceTo(head1).toFixed(2)} m from the head`);

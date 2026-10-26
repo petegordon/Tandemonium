@@ -49,7 +49,9 @@ const sample = () => page.evaluate(() => {
     upY: +up.y.toFixed(3), gx: +b.group.position.x.toFixed(2), gz: +b.group.position.z.toFixed(2),
     ov: !!b.transformOverride, tumble: !!b._tumbleHandle, cd: +(g.countdownTimer || 0).toFixed(2),
     d: +b.distanceTraveled.toFixed(1), fx: !!(g.physicsFx && g.physicsFx.ready),
-    clock: g.raceManager ? +g.raceManager.segmentTimeRemaining.toFixed(3) : null, scene: !!b.crashScene };
+    clock: g.raceManager ? +g.raceManager.segmentTimeRemaining.toFixed(3) : null, scene: !!b.crashScene,
+    stretch: b.crashScene && b.crashScene.world ? b.crashScene.maxBoneStretch() : 0,
+    gap: b.crashScene && b.crashScene.world ? b.crashScene.maxJointGap() : 0 };
 });
 // #484: where the bones no clip animates (Hips, the hat's socket) sit in bike space: after the cut to the
 // checkpoint they must be exactly where they were (the riders put back in their seats, hats back on)
@@ -105,7 +107,10 @@ const clockOk = !log[1] || !log[1].scene || (held.length > 10 && Math.max(...hel
 const later = log.filter(r => r.i >= 62 && r.i <= 110 && r.fallen).map(r => r.clock);
 console.log('race clock during the slow-mo:', held.length ? (Math.max(...held) - Math.min(...held)).toFixed(3) + ' s used' : 'n/a',
   '| after it:', later.length ? (Math.max(...later) - Math.min(...later)).toFixed(3) + ' s used' : 'n/a');
-const ok = worst < Math.cos(Math.min(LEAN, 1.2)) + 0.05 && worstD < 0.01 && clockOk;
+// #484: no limb comes off the body (bones keep their seated length) and the ball joints hold
+const stretch = Math.max(0, ...log.map(r => r.stretch || 0)), gap = Math.max(0, ...log.map(r => r.gap || 0));
+console.log('rag doll: bone stretch', stretch.toExponential(2), '| widest joint gap', gap.toFixed(3));
+const ok = worst < Math.cos(Math.min(LEAN, 1.2)) + 0.05 && worstD < 0.01 && clockOk && stretch < 1e-3 && gap < 0.08;
 console.log(ok ? '✔ stays down from the impact lean (max upY ' + worst + '), riders back in their seats'
   : '✖ pops upright while fallen (#483; max upY ' + worst + ') or riders not put back (#484; ' + worstD.toFixed(4) + ')');
 console.log('errors', s.errors.slice(0, 3));

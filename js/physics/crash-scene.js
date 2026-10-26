@@ -38,7 +38,7 @@ const GROUND_STEP = 1.0;   // the verge banks steeply off the road edge: a coars
 const SUBSTEP = 1 / 120;  // the joints want small steps; slow-mo gets them for free
 
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _inv = new THREE.Matrix4();
-const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1);
+const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1), _pq = new THREE.Quaternion();
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const ONE = new THREE.Vector3(1, 1, 1);
@@ -69,6 +69,10 @@ export class CrashScene {
     this.bike = bike;
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.world.timestep = SUBSTEP;
+    // the joints hold under a hard throw: more solver iterations than the default
+    const ip = this.world.integrationParameters;
+    if (ip && 'numSolverIterations' in ip) ip.numSolverIterations = 8;
+    this.joints = [];      // [parentBody, childBody, anchorInParent, anchorInChild] (the joint-gap check)
     this.riders = [];      // { seat, rider, snap, segs:[{bone, body, O}], hat:{bone, body, O} }
     this.bodyCount = 0;
     this._acc = 0;
@@ -184,13 +188,16 @@ export class CrashScene {
       const B0 = new THREE.Matrix4().compose(ctr, q, ONE);
       const O = B0.clone().invert().multiply(bone.matrixWorld);
       made[sg.id] = { body, B0, anchor: _a.clone() };
-      out.segs.push({ bone, body, O, rad });
+      // only the pelvis is placed; every other bone is only TURNED (rotOnly), so a goose can't come apart
+      const pw = bone.parent && bone.parent.isBone ? bone.parent.getWorldPosition(new THREE.Vector3()) : null;
+      out.segs.push({ bone, body, O, rad, rotOnly: !!sg.parent, rest: pw ? bone.getWorldPosition(new THREE.Vector3()).distanceTo(pw) : null });
       const p = sg.parent && made[sg.parent];
       if (p) {
         const la = _a.clone().applyMatrix4(_inv.copy(p.B0).invert());
         const lb = _a.clone().applyMatrix4(_inv.copy(B0).invert());
         this.world.createImpulseJoint(R.JointData.spherical({ x: la.x, y: la.y, z: la.z }, { x: lb.x, y: lb.y, z: lb.z }),
           p.body, body, true);
+        this.joints.push([p.body, body, la, lb]);
       }
     }
     // the hat, if this goose wears one bound to its HatSocket
@@ -241,9 +248,43 @@ export class CrashScene {
     const parent = s.bone.parent;
     parent.updateWorldMatrix(true, false);
     _m.multiplyMatrices(bodyMatrix(s.body, _m2), s.O);
-    _m.premultiply(_inv.copy(parent.matrixWorld).invert());
-    _m.decompose(s.bone.position, s.bone.quaternion, s.bone.scale);
+    if (s.rotOnly) {
+      // Limbs, neck, head: take the body's ORIENTATION only and keep the bone's own offset from its parent.
+      // The bodies hang on ball joints that stretch a little under a hard throw; copying their positions
+      // too pulled the legs visibly away from the hips. Rotation-only keeps every bone at its rest length.
+      _m.decompose(_p, _q, _s);
+      parent.getWorldQuaternion(_pq);
+      s.bone.quaternion.copy(_pq.invert().multiply(_q));
+    } else {
+      _m.premultiply(_inv.copy(parent.matrixWorld).invert());
+      _m.decompose(s.bone.position, s.bone.quaternion, s.bone.scale);
+    }
     s.bone.updateMatrixWorld(true);
+  }
+
+  /** The widest gap between any bone and its parent bone vs their seated distance (metres; tests). */
+  maxBoneStretch() {
+    let m = 0;
+    for (const rd of this.riders) for (const sg of rd.segs) {
+      const b = sg.bone, p = b.parent;
+      if (!sg.rotOnly || !p || !p.isBone) continue;
+      if (sg.rest == null) continue;
+      const d = b.getWorldPosition(_a).distanceTo(p.getWorldPosition(_b));
+      m = Math.max(m, Math.abs(d - sg.rest));
+    }
+    return m;
+  }
+
+  /** The widest a ball joint has pulled apart (metres; the physics side of "the legs came off"). */
+  maxJointGap() {
+    let m = 0;
+    const A = new THREE.Vector3(), B = new THREE.Vector3(), M = new THREE.Matrix4();
+    for (const [p, c, la, lb] of this.joints) {
+      A.copy(la).applyMatrix4(bodyMatrix(p, M));
+      B.copy(lb).applyMatrix4(bodyMatrix(c, M));
+      m = Math.max(m, A.distanceTo(B));
+    }
+    return m;
   }
 
   /** Where each rag doll's pelvis is (tests, the review capture). */
