@@ -87,7 +87,9 @@ export class CrashScene {
     // with a little roll: that is what makes "it hit something" read, rather than just falling over.
     bike.group.updateMatrixWorld(true);
     const headOn = cause === 'obstacle' || cause === 'tree';
-    const roll = (headOn ? 1.2 : 3.2 + speed * 0.35) * (lean >= 0 ? 1 : -1);
+    // (with enough roll and little spin damping that it goes on over and topples: a bike left balanced on its
+    // front wheel for a second looked staged)
+    const roll = (headOn ? 2.6 : 3.2 + speed * 0.35) * (lean >= 0 ? 1 : -1);
     const pitch = headOn ? 3.5 + speed * 0.3 : 0;              // about -right: the top goes forward
     const carry = headOn ? 0.3 : 0.55;   // a pylon stops the bike; the geese keep going
     const bq = bike.group.quaternion;
@@ -96,7 +98,7 @@ export class CrashScene {
       .setRotation({ x: bq.x, y: bq.y, z: bq.z, w: bq.w })
       .setLinvel(fx * speed * carry, headOn ? 2.4 : 1.1, fz * speed * carry)
       .setAngvel({ x: fx * roll + fz * pitch, y: (rand() - 0.5) * 1.6, z: fz * roll - fx * pitch })
-      .setLinearDamping(0.55).setAngularDamping(0.9).setCcdEnabled(true);
+      .setLinearDamping(0.55).setAngularDamping(headOn ? 0.35 : 0.9).setCcdEnabled(true);
     this.bikeBody = this.world.createRigidBody(bd);
     this.world.createCollider(RAPIER.ColliderDesc.cuboid(0.28, 0.55, 1.35).setTranslation(0, 0.55, 0)
       .setFriction(1.1).setRestitution(0.12).setCollisionGroups(DEBRIS_GROUPS), this.bikeBody);

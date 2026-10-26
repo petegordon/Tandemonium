@@ -10,7 +10,7 @@
 //   - notices when a newer build has been deployed since the page loaded.
 // Either mismatch offers a one-tap reload. Outside a preview it does nothing.
 
-const MODULE_SHA = '3e13f4a';
+const MODULE_SHA = '5a8983b';
 
 function banner(text) {
   if (document.getElementById('build-stale')) return;
