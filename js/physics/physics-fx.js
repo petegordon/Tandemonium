@@ -31,6 +31,8 @@
 import * as THREE from 'three';
 import { ensureRapier } from './rapier-runtime.js';
 import { DebrisWorld } from './debris-world.js';
+import { CrashScene } from './crash-scene.js';
+import { SLOWMO, simSecondsFor } from '../crash-slowmo.js';
 
 const _axis = new THREE.Vector3();
 const _camRight = new THREE.Vector3();
@@ -76,6 +78,10 @@ export class PhysicsFx {
     // orientation it was cloned with — going edge-on, and invisible, the
     // moment the camera moved past it. See faceCamera().
     this._billboards = [];
+    // #484: crashes with goose riders become a CrashScene (rag dolls + hats + the bike), one per crashing
+    // bike. Off = the plain one-box tumble below.
+    this.ragdolls = true;
+    this._scenes = new Set();
   }
 
   /** Live only once the WASM has landed AND the flag is on. */
@@ -160,8 +166,11 @@ export class PhysicsFx {
    *
    * @returns {boolean} true if the tumble was taken over
    */
-  crashTumble(bike) {
+  crashTumble(bike, { cause = 'balance', slowMo = false } = {}) {
     if (!this.ready || !bike || !bike.group) return false;
+    if (this.ragdolls && bike.goose && Object.keys(bike.goose.riders || {}).length) {
+      return this._crashScene(bike, cause, slowMo);
+    }
 
     const speed = bike.speed;
     const heading = bike.heading;
@@ -212,9 +221,44 @@ export class PhysicsFx {
     return true;
   }
 
+  /**
+   * #484: the whole crash as one scene: the bike tumbles, both geese are thrown as rag dolls, the hats fly.
+   * With slowMo, the bike stays down for SLOWMO.downReal REAL seconds; the game slows this bike's view
+   * (crash-slowmo.js) for the first moment of it, so its fall timer is set in simulated seconds.
+   */
+  _crashScene(bike, cause, slowMo) {
+    let scene;
+    try {
+      scene = new CrashScene(this._world.RAPIER, {
+        bike, cause,
+        // a second crash while one is still live (versus): the lighter rag doll
+        budget: this._scenes.size ? 'lite' : 'full',
+        groundAt: (x, z) => this._groundAt(x, z, bike.roadD),
+      });
+    } catch (err) {
+      console.warn('[physics] crash scene failed, plain tumble instead:', err && err.message);
+      if (scene) scene.dispose();
+      return false;
+    }
+    this._scenes.add(scene);
+    bike.crashScene = scene;
+    bike.transformOverride = true;
+    if (slowMo) {
+      bike._slowMoStart = performance.now();
+      bike._crashDownSim = simSecondsFor(SLOWMO.downReal);
+    }
+    return true;
+  }
+
   /** Hand a bike back to its normal transform. Safe to call unconditionally. */
   releaseCrash(bike) {
     if (!bike) return;
+    if (bike.crashScene) {
+      bike.crashScene.dispose();
+      this._scenes.delete(bike.crashScene);
+      bike.crashScene = null;
+    }
+    bike._slowMoStart = 0;
     if (bike._tumbleHandle && this._world) {
       this._world.release(bike._tumbleHandle);
     }
@@ -353,12 +397,16 @@ export class PhysicsFx {
 
   /** Drop everything mid-ride (reset, level change, mode switch). */
   clear() {
+    for (const sc of this._scenes) sc.dispose();
+    this._scenes.clear();
     if (this._world) this._world.clear();   // onExpire drains _billboards
     this._billboards.length = 0;
   }
 
   /** End of ride: free the world and its WASM memory. */
   dispose() {
+    for (const sc of this._scenes) sc.dispose();
+    this._scenes.clear();
     if (this._world) {
       this._world.dispose();
       this._world = null;

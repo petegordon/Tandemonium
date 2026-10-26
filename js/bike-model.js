@@ -100,6 +100,11 @@ export class BikeModel {
     // the HUD, the race logic and the cameras never see a difference.
     this.onFall = null;
     this.onReset = null;
+    // #484 crash scene (physics/crash-scene.js): rag dolls + hats; the slow-mo clock; the crash cause
+    this.crashScene = null;
+    this._slowMoStart = 0;
+    this._crashDownSim = 0;
+    this._crashCause = null;
     this.transformOverride = false;
     this._tumbleHandle = null;
 
@@ -687,6 +692,7 @@ export class BikeModel {
       // #483: from the lean it crashed at, not from upright (crash-tumble.js).
       this.lean = fallLean(this._fallLeanStart || 0, this._fallLeanTarget || 0, this.fallElapsed);
       if (this.fallTimer <= 0) this._reset();
+      else if (this.crashScene) this.crashScene.step(dt);   // #484: rag dolls + hats + the bike
       this._applyTransform(dt);
       return;
     }
@@ -1063,7 +1069,9 @@ export class BikeModel {
     // bike actually crashed at, and the next four lines destroy both.
     if (this.onFall) this.onFall(this);
     this.fallen = true;
-    this.fallTimer = 1.2;
+    // #484: a slow-mo crash scene asks for longer, in simulated seconds (crash-slowmo.js)
+    this.fallTimer = this._crashDownSim || 1.2;
+    this._crashDownSim = 0;
     this.fallElapsed = 0;
     this.speed = 0;
     this._fallLeanStart = this.lean || 0;
@@ -1088,6 +1096,8 @@ export class BikeModel {
     // tumble keeps driving it and the reset is invisible.
     if (this.onReset) this.onReset(this);
     this.fallen = false;
+    this._crashCause = null;
+    this._slowMoStart = 0;
     this.lean = 0;
     this.leanVelocity = 0;
     this.speed = 0;
@@ -1106,6 +1116,8 @@ export class BikeModel {
     this.air = null;
     if (this.onReset) this.onReset(this);
     this.fallen = false;
+    this._crashCause = null;
+    this._slowMoStart = 0;
     this.lean = 0;
     this.leanVelocity = 0;
     this.speed = 0;
