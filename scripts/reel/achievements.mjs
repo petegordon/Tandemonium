@@ -467,46 +467,93 @@ SHOTS.probe_gyro = async () => {
   await s.close();
 };
 
-/** Capture-only: big controller tiles (they are the subject) with the lab's float layout on — triggers, bumpers
- *  and the Steam Controller's back paddles popped clear of the body, so every pull reads. */
-const bigTiles = (page) => page.evaluate((tall) => {
+/** Capture-only tile staging for the #101 reel. window.__tileMode: 'ds' / 'sc' = a close-up of that pad filling the
+ *  upper frame (the other tile parked off-screen); 'band' = both pads in a big bottom band (the bottom ~40% in 9:16,
+ *  each tile half the width). The float layout (triggers, bumpers, Steam paddles popped off the body) is switched on
+ *  and every tile's camera moves to a raised three-quarter view that shows the popped parts. */
+const CAM = (process.env.NT_CAM || '0.16,0.30,0.20').split(',').map(Number);
+const stageTiles = (page) => page.evaluate((tall, cam) => {
   const g = window._game, hud = g.controllerHud, R = window.__reel;
-  const m0 = hud.metrics.bind(hud);
-  hud.metrics = () => {
-    const m = m0();
-    const tileW = tall ? Math.floor((m.w - 3 * 14) / 2) : 470;
-    return { ...m, tileW, tileH: Math.round(tileW * (tall ? 0.95 : 0.72)), margin: tall ? 14 : 34, gap: 14 };
+  window.__tileMode = 'band';
+  hud._layout = function () {
+    const w = window.innerWidth, h = window.innerHeight, m = tall ? 10 : 24, gap = tall ? 10 : 20;
+    const mode = window.__tileMode;
+    for (const t of this.tiles.values()) {
+      const ds = t.profile === 'dualsense';
+      let r;
+      if (mode === 'band') {
+        const tw = Math.floor((w - 2 * m - gap) / 2), th = tall ? Math.round(h * 0.40) : Math.round(h * 0.44);
+        r = { left: ds ? w - m - tw : m, top: h - m - th, width: tw, height: th };   // P1 (DualSense) right, P2 left
+      } else {
+        const focus = (mode === 'ds') === ds;
+        const tw = tall ? w - 2 * m : Math.round(w * 0.62), th = tall ? Math.round(h * 0.62) : h - 2 * m - 60;
+        r = focus ? { left: Math.round((w - tw) / 2), top: tall ? Math.round(h * 0.16) : 60 + m, width: tw, height: th }
+          : { left: -4000, top: 0, width: 300, height: 200 };
+      }
+      if (!t.__r || t.__r.left !== r.left || t.__r.width !== r.width || t.__r.height !== r.height || t.__r.top !== r.top) {
+        t.__r = r; t.applyRect(r);
+      }
+    }
   };
   R.hooks.push(() => {
+    hud._layout();
     for (const t of hud.tiles.values()) {
-      if (t.overlay && !t.__float) { t.__float = true; try { t.overlay.setFloatParts(true); } catch (e) {} }
+      if (t.overlay && !t.__staged) {
+        t.__staged = true;
+        try { t.overlay.setFloatParts(true); } catch (e) { console.log('[reel] float failed ' + e.message); }
+        try { t.overlay.camera.position.set(cam[0], cam[1], cam[2]); t.overlay.controls.target.set(0, 0, 0); t.overlay.controls.update && t.overlay.controls.update(); } catch (e) {}
+      }
     }
   });
-  // the selfie / partner PiPs would push the tiles aside: the tiles own the bottom corners in this reel
   R.noPip = true;
-  for (const el of document.querySelectorAll('.front-view-frame, #partner-pip-wrap')) el.style.display = 'none';
-}, TALL);
+}, TALL, CAM);
 
-// #101 LOOK, NO THUMBS: both riders steer by tilting their pads (DualSense + Steam Controller) all the way home
+const floatState = (page) => page.evaluate(() => [...window._game.controllerHud.tiles.values()].map(t => ({
+  profile: t.profile, float: !!(t.overlay && t.overlay._floatActive), parts: t.overlay ? (t.overlay._floatWrappers || []).length : 0,
+  shrink: t.overlay && t.overlay.bodyGroup ? +t.overlay.bodyGroup.scale.x.toFixed(2) : null })));
+
+/** A weaving line (metres along the road -> lateral metres) so the riders visibly lean and the pads rock. */
+const WEAVE = (from, to, amp = 2.7, period = 22) => {
+  const p = [];
+  for (let d = from, i = 0; d <= to; d += period / 2, i++) p.push([d, i === 0 ? 0 : (i % 2 ? amp : -amp)]);
+  p.push([to + 8, 0]);
+  return p;
+};
+const weaveBots = (page, from, to) => page.evaluate((path) => { for (const b of window.__reel.bots) { b.path = path; b.sway = { amp: 0.08, freq: 0.3, phase: 0 }; } }, WEAVE(from, to));
+
+// #101 LOOK, NO THUMBS: a close-up of each pad (DualSense, then Steam Controller), then both riders weaving home by
+// tilting their pads, the two controllers big along the bottom of the frame
+const NT = { from: Number(process.env.NT_FROM || 120), closeDs: 1.5, closeSc: 1.5, secs: Number(process.env.NT_SECS || 22) };
 SHOTS.nothumbs = async () => {
   const s = await gyroCoop({ sign: [-1, -1] });
-  await bigTiles(s.page);
-  const go = await until(s.page, st => st.d >= Number(process.env.NT_FROM || 196) || ['finishCinematic', 'victory', 'gameover'].includes(st.state), 120, 0.25);
-  console.log('  from', JSON.stringify({ d: go.d, state: go.state }));
-  await take('nothumbs', s, Number(process.env.NT_SECS || 15));
+  await stageTiles(s.page);
+  await weaveBots(s.page, 30, 232);
+  const go = await until(s.page, st => st.d >= NT.from || ['finishCinematic', 'victory', 'gameover'].includes(st.state), 120, 0.25);
+  console.log('  from', JSON.stringify({ d: go.d, state: go.state }), JSON.stringify(await floatState(s.page)));
+  await take('nothumbs', s, NT.secs, async (i, t) => {
+    const mode = t < NT.closeDs ? 'ds' : t < NT.closeDs + NT.closeSc ? 'sc' : 'band';
+    await s.page.evaluate((m) => { window.__tileMode = m; }, mode);
+  });
 };
 
 SHOTS.probe_tiles = async () => {
   const s = await gyroCoop({ sign: [-1, -1] });
-  await bigTiles(s.page);
-  await until(s.page, st => st.d >= 120, 120, 0.25);
-  await advance(s.page, 0.5);
-  const p = await s.page.evaluate(() => [...window._game.controllerHud.tiles.values()].map(t => ({ profile: t.profile, float: !!t.__float, rect: t.root ? t.root.getBoundingClientRect().toJSON() : null, sub: t.subEl && t.subEl.textContent })));
-  console.log(JSON.stringify(p));
-  const { data } = await (await s.page.createCDPSession()).send('Page.captureScreenshot', { format: 'jpeg', quality: 85, ...(s.page.__reelClip ? { clip: s.page.__reelClip } : {}) });
-  fs.writeFileSync(path.join(OUT, `probe_tiles_${ASPECT}.jpg`), Buffer.from(data, 'base64'));
+  await stageTiles(s.page);
+  await weaveBots(s.page, 30, 232);
+  await until(s.page, st => st.d >= 90, 120, 0.25);
+  const cdp = await s.page.createCDPSession();
+  for (const mode of ['ds', 'sc', 'band']) {
+    await s.page.evaluate((m) => { window.__tileMode = m; }, mode);
+    await advance(s.page, 0.6);
+    console.log(mode, JSON.stringify(await floatState(s.page)), JSON.stringify(await gyState(s.page).then(p => [p.p1.roll, p.p2.roll, p.x])));
+    const { data } = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 85, ...(s.page.__reelClip ? { clip: s.page.__reelClip } : {}) });
+    fs.writeFileSync(path.join(OUT, `probe_tiles_${mode}_${ASPECT}.jpg`), Buffer.from(data, 'base64'));
+  }
+  for (let k = 0; k < 6; k++) { await advance(s.page, 1); const p = await gyState(s.page); console.log('  roll', p.p1.roll, p.p2.roll, 'x', p.x, 'd', p.d, p.fallen ? 'FALLEN' : ''); }
   await s.close();
 };
+
+
 
 const want = (process.argv[2] || '').split(',').filter(Boolean);
 for (const k of want) {
