@@ -2991,7 +2991,7 @@ export class Lobby {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (document.querySelector('#phone-pad-panel.open')) return;   // the phone panel closes itself
       if (document.querySelector('#options-overlay.visible')) return; // Options closes itself (game.js)
-      if (this.helpModal && this.helpModal.classList.contains('visible')) { this._closeHelp(); e.preventDefault(); return; }
+      if (this.helpModal && this.helpModal.open) { this._closeHelp(); e.preventDefault(); return; }
       const lb = $('leaderboard-modal');
       if (lb && lb.style.display !== 'none') { this._closeLeaderboard(); e.preventDefault(); return; }
       if (this.profilePopup && this.profilePopup.classList.contains('visible')) { this.profilePopup.classList.remove('visible'); e.preventDefault(); return; }
@@ -3213,12 +3213,31 @@ export class Lobby {
     }
   }
 
-  _openHelp() {
-    this.helpModal.classList.add('visible');
+  /**
+   * Help, a kit <uf-sheet> since #459 (item 11): B / Esc / the scrim / its
+   * Close all close it; the pad's View button and the Help pill open it (item
+   * 18). `section` scrolls to an id inside (the footer's © → attributions).
+   * @param {{ section?: string | null }} [opts]
+   */
+  _openHelp({ section = null } = {}) {
+    this.helpModal.show();
+    this._scrollHelpTo(section);
+    this._gpPrevView = true;   // the press that opened it must not close it
   }
 
   _closeHelp() {
-    this.helpModal.classList.remove('visible');
+    this.helpModal.close();
+  }
+
+  /** Scroll the Help sheet's body to a section id, or the top. */
+  _scrollHelpTo(id) {
+    const body = this.helpModal && this.helpModal.body;
+    if (!body) return;
+    requestAnimationFrame(() => {
+      const el = id ? document.getElementById(id) : null;
+      if (el) body.scrollTop = Math.max(0, el.offsetTop - body.offsetTop - 8);
+      else body.scrollTop = 0;
+    });
   }
 
   _closeLeaderboard() {
@@ -7128,16 +7147,19 @@ export class Lobby {
       this._modalFocus.poll();
       return;
     }
-    if (this.helpModal.classList.contains('visible')) {
-      // Right stick Y scrolls the help content
+    if (this.helpModal.open) {
+      // Right stick Y scrolls the help content (the kit sheet's body scrolls)
       const helpStickY = gp.axes[3] || 0;
       if (Math.abs(helpStickY) > 0.15) {
-        const helpInner = document.getElementById('help-modal-inner');
-        if (helpInner) helpInner.scrollTop += helpStickY * 12;
+        const body = this.helpModal.body;
+        if (body) body.scrollTop += helpStickY * 12;
       }
-      if (b && !this._gpPrevB) {
+      // B closes (#459: as does the sheet's own Esc / scrim / Close); View again too.
+      const viewNow = !!(gp.buttons[8] && gp.buttons[8].pressed);
+      if ((b && !this._gpPrevB) || (viewNow && !this._gpPrevView)) {
         this._closeHelp();
       }
+      this._gpPrevView = viewNow;
       this._gpPrevUp = up; this._gpPrevDown = down;
       this._gpPrevLeft = left; this._gpPrevRight = right;
       this._gpPrevA = a; this._gpPrevB = b;
@@ -7197,6 +7219,12 @@ export class Lobby {
     // Reaching here means no modal is open — release a linear modal controller
     // (profile/rejoin) if one was active, clearing its highlight.
     if (this._activeModal) { this._modalFocus.clear(); this._activeModal = null; this._modalBack = null; }
+
+    // #459 item 18 · the pad's View / Share / Create button (buttons[8]) opens
+    // Help on every step, the same glyph the Help pill and the pause menu show.
+    const view = !!(gp.buttons[8] && gp.buttons[8].pressed);
+    if (view && !this._gpPrevView) { this._gpPrevView = view; this._openHelp(); return; }
+    this._gpPrevView = view;
 
     // Step navigation: delegated to the spatial FocusController (#318).
     // Lazily seed the scope the first time we run with a gamepad — covers

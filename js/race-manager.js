@@ -48,6 +48,7 @@ export class RaceManager {
     this.finished = false;
     this.startTime = 0;
     this.finishTime = 0;
+    this._pausedAt = null;   // #459 · wall-clock time the ride froze at, while frozen
     this.collectiblesCount = 0;
     this.crashCount = 0;
     this.timeoutCount = 0;
@@ -190,9 +191,28 @@ export class RaceManager {
     this.collectiblesCount++;
   }
 
+  /**
+   * #459 · the ride is frozen (pause menu, disconnect pause): the total clock
+   * stops with it. The elapsed time is wall-clock from startTime, so the pause
+   * is taken out of it on resume by moving startTime forward. Idempotent.
+   */
+  pause(now = performance.now()) {
+    if (this._pausedAt == null) this._pausedAt = now;
+  }
+
+  resume(now = performance.now()) {
+    if (this._pausedAt == null) return;
+    // A start() during the pause (countdown → GO while the menu is up) makes
+    // the ride begin at resume, not when GO was shown.
+    if (this.startTime > 0 && !this.finished) this.startTime += now - Math.max(this._pausedAt, this.startTime);
+    this._pausedAt = null;
+  }
+
+  get paused() { return this._pausedAt != null; }
+
   getElapsedMs() {
     if (this.startTime === 0) return 0;
-    const end = this.finishTime || performance.now();
+    const end = this.finishTime || (this._pausedAt != null ? Math.max(this._pausedAt, this.startTime) : performance.now());
     return end - this.startTime;
   }
 

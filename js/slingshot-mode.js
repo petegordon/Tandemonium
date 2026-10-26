@@ -151,6 +151,22 @@ class SlingshotMode {
       });
       const idx = want && want.up ? buttons.findIndex(b => b.dataset && b.dataset.up === want.up) : want;
       this._setOverlayButtons(buttons, Math.max(0, idx || 0));
+      // #459 item 11: the Garage is on the modal shell — the pad's B closes the
+      // sheet, and any close the player makes (B, Esc, the scrim, the header's
+      // Close) is its BACK / LOBBY.
+      const gSheet = /** @type {any} */ (document.getElementById('sling-garage-sheet'));
+      if (gSheet) {
+        this._overlayBack = () => { if (gSheet.open) gSheet.close('back'); };
+        if (!this._garageSheetWired) {
+          this._garageSheetWired = true;
+          gSheet.addEventListener('uf-sheet:close', (e) => {
+            const reason = e.detail && e.detail.reason;
+            if (this.state !== 'slingGarage' || !reason || reason === 'api') return;
+            this._clearOverlayButtons();
+            this._returnToLobby();
+          });
+        }
+      }
       if (lock && lock.kind === 'demo') analytics.trackEvent('slingshot_demo_end', { from: 'garage' });
     };
     render(focus);

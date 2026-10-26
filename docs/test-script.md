@@ -84,6 +84,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | BL-09 | Pad focus starts on a visible control on every lobby step | A | `smoke:flows` |
 | BL-10 | Every lobby step at 390×844, 844×390, 1920×1080 and 4K: every control reachable, none overlapping | A | `smoke:lobby-layout` |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
+| BL-12 | Modal shell (#459): Help (a kit sheet) opens from the pad's View button, the Help pill and the footer © (at its attributions); B and Esc close it with focus restored and without stepping the lobby back; the Garage closes the same way | A | `smoke:flows` |
 
 ## 2. Solo rides
 
@@ -123,6 +124,9 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-24h | SR-24 looks right: scale, placement, wave reads from the chase camera, no frame drop on Low | M | — |
 | SR-25 | 3D present, death cone and Grandma's house (no video billboards); presents still collect, cones still crash and get knocked flying; after the finish the ride's presents fly into a pile beside Grandma (#478) | A | `smoke:props`, `test/unit/props-3d`, `test/unit/present-stack` |
 | SR-25h | SR-25 looks right: presents and cones read from the chase camera, the pile lands neatly and is seen during the finish swing, no frame drop on Low / phone / Quest | M | `scripts/review-props.mjs`, `scripts/probe-props.mjs` |
+| SR-26 | Pause menu (#459): Start / Esc / the quick menu's PAUSE mid-ride opens it and the ride (physics + race clock) stops; B / Start / Esc / RESUME continue; SETTINGS opens Options over it and B returns to the menu; View opens Help over it and B returns; RESTART rides again; END RIDE returns to the lobby; in versus P1's Start freezes both teams | A | `smoke:flows`, `smoke:versus`, `test/unit/race-manager` |
+| SR-27 | Every end screen (game over, victory, tutorial complete, demo end, partner left, versus results) is the result-screen shell: a headline kit sheet, one action row in the shared order, the primary first and focused (#459) | A | `smoke:flows`, `smoke:versus`, `smoke:solo-extras`, `smoke:tutorial`, `smoke:layout` (fits at phone, desktop, TV; screenshots) |
+| SR-28 | First-time SOLO shows the tutorial intro before the countdown: START begins the tutorial (SKIP TUTORIAL on screen, Y / △ on a pad), SKIP / B / Esc skip to the level list (#459) | A | `smoke:tutorial`, `smoke:solo-extras` |
 
 ## 3. Ride feel (manual only)
 

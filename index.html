@@ -944,24 +944,18 @@
   .tutorial-dot.done { background: #ffd700; }
   #btn-tutorial-skip {
     /* Right edge, under the quick-menu button: clear of the pedals (bottom)
-       and the phase prompt (top centre). */
+       and the phase prompt (top centre). A kit button since #459 (item 6). */
     position: fixed;
     top: calc(env(safe-area-inset-top, 0px) + 140px);
     right: 14px;
     z-index: 210;
     display: none;
-    font-family: var(--uf-font-ui);
     font-weight: 700;
-    font-size: 14px;
     letter-spacing: 0.06em;
-    color: #fff;
     background: rgba(0,0,0,0.55);
-    border: 1px solid rgba(255,255,255,0.5);
     border-radius: 999px;
-    padding: 8px 14px;
-    cursor: pointer;
   }
-  #btn-tutorial-skip.visible { display: block; }
+  #btn-tutorial-skip.visible { display: inline-block; }
   /* ── Coaching dodge arrow ── */
   #coaching-dodge-arrow {
     position: fixed;
@@ -1130,13 +1124,6 @@
     padding: 20px;
   }
   #tutorial-complete.visible { display: flex; }
-  #tutorial-complete h2 {
-    font-size: 28px;
-    font-weight: 700;
-    color: var(--uf-color-accent);
-    margin: 0 0 12px;
-    text-shadow: 0 0 20px rgba(68,255,102,0.5);
-  }
   #tutorial-complete-stats {
     font-size: 15px;
     color: rgba(255,255,255,0.85);
@@ -1202,12 +1189,7 @@
     outline-offset: 6px;
     border-radius: 6px;
   }
-  #tutorial-complete uf-button {
-    max-width: 280px;
-    width: 280px;
-    font-size: 15px;
-    padding: 12px 16px;
-  }
+  /* #tutorial-complete's buttons sit in its kit sheet's action row since #459 (css/end-screens.css). */
   #btn-tutorial-buy {
     margin-bottom: 8px;
     background: rgba(68,255,102,0.25);
@@ -3549,23 +3531,8 @@
     justify-content: center;
     padding: 30px;
   }
-  .disconnect-box {
-    text-align: center;
-  }
-  .disconnect-box p {
-    color: #ff6644;
-    font-size: 20px;
-    font-weight: 700;
-    margin-bottom: 20px;
-  }
-  .disconnect-box #disconnect-sub {
-    color: rgba(255,255,255,0.75);
-    font-size: 16px;
-    font-weight: 400;
-    margin: -10px 0 20px;
-  }
-  .disconnect-box uf-button[hidden] { display: none; }
-  .disconnect-box uf-button { margin: 5px 4px !important; }   /* one row, wraps on phones */
+  /* .disconnect-box is gone: the overlay holds a kit <uf-sheet> since #459 (css/end-screens.css). */
+  #disconnect-overlay uf-button[hidden] { display: none; }
 
   /* ── Connection badge ── */
   #conn-badge {
@@ -3662,29 +3629,8 @@
   }
   .lobby-credits-btn:active { color: rgba(255,255,255,0.7); }
 
-  /* ── Help modal ── */
-  #help-modal {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.85);
-    z-index: 200;
-    align-items: center;
-    justify-content: center;
-  }
-  #help-modal.visible {
-    display: flex;
-  }
+  /* ── Help modal: a kit <uf-sheet> since #459 (css/shell.css sizes its text) ── */
   #help-modal-inner {
-    position: relative;
-    background: rgba(30,30,30,0.95);
-    border: 1px solid rgba(255,255,255,0.15);
-    border-radius: 14px;
-    padding: 28px 24px;
-    max-width: 400px;
-    max-height: 80vh;
-    overflow-y: auto;
-    width: 90%;
     font-family: var(--uf-font-ui);
     font-size: 14px;
     line-height: 1.6;
@@ -3737,19 +3683,6 @@
     align-items: center;
     justify-content: center;
   }
-  #help-close {
-    position: absolute;
-    top: 10px;
-    right: 14px;
-    background: none;
-    border: none;
-    color: rgba(255,255,255,0.5);
-    font-size: 22px;
-    cursor: pointer;
-    padding: 4px 8px;
-    -webkit-tap-highlight-color: transparent;
-  }
-  #help-close:hover { color: rgba(255,255,255,0.8); }
   .help-toggle-name {
     font-weight: 600;
     color: rgba(255,255,255,0.9);
@@ -4754,7 +4687,6 @@
 
     /* Game over / disconnect */
     #gameover-overlay, #disconnect-overlay { padding: calc(30 * var(--ls)); }
-    .disconnect-box p { font-size: calc(20 * var(--ls)); }
 
     /* ── Victory screen — two-column layout for TV/monitor ── */
     #victory-overlay.visible {
@@ -4838,12 +4770,7 @@
     .lb-no-data { font-size: calc(13 * var(--ls)); padding: calc(16 * var(--ls)); }
     #leaderboard-video { max-width: calc(320 * var(--ls)); border-radius: calc(10 * var(--ls)); }
 
-    #help-modal-inner {
-      max-width: calc(400 * var(--ls));
-      padding: calc(28 * var(--ls)) calc(24 * var(--ls));
-      font-size: calc(14 * var(--ls));
-      border-radius: calc(14 * var(--ls));
-    }
+    #help-modal-inner { font-size: calc(14 * var(--ls)); }
     #help-modal-inner h3 { font-size: calc(18 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
     .help-section { margin-top: calc(14 * var(--ls)); padding-top: calc(14 * var(--ls)); }
     .help-section-title { font-size: calc(13 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
@@ -4869,7 +4796,6 @@
       flex-shrink: 0;
       text-align: center;
     }
-    #help-close { font-size: calc(22 * var(--ls)); top: calc(10 * var(--ls)); right: calc(14 * var(--ls)); }
     .help-attribution { font-size: calc(12 * var(--ls)); }
     .help-achievement-list li { font-size: calc(13 * var(--ls)); }
     .help-achievement-list .ach-icon { width: calc(22 * var(--ls)); margin-right: calc(4 * var(--ls)); }
@@ -4939,6 +4865,7 @@
 <!-- Desktop/TV layout A (#428): after the inline styles so it wins at equal specificity. -->
 <link rel="stylesheet" href="css/lobby-tv.css">
 <link rel="stylesheet" href="css/end-screens.css">
+<link rel="stylesheet" href="css/shell.css">
 </head>
 <body>
 
@@ -5069,6 +4996,10 @@ ON</button>
     <span id="quick-menu-title">CONTROLS</span>
     <button id="quick-menu-close" aria-label="Close">&times;</button>
     <div id="quick-menu-grid">
+      <!-- #459 item 12: the touch way into the pause menu (Start / Esc on a pad or keyboard). -->
+      <button class="qm-item" id="qm-pause">
+        <span class="qm-icon">&#x23F8;&#xFE0F;</span><span class="qm-label">PAUSE</span><span class="qm-state"></span>
+      </button>
       <button class="qm-item" id="qm-safety">
         <span class="qm-icon">&#x1F6E1;&#xFE0F;</span><span class="qm-label">SAFETY</span><span class="qm-state"></span>
       </button>
@@ -5901,7 +5832,8 @@ ON</button>
        pills drive the same handlers as the toggles (lobby.js _initSystemBar).
        Reached with ↓ from a step (d-pad or stick); no dedicated button. -->
   <uf-system-bar id="lobby-bar" back="hide">
-    <uf-button size="pill" slot="start" id="bar-help"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="8"/><path d="M7.8 7.6a2.3 2.3 0 1 1 3.3 2.1c-.8.4-1.1.9-1.1 1.7M10 14.2v.1"/></svg>Help</uf-button>
+    <!-- #459 item 18: the pad's View/Share button opens Help everywhere (lobby, pause menu); the pill shows that glyph. -->
+    <uf-button size="pill" slot="start" id="bar-help"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="8"/><path d="M7.8 7.6a2.3 2.3 0 1 1 3.3 2.1c-.8.4-1.1.9-1.1 1.7M10 14.2v.1"/></svg>Help <uf-controller-glyph button="view" size="sm" class="pad-only"></uf-controller-glyph></uf-button>
     <uf-button size="pill" slot="start" id="bar-leaderboard"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5"/></svg>Leaderboard</uf-button>
     <uf-button size="pill" slot="start" id="bar-profile"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>Profile</uf-button>
     <uf-button size="pill" slot="end" id="bar-controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h12a4 4 0 0 1 3.9 4.9l-.8 3.4a2.5 2.5 0 0 1-4.3 1.1L15 16H9l-1.8 2.4a2.5 2.5 0 0 1-4.3-1.1l-.8-3.4A4 4 0 0 1 6 9z"/><path d="M8 12v3M6.5 13.5h3"/></svg><span id="bar-controls-label">Controls</span></uf-button>
@@ -5939,10 +5871,11 @@ ON</button>
   </div>
 </div>
 
-<!-- Help modal -->
-<div id="help-modal">
+<!-- Help modal. #459 item 11: the kit sheet shell (B / Esc / scrim / Close all
+     close it; focus returns to what opened it); item 18: the pad's View/Share
+     button opens it from the lobby and the pause menu. -->
+<uf-sheet id="help-modal" heading="Help" size="lg">
   <div id="help-modal-inner">
-    <button id="help-close">&times;</button>
     <h3>Tandemonium</h3>
     <p>A party-physics game on a tandem bicycle. Ride solo or with a partner — pedal, steer, and navigate to your destination before time runs out!</p>
 
@@ -6011,7 +5944,7 @@ ON</button>
       </div>
     </div>
 
-    <div class="help-section">
+    <div class="help-section" id="help-attributions">
       <div class="help-section-title">Attributions</div>
       <p class="help-attribution">
         <a href="https://skfb.ly/pqIJQ" target="_blank" rel="noopener">"Tandem bicycle"</a>
@@ -6066,15 +5999,18 @@ ON</button>
       </ul>
     </div>
   </div>
-</div>
+</uf-sheet>
 <script>
 (function() {
+  // © in the footer: Help, scrolled to its attributions (#459 item 18). The
+  // kit sheet closes itself (B / Esc / scrim / Close); lobby.js drives the pad.
   var btn = document.getElementById('credits-btn');
-  var modal = document.getElementById('help-modal');
-  btn.addEventListener('click', function(e) { e.stopPropagation(); modal.classList.add('visible'); });
-  modal.addEventListener('click', function() { modal.classList.remove('visible'); });
-  modal.querySelector('#help-modal-inner').addEventListener('click', function(e) { e.stopPropagation(); });
-  document.getElementById('help-close').addEventListener('click', function() { modal.classList.remove('visible'); });
+  btn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var l = window._game && window._game.lobby;
+    if (l && l._openHelp) l._openHelp({ section: 'help-attributions' });
+    else document.getElementById('help-modal').show();
+  });
   var ctrlTestBtn = document.getElementById('ctrl-test-btn');
   if (ctrlTestBtn) {
     ctrlTestBtn.addEventListener('click', function(e) {
@@ -6104,8 +6040,32 @@ ON</button>
   </div>
 </div>
 <!-- D6 (#400): always-visible way out of the tutorial (first launch sends new
-     players here). Above #calib-flow-overlay so it works during calibration. -->
-<button id="btn-tutorial-skip" type="button">SKIP TUTORIAL</button>
+     players here). Above #calib-flow-overlay so it works during calibration.
+     #459 item 6: a kit button with the pad glyph that skips (Y / △ mid-ride). -->
+<uf-button id="btn-tutorial-skip" size="sm"><uf-controller-glyph button="extra" size="sm" class="pad-only"></uf-controller-glyph> SKIP TUTORIAL</uf-button>
+<!-- #459 item 6: one screen before the first tutorial countdown (game.js _showTutorialIntro). -->
+<uf-sheet id="tutorial-intro" heading="Learn the ride in a minute" tone="accent" size="md" dismissible="false">
+  <p class="shell-line" id="tutorial-intro-pedal"></p>
+  <p class="shell-line" id="tutorial-intro-steer"></p>
+  <div slot="actions">
+    <uf-button variant="accent" id="btn-tutorial-intro-start"><uf-controller-glyph button="confirm" size="sm" class="pad-only"></uf-controller-glyph> START</uf-button>
+    <uf-button id="btn-tutorial-intro-skip"><uf-controller-glyph button="back" size="sm" class="pad-only"></uf-controller-glyph> SKIP TUTORIAL</uf-button>
+  </div>
+</uf-sheet>
+<!-- #459 item 12: the pause menu (Start / Options / Esc mid-ride; game.js _openPause).
+     The ride (physics + race clock) is frozen the way the disconnect pause freezes it. -->
+<uf-sheet id="pause-sheet" heading="Paused" size="sm">
+  <p class="shell-line" id="pause-sub"></p>
+  <div class="shell-menu">
+    <uf-button variant="accent" id="btn-pause-resume">RESUME</uf-button>
+    <uf-button id="btn-pause-restart">RESTART</uf-button>
+    <uf-button id="btn-pause-settings">SETTINGS</uf-button>
+    <uf-button id="btn-pause-end">END RIDE</uf-button>
+  </div>
+  <div slot="actions">
+    <uf-button variant="ghost" size="sm" id="btn-pause-help"><uf-controller-glyph button="view" size="sm" class="pad-only"></uf-controller-glyph> Help</uf-button>
+  </div>
+</uf-sheet>
 <div id="coaching-dodge-arrow">
   <svg width="100" height="100" viewBox="0 0 256 256" fill="none">
     <path fill="var(--uf-color-accent)" d="
@@ -6131,7 +6091,8 @@ ON</button>
   <div id="tutorial-crash-hint"></div>
 </div>
 <div id="tutorial-complete">
-  <h2>You're ready to ride!</h2>
+  <!-- #459 item 15: the result-screen shell (js/ui-shell.js); the game shows/hides the wrapper. -->
+  <uf-sheet id="tutorial-complete-sheet" open dismissible="false" headline tone="accent" heading="You're ready to ride!" size="md">
   <div id="tutorial-complete-stats"></div>
   <div id="steering-feel-wrap">
     <div class="steering-feel-label">Steering Feel</div>
@@ -6146,8 +6107,11 @@ ON</button>
     <a class="lobby-btn" id="btn-steam-store" href="https://store.steampowered.com/app/4482940/Tandemonium/" target="_blank" rel="noopener" style="display:inline-block;margin-top:16px;color:#67c1f5;text-decoration:none;max-width:280px;width:280px;">View on Steam Store &rarr;</a>
   </div>
   <!-- D6 (#400): solo goes straight on to the first real level in one tap. -->
-  <uf-button variant="accent" id="btn-tutorial-next" style="margin-top:16px;display:none;">NEXT: GRANDMA'S</uf-button>
-  <uf-button variant="accent" id="btn-tutorial-continue" style="margin-top:16px;">Let's RIDE!</uf-button>
+  <div slot="actions">
+    <uf-button variant="accent" id="btn-tutorial-next" style="display:none;">NEXT: GRANDMA'S</uf-button>
+    <uf-button variant="accent" id="btn-tutorial-continue">Let's RIDE!</uf-button>
+  </div>
+  </uf-sheet>
 </div>
 
 <!-- Game Over overlay -->
@@ -6164,13 +6128,15 @@ ON</button>
       <!-- B-5 · the two things a demo player should be able to do next. Shown by
            _updateCtaButtons(); hidden in the full Steam build. -->
       <!-- D-3 · see the victory overlay. -->
+    <!-- #459 item 15: one action row in one order (js/ui-shell.js): the primary
+         first, the other ride actions, RETURN TO ROOM, END RIDE, then the extras. -->
     <div slot="actions">
-      <uf-button id="btn-gameover-clip" style="display:none;">&#x1F3AC; SAVE CLIP</uf-button>
       <uf-button variant="accent" id="btn-restart">RESTART</uf-button>
       <uf-button id="btn-skip-checkpoint" style="display:none;">&#x1F451; Take the Royal Shortcut</uf-button>
       <uf-button id="btn-practice-help" style="display:none;">&#x1F6DF; Ride it as practice — with a helping hand</uf-button>
       <uf-button id="btn-gameover-room" style="display:none;">RETURN TO ROOM</uf-button>
       <uf-button id="btn-gameover-lobby">END RIDE TOGETHER</uf-button>
+      <uf-button id="btn-gameover-clip" style="display:none;">&#x1F3AC; SAVE CLIP</uf-button>
       <uf-button id="btn-gameover-garage" style="display:none;">GARAGE &rarr;</uf-button>
       <uf-button class="cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</uf-button>
       <uf-button class="cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
@@ -6199,9 +6165,10 @@ ON</button>
       <!-- D-8 · what the two of you have done together. -->
       <div id="pair-panel" style="display:none;"></div>
     </div>
+    <!-- #459 item 15: the same order as game over; NEXT LEVEL (the primary when it exists) first. -->
     <div slot="actions" id="victory-buttons">
-      <uf-button variant="accent" id="btn-play-again">PLAY AGAIN</uf-button>
       <uf-button id="btn-next-level" style="display:none;">NEXT LEVEL</uf-button>
+      <uf-button variant="accent" id="btn-play-again">PLAY AGAIN</uf-button>
       <uf-button id="btn-victory-room" style="display:none;">RETURN TO ROOM</uf-button>
       <uf-button id="btn-victory-lobby">END RIDE TOGETHER</uf-button>
       <uf-button id="btn-victory-garage" style="display:none;">GARAGE &rarr;</uf-button>
@@ -6213,7 +6180,8 @@ ON</button>
 </div>
 
 <!-- Slingshot mode · spend Chaos Coins between launches. Filled by js/slingshot-ui.js. -->
-<div id="sling-garage"><uf-sheet id="sling-garage-sheet" open dismissible="false" headline tone="gold" heading="Garage" size="md"><div id="sling-garage-body"></div></uf-sheet></div>
+<!-- #459 item 11: on the modal shell — B / Esc / the scrim / Close all leave it (its BACK / LOBBY). -->
+<div id="sling-garage"><uf-sheet id="sling-garage-sheet" headline tone="gold" heading="Garage" size="md"><div id="sling-garage-body"></div></uf-sheet></div>
 <!-- Slingshot mode · one launch's payout. -->
 <div id="sling-results"><uf-sheet id="sling-results-sheet" open dismissible="false" headline tone="gold" heading="" size="md"><div id="sling-results-body"></div></uf-sheet></div>
 <!-- Slingshot mode · the end-of-ride signal: distance, then the coins it pays. -->
@@ -6233,25 +6201,30 @@ ON</button>
 
 <!-- Stoker CTA overlay (shown after unlicensed stoker finishes a ride) -->
 <div id="stoker-cta-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p style="color:var(--uf-color-accent);font-size:1.1em;margin-bottom:4px;">Great ride!</p>
-    <p style="font-size:0.85em;opacity:0.8;margin-bottom:12px;">Wishlist Tandemonium on Steam to get notified at launch!</p>
+  <!-- #459 item 15: the result-screen shell. -->
+  <uf-sheet id="stoker-cta-sheet" open dismissible="false" headline tone="accent" heading="Great ride!" size="md">
+    <p class="shell-line">Wishlist Tandemonium on Steam to get notified at launch!</p>
     <iframe src="https://store.steampowered.com/widget/4482940/" frameborder="0" width="100%" height="190" style="max-width:646px;border-radius:8px;"></iframe>
-    <a href="https://store.steampowered.com/app/4482940/Tandemonium/" target="_blank" rel="noopener" style="display:inline-block;margin:8px 0;color:#67c1f5;font-size:0.82em;text-decoration:none;">View on Steam Store &rarr;</a>
-    <uf-button id="btn-stoker-cta-continue" style="margin-top:10px;">CONTINUE</uf-button>
-  </div>
+    <a href="https://store.steampowered.com/app/4482940/Tandemonium/" target="_blank" rel="noopener" style="display:inline-block;color:#67c1f5;font-size:0.82em;text-decoration:none;">View on Steam Store &rarr;</a>
+    <div slot="actions">
+      <uf-button variant="accent" id="btn-stoker-cta-continue">CONTINUE</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
-<!-- Disconnect overlay -->
+<!-- Disconnect overlay: the disconnect pause (#468) and "partner left". #459 item 15:
+     the result-screen shell; the heading mirrors #disconnect-msg (game.js). -->
 <div id="disconnect-overlay" style="display:none;">
-  <div class="disconnect-box">
-    <p id="disconnect-msg">Partner disconnected</p>
-    <p id="disconnect-sub" hidden></p>
-    <uf-button variant="accent" id="btn-drop-resume" hidden>Resume</uf-button>
-    <uf-button variant="accent" id="btn-ride-alone" hidden>Ride on alone</uf-button>
-    <uf-button variant="accent" id="btn-try-reconnect">Try Again</uf-button>
-    <uf-button id="btn-return-lobby" style="margin-top:10px;">Return to Lobby</uf-button>
-  </div>
+  <uf-sheet id="disconnect-sheet" open dismissible="false" headline tone="danger" heading="Partner disconnected" size="md">
+    <p id="disconnect-msg" hidden>Partner disconnected</p>
+    <p id="disconnect-sub" class="shell-line" hidden></p>
+    <div slot="actions">
+      <uf-button variant="accent" id="btn-drop-resume" hidden>Resume</uf-button>
+      <uf-button variant="accent" id="btn-ride-alone" hidden>Ride on alone</uf-button>
+      <uf-button variant="accent" id="btn-try-reconnect">Try Again</uf-button>
+      <uf-button id="btn-return-lobby">Return to Lobby</uf-button>
+    </div>
+  </uf-sheet>
 </div>
 
 <!-- Connection / gamepad badge -->
