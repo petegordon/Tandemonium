@@ -16,6 +16,15 @@
 //   SR-10  victory: NEXT LEVEL rides the next level, PLAY AGAIN rides the same
 //          one, END RIDE goes to the lobby, no GARAGE
 //          (the garage is Slingshot-only: js/economy-mode.js _showRideCoins)
+//   SR-27  (#459) every end screen is the result-screen shell: a headline kit
+//          sheet, one action row, focus on its primary (game over, victory,
+//          demo end, partner left)
+//   SR-26  (#459) the pause menu: Start / Esc mid-ride opens it and the ride
+//          (physics + race clock) stops; B / Start / Esc / RESUME continue;
+//          SETTINGS opens Options over it and B comes back to the menu;
+//          View opens Help over it and B comes back; RESTART rides again;
+//          END RIDE returns to the lobby
+//   BL-12  (#459) a modal (Help) closes on B and on Esc with focus restored
 //
 // KNOWN checks print "KNOWN BUG" instead of failing the run, so CI stays green
 // while the bug is open; they print "FIXED" once the game behaves, which is the
@@ -152,10 +161,55 @@ console.log('options');
   await show('modeStep'); await sleep(400);
 }
 
+// ── BL-12: a modal on the sheet shell (Help) closes on B / Esc, focus restored ──
+console.log('modal shell');
+{
+  const helpState = () => page.evaluate(() => {
+    const sheet = document.getElementById('help-modal');
+    const f = document.querySelector('.gamepad-focus');
+    return { open: !!sheet && sheet.open, sheetTag: sheet ? sheet.tagName.toLowerCase() : null, focus: f ? (f.id || f.className) : null };
+  });
+  const before = await look();
+  await pads.tap(0, 'SELECT'); await sleep(500);   // View / Share / Create = Help (#459 item 18)
+  let s = await helpState();
+  check(s.open && s.sheetTag === 'uf-sheet', 'BL-12 pad: the View button opens Help, a kit sheet', s);
+  await padB();
+  s = await helpState();
+  check(!s.open, 'BL-12 pad: B closes Help');
+  check(s.focus === before.focus, 'BL-12 pad: focus is back where it was', { before: before.focus, after: s.focus });
+  await clickId(page, 'bar-help'); await sleep(500);
+  check((await helpState()).open, 'BL-12 mouse: the Help pill opens Help');
+  await esc();
+  s = await helpState();
+  check(!s.open && (await look()).step === 'lobby-mode', 'BL-12 Esc closes Help and does not step the lobby back', s);
+  await clickId(page, 'credits-btn'); await sleep(500);
+  const scrolled = await page.evaluate(() => { const b = document.getElementById('help-modal').body; return { open: document.getElementById('help-modal').open, top: b.scrollTop }; });
+  check(scrolled.open && scrolled.top > 0, 'BL-12 the footer © opens Help at its attributions', scrolled);
+  await esc();
+}
+
 // ── SR-09 / SR-10: game-over and victory buttons ──
 const waitState = (st, timeout = 240000) => page.waitForFunction((x) => window._game?.state === x, { timeout, polling: 100 }, st);
 const shown = (id) => page.evaluate((i) => { const e = document.getElementById(i); return !!e && e.style.display !== 'none' && e.getBoundingClientRect().width > 0; }, id);
 const levelId = () => page.evaluate(() => window._game.lobby.selectedLevel?.id || null);
+/** SR-27: the result-screen shell — a headline kit sheet, one action row in DOM order, focus on `wantFocus`. */
+const shell = (sheetId) => page.evaluate((id) => {
+  const sheet = document.getElementById(id);
+  if (!sheet) return { sheet: false };
+  const vis = (e) => e.style.display !== 'none' && !e.hidden && e.getBoundingClientRect().width > 0;
+  const row = sheet.querySelector('[slot="actions"]');
+  const actions = row ? Array.from(row.querySelectorAll('uf-button, button')).filter(vis).map((b) => b.id) : [];
+  const f = sheet.querySelector('.gamepad-focus');
+  const title = sheet.querySelector('.uf-sheet__title');
+  return { sheet: sheet.tagName.toLowerCase() === 'uf-sheet' && sheet.hasAttribute('headline'), visible: sheet.getBoundingClientRect().width > 0,
+    heading: title ? title.textContent : null, actions, focus: f ? f.id : null, rows: row ? 1 : 0 };
+}, sheetId);
+const checkShell = async (name, sheetId, wantFocus) => {
+  const s = await shell(sheetId);
+  check(s.sheet && s.visible && s.rows === 1 && s.heading, `SR-27 ${name}: a headline kit sheet with one action row`, s);
+  check(s.focus === wantFocus && s.actions[0] === wantFocus, `SR-27 ${name}: the primary (${wantFocus}) is first and focused`, { focus: s.focus, actions: s.actions });
+  return s;
+};
 
 async function startGrandma() {
   await show('modeStep'); await sleep(300);
@@ -187,6 +241,8 @@ console.log('game-over buttons');
   await crash();
   check(await page.evaluate(() => window._game.state) === 'gameover', 'SR-09 a forced crash shows the game-over screen');
   check(await shown('btn-restart') && await shown('btn-gameover-lobby'), 'SR-09 RESTART and END RIDE shown');
+  await checkShell('game over', 'gameover-sheet', 'btn-restart');
+  await h.shot(page, 'shell-gameover');
   const clip = await shown('btn-gameover-clip');
   const recording = await page.evaluate(() => !!(window._game.recorder && window._game.recorder.buffering));
   check(clip === recording, 'SR-09 SAVE CLIP shown exactly when the ride is recording', { clip, recording });
@@ -217,6 +273,8 @@ console.log('victory buttons');
   check(await shown('btn-play-again') && await shown('btn-victory-lobby'), 'SR-10 PLAY AGAIN and END RIDE shown');
   const hasNext = await shown('btn-next-level');
   check(hasNext, 'SR-10 NEXT LEVEL shown after Grandma\'s');
+  await checkShell('victory', 'victory-sheet', hasNext ? 'btn-next-level' : 'btn-play-again');
+  await h.shot(page, 'shell-victory');
   if (hasNext) {
     await clickId(page, 'btn-next-level');
     await waitState('playing', 120000).catch(() => {});
@@ -236,6 +294,127 @@ console.log('victory buttons');
   await waitState('lobby', 30000).catch(() => {});
   const s = await look();
   check(s.state === 'lobby' && !!s.step, 'SR-10 END RIDE returns to the lobby', s);
+}
+
+// ── SR-27: the other end screens on the shell (forced, as smoke:layout does) ──
+console.log('end screen shell');
+{
+  await page.evaluate(() => { const g = window._game; g.mode = 'solo'; g._showDemoEnd(); });
+  await sleep(400);
+  await checkShell('demo end', 'demo-end-sheet', await shown('btn-wishlist-demo-end') ? 'btn-wishlist-demo-end' : 'btn-demo-lobby');
+  await h.shot(page, 'shell-demo-end');
+  await page.evaluate(() => window._game._hideDemoEnd());
+  await page.evaluate(() => { const g = window._game; g.mode = 'captain'; g._showDisconnect('Your partner lost connection'); });
+  await sleep(400);
+  const dc = await checkShell('partner left', 'disconnect-sheet', 'btn-return-lobby');
+  check(dc.heading === 'Your partner lost connection', 'SR-27 partner left: the sheet heading is the notice', dc.heading);
+  await h.shot(page, 'shell-partner-left');
+  await page.evaluate(() => { const g = window._game; document.getElementById('disconnect-overlay').style.display = 'none'; g._clearOverlayButtons(); g.mode = 'solo'; });
+  await show('modeStep'); await sleep(300);
+}
+
+// ── SR-26: the pause menu ──
+console.log('pause menu');
+{
+  const pause = () => page.evaluate(() => {
+    const g = window._game, sheet = document.getElementById('pause-sheet');
+    const f = sheet ? sheet.querySelector('.gamepad-focus') : null;
+    const rm = g.raceManager;
+    return { open: !!g._pause && !!sheet && sheet.open, state: g.state, focus: f ? f.id : null,
+      clockPaused: !!(rm && rm.paused), elapsed: rm ? Math.round(rm.getElapsedMs()) : null,
+      options: document.getElementById('options-overlay').classList.contains('visible'),
+      help: !!document.getElementById('help-modal').open, sub: (document.getElementById('pause-sub') || {}).textContent };
+  });
+  const waitPause = (open) => page.waitForFunction((o) => !!window._game._pause === o, { timeout: 10000, polling: 100 }, open).then(() => true).catch(() => false);
+  const countSteps = () => page.evaluate(() => {
+    const rm = window._game.raceManager;
+    if (!rm.__counted) { const up = rm.update.bind(rm); rm.update = (...a) => { window.__rmCalls++; return up(...a); }; rm.__counted = true; }
+    window.__rmCalls = 0;
+  });
+
+  await startGrandma();
+  await page.evaluate(() => { const g = window._game; g.raceManager.noteFirstPedal(); });
+  // Start opens it; the ride and the clock stop.
+  await pads.tap(0, 'START');
+  check(await waitPause(true), 'SR-26 pad: Start mid-ride opens the pause menu');
+  let p = await pause();
+  check(p.open && p.state === 'playing' && p.focus === 'btn-pause-resume', 'SR-26 the menu opens over the ride with RESUME focused', p);
+  check(p.clockPaused && /clock is stopped/.test(p.sub || ''), 'SR-26 the race clock is held', { paused: p.clockPaused, sub: p.sub });
+  await countSteps();
+  const e0 = p.elapsed;
+  await sleep(1500);
+  const steps = await page.evaluate(() => window.__rmCalls);
+  p = await pause();
+  check(steps === 0 && p.elapsed === e0, 'SR-26 physics + race clock not stepped while paused', { steps, e0, e1: p.elapsed });
+  await h.shot(page, 'pause-menu');
+  // B = Resume.
+  await padB();
+  check(await waitPause(false), 'SR-26 pad: B resumes');
+  p = await pause();
+  check(!p.open && p.state === 'playing' && !p.clockPaused, 'SR-26 after Resume the ride and clock run', p);
+  await sleep(1200);
+  check(await page.evaluate(() => window.__rmCalls) > 0, 'SR-26 race steps again after Resume');
+  // Start again = Resume; Esc opens and closes.
+  await pads.tap(0, 'START'); await waitPause(true);
+  await pads.tap(0, 'START');
+  check(await waitPause(false), 'SR-26 pad: Start again resumes');
+  await page.keyboard.press('Escape');
+  check(await waitPause(true), 'SR-26 keyboard: Esc opens the pause menu');
+  await page.keyboard.press('Escape');
+  check(await waitPause(false), 'SR-26 keyboard: Esc closes it (resume)');
+  // RESUME by A on the focused button.
+  await pads.tap(0, 'START'); await waitPause(true); await sleep(400);
+  await pads.tap(0, 'A');
+  check(await waitPause(false), 'SR-26 pad: A on RESUME resumes');
+  // SETTINGS opens Options over the menu; B returns to the menu with focus.
+  await pads.tap(0, 'START'); await waitPause(true); await sleep(400);
+  await pads.tap(0, 'DOWN'); await sleep(300); await pads.tap(0, 'DOWN'); await sleep(300);
+  p = await pause();
+  check(p.focus === 'btn-pause-settings', 'SR-26 pad: ↓↓ reaches SETTINGS', p.focus);
+  await pads.tap(0, 'A'); await sleep(600);
+  p = await pause();
+  check(p.options && p.open, 'SR-26 SETTINGS opens Options over the paused ride', p);
+  await padB();
+  p = await pause();
+  check(!p.options && p.open && p.focus === 'btn-pause-resume' && p.state === 'playing' && p.clockPaused, 'SR-26 B closes Options; the menu has focus again, still paused', p);
+  // View opens Help over the menu; B comes back.
+  await pads.tap(0, 'SELECT'); await sleep(600);
+  p = await pause();
+  check(p.help && p.open, 'SR-26 pad: View opens Help over the pause menu', p);
+  await h.shot(page, 'pause-help');
+  await padB();
+  p = await pause();
+  check(!p.help && p.open && p.focus === 'btn-pause-resume', 'SR-26 B closes Help; focus is back on the menu', p);
+  // RESTART rides again.
+  await pads.tap(0, 'DOWN'); await sleep(300);
+  p = await pause();
+  check(p.focus === 'btn-pause-restart', 'SR-26 pad: ↓ reaches RESTART', p.focus);
+  await pads.tap(0, 'A');
+  check(await waitPause(false), 'SR-26 RESTART closes the menu');
+  await waitState('playing', 60000).catch(() => {});
+  p = await pause();
+  check(p.state === 'playing' && !p.clockPaused, 'SR-26 RESTART rides the same level again', p);
+  // END RIDE returns to the lobby.
+  await pads.tap(0, 'START'); await waitPause(true); await sleep(400);
+  for (let i = 0; i < 3; i++) { await pads.tap(0, 'DOWN'); await sleep(300); }
+  p = await pause();
+  check(p.focus === 'btn-pause-end', 'SR-26 pad: ↓↓↓ reaches END RIDE', p.focus);
+  await pads.tap(0, 'A');
+  await waitState('lobby', 30000).catch(() => {});
+  const s = await look();
+  check(s.state === 'lobby' && !!s.step && !(await pause()).open, 'SR-26 END RIDE returns to the lobby', s);
+  // Touch: the quick menu's PAUSE entry.
+  await startGrandma();
+  await page.evaluate(() => { window._game.quickMenu.show(); });
+  await sleep(300);
+  const qm = await page.evaluate(() => { const b = document.getElementById('qm-pause'); return { shown: !!b && !b.hidden && b.getBoundingClientRect().width > 0 }; });
+  check(qm.shown, 'SR-26 touch: the quick menu offers PAUSE while riding', qm);
+  await clickId(page, 'qm-pause');
+  check(await waitPause(true), 'SR-26 touch: PAUSE opens the pause menu');
+  await clickId(page, 'btn-pause-resume');
+  check(await waitPause(false), 'SR-26 touch: RESUME resumes');
+  await page.evaluate(() => window._game._returnToLobby());
+  await sleep(600);
 }
 
 check(h.errors.length === 0, 'no page errors', h.errors);

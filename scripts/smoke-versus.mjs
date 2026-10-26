@@ -146,6 +146,21 @@ console.log('seats');
   const back = await page.evaluate(() => ({ visible: document.getElementById('disconnect-overlay').style.display !== 'none', paused: window._game._versusPaused, state: window._game.state }));
   check(!back.visible && !back.paused && back.state === 'playing', 'drop: replugging resumes the race', back);
   check(await page.evaluate(() => window.__steps) >= 2, 'drop: both teams step again after the replug', await page.evaluate(() => window.__steps));
+
+  // ── #459 item 12: P1's Start pauses the race (both teams); B resumes ──
+  await pads.tap(0, 'START');
+  const paused = await page.waitForFunction(() => !!window._game._pause, { timeout: 10000, polling: 100 }).then(() => true).catch(() => false);
+  check(paused, 'pause: P1\'s Start opens the pause menu mid-race');
+  await page.evaluate(() => { window.__steps = 0; });
+  await sleep(1500);
+  const pz = await page.evaluate(() => ({ steps: window.__steps, clocks: window._game.versusRigs.map((r) => r.raceManager.paused), state: window._game.state }));
+  check(pz.steps === 0 && pz.clocks.every(Boolean) && pz.state === 'playing', 'pause: neither team is stepped and both race clocks hold', pz);
+  await h.shot(page, 'race-2v2-paused');
+  await pads.tap(0, 'B');
+  const resumed = await page.waitForFunction(() => !window._game._pause, { timeout: 10000, polling: 100 }).then(() => true).catch(() => false);
+  await sleep(1200);
+  const rz = await page.evaluate(() => ({ steps: window.__steps, clocks: window._game.versusRigs.map((r) => r.raceManager.paused) }));
+  check(resumed && rz.steps >= 2 && !rz.clocks.some(Boolean), 'pause: B resumes the race for both teams', rz);
   await page.close();
 }
 
@@ -198,11 +213,16 @@ console.log('race 1v1 + finish');
   await page.waitForFunction(() => window._game.state === 'versusResults', { timeout: 120000 }).catch(() => {});
   const res = await page.evaluate(() => {
     const sheet = document.querySelector('#versus-results uf-sheet');
-    return { state: window._game.state, heading: sheet ? sheet.getAttribute('heading') : null, winner: window._game._versusWinner?.id, rematch: !!document.getElementById('vr-rematch'), lobby: !!document.getElementById('vr-lobby') };
+    const row = sheet ? sheet.querySelector('[slot="actions"]') : null;
+    const f = sheet ? sheet.querySelector('.gamepad-focus') : null;
+    return { state: window._game.state, heading: sheet ? sheet.getAttribute('heading') : null, winner: window._game._versusWinner?.id, rematch: !!document.getElementById('vr-rematch'), lobby: !!document.getElementById('vr-lobby'),
+      headline: !!sheet && sheet.hasAttribute('headline'), actions: row ? Array.from(row.querySelectorAll('uf-button')).map((b) => b.id) : [], focus: f ? f.id : null };
   });
   check(res.state === 'versusResults' && res.winner === 'B', 'finish: the team over the line wins', res);
   check(res.heading && res.heading.toLowerCase() === `${red.name} wins!`.toLowerCase(), 'results card names the winning team', { heading: res.heading, red: red.name });
   check(res.rematch && res.lobby, 'results offer REMATCH and LOBBY', res);
+  // #459 item 15: the result-screen shell — REMATCH (the primary) first and focused.
+  check(res.headline && res.actions[0] === 'vr-rematch' && res.focus === 'vr-rematch', 'results: headline sheet, REMATCH first and focused', { actions: res.actions, focus: res.focus });
   await h.shot(page, 'results');
   await clickId(page, 'vr-lobby');
   await sleep(1200);
