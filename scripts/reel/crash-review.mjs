@@ -10,7 +10,7 @@ import { launch, record, encode, advance, sleep, OUT } from './lib.mjs';
 
 const args = process.argv.slice(2);
 const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
-const SHOTS = (args[0] && !args[0].startsWith('--') ? args[0] : 'pylon,leanout').split(',');
+const SHOTS = (args[0] && !args[0].startsWith('--') ? args[0] : 'pylon,tree,versus,leanout').split(',');
 const FINAL = opt('--out', path.join(OUT, 'clips', 'crash-review.mp4'));
 const PORT = 8963;
 const W = 1920, H = 1080;
@@ -61,8 +61,17 @@ async function until(page, pred, max = 90, step = 0.25) {
 }
 
 /** Film from `pre` seconds before the crash (crash() starts it) to the checkpoint countdown. */
-async function film(name, s, crash, cam, seconds = 4.2) {
+async function film(name, s, crash, cam, seconds = 4.2, caption = '') {
   const { page } = s;
+  // a small caption, bottom left, for the whole shot
+  await page.evaluate((text) => {
+    let el = document.getElementById('reel-caption');
+    if (!el) { el = document.createElement('div'); el.id = 'reel-caption'; document.body.appendChild(el); }
+    el.style.cssText = 'position:fixed;left:28px;bottom:26px;z-index:99999;padding:8px 16px;border-radius:10px;'
+      + 'background:rgba(20,20,40,.82);color:#ffe9a8;font:600 26px/1.2 system-ui,sans-serif;letter-spacing:.02em';
+    el.textContent = text;
+    el.style.display = text ? 'block' : 'none';
+  }, caption);
   await page.evaluate((c, lead) => { window.__reel.setCamera(c); window.__LEAD = lead; }, cam, LEAD);
   let hit = -1, locked = false;
   const log = [];
@@ -74,7 +83,9 @@ async function film(name, s, crash, cam, seconds = 4.2) {
         pel: sc ? sc.pelvisPositions().map(p => [+p.y.toFixed(2)]) : null,
         clr: sc && sc.world ? +sc.minClearance().toFixed(3) : null,
         v: sc && sc.riders[0] ? (({ x, y, z }) => [+x.toFixed(1), +y.toFixed(1), +z.toFixed(1)])(sc.riders[0].segs[0].body.linvel()) : null,
-        sp: +b.speed.toFixed(2), lean: +b.lean.toFixed(2) };
+        sp: +b.speed.toFixed(2), lean: +b.lean.toFixed(2),
+        cause: g._lastCrashCause || null,
+        knocked: g.physicsFx ? g.physicsFx._billboards.length : 0 };
     });
     if (r.fallen) log.push(r);
     if (process.env.DEBUG && (r.fallen || i % 10 === 0)) console.log('   ', i, JSON.stringify(r));
@@ -91,7 +102,8 @@ async function film(name, s, crash, cam, seconds = 4.2) {
     }
   } });
   const clip = await encode(name);
-  console.log('  ->', clip, 'impact at', hit.toFixed(2), 's; scene', log.some(l => l.scene), 'errors', s.errors.slice(0, 2));
+  console.log('  ->', clip, 'impact at', hit.toFixed(2), 's; cause', log[0] && log[0].cause, '; scene', log.some(l => l.scene),
+    '; knocked cones', Math.max(0, ...log.map(l => l.knocked)), '; errors', s.errors.slice(0, 2));
   // the lowest any pelvis got below where it started (geese through the floor?)
   const ys = log.filter(l => l.pel).flatMap(l => l.pel.map(p => p[0]));
   if (ys.length) console.log('  pelvis y range', Math.min(...ys).toFixed(2), Math.max(...ys).toFixed(2));
@@ -100,47 +112,83 @@ async function film(name, s, crash, cam, seconds = 4.2) {
   return clip;
 }
 
-let LEAD = 4;   // metres ahead of the crash the locked camera aims (the geese fly forward)
-const CAM = (deg, dist, h) => ({ stiff: 0.25, keys: [{ t: 0, deg, dist, h, look: -0.2, fov: 42 }] });
+let LEAD = 2;   // metres ahead of the crash the locked camera aims (the geese fly forward)
+const CAM = (deg, dist, h, fov = 46, look = -0.25) => ({ stiff: 0.3, keys: [{ t: 0, deg, dist, h, look, fov }] });
+const noCrash = async () => false;   // every crash comes from the game's own collision code
+
+/** The next pylon at least `ahead` metres down the road, in the obstacle manager's window. */
+const nextPylon = (page, d, ahead = 30) => page.evaluate((d, ahead) => {
+  const items = (window._game.obstacleManager._items || []).filter(i => i.absoluteD > d + ahead && !i._hidden)
+    .sort((a, b) => a.absoluteD - b.absoluteD);
+  return items[0] ? { d: items[0].absoluteD, x: items[0].lateralOffset } : null;
+}, d, ahead);
+
+/** Ride the bot straight at lateral offset x (no dodging) until the filmed bike is `short` metres before d. */
+async function lineUp(page, target, short = 7) {
+  await page.evaluate((x) => { for (const b of window.__reel.bots) { b.dodge = false; b.offset = x; } }, target.x);
+  for (let t = 0; t < 60; t += 1 / 30) {
+    const d = await page.evaluate(() => (window.__filmBike ? window.__filmBike() : window._game.bike).distanceTraveled);
+    if (d > target.d - short) return true;
+    await advance(page, 1 / 30);
+  }
+  return false;
+}
 
 const shots = {
-  // head-on into a pylon: the captain over the bars, the stoker off the back
+  // head-on into a pylon: the cone in frame before the hit and knocked flying; the captain over the bars
   async pylon() {
     const s = await ride();
     const { page } = s;
     const start = await until(page, x => x.state === 'playing' && x.d > 40 && x.speed > 6);
-    const p = await page.evaluate((d) => {
-      const items = (window._game.obstacleManager._items || []).filter(i => i.absoluteD > d + 30).sort((a, b) => a.absoluteD - b.absoluteD);
-      return items[0] ? { d: items[0].absoluteD, x: items[0].lateralOffset } : null;
-    }, start.d);
-    console.log('  pylon at', JSON.stringify(p), 'from', JSON.stringify(start));
-    await page.evaluate((p, d) => {
-      for (const b of window.__reel.bots) { b.dodge = false; b.offset = p.x; }
-    }, p, start.d);
-    await until(page, x => x.d > p.d - 9 || x.fallen, 60, 1 / 30);
-    const clip = await film('crash-pylon', s, async () => false, CAM(70, 11, 1.4));
+    const p = await nextPylon(page, start.d);
+    console.log('  pylon at', JSON.stringify(p), 'from d', start.d);
+    await lineUp(page, p, 16);
+    // 3/4 front-side, low and close: the cone sits between the camera and the oncoming bike
+    const clip = await film('crash-pylon', s, noCrash, CAM(38, 5.5, 0.35, 50, -0.35), 4.0, 'Head-on: pylon');
     await s.close();
     return clip;
   },
-  // leaning out too far at speed: both geese thrown to the side it falls
+  // into a roadside tree (Grandma's trees collide): head-on throw, the tree stays put
+  async tree() {
+    const s = await ride();
+    const { page } = s;
+    const start = await until(page, x => x.state === 'playing' && x.d > 40 && x.speed > 6);
+    const t = await page.evaluate((d) => {
+      const g = window._game, rp = g.world.roadPath, out = [];
+      for (const sl of g.world._treePool || []) {
+        if (!sl.active || !sl.mesh.visible || !(sl.roadD > d + 30)) continue;
+        const info = rp.getClosestRoadInfo(sl.mesh.position.x, sl.mesh.position.z, sl.roadD);
+        if (info && Math.abs(info.lateralOffset) < 6.5) out.push({ d: sl.roadD, x: info.lateralOffset });
+      }
+      out.sort((a, b) => a.d - b.d);
+      return out[0] || null;
+    }, start.d);
+    console.log('  tree at', JSON.stringify(t), 'from d', start.d);
+    // no pylons on the way in: the tree is the crash
+    await page.evaluate(() => { const om = window._game.obstacleManager; for (const i of om._items) i._hidden = true; });
+    await lineUp(page, t, 14);
+    const clip = await film('crash-tree', s, noCrash, CAM(-42, 6.5, 0.6, 50, -0.2), 4.0, 'Head-on: tree');
+    await s.close();
+    return clip;
+  },
+  // leaning out too far at speed: no obstacle, both geese cartwheel to the side it falls (short, last)
   async leanout() {
     const s = await ride();
     const { page } = s;
     await until(page, x => x.state === 'playing' && x.d > 60 && x.speed > 6);
     const clip = await film('crash-leanout', s, async (i, t) => {
-      if (t < 0.5) return false;
-      // stop steering and lean hard right: the balance gives out within a few frames; once down, ride on normally
+      if (t < 0.2) return false;
       await page.evaluate(() => {
         const down = window._game.bike.fallen;
         for (const b of window.__reel.bots) { b.steer = down ? 0.9 : 0; b.extra = down ? 0 : 1; }
       });
       return false;
-    }, null);   // the game's own chase camera: what the player sees
+    }, null, 3.4, 'Lean-out (no obstacle)');
     await s.close();
     return clip;
   },
-  // split-screen versus (?versusbot=1: Team B is the game's debug rider): Team A crashes into a pylon and
-  // only its half slows down; Team B races on in real time
+  // split-screen versus (?versusbot=1: Team B is the game's debug rider): Team A rides into a pylon; only its
+  // half slows, Team B races on in real time
   async versus() {
     const s = await launch({ width: W, height: H, port: PORT, query: '?versusbot=1',
       storage: { tandemonium_show_riders: 'on', tandemonium_physics_fx: opt('--fx', 'on') } });
@@ -170,15 +218,11 @@ const shots = {
         && g.versusRigs[0].bike.speed > 7 && g.versusRigs[0].bike.distanceTraveled > 40; });
       if (ok) break;
     }
-    const clip = await film('crash-versus', s, async (i, t) => {
-      if (t < 0.5) return false;
-      return page.evaluate(() => {
-        const g = window._game, b = g.versusRigs[0].bike;
-        if (b.fallen) return true;
-        g._recordCrash('obstacle', b); b._fall();
-        return true;
-      });
-    }, null, 4.0);
+    const d = await page.evaluate(() => window._game.versusRigs[0].bike.distanceTraveled);
+    const p = await nextPylon(page, d, 25);
+    console.log('  versus pylon at', JSON.stringify(p), 'from d', d.toFixed(1));
+    await lineUp(page, p, 14);
+    const clip = await film('crash-versus', s, noCrash, null, 4.0, 'Versus: Team A hits a pylon, only its half slows');
     await s.close();
     return clip;
   },
@@ -194,6 +238,6 @@ const list = path.join(OUT, 'clips', 'crash-review.txt');
 fs.writeFileSync(list, clips.map(c => `file '${c.replace(/\\/g, '/')}'`).join('\n'));
 fs.mkdirSync(path.dirname(FINAL), { recursive: true });
 execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', FINAL]);
-execFileSync('ffmpeg', ['-y', '-v', 'error', '-i', FINAL, '-vf', 'fps=6,scale=480:-1,tile=6x' + Math.ceil(clips.length * 4.2), '-frames:v', '1',
+execFileSync('ffmpeg', ['-y', '-v', 'error', '-i', FINAL, '-vf', 'fps=5,scale=480:-1,tile=6x' + Math.ceil(clips.length * 4 * 5 / 6), '-frames:v', '1',
   FINAL.replace(/\.mp4$/, '-sheet.jpg')]);
 console.log('review', FINAL);
