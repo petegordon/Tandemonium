@@ -398,6 +398,46 @@ export const TOURIST_TUNE = {
   // when tiles stream in/out and a frame has no ray hit.
   groundLerp: 8,
 
+  // #402 · street-level hit selection + breadcrumb recovery (tourist-ground.js).
+  // The tiles are one fused mesh with no road/roof/tree labels, so the probe
+  // reads every surface under the bike and keeps the one a bike could actually
+  // have ridden onto since its last known ground point.
+  ground: {
+    // Faces whose world-space normal has y below this are walls, kerb faces and
+    // leaf sides, never ground. 0.6 ≈ 53° from horizontal.
+    minNormalY: 0.6,
+    // Rise window (metres) = min(stepUpMax, stepUpBase + stepUpPerMetre × metres
+    // travelled since the last accepted ground point). Base covers kerbs and
+    // LOD jitter at a standstill; 0.5/m is a 1:2 ramp, steeper than any street,
+    // and the cap means riding along a wall never widens the window up to its roof.
+    stepUpBase: 0.5,
+    stepUpPerMetre: 0.5,
+    stepUpMax: 6,
+    // Drop window: generous (hills, riding off a kerb, a roof or a bridge) but
+    // capped so a coarse tile far below the street is never taken mid-ride.
+    stepDownBase: 3,
+    stepDownPerMetre: 1.0,
+    stepDownMax: 150,
+    // First hit (spawn): of the upward-facing hits within this many metres below
+    // the HIGHEST hit, take the lowest — the street under a tree crown or an
+    // awning — while a coarse root tile kilometres below is outside the cluster.
+    spawnClusterDepth: 80,
+    // Breadcrumb trail of accepted ground points: one every few metres, capped.
+    breadcrumbSpacing: 3,
+    breadcrumbMax: 64,
+    // Seconds without an accepted ground hit before the bike resnaps to its last
+    // breadcrumb; after this many resnaps that still find no ground the trail is
+    // stale and the next frame snaps fresh (like the first hit of the ride).
+    resnapAfter: 4,
+    resnapMaxTries: 3,
+    // "Inside geometry": a surface between ceilingClearance and ceilingProbe
+    // metres above the bike with no rideable ground under it → resnap at once.
+    ceilingClearance: 0.3,
+    ceilingProbe: 3,
+    // Speed (m/s) the bike is cut to when resnapped out of geometry.
+    resnapSpeed: 3,
+  },
+
   // Seconds of sustained "no ground found" (after tiles start streaming) before
   // telling the rider this location has no photogrammetry coverage. Long enough
   // that ordinary streaming gaps — or a slow first load — never trip it.
