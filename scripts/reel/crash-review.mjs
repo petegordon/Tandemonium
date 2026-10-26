@@ -85,7 +85,7 @@ async function film(name, s, crash, cam, seconds = 4.2, caption = '') {
         v: sc && sc.riders[0] ? (({ x, y, z }) => [+x.toFixed(1), +y.toFixed(1), +z.toFixed(1)])(sc.riders[0].segs[0].body.linvel()) : null,
         sp: +b.speed.toFixed(2), lean: +b.lean.toFixed(2),
         cause: g._lastCrashCause || null,
-        knocked: g.physicsFx ? g.physicsFx._billboards.length : 0 };
+        knocked: (g.physicsFx ? g.physicsFx._billboards.length : 0) + g.scene.children.filter(o => o.name === 'knocked-cone').length };   // billboard or #478 3D cone
     });
     if (r.fallen) log.push(r);
     if (process.env.DEBUG && (r.fallen || i % 10 === 0)) console.log('   ', i, JSON.stringify(r));
