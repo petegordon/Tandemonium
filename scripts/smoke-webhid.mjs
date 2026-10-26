@@ -48,31 +48,71 @@ const snap = (page) => page.evaluate(() => {
 });
 const slot = (s, id) => s.slots.find((x) => x.id === id);
 
-/** Open the game with these HID devices granted; plug `pads` once the pool settles. */
-async function open(devices, { pads = [], settleMs = 3000 } = {}) {
-  const page = await h.gamePage({ storage: STORAGE, before: async (p) => { await installFakeWebHid(p, devices); await installFakeGamepads(p); } });
-  await sleep(settleMs);
-  const fp = fakePads(page);
-  const idx = [];
-  for (const m of pads) idx.push(await fp.plug(m));
-  if (pads.length) await sleep(1200);
-  return { page, pads: fp, hid: fakeHid(page), idx };
+// Everything waits on state, never on a fixed delay: a CI runner draws 1–3 fps
+// under software WebGL, so one game frame can take most of a second.
+const WAIT_MS = 45000;
+
+// A throttled or CI page can take longer than puppeteer's 30 s default just to load.
+const slowLoad = (p) => { p.setDefaultNavigationTimeout(180000); p.setDefaultTimeout(180000); };
+
+/** Poll the snapshot until `pred(snap)` holds (or time runs out); returns the last snapshot. */
+async function waitFor(page, pred, timeout = WAIT_MS) {
+  let s;
+  for (const t0 = Date.now(); ;) {
+    s = await snap(page);
+    if (pred(s) || Date.now() - t0 > timeout) return s;
+    await sleep(200);
+  }
 }
 
-/** Press A on a pad and on its HID twin together, as one physical press reads. */
-async function pressBoth(ctx, padIndex, hidKey, bit, ms = 400) {
-  await ctx.hid.hold(hidKey, bit, true);
-  if (padIndex != null) await ctx.pads.hold(padIndex, 'A', true);
-  await sleep(ms);
-  await ctx.hid.hold(hidKey, bit, false);
-  if (padIndex != null) await ctx.pads.hold(padIndex, 'A', false);
-  await sleep(400);
+/** True once each named device is streaming, pooled or seated. */
+const streamingAll = (keys) => (s) => keys.every((k) => s.pool.some((e) => e.hid === k && e.streaming) || s.slots.some((x) => x.hid === k && x.streaming));
+
+/** Set A on a pad and its HID twin in ONE page task, so no game frame sees one without the other. */
+const setBoth = (ctx, padIndex, hidKey, bit, on) => ctx.page.evaluate((k, o, m, pi, down) => {
+  window.__fakeHid.hold(k, o, m, down);
+  if (pi != null) window.__fakePads.hold(pi, 'A', down);
+}, hidKey, bit.offset, bit.mask, padIndex, on);
+
+/**
+ * Hold A on a pad and on its HID twin together (one physical press reads on
+ * both at once) until `pred(snap)` holds, then release and wait for it to land.
+ * Both are set in the same page task: two separate calls let a slow page draw a
+ * frame between them, and then core's ambiguous-unit binding guesses (see the
+ * MC-11 note below).
+ */
+async function holdUntil(ctx, padIndex, hidKey, bit, pred, timeout = WAIT_MS) {
+  await setBoth(ctx, padIndex, hidKey, bit, true);
+  const s = await waitFor(ctx.page, pred, timeout);
+  await setBoth(ctx, padIndex, hidKey, bit, false);
+  await waitFor(ctx.page, (x) => !x.slots.some((y) => y.btnA), 5000);
+  return s;
+}
+
+/**
+ * Open the game with these HID devices granted, wait for them to stream, then
+ * plug `pads` (a pad plugged after launch, as most are). `join` seats P1 the
+ * way a player does: if the lobby's boot auto-claim didn't take the pad (its
+ * 2 s window can pass before the pad shows on a slow machine), press A on it
+ * (pad + its HID twin together) until the seat is claimed and bound.
+ */
+async function open(devices, { pads = [], join = null } = {}) {
+  const page = await h.gamePage({ storage: STORAGE, before: async (p) => { slowLoad(p); await installFakeWebHid(p, devices); await installFakeGamepads(p); } });
+  const ctx = { page, pads: fakePads(page), hid: fakeHid(page), idx: [] };
+  await waitFor(page, streamingAll(devices.filter((d) => d.reports.length).map((d) => d.key)));
+  for (const m of pads) ctx.idx.push(await ctx.pads.plug(m));
+  if (join) {
+    const seated = (s) => slot(s, 'P1').state === 'claimed' && slot(s, 'P1').hid === join.hid && slot(s, 'P1').streaming;
+    if (!seated(await waitFor(page, seated, 3000))) { console.log('  (pad not auto-claimed; joining by pressing A)'); await holdUntil(ctx, join.pad, join.hid, join.bit, seated); }
+    await waitFor(page, (s) => seated(s) && slot(s, 'P1').accelOk && s.gyroP1 && !!s.p1);
+  }
+  return ctx;
 }
 
 // ── IN-06 DualSense USB ──
 console.log('IN-06 DualSense USB');
 {
-  const ctx = await open([hidDevice.dualsenseUsb('ds')], { pads: ['dualsense'] });
+  const ctx = await open([hidDevice.dualsenseUsb('ds')], { pads: ['dualsense'], join: { pad: 0, hid: 'ds', bit: FACE_A.ds5Usb } });
   let s = await snap(ctx.page);
   const p1 = slot(s, 'P1');
   check(p1.state === 'claimed' && p1.pad === 0 && p1.hid === 'ds', 'IN-06: the DualSense pad claims P1 and its HID device binds to that seat', p1);
@@ -80,8 +120,7 @@ console.log('IN-06 DualSense USB');
   check(p1.streaming && p1.accelOk && s.gyroP1, 'IN-06: reports streaming, accel ≈ 1 g, P1 gyro live', { streaming: p1.streaming, accelOk: p1.accelOk, gyro: s.gyroP1 });
   check(s.p1 && s.p1.name === 'Sony DualSense' && s.p1.glyph === 'playstation', 'IN-06: lobby names it "Sony DualSense" with PlayStation prompts', s.p1);
   await ctx.hid.hold('ds', FACE_A.ds5Usb, true);
-  // Poll (up to 3 s): on a slow runner the next parsed report can lag.
-  for (const t0 = Date.now(); Date.now() - t0 < 3000;) { await sleep(150); s = await snap(ctx.page); if (slot(s, 'P1').btnA) break; }
+  s = await waitFor(ctx.page, (x) => slot(x, 'P1').btnA, 15000);
   check(slot(s, 'P1').btnA, 'IN-06: cross in the HID report reads as button 0 on the seat');
   await ctx.hid.hold('ds', FACE_A.ds5Usb, false);
   check(!s.pool.some((e) => e.hid === 'ds'), 'IN-06: one entry for the device (none left in the pool)', s.pool);
@@ -91,7 +130,7 @@ console.log('IN-06 DualSense USB');
 // ── IN-08 DualShock 4 v1 over Bluetooth ──
 console.log('IN-08 DualShock 4 BT');
 {
-  const ctx = await open([hidDevice.ds4Bt('ds4')], { pads: ['Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 05c4)'] });
+  const ctx = await open([hidDevice.ds4Bt('ds4')], { pads: ['Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 05c4)'], join: { pad: 0, hid: 'ds4', bit: FACE_A.ds4Bt } });
   const s = await snap(ctx.page);
   const p1 = slot(s, 'P1');
   const st = await ctx.hid.stats('ds4');
@@ -105,7 +144,7 @@ console.log('IN-08 DualShock 4 BT');
 // ── IN-11 GameSir Super Nova (DS4 mode) ──
 console.log('IN-11 Super Nova');
 {
-  const ctx = await open([hidDevice.superNova('nova')], { pads: ['ds4'] });
+  const ctx = await open([hidDevice.superNova('nova')], { pads: ['ds4'], join: { pad: 0, hid: 'nova', bit: FACE_A.ds4Usb } });
   const s = await snap(ctx.page);
   const p1 = slot(s, 'P1');
   check(p1.hid === 'nova' && p1.conn === 'usb' && p1.family === 'gamesir-ds4' && p1.gyroOffset === 12, 'IN-11: Super Nova bound to P1, GameSir IMU family (byte 12), USB', p1);
@@ -126,8 +165,8 @@ console.log('IN-10 Steam Controller via Puck');
   check(pooled && pooled.driver === 'Steam Controller 2026 (via Puck)' && pooled.streaming, 'IN-10: Puck pooled with the via-Puck driver, streaming', pooled);
   check(st.featureSends >= 2, 'IN-10: lizard-mode handshake sent (CLEAR + SET_SETTINGS)', st.featureSends);
   check(slot(s, 'P1').state === 'empty', 'IN-10: no seat until a button is pressed (HID-only, no Gamepad pad)', slot(s, 'P1').state);
-  await pressBoth(ctx, null, 'puck', FACE_A.steam);
-  s = await snap(ctx.page);
+  await holdUntil(ctx, null, 'puck', FACE_A.steam, (x) => slot(x, 'P1').state === 'claimed');
+  s = await waitFor(ctx.page, (x) => x.gyroP1 && !!x.p1);
   const p1 = slot(s, 'P1');
   check(p1.state === 'claimed' && p1.hid === 'puck' && p1.pad === null, 'IN-10: pressing A seats P1 on the Puck over WebHID', p1);
   check(s.p1 && s.p1.name === 'Steam Controller 2026 (via Puck)' && s.p1.glyph === 'steam', 'IN-10: named "Steam Controller 2026 (via Puck)" with Steam prompts', s.p1);
@@ -140,22 +179,23 @@ console.log('MC-11 two identical DualSense');
 {
   const ctx = await open([hidDevice.dualsenseUsb('ds-a'), hidDevice.dualsenseUsb('ds-b')], { pads: ['dualsense', 'dualsense'] });
   const [a, b] = ctx.idx;
-  await pressBoth(ctx, a, 'ds-a', FACE_A.ds5Usb);
-  await pressBoth(ctx, b, 'ds-b', FACE_A.ds5Usb);
-  let s = await snap(ctx.page);
+  // P1 may already hold pad A if the boot auto-claim caught it; either way A's press seats it.
+  await holdUntil(ctx, a, 'ds-a', FACE_A.ds5Usb, (x) => slot(x, 'P1').state === 'claimed' && !!slot(x, 'P1').hid);
+  await holdUntil(ctx, b, 'ds-b', FACE_A.ds5Usb, (x) => slot(x, 'P2').state === 'claimed' && !!slot(x, 'P2').hid);
+  let s = await waitFor(ctx.page, (x) => slot(x, 'P1').streaming && slot(x, 'P2').streaming);
   check(slot(s, 'P1').pad === a && slot(s, 'P1').hid === 'ds-a' && slot(s, 'P2').pad === b && slot(s, 'P2').hid === 'ds-b',
     'MC-11: each pad seats with its own unit (P1 = A, P2 = B)', { P1: slot(s, 'P1'), P2: slot(s, 'P2') });
   // B drops (pad + HID both go away, as an unplug does) …
   await ctx.pads.unplug(b);
   await ctx.hid.disconnect('ds-b');
-  await sleep(800);
-  s = await snap(ctx.page);
+  s = await waitFor(ctx.page, (x) => slot(x, 'P2').state === 'orphan');
   check(slot(s, 'P2').state === 'orphan' && slot(s, 'P1').hid === 'ds-a' && slot(s, 'P1').state === 'claimed', 'MC-11: B unplugged → P2 orphaned, P1 keeps unit A', { P1: slot(s, 'P1'), P2: slot(s, 'P2') });
   // … and comes back: a new HIDDevice object for the same unit.
   await ctx.hid.connect('ds-b');
   await ctx.pads.replug(b);
-  await sleep(2500);
-  await pressBoth(ctx, b, 'ds-b', FACE_A.ds5Usb);
+  await waitFor(ctx.page, streamingAll(['ds-b']));
+  const back = (x) => slot(x, 'P2').state === 'claimed' && slot(x, 'P2').hid === 'ds-b' && slot(x, 'P2').streaming;
+  if (!back(await waitFor(ctx.page, back, 3000))) await holdUntil(ctx, b, 'ds-b', FACE_A.ds5Usb, back);
   s = await snap(ctx.page);
   const st = await ctx.hid.stats('ds-b');
   check(st.objects === 2, 'MC-11: the reconnect handed out a new HIDDevice object', st.objects);
@@ -167,13 +207,50 @@ console.log('MC-11 two identical DualSense');
   await ctx.page.close();
 }
 
+// ── MC-11b the press reaches the HID stream a frame before the pad sample ──
+// Real pads do this: one press lands in the unit's own HID report a frame or
+// two before Chrome's Gamepad sample shows it. With P1 seated by its pad and
+// no unit bound yet, core 0.6.1 bound the OTHER (never-pressed) identical unit
+// on that frame (Tier 2). Core 0.6.2 waits for the pad to catch up.
+console.log('MC-11b press lands on HID a frame early');
+{
+  const ctx = await open([hidDevice.dualsenseUsb('ds-a'), hidDevice.dualsenseUsb('ds-b')], { pads: ['dualsense'] });
+  const a = ctx.idx[0];
+  // P1 seated by pad A alone (boot auto-claim, or a pad-only press): two identical
+  // candidate units and no HID press, so core binds neither yet.
+  const p1Claimed = (x) => slot(x, 'P1').state === 'claimed' && slot(x, 'P1').pad === a;
+  if (!p1Claimed(await waitFor(ctx.page, p1Claimed, 3000))) {
+    await ctx.pads.hold(a, 'A', true);
+    await waitFor(ctx.page, p1Claimed);
+    await ctx.pads.hold(a, 'A', false);
+  }
+  let s = await waitFor(ctx.page, (x) => !x.slots.some((y) => y.btnA));
+  check(p1Claimed(s) && !slot(s, 'P1').hid, 'MC-11b: P1 seated by its pad, no unit bound yet (two identical candidates)', slot(s, 'P1'));
+  const b = await ctx.pads.plug('dualsense');
+  // Unit A's HID report shows cross; hold it for two game frames before pad A's sample does.
+  await ctx.hid.hold('ds-a', FACE_A.ds5Usb, true);
+  await ctx.page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  s = await snap(ctx.page);
+  check(slot(s, 'P1').hid !== 'ds-b', "MC-11b: the HID press alone doesn't bind P1 to the other player's unit", slot(s, 'P1'));
+  await ctx.pads.hold(a, 'A', true);
+  s = await waitFor(ctx.page, (x) => !!slot(x, 'P1').hid);
+  await ctx.pads.hold(a, 'A', false);
+  await ctx.hid.hold('ds-a', FACE_A.ds5Usb, false);
+  check(slot(s, 'P1').hid === 'ds-a', 'MC-11b: once the pad shows the press, P1 binds its own unit A', slot(s, 'P1'));
+  await waitFor(ctx.page, (x) => !x.slots.some((y) => y.btnA), 5000);
+  await holdUntil(ctx, b, 'ds-b', FACE_A.ds5Usb, (x) => slot(x, 'P2').state === 'claimed' && !!slot(x, 'P2').hid);
+  s = await snap(ctx.page);
+  check(slot(s, 'P2').pad === b && slot(s, 'P2').hid === 'ds-b', 'MC-11b: P2 joins on pad B with unit B', slot(s, 'P2'));
+  await ctx.page.close();
+}
+
 // ── MC-12 two Steam Controller bodies on one Puck ──
 console.log('MC-12 two Steam Controllers on one Puck');
 {
   const ctx = await open([hidDevice.steamPuck('body-1'), hidDevice.steamPuck('body-2'), hidDevice.puckIdleSibling('puck-idle')]);
-  await pressBoth(ctx, null, 'body-1', FACE_A.steam);
-  await pressBoth(ctx, null, 'body-2', FACE_A.steam);
-  const s = await snap(ctx.page);
+  await holdUntil(ctx, null, 'body-1', FACE_A.steam, (x) => slot(x, 'P1').state === 'claimed');
+  await holdUntil(ctx, null, 'body-2', FACE_A.steam, (x) => slot(x, 'P2').state === 'claimed');
+  const s = await waitFor(ctx.page, (x) => slot(x, 'P1').streaming && slot(x, 'P2').streaming);
   check(slot(s, 'P1').hid === 'body-1' && slot(s, 'P2').hid === 'body-2', 'MC-12: P1 = body 1, P2 = body 2 (no cross-wiring)', { P1: slot(s, 'P1').hid, P2: slot(s, 'P2').hid });
   check(slot(s, 'P1').streaming && slot(s, 'P2').streaming, 'MC-12: both seats streaming their own body');
   check(!s.slots.some((x) => x.hid === 'puck-idle'), 'MC-12: the idle receiver interface takes no seat', s.slots.map((x) => x.hid));
@@ -193,8 +270,13 @@ console.log('pad + granted HID at boot');
   const runs = 3;
   let dup = 0, doubleSeat = 0;
   for (let r = 0; r < runs; r++) {
-    const page = await h.gamePage({ storage: STORAGE, before: async (p) => { await installFakeWebHid(p, [hidDevice.dualsenseUsb('ds')]); await installFakeGamepads(p, { atBoot: ['dualsense'] }); } });
-    await sleep(3500);
+    const page = await h.gamePage({ storage: STORAGE, before: async (p) => { slowLoad(p); await installFakeWebHid(p, [hidDevice.dualsenseUsb('ds')]); await installFakeGamepads(p, { atBoot: ['dualsense'] }); } });
+    const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
+    // Settle: P1 seated + bound (boot auto-claim, or a press if a slow machine
+    // missed its window), then a beat for any racing second pool to land.
+    const seated = (s) => slot(s, 'P1').state === 'claimed' && slot(s, 'P1').hid === 'ds' && slot(s, 'P1').streaming;
+    if (!seated(await waitFor(page, seated, 8000))) { console.log('  (boot auto-claim missed; joining by pressing A)'); await holdUntil(ctx, 0, 'ds', FACE_A.ds5Usb, seated); }
+    await sleep(1500);
     // Held = pool entries + seats for this one unit. One controller, one holder.
     const held = await page.evaluate(() => {
       const m = window.__controllerManager;
@@ -202,8 +284,9 @@ console.log('pad + granted HID at boot');
         + m.slots.filter((s) => s.hidDevice && s.hidDevice.__fakeKey === 'ds').length;
     });
     if (held > 1) dup++;
-    const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
-    await pressBoth(ctx, 0, 'ds', FACE_A.ds5Usb, 600);
+    // A press must not seat it a second time.
+    await holdUntil(ctx, 0, 'ds', FACE_A.ds5Usb, (x) => slot(x, 'P1').btnA, 15000);
+    await sleep(800);
     const s = await snap(page);
     if (s.slots.filter((x) => x.hid === 'ds').length > 1) doubleSeat++;
     await page.close();

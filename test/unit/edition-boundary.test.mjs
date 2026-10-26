@@ -20,7 +20,7 @@ test('URL tidy keeps demo and media, drops everything else', () => {
 });
 
 test('join links carry demo / media only when on', () => {
-  const base = 'https://tandemonium.jimandi.love/';
+  const base = 'https://tandemonium.housetandem.com/';
   assert.equal(buildJoinUrl(base, 'TNDM-ABCD'), base + '?room=TNDM-ABCD');
   assert.equal(buildJoinUrl(base, 'TNDM-ABCD', { demo: true }), base + '?room=TNDM-ABCD&demo=1');
   assert.equal(buildJoinUrl(base, 'TNDM-ABCD', { demo: true, media: true }), base + '?room=TNDM-ABCD&demo=1&media=1');

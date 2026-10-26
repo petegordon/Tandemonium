@@ -9,6 +9,7 @@ import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RE
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
+import { crashTimeScale, clockHeld } from './crash-slowmo.js';
 import * as records from './records.js';
 import './build-badge.js';   // preview builds: which commit is on screen
 import { installSlingshotMode } from './slingshot-mode.js';
@@ -69,7 +70,7 @@ import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
 const TOURIST_READY_TIMEOUT_MS = 20000;
-import { HUD } from './hud.js';
+import { HUD, pedalButtonNames } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { GustVisual } from './gust-visual.js';
 import { CobblesVisual } from './cobbles-visual.js';
@@ -4608,7 +4609,28 @@ class Game {
     // Briefly damp the chase cam's residual shake so the cinematic
     // starts from a clean pose.
     if (this.chaseCamera) this.chaseCamera.shakeAmount = 0;
-    this._finishCinematic = new FinishCameraAnimation(this.camera, this.bike);
+    // #478 · Grandma's 3D house stands on the bike's right at the finish: swing
+    // round the left so the camera never passes through it.
+    this._finishCinematic = new FinishCameraAnimation(this.camera, this.bike, { via: this._finishSwingSide() });
+    // #478 · the ride's presents fly off the bike into the pile at Grandma's
+    // (Grandma's and Today's Road only; World says no elsewhere).
+    if (this.world && this.bike) this.world.startPresentStack(this._presentsForStack(fromRemote), this.bike.position);
+  }
+
+  /** #478 · the finish swing goes round the left where Grandma's house stands on the right. */
+  _finishSwingSide() {
+    return this.world && this.world._grandmaFinish ? -1 : 1;
+  }
+
+  /**
+   * #478 · how many presents go on Grandma's pile: this ride's collected
+   * count. The stoker takes the captain's authoritative tally when it has it.
+   */
+  _presentsForStack(fromRemote = false) {
+    const remote = fromRemote && this._remoteFinishStats && this._remoteFinishStats.raceSummary;
+    if (remote && typeof remote.collectibles === 'number') return remote.collectibles;
+    if (this.raceManager) return this.raceManager.collectiblesCount || 0;
+    return this.collectibleManager ? this.collectibleManager.collected : 0;
   }
 
   /**
@@ -4633,9 +4655,10 @@ class Game {
     }
 
     // Keep the world streaming so terrain/scenery don't pop while the
-    // bike rolls forward, but at slow-motion pace.
+    // bike rolls forward, but at slow-motion pace. Grandma (#475) keeps real
+    // time, so she can walk to the finish line before the front view lands.
     if (this.world) {
-      this.world.update(this.bike.position, this.bike.roadD, slowDt);
+      this.world.update(this.bike.position, this.bike.roadD, slowDt, null, dt);
     }
     if (this.grassParticles) {
       this.grassParticles.update(this.bike, slowDt);
@@ -4643,8 +4666,9 @@ class Game {
     }
 
     // Camera moves at real time so the cinematic timing is consistent
-    // regardless of the bike's slow-mo wind-down.
+    // regardless of the bike's slow-mo wind-down. So does the present pile.
     const done = cinematic.update(dt);
+    if (this.world) this.world.updateFinishFx(dt);
 
     this.renderer.render(this.scene, this.camera);
 
@@ -6368,6 +6392,7 @@ class Game {
 
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
+    if (bike && !bike.fallen) bike._crashCause = cause;   // #484: read by the crash scene's throw (onFall)
     // #401: a Slingshot crash is not a ride crash (no Goose Down, So Close, False Start).
     if (this._rideSystemOn('achievements')) this.achievements.crash(cause, {   // #401
       ref: this.mode === 'versus' ? null : this.raceManager,
@@ -6412,9 +6437,32 @@ class Game {
 
     this._physicsBikes = bikes.filter(Boolean);
     for (const bike of this._physicsBikes) {
-      bike.onFall = (b) => { if (this.physicsFx) this.physicsFx.crashTumble(b); };
+      // #484: the crash scene (rag dolls, hats); slow-mo where the view is ours to slow (not online co-op,
+      // where the captain's frame pacing feeds the stoker)
+      bike.onFall = (b) => {
+        if (!this.physicsFx) return;
+        // #484 versus: the parts can hit the other team (a wobble); never in online modes
+        const others = this.mode === 'versus' ? this._physicsBikes.filter(x => x !== b) : [];
+        this.physicsFx.crashTumble(b, { cause: b._crashCause || 'balance', slowMo: this._crashSlowMoMode(), others });
+      };
       bike.onReset = (b) => { if (this.physicsFx) this.physicsFx.releaseCrash(b); };
     }
+  }
+
+  /** #484: modes whose crashing view may slow down (the slow-mo moment). */
+  _crashSlowMoMode() {
+    return this.mode === 'solo' || this.mode === 'local' || this.mode === 'versus';
+  }
+
+  /** #484: the time scale of this bike's view (1 unless it is in a crash's slow-mo moment). */
+  _crashScale(bike) {
+    if (!bike || !bike.fallen || !bike._slowMoStart) return 1;
+    return crashTimeScale((performance.now() - bike._slowMoStart) / 1000);
+  }
+
+  /** #484: the race clock is held while this bike's view is slowed. */
+  _crashClockHeld(bike) {
+    return !!(bike && bike.fallen && bike._slowMoStart && clockHeld((performance.now() - bike._slowMoStart) / 1000));
   }
 
   /** Tear the sidecar down and give every bike its own transform back. */
@@ -6628,13 +6676,13 @@ class Game {
 
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
-        this._updateSolo(dt);
+        this._updateSolo(dt * this._crashScale(this.bike));   // #484 slow-mo
       } else if (this.mode === 'captain') {
         this._updateCaptain(dt);
       } else if (this.mode === 'stoker') {
         this._updateStoker(dt);
       } else if (this.mode === 'local') {
-        this._updateLocal(dt);
+        this._updateLocal(dt * this._crashScale(this.bike));  // #484 slow-mo
       } else if (this.mode === 'versus') {
         this._updateVersus(dt);
       }
@@ -6673,6 +6721,7 @@ class Game {
         this._renderVersusViews();
       } else {
         this.world.update(this.bike.position, this.bike.roadD, dt);
+        this.world.updateFinishFx(dt);   // #478 · a pile still landing when the victory screen opens
         if (this.state === 'slingAim') this._placeSlingCamera();
         else this.chaseCamera.update(this.bike, dt, roadPath);
         if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
@@ -6799,7 +6848,8 @@ class Game {
       // Tourist Mode (#333): free-roam — no race timer / timeout.
       const timerEnabled = !this.isTourist &&
         (!this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false);
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled ? dt : 0);
+      // #484: the clock is held through a crash's slow-mo moment
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled && !this._crashClockHeld(this.bike) ? dt : 0);
       if (raceEvent) {
         if (raceEvent.event === 'timeout' && timerEnabled) { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
@@ -6905,7 +6955,7 @@ class Game {
     // phone-lock shouldn't pause the timer for both players. (#321 already
     // debounces the reconnect UI so quick blips don't even show.)
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, this._crashClockHeld(this.bike) ? 0 : dt);   // #484
       if (raceEvent) {
         if (raceEvent.event === 'timeout') { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
@@ -7279,7 +7329,8 @@ class Game {
       this._clearOverlayButtons();
     }
 
-    for (const rig of rigs) this._stepTeam(rig, dt);
+    // #484: a crashing team's half slows for its slow-mo moment; the other team races on
+    for (const rig of rigs) { rig._dt = dt * this._crashScale(rig.bike); this._stepTeam(rig, rig._dt); }
     this.achievements.ride.frame(dt, { ref: null, playing: true });   // #401 False Start: the clock since GO runs in versus too
     // m19: a race against the ?versusbot=1 rider earns no achievements.
     if (!rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
@@ -7311,7 +7362,7 @@ class Game {
     this.world.update(a.bike.position, a.bike.roadD, dt, { pos: b.bike.position, d: b.bike.roadD });
 
     for (const rig of rigs) {
-      rig.chaseCamera.update(rig.bike, dt, this.world.roadPath);
+      rig.chaseCamera.update(rig.bike, rig._dt != null ? rig._dt : dt, this.world.roadPath);
       if (rig.bike.fallen && rig.bike.fallElapsed < 0.35) {
         rig.chaseCamera.shakeAmount = 0.15;
       }
@@ -7556,6 +7607,9 @@ class Game {
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';
+    // #478 · versus: the winners deliver to Grandma — their presents fly into
+    // her pile. The losers' don't (they never reach the house).
+    this.world.startPresentStack(winner.collectibles || 0, winner.bike.position);
     hapticFinish(); // everyone feels the finish
     this._playBeep(800, 0.3);
     setTimeout(() => this._playBeep(1000, 0.3), 150);
@@ -7600,7 +7654,7 @@ class Game {
     // Full-frame phase: hide the split-screen divider + per-half panels
     // (CSS keys off this class). Cleared at rematch countdown / teardown.
     document.body.classList.add('versus-fullframe');
-    this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike);
+    this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike, { via: this._finishSwingSide() });
 
     this.versusHud.showBanner(`${winner.color.name} WINS!`, winner.color.hex);
   }
@@ -7633,8 +7687,10 @@ class Game {
     );
     winner.grassParticles.update(winner.bike, slowDt);
 
-    // Camera orbits at real time for consistent cinematic pacing.
+    // Camera orbits at real time for consistent cinematic pacing; the
+    // winners' presents fly into Grandma's pile in real time too (#478).
     const done = cinematic.update(dt);
+    this.world.updateFinishFx(dt);
     this.renderer.render(this.scene, this.camera);
 
     if (done) {
@@ -8029,9 +8085,11 @@ class Game {
       if (localStorage.getItem(this._coachKeyFor(method))) return;
     } catch { /* private mode: show it, it is only 20 seconds */ }
 
+    // The pad's own shoulder-button names (L1/R1, L/R…), not always Xbox's (#472).
+    const pb = method === 'gamepad' ? pedalButtonNames() : null;
     const pedal = {
       keyboard: 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>',
-      gamepad:  'Pedal: alternate <b>LB</b> and <b>RB</b> (or <b>LT</b>/<b>RT</b>)',
+      gamepad:  pb ? `Pedal: alternate <b>${pb.lb}</b> and <b>${pb.rb}</b> (or <b>${pb.lt}</b>/<b>${pb.rt}</b>)` : '',
       touch:    'Pedal: tap the <b>left</b> and <b>right</b> halves in turn'
     }[method] || 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>';
     const steer = {
