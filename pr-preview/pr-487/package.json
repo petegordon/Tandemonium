@@ -65,6 +65,7 @@
     "smoke:online": "node scripts/smoke-online.mjs",
     "smoke:phone-coop": "node scripts/smoke-phone-coop.mjs",
     "smoke:solo-extras": "node scripts/smoke-solo-extras.mjs",
+    "smoke:props": "node scripts/smoke-props-3d.mjs",
     "smoke:all": "node scripts/run-smokes.mjs"
   },
   "dependencies": {

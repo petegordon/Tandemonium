@@ -3,6 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { buildPresentGeometry, presentMaterial, buildPresentFxGeometry, presentFxMaterial, PRESENT } from './props-3d.js';
 
 const POOL_SIZE = 40;
 const COLLECT_RADIUS = 2.0;
@@ -20,102 +21,20 @@ function makeRng(seed) {
   };
 }
 
-// Chromakey vertex/fragment shaders for green-screen video
-const chromakeyVertex = `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const chromakeyFragment = `
-  uniform sampler2D map;
-  uniform vec3 keyColor;
-  uniform float similarity;
-  uniform float smoothness;
-  uniform float videoReady;
-  uniform vec3 fallbackColor;
-  varying vec2 vUv;
-  void main() {
-    if (videoReady < 0.5) {
-      // Video not playing yet — show colored fallback instead of black
-      float r = length(vUv - vec2(0.5));
-      float alpha = smoothstep(0.5, 0.35, r);
-      if (alpha < 0.01) discard;
-      gl_FragColor = vec4(fallbackColor, alpha);
-      return;
-    }
-    vec4 texColor = texture2D(map, vUv);
-    float d = distance(texColor.rgb, keyColor);
-    float alpha = smoothstep(similarity, similarity + smoothness, d);
-    if (alpha < 0.01) discard;
-    gl_FragColor = vec4(texColor.rgb, alpha);
-  }
-`;
-
 // Theme definitions: geometry + colors for each level type
 const THEMES = {
+  // #478 · a 3D present (cream box, gold ribbon and bow) with its magic —
+  // gold rays, a swirling rainbow ring, a twinkle — in a second additive
+  // mesh. Both are instanced: every present on the road is two draws.
   presents: {
-    billboard: true,
-    build(scene) {
-      // Create shared video element for the gold gift animation
-      const video = document.createElement('video');
-      video.src = 'assets/gold_gift_200.mp4';
-      video.loop = true;
-      video.muted = true;
-      video.playsInline = true;
-
-      const videoTexture = new THREE.VideoTexture(video);
-      videoTexture.minFilter = THREE.LinearFilter;
-      videoTexture.magFilter = THREE.LinearFilter;
-
-      // Aspect ratio: 200x296 — sized to be visible against the bike
-      const w = 1.4, h = 1.4 * (296 / 200);
-      const geo = new THREE.PlaneGeometry(w, h);
-
-      // videoReady flips to 1.0 once the video is actually playing
-      const videoReadyUniform = { value: 0.0 };
-      video.addEventListener('playing', () => { videoReadyUniform.value = 1.0; });
-
-      // Attempt autoplay; log errors and retry on user gesture
-      video.play().catch(err => {
-        console.warn('Collectible video autoplay blocked:', err.message);
-        const retry = () => {
-          video.play().then(() => {
-            document.removeEventListener('touchstart', retry);
-            document.removeEventListener('click', retry);
-          }).catch(() => {});
-        };
-        document.addEventListener('touchstart', retry, { once: true });
-        document.addEventListener('click', retry, { once: true });
-      });
-
-      // All presents share the same video + chromakey material (cloned per pool slot)
-      const baseMat = new THREE.ShaderMaterial({
-        uniforms: {
-          map: { value: videoTexture },
-          keyColor: { value: new THREE.Color(58 / 255, 180 / 255, 38 / 255) },
-          similarity: { value: 0.3 },
-          smoothness: { value: 0.08 },
-          videoReady: videoReadyUniform,
-          fallbackColor: { value: new THREE.Color(1.0, 0.84, 0.0) } // gold
-        },
-        vertexShader: chromakeyVertex,
-        fragmentShader: chromakeyFragment,
-        transparent: true,
-        side: THREE.DoubleSide,
-        depthWrite: false
-      });
-
-      // Return 3 identical variants (pool cycles through them)
-      return [
-        { geo, mat: baseMat },
-        { geo, mat: baseMat },
-        { geo, mat: baseMat }
-      ];
+    instanced: true,
+    build() {
+      const time = { value: 0 };
+      return {
+        geo: buildPresentGeometry(), mat: presentMaterial(),
+        fxGeo: buildPresentFxGeometry(), fxMat: presentFxMaterial(time, { glow: 1.5 }), time,
+      };
     },
-    _video: null // stored on destroy
   },
   // Slingshot mode's Chaos Coins: big glossy gold discs stood on edge so the
   // spin flashes the face, each with a soft halo and twinkling star sparkles
@@ -198,9 +117,32 @@ export class CollectibleManager {
 
     // Build themed meshes
     const theme = THEMES[level.collectibles] || THEMES.presents;
-    this._variants = theme.build(scene);
     this._animate = theme.animate || null;
     this._billboard = !!theme.billboard;
+    this._instanced = null;
+
+    if (theme.instanced) {
+      // #478 · one InstancedMesh for the presents and one for their fx. The
+      // pool keeps a plain Object3D per slot (position/rotation/visible, as
+      // before); _sync() copies the visible ones into the instances.
+      const parts = theme.build(scene);
+      const body = new THREE.InstancedMesh(parts.geo, parts.mat, POOL_SIZE);
+      const fx = new THREE.InstancedMesh(parts.fxGeo, parts.fxMat, POOL_SIZE);
+      for (const m of [body, fx]) { m.count = 0; m.frustumCulled = false; scene.add(m); }
+      body.name = 'presents'; fx.name = 'presents-fx';
+      body.castShadow = true;
+      this._instanced = { body, fx, time: parts.time };
+      this._variants = [{ geo: parts.geo, mat: parts.mat }, { geo: parts.fxGeo, mat: parts.fxMat }];
+      for (let i = 0; i < POOL_SIZE; i++) {
+        const mesh = new THREE.Object3D();
+        mesh.scale.setScalar(PRESENT.ROAD_SCALE);
+        mesh.visible = false;
+        this._pool.push({ mesh, itemIdx: -1 });
+      }
+      this._placeItems();
+      return;
+    }
+    this._variants = theme.build(scene);
 
     // Create mesh pool
     for (let i = 0; i < POOL_SIZE; i++) {
@@ -240,6 +182,33 @@ export class CollectibleManager {
     }
   }
 
+  /**
+   * #478 · copy the visible pool slots into the instanced meshes. Called at
+   * the end of every update and after anything that hides slots. A no-op for
+   * the per-mesh themes.
+   */
+  _sync() {
+    const inst = this._instanced;
+    if (!inst) return;
+    inst.time.value = performance.now() / 1000;
+    let n = 0;
+    for (const slot of this._pool) {
+      if (!slot.mesh.visible) continue;
+      slot.mesh.updateMatrix();
+      inst.body.setMatrixAt(n, slot.mesh.matrix);
+      inst.fx.setMatrixAt(n, slot.mesh.matrix);
+      n++;
+    }
+    inst.body.count = inst.fx.count = n;
+    inst.body.instanceMatrix.needsUpdate = true;
+    inst.fx.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Visible present slots (tests, the reel bot): how many are drawn now. */
+  visibleCount() {
+    return this._pool.filter((s) => s.itemIdx >= 0 && s.mesh.visible).length;
+  }
+
   replaceItems(positions) {
     // Release all pool slots
     for (const slot of this._pool) {
@@ -270,6 +239,7 @@ export class CollectibleManager {
       }
     }
     this.collected = 0;
+    this._sync();
   }
 
   /** Reset only items in a distance range (for tutorial phase-specific retry). */
@@ -406,6 +376,7 @@ export class CollectibleManager {
       slot.mesh.visible = true;
     }
 
+    this._sync();
     return collected; // array of collected item indices
   }
 
@@ -492,6 +463,7 @@ export class CollectibleManager {
       slot.mesh.visible = true;
     }
 
+    this._sync();
     return counts;
   }
 
@@ -529,6 +501,12 @@ export class CollectibleManager {
   destroy() {
     for (const slot of this._pool) {
       this.scene.remove(slot.mesh);
+    }
+    if (this._instanced) {
+      this.scene.remove(this._instanced.body, this._instanced.fx);
+      this._instanced.body.dispose();
+      this._instanced.fx.dispose();
+      this._instanced = null;
     }
     // Variants may share their geo/mat (presents theme uses a single
     // geo+mat across 3 variants). Dedupe before dispose so we don't
