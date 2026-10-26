@@ -2349,8 +2349,6 @@ class Game {
     }
     // St2 — duck music during gameplay vs the lobby.
     this.audioEngine.duckMusic(0.55, 0.8);
-    // Sp3 — start procedural bike motion loop (silent until speed rises).
-    this.audioEngine.startBike();
 
     this._playBeep(400, 0.15);
 
@@ -2489,7 +2487,6 @@ class Game {
     this.audioEngine.connectMusicElement(this._musicEl);
     if (this.lobby.musicActive) this._musicEl.play().catch(() => {});
     this.audioEngine.duckMusic(0.55, 0.8);
-    this.audioEngine.startBike();
     this._playBeep(400, 0.15);
   }
 
@@ -3936,7 +3933,6 @@ class Game {
     const onCobbles = !!this._activeDisruption &&
       this._activeDisruption.event.kind === KIND.COBBLES;
     this.bike._roughness = onCobbles && authoritative ? 1 : 0;
-    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(onCobbles);
     if (onCobbles) {
       // The camera rides the surface too — a rattle you can see, not just a
       // number in the physics. Scaled by speed: crawling over stones is not the
@@ -3998,7 +3994,6 @@ class Game {
     if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
     if (this.bike) this.bike._roughness = 0;
     if (this.gustVisual) this.gustVisual.setWind(this._gustDirection || 1, 0);
-    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(false);
     if (this.hud && this.hud.updateDisruption) this.hud.updateDisruption(null);
   }
 
@@ -5252,8 +5247,7 @@ class Game {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
     }
-    // Stop bike motion loop + restore music from its gameplay duck (St2/Sp3).
-    this.audioEngine.stopBike();
+    // Restore music from its gameplay duck (St2).
     this.audioEngine.duckMusic(1.0, 0.8);
     this.audioEngine.detachRecorderDestination();
     this._hideGameOver();
@@ -5399,8 +5393,7 @@ class Game {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
     }
-    // Stop bike motion loop + restore music from its gameplay duck (St2/Sp3).
-    this.audioEngine.stopBike();
+    // Restore music from its gameplay duck (St2).
     this.audioEngine.duckMusic(1.0, 0.8);
     this.audioEngine.detachRecorderDestination();
     this._hideGameOver();
@@ -6770,43 +6763,6 @@ class Game {
         localP2Type: this._localP2Type,
         pads,
       });
-    }
-
-    // Sp3 — feed bike velocity to the procedural motion loop every frame.
-    // When not actively playing (victory / gameover / lobby / countdown),
-    // feed speed=0 so the loop fades to silence via the engine's internal
-    // ramp instead of holding the last gain value indefinitely.
-    if (this.mode === 'versus' && this.versusRigs) {
-      // Versus: motion loop follows the faster bike; off-road follows the
-      // worse offender so the scrape reads on either half of the screen.
-      const playing = this.state === 'playing';
-      let topSpeed = 0, offRoad = 0, anyUpright = false;
-      for (const rig of this.versusRigs) {
-        topSpeed = Math.max(topSpeed, rig.bike.speed);
-        const fo = Math.abs(rig.bike._frontWheelOffset || 0);
-        const ro = Math.abs(rig.bike._rearWheelOffset || 0);
-        offRoad = Math.max(offRoad, Math.min(1, Math.max(0, Math.max(fo, ro) - 2.5) / 3));
-        if (!rig.bike.fallen) anyUpright = true;
-      }
-      this.audioEngine.updateBike(
-        playing ? topSpeed : 0,
-        TUNE.maxSpeed || 19,
-        playing ? offRoad : 0,
-        !playing || !anyUpright
-      );
-    } else if (this.bike) {
-      const playing = this.state === 'playing';
-      const frontOff = Math.abs(this.bike._frontWheelOffset || 0);
-      const rearOff = Math.abs(this.bike._rearWheelOffset || 0);
-      const offRoad = playing
-        ? Math.min(1, Math.max(0, Math.max(frontOff, rearOff) - 2.5) / 3)
-        : 0;
-      this.audioEngine.updateBike(
-        playing ? this.bike.speed : 0,
-        TUNE.maxSpeed || 19,
-        offRoad,
-        !playing || this.bike.fallen
-      );
     }
 
     // Clear buffered tap flags after all input has been read this frame
