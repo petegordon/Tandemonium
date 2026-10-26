@@ -39,14 +39,15 @@ test('once the riders pass, Grandma turns round and walks to the finish line', (
 
   run(set, destD + 2, WALK.turnTime / 2 + 0.5);
   assert.equal(set.route.mode, 'walk');
-  assert.ok(Math.abs(Math.sin(g.rotation.y)) < 1e-9 && Math.cos(g.rotation.y) > 0.99, 'walking toward the finish');
+  assert.ok(Math.cos(g.rotation.y) > 0.8, 'walking toward the finish (angled a little out toward her house)');
   assert.ok(g.position.z > destD + LAYOUT.grandma.along + 1, 'and getting closer');
-  assert.equal(g.position.x, LAYOUT.grandma.lateral, 'along the shoulder, off the road');
+  assert.ok(g.position.x > 2.5 && g.position.x >= Math.min(LAYOUT.grandma.lateral, WALK.toLateral) - 1e-9 && g.position.x <= Math.max(LAYOUT.grandma.lateral, WALK.toLateral) + 1e-9, 'along the shoulder, off the road');
   assert.equal(marker.roadD, g.position.z, 'her marker moves with her, so World grounds her on the slope');
 
   run(set, destD + 2, 10);
   assert.equal(set.route.mode, 'arrived');
-  assert.ok(Math.abs(g.position.z - (destD + WALK.toAlong)) < 1e-9, 'stops just short of the finish line');
+  assert.ok(Math.abs(g.position.z - (destD + WALK.toAlong)) < 1e-9 && Math.abs(g.position.x - WALK.toLateral) < 1e-9, 'stops beside the bike, between the road and her house (#481)');
+  assert.ok(WALK.toLateral > 2.5 && WALK.toLateral < 4.6, 'off the 5-unit road and in front of the house front (lateral 4.6)');
 });
 
 test('she gets there within the finish cinematic, even after a fast finish', () => {
@@ -87,10 +88,13 @@ test('the three props build into meshes on the ground', () => {
   }
 });
 
-test('the set: four markers at the finish on the house side, off the road', () => {
+test('the set: five markers at the finish on the house side, off the road', () => {
   const roadPath = { loopLength: 1000, getPointAtDistance: (d) => ({ x: 0, y: 0, z: d, heading: 0 }) };
-  const { markers, grandmaD } = buildGrandmaFinish(roadPath, 500);
-  assert.equal(markers.length, 4);
+  const { markers, grandmaD, stack } = buildGrandmaFinish(roadPath, 500);
+  // Grandma, woodpile, outhouse, tree, and (#478) the present pile
+  assert.equal(markers.length, 5);
+  assert.deepEqual(markers.map((m) => m.type), ['grandma-prop', 'grandma-prop', 'grandma-prop', 'grandma-prop', 'present-stack']);
+  assert.ok(stack && markers[4].mesh === stack.group, 'the pile is the last marker');
   assert.equal(grandmaD, 500 + LAYOUT.grandma.along);
   for (const m of markers) {
     assert.ok(Math.abs(m.mesh.position.x) > 2.5, `${m.mesh.name} is off the 5-unit road`);
