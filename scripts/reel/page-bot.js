@@ -5,6 +5,8 @@
 import { InputManager } from '/js/input-manager.js';
 import { BalanceController } from '/js/balance-controller.js';
 
+/** Small seeded PRNG (mulberry32): the bot's human jitter, the same every take. */
+function mulberry(a) { return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const game = window._game;
 const THREE_V = () => game.camera.position.constructor;
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -48,9 +50,17 @@ const reel = {
     b.input._markActive();   // a rider who is riding (P2's lean is dropped after 10 s idle)
     // pedal: alternate feet at the cadence; the stoker's tap lands 80 ms after the captain's (a "perfect" pair)
     if (b.pedal && game.state === 'playing') {
-      b.acc += dt * b.cadence;
-      if (b.acc >= 1 + (b.role === 'stoker' ? 0.08 * b.cadence : 0)) {
-        b.acc -= 1;
+      // a human rhythm, not a metronome (seeded, so a take is reproducible): each stroke gets its own length
+      // (+-13%), and the cadence drifts slowly (+-10%) with two out-of-step waves
+      const rnd = b._rnd || (b._rnd = mulberry(b.role === 'stoker' ? 7331 : 1337));
+      b._ct = (b._ct || 0) + dt;
+      const ph = b.role === 'stoker' ? 1.3 : 0;
+      const drift = 1 + 0.07 * Math.sin(b._ct * 1.45 + ph) + 0.04 * Math.sin(b._ct * 0.53 + 0.7 + ph);
+      if (b._need == null) b._need = 1;
+      b.acc += dt * b.cadence * drift;
+      if (b.acc >= b._need + (b.role === 'stoker' ? 0.08 * b.cadence : 0)) {
+        b.acc -= b._need;
+        b._need = 1 + (rnd() - 0.5) * 0.26;
         // the stoker starts on the other foot, so each pair is opposite feet
         b.foot = b.foot === 'left' ? 'right' : 'left';
         if (b.foot === 'left') b.input._leftTapped = true; else b.input._rightTapped = true;
