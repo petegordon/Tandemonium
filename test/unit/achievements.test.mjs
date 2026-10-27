@@ -289,6 +289,16 @@ test('ride tracker: off-road, centre strip, boost chain, steady hands, assist', 
   assert.equal(t.snapshot().offroadT, 0);
 });
 
+test('manager: a gust ridden out earns Weathered (the tracker sees the gust start)', async () => {
+  const { AchievementManager } = await import('../../js/achievements.js');
+  const m = new AchievementManager();
+  m.ride.sync('r1');
+  m.gust(true);
+  assert.equal(m.ride.gustActive, true);
+  const earned = m.gust(false);
+  assert.ok(earned.some(e => e.id === 'weathered'), 'Weathered is awarded when the gust ends without a crash');
+});
+
 test('ride tracker: a gust ridden out, and one that was not', () => {
   const t = new RideTracker();
   t.gust(true);
