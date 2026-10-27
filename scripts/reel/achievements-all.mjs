@@ -44,7 +44,13 @@ async function ride(id, sc) {
     prep: async (page) => {
       // day keys in the seed ('rel:k'): the game's own dailyKey (its rollover hour), then the stats are re-read
       if (sc.seed && JSON.stringify(sc.seed).includes('rel:')) await seedStats(page, sc.seed);
-      if (sc.bike) await page.evaluate((k) => { window._game.lobby.selectedPresetKey = k; }, sc.bike);
+      // the bike colour: the game paints from the lobby's preset OBJECT (selectedPreset), the key only names it for the stats
+      if (sc.bike) await page.evaluate(async (k) => {
+        const lb = window._game.lobby;
+        if (!lb._presetData || !Object.keys(lb._presetData).length) lb._presetData = await (await fetch('tandem-3d/bike-presets.json')).json();
+        if (!lb._presetData[k]) throw new Error('no bike preset ' + k);
+        lb.selectedPresetKey = k; lb.selectedPreset = lb._presetData[k];
+      }, sc.bike);
       // one gust at `gustAt` metres (the game's own ?disrupt=gust debug road, which URL tidying would drop)
       if (sc.gustAt) await page.evaluate(async (at) => {
         const { TELEGRAPH_S, DURATION, KIND } = await import('/js/disruptions.js');
