@@ -282,6 +282,9 @@ async function leadIn(shot, id) {
   const seconds = T.liftAt + LEAD.lift + LEAD.tail;
   console.log(`  lead-in ${shot}: ${info.name} locked=${info.locked} scroll ${info.from.toFixed(0)}->${info.to.toFixed(0)} (${scrollSec} s), ${seconds.toFixed(2)} s`);
   const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+  // the real icon and name, for the reveal of a hidden achievement's "?" tile (from the game's definitions)
+  const def = DEFS.match(new RegExp(`\\{ id: '${id}',[^\\n]*?name: '((?:[^'\\\\]|\\\\.)*)',\\s*icon: '([^']*)'`));
+  const reveal = def ? { name: def[1].replace(/\\'/g, "'"), icon: def[2] } : { name: info.name, icon: '?' };
   const tag = `ach-lead-${shot}-${ASPECT}`;
   await record(page, tag, seconds, { perFrame: async (i, t) => {
     const u = scrollSec ? Math.max(0, Math.min(1, (t - LEAD.hold) / scrollSec)) : 1;
@@ -306,13 +309,22 @@ async function leadIn(shot, id) {
           D.item.style.visibility = 'hidden';
         }
         const k = E(o.lift), W = window.innerWidth, H = window.innerHeight;
+        // a hidden achievement (the Chaos set) sits in the list as a "?" / "???" tile: as it lifts, the real badge is
+        // revealed (a dip to black on the icon and name, then the achievement's own icon and name)
+        if (!D.revealed && D.clone.querySelector('.lb-ach-name')?.textContent.trim() === '???') {
+          const ic = D.clone.querySelector('.lb-ach-icon'), nm = D.clone.querySelector('.lb-ach-name');
+          const dip = k < 0.35 ? 0 : Math.min(1, (k - 0.35) / 0.3);   // 0.35..0.65 of the lift
+          ic.style.opacity = nm.style.opacity = String(dip < 0.5 ? 1 - dip * 2 : (dip - 0.5) * 2);
+          if (dip >= 0.5 && !D.swapped) { D.swapped = true; ic.textContent = o.reveal.icon; nm.textContent = o.reveal.name; }
+          if (dip >= 1) D.revealed = true;
+        }
         const S = 1 + (Math.min(0.82 * W / D.rect.w, 0.6 * H / D.rect.h) - 1) * k;
         const dx = (W / 2 - D.rect.x) * k, dy = (H / 2 - D.rect.y) * k;
         D.clone.style.transform = `translate(${dx}px, ${dy}px) scale(${S})`;
         D.box.style.filter = `blur(${(8 * k).toFixed(2)}px) brightness(${(1 - 0.6 * k).toFixed(3)})`;
         document.getElementById('leaderboard-modal').style.background = `rgba(0, 0, 0, ${(0.65 * k).toFixed(3)})`;
       }
-    }, { u, glow, lift });
+    }, { u, glow, lift, reveal });
   } });
   const clip = await encode(tag);
   fs.writeFileSync(path.join(AOUT, `lead-${shot}-${ASPECT}.json`), JSON.stringify({ seconds, liftEnd: T.liftAt + LEAD.lift, ...info }));
