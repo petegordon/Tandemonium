@@ -26,6 +26,7 @@
     "smoke:geese": "node scripts/smoke-goose-riders.mjs",
     "smoke:no-media": "node scripts/smoke-no-media.mjs",
     "smoke:crash": "node scripts/smoke-crash-beat.mjs",
+    "smoke:tutorial-board": "node scripts/smoke-tutorial-board.mjs",
     "smoke:records": "node scripts/smoke-records.mjs",
     "smoke:seed": "node scripts/smoke-seed-plumbing.mjs",
     "smoke:ctas": "node scripts/smoke-demo-ctas.mjs",
