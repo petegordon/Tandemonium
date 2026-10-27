@@ -305,9 +305,9 @@ for (const id of list) {
     console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'}${m.cross != null ? ` line=${m.cross.toFixed(2)} s` : ''} state=${JSON.stringify(m.st)} earned=${JSON.stringify(m.earned)} partner=${m.partner} toasts=${JSON.stringify((m.toasts || []).map(t => [+(t[0] || 0).toFixed(2), t[1]]))}${m.ride ? ' ride=' + JSON.stringify(m.ride) : ''}${m.run ? ' run=' + JSON.stringify(m.run) : ''}${m.winner ? ' winner=' + m.winner : ''}`);
     if (m.T == null) { results.push({ id, failed: 'no toast', st: m.st, earned: m.earned, ride: m.ride }); continue; }
     if (PROBE) { results.push({ id, T: m.T, earned: m.earned }); continue; }
-    let r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks);
+    let r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks, m);
     // pass 2 does not always replay pass 1 (a crash on the way can fall differently): take again, up to twice
-    for (let again = 1; r.diverged && again <= 2; again++) { console.log(`  pass 2 diverged (ended '${r.last}'${r.sheetAt != null ? '' : ', no sheet'}): take ${again + 1}`); r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks); }
+    for (let again = 1; r.diverged && again <= 2; again++) { console.log(`  pass 2 diverged (ended '${r.last}'${r.sheetAt != null ? '' : ', no sheet'}): take ${again + 1}`); r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks, m); }
     if (r.diverged) { results.push({ id, failed: `pass 2 diverged (ended '${r.last}')` }); console.log('  FAILED', id, 'pass 2 diverged'); continue; }
     const metaPath = path.join(AOUT, `${r.tag}-${ASPECT}.json`);
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));

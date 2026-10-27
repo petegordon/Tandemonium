@@ -347,10 +347,18 @@ export async function versusFind(id, sc, name) {
     if (T != null) break;
     if (['versusResults', 'lobby'].includes(st.state)) { if (++over > 40) break; }
   }
+  // the toast comes as the cinematic starts (T == cross): time the results sheet too, so a finish take stops before it
+  let sheet = null;
+  if (T != null && cross != null) for (let t = 0; t < 12; t += 0.25) {
+    await advance(page, 0.25);
+    const s2 = await versusState(page);
+    if (s2.state === 'versusResults') { sheet = await vt(page); break; }
+  }
   const info = await page.evaluate(() => ({ earned: [...(window._game.achievements?._earned?.keys?.() || [])].filter(i => !window.__achPre.includes(i)), toasts: window.__ach.toasts,
     winner: window._game._versusWinner ? window._game._versusWinner.id : null }));
   await s.close();
-  return { T, cross, st, ...info };
+  if (sheet != null) console.log(`  versus sheet at ${sheet.toFixed(2)} s (line ${cross.toFixed(2)} s)`);
+  return { T, cross, sheet, st, ...info };
 }
 
 /**
@@ -358,12 +366,13 @@ export async function versusFind(id, sc, name) {
  * the game's own floating toast raised `toastLead` s before the line, the versus cinematic, and out before the
  * results sheet (as achievements-all.mjs recordMoment does for a ride). Otherwise `pre` / `post` round the toast.
  */
-export async function versusRecord(id, sc, T, cross = null) {
+export async function versusRecord(id, sc, T, cross = null, marks = {}, m = {}) {
   const MARGIN = 0.75;
   const over = !!(sc.over && cross != null);
   const pre = over ? (sc.pre ?? 7.5) : (sc.pre ?? 2.5) + MARGIN;
   const lead = over ? (sc.toastLead ?? 2.6) : 0;
-  const post = over ? Math.min(4.6, T - cross - 0.3) : (sc.post ?? 3.0) + MARGIN;
+  // the sheet, timed by the find pass (the toast itself comes with the cinematic, so T is no guide to it)
+  const post = over ? Math.min(4.6, (m.sheet ?? cross + 4.9) - cross - 0.3) : (sc.post ?? 3.0) + MARGIN;
   const s = await versusRide(id, sc);
   const { page } = s;
   page.__reelClip = null;   // the full 16:9 viewport
