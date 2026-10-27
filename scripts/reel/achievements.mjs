@@ -321,6 +321,7 @@ const SHOTS = {
   natural_lead: () => leadIn('natural', 'tutorial_clean'),
   madeit_lead: () => leadIn('madeit', 'first_finish'),
   goosedown_lead: () => leadIn('goosedown', 'first_crash'),
+  nothumbs_lead: () => leadIn('nothumbs', 'look_no_thumbs'),
   // #1 KICK OFF: a new player's very first ride; the countdown, GO, the first push on the pedals
   async kickoff() {
     const s = await tutorial('first_pedal');
