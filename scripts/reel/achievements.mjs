@@ -153,6 +153,7 @@ async function renderAudio(page, seconds) {
     const q = 128 / sr, groups = new Map();
     for (const [t, m, args] of [...A.pre, ...A.calls]) {
       if (m === 'pedalTap') continue;   // Pete: no pedal sounds in the reels
+      if (m === 'crash' && args[0] === 0.18) continue;   // ...nor the "fight" clatter (two riders on one crank arm): a pedal cue too, and a beat in a versus reel
       if (t < 0 || t >= dur - 0.01) continue;
       const k = Math.max(1, Math.round(t / q));
       if (!groups.has(k)) groups.set(k, []);
