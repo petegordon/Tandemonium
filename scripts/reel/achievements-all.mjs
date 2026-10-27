@@ -255,9 +255,12 @@ async function recordMoment(id, sc, T, cross = null, marks = {}) {
   for (;;) { const now = await vt(page); if (now >= startAt) break; await advance(page, 1 / 60); }
   if (sc.cam) await cam(page, camOf(sc.cam));
   const tag = `${id}_together`;
-  let raised = false;
+  let raised = false, sheetAt = null, gameOver = false, last = null;
   await take(tag, s, len, async (i, t) => {
     const st = await rideState(page);
+    last = st.state;
+    if (st.state === 'gameover') gameOver = true;
+    if (over && sheetAt == null && st.state === 'victory') sheetAt = t;   // the result sheet (pass 2 can run a few tenths off pass 1)
     await steer(page, sc, st);
     if (over && !raised && t >= tT) {
       raised = true;
@@ -269,7 +272,9 @@ async function recordMoment(id, sc, T, cross = null, marks = {}) {
     }
     if (sc.cam) await page.evaluate(() => { if (window._game.state !== 'playing' && window.__reel.cam) window.__reel.setCamera(null); });
   });
-  return { pre, post, len, tag, expect: tT, over, cut };
+  // a finish take must end in the cinematic or on the sheet; a game over (or no line) means pass 2 left pass 1's ride
+  const diverged = over && (gameOver || !['finishCinematic', 'victory'].includes(last));
+  return { pre, post, len, tag, expect: tT, over, cut, sheetAt, diverged, last };
 }
 
 // the other rigs (achievement-modes.mjs): the Slingshot, the garage, versus
@@ -300,13 +305,16 @@ for (const id of list) {
     console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'}${m.cross != null ? ` line=${m.cross.toFixed(2)} s` : ''} state=${JSON.stringify(m.st)} earned=${JSON.stringify(m.earned)} partner=${m.partner} toasts=${JSON.stringify((m.toasts || []).map(t => [+(t[0] || 0).toFixed(2), t[1]]))}${m.ride ? ' ride=' + JSON.stringify(m.ride) : ''}${m.run ? ' run=' + JSON.stringify(m.run) : ''}${m.winner ? ' winner=' + m.winner : ''}`);
     if (m.T == null) { results.push({ id, failed: 'no toast', st: m.st, earned: m.earned, ride: m.ride }); continue; }
     if (PROBE) { results.push({ id, T: m.T, earned: m.earned }); continue; }
-    const r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks);
+    let r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks);
+    // pass 2 does not always replay pass 1 (a crash on the way can fall differently): take again, up to twice
+    for (let again = 1; r.diverged && again <= 2; again++) { console.log(`  pass 2 diverged (ended '${r.last}'${r.sheetAt != null ? '' : ', no sheet'}): take ${again + 1}`); r = await recordMoment(id, sc, m.T, m.cross, m.marks); }
+    if (r.diverged) { results.push({ id, failed: `pass 2 diverged (ended '${r.last}')` }); console.log('  FAILED', id, 'pass 2 diverged'); continue; }
     const metaPath = path.join(AOUT, `${r.tag}-${ASPECT}.json`);
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     if (sc.atStart && !(meta.toasts[0] && meta.toasts[0][0] != null)) { meta.toasts = [[0, name]]; fs.writeFileSync(metaPath, JSON.stringify(meta)); }   // up from the first frame
     const got = meta.toasts[0] ? meta.toasts[0][0] : null;
     // a finish reel keeps everything recorded: the cut window round the toast (and a span to drop), for edit.py (reels.json has no entry)
-    if (r.over && got != null) { meta.window = { pre: +got.toFixed(3), post: +(meta.seconds - got - 0.02).toFixed(3), ...(r.cut ? { cut: r.cut.map(x => +x.toFixed(3)) } : {}) }; fs.writeFileSync(metaPath, JSON.stringify(meta)); }
+    if (r.over && got != null) { meta.window = { pre: +got.toFixed(3), post: +Math.min(meta.seconds - got - 0.02, r.sheetAt != null ? r.sheetAt - got - 0.15 : Infinity).toFixed(3), ...(r.cut ? { cut: r.cut.map(x => +x.toFixed(3)) } : {}) }; fs.writeFileSync(metaPath, JSON.stringify(meta)); }
     // any other engine reel: the scenario's own pre / post round the toast (the take holds MARGIN more each side)
     else if (got != null) { meta.window = { pre: +Math.min(sc.pre ?? 2.5, got).toFixed(3), post: +Math.min(sc.post ?? 3.0, meta.seconds - got - 0.02).toFixed(3) }; fs.writeFileSync(metaPath, JSON.stringify(meta)); }
     const expect = r.expect ?? r.pre;

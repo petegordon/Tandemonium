@@ -97,7 +97,7 @@ export const SCENARIOS = {
 
   // ── Today's Road ──
   daily_first: { todo: 'a ranked Today\'s Road needs the server (the capture blocks the network)' },
-  daily_streak_3: { moment: 'Today\'s Road, the third day running: the Fancy pair\'s last stretch and the line', seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', outfit: 'fancy', ...finish },
+  daily_streak_3: { moment: 'Today\'s Road, the third day running: the Fancy pair\'s last stretch and the line', seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'fancy', ...finish },
   daily_streak_7: { moment: 'Today\'s Road, a week straight: the Georgian pair from the right, over the line', seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'georgian', cam: 'sideR', ...finish },
   daily_streak_30: { moment: 'Today\'s Road, thirty days straight: a metronome pair, a slow swing round them to the line', seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: 'rel:1' }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, cam: 'orbit', ...finish },   // a metronome pair: the two passes agree
   daily_share: { moment: 'The result sheet\'s Share button pressed after Today\'s Road', seed: {}, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, share: true, pre: 2.0, post: 3.0 },   // the Share button on the result sheet
