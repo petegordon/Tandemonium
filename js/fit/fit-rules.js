@@ -13,7 +13,8 @@ export const HIP_UP = 0.11;
 export const TOL = {
   hipAboveSaddle: { target: HIP_UP, tol: 0.005 },  // the root sits where seatOffset put it
   socketOnSaddle: { min: -0.01, max: 0.01 },       // socket y − saddle mesh top under it
-  seatProbe: { min: -0.03, max: 0.01 },            // lowest body point over the saddle − saddle top
+  seatProbe: { min: -0.03, max: 0.01 },            // lowest body point over the saddle's rear band − saddle top
+  noseProbe: { min: -0.12, max: 0.03 },            // the same over the nose: the thighs wrap it (deep by nature)
   footOnPedal: { max: 0.012 },                      // |ball of foot − pedal pin (+ sole)|, every crank step
   handOnGrip: { min: 0.06, max: 0.16 },             // |hand joint − grip socket| (handshake grip)
   wheelPenetration: { maxVerts: 0 },                // bike vertices inside the rear tyre's tread band
@@ -53,8 +54,12 @@ export function judge(report) {
         Math.abs(r.hipAboveSaddle - TOL.hipAboveSaddle.target) <= TOL.hipAboveSaddle.tol, `target ${TOL.hipAboveSaddle.target}`));
     }
     if (r.seatProbe !== undefined) {
-      lines.push(line(`${seat} · body over saddle top (m, − sinks in)`, r.seatProbe,
+      lines.push(line(`${seat} · bottom over saddle top (m, − sinks in)`, r.seatProbe,
         r.seatProbe >= TOL.seatProbe.min && r.seatProbe <= TOL.seatProbe.max, r.seatProbeMesh));
+    }
+    if (r.noseProbe !== undefined) {
+      lines.push(line(`${seat} · thighs over saddle nose (m, − sinks in)`, r.noseProbe,
+        r.noseProbe >= TOL.noseProbe.min && r.noseProbe <= TOL.noseProbe.max, r.noseProbeMesh));
     }
     for (const side of ['L', 'R']) {
       const f = r.foot && r.foot[side];
@@ -85,6 +90,8 @@ export function nudgePatch(n) {
     if (s.dz) e.dz = round(s.dz);
     if (s.scale && Math.abs(s.scale - 1) > 1e-6) e.scale = round(s.scale);
     if (s.saddleDy) e.saddleDy = round(s.saddleDy);
+    if (s.saddleDz) e.saddleDz = round(s.saddleDz);
+    if (s.saddleScale && Math.abs(s.saddleScale - 1) > 1e-6) e.saddleScale = round(s.saddleScale);
     if (Object.keys(e).length) (out.seats = out.seats || {})[seat] = e;
   }
   return out;

@@ -212,22 +212,28 @@ export function measureFit(riders, opts = {}) {
       if (l.toe[side] && l.expectedBall[side]) rep.foot[side] = { err: l.toe[side].distanceTo(l.expectedBall[side]), dy: l.toe[side].y - l.expectedBall[side].y };
       if (l.hand[side] && lm.bike.grips[seat + side]) rep.hand[side] = { dist: l.hand[side].distanceTo(lm.bike.grips[seat + side]) };
     }
-    // seat probe: the lowest posed body point over the sit-bone part of the saddle (the rear, where the
-    // socket is), against the saddle top. Thighs pass the nose lower by design, so the nose is excluded.
+    // seat probe: the lowest posed body point over the sit-bone band of the saddle (the rear, where the
+    // socket is: 6 cm behind to 2 cm in front of it), against the saddle top — what the bottom does.
+    // nose probe: the same over the nose (2 to 10 cm in front): the thighs wrap the nose, so it sinks
+    // much deeper into the breeches than the bottom does; reported apart so the two aren't confused.
     if (saddle && socket) {
-      let low = Infinity, lowMesh = null;
+      let low = Infinity, lowMesh = null, nose = Infinity, noseMesh = null;
       let cloth = 0, clothMesh = null, clothMax = 0;
       r.root.traverse((mesh) => {
         if (!mesh.isMesh || !mesh.visible) return;
         const probe = PROBE_MESH.test(mesh.name);
         let n = 0;
         eachVertex(model, mesh, (v) => {
-          if (probe && Math.abs(v.x - socket.x) < 0.04 && v.z > socket.z - 0.06 && v.z < socket.z + 0.08 && v.y > socket.y - 0.12 && v.y < low) { low = v.y; lowMesh = mesh.name; }
+          if (probe && Math.abs(v.x - socket.x) < 0.04 && v.y > socket.y - 0.12) {
+            if (v.z > socket.z - 0.06 && v.z < socket.z + 0.02 && v.y < low) { low = v.y; lowMesh = mesh.name; }
+            else if (v.z >= socket.z + 0.02 && v.z < socket.z + 0.10 && v.y < nose) { nose = v.y; noseMesh = mesh.name; }
+          }
           if (tyre && Math.abs(v.x - tyre.centre.x) < tyre.half + 0.01 && Math.hypot(v.y - tyre.centre.y, v.z - tyre.centre.z) < tyre.R) n++;
         });
         if (n) { cloth += n; if (n > clothMax) { clothMax = n; clothMesh = mesh.name; } }
       });
       if (Number.isFinite(low)) { rep.seatProbe = low - saddle.top; rep.seatProbeMesh = lowMesh; }
+      if (Number.isFinite(nose)) { rep.noseProbe = nose - saddle.top; rep.noseProbeMesh = noseMesh; }
       rep.clothInWheel = cloth;
       rep.clothInWheelMesh = clothMesh;
     }
@@ -257,6 +263,7 @@ export function sweepCrank(riders, steps = 12, opts = {}) {
         if (r.foot[side] && (!w.foot[side] || r.foot[side].err > w.foot[side].err)) w.foot[side] = { ...r.foot[side], crank: Math.round(angle * 180 / Math.PI) };
       }
       if (r.seatProbe !== undefined && (w.seatProbe === undefined || r.seatProbe < w.seatProbe)) { w.seatProbe = r.seatProbe; w.seatProbeMesh = r.seatProbeMesh; w.seatProbeCrank = Math.round(angle * 180 / Math.PI); }
+      if (r.noseProbe !== undefined && (w.noseProbe === undefined || r.noseProbe < w.noseProbe)) { w.noseProbe = r.noseProbe; w.noseProbeMesh = r.noseProbeMesh; }
       if (r.clothInWheel > (w.clothInWheel || 0)) { w.clothInWheel = r.clothInWheel; w.clothInWheelMesh = r.clothInWheelMesh; }
     }
   }

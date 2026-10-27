@@ -29,7 +29,8 @@ if (SHOTS) fs.mkdirSync(OUT, { recursive: true });
 const KNOWN = [
   /rear wheel · bike vertices/,     // mudguard, rack, seat-tube clamp inside the tyre (goose_tandem.glb)
   /rear wheel · nearest/,
-  /body over saddle top/,           // geese float / sink on the saddles
+  /bottom over saddle top/,         // geese float / sink on the saddles
+  /thighs over saddle nose/,        // the nose inside the breeches
   /cloth vertices in the rear wheel/,
 ];
 
