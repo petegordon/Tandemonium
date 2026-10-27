@@ -438,10 +438,13 @@ const GYRO_CSS = `
 // becomes a controller ROLL: gravity turned in the report's accelerometer + the matching gyro rate, closed-loop on
 // what the game reads back (InputManager.getMotionLean), so the steering is the game's own gyro path end to end.
 // Pedalling pulls the real triggers in the reports. No stick, D-pad or keyboard lean, ever.
-async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1, prep = null } = {}) {
-  const st = { ...BASE, ...others(keep), tandemonium_controller_overlay: overlay ? 'on' : 'off', ...(solo ? { tandemonium_show_solo: 'on' } : {}), ...storage };
-  const s = await launch({ ...VIEW, port: PORT, storage: st,
-    before: async (p) => { await seedRandom(p); await installFakeWebHid(p, solo ? [hidDevice.dualsenseUsb('ds')] : [hidDevice.dualsenseUsb('ds'), hidDevice.steamPuck('sc')]); } });
+async function gyroCoop(o = {}) {
+  const st0 = { ...BASE, ...others(o.keep || 'look_no_thumbs'), tandemonium_controller_overlay: o.overlay === false ? 'off' : 'on', ...(o.solo ? { tandemonium_show_solo: 'on' } : {}), ...(o.storage || {}) };
+  const s = await launch({ ...VIEW, port: PORT, storage: st0,
+    before: async (p) => { await seedRandom(p); await installFakeWebHid(p, o.solo ? [hidDevice.dualsenseUsb('ds')] : [hidDevice.dualsenseUsb('ds'), hidDevice.steamPuck('sc')]); } });
+  try { return await gyroCoopOn(s, o); } catch (e) { await s.close().catch(() => {}); throw e; }
+}
+async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1, prep = null } = {}) {
   const { page } = s;
   await page.evaluate((pre) => { window.__achPre = pre; }, IDS.filter(i => i !== keep));
   // the live report writer: IMU (roll about the pad's forward axis) + analog triggers, per device
@@ -523,7 +526,7 @@ async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty
     Date.now = real;
   }, SALT);
   // Today's Road asks practice or ranked before it starts (D-2): practice (the capture has no server)
-  if (!solo) { await sleep(400); await page.evaluate(() => { const o = document.getElementById('daily-mode-overlay'); if (o && o.style.display !== 'none' && o.offsetParent !== null) document.getElementById('btn-daily-practice')?.click(); }); }
+  if (!solo) for (let i = 0; i < 10; i++) { await sleep(300); if (await page.evaluate(() => { const o = document.getElementById('daily-mode-overlay'); if (!o || !o.classList.contains('visible')) return false; document.getElementById('btn-daily-practice')?.click(); return true; })) break; }
   await page.waitForFunction((m) => window._game.mode === m && window._game.bike.modelLoaded && window._game.bike.goose, { timeout: 120000 }, solo ? 'solo' : 'local');
   // the rider bots work out the lean each rider wants; a hook turns that into a controller roll + trigger pulls
   await page.evaluate((sign, solo, steer, cadence, human) => {

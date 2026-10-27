@@ -13,10 +13,9 @@
 //   todo      not scripted yet (why)
 import { STILL } from './achievements.mjs';
 
-const DAY = 86400000;
-const day = (back) => new Date(Date.now() - back * DAY).toISOString().slice(0, 10);
-const pastDays = (n) => Array.from({ length: n }, (_, i) => day(n - i));   // n days, ending yesterday
-const run = (n) => ({ days: n, dayList: pastDays(n), lastDay: day(1) });
+// Day keys follow the game's own rollover hour (js/daily-seed.js dailyKey): 'rel:k' is resolved in the page by
+// achievements-all.mjs to the key k days ago; a dayList 'rel:n' is the n days ending yesterday.
+const run = (n) => ({ days: n, dayList: 'rel:' + n, lastDay: 'rel:1' });
 
 /** A slow personal best on Grandma's (chill, co-op), so the bots' finish beats it. */
 const slowRecord = { 'grandma|chill|coop': { timeMs: 240000, bestMedal: null, helped: false } };
@@ -54,11 +53,11 @@ export const SCENARIOS = {
   daily_gold: { seed: {}, level: 'daily', cadence: 3.8, bots: { sway: STILL }, ...finish },
   all_gold: { seed: { golds: ['daily'] }, cadence: 3.8, bots: { sway: STILL }, ...finish },   // Grandma's gold completes the set
   adventurer: { seed: {}, difficulty: 'adventurous', bots: { sway: STILL }, ...finish },
-  daredevil: { seed: {}, difficulty: 'daredevil', cadence: 3.2, bots: { sway: STILL }, ...finish },
+  daredevil: { seed: {}, difficulty: 'daredevil', cadence: 2.6, human: 0, bots: { sway: STILL, collect: false, steer: 0.7 }, ...finish },
 
   // ── Clean riding ──
-  steady_hands: { seed: {}, cadence: 1.8, bots: { sway: STILL }, pre: 2.5, post: 3 },
-  centerline: { seed: {}, cadence: 2.2, bots: { sway: STILL, dodge: false, offset: 0, collect: false }, pre: 2.5, post: 3 },
+  steady_hands: { seed: {}, level: 'daily', cadence: 2.0, human: 0, bots: { sway: STILL, steer: 0.5, collect: false }, pre: 2.5, post: 3 },   // 500 m gently: > 60 s, small leans
+  centerline: { seed: {}, level: 'daily', cadence: 2.2, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 1.3 }, pre: 2.5, post: 3 },
   no_offroad: { seed: {}, bots: { sway: STILL }, ...finish },
   no_trees_daily: { seed: {}, level: 'daily', bots: { sway: STILL }, ...finish },
   new_best: { seed: {}, storage: { tandemonium_records: JSON.stringify(slowRecord) }, ...finish },
@@ -71,16 +70,16 @@ export const SCENARIOS = {
   afterburner: { seed: {}, cadence: 4.0, bots: { collect: true, sway: STILL }, pre: 2.5, post: 3 },
 
   // ── Collecting ──
-  collector: { seed: {}, bots: { collect: true }, pre: 2.0, post: 3 },
+  collector: { seed: {}, level: 'daily', human: 0, bots: { collect: true, sway: STILL }, pre: 2.0, post: 3 },
   hoarder: { seed: {}, bots: { collect: true, sway: STILL }, ...finish },
   presents_100: { seed: { pickups: 99, boosts: 30 }, bots: { collect: true }, pre: 2.0, post: 3 },
-  daily_haul: { seed: {}, level: 'daily', bots: { collect: true, sway: STILL }, ...finish },
+  daily_haul: { seed: {}, level: 'daily', human: 0, cadence: 3.0, bots: { collect: true, sway: STILL, dodge: false }, ...finish },
 
   // ── Chaos Coins (the payout at the finish) ──
   coin_first: { seed: {}, ...finish },
   coins_1000: { seed: { coinsEarned: 990 }, ...finish },
   coins_10000: { seed: { coinsEarned: 9990 }, ...finish },
-  payday: { seed: {}, difficulty: 'daredevil', cadence: 4.0, bots: { collect: true, sway: STILL }, ...finish },
+  payday: { seed: {}, cadence: 3.8, bots: { collect: true, sway: STILL }, ...finish },   // gold + no crashes + every present ≈ 227 coins
   first_upgrade: { todo: 'the garage (Slingshot) UI: buy an upgrade' },
   max_upgrade: { todo: 'the garage UI: max one upgrade' },
   garage_royalty: { todo: 'the garage UI: max every upgrade' },
@@ -90,20 +89,20 @@ export const SCENARIOS = {
 
   // ── Today's Road ──
   daily_first: { todo: 'a ranked Today\'s Road needs the server (the capture blocks the network)' },
-  daily_streak_3: { seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: day(1) }, level: 'daily', ...finish },
-  daily_streak_7: { seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: day(1) }, level: 'daily', ...finish },
-  daily_streak_30: { seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: day(1) }, level: 'daily', ...finish },
+  daily_streak_3: { seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
+  daily_streak_7: { seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
+  daily_streak_30: { seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
   daily_share: { seed: {}, level: 'daily', share: true, pre: 2.0, post: 3.0 },         // the Share button on the result sheet
   daily_practice_10: { seed: { dailyPractice: 9 }, level: 'daily', ...finish },
 
   // ── Riding together ──
   perfect_sync: { seed: {}, human: 0, pre: 2.5, post: 3 },                 // two riders answering each other's beat
-  team_player: { seed: {}, bots: { sway: STILL }, ...finish },
+  team_player: { seed: {}, atStart: true, pre: 0, post: 4.0 },        // 100% safe riding from the first frame: the toast is up at GO
   pair_10_rides: { seed: {}, pairRides: 9, ...finish },
   pair_100km: { seed: {}, pairDistance: 99900, ...finish },
   coop_first: { seed: {}, ...finish },
   social_goose: { seed: { partners: ['goose-a', 'goose-b'], coopFinishes: 2 }, ...finish },
-  standing_date: { seed: {}, pairWeeks: 3, ...finish },
+  standing_date: { seed: {}, level: 'daily', pairWeeks: 3, ...finish },   // this week's Today's Road makes the 4th week in a row
 
   // ── Versus (its own rig) ──
   versus_first: { todo: 'versus rig' }, versus_win: { todo: 'versus rig' }, versus_2v2: { todo: 'versus rig' },
@@ -111,9 +110,9 @@ export const SCENARIOS = {
 
   // ── Chaos ──
   crashes_10: { seed: { crashes: 9 }, crash: 90, pre: 2.0, post: 3.5 },
-  false_start: { seed: {}, falseStart: true, pre: 1.5, post: 3.5 },        // lean out hard at GO
-  so_close: { seed: {}, crash: 236, pre: 2.0, post: 3.5 },                 // a pylon within 10 m of the line
-  weathered: { seed: {}, difficulty: 'adventurous', bots: { sway: STILL }, pre: 3.0, post: 3 },
+  false_start: { seed: {}, difficulty: 'daredevil', cadence: 4.5, falseStart: true, pre: 1.5, post: 3.5 },   // lean out hard at GO (chill's safety clamp won't let a lean crash)
+  so_close: { seed: {}, difficulty: 'daredevil', leanOutAt: 243, pre: 2.0, post: 3.5 },   // over they go within 10 m of the line
+  weathered: { seed: {}, difficulty: 'adventurous', cadence: 3.0, human: 0, bots: { sway: STILL, collect: false }, pre: 3.0, post: 3 },
   gone_with_wind: { seed: { gusts: 9 }, difficulty: 'adventurous', bots: { sway: STILL }, pre: 2.0, post: 3 },
 
   // ── Exploring ──

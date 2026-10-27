@@ -45,17 +45,47 @@ async function ride(id, sc) {
     level: sc.level || 'grandma', difficulty: sc.difficulty || (sc.crash ? 'adventurous' : 'chill'), cadence: sc.cadence || 3.4,
     human: sc.human == null ? 1 : sc.human, storage: storageFor(sc),
     prep: async (page) => {
+      // day keys in the seed ('rel:k'): the game's own dailyKey (its rollover hour), then the stats are re-read
+      if (sc.seed && JSON.stringify(sc.seed).includes('rel:')) await page.evaluate(async (seed) => {
+        const { dailyKey } = await import('/js/daily-seed.js');
+        const key = (k) => dailyKey(new Date(Date.now() - k * 86400000));
+        const fix = (v) => (typeof v === 'string' && v.startsWith('rel:')) ? key(+v.slice(4)) : v;
+        const out = { v: 2 };
+        for (const [k, v] of Object.entries(seed)) {
+          if (k === 'dayList' && typeof v === 'string') { const n = +v.slice(4); out[k] = Array.from({ length: n }, (_, i) => key(n - i)); }
+          else out[k] = fix(v);
+        }
+        localStorage.setItem('tandemonium_achievement_stats', JSON.stringify(out));
+        window._game.achievements.reload();
+      }, sc.seed);
       if (sc.bike) await page.evaluate((k) => { window._game.lobby.selectedPresetKey = k; }, sc.bike);
+      // a pair streak: Today's Road ridden with this partner in each of the last N ISO weeks (the daily save)
+      if (sc.pairWeeks) await page.evaluate(async (n) => {
+        const { dailyKey } = await import('/js/daily-seed.js');
+        const all = JSON.parse(localStorage.getItem('tandemonium_daily') || '{}');
+        for (let w = 1; w <= n; w++) all[dailyKey(new Date(Date.now() - 7 * w * 86400000))] = { practice: 1, partners: ['local:p2'] };
+        localStorage.setItem('tandemonium_daily', JSON.stringify(all));
+      }, sc.pairWeeks);
       // the pair summary (Regulars, A Hundred Together) comes from the server, which the capture blocks: answer
       // for it with the summary this ride brings the pair to
-      if (sc.pairRides || sc.pairDistance) await page.evaluate((o) => { const a = window._game.auth; if (a) a.fetchPair = async () => ({ rides: o.rides + 1, distance: o.distance + 250 }); }, { rides: sc.pairRides || 0, distance: sc.pairDistance || 0 });
+      if (sc.pairRides || sc.pairDistance) await page.evaluate((o) => {
+        const g = window._game, sum = { rides: o.rides + 1, distance: o.distance + 250 };
+        g._lastPairSummary = sum;                                   // what the finish reads (pairRides, pairDistanceKm)
+        if (g.auth) g.auth.fetchPair = async () => sum;             // and what a refresh would fetch
+      }, { rides: sc.pairRides || 0, distance: sc.pairDistance || 0 });
       if (sc.prep) await sc.prep(page);
     },
   });
   const { page } = s;
   if (sc.bots) await bots(page, sc.bots);
   await advance(page, 0.001);
-  await page.evaluate(() => { window.__ach.t0 = window.__vclock.t; window.__ach.anchor = window.__vclock.t; });
+  // the anchor: from here both passes see the same virtual time and the same random numbers (the lobby's own
+  // animations consumed a different number of them before the ride, so Math.random is re-seeded here)
+  await page.evaluate(() => {
+    let a = 0x2545F491;
+    Math.random = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    window.__ach.t0 = window.__vclock.t; window.__ach.anchor = window.__vclock.t;
+  });
   return s;
 }
 
@@ -74,11 +104,13 @@ async function steer(page, sc, st) {
     else if (!page.__noPylon) { page.__noPylon = true; console.log('  crash: no pylon ahead of d', st.d); }
   }
   if (sc.crash && page.__crashed && st.fallen && !page.__recovered) { page.__recovered = true; await bots(page, { dodge: true, offset: 0 }); }
-  if (sc.falseStart && st.state === 'playing' && !page.__fs) { page.__fs = true; await bots(page, { extra: 1.0, sway: { amp: 0, freq: 0, phase: 0 } }); }
-  if (sc.falseStart && page.__fs && st.fallen && !page.__fsDone) { page.__fsDone = true; await bots(page, { extra: 0 }); }
+  // a false start: at GO both riders throw their weight one way (no road-following, no steadying) until they are down
+  if (sc.falseStart && st.state === 'playing' && !page.__fs) { page.__fs = true; await bots(page, { extra: 1.0, steer: 0, stab: 0, sway: { amp: 0, freq: 0, phase: 0 } }); }
+  if (sc.leanOutAt && st.d >= sc.leanOutAt && st.state === 'playing' && !page.__lo) { page.__lo = true; await bots(page, { extra: 1.0, steer: 0, stab: 0, sway: { amp: 0, freq: 0, phase: 0 } }); }
+  if (sc.falseStart && page.__fs && st.fallen && !page.__fsDone) { page.__fsDone = true; await bots(page, { extra: 0, steer: 0.9, stab: 0.35 }); }
   if (sc.share && ['victory', 'gameover'].includes(st.state) && !page.__shared) {
     page.__shared = true;
-    await page.evaluate(() => { const b = document.querySelector('#victory [id*="share"], #victory uf-button[id*="share"], [id*="share-daily"]'); if (b) b.click(); });
+    await page.evaluate(() => { const b = document.getElementById('btn-daily-share-victory') || document.getElementById('btn-daily-share-gameover'); if (b) b.click(); });
   }
 }
 
@@ -93,6 +125,8 @@ async function findMoment(id, sc, name) {
     await steer(page, sc, st);
     T = await toastFor(page, id, name);
     if (T != null) break;
+    // a toast up before the anchor (Team Player: safe riding from the first frame) is logged with no time: the moment is the start
+    if (sc.atStart && await page.evaluate((nm) => window.__ach.toasts.some(x => x[1] === nm), name)) { T = 0; break; }
     // the finish's toasts come with the result sheet, after the finish cinematic: wait that out, then 10 s more
     if (['victory', 'gameover', 'lobby'].includes(st.state)) { if (++over > 40) break; }
   }
@@ -104,7 +138,8 @@ async function findMoment(id, sc, name) {
 
 /** Pass 2: ride again and record from T - pre to T + post. */
 async function recordMoment(id, sc, T) {
-  const pre = sc.pre ?? 2.5, post = sc.post ?? 3.0;
+  const MARGIN = 0.75;   // the passes agree to a few tenths of a second; edit.py cuts by the logged toast
+  const pre = (sc.pre ?? 2.5) + MARGIN, post = (sc.post ?? 3.0) + MARGIN;
   const s = await ride(id, sc);
   const { page } = s;
   const startAt = Math.max(0, T - pre);
@@ -136,11 +171,13 @@ for (const id of list) {
   try {
     if (LEAD) await leadIn(id, id);
     const m = await findMoment(id, sc, name);
-    console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'} state=${JSON.stringify(m.st)} earned=${JSON.stringify(m.earned)} medal=${m.medal} partner=${m.partner}`);
+    console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'} state=${JSON.stringify(m.st)} earned=${JSON.stringify(m.earned)} partner=${m.partner} toasts=${JSON.stringify((m.toasts || []).map(t => [+(t[0] || 0).toFixed(2), t[1]]))}`);
     if (m.T == null) { results.push({ id, failed: 'no toast', st: m.st, earned: m.earned }); continue; }
     if (PROBE) { results.push({ id, T: m.T, earned: m.earned }); continue; }
     const r = await recordMoment(id, sc, m.T);
-    const meta = JSON.parse(fs.readFileSync(path.join(AOUT, `${id}_together-${ASPECT}.json`), 'utf8'));
+    const metaPath = path.join(AOUT, `${id}_together-${ASPECT}.json`);
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    if (sc.atStart && !(meta.toasts[0] && meta.toasts[0][0] != null)) { meta.toasts = [[0, name]]; fs.writeFileSync(metaPath, JSON.stringify(meta)); }   // up from the first frame
     const got = meta.toasts[0] ? meta.toasts[0][0] : null;
     console.log(`  recorded ${r.pre + r.post} s, toast at ${got == null ? 'NONE' : got.toFixed(2)} (expected ${r.pre})`);
     results.push({ id, T: m.T, toastAt: got, drift: got == null ? null : +(got - r.pre).toFixed(2) });
