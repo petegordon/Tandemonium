@@ -444,7 +444,7 @@ async function gyroCoop(o = {}) {
     before: async (p) => { await seedRandom(p); await installFakeWebHid(p, o.solo ? [hidDevice.dualsenseUsb('ds')] : [hidDevice.dualsenseUsb('ds'), hidDevice.steamPuck('sc')]); } });
   try { return await gyroCoopOn(s, o); } catch (e) { await s.close().catch(() => {}); throw e; }
 }
-async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1, prep = null, start = 'ride' } = {}) {
+async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1, prep = null, start = 'ride', salt = SALT } = {}) {
   const { page } = s;
   await page.evaluate((pre) => { window.__achPre = pre; }, IDS.filter(i => i !== keep));
   // the live report writer: IMU (roll about the pad's forward axis) + analog triggers, per device
@@ -519,7 +519,7 @@ async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', diffi
       Date.now = () => Math.floor(real() / 1e6) * 1e6 + salt;
       document.getElementById('instructions')?.click();
       Date.now = real;
-    }, SALT);
+    }, salt);
   } else await page.evaluate(async (o) => {
     const L = window._game.lobby, { getLevelById } = await import('/js/race-config.js');
     if (document.getElementById('lobby-flow')?.current !== 'lobby-level') document.getElementById('btn-host-local-next').click();
@@ -533,7 +533,7 @@ async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', diffi
     Date.now = () => Math.floor(real() / 1e6) * 1e6 + salt;
     document.getElementById('btn-start-ride').click();
     Date.now = real;
-  }, SALT);
+  }, salt);
   // Today's Road asks practice or ranked before it starts (D-2): practice (the capture has no server)
   if (!solo) for (let i = 0; i < 10; i++) { await sleep(300); if (await page.evaluate(() => { const o = document.getElementById('daily-mode-overlay'); if (!o || !o.classList.contains('visible')) return false; document.getElementById('btn-daily-practice')?.click(); return true; })) break; }
   await page.waitForFunction((m) => window._game.mode === m && window._game.bike.modelLoaded && window._game.bike.goose, { timeout: 120000 }, solo ? 'solo' : 'local');

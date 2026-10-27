@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { advance, sleep, OUT } from './lib.mjs';
-import { ASPECT, IDS, AOUT, together, take, until, cam, bots, leadIn, state as rideState } from './achievements.mjs';
+import { ASPECT, TALL, IDS, AOUT, together, take, until, cam, bots, leadIn, state as rideState } from './achievements.mjs';
 import { SCENARIOS, HAND_MADE } from './achievement-scenarios.mjs';
 import { garageMoment, slingFind, slingRecord, versusFind, versusRecord, storageOf, seedStats } from './achievement-modes.mjs';
 
@@ -39,8 +39,11 @@ const storageFor = storageOf;
 /** Launch the ride for a scenario (co-op rig), apply its bots / prep, and anchor the virtual clock. */
 async function ride(id, sc) {
   const s = await together(id, {
-    level: sc.level || 'grandma', difficulty: sc.difficulty || (sc.crash ? 'adventurous' : 'chill'), cadence: sc.cadence || 3.4,
-    human: sc.human == null ? 1 : sc.human, storage: storageFor(sc), query: sc.query || '',
+    // a finish reel rides Adventurous (more lean and wobble on the way to the line); a slow / clean one stays Chill
+    level: sc.level || 'grandma', difficulty: sc.difficulty || (sc.crash || sc.over ? 'adventurous' : 'chill'), cadence: sc.cadence || 3.4,
+    human: sc.human == null ? 1 : sc.human, query: sc.query || '', salt: sc.salt,
+    // the outfit (Victorian / Cyclists / Fancy / Georgian) is the game's own option, read from storage at load
+    storage: { ...storageFor(sc), ...(sc.outfit ? { tandemonium_goose_outfit: sc.outfit } : {}) },
     prep: async (page) => {
       // day keys in the seed ('rel:k'): the game's own dailyKey (its rollover hour), then the stats are re-read
       if (sc.seed && JSON.stringify(sc.seed).includes('rel:')) await seedStats(page, sc.seed);
@@ -134,6 +137,7 @@ async function steer(page, sc, st) {
     if (st.state === 'gameover' && !page.__go) {
       page.__go = true;
       const offered = await page.evaluate(() => { const b = document.getElementById('assist-btn'); return !!b && b.style.display !== 'none'; });
+      if (offered) page.__assistAt = await vt(page);   // the mark: the sheet with ASSIST on it, turned down
       console.log('  assist: game over, ASSIST offered =', offered);
       await page.evaluate(() => document.getElementById('btn-restart').click());
       if (offered) { page.__assistDone = true; await bots(page, { dodge: true, offset: 0, collect: false }); }
@@ -168,15 +172,29 @@ async function steer(page, sc, st) {
   }
 }
 
-/** Pass 1: ride until this achievement's toast (or the ride is over). Returns {T, st, earned, pair}. */
+// Reel cameras for the ride (page-bot.js setCamera): a name in a scenario's `cam`, or a shot object of its own.
+// Every one ends at the line: the game's own finish cinematic takes over when the state leaves 'playing'.
+const CAMS = {
+  side: { stiff: 0.3, keys: [{ t: 0, deg: -62, dist: TALL ? 4.6 : 5.2, h: 0.35, look: 0.45, fov: TALL ? 48 : 36 }] },                 // beside the riders, left
+  sideR: { stiff: 0.3, keys: [{ t: 0, deg: 62, dist: TALL ? 4.6 : 5.2, h: 0.35, look: 0.45, fov: TALL ? 48 : 36 }] },                 // beside the riders, right
+  quarter: { stiff: 0.3, keys: [{ t: 0, deg: 35, dist: 4.4, h: 0.15, look: 0.65, fov: TALL ? 46 : 34 }, { t: 8, deg: 18, dist: 5.2, h: 0.3, look: 0.6, fov: TALL ? 46 : 34 }] },   // low behind the stoker's shoulder, easing round
+  front: { keys: [{ t: 0, deg: 158, dist: TALL ? 6.2 : 6.4, h: TALL ? 2.4 : 1.9, look: TALL ? -1.1 : -0.5, fov: TALL ? 50 : 40 }] },  // from ahead, the geese coming at the lens
+  high: { stiff: 0.3, keys: [{ t: 0, deg: TALL ? 40 : 58, dist: TALL ? 13 : 9, h: TALL ? 1.1 : 0.6, look: -0.3, fov: TALL ? 56 : 50 }] },   // high and wide: the road, the trees, the pair small in it
+  orbit: { stiff: 0.3, keys: [{ t: 0, deg: 60, dist: 4.2, h: 0.4, look: 0.3, fov: TALL ? 50 : 36 }, { t: 6, deg: 100, dist: 3.8, h: 0.3, look: 0.3, fov: TALL ? 50 : 36 }] },   // a slow swing from beside to behind
+};
+const camOf = (c) => (typeof c === 'string' ? CAMS[c] : c);
+
+/** Pass 1: ride until this achievement's toast (or the ride is over). Returns {T, cross, st, earned, pair}. */
 async function findMoment(id, sc, name) {
   const s = await ride(id, sc);
   const { page } = s;
-  let T = null, st = null, over = 0;
+  let T = null, st = null, over = 0, cross = null;
   for (let t = 0; t < 200; t += 0.25) {
     await advance(page, 0.25);
     st = await rideState(page);
     await steer(page, sc, st);
+    // the line: the finish cinematic starts the instant the bike crosses it (the result sheet, and its toasts, come after it)
+    if (cross == null && ['finishCinematic', 'victory'].includes(st.state)) cross = await vt(page);
     if (sc.gustAt && t === 1) console.log('  disruptions', await page.evaluate(() => JSON.stringify({ planned: window._game._disruptions, active: !!window._game._activeDisruption, state: window._game.state, mode: window._game.mode })));
     // REEL_TRACE=1: the bike's line every poll (what breaks a strip / steady run)
     if (process.env.REEL_TRACE && Math.round(t * 4) % 2 === 0) console.log('  trace', t.toFixed(1), await page.evaluate(() => { const g = window._game, b = g.bike, r = g.achievements.ride; return JSON.stringify({ st: g.state, d: +b.distanceTraveled.toFixed(0), x: +(b._lateralOffset || 0).toFixed(2), v: +b.speed.toFixed(1), lean: +(b.lean || 0).toFixed(2), edge: +(b._edgeIntensity || 0).toFixed(2), strip: !!b.onCenterStrip, sRun: +(r.stripRun || 0).toFixed(1), stRun: +(r.steadyRun || 0).toFixed(1), lo: +(window.__reel.bots[0]?.leanOut || 0).toFixed(2), dis: g._activeDisruption ? g._activeDisruption.phase : null, gust: !!g.achievements.ride.gustActive }); }));
@@ -196,17 +214,35 @@ async function findMoment(id, sc, name) {
       missed: ((cm && cm._items) || []).filter(i => !i.collected).map(i => [+i.absoluteD.toFixed(0), +i.lateralOffset.toFixed(1)]),
       // the pylon nearest each missed present
       beside: ((cm && cm._items) || []).filter(i => !i.collected).map(i => { const near = (g.obstacleManager._items || []).map(o => [+o.absoluteD.toFixed(0), +o.lateralOffset.toFixed(1), Math.abs(o.absoluteD - i.absoluteD)]).sort((a, b) => a[2] - b[2])[0]; return near ? [+i.absoluteD.toFixed(0), near[0], near[1]] : null; }) }; })() }));
+  // marks a finish reel can open on (`from`): the first crash, the ASSIST sheet turned down
+  const marks = { crash: info.ride.crashes[0] ?? null, assist: page.__assistAt ?? null };
   await s.close();
-  return { T, st, ...info };
+  return { T, cross, marks, st, ...info };
 }
 
-/** Pass 2: ride again and record from T - pre to T + post. */
-async function recordMoment(id, sc, T) {
+/**
+ * Pass 2: ride again and record from T - pre to T + post.
+ * A finish reel (`over`, T = the result sheet's toast, `cross` = the line): the last `pre` seconds of the ride up to
+ * the line, the game's own floating toast raised over the riding `toastLead` seconds before it, the finish
+ * cinematic (the sweep, the presents flying onto the pile), and out before the result sheet. The toast the sheet
+ * would show is never seen; the one over the ride is the same badge the game floats mid-ride.
+ */
+async function recordMoment(id, sc, T, cross = null, marks = {}) {
   const MARGIN = 0.75;   // the passes agree to a few tenths of a second; edit.py cuts by the logged toast
-  const pre = (sc.pre ?? 2.5) + MARGIN, post = (sc.post ?? 3.0) + MARGIN;
+  const over = !!(sc.over && cross != null);
+  const pre = over ? (sc.pre ?? 7.5) : (sc.pre ?? 2.5) + MARGIN;
+  const lead = over ? (sc.toastLead ?? 2.6) : 0;
+  // the cinematic is 4.7 s (finish-camera-animation.js); out a beat before the sheet, which pass 1 timed
+  const post = over ? Math.min(4.6, T - cross - 0.3) : (sc.post ?? 3.0) + MARGIN;
+  // `from`: open on a mark (the crash, the ASSIST sheet), hold it, then jump to the last `pre` seconds before the line
+  const mark = over && sc.from && marks[sc.from.mark] != null ? marks[sc.from.mark] : null;
+  const before = sc.from?.before ?? 2.0, hold = sc.from?.hold ?? 4.5;
+  const startAt = Math.max(0, mark != null ? mark - before : (over ? cross : T) - pre);
+  const len = (over ? cross + post : T + post) - startAt;
+  const tT = over ? cross - lead - startAt : pre;   // the toast, seconds into the take
+  const cut = mark != null && mark + hold < cross - pre ? [mark + hold - startAt - tT, cross - pre - startAt - tT] : null;
   const s = await ride(id, sc);
   const { page } = s;
-  const startAt = Math.max(0, T - pre);
   for (;;) {
     const now = await vt(page);
     if (now >= startAt - 0.26) break;
@@ -214,14 +250,23 @@ async function recordMoment(id, sc, T) {
     await steer(page, sc, await rideState(page));
   }
   for (;;) { const now = await vt(page); if (now >= startAt) break; await advance(page, 1 / 60); }
-  if (sc.cam) await cam(page, sc.cam);
+  if (sc.cam) await cam(page, camOf(sc.cam));
   const tag = `${id}_together`;
-  await take(tag, s, pre + post, async () => {
+  let raised = false;
+  await take(tag, s, len, async (i, t) => {
     const st = await rideState(page);
     await steer(page, sc, st);
+    if (over && !raised && t >= tT) {
+      raised = true;
+      await page.evaluate(async (aid) => {
+        const { ACHIEVEMENTS } = await import('/js/achievement-defs.js');
+        const { showAchievementToast } = await import('/js/achievements.js');
+        showAchievementToast(ACHIEVEMENTS.find(a => a.id === aid));
+      }, id);
+    }
     if (sc.cam) await page.evaluate(() => { if (window._game.state !== 'playing' && window.__reel.cam) window.__reel.setCamera(null); });
   });
-  return { pre, post, tag };
+  return { pre, post, len, tag, expect: tT, over, cut };
 }
 
 // the other rigs (achievement-modes.mjs): the Slingshot, the garage, versus
@@ -249,16 +294,19 @@ for (const id of list) {
       continue;
     }
     const m = await (FIND[sc.kind] || findMoment)(id, sc, name);
-    console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'} state=${JSON.stringify(m.st)} earned=${JSON.stringify(m.earned)} partner=${m.partner} toasts=${JSON.stringify((m.toasts || []).map(t => [+(t[0] || 0).toFixed(2), t[1]]))}${m.ride ? ' ride=' + JSON.stringify(m.ride) : ''}${m.run ? ' run=' + JSON.stringify(m.run) : ''}${m.winner ? ' winner=' + m.winner : ''}`);
+    console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'}${m.cross != null ? ` line=${m.cross.toFixed(2)} s` : ''} state=${JSON.stringify(m.st)} earned=${JSON.stringify(m.earned)} partner=${m.partner} toasts=${JSON.stringify((m.toasts || []).map(t => [+(t[0] || 0).toFixed(2), t[1]]))}${m.ride ? ' ride=' + JSON.stringify(m.ride) : ''}${m.run ? ' run=' + JSON.stringify(m.run) : ''}${m.winner ? ' winner=' + m.winner : ''}`);
     if (m.T == null) { results.push({ id, failed: 'no toast', st: m.st, earned: m.earned, ride: m.ride }); continue; }
     if (PROBE) { results.push({ id, T: m.T, earned: m.earned }); continue; }
-    const r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T);
+    const r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks);
     const metaPath = path.join(AOUT, `${r.tag}-${ASPECT}.json`);
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     if (sc.atStart && !(meta.toasts[0] && meta.toasts[0][0] != null)) { meta.toasts = [[0, name]]; fs.writeFileSync(metaPath, JSON.stringify(meta)); }   // up from the first frame
     const got = meta.toasts[0] ? meta.toasts[0][0] : null;
-    console.log(`  recorded ${r.pre + r.post} s, toast at ${got == null ? 'NONE' : got.toFixed(2)} (expected ${r.pre})`);
-    results.push({ id, T: m.T, toastAt: got, drift: got == null ? null : +(got - r.pre).toFixed(2) });
+    // a finish reel keeps everything recorded: the cut window round the toast (and a span to drop), for edit.py (reels.json has no entry)
+    if (r.over && got != null) { meta.window = { pre: +got.toFixed(3), post: +(meta.seconds - got - 0.02).toFixed(3), ...(r.cut ? { cut: r.cut.map(x => +x.toFixed(3)) } : {}) }; fs.writeFileSync(metaPath, JSON.stringify(meta)); }
+    const expect = r.expect ?? r.pre;
+    console.log(`  recorded ${(r.len ?? r.pre + r.post).toFixed(2)} s, toast at ${got == null ? 'NONE' : got.toFixed(2)} (expected ${expect.toFixed(2)})${m.cross != null ? ` line at ${m.cross.toFixed(2)} s, sheet at ${m.T.toFixed(2)} s` : ''}${r.cut ? ` cut ${JSON.stringify(r.cut.map(x => +x.toFixed(2)))}` : ''}`);
+    results.push({ id, T: m.T, cross: m.cross, toastAt: got, drift: got == null ? null : +(got - expect).toFixed(2) });
   } catch (e) {
     console.log('  FAILED', id, e.stack);
     results.push({ id, failed: e.message });
