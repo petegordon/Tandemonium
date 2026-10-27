@@ -1431,6 +1431,9 @@ export class World {
     this._treeNextD = 0;
     this._treeRngState = seeds.trees;
     this._treeSeedBase = seeds.trees;
+    // ...and place them along the new road. The load callback only ever placed them for the road that
+    // was current when the pine model arrived: every road chosen after that was bare (#506 review).
+    if (this._treeModelReady) this._placeTreesUpTo(this.roadPath.loopLength);
 
     // Clouds: same.
     for (const slot of this._cloudPool || []) {
@@ -1438,6 +1441,7 @@ export class World {
       if (slot.mesh) slot.mesh.visible = false;
     }
     this._cloudNextD = 0;
+    if (this._cloudPool) this._placeCloudsUpTo(this.roadPath.loopLength);
     this._cloudRngState = seeds.clouds;
     this._cloudSeedBase = seeds.clouds;
 
