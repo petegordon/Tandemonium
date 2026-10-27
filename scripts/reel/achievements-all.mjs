@@ -186,15 +186,37 @@ const CAMS = {
   orbit: { stiff: 0.3, keys: [{ t: 0, deg: 60, dist: 4.2, h: 0.4, look: 0.3, fov: TALL ? 50 : 36 }, { t: 6, deg: 100, dist: 3.8, h: 0.3, look: 0.3, fov: TALL ? 50 : 36 }] },   // a slow swing from beside to behind
 };
 const camOf = (c) => (typeof c === 'string' ? CAMS[c] : c);
+// a shot from the road's right (0 < deg < 120) mirrored to the left: Grandma's house stands on the right at the line
+const mirrorOff = (shot) => shot.keys.some(k => k.deg > 0 && k.deg < 120) ? { ...shot, keys: shot.keys.map(k => ({ ...k, deg: k.deg > 0 && k.deg < 120 ? -k.deg : k.deg })) } : shot;
+
+// The tightest pair of roadside trees, one each side of the road within 14 m and within 8 m of road distance of each
+// other, well before the last stretch (a finish reel jumps from the gate to the line). Read while the ride is on: the
+// world re-seeds the road, and empties the tree pool, once it is over. null until the trees are placed.
+const findGate = (page) => page.evaluate(() => {
+  const g = window._game, maxD = (g.raceManager?.raceDistance || 250) - 70;
+  const all = (g.world._treePool || []).filter(t => t.active && t.roadD < maxD).map(t => ({ d: t.roadD, x: t.lateralOffset }));
+  if (!all.length) return null;
+  const trees = all.filter(t => Math.abs(t.x) <= 14);
+  let best = { score: Infinity, pool: all.length, near: trees.length };
+  for (const l of trees.filter(t => t.x < 0)) for (const r of trees.filter(t => t.x > 0)) {
+    if (Math.abs(l.d - r.d) > 8) continue;
+    const score = -l.x + r.x + 0.5 * Math.abs(l.d - r.d);
+    if (score < best.score) best = { ...best, score, d: (l.d + r.d) / 2, left: [+l.d.toFixed(1), +l.x.toFixed(1)], right: [+r.d.toFixed(1), +r.x.toFixed(1)] };
+  }
+  return best.d != null ? best : { none: true, pool: all.length, near: trees.length };
+});
 
 /** Pass 1: ride until this achievement's toast (or the ride is over). Returns {T, cross, st, earned, pair}. */
 async function findMoment(id, sc, name) {
   const s = await ride(id, sc);
   const { page } = s;
   let T = null, st = null, over = 0, cross = null;
+  const wantTrees = sc.from?.mark === 'trees', trace = [];   // (virtual time, road distance): the gate's time comes from it
+  let gate = null;
   for (let t = 0; t < 200; t += 0.25) {
     await advance(page, 0.25);
     st = await rideState(page);
+    if (wantTrees && st.state === 'playing') { trace.push([await vt(page), st.d]); if (!gate) gate = await findGate(page); if (!gate && trace.length === 8) console.log('  trees: pool', JSON.stringify(await page.evaluate(() => { const w = window._game.world; return { pool: (w._treePool || []).length, active: (w._treePool || []).filter(t => t.active).length, ready: w._treeModelReady, tier: w._tier, parked: (w._parkedObjects || []).length, nextD: w._treeNextD, keys: Object.keys(w).filter(k => /tree/i.test(k)) }; }))); }
     await steer(page, sc, st);
     // the line: the finish cinematic starts the instant the bike crosses it (the result sheet, and its toasts, come after it)
     if (cross == null && ['finishCinematic', 'victory'].includes(st.state)) cross = await vt(page);
@@ -218,7 +240,16 @@ async function findMoment(id, sc, name) {
       // the pylon nearest each missed present
       beside: ((cm && cm._items) || []).filter(i => !i.collected).map(i => { const near = (g.obstacleManager._items || []).map(o => [+o.absoluteD.toFixed(0), +o.lateralOffset.toFixed(1), Math.abs(o.absoluteD - i.absoluteD)]).sort((a, b) => a[2] - b[2])[0]; return near ? [+i.absoluteD.toFixed(0), near[0], near[1]] : null; }) }; })() }));
   // marks a finish reel can open on (`from`): the first crash, the ASSIST sheet turned down
-  const marks = { crash: info.ride.crashes[0] ?? null, assist: page.__assistAt ?? null };
+  const marks = { crash: info.ride.crashes[0] ?? null, assist: page.__assistAt ?? null, trees: null };
+  if (wantTrees && trace.length) {
+    // (the tightest gate: a tree each side of the road within 14 m, within 8 m of road distance of each other, and well
+    // before the last stretch (the reel jumps from the gate to the line)
+    if (gate && gate.d != null) {
+      const i = trace.findIndex(([, d]) => d >= gate.d);
+      if (i > 0) { const [t0, d0] = trace[i - 1], [t1, d1] = trace[i]; marks.trees = t0 + (t1 - t0) * ((gate.d - d0) / Math.max(1e-6, d1 - d0)); }
+      console.log('  trees: the gate', JSON.stringify(gate), 'at', marks.trees?.toFixed(2), 's');
+    } else console.log('  trees: no gate found', JSON.stringify(gate));
+  }
   await s.close();
   return { T, cross, marks, st, ...info };
 }
@@ -253,7 +284,7 @@ async function recordMoment(id, sc, T, cross = null, marks = {}) {
     await steer(page, sc, await rideState(page));
   }
   for (;;) { const now = await vt(page); if (now >= startAt) break; await advance(page, 1 / 60); }
-  if (sc.cam) await cam(page, camOf(sc.cam));
+  if (sc.cam) await cam(page, over ? mirrorOff(camOf(sc.cam)) : camOf(sc.cam));
   const tag = `${id}_together`;
   let raised = false, sheetAt = null, gameOver = false, last = null;
   await take(tag, s, len, async (i, t) => {
