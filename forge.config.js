@@ -19,6 +19,8 @@ module.exports = {
       path.join(__dirname, 'steamworks_sdk'),
     ],
     name: 'Tandemonium',
+    // Dev-only pages and rendered output that must not ship (#505 fit viewer).
+    ignore: [/^\/tools\/fit-viewer(\/|$)/, /^\/renders(\/|$)/],
   },
   hooks: {
     // After packaging, drop the Steam Input files next to the exe under
