@@ -204,6 +204,7 @@ export async function slingFind(id, sc, name) {
   for (let t = 0; t < 200; t += 0.25) {
     await advance(page, 0.25);
     st = await slingState(page);
+    if (process.env.REEL_TRACE) console.log('  strace', t.toFixed(2), 'vt', (await vt(page)).toFixed(2), JSON.stringify(st), await page.evaluate(() => JSON.stringify({ drag: window.__slingDrag, run: window._game._slingRun && { launched: window._game._slingRun.launched, over: window._game._slingRun.over, pull: window._game._slingRun.pull }, lastTime: +window._game.lastTime.toFixed(0), now: +performance.now().toFixed(0) })));
     if (st.launched) await slingPath(page, sc, st);
     T = await page.evaluate((nm) => { const x = window.__ach.toasts.find(y => y[1] === nm); return x ? x[0] : null; }, name);
     if (T != null) break;

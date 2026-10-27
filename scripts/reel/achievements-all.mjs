@@ -281,8 +281,8 @@ async function recordMoment(id, sc, T, cross = null, marks = {}) {
 const FIND = { sling: slingFind, versus: versusFind };
 const RECORD = { sling: slingRecord, versus: versusRecord };
 
-const list = wanted(args.find(a => !a.startsWith('--')));
-const results = [];
+const list = [...wanted(args.find(a => !a.startsWith('--')))];
+const results = [], retried = new Set();
 for (const id of list) {
   const sc = SCENARIOS[id];
   const name = nameOf(id);
@@ -321,6 +321,8 @@ for (const id of list) {
     console.log(`  recorded ${(r.len ?? r.pre + r.post).toFixed(2)} s, toast at ${got == null ? 'NONE' : got.toFixed(2)} (expected ${expect.toFixed(2)})${m.cross != null ? ` line at ${m.cross.toFixed(2)} s, sheet at ${m.T.toFixed(2)} s` : ''}${r.cut ? ` cut ${JSON.stringify(r.cut.map(x => +x.toFixed(2)))}` : ''}`);
     results.push({ id, T: m.T, cross: m.cross, toastAt: got, drift: got == null ? null : +(got - expect).toFixed(2) });
   } catch (e) {
+    // the page sometimes never finishes loading the bike (a 120 s wait): once more at the end of the list
+    if (e.name === 'TimeoutError' && !retried.has(id)) { retried.add(id); list.push(id); console.log('  timed out:', e.message.split('\n')[0], '- once more at the end'); continue; }
     console.log('  FAILED', id, e.stack);
     results.push({ id, failed: e.message });
   }

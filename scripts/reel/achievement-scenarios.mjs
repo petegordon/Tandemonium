@@ -86,7 +86,7 @@ export const SCENARIOS = {
   // ── Chaos Coins (the payout at the finish; #512 decides what coins become) ──
   coin_first: { moment: 'A clean first ride, the Fancy pair from behind the stoker: the first coins paid at the line', seed: {}, bots: { sway: STILL, collect: false }, outfit: 'fancy', cam: 'quarter', salt: 444455, ...finish },
   coins_1000: { moment: 'The thousandth coin, lifetime: the Georgian pair high and wide to the line', seed: { coinsEarned: 990 }, human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'georgian', cam: 'high', salt: 445555, ...finish },   // coins pay at a crash too, so the ride must be clean: a lighter sway
-  coins_10000: { moment: 'Ten thousand coins, lifetime: the geese coming at the lens on the last stretch', seed: { coinsEarned: 9990 }, human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, cam: 'front', salt: 446666, ...finish },
+  coins_10000: { moment: 'Ten thousand coins, lifetime: the geese coming at the lens on the last stretch', seed: { coinsEarned: 9990 }, human: 0.5, bots: { sway: STILL }, cam: 'front', salt: 446666, ...finish },   // still: at a 0.3 sway the pair hit an obstacle, and coins pay at a crash
   payday: { moment: 'Two hundred coins from one ride: gold pace, no crash, every present, the Cyclists from beside', seed: {}, cadence: 3.8, bots: { collect: true, sway: STILL }, outfit: 'cyclists', cam: 'side', salt: 447777, ...finish },   // gold + no crashes + every present ≈ 227 coins
   first_upgrade: { moment: 'The garage: 120 coins, the first band bought', kind: 'garage', seed: {}, wallet: { coins: 120 }, buy: 'sling' },
   max_upgrade: { moment: 'The garage: the tenth band, one upgrade maxed', kind: 'garage', seed: { upgrades: 9 }, wallet: { coins: 4000, lv: { sling: 9, wheels: 3 } }, buy: 'sling' },          // the tenth band
@@ -97,7 +97,7 @@ export const SCENARIOS = {
 
   // ── Today's Road ──
   daily_first: { todo: 'a ranked Today\'s Road needs the server (the capture blocks the network)' },
-  daily_streak_3: { moment: 'Today\'s Road, the third day running: the Fancy pair\'s last stretch and the line', seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'fancy', ...finish },
+  daily_streak_3: { moment: 'Today\'s Road, the third day running: the Fancy pair\'s last stretch and the line', seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: STILL }, outfit: 'fancy', ...finish },   // still: today's road crashes a swaying pair at the same four spots whatever the amplitude
   daily_streak_7: { moment: 'Today\'s Road, a week straight: the Georgian pair from the right, over the line', seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: STILL }, outfit: 'georgian', cam: 'sideR', ...finish },
   daily_streak_30: { moment: 'Today\'s Road, thirty days straight: a metronome pair, a slow swing round them to the line', seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: 'rel:1' }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, cam: 'orbit', ...finish },   // a metronome pair: the two passes agree
   daily_share: { moment: 'The result sheet\'s Share button pressed after Today\'s Road', seed: {}, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, share: true, pre: 2.0, post: 3.0 },   // the Share button on the result sheet
