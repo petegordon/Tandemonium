@@ -148,6 +148,23 @@ async function steer(page, sc, st) {
     }
     if (st.state === 'playing') page.__go = false;
   }
+  // No Trees Were Harmed: a gate of two pines, one each side `x` m off the road at `d` (the nearest pool trees, moved),
+  // staged once the world has placed the road's trees (both passes stage it at the same poll)
+  if (sc.treeGate && !page.__treeGate) {
+    page.__treeGate = await page.evaluate((o) => {
+      const w = window._game.world, rp = w.roadPath, P = (w._treePool || []).filter(t => t.active);
+      if (!P.length) return false;
+      for (const sign of [-1, 1]) {
+        const t = P.filter(t => Math.sign(t.lateralOffset) === sign).sort((a, b) => Math.abs(a.roadD - o.d) - Math.abs(b.roadD - o.d))[0];
+        if (!t) continue;
+        t.roadD = o.d + sign * (o.stagger ?? 1.5); t.lateralOffset = sign * o.x;
+        const pt = rp.getPointAtDistance(t.roadD), fx = Math.sin(pt.heading), fz = Math.cos(pt.heading);
+        t.mesh.position.x = pt.x + fz * t.lateralOffset; t.mesh.position.z = pt.z - fx * t.lateralOffset;   // y follows in _updateTreeHeights
+      }
+      return true;
+    }, sc.treeGate);
+    if (page.__treeGate) console.log('  tree gate staged', JSON.stringify(sc.treeGate), 'at d', st.d);
+  }
   // a crash on a pylon standing between crashWindow[0] and [1] metres (So Close: within 10 m of the line)
   if (sc.crashWindow && !page.__cw && st.d >= sc.crashWindow[0] - 70 && st.state === 'playing') {
     const p = await page.evaluate((w) => {
