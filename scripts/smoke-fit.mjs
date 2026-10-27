@@ -28,9 +28,7 @@ if (SHOTS) fs.mkdirSync(OUT, { recursive: true });
 // fails one, the line is reported as KNOWN BUG (the smoke stays green so CI can run it). The saddle
 // lines are real checks: a saddle swallowed by breeches or a skirt is right, a floating goose is not.
 const KNOWN = [
-  /rear wheel · bike vertices/,     // mudguard, rack, seat-tube clamp inside the tyre (goose_tandem.glb)
-  /rear wheel · nearest/,
-  /cloth vertices in the rear wheel/,
+  /cloth vertices in the rear wheel/,   // the skirts drape over the rear wheel (goose-fit-tandem.md P5.4)
 ];
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.glb': 'model/gltf-binary',

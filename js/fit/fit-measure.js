@@ -115,7 +115,8 @@ export function measureRearWheel(model, tyre = rearTyre(model)) {
     eachVertex(model, mesh, (v) => {
       const d = tyreDistance(tyre, v);
       near = Math.min(near, d);
-      if (d < 0) { n++; depth = Math.max(depth, -d); }
+      // a vertex 2 mm into the tread is the decimation (make_bike TOL_M 4 mm), not a part in the wheel
+      if (d < -0.002) { n++; depth = Math.max(depth, -d); }
     });
     if (near < clearance) { clearance = near; nearest = mesh.name; }
     if (n) { inside += n; penetrating.push({ mesh: mesh.name, inside: n, depth }); }

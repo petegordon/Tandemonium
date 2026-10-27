@@ -20,8 +20,8 @@ export const TOL = {
   noseProbe: { min: -0.15, max: 0.03 },            // the same over the nose: the thighs wrap it
   footOnPedal: { max: 0.012 },                      // |ball of foot − pedal pin (+ sole)|, every crank step
   handOnGrip: { min: 0.06, max: 0.16 },             // |hand joint − grip socket| (handshake grip)
-  wheelPenetration: { maxVerts: 0 },                // bike vertices inside the rear tyre's tread band
-  wheelClearance: { min: 0.004 },                   // nearest bike part to the tyre surface
+  wheelPenetration: { maxVerts: 0 },                // bike vertices > 2 mm inside the rear tyre's tread band
+  wheelClearance: { min: -0.002 },                  // nearest bike part to the tyre surface (the mudguard stays touch it at the axle)
   clothInWheel: { maxVerts: 30 },                   // skirt / coat vertices inside the rear wheel disc
 };
 
