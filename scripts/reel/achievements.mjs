@@ -225,7 +225,97 @@ async function tutorial(keep) {
   return s;
 }
 
+/**
+ * #506 · the lead-in: the game's own achievements screen (the lobby's "Your Rides" tab), the achievement still
+ * locked; a settle, an eased scroll to it, a soft highlight, then the badge lifts off the page toward the camera
+ * (the list behind dims and blurs) and fills the screen. The real DOM, driven frame by frame on the virtual
+ * clock (no CSS transitions). edit.py dissolves it into the ride.
+ * Out: clips/ach-lead-<shot>-<aspect>.mp4 (silent) + ach/lead-<shot>-<aspect>.json (seconds, when the lift ends).
+ */
+const LEAD = { hold: 0.3, scroll: 0.7, glow: 0.35, lift: 0.8, tail: 0.5 };   // seconds; the scroll is skipped when it would be short
+async function leadIn(shot, id) {
+  const s = await launch({ ...VIEW, port: PORT, storage: { ...BASE } });   // a fresh player: everything locked
+  const { page } = s;
+  await page.click('#tap-to-start').catch(() => {});
+  await sleep(600);
+  await page.addStyleTag({ content: `
+    #leaderboard-video, #lb-sub-tabs { display: none !important; }
+    #leaderboard-modal { z-index: 9000; }
+    .leaderboard-box { max-height: 80vh !important; transition: none !important; }
+    .lb-ach-item { transition: none !important; }
+    .lb-ach-item.lead-glow { opacity: 1 !important; border-color: rgba(255, 204, 0, var(--glow, 0)) !important;
+      box-shadow: 0 0 calc(18px * var(--glow, 0)) rgba(255, 204, 0, calc(0.55 * var(--glow, 0))) !important;
+      background: rgba(255, 204, 0, calc(0.10 * var(--glow, 0))) !important; }
+    #lead-lift { position: fixed; z-index: 9999; pointer-events: none; transform-origin: 50% 50%; opacity: 1 !important;
+      border-radius: 10px; background: rgba(34, 32, 48, 0.98) !important; border: 1.5px solid rgba(255, 204, 0, 0.9) !important;
+      box-shadow: 0 0 30px rgba(255, 204, 0, 0.45), 0 30px 60px rgba(0, 0, 0, 0.6) !important; }
+    #lead-lift .lb-ach-name { color: rgba(255, 255, 255, 0.92) !important; }
+  ` });
+  const info = await page.evaluate(async (id) => {
+    const L = window._game.lobby;
+    L._lbMainTab = 'you';
+    await L._openLeaderboard();
+    L._renderAchievements();
+    const item = document.querySelector(`.lb-ach-item[data-ach="${id}"]`);
+    if (!item) return null;
+    const box = document.querySelector('.leaderboard-box');
+    // where the tile would be centred in the scrolling box
+    const r0 = item.getBoundingClientRect(), b0 = box.getBoundingClientRect();
+    const target = Math.max(0, Math.min(box.scrollHeight - box.clientHeight, box.scrollTop + (r0.top + r0.height / 2) - (b0.top + b0.height / 2)));
+    window.__lead = { item, box, from: box.scrollTop, to: target };
+    return { from: box.scrollTop, to: target, locked: item.classList.contains('locked'), name: item.querySelector('.lb-ach-name')?.textContent };
+  }, id);
+  if (!info) { console.log('  no tile for', id); await s.close(); return; }
+  const scrollSec = Math.abs(info.to - info.from) < 40 ? 0 : LEAD.scroll;
+  const T = { glowAt: LEAD.hold + scrollSec, liftAt: LEAD.hold + scrollSec + LEAD.glow };
+  const seconds = T.liftAt + LEAD.lift + LEAD.tail;
+  console.log(`  lead-in ${shot}: ${info.name} locked=${info.locked} scroll ${info.from.toFixed(0)}->${info.to.toFixed(0)} (${scrollSec} s), ${seconds.toFixed(2)} s`);
+  const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+  const tag = `ach-lead-${shot}-${ASPECT}`;
+  await record(page, tag, seconds, { perFrame: async (i, t) => {
+    const u = scrollSec ? Math.max(0, Math.min(1, (t - LEAD.hold) / scrollSec)) : 1;
+    const glow = Math.max(0, Math.min(1, (t - T.glowAt) / LEAD.glow));
+    const lift = Math.max(0, Math.min(1, (t - T.liftAt) / LEAD.lift));
+    await page.evaluate((o) => {
+      const D = window.__lead, E = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);   // ease in-out cubic
+      D.box.scrollTop = D.from + (D.to - D.from) * E(o.u);
+      D.item.classList.add('lead-glow');
+      D.item.style.setProperty('--glow', String(o.glow));
+      if (o.lift > 0) {
+        if (!D.clone) {
+          const r = D.item.getBoundingClientRect();
+          const c = D.item.cloneNode(true);
+          c.id = 'lead-lift';
+          c.classList.add('lead-glow');
+          c.style.setProperty('--glow', '1');
+          c.style.left = r.left + 'px'; c.style.top = r.top + 'px'; c.style.width = r.width + 'px'; c.style.height = r.height + 'px';
+          c.style.boxSizing = 'border-box';
+          document.body.appendChild(c);
+          D.clone = c; D.rect = { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+          D.item.style.visibility = 'hidden';
+        }
+        const k = E(o.lift), W = window.innerWidth, H = window.innerHeight;
+        const S = 1 + (Math.min(0.82 * W / D.rect.w, 0.6 * H / D.rect.h) - 1) * k;
+        const dx = (W / 2 - D.rect.x) * k, dy = (H / 2 - D.rect.y) * k;
+        D.clone.style.transform = `translate(${dx}px, ${dy}px) scale(${S})`;
+        D.box.style.filter = `blur(${(8 * k).toFixed(2)}px) brightness(${(1 - 0.6 * k).toFixed(3)})`;
+        document.getElementById('leaderboard-modal').style.background = `rgba(0, 0, 0, ${(0.65 * k).toFixed(3)})`;
+      }
+    }, { u, glow, lift });
+  } });
+  const clip = await encode(tag);
+  fs.writeFileSync(path.join(AOUT, `lead-${shot}-${ASPECT}.json`), JSON.stringify({ seconds, liftEnd: T.liftAt + LEAD.lift, ...info }));
+  console.log('  ->', clip);
+  if (s.errors.length) console.log('  page errors:', s.errors.slice(0, 3));
+  await s.close();
+}
+
 const SHOTS = {
+  kickoff_lead: () => leadIn('kickoff', 'first_pedal'),
+  learner_lead: () => leadIn('learner', 'tutorial_done'),
+  natural_lead: () => leadIn('natural', 'tutorial_clean'),
+  madeit_lead: () => leadIn('madeit', 'first_finish'),
+  goosedown_lead: () => leadIn('goosedown', 'first_crash'),
   // #1 KICK OFF: a new player's very first ride; the countdown, GO, the first push on the pedals
   async kickoff() {
     const s = await tutorial('first_pedal');
