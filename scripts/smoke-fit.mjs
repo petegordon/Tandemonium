@@ -124,7 +124,8 @@ const solo = await page.evaluate((n) => window.__fit.sweep(n), STEPS);
 check(solo.riders.Captain && !solo.riders.Stoker, 'Show Solo: only the captain is measured', Object.keys(solo.riders));
 if (SHOTS) { await page.evaluate(() => { window.__fit.setCrank(60); window.__fit.view('side'); }); await shot('solo-side'); }
 
-fs.writeFileSync(path.join(SHOTS ? OUT : ROOT, 'fit-report.json'), JSON.stringify(summary, null, 1));
+fs.mkdirSync(OUT, { recursive: true });
+fs.writeFileSync(path.join(OUT, 'fit-report.json'), JSON.stringify(summary, null, 1));
 check(errors.length === 0, 'no page errors', errors.slice(0, 3));
 await browser.close();
 server.close();
