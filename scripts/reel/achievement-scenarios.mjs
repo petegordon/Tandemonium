@@ -55,7 +55,7 @@ export const SCENARIOS = {
   // ── Levels and medals (Grandma's, 250 m) ──
   home_sweet: { moment: 'Grandma\'s last 100 m from beside the riders, over the line, the presents flying onto her pile', seed: {}, outfit: 'cyclists', cam: 'side', salt: 432222, ...finish },
   perfect_1k: { moment: 'A clean run: no crash, no restart, the Fancy pair steady to the line and the finish sweep', seed: {}, bots: { sway: STILL }, outfit: 'fancy', salt: 433333, ...finish },
-  grandma_bronze: { moment: 'A gentle pace to Grandma\'s line (inside 90% of the clock), the Georgian pair, high and wide', seed: {}, human: 0, bots: { sway: STILL, collect: false }, noGusts: true, outfit: 'georgian', cam: 'high', noPresents: true, maxSpeed: 3.8, salt: 434444, ...finish },   // a slow tandem tips over on Adventurous if the riders sway: still riders, no gusts
+  grandma_bronze: { moment: 'A gentle pace to Grandma\'s line (inside 90% of the clock), the Georgian pair, high and wide', seed: {}, difficulty: 'chill', human: 0, bots: { sway: STILL, collect: false }, outfit: 'georgian', cam: 'high', noPresents: true, maxSpeed: 3.0, salt: 434444, ...finish },   // Chill: a tandem this slow falls over on Adventurous whatever the riders do; bronze on Chill is 75-94 s, 3.0 m/s ≈ 84 s
   grandma_silver: { moment: 'A brisker pace to the line (inside 72%), from behind the stoker\'s shoulder', seed: {}, human: 0, bots: { sway: STILL, collect: false }, noGusts: true, cam: 'quarter', noPresents: true, maxSpeed: 4.8, salt: 435555, ...finish },
   grandma_gold: { moment: 'Flat out to Grandma\'s line (inside 55% of the clock), the Cyclists sprinting, a slow swing from beside to behind', seed: {}, cadence: 3.8, bots: { sway: STILL }, outfit: 'cyclists', cam: 'orbit', salt: 436677, ...finish },
   daily_gold: { moment: 'Today\'s Road at a gold pace, the Fancy pair, the geese coming at the lens', seed: {}, level: 'daily', cadence: 3.8, bots: { sway: STILL }, outfit: 'fancy', cam: 'front', ...finish },
@@ -84,7 +84,7 @@ export const SCENARIOS = {
   daily_haul: { moment: 'Today\'s Road swept clean at a careful pace: the Cyclists swerving round a pylon for the last present, then the line', seed: {}, level: 'daily', human: 0, cadence: 3.4, maxSpeed: 5.5, bots: { collect: true, sway: STILL }, outfit: 'cyclists', ...finish },   // capped at 5.5 m/s so a present tucked behind a pylon is reachable (the bot skips one within a speed's worth of metres)
 
   // ── Chaos Coins (the payout at the finish; #512 decides what coins become) ──
-  coin_first: { moment: 'A clean first ride collecting as it goes, the Fancy pair, from behind the stoker: the first coins paid at the line', seed: {}, bots: { sway: STILL, collect: true }, outfit: 'fancy', cam: 'quarter', salt: 444455, ...finish },
+  coin_first: { moment: 'A clean first ride, the Fancy pair from behind the stoker: the first coins paid at the line', seed: {}, bots: { sway: STILL, collect: false }, outfit: 'fancy', cam: 'quarter', salt: 444455, ...finish },
   coins_1000: { moment: 'The thousandth coin, lifetime: the Georgian pair high and wide to the line', seed: { coinsEarned: 990 }, human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'georgian', cam: 'high', salt: 445555, ...finish },   // coins pay at a crash too, so the ride must be clean: a lighter sway
   coins_10000: { moment: 'Ten thousand coins, lifetime: the geese coming at the lens on the last stretch', seed: { coinsEarned: 9990 }, human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, cam: 'front', salt: 446666, ...finish },
   payday: { moment: 'Two hundred coins from one ride: gold pace, no crash, every present, the Cyclists from beside', seed: {}, cadence: 3.8, bots: { collect: true, sway: STILL }, outfit: 'cyclists', cam: 'side', salt: 447777, ...finish },   // gold + no crashes + every present ≈ 227 coins
@@ -98,7 +98,7 @@ export const SCENARIOS = {
   // ── Today's Road ──
   daily_first: { todo: 'a ranked Today\'s Road needs the server (the capture blocks the network)' },
   daily_streak_3: { moment: 'Today\'s Road, the third day running: the Fancy pair\'s last stretch and the line', seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'fancy', ...finish },
-  daily_streak_7: { moment: 'Today\'s Road, a week straight: the Georgian pair from the right, over the line', seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'georgian', cam: 'sideR', ...finish },
+  daily_streak_7: { moment: 'Today\'s Road, a week straight: the Georgian pair from the right, over the line', seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: STILL }, outfit: 'georgian', cam: 'sideR', ...finish },
   daily_streak_30: { moment: 'Today\'s Road, thirty days straight: a metronome pair, a slow swing round them to the line', seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: 'rel:1' }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, cam: 'orbit', ...finish },   // a metronome pair: the two passes agree
   daily_share: { moment: 'The result sheet\'s Share button pressed after Today\'s Road', seed: {}, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, share: true, pre: 2.0, post: 3.0 },   // the Share button on the result sheet
   daily_practice_10: { moment: 'The tenth practice run of Today\'s Road, the Cyclists high and wide to the line', seed: { dailyPractice: 9 }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, outfit: 'cyclists', cam: 'high', ...finish },
@@ -113,12 +113,12 @@ export const SCENARIOS = {
   standing_date: { moment: 'Today\'s Road with the same partner for the fourth week running: the Fancy pair high and wide', seed: {}, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, pairWeeks: 3, outfit: 'fancy', cam: 'high', ...finish },   // this week's Today's Road makes the 4th week in a row
 
   // ── Versus (its own rig) ──
-  versus_first: { moment: 'Split screen: the first race, blue pulls clear', kind: 'versus', seed: {}, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...tally },
-  versus_win: { moment: 'Split screen: blue takes the win', kind: 'versus', seed: { versusRaces: 3 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...tally },
-  versus_2v2: { moment: 'Split screen, four pads: two tandems a side', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, players: 4, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...tally },
-  versus_close: { moment: 'Split screen: a wheel\'s width at the line', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, teams: [{ cadence: 3.45 }, { cadence: 3.4 }], ...tally },   // a wheel's width
-  versus_comeback: { moment: 'Split screen: behind at halfway, then the chase and the win', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, teams: [{ cadence: 2.8 }, { cadence: 3.4 }], comeback: [4.4, 2.6], ...tally },   // behind at halfway, then the chase
-  versus_10: { moment: 'Split screen: the tenth win', kind: 'versus', seed: { versusRaces: 12, versusWins: 9 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...tally },
+  versus_first: { moment: 'Split screen: the first race, blue pulls clear on the last stretch, the toast over both halves, the line', kind: 'versus', seed: {}, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...finish },
+  versus_win: { moment: 'Split screen: the Cyclists in blue take the win at the line', kind: 'versus', seed: { versusRaces: 3 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], outfit: 'cyclists', ...finish },
+  versus_2v2: { moment: 'Split screen, four pads: two tandems a side in the Fancy outfits, the line', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, players: 4, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], outfit: 'fancy', ...finish },
+  versus_close: { moment: 'Split screen: a wheel\'s width at the line, the Georgian pairs', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, teams: [{ cadence: 3.45 }, { cadence: 3.4 }], outfit: 'georgian', ...finish },   // a wheel's width
+  versus_comeback: { moment: 'Split screen: behind at halfway, then the chase and the win, the toast over the catch', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, teams: [{ cadence: 2.8 }, { cadence: 3.4 }], comeback: [4.4, 2.6], ...finish },   // behind at halfway, then the chase
+  versus_10: { moment: 'Split screen: the tenth win, the Cyclists clear at the line', kind: 'versus', seed: { versusRaces: 12, versusWins: 9 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], outfit: 'cyclists', ...finish },
 
   // ── Chaos ──
   crashes_10: { moment: 'The tenth crash, lifetime: a pylon, the tumble, the toast as they get up', seed: { crashes: 9 }, crash: 90, pre: 2.0, post: 3.5 },

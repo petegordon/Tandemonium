@@ -307,7 +307,7 @@ for (const id of list) {
     if (PROBE) { results.push({ id, T: m.T, earned: m.earned }); continue; }
     let r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks);
     // pass 2 does not always replay pass 1 (a crash on the way can fall differently): take again, up to twice
-    for (let again = 1; r.diverged && again <= 2; again++) { console.log(`  pass 2 diverged (ended '${r.last}'${r.sheetAt != null ? '' : ', no sheet'}): take ${again + 1}`); r = await recordMoment(id, sc, m.T, m.cross, m.marks); }
+    for (let again = 1; r.diverged && again <= 2; again++) { console.log(`  pass 2 diverged (ended '${r.last}'${r.sheetAt != null ? '' : ', no sheet'}): take ${again + 1}`); r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T, m.cross, m.marks); }
     if (r.diverged) { results.push({ id, failed: `pass 2 diverged (ended '${r.last}')` }); console.log('  FAILED', id, 'pass 2 diverged'); continue; }
     const metaPath = path.join(AOUT, `${r.tag}-${ASPECT}.json`);
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));

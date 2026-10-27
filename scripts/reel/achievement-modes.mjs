@@ -65,6 +65,7 @@ export function storageOf(sc) {
   if (sc.wallet) st.tandemonium_wallet = JSON.stringify({ v: 1, coins: 0, earned: 0, lv: {}, rebuilds: 0, ...sc.wallet, earned: Math.max(sc.wallet.coins || 0, sc.wallet.earned || 0) });
   if (sc.sling || sc.kind === 'sling' || sc.kind === 'garage') st.tandemonium_slingshot = JSON.stringify({ v: 3, best: 0, runs: 0, stage: 1, ...(sc.sling || {}) });
   if (sc.records) st.tandemonium_records = JSON.stringify(sc.records);
+  if (sc.outfit) st.tandemonium_goose_outfit = sc.outfit;   // the goose outfit (victorian | cyclists | fancy | georgian), every rig
   return st;
 }
 
@@ -330,11 +331,12 @@ async function versusSteer(page, sc, st) {
 export async function versusFind(id, sc, name) {
   const s = await versusRide(id, sc);
   const { page } = s;
-  let T = null, st = null, over = 0;
+  let T = null, st = null, over = 0, cross = null;
   for (let t = 0; t < 200; t += 0.25) {
     await advance(page, 0.25);
     st = await versusState(page);
     await versusSteer(page, sc, st);
+    if (cross == null && ['versusCinematic', 'versusResults'].includes(st.state)) cross = await vt(page);   // the first team over the line
     if (process.env.REEL_VDIAG && Math.round(t * 4) === 60) console.log('  vdiag', await page.evaluate(() => JSON.stringify(window._game.versusRigs.map(r => {
       const b = r.bike, o = {}; for (const k of Object.keys(b)) { const v = b[k]; if (/speed|accel|drag|mass|tune|power|boost|coast|assist|resist|friction|surface|wobble|fallen|air/i.test(k) && (typeof v !== 'object' || v === null)) o[k] = typeof v === 'number' ? +v.toFixed(3) : v; }
       return { stats: r.pedalCtrl && r.pedalCtrl.stats, power: r.pedalCtrl && r.pedalCtrl.pedalPower, last: r.pedalCtrl && r.pedalCtrl.lastPedal, bike: o, same: b === window._game.bike, preset: b.preset && b.preset.name };
@@ -347,16 +349,26 @@ export async function versusFind(id, sc, name) {
   const info = await page.evaluate(() => ({ earned: [...(window._game.achievements?._earned?.keys?.() || [])].filter(i => !window.__achPre.includes(i)), toasts: window.__ach.toasts,
     winner: window._game._versusWinner ? window._game._versusWinner.id : null }));
   await s.close();
-  return { T, st, ...info };
+  return { T, cross, st, ...info };
 }
 
-export async function versusRecord(id, sc, T) {
+/**
+ * The take. A finish reel (`over`, `cross` = the first team over the line) is the last `pre` seconds of the race,
+ * the game's own floating toast raised `toastLead` s before the line, the versus cinematic, and out before the
+ * results sheet (as achievements-all.mjs recordMoment does for a ride). Otherwise `pre` / `post` round the toast.
+ */
+export async function versusRecord(id, sc, T, cross = null) {
   const MARGIN = 0.75;
-  const pre = (sc.pre ?? 2.5) + MARGIN, post = (sc.post ?? 3.0) + MARGIN;
+  const over = !!(sc.over && cross != null);
+  const pre = over ? (sc.pre ?? 7.5) : (sc.pre ?? 2.5) + MARGIN;
+  const lead = over ? (sc.toastLead ?? 2.6) : 0;
+  const post = over ? Math.min(4.6, T - cross - 0.3) : (sc.post ?? 3.0) + MARGIN;
   const s = await versusRide(id, sc);
   const { page } = s;
   page.__reelClip = null;   // the full 16:9 viewport
-  const startAt = Math.max(0, T - pre);
+  const startAt = Math.max(0, (over ? cross : T) - pre);
+  const len = (over ? cross + post : T + post) - startAt;
+  const tT = over ? cross - lead - startAt : pre;
   for (;;) {
     const now = await vt(page);
     if (now >= startAt - 0.26) break;
@@ -365,6 +377,21 @@ export async function versusRecord(id, sc, T) {
   }
   for (;;) { const now = await vt(page); if (now >= startAt) break; await advance(page, 1 / 60); }
   const tag = `${id}_together`;
-  await take(tag, s, pre + post, async () => { await versusSteer(page, sc, await versusState(page)); });
-  return { pre, post, tag };
+  let raised = false, sheetAt = null, last = null;
+  await take(tag, s, len, async (i, t) => {
+    const st = await versusState(page);
+    last = st.state;
+    if (over && sheetAt == null && st.state === 'versusResults') sheetAt = t;
+    await versusSteer(page, sc, st);
+    if (over && !raised && t >= tT) {
+      raised = true;
+      await page.evaluate(async (aid) => {
+        const { ACHIEVEMENTS } = await import('/js/achievement-defs.js');
+        const { showAchievementToast } = await import('/js/achievements.js');
+        showAchievementToast(ACHIEVEMENTS.find(a => a.id === aid));
+      }, id);
+    }
+  });
+  const diverged = over && !['versusCinematic', 'versusResults'].includes(last);
+  return { pre, post, len, tag, expect: tT, over, sheetAt, diverged, last };
 }
