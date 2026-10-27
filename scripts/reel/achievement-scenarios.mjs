@@ -56,8 +56,8 @@ export const SCENARIOS = {
   daredevil: { seed: {}, difficulty: 'daredevil', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false, dodge: true }, ...finish },
 
   // ── Clean riding ──
-  steady_hands: { seed: {}, level: 'daily', cadence: 2.9, human: 0, bots: { sway: STILL, collect: false }, pre: 2.5, post: 3 },   // 500 m at a gentle pace: > 60 s of calm riding (a loose steer wanders onto the grass and times out)
-  centerline: { seed: {}, level: 'daily', cadence: 2.9, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 1.1 }, pre: 2.5, post: 3 },   // the longer road: 30 s on the strip
+  steady_hands: { seed: {}, human: 0, bots: { sway: STILL, collect: false }, brake: { on: 40, off: 20 }, pre: 2.5, post: 3 },   // Grandma's with the brakes dragged (the bike tops out at any cadence): > 60 s of calm riding
+  centerline: { seed: {}, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 1.8 }, brake: { on: 30, off: 30 }, pre: 2.5, post: 3 },   // Grandma's at a crawl, dead centre: 30 s on the strip
   no_offroad: { seed: {}, bots: { sway: STILL }, ...finish },
   no_trees_daily: { seed: {}, level: 'daily', bots: { sway: STILL }, ...finish },
   new_best: { seed: {}, storage: { tandemonium_records: JSON.stringify(slowRecord) }, ...finish },
@@ -73,7 +73,7 @@ export const SCENARIOS = {
   collector: { seed: {}, level: 'daily', human: 0, bots: { collect: true, sway: STILL }, pre: 2.0, post: 3 },
   hoarder: { seed: {}, bots: { collect: true, sway: STILL }, ...finish },
   presents_100: { seed: { pickups: 99, boosts: 30 }, bots: { collect: true }, pre: 2.0, post: 3 },
-  daily_haul: { seed: {}, level: 'daily', human: 0, cadence: 3.4, bots: { collect: true, sway: STILL, dodge: false }, ...finish },   // slower, and straight through the pylons' lanes, so no present is skipped
+  daily_haul: { seed: {}, level: 'daily', human: 0, cadence: 3.4, bots: { collect: true, sway: STILL }, ...finish },   // the bot swerves round a pylon to the side its next present is on
 
   // ── Chaos Coins (the payout at the finish) ──
   coin_first: { seed: {}, ...finish },
@@ -115,8 +115,8 @@ export const SCENARIOS = {
   // ── Chaos ──
   crashes_10: { seed: { crashes: 9 }, crash: 90, pre: 2.0, post: 3.5 },
   false_start: { seed: {}, difficulty: 'daredevil', cadence: 4.5, falseStart: true, pre: 1.5, post: 3.5 },   // lean out hard at GO (chill's safety clamp won't let a lean crash)
-  so_close: { todo: 'a crash within 10 m of the line: a full lean at speed turns rather than falls; needs a pylon by the line or a tree hit' },
-  weathered: { seed: {}, query: '?disrupt=gust', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false }, pre: 3.0, post: 3 },   // the game's own debug road: one gust at 70 m, ridden out
+  so_close: { seed: {}, difficulty: 'daredevil', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false }, leanOutAt: 236, pre: 2.5, post: 3.5 },   // both riders throw their weight out 14 m from the line (Daredevil lets a lean fall; no pylon or tree stands by the line)
+  weathered: { seed: {}, gustAt: 70, difficulty: 'adventurous', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false, steer: 1.3 }, pre: 3.0, post: 3 },   // one gust at 70 m (the game's own ?disrupt=gust road; Chill clears the road of gusts), ridden out
   gone_with_wind: { seed: { gusts: 9 }, difficulty: 'adventurous', bots: { sway: STILL }, pre: 2.0, post: 3 },
 
   // ── Exploring ──

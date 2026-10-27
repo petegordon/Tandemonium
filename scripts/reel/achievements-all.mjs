@@ -45,6 +45,12 @@ async function ride(id, sc) {
       // day keys in the seed ('rel:k'): the game's own dailyKey (its rollover hour), then the stats are re-read
       if (sc.seed && JSON.stringify(sc.seed).includes('rel:')) await seedStats(page, sc.seed);
       if (sc.bike) await page.evaluate((k) => { window._game.lobby.selectedPresetKey = k; }, sc.bike);
+      // one gust at `gustAt` metres (the game's own ?disrupt=gust debug road, which URL tidying would drop)
+      if (sc.gustAt) await page.evaluate(async (at) => {
+        const { TELEGRAPH_S, DURATION, KIND } = await import('/js/disruptions.js');
+        window._game._overrideDisruptions = () => [{ kind: KIND.GUST, atM: at, telegraphM: Math.max(0, at - TELEGRAPH_S * 8), duration: DURATION.gust }];
+        console.log('[reel] gust override installed at ' + at + ' m');
+      }, sc.gustAt);
       // a pair streak: Today's Road ridden with this partner in each of the last N ISO weeks (the daily save)
       if (sc.pairWeeks) await page.evaluate(async (n) => {
         const { dailyKey } = await import('/js/daily-seed.js');
@@ -64,6 +70,7 @@ async function ride(id, sc) {
   });
   const { page } = s;
   if (sc.bots) await bots(page, sc.bots);
+  if (sc.brake) await page.evaluate((b) => { window.__gyBrake = b; }, sc.brake);
   await advance(page, 0.001);
   // the anchor: from here both passes see the same virtual time and the same random numbers (the lobby's own
   // animations consumed a different number of them before the ride, so Math.random is re-seeded here)
@@ -90,6 +97,23 @@ async function steer(page, sc, st) {
     else if (!page.__noPylon) { page.__noPylon = true; console.log('  crash: no pylon ahead of d', st.d); }
   }
   if (sc.crash && page.__crashed && st.fallen && !page.__recovered) { page.__recovered = true; await bots(page, { dodge: true, offset: 0 }); }
+  // a crash on a pylon standing between crashWindow[0] and [1] metres (So Close: within 10 m of the line)
+  if (sc.crashWindow && !page.__cw && st.d >= sc.crashWindow[0] - 70 && st.state === 'playing') {
+    const p = await page.evaluate((w) => {
+      const items = (window._game.obstacleManager._items || []).filter(i => i.absoluteD >= w[0] && i.absoluteD <= w[1] && !i._hidden).sort((x, y) => x.absoluteD - y.absoluteD);
+      if (items[0]) return { d: items[0].absoluteD, x: items[0].lateralOffset, what: 'pylon' };
+      // no pylon there: the nearest roadside tree in the window (the road's right vector is (cos h, -sin h), as the collectibles place themselves)
+      const g = window._game, rp = g.world.roadPath;
+      const trees = (g.world._treePool || []).filter(t => t.active && t.mesh.visible && t.roadD >= w[0] && t.roadD <= w[1]).map(t => {
+        const pt = rp.getPointAtDistance(t.roadD);
+        return { d: t.roadD, x: (t.mesh.position.x - pt.x) * Math.cos(pt.heading) - (t.mesh.position.z - pt.z) * Math.sin(pt.heading), what: 'tree' };
+      }).sort((p, q) => Math.abs(p.x) - Math.abs(q.x));
+      return trees[0] || { all: trees.length };
+    }, sc.crashWindow);
+    page.__cw = true;
+    if (p.d) { await bots(page, { dodge: false, offset: p.x, path: null, collect: false, sway: { amp: 0, freq: 0, phase: 0 } }); console.log('  crash window: aiming at the ' + p.what, JSON.stringify(p), 'from d', st.d); }
+    else console.log('  crash window: no pylon in', JSON.stringify(sc.crashWindow), 'near:', JSON.stringify(p.all));
+  }
   // a false start: at GO both riders throw their weight one way (no road-following, no steadying) until they are down
   if (sc.falseStart && st.state === 'playing' && !page.__fs) { page.__fs = true; await bots(page, { extra: 1.0, steer: 0, stab: 0, sway: { amp: 0, freq: 0, phase: 0 } }); }
   if (sc.leanOutAt && st.d >= sc.leanOutAt && st.state === 'playing' && !page.__lo) { page.__lo = true; await bots(page, { extra: 1.0, steer: 0, stab: 0, sway: { amp: 0, freq: 0, phase: 0 } }); }
@@ -109,6 +133,9 @@ async function findMoment(id, sc, name) {
     await advance(page, 0.25);
     st = await rideState(page);
     await steer(page, sc, st);
+    if (sc.gustAt && t === 1) console.log('  disruptions', await page.evaluate(() => JSON.stringify({ planned: window._game._disruptions, active: !!window._game._activeDisruption, state: window._game.state, mode: window._game.mode })));
+    // REEL_TRACE=1: the bike's line every poll (what breaks a strip / steady run)
+    if (process.env.REEL_TRACE && Math.round(t * 4) % 2 === 0) console.log('  trace', t.toFixed(1), await page.evaluate(() => { const g = window._game, b = g.bike, r = g.achievements.ride; return JSON.stringify({ st: g.state, d: +b.distanceTraveled.toFixed(0), x: +(b._lateralOffset || 0).toFixed(2), v: +b.speed.toFixed(1), lean: +(b.lean || 0).toFixed(2), edge: +(b._edgeIntensity || 0).toFixed(2), strip: !!b.onCenterStrip, sRun: +(r.stripRun || 0).toFixed(1), stRun: +(r.steadyRun || 0).toFixed(1), lo: +(window.__reel.bots[0]?.leanOut || 0).toFixed(2), dis: g._activeDisruption ? g._activeDisruption.phase : null, gust: !!g.achievements.ride.gustActive }); }));
     T = await toastFor(page, id, name);
     if (T != null) break;
     // a toast up before the anchor (Team Player: safe riding from the first frame) is logged with no time: the moment is the start
@@ -119,8 +146,11 @@ async function findMoment(id, sc, name) {
   const info = await page.evaluate(() => ({ earned: [...(window._game.achievements?._earned?.keys?.() || [])].filter(i => !window.__achPre.includes(i)),
     toasts: window.__ach.toasts, medal: window._game._lastFinish?.medal || null, pair: window._game._lastPairSummary || null, partner: (() => { try { return window._game._partnerKey(); } catch (e) { return null; } })(),
     // the ride's own numbers, for tuning a scenario that missed
-    ride: (() => { const r = window._game.achievements.ride || {}; const cm = window._game.collectibleManager; return { strip: +(r.stripBest || 0).toFixed(1), steady: +(r.steadyBest || 0).toFixed(1), treeHits: r.treeHits, offroad: +(r.offroadT || 0).toFixed(1),
-      missed: ((cm && cm._items) || []).filter(i => !i.collected).map(i => [+i.absoluteD.toFixed(0), +i.lateralOffset.toFixed(1)]) }; })() }));
+    ride: (() => { const r = window._game.achievements.ride || {}; const cm = window._game.collectibleManager, g = window._game; return { strip: +(r.stripBest || 0).toFixed(1), steady: +(r.steadyBest || 0).toFixed(1), treeHits: r.treeHits, offroad: +(r.offroadT || 0).toFixed(1),
+      crashes: window.__ach.calls.filter(c => c[1] === 'crash').map(c => +c[0].toFixed(1)), cause: g._lastCrashCause || null, restarts: g.raceManager ? g.raceManager.restartCount : null, timeLeft: g.raceManager && g.raceManager.timeRemaining != null ? +g.raceManager.timeRemaining.toFixed(1) : null,
+      missed: ((cm && cm._items) || []).filter(i => !i.collected).map(i => [+i.absoluteD.toFixed(0), +i.lateralOffset.toFixed(1)]),
+      // the pylon nearest each missed present
+      beside: ((cm && cm._items) || []).filter(i => !i.collected).map(i => { const near = (g.obstacleManager._items || []).map(o => [+o.absoluteD.toFixed(0), +o.lateralOffset.toFixed(1), Math.abs(o.absoluteD - i.absoluteD)]).sort((a, b) => a[2] - b[2])[0]; return near ? [+i.absoluteD.toFixed(0), near[0], near[1]] : null; }) }; })() }));
   await s.close();
   return { T, st, ...info };
 }

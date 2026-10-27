@@ -573,6 +573,10 @@ async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', diffi
         if (!playing) roll *= Math.max(0, 1 - dt * 3);   // level out between rides (the countdown recentres)
         G.rate = ((roll - prev) / dt) * 180 / Math.PI; G.roll = roll;
         // pedal: alternate trigger pulls at the cadence (a quick squeeze the overlay shows)
+        // a scenario's brake (window.__gyBrake = { on, off } frames): both triggers held for `on` frames in every
+        // `on + off`, which bleeds speed (a 60 s calm ride on a road the bike would otherwise cross in 25)
+        const brk = window.__gyBrake;
+        if (playing && brk) { r.bt = (r.bt || 0) + 1; if ((r.bt % (brk.on + brk.off)) < brk.on) { G.l = G.r = 1; continue; } }
         if (playing) {
           r.t = (r.t || 0) + dt;
           r.acc += dt * (cw != null ? Number(window.__choreoCadence || 2.2) : cadence) * (1 + human * (0.07 * Math.sin(r.t * 1.45 + ri * 1.3) + 0.04 * Math.sin(r.t * 0.53 + 0.7)));   // slower through the beats: less drift

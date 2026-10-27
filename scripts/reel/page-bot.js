@@ -48,6 +48,9 @@ const reel = {
   _drive(b, dt) {
     const bike = b.getBike(); if (!bike) return;
     b.input._markActive();   // a rider who is riding (P2's lean is dropped after 10 s idle)
+    // a versus member's input is consumed by nobody (the game drains only its own P1 / P2): a tap would stay
+    // "pressed" for ever and the team's pedal controller would see one edge, so the bot releases it each frame
+    if (b.clearTaps) { b.input._leftTapped = false; b.input._rightTapped = false; }
     // pedal: alternate feet at the cadence; the stoker's tap lands 80 ms after the captain's (a "perfect" pair)
     if (b.pedal && game.state === 'playing') {
       // a human rhythm, not a metronome (seeded, so a take is reproducible): each stroke gets its own length
@@ -75,7 +78,8 @@ const reel = {
     const mean = mates.reduce((a, o) => a + this._swayOf(o, bike), 0) / mates.length;
     const target = clamp(steer + this._swayOf(b, bike) - this.swayComp * mean + b.extra, -1, 1);
     b.lean += (target - b.lean) * Math.min(1, dt * 12);   // a body, not a switch
-    b.leanOut = clamp(b.lean, -1, 1);
+    const lim = b.maxOut ?? 1;   // a gentle hand (Straight Shooter: a lean under the game's deadzone is not steering)
+    b.leanOut = clamp(b.lean, -lim, lim);
   },
 
   /**
@@ -138,13 +142,28 @@ const reel = {
     let ob = null;
     // b.collect === 'avoid': presents count as obstacles (clean beauty shots: no gold arch across the lens)
     const hazards = [...((om && om._items) || []), ...(b.collect === 'avoid' ? ((cm && cm._items) || []).filter(i => !i.collected) : [])];
+    const near = [];
     for (const it of hazards) {
       const ahead = it.absoluteD - at;
-      if (ahead > -1 && ahead < horizon && (!ob || it.absoluteD < ob.absoluteD)) ob = it;
+      if (ahead > -1 && ahead < horizon) { near.push(it); if (!ob || it.absoluteD < ob.absoluteD) ob = it; }
     }
-    if (ob && Math.abs((b._lane ?? 0) - ob.lateralOffset) < 1.7) {
-      const side = ob.lateralOffset > 0 ? -1 : 1;
-      return clamp(ob.lateralOffset + side * 1.7, -2.1, 2.1);
+    // a lane clear of every pylon in sight (a staggered pair needs one line through both, not two swerves)
+    const cur = b._lane ?? 0;
+    if (ob && near.some(it => Math.abs(cur - it.lateralOffset) < 1.7)) {
+      // ...and, when collecting, the side the next present is on (a swerve the wrong way loses it)
+      let want = cur;
+      if (b.collect === true || b.collect == null) {
+        const nxt = ((cm && cm._items) || []).find(it => !it.collected && it.absoluteD - at > 2 && it.absoluteD - at < 40);
+        if (nxt) want = nxt.lateralOffset;
+      }
+      let pick = null, best = -Infinity;
+      for (let lane = -2.1; lane <= 2.11; lane += 0.3) {
+        let clear = Infinity;
+        for (const it of near) clear = Math.min(clear, Math.abs(lane - it.lateralOffset));
+        const score = Math.min(clear, 1.9) * 2 - Math.abs(lane - want) * 0.4;
+        if (score > best) { best = score; pick = lane; }
+      }
+      return pick;
     }
     if (b.collect === true || b.collect == null) {
       let best = null;
@@ -153,7 +172,9 @@ const reel = {
         const ahead = it.absoluteD - at;
         if (ahead > 2 && ahead < 30 && (!best || it.absoluteD < best.absoluteD)) best = it;
       }
-      if (best && !(ob && Math.abs(best.lateralOffset - ob.lateralOffset) < 1.7)) return clamp(best.lateralOffset, -2, 2);
+      // a present beside a pylon is still worth the line when it comes well before or after the pylon (Daily Haul)
+      const room = Math.max(4, bike.speed * 1.0);   // the metres a swerve needs at this speed
+      if (best && !(ob && Math.abs(best.lateralOffset - ob.lateralOffset) < 1.7 && Math.abs(best.absoluteD - ob.absoluteD) < room)) return clamp(best.lateralOffset, -2, 2);
     }
     return b.offset || 0;
   },

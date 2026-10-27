@@ -79,9 +79,11 @@ async function openGarage(id, sc) {
 /** A click in the garage: the upgrade row `buy`, or REBUILD. */
 const garageClick = (page, sc) => page.evaluate((o) => {
   if (o.buy) { document.querySelector(`#sling-garage .sling-up[data-up="${o.buy}"]`).click(); return 'buy ' + o.buy; }
-  if (o.rebuild) { Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).find(b => /rebuild/i.test(b.textContent)).click(); return 'rebuild'; }
+  // REBUILD arms on the first press ("PRESS AGAIN ...") and rebuilds on the second
+  if (o.rebuild) { const b = document.querySelector('#sling-garage .sling-rebuild'); b.click(); return 'rebuild ' + b.textContent.slice(0, 24); }
   return 'nothing';
 }, { buy: sc.buy || null, rebuild: !!sc.rebuild });
+const ARM = 0.7;   // seconds between REBUILD's two presses
 
 /** One pass: the garage, a beat, the click, the toast. Returns what recordMoment returns. */
 export async function garageMoment(id, sc, { probe = false } = {}) {
@@ -92,14 +94,15 @@ export async function garageMoment(id, sc, { probe = false } = {}) {
   const pre = sc.pre ?? 1.5, post = sc.post ?? 3.0;
   if (probe) {
     await advance(page, pre);
-    const what = await garageClick(page, sc);
+    let what = await garageClick(page, sc);
+    if (sc.rebuild) { await advance(page, ARM); what += ' / ' + await garageClick(page, sc); }
     await advance(page, post);
     const toasts = await page.evaluate(() => window.__ach.toasts);
     await s.close();
     return { T: toasts[0] ? toasts[0][0] : null, st: { state: 'slingGarage', what }, toasts, earned: [] };
   }
-  const at = Math.round(pre * 60);
-  await take(`${id}_solo`, s, pre + post, async (i) => { if (i === at) console.log('  garage:', await garageClick(page, sc)); });
+  const at = Math.round(pre * 60), at2 = at + Math.round(ARM * 60);
+  await take(`${id}_solo`, s, pre + post, async (i) => { if (i === at || (sc.rebuild && i === at2)) console.log('  garage:', await garageClick(page, sc)); });
   return { pre, post, tag: `${id}_solo` };
 }
 
@@ -127,7 +130,9 @@ async function slingRide(id, sc) {
   // the rider bot: no pedalling (nothing to pedal here), lean only where the scenario steers for a lane
   await page.evaluate((o) => {
     const g = window._game, R = window.__reel;
-    R.attach(g.input, () => g.bike, { role: 'captain', pedal: false, sway: { amp: 0, freq: 0, phase: 0 }, steer: o.target ? 0.9 : 0, dodge: false, offset: 0, collect: false });
+    // no target: follow the road with a hand so light the game does not call it steering (Straight Shooter); the
+    // slingshot road bends after its first 80 m and a bike that never leans runs onto the grass and stalls
+    R.attach(g.input, () => g.bike, { role: 'captain', pedal: false, sway: { amp: 0, freq: 0, phase: 0 }, steer: 0.9, maxOut: o.target ? 1 : 0.2, dodge: false, offset: 0, collect: false });
     // the drag: finger down mid-screen, back (and aside) over 0.8 s, a short hold, let go
     const W = window.innerWidth, H = window.innerHeight, x0 = W / 2, y0 = H * 0.38;
     const dx = (o.side || 0) * 0.25 * W, dy = (o.pull ?? 1) * 0.3 * H;
@@ -166,10 +171,13 @@ async function slingPath(page, sc) {
     const fan1 = coins.find(c => Math.abs(c.absoluteD - (g1 - 6)) < 0.5), fan2 = coins.find(c => Math.abs(c.absoluteD - (g2 - 6)) < 0.5);
     const c1 = fan1 ? fan1.lateralOffset : [-1.6, 0, 1.6].find(l => !hay[0] || Math.abs(l - hay[0].offset) > 0.5);
     const c2 = fan2 ? fan2.lateralOffset : 0;
-    const path = [[0, c1]];
-    if (target === 'ramp') { const r = items.filter(i => i.kind === 'ramp').sort((a, b) => a.d - b.d)[0]; if (r) path.push([g1 + 10, r.offset]); }
-    else if (target === 'jackpot') { const j = items.find(i => i.kind === 'jackpot'); if (j) path.push([g1 + 10, j.offset]); }
-    else if (target === 'trail') { const t = coins.find(c => c.absoluteD > g2 + 20); path.push([g1 + 10, c2]); if (t) path.push([g2 + 15, t.lateralOffset]); }
+    const h1 = hay[0] ? hay[0].offset : null;
+    // the target's lane from the launch, unless gate 1's hay bale sits in it: then gate 1's coin lane first
+    const to = (lane, after) => (h1 != null && Math.abs(lane - h1) < 0.5) ? [[0, c1], [g1 + 6, lane]] : [[0, lane], ...(after || [])];
+    let path = [[0, c1]];
+    if (target === 'ramp') { const r = items.filter(i => i.kind === 'ramp').sort((a, b) => a.d - b.d)[0]; if (r) path = to(r.offset); }
+    else if (target === 'jackpot') { const j = items.find(i => i.kind === 'jackpot'); if (j) path = to(j.offset); }
+    else if (target === 'trail') { const t = coins.find(c => c.absoluteD > g2 + 20); path = [[0, c1], [g1 + 6, c2]]; if (t) path.push([g2 + 10, t.lateralOffset]); }
     return { path, items: items.map(i => [i.kind, +i.d.toFixed(1), i.offset]), coins: coins.length };
   }, sc.target);
   await bots(page, { path: p.path, dodge: false, collect: false });
@@ -222,7 +230,11 @@ const VERSUS_CSS = `#achievement-toast-container { zoom: 2.0; top: 11% !importan
 const versusState = (page) => page.evaluate(() => {
   const g = window._game, rigs = g.versusRigs || [], b = rigs[0] ? rigs[0].bike : g.bike;
   return { state: g.state, speed: +(b.speed || 0).toFixed(2), d: +(b.distanceTraveled || 0).toFixed(1), x: +(b._lateralOffset || 0).toFixed(2), fallen: !!b.fallen,
-    dist: rigs.map(r => +r.bike.distanceTraveled.toFixed(1)), half: rigs[0] && rigs[0].raceManager ? rigs[0].raceManager.raceDistance / 2 : null,
+    dist: rigs.map(r => +r.bike.distanceTraveled.toFixed(1)), speeds: rigs.map(r => +r.bike.speed.toFixed(1)),
+    taps: rigs.map(r => r.pedalCtrl && r.pedalCtrl.stats ? r.pedalCtrl.stats.totalTaps : null), power: rigs.map(r => r.pedalCtrl ? +(r.pedalCtrl.pedalPower || 0).toFixed(2) : null),
+    inputs: rigs.map(r => r.members.map(m => m.input === g.input ? 'P1' : (m.input === g.inputP2 ? 'P2' : 'own'))),
+    xs: rigs.map(r => +(r.bike._lateralOffset || 0).toFixed(2)), leans: rigs.map(r => +(r.bike.lean || 0).toFixed(2)), edge: rigs.map(r => +(r.bike._edgeIntensity || 0).toFixed(2)),
+    wob: rigs.map(r => +(r.bike.wobble || r.bike._wobble || 0).toFixed(2)), acc: rigs.map(r => r.pedalCtrl && r.pedalCtrl._lastResult ? +r.pedalCtrl._lastResult.acceleration.toFixed(2) : null), half: rigs[0] && rigs[0].raceManager ? rigs[0].raceManager.raceDistance / 2 : null,
     winner: g._versusWinner ? g._versusWinner.id : null,
     earned: [...(g.achievements?._earned?.keys?.() || [])].filter(i => !window.__achPre.includes(i)) };
 });
@@ -273,14 +285,16 @@ async function versusRide(id, sc) {
     }, SALT);
     await page.waitForFunction(() => window._game.mode === 'versus' && !!window._game.versusRigs && window._game.versusRigs.length === 2, { timeout: 180000 });
     await sleep(1500);
-    await page.evaluate((teams, human) => {
+    // REEL_TEAMS=3.4,3.4 / REEL_PHASE=0.37: an experiment's cadences, and team B's first-stroke offset
+    const teams = process.env.REEL_TEAMS ? process.env.REEL_TEAMS.split(',').map(c => ({ cadence: +c })) : (sc.teams || [{ cadence: 3.6 }, { cadence: 3.0 }]);
+    await page.evaluate((teams, human, phase) => {
       const g = window._game, R = window.__reel;
       g.versusRigs.forEach((rig, i) => rig.members.forEach((m, j) => {
         R.attach(m.input, () => rig.bike, { role: j ? 'stoker' : 'captain', cadence: (teams[i] || teams[0]).cadence, human, pedal: true, collect: false,
-          sway: { amp: 0, freq: 0, phase: 0 }, team: i });
+          sway: { amp: 0, freq: 0, phase: 0 }, team: i, clearTaps: true, acc: i ? phase : 0 });
       }));
       R.gameplayHud();
-    }, sc.teams || [{ cadence: 3.6 }, { cadence: 3.0 }], sc.human ?? 0);
+    }, teams, sc.human ?? 0, process.env.REEL_PHASE ? +process.env.REEL_PHASE : 0);
     await advance(page, 0.001);
     await anchor(page);
     return s;
@@ -304,6 +318,11 @@ export async function versusFind(id, sc, name) {
     await advance(page, 0.25);
     st = await versusState(page);
     await versusSteer(page, sc, st);
+    if (process.env.REEL_VDIAG && Math.round(t * 4) === 60) console.log('  vdiag', await page.evaluate(() => JSON.stringify(window._game.versusRigs.map(r => {
+      const b = r.bike, o = {}; for (const k of Object.keys(b)) { const v = b[k]; if (/speed|accel|drag|mass|tune|power|boost|coast|assist|resist|friction|surface|wobble|fallen|air/i.test(k) && (typeof v !== 'object' || v === null)) o[k] = typeof v === 'number' ? +v.toFixed(3) : v; }
+      return { stats: r.pedalCtrl && r.pedalCtrl.stats, power: r.pedalCtrl && r.pedalCtrl.pedalPower, last: r.pedalCtrl && r.pedalCtrl.lastPedal, bike: o, same: b === window._game.bike, preset: b.preset && b.preset.name };
+    }))));
+    if (Math.round(t * 4) % 20 === 0) console.log(`  versus t=${t.toFixed(0)} ${st.state} dist=${JSON.stringify(st.dist)} speeds=${JSON.stringify(st.speeds)} taps=${JSON.stringify(st.taps)} power=${JSON.stringify(st.power)} inputs=${JSON.stringify(st.inputs)} xs=${JSON.stringify(st.xs)} leans=${JSON.stringify(st.leans)} edge=${JSON.stringify(st.edge)} wob=${JSON.stringify(st.wob)}`);
     T = await page.evaluate((nm) => { const x = window.__ach.toasts.find(y => y[1] === nm); return x ? x[0] : null; }, name);
     if (T != null) break;
     if (['versusResults', 'lobby'].includes(st.state)) { if (++over > 40) break; }
