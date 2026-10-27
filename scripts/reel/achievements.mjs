@@ -17,7 +17,13 @@ import path from 'node:path';
 import { launch, record, encode, advance, sleep, ROOT, OUT } from './lib.mjs';
 import { installFakeWebHid, hidDevice, FACE_A } from '../lib/fake-webhid.mjs';
 
-const PORT = 8951;   // beside attraction.mjs (8941) and the other reel scripts
+const PORT = Number(process.env.REEL_PORT || 8951);   // beside attraction.mjs (8941) and the other reel scripts
+
+/** Seed Math.random in the page before any game script: with the salt pinned, two runs ride the same ride. */
+const seedRandom = (p) => p.evaluateOnNewDocument(() => {
+  let a = 0x9E3779B9;
+  Math.random = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+});
 const ASPECT = process.argv.includes('--aspect') ? process.argv[process.argv.indexOf('--aspect') + 1] : '16x9';
 const TALL = ASPECT === '9x16';
 // 9:16 is a phone-sized page (540x960 CSS px) at 2x, so the HUD, toast and result sheets read at phone size
@@ -61,7 +67,7 @@ async function solo({ keep, tutorial = false, level = 'grandma', difficulty = 'c
   sway = { amp: 0.25, freq: 0.3, phase: 0 }, collect = true, storage = {} } = {}) {
   const st = { ...BASE, tandemonium_show_solo: 'on', ...others(keep), ...storage };   // SOLO RIDE: one goose
   if (tutorial) st.tandemonium_tutorial_done = null;
-  const s = await launch({ ...VIEW, port: PORT, storage: st });
+  const s = await launch({ ...VIEW, port: PORT, storage: st, before: seedRandom });
   const { page } = s;
   await page.evaluate((pre) => { window.__achPre = pre; }, IDS.filter(i => i !== keep));
   await page.click('#tap-to-start').catch(() => {});
@@ -432,10 +438,10 @@ const GYRO_CSS = `
 // becomes a controller ROLL: gravity turned in the report's accelerometer + the matching gyro rate, closed-loop on
 // what the game reads back (InputManager.getMotionLean), so the steering is the game's own gyro path end to end.
 // Pedalling pulls the real triggers in the reports. No stick, D-pad or keyboard lean, ever.
-async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1 } = {}) {
+async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1, prep = null } = {}) {
   const st = { ...BASE, ...others(keep), tandemonium_controller_overlay: overlay ? 'on' : 'off', ...(solo ? { tandemonium_show_solo: 'on' } : {}), ...storage };
   const s = await launch({ ...VIEW, port: PORT, storage: st,
-    before: (p) => installFakeWebHid(p, solo ? [hidDevice.dualsenseUsb('ds')] : [hidDevice.dualsenseUsb('ds'), hidDevice.steamPuck('sc')]) });
+    before: async (p) => { await seedRandom(p); await installFakeWebHid(p, solo ? [hidDevice.dualsenseUsb('ds')] : [hidDevice.dualsenseUsb('ds'), hidDevice.steamPuck('sc')]); } });
   const { page } = s;
   await page.evaluate((pre) => { window.__achPre = pre; }, IDS.filter(i => i !== keep));
   // the live report writer: IMU (roll about the pad's forward axis) + analog triggers, per device
@@ -486,6 +492,7 @@ async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty
   await seat('ds', FACE_A.ds5Usb, () => window.__controllerManager.getSlot('P1').hidDevice?.__fakeKey === 'ds', 'P1 DualSense');
   if (!solo) await seat('sc', FACE_A.steam, () => !!window._game.lobby._localP2InputManager && window.__controllerManager.getSlot('P2').hidDevice?.__fakeKey === 'sc', 'P2 Steam Controller');
   console.log('  seated', JSON.stringify(await page.evaluate(() => ['P1', 'P2'].map(id => { const sl = window.__controllerManager.getSlot(id); return [id, sl.state, sl.driver?.entry?.name]; }))));
+  if (prep) await prep(page);   // achievements-all: a scenario's set-up (bike colour, ...) before the ride starts
   if (solo) {
     await page.evaluate(async (o) => {
       const g = window._game, L = g.lobby, { getLevelById } = await import('/js/race-config.js');
@@ -515,6 +522,8 @@ async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty
     document.getElementById('btn-start-ride').click();
     Date.now = real;
   }, SALT);
+  // Today's Road asks practice or ranked before it starts (D-2): practice (the capture has no server)
+  if (!solo) { await sleep(400); await page.evaluate(() => { const o = document.getElementById('daily-mode-overlay'); if (o && o.style.display !== 'none' && o.offsetParent !== null) document.getElementById('btn-daily-practice')?.click(); }); }
   await page.waitForFunction((m) => window._game.mode === m && window._game.bike.modelLoaded && window._game.bike.goose, { timeout: 120000 }, solo ? 'solo' : 'local');
   // the rider bots work out the lean each rider wants; a hook turns that into a controller roll + trigger pulls
   await page.evaluate((sign, solo, steer, cadence, human) => {
@@ -888,10 +897,15 @@ SHOTS.probe_tut_together = async () => {
   }
   await s.close();
 };
-const want = (process.argv[2] || '').split(',').filter(Boolean);
-for (const k of want) {
-  if (!SHOTS[k]) { console.log('no shot', k); continue; }
-  console.log('== shot', k, ASPECT);
-  try { await SHOTS[k](); } catch (e) { console.log('  FAILED', k, e.stack); }
+// achievements-all.mjs (the other 95) builds on these
+export { SHOTS, VIEW, ASPECT, TALL, PORT, BASE, SALT, AOUT, IDS, others, TOAST_CSS, state, solo, together, gyroCoop, installLogs, renderAudio, take, until, cam, bots, leadIn, STILL, TUT_PATH };
+
+if (process.argv[1] && import.meta.url === (await import('node:url')).pathToFileURL(process.argv[1]).href) {
+  const want = (process.argv[2] || '').split(',').filter(Boolean);
+  for (const k of want) {
+    if (!SHOTS[k]) { console.log('no shot', k); continue; }
+    console.log('== shot', k, ASPECT);
+    try { await SHOTS[k](); } catch (e) { console.log('  FAILED', k, e.stack); }
+  }
+  process.exit(0);
 }
-process.exit(0);
