@@ -27,7 +27,7 @@ const run = (n) => ({ days: n, dayList: 'rel:' + n, lastDay: 'rel:1' });
 const slowRecord = { 'grandma|adventurous|coop': { timeMs: 240000, bestMedal: null, helped: false } };
 
 const finish = { over: true, pre: 7.5, toastLead: 2.6 };   // a finish reel: the ride to the line, the toast over it, the sweep
-const tally = { pre: 3.0, post: 3.0 };                     // the toast comes with a result sheet (Slingshot, versus)
+const tally = { pre: 5.5, post: 3.0 };                     // the toast comes with the Slingshot's STAGE GOAL sheet: the roll up to the flag, then the sheet
 const start = { pre: 1.0, post: 3.5 };                     // the toast comes at GO
 const crashAt = (dist) => async (page) => { /* placeholder: the bot steers into the next pylon after `dist` */ page.__crashAt = dist; };
 const WOBBLE = { amp: 0.45, freq: 0.32, phase: 0 };        // a bigger sway than the default human (0.25): visible lean and wobble
@@ -55,7 +55,7 @@ export const SCENARIOS = {
   // ── Levels and medals (Grandma's, 250 m) ──
   home_sweet: { moment: 'Grandma\'s last 100 m from beside the riders, over the line, the presents flying onto her pile', seed: {}, outfit: 'cyclists', cam: 'side', salt: 432222, ...finish },
   perfect_1k: { moment: 'A clean run: no crash, no restart, the Fancy pair steady to the line and the finish sweep', seed: {}, bots: { sway: STILL }, outfit: 'fancy', salt: 433333, ...finish },
-  grandma_bronze: { moment: 'A gentle pace to Grandma\'s line (inside 90% of the clock), the Georgian pair, high and wide', seed: {}, difficulty: 'chill', human: 0, bots: { sway: STILL, collect: false }, outfit: 'georgian', cam: 'high', noPresents: true, maxSpeed: 3.35, salt: 434444, ...finish },   // Chill at 3.35 m/s: the segment timer (62 m in 19.4 s on Chill, no carry-over) wants 3.2+, bronze (75-94 s) wants 3.3-; Adventurous has no such pace, and a 3.8 m/s tandem falls there
+  grandma_bronze: { moment: 'A gentle pace to Grandma\'s line (inside 90% of the clock), the Georgian pair from beside', seed: {}, difficulty: 'chill', human: 0, bots: { sway: STILL, collect: false }, outfit: 'georgian', cam: 'side', noPresents: true, maxSpeed: 3.35, salt: 434444, ...finish },   // Chill at 3.35 m/s: the segment timer (62 m in 19.4 s on Chill, no carry-over) wants 3.2+, bronze (75-94 s) wants 3.3-; Adventurous has no such pace, and a 3.8 m/s tandem falls there
   grandma_silver: { moment: 'A brisker pace to the line (inside 72%), from behind the stoker\'s shoulder', seed: {}, human: 0, bots: { sway: STILL, collect: false }, noGusts: true, cam: 'quarter', noPresents: true, maxSpeed: 4.8, salt: 435555, ...finish },
   grandma_gold: { moment: 'Flat out to Grandma\'s line (inside 55% of the clock), the Cyclists sprinting, a slow swing from beside to behind', seed: {}, cadence: 3.8, bots: { sway: STILL }, outfit: 'cyclists', cam: 'orbit', salt: 436677, ...finish },
   daily_gold: { moment: 'Today\'s Road at a gold pace, the Fancy pair, the geese coming at the lens', seed: {}, level: 'daily', cadence: 3.8, bots: { sway: STILL }, outfit: 'fancy', cam: 'front', ...finish },
