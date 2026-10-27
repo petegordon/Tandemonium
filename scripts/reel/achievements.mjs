@@ -440,11 +440,11 @@ const GYRO_CSS = `
 // Pedalling pulls the real triggers in the reports. No stick, D-pad or keyboard lean, ever.
 async function gyroCoop(o = {}) {
   const st0 = { ...BASE, ...others(o.keep || 'look_no_thumbs'), tandemonium_controller_overlay: o.overlay === false ? 'off' : 'on', ...(o.solo ? { tandemonium_show_solo: 'on' } : {}), ...(o.storage || {}) };
-  const s = await launch({ ...VIEW, port: PORT, storage: st0,
+  const s = await launch({ ...VIEW, port: PORT, storage: st0, query: o.query || '',
     before: async (p) => { await seedRandom(p); await installFakeWebHid(p, o.solo ? [hidDevice.dualsenseUsb('ds')] : [hidDevice.dualsenseUsb('ds'), hidDevice.steamPuck('sc')]); } });
   try { return await gyroCoopOn(s, o); } catch (e) { await s.close().catch(() => {}); throw e; }
 }
-async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1, prep = null } = {}) {
+async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1, prep = null, start = 'ride' } = {}) {
   const { page } = s;
   await page.evaluate((pre) => { window.__achPre = pre; }, IDS.filter(i => i !== keep));
   // the live report writer: IMU (roll about the pad's forward axis) + analog triggers, per device
@@ -496,6 +496,15 @@ async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', diffi
   if (!solo) await seat('sc', FACE_A.steam, () => !!window._game.lobby._localP2InputManager && window.__controllerManager.getSlot('P2').hidDevice?.__fakeKey === 'sc', 'P2 Steam Controller');
   console.log('  seated', JSON.stringify(await page.evaluate(() => ['P1', 'P2'].map(id => { const sl = window.__controllerManager.getSlot(id); return [id, sl.state, sl.driver?.entry?.name]; }))));
   if (prep) await prep(page);   // achievements-all: a scenario's set-up (bike colour, ...) before the ride starts
+  if (solo && start === 'garage') {
+    // the Slingshot (achievement-modes.mjs): SOLO -> the Slingshot card -> the garage; the scenario takes it from there
+    await page.evaluate(() => document.getElementById('btn-solo').click());
+    await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card-slingshot'), { timeout: 20000 });
+    await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
+    await page.waitForFunction(() => window._game.state === 'slingGarage', { timeout: 20000 });
+    await sleep(300);
+    return s;
+  }
   if (solo) {
     await page.evaluate(async (o) => {
       const g = window._game, L = g.lobby, { getLevelById } = await import('/js/race-config.js');

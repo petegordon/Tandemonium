@@ -53,11 +53,11 @@ export const SCENARIOS = {
   daily_gold: { seed: {}, level: 'daily', cadence: 3.8, bots: { sway: STILL }, ...finish },
   all_gold: { seed: { golds: ['daily'] }, cadence: 3.8, bots: { sway: STILL }, ...finish },   // Grandma's gold completes the set
   adventurer: { seed: {}, difficulty: 'adventurous', bots: { sway: STILL }, ...finish },
-  daredevil: { seed: {}, difficulty: 'daredevil', cadence: 2.6, human: 0, bots: { sway: STILL, collect: false, steer: 0.7 }, ...finish },
+  daredevil: { seed: {}, difficulty: 'daredevil', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false, dodge: true }, ...finish },
 
   // ── Clean riding ──
-  steady_hands: { seed: {}, level: 'daily', cadence: 2.0, human: 0, bots: { sway: STILL, steer: 0.5, collect: false }, pre: 2.5, post: 3 },   // 500 m gently: > 60 s, small leans
-  centerline: { seed: {}, level: 'daily', cadence: 2.2, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 1.3 }, pre: 2.5, post: 3 },
+  steady_hands: { seed: {}, level: 'daily', cadence: 2.9, human: 0, bots: { sway: STILL, collect: false }, pre: 2.5, post: 3 },   // 500 m at a gentle pace: > 60 s of calm riding (a loose steer wanders onto the grass and times out)
+  centerline: { seed: {}, level: 'daily', cadence: 2.9, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 1.1 }, pre: 2.5, post: 3 },   // the longer road: 30 s on the strip
   no_offroad: { seed: {}, bots: { sway: STILL }, ...finish },
   no_trees_daily: { seed: {}, level: 'daily', bots: { sway: STILL }, ...finish },
   new_best: { seed: {}, storage: { tandemonium_records: JSON.stringify(slowRecord) }, ...finish },
@@ -73,27 +73,27 @@ export const SCENARIOS = {
   collector: { seed: {}, level: 'daily', human: 0, bots: { collect: true, sway: STILL }, pre: 2.0, post: 3 },
   hoarder: { seed: {}, bots: { collect: true, sway: STILL }, ...finish },
   presents_100: { seed: { pickups: 99, boosts: 30 }, bots: { collect: true }, pre: 2.0, post: 3 },
-  daily_haul: { seed: {}, level: 'daily', human: 0, cadence: 3.0, bots: { collect: true, sway: STILL, dodge: false }, ...finish },
+  daily_haul: { seed: {}, level: 'daily', human: 0, cadence: 3.4, bots: { collect: true, sway: STILL, dodge: false }, ...finish },   // slower, and straight through the pylons' lanes, so no present is skipped
 
   // ── Chaos Coins (the payout at the finish) ──
   coin_first: { seed: {}, ...finish },
   coins_1000: { seed: { coinsEarned: 990 }, ...finish },
   coins_10000: { seed: { coinsEarned: 9990 }, ...finish },
   payday: { seed: {}, cadence: 3.8, bots: { collect: true, sway: STILL }, ...finish },   // gold + no crashes + every present ≈ 227 coins
-  first_upgrade: { todo: 'the garage (Slingshot) UI: buy an upgrade' },
-  max_upgrade: { todo: 'the garage UI: max one upgrade' },
-  garage_royalty: { todo: 'the garage UI: max every upgrade' },
-  big_spender: { todo: 'the garage UI: spend 1,000 coins' },
-  rebuilt: { todo: 'the garage UI: rebuild (prestige)' },
-  ship_of_theseus: { todo: 'the garage UI: rebuild 5 times' },
+  first_upgrade: { kind: 'garage', seed: {}, wallet: { coins: 120 }, buy: 'sling' },
+  max_upgrade: { kind: 'garage', seed: { upgrades: 9 }, wallet: { coins: 4000, lv: { sling: 9, wheels: 3 } }, buy: 'sling' },          // the tenth band
+  garage_royalty: { kind: 'garage', seed: { upgrades: 27, maxedAny: true }, wallet: { coins: 4000, lv: { sling: 10, wheels: 10, magnet: 7 } }, buy: 'magnet' },
+  big_spender: { kind: 'garage', seed: { upgrades: 12, coinsSpent: 980 }, wallet: { coins: 400, lv: { sling: 2 } }, buy: 'wheels' },   // 70 coins takes it past 1,000
+  rebuilt: { kind: 'garage', seed: { upgrades: 28, maxedAny: true, maxedAll: true }, wallet: { coins: 4000, lv: { sling: 10, wheels: 10, magnet: 8 } }, rebuild: true },
+  ship_of_theseus: { kind: 'garage', seed: { upgrades: 140, maxedAny: true, maxedAll: true, rebuilds: 4 }, wallet: { ...{ coins: 4000, lv: { sling: 10, wheels: 10, magnet: 8 } }, rebuilds: 4 }, rebuild: true },
 
   // ── Today's Road ──
   daily_first: { todo: 'a ranked Today\'s Road needs the server (the capture blocks the network)' },
   daily_streak_3: { seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
   daily_streak_7: { seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
   daily_streak_30: { seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
-  daily_share: { seed: {}, level: 'daily', share: true, pre: 2.0, post: 3.0 },         // the Share button on the result sheet
-  daily_practice_10: { seed: { dailyPractice: 9 }, level: 'daily', ...finish },
+  daily_share: { seed: {}, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, share: true, pre: 2.0, post: 3.0 },   // the Share button on the result sheet
+  daily_practice_10: { seed: { dailyPractice: 9 }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, ...finish },
 
   // ── Riding together ──
   perfect_sync: { seed: {}, human: 0, pre: 2.5, post: 3 },                 // two riders answering each other's beat
@@ -102,17 +102,21 @@ export const SCENARIOS = {
   pair_100km: { seed: {}, pairDistance: 99900, ...finish },
   coop_first: { seed: {}, ...finish },
   social_goose: { seed: { partners: ['goose-a', 'goose-b'], coopFinishes: 2 }, ...finish },
-  standing_date: { seed: {}, level: 'daily', pairWeeks: 3, ...finish },   // this week's Today's Road makes the 4th week in a row
+  standing_date: { seed: {}, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, pairWeeks: 3, ...finish },   // this week's Today's Road makes the 4th week in a row
 
   // ── Versus (its own rig) ──
-  versus_first: { todo: 'versus rig' }, versus_win: { todo: 'versus rig' }, versus_2v2: { todo: 'versus rig' },
-  versus_close: { todo: 'versus rig' }, versus_comeback: { todo: 'versus rig' }, versus_10: { todo: 'versus rig' },
+  versus_first: { kind: 'versus', seed: {}, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...finish },
+  versus_win: { kind: 'versus', seed: { versusRaces: 3 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...finish },
+  versus_2v2: { kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, players: 4, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...finish },
+  versus_close: { kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, teams: [{ cadence: 3.45 }, { cadence: 3.4 }], ...finish },   // a wheel's width
+  versus_comeback: { kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, teams: [{ cadence: 2.8 }, { cadence: 3.4 }], comeback: [4.4, 2.6], ...finish },   // behind at halfway, then the chase
+  versus_10: { kind: 'versus', seed: { versusRaces: 12, versusWins: 9 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...finish },
 
   // ── Chaos ──
   crashes_10: { seed: { crashes: 9 }, crash: 90, pre: 2.0, post: 3.5 },
   false_start: { seed: {}, difficulty: 'daredevil', cadence: 4.5, falseStart: true, pre: 1.5, post: 3.5 },   // lean out hard at GO (chill's safety clamp won't let a lean crash)
-  so_close: { seed: {}, difficulty: 'daredevil', leanOutAt: 243, pre: 2.0, post: 3.5 },   // over they go within 10 m of the line
-  weathered: { seed: {}, difficulty: 'adventurous', cadence: 3.0, human: 0, bots: { sway: STILL, collect: false }, pre: 3.0, post: 3 },
+  so_close: { todo: 'a crash within 10 m of the line: a full lean at speed turns rather than falls; needs a pylon by the line or a tree hit' },
+  weathered: { seed: {}, query: '?disrupt=gust', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false }, pre: 3.0, post: 3 },   // the game's own debug road: one gust at 70 m, ridden out
   gone_with_wind: { seed: { gusts: 9 }, difficulty: 'adventurous', bots: { sway: STILL }, pre: 2.0, post: 3 },
 
   // ── Exploring ──
@@ -129,12 +133,22 @@ export const SCENARIOS = {
   grandma_yellow: { seed: {}, bike: 'bike_yellow', ...finish },
 
   // ── Slingshot (its own mode: the garage, a drag, the flight) ──
-  sling_first: { todo: 'slingshot rig' }, sling_stage1: { todo: 'slingshot rig' }, sling_stage3: { todo: 'slingshot rig' },
-  sling_stage5: { todo: 'slingshot rig' }, sling_stage7: { todo: 'slingshot rig' }, sling_500: { todo: 'slingshot rig' },
-  sling_1000: { todo: 'slingshot rig' }, big_air: { todo: 'slingshot rig' }, frequent_flyer: { todo: 'slingshot rig' },
-  jackpot: { todo: 'slingshot rig' }, double_down: { todo: 'slingshot rig' }, full_trail: { todo: 'slingshot rig' },
-  straight_shooter: { todo: 'slingshot rig' }, medal_key: { seed: {}, cadence: 3.8, bots: { sway: STILL }, ...finish },
-  todays_launch: { todo: 'slingshot rig' }, launch_week: { todo: 'slingshot rig' },
+  sling_first: { kind: 'sling', seed: {}, wallet: { coins: 0 }, pull: 1, pre: 2.5, post: 3.5 },                                        // the bands let go
+  sling_stage1: { kind: 'sling', seed: { slingLaunches: 2 }, wallet: { coins: 60 }, pull: 1, ...finish },                             // 300 m on stock bands (a full pull rolls ~340)
+  sling_stage3: { kind: 'sling', seed: { slingLaunches: 9, slingStage: 2 }, sling: { stage: 3, best: 430, runs: 9 }, wallet: { coins: 300, lv: { sling: 4, wheels: 4 } }, pull: 1, ...finish },
+  sling_stage5: { kind: 'sling', seed: { slingLaunches: 20, slingStage: 4 }, sling: { stage: 5, best: 680, runs: 20 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 500, lv: { sling: 7, wheels: 7 } }, pull: 1, ...finish },
+  sling_stage7: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 6 }, sling: { stage: 7, best: 920, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 50000, bestMedal: 'gold', helped: false } }, wallet: { coins: 800, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },
+  sling_500: { kind: 'sling', seed: { slingLaunches: 9, slingStage: 2, slingBest: 430 }, sling: { stage: 3, best: 430, runs: 9 }, wallet: { coins: 300, lv: { sling: 4, wheels: 4 } }, pull: 1, ...finish },   // stage 3's goal is 540 m
+  sling_1000: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 6, slingBest: 920 }, sling: { stage: 7, best: 920, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 50000, bestMedal: 'gold', helped: false } }, wallet: { coins: 800, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },   // stage 7's goal is 1,050 m
+  big_air: { kind: 'sling', seed: { slingLaunches: 5, slingStage: 1 }, sling: { stage: 2, best: 310, runs: 5 }, wallet: { coins: 200, lv: { sling: 6, wheels: 4 } }, pull: 1, target: 'ramp', pre: 2.5, post: 3.0 },   // the ramp before gate 2, at speed
+  frequent_flyer: { kind: 'sling', seed: { slingLaunches: 60, slingStage: 3, bigAirs: 24 }, sling: { stage: 4, best: 600, runs: 60 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 500, lv: { sling: 8, wheels: 6 } }, pull: 1, target: 'ramp', pre: 2.5, post: 3.0 },
+  jackpot: { kind: 'sling', seed: { slingLaunches: 6, slingStage: 1 }, sling: { stage: 2, best: 310, runs: 6 }, wallet: { coins: 200, lv: { sling: 3, wheels: 2 } }, pull: 1, target: 'jackpot', pre: 2.5, post: 3.5 },   // the billboard past gate 2
+  double_down: { kind: 'sling', seed: { slingLaunches: 30, slingStage: 4, jackpots: 2 }, sling: { stage: 5, best: 700, runs: 30 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 500, lv: { sling: 6, wheels: 5 } }, daily: true, pull: 1, target: 'jackpot', ...finish },   // Today's Launch: the jackpot on a day's best
+  full_trail: { kind: 'sling', seed: { slingLaunches: 4, slingStage: 1 }, sling: { stage: 2, best: 310, runs: 4 }, wallet: { coins: 200, lv: { sling: 5, wheels: 4 } }, pull: 1, target: 'trail', ...finish },   // the first trail past gate 2, all five
+  straight_shooter: { kind: 'sling', seed: { slingLaunches: 3 }, wallet: { coins: 60 }, pull: 1, ...finish },                           // 300 m, hands off
+  medal_key: { seed: {}, cadence: 3.8, bots: { sway: STILL }, ...finish },
+  todays_launch: { kind: 'sling', seed: { slingLaunches: 12, slingStage: 3 }, sling: { stage: 4, best: 560, runs: 12 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 300, lv: { sling: 5, wheels: 4 } }, daily: true, pull: 0.55, ...finish },   // a lazy pull: a short flight, the day's first launch
+  launch_week: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 3, launchDays: 'rel:6' }, sling: { stage: 4, best: 560, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 300, lv: { sling: 5, wheels: 4 } }, daily: true, pull: 0.55, ...finish },
 };
 
 /** The six with hand-made shots in achievements.mjs (kickoff, learner, ...): not here. */

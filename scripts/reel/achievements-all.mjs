@@ -17,6 +17,7 @@ import path from 'node:path';
 import { advance, sleep, OUT } from './lib.mjs';
 import { ASPECT, IDS, AOUT, together, take, until, cam, bots, leadIn, state as rideState } from './achievements.mjs';
 import { SCENARIOS, HAND_MADE } from './achievement-scenarios.mjs';
+import { garageMoment, slingFind, slingRecord, versusFind, versusRecord, storageOf, seedStats } from './achievement-modes.mjs';
 
 const args = process.argv.slice(2);
 const PROBE = args.includes('--probe');
@@ -32,32 +33,17 @@ function wanted(spec) {
   return spec.split(',').filter(Boolean);
 }
 
-/** Storage for a scenario: the seeded lifetime stats (v2) and anything else it names. */
-function storageFor(sc) {
-  const st = { ...(sc.storage || {}) };
-  if (sc.seed) st.tandemonium_achievement_stats = JSON.stringify({ v: 2, ...sc.seed });
-  return st;
-}
+/** Storage for a scenario: the seeded lifetime stats (v2), the wallet / Slingshot save / records, anything else it names. */
+const storageFor = storageOf;
 
 /** Launch the ride for a scenario (co-op rig), apply its bots / prep, and anchor the virtual clock. */
 async function ride(id, sc) {
   const s = await together(id, {
     level: sc.level || 'grandma', difficulty: sc.difficulty || (sc.crash ? 'adventurous' : 'chill'), cadence: sc.cadence || 3.4,
-    human: sc.human == null ? 1 : sc.human, storage: storageFor(sc),
+    human: sc.human == null ? 1 : sc.human, storage: storageFor(sc), query: sc.query || '',
     prep: async (page) => {
       // day keys in the seed ('rel:k'): the game's own dailyKey (its rollover hour), then the stats are re-read
-      if (sc.seed && JSON.stringify(sc.seed).includes('rel:')) await page.evaluate(async (seed) => {
-        const { dailyKey } = await import('/js/daily-seed.js');
-        const key = (k) => dailyKey(new Date(Date.now() - k * 86400000));
-        const fix = (v) => (typeof v === 'string' && v.startsWith('rel:')) ? key(+v.slice(4)) : v;
-        const out = { v: 2 };
-        for (const [k, v] of Object.entries(seed)) {
-          if (k === 'dayList' && typeof v === 'string') { const n = +v.slice(4); out[k] = Array.from({ length: n }, (_, i) => key(n - i)); }
-          else out[k] = fix(v);
-        }
-        localStorage.setItem('tandemonium_achievement_stats', JSON.stringify(out));
-        window._game.achievements.reload();
-      }, sc.seed);
+      if (sc.seed && JSON.stringify(sc.seed).includes('rel:')) await seedStats(page, sc.seed);
       if (sc.bike) await page.evaluate((k) => { window._game.lobby.selectedPresetKey = k; }, sc.bike);
       // a pair streak: Today's Road ridden with this partner in each of the last N ISO weeks (the daily save)
       if (sc.pairWeeks) await page.evaluate(async (n) => {
@@ -131,7 +117,10 @@ async function findMoment(id, sc, name) {
     if (['victory', 'gameover', 'lobby'].includes(st.state)) { if (++over > 40) break; }
   }
   const info = await page.evaluate(() => ({ earned: [...(window._game.achievements?._earned?.keys?.() || [])].filter(i => !window.__achPre.includes(i)),
-    toasts: window.__ach.toasts, medal: window._game._lastFinish?.medal || null, pair: window._game._lastPairSummary || null, partner: (() => { try { return window._game._partnerKey(); } catch (e) { return null; } })() }));
+    toasts: window.__ach.toasts, medal: window._game._lastFinish?.medal || null, pair: window._game._lastPairSummary || null, partner: (() => { try { return window._game._partnerKey(); } catch (e) { return null; } })(),
+    // the ride's own numbers, for tuning a scenario that missed
+    ride: (() => { const r = window._game.achievements.ride || {}; const cm = window._game.collectibleManager; return { strip: +(r.stripBest || 0).toFixed(1), steady: +(r.steadyBest || 0).toFixed(1), treeHits: r.treeHits, offroad: +(r.offroadT || 0).toFixed(1),
+      missed: ((cm && cm._items) || []).filter(i => !i.collected).map(i => [+i.absoluteD.toFixed(0), +i.lateralOffset.toFixed(1)]) }; })() }));
   await s.close();
   return { T, st, ...info };
 }
@@ -157,8 +146,12 @@ async function recordMoment(id, sc, T) {
     await steer(page, sc, st);
     if (sc.cam) await page.evaluate(() => { if (window._game.state !== 'playing' && window.__reel.cam) window.__reel.setCamera(null); });
   });
-  return { pre, post };
+  return { pre, post, tag };
 }
+
+// the other rigs (achievement-modes.mjs): the Slingshot, the garage, versus
+const FIND = { sling: slingFind, versus: versusFind };
+const RECORD = { sling: slingRecord, versus: versusRecord };
 
 const list = wanted(args.find(a => !a.startsWith('--')));
 const results = [];
@@ -170,12 +163,22 @@ for (const id of list) {
   console.log(`== ${id} (${name}) ${ASPECT}`);
   try {
     if (LEAD) await leadIn(id, id);
-    const m = await findMoment(id, sc, name);
-    console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'} state=${JSON.stringify(m.st)} earned=${JSON.stringify(m.earned)} partner=${m.partner} toasts=${JSON.stringify((m.toasts || []).map(t => [+(t[0] || 0).toFixed(2), t[1]]))}`);
-    if (m.T == null) { results.push({ id, failed: 'no toast', st: m.st, earned: m.earned }); continue; }
+    if (sc.kind === 'garage') {
+      // one pass: the garage, a beat, the click, the toast (nothing to find first)
+      if (PROBE) { const m = await garageMoment(id, sc, { probe: true }); console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'} ${JSON.stringify(m.st)} toasts=${JSON.stringify(m.toasts)}`); results.push(m.T == null ? { id, failed: 'no toast', st: m.st } : { id, T: m.T }); continue; }
+      const r = await garageMoment(id, sc);
+      const meta = JSON.parse(fs.readFileSync(path.join(AOUT, `${r.tag}-${ASPECT}.json`), 'utf8'));
+      const got = meta.toasts[0] ? meta.toasts[0][0] : null;
+      console.log(`  recorded ${r.pre + r.post} s, toast at ${got == null ? 'NONE' : got.toFixed(2)} (expected ~${r.pre + 0.1})`);
+      results.push(got == null ? { id, failed: 'no toast' } : { id, T: got, toastAt: got });
+      continue;
+    }
+    const m = await (FIND[sc.kind] || findMoment)(id, sc, name);
+    console.log(`  moment T=${m.T == null ? 'NONE' : m.T.toFixed(2) + ' s'} state=${JSON.stringify(m.st)} earned=${JSON.stringify(m.earned)} partner=${m.partner} toasts=${JSON.stringify((m.toasts || []).map(t => [+(t[0] || 0).toFixed(2), t[1]]))}${m.ride ? ' ride=' + JSON.stringify(m.ride) : ''}${m.run ? ' run=' + JSON.stringify(m.run) : ''}${m.winner ? ' winner=' + m.winner : ''}`);
+    if (m.T == null) { results.push({ id, failed: 'no toast', st: m.st, earned: m.earned, ride: m.ride }); continue; }
     if (PROBE) { results.push({ id, T: m.T, earned: m.earned }); continue; }
-    const r = await recordMoment(id, sc, m.T);
-    const metaPath = path.join(AOUT, `${id}_together-${ASPECT}.json`);
+    const r = await (RECORD[sc.kind] || recordMoment)(id, sc, m.T);
+    const metaPath = path.join(AOUT, `${r.tag}-${ASPECT}.json`);
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
     if (sc.atStart && !(meta.toasts[0] && meta.toasts[0][0] != null)) { meta.toasts = [[0, name]]; fs.writeFileSync(metaPath, JSON.stringify(meta)); }   // up from the first frame
     const got = meta.toasts[0] ? meta.toasts[0][0] : null;
