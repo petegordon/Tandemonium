@@ -291,13 +291,16 @@ async function versusRide(id, sc) {
     }, { level: sc.level || 'grandma', difficulty: sc.difficulty || 'chill' });
     if (hasRel(sc.seed)) await seedStats(page, sc.seed);
     if (sc.prep) await sc.prep(page);
+    // the versus rigs clone their geese from the lobby's bike (bike-model.js _initFromCloneGoose): with an outfit
+    // whose riders are still loading, the clones ride empty bikes — so the riders are seated before START RIDE
+    await page.waitForFunction(() => window._game.bike && window._game.bike.modelLoaded && !!window._game.bike.goose, { timeout: 120000 });
     await page.evaluate((salt) => {
       const real = Date.now;
       Date.now = () => Math.floor(real() / 1e6) * 1e6 + salt;
       document.getElementById('btn-start-ride').click();
       Date.now = real;
     }, SALT);
-    await page.waitForFunction(() => window._game.mode === 'versus' && !!window._game.versusRigs && window._game.versusRigs.length === 2, { timeout: 180000 });
+    await page.waitForFunction(() => window._game.mode === 'versus' && !!window._game.versusRigs && window._game.versusRigs.length === 2 && window._game.versusRigs.every(r => r.bike.modelLoaded && !!r.bike.goose), { timeout: 180000 });
     await sleep(1500);
     // REEL_TEAMS=3.4,3.4 / REEL_PHASE=0.37: an experiment's cadences, and team B's first-stroke offset
     const teams = process.env.REEL_TEAMS ? process.env.REEL_TEAMS.split(',').map(c => ({ cadence: +c })) : (sc.teams || [{ cadence: 3.6 }, { cadence: 3.0 }]);
