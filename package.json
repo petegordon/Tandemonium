@@ -11,6 +11,7 @@
     "check:controller-core": "node scripts/check-controller-core.js",
     "smoke:controller-overlay": "node scripts/smoke-controller-overlay.mjs",
     "smoke:physics": "node scripts/smoke-physics-fx.mjs",
+    "sim:ragdoll": "node scripts/ragdoll-sim.mjs",
     "download-vendors": "node scripts/download-vendors.js",
     "build-desktop": "node scripts/build-desktop.js",
     "package": "electron-forge package --platform win32 --arch x64",
@@ -65,6 +66,8 @@
     "smoke:online": "node scripts/smoke-online.mjs",
     "smoke:phone-coop": "node scripts/smoke-phone-coop.mjs",
     "smoke:solo-extras": "node scripts/smoke-solo-extras.mjs",
+    "smoke:fit": "node scripts/smoke-fit.mjs",
+    "fit-viewer": "node scripts/fit-viewer.mjs",
     "smoke:props": "node scripts/smoke-props-3d.mjs",
     "smoke:all": "node scripts/run-smokes.mjs"
   },
