@@ -114,11 +114,11 @@ export const SCENARIOS = {
 
   // ── Versus (its own rig) ──
   versus_first: { moment: 'Split screen: the first race, blue pulls clear on the last stretch, the toast over both halves, the line', kind: 'versus', seed: {}, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...finish },
-  versus_win: { moment: 'Split screen: the Cyclists in blue take the win at the line', kind: 'versus', seed: { versusRaces: 3 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], outfit: 'cyclists', ...finish },
+  versus_win: { moment: 'Split screen: blue takes the win at the line, the Victorian pairs', kind: 'versus', seed: { versusRaces: 3 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], ...finish },   // no outfit: the Cyclists did not load for a versus rig (empty bikes)
   versus_2v2: { moment: 'Split screen, four pads: two tandems a side in the Fancy outfits, the line', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, players: 4, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], outfit: 'fancy', ...finish },
   versus_close: { moment: 'Split screen: a wheel\'s width at the line, the Georgian pairs', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, teams: [{ cadence: 3.45 }, { cadence: 3.4 }], outfit: 'georgian', ...finish },   // a wheel's width
   versus_comeback: { moment: 'Split screen: behind at halfway, then the chase and the win, the toast over the catch', kind: 'versus', seed: { versusRaces: 4, versusWins: 2 }, teams: [{ cadence: 2.8 }, { cadence: 3.4 }], comeback: [4.4, 2.6], ...finish },   // behind at halfway, then the chase
-  versus_10: { moment: 'Split screen: the tenth win, the Cyclists clear at the line', kind: 'versus', seed: { versusRaces: 12, versusWins: 9 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], outfit: 'cyclists', ...finish },
+  versus_10: { moment: 'Split screen: the tenth win, the Georgian pairs, blue clear at the line', kind: 'versus', seed: { versusRaces: 12, versusWins: 9 }, teams: [{ cadence: 3.6 }, { cadence: 3.0 }], outfit: 'georgian', ...finish },
 
   // ── Chaos ──
   crashes_10: { moment: 'The tenth crash, lifetime: a pylon, the tumble, the toast as they get up', seed: { crashes: 9 }, crash: 90, pre: 2.0, post: 3.5 },

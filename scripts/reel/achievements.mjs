@@ -190,7 +190,11 @@ const bots = (page, patch) => page.evaluate((p) => { for (const b of window.__re
 async function take(name, s, seconds, perFrame = null) {
   const tag = `ach-${name}-${ASPECT}`;
   await record(s.page, tag, seconds, { perFrame: async (i, t) => {
-    if (i === 0) await s.page.evaluate(() => { window.__ach.t0 = window.__vclock.t; });
+    // the take's clock starts here: the sounds logged before it (the countdown, the first strokes, the versus
+    // "fight" clatter) would otherwise replay inside the take at their old times; a running bike keeps its hum
+    if (i === 0) await s.page.evaluate(() => { const A = window.__ach; A.t0 = window.__vclock.t;
+      A.calls = A.calls.some(c => c[1] === 'startBike') && !A.calls.some(c => c[1] === 'stopBike' && c[0] > A.calls.findLast(x => x[1] === 'startBike')[0]) ? [[0, 'startBike', A.calls.findLast(c => c[1] === 'startBike')[2]]] : [];
+      A.toasts = []; });
     if (perFrame) await perFrame(i, t);
   } });
   const clip = await encode(tag);
