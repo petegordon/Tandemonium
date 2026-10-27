@@ -3,8 +3,13 @@
 // Every reel is a brand-new browser profile riding solo with the bot, and records the real moment the game
 // awards the achievement and shows its own toast. Everything the same moment would ALSO award (a tutorial
 // finish earns four at once) is marked earned beforehand, so each reel shows only its own toast.
-//   node scripts/reel/achievements.mjs kickoff,learner,natural,madeit,goosedown --aspect 9x16|16x9
-//   node scripts/reel/achievements.mjs probe_tutorial|probe_geese|probe_audio
+//   node scripts/reel/achievements.mjs kickoff,learner,natural,madeit,goosedown --aspect 9x16|16x9     SOLO RIDE
+//   node scripts/reel/achievements.mjs kickoff_together,learner_together,... --aspect 9x16|16x9     RIDE TOGETHER
+//   node scripts/reel/achievements.mjs kickoff_lead,learner_lead,... --aspect 9x16|16x9             #506 lead-ins
+//   node scripts/reel/achievements.mjs nothumbs|nothumbs_solo --aspect 9x16|16x9                   #101 (gyro rig, NT_* env)
+//   node scripts/reel/achievements.mjs probe_tutorial|probe_geese|probe_gyro|probe_tiles|probe_choreo|probe_tut_together
+// Env: SALT (the ride's placement salt, default 424242), MI_DEG (Made It side camera), NT_* (Look, No Thumbs).
+// The full recipe per reel: tandemonium-trailers/achievement-reels/README.md "Repeat a reel".
 // Out: renders/reel/clips/ach-<shot>-<aspect>.mp4 (silent), renders/reel/ach/<shot>-<aspect>.wav (the game's own
 // sound effects for that footage, rendered offline from the logged audio calls) and .json (toast times).
 import fs from 'node:fs';
