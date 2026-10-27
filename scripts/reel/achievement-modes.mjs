@@ -162,7 +162,7 @@ async function slingRide(id, sc) {
 
 /** After the launch: the lane path for the scenario's target, from the course the game built. */
 async function slingPath(page, sc) {
-  if (!sc.target || page.__slingPathed) return;
+  if (page.__slingPathed) return;
   page.__slingPathed = true;
   const p = await page.evaluate((target) => {
     const g = window._game, items = (g._slingProps && g._slingProps.items) || [], coins = (g.collectibleManager && g.collectibleManager._items) || [];
@@ -174,7 +174,8 @@ async function slingPath(page, sc) {
     const h1 = hay[0] ? hay[0].offset : null;
     // the target's lane from the launch, unless gate 1's hay bale sits in it: then gate 1's coin lane first
     const to = (lane, after) => (h1 != null && Math.abs(lane - h1) < 0.5) ? [[0, c1], [g1 + 6, lane]] : [[0, lane], ...(after || [])];
-    let path = [[0, c1]];
+    // no target: gate 1's coin lane, gate 2's coin lane (no hay bale, no ramp, no jackpot billboard there), then the middle
+    let path = [[0, c1], [g1 + 6, c2], [g2 + 14, c2], [g2 + 45, 0]];   // the lane holds until the billboard (g2 + 8) is behind
     if (target === 'ramp') { const r = items.filter(i => i.kind === 'ramp').sort((a, b) => a.d - b.d)[0]; if (r) path = to(r.offset); }
     else if (target === 'jackpot') { const j = items.find(i => i.kind === 'jackpot'); if (j) path = to(j.offset); }
     else if (target === 'trail') { const t = coins.find(c => c.absoluteD > g2 + 20); path = [[0, c1], [g1 + 6, c2]]; if (t) path.push([g2 + 10, t.lateralOffset]); }
@@ -290,9 +291,14 @@ async function versusRide(id, sc) {
     await page.evaluate((teams, human, phase) => {
       const g = window._game, R = window.__reel;
       g.versusRigs.forEach((rig, i) => rig.members.forEach((m, j) => {
-        R.attach(m.input, () => rig.bike, { role: j ? 'stoker' : 'captain', cadence: (teams[i] || teams[0]).cadence, human, pedal: true, collect: false,
+        // presents boost whoever reaches them first, and the team behind finds them gone: both teams ride round them,
+        // so the cadences alone decide the race
+        R.attach(m.input, () => rig.bike, { role: j ? 'stoker' : 'captain', cadence: (teams[i] || teams[0]).cadence, human, pedal: true, collect: 'avoid',
           sway: { amp: 0, freq: 0, phase: 0 }, team: i, clearTaps: true, acc: i ? phase : 0 });
       }));
+      // no presents in a race: a boost for whoever reaches one first would decide it, not the pedalling
+      const cm = g.collectibleManager;
+      if (cm) { for (const it of cm._items || []) it.collected = true; for (const slot of cm._pool || []) for (const v of Object.values(slot)) if (v && v.isObject3D) v.visible = false; }
       R.gameplayHud();
     }, teams, sc.human ?? 0, process.env.REEL_PHASE ? +process.env.REEL_PHASE : 0);
     await advance(page, 0.001);

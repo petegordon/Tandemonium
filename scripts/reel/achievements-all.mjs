@@ -71,6 +71,10 @@ async function ride(id, sc) {
   const { page } = s;
   if (sc.bots) await bots(page, sc.bots);
   if (sc.brake) await page.evaluate((b) => { window.__gyBrake = b; }, sc.brake);
+  if (sc.desync) await page.evaluate((d) => { window.__gyDesync = d; }, sc.desync);
+  // no presents: a boost (from a present the line happens to cross) would double the pace of a ride that wants to be slow
+  if (sc.noPresents) await page.evaluate(() => { const cm = window._game.collectibleManager; if (!cm) return;
+    for (const it of cm._items || []) it.collected = true; for (const slot of cm._pool || []) for (const v of Object.values(slot)) if (v && v.isObject3D) v.visible = false; });
   await advance(page, 0.001);
   // the anchor: from here both passes see the same virtual time and the same random numbers (the lobby's own
   // animations consumed a different number of them before the ride, so Math.random is re-seeded here)
@@ -97,6 +101,32 @@ async function steer(page, sc, st) {
     else if (!page.__noPylon) { page.__noPylon = true; console.log('  crash: no pylon ahead of d', st.d); }
   }
   if (sc.crash && page.__crashed && st.fallen && !page.__recovered) { page.__recovered = true; await bots(page, { dodge: true, offset: 0 }); }
+  // Did It Myself: crash on pylon after pylon until the game offers ASSIST (the third crash in a segment brings the
+  // game-over sheet with the ASSIST button), RESTART without it, then ride clean to the line
+  if (sc.assist && !page.__assistDone) {
+    if (st.state === 'playing' && !st.fallen && (!page.__aim || page.__wasFallen)) {
+      page.__wasFallen = false;
+      const p = await page.evaluate((d) => {
+        // pylons past the first checkpoint only: a game-over before it rebuilds the race (and the ride tracker's offer
+        // with it), one after it resumes from the checkpoint
+        const from = Math.max(d + 12, (window._game.raceManager.checkpoints[0] || 62) + 10);
+        const items = (window._game.obstacleManager._items || []).filter(i => i.absoluteD > from && !i._hidden).sort((x, y) => x.absoluteD - y.absoluteD);
+        return items[0] ? { d: items[0].absoluteD, x: items[0].lateralOffset } : null;
+      }, st.d);
+      if (p) { page.__aim = p; await bots(page, { dodge: false, offset: p.x, path: null, collect: false, sway: { amp: 0, freq: 0, phase: 0 } }); console.log('  assist: aiming at the pylon', JSON.stringify(p), 'from d', st.d); }
+    }
+    if (st.fallen) page.__wasFallen = true;
+    // (the DDA counts game-overs in a segment, not crashes: ASSIST comes with the second game-over there)
+    if (st.state === 'gameover' && !page.__go) {
+      page.__go = true;
+      const offered = await page.evaluate(() => { const b = document.getElementById('assist-btn'); return !!b && b.style.display !== 'none'; });
+      console.log('  assist: game over, ASSIST offered =', offered);
+      await page.evaluate(() => document.getElementById('btn-restart').click());
+      if (offered) { page.__assistDone = true; await bots(page, { dodge: true, offset: 0, collect: false }); }
+      else page.__aim = null;   // keep crashing
+    }
+    if (st.state === 'playing') page.__go = false;
+  }
   // a crash on a pylon standing between crashWindow[0] and [1] metres (So Close: within 10 m of the line)
   if (sc.crashWindow && !page.__cw && st.d >= sc.crashWindow[0] - 70 && st.state === 'playing') {
     const p = await page.evaluate((w) => {
@@ -147,7 +177,8 @@ async function findMoment(id, sc, name) {
     toasts: window.__ach.toasts, medal: window._game._lastFinish?.medal || null, pair: window._game._lastPairSummary || null, partner: (() => { try { return window._game._partnerKey(); } catch (e) { return null; } })(),
     // the ride's own numbers, for tuning a scenario that missed
     ride: (() => { const r = window._game.achievements.ride || {}; const cm = window._game.collectibleManager, g = window._game; return { strip: +(r.stripBest || 0).toFixed(1), steady: +(r.steadyBest || 0).toFixed(1), treeHits: r.treeHits, offroad: +(r.offroadT || 0).toFixed(1),
-      crashes: window.__ach.calls.filter(c => c[1] === 'crash').map(c => +c[0].toFixed(1)), cause: g._lastCrashCause || null, restarts: g.raceManager ? g.raceManager.restartCount : null, timeLeft: g.raceManager && g.raceManager.timeRemaining != null ? +g.raceManager.timeRemaining.toFixed(1) : null,
+      crashes: window.__ach.calls.filter(c => c[1] === 'crash').map(c => +c[0].toFixed(1)), cause: g._lastCrashCause || null,
+      assist: { offered: r.assistOffered, used: r.assistUsed, weight: g._assistWeight || 0, ref: r.ref === g.raceManager }, restarts: g.raceManager ? g.raceManager.restartCount : null, timeLeft: g.raceManager && g.raceManager.timeRemaining != null ? +g.raceManager.timeRemaining.toFixed(1) : null,
       missed: ((cm && cm._items) || []).filter(i => !i.collected).map(i => [+i.absoluteD.toFixed(0), +i.lateralOffset.toFixed(1)]),
       // the pylon nearest each missed present
       beside: ((cm && cm._items) || []).filter(i => !i.collected).map(i => { const near = (g.obstacleManager._items || []).map(o => [+o.absoluteD.toFixed(0), +o.lateralOffset.toFixed(1), Math.abs(o.absoluteD - i.absoluteD)]).sort((a, b) => a[2] - b[2])[0]; return near ? [+i.absoluteD.toFixed(0), near[0], near[1]] : null; }) }; })() }));

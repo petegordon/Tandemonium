@@ -586,7 +586,9 @@ async function gyroCoopOn(s, { keep = 'look_no_thumbs', level = 'grandma', diffi
             if (r.acc >= r.need) {
               r.acc -= r.need; r.need = 1 + (r.rnd() - 0.5) * 0.26 * human; r.foot ^= 1; r.pull = 0.16;
               const o = riders[1];
-              if (o) { o.wait = 0.065 + r.rnd() * 0.03; o.nextFoot = r.foot ^ 1; }
+              // (window.__gyDesync: the stoker follows that much later instead: out of step, which the pair's pedal
+              // controller pays with speed, for the slow rides)
+              if (o) { o.wait = window.__gyDesync || (0.065 + r.rnd() * 0.03); o.nextFoot = r.foot ^ 1; }
             }
           } else if (r.wait != null) {
             // ...and the stoker follows each stroke ~80 ms later on the other foot, as a pair does (out-of-step

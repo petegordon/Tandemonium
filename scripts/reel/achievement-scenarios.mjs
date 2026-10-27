@@ -56,12 +56,12 @@ export const SCENARIOS = {
   daredevil: { seed: {}, difficulty: 'daredevil', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false, dodge: true }, ...finish },
 
   // ── Clean riding ──
-  steady_hands: { seed: {}, human: 0, bots: { sway: STILL, collect: false }, brake: { on: 40, off: 20 }, pre: 2.5, post: 3 },   // Grandma's with the brakes dragged (the bike tops out at any cadence): > 60 s of calm riding
-  centerline: { seed: {}, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 1.8 }, brake: { on: 30, off: 30 }, pre: 2.5, post: 3 },   // Grandma's at a crawl, dead centre: 30 s on the strip
+  steady_hands: { seed: {}, level: 'daily', human: 0, bots: { sway: STILL, collect: false }, noPresents: true, desync: 0.22, pre: 2.5, post: 3 },   // the long road, no presents to boost off, the pair out of step (slow): > 60 s of calm riding   // Grandma's with the brakes dragged (the bike tops out at any cadence): > 60 s of calm riding
+  centerline: { seed: {}, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 1.8 }, noPresents: true, desync: 0.22, pre: 2.5, post: 3 },   // Grandma's, no presents to boost off, the pair out of step (slow), dead centre: 30 s on the strip   // Grandma's at a crawl, dead centre: 30 s on the strip
   no_offroad: { seed: {}, bots: { sway: STILL }, ...finish },
   no_trees_daily: { seed: {}, level: 'daily', bots: { sway: STILL }, ...finish },
   new_best: { seed: {}, storage: { tandemonium_records: JSON.stringify(slowRecord) }, ...finish },
-  assist_free: { todo: 'ASSIST is offered after repeated crashes in one segment; the decline is a UI step (not scripted yet)' },
+  assist_free: { seed: {}, difficulty: 'adventurous', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false }, assist: true, ...finish },   // three crashes in the first segment bring the ASSIST offer; RESTART without it, then finish
 
   // ── Speed and boost ──
   speed_demon: { seed: {}, difficulty: 'daredevil', cadence: 4.0, bots: { collect: true, sway: STILL }, pre: 2.5, post: 3 },
@@ -136,7 +136,7 @@ export const SCENARIOS = {
   sling_first: { kind: 'sling', seed: {}, wallet: { coins: 0 }, pull: 1, pre: 2.5, post: 3.5 },                                        // the bands let go
   sling_stage1: { kind: 'sling', seed: { slingLaunches: 2 }, wallet: { coins: 60 }, pull: 1, ...finish },                             // 300 m on stock bands (a full pull rolls ~340)
   sling_stage3: { kind: 'sling', seed: { slingLaunches: 9, slingStage: 2 }, sling: { stage: 3, best: 430, runs: 9 }, wallet: { coins: 300, lv: { sling: 4, wheels: 4 } }, pull: 1, ...finish },
-  sling_stage5: { kind: 'sling', seed: { slingLaunches: 20, slingStage: 4 }, sling: { stage: 5, best: 680, runs: 20 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 500, lv: { sling: 7, wheels: 7 } }, pull: 1, ...finish },
+  sling_stage5: { kind: 'sling', seed: { slingLaunches: 20, slingStage: 4 }, sling: { stage: 5, best: 680, runs: 20 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 500, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },   // 780 m takes the full bands (a stock-ish bike stalls near 670)
   sling_stage7: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 6 }, sling: { stage: 7, best: 920, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 50000, bestMedal: 'gold', helped: false } }, wallet: { coins: 800, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },
   sling_500: { kind: 'sling', seed: { slingLaunches: 9, slingStage: 2, slingBest: 430 }, sling: { stage: 3, best: 430, runs: 9 }, wallet: { coins: 300, lv: { sling: 4, wheels: 4 } }, pull: 1, ...finish },   // stage 3's goal is 540 m
   sling_1000: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 6, slingBest: 920 }, sling: { stage: 7, best: 920, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 50000, bestMedal: 'gold', helped: false } }, wallet: { coins: 800, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },   // stage 7's goal is 1,050 m
