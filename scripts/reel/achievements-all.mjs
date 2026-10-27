@@ -50,10 +50,13 @@ async function ride(id, sc) {
       // the bike colour: the game paints from the lobby's preset OBJECT (selectedPreset), the key only names it for the stats
       if (sc.bike) await page.evaluate(async (k) => {
         const lb = window._game.lobby;
+        if (k === 'default') { lb.selectedPresetKey = 'default'; lb.selectedPreset = null; return; }   // the stock tandem
         if (!lb._presetData || !Object.keys(lb._presetData).length) lb._presetData = await (await fetch('tandem-3d/bike-presets.json')).json();
         if (!lb._presetData[k]) throw new Error('no bike preset ' + k);
         lb.selectedPresetKey = k; lb.selectedPreset = lb._presetData[k];
       }, sc.bike);
+      // no gusts: a slow or must-stay-on-the-road ride without the Adventurous disruptions
+      if (sc.noGusts) await page.evaluate(() => { window._game._overrideDisruptions = () => []; });
       // one gust at `gustAt` metres (the game's own ?disrupt=gust debug road, which URL tidying would drop)
       if (sc.gustAt) await page.evaluate(async (at) => {
         const { TELEGRAPH_S, DURATION, KIND } = await import('/js/disruptions.js');
@@ -304,6 +307,8 @@ for (const id of list) {
     const got = meta.toasts[0] ? meta.toasts[0][0] : null;
     // a finish reel keeps everything recorded: the cut window round the toast (and a span to drop), for edit.py (reels.json has no entry)
     if (r.over && got != null) { meta.window = { pre: +got.toFixed(3), post: +(meta.seconds - got - 0.02).toFixed(3), ...(r.cut ? { cut: r.cut.map(x => +x.toFixed(3)) } : {}) }; fs.writeFileSync(metaPath, JSON.stringify(meta)); }
+    // any other engine reel: the scenario's own pre / post round the toast (the take holds MARGIN more each side)
+    else if (got != null) { meta.window = { pre: +Math.min(sc.pre ?? 2.5, got).toFixed(3), post: +Math.min(sc.post ?? 3.0, meta.seconds - got - 0.02).toFixed(3) }; fs.writeFileSync(metaPath, JSON.stringify(meta)); }
     const expect = r.expect ?? r.pre;
     console.log(`  recorded ${(r.len ?? r.pre + r.post).toFixed(2)} s, toast at ${got == null ? 'NONE' : got.toFixed(2)} (expected ${expect.toFixed(2)})${m.cross != null ? ` line at ${m.cross.toFixed(2)} s, sheet at ${m.T.toFixed(2)} s` : ''}${r.cut ? ` cut ${JSON.stringify(r.cut.map(x => +x.toFixed(2)))}` : ''}`);
     results.push({ id, T: m.T, cross: m.cross, toastAt: got, drift: got == null ? null : +(got - expect).toFixed(2) });

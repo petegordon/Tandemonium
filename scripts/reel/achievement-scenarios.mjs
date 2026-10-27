@@ -15,6 +15,7 @@
 //   over      a finish reel: the toast is raised over the last `pre` seconds of the ride (`toastLead` s before the line),
 //             then the finish cinematic, out before the result sheet. `from: { mark: 'crash' | 'assist', hold }` opens on
 //             that mark instead, holds it, then jumps to the line.
+//   noGusts   no Adventurous gust disruptions (a slow ride, or one that must keep every wheel on the road)
 //   todo      not scripted yet (why)
 import { STILL } from './achievements.mjs';
 
@@ -54,9 +55,9 @@ export const SCENARIOS = {
   // ── Levels and medals (Grandma's, 250 m) ──
   home_sweet: { moment: 'Grandma\'s last 100 m from beside the riders, over the line, the presents flying onto her pile', seed: {}, outfit: 'cyclists', cam: 'side', salt: 432222, ...finish },
   perfect_1k: { moment: 'A clean run: no crash, no restart, the Fancy pair steady to the line and the finish sweep', seed: {}, bots: { sway: STILL }, outfit: 'fancy', salt: 433333, ...finish },
-  grandma_bronze: { moment: 'A gentle pace to Grandma\'s line (inside 90% of the clock), the Georgian pair, high and wide', seed: {}, outfit: 'georgian', cam: 'high', noPresents: true, maxSpeed: 3.8, salt: 434444, ...finish },
-  grandma_silver: { moment: 'A brisker pace to the line (inside 72%), from behind the stoker\'s shoulder', seed: {}, cam: 'quarter', noPresents: true, maxSpeed: 4.8, salt: 435555, ...finish },
-  grandma_gold: { moment: 'Flat out to Grandma\'s line (inside 55% of the clock), the Cyclists sprinting, a slow swing from beside to behind', seed: {}, cadence: 3.8, bots: { sway: STILL }, outfit: 'cyclists', cam: 'orbit', salt: 436666, ...finish },
+  grandma_bronze: { moment: 'A gentle pace to Grandma\'s line (inside 90% of the clock), the Georgian pair, high and wide', seed: {}, human: 0, bots: { sway: STILL, collect: false }, noGusts: true, outfit: 'georgian', cam: 'high', noPresents: true, maxSpeed: 3.8, salt: 434444, ...finish },   // a slow tandem tips over on Adventurous if the riders sway: still riders, no gusts
+  grandma_silver: { moment: 'A brisker pace to the line (inside 72%), from behind the stoker\'s shoulder', seed: {}, human: 0, bots: { sway: STILL, collect: false }, noGusts: true, cam: 'quarter', noPresents: true, maxSpeed: 4.8, salt: 435555, ...finish },
+  grandma_gold: { moment: 'Flat out to Grandma\'s line (inside 55% of the clock), the Cyclists sprinting, a slow swing from beside to behind', seed: {}, cadence: 3.8, bots: { sway: STILL }, outfit: 'cyclists', cam: 'orbit', salt: 436677, ...finish },
   daily_gold: { moment: 'Today\'s Road at a gold pace, the Fancy pair, the geese coming at the lens', seed: {}, level: 'daily', cadence: 3.8, bots: { sway: STILL }, outfit: 'fancy', cam: 'front', ...finish },
   all_gold: { moment: 'Today\'s Road already gold: Grandma\'s gold completes the set, the Georgian pair, from the right', seed: { golds: ['daily'] }, cadence: 3.8, bots: { sway: STILL }, outfit: 'georgian', cam: 'sideR', salt: 437777, ...finish },
   adventurer: { moment: 'Adventurous: the pair leaning and wobbling through the last pylons to the line, chase camera', seed: {}, difficulty: 'adventurous', bots: { sway: WOBBLE }, salt: 438888, ...finish },
@@ -65,7 +66,7 @@ export const SCENARIOS = {
   // ── Clean riding ──
   steady_hands: { moment: 'Sixty calm seconds at a capped pace, no lean past the shake, the toast mid-ride', seed: {}, human: 0, bots: { sway: STILL, collect: false }, noPresents: true, maxSpeed: 3.5, pre: 2.5, post: 3 },   // Grandma's at a capped 3.5 m/s, no presents to boost off: > 60 s of calm riding
   centerline: { moment: 'Thirty seconds dead on the centre strip, the Fancy pair, the toast mid-ride', seed: {}, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 2.0, gains: { kl: 0.16, kh: 0.55 } }, noPresents: true, maxSpeed: 6, outfit: 'fancy', pre: 2.5, post: 3 },   // Grandma's at a capped 6 m/s with a firmer hand, no presents to boost off, dead centre: 30 s on the strip
-  no_offroad: { moment: 'Never a wheel on the grass: the Georgian pair threading the last pylons to the line, high and wide', seed: {}, bots: { sway: STILL }, outfit: 'georgian', cam: 'high', salt: 441111, ...finish },
+  no_offroad: { moment: 'Never a wheel on the grass: the Georgian pair threading the last pylons to the line, high and wide', seed: {}, bots: { sway: STILL, steer: 1.3 }, noGusts: true, outfit: 'georgian', cam: 'high', salt: 441122, ...finish },
   no_trees_daily: { moment: 'Today\'s Road between the roadside trees, none touched, from the right, to the line', seed: {}, level: 'daily', bots: { sway: STILL }, outfit: 'fancy', cam: 'sideR', ...finish },
   new_best: { moment: 'A slow old record on the books: the Cyclists beat it, the toast over the last stretch', seed: {}, storage: { tandemonium_records: JSON.stringify(slowRecord) }, outfit: 'cyclists', salt: 442222, ...finish },
   assist_free: { moment: 'The game-over sheet offers ASSIST; RESTART without it, then the clean run to the line', seed: {}, difficulty: 'adventurous', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false }, assist: true, outfit: 'georgian', from: { mark: 'assist', before: 1.0, hold: 3.5 }, ...finish },   // three crashes in the first segment bring the ASSIST offer; RESTART without it, then finish
@@ -78,14 +79,14 @@ export const SCENARIOS = {
 
   // ── Collecting ──
   collector: { moment: 'Today\'s Road: the tenth present of the ride, snatched from beside a pylon', seed: {}, level: 'daily', human: 0, bots: { collect: true, sway: STILL }, pre: 2.0, post: 3 },
-  hoarder: { moment: 'Every present on Grandma\'s taken, the last one by the gate, and the line, a slow swing round the pair', seed: {}, bots: { collect: true, sway: STILL }, cam: 'orbit', salt: 443333, ...finish },
+  hoarder: { moment: 'Every present on Grandma\'s taken, the last one by the gate, and the line, a slow swing round the pair', seed: {}, bots: { collect: true, sway: STILL }, cam: 'orbit', salt: 443333, ...finish, pre: 4.0, post: 7.0 },   // the toast comes at the last present (~40 m before the line): the window runs on through the line and the sweep
   presents_100: { moment: 'The hundredth present, lifetime, in the Georgian outfits', seed: { pickups: 99, boosts: 30 }, bots: { collect: true }, outfit: 'georgian', pre: 2.0, post: 3 },
-  daily_haul: { moment: 'Today\'s Road swept clean: the Cyclists swerving round a pylon for the last present, then the line', seed: {}, level: 'daily', human: 0, cadence: 3.4, bots: { collect: true, sway: STILL }, outfit: 'cyclists', ...finish },   // the bot swerves round a pylon to the side its next present is on
+  daily_haul: { moment: 'Today\'s Road swept clean at a careful pace: the Cyclists swerving round a pylon for the last present, then the line', seed: {}, level: 'daily', human: 0, cadence: 3.4, maxSpeed: 5.5, bots: { collect: true, sway: STILL }, outfit: 'cyclists', ...finish },   // capped at 5.5 m/s so a present tucked behind a pylon is reachable (the bot skips one within a speed's worth of metres)
 
   // ── Chaos Coins (the payout at the finish; #512 decides what coins become) ──
-  coin_first: { moment: 'A clean first ride collecting as it goes, the Fancy pair, from behind the stoker: the first coins paid at the line', seed: {}, bots: { sway: STILL, collect: true }, outfit: 'fancy', cam: 'quarter', salt: 444444, ...finish },
-  coins_1000: { moment: 'The thousandth coin, lifetime: the Georgian pair high and wide to the line', seed: { coinsEarned: 990 }, outfit: 'georgian', cam: 'high', salt: 445555, ...finish },
-  coins_10000: { moment: 'Ten thousand coins, lifetime: the geese coming at the lens on the last stretch', seed: { coinsEarned: 9990 }, cam: 'front', salt: 446666, ...finish },
+  coin_first: { moment: 'A clean first ride collecting as it goes, the Fancy pair, from behind the stoker: the first coins paid at the line', seed: {}, bots: { sway: STILL, collect: true }, outfit: 'fancy', cam: 'quarter', salt: 444455, ...finish },
+  coins_1000: { moment: 'The thousandth coin, lifetime: the Georgian pair high and wide to the line', seed: { coinsEarned: 990 }, human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'georgian', cam: 'high', salt: 445555, ...finish },   // coins pay at a crash too, so the ride must be clean: a lighter sway
+  coins_10000: { moment: 'Ten thousand coins, lifetime: the geese coming at the lens on the last stretch', seed: { coinsEarned: 9990 }, human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, cam: 'front', salt: 446666, ...finish },
   payday: { moment: 'Two hundred coins from one ride: gold pace, no crash, every present, the Cyclists from beside', seed: {}, cadence: 3.8, bots: { collect: true, sway: STILL }, outfit: 'cyclists', cam: 'side', salt: 447777, ...finish },   // gold + no crashes + every present ≈ 227 coins
   first_upgrade: { moment: 'The garage: 120 coins, the first band bought', kind: 'garage', seed: {}, wallet: { coins: 120 }, buy: 'sling' },
   max_upgrade: { moment: 'The garage: the tenth band, one upgrade maxed', kind: 'garage', seed: { upgrades: 9 }, wallet: { coins: 4000, lv: { sling: 9, wheels: 3 } }, buy: 'sling' },          // the tenth band
@@ -97,7 +98,7 @@ export const SCENARIOS = {
   // ── Today's Road ──
   daily_first: { todo: 'a ranked Today\'s Road needs the server (the capture blocks the network)' },
   daily_streak_3: { moment: 'Today\'s Road, the third day running: the Fancy pair\'s last stretch and the line', seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', outfit: 'fancy', ...finish },
-  daily_streak_7: { moment: 'Today\'s Road, a week straight: the Georgian pair from the right, over the line', seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', outfit: 'georgian', cam: 'sideR', ...finish },
+  daily_streak_7: { moment: 'Today\'s Road, a week straight: the Georgian pair from the right, over the line', seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', human: 0.5, bots: { sway: { amp: 0.3, freq: 0.3, phase: 0 } }, outfit: 'georgian', cam: 'sideR', ...finish },
   daily_streak_30: { moment: 'Today\'s Road, thirty days straight: a metronome pair, a slow swing round them to the line', seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: 'rel:1' }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, cam: 'orbit', ...finish },   // a metronome pair: the two passes agree
   daily_share: { moment: 'The result sheet\'s Share button pressed after Today\'s Road', seed: {}, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, share: true, pre: 2.0, post: 3.0 },   // the Share button on the result sheet
   daily_practice_10: { moment: 'The tenth practice run of Today\'s Road, the Cyclists high and wide to the line', seed: { dailyPractice: 9 }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, outfit: 'cyclists', cam: 'high', ...finish },
@@ -105,7 +106,7 @@ export const SCENARIOS = {
   // ── Riding together ──
   perfect_sync: { moment: 'Two riders answering each other\'s beat: the sync meter full, the toast mid-ride', seed: {}, human: 0, pre: 2.5, post: 3 },                 // two riders answering each other's beat
   team_player: { moment: 'Safe riding from the first frame: the toast is up at GO', seed: {}, atStart: true, pre: 0, post: 4.0 },        // 100% safe riding from the first frame: the toast is up at GO
-  pair_10_rides: { moment: 'The pair\'s tenth ride together: the Fancy outfits from beside, the line', seed: {}, pairRides: 9, outfit: 'fancy', cam: 'side', salt: 448888, ...finish },
+  pair_10_rides: { moment: 'The pair\'s tenth ride together: the Fancy outfits from beside, the line', seed: {}, pairRides: 9, outfit: 'fancy', cam: 'side', salt: 448899, ...finish },
   pair_100km: { moment: 'A hundred kilometres as a pair: the Georgian outfits from behind the stoker, the line', seed: {}, pairDistance: 99900, outfit: 'georgian', cam: 'quarter', salt: 449999, ...finish },
   coop_first: { moment: 'The first finish as a pair: the geese coming at the lens, then the sweep', seed: {}, cam: 'front', salt: 451111, ...finish },
   social_goose: { moment: 'A third partner: the Cyclists, a slow swing round them, the line', seed: { partners: ['goose-a', 'goose-b'], coopFinishes: 2 }, outfit: 'cyclists', cam: 'orbit', salt: 452222, ...finish },
