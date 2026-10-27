@@ -91,6 +91,8 @@
       <span>seat dy (m)</span><input type="number" id="dyC" step="0.005" value="0"><input type="number" id="dyS" step="0.005" value="0"><span></span>
       <span>seat dz (m)</span><input type="number" id="dzC" step="0.005" value="0"><input type="number" id="dzS" step="0.005" value="0"><span></span>
       <span>saddle dy (m)</span><input type="number" id="sdyC" step="0.005" value="0"><input type="number" id="sdyS" step="0.005" value="0"><span></span>
+      <span>saddle dz (m)</span><input type="number" id="sdzC" step="0.005" value="0"><input type="number" id="sdzS" step="0.005" value="0"><span>+ fwd</span>
+      <span>saddle scale</span><input type="number" id="sscC" step="0.05" value="1"><input type="number" id="sscS" step="0.05" value="1"><span>about its top</span>
       <span>rider scale</span><input type="number" id="scC" step="0.01" value="1"><input type="number" id="scS" step="0.01" value="1"><span></span>
     </div>
     <div class="row"><button id="copy">Copy JSON patch</button><button id="reset">Reset</button></div>
@@ -144,7 +146,7 @@ const loader = new GLTFLoader();
 let riders = null, model = null, tyre = null;
 let outfit = normalizeGooseOutfit(q.get('outfit') || 'victorian');
 let playing = false, lastT = 0, crank = 0;
-const nudge = { hipUp: HIP_UP, seats: { Captain: { dy: 0, dz: 0, scale: 1, saddleDy: 0 }, Stoker: { dy: 0, dz: 0, scale: 1, saddleDy: 0 } } };
+const nudge = { hipUp: HIP_UP, seats: { Captain: { dy: 0, dz: 0, scale: 1, saddleDy: 0, saddleDz: 0, saddleScale: 1 }, Stoker: { dy: 0, dz: 0, scale: 1, saddleDy: 0, saddleDz: 0, saddleScale: 1 } } };
 const saddleMesh = {};   // seat -> saddle mesh (moved with the socket by the saddle nudge)
 
 function resize() {
@@ -220,10 +222,19 @@ function applyNudges() {
     const o = seatOffset(root.userData.hipMid, nudge.hipUp);
     root.scale.setScalar(n.scale);
     root.position.set(o.x * n.scale, o.y * n.scale + n.dy, o.z * n.scale + n.dz);
+    const socket = model.getObjectByName('Seat_' + seat);
     // saddle dy moves the saddle MESH only: the socket (hips, and so the feet on the pedals) stays put, which
     // is what a lower saddle on the rebuilt bike + a larger HIP_UP amounts to
     const sm = saddleMesh[seat];
-    if (sm) { if (sm.userData.y0 === undefined) sm.userData.y0 = sm.position.y; sm.position.y = sm.userData.y0 + n.saddleDy; }
+    if (sm) {
+      // the saddle mesh is baked in bike space (identity node), so a scale about its socket point (the
+      // saddle top at the sit bones) is scale s with the position set to socket·(1 − s)
+      if (sm.userData.y0 === undefined) { sm.userData.y0 = sm.position.y; sm.userData.z0 = sm.position.z; }
+      const s = n.saddleScale || 1;
+      const sp = socket ? socket.position : new THREE.Vector3();
+      sm.scale.setScalar(s);
+      sm.position.set(sp.x * (1 - s), sm.userData.y0 + sp.y * (1 - s) + n.saddleDy, sm.userData.z0 + sp.z * (1 - s) + (n.saddleDz || 0));
+    }
   }
   $('patch').textContent = JSON.stringify(nudgePatch(nudge), null, 1);
 }
@@ -413,14 +424,14 @@ $('wire').onclick = () => setWire(!wire);
 $('markers').onclick = () => { $('markers').classList.toggle('on'); drawMarkers(); };
 $('cutoff').onclick = () => setCut(null); $('cutx').onclick = () => setCut('x'); $('cutz').onclick = () => setCut('z'); $('cuty').onclick = () => setCut('y');
 $('cut').oninput = applyCut;
-const NUDGE_IDS = { hipUp: ['hipUp'], dy: ['dyC', 'dyS'], dz: ['dzC', 'dzS'], saddleDy: ['sdyC', 'sdyS'], scale: ['scC', 'scS'] };
+const NUDGE_IDS = { hipUp: ['hipUp'], dy: ['dyC', 'dyS'], dz: ['dzC', 'dzS'], saddleDy: ['sdyC', 'sdyS'], saddleDz: ['sdzC', 'sdzS'], saddleScale: ['sscC', 'sscS'], scale: ['scC', 'scS'] };
 function readNudges() {
   nudge.hipUp = +$('hipUp').value;
   for (const [k, ids] of Object.entries(NUDGE_IDS)) { if (k === 'hipUp') continue; nudge.seats.Captain[k] = +$(ids[0]).value; nudge.seats.Stoker[k] = +$(ids[1]).value; }
   applyNudges(); pose(); scheduleMeasure();
 }
 for (const ids of Object.values(NUDGE_IDS)) for (const id of ids) $(id).onchange = readNudges;
-$('reset').onclick = () => { $('hipUp').value = HIP_UP; for (const [k, ids] of Object.entries(NUDGE_IDS)) if (k !== 'hipUp') for (const id of ids) $(id).value = k === 'scale' ? 1 : 0; readNudges(); };
+$('reset').onclick = () => { $('hipUp').value = HIP_UP; for (const [k, ids] of Object.entries(NUDGE_IDS)) if (k !== 'hipUp') for (const id of ids) $(id).value = /scale/i.test(k) ? 1 : 0; readNudges(); };
 $('copy').onclick = () => navigator.clipboard.writeText($('patch').textContent);
 
 // ── the smoke's handle ──

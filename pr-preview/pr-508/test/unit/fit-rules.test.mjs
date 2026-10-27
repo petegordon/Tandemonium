@@ -34,9 +34,14 @@ test('the rear end inside the tyre fails the wheel line and names the parts', ()
 test('a goose floating above the saddle fails the seat probe; a little sink passes', () => {
   const r = good();
   r.riders.Captain.seatProbe = 0.047;
-  assert.equal(judge(r).lines.find(l => /Captain · body over saddle/.test(l.name)).pass, false);
+  assert.equal(judge(r).lines.find(l => /Captain · bottom over saddle/.test(l.name)).pass, false);
   r.riders.Captain.seatProbe = TOL.seatProbe.min;
-  assert.equal(judge(r).lines.find(l => /Captain · body over saddle/.test(l.name)).pass, true);
+  assert.equal(judge(r).lines.find(l => /Captain · bottom over saddle/.test(l.name)).pass, true);
+  // the thighs wrap the nose: 11 cm into the breeches there is by nature, 15 is not
+  r.riders.Captain.noseProbe = -0.11;
+  assert.equal(judge(r).lines.find(l => /Captain · thighs over saddle nose/.test(l.name)).pass, true);
+  r.riders.Captain.noseProbe = -0.15;
+  assert.equal(judge(r).lines.find(l => /Captain · thighs over saddle nose/.test(l.name)).pass, false);
 });
 
 test('the root must sit HIP_UP above the socket, within 5 mm', () => {
@@ -57,6 +62,6 @@ test('a foot off its pedal at any crank step fails that side', () => {
 
 test('the nudge patch carries only what moved', () => {
   assert.deepEqual(nudgePatch({ hipUp: HIP_UP, seats: { Captain: { dy: 0, dz: 0, scale: 1 } } }), {});
-  assert.deepEqual(nudgePatch({ hipUp: 0.09, seats: { Stoker: { dy: -0.02, scale: 1.05, saddleDy: 0.01 } } }),
-    { HIP_UP: 0.09, seats: { Stoker: { dy: -0.02, scale: 1.05, saddleDy: 0.01 } } });
+  assert.deepEqual(nudgePatch({ hipUp: 0.09, seats: { Stoker: { dy: -0.02, scale: 1.05, saddleDy: 0.01, saddleDz: -0.08 } } }),
+    { HIP_UP: 0.09, seats: { Stoker: { dy: -0.02, scale: 1.05, saddleDy: 0.01, saddleDz: -0.08 } } });
 });
