@@ -224,7 +224,7 @@ function applyNudges() {
     root.position.set(o.x * n.scale, o.y * n.scale + n.dy, o.z * n.scale + n.dz);
     const socket = model.getObjectByName('Seat_' + seat);
     // saddle dy moves the saddle MESH only: the socket (hips, and so the feet on the pedals) stays put, which
-    // is what a lower saddle on the rebuilt bike + a larger HIP_UP amounts to
+    // is what a moved saddle in the frame spec + HIP_UP changed by the opposite amount amounts to
     const sm = saddleMesh[seat];
     if (sm) {
       // the saddle mesh is baked in bike space (identity node), so a scale about its socket point (the
@@ -408,6 +408,7 @@ $('measure').onclick = () => measure(false);
 $('sweep').onclick = () => measure(true);
 
 // ── controls ──
+$('hipUp').value = HIP_UP;
 for (const [k, o] of Object.entries(GOOSE_OUTFITS)) $('outfit').add(new Option(o.label, k));
 $('outfit').value = outfit;
 function fillColourways() { const s = $('colourway'); s.innerHTML = ''; for (const w of colourwaysFor(outfit)) s.add(new Option(w.label, w.key)); }
@@ -446,6 +447,7 @@ window.__fit = {
   setLeans: (c, s) => { $('leanC').value = c * 100; $('leanS').value = s * 100; pose(); },
   view: (name) => { const v = VIEWS[name]; if (v) look(...v); else { const c = CLOSEUPS[name]; if (c) { const [node, off, span] = c(); const o = model.getObjectByName(node); const t = o.getWorldPosition(new THREE.Vector3()); look([t.x + off[0], t.y + off[1], t.z + off[2]], t.toArray(), span); } } renderer.render(scene, camera); },
   xray: setXray, cut: (axis, d) => { $('cut').value = (d || 0) * 1000; setCut(axis); },
+  lookFrom: (pos, target, span) => { look(pos, target, span || 0.6); renderer.render(scene, camera); },
   measure: () => measure(false), sweep: (n) => { const r = sweepCrank(riders, n || 12, { tyre }); lastReport = r; showReport(r, true); return r; },
   judge: (r) => judge(r || lastReport), render: () => renderer.render(scene, camera), lastReport: () => lastReport,
   lost: () => renderer.getContext().isContextLost(),
