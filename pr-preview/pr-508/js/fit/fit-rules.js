@@ -7,8 +7,10 @@
 // the whole assembly by one factor, so every relationship is the same). This module says what
 // the numbers must be. Positive = gap / clearance, negative = sink / penetration, unless noted.
 
-/** Hip joints above the saddle-top socket (goose-rider-clips HIP_UP): the game's own placement. */
-export const HIP_UP = 0.11;
+import { HIP_UP } from '../goose-rider-clips.js';
+
+/** Hip joints above the saddle-top socket: the game's own placement (goose-rider-clips HIP_UP). */
+export { HIP_UP };
 
 export const TOL = {
   hipAboveSaddle: { target: HIP_UP, tol: 0.005 },  // the root sits where seatOffset put it

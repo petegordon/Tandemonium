@@ -9,8 +9,8 @@ const good = () => ({
     saddles: { Captain: { socketAboveMesh: 0.001 }, Stoker: { socketAboveMesh: -0.002 } },
   },
   riders: {
-    Captain: { hipAboveSaddle: 0.11, seatProbe: -0.01, foot: { L: { err: 0.003, crank: 90 }, R: { err: 0.004, crank: 270 } }, hand: { L: { dist: 0.11 }, R: { dist: 0.11 } }, clothInWheel: 0 },
-    Stoker: { hipAboveSaddle: 0.11, seatProbe: 0.0, foot: { L: { err: 0.002 }, R: { err: 0.002 } }, hand: { L: { dist: 0.12 }, R: { dist: 0.12 } }, clothInWheel: 21 },
+    Captain: { hipAboveSaddle: HIP_UP, seatProbe: -0.01, foot: { L: { err: 0.003, crank: 90 }, R: { err: 0.004, crank: 270 } }, hand: { L: { dist: 0.11 }, R: { dist: 0.11 } }, clothInWheel: 0 },
+    Stoker: { hipAboveSaddle: HIP_UP, seatProbe: 0.0, foot: { L: { err: 0.002 }, R: { err: 0.002 } }, hand: { L: { dist: 0.12 }, R: { dist: 0.12 } }, clothInWheel: 21 },
   },
 });
 

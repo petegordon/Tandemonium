@@ -20,7 +20,9 @@
 export const SEATS = ['Captain', 'Stoker'];
 
 // Hip joints sit this far above the saddle-top socket (ride_fit.py HIP_UP), in bike metres.
-export const HIP_UP = 0.11;
+// #505: 0.11 (a human's) -> 0.03: the saddles came up 8 cm in the frame spec while the geese stayed
+// where the clips were baked, so the seat sits up by the hips and disappears into the breeches.
+export const HIP_UP = 0.03;
 
 const UPPER = new Set(['Spine', 'Spine1', 'Spine2', 'Neck', 'Neck1', 'Neck2', 'Neck3', 'Head',
   'LeftShoulder', 'LeftArm', 'LeftForeArm', 'LeftHand',
