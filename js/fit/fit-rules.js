@@ -13,8 +13,11 @@ export const HIP_UP = 0.11;
 export const TOL = {
   hipAboveSaddle: { target: HIP_UP, tol: 0.005 },  // the root sits where seatOffset put it
   socketOnSaddle: { min: -0.01, max: 0.01 },       // socket y − saddle mesh top under it
-  seatProbe: { min: -0.03, max: 0.01 },            // lowest body point over the saddle's rear band − saddle top
-  noseProbe: { min: -0.12, max: 0.03 },            // the same over the nose: the thighs wrap it (deep by nature)
+  // The saddle is meant to be swallowed by the breeches / skirt (Pete, 2026-10-26: "true to what should
+  // happen"), so sinking is fine up to a goose's depth; what these catch is a goose floating above its seat.
+  // (the measure looks 14 cm down, so the min never bites: only a gap can fail)
+  seatProbe: { min: -0.15, max: 0.01 },            // lowest cloth point over the saddle's rear band − saddle top
+  noseProbe: { min: -0.15, max: 0.03 },            // the same over the nose: the thighs wrap it
   footOnPedal: { max: 0.012 },                      // |ball of foot − pedal pin (+ sole)|, every crank step
   handOnGrip: { min: 0.06, max: 0.16 },             // |hand joint − grip socket| (handshake grip)
   wheelPenetration: { maxVerts: 0 },                // bike vertices inside the rear tyre's tread band

@@ -224,7 +224,8 @@ export function measureFit(riders, opts = {}) {
         const probe = PROBE_MESH.test(mesh.name);
         let n = 0;
         eachVertex(model, mesh, (v) => {
-          if (probe && Math.abs(v.x - socket.x) < 0.04 && v.y > socket.y - 0.12) {
+          // (a lifted skirt leaves nothing within 5 cm over the saddle: then there is no seat to measure)
+          if (probe && Math.abs(v.x - socket.x) < 0.04 && v.y > socket.y - 0.14 && v.y < socket.y + 0.05) {
             if (v.z > socket.z - 0.06 && v.z < socket.z + 0.02 && v.y < low) { low = v.y; lowMesh = mesh.name; }
             else if (v.z >= socket.z + 0.02 && v.z < socket.z + 0.10 && v.y < nose) { nose = v.y; noseMesh = mesh.name; }
           }

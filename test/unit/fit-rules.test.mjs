@@ -37,10 +37,10 @@ test('a goose floating above the saddle fails the seat probe; a little sink pass
   assert.equal(judge(r).lines.find(l => /Captain · bottom over saddle/.test(l.name)).pass, false);
   r.riders.Captain.seatProbe = TOL.seatProbe.min;
   assert.equal(judge(r).lines.find(l => /Captain · bottom over saddle/.test(l.name)).pass, true);
-  // the thighs wrap the nose: 11 cm into the breeches there is by nature, 15 is not
-  r.riders.Captain.noseProbe = -0.11;
+  // the thighs wrap the nose: 12 cm into the breeches there is by nature, 16 is not
+  r.riders.Captain.noseProbe = -0.12;
   assert.equal(judge(r).lines.find(l => /Captain · thighs over saddle nose/.test(l.name)).pass, true);
-  r.riders.Captain.noseProbe = -0.15;
+  r.riders.Captain.noseProbe = -0.16;
   assert.equal(judge(r).lines.find(l => /Captain · thighs over saddle nose/.test(l.name)).pass, false);
 });
 
