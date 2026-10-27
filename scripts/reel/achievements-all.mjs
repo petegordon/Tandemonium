@@ -66,12 +66,17 @@ async function ride(id, sc) {
         if (g.auth) g.auth.fetchPair = async () => sum;             // and what a refresh would fetch
       }, { rides: sc.pairRides || 0, distance: sc.pairDistance || 0 });
       if (sc.prep) await sc.prep(page);
+      // the pylons and presents are placed when the ride starts, from Math.random: re-seed it here (the lobby's own
+      // animations drew a run-dependent number before this), so both passes, and every take, ride one layout
+      await page.evaluate(() => { let a = 0x1F2E3D4C; Math.random = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; });
     },
   });
   const { page } = s;
   if (sc.bots) await bots(page, sc.bots);
   if (sc.brake) await page.evaluate((b) => { window.__gyBrake = b; }, sc.brake);
   if (sc.desync) await page.evaluate((d) => { window.__gyDesync = d; }, sc.desync);
+  // a speed cap (m/s): the pair rides at the road's top speed whatever the cadence; a calm 60 s needs a slower bike
+  if (sc.maxSpeed) await page.evaluate(async (v) => { const { TUNE } = await import('/js/config.js'); TUNE.maxSpeed = v; if (window._game.bike) window._game.bike.maxSpeed = v; }, sc.maxSpeed);
   // no presents: a boost (from a present the line happens to cross) would double the pace of a ride that wants to be slow
   if (sc.noPresents) await page.evaluate(() => { const cm = window._game.collectibleManager; if (!cm) return;
     for (const it of cm._items || []) it.collected = true; for (const slot of cm._pool || []) for (const v of Object.values(slot)) if (v && v.isObject3D) v.visible = false; });
@@ -82,6 +87,9 @@ async function ride(id, sc) {
     let a = 0x2545F491;
     Math.random = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     window.__ach.t0 = window.__vclock.t; window.__ach.anchor = window.__vclock.t;
+    // Date.now too (a crash's re-placement salts itself with it): from here it runs from the top of the real hour,
+    // so both passes see the same clock (and the same day key)
+    { const vc = window.__vclock, b = vc.t, origin = Date.now() - (Date.now() % 3600000); Date.now = () => origin + (vc.t - b); }
   });
   return s;
 }

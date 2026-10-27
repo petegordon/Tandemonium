@@ -27,6 +27,9 @@ export const anchor = (page) => page.evaluate(() => {
   let a = 0x2545F491;
   Math.random = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   window.__ach.t0 = window.__vclock.t; window.__ach.anchor = window.__vclock.t;
+  // Date.now too (a crash's re-placement salts itself with it): from here it runs from the top of the real hour,
+  // so both passes see the same clock (and the same day key)
+  { const vc = window.__vclock, b = vc.t, origin = Date.now() - (Date.now() % 3600000); Date.now = () => origin + (vc.t - b); }
 });
 /** Math.random seeded from the page's first instant (the lobby's own animations then draw the same numbers). */
 const seedRandom = (p) => p.evaluateOnNewDocument(() => {
@@ -132,7 +135,7 @@ async function slingRide(id, sc) {
     const g = window._game, R = window.__reel;
     // no target: follow the road with a hand so light the game does not call it steering (Straight Shooter); the
     // slingshot road bends after its first 80 m and a bike that never leans runs onto the grass and stalls
-    R.attach(g.input, () => g.bike, { role: 'captain', pedal: false, sway: { amp: 0, freq: 0, phase: 0 }, steer: 0.9, maxOut: o.target ? 1 : 0.2, dodge: false, offset: 0, collect: false });
+    R.attach(g.input, () => g.bike, { role: 'captain', pedal: false, sway: { amp: 0, freq: 0, phase: 0 }, steer: o.steer ?? 0.9, maxOut: o.target ? 1 : 0.2, dodge: false, offset: 0, collect: false, gains: o.gains || null });
     // the drag: finger down mid-screen, back (and aside) over 0.8 s, a short hold, let go
     const W = window.innerWidth, H = window.innerHeight, x0 = W / 2, y0 = H * 0.38;
     const dx = (o.side || 0) * 0.25 * W, dy = (o.pull ?? 1) * 0.3 * H;
@@ -154,17 +157,19 @@ async function slingRide(id, sc) {
       } else if (drag.phase === 2 && g._slingRun && g._slingRun.launched) drag.phase = 3;
     });
     window.__slingDrag = drag;
-  }, { pull: sc.pull, side: sc.side, wait: sc.wait, target: sc.target });
+  }, { pull: sc.pull, side: sc.side, wait: sc.wait, target: sc.target, steer: sc.steer, gains: sc.gains });
   await advance(page, 0.001);
   await anchor(page);
   return s;
 }
 
 /** After the launch: the lane path for the scenario's target, from the course the game built. */
-async function slingPath(page, sc) {
+async function slingPath(page, sc, st) {
+  // gainsAfter: [metres, gains]: a gentler hand from there (the gates need a quick one; the long road a steady one)
+  if (sc.gainsAfter && !page.__ga && st && st.d >= sc.gainsAfter[0]) { page.__ga = true; await bots(page, { gains: sc.gainsAfter[1] }); }
   if (page.__slingPathed) return;
   page.__slingPathed = true;
-  const p = await page.evaluate((target) => {
+  const p = await page.evaluate((target, explicit) => {
     const g = window._game, items = (g._slingProps && g._slingProps.items) || [], coins = (g.collectibleManager && g.collectibleManager._items) || [];
     const REST = 5.2, g1 = REST + 45, g2 = REST + 110;
     const hay = items.filter(i => i.kind === 'hay').sort((a, b) => a.d - b.d);
@@ -178,9 +183,15 @@ async function slingPath(page, sc) {
     let path = [[0, c1], [g1 + 6, c2], [g2 + 14, c2], [g2 + 45, 0]];   // the lane holds until the billboard (g2 + 8) is behind
     if (target === 'ramp') { const r = items.filter(i => i.kind === 'ramp').sort((a, b) => a.d - b.d)[0]; if (r) path = to(r.offset); }
     else if (target === 'jackpot') { const j = items.find(i => i.kind === 'jackpot'); if (j) path = to(j.offset); }
+    else if (target === 'ramps') {   // every ramp down the road (air has no rolling resistance): the long stage goals
+      path = [[0, c1], [g1 + 6, c2], [g2 + 14, c2]];
+      for (const r of items.filter(i => i.kind === 'ramp' && i.d > g2 + 20).sort((a, b) => a.d - b.d)) path.push([r.d - 30, r.offset], [r.d + 4, r.offset]);
+      path.push([path[path.length - 1][0] + 30, 0]);
+    }
     else if (target === 'trail') { const t = coins.find(c => c.absoluteD > g2 + 20); path = [[0, c1], [g1 + 6, c2]]; if (t) path.push([g2 + 10, t.lateralOffset]); }
+    if (explicit) path = explicit;   // a scenario's own line
     return { path, items: items.map(i => [i.kind, +i.d.toFixed(1), i.offset]), coins: coins.length };
-  }, sc.target);
+  }, sc.target, sc.slingPath || null);
   await bots(page, { path: p.path, dodge: false, collect: false });
   console.log('  sling path', JSON.stringify(p.path), 'props', JSON.stringify(p.items.slice(0, 6)));
 }
@@ -192,7 +203,7 @@ export async function slingFind(id, sc, name) {
   for (let t = 0; t < 200; t += 0.25) {
     await advance(page, 0.25);
     st = await slingState(page);
-    if (st.launched) await slingPath(page, sc);
+    if (st.launched) await slingPath(page, sc, st);
     T = await page.evaluate((nm) => { const x = window.__ach.toasts.find(y => y[1] === nm); return x ? x[0] : null; }, name);
     if (T != null) break;
     if (['slingResults', 'lobby', 'slingGarage'].includes(st.state)) { if (++over > 40) break; }
@@ -214,11 +225,11 @@ export async function slingRecord(id, sc, T) {
     if (now >= startAt - 0.26) break;
     await advance(page, 0.25);
     const st = await slingState(page);
-    if (st.launched) await slingPath(page, sc);
+    if (st.launched) await slingPath(page, sc, st);
   }
   for (;;) { const now = await vt(page); if (now >= startAt) break; await advance(page, 1 / 60); }
   const tag = `${id}_solo`;
-  await take(tag, s, pre + post, async () => { const st = await slingState(page); if (st.launched) await slingPath(page, sc); });
+  await take(tag, s, pre + post, async () => { const st = await slingState(page); if (st.launched) await slingPath(page, sc, st); });
   return { pre, post, tag };
 }
 

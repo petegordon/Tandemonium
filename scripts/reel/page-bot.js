@@ -89,7 +89,7 @@ const reel = {
    */
   _steer(b, bike, dt) {
     const rp = bike.roadPath; if (!rp) return 0;
-    const g = this.gains;
+    const g = b.gains ? { ...this.gains, ...b.gains } : this.gains;   // a bot's own tuning (a slow bike needs a firmer hand)
     const ahead = rp.getPointAtDistance(bike.roadD + Math.max(1, bike.speed * g.look));
     // lane: dodge the next obstacle, else go for the next present / coin, else b.offset; slewed so it weaves
     // b.path [[distance, lateral], ...]: a scripted line (e.g. the tutorial's exact weave) from its first

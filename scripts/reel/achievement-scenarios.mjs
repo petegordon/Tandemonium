@@ -56,8 +56,8 @@ export const SCENARIOS = {
   daredevil: { seed: {}, difficulty: 'daredevil', cadence: 3.4, human: 0, bots: { sway: STILL, collect: false, dodge: true }, ...finish },
 
   // ── Clean riding ──
-  steady_hands: { seed: {}, level: 'daily', human: 0, bots: { sway: STILL, collect: false }, noPresents: true, desync: 0.22, pre: 2.5, post: 3 },   // the long road, no presents to boost off, the pair out of step (slow): > 60 s of calm riding   // Grandma's with the brakes dragged (the bike tops out at any cadence): > 60 s of calm riding
-  centerline: { seed: {}, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 1.8 }, noPresents: true, desync: 0.22, pre: 2.5, post: 3 },   // Grandma's, no presents to boost off, the pair out of step (slow), dead centre: 30 s on the strip   // Grandma's at a crawl, dead centre: 30 s on the strip
+  steady_hands: { seed: {}, human: 0, bots: { sway: STILL, collect: false }, noPresents: true, maxSpeed: 3.5, pre: 2.5, post: 3 },   // Grandma's at a capped 3.5 m/s, no presents to boost off: > 60 s of calm riding   // Grandma's with the brakes dragged (the bike tops out at any cadence): > 60 s of calm riding
+  centerline: { seed: {}, human: 0, bots: { sway: STILL, dodge: false, offset: 0, collect: false, steer: 2.0, gains: { kl: 0.16, kh: 0.55 } }, noPresents: true, maxSpeed: 6, pre: 2.5, post: 3 },   // Grandma's at a capped 6 m/s with a firmer hand, no presents to boost off, dead centre: 30 s on the strip   // Grandma's at a crawl, dead centre: 30 s on the strip
   no_offroad: { seed: {}, bots: { sway: STILL }, ...finish },
   no_trees_daily: { seed: {}, level: 'daily', bots: { sway: STILL }, ...finish },
   new_best: { seed: {}, storage: { tandemonium_records: JSON.stringify(slowRecord) }, ...finish },
@@ -91,7 +91,7 @@ export const SCENARIOS = {
   daily_first: { todo: 'a ranked Today\'s Road needs the server (the capture blocks the network)' },
   daily_streak_3: { seed: { dailyDayBest: 2, dailyDayRun: 2, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
   daily_streak_7: { seed: { dailyDayBest: 6, dailyDayRun: 6, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
-  daily_streak_30: { seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: 'rel:1' }, level: 'daily', ...finish },
+  daily_streak_30: { seed: { dailyDayBest: 29, dailyDayRun: 29, lastDailyDay: 'rel:1' }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, ...finish },   // a metronome pair: the two passes agree
   daily_share: { seed: {}, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, share: true, pre: 2.0, post: 3.0 },   // the Share button on the result sheet
   daily_practice_10: { seed: { dailyPractice: 9 }, level: 'daily', cadence: 3.8, human: 0, bots: { sway: STILL }, ...finish },
 
@@ -137,9 +137,9 @@ export const SCENARIOS = {
   sling_stage1: { kind: 'sling', seed: { slingLaunches: 2 }, wallet: { coins: 60 }, pull: 1, ...finish },                             // 300 m on stock bands (a full pull rolls ~340)
   sling_stage3: { kind: 'sling', seed: { slingLaunches: 9, slingStage: 2 }, sling: { stage: 3, best: 430, runs: 9 }, wallet: { coins: 300, lv: { sling: 4, wheels: 4 } }, pull: 1, ...finish },
   sling_stage5: { kind: 'sling', seed: { slingLaunches: 20, slingStage: 4 }, sling: { stage: 5, best: 680, runs: 20 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 500, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },   // 780 m takes the full bands (a stock-ish bike stalls near 670)
-  sling_stage7: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 6 }, sling: { stage: 7, best: 920, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 50000, bestMedal: 'gold', helped: false } }, wallet: { coins: 800, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },
+  sling_stage7: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 6 }, sling: { stage: 7, best: 920, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 50000, bestMedal: 'gold', helped: false } }, wallet: { coins: 800, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },   // NOT YET REACHED: the straight strip line stalls at 1,044 of the 1,050 (hills); ramps in other lanes cost more than they give   // 1,050 m: full bands and every ramp, lane changes gentle enough to stay off the edge (a straight roll stalls 6 m short)
   sling_500: { kind: 'sling', seed: { slingLaunches: 9, slingStage: 2, slingBest: 430 }, sling: { stage: 3, best: 430, runs: 9 }, wallet: { coins: 300, lv: { sling: 4, wheels: 4 } }, pull: 1, ...finish },   // stage 3's goal is 540 m
-  sling_1000: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 6, slingBest: 920 }, sling: { stage: 7, best: 920, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 50000, bestMedal: 'gold', helped: false } }, wallet: { coins: 800, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },   // stage 7's goal is 1,050 m
+  sling_1000: { kind: 'sling', seed: { slingLaunches: 40, slingStage: 6, slingBest: 920 }, sling: { stage: 7, best: 920, runs: 40 }, records: { 'grandma|chill|solo': { timeMs: 50000, bestMedal: 'gold', helped: false } }, wallet: { coins: 800, lv: { sling: 10, wheels: 10 } }, pull: 1, ...finish },   // the straight strip line rolls ~1,044   // stage 7's goal is 1,050 m
   big_air: { kind: 'sling', seed: { slingLaunches: 5, slingStage: 1 }, sling: { stage: 2, best: 310, runs: 5 }, wallet: { coins: 200, lv: { sling: 6, wheels: 4 } }, pull: 1, target: 'ramp', pre: 2.5, post: 3.0 },   // the ramp before gate 2, at speed
   frequent_flyer: { kind: 'sling', seed: { slingLaunches: 60, slingStage: 3, bigAirs: 24 }, sling: { stage: 4, best: 600, runs: 60 }, records: { 'grandma|chill|solo': { timeMs: 90000, bestMedal: 'bronze', helped: false } }, wallet: { coins: 500, lv: { sling: 8, wheels: 6 } }, pull: 1, target: 'ramp', pre: 2.5, post: 3.0 },
   jackpot: { kind: 'sling', seed: { slingLaunches: 6, slingStage: 1 }, sling: { stage: 2, best: 310, runs: 6 }, wallet: { coins: 200, lv: { sling: 3, wheels: 2 } }, pull: 1, target: 'jackpot', pre: 2.5, post: 3.5 },   // the billboard past gate 2
