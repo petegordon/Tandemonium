@@ -138,7 +138,7 @@ export const SCENARIOS = {
   grandma_red: { moment: 'The red tandem from behind the stoker\'s shoulder, the Georgian pair, the line', seed: {}, bike: 'bike_red', outfit: 'georgian', cam: 'quarter', salt: 456666, ...finish },
   grandma_blue: { moment: 'The blue tandem coming at the lens, the line', seed: {}, bike: 'bike_blue', cam: 'front', salt: 457777, ...finish },
   grandma_green: { moment: 'The green tandem, a slow swing from beside to behind, the Cyclists aboard, the line', seed: {}, bike: 'bike_green', outfit: 'cyclists', cam: 'orbit', salt: 458888, ...finish },
-  grandma_yellow: { moment: 'The yellow tandem high and wide on the road, the Fancy pair, the line', seed: {}, bike: 'bike_yellow', outfit: 'fancy', cam: 'high', salt: 459999, ...finish },
+  grandma_yellow: { moment: 'The yellow tandem high and wide on the road, the Fancy pair, the line', seed: {}, bike: 'bike_yellow', outfit: 'fancy', cam: 'high', salt: 461111, ...finish },
 
   // ── Slingshot (its own mode: the garage, a drag, the flight) ──
   sling_first: { moment: 'The Slingshot: a finger drag, the bands let go, the launch past Your Home', kind: 'sling', seed: {}, wallet: { coins: 0 }, pull: 1, pre: 2.5, post: 3.5 },                                        // the bands let go

@@ -259,7 +259,7 @@ async function recordMoment(id, sc, T, cross = null, marks = {}) {
   await take(tag, s, len, async (i, t) => {
     const st = await rideState(page);
     last = st.state;
-    if (st.state === 'gameover') gameOver = true;
+    if (st.state === 'gameover' && (mark == null || t >= tT)) gameOver = true;   // a reel opening on the ASSIST sheet expects one before the toast
     if (over && sheetAt == null && st.state === 'victory') sheetAt = t;   // the result sheet (pass 2 can run a few tenths off pass 1)
     await steer(page, sc, st);
     if (over && !raised && t >= tT) {
