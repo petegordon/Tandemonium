@@ -40,7 +40,7 @@ const reel = {
     this.t += dt;
     const fv = game.frontView;   // the PiP draws into the main canvas: skip it for clean shots
     if (fv && !fv.__reel) { fv.__reel = true; const fr = fv.render.bind(fv); fv.render = (...a) => (this.noPip ? undefined : fr(...a)); }
-    if (this.noPip) this._clearRoad();
+    if (this.noPip && !this.keepRoad) this._clearRoad();   // keepRoad: no PiP, but the presents, pylons and arches stay
     for (const b of this.bots) if (b.enabled) this._drive(b, dt);
     for (const h of this.hooks || []) h(dt);   // extra per-frame drivers (e.g. a gyro rider's HID reports)
   },
@@ -55,12 +55,13 @@ const reel = {
       const rnd = b._rnd || (b._rnd = mulberry(b.role === 'stoker' ? 7331 : 1337));
       b._ct = (b._ct || 0) + dt;
       const ph = b.role === 'stoker' ? 1.3 : 0;
-      const drift = 1 + 0.07 * Math.sin(b._ct * 1.45 + ph) + 0.04 * Math.sin(b._ct * 0.53 + 0.7 + ph);
+      const hu = b.human ?? 1;   // how human (0 = metronome); the scripted tutorial line wants a light touch
+      const drift = 1 + hu * (0.07 * Math.sin(b._ct * 1.45 + ph) + 0.04 * Math.sin(b._ct * 0.53 + 0.7 + ph));
       if (b._need == null) b._need = 1;
       b.acc += dt * b.cadence * drift;
       if (b.acc >= b._need + (b.role === 'stoker' ? 0.08 * b.cadence : 0)) {
         b.acc -= b._need;
-        b._need = 1 + (rnd() - 0.5) * 0.26;
+        b._need = 1 + (rnd() - 0.5) * 0.26 * (b.human ?? 1);
         // the stoker starts on the other foot, so each pair is opposite feet
         b.foot = b.foot === 'left' ? 'right' : 'left';
         if (b.foot === 'left') b.input._leftTapped = true; else b.input._rightTapped = true;

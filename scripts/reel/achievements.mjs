@@ -219,6 +219,7 @@ async function watchTutorial(page) {
 
 async function tutorial(keep) {
   const s = await solo({ keep, tutorial: true, cadence: 2.6, sway: STILL });
+  await s.page.evaluate(() => { for (const b of window.__reel.bots) b.human = 0.35; });
   await watchTutorial(s.page);
   await bots(s.page, { path: TUT_PATH });
   return s;
@@ -251,7 +252,7 @@ const SHOTS = {
     const s = await solo({ keep: 'first_finish', level: 'grandma', difficulty: 'chill', cadence: 3.8 });
     console.log('  at', JSON.stringify(await until(s.page, st => st.d >= 212, 120, 0.5)));
     // a low three-quarter side view: legs and cranks turning all the way to the line (Pete: show the pedalling)
-    await cam(s.page, { stiff: 0.3, keys: [{ t: 0, deg: 62, dist: TALL ? 4.6 : 5.2, h: 0.35, look: 0.45, fov: TALL ? 48 : 36 }] });
+    await cam(s.page, { stiff: 0.3, keys: [{ t: 0, deg: Number(process.env.MI_DEG || -62), dist: TALL ? 4.6 : 5.2, h: 0.35, look: 0.45, fov: TALL ? 48 : 36 }] });
     await take('madeit', s, 13.5, async () => { await s.page.evaluate(() => { if (window._game.state !== 'playing' && window.__reel.cam) window.__reel.setCamera(null); }); });
   },
   // #5 GOOSE DOWN: head-on into a pylon (#478's 3D cone, a real collision): the cone flies, the tandem comes apart,
@@ -325,6 +326,8 @@ SHOTS.probe_tutorial = async () => {
 const GYRO_CSS = `
   .cohud-tile { transition: none !important; }
   .front-view-frame, #partner-pip-wrap { display: none !important; }
+  /* the line flashes CHECKPOINT with its arch out of this camera's view: hide the flash in this reel */
+  #checkpoint-flash { display: none !important; }
 `;
 
 // ── #500 LOOK, NO THUMBS: local co-op, P1 on a DualSense, P2 on a Steam Controller (2026), both steering by gyro ──
@@ -333,7 +336,7 @@ const GYRO_CSS = `
 // becomes a controller ROLL: gravity turned in the report's accelerometer + the matching gyro rate, closed-loop on
 // what the game reads back (InputManager.getMotionLean), so the steering is the game's own gyro path end to end.
 // Pedalling pulls the real triggers in the reports. No stick, D-pad or keyboard lean, ever.
-async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true } = {}) {
+async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty = 'chill', storage = {}, sign = [1, 1], solo = false, overlay = true, steer = 'gyro', cadence = 2.8, human = 1 } = {}) {
   const st = { ...BASE, ...others(keep), tandemonium_controller_overlay: overlay ? 'on' : 'off', ...(solo ? { tandemonium_show_solo: 'on' } : {}), ...storage };
   const s = await launch({ ...VIEW, port: PORT, storage: st,
     before: (p) => installFakeWebHid(p, solo ? [hidDevice.dualsenseUsb('ds')] : [hidDevice.dualsenseUsb('ds'), hidDevice.steamPuck('sc')]) });
@@ -407,6 +410,7 @@ async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty
     if (document.getElementById('lobby-flow')?.current !== 'lobby-level') document.getElementById('btn-host-local-next').click();
     L.selectedLevel = L.resolveRoadLevel ? L.resolveRoadLevel(getLevelById(o.level)) : getLevelById(o.level);
     L.selectedDifficulty = o.difficulty;
+    if (o.level === 'tutorial') L._forceWizard = true;
   }, { level, difficulty });
   if (!solo) await sleep(800);
   if (!solo) await page.evaluate((salt) => {
@@ -417,16 +421,19 @@ async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty
   }, SALT);
   await page.waitForFunction((m) => window._game.mode === m && window._game.bike.modelLoaded && window._game.bike.goose, { timeout: 120000 }, solo ? 'solo' : 'local');
   // the rider bots work out the lean each rider wants; a hook turns that into a controller roll + trigger pulls
-  await page.evaluate((sign, solo) => {
+  await page.evaluate((sign, solo, steer, cadence, human) => {
     const g = window._game, R = window.__reel;
     R.hooks = R.hooks || [];
     const riders = [['ds', g.input, 'captain', 0, sign[0]], ['sc', g.inputP2, 'stoker', 0.5, sign[1]]].slice(0, solo ? 1 : 2).map(([key, input, role, ph, sg]) => {
       const orig = input.getGamepadLean.bind(input);
       const bot = R.attach(input, () => g.bike, { role, pedal: false, cadence: 2.8, sway: { amp: 0.32, freq: 0.27, phase: ph } });
-      input.getGamepadLean = orig;   // no stick lean: the bot's lean goes out through the gyro below
+      if (steer === 'gyro') input.getGamepadLean = orig;   // no stick lean: the bot's lean goes out through the gyro below
       return { key, input, bot, acc: role === 'stoker' ? 0.5 : 0, foot: role === 'stoker' ? 1 : 0, pull: 0, sign: sg };
     });
     window.__gyRiders = riders;
+    // from here the hook sends one report per virtual frame: stop the real-time stream, whose extra reports (stamped
+    // with a frozen clock while a frame is being saved) upset the fusion
+    for (const r of riders) window.__fakeHid.quiet(r.key);
     R.hooks.push((dt) => {
       if (dt <= 0) return;
       // the fake HID streams on a REAL interval, which barely runs under the virtual clock: send one report per
@@ -440,10 +447,10 @@ async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty
         // capture-only: during a beat the gyro drift re-centring is paused, so a held tilt reads as the lean it is
         if (cw != null && r.driftRate == null) { r.driftRate = r.input._driftRate; r.input._driftRate = 0; }
         if (cw == null && r.driftRate != null) { r.input._driftRate = r.driftRate; r.driftRate = null; }
-        const want = playing ? (cw != null ? cw : r.bot.leanOut) : 0;
+        const want = playing && steer === 'gyro' ? (cw != null ? cw : r.bot.leanOut) : 0;
         const got = r.input.getMotionLean ? r.input.getMotionLean() : 0;
         const prev = G.roll;
-        let roll = prev + r.sign * (want - got) * (cw != null ? 4.0 : 1.6) * dt;
+        let roll = prev + r.sign * (want - got) * (cw != null ? 4.0 : Number(window.__gyGain || 1.6)) * dt;
         const lim = cw != null ? 0.65 : 1.0;   // a beat holds ~37°; outside one the rider may tilt further to recover
         roll = Math.max(-lim, Math.min(lim, roll));
         if (!playing) roll *= Math.max(0, 1 - dt * 3);   // level out between rides (the countdown recentres)
@@ -451,16 +458,28 @@ async function gyroCoop({ keep = 'look_no_thumbs', level = 'grandma', difficulty
         // pedal: alternate trigger pulls at the cadence (a quick squeeze the overlay shows)
         if (playing) {
           r.t = (r.t || 0) + dt;
-          r.acc += dt * (cw != null ? Number(window.__choreoCadence || 1.6) : 2.8) * (1 + 0.07 * Math.sin(r.t * 1.45 + ri * 1.3) + 0.04 * Math.sin(r.t * 0.53 + 0.7));   // slower through the beats: less drift
+          r.acc += dt * (cw != null ? Number(window.__choreoCadence || 2.2) : cadence) * (1 + human * (0.07 * Math.sin(r.t * 1.45 + ri * 1.3) + 0.04 * Math.sin(r.t * 0.53 + 0.7)));   // slower through the beats: less drift
           if (r.need == null) { r.rnd = ((a) => () => { a = (a * 1103515245 + 12345) & 0x7fffffff; return a / 0x7fffffff; })(ri ? 97 : 31); r.need = 1; }
-          if (r.acc >= r.need) { r.acc -= r.need; r.need = 1 + (r.rnd() - 0.5) * 0.26; r.foot ^= 1; r.pull = 0.16; }   // human jitter
+          if (ri === 0) {
+            // the captain sets a human rhythm (each stroke its own length, the cadence drifting)...
+            if (r.acc >= r.need) {
+              r.acc -= r.need; r.need = 1 + (r.rnd() - 0.5) * 0.26 * human; r.foot ^= 1; r.pull = 0.16;
+              const o = riders[1];
+              if (o) { o.wait = 0.065 + r.rnd() * 0.03; o.nextFoot = r.foot ^ 1; }
+            }
+          } else if (r.wait != null) {
+            // ...and the stoker follows each stroke ~80 ms later on the other foot, as a pair does (out-of-step
+            // pedalling is a crank fight in this game)
+            r.wait -= dt;
+            if (r.wait <= 0) { r.wait = null; r.foot = r.nextFoot; r.pull = 0.16; }
+          }
           r.pull = Math.max(0, r.pull - dt);
           const v = r.pull > 0 ? Math.min(1, (0.16 - r.pull) / 0.05 + 0.2) : 0;
           G.l = r.foot === 0 ? v : 0; G.r = r.foot === 1 ? v : 0;
         } else { G.l = G.r = 0; }
       }
     });
-  }, sign, solo);
+  }, sign, solo, steer, cadence, human);
   await sleep(500);
   await page.evaluate(() => window.__reel.gameplayHud());
   return s;
@@ -527,11 +546,11 @@ const stageTiles = (page) => page.evaluate((tall, cam) => {
       if (t.overlay && !t.__staged) {
         t.__staged = true;
         try { t.overlay.setFloatParts(true); } catch (e) { console.log('[reel] float failed ' + e.message); }
-        try { t.overlay.camera.position.set(cam[0], cam[1], cam[2]); t.overlay.controls.target.set(0, 0, 0); t.overlay.controls.update && t.overlay.controls.update(); } catch (e) {}
+        try { t.overlay.setCameraPreset('top'); } catch (e) {}   // the lab's default: the pad as the player holds it
       }
     }
   });
-  R.noPip = true;
+  R.noPip = true; R.keepRoad = true;   // no selfie PiP drawn over the tiles; the road (arches too) stays
 }, TALL, CAM);
 
 const floatState = (page) => page.evaluate(() => [...window._game.controllerHud.tiles.values()].map(t => ({
@@ -580,8 +599,9 @@ const LEAN = Number(process.env.NT_LEAN || 0.5);
 const LEAN_T = Number(process.env.NT_LEAN_T || 0.3);   // together: both the same way (the bike turns, so keep it brief)
 // [start s, end s, caption, P1, P2, kind]: T = absolute lean; O = the bot's own steering + a split (the bike's average
 // still follows the road while the two riders lean apart)
-const BEATS = [[0.3, 1.4, 'TOGETHER', -LEAN_T, -LEAN_T, 'T'], [1.4, 3.0, 'OPPOSITE', -LEAN, LEAN, 'O'],
-  [3.0, 4.1, 'TOGETHER', LEAN_T, LEAN_T, 'T'], [4.1, 5.4, 'OPPOSITE', LEAN, -LEAN, 'O']];
+// short gaps between beats hand the steering back to the riders' road sense, so the bike stays on the road
+const BEATS = [[0.3, 1.4, 'TOGETHER', -LEAN_T, -LEAN_T, 'T'], [1.6, 3.0, 'OPPOSITE', -LEAN, LEAN, 'O'],
+  [3.5, 4.6, 'TOGETHER', LEAN_T, LEAN_T, 'T'], [5.3, 6.6, 'OPPOSITE', LEAN, -LEAN, 'O']];
 const LEAN_S = Number(process.env.NT_LEAN_S || 0.32);
 const BEATS_SOLO = [[0.3, 1.3, 'LEAN LEFT', -LEAN_S, 0, 'T'], [1.3, 2.5, 'LEAN RIGHT', LEAN_S, 0, 'T'],
   [2.5, 3.5, 'LEAN LEFT', -LEAN_S, 0, 'T'], [3.5, 4.6, 'LEAN RIGHT', LEAN_S, 0, 'T']];
@@ -625,21 +645,88 @@ const choreo = (page, beats = BEATS) => page.evaluate((beats, tall, botw) => {
 
 // #101 LOOK, NO THUMBS: a close-up of each pad (DualSense, then Steam Controller), then both riders weaving home by
 // tilting their pads, the two controllers big along the bottom of the frame
-const NT = { from: Number(process.env.NT_FROM || 120), closeDs: 0, closeSc: 0, secs: Number(process.env.NT_SECS || 22) };
+const NT = { from: Number(process.env.NT_FROM || 195), closeDs: 0, closeSc: 0, secs: Number(process.env.NT_SECS || 22) };
 const nothumbsShot = (solo) => async () => {
   const s = await gyroCoop({ sign: [-1, -1], solo });
   await stageTiles(s.page);
   await tiltLabels(s.page);
   await choreo(s.page, solo ? BEATS_SOLO : BEATS);
-  await until(s.page, st => st.d >= NT.from - 22 || ['finishCinematic', 'victory', 'gameover'].includes(st.state), 120, 0.25);
+  await s.page.evaluate((k) => { window.__gyGain = k; }, Number(process.env.NT_GAIN || 3.5));   // a quicker hand on the pad
+  const from = solo ? Number(process.env.NT_FROM_SOLO || 212) : NT.from;   // close to the finish: one continuous take, no cut
+  await until(s.page, st => st.d >= from - 22 || ['finishCinematic', 'victory', 'gameover'].includes(st.state), 120, 0.25);
   await s.page.evaluate((o) => { for (const b of window.__reel.bots) { b.dodge = false; b.offset = o; } }, solo ? 0 : Number(process.env.NT_PRE || -1.3));
-  const go = await until(s.page, st => st.d >= NT.from || ['finishCinematic', 'victory', 'gameover'].includes(st.state), 120, 0.25);
+  const go = await until(s.page, st => st.d >= from || ['finishCinematic', 'victory', 'gameover'].includes(st.state), 120, 0.25);
   console.log('  from', JSON.stringify({ d: go.d, state: go.state }), JSON.stringify(await floatState(s.page)));
   // behind the riders, aimed a little under the seats so they sit above the controller band
   await cam(s.page, { keys: [{ t: 0, deg: 158, dist: TALL ? 6.2 : 6.4, h: TALL ? 2.4 : 1.9, look: TALL ? -1.1 : -0.5, fov: TALL ? 50 : 40 }] });
-  await take(solo ? 'nothumbs_solo' : 'nothumbs', s, NT.secs, async (i) => { if (i === 0) await s.page.evaluate(() => { window.__choreo.t0 = window.__vclock.t; for (const b of window.__reel.bots) { b.offset = 0; } }); });
+  await take(solo ? 'nothumbs_solo' : 'nothumbs', s, NT.secs, async (i) => {
+    if (i === 0) await s.page.evaluate(() => { window.__choreo.t0 = window.__vclock.t; for (const b of window.__reel.bots) { b.offset = 0; } });
+    // over the line the game's own finish (Grandma at her gate) takes the camera
+    await s.page.evaluate(() => { if (window._game.state !== 'playing' && window.__reel.cam) window.__reel.setCamera(null); });
+  });
 };
 SHOTS.nothumbs = nothumbsShot(false);
+
+/** RIDE TOGETHER: local co-op, both pads, both geese; the bots steer with the sticks and pedal with the triggers. */
+const together = (keep, o = {}) => gyroCoop({ keep, steer: 'stick', overlay: false, sign: [-1, -1], ...o });
+SHOTS.learner_together = async () => {
+  const s = await together('tutorial_done', { level: 'tutorial', cadence: 2.6, human: 0.35 });
+  await bots(s.page, { path: TUT_PATH, sway: STILL });
+  await until(s.page, st => st.d >= 117);
+  await take('learner_together', s, 6.5);
+};
+SHOTS.natural_together = async () => {
+  const s = await together('tutorial_clean', { level: 'tutorial', cadence: 2.6, human: 0.35 });
+  await bots(s.page, { path: TUT_PATH, sway: STILL });
+  await until(s.page, st => st.d >= 112);
+  await cam(s.page, { stiff: 0.3, keys: [{ t: 0, deg: 60, dist: 4.2, h: 0.4, look: 0.3, fov: TALL ? 50 : 36 },
+    { t: 5, deg: 75, dist: 3.8, h: 0.3, look: 0.3, fov: TALL ? 50 : 36 }] });
+  await take('natural_together', s, 7);
+};
+SHOTS.madeit_together = async () => {
+  const s = await together('first_finish', { cadence: 3.4 });
+  console.log('  at', JSON.stringify(await until(s.page, st => st.d >= 212, 120, 0.5)));
+  await cam(s.page, { stiff: 0.3, keys: [{ t: 0, deg: Number(process.env.MI_DEG || -62), dist: TALL ? 4.6 : 5.2, h: 0.35, look: 0.45, fov: TALL ? 48 : 36 }] });
+  await take('madeit_together', s, 13.5, async () => { await s.page.evaluate(() => { if (window._game.state !== 'playing' && window.__reel.cam) window.__reel.setCamera(null); }); });
+};
+SHOTS.goosedown_together = async () => {
+  const s = await together('first_crash', { difficulty: 'adventurous', cadence: 3.4, storage: { tandemonium_physics_fx: 'on' } });
+  const { page } = s;
+  await bots(page, { sway: STILL });
+  await until(page, st => st.state === 'playing' && st.d > 40 && st.speed > 6, 120, 0.5);
+  const ready = await page.evaluate(() => !!(window._game.physicsFx && window._game.physicsFx.ready));
+  if (!ready) throw new Error('Physics FX not ready: is vendor/rapier.mjs there?');
+  const d0 = (await state(page)).d;
+  const p = await page.evaluate((d) => {
+    const items = (window._game.obstacleManager._items || []).filter(i => i.absoluteD > d + 30 && !i._hidden)
+      .sort((x, y) => x.absoluteD - y.absoluteD);
+    return items[0] ? { d: items[0].absoluteD, x: items[0].lateralOffset } : null;
+  }, d0);
+  if (!p) throw new Error('no pylon ahead');
+  console.log('  pylon at', JSON.stringify(p), 'from d', d0);
+  await bots(page, { dodge: false, offset: p.x, path: null });
+  await until(page, st => st.d > p.d - 30 || st.fallen, 60, 1 / 30);
+  await cam(page, { stiff: 0.3, keys: [{ t: 0, deg: TALL ? 40 : 58, dist: TALL ? 13 : 9, h: TALL ? 1.1 : 0.6, look: -0.3, fov: TALL ? 56 : 50 }] });
+  let locked = false;
+  await take('goosedown_together', s, 7.5, async (i, t) => {
+    const st = await page.evaluate(() => {
+      for (const mk of (window._game.world && window._game.world._raceMarkers) || [])
+        if (mk.type === 'checkpoint') { mk._permanentlyHidden = true; mk.mesh.visible = false; }
+      const b = window._game.bike;
+      return { d: b.distanceTraveled, fallen: b.fallen, scene: !!b.crashScene, parts: b.crashScene ? b.crashScene.parts.length : 0 };
+    });
+    if (i % 15 === 0) console.log('   ', t.toFixed(2), JSON.stringify(st));
+    if (st.fallen && !locked) {
+      locked = true;   // hold the crash site: the rig would follow the seats into the dirt
+      await page.evaluate(() => {
+        const R = window.__reel, cs = R.camState;
+        if (cs && cs.ctr) { const ctr = cs.ctr.clone().addScaledVector(cs.fwd, 4.5), fwd = cs.fwd.clone(); R._bikeFrame = () => ({ ctr: ctr.clone(), fwd: fwd.clone() }); }
+      });
+    }
+    // stays down for the toast and the end card (simulated seconds: past the slow-mo, the parts settle)
+    if (st.fallen) await page.evaluate(() => { const b = window._game.bike; if (b.fallTimer < 50) b.fallTimer = 99; });
+  });
+};
 SHOTS.nothumbs_solo = nothumbsShot(true);
 
 // #1 KICK OFF, RIDE TOGETHER: local co-op on two pads, the countdown, GO, both riders' first push
@@ -672,13 +759,14 @@ SHOTS.probe_tiles = async () => {
 SHOTS.probe_choreo = async () => {
   const s = await gyroCoop({ sign: [-1, -1] });
   await stageTiles(s.page); await tiltLabels(s.page); await choreo(s.page);
+  await s.page.evaluate((k) => { window.__gyGain = k; }, Number(process.env.NT_GAIN || 3.5));
   await s.page.evaluate((o) => { for (const b of window.__reel.bots) { b.dodge = false; b.offset = o; } }, Number(process.env.NT_PRE || -1.3));
   await until(s.page, st => st.d >= NT.from, 120, 0.25);
   await cam(s.page, { keys: [{ t: 0, deg: 158, dist: TALL ? 6.2 : 6.4, h: TALL ? 2.4 : 1.9, look: TALL ? -1.1 : -0.5, fov: TALL ? 50 : 40 }] });
   await s.page.evaluate(() => window.__vclock.enable());
   await s.page.evaluate(() => { window.__choreo.t0 = window.__vclock.t; for (const b of window.__reel.bots) b.offset = 0; });
   const cdp = await s.page.createCDPSession();
-  for (let k = 1; k <= 36; k++) {
+  for (let k = 1; k <= Number(process.env.NT_PK || 36); k++) {
     await advance(s.page, 0.25);
     const p = await s.page.evaluate(() => { const g = window._game, b = g.bike, G = window.__gy;
       return { t: ((window.__vclock.t - window.__choreo.t0) / 1000).toFixed(2), cap: +(b._captainLeanTarget || 0).toFixed(2), sto: +(b._stokerLeanTarget || 0).toFixed(2),
@@ -692,6 +780,18 @@ SHOTS.probe_choreo = async () => {
   await s.close();
 };
 
+SHOTS.probe_tut_together = async () => {
+  const s = await together('tutorial_done', { level: 'tutorial', cadence: 2.6, human: 0.35 });
+  await watchTutorial(s.page);
+  await bots(s.page, { path: TUT_PATH, sway: STILL });
+  for (let k = 0; k < 40; k++) {
+    await advance(s.page, 1);
+    const p = await s.page.evaluate(() => { const g = window._game, b = g.bike; return { st: g.state, mode: g.mode, tut: !!g._tutorialActive, tp: g._tutTargetPhase, v: +b.speed.toFixed(1), d: +b.distanceTraveled.toFixed(0), x: +(b._lateralOffset || 0).toFixed(2), lv: g.lobby.selectedLevel && g.lobby.selectedLevel.id, earned: [...g.achievements._earned.keys()].filter(i => !window.__achPre.includes(i)) }; });
+    console.log(' ', k + 1, JSON.stringify(p));
+    if (p.st === 'gameover' || p.earned.length) break;
+  }
+  await s.close();
+};
 const want = (process.argv[2] || '').split(',').filter(Boolean);
 for (const k of want) {
   if (!SHOTS[k]) { console.log('no shot', k); continue; }

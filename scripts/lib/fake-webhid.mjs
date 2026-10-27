@@ -180,6 +180,8 @@ function browserFakeHid(specs) {
       setTimeout(() => window.__fakeHid.hold(key, offset, mask, false), ms);
       return true;
     },
+    /** Stop the timed stream but keep the device open (a caller emitting reports itself, e.g. per virtual frame). */
+    quiet(key) { const r = recs.get(key); if (!r) return false; stopStream(r); return true; },
     device(key) { const r = recs.get(key); return r ? r.device : null; },
     stats(key) { const r = recs.get(key); return r ? { opened: r.device.opened, connected: r.connected, granted: r.granted, ...r.stats } : null; },
     keys() { return [...recs.keys()]; },
