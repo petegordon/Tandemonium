@@ -244,7 +244,8 @@ export class AchievementManager {
 
   /** A gust starts (true) or ends (false). */
   gust(starting) {
-    if (starting) return this.record('gust');
+    // The ride tracker has to see the gust start too, or no gust is ever "ridden out" (Weathered).
+    if (starting) { this.ride.gust(true); return this.record('gust'); }
     return this.ride.gust(false) ? this.record('weathered') : [];
   }
 
