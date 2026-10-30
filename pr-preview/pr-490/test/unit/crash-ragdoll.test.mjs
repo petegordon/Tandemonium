@@ -2,7 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SLOWMO, crashTimeScale, simSecondsFor, clockHeld } from '../../js/crash-slowmo.js';
-import { SEGMENTS, LITE, segmentsFor, throwFor, hatThrow } from '../../js/physics/ragdoll-spec.js';
+import { SEGMENTS, LITE, segmentsFor, throwFor, hatThrow, GOOSE_MASS, segmentMass, rodInertia, toneRate, frictionFraction,
+  MAX_RATE, LIMIT_RATE, RESTITUTION, LINEAR_DAMPING } from '../../js/physics/ragdoll-spec.js';
 
 const near = (a, b, e = 1e-9) => Math.abs(a - b) <= e;
 
@@ -111,4 +112,51 @@ test('hat: always hops up off the head, spinning', () => {
     assert.ok(h.linvel.y >= 3.2);
     assert.ok(Number.isFinite(h.angvel.x + h.angvel.y + h.angvel.z));
   }
+});
+
+// #507 · more weight, less rubber: the mass budget, the joint tone and what it may never do.
+test('#507 rag doll: the goose has a mass budget and the body carries most of it', () => {
+  const total = SEGMENTS.reduce((a, s) => a + s.mass, 0);
+  assert.ok(near(total, 1, 0.03), `mass fractions sum to ${total}`);
+  const body = SEGMENTS.filter(s => s.id === 'pelvis' || s.id === 'chest').reduce((a, s) => a + s.mass, 0);
+  assert.ok(body > 0.5, 'pelvis + chest are more than half the goose');
+  for (const s of SEGMENTS) assert.ok(near(segmentMass(s), s.mass * GOOSE_MASS), s.id);
+  assert.ok(segmentMass({ mass: 0 }) > 0, 'never a massless body');
+  assert.equal(RESTITUTION, 0, 'a goose does not bounce');
+  assert.ok(LINEAR_DAMPING < 0.1, 'it falls like a sack, not through water');
+});
+
+test('#507 rag doll: every joint but the pelvis has tone; limbs are damped harder than the neck', () => {
+  for (const s of SEGMENTS) {
+    if (s.id === 'pelvis') { assert.equal(s.tone, null); continue; }
+    assert.ok(s.tone && s.tone.fr > 0 && s.tone.tc > 0 && s.tone.limit > 0, s.id);
+  }
+  const neck = SEGMENTS.filter(s => s.id.startsWith('neck'));
+  const limbs = SEGMENTS.filter(s => /^(arm|fore|thigh|shin)/.test(s.id));
+  for (const n of neck) for (const l of limbs) {
+    assert.ok(n.tone.fr > l.tone.fr && n.tone.tc > l.tone.tc && n.damp < l.damp, `${n.id} looser than ${l.id}`);
+  }
+});
+
+test('#507 tone: pulls back toward the seated angle, geometrically, never faster than a muscle', () => {
+  const tone = { fr: 0.03, tc: 0.05, limit: 0.9 };
+  const h = 1 / 120;
+  assert.equal(toneRate(0, h, tone), 0);
+  assert.equal(toneRate(0.3, h, null), 0);
+  const r1 = toneRate(0.05, h, tone), r2 = toneRate(0.1, h, tone);
+  assert.ok(r1 < 0 && r2 < r1, 'closing, and faster when further');
+  // small angles close by the same fraction per step
+  assert.ok(near(r2 / r1, 2, 1e-9));
+  // a joint far from its pose comes back at MAX_RATE, past its limit at most LIMIT_RATE
+  assert.ok(near(toneRate(0.8, h, tone), -MAX_RATE));
+  assert.ok(toneRate(2.5, h, tone) < -MAX_RATE && toneRate(2.5, h, tone) >= -LIMIT_RATE);
+  assert.ok(toneRate(3.1, h, tone) >= -LIMIT_RATE);
+});
+
+test('#507 joint friction: a fraction of the relative spin per substep, more for a shorter relaxation', () => {
+  assert.equal(frictionFraction(1 / 120, 0), 0);
+  const f1 = frictionFraction(1 / 120, 0.03), f2 = frictionFraction(1 / 120, 0.15);
+  assert.ok(f1 > f2 && f1 < 1 && f2 > 0);
+  assert.ok(near(frictionFraction(0.03, 0.03), 1 - Math.exp(-1)));
+  assert.ok(rodInertia(1, 0.4, 0.05) > rodInertia(1, 0.2, 0.05));
 });

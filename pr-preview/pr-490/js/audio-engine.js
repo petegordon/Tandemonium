@@ -2,15 +2,15 @@
 //
 // Design goals:
 //   - One AudioContext, lazily created on first user gesture (iOS-safe).
-//   - Three buses off a single master: music, sfx, bike. Lets us duck music
+//   - Two buses off a single master: music and sfx. Lets us duck music
 //     during gameplay without touching individual volumes (St2).
-//   - Procedural bike motion sound (wind + tire hiss + chain) driven by
-//     speed (Sp3), so the bike is never silent while rolling.
+//   - No bike motion loop: the procedural wind/tire/chain bed (Sp3) whined,
+//     so it was removed (2026-10-26). Pedal taps carry the riding sound.
 //   - Richer SFX timbres (bell-like chime with inharmonic partials, noise-
 //     based crash) instead of bare square/sine oscillators (Ti1).
 //   - Linear crossfades on music start/stop/duck changes (St3).
 //   - Recorder tap: connecting a MediaStreamDestination on the master bus
-//     keeps music + SFX + bike audio in exported clips automatically.
+//     keeps music + SFX audio in exported clips automatically.
 //
 // The engine never disconnects the <audio> MediaElementSource after creating
 // it. Muting is handled by ramping the music bus gain to zero and pausing
@@ -61,15 +61,11 @@ export class AudioEngine {
     this.master = null;
     this.musicBus = null;
     this.sfxBus = null;
-    this.bikeBus = null;
     this._musicDuck = null;
     this._musicSrc = null;
     this._recorderDest = null;
     this._noiseBuf = null;
-    this._bike = null;
-    this._onCobbles = false;
     this._duckTarget = 1.0;
-    this._lastBikeUpdate = 0;
   }
 
   // Create the AudioContext and bus graph. Safe to call multiple times.
@@ -95,9 +91,6 @@ export class AudioEngine {
     this.sfxBus.gain.value = 1.0;
     this.sfxBus.connect(this.master);
 
-    this.bikeBus = ctx.createGain();
-    this.bikeBus.gain.value = 0.0;
-    this.bikeBus.connect(this.master);
 
     return ctx;
   }
@@ -638,171 +631,4 @@ export class AudioEngine {
     return buf;
   }
 
-  // ── Bike motion loop (Sp3) ───────────────────────────────────────────────
-
-  startBike() {
-    const ctx = this.ctx;
-    if (!ctx || this._bike) return;
-
-    // Wind: lowpassed pink-ish noise
-    const windSrc = ctx.createBufferSource();
-    windSrc.buffer = this._getNoiseBuffer();
-    windSrc.loop = true;
-    const windFilt = ctx.createBiquadFilter();
-    windFilt.type = 'lowpass';
-    windFilt.frequency.value = 420;
-    windFilt.Q.value = 0.5;
-    const windGain = ctx.createGain();
-    windGain.gain.value = 0;
-    windSrc.connect(windFilt).connect(windGain).connect(this.bikeBus);
-
-    // Tires: bandpassed noise around 1200 Hz
-    const tireSrc = ctx.createBufferSource();
-    tireSrc.buffer = this._getNoiseBuffer();
-    tireSrc.loop = true;
-    const tireFilt = ctx.createBiquadFilter();
-    tireFilt.type = 'bandpass';
-    tireFilt.frequency.value = 1200;
-    tireFilt.Q.value = 1.0;
-    const tireGain = ctx.createGain();
-    tireGain.gain.value = 0;
-    tireSrc.connect(tireFilt).connect(tireGain).connect(this.bikeBus);
-
-    // Drivetrain: low filtered saw whose pitch tracks cadence
-    const chainOsc = ctx.createOscillator();
-    chainOsc.type = 'sawtooth';
-    chainOsc.frequency.value = 60;
-    const chainFilt = ctx.createBiquadFilter();
-    chainFilt.type = 'lowpass';
-    chainFilt.frequency.value = 240;
-    chainFilt.Q.value = 2;
-    const chainGain = ctx.createGain();
-    chainGain.gain.value = 0;
-    chainOsc.connect(chainFilt).connect(chainGain).connect(this.bikeBus);
-
-    // Cobbles (E-2): a fourth layer that only opens up on the stones. Two bands
-    // of the same noise — a low body you feel and a hard rattle you hear — so
-    // the surface reads as stone rather than as more off-road hiss. It is built
-    // with the rest of the bed so stopBike() tears it down with everything else;
-    // leaving filters connected to bikeBus across races froze iOS WebKit (#277).
-    const cobbleSrc = ctx.createBufferSource();
-    cobbleSrc.buffer = this._getNoiseBuffer();
-    cobbleSrc.loop = true;
-    const cobbleFilt = ctx.createBiquadFilter();
-    cobbleFilt.type = 'bandpass';
-    cobbleFilt.frequency.value = 190;
-    cobbleFilt.Q.value = 0.7;
-    const cobbleGain = ctx.createGain();
-    cobbleGain.gain.value = 0;
-    cobbleSrc.connect(cobbleFilt).connect(cobbleGain).connect(this.bikeBus);
-
-    const rattleFilt = ctx.createBiquadFilter();
-    rattleFilt.type = 'bandpass';
-    rattleFilt.frequency.value = 900;
-    rattleFilt.Q.value = 1.4;
-    const rattleGain = ctx.createGain();
-    rattleGain.gain.value = 0;
-    cobbleSrc.connect(rattleFilt).connect(rattleGain).connect(this.bikeBus);
-
-    windSrc.start();
-    tireSrc.start();
-    chainOsc.start();
-    cobbleSrc.start();
-
-    // Track every node so stopBike() can fully tear down the graph.
-    // Without holding refs to the filters, they were leaked-connected to
-    // bikeBus across races and accumulated on iOS WebKit (browser freeze
-    // while audio kept playing — main thread starved by node graph).
-    this._bike = {
-      windSrc, tireSrc, chainOsc, cobbleSrc,
-      windFilt, tireFilt, chainFilt, cobbleFilt, rattleFilt,
-      windGain, tireGain, chainGain, cobbleGain, rattleGain,
-    };
-
-    // Fade the bus in; individual sources stay at 0 until speed rises.
-    const now = ctx.currentTime;
-    this.bikeBus.gain.cancelScheduledValues(now);
-    this.bikeBus.gain.setValueAtTime(this.bikeBus.gain.value, now);
-    this.bikeBus.gain.linearRampToValueAtTime(1.0, now + 0.2);
-  }
-
-  /**
-   * E-2 · are we on the stones? Opens the cobble layer of the bike bed.
-   * Level follows speed in updateBike(), so slow cobbles mutter and fast
-   * cobbles roar. Safe to call every frame with the same value.
-   */
-  setCobbles(on) {
-    this._onCobbles = !!on;
-    if (!this.ctx || !this._bike) return;
-    // Ramp handled in updateBike so it stays on one throttled automation path.
-    this._lastBikeUpdate = 0;
-  }
-
-  stopBike() {
-    if (!this.ctx || !this._bike) return;
-    const ctx = this.ctx;
-    const now = ctx.currentTime;
-    this.bikeBus.gain.cancelScheduledValues(now);
-    this.bikeBus.gain.setValueAtTime(this.bikeBus.gain.value, now);
-    this.bikeBus.gain.linearRampToValueAtTime(0, now + 0.3);
-    const b = this._bike;
-    this._bike = null;
-    this._onCobbles = false;   // a new ride starts off the stones
-    setTimeout(() => {
-      // Stop sources first so they're eligible for auto-release.
-      try { b.windSrc.stop();  } catch (e) {}
-      try { b.tireSrc.stop();  } catch (e) {}
-      try { b.chainOsc.stop(); } catch (e) {}
-      try { b.cobbleSrc.stop(); } catch (e) {}
-      // Explicitly disconnect every node from the graph. Sources auto-GC
-      // after stop(), but BiquadFilter / GainNode are kept alive by their
-      // outgoing connection to bikeBus until disconnect() is called.
-      try { b.windSrc.disconnect();  } catch (e) {}
-      try { b.tireSrc.disconnect();  } catch (e) {}
-      try { b.chainOsc.disconnect(); } catch (e) {}
-      try { b.cobbleSrc.disconnect(); } catch (e) {}
-      try { b.windFilt.disconnect();  } catch (e) {}
-      try { b.tireFilt.disconnect();  } catch (e) {}
-      try { b.chainFilt.disconnect(); } catch (e) {}
-      try { b.cobbleFilt.disconnect(); } catch (e) {}
-      try { b.rattleFilt.disconnect(); } catch (e) {}
-      try { b.windGain.disconnect();  } catch (e) {}
-      try { b.tireGain.disconnect();  } catch (e) {}
-      try { b.chainGain.disconnect(); } catch (e) {}
-      try { b.cobbleGain.disconnect(); } catch (e) {}
-      try { b.rattleGain.disconnect(); } catch (e) {}
-    }, 400);
-  }
-
-  // Called each frame while playing. `speed` in the bike's units,
-  // `maxSpeed` the configured cap, `offRoad` 0-1 surface roughness.
-  //
-  // Perf: throttled to ~20Hz and uses setTargetAtTime rather than
-  // cancel+setValue+linearRamp every frame. The old pattern tore down the
-  // automation timeline and forced an audio-thread sync on every call,
-  // which caused main-thread stalls on high-refresh displays (#277).
-  updateBike(speed, maxSpeed, offRoad = 0, fallen = false) {
-    if (!this.ctx || !this._bike) return;
-    const now = this.ctx.currentTime;
-    if (now - this._lastBikeUpdate < 0.05) return;
-    this._lastBikeUpdate = now;
-
-    const norm = Math.max(0, Math.min(1, speed / (maxSpeed || 19)));
-    const wind  = fallen ? 0 : norm * norm * 0.22;
-    const tire  = fallen ? 0 : norm * 0.16 + offRoad * 0.28;
-    const chain = fallen ? 0 : norm * 0.09;
-    const chainHz = 58 + norm * 112;
-
-    const tc = 0.08;
-    const b = this._bike;
-    b.windGain.gain.setTargetAtTime(wind, now, tc);
-    b.tireGain.gain.setTargetAtTime(tire, now, tc);
-    b.chainGain.gain.setTargetAtTime(chain, now, tc);
-    b.chainOsc.frequency.setTargetAtTime(chainHz, now, tc);
-
-    // Cobbles: silent off the stones, and louder the faster you take them.
-    const rough = this._onCobbles && !fallen ? (0.35 + norm * 0.65) : 0;
-    b.cobbleGain.gain.setTargetAtTime(rough * 0.30, now, tc);
-    b.rattleGain.gain.setTargetAtTime(rough * 0.13, now, tc);
-  }
 }

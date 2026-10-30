@@ -24,7 +24,8 @@
 // ============================================================
 
 import * as THREE from 'three';
-import { segmentsFor, throwFor, hatThrow } from './ragdoll-spec.js';
+import { segmentsFor, throwFor, hatThrow, segmentMass, rodInertia, toneRate, frictionFraction,
+  LINEAR_DAMPING, RESTITUTION, FRICTION } from './ragdoll-spec.js';
 import { PARTS, hasParts, visibleMeshesByPart, boundsIn, partLaunch } from './bike-parts.js';
 import { hitWobble, onBike, kickSign, aimAt } from '../crash-wobble.js';
 import { realSecondsFor, SLOWMO } from '../crash-slowmo.js';
@@ -44,6 +45,7 @@ const LAND_BY = SLOWMO.downReal - 0.25;  // the joints want small steps; slow-mo
 
 const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _inv = new THREE.Matrix4();
 const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1), _pq = new THREE.Quaternion();
+const _q2 = new THREE.Quaternion(), _inv_q = new THREE.Quaternion();
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const ONE = new THREE.Vector3(1, 1, 1);
@@ -52,6 +54,39 @@ function bonesOf(root) {
   const out = {};
   root.traverse((o) => { if (o.isBone && !out[o.name]) out[o.name] = o; });
   return out;
+}
+
+/**
+ * A body's inertia for the tone: Rapier's principal values and their local frame (a capsule's axial inertia
+ * is ~10x smaller than its transverse one, so a scalar would over-kick any twist); else the rod estimate.
+ */
+function inertiaOf(body, mass, len, rad) {
+  try {
+    const pi = body.principalInertia && body.principalInertia();
+    const fr = body.principalInertiaLocalFrame && body.principalInertiaLocalFrame();
+    if (pi && fr && Math.min(pi.x, pi.y, pi.z) > 0) return { pi: new THREE.Vector3(pi.x, pi.y, pi.z), frame: new THREE.Quaternion(fr.x, fr.y, fr.z, fr.w) };
+  } catch (e) { /* fall through */ }
+  const I = rodInertia(mass, len, rad);
+  return { pi: new THREE.Vector3(I, I, I), frame: new THREE.Quaternion() };
+}
+
+const _fq = new THREE.Quaternion(), _dl = new THREE.Vector3();
+/** The inertia of a body (rotation q, inertia inr) about a world axis d (unit): dᵀ R diag(pi) Rᵀ d. */
+function inertiaAlong(q, inr, d) {
+  _fq.copy(q).multiply(inr.frame).invert();
+  _dl.copy(d).applyQuaternion(_fq);
+  return inr.pi.x * _dl.x * _dl.x + inr.pi.y * _dl.y * _dl.y + inr.pi.z * _dl.z * _dl.z;
+}
+/**
+ * The torque impulse that changes a body's spin by exactly dw (world): I_world · dw. A capsule's axial
+ * inertia is ~10x its transverse one, so an impulse along an arbitrary axis would spin it up about its own
+ * axis (to Rapier's cap) — this one does not.
+ */
+function spinImpulse(body, q, inr, dw) {
+  _fq.copy(q).multiply(inr.frame);
+  _dl.copy(dw).applyQuaternion(_fq.clone().invert());
+  _dl.set(_dl.x * inr.pi.x, _dl.y * inr.pi.y, _dl.z * inr.pi.z).applyQuaternion(_fq);
+  body.applyTorqueImpulse({ x: _dl.x, y: _dl.y, z: _dl.z }, true);
 }
 
 function bodyMatrix(body, target) {
@@ -78,15 +113,17 @@ export class CrashScene {
     this.bike = bike;
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.world.timestep = SUBSTEP;
-    // the joints hold under a hard throw: more solver iterations than the default
+    // the joints hold under a hard throw: more solver iterations than the default (#507: 12, with the
+    // muscle tone pulling on them every substep)
     const ip = this.world.integrationParameters;
-    if (ip && 'numSolverIterations' in ip) ip.numSolverIterations = 8;
+    if (ip && 'numSolverIterations' in ip) ip.numSolverIterations = 12;
     this.parts = [];       // { part, body, group, mass, rad } (#484 step 3: the tandem comes apart)
     this._hidden = [];     // the bike's own meshes hidden while their part flies
     this._others = others.filter(o => o && o !== bike && o.group);
     this._hitTeams = new Set();
     this.hits = [];        // [{ part, bike, kick }] (tests, the review capture)
     this.joints = [];      // [parentBody, childBody, anchorInParent, anchorInChild] (the joint-gap check)
+    this.tones = [];       // #507: { parent, rel0, gains } per toned joint, applied every substep (with the child in segs)
     this.riders = [];      // { seat, rider, snap, segs:[{bone, body, O}], hat:{bone, body, O} }
     this.bodyCount = 0;
     this._acc = 0;
@@ -212,19 +249,22 @@ export class CrashScene {
       const q = len > 1e-5 ? new THREE.Quaternion().setFromUnitVectors(UP, _d.normalize()) : new THREE.Quaternion();
       // leave as one piece: v + w x (p - hips)
       const lv = v0.clone().add(w.clone().cross(ctr.clone().sub(hips)));
+      // #507: a goose has weight: the body carries most of it, the limbs are damped hard, nothing bounces
+      const mass = segmentMass(sg);
       const body = this.world.createRigidBody(R.RigidBodyDesc.dynamic()
         .setTranslation(ctr.x, ctr.y, ctr.z).setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
         .setLinvel(lv.x, lv.y, lv.z).setAngvel({ x: w.x, y: w.y, z: w.z })
-        .setLinearDamping(0.12).setAngularDamping(sg.damp).setCcdEnabled(true));
-      this.world.createCollider(R.ColliderDesc.capsule(half, rad).setFriction(0.85).setRestitution(0.15)
+        .setLinearDamping(LINEAR_DAMPING).setAngularDamping(sg.damp).setCcdEnabled(true));
+      this.world.createCollider(R.ColliderDesc.capsule(half, rad).setMass(mass).setFriction(FRICTION).setRestitution(RESTITUTION)
         .setCollisionGroups(DEBRIS_GROUPS), body);
       this.bodyCount++;
       const B0 = new THREE.Matrix4().compose(ctr, q, ONE);
       const O = B0.clone().invert().multiply(bone.matrixWorld);
-      made[sg.id] = { body, B0, anchor: _a.clone() };
+      made[sg.id] = { body, B0, anchor: _a.clone(), q, inr: inertiaOf(body, mass, len, rad) };
       // only the pelvis is placed; every other bone is only TURNED (rotOnly), so a goose can't come apart
       const pw = bone.parent && bone.parent.isBone ? bone.parent.getWorldPosition(new THREE.Vector3()) : null;
-      out.segs.push({ bone, body, O, rad, rotOnly: !!sg.parent, rest: pw ? bone.getWorldPosition(new THREE.Vector3()).distanceTo(pw) : null });
+      const seg = { bone, body, O, rad, rotOnly: !!sg.parent, rest: pw ? bone.getWorldPosition(new THREE.Vector3()).distanceTo(pw) : null };
+      out.segs.push(seg);
       const p = sg.parent && made[sg.parent];
       if (p) {
         const la = _a.clone().applyMatrix4(_inv.copy(p.B0).invert());
@@ -232,6 +272,11 @@ export class CrashScene {
         this.world.createImpulseJoint(R.JointData.spherical({ x: la.x, y: la.y, z: la.z }, { x: lb.x, y: lb.y, z: lb.z }),
           p.body, body, true);
         this.joints.push([p.body, body, la, lb]);
+        // the muscle tone: the seated relative rotation this joint is pulled back toward, and its gains
+        if (sg.tone) {
+          seg.tone = { parent: p.body, rel0: p.q.clone().invert().multiply(q), spec: sg.tone, ic: inertiaOf(body, mass, len, rad), ip: p.inr };
+          this.tones.push(seg.tone);
+        }
       }
     }
     // the hat, if this goose wears one bound to its HatSocket
@@ -391,10 +436,65 @@ export class CrashScene {
     this.age += dt;
     this._acc = Math.min(this._acc + dt, SUBSTEP * 8);
     // whole substeps, then one partial so a slow-mo frame (dt < SUBSTEP) still moves
-    while (this._acc >= SUBSTEP) { this.world.timestep = SUBSTEP; this.world.step(); this._acc -= SUBSTEP; }
-    if (this._acc > 1e-5) { this.world.timestep = this._acc; this.world.step(); this._acc = 0; }
+    while (this._acc >= SUBSTEP) { this._tone(SUBSTEP); this.world.timestep = SUBSTEP; this.world.step(); this._acc -= SUBSTEP; }
+    if (this._acc > 1e-5) { this._tone(this._acc); this.world.timestep = this._acc; this.world.step(); this._acc = 0; }
     if (this._others.length && this.parts.length) this._hitOthers();
     this._pose();
+  }
+
+  /**
+   * #507 muscle tone, velocity-level: joint friction relaxes the relative spin of the pair, then the spin along
+   * the error axis is set so the joint closes on its seated rotation (rel0) geometrically, faster past its
+   * limit. Equal and opposite impulses on the pair (reduced inertia), so the doll's momentum is untouched and
+   * nothing can ring or blow up whatever the stiffness.
+   */
+  _tone(h) {
+    for (const rd of this.riders) for (const s of rd.segs) {
+      const t = s.tone;
+      if (!t) continue;
+      const pr = t.parent.rotation(), cr = s.body.rotation();
+      _pq.set(pr.x, pr.y, pr.z, pr.w);
+      _q.set(cr.x, cr.y, cr.z, cr.w);
+      // A change of the RELATIVE spin by dw along a world axis d is shared by the pair by their inertia about
+      // d (the lighter one turns more), each getting a tensor-correct impulse for its own share.
+      const share = (d, dw) => {
+        const a = inertiaAlong(_q, t.ic, d), b = inertiaAlong(_pq, t.ip, d), kc = b / (a + b);
+        spinImpulse(s.body, _q, t.ic, _a.copy(d).multiplyScalar(dw * kc));
+        spinImpulse(t.parent, _pq, t.ip, _a.copy(d).multiplyScalar(-dw * (1 - kc)));
+      };
+      const wp = t.parent.angvel(), wc = s.body.angvel();
+      // joint friction: the relative spin relaxes toward zero (unconditionally stable)
+      const f = frictionFraction(h, t.spec.fr);
+      _b.set(wc.x - wp.x, wc.y - wp.y, wc.z - wp.z);
+      const relSpin = _b.length();
+      if (f > 0 && relSpin > 1e-6) share(_b.divideScalar(relSpin), -f * relSpin);
+      // the error rotation, in the parent's frame: rel · rel0⁻¹ where rel = parent⁻¹ · child
+      _q2.copy(_pq).invert().multiply(_q).multiply(_inv_q.copy(t.rel0).invert());
+      if (_q2.w < 0) _q2.set(-_q2.x, -_q2.y, -_q2.z, -_q2.w);
+      const sinHalf = Math.hypot(_q2.x, _q2.y, _q2.z);
+      if (sinHalf < 1e-6) continue;
+      const angle = 2 * Math.atan2(sinHalf, _q2.w);
+      _d.set(_q2.x / sinHalf, _q2.y / sinHalf, _q2.z / sinHalf).applyQuaternion(_pq);   // the error axis, world
+      // after the friction pass the relative spin is (1 − f) of what it was
+      const rate = (1 - f) * ((wc.x - wp.x) * _d.x + (wc.y - wp.y) * _d.y + (wc.z - wp.z) * _d.z);
+      const want = toneRate(angle, h, t.spec);
+      if (Number.isFinite(want - rate) && want !== rate) share(_d, want - rate);
+    }
+  }
+
+  /** The widest any toned joint is turned from its seated pose (rad; tests, the sim). */
+  maxToneAngle() {
+    let m = 0;
+    for (const rd of this.riders) for (const s of rd.segs) {
+      const t = s.tone;
+      if (!t) continue;
+      const pr = t.parent.rotation(), cr = s.body.rotation();
+      _pq.set(pr.x, pr.y, pr.z, pr.w);
+      _q.set(cr.x, cr.y, cr.z, cr.w);
+      _q2.copy(_pq).invert().multiply(_q).multiply(_inv_q.copy(t.rel0).invert());
+      m = Math.max(m, 2 * Math.acos(Math.min(1, Math.abs(_q2.w))));
+    }
+    return m;
   }
 
   _pose() {
