@@ -12,6 +12,7 @@ import { deriveSeed, SALT } from './daily-seed.js';
 import { buildArchPuffs, archTime } from './arch-puffs.js';
 import { buildGrandmaFinish } from './grandma-finish.js';
 import { buildGrandmaHouse, HOUSE } from './props-3d.js';
+import { buildTutorialBoard, boardPose, BOARD_PLACES } from './tutorial-board.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS_FULL = 120;    // ~4.2-unit vertex spacing — covers visible road/tree range
@@ -1038,8 +1039,11 @@ export class World {
       this._raceMarkers.push({ mesh: group, roadD, type: 'checkpoint' });
     }
 
-    // Your Home: chromakey video billboard just ahead of start line, left side
-    {
+    // #503 · the tutorial starts at a 3D "TUTORIAL START" board (end-card style)
+    if (level.isTutorial) {
+      this._addTutorialBoard('start', BOARD_PLACES.start.d, BOARD_PLACES.start.d);
+    } else {
+      // Your Home: chromakey video billboard just ahead of start line, left side
       const homeD = 15;
       const homePt = this.roadPath.getPointAtDistance(homeD);
       const marker = this._createVideoBillboard({
@@ -1053,18 +1057,7 @@ export class World {
       this._raceMarkers.push(marker);
 
       // Clear trees near the billboard so they don't overlap
-      const bx = marker.mesh.position.x;
-      const bz = marker.mesh.position.z;
-      const clearRadius = 5;
-      for (const slot of this._treePool) {
-        if (!slot.active) continue;
-        const dx = slot.mesh.position.x - bx;
-        const dz = slot.mesh.position.z - bz;
-        if (dx * dx + dz * dz < clearRadius * clearRadius) {
-          slot.mesh.visible = false;
-          slot.active = false;
-        }
-      }
+      this._clearTreesAround(marker.mesh.position.x, marker.mesh.position.z, 5);
     }
 
     // Destination marker
@@ -1077,6 +1070,9 @@ export class World {
       const marker = this._buildGrandmaHouse(destPt, destD);
       this._raceMarkers.push(marker);
       this._addGrandmaFinish(destD);
+    } else if (level.isTutorial) {
+      // #503 · a 3D "TUTORIAL END" board just past the finish line
+      this._addTutorialBoard('end', destD + BOARD_PLACES.end.dAfter, destD);
     } else {
       // Other levels: simple house shape (box + pyramid roof)
       const destGroup = new THREE.Group();
@@ -1165,6 +1161,34 @@ export class World {
    * the video billboard stood: 6 units off the road on the house's side, set
    * back so its front sits that far out, door angled towards the riders.
    */
+  /**
+   * #503 · a tutorial board beside the road at roadD; its glint fires when the
+   * lead bike passes glintD. Clears the trees around it like the start sign did.
+   */
+  _addTutorialBoard(kind, roadD, glintD) {
+    const L = this.roadPath.loopLength || Infinity;
+    const d = Number.isFinite(L) ? ((roadD % L) + L) % L : roadD;
+    const pt = this.roadPath.getPointAtDistance(d);
+    const place = BOARD_PLACES[kind];
+    const pose = boardPose(pt, place.lateral, place.turn);
+    const board = buildTutorialBoard(kind);
+    board.position.set(pose.x, pt.y, pose.z);
+    board.rotation.y = pose.rotY;
+    board.visible = false;
+    this.scene.add(board);
+    this._raceMarkers.push({ mesh: board, roadD: d, type: kind === 'end' ? 'destination' : 'start', board: true, glintD });
+    this._clearTreesAround(pose.x, pose.z, 5.5);
+  }
+
+  /** Hide pooled trees within r metres of (x, z) so nothing grows through a sign. */
+  _clearTreesAround(x, z, r) {
+    for (const slot of this._treePool) {
+      if (!slot.active) continue;
+      const dx = slot.mesh.position.x - x, dz = slot.mesh.position.z - z;
+      if (dx * dx + dz * dz < r * r) { slot.mesh.visible = false; slot.active = false; }
+    }
+  }
+
   _buildGrandmaHouse(destPt, destD) {
     if (!this._houseTime) this._houseTime = { value: 0 };
     const house = buildGrandmaHouse(this._houseTime);
@@ -1407,6 +1431,9 @@ export class World {
     this._treeNextD = 0;
     this._treeRngState = seeds.trees;
     this._treeSeedBase = seeds.trees;
+    // ...and place them along the new road. The load callback only ever placed them for the road that
+    // was current when the pine model arrived: every road chosen after that was bare (#506 review).
+    if (this._treeModelReady) this._placeTreesUpTo(this.roadPath.loopLength);
 
     // Clouds: same.
     for (const slot of this._cloudPool || []) {
@@ -1414,6 +1441,7 @@ export class World {
       if (slot.mesh) slot.mesh.visible = false;
     }
     this._cloudNextD = 0;
+    if (this._cloudPool) this._placeCloudsUpTo(this.roadPath.loopLength);
     this._cloudRngState = seeds.clouds;
     this._cloudSeedBase = seeds.clouds;
 
@@ -1533,6 +1561,8 @@ export class World {
 
       // #478 · the house's sparkle runs on its own clock
       if (marker.house && this._houseTime) this._houseTime.value = t;
+      // #503 · the tutorial boards' bunting + glint
+      if (marker.board) marker.mesh.userData.board.update(t, bikeD, marker.glintD);
 
       // Billboard destination video: offset Y so bottom sits on ground, face camera
       if (marker.billboard) {

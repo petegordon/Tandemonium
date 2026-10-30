@@ -2,7 +2,7 @@
 // ACHIEVEMENTS — the manager: persistence, events, toasts, Steam
 // ============================================================
 //
-// The 100 definitions, the lifetime stats and the pure rules live in
+// The 101 definitions, the lifetime stats and the pure rules live in
 // js/achievement-defs.js (#401). This file keeps what touches the browser:
 // localStorage, the economy-event listener, Steam, server sync, the toast and
 // the badges — plus the thin readers that turn Game state into the plain
@@ -244,7 +244,8 @@ export class AchievementManager {
 
   /** A gust starts (true) or ends (false). */
   gust(starting) {
-    if (starting) return this.record('gust');
+    // The ride tracker has to see the gust start too, or no gust is ever "ridden out" (Weathered).
+    if (starting) { this.ride.gust(true); return this.record('gust'); }
     return this.ride.gust(false) ? this.record('weathered') : [];
   }
 
@@ -321,7 +322,7 @@ export class AchievementManager {
   }
 
   /**
-   * What the lobby's badge screen lists: all 100 achievements. Hidden ones
+   * What the lobby's badge screen lists: all 101 achievements. Hidden ones
    * read "???" until earned; counters
    * carry [current, goal] progress; demoLocked marks full-game-only rows.
    */

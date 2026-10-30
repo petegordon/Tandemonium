@@ -41,6 +41,7 @@ import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { gyroOnlySteer } from './achievement-defs.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
@@ -2385,8 +2386,6 @@ class Game {
     }
     // St2 — duck music during gameplay vs the lobby.
     this.audioEngine.duckMusic(0.55, 0.8);
-    // Sp3 — start procedural bike motion loop (silent until speed rises).
-    this.audioEngine.startBike();
 
     this._playBeep(400, 0.15);
 
@@ -2525,7 +2524,6 @@ class Game {
     this.audioEngine.connectMusicElement(this._musicEl);
     if (this.lobby.musicActive) this._musicEl.play().catch(() => {});
     this.audioEngine.duckMusic(0.55, 0.8);
-    this.audioEngine.startBike();
     this._playBeep(400, 0.15);
   }
 
@@ -3404,7 +3402,8 @@ class Game {
       try {
         analytics.trackEvent('daily_finish', {
           key: level.key, mode: dailyMode, ranked: this._rankedRunActive,
-          time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes
+          time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes,
+          geese_scattered: this.geeseManager ? this.geeseManager.getDisruptedCount() : 0   // #364
         });
       } catch {}
     }
@@ -3983,7 +3982,6 @@ class Game {
     const onCobbles = !!this._activeDisruption &&
       this._activeDisruption.event.kind === KIND.COBBLES;
     this.bike._roughness = onCobbles && authoritative ? 1 : 0;
-    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(onCobbles);
     if (onCobbles) {
       // The camera rides the surface too — a rattle you can see, not just a
       // number in the physics. Scaled by speed: crawling over stones is not the
@@ -4045,7 +4043,6 @@ class Game {
     if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
     if (this.bike) this.bike._roughness = 0;
     if (this.gustVisual) this.gustVisual.setWind(this._gustDirection || 1, 0);
-    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(false);
     if (this.hud && this.hud.updateDisruption) this.hud.updateDisruption(null);
   }
 
@@ -4592,6 +4589,10 @@ class Game {
       weekly,   // m5: the weekly road feeds no day streak
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
+    // #500 · Look, No Thumbs: earned by each rider on THIS device who steered the
+    // whole ride by controller gyro (local co-op: either seat; online: your own).
+    state.gyroOnly = [this.balanceCtrl, this.mode === 'local' ? this.balanceCtrlP2 : null]
+      .some(bc => !!bc && gyroOnlySteer(bc.steerFrames));
     this.achievements.finish(state);
   }
 
@@ -5291,8 +5292,7 @@ class Game {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
     }
-    // Stop bike motion loop + restore music from its gameplay duck (St2/Sp3).
-    this.audioEngine.stopBike();
+    // Restore music from its gameplay duck (St2).
     this.audioEngine.duckMusic(1.0, 0.8);
     this.audioEngine.detachRecorderDestination();
     this._hideGameOver();
@@ -5439,8 +5439,7 @@ class Game {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
     }
-    // Stop bike motion loop + restore music from its gameplay duck (St2/Sp3).
-    this.audioEngine.stopBike();
+    // Restore music from its gameplay duck (St2).
     this.audioEngine.duckMusic(1.0, 0.8);
     this.audioEngine.detachRecorderDestination();
     this._hideGameOver();
@@ -6933,43 +6932,6 @@ class Game {
       });
     }
 
-    // Sp3 — feed bike velocity to the procedural motion loop every frame.
-    // When not actively playing (victory / gameover / lobby / countdown),
-    // feed speed=0 so the loop fades to silence via the engine's internal
-    // ramp instead of holding the last gain value indefinitely.
-    if (this.mode === 'versus' && this.versusRigs) {
-      // Versus: motion loop follows the faster bike; off-road follows the
-      // worse offender so the scrape reads on either half of the screen.
-      const playing = this.state === 'playing';
-      let topSpeed = 0, offRoad = 0, anyUpright = false;
-      for (const rig of this.versusRigs) {
-        topSpeed = Math.max(topSpeed, rig.bike.speed);
-        const fo = Math.abs(rig.bike._frontWheelOffset || 0);
-        const ro = Math.abs(rig.bike._rearWheelOffset || 0);
-        offRoad = Math.max(offRoad, Math.min(1, Math.max(0, Math.max(fo, ro) - 2.5) / 3));
-        if (!rig.bike.fallen) anyUpright = true;
-      }
-      this.audioEngine.updateBike(
-        playing ? topSpeed : 0,
-        TUNE.maxSpeed || 19,
-        playing ? offRoad : 0,
-        !playing || !anyUpright
-      );
-    } else if (this.bike) {
-      const playing = this.state === 'playing';
-      const frontOff = Math.abs(this.bike._frontWheelOffset || 0);
-      const rearOff = Math.abs(this.bike._rearWheelOffset || 0);
-      const offRoad = playing
-        ? Math.min(1, Math.max(0, Math.max(frontOff, rearOff) - 2.5) / 3)
-        : 0;
-      this.audioEngine.updateBike(
-        playing ? this.bike.speed : 0,
-        TUNE.maxSpeed || 19,
-        offRoad,
-        !playing || this.bike.fallen
-      );
-    }
-
     // Clear buffered tap flags after all input has been read this frame
     this.input.consumeTaps();
     if (this.inputP2) this.inputP2.consumeTaps();
@@ -7799,6 +7761,9 @@ class Game {
       loser_distance: Math.floor(loser.bike.distanceTraveled),
       winner_crashes: winner.crashCount,
       loser_crashes: loser.crashCount,
+      // #364: per-team geese (free-form event payload; the rides table has no column)
+      winner_geese: this.geeseManager ? this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(winner)) : 0,
+      loser_geese: this.geeseManager ? this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(loser)) : 0,
     });
     analytics.endRide({
       completed: true,
@@ -7884,7 +7849,13 @@ class Game {
     this.camera.layers.disable(2);
     if (!winner || !loser || !this.versusHud) return;
     this.versusHud.hideBanner();
-    const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser);
+    // #364: each team's own geese. GeeseManager tallies per anchor index, and
+    // _updateVersus passes the anchors as rigs.map(...) — so anchor i is
+    // this.versusRigs[i] (A = 0, B = 1), whichever of them won.
+    const geese = this.geeseManager
+      ? (rig) => this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(rig))
+      : null;
+    const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser, { geese });
     this._showVersusCoins();   // #400 D4: one payout per race
     rematchBtn.addEventListener('click', () => this._rematchVersus());
     lobbyBtn.addEventListener('click', () => {

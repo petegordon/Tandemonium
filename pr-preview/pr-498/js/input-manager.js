@@ -222,6 +222,36 @@ export function mergeRemoteNavPad(real, nav, swapAB) {
   };
 }
 
+// Gyro drift-correction taper (see _applyTilt). Full strength near centre,
+// fading linearly over a moderate lean so a deliberate turn is never
+// re-centred — but never reaching zero.
+//
+// TAPER_FLOOR stops the correction ever reaching zero. With a constant
+// uncorrected gyro bias (startup calibration aborted as too noisy — see
+// #365) rawGamma grows steadily: lean grows, so the taper shrinks, so
+// the correction weakens, so lean grows faster. Past ZERO_AT it stopped
+// entirely and could never recover — the "pulls to one side and sticks"
+// report. A floor keeps a slow pull-back alive through sustained leans
+// without meaningfully fighting a real turn: at 0.15 the offset moves
+// with a ~7s time constant, far longer than any deliberate corner but
+// far shorter than a whole ride.
+export const DRIFT_TAPER_FULL_BELOW = 0.2;   // tuning knobs (lean fraction)
+export const DRIFT_TAPER_ZERO_AT = 0.7;
+export const DRIFT_TAPER_FLOOR = 0.15;
+
+/**
+ * Drift-correction strength for a smoothed lean magnitude `L` (0..1).
+ * 1 at L <= FULL_BELOW, linear down to the floor at ZERO_AT, floor beyond.
+ * Exported for tests.
+ * @param {number} L  absolute smoothed lean
+ */
+export function driftTaper(L) {
+  const rawTaper = L <= DRIFT_TAPER_FULL_BELOW ? 1
+    : L >= DRIFT_TAPER_ZERO_AT ? 0
+    : (DRIFT_TAPER_ZERO_AT - L) / (DRIFT_TAPER_ZERO_AT - DRIFT_TAPER_FULL_BELOW);
+  return Math.max(DRIFT_TAPER_FLOOR, rawTaper);
+}
+
 export class InputManager {
   /**
    * @param {Object} [options]
@@ -828,19 +858,17 @@ export class InputManager {
       this._driftEma = this.rawGamma;
     } else if (isGyro) {
       // Gyro: taper drift learning + correction by lean magnitude instead of a
-      // hard on/off gate. Full strength near center; fades to zero by a large
-      // lean. This keeps GENTLY correcting through sustained moderate leans —
-      // where drift was creeping toward "fusing to one side" — while never
-      // re-centering a big intentional turn. A brief sharp turn spikes the
-      // lean, so the taper ≈ 0 at its peak and it can't poison the neutral
-      // estimate (the bug that made it fuse fast on sharp turns).
-      const FULL_BELOW = 0.2, ZERO_AT = 0.7; // tuning knobs (lean fraction)
-      const L = Math.abs(this._smoothedLean);
-      const taper = L <= FULL_BELOW ? 1 : L >= ZERO_AT ? 0 : (ZERO_AT - L) / (ZERO_AT - FULL_BELOW);
-      if (taper > 0) {
-        this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
-        this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
-      }
+      // hard on/off gate. Full strength near center; fades to a small floor by
+      // a large lean. This keeps GENTLY correcting through sustained moderate
+      // leans — where drift was creeping toward "fusing to one side" — while
+      // never re-centering a big intentional turn. A brief sharp turn spikes
+      // the lean, so the taper ≈ floor at its peak and it can't poison the
+      // neutral estimate (the bug that made it fuse fast on sharp turns). The
+      // floor is why a one-sided pull can always recover (#365) — see
+      // driftTaper() for the positive-feedback loop it breaks.
+      const taper = driftTaper(Math.abs(this._smoothedLean));
+      this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
+      this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
     } else {
       // Mobile tilt (gravity-absolute): original always-on EMA + hard 0.3 gate.
       this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
