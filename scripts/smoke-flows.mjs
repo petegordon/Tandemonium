@@ -16,12 +16,18 @@
 //   SR-10  victory: NEXT LEVEL rides the next level, PLAY AGAIN rides the same
 //          one, END RIDE goes to the lobby, no GARAGE
 //          (the garage is Slingshot-only: js/economy-mode.js _showRideCoins)
+//   QT     #172 quit from the lobby: no Quit pill on the web build; in the
+//          desktop app (Electron UA + the preload bridge from fake-steam.mjs)
+//          the pill shows on mode select only, the pad reaches it, A opens the
+//          confirm with QUIT focused, B / Esc / CANCEL close it without
+//          quitting, and QUIT calls the bridge's quit() once
 //
 // KNOWN checks print "KNOWN BUG" instead of failing the run, so CI stays green
 // while the bug is open; they print "FIXED" once the game behaves, which is the
 // cue to turn them into normal checks.
 import { startHarness, sleep, clickId } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
+import { installFakeSteam, fakeSteam, ELECTRON_UA } from './lib/fake-steam.mjs';
 
 const h = await startHarness({ port: 8965, outDir: 'tandemonium-flows' });
 const { check } = h;
@@ -150,6 +156,93 @@ console.log('options');
   check(under.step === 'lobby-level', 'BL-08 Esc: Esc with Options open leaves the lobby step alone', under.step);
   await clickId(page, 'options-close-btn'); await sleep(400);
   await show('modeStep'); await sleep(400);
+}
+
+// ── QT: quit from the lobby, desktop app only (#172) ──
+console.log('quit (desktop only)');
+{
+  /** Poll `fn` until truthy (the smokes run at 1-3 fps on CI: never a fixed wait). */
+  const until = async (fn, timeout = 12000) => {
+    const t0 = Date.now();
+    for (;;) { if (await fn()) return true; if (Date.now() - t0 > timeout) return false; await sleep(150); }
+  };
+  const quitShown = (p) => p.evaluate(() => {
+    const b = document.getElementById('bar-quit');
+    if (!b || getComputedStyle(b).display === 'none') return false;
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  check(await page.evaluate(() => !window.electronApp), 'QT-01 web build: no Electron bridge');
+  check(!(await quitShown(page)), 'QT-01 web build: no Quit pill in the bar');
+
+  // The desktop app: Electron UA + the preload's bridge (fake-steam.mjs, Steam
+  // itself off as when launched outside Steam), one pad at boot.
+  const desk = await h.gamePage({
+    userAgent: ELECTRON_UA,
+    storage: { tandemonium_tutorial_done: 'smoke' },
+    before: async (p) => {
+      await installFakeSteam(p, { available: false, controllers: [] });
+      await installFakeGamepads(p, { atBoot: ['xbox'] });
+    },
+  });
+  const dpads = fakePads(desk);
+  const dsteam = fakeSteam(desk);
+  const dlook = () => desk.evaluate(() => {
+    const flow = document.getElementById('lobby-flow');
+    const f = Array.from(document.querySelectorAll('.gamepad-focus')).find((el) => !el.closest('#options-overlay')) || null;
+    const sheet = /** @type {any} */ (document.getElementById('quit-sheet'));
+    return { step: flow ? flow.current : null, focus: f ? (f.id || f.className) : null, open: !!(sheet && sheet.open) };
+  });
+  await until(async () => (await dlook()).step === 'lobby-mode' && (await dlook()).focus);
+  check(await desk.evaluate(() => typeof window.electronApp?.quit === 'function'), 'QT-02 desktop: the bridge offers quit()');
+  check(await quitShown(desk), 'QT-02 desktop: Quit pill shown on mode select');
+  check(await desk.evaluate(() => window._game.lobby._stepFocus.items.includes(document.getElementById('bar-quit'))), 'QT-02 desktop: Quit pill is in the pad\'s focus scope');
+
+  // Pad-navigable: walk down to the bar, then along it to Quit (bounded).
+  // Quit is second from the left (Help, Quit, Leaderboard, Profile … end pills).
+  let s = await dlook();
+  for (let i = 0; i < 16 && s.focus !== 'bar-quit'; i++) {
+    const inBar = (s.focus || '').startsWith('bar-');
+    const dir = !inBar ? 'DOWN' : (s.focus === 'bar-help' ? 'RIGHT' : 'LEFT');
+    await dpads.tap(0, dir);
+    const before = s.focus;
+    await until(async () => (await dlook()).focus !== before, 1500);
+    s = await dlook();
+  }
+  check(s.focus === 'bar-quit', 'QT-03 pad: d-pad reaches the Quit pill', s.focus);
+
+  await dpads.tap(0, 'A');
+  check(await until(async () => (await dlook()).open), 'QT-03 pad: A on Quit opens the confirm');
+  check(await until(async () => (await dlook()).focus === 'quit-confirm'), 'QT-03 pad: QUIT is the focused control in the confirm', (await dlook()).focus);
+  await dpads.tap(0, 'B');
+  check(await until(async () => !(await dlook()).open), 'QT-04 pad: B closes the confirm');
+  s = await dlook();
+  check(s.step === 'lobby-mode' && await dsteam.quitCalls() === 0, 'QT-04 pad: B cancels without quitting or stepping the lobby', s);
+  check(await until(async () => (await dlook()).focus === 'bar-quit'), 'QT-04 pad: focus returns to the Quit pill', (await dlook()).focus);
+
+  await clickId(desk, 'bar-quit');
+  check(await until(async () => (await dlook()).open), 'QT-05 mouse: the Quit pill opens the confirm');
+  await desk.keyboard.press('Escape');
+  check(await until(async () => !(await dlook()).open), 'QT-05 Esc closes the confirm');
+  check((await dlook()).step === 'lobby-mode', 'QT-05 Esc with the confirm open leaves the lobby step alone');
+  await clickId(desk, 'bar-quit');
+  await until(async () => (await dlook()).open);
+  await clickId(desk, 'quit-cancel');
+  check(await until(async () => !(await dlook()).open) && await dsteam.quitCalls() === 0, 'QT-05 CANCEL closes the confirm without quitting');
+
+  // Only the first step offers it.
+  await clickId(desk, 'btn-solo');
+  check(await until(async () => (await dlook()).step === 'lobby-level' && !(await quitShown(desk))), 'QT-06 Quit pill hidden off the mode step');
+  await desk.evaluate(() => { const l = window._game.lobby; l._showStep(l.modeStep); });
+  check(await until(async () => (await dlook()).step === 'lobby-mode' && await quitShown(desk)), 'QT-06 Quit pill back on mode select');
+
+  // Confirm: A on QUIT asks the bridge to quit, once.
+  await clickId(desk, 'bar-quit');
+  await until(async () => (await dlook()).focus === 'quit-confirm');
+  await dpads.tap(0, 'A');
+  check(await until(async () => (await dsteam.quitCalls()) === 1), 'QT-07 pad: A on QUIT calls electronApp.quit() once', await dsteam.quitCalls());
+  check(await desk.evaluate(() => document.getElementById('quit-confirm').hasAttribute('disabled')), 'QT-07 QUIT disables itself after the request (no double quit)');
+  await desk.close();
 }
 
 // ── SR-09 / SR-10: game-over and victory buttons ──
