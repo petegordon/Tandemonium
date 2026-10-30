@@ -85,6 +85,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | BL-10 | Every lobby step at 390×844, 844×390, 1920×1080 and 4K: every control reachable, none overlapping | A | `smoke:lobby-layout` |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
 | BL-12 | Quit (#172): the desktop app's mode step has a Quit pill next to Help; the pad reaches it, A opens "Quit Tandemonium?" with QUIT focused, B / Esc / CANCEL close it, QUIT asks Electron to quit once; the web build and phones have no Quit | A | `smoke:flows` (QT-01…07) |
+| BL-13 | Modal shell (#459): Help (a kit sheet) opens from the pad's View button, the Help pill and the footer © (at its attributions); B and Esc close it with focus restored and without stepping the lobby back; the Garage closes the same way | A | `smoke:flows` |
 
 ## 2. Solo rides
 
@@ -128,6 +129,9 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-25h | SR-25 looks right: presents and cones read from the chase camera, the pile lands neatly and is seen during the finish swing, no frame drop on Low / phone / Quest | M | `scripts/review-props.mjs`, `scripts/probe-props.mjs` |
 | SR-26 | Bike × geese fit (#505): hips HIP_UP over the socket, feet on the pedals through a crank turn, hands at the grips, body on the saddle, bike's rear end clear of the tyre, for every outfit and Show Solo; measured on the in-game assembly | A | `smoke:fit` (KNOWN BUG lines while the assets are being fixed), `test/unit/fit-rules` |
 | SR-26h | SR-26 looks right in the fit viewer (`npm run fit-viewer`: orbit, snap views, close-ups, X-ray, section plane, markers, nudges) | M | `tools/fit-viewer`, screenshots in `renders/fit/` |
+| SR-27 | Every end screen (game over, victory, tutorial complete, demo end, partner left, versus results) is the result-screen shell: a headline kit sheet, one action row in the shared order, the primary first and focused (#459) | A | `smoke:flows`, `smoke:versus`, `smoke:solo-extras`, `smoke:tutorial`, `smoke:layout` (fits at phone, desktop, TV; screenshots) |
+| SR-28 | First-time SOLO shows the tutorial intro before the countdown: START begins the tutorial (SKIP TUTORIAL on screen, Y / △ on a pad), SKIP / B / Esc skip to the level list (#459) | A | `smoke:tutorial`, `smoke:solo-extras` |
+| SR-29 | Pause menu (#459): Start / Esc / the quick menu's PAUSE mid-ride opens it and the ride (physics + race clock) stops; B / Start / Esc / RESUME continue; SETTINGS opens Options over it and B returns to the menu; View opens Help over it and B returns; RESTART rides again; END RIDE returns to the lobby; in versus P1's Start freezes both teams | A | `smoke:flows`, `smoke:versus`, `test/unit/race-manager` |
 
 ## 3. Ride feel (manual only)
 

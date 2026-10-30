@@ -144,7 +144,8 @@ export class VersusHud {
     const el = document.createElement('div');
     el.id = 'versus-results';
     // Kit pieces (#428): a headline <uf-sheet> in the winner's colour, one
-    // <uf-stat variant=card> per team, the actions in the sheet's action row.
+    // <uf-stat variant=card> per team, the actions in the sheet's action row
+    // (#459: the result-screen order — REMATCH, the primary, first).
     // .vr-card stays the body container (economy-mode adds the coin ledger to it).
     const tone = (rig) => (/blue/i.test(rig.color.name) ? 'team-a' : 'team-b');
     const card = (rig, outcome) =>
@@ -164,8 +165,8 @@ export class VersusHud {
           </div>
         </div>
         <div slot="actions">
-          <uf-button id="vr-lobby">LOBBY</uf-button>
           <uf-button variant="accent" id="vr-rematch">REMATCH</uf-button>
+          <uf-button id="vr-lobby">LOBBY</uf-button>
         </div>
       </uf-sheet>`;
     document.body.appendChild(el);

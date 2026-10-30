@@ -84,7 +84,8 @@ const MEASURE = (rootSel) => {
 /** The drop overlay's visible buttons: on screen, in the box, no overlaps, lined up. Runs in the page. */
 const MEASURE_DROP = () => {
   const vw = window.innerWidth, vh = window.innerHeight;
-  const box = document.querySelector('#disconnect-overlay .disconnect-box').getBoundingClientRect();
+  // The kit sheet's card (#459: the overlay is on the result-screen shell).
+  const box = document.querySelector('#disconnect-overlay .uf-sheet__card').getBoundingClientRect();
   const btns = ['btn-drop-resume', 'btn-ride-alone', 'btn-try-reconnect', 'btn-return-lobby']
     .map((id) => document.getElementById(id)).filter((b) => b && !b.hidden && b.getBoundingClientRect().width > 0)
     .map((b) => { const r = b.getBoundingClientRect(); return { id: b.id, l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height, cx: (r.left + r.right) / 2 }; });
