@@ -2418,6 +2418,16 @@
     overflow-y: auto;
     text-align: center;
   }
+  /* #506: the box scrolls (achievements, rides); a thin translucent bar instead of the browser's white one */
+  .leaderboard-box {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.22) transparent;
+    scrollbar-gutter: stable;
+  }
+  .leaderboard-box::-webkit-scrollbar { width: 6px; }
+  .leaderboard-box::-webkit-scrollbar-track { background: transparent; margin: 16px 0; }
+  .leaderboard-box::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 3px; }
+  .leaderboard-box::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.38); }
   #leaderboard-x {
     position: absolute;
     top: 8px;
@@ -3111,6 +3121,9 @@
   /* Results overlay: a kit <uf-sheet headline> (#428); only the body layout lives here. */
   #versus-results .vr-card { display: grid; gap: var(--uf-space-4); justify-items: center; }
   #versus-results .vr-teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--uf-space-4); width: 100%; }
+  /* #364: a team's card plus its own 🪿 stat underneath (only when it scattered any). */
+  #versus-results .vr-team { display: grid; gap: var(--uf-space-2); align-content: start; }
+  #versus-results .vr-geese { justify-self: center; }
   .lobby-layout {
     display: flex;
     align-items: center;
@@ -5887,7 +5900,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.cdfc546 | 10-27-2026 00:06</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.bb2bd53 | 10-30-2026 17:15</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -5902,6 +5915,8 @@ ON</button>
        Reached with ↓ from a step (d-pad or stick); no dedicated button. -->
   <uf-system-bar id="lobby-bar" back="hide">
     <uf-button size="pill" slot="start" id="bar-help"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="8"/><path d="M7.8 7.6a2.3 2.3 0 1 1 3.3 2.1c-.8.4-1.1.9-1.1 1.7M10 14.2v.1"/></svg>Help</uf-button>
+    <!-- #172: desktop app only (js/app-quit.js canQuitApp), mode step only; lobby.js _syncSystemBar shows it. -->
+    <uf-button size="pill" slot="start" id="bar-quit" style="display:none;" title="Close Tandemonium"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v7"/><path d="M5.6 5.6a6.2 6.2 0 1 0 8.8 0"/></svg>Quit</uf-button>
     <uf-button size="pill" slot="start" id="bar-leaderboard"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5"/></svg>Leaderboard</uf-button>
     <uf-button size="pill" slot="start" id="bar-profile"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>Profile</uf-button>
     <uf-button size="pill" slot="end" id="bar-controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h12a4 4 0 0 1 3.9 4.9l-.8 3.4a2.5 2.5 0 0 1-4.3 1.1L15 16H9l-1.8 2.4a2.5 2.5 0 0 1-4.3-1.1l-.8-3.4A4 4 0 0 1 6 9z"/><path d="M8 12v3M6.5 13.5h3"/></svg><span id="bar-controls-label">Controls</span></uf-button>
@@ -5922,6 +5937,14 @@ ON</button>
     <uf-setting id="set-prompts" kind="value" label="Button prompts" description="Picked from the controller in use" value="Automatic"></uf-setting>
     <uf-setting id="set-phone" kind="value" label="Use your phone instead" description="Scan a code to steer and pedal with your phone" value="Open"></uf-setting>
     <div slot="actions"><uf-button variant="accent" id="controls-done">DONE</uf-button></div>
+  </uf-sheet>
+
+  <!-- Quit confirm (#172, desktop app only): opened from the bar's Quit pill
+       on the mode step; QUIT is first so the pad lands on it, B / Esc / scrim /
+       CANCEL close it. Wired in lobby.js _initSystemBar. -->
+  <uf-sheet id="quit-sheet" heading="Quit Tandemonium?" size="sm" tone="danger">
+    <p style="margin:0;color:var(--uf-color-fg-muted);">Close the game and go back to the desktop.</p>
+    <div slot="actions"><uf-button variant="danger" id="quit-confirm">QUIT</uf-button><uf-button id="quit-cancel">CANCEL</uf-button></div>
   </uf-sheet>
 </div>
 
@@ -6174,7 +6197,7 @@ ON</button>
       <uf-button id="btn-gameover-garage" style="display:none;">GARAGE &rarr;</uf-button>
       <uf-button class="cta-btn" id="btn-daily-share-gameover" style="display:none;">&#128203; SHARE RESULT</uf-button>
       <uf-button class="cta-btn" id="btn-wishlist-gameover" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
-      <uf-button class="cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
+      <uf-button class="cta-btn" id="btn-invite-gameover" style="display:none;">&#128692; INVITE A PARTNER TO RIDE</uf-button>
     </div>
   </uf-sheet>
 </div>
@@ -6207,7 +6230,7 @@ ON</button>
       <uf-button id="btn-victory-garage" style="display:none;">GARAGE &rarr;</uf-button>
       <uf-button class="cta-btn" id="btn-daily-share-victory" style="display:none;">&#128203; SHARE RESULT</uf-button>
       <uf-button class="cta-btn" id="btn-wishlist-victory" style="display:none;">&#9829; WISHLIST ON STEAM</uf-button>
-      <uf-button class="cta-btn" id="btn-invite-victory" style="display:none;">&#128692; SEND A LINK TO YOUR PARTNER</uf-button>
+      <uf-button class="cta-btn" id="btn-invite-victory" style="display:none;">&#128692; INVITE A PARTNER TO RIDE</uf-button>
     </div>
   </uf-sheet>
 </div>

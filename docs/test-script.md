@@ -84,6 +84,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | BL-09 | Pad focus starts on a visible control on every lobby step | A | `smoke:flows` |
 | BL-10 | Every lobby step at 390×844, 844×390, 1920×1080 and 4K: every control reachable, none overlapping | A | `smoke:lobby-layout` |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
+| BL-12 | Quit (#172): the desktop app's mode step has a Quit pill next to Help; the pad reaches it, A opens "Quit Tandemonium?" with QUIT focused, B / Esc / CANCEL close it, QUIT asks Electron to quit once; the web build and phones have no Quit | A | `smoke:flows` (QT-01…07) |
 
 ## 2. Solo rides
 
@@ -91,6 +92,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 |---|---|---|---|
 | SR-01 | Tutorial: runway, phase 1 (collect) and phase 2 (collect + dodge) prompts advance; all presents and pylons count; the end screen shows the tally, saves the calibration, the feel slider sets the feel; NEXT offered | A | `smoke:solo-extras` |
 | SR-01h | Lean-steering onto the tutorial presents feels learnable | M | — |
+| SR-01i | Tutorial: the 3D "TUTORIAL START" board beside the start and the "TUTORIAL END" board past the finish (end-card style, bunting flaps, lettering glints as you pass); no "Your Home" video and no box house on the tutorial; Grandma's unchanged (#503) | A | `smoke:tutorial-board`, `test/unit/tutorial-board` |
 | SR-02 | Tutorial: you cannot fall | A | `test/unit/crash-policy` |
 | SR-03 | Grandma's: clock is held until the first pedal taps, then runs | A | `smoke:ride` |
 | SR-04 | Grandma's: ride to the finish; victory overlay shows time, medal, coins | A | `smoke:economy`, `smoke:achievements` |
