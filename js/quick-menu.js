@@ -25,8 +25,10 @@ export class QuickMenu {
    *   on-screen affordance along with the YOU lean gauge.
    * @param {object} [controllers]  the other one: { isOn(): boolean, run(): void }
    *   — the controller overlay toggle (live 3D tiles of each rider's pad).
+   * @param {object} [pause]  the pause menu (#459), for touch players — a pad's
+   *   Start / a keyboard's Esc open it directly: available(): boolean, run(): void.
    */
-  constructor(recenter, controllers) {
+  constructor(recenter, controllers, pause) {
     this.btn = document.getElementById('quick-menu-btn');
     this.overlay = document.getElementById('quick-menu-overlay');
     this.sheet = document.getElementById('quick-menu-sheet');
@@ -44,6 +46,7 @@ export class QuickMenu {
 
     this.recenter = recenter || null;
     this.controllers = controllers || null;
+    this.pause = pause || null;
     this.open = false;
 
     this.btn.addEventListener('click', () => this.toggle());
@@ -67,6 +70,15 @@ export class QuickMenu {
     this._bind('qm-clip', this.shareBtn, true);
     this._bind('qm-reset', this.resetBtn, true);
     this._bind('qm-lobby', this.lobbyBtn, true);
+
+    // The pause menu: an action, so the sheet closes and the menu takes over.
+    const pauseEl = document.getElementById('qm-pause');
+    if (pauseEl) {
+      pauseEl.addEventListener('click', () => {
+        this.close();
+        if (this.pause) this.pause.run();
+      });
+    }
 
     const recenterEl = document.getElementById('qm-recenter');
     if (recenterEl) {
@@ -143,6 +155,9 @@ export class QuickMenu {
 
     // Recentring only means anything to a rider steering by tilt or gyro.
     this._show('qm-recenter', !!(this.recenter && this.recenter.available()));
+
+    // Pause: while a ride is actually on (not the countdown or an end screen).
+    this._show('qm-pause', !!(this.pause && this.pause.available()));
 
     // Controller overlay: available whenever the game wired it (every mode).
     this._show('qm-controllers', !!this.controllers);

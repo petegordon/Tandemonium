@@ -56,6 +56,10 @@ export function renderGarage(save, wallet, opts = {}) {
   const gSheet = /** @type {any} */ ($('sling-garage-sheet'));
   if (gSheet) {
     gSheet.heading = '🛠️ Garage';
+    // #459: a dismissible sheet (B / Esc / Close = BACK) is opened here and
+    // closed by hideGarage(), never left `open` in the markup — an open
+    // dismissible sheet, even in a hidden wrapper, would take every Esc.
+    gSheet.open = true;
     if (rebuilt) root.appendChild(el('div', null, rebuilt.trim()));   // the rebuild badge, under the headline
   } else root.appendChild(el('h2', null, `🛠️ GARAGE${rebuilt}`));
   root.appendChild(el('div', 'sling-wallet', `${COIN} ${fmt(wallet.coins)} Chaos Coins`));
@@ -161,7 +165,11 @@ export function renderGarage(save, wallet, opts = {}) {
   return buttons;
 }
 
-export function hideGarage() { $('sling-garage').classList.remove('visible'); }
+export function hideGarage() {
+  $('sling-garage').classList.remove('visible');
+  const gSheet = /** @type {any} */ ($('sling-garage-sheet'));
+  if (gSheet && gSheet.open) gSheet.close('api');   // 'api': the game closed it, not the player (slingshot-mode.js listens)
+}
 
 const CAUSE = {
   stall: 'You rolled to a stop',
