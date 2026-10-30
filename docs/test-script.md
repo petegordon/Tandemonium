@@ -109,6 +109,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-08 | Geese and obstacles appear, collide and react | M | `smoke:geese` (riders only) |
 | SR-09 | Game-over buttons: RESTART, END RIDE, SAVE CLIP (only while recording) do what they say; no GARAGE outside Slingshot | A | `smoke:flows`, `smoke:economy` |
 | SR-09h | SAVE CLIP opens the clip preview after a recorded ride | M | — |
+| SR-09i | iPhone: SHARE in the clip preview offers FULL CLIP (20 s) and SHORT CLIP (10 s, FOR MESSAGES); the short one is cut from the same buffer on a keyframe; after the sheet closes a "Save Video, then send it from Photos" hint shows once; pad B steps back out of the choice; desktop unchanged (#408) | A | `smoke:clip-share` |
 | SR-10 | Victory buttons: NEXT LEVEL, PLAY AGAIN, END RIDE | A | `smoke:flows` |
 | SR-11 | Today's Road: same road for two players on the same day; difficulty locked | A | `smoke:daily` |
 | SR-12 | Today's Road ranked: chooser on web, never in demo; share strip has no road spoilers | A | `smoke:ranked` |

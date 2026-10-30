@@ -4187,6 +4187,23 @@
     background: rgba(255,60,60,0.15);
     border-color: rgba(255,60,60,0.4);
   }
+  /* #408 · share choice: three labels are wider than the row, so let it wrap */
+  .clip-share-options {
+    flex-wrap: wrap;
+    max-width: 90%;
+  }
+  #clip-share-tip {
+    margin-top: 14px;
+    max-width: 90%;
+    padding: 10px 16px;
+    border-radius: 12px;
+    background: rgba(0,0,0,0.8);
+    border: 1.5px solid rgba(255,255,255,0.2);
+    color: #fff;
+    font-size: 13px;
+    text-align: center;
+    pointer-events: none;
+  }
 
   /* ── Gamepad badge ── */
   #gamepad-badge {
@@ -6047,11 +6064,18 @@ ON</button>
 <!-- Clip preview modal -->
 <div id="clip-preview-modal">
   <video id="clip-preview" playsinline loop></video>
-  <div class="clip-actions">
+  <div class="clip-actions" id="clip-actions">
     <button class="clip-btn clip-btn-share" id="clip-share-btn">SHARE</button>
     <button class="clip-btn" id="clip-save-btn">SAVE</button>
     <button class="clip-btn clip-btn-discard" id="clip-discard-btn">DISCARD</button>
   </div>
+  <!-- #408 · share choice (iOS): the labels' seconds are filled by the recorder. -->
+  <div class="clip-actions clip-share-options" id="clip-share-options" style="display:none;">
+    <button class="clip-btn clip-btn-share" id="clip-share-full">FULL CLIP</button>
+    <button class="clip-btn clip-btn-share" id="clip-share-short">SHORT CLIP</button>
+    <button class="clip-btn" id="clip-share-back">BACK</button>
+  </div>
+  <div id="clip-share-tip" style="display:none;">Didn't send? Choose Save Video, then send it from Photos.</div>
 </div>
 
 <!-- Tutorial overlays -->

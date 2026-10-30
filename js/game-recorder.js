@@ -26,6 +26,42 @@ export function canRecordClips() {
 // iOS clip resolution cap (long side, px) for the composite + H.264 encode.
 const WC_MAX_LONG_SIDE = 1280;
 
+// Clip lengths, in seconds. The rolling buffer keeps the last CLIP_SECONDS;
+// the share sheet also offers a SHORT_CLIP_SECONDS cut of the same clip,
+// small enough to get through messaging apps (#408: a 20 s / ~5 MB MP4 sent
+// as a file from iPhone Messages to Android over RCS came back Not Delivered).
+export const CLIP_SECONDS = 20;
+export const SHORT_CLIP_SECONDS = 10;
+
+/**
+ * #408 · the last `seconds` of a WebCodecs chunk buffer, cut at the muxing
+ * step rather than re-encoded. H.264 can only start on a keyframe, so the
+ * window opens on the first keyframe at or after (end - seconds): it is never
+ * longer than `seconds`, and with a keyframe every 2 s never more than 2 s
+ * shorter. If no keyframe lands in that window (a buffer shorter than the
+ * keyframe interval), the latest keyframe before it is used instead so the
+ * clip still opens on one. Chunks are the recorder's own records:
+ * `{ type: 'key'|'delta', timestamp: µs, duration: µs }`, in encode order.
+ * Returns a sub-array (the same records), or [] when nothing can be cut.
+ */
+export function cutShortWindow(chunks, seconds = SHORT_CLIP_SECONDS, fps = 20) {
+  if (!chunks || !chunks.length) return [];
+  const frameUs = Math.round(1_000_000 / fps);
+  const last = chunks[chunks.length - 1];
+  const end = last.timestamp + (last.duration || frameUs);
+  const cut = end - seconds * 1_000_000;
+  let start = chunks.findIndex(c => c.type === 'key' && c.timestamp >= cut);
+  if (start < 0) {
+    for (let i = chunks.length - 1; i >= 0; i--) {
+      if (chunks[i].type === 'key') { start = i; break; }
+    }
+  }
+  return start < 0 ? [] : chunks.slice(start);
+}
+
+// #408 · the "Save Video, then send from Photos" hint: once per session.
+let _shareHintShown = false;
+
 // Detect low-end devices by benchmarking the exact operation that's expensive:
 // drawing a busy WebGL canvas into a 2D canvas (forces GPU pipeline flush +
 // GPU→CPU readback).  A trivial gl.clear() doesn't stress the pipeline — we
@@ -223,7 +259,7 @@ export class GameRecorder {
     this._recordStartTime = 0;
     this._saving = false;      // true while save-clip delay is pending
     this.buffering = false;
-    this.bufferDuration = 20; // seconds
+    this.bufferDuration = CLIP_SECONDS; // seconds
 
     // WebCodecs state (iOS path)
     this._wcEncoder = null;
@@ -270,10 +306,28 @@ export class GameRecorder {
     this.previewShareBtn = document.getElementById('clip-share-btn');
     this.previewSaveBtn = document.getElementById('clip-save-btn');
     this.previewDiscardBtn = document.getElementById('clip-discard-btn');
+    // #408 · the share choice: full clip or a short cut for messaging apps.
+    this.previewActions = document.getElementById('clip-actions');
+    this.previewShareOptions = document.getElementById('clip-share-options');
+    this.previewShareFullBtn = document.getElementById('clip-share-full');
+    this.previewShareShortBtn = document.getElementById('clip-share-short');
+    this.previewShareBackBtn = document.getElementById('clip-share-back');
+    this.previewShareTip = document.getElementById('clip-share-tip');
+    this._shareOptionsOpen = false;
+    this._shareHintTimer = null;
+    // The seconds in the labels come from the recorder's own numbers.
+    if (this.previewShareFullBtn) this.previewShareFullBtn.textContent = `FULL CLIP (${CLIP_SECONDS} s)`;
+    if (this.previewShareShortBtn) this.previewShareShortBtn.textContent = `SHORT CLIP (${SHORT_CLIP_SECONDS} s, FOR MESSAGES)`;
 
     // Current clip blob URL
     this._clipUrl = null;
     this._clipBlob = null;
+    // #408 · the encoded chunks behind _clipBlob (WebCodecs path only), kept
+    // so a short cut can be muxed from the same buffer without re-recording.
+    this._clipChunks = null;
+    this._clipDecoderConfig = null;
+    this._clipDims = null;
+    this._shortClipBlob = null;
 
     // Bind UI events (touchend + click for mobile reliability)
     const onTap = (el, fn) => {
@@ -281,7 +335,10 @@ export class GameRecorder {
       el.addEventListener('click', fn);
     };
     if (this.shareBtn) onTap(this.shareBtn, () => this.saveClip());
-    if (this.previewShareBtn) onTap(this.previewShareBtn, () => this._shareClip());
+    if (this.previewShareBtn) onTap(this.previewShareBtn, () => this._onShareTap());
+    if (this.previewShareFullBtn) onTap(this.previewShareFullBtn, () => this._shareClip('full'));
+    if (this.previewShareShortBtn) onTap(this.previewShareShortBtn, () => this._shareClip('short'));
+    if (this.previewShareBackBtn) onTap(this.previewShareBackBtn, () => this._showShareOptions(false));
     if (this.previewSaveBtn) onTap(this.previewSaveBtn, () => this._downloadClip());
     if (this.previewDiscardBtn) onTap(this.previewDiscardBtn, () => this._discardClip());
 
@@ -296,7 +353,8 @@ export class GameRecorder {
     this._previewPollId = null;
     this._previewFocus = new FocusController({
       input: this.input,
-      onBack: () => this._discardClip(),
+      // B steps back out of the share choice first (#408), then discards.
+      onBack: () => (this._shareOptionsOpen ? this._showShareOptions(false) : this._discardClip()),
     });
 
     // Resize listener to keep compositing canvas in sync
@@ -473,18 +531,34 @@ export class GameRecorder {
     const mp4 = await this._loadMp4Muxer();
     if (!mp4) return;
 
-    const w = this.compCanvas.width;
-    const h = this.compCanvas.height;
+    // Snapshot: the encoder keeps running while the preview is open, and the
+    // short cut (#408) must come from the very same chunks as the full clip.
+    const chunks = this._wcEncodedChunks.slice();
+    const decoderConfig = this._wcLastDecoderConfig;
+    const dims = { w: this.compCanvas.width, h: this.compCanvas.height };
 
+    const blob = this._muxWebCodecsChunks(mp4, chunks, decoderConfig, dims);
+    if (blob.size > 0) {
+      this._clipBlob = blob;
+      this._clipChunks = chunks;
+      this._clipDecoderConfig = decoderConfig;
+      this._clipDims = dims;
+      this._shortClipBlob = null;
+      this._clipUrl = URL.createObjectURL(blob);
+      this._showPreview();
+    }
+  }
+
+  /** Mux encoded H.264 chunks (which must open on a keyframe) into an MP4 blob. */
+  _muxWebCodecsChunks(mp4, chunks, decoderConfig, dims) {
     const target = new mp4.ArrayBufferTarget();
     const muxer = new mp4.Muxer({
       target,
-      video: { codec: 'avc', width: w, height: h },
+      video: { codec: 'avc', width: dims.w, height: dims.h },
       fastStart: 'in-memory'
     });
 
     // Re-timestamp chunks starting from 0; always pass decoderConfig on first chunk
-    const chunks = this._wcEncodedChunks;
     const baseTimestamp = chunks[0].timestamp;
     let first = true;
 
@@ -495,17 +569,40 @@ export class GameRecorder {
         duration: c.duration || Math.round(1_000_000 / this._wcTargetFps),
         data: c.data
       });
-      muxer.addVideoChunk(chunk, first ? this._wcLastDecoderConfig : undefined);
+      muxer.addVideoChunk(chunk, first ? decoderConfig : undefined);
       first = false;
     }
 
     muxer.finalize();
+    return new Blob([target.buffer], { type: 'video/mp4' });
+  }
 
-    const blob = new Blob([target.buffer], { type: 'video/mp4' });
-    if (blob.size > 0) {
-      this._clipBlob = blob;
-      this._clipUrl = URL.createObjectURL(blob);
-      this._showPreview();
+  /** #408 · can the clip in the preview be cut short (WebCodecs chunks kept)? */
+  canShareShort() {
+    return !!(this._clipChunks && this._clipChunks.length && this._clipDecoderConfig);
+  }
+
+  /**
+   * #408 · the last SHORT_CLIP_SECONDS of the clip in the preview, muxed from
+   * the same chunk snapshot (see cutShortWindow). Cached until the clip is
+   * discarded. Null when there is nothing to cut.
+   */
+  async makeShortClip() {
+    if (!this.canShareShort()) return null;
+    if (this._shortClipBlob) return this._shortClipBlob;
+    const mp4 = await this._loadMp4Muxer();
+    if (!mp4) return null;
+    const cut = cutShortWindow(this._clipChunks, SHORT_CLIP_SECONDS, this._wcTargetFps);
+    if (!cut.length) return null;
+    try {
+      const blob = this._muxWebCodecsChunks(mp4, cut, this._clipDecoderConfig, this._clipDims);
+      if (!blob.size) return null;
+      _dbg(`short clip: ${cut.length}/${this._clipChunks.length} chunks, ${blob.size} bytes`);
+      this._shortClipBlob = blob;
+      return blob;
+    } catch (e) {
+      _dbg('short clip FAIL: ' + e.message);
+      return null;
     }
   }
 
@@ -1312,10 +1409,11 @@ export class GameRecorder {
   _startPreviewGamepadNav() {
     // Visible items only (SHARE may be hidden on desktop). The controller
     // primes edge-state so a button held when the modal opens doesn't fire.
-    this._previewFocus.setItems(
-      [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn]
-        .filter(el => el && el.style.display !== 'none')
-    );
+    // With the share choice open (#408) the pad walks that row instead.
+    const row = this._shareOptionsOpen
+      ? [this.previewShareFullBtn, this.previewShareShortBtn, this.previewShareBackBtn]
+      : [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn];
+    this._previewFocus.setItems(row.filter(el => el && el.style.display !== 'none'));
     // Singleton RAF loop: cancel any prior poll before starting a new one so
     // re-showing the preview can't stack loops that double-process input. (#318)
     if (this._previewPollId) cancelAnimationFrame(this._previewPollId);
@@ -1521,25 +1619,52 @@ export class GameRecorder {
       this.previewShareBtn.style.display = canShare ? '' : 'none';
     }
 
-    // Start gamepad navigation for preview buttons
-    this._startPreviewGamepadNav();
+    // A fresh preview opens on the main row, hint hidden (#408).
+    this._showShareOptions(false);
+    this._hideShareHint();
   }
 
-  async _shareClip() {
+  /**
+   * #408 · SHARE: where the clip can be cut short (iOS WebCodecs buffer),
+   * offer the full clip or the short one before the share sheet opens.
+   * Elsewhere (Android MediaRecorder clips) share the whole clip as before.
+   */
+  _onShareTap() {
+    if (this.canShareShort() && this.previewShareOptions) this._showShareOptions(true);
+    else this._shareClip('full');
+  }
+
+  /** Swap the preview's action row for the share choice (and back). */
+  _showShareOptions(show) {
+    this._shareOptionsOpen = !!show && !!this.previewShareOptions;
+    if (this.previewActions) this.previewActions.style.display = this._shareOptionsOpen ? 'none' : '';
+    if (this.previewShareOptions) this.previewShareOptions.style.display = this._shareOptionsOpen ? '' : 'none';
+    // Re-point pad focus at whichever row is showing.
+    if (this.previewModal && this.previewModal.classList.contains('visible')) this._startPreviewGamepadNav();
+  }
+
+  async _shareClip(variant = 'full') {
     if (!this._clipBlob) return;
 
-    const ext = this._clipBlob.type.includes('mp4') ? 'mp4' : 'webm';
-    const file = new File([this._clipBlob], 'tandemonium-clip.' + ext, {
-      type: this._clipBlob.type
-    });
+    let blob = this._clipBlob;
+    if (variant === 'short') {
+      const short = await this.makeShortClip();
+      if (short) blob = short;
+      else variant = 'full';   // nothing to cut: share what there is
+    }
 
+    const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+    const file = new File([blob], 'tandemonium-clip.' + ext, { type: blob.type });
+
+    let sheetOpened = false;
     try {
       if (navigator.share && navigator.canShare({ files: [file] })) {
+        sheetOpened = true;
         await navigator.share({
           title: 'Tandemonium Clip',
           files: [file]
         });
-        analytics.trackEvent('clip_save', { method: 'share' });
+        analytics.trackEvent('clip_save', { method: 'share', variant, bytes: blob.size });
         analytics.trackConversion('clip_shared', 'results');
       } else {
         // Fallback to download
@@ -1550,6 +1675,28 @@ export class GameRecorder {
         this._downloadClip();
       }
     }
+    // The Web Share API cannot tell a sent clip from an undelivered one, so
+    // the hint follows every closed sheet, once per session (#408).
+    if (sheetOpened) this._showShareHint();
+  }
+
+  /**
+   * #408 · iOS Messages hands a shared File to the recipient as a document,
+   * not a video from Photos, and that can come back Not Delivered. Point at
+   * the path that works: Save Video, then send it from Photos.
+   */
+  _showShareHint() {
+    if (!_isIOS || _shareHintShown || !this.previewShareTip) return;
+    _shareHintShown = true;
+    this.previewShareTip.style.display = 'block';
+    clearTimeout(this._shareHintTimer);
+    this._shareHintTimer = setTimeout(() => this._hideShareHint(), 8000);
+  }
+
+  _hideShareHint() {
+    clearTimeout(this._shareHintTimer);
+    this._shareHintTimer = null;
+    if (this.previewShareTip) this.previewShareTip.style.display = 'none';
   }
 
   _downloadClip() {
@@ -1573,6 +1720,12 @@ export class GameRecorder {
       this._clipUrl = null;
     }
     this._clipBlob = null;
+    this._clipChunks = null;
+    this._clipDecoderConfig = null;
+    this._clipDims = null;
+    this._shortClipBlob = null;
+    this._shareOptionsOpen = false;
+    this._hideShareHint();
     if (this.previewVideo) {
       this.previewVideo.pause();
       this.previewVideo.src = '';
