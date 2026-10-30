@@ -117,6 +117,34 @@ in simulated seconds (`simSecondsFor(2.0)` ≈ 1.34). Online co-op keeps the
 At the reset (`releaseCrash`) the scene restores every bone to its seated pose
 and frees its world. Still purely visual: nothing reads the rag dolls back.
 
+### Weight and tone (#507)
+
+Pete, after the #484 crashes: the geese read light and rubbery. The rag doll now
+has (`ragdoll-spec.js`):
+
+- a **mass budget**: `GOOSE_MASS` (7, the versus wobble's kg scale, a wheel is
+  2.5) shared out per segment, the pelvis and chest carrying more than half, so
+  the body leads the fall and the limbs trail;
+- **no bounce** (restitution 0), friction 1, and air-only linear damping (0.04;
+  it was 0.12, which read as falling through water);
+- **muscle tone** on every joint but the pelvis, applied by `CrashScene._tone`
+  every physics substep: joint FRICTION first (the pair's relative spin relaxes
+  with time constant `fr`), then a pull back toward the seated relative rotation
+  closing with time constant `tc`, tightening past `limit` so nothing folds the
+  wrong way, capped at `MAX_RATE` / `LIMIT_RATE` so a thrown limb comes back
+  like a muscle, not a snap. Both are velocity-level (the relative spin is set,
+  not pushed), with each body getting a tensor-correct impulse for its share, so
+  it is stable at any stiffness. A capsule's axial inertia is ~10x its
+  transverse one; a scalar impulse spun shins up to Rapier's angular cap.
+  Rapier's spherical joint has no limits or motors in the build we ship, so the
+  tone does both jobs. The neck keeps the loosest tone: the long neck is the joke.
+
+`npm run sim:ragdoll` (`scripts/ragdoll-sim.mjs`) runs crashes through the real
+CrashScene in Node on a synthetic seated skeleton and prints settle time,
+bounces, joint gap, knee/elbow fold, head spin and the fall's floatiness; pass
+`--scene <path>` to compare a branch with main, `--trace` for one crash's
+fastest body over time. The review reel is `node scripts/reel/crash-review.mjs`.
+
 ### The tandem comes apart (#484 step 3)
 
 On the goose tandem (the rig with `Wheel_F` / `Wheel_R` bones), every crash

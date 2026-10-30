@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<!-- #503 · the tutorial billboard's face, in the achievement-reel end card's style. One atlas:
+     face 2048x1024 on top, crest disc 256x256 in the strip below. ?title=TUTORIAL END&sub=...&crest=🏁 -->
+<style>
+@font-face { font-family: Rye; src: url('fonts/Rye-Regular.ttf'); }
+@font-face { font-family: Play; src: url('fonts/PlayfairDisplay-Italic.ttf'); font-style: italic; }
+html, body { margin: 0; background: #08080f; }
+body { width: 2048px; height: 1280px; position: relative; overflow: hidden; }
+.face { position: absolute; left: 0; top: 0; width: 2048px; height: 1024px; overflow: hidden;
+  background: radial-gradient(ellipse 70% 80% at 50% 45%, #25223f 0%, #16152b 45%, #0b0b18 100%); }
+/* the end card's soft gold rules, as a double border */
+.b1 { position: absolute; inset: 30px; border: 7px solid #ffcc00; border-radius: 22px;
+  box-shadow: 0 0 0 4px rgba(110,16,16,.9), inset 0 0 0 4px rgba(110,16,16,.55), 0 0 40px rgba(255,204,0,.25) inset; }
+.b2 { position: absolute; inset: 58px; border: 2px solid rgba(255,204,0,.45); border-radius: 14px; }
+.corner { position: absolute; width: 58px; height: 58px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fff2a8, #ffcc00 45%, #a87a00 100%);
+  box-shadow: 0 0 0 5px #6e1010, 0 6px 14px rgba(0,0,0,.6); }
+.wrap { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.logo { font: 100px/1 Rye; letter-spacing: 14px; color: #f4e6c4; text-shadow: 0 6px 0 #8c1a1a, 0 10px 24px rgba(0,0,0,.6); }
+.rule { width: 62%; height: 4px; margin: 46px 0 40px; background: linear-gradient(90deg, transparent, #ffcc00, transparent); }
+.title { font: 268px/0.95 Rye; color: #ffcc00; letter-spacing: 6px; white-space: nowrap;
+  text-shadow: 0 13px 0 #6e1010, 0 20px 46px rgba(0,0,0,.7); }
+.sub { font: italic 104px/1.15 Play; margin-top: 58px; color: #f4e6c4; text-shadow: 0 4px 16px rgba(0,0,0,.7); }
+.crest { position: absolute; left: 0; top: 1024px; width: 256px; height: 256px; display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 40%, #3b3352 0%, #1a1a2e 70%); font-size: 196px; line-height: 1; }
+</style></head>
+<body>
+<div class="face">
+  <div class="b1"></div><div class="b2"></div>
+  <div class="corner" style="left:4px;top:4px"></div><div class="corner" style="right:4px;top:4px"></div>
+  <div class="corner" style="left:4px;bottom:4px"></div><div class="corner" style="right:4px;bottom:4px"></div>
+  <div class="wrap">
+    <div class="logo">TANDEMONIUM</div>
+    <div class="rule"></div>
+    <div class="title" id="title"></div>
+    <div class="sub" id="sub"></div>
+  </div>
+</div>
+<div class="crest" id="crest"></div>
+<script>
+const q = new URLSearchParams(location.search);
+document.getElementById('title').textContent = q.get('title');
+document.getElementById('sub').textContent = q.get('sub');
+document.getElementById('crest').textContent = q.get('crest');
+</script>
+</body></html>
