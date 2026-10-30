@@ -3635,7 +3635,9 @@ class Game {
       // B3: open world pays coins for at most 10 km a ride (no farming circles).
       payCapM: plan.explore ? OPEN_WORLD_PAY_CAP_M : undefined,
       timerEnabled: false,      // there is no losing a ride to someone you love
-      treeCollision: false,
+      // #402 §3: walls and trees in the streamed mesh bump the bike like
+      // procedural trees do (TouristWorld.checkTreeCollision).
+      treeCollision: true,
       motionAdaptation: false
     };
     this.lobby.selectedDifficulty = 'chill';   // arriving is the point, not the challenge

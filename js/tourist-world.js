@@ -25,6 +25,7 @@ import {
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { dracoDecoderPath } from './draco-path.js';
 import { getTouristOrigin, TOURIST_TUNE, TOURIST_MAX_RADIUS_M } from './tourist-config.js';
+import { TouristGround } from './tourist-ground.js';
 import { isMobile } from './config.js';
 
 const DEG2RAD = Math.PI / 180;
@@ -140,26 +141,24 @@ export class TouristWorld {
     // Camera terrain-clipping shim (ChaseCamera calls roadPath.getHeightAtWorld).
     this.roadPath = new TouristRoadPath(this);
 
-    // Ground-following state.
-    this._raycaster = new THREE.Raycaster();
-    this._raycaster.firstHitOnly = false;
+    // Ground-following state. Hit selection + breadcrumb recovery live in
+    // tourist-ground.js (#402) so they can be unit-tested without the tiles library.
+    this._ground = new TouristGround({
+      tiles, probeUp: this._probeUp, probeRay: this._probeRay, tune: TOURIST_TUNE,
+    });
     // Ground-follow telemetry only when ?ttdebug is present (keeps console clean).
     this._dbg = new URLSearchParams(window.location.search).has('ttdebug');
     this._groundY = TOURIST_TUNE.wheelOffset; // best guess until first hit
-    this._hasGround = false;
     this._tiltQ = new THREE.Quaternion();     // smoothed ground tilt
     this._smoothNormal = new THREE.Vector3(0, 1, 0);
-    this._tmpOrigin = new THREE.Vector3();
-    this._tmpNormalMat = new THREE.Matrix3();
-    this._tmpNormal = new THREE.Vector3();
     this._tmpUpQ = new THREE.Quaternion();
 
     // Attribution overlay (Google requires visible credit when streaming tiles).
     this._creditsEl = document.getElementById('tourist-credits');
     this._creditTimer = 0;
 
-    // "No 3D coverage" notice state — see _setCoverageNotice.
-    this._noHitElapsed = 0;
+    // "No 3D coverage" notice state — see _setCoverageNotice (the no-hit timer
+    // itself lives in this._ground.noHitElapsed).
     this._noticeEl = null;
   }
 
@@ -349,72 +348,49 @@ export class TouristWorld {
 
   /**
    * Step 4 — vertical ground-following. Raycast straight down onto the loaded
-   * tile meshes, clamp the bike's Y to the hit (+ wheel offset), and pitch the
-   * bike to the ground normal. Tiles stream in/out, so frames with no hit hold
-   * the last height to avoid pops.
+   * tile meshes, pick the STREET-LEVEL hit (#402: not the roof or tree crown
+   * that happens to be highest — see TouristGround), clamp the bike's Y to it
+   * (+ wheel offset), and pitch the bike to the ground normal. Tiles stream
+   * in/out, so frames with no hit hold the last height to avoid pops; a long
+   * run of unrideable hits resnaps the bike to its breadcrumb trail.
    */
   _groundFollow(bikePos, dt) {
-    const ray = this._raycaster;
-    // The ray starts above the bike, but never below the anchor plane + probeUp.
-    // Without that floor the probe is a one-way trapdoor: accept one bad hit far
-    // below the real ground (a coarse root tile), and the origin drops with the
-    // bike until the true surface is ABOVE the ray start — at which point a
-    // downward ray can never find it again and the rider is stuck underground
-    // forever. Clamping up means the bike can always climb back out.
-    const probeTop = Math.max(bikePos.y + this._probeUp, this._probeUp);
-    this._tmpOrigin.set(bikePos.x, probeTop, bikePos.z);
-    ray.set(this._tmpOrigin, new THREE.Vector3(0, -1, 0));
-    // Measured from the bike, not the (possibly clamped) ray origin, so the reach
-    // below the bike stays constant however far the origin was lifted.
-    ray.far = (probeTop - bikePos.y) + this._probeRay;
-
-    // Use the library's own raycast: it transforms the world-space ray into the
-    // tiles' (ECEF) coordinate frame via the group transform. Raycasting the tile
-    // meshes directly bypasses that and never hits (the meshes live at raw ECEF).
-    const hits = [];
-    this.tiles.raycast(ray, hits);
+    const ground = this._ground;
+    const r = ground.step(bikePos, dt, this._tilesStarted, this._bike ? this._bike.heading : undefined);
+    this._groundY = ground.groundY;
 
     // Throttled ground-follow telemetry (~2/sec), only with ?ttdebug.
     this._dbgTimer = (this._dbgTimer || 0) + dt;
-    if (this._dbg && this._dbgTimer > 0.5) {
+    if (this._dbg && (this._dbgTimer > 0.5 || r.resnapped)) {
       this._dbgTimer = 0;
-      hits.sort((a, b) => a.distance - b.distance);
-      const nearest = hits.length ? hits[0].point.y.toFixed(1) : 'none';
+      const picked = r.hit ? r.hit.point.y.toFixed(1) : 'none';
       console.log(`[Tourist GF] bikeXZ=(${bikePos.x.toFixed(0)},${bikePos.z.toFixed(0)}) ` +
         `bikeY=${bikePos.y.toFixed(1)} groundY=${this._groundY.toFixed(1)} ` +
-        `hits=${hits.length} nearestHitY=${nearest} probeTop=${probeTop.toFixed(0)}`);
+        `hits=${r.hits} rejected=${r.rejected} pickedY=${picked} probeTop=${r.probeTop.toFixed(0)}` +
+        (r.resnapped ? ` RESNAP=${r.resnapped} crumbs=${ground.breadcrumbs.length}` : '') +
+        (ground.bump ? ` BUMP at ${ground.bump.distance.toFixed(1)}m` : ''));
     }
 
     const ease = Math.min(1, TOURIST_TUNE.groundLerp * dt);
 
-    if (hits.length) {
-      hits.sort((a, b) => a.distance - b.distance);
-      const hit = hits[0];
-      const targetY = hit.point.y + TOURIST_TUNE.wheelOffset;
-      // First hit SNAPS rather than eases: this is the moment the real surface
-      // height becomes known, and for a custom location it can be a kilometre
-      // from the guessed anchor — easing that would be a long visible fall.
-      // It also means the anchor height never has to be looked up or tuned.
-      if (!this._hasGround) this._groundY = targetY;
-      else this._groundY += (targetY - this._groundY) * ease;
-      this._hasGround = true;
-
-      // Ground normal → world space, smoothed, for pitch/roll.
-      if (hit.face) {
-        this._tmpNormalMat.getNormalMatrix(hit.object.matrixWorld);
-        this._tmpNormal.copy(hit.face.normal).applyMatrix3(this._tmpNormalMat).normalize();
-        if (this._tmpNormal.y < 0) this._tmpNormal.negate(); // face upward
-        this._smoothNormal.lerp(this._tmpNormal, ease).normalize();
-      }
-
-      this._noHitElapsed = 0;
+    if (r.hit) {
+      // Ground normal (already world space, upward), smoothed, for pitch/roll.
+      if (r.hit.face) this._smoothNormal.lerp(ground.normal, ease).normalize();
       this._setCoverageNotice(false);
     } else if (this._tilesStarted) {
-      // No hit this frame — hold last _groundY/normal. Usually just tiles still
-      // streaming, so only the SUSTAINED case means "nothing here to ride".
-      // Gated on _tilesStarted so the mobile tile-gate wait never counts.
-      this._noHitElapsed += dt;
-      if (this._noHitElapsed > TOURIST_TUNE.noCoverageAfter) this._setCoverageNotice(true);
+      // No ground this frame — hold last _groundY/normal. Usually just tiles
+      // still streaming, so only the SUSTAINED case with no hit at all means
+      // "nothing here to ride". (Gated on _tilesStarted inside step() too, so
+      // the mobile tile-gate wait never counts.)
+      if (ground.noHitElapsed > TOURIST_TUNE.noCoverageAfter) this._setCoverageNotice(true);
+    }
+
+    // #402 option 5 · the bike was pulled back to its last good ground point
+    // because it rode into geometry (wall/roof overhead). Take the speed off so
+    // it doesn't drive straight back in; what a wall should DO beyond this
+    // (bump and turn vs. pass through with an X-ray) is still Pete's call (#402 §3).
+    if (r.resnapped && r.blocked && this._bike && this._bike.speed > TOURIST_TUNE.ground.resnapSpeed) {
+      this._bike.speed = TOURIST_TUNE.ground.resnapSpeed;
     }
 
     // Apply Y to the bike (bikePos is the bike's live position vector).
@@ -440,12 +416,18 @@ export class TouristWorld {
   setRaceMarkers() {}
   clearRaceMarkers() {}
   setBalloonColor() {}
-  // #478 finish props (Grandma's present pile) belong to the procedural world;
-  // the finish cinematic and victory screen call these on whatever world is
-  // live, so a Tourist finish must not throw here.
-  startPresentStack() {}
+  // #478/#484 · no Grandma's house or present pile on real streets (the
+  // victory path calls both every tourist ride; without them it threw).
+  startPresentStack() { return false; }
   updateFinishFx() {}
-  checkTreeCollision() { return { hit: false }; }
+  /**
+   * #402 §3 · a wall, trunk or crown right ahead (TouristGround._probeAhead)
+   * is reported as a tree hit, so game.js gives it the same crash beat as a
+   * procedural tree. The ground follower has already pushed the bike back out
+   * of the face. Low things (cars, kerbs, hedges) are ridden over instead and
+   * never reach here.
+   */
+  checkTreeCollision() { return { hit: !!this._ground.bump, tree: null }; }
   // _startCountdown reseeds the world from the level; real streets have no seed.
   // (Without this _startCountdown threw before it built the RaceManager, so a
   // tourist ride rolled but never had a finish.)
