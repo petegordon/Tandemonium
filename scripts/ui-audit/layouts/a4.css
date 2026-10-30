@@ -1,0 +1,5 @@
+/* extends: a3, _coop */
+/* script: _seats */
+/* A4 · one seat component: the captain's local join reuses the versus team box,
+   "Also connected" replaces the expandable Controllers list on both screens,
+   and the full list moves into the Controls sheet. */

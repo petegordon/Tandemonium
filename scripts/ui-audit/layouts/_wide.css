@@ -1,0 +1,130 @@
+/* Shared reflow for every layout mockup (#428). Variants set --art-w (the width
+   the painting takes on the right; 0 when it sits behind) and place the art.
+   Mockup only: !important is used to beat the live desktop rules. */
+
+#lobby {
+  --art-w: 0px;
+  --gutter: 48px;
+  --bar-h: 132px;
+  --foot-h: 72px;
+  /* TV type scale through the tokens: every uf-button follows. */
+  --uf-size-xs: 16px; --uf-size-sm: 20px; --uf-size-md: 26px;
+  --uf-size-lg: 30px; --uf-size-xl: 36px; --uf-size-2xl: 44px;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--art-w) !important;
+  grid-template-rows: var(--bar-h) minmax(0, 1fr) var(--foot-h) !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  align-items: center !important;
+  overflow: hidden !important;
+}
+#lobby-img-left { display: none !important; }
+#lobby-img-right { grid-column: 3 !important; grid-row: 1 / -1 !important; object-position: center !important; }
+
+/* ── Top bar: logo left, every icon button right ── */
+#lobby-card-header {
+  display: block !important;
+  position: fixed; top: 18px; left: var(--gutter);
+  width: 300px; height: 112px;
+  background: url(images/logo.png) left center / contain no-repeat;
+  z-index: 3;
+}
+#lobby .lobby-left-col, #lobby .lobby-right-col {
+  position: fixed !important; top: 34px; z-index: 4;
+  flex-direction: row !important; gap: 14px !important; padding: 0 !important;
+  align-items: center !important;
+}
+#lobby .lobby-right-col { right: calc(var(--art-w) + var(--gutter)); }
+#lobby .lobby-left-col  { right: calc(var(--art-w) + var(--gutter) + 4 * 64px + 3 * 14px + 36px); }
+#lobby .lobby-toggle { width: 64px !important; height: 64px !important; }
+#lobby .lobby-toggle svg { width: 28px; height: 28px; }
+#lobby #toggle-help span { font-size: 26px !important; }
+
+/* ── Stage: mode step = bike + buttons side by side; other steps = full width ── */
+#bike-carousel {
+  grid-column: 1 !important; grid-row: 2 !important;
+  width: calc(100% - var(--gutter)) !important; margin: 0 0 0 var(--gutter) !important;
+  justify-self: stretch !important; align-self: center !important;
+}
+#bike-name { font-size: 30px !important; line-height: 36px !important; top: -48px !important; }
+#lobby .lobby-card {
+  grid-column: 2 !important; grid-row: 2 !important;
+  max-width: none !important; width: 100% !important; height: auto !important; max-height: none !important;
+  padding: 0 var(--gutter) !important; margin: 0 !important;
+  display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important;
+  align-self: center !important; justify-self: stretch !important;
+}
+#lobby.lobby-wide .lobby-card { grid-column: 1 / 3 !important; }
+#lobby .lobby-layout { display: block !important; width: 100%; flex: 0 0 auto !important; }
+#lobby .lobby-steps-col { width: 100% !important; max-width: none !important; min-width: 0 !important; overflow: visible !important; }
+#lobby .lobby-step { overflow: visible !important; }
+#lobby .lobby-prompt { font-size: 30px !important; margin: 0 0 20px !important; }
+
+/* Mode buttons: one TV-sized list */
+#lobby-mode .lobby-mode-buttons { gap: 18px !important; width: min(560px, 100%); margin: 0 auto; }
+#lobby-mode uf-button:not([size]) { min-height: 84px; font-size: 30px; border-radius: 18px; }
+
+/* ── Level select: every card in one row, START RIDE on screen ── */
+#lobby #level-cards {
+  flex-direction: row !important; width: 100% !important; max-width: none !important;
+  gap: 24px !important; align-items: stretch !important; padding: 8px 0 !important;
+}
+#lobby .level-card { flex: 1 1 0 !important; min-width: 0 !important; width: auto !important; min-height: 300px; padding: 28px 24px !important; text-align: left; }
+#lobby .level-card-top { flex-direction: column !important; align-items: flex-start !important; gap: 14px !important; }
+#lobby .level-card-icon { font-size: 56px !important; }
+#lobby .level-card-name { font-size: 34px !important; }
+#lobby .level-card-desc { font-size: 22px !important; line-height: 1.35 !important; margin-top: 12px !important; }
+#lobby .level-card-daily-rule { font-size: 16px !important; display: block; margin-top: 6px; }
+#lobby .level-card-record { font-size: 22px !important; margin-top: 14px !important; }
+#lobby .difficulty-selector { margin-top: 24px !important; font-size: 22px !important; }
+#lobby #level-extras { margin-top: 24px !important; }
+#lobby #btn-start-ride { min-width: 420px; min-height: 80px; font-size: 30px !important; }
+
+/* ── Versus: four seat cards across, readable join hint ── */
+#lobby-versus .versus-teams { gap: 24px !important; align-items: stretch !important; }
+#lobby-versus .versus-team { padding: 18px !important; border-radius: 18px !important; gap: 14px !important; }
+#lobby-versus .versus-team-title { font-size: 26px !important; }
+#lobby-versus .versus-vs { font-size: 40px !important; }
+#lobby-versus .versus-team-slots { flex-direction: row !important; gap: 16px !important; }
+#lobby-versus .versus-player-card { flex: 1 1 0; min-width: 0; min-height: 170px; justify-content: center; gap: 10px; padding: 18px !important; border-radius: 14px !important; }
+#lobby-versus .vp-name { font-size: 26px !important; }
+#lobby-versus .vp-device { font-size: 18px !important; opacity: .85 !important; line-height: 1.3; text-align: center; }
+#lobby-versus .versus-join-hint { font-size: 24px !important; opacity: .85 !important; color: #fff !important; margin: 22px 0 !important; }
+#lobby-versus #btn-versus-controllers, #lobby-versus #versus-controllers { display: none !important; }
+#lobby-versus #btn-versus-continue { width: 520px; min-height: 80px; font-size: 30px; margin: 8px auto 0; }
+
+/* ── Step footer: Back hint bottom-left, credits bottom-right, never overlapping ── */
+#lobby .gamepad-back-hint {
+  position: fixed !important; left: var(--gutter); bottom: 14px; margin: 0 !important;
+  font-size: 22px !important; color: rgba(255,255,255,.75) !important; z-index: 4;
+}
+#lobby #lobby-fixed-back, #lobby .lobby-back { display: none !important; }
+#lobby .lobby-credits {
+  position: fixed !important; left: auto !important; right: calc(var(--art-w) + var(--gutter)) !important;
+  bottom: 18px !important; width: auto !important; height: auto !important;
+  font-size: 18px !important; gap: 14px !important; margin: 0 !important; z-index: 4;
+}
+#lobby .lobby-credits * { font-size: 18px !important; }
+
+/* The bike preview belongs to the mode screen; every other step gets the full stage. */
+#lobby:not(:has(#lobby-mode[active])) #bike-carousel { display: none !important; }
+#lobby:not(:has(#lobby-mode[active])) .lobby-card { grid-column: 1 / 3 !important; }
+
+/* Opaque stage so the paused 3D scene and its HUD don't bleed through. */
+#lobby { background: radial-gradient(120% 90% at 30% 40%, #161b24 0%, #0a0c11 70%) !important; }
+/* Right icon group: one row (it nests two columns in the markup). */
+#lobby .lobby-right-col > .lobby-toggle-col { display: contents !important; }
+#lobby #toggle-all { font-size: 18px !important; }
+/* Bike preview as a framed card; the canvas scales to the card instead of overflowing the arrows. */
+#bike-preview-wrap { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; }
+#bike-preview-canvas { width: 100% !important; height: auto !important; aspect-ratio: auto; }
+#bike-carousel { border-radius: 18px; overflow: visible; }
+#bike-carousel .bike-carousel-nav { width: 64px !important; font-size: 34px !important; }
+/* Centre labels in the taller TV buttons. */
+#lobby-mode uf-button:not([size]), #lobby #btn-start-ride, #lobby-versus #btn-versus-continue {
+  display: flex !important; align-items: center; justify-content: center; gap: 12px; padding-top: 0 !important; padding-bottom: 0 !important;
+}
+/* Seat labels were near-black on dark: make them readable. */
+#lobby-versus .vp-name { color: #fff !important; }
+#lobby-versus .versus-vs { color: rgba(255,255,255,.55) !important; opacity: 1 !important; }
+#lobby #btn-start-ride, #lobby-versus #btn-versus-continue { line-height: 1 !important; }
