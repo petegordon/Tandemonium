@@ -84,6 +84,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | BL-09 | Pad focus starts on a visible control on every lobby step | A | `smoke:flows` |
 | BL-10 | Every lobby step at 390×844, 844×390, 1920×1080 and 4K: every control reachable, none overlapping | A | `smoke:lobby-layout` |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
+| BL-12 | Quit (#172): the desktop app's mode step has a Quit pill next to Help; the pad reaches it, A opens "Quit Tandemonium?" with QUIT focused, B / Esc / CANCEL close it, QUIT asks Electron to quit once; the web build and phones have no Quit | A | `smoke:flows` (QT-01…07) |
 
 ## 2. Solo rides
 
@@ -91,6 +92,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 |---|---|---|---|
 | SR-01 | Tutorial: runway, phase 1 (collect) and phase 2 (collect + dodge) prompts advance; all presents and pylons count; the end screen shows the tally, saves the calibration, the feel slider sets the feel; NEXT offered | A | `smoke:solo-extras` |
 | SR-01h | Lean-steering onto the tutorial presents feels learnable | M | — |
+| SR-01i | Tutorial: the 3D "TUTORIAL START" board beside the start and the "TUTORIAL END" board past the finish (end-card style, bunting flaps, lettering glints as you pass); no "Your Home" video and no box house on the tutorial; Grandma's unchanged (#503) | A | `smoke:tutorial-board`, `test/unit/tutorial-board` |
 | SR-02 | Tutorial: you cannot fall | A | `test/unit/crash-policy` |
 | SR-03 | Grandma's: clock is held until the first pedal taps, then runs | A | `smoke:ride` |
 | SR-04 | Grandma's: ride to the finish; victory overlay shows time, medal, coins | A | `smoke:economy`, `smoke:achievements` |
@@ -98,6 +100,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-05b | Crash: the bike falls once from the lean it crashed at — never pops upright and falls again (#483; Physics FX off shows it) | A | `test/unit/crash-tumble`, `node scripts/reel/crash-probe.mjs --fx off` (manual, GPU) |
 | SR-05c | Crash (Physics FX on): both geese are thrown as rag dolls, hats fly, the view slows for a moment with the clock held, then the riders are back in their seats at the checkpoint (#484) | A | `smoke:physics` (crash scene), `test/unit/crash-ragdoll`, `node scripts/reel/crash-probe.mjs` (manual, GPU) |
 | SR-05d | SR-05c looks right and is funny: no geese through the floor, no jitter, versus slows only the crashing half | M | `node scripts/reel/crash-review.mjs` (review video) |
+| SR-05e | Rag dolls have weight and are not rubbery (#507): no bounce, limbs settle instead of flailing, knees/elbows never fold the wrong way, the neck stays the loose one | A | `npm run sim:ragdoll` (Node, Rapier; `--scene` compares with main), `test/unit/crash-ragdoll` |
 | SR-05e | Crash (Physics FX on, goose tandem): the bike comes apart (wheels roll off, bars and saddles fly), nothing sinks, and it is whole again at the checkpoint (#484) | A | `smoke:physics` (bike apart), `test/unit/crash-bike-apart` |
 | SR-05f | Versus: a part from one team's crash that reaches the other team wobbles it (once), never crashes it outright; never in online modes (#484) | A | `smoke:physics` (versus hit), `test/unit/crash-bike-apart`, `node scripts/reel/crash-review.mjs versus` (manual, GPU) |
 | SR-06 | Helping hand: repeated failure on a checkpoint makes it visibly easier | A | `smoke:helping-hand` |
@@ -124,6 +127,8 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-24h | SR-24 looks right: scale, placement, wave reads from the chase camera, no frame drop on Low | M | — |
 | SR-25 | 3D present, death cone and Grandma's house (no video billboards); presents still collect, cones still crash and get knocked flying; after the finish the ride's presents fly into a pile beside Grandma (#478) | A | `smoke:props`, `test/unit/props-3d`, `test/unit/present-stack` |
 | SR-25h | SR-25 looks right: presents and cones read from the chase camera, the pile lands neatly and is seen during the finish swing, no frame drop on Low / phone / Quest | M | `scripts/review-props.mjs`, `scripts/probe-props.mjs` |
+| SR-26 | Bike × geese fit (#505): hips HIP_UP over the socket, feet on the pedals through a crank turn, hands at the grips, body on the saddle, bike's rear end clear of the tyre, for every outfit and Show Solo; measured on the in-game assembly | A | `smoke:fit` (KNOWN BUG lines while the assets are being fixed), `test/unit/fit-rules` |
+| SR-26h | SR-26 looks right in the fit viewer (`npm run fit-viewer`: orbit, snap views, close-ups, X-ray, section plane, markers, nudges) | M | `tools/fit-viewer`, screenshots in `renders/fit/` |
 
 ## 3. Ride feel (manual only)
 
