@@ -3353,7 +3353,8 @@ class Game {
       try {
         analytics.trackEvent('daily_finish', {
           key: level.key, mode: dailyMode, ranked: this._rankedRunActive,
-          time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes
+          time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes,
+          geese_scattered: this.geeseManager ? this.geeseManager.getDisruptedCount() : 0   // #364
         });
       } catch {}
     }
@@ -7581,6 +7582,9 @@ class Game {
       loser_distance: Math.floor(loser.bike.distanceTraveled),
       winner_crashes: winner.crashCount,
       loser_crashes: loser.crashCount,
+      // #364: per-team geese (free-form event payload; the rides table has no column)
+      winner_geese: this.geeseManager ? this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(winner)) : 0,
+      loser_geese: this.geeseManager ? this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(loser)) : 0,
     });
     analytics.endRide({
       completed: true,
@@ -7666,7 +7670,13 @@ class Game {
     this.camera.layers.disable(2);
     if (!winner || !loser || !this.versusHud) return;
     this.versusHud.hideBanner();
-    const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser);
+    // #364: each team's own geese. GeeseManager tallies per anchor index, and
+    // _updateVersus passes the anchors as rigs.map(...) — so anchor i is
+    // this.versusRigs[i] (A = 0, B = 1), whichever of them won.
+    const geese = this.geeseManager
+      ? (rig) => this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(rig))
+      : null;
+    const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser, { geese });
     this._showVersusCoins();   // #400 D4: one payout per race
     rematchBtn.addEventListener('click', () => this._rematchVersus());
     lobbyBtn.addEventListener('click', () => {

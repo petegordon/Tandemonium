@@ -3121,6 +3121,9 @@
   /* Results overlay: a kit <uf-sheet headline> (#428); only the body layout lives here. */
   #versus-results .vr-card { display: grid; gap: var(--uf-space-4); justify-items: center; }
   #versus-results .vr-teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--uf-space-4); width: 100%; }
+  /* #364: a team's card plus its own 🪿 stat underneath (only when it scattered any). */
+  #versus-results .vr-team { display: grid; gap: var(--uf-space-2); align-content: start; }
+  #versus-results .vr-geese { justify-self: center; }
   .lobby-layout {
     display: flex;
     align-items: center;
