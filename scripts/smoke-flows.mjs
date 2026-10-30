@@ -19,18 +19,24 @@
 //   SR-27  (#459) every end screen is the result-screen shell: a headline kit
 //          sheet, one action row, focus on its primary (game over, victory,
 //          demo end, partner left)
-//   SR-26  (#459) the pause menu: Start / Esc mid-ride opens it and the ride
+//   SR-29  (#459) the pause menu: Start / Esc mid-ride opens it and the ride
 //          (physics + race clock) stops; B / Start / Esc / RESUME continue;
 //          SETTINGS opens Options over it and B comes back to the menu;
 //          View opens Help over it and B comes back; RESTART rides again;
 //          END RIDE returns to the lobby
-//   BL-12  (#459) a modal (Help) closes on B and on Esc with focus restored
+//   BL-13  (#459) a modal (Help) closes on B and on Esc with focus restored
+//   QT     #172 quit from the lobby: no Quit pill on the web build; in the
+//          desktop app (Electron UA + the preload bridge from fake-steam.mjs)
+//          the pill shows on mode select only, the pad reaches it, A opens the
+//          confirm with QUIT focused, B / Esc / CANCEL close it without
+//          quitting, and QUIT calls the bridge's quit() once
 //
 // KNOWN checks print "KNOWN BUG" instead of failing the run, so CI stays green
 // while the bug is open; they print "FIXED" once the game behaves, which is the
 // cue to turn them into normal checks.
 import { startHarness, sleep, clickId } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
+import { installFakeSteam, fakeSteam, ELECTRON_UA } from './lib/fake-steam.mjs';
 
 const h = await startHarness({ port: 8965, outDir: 'tandemonium-flows' });
 const { check } = h;
@@ -161,7 +167,7 @@ console.log('options');
   await show('modeStep'); await sleep(400);
 }
 
-// ── BL-12: a modal on the sheet shell (Help) closes on B / Esc, focus restored ──
+// ── BL-13: a modal on the sheet shell (Help) closes on B / Esc, focus restored ──
 console.log('modal shell');
 {
   const helpState = () => page.evaluate(() => {
@@ -172,20 +178,107 @@ console.log('modal shell');
   const before = await look();
   await pads.tap(0, 'SELECT'); await sleep(500);   // View / Share / Create = Help (#459 item 18)
   let s = await helpState();
-  check(s.open && s.sheetTag === 'uf-sheet', 'BL-12 pad: the View button opens Help, a kit sheet', s);
+  check(s.open && s.sheetTag === 'uf-sheet', 'BL-13 pad: the View button opens Help, a kit sheet', s);
   await padB();
   s = await helpState();
-  check(!s.open, 'BL-12 pad: B closes Help');
-  check(s.focus === before.focus, 'BL-12 pad: focus is back where it was', { before: before.focus, after: s.focus });
+  check(!s.open, 'BL-13 pad: B closes Help');
+  check(s.focus === before.focus, 'BL-13 pad: focus is back where it was', { before: before.focus, after: s.focus });
   await clickId(page, 'bar-help'); await sleep(500);
-  check((await helpState()).open, 'BL-12 mouse: the Help pill opens Help');
+  check((await helpState()).open, 'BL-13 mouse: the Help pill opens Help');
   await esc();
   s = await helpState();
-  check(!s.open && (await look()).step === 'lobby-mode', 'BL-12 Esc closes Help and does not step the lobby back', s);
+  check(!s.open && (await look()).step === 'lobby-mode', 'BL-13 Esc closes Help and does not step the lobby back', s);
   await clickId(page, 'credits-btn'); await sleep(500);
   const scrolled = await page.evaluate(() => { const b = document.getElementById('help-modal').body; return { open: document.getElementById('help-modal').open, top: b.scrollTop }; });
-  check(scrolled.open && scrolled.top > 0, 'BL-12 the footer © opens Help at its attributions', scrolled);
+  check(scrolled.open && scrolled.top > 0, 'BL-13 the footer © opens Help at its attributions', scrolled);
   await esc();
+}
+
+// ── QT: quit from the lobby, desktop app only (#172) ──
+console.log('quit (desktop only)');
+{
+  /** Poll `fn` until truthy (the smokes run at 1-3 fps on CI: never a fixed wait). */
+  const until = async (fn, timeout = 12000) => {
+    const t0 = Date.now();
+    for (;;) { if (await fn()) return true; if (Date.now() - t0 > timeout) return false; await sleep(150); }
+  };
+  const quitShown = (p) => p.evaluate(() => {
+    const b = document.getElementById('bar-quit');
+    if (!b || getComputedStyle(b).display === 'none') return false;
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  check(await page.evaluate(() => !window.electronApp), 'QT-01 web build: no Electron bridge');
+  check(!(await quitShown(page)), 'QT-01 web build: no Quit pill in the bar');
+
+  // The desktop app: Electron UA + the preload's bridge (fake-steam.mjs, Steam
+  // itself off as when launched outside Steam), one pad at boot.
+  const desk = await h.gamePage({
+    userAgent: ELECTRON_UA,
+    storage: { tandemonium_tutorial_done: 'smoke' },
+    before: async (p) => {
+      await installFakeSteam(p, { available: false, controllers: [] });
+      await installFakeGamepads(p, { atBoot: ['xbox'] });
+    },
+  });
+  const dpads = fakePads(desk);
+  const dsteam = fakeSteam(desk);
+  const dlook = () => desk.evaluate(() => {
+    const flow = document.getElementById('lobby-flow');
+    const f = Array.from(document.querySelectorAll('.gamepad-focus')).find((el) => !el.closest('#options-overlay')) || null;
+    const sheet = /** @type {any} */ (document.getElementById('quit-sheet'));
+    return { step: flow ? flow.current : null, focus: f ? (f.id || f.className) : null, open: !!(sheet && sheet.open) };
+  });
+  await until(async () => (await dlook()).step === 'lobby-mode' && (await dlook()).focus);
+  check(await desk.evaluate(() => typeof window.electronApp?.quit === 'function'), 'QT-02 desktop: the bridge offers quit()');
+  check(await quitShown(desk), 'QT-02 desktop: Quit pill shown on mode select');
+  check(await desk.evaluate(() => window._game.lobby._stepFocus.items.includes(document.getElementById('bar-quit'))), 'QT-02 desktop: Quit pill is in the pad\'s focus scope');
+
+  // Pad-navigable: walk down to the bar, then along it to Quit (bounded).
+  // Quit is second from the left (Help, Quit, Leaderboard, Profile … end pills).
+  let s = await dlook();
+  for (let i = 0; i < 16 && s.focus !== 'bar-quit'; i++) {
+    const inBar = (s.focus || '').startsWith('bar-');
+    const dir = !inBar ? 'DOWN' : (s.focus === 'bar-help' ? 'RIGHT' : 'LEFT');
+    await dpads.tap(0, dir);
+    const before = s.focus;
+    await until(async () => (await dlook()).focus !== before, 1500);
+    s = await dlook();
+  }
+  check(s.focus === 'bar-quit', 'QT-03 pad: d-pad reaches the Quit pill', s.focus);
+
+  await dpads.tap(0, 'A');
+  check(await until(async () => (await dlook()).open), 'QT-03 pad: A on Quit opens the confirm');
+  check(await until(async () => (await dlook()).focus === 'quit-confirm'), 'QT-03 pad: QUIT is the focused control in the confirm', (await dlook()).focus);
+  await dpads.tap(0, 'B');
+  check(await until(async () => !(await dlook()).open), 'QT-04 pad: B closes the confirm');
+  s = await dlook();
+  check(s.step === 'lobby-mode' && await dsteam.quitCalls() === 0, 'QT-04 pad: B cancels without quitting or stepping the lobby', s);
+  check(await until(async () => (await dlook()).focus === 'bar-quit'), 'QT-04 pad: focus returns to the Quit pill', (await dlook()).focus);
+
+  await clickId(desk, 'bar-quit');
+  check(await until(async () => (await dlook()).open), 'QT-05 mouse: the Quit pill opens the confirm');
+  await desk.keyboard.press('Escape');
+  check(await until(async () => !(await dlook()).open), 'QT-05 Esc closes the confirm');
+  check((await dlook()).step === 'lobby-mode', 'QT-05 Esc with the confirm open leaves the lobby step alone');
+  await clickId(desk, 'bar-quit');
+  await until(async () => (await dlook()).open);
+  await clickId(desk, 'quit-cancel');
+  check(await until(async () => !(await dlook()).open) && await dsteam.quitCalls() === 0, 'QT-05 CANCEL closes the confirm without quitting');
+
+  // Only the first step offers it.
+  await clickId(desk, 'btn-solo');
+  check(await until(async () => (await dlook()).step === 'lobby-level' && !(await quitShown(desk))), 'QT-06 Quit pill hidden off the mode step');
+  await desk.evaluate(() => { const l = window._game.lobby; l._showStep(l.modeStep); });
+  check(await until(async () => (await dlook()).step === 'lobby-mode' && await quitShown(desk)), 'QT-06 Quit pill back on mode select');
+
+  // Confirm: A on QUIT asks the bridge to quit, once.
+  await clickId(desk, 'bar-quit');
+  await until(async () => (await dlook()).focus === 'quit-confirm');
+  await dpads.tap(0, 'A');
+  check(await until(async () => (await dsteam.quitCalls()) === 1), 'QT-07 pad: A on QUIT calls electronApp.quit() once', await dsteam.quitCalls());
+  check(await desk.evaluate(() => document.getElementById('quit-confirm').hasAttribute('disabled')), 'QT-07 QUIT disables itself after the request (no double quit)');
+  await desk.close();
 }
 
 // ── SR-09 / SR-10: game-over and victory buttons ──
@@ -313,7 +406,7 @@ console.log('end screen shell');
   await show('modeStep'); await sleep(300);
 }
 
-// ── SR-26: the pause menu ──
+// ── SR-29: the pause menu ──
 console.log('pause menu');
 {
   const pause = () => page.evaluate(() => {
@@ -336,83 +429,83 @@ console.log('pause menu');
   await page.evaluate(() => { const g = window._game; g.raceManager.noteFirstPedal(); });
   // Start opens it; the ride and the clock stop.
   await pads.tap(0, 'START');
-  check(await waitPause(true), 'SR-26 pad: Start mid-ride opens the pause menu');
+  check(await waitPause(true), 'SR-29 pad: Start mid-ride opens the pause menu');
   let p = await pause();
-  check(p.open && p.state === 'playing' && p.focus === 'btn-pause-resume', 'SR-26 the menu opens over the ride with RESUME focused', p);
-  check(p.clockPaused && /clock is stopped/.test(p.sub || ''), 'SR-26 the race clock is held', { paused: p.clockPaused, sub: p.sub });
+  check(p.open && p.state === 'playing' && p.focus === 'btn-pause-resume', 'SR-29 the menu opens over the ride with RESUME focused', p);
+  check(p.clockPaused && /clock is stopped/.test(p.sub || ''), 'SR-29 the race clock is held', { paused: p.clockPaused, sub: p.sub });
   await countSteps();
   const e0 = p.elapsed;
   await sleep(1500);
   const steps = await page.evaluate(() => window.__rmCalls);
   p = await pause();
-  check(steps === 0 && p.elapsed === e0, 'SR-26 physics + race clock not stepped while paused', { steps, e0, e1: p.elapsed });
+  check(steps === 0 && p.elapsed === e0, 'SR-29 physics + race clock not stepped while paused', { steps, e0, e1: p.elapsed });
   await h.shot(page, 'pause-menu');
   // B = Resume.
   await padB();
-  check(await waitPause(false), 'SR-26 pad: B resumes');
+  check(await waitPause(false), 'SR-29 pad: B resumes');
   p = await pause();
-  check(!p.open && p.state === 'playing' && !p.clockPaused, 'SR-26 after Resume the ride and clock run', p);
+  check(!p.open && p.state === 'playing' && !p.clockPaused, 'SR-29 after Resume the ride and clock run', p);
   await sleep(1200);
-  check(await page.evaluate(() => window.__rmCalls) > 0, 'SR-26 race steps again after Resume');
+  check(await page.evaluate(() => window.__rmCalls) > 0, 'SR-29 race steps again after Resume');
   // Start again = Resume; Esc opens and closes.
   await pads.tap(0, 'START'); await waitPause(true);
   await pads.tap(0, 'START');
-  check(await waitPause(false), 'SR-26 pad: Start again resumes');
+  check(await waitPause(false), 'SR-29 pad: Start again resumes');
   await page.keyboard.press('Escape');
-  check(await waitPause(true), 'SR-26 keyboard: Esc opens the pause menu');
+  check(await waitPause(true), 'SR-29 keyboard: Esc opens the pause menu');
   await page.keyboard.press('Escape');
-  check(await waitPause(false), 'SR-26 keyboard: Esc closes it (resume)');
+  check(await waitPause(false), 'SR-29 keyboard: Esc closes it (resume)');
   // RESUME by A on the focused button.
   await pads.tap(0, 'START'); await waitPause(true); await sleep(400);
   await pads.tap(0, 'A');
-  check(await waitPause(false), 'SR-26 pad: A on RESUME resumes');
+  check(await waitPause(false), 'SR-29 pad: A on RESUME resumes');
   // SETTINGS opens Options over the menu; B returns to the menu with focus.
   await pads.tap(0, 'START'); await waitPause(true); await sleep(400);
   await pads.tap(0, 'DOWN'); await sleep(300); await pads.tap(0, 'DOWN'); await sleep(300);
   p = await pause();
-  check(p.focus === 'btn-pause-settings', 'SR-26 pad: ↓↓ reaches SETTINGS', p.focus);
+  check(p.focus === 'btn-pause-settings', 'SR-29 pad: ↓↓ reaches SETTINGS', p.focus);
   await pads.tap(0, 'A'); await sleep(600);
   p = await pause();
-  check(p.options && p.open, 'SR-26 SETTINGS opens Options over the paused ride', p);
+  check(p.options && p.open, 'SR-29 SETTINGS opens Options over the paused ride', p);
   await padB();
   p = await pause();
-  check(!p.options && p.open && p.focus === 'btn-pause-resume' && p.state === 'playing' && p.clockPaused, 'SR-26 B closes Options; the menu has focus again, still paused', p);
+  check(!p.options && p.open && p.focus === 'btn-pause-resume' && p.state === 'playing' && p.clockPaused, 'SR-29 B closes Options; the menu has focus again, still paused', p);
   // View opens Help over the menu; B comes back.
   await pads.tap(0, 'SELECT'); await sleep(600);
   p = await pause();
-  check(p.help && p.open, 'SR-26 pad: View opens Help over the pause menu', p);
+  check(p.help && p.open, 'SR-29 pad: View opens Help over the pause menu', p);
   await h.shot(page, 'pause-help');
   await padB();
   p = await pause();
-  check(!p.help && p.open && p.focus === 'btn-pause-resume', 'SR-26 B closes Help; focus is back on the menu', p);
+  check(!p.help && p.open && p.focus === 'btn-pause-resume', 'SR-29 B closes Help; focus is back on the menu', p);
   // RESTART rides again.
   await pads.tap(0, 'DOWN'); await sleep(300);
   p = await pause();
-  check(p.focus === 'btn-pause-restart', 'SR-26 pad: ↓ reaches RESTART', p.focus);
+  check(p.focus === 'btn-pause-restart', 'SR-29 pad: ↓ reaches RESTART', p.focus);
   await pads.tap(0, 'A');
-  check(await waitPause(false), 'SR-26 RESTART closes the menu');
+  check(await waitPause(false), 'SR-29 RESTART closes the menu');
   await waitState('playing', 60000).catch(() => {});
   p = await pause();
-  check(p.state === 'playing' && !p.clockPaused, 'SR-26 RESTART rides the same level again', p);
+  check(p.state === 'playing' && !p.clockPaused, 'SR-29 RESTART rides the same level again', p);
   // END RIDE returns to the lobby.
   await pads.tap(0, 'START'); await waitPause(true); await sleep(400);
   for (let i = 0; i < 3; i++) { await pads.tap(0, 'DOWN'); await sleep(300); }
   p = await pause();
-  check(p.focus === 'btn-pause-end', 'SR-26 pad: ↓↓↓ reaches END RIDE', p.focus);
+  check(p.focus === 'btn-pause-end', 'SR-29 pad: ↓↓↓ reaches END RIDE', p.focus);
   await pads.tap(0, 'A');
   await waitState('lobby', 30000).catch(() => {});
   const s = await look();
-  check(s.state === 'lobby' && !!s.step && !(await pause()).open, 'SR-26 END RIDE returns to the lobby', s);
+  check(s.state === 'lobby' && !!s.step && !(await pause()).open, 'SR-29 END RIDE returns to the lobby', s);
   // Touch: the quick menu's PAUSE entry.
   await startGrandma();
   await page.evaluate(() => { window._game.quickMenu.show(); });
   await sleep(300);
   const qm = await page.evaluate(() => { const b = document.getElementById('qm-pause'); return { shown: !!b && !b.hidden && b.getBoundingClientRect().width > 0 }; });
-  check(qm.shown, 'SR-26 touch: the quick menu offers PAUSE while riding', qm);
+  check(qm.shown, 'SR-29 touch: the quick menu offers PAUSE while riding', qm);
   await clickId(page, 'qm-pause');
-  check(await waitPause(true), 'SR-26 touch: PAUSE opens the pause menu');
+  check(await waitPause(true), 'SR-29 touch: PAUSE opens the pause menu');
   await clickId(page, 'btn-pause-resume');
-  check(await waitPause(false), 'SR-26 touch: RESUME resumes');
+  check(await waitPause(false), 'SR-29 touch: RESUME resumes');
   await page.evaluate(() => window._game._returnToLobby());
   await sleep(600);
 }

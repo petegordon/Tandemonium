@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// smoke-achievements.mjs — #401: the 100 achievements, wired end to end.
+// smoke-achievements.mjs — #401: the 101 achievements, wired end to end.
 // A Grandma's ride earns Kick Off (a real pedal stroke through the game's tap
 // path) and Made It (the finish); its payout earns Pocket Change through the
 // economy event; a Slingshot launch earns Fire!; the lobby's badge screen
@@ -119,7 +119,7 @@ const screen = await page.evaluate(() => {
     progress: item('rides_10')?.querySelector('.lb-ach-progress')?.textContent || '',
   };
 });
-check(screen.sections === 15 && screen.rows === 100, `the badge screen has 15 sections, 100 badges ("${screen.count}")`);
+check(screen.sections === 15 && screen.rows === 101, `the badge screen has 15 sections, 101 badges ("${screen.count}")`);
 check(screen.hidden === '???' && screen.hiddenIcon === '❔', `a hidden achievement shows as ??? until earned (${screen.hidden})`);
 check(screen.earned && screen.colour, 'earned ones light up; the bike colours show');
 check(screen.progress === '1/10', `counters show their progress (Regular Rider "${screen.progress}")`);
