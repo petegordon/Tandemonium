@@ -189,20 +189,33 @@ console.log('race 1v1 + finish');
   const v = await raceInfo(page);
   check(v.rigs === 2 && v.members.join() === '1,1' && v.halves === 2, '1v1: two solo rigs, two halves', v);
   // Fast-forward: put team red just short of the line and let the race step it over.
+  // #364: red (anchor 1) is given 3 scattered geese directly, blue none — the
+  // results card must show red's own 🪿 stat and no stat at all for blue.
   const red = await page.evaluate(() => {
     const rig = window._game.versusRigs[1];
     const total = rig.raceManager.raceDistance;
+    window._game.geeseManager._disrupted[0] = 0;
+    window._game.geeseManager._disrupted[1] = 3;
     rig.bike.distanceTraveled = total + 2;
     return { name: rig.color.name, total };
   });
   await page.waitForFunction(() => window._game.state === 'versusResults', { timeout: 120000 }).catch(() => {});
   const res = await page.evaluate(() => {
     const sheet = document.querySelector('#versus-results uf-sheet');
-    return { state: window._game.state, heading: sheet ? sheet.getAttribute('heading') : null, winner: window._game._versusWinner?.id, rematch: !!document.getElementById('vr-rematch'), lobby: !!document.getElementById('vr-lobby') };
+    const teams = [...document.querySelectorAll('#versus-results .vr-team')].map((t) => {
+      const card = t.querySelector('uf-stat[variant="card"]');
+      const geese = t.querySelector('uf-stat[icon="🪿"]');
+      return { team: card ? card.getAttribute('label') : null, geese: geese ? geese.getAttribute('value') : null, geeseLabel: geese ? geese.getAttribute('label') : null };
+    });
+    return { state: window._game.state, heading: sheet ? sheet.getAttribute('heading') : null, winner: window._game._versusWinner?.id, rematch: !!document.getElementById('vr-rematch'), lobby: !!document.getElementById('vr-lobby'), teams };
   });
   check(res.state === 'versusResults' && res.winner === 'B', 'finish: the team over the line wins', res);
   check(res.heading && res.heading.toLowerCase() === `${red.name} wins!`.toLowerCase(), 'results card names the winning team', { heading: res.heading, red: red.name });
   check(res.rematch && res.lobby, 'results offer REMATCH and LOBBY', res);
+  const redTeam = res.teams.find((t) => t.team === red.name);
+  const blueTeam = res.teams.find((t) => t.team !== red.name);
+  check(res.teams.length === 2 && redTeam && redTeam.geese === '3' && redTeam.geeseLabel === 'Geese scattered', 'results show the winning team its own geese scattered (#364)', res.teams);
+  check(blueTeam && blueTeam.geese === null, 'a team that scattered none gets no geese stat (#364)', res.teams);
   await h.shot(page, 'results');
   await clickId(page, 'vr-lobby');
   await sleep(1200);

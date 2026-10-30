@@ -134,8 +134,12 @@ export class VersusHud {
   /**
    * Full-screen results overlay. Returns { rematchBtn, lobbyBtn } so the
    * game can wire click handlers + gamepad overlay navigation.
+   *
+   * `geese` (#364): a function rig → geese that team scattered. Each team's
+   * own count sits under its card as the solo screen's 🪿 <uf-stat>, and
+   * like the solo screen it is only shown when > 0.
    */
-  showResults(winner, loser) {
+  showResults(winner, loser, { geese = null } = {}) {
     this.hideResults();
     const el = document.createElement('div');
     el.id = 'versus-results';
@@ -146,12 +150,17 @@ export class VersusHud {
     const card = (rig, outcome) =>
       `<uf-stat variant="card" tone="${tone(rig)}" label="${rig.color.name}" value="${outcome}"` +
       ` detail="${rig.crashCount} crash${rig.crashCount === 1 ? '' : 'es'} · 🎁 ${rig.collectibles}"></uf-stat>`;
+    const geeseStat = (rig) => {
+      const n = geese ? geese(rig) : 0;
+      return n > 0 ? `<uf-stat class="vr-geese" icon="🪿" value="${n}" label="Geese scattered"></uf-stat>` : '';
+    };
+    const team = (rig, outcome) => `<div class="vr-team">${card(rig, outcome)}${geeseStat(rig)}</div>`;
     el.innerHTML = `
       <uf-sheet open dismissible="false" headline tone="${tone(winner)}" heading="${winner.color.name} wins!" size="md">
         <div class="vr-card">
           <div class="vr-teams">
-            ${card(winner, winner.raceManager.getElapsedFormatted())}
-            ${card(loser, `DNF · ${Math.floor(loser.bike.distanceTraveled)} m`)}
+            ${team(winner, winner.raceManager.getElapsedFormatted())}
+            ${team(loser, `DNF · ${Math.floor(loser.bike.distanceTraveled)} m`)}
           </div>
         </div>
         <div slot="actions">
