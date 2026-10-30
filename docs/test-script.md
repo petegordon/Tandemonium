@@ -92,6 +92,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 |---|---|---|---|
 | SR-01 | Tutorial: runway, phase 1 (collect) and phase 2 (collect + dodge) prompts advance; all presents and pylons count; the end screen shows the tally, saves the calibration, the feel slider sets the feel; NEXT offered | A | `smoke:solo-extras` |
 | SR-01h | Lean-steering onto the tutorial presents feels learnable | M | — |
+| SR-01i | Tutorial: the 3D "TUTORIAL START" board beside the start and the "TUTORIAL END" board past the finish (end-card style, bunting flaps, lettering glints as you pass); no "Your Home" video and no box house on the tutorial; Grandma's unchanged (#503) | A | `smoke:tutorial-board`, `test/unit/tutorial-board` |
 | SR-02 | Tutorial: you cannot fall | A | `test/unit/crash-policy` |
 | SR-03 | Grandma's: clock is held until the first pedal taps, then runs | A | `smoke:ride` |
 | SR-04 | Grandma's: ride to the finish; victory overlay shows time, medal, coins | A | `smoke:economy`, `smoke:achievements` |
