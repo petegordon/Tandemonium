@@ -2099,6 +2099,19 @@ class Game {
     }
   }
 
+  /**
+   * #531 · a phone steering a seat (this device or a phone remote) takes its
+   * centre again on the countdown, held the way the player will ride; the
+   * centre it took while pairing in the menus may have caught a slant. Not in
+   * the tutorial, which runs its own calibration steps.
+   */
+  _recenterPhonesForRide() {
+    if (this._tutorialActive) return;
+    for (const im of new Set([this.input, this.inputP2, ...(this.versusRigs || []).flatMap((r) => (r && r.inputs) || [])])) {
+      if (im && typeof im.recenterTiltForRide === 'function') im.recenterTiltForRide();
+    }
+  }
+
   _startCountdown() {
     // Versus has its own lean countdown path — no singleton HUD, DDA,
     // recorder, or contribution tracking.
@@ -2111,6 +2124,7 @@ class Game {
 
     this.state = 'countdown';
     this.countdownTimer = 3.0;
+    this._recenterPhonesForRide();
     this._hideGameOver();
     this._hideVictory();
     this.instructionsEl.classList.add('hidden');
@@ -2426,6 +2440,7 @@ class Game {
   _startVersusCountdown() {
     this.state = 'countdown';
     this.countdownTimer = 3.0;
+    this._recenterPhonesForRide();
     this._hideGameOver();
     this._hideVictory();
     this.instructionsEl.classList.add('hidden');
