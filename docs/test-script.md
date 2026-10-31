@@ -307,6 +307,7 @@ Two devices on different networks for the M rows.
 | LY-10 | Leaderboard is the same sheet as Help (Close, B, Esc, scrim); category headings readable; Quit is the bar's last pill (#517) | A | `smoke:tv-nav` |
 | LY-11 | First Grandma's finish at 1080p: every unlock shows; ← / → walk the result buttons (#517) | A | `smoke:tv-nav` |
 | LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
+| LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
 
 ## 12. Data and backend
 

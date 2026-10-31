@@ -10,7 +10,7 @@ import { RoadChunkManager } from './road-chunks.js';
 import { isMobile } from './config.js';
 import { deriveSeed, SALT } from './daily-seed.js';
 import { buildArchPuffs, archTime } from './arch-puffs.js';
-import { buildGrandmaFinish } from './grandma-finish.js';
+import { buildGrandmaFinish, HOUSE_SPOT } from './grandma-finish.js';
 import { buildGrandmaHouse, HOUSE } from './props-3d.js';
 import { buildTutorialBoard, boardPose, BOARD_PLACES } from './tutorial-board.js';
 
@@ -1714,5 +1714,5 @@ export class World {
 
 World.LEAN_FILL = 0.35;   // #456 · lean riders lighting: the fill's share folded into the hemisphere
 World.SPRITE_ARCH_PUFFS = false;   // #456 · true = the old 16-sprite arches (for A/B)
-World.HOUSE_LATERAL = 4.6;   // #478 · Grandma's house: its front this far off the road centre (house's side)
-World.HOUSE_TURN = 0.5;      // #478 · and turned this far (radians) towards the oncoming riders
+World.HOUSE_LATERAL = HOUSE_SPOT.lateral;   // #478 · Grandma's house: its front this far off the road centre (house's side)
+World.HOUSE_TURN = HOUSE_SPOT.turn;      // #478 · and turned this far (radians) towards the oncoming riders
