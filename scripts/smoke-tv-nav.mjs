@@ -6,7 +6,8 @@
 //   LY-07  Slingshot card selects like a level; START RIDE opens its garage.
 //   LY-08  Music pill: the pad moves through the volume picker, A picks, B closes.
 //   LY-09  Settings: focus starts at the top, moves only over shown options,
-//          stays on screen; the right stick scrolls the card.
+//          stays on screen; the right stick scrolls the card. #523: kit text
+//          sizes, one row per choice, two columns; → along a row, ↓ by column.
 //   LY-10  Leaderboard is a kit sheet like Help (its Close, B closes it); the
 //          desktop app's Quit pill is the bar's last pill.
 //   LY-11  First Grandma's finish: the unlocks fit, ← / → walk the button row.
@@ -114,6 +115,30 @@ await page.evaluate(() => document.getElementById('bar-settings').click());
 await until(() => document.getElementById('options-overlay').classList.contains('visible'));
 const first = await until(() => window._game._overlayFocus.focused?.id || null);
 check(first === 'opt-high', 'LY-09 Settings focus starts at the top', first);
+// #523 · readable from the couch: kit text sizes, one row per choice, two columns.
+const optLayout = await page.evaluate(() => {
+  const card = document.querySelector('#options-overlay .options-card');
+  const probe = document.createElement('div'); document.body.appendChild(probe);
+  const px = (v) => { probe.style.fontSize = `var(${v})`; return parseFloat(getComputedStyle(probe).fontSize); };
+  const sm = px('--uf-size-sm'), md = px('--uf-size-md'); probe.remove();
+  const small = [];
+  for (const el of card.querySelectorAll('*')) {
+    if (![...el.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim()) || !el.getBoundingClientRect().width) continue;
+    if (parseFloat(getComputedStyle(el).fontSize) < sm - 0.01) small.push(el.id || el.className || el.tagName);
+  }
+  const btns = [...card.querySelectorAll('.opt-btn')].filter((b) => b.getBoundingClientRect().width);
+  const r = (id) => document.getElementById(id).getBoundingClientRect();
+  const tops = ['opt-high', 'opt-medium', 'opt-low', 'opt-auto'].map((id) => Math.round(r(id).top));
+  return { sm, md, small, btnMin: Math.min(...btns.map((b) => parseFloat(getComputedStyle(b).fontSize))),
+    oneRow: tops.every((t) => t === tops[0]), twoCols: r('opt-ds-auto').left > r('opt-auto').right && Math.round(r('opt-ds-auto').top) === tops[0] };
+});
+check(optLayout.small.length === 0 && optLayout.btnMin >= optLayout.md, 'LY-09 every Settings text is at least --uf-size-sm and the options at least --uf-size-md (#523)', optLayout);
+check(optLayout.oneRow && optLayout.twoCols, 'LY-09 each choice is one row (High | Medium | Low | Auto), sections in two columns (#523)', optLayout);
+await press('RIGHT');
+const rightOf = await page.evaluate(() => window._game._overlayFocus.focused?.id);
+await press('DOWN');
+const below = await page.evaluate(() => window._game._overlayFocus.focused?.id);
+check(rightOf === 'opt-medium' && /^opt-gyro-/.test(below || ''), 'LY-09 → moves along the row, ↓ to the next row in the same column (#523)', { rightOf, below });
 let allShown = true, allInView = true, moved = 0, last = first;
 for (let i = 0; i < 10; i++) {
   await press('DOWN');
@@ -125,9 +150,11 @@ for (let i = 0; i < 10; i++) {
   if (st.id !== last) moved++;
   last = st.id; allShown &&= st.shown; allInView &&= st.inView;
 }
-check(moved >= 6 && allShown, 'LY-09 ↓ walks the shown options', { moved, last });
+// #523: two columns make fewer rows, so ten presses reach the bottom (the tools row).
+check(moved >= 5 && allShown && /^options-(perf|devtools|browserdev|close)-btn$/.test(last), 'LY-09 ↓ walks the shown options down to the tools row', { moved, last });
 check(allInView, 'LY-09 the focused option stays inside the card');
-const scrolled = await page.evaluate(() => document.querySelector('#options-overlay .options-card').scrollTop);
+// Back to the top, so the stick has room to scroll down.
+const scrolled = await page.evaluate(() => { const c = document.querySelector('#options-overlay .options-card'); c.scrollTop = 0; return c.scrollTop; });
 await pads.stick(0, 'RY', 1);
 const stickScrolled = await until((s0) => document.querySelector('#options-overlay .options-card').scrollTop > s0 + 20, scrolled, 4000);
 await pads.stick(0, 'RY', 0);
