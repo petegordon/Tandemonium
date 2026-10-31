@@ -62,7 +62,7 @@ import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { steamTypeIdentity } from './controller-overlay-hud.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, steamTypeGlyphIdentity, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
-import { FocusController } from '../shared/ui/focus-controller.js';
+import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
@@ -298,8 +298,10 @@ export class Lobby {
       input: this.input,
       orientation: 'vertical',
       onBack: () => { if (this._modalBack) this._modalBack(); },
+      // #517: d-pad past the leaderboard's last row scrolls its sheet.
+      onEdge: (dir) => { if (this._activeModal === 'leaderboard' && this._leaderboardSheet) scrollPage(this._leaderboardSheet.body, dir); },
     });
-    this._activeModal = null; // 'profile' | 'rejoin' | null
+    this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | 'rejoin' | null
     this._modalBack = null;
     this._gpPrevUp = false;
     this._gpPrevUp = false;
@@ -1199,6 +1201,15 @@ export class Lobby {
 
     // Levels step: START RIDE button — works for solo, multiplayer, and local co-op
     document.getElementById('btn-start-ride').addEventListener('click', () => {
+      // #517: the Slingshot card was picked — START RIDE opens its garage.
+      if (this._slingshotPicked && this._currentStep === this.levelStep) {
+        this._slingshotPicked = false;
+        this._pendingMode = 'slingshot';
+        this._hideLobby();
+        this.onSlingshotReady();
+        analytics.trackEvent('slingshot_open');
+        return;
+      }
       // D-2: on Today's Road, ask first — unless this is the demo, which is
       // practice-only, or the chooser has already been answered.
       if (this._shouldAskDailyMode()) { this._showDailyModeChooser(); return; }
@@ -1904,6 +1915,7 @@ export class Lobby {
             // this page was loaded (someone may have left it open overnight).
             this.selectedLevel = this.resolveRoadLevel(level);
             this._forceWizard = isTutorial;
+            this._slingshotPicked = false;   // #517
             this._updateDifficultyVisibility(level.id);
             container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
             card.classList.add('selected');
@@ -1929,9 +1941,10 @@ export class Lobby {
       if (!locked) buttons.push(card);
     });
 
-    // Slingshot lives under SOLO: a mode, not a level, so its card skips the
-    // difficulty/START RIDE flow and opens the garage directly. #400: the
-    // edition decides (the demo keeps it, with a stage cap).
+    // Slingshot lives under SOLO: a mode, not a level. #517: picking its card
+    // selects it like a level (it has no difficulty, so that row greys out)
+    // and START RIDE opens its garage. #400: the edition decides (the demo
+    // keeps it, with a stage cap).
     // PR #397 m10: not for couch co-op, which shares this list — the Slingshot
     // is one rider, and leaving through it silently dropped P2.
     this._soloListFor = mode !== 'solo' ? null : this._pendingMode === 'local' ? 'local' : 'solo';
@@ -1946,10 +1959,14 @@ export class Lobby {
         '</div>' +
         '<div class="level-card-desc">Pull back, aim, let go. Earn Chaos Coins and upgrade.</div>';
       card.addEventListener('click', () => {
-        this._pendingMode = 'slingshot';
-        this._hideLobby();
-        this.onSlingshotReady();
-        analytics.trackEvent('slingshot_open');
+        container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
+        card.classList.add('selected');
+        this._slingshotPicked = true;
+        document.querySelectorAll('#difficulty-selector .difficulty-btn').forEach(b => {
+          b.disabled = true;
+          b.classList.add('diff-disabled');
+        });
+        if (startBtn) startBtn.disabled = false;
       });
       container.appendChild(card);
       buttons.push(card);
@@ -1976,6 +1993,7 @@ export class Lobby {
 
     // Default selection: restore previous or pick first unlocked non-tutorial level
     if (isClickable) {
+      this._slingshotPicked = false;   // #517: the cards were rebuilt; a level is picked below
       let defaultCard = null;
       if (this.selectedLevel) {
         // Restore previous selection
@@ -2162,6 +2180,9 @@ export class Lobby {
       const subscribed = await window.steam.isSubscribed();
       if (subscribed) {
         this._isSteam = true;
+        // #517: Help's Profile line said "Sign in with Google" here too.
+        const helpProfile = document.getElementById('help-profile-desc');
+        if (helpProfile) helpProfile.textContent = '— You are signed in with Steam; your scores save automatically';
         // Shim: Steam ownership = fully licensed, no network checks needed
         this.license = {
           isLicensed: true,
@@ -2217,6 +2238,24 @@ export class Lobby {
 
     // Save original SVG to restore on logout
     const profileSvg = this.toggleProfile.innerHTML;
+    // #517: the desktop/TV bar's Profile pill shows the picture too.
+    const barProfile = document.getElementById('bar-profile');
+    const barProfileSvg = barProfile ? barProfile.innerHTML : '';
+    const setBarAvatar = (src) => {
+      if (!barProfile) return;
+      if (!src) { barProfile.innerHTML = barProfileSvg; return; }
+      let img = barProfile.querySelector('img.bar-avatar');
+      if (!img) {
+        barProfile.innerHTML = barProfileSvg;
+        const svg = barProfile.querySelector('svg');
+        img = document.createElement('img');
+        img.className = 'bar-avatar';
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer';
+        if (svg) svg.replaceWith(img); else barProfile.prepend(img);
+      }
+      img.src = src;
+    };
 
     const updateUI = (user) => {
       if (user) {
@@ -2228,6 +2267,7 @@ export class Lobby {
         if (user.avatar) {
           const cachedAvatar = this._avatarCache.get(user.avatar) || user.avatar;
           this.toggleProfile.innerHTML = '<img src="' + cachedAvatar + '" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
+          setBarAvatar(cachedAvatar);
           // Fire-and-forget: fetch and upgrade to blob URL
           if (!this._avatarCache.has(user.avatar)) {
             this._cacheAvatarUrl(user.avatar).then(() => {
@@ -2235,6 +2275,7 @@ export class Lobby {
               if (blobUrl && blobUrl !== user.avatar) {
                 const img = this.toggleProfile.querySelector('img');
                 if (img) img.src = blobUrl;
+                setBarAvatar(blobUrl);
               }
             });
           }
@@ -2243,6 +2284,7 @@ export class Lobby {
         this.toggleProfile.classList.remove('active');
         this.toggleLeaderboard.classList.remove('active');
         this.toggleProfile.innerHTML = profileSvg;
+        setBarAvatar(null);
         this.profilePopup.classList.remove('visible');
       }
     };
@@ -2345,12 +2387,10 @@ export class Lobby {
       this.profilePopup.classList.remove('visible');
     });
 
-    // Leaderboard close
-    document.getElementById('leaderboard-close').addEventListener('click', () => this._closeLeaderboard());
-    document.getElementById('leaderboard-x').addEventListener('click', () => this._closeLeaderboard());
-    document.getElementById('leaderboard-modal').addEventListener('click', (e) => {
-      if (e.target === e.currentTarget) this._closeLeaderboard();
-    });
+    // Leaderboard (#517: a kit sheet — its Close, the scrim, Esc and B all
+    // close it; the video and the pad focus stop with it whatever closed it).
+    this._leaderboardSheet = /** @type {any} */ (document.getElementById('leaderboard-modal'));
+    this._leaderboardSheet.addEventListener('uf-sheet:close', () => this._onLeaderboardClosed());
 
     // Restore UI if already logged in from localStorage
     if (this.auth.isLoggedIn()) {
@@ -2952,8 +2992,8 @@ export class Lobby {
     // Spatial focus: the pills join the toggle columns (hidden toggles and,
     // below 1024px, the hidden bar are skipped by the FocusController).
     const p = this._barPills;
-    this._modeColumns[0].push(p.help, p.quit, p.leaderboard, p.profile);
-    this._modeColumns[2].push(p.controls, p.music, p.settings);
+    this._modeColumns[0].push(p.help, p.leaderboard, p.profile);
+    this._modeColumns[2].push(p.controls, p.music, p.settings, p.quit);   // #517: Quit on the far right
 
     // Popups that lived inside the (now hidden) toggle columns move to <body>
     // on desktop and anchor above their pill; back in place on a phone.
@@ -2996,8 +3036,7 @@ export class Lobby {
       if (document.querySelector('#phone-pad-panel.open')) return;   // the phone panel closes itself
       if (document.querySelector('#options-overlay.visible')) return; // Options closes itself (game.js)
       if (this.helpModal && this.helpModal.open) { this._closeHelp(); e.preventDefault(); return; }
-      const lb = $('leaderboard-modal');
-      if (lb && lb.style.display !== 'none') { this._closeLeaderboard(); e.preventDefault(); return; }
+      if (this._leaderboardSheet && this._leaderboardSheet.open) { this._closeLeaderboard(); e.preventDefault(); return; }
       if (this.profilePopup && this.profilePopup.classList.contains('visible')) { this.profilePopup.classList.remove('visible'); e.preventDefault(); return; }
       if (this._volumePicker && this._volumePicker.classList.contains('visible')) { this._hideVolumePicker(); e.preventDefault(); return; }
       const flow = $('lobby-flow');
@@ -3273,21 +3312,26 @@ export class Lobby {
   }
 
   _closeLeaderboard() {
+    if (this._leaderboardSheet.open) this._leaderboardSheet.close();
+    else this._onLeaderboardClosed();
+  }
+
+  /** The sheet closed (B, Esc, the scrim, its Close, or _closeLeaderboard). */
+  _onLeaderboardClosed() {
     this._stopLeaderboardVideo();
     this._lbClearFocus();
-    document.getElementById('leaderboard-modal').style.display = 'none';
   }
 
   _lbClearFocus() {
     document.querySelectorAll('#leaderboard-modal .gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
   }
 
-  // Tabs (main + sub) + close button — the leaderboard's spatial focusable set.
+  // Tabs (main + sub) + the sheet's Close — the leaderboard's spatial focusable set.
   _lbFocusables() {
     return [
       ...document.querySelectorAll('#lb-main-tabs .lb-tab'),
       ...document.querySelectorAll('#lb-sub-tabs .lb-tab'),
-      document.getElementById('leaderboard-close'),
+      this._leaderboardSheet.querySelector('.uf-sheet__close'),
     ].filter(Boolean);
   }
 
@@ -3384,7 +3428,6 @@ export class Lobby {
   }
 
   async _openLeaderboard() {
-    const modal = document.getElementById('leaderboard-modal');
     this._lbSubLevel = this.selectedLevel ? this.selectedLevel.id : 'grandma';
 
     // Reset main tabs active state
@@ -3396,9 +3439,10 @@ export class Lobby {
     this._buildSubTabs();
 
     const level = LEVELS.find(l => l.id === this._lbSubLevel) || LEVELS[0];
-    document.getElementById('leaderboard-title').textContent = 'Leaderboard';
+    this._leaderboardSheet.heading = 'Leaderboard';
 
-    modal.style.display = '';
+    this._leaderboardSheet.show();
+    if (this._leaderboardSheet.body) this._leaderboardSheet.body.scrollTop = 0;
     if (this._lbMainTab !== 'partners') {
       this._startLeaderboardVideo(this._lbSubLevel);
     }
@@ -3414,7 +3458,7 @@ export class Lobby {
 
     if (this._lbMainTab === 'you') {
       // Show achievements + personal rides
-      document.getElementById('leaderboard-title').textContent = 'Your Rides';
+      this._leaderboardSheet.heading = 'Your Rides';
       this._renderAchievements();
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
@@ -3439,7 +3483,7 @@ export class Lobby {
         list.innerHTML = '<div class="lb-no-data">Could not load rides</div>';
       }
     } else if (this._lbMainTab === 'partners') {
-      document.getElementById('leaderboard-title').textContent = 'Partners';
+      this._leaderboardSheet.heading = 'Partners';
       achDiv.innerHTML = '';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
@@ -3463,7 +3507,7 @@ export class Lobby {
       }
     } else {
       // SOLO or TOGETHER — hide achievements, show filtered leaderboard
-      document.getElementById('leaderboard-title').textContent = 'Leaderboard';
+      this._leaderboardSheet.heading = 'Leaderboard';
       achDiv.innerHTML = '';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
@@ -7158,15 +7202,24 @@ export class Lobby {
       this._modalFocus.poll();
       return;
     }
-    // Leaderboard modal gamepad navigation
-    if (document.getElementById('leaderboard-modal').style.display !== 'none') {
-      // Right stick (axis 3) scrolls the leaderboard score list (focus nav is
-      // over the tabs/close only).
-      const lbStickY = gp.axes[3] || 0;
-      if (Math.abs(lbStickY) > 0.15) {
-        const lbBox = document.querySelector('.leaderboard-box');
-        if (lbBox) lbBox.scrollTop += lbStickY * 12;
+    // #517 · the Music pill's volume picker (High / Med / Low / Mute): the pad
+    // moves along it and A picks (which closes it); B closes it. Focus goes
+    // back to the Music pill either way.
+    if (this._volumePicker && this._volumePicker.classList.contains('visible')) {
+      if (this._activeModal !== 'volume') {
+        this._activeModal = 'volume';
+        this._modalBack = () => this._hideVolumePicker();
+        const btns = Array.from(this._volBtns || []);
+        this._modalFocus.setSpatial(btns, btns.find((b) => b.classList.contains('active')) || btns[0]);
       }
+      this._modalFocus.poll();
+      return;
+    }
+    // Leaderboard (#517: a kit sheet, like Help)
+    if (this._leaderboardSheet && this._leaderboardSheet.open) {
+      // Right stick (axis 3) scrolls the sheet (focus nav is over the tabs and
+      // Close); d-pad up / down past the last row scrolls too (onEdge).
+      scrollWithStick(this._leaderboardSheet.body, gp.axes[3]);
       // Tabs (main + sub) + close form a small spatial grid (#318). Sub-tabs
       // rebuild on main-tab change, so refresh the set each frame; B closes.
       if (this._activeModal !== 'leaderboard') {
@@ -7180,12 +7233,11 @@ export class Lobby {
       return;
     }
     if (this.helpModal.open) {
-      // Right stick Y scrolls the help content (the kit sheet's body scrolls)
-      const helpStickY = gp.axes[3] || 0;
-      if (Math.abs(helpStickY) > 0.15) {
-        const body = this.helpModal.body;
-        if (body) body.scrollTop += helpStickY * 12;
-      }
+      // Right stick Y scrolls the help content (the kit sheet's body scrolls);
+      // #517: so do d-pad / left stick up and down — Help has nothing to focus.
+      scrollWithStick(this.helpModal.body, gp.axes[3]);
+      if (up && !this._gpPrevUp) scrollPage(this.helpModal.body, 'up');
+      if (down && !this._gpPrevDown) scrollPage(this.helpModal.body, 'down');
       // B closes (#459: as does the sheet's own Esc / scrim / Close); View again too.
       const viewNow = !!(gp.buttons[8] && gp.buttons[8].pressed);
       if ((b && !this._gpPrevB) || (viewNow && !this._gpPrevView)) {
