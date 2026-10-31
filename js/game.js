@@ -316,7 +316,12 @@ class Game {
       onPause: () => { if (!this._optionsOpen && !this._pause) this._pauseOrOptions(); },
       onDrop: () => {
         const local = this.mode === 'solo' || this.mode === 'local' || this.mode === 'versus';
-        if (local && PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen && !this._pause) this._pauseOrOptions();
+        if (!local || !PHONE_RIDE_STATES.has(this.state) || this._optionsOpen || this._pause) return;
+        // #529: the drop opens the phone's own QR panel, which _canPause
+        // normally refuses under; the pause menu sits beneath it instead and is
+        // still there once the phone is back.
+        if (this._canPause({ phonePanel: true })) this._openPause({ phonePanel: true });
+        else this._openOptions();
       },
     });
     this._phonePadState = null;
@@ -2616,7 +2621,7 @@ class Game {
   _syncPhonePad() {
     const pp = this.phonePad;
     if (!pp || pp.status === 'idle') return;
-    const riding = PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen && !this._inputChoiceOpen;
+    const riding = PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen && !this._pause && !this._inputChoiceOpen;   // #529: the pause menu too
     pp.setMode(riding ? 'ride' : 'menu');
     if (this.state !== this._phonePadState) {
       const cue = PHONE_STATE_CUES[this.state];
@@ -6271,11 +6276,11 @@ class Game {
   // screen and input).
   // ============================================================
 
-  /** A ride is on and nothing else owns the screen. */
-  _canPause() {
+  /** A ride is on and nothing else owns the screen. `phonePanel`: the phone's QR panel may be open (a dropped phone, #529). */
+  _canPause({ phonePanel = false } = {}) {
     if (this.state !== 'playing' || this._drop || this._inputChoiceOpen) return false;
     if (this.mode === 'versus' && this._versusPaused) return false;
-    if (this.phonePad && this.phonePad.panelOpen) return false;
+    if (!phonePanel && this.phonePad && this.phonePad.panelOpen) return false;
     if (this.recorder && this.recorder._previewPollId) return false;
     return true;
   }
@@ -6286,8 +6291,8 @@ class Game {
     else this._openOptions();
   }
 
-  _openPause() {
-    if (this._pause || !this._canPause()) return;
+  _openPause(opts) {
+    if (this._pause || !this._canPause(opts)) return;
     const sheet = /** @type {any} */ (document.getElementById('pause-sheet'));
     if (!sheet) { this._openOptions(); return; }
     this.quickMenu.close();
