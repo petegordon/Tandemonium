@@ -205,6 +205,7 @@ npm run smoke:economy        # one Chaos Coin wallet: ride payouts, garage, stag
 npm run smoke:achievements   # achievements wired end to end, badge screen
 npm run smoke:helping-hand   # repeated checkpoint failures get easier, visibly
 npm run smoke:no-media       # room camera/mic stays off unless ?media=1
+npm run smoke:clip-share     # iPhone clip share: full / short (10 s) choice, Save Video hint (#408)
 npm run smoke:physics        # the Rapier physics sidecar
 npm run smoke:controller-overlay  # the controller overlay HUD scenarios
 npm run check:dashboard-sql  # the dashboard SQL, against a real SQLite

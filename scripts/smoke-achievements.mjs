@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// smoke-achievements.mjs — #401: the 100 achievements, wired end to end.
+// smoke-achievements.mjs — #401: the 101 achievements, wired end to end.
 // A Grandma's ride earns Kick Off (a real pedal stroke through the game's tap
 // path) and Made It (the finish); its payout earns Pocket Change through the
 // economy event; a Slingshot launch earns Fire!; the lobby's badge screen
@@ -76,6 +76,17 @@ await page.waitForFunction(() => !!document.querySelector('.achievement-toast'),
 const afterPedal = await earned();
 const toast = await page.evaluate(() => document.querySelector('.achievement-toast')?.textContent || '');
 check(afterPedal.includes('first_pedal') && /Kick Off/.test(toast), `the first stroke earns Kick Off, with a toast ("${toast.trim()}")`);
+// #482: the toast floats over the road, so its badge must be a solid panel.
+// The badge's computed fill, painted on a 1×1 canvas to read its alpha
+// (Chrome reports color-mix() results as color(srgb …), not rgba).
+const { toastBg, toastAlpha } = await page.evaluate(() => {
+  const b = document.querySelector('.achievement-toast uf-achievement');
+  const bg = b ? getComputedStyle(b).backgroundColor : '';
+  const c = document.createElement('canvas'); c.width = c.height = 1;
+  const x = c.getContext('2d'); x.fillStyle = bg || 'transparent'; x.fillRect(0, 0, 1, 1);
+  return { toastBg: bg, toastAlpha: x.getImageData(0, 0, 1, 1).data[3] / 255 };
+});
+check(toastAlpha >= 0.95, `the toast's badge is a solid panel over the road (${toastBg}, alpha ${toastAlpha.toFixed(2)})`);
 
 // 3. Finish → Made It + Home Sweet Home; the victory payout → Pocket Change.
 await page.evaluate(() => { const g = window._game; g.bike.distanceTraveled = g.lobby.selectedLevel.distance - 0.5; g.bike.speed = 10; });
@@ -108,7 +119,7 @@ const screen = await page.evaluate(() => {
     progress: item('rides_10')?.querySelector('.lb-ach-progress')?.textContent || '',
   };
 });
-check(screen.sections === 15 && screen.rows === 100, `the badge screen has 15 sections, 100 badges ("${screen.count}")`);
+check(screen.sections === 15 && screen.rows === 101, `the badge screen has 15 sections, 101 badges ("${screen.count}")`);
 check(screen.hidden === '???' && screen.hiddenIcon === '❔', `a hidden achievement shows as ??? until earned (${screen.hidden})`);
 check(screen.earned && screen.colour, 'earned ones light up; the bike colours show');
 check(screen.progress === '1/10', `counters show their progress (Regular Rider "${screen.progress}")`);

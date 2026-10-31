@@ -135,3 +135,28 @@ test('#403 the helping hand stretches a retried segment, and passing the checkpo
   assert.equal(rm.helpTimeScale, 1);
   assert.ok(Math.abs(rm.segmentTimeTotal - base) < 1e-9, 'the next stretch is back to its own budget');
 });
+
+// #459 · the pause menu / disconnect pause freeze the total clock too.
+test('pause() stops the elapsed clock and resume() takes the pause out of it', () => {
+  const rm = new RaceManager(level);
+  rm.start();
+  const t0 = rm.startTime;
+  rm.pause(t0 + 1000);
+  assert.equal(rm.paused, true);
+  // performance.now() is a float, so the clock is compared to the millisecond.
+  assert.ok(Math.abs(rm.getElapsedMs() - 1000) < 0.01, 'frozen at the second it paused');
+  rm.resume(t0 + 6000);
+  assert.equal(rm.paused, false);
+  assert.ok(Math.abs(rm.startTime - (t0 + 5000)) < 0.01, 'five paused seconds leave the ride');
+  rm.resume(t0 + 9000);   // idempotent
+  assert.ok(Math.abs(rm.startTime - (t0 + 5000)) < 0.01);
+});
+
+test('a ride that starts during a pause begins at the resume', () => {
+  const rm = new RaceManager(level);
+  rm.pause(100);
+  rm.startTime = 400;   // GO shown while the menu was up
+  assert.equal(rm.getElapsedMs(), 0);
+  rm.resume(1400);
+  assert.equal(rm.startTime, 1400);
+});

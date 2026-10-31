@@ -118,7 +118,8 @@ async function suite(label, vp) {
   }
   check(rest.inView, 'both forks and the pouch are on screen');
   check(rest.pedalsHidden, 'no pedal pads');
-  check(rest.overlaps.length === 0, `no text over the bike at rest${rest.overlaps.length ? ' (' + rest.overlaps.join(', ') + ')' : ''}`);
+  const restMsg = `no text over the bike at rest${rest.overlaps.length ? ' (' + rest.overlaps.join(', ') + ')' : ''}`;
+  check(rest.overlaps.length === 0, restMsg);
   const earnedBefore = rest.earned;
   const earnedIdsBefore = new Set(rest.earnedIds);
 

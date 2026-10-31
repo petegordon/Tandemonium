@@ -62,8 +62,8 @@ test('roles: host and pad-1..pad-4 only', () => {
 });
 
 test('the phone link keeps the secret in the #fragment and parses back', () => {
-  const link = buildPadLink('https://tandemonium.jimandi.love/pr-preview/pr-422/', 'ABCDEF', 1, 'a'.repeat(32));
-  assert.equal(link, 'https://tandemonium.jimandi.love/pr-preview/pr-422/remote/?pad=ABCDEF&seat=1#k=' + 'a'.repeat(32));
+  const link = buildPadLink('https://tandemonium.housetandem.com/pr-preview/pr-422/', 'ABCDEF', 1, 'a'.repeat(32));
+  assert.equal(link, 'https://tandemonium.housetandem.com/pr-preview/pr-422/remote/?pad=ABCDEF&seat=1#k=' + 'a'.repeat(32));
   assert.deepEqual(parsePadLink(link), { code: 'ABCDEF', seat: 1, secret: 'a'.repeat(32), relay: null });
   assert.equal(parsePadLink('https://x/remote/?pad=AB&seat=1'), null);
   assert.equal(parsePadLink('https://x/remote/?pad=ABCDEF&seat=9#k=' + 'a'.repeat(32)), null);
@@ -72,7 +72,7 @@ test('the phone link keeps the secret in the #fragment and parses back', () => {
 
 test('a relay override is only honoured on localhost', () => {
   assert.equal(relayOverrideAllowed('127.0.0.1'), true);
-  assert.equal(relayOverrideAllowed('tandemonium.jimandi.love'), false);
+  assert.equal(relayOverrideAllowed('tandemonium.housetandem.com'), false);
   assert.equal(padSocketUrl('ws://127.0.0.1:8787', 'ABCDEF', 'pad-1', 'ff'), 'ws://127.0.0.1:8787/pad?code=ABCDEF&role=pad-1&k=ff');
 });
 
@@ -357,6 +357,20 @@ test('host: a short silence lets go of held pedals and buttons; a button still h
   assert.equal(calls.filter((c) => c[0] === 'nav').at(-1)[2] & NAV.ok, 0, 'held OK is latched');
 });
 
+test('host: a game stall past the release window does not let go of a held button', () => {
+  const { host, calls, frame } = hostWithFakes();
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1 }));
+  frame({ seq: 2, left: true, nav: NAV.down });
+  calls.length = 0;
+  // One 600 ms game frame: the watchdog ran late, the phone's frames are queued.
+  host._lastAt -= 600;
+  host._lastCheckAt = performance.now() - 600;
+  host._checkStale();
+  assert.equal(calls.filter((c) => c[0] === 'pedals' || c[0] === 'nav').length, 0, 'nothing released');
+  frame({ seq: 3, left: true, nav: NAV.down });
+  assert.equal(calls.filter((c) => c[0] === 'nav').at(-1)[2] & NAV.down, NAV.down, 'DOWN still held');
+});
+
 test('host: opening twice makes one room; Stop says goodbye to the phone', async () => {
   const { host, sent } = hostWithFakes();
   const OrigWS = globalThis.WebSocket;
@@ -596,7 +610,9 @@ function roomHost(hooks = {}) {
   h.host._buildLink();
   return h;
 }
-const flush = () => new Promise((r) => setTimeout(r, 0));
+// The host hashes keys with crypto.subtle, which settles off the main thread:
+// one tick isn't always enough on a loaded CI runner, so give it ~100 ms of turns.
+const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 5)); };
 const toPad = (sent, type) => sent.filter((m) => m.type === 'to-pad' && m.msg.type === type).map((m) => m.msg);
 
 test('mix: new game + older phone (no hello) works as before: no mode, no rekey, the QR stays', async () => {

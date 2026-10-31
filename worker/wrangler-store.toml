@@ -8,7 +8,7 @@ database_name = "usersfirst-store"
 database_id = "359f7a9e-75e6-4673-9eae-01c849af61d4"
 
 [vars]
-CORS_ORIGINS = "https://games.usersfirst.com,https://tandemonium.jimandi.love"
+CORS_ORIGINS = "https://tandemonium.housetandem.com,https://tandemonium.jimandi.love,https://games.usersfirst.com"
 STORE_URL = "https://games.usersfirst.com"
 # Set secrets via: wrangler secret put <NAME> --config wrangler-store.toml
 #   STRIPE_SECRET_KEY

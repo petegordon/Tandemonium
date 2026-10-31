@@ -2,14 +2,22 @@
 // LEADERBOARD API — Cloudflare Worker + D1
 // ============================================================
 
+/**
+ * CORS_ORIGIN is a comma-separated list of allowed site origins ('*' allows any).
+ * The first entry is the fallback, so a disallowed origin gets a header that doesn't match it.
+ */
+export function pickCorsOrigin(requestOrigin, corsSetting) {
+  const allowed = (corsSetting || '*').split(',').map(s => s.trim()).filter(Boolean);
+  if (allowed.includes('*')) return requestOrigin || '*';
+  if (allowed.includes(requestOrigin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(requestOrigin)) return requestOrigin;
+  return allowed[0];
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const requestOrigin = request.headers.get('Origin') || '';
-    const allowed = env.CORS_ORIGIN || '*';
-    const corsOrigin = (allowed === '*' || requestOrigin === allowed || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(requestOrigin))
-      ? requestOrigin || allowed
-      : allowed;
+    const corsOrigin = pickCorsOrigin(requestOrigin, env.CORS_ORIGIN);
 
     // CORS preflight
     if (request.method === 'OPTIONS') {

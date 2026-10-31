@@ -63,6 +63,7 @@ import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } f
 import { steamTypeIdentity } from './controller-overlay-hud.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, steamTypeGlyphIdentity, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
+import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
@@ -2942,13 +2943,16 @@ export class Lobby {
         this._showVolumePicker();
       }),
       settings: pill('bar-settings', () => $('ctrl-settings-btn')?.click()),
+      // #172: desktop app only; _syncSystemBar shows it on the mode step.
+      quit: pill('bar-quit', () => this._openQuitSheet()),
     };
     this._bar.addEventListener('uf-system-bar:back', () => this._goBack());
+    this._canQuit = canQuitApp(window);
 
     // Spatial focus: the pills join the toggle columns (hidden toggles and,
     // below 1024px, the hidden bar are skipped by the FocusController).
     const p = this._barPills;
-    this._modeColumns[0].push(p.help, p.leaderboard, p.profile);
+    this._modeColumns[0].push(p.help, p.quit, p.leaderboard, p.profile);
     this._modeColumns[2].push(p.controls, p.music, p.settings);
 
     // Popups that lived inside the (now hidden) toggle columns move to <body>
@@ -2990,7 +2994,8 @@ export class Lobby {
       if (!this.lobbyEl || this.lobbyEl.style.display === 'none') return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (document.querySelector('#phone-pad-panel.open')) return;   // the phone panel closes itself
-      if (this.helpModal && this.helpModal.classList.contains('visible')) { this._closeHelp(); e.preventDefault(); return; }
+      if (document.querySelector('#options-overlay.visible')) return; // Options closes itself (game.js)
+      if (this.helpModal && this.helpModal.open) { this._closeHelp(); e.preventDefault(); return; }
       const lb = $('leaderboard-modal');
       if (lb && lb.style.display !== 'none') { this._closeLeaderboard(); e.preventDefault(); return; }
       if (this.profilePopup && this.profilePopup.classList.contains('visible')) { this.profilePopup.classList.remove('visible'); e.preventDefault(); return; }
@@ -3028,7 +3033,28 @@ export class Lobby {
     if (slider) slider.addEventListener('input', () => this._applySteeringFeel(slider.value / 100));
     $('set-recalibrate')?.addEventListener('click', () => { this._recalibrateSteering(); sheet.close(); });
     sheet.addEventListener('uf-sheet:close', () => { this._stepFocus.setSlider(null); this._syncSystemBar(); });
+
+    // ── Quit confirm (#172) ── desktop app only. The kit sheet handles B /
+    // Esc / scrim / its Close control; QUIT asks main to app.quit().
+    this._quitSheet = $('quit-sheet');
+    if (this._quitSheet && this._canQuit) {
+      this._quitSheet.attachFocus(this._stepFocus);
+      $('quit-cancel')?.addEventListener('click', () => this._quitSheet.close());
+      $('quit-confirm')?.addEventListener('click', () => {
+        const btn = $('quit-confirm');
+        if (btn) btn.setAttribute('disabled', '');   // one request: the window is on its way out
+        analytics.trackEvent('app_quit', { from: 'lobby' });
+        if (!requestAppQuit(window) && btn) btn.removeAttribute('disabled');
+      });
+    }
     this._syncSystemBar();
+  }
+
+  _openQuitSheet() {
+    if (!this._quitSheet || !this._canQuit) return;
+    const btn = document.getElementById('quit-confirm');
+    if (btn) btn.removeAttribute('disabled');
+    this._quitSheet.show();
   }
 
   /** Put a popup that now lives in <body> just above the pill that opened it. */
@@ -3117,6 +3143,13 @@ export class Lobby {
     // Back shows on every step but the first.
     const flow = document.getElementById('lobby-flow');
     this._bar.back = flow && flow.current && flow.current !== 'lobby-mode' ? 'show' : 'hide';
+    // #172: Quit sits next to Help on the mode step of the desktop app only
+    // (the web build has the tab's close box; a phone has no pad).
+    const quit = this._barPills?.quit;
+    if (quit) {
+      const want = this._canQuit && flow && flow.current === 'lobby-mode' ? '' : 'none';
+      if (quit.style.display !== want) quit.style.display = want;
+    }
     // The sheet, when open.
     const sheet = this._controlsSheet;
     if (!sheet || !sheet.open) return;
@@ -3212,12 +3245,31 @@ export class Lobby {
     }
   }
 
-  _openHelp() {
-    this.helpModal.classList.add('visible');
+  /**
+   * Help, a kit <uf-sheet> since #459 (item 11): B / Esc / the scrim / its
+   * Close all close it; the pad's View button and the Help pill open it (item
+   * 18). `section` scrolls to an id inside (the footer's © → attributions).
+   * @param {{ section?: string | null }} [opts]
+   */
+  _openHelp({ section = null } = {}) {
+    this.helpModal.show();
+    this._scrollHelpTo(section);
+    this._gpPrevView = true;   // the press that opened it must not close it
   }
 
   _closeHelp() {
-    this.helpModal.classList.remove('visible');
+    this.helpModal.close();
+  }
+
+  /** Scroll the Help sheet's body to a section id, or the top. */
+  _scrollHelpTo(id) {
+    const body = this.helpModal && this.helpModal.body;
+    if (!body) return;
+    requestAnimationFrame(() => {
+      const el = id ? document.getElementById(id) : null;
+      if (el) body.scrollTop = Math.max(0, el.offsetTop - body.offsetTop - 8);
+      else body.scrollTop = 0;
+    });
   }
 
   _closeLeaderboard() {
@@ -3500,7 +3552,7 @@ export class Lobby {
   }
 
   /**
-   * #401 · the badge screen: all 100 achievements grouped by section,
+   * #401 · the badge screen: all 101 achievements grouped by section,
    * counters with their progress (3/7 days), hidden ones as ??? until earned.
    */
   _renderAchievements() {
@@ -5939,8 +5991,15 @@ export class Lobby {
         state: isP2 ? 'seated' : 'connected', player: isP2 ? 2 : null, seat: isP2 ? stokerSeat : null });
     }
     if (p2Im && !p2Listed) {
-      const n = this._localP2Name || (this._localP2Type === 'keyboard' ? 'Keyboard' : 'Player 2');
-      rows.push({ key: 'p2', name: n, shortName: n, glyphFamily: this._localP2Type === 'keyboard' ? 'keyboard' : 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat });
+      // A seated pad drops out of the join candidates; name and glyph come from
+      // its own slot so a Switch Pro shows Nintendo prompts, not generic (#472).
+      const mgr = this.controllerManager;
+      const p2SlotObj = p2Im._slot && p2Im._slot.state === 'claimed' ? p2Im._slot : null;
+      const pid = this._localP2Type !== 'keyboard' && p2SlotObj && mgr ? slotIdentityHidFirst(p2SlotObj, (s) => mgr.slotIdentity(s)) : null;
+      const n = this._localP2Name || (this._localP2Type === 'keyboard' ? 'Keyboard' : (pid ? pid.shortName : 'Player 2'));
+      rows.push({ key: 'p2', name: this._localP2Name || (pid ? pid.name : n), shortName: n,
+        glyphFamily: this._localP2Type === 'keyboard' ? 'keyboard' : (pid ? pid.glyphFamily : 'generic'),
+        swapAB: pid ? !!pid.swapAB : false, state: 'seated', player: 2, seat: stokerSeat });
     }
     if (online) {
       const n = this._roomPartnerName || 'Partner';
@@ -6470,6 +6529,8 @@ export class Lobby {
       type: p.type,
       slotId: p.slotId,
       name: p.name,
+      // The seat card's own name ("Steam Controller"), for messages in sentences.
+      label: (() => { try { return this._versusIdentity(p).shortName || null; } catch { return null; } })(),
       isP1: p.slotId === 'P1',
     });
     return [
@@ -7118,16 +7179,19 @@ export class Lobby {
       this._modalFocus.poll();
       return;
     }
-    if (this.helpModal.classList.contains('visible')) {
-      // Right stick Y scrolls the help content
+    if (this.helpModal.open) {
+      // Right stick Y scrolls the help content (the kit sheet's body scrolls)
       const helpStickY = gp.axes[3] || 0;
       if (Math.abs(helpStickY) > 0.15) {
-        const helpInner = document.getElementById('help-modal-inner');
-        if (helpInner) helpInner.scrollTop += helpStickY * 12;
+        const body = this.helpModal.body;
+        if (body) body.scrollTop += helpStickY * 12;
       }
-      if (b && !this._gpPrevB) {
+      // B closes (#459: as does the sheet's own Esc / scrim / Close); View again too.
+      const viewNow = !!(gp.buttons[8] && gp.buttons[8].pressed);
+      if ((b && !this._gpPrevB) || (viewNow && !this._gpPrevView)) {
         this._closeHelp();
       }
+      this._gpPrevView = viewNow;
       this._gpPrevUp = up; this._gpPrevDown = down;
       this._gpPrevLeft = left; this._gpPrevRight = right;
       this._gpPrevA = a; this._gpPrevB = b;
@@ -7187,6 +7251,12 @@ export class Lobby {
     // Reaching here means no modal is open — release a linear modal controller
     // (profile/rejoin) if one was active, clearing its highlight.
     if (this._activeModal) { this._modalFocus.clear(); this._activeModal = null; this._modalBack = null; }
+
+    // #459 item 18 · the pad's View / Share / Create button (buttons[8]) opens
+    // Help on every step, the same glyph the Help pill and the pause menu show.
+    const view = !!(gp.buttons[8] && gp.buttons[8].pressed);
+    if (view && !this._gpPrevView) { this._gpPrevView = view; this._openHelp(); return; }
+    this._gpPrevView = view;
 
     // Step navigation: delegated to the spatial FocusController (#318).
     // Lazily seed the scope the first time we run with a gamepad — covers

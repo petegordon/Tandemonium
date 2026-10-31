@@ -188,7 +188,7 @@ export const API_BASE = 'https://tandemonium-api.pete-872.workers.dev';
 
 // Production web URL — used for QR codes in Electron, share links, etc.
 // Update this when the domain changes.
-export const SITE_URL = 'https://tandemonium.jimandi.love';
+export const SITE_URL = 'https://tandemonium.housetandem.com';
 export const TURN_CREDENTIALS_URL = 'https://tandemonium-relay.pete-872.workers.dev/turn-credentials';
 
 // Display name shown to a partner when a player joins an invite without

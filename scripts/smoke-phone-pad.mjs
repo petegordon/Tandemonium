@@ -96,7 +96,9 @@ try {
 
   // ── the game ──
   const game = await gameBrowser.newPage();
-  await game.setViewport({ width: 1280, height: 800 });
+  // A smaller window: on a CI runner software WebGL draws ~1-2 fps at 1280x800,
+  // and the phone's timing checks need the game to keep up.
+  await game.setViewport({ width: 960, height: 600 });
   await wire(game);
   await game.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
   await game.goto(`http://127.0.0.1:${PORT}/index.html?padRelay=${encodeURIComponent(RELAY)}`, { waitUntil: 'domcontentloaded' });
@@ -167,13 +169,19 @@ try {
     }, 16);
   });
   await sleep(800);   // level: lets the game's tilt pipeline calibrate its centre
+  // The lean eases in over the game's frames; at headless frame rates that can
+  // take a few seconds, so poll (up to 8 s) instead of one fixed wait.
+  const leanWait = async (ok) => {
+    const t0 = Date.now(); let v;
+    do { await sleep(300); v = await game.evaluate(() => window._game.input.getMotionLeanVisual()); } while (!ok(v) && Date.now() - t0 < 8000);
+    return v;
+  };
   await phone.evaluate(() => { window.__tilt = 35; });
-  await sleep(1500);
-  const lean = await game.evaluate(() => ({ visual: window._game.input.getMotionLeanVisual(), motion: window._game.input.motionEnabled, frames: window.__phonePad.framesReceived }));
+  const leanR = await leanWait((v) => v > 0.4);
+  const lean = await game.evaluate((v) => ({ visual: v, motion: window._game.input.motionEnabled, frames: window.__phonePad.framesReceived }), leanR);
   check(lean.motion && lean.visual > 0.4, 'tilting the phone right leans the game right', JSON.stringify(lean));
   await phone.evaluate(() => { window.__tilt = -35; });
-  await sleep(1500);
-  const leanL = await game.evaluate(() => window._game.input.getMotionLeanVisual());
+  const leanL = await leanWait((v) => v < -0.4);
   check(leanL < -0.4, 'tilting left leans left', leanL.toFixed(2));
   await phone.evaluate(() => { window.__tilt = 0; });
 
@@ -205,7 +213,15 @@ try {
     const el = await phone.$(`#controls [data-nav="${nav}"]`);
     const b = await el.boundingBox();
     await phone.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
-    await phone.mouse.down(); await sleep(holdMs); await phone.mouse.up(); await sleep(700);
+    await phone.mouse.down(); await sleep(holdMs);
+    // Hold until the game has seen the press for two of its frames: on a slow
+    // runner (~1 fps) a whole tap can otherwise fall between two frames.
+    const bit = { up: 1, down: 2, left: 4, right: 8, ok: 16, back: 32 }[nav] || 0;
+    if (bit) {
+      await game.waitForFunction((b) => (window._game.input._remoteNav & b) !== 0, { timeout: 5000 }, bit).catch(() => {});
+      await game.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    }
+    await phone.mouse.up(); await sleep(700);
   };
   const focused = () => game.evaluate(() => {
     const el = document.querySelector('.gamepad-focus');
@@ -262,36 +278,45 @@ try {
       check(n >= 20, 'riding: the phone streams at the full rate', `${n} frames/s`);
     }
     // Pedals: press and hold the left half, then the right half.
+    // While held, poll (up to 3 s): on a slow runner the first frame can lag.
+    const heldUntil = async (read, ok) => {
+      const t0 = Date.now(); let v;
+      do { await sleep(150); v = await game.evaluate(read); } while (!ok(v) && Date.now() - t0 < 3000);
+      return v;
+    };
     await phone.mouse.move(150, 250); await phone.mouse.down();
-    await sleep(300);
-    const pl = await game.evaluate(() => [window._game.input.isPressed('ArrowLeft'), window._game.input.isPressed('ArrowRight')]);
+    const pl = await heldUntil(() => [window._game.input.isPressed('ArrowLeft'), window._game.input.isPressed('ArrowRight')], (v) => v[0] && !v[1]);
     await phone.mouse.up();
-    await phone.mouse.move(700, 250); await phone.mouse.down();
     await sleep(300);
-    const pr = await game.evaluate(() => [window._game.input.isPressed('ArrowLeft'), window._game.input._remoteRight]);
+    await phone.mouse.move(700, 250); await phone.mouse.down();
+    const pr = await heldUntil(() => [window._game.input.isPressed('ArrowLeft'), window._game.input._remoteRight], (v) => v[1]);
     await phone.mouse.up();
     check(pl[0] && !pl[1], 'holding LEFT on the phone holds the left pedal', JSON.stringify(pl));
     check(pr[1], 'holding RIGHT on the phone holds the right pedal', JSON.stringify(pr));
 
     await sleep(1100);
     const before = await game.evaluate(() => window._game.bike?.speed);
-    for (let i = 0; i < 16; i++) {
+    // Alternate strokes until the bike picks up (up to ~60): on a slow runner
+    // the game sees only a few of them per second.
+    for (let i = 0; i < 60; i++) {
       const x = i % 2 ? 700 : 150;
       await phone.mouse.move(x, 250); await phone.mouse.down();
       await sleep(140);
       await phone.mouse.up();
       await sleep(140);
+      if (i >= 15 && i % 4 === 3 && (await game.evaluate(() => window._game.bike?.speed)) > before + 0.5) break;
     }
     const ride = await game.evaluate(() => ({ speed: window._game.bike?.speed, dist: window._game.bike?.distanceTraveled }));
     check(ride.speed > before + 0.5, 'pedalling on the phone speeds the bike up', JSON.stringify({ before, ...ride }));
 
     // Pause from the phone, resume with BACK.
     await phone.click('#btn-pause');
-    await sleep(500);
+    // Poll (up to 4 s): on a slow runner the tap can take a few game frames to land.
+    await game.waitForFunction(() => window._game._optionsOpen, { timeout: 4000 }).catch(() => {});
     check(await game.evaluate(() => window._game._optionsOpen), 'Pause on the phone pauses the game');
     check(await phoneLayoutFixed() && await hostMode() === 'menu', 'paused: same phone layout; the game reads it as a menu pad');
     await press('back');
-    await sleep(500);
+    await game.waitForFunction(() => !window._game._optionsOpen, { timeout: 4000 }).catch(() => {});
     check(await game.evaluate(() => !window._game._optionsOpen), 'BACK on the phone resumes');
     check(await phoneLayoutFixed() && await hostMode() === 'ride', 'resumed: same phone layout; pedals again');
 
@@ -311,8 +336,16 @@ try {
     check(k.n === 1 && t === 0, '#454: it came back with its own key (the old QR secret is dropped), not as a takeover', JSON.stringify({ keys: k.n, takeovers: t }));
     check(await phoneLayoutFixed() && await hostMode() === 'menu', 'reconnected while paused: same phone layout; read as a menu pad');
     await press('back');
-    await sleep(500);
+    await game.waitForFunction(() => !window._game._optionsOpen && window._game.state === 'playing', { timeout: 8000 }).catch(() => {});
     check(await game.evaluate(() => !window._game._optionsOpen && window._game.state === 'playing'), 'BACK resumes the ride');
+    // PR-05: after the reconnect the phone drives the ride again (pedal + lean).
+    await phone.evaluate(() => { window.__tilt = 30; });
+    await phone.mouse.move(150, 250); await phone.mouse.down();
+    await game.waitForFunction(() => window._game.input.isPressed('ArrowLeft') && window._game.input.getMotionLean() > 0.1, { timeout: 8000 }).catch(() => {});
+    const again = await game.evaluate(() => ({ left: window._game.input.isPressed('ArrowLeft'), lean: +window._game.input.getMotionLean().toFixed(2) }));
+    await phone.mouse.up();
+    await phone.evaluate(() => { window.__tilt = 0; });
+    check(again.left && again.lean > 0.1, 'PR-05: after the reconnect the phone pedals and steers the ride again', JSON.stringify(again));
   }
 
   // ── someone with only the room code can't take the game's place ──
@@ -342,12 +375,33 @@ try {
   // ── the phone leaves: input is released ──
   await phone.evaluate(() => { window.__tilt = 35; });
   await phone.mouse.move(150, 250); await phone.mouse.down();
-  await sleep(600);
+  await game.waitForFunction(() => window._game.input.getMotionLean() > 0.1, { timeout: 8000 }).catch(() => {});
+  // PR-05 / #424: when the phone goes, the lean eases to 0 over
+  // REMOTE_LEAN_EASE_MS (300) instead of snapping. The ease is read from the
+  // clock, so sample it inside the drop itself, at fixed times after it, and
+  // the result doesn't depend on the game's frame rate.
+  await game.evaluate(() => {
+    const im = window._game.input, orig = im.detachRemote.bind(im);
+    im.detachRemote = (...a) => {
+      const r = orig(...a);
+      if (!window.__leanEase) {
+        const t0 = performance.now(), spin = (ms) => { while (performance.now() - t0 < ms) { /* wait */ } };
+        const s = [];
+        for (const ms of [0, 100, 200, 360]) { spin(ms); s.push(+im.getMotionLean().toFixed(3)); }
+        window.__leanEase = s;
+      }
+      return r;
+    };
+  });
   await phone.close();
   await game.waitForFunction(() => window.__phonePad.status === 'waiting', { timeout: 10000 }).catch(() => {});
   await sleep(400);   // #424: the lean eases to 0 over 300 ms rather than snapping
   const after = await game.evaluate(() => ({ status: window.__phonePad.status, left: window._game.input.isPressed('ArrowLeft'), lean: window._game.input.getMotionLean() }));
   check(after.status === 'waiting' && !after.left && after.lean === 0, 'closing the phone page releases the pedal and the lean', JSON.stringify(after));
+  const ease = await game.evaluate(() => window.__leanEase || null);
+  // [at the drop, +100 ms, +200 ms, +360 ms]: from the held lean, falling, same side, then 0.
+  check(!!ease && ease[0] > 0.1 && ease[1] < ease[0] && ease[1] > 0 && ease[2] < ease[1] && ease[2] > 0 && ease[3] === 0,
+    'PR-05: the lean eases back to centre over ~300 ms (no snap)', JSON.stringify(ease));
 
   /** A script WebSocket that records what it gets. */
   const scriptSocket = (url) => new Promise((res, rej) => {

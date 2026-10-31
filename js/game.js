@@ -9,6 +9,7 @@ import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RE
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
+import { crashTimeScale, clockHeld } from './crash-slowmo.js';
 import * as records from './records.js';
 import './build-badge.js';   // preview builds: which commit is on screen
 import { installSlingshotMode } from './slingshot-mode.js';
@@ -40,6 +41,7 @@ import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { gyroOnlySteer } from './achievement-defs.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
@@ -69,13 +71,14 @@ import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
 const TOURIST_READY_TIMEOUT_MS = 20000;
-import { HUD } from './hud.js';
+import { HUD, pedalButtonNames } from './hud.js';
 import { GrassParticles } from './grass-particles.js';
 import { GustVisual } from './gust-visual.js';
 import { CobblesVisual } from './cobbles-visual.js';
 import { Lobby } from './lobby.js';
 import { GameRecorder, canRecordClips } from './game-recorder.js';
 import { QuickMenu } from './quick-menu.js';
+import { openModal, focusResult } from './ui-shell.js';   // #459: result screens + modals on the kit sheet
 import { ArchIndicator } from './arch-indicator.js';
 import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
@@ -307,12 +310,13 @@ class Game {
     this.input = new InputManager({ slot: this.controllerManager.getSlot('P1') });
     // #421 · a phone on another device can steer + pedal Player 1, and work
     // the menus (its menu pad is a gamepad on this.input). Its Pause button
-    // and a dropped phone both open the options overlay, which is the pause.
+    // and a dropped phone both pause: the pause menu mid-ride (#459), else
+    // the options overlay.
     this.phonePad = installPhonePadUI(this.input, {
-      onPause: () => { if (!this._optionsOpen) this._openOptions(); },
+      onPause: () => { if (!this._optionsOpen && !this._pause) this._pauseOrOptions(); },
       onDrop: () => {
         const local = this.mode === 'solo' || this.mode === 'local' || this.mode === 'versus';
-        if (local && PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen) this._openOptions();
+        if (local && PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen && !this._pause) this._pauseOrOptions();
       },
     });
     this._phonePadState = null;
@@ -573,6 +577,33 @@ class Game {
     this._onTap('btn-tutorial-skip', () => this._skipTutorial());
     this._onTap('btn-tutorial-next', () => this._nextAfterTutorial());
 
+    // #459 item 12 · the pause menu (Start / Esc mid-ride; js/ui-shell.js modal).
+    this._pause = null;   // the open modal, or null
+    this._onTap('btn-pause-resume', () => this._closePause('resume'));
+    this._onTap('btn-pause-restart', () => { this._closePause('restart'); document.getElementById('reset-btn').click(); });
+    this._onTap('btn-pause-settings', () => this._openOptions());   // over the pause; closing it re-focuses the menu
+    this._onTap('btn-pause-help', () => this._openHelpModal());
+    this._onTap('btn-pause-end', () => {
+      // END RIDE = the ride's own LOBBY / ROOM button (the ranked-run confirm lives there).
+      const wasPaused = !!this._pause;
+      this._lobbyBtn.click();
+      // Declined the confirm: still riding, still paused.
+      if (wasPaused && this._pause && this.state === 'playing') this._pause.refocus();
+    });
+    // Esc mid-ride opens the pause menu; the open sheet handles its own Esc
+    // (closing = Resume) and marks the event, so this never reopens it.
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.repeat) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (this._optionsOpen || this._pause || !this._canPause()) return;
+      e.preventDefault();
+      this._openPause();
+    });
+    // #459 item 18 · the pad's View / Share / Create button is Help, here as in the lobby.
+    this._gpPrevView = false;
+    // Pad glyphs on buttons show while a pad drives the menus (css/shell.css).
+    this._syncPadMenus();
+
     // B-5 · end-screen calls to action (wishlist / send a link).
     this._wireCtaButtons();
     // #400 D4 · the end screens' GARAGE → buttons.
@@ -600,6 +631,7 @@ class Game {
     this._onTap('btn-return-lobby', () => {
       document.getElementById('disconnect-overlay').style.display = 'none';
       this._clearOverlayButtons();
+      if (this._drop) this._endDropPause();
       this._drop = null;
       this._returnToLobby();
     });
@@ -787,7 +819,12 @@ class Game {
       input: this.input,
       orientation: 'vertical',
       canConfirm: () => performance.now() >= this._overlayCooldownUntil,
+      // B on an overlay: whatever the screen registered (#459: the Garage's
+      // Close; modals set their own through js/ui-shell.js). Cleared with the
+      // buttons, so no screen inherits another's Back.
+      onBack: () => { if (this._overlayBack) this._overlayBack(); },
     });
+    this._overlayBack = null;
 
     // Game state
     this.state = 'lobby'; // 'lobby' | 'instructions' | 'countdown' | 'slingAim' | 'slingTally' | 'playing' | 'finishCinematic' | 'gameover' | 'victory' | 'versusResults' | 'slingGarage' | 'slingResults'
@@ -840,6 +877,10 @@ class Game {
     }, {
       isOn: () => this.controllerHud.isOn(),
       run: () => this.controllerHud.toggle(),
+    }, {
+      // #459 item 12: the pause menu for touch players.
+      available: () => this._canPause(),
+      run: () => this._openPause(),
     });
 
     // Volume changes from lobby slider
@@ -1019,9 +1060,7 @@ class Game {
     const roomBtn = document.getElementById('btn-demo-room');   // PR #397 m11
     if (roomBtn) roomBtn.style.display = this.net ? '' : 'none';
     overlay.style.display = 'flex';
-    const btns = [wishlist, roomBtn, document.getElementById('btn-demo-lobby')]
-      .filter(b => b && b.style.display !== 'none');
-    this._setOverlayButtons(btns, 0);
+    focusResult(this._overlayFocus, document.getElementById('demo-end-sheet'));   // #459: WISHLIST (accent) first
     try { analytics.trackEvent('demo_end_shown', { level: this.lobby.selectedLevel && this.lobby.selectedLevel.id }); } catch {}
   }
 
@@ -1570,7 +1609,7 @@ class Game {
    * over both teams with their pre-constructed InputManagers.
    *
    * @param {Object} opts
-   * @param {Array<{id: 'A'|'B', members: Array<{input, type, slotId, name, isP1}>}>} opts.teams
+   * @param {Array<{id: 'A'|'B', members: Array<{input, type, slotId, name, label?: string|null, isP1}>}>} opts.teams
    */
   _onVersusReady({ teams }) {
     this.mode = 'versus';
@@ -2347,8 +2386,6 @@ class Game {
     }
     // St2 — duck music during gameplay vs the lobby.
     this.audioEngine.duckMusic(0.55, 0.8);
-    // Sp3 — start procedural bike motion loop (silent until speed rises).
-    this.audioEngine.startBike();
 
     this._playBeep(400, 0.15);
 
@@ -2487,7 +2524,6 @@ class Game {
     this.audioEngine.connectMusicElement(this._musicEl);
     if (this.lobby.musicActive) this._musicEl.play().catch(() => {});
     this.audioEngine.duckMusic(0.55, 0.8);
-    this.audioEngine.startBike();
     this._playBeep(400, 0.15);
   }
 
@@ -2661,6 +2697,7 @@ class Game {
   // ============================================================
 
   _resetGame(fromRemote = false, fromBeginning = false) {
+    this._closePause();   // #459: RESTART from the pause menu, or a partner's reset while paused
     // Slingshot: every reset is back into the slingshot, never to a checkpoint.
     if (this.isSlingshot) { this._resetToSling(); return; }
     // M2: pay what the ride has done before the bike goes back (the ledger
@@ -2908,17 +2945,24 @@ class Game {
   }
 
   _showDisconnect(reason) {
+    this._closePause();   // #459: a notice over a paused ride replaces the menu
     const overlay = document.getElementById('disconnect-overlay');
     const msg = document.getElementById('disconnect-msg');
     overlay.style.display = 'flex';
     msg.textContent = reason || 'Partner disconnected';
+    this._setSheetHeading('disconnect-sheet', msg.textContent);
     for (const id of ['disconnect-sub', 'btn-drop-resume', 'btn-ride-alone']) document.getElementById(id).hidden = true;
     const retry = document.getElementById('btn-try-reconnect');
     retry.hidden = !this.net;
 
-    // Register buttons for gamepad navigation
-    const btns = [retry, document.getElementById('btn-return-lobby')].filter((b) => !b.hidden);
-    this._setOverlayButtons(btns);
+    // Register buttons for gamepad navigation (#459: the sheet's row, in order)
+    focusResult(this._overlayFocus, document.getElementById('disconnect-sheet'));
+  }
+
+  /** The kit sheet's heading, mirrored from the game's text (#459 result shell). */
+  _setSheetHeading(id, text) {
+    const sh = /** @type {any} */ (document.getElementById(id));
+    if (sh) sh.heading = text;
   }
 
   // ============================================================
@@ -2955,10 +2999,11 @@ class Game {
     }
     if (who && (!this._drop || this._drop.who !== who)) this._startDropPause(who);
     else if (!who && this._drop) this._endDropPause();
-    if (!this._drop) return false;
+    // #459: the pause menu freezes the ride through this same path.
+    if (!this._drop && !this._pause) return false;
 
     const d = this._drop;
-    if (d.canTakeover && !d.takeoverReady) {
+    if (d && d.canTakeover && !d.takeoverReady) {
       const left = Math.max(0, Math.ceil((DROP_TAKEOVER_MS - (performance.now() - d.since)) / 1000));
       if (left === 0) { d.takeoverReady = true; this._renderDropOverlay(); }
       else if (left !== d.shownLeft) {
@@ -3005,6 +3050,8 @@ class Game {
     }
     this._drop = d;
     if (this.mode === 'local') { this._localP2Disconnected = who === 'p2'; }
+    this._closePause();     // #459: the drop takes over from the pause menu
+    this._freezeClock(true);
     // Either local player may press the buttons (P1's pad may be the one gone).
     this._overlayFocus.input = this._dropFocusInput();
     this._renderDropOverlay();
@@ -3016,6 +3063,7 @@ class Game {
     if (!d) return;
     document.getElementById('disconnect-overlay').style.display = 'flex';
     document.getElementById('disconnect-msg').textContent = d.title;
+    this._setSheetHeading('disconnect-sheet', d.title);
     const sub = document.getElementById('disconnect-sub');
     sub.hidden = false;
     sub.textContent = d.canTakeover && !d.takeoverReady
@@ -3028,8 +3076,7 @@ class Game {
     alone.hidden = !(d.canTakeover && d.takeoverReady);
     alone.textContent = d.takeoverLabel || 'Ride on alone';
     retry.hidden = !(d.who === 'partner' && this._netLost && this.net);
-    const btns = [resume, alone, retry, document.getElementById('btn-return-lobby')].filter((b) => !b.hidden);
-    this._setOverlayButtons(btns, 0);
+    focusResult(this._overlayFocus, document.getElementById('disconnect-sheet'));   // #459: DOM order, the first accent focused
   }
 
   _endDropPause() {
@@ -3038,6 +3085,7 @@ class Game {
     this._localP2Disconnected = false;
     document.getElementById('disconnect-overlay').style.display = 'none';
     this._clearOverlayButtons();
+    this._freezeClock(false);
     this._overlayFocus.input = this.input;
     this._overlayFocus.reprime();
     // A button held to resume isn't a pedal stroke.
@@ -3105,6 +3153,7 @@ class Game {
   }
 
   _showGameOver(fromRemote = false, opts = {}) {
+    this._closePause();   // #459: a partner's crash arrives while this side is paused
     this.state = 'gameover';
     this.hud.hideTimer();
     // The quick menu sits above the result overlays, so retire it with the ride.
@@ -3176,14 +3225,12 @@ class Game {
       practiceBtn.style.display = (this._rankedRunActive && this.mode !== 'stoker' && level && level.isDaily) ? '' : 'none';
     }
     // B-5: wishlist + send-a-link, after the ride buttons.
-    const gameoverCtas = this._updateCtaButtons('gameover');
+    this._updateCtaButtons('gameover');
     // #400 D4: a crashed ride still pays for its distance.
-    const btns = [clipBtn, document.getElementById('btn-restart'), skipBtn, practiceBtn, roomBtn,
-      document.getElementById('btn-gameover-lobby'), ...this._showRideCoins('gameover', 'crash'), ...gameoverCtas]
-      .filter(el => el && el.style.display !== 'none');
-    // #458 item 10: focus starts on RESTART (the retry), not SAVE CLIP above it.
-    const restartIdx = btns.indexOf(document.getElementById('btn-restart'));
-    this._setOverlayButtons(btns, restartIdx >= 0 ? restartIdx : btns.findIndex(b => b !== clipBtn));
+    this._showRideCoins('gameover', 'crash');
+    // #459 item 15: the sheet's action row in its own order; focus starts on
+    // RESTART (the primary — #458 item 10), never on SAVE CLIP.
+    const btns = focusResult(this._overlayFocus, document.getElementById('gameover-sheet'), { primary: document.getElementById('btn-restart') });
 
     // Input cooldown: on mobile, pedal taps and button taps share the same
     // touch area. On desktop/TV, pedal inputs are separate from selection.
@@ -3243,7 +3290,7 @@ class Game {
     overlay.style.display = 'flex';
 
     const contBtn = document.getElementById('btn-stoker-cta-continue');
-    if (contBtn) this._setOverlayButtons([contBtn]);
+    focusResult(this._overlayFocus, document.getElementById('stoker-cta-sheet'));   // #459
     if (contBtn) {
       contBtn.onclick = () => {
         overlay.style.display = 'none';
@@ -3355,7 +3402,8 @@ class Game {
       try {
         analytics.trackEvent('daily_finish', {
           key: level.key, mode: dailyMode, ranked: this._rankedRunActive,
-          time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes
+          time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes,
+          geese_scattered: this.geeseManager ? this.geeseManager.getDisruptedCount() : 0   // #364
         });
       } catch {}
     }
@@ -3587,7 +3635,9 @@ class Game {
       // B3: open world pays coins for at most 10 km a ride (no farming circles).
       payCapM: plan.explore ? OPEN_WORLD_PAY_CAP_M : undefined,
       timerEnabled: false,      // there is no losing a ride to someone you love
-      treeCollision: false,
+      // #402 §3: walls and trees in the streamed mesh bump the bike like
+      // procedural trees do (TouristWorld.checkTreeCollision).
+      treeCollision: true,
       motionAdaptation: false
     };
     this.lobby.selectedDifficulty = 'chill';   // arriving is the point, not the challenge
@@ -3934,7 +3984,6 @@ class Game {
     const onCobbles = !!this._activeDisruption &&
       this._activeDisruption.event.kind === KIND.COBBLES;
     this.bike._roughness = onCobbles && authoritative ? 1 : 0;
-    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(onCobbles);
     if (onCobbles) {
       // The camera rides the surface too — a rattle you can see, not just a
       // number in the physics. Scaled by speed: crawling over stones is not the
@@ -3996,7 +4045,6 @@ class Game {
     if (this.sharedPedal) this.sharedPedal.beatWindow = BEAT_WINDOW_S;
     if (this.bike) this.bike._roughness = 0;
     if (this.gustVisual) this.gustVisual.setWind(this._gustDirection || 1, 0);
-    if (this.audioEngine && this.audioEngine.setCobbles) this.audioEngine.setCobbles(false);
     if (this.hud && this.hud.updateDisruption) this.hud.updateDisruption(null);
   }
 
@@ -4543,6 +4591,10 @@ class Game {
       weekly,   // m5: the weekly road feeds no day streak
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
+    // #500 · Look, No Thumbs: earned by each rider on THIS device who steered the
+    // whole ride by controller gyro (local co-op: either seat; online: your own).
+    state.gyroOnly = [this.balanceCtrl, this.mode === 'local' ? this.balanceCtrlP2 : null]
+      .some(bc => !!bc && gyroOnlySteer(bc.steerFrames));
     this.achievements.finish(state);
   }
 
@@ -4608,7 +4660,28 @@ class Game {
     // Briefly damp the chase cam's residual shake so the cinematic
     // starts from a clean pose.
     if (this.chaseCamera) this.chaseCamera.shakeAmount = 0;
-    this._finishCinematic = new FinishCameraAnimation(this.camera, this.bike);
+    // #478 · Grandma's 3D house stands on the bike's right at the finish: swing
+    // round the left so the camera never passes through it.
+    this._finishCinematic = new FinishCameraAnimation(this.camera, this.bike, { via: this._finishSwingSide() });
+    // #478 · the ride's presents fly off the bike into the pile at Grandma's
+    // (Grandma's and Today's Road only; World says no elsewhere).
+    if (this.world && this.bike) this.world.startPresentStack(this._presentsForStack(fromRemote), this.bike.position);
+  }
+
+  /** #478 · the finish swing goes round the left where Grandma's house stands on the right. */
+  _finishSwingSide() {
+    return this.world && this.world._grandmaFinish ? -1 : 1;
+  }
+
+  /**
+   * #478 · how many presents go on Grandma's pile: this ride's collected
+   * count. The stoker takes the captain's authoritative tally when it has it.
+   */
+  _presentsForStack(fromRemote = false) {
+    const remote = fromRemote && this._remoteFinishStats && this._remoteFinishStats.raceSummary;
+    if (remote && typeof remote.collectibles === 'number') return remote.collectibles;
+    if (this.raceManager) return this.raceManager.collectiblesCount || 0;
+    return this.collectibleManager ? this.collectibleManager.collected : 0;
   }
 
   /**
@@ -4633,9 +4706,10 @@ class Game {
     }
 
     // Keep the world streaming so terrain/scenery don't pop while the
-    // bike rolls forward, but at slow-motion pace.
+    // bike rolls forward, but at slow-motion pace. Grandma (#475) keeps real
+    // time, so she can walk to the finish line before the front view lands.
     if (this.world) {
-      this.world.update(this.bike.position, this.bike.roadD, slowDt);
+      this.world.update(this.bike.position, this.bike.roadD, slowDt, null, dt);
     }
     if (this.grassParticles) {
       this.grassParticles.update(this.bike, slowDt);
@@ -4643,8 +4717,9 @@ class Game {
     }
 
     // Camera moves at real time so the cinematic timing is consistent
-    // regardless of the bike's slow-mo wind-down.
+    // regardless of the bike's slow-mo wind-down. So does the present pile.
     const done = cinematic.update(dt);
+    if (this.world) this.world.updateFinishFx(dt);
 
     this.renderer.render(this.scene, this.camera);
 
@@ -4661,6 +4736,7 @@ class Game {
   _showVictory(fromRemote = false) {
     // Slingshot: reaching the stage goal pays out on its own results screen.
     if (this.isSlingshot) { this._endSlingRun('goal'); return; }
+    this._closePause();   // #459
     this.state = 'victory';
     this.hud.hideTimer();
     // The quick menu sits above the result overlays, so retire it with the ride.
@@ -4944,21 +5020,13 @@ class Game {
     if (victoryLobbyBtn) victoryLobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
     // B-5: wishlist + send-a-link, after the ride buttons.
-    const victoryCtas = this._updateCtaButtons('victory');
-
-    // Gamepad navigation for victory buttons
+    this._updateCtaButtons('victory');
     // #400 D4: the ride pays Chaos Coins — the tally, and GARAGE → to spend them.
-    const victoryBtns = [playAgainBtn, document.getElementById('btn-victory-lobby'),
-      ...this._showRideCoins('victory', 'finish', { summary }), ...victoryCtas];
-    // Include "next level" if visible, and default-focus it
-    if (hasNext) {
-      victoryBtns.splice(1, 0, nextBtn);
-    }
-    // Include "return to room" if in multiplayer
-    if (roomBtn && this.net) {
-      victoryBtns.splice(victoryBtns.length - 1, 0, roomBtn);
-    }
-    this._setOverlayButtons(victoryBtns, hasNext ? 1 : 0);
+    this._showRideCoins('victory', 'finish', { summary });
+
+    // Gamepad navigation for victory buttons: the sheet's action row in its
+    // own order (#459 item 15); NEXT LEVEL when there is one, else PLAY AGAIN.
+    focusResult(this._overlayFocus, document.getElementById('victory-sheet'), { primary: hasNext ? nextBtn : playAgainBtn });
 
     // Re4 — victory uses the same C-E-G motif as the checkpoint chime,
     // giving Tandemonium a recognizable audio signature across cues.
@@ -5191,6 +5259,9 @@ class Game {
 
   _returnToLobby() {
     if (this._drop) this._endDropPause();
+    this._closePause();   // #459
+    if (this._intro) this._intro.close();
+    if (this._helpSheet) this._helpSheet.close();
     this._netLost = false;
     this._p1PadSeen = false;
     this._p1PadWaived = false;
@@ -5223,8 +5294,7 @@ class Game {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
     }
-    // Stop bike motion loop + restore music from its gameplay duck (St2/Sp3).
-    this.audioEngine.stopBike();
+    // Restore music from its gameplay duck (St2).
     this.audioEngine.duckMusic(1.0, 0.8);
     this.audioEngine.detachRecorderDestination();
     this._hideGameOver();
@@ -5346,6 +5416,7 @@ class Game {
   }
 
   _returnToRoom() {
+    this._closePause();      // #459
     this._payoutAbandon();   // #400 D4
     this._endRankedRun();   // #398
     this._helpEndRide();    // #403
@@ -5370,8 +5441,7 @@ class Game {
       this._musicEl.pause();
       this._musicEl.currentTime = 0;
     }
-    // Stop bike motion loop + restore music from its gameplay duck (St2/Sp3).
-    this.audioEngine.stopBike();
+    // Restore music from its gameplay duck (St2).
     this.audioEngine.duckMusic(1.0, 0.8);
     this.audioEngine.detachRecorderDestination();
     this._hideGameOver();
@@ -5613,6 +5683,15 @@ class Game {
     const isElectron = !!window.electronApp;
 
     closeBtn.addEventListener('click', () => this._closeOptions());
+    // Esc closes Options (#472). Capture phase, so it runs before the lobby's
+    // Esc = Back and marks the event handled: the step under it stays put.
+    window.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !this._optionsOpen) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this._closeOptions();
+    }, true);
     highBtn.addEventListener('click', () => this._setQuality('high'));
     document.getElementById('opt-medium')?.addEventListener('click', () => this._setQuality('medium'));
     lowBtn.addEventListener('click', () => this._setQuality('low'));
@@ -6137,6 +6216,8 @@ class Game {
     this._optionsOpen = false;
     this._autoWatching = false;   // resuming (or a riders swap) hitches: a fresh Auto grace
     this._clearOverlayButtons();
+    // #459: Settings opened from the pause menu — the menu takes the pad back.
+    if (this._pause) this._pause.refocus();
   }
 
   _pollStartButton() {
@@ -6145,21 +6226,124 @@ class Game {
     if (!gp) return;
 
     const start = gp.buttons[9] && gp.buttons[9].pressed;
+    const view = gp.buttons[8] && gp.buttons[8].pressed;
     const bIdx = this.input._gpSwapAB ? 0 : 1;
     const b = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
     // The phone QR panel is on top and takes B / Start itself.
-    if (this.phonePad && this.phonePad.panelOpen) { this._gpPrevStart = start; this._gpPrevB = b; return; }
+    if (this.phonePad && this.phonePad.panelOpen) { this._gpPrevStart = start; this._gpPrevB = b; this._gpPrevView = view; return; }
 
     if (start && !this._gpPrevStart) {
       if (this._optionsOpen) this._closeOptions();
-      else this._openOptions();
+      else if (this._pause) this._closePause('resume');   // #459: Start again resumes
+      else this._pauseOrOptions();
     }
     if (b && !this._gpPrevB && this._optionsOpen) {
       this._closeOptions();
     }
+    // #459 item 18 · View / Share / Create: Help, from the pause menu (the lobby
+    // handles its own steps in lobby.js).
+    if (view && !this._gpPrevView && this._pause && !this._optionsOpen && !this._helpSheet) this._openHelpModal();
 
     this._gpPrevStart = start;
     this._gpPrevB = b;
+    this._gpPrevView = view;
+  }
+
+  // ============================================================
+  // PAUSE MENU (#459 item 12)
+  // Start / Options / Esc mid-ride: Resume · Restart · Settings · End ride.
+  // The ride freezes exactly as the disconnect pause freezes it
+  // (_tickDropPause skips the mode update and holds the race clock); in
+  // versus, _updateVersus has the same early return. Only P1's pad drives it.
+  // Online co-op: the pause is local — the protocol has no shared pause, so
+  // the partner's screen is not paused (the captain's physics stops, so the
+  // stoker sees the bike stand still; a stoker's pause only stops their own
+  // screen and input).
+  // ============================================================
+
+  /** A ride is on and nothing else owns the screen. */
+  _canPause() {
+    if (this.state !== 'playing' || this._drop || this._inputChoiceOpen) return false;
+    if (this.mode === 'versus' && this._versusPaused) return false;
+    if (this.phonePad && this.phonePad.panelOpen) return false;
+    if (this.recorder && this.recorder._previewPollId) return false;
+    return true;
+  }
+
+  /** Start / the phone's Pause: the pause menu mid-ride, Options anywhere else. */
+  _pauseOrOptions() {
+    if (this._canPause()) this._openPause();
+    else this._openOptions();
+  }
+
+  _openPause() {
+    if (this._pause || !this._canPause()) return;
+    const sheet = /** @type {any} */ (document.getElementById('pause-sheet'));
+    if (!sheet) { this._openOptions(); return; }
+    this.quickMenu.close();
+    const level = this.lobby.selectedLevel;
+    const sub = document.getElementById('pause-sub');
+    if (sub) sub.textContent = this._tutorialActive ? 'Tutorial · the clock is stopped' : `${level ? level.name : 'Ride'} · the clock is stopped`;
+    // RESTART is the ride's reset (checkpoint restart); a stoker has no ride
+    // controls, so no RESTART there either (quick-menu.js mirrors the same rule).
+    const restart = document.getElementById('btn-pause-restart');
+    const resetBtn = document.getElementById('reset-btn');
+    const sideButtons = document.getElementById('side-buttons');
+    if (restart) restart.hidden = !(resetBtn && sideButtons && sideButtons.style.display !== 'none' && !this.isSlingshot);
+    const end = document.getElementById('btn-pause-end');
+    if (end) end.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
+    this._freezeClock(true);
+    this.input.consumeTaps();
+    if (this.inputP2) this.inputP2.consumeTaps();
+    this._pause = openModal(sheet, this._overlayFocus, {
+      onClose: (reason) => {
+        this._pause = null;
+        if (this._helpSheet) this._helpSheet.close();
+        // Dismissed (B, Esc, the scrim, Close, RESUME): back to the ride.
+        this._freezeClock(false);
+        this.input.consumeTaps();
+        if (this.inputP2) this.inputP2.consumeTaps();
+        this._autoWatching = false;   // resuming hitches: a fresh Auto grace
+        try { analytics.trackEvent('ride_pause_end', { reason, mode: this.mode }); } catch (e) {}
+      },
+    });
+    this._overlayCooldownUntil = performance.now() + 250;
+    try { analytics.trackEvent('ride_pause', { mode: this.mode, state: this.state }); } catch (e) {}
+  }
+
+  /** Close the pause menu. `reason` is for analytics ('resume', 'restart', 'end', 'api'). */
+  _closePause(reason = 'api') {
+    if (!this._pause) return;
+    this._pause.close(reason);
+  }
+
+  /** The race clock(s) hold while the ride is frozen (pause menu or disconnect pause). */
+  _freezeClock(on) {
+    const rms = [this.raceManager, ...(this.versusRigs ? this.versusRigs.map((r) => r.raceManager) : [])].filter(Boolean);
+    for (const rm of rms) { if (on) rm.pause(); else rm.resume(); }
+  }
+
+  /** The Help sheet (the lobby's) as a modal over the pause menu (#459 item 18). */
+  _openHelpModal() {
+    const sheet = /** @type {any} */ (document.getElementById('help-modal'));
+    if (!sheet || this._helpSheet) return;
+    const under = this._pause;
+    this._helpSheet = openModal(sheet, this._overlayFocus, {
+      onClose: () => {
+        this._helpSheet = null;
+        if (under && under.open) under.refocus();
+      },
+    });
+    if (this.lobby && this.lobby._scrollHelpTo) this.lobby._scrollHelpTo(null);
+  }
+
+  /** body.pad-menus: a pad drives the menus, so buttons show their pad glyph (css/shell.css). */
+  _syncPadMenus() {
+    const on = !!(this.input && this.input.gamepadConnected);
+    if (on !== this._padMenusOn) {
+      this._padMenusOn = on;
+      document.body.classList.toggle('pad-menus', on);
+    }
   }
 
   _pollDpad() {
@@ -6209,7 +6393,12 @@ class Game {
     if (down && !this._dpadPrevDown) this.speedBtn.click();
     if (right && !this._dpadPrevRight) document.getElementById('reset-btn').click();
     if (left && !this._dpadPrevLeft) this._lobbyBtn.click();
-    if (y && !this._gpPrevY) this.recorder.saveClip();
+    // #459 item 6: in a solo tutorial Y / △ is SKIP TUTORIAL (the on-screen button's glyph).
+    if (y && !this._gpPrevY) {
+      const skip = document.getElementById('btn-tutorial-skip');
+      if (this._tutorialActive && skip && skip.classList.contains('visible')) this._skipTutorial();
+      else this.recorder.saveClip();
+    }
     if (a && !this._gpPrevA && (this.input.motionEnabled || this.input.gyroConnected)) {
       this._recalibrateTilt();
     }
@@ -6259,10 +6448,12 @@ class Game {
   // Overlay gamepad nav now delegates to the shared FocusController (#318).
   // These wrappers keep the existing call sites unchanged.
   _setOverlayButtons(buttons, initialFocus = 0) {
+    this._overlayBack = null;
     this._overlayFocus.setItems(buttons, initialFocus);
   }
 
   _clearOverlayButtons() {
+    this._overlayBack = null;
     this._overlayFocus.clear();
   }
 
@@ -6359,6 +6550,7 @@ class Game {
 
     // Capture crash data at the moment of impact (speed/lean are still valid)
     this._lastCrashCause = cause;
+    if (bike && !bike.fallen) bike._crashCause = cause;   // #484: read by the crash scene's throw (onFall)
     // #401: a Slingshot crash is not a ride crash (no Goose Down, So Close, False Start).
     if (this._rideSystemOn('achievements')) this.achievements.crash(cause, {   // #401
       ref: this.mode === 'versus' ? null : this.raceManager,
@@ -6403,9 +6595,32 @@ class Game {
 
     this._physicsBikes = bikes.filter(Boolean);
     for (const bike of this._physicsBikes) {
-      bike.onFall = (b) => { if (this.physicsFx) this.physicsFx.crashTumble(b); };
+      // #484: the crash scene (rag dolls, hats); slow-mo where the view is ours to slow (not online co-op,
+      // where the captain's frame pacing feeds the stoker)
+      bike.onFall = (b) => {
+        if (!this.physicsFx) return;
+        // #484 versus: the parts can hit the other team (a wobble); never in online modes
+        const others = this.mode === 'versus' ? this._physicsBikes.filter(x => x !== b) : [];
+        this.physicsFx.crashTumble(b, { cause: b._crashCause || 'balance', slowMo: this._crashSlowMoMode(), others });
+      };
       bike.onReset = (b) => { if (this.physicsFx) this.physicsFx.releaseCrash(b); };
     }
+  }
+
+  /** #484: modes whose crashing view may slow down (the slow-mo moment). */
+  _crashSlowMoMode() {
+    return this.mode === 'solo' || this.mode === 'local' || this.mode === 'versus';
+  }
+
+  /** #484: the time scale of this bike's view (1 unless it is in a crash's slow-mo moment). */
+  _crashScale(bike) {
+    if (!bike || !bike.fallen || !bike._slowMoStart) return 1;
+    return crashTimeScale((performance.now() - bike._slowMoStart) / 1000);
+  }
+
+  /** #484: the race clock is held while this bike's view is slowed. */
+  _crashClockHeld(bike) {
+    return !!(bike && bike.fallen && bike._slowMoStart && clockHeld((performance.now() - bike._slowMoStart) / 1000));
   }
 
   /** Tear the sidecar down and give every bike its own transform back. */
@@ -6538,9 +6753,18 @@ class Game {
     }
 
     this._syncPhonePad();
+    this._syncPadMenus();
 
-    // Start button → options overlay (available in all states)
+    // Start button → the pause menu mid-ride, the options overlay elsewhere
     this._pollStartButton();
+    // Help over the pause menu: only its navigation runs (the ride stays frozen underneath).
+    if (this._helpSheet) {
+      this._pollOverlayGamepad();
+      this.input.consumeTaps();
+      if (this.mode === 'versus' && this.versusRigs) this._renderVersusViews();
+      else this._renderStatic();
+      return;
+    }
     // If options overlay is open, only poll overlay navigation — skip game updates
     if (this._optionsOpen) {
       this._pollOverlayGamepad();
@@ -6619,13 +6843,13 @@ class Game {
 
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
-        this._updateSolo(dt);
+        this._updateSolo(dt * this._crashScale(this.bike));   // #484 slow-mo
       } else if (this.mode === 'captain') {
         this._updateCaptain(dt);
       } else if (this.mode === 'stoker') {
         this._updateStoker(dt);
       } else if (this.mode === 'local') {
-        this._updateLocal(dt);
+        this._updateLocal(dt * this._crashScale(this.bike));  // #484 slow-mo
       } else if (this.mode === 'versus') {
         this._updateVersus(dt);
       }
@@ -6643,7 +6867,7 @@ class Game {
       if (this.state === 'slingAim') this._updateSlingAimState(dt);
       if (this.state === 'slingTally') this._updateSlingTally(dt);
       if (this.state === 'gameover' || this.state === 'victory' || this.state === 'versusResults' ||
-          this.state === 'slingGarage' || this.state === 'slingResults' ||
+          this.state === 'slingGarage' || this.state === 'slingResults' || this._intro ||
           document.getElementById('disconnect-overlay').style.display !== 'none') this._pollOverlayGamepad();
       if (this.mode === 'versus' && this.versusRigs) {
         // Versus non-playing states (instructions/countdown/results) still
@@ -6664,6 +6888,7 @@ class Game {
         this._renderVersusViews();
       } else {
         this.world.update(this.bike.position, this.bike.roadD, dt);
+        this.world.updateFinishFx(dt);   // #478 · a pile still landing when the victory screen opens
         if (this.state === 'slingAim') this._placeSlingCamera();
         else this.chaseCamera.update(this.bike, dt, roadPath);
         if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
@@ -6707,43 +6932,6 @@ class Game {
         localP2Type: this._localP2Type,
         pads,
       });
-    }
-
-    // Sp3 — feed bike velocity to the procedural motion loop every frame.
-    // When not actively playing (victory / gameover / lobby / countdown),
-    // feed speed=0 so the loop fades to silence via the engine's internal
-    // ramp instead of holding the last gain value indefinitely.
-    if (this.mode === 'versus' && this.versusRigs) {
-      // Versus: motion loop follows the faster bike; off-road follows the
-      // worse offender so the scrape reads on either half of the screen.
-      const playing = this.state === 'playing';
-      let topSpeed = 0, offRoad = 0, anyUpright = false;
-      for (const rig of this.versusRigs) {
-        topSpeed = Math.max(topSpeed, rig.bike.speed);
-        const fo = Math.abs(rig.bike._frontWheelOffset || 0);
-        const ro = Math.abs(rig.bike._rearWheelOffset || 0);
-        offRoad = Math.max(offRoad, Math.min(1, Math.max(0, Math.max(fo, ro) - 2.5) / 3));
-        if (!rig.bike.fallen) anyUpright = true;
-      }
-      this.audioEngine.updateBike(
-        playing ? topSpeed : 0,
-        TUNE.maxSpeed || 19,
-        playing ? offRoad : 0,
-        !playing || !anyUpright
-      );
-    } else if (this.bike) {
-      const playing = this.state === 'playing';
-      const frontOff = Math.abs(this.bike._frontWheelOffset || 0);
-      const rearOff = Math.abs(this.bike._rearWheelOffset || 0);
-      const offRoad = playing
-        ? Math.min(1, Math.max(0, Math.max(frontOff, rearOff) - 2.5) / 3)
-        : 0;
-      this.audioEngine.updateBike(
-        playing ? this.bike.speed : 0,
-        TUNE.maxSpeed || 19,
-        offRoad,
-        !playing || this.bike.fallen
-      );
     }
 
     // Clear buffered tap flags after all input has been read this frame
@@ -6790,7 +6978,8 @@ class Game {
       // Tourist Mode (#333): free-roam — no race timer / timeout.
       const timerEnabled = !this.isTourist &&
         (!this.lobby.selectedLevel || this.lobby.selectedLevel.timerEnabled !== false);
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled ? dt : 0);
+      // #484: the clock is held through a crash's slow-mo moment
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, timerEnabled && !this._crashClockHeld(this.bike) ? dt : 0);
       if (raceEvent) {
         if (raceEvent.event === 'timeout' && timerEnabled) { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
@@ -6896,7 +7085,7 @@ class Game {
     // phone-lock shouldn't pause the timer for both players. (#321 already
     // debounces the reconnect UI so quick blips don't even show.)
     if (this.raceManager) {
-      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, dt);
+      const raceEvent = this.raceManager.update(this.bike.distanceTraveled, this._crashClockHeld(this.bike) ? 0 : dt);   // #484
       if (raceEvent) {
         if (raceEvent.event === 'timeout') { this._onTimerExpired(); return; }
         this._handleRaceEvent(raceEvent);
@@ -7247,6 +7436,14 @@ class Game {
     const rigs = this.versusRigs;
     if (!rigs) return;
 
+    // #459: the pause menu freezes the race the same way a dropped pad does.
+    if (this._pause) {
+      for (const r of rigs) for (const m of r.members) if (m.input && m.input.consumeTaps) m.input.consumeTaps();
+      this._pollOverlayGamepad();
+      this._renderVersusViews();
+      return;
+    }
+
     // Mid-race pad drop: freeze the whole race (both teams) until the pad
     // returns — same freeze pattern as local co-op's P2 disconnect, but
     // any physical-pad member of either team can trigger it.
@@ -7257,7 +7454,9 @@ class Game {
     if (dropped) {
       if (!this._versusPaused) {
         this._versusPaused = true;
-        this._showDisconnect(`${dropped.name || 'A'} controller disconnected`);
+        // The seat card's name ("Steam Controller"), not the shouted HUD label (#472).
+        const who = dropped.label || dropped.name;
+        this._showDisconnect(who ? `${who} disconnected` : 'A controller disconnected');
       }
       this._renderVersusViews();
       return;
@@ -7268,7 +7467,8 @@ class Game {
       this._clearOverlayButtons();
     }
 
-    for (const rig of rigs) this._stepTeam(rig, dt);
+    // #484: a crashing team's half slows for its slow-mo moment; the other team races on
+    for (const rig of rigs) { rig._dt = dt * this._crashScale(rig.bike); this._stepTeam(rig, rig._dt); }
     this.achievements.ride.frame(dt, { ref: null, playing: true });   // #401 False Start: the clock since GO runs in versus too
     // m19: a race against the ?versusbot=1 rider earns no achievements.
     if (!rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
@@ -7300,7 +7500,7 @@ class Game {
     this.world.update(a.bike.position, a.bike.roadD, dt, { pos: b.bike.position, d: b.bike.roadD });
 
     for (const rig of rigs) {
-      rig.chaseCamera.update(rig.bike, dt, this.world.roadPath);
+      rig.chaseCamera.update(rig.bike, rig._dt != null ? rig._dt : dt, this.world.roadPath);
       if (rig.bike.fallen && rig.bike.fallElapsed < 0.35) {
         rig.chaseCamera.shakeAmount = 0.15;
       }
@@ -7545,6 +7745,9 @@ class Game {
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';
+    // #478 · versus: the winners deliver to Grandma — their presents fly into
+    // her pile. The losers' don't (they never reach the house).
+    this.world.startPresentStack(winner.collectibles || 0, winner.bike.position);
     hapticFinish(); // everyone feels the finish
     this._playBeep(800, 0.3);
     setTimeout(() => this._playBeep(1000, 0.3), 150);
@@ -7560,6 +7763,9 @@ class Game {
       loser_distance: Math.floor(loser.bike.distanceTraveled),
       winner_crashes: winner.crashCount,
       loser_crashes: loser.crashCount,
+      // #364: per-team geese (free-form event payload; the rides table has no column)
+      winner_geese: this.geeseManager ? this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(winner)) : 0,
+      loser_geese: this.geeseManager ? this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(loser)) : 0,
     });
     analytics.endRide({
       completed: true,
@@ -7589,7 +7795,7 @@ class Game {
     // Full-frame phase: hide the split-screen divider + per-half panels
     // (CSS keys off this class). Cleared at rematch countdown / teardown.
     document.body.classList.add('versus-fullframe');
-    this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike);
+    this._finishCinematic = new FinishCameraAnimation(this.camera, winner.bike, { via: this._finishSwingSide() });
 
     this.versusHud.showBanner(`${winner.color.name} WINS!`, winner.color.hex);
   }
@@ -7622,8 +7828,10 @@ class Game {
     );
     winner.grassParticles.update(winner.bike, slowDt);
 
-    // Camera orbits at real time for consistent cinematic pacing.
+    // Camera orbits at real time for consistent cinematic pacing; the
+    // winners' presents fly into Grandma's pile in real time too (#478).
     const done = cinematic.update(dt);
+    this.world.updateFinishFx(dt);
     this.renderer.render(this.scene, this.camera);
 
     if (done) {
@@ -7643,14 +7851,20 @@ class Game {
     this.camera.layers.disable(2);
     if (!winner || !loser || !this.versusHud) return;
     this.versusHud.hideBanner();
-    const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser);
+    // #364: each team's own geese. GeeseManager tallies per anchor index, and
+    // _updateVersus passes the anchors as rigs.map(...) — so anchor i is
+    // this.versusRigs[i] (A = 0, B = 1), whichever of them won.
+    const geese = this.geeseManager
+      ? (rig) => this.geeseManager.getDisruptedCount(this.versusRigs.indexOf(rig))
+      : null;
+    const { rematchBtn, lobbyBtn } = this.versusHud.showResults(winner, loser, { geese });
     this._showVersusCoins();   // #400 D4: one payout per race
     rematchBtn.addEventListener('click', () => this._rematchVersus());
     lobbyBtn.addEventListener('click', () => {
       this._clearOverlayButtons();
       this._returnToLobby();
     });
-    this._setOverlayButtons([rematchBtn, lobbyBtn]);
+    focusResult(this._overlayFocus, this.versusHud.resultsEl, { primary: rematchBtn });   // #459: REMATCH first
     this._overlayCooldownUntil = performance.now() + 1000;
   }
 
@@ -8018,9 +8232,11 @@ class Game {
       if (localStorage.getItem(this._coachKeyFor(method))) return;
     } catch { /* private mode: show it, it is only 20 seconds */ }
 
+    // The pad's own shoulder-button names (L1/R1, L/R…), not always Xbox's (#472).
+    const pb = method === 'gamepad' ? pedalButtonNames() : null;
     const pedal = {
       keyboard: 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>',
-      gamepad:  'Pedal: alternate <b>LB</b> and <b>RB</b> (or <b>LT</b>/<b>RT</b>)',
+      gamepad:  pb ? `Pedal: alternate <b>${pb.lb}</b> and <b>${pb.rb}</b> (or <b>${pb.lt}</b>/<b>${pb.rt}</b>)` : '',
       touch:    'Pedal: tap the <b>left</b> and <b>right</b> halves in turn'
     }[method] || 'Pedal: alternate <b>&#8592;</b> and <b>&#8594;</b>';
     const steer = {
@@ -8327,6 +8543,50 @@ class Game {
     this._calibSuppressPedals = false;
   }
 
+  /**
+   * #459 item 6 · the tutorial intro: a kit sheet (js/ui-shell.js modal) with
+   * two lines fitted to the input in hand, START (A) and SKIP TUTORIAL (B).
+   * Resolves 'start' | 'skip' | 'cancel' (the game closed it).
+   */
+  _showTutorialIntro() {
+    const sheet = /** @type {any} */ (document.getElementById('tutorial-intro'));
+    const start = document.getElementById('btn-tutorial-intro-start');
+    const skip = document.getElementById('btn-tutorial-intro-skip');
+    if (!sheet || !start || !skip) return Promise.resolve('start');
+    const pad = !!this.input.gamepadConnected;
+    const gyro = !!this.input.gyroConnected;
+    const tilt = !!this.input.motionEnabled;
+    const glyph = (b) => `<uf-controller-glyph button="${b}" size="sm"></uf-controller-glyph>`;
+    const pedal = document.getElementById('tutorial-intro-pedal');
+    const steer = document.getElementById('tutorial-intro-steer');
+    if (pedal) pedal.innerHTML = pad
+      ? `Pedal: tap ${glyph('lb')} and ${glyph('rb')} in turn to build speed.`
+      : (tilt || isMobile) ? 'Pedal: tap the left and right pedals in turn to build speed.'
+      : 'Pedal: tap <b>&larr;</b> and <b>&rarr;</b> in turn to build speed.';
+    if (steer) steer.innerHTML = (gyro ? 'Steer: lean the controller.'
+      : tilt ? 'Steer: tilt your phone.'
+      : pad ? `Steer: ${glyph('ls')} left stick.`
+      : 'Steer: <b>A</b> and <b>D</b>.') + ' Scoop up the presents and dodge the pylons.';
+    return new Promise((resolve) => {
+      let choice = null;
+      const onStart = () => { choice = 'start'; if (this._intro) this._intro.close(); };
+      const onSkip = () => { choice = 'skip'; if (this._intro) this._intro.close(); };
+      start.addEventListener('click', onStart);
+      skip.addEventListener('click', onSkip);
+      this._intro = openModal(sheet, this._overlayFocus, {
+        primary: start,
+        onClose: (reason) => {
+          start.removeEventListener('click', onStart);
+          skip.removeEventListener('click', onSkip);
+          this._intro = null;
+          // B / Esc = SKIP; closed by the game = cancel.
+          resolve(choice || (reason === 'api' ? 'cancel' : 'skip'));
+        },
+      });
+      this._overlayCooldownUntil = performance.now() + 300;
+    });
+  }
+
   /** D6 (#400) · SKIP TUTORIAL: counts as done, back to the solo level list. */
   _skipTutorial() {
     if (!this._tutorialActive) return;
@@ -8425,6 +8685,15 @@ class Game {
       this.input.suppressGamepadLean = true;
     }
 
+    // #459 item 6 · one screen before the first countdown: what the tutorial
+    // is, START, SKIP TUTORIAL (solo only; co-op keeps the pair together).
+    this._tutorialStartTime = performance.now();
+    if (this.mode === 'solo' && !this.net) {
+      const choice = await this._showTutorialIntro();
+      if (choice === 'skip') { this._skipTutorial(); return; }
+      if (choice !== 'start') return;   // the game closed it (a return to the lobby)
+    }
+
     // Show tutorial UI
     document.getElementById('btn-tutorial-continue').onclick = () => this._finishTutorial();
     // D6: SKIP is always on screen in a solo tutorial (co-op keeps the pair together)
@@ -8434,7 +8703,6 @@ class Game {
     // Analytics: tutorial start
     analytics.setPage('tutorial');
     analytics.trackEvent('tutorial_start', { input_method: analytics.getInputMethod() });
-    this._tutorialStartTime = performance.now();
 
     // Flag to prevent _startCountdown from running its own tilt calibration
     // (the tutorial calibration flow will handle it)
@@ -9109,13 +9377,11 @@ class Game {
 
     document.getElementById('tutorial-complete').classList.add('visible');
 
-    // Register buttons for gamepad navigation (Steam Store link + next + continue)
+    // Register buttons for gamepad navigation: the sheet's action row (NEXT:
+    // GRANDMA'S first and focused, #459 item 15), then the Steam Store link.
     const steamStoreBtn = document.getElementById('btn-steam-store');
-    const overlayBtns = [];
-    if (steamStoreBtn) overlayBtns.push(steamStoreBtn);
-    if (soloNext) overlayBtns.push(nextBtn);
-    overlayBtns.push(continueBtn);
-    this._setOverlayButtons(overlayBtns, soloNext ? overlayBtns.indexOf(nextBtn) : overlayBtns.length - 1);
+    const overlayBtns = focusResult(this._overlayFocus, document.getElementById('tutorial-complete-sheet'),
+      { primary: soloNext ? nextBtn : continueBtn, extra: steamStoreBtn ? [steamStoreBtn] : [] });
     this._overlayFocus.setSlider(slider);
 
     if (isMobile) {
@@ -9163,8 +9429,7 @@ class Game {
 
     document.getElementById('tutorial-complete').classList.add('visible');
 
-    const overlayBtns = [continueBtn];
-    this._setOverlayButtons(overlayBtns, 0);
+    const overlayBtns = focusResult(this._overlayFocus, document.getElementById('tutorial-complete-sheet'), { primary: continueBtn });   // #459
     this._overlayFocus.setSlider(slider);
 
     if (isMobile) {

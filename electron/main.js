@@ -494,6 +494,9 @@ ipcMain.handle('steam:input:xinputMap', () => steamXInputMap);
 // B4c: preload reads this synchronously at load so js/edition.js sees
 // window.tandemoniumSteam.isDemo before the first getEditionRules() call.
 ipcMain.on('app:isDemo', (e) => { e.returnValue = _resolveIsDemo(); });
+// #172: the lobby's QUIT pill (js/app-quit.js via preload's electronApp.quit).
+// app.quit() closes the window and runs will-quit like the window's close box.
+ipcMain.on('app:quit', () => { _diagLog('[app] quit requested from the lobby'); app.quit(); });
 
 // Full-diagnostic dump for the in-game Steam Input test page. Queries Steam
 // on demand for every piece of state we can read (handles, controllers,
@@ -723,9 +726,9 @@ app.whenReady().then(async () => {
   // browser's CORS check passes.
   const API_MATCH = /workers\.dev|jimandi\.love/;
   // Tourist Mode (#333): the Google Map Tiles API key is restricted to the
-  // jimandi.love HTTP referrer, but Electron's page origin is tandemonium://app.
+  // tandemonium.housetandem.com referrer, but Electron's page origin is tandemonium://app.
   // Send a matching Referer on tile requests so the restricted key is accepted
-  // in the desktop app (the web build at jimandi.love matches naturally).
+  // in the desktop app (the web build matches naturally).
   // maps.googleapis.com is included for the Maps JavaScript API, which Tourist
   // Mode loads to reach ElevationService when anchoring a ?lat/?lon ride. Same
   // restricted key, so it needs the same Referer or the lookup is rejected and
@@ -733,12 +736,12 @@ app.whenReady().then(async () => {
   const TILES_MATCH = /(?:tile|maps)\.googleapis\.com/;
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
     if (API_MATCH.test(details.url)) {
-      details.requestHeaders['Origin'] = 'https://tandemonium.jimandi.love';
+      details.requestHeaders['Origin'] = 'https://tandemonium.housetandem.com';
     }
     if (TILES_MATCH.test(details.url)) {
-      // Use a subdomain referer so it matches a `*.jimandi.love` key restriction
-      // (the apex `jimandi.love` does NOT satisfy the wildcard).
-      details.requestHeaders['Referer'] = 'https://tandemonium.jimandi.love/';
+      // Use the game's own subdomain so it matches the key's referrer restriction
+      // (an apex domain does NOT satisfy a `*.` wildcard).
+      details.requestHeaders['Referer'] = 'https://tandemonium.housetandem.com/';
     }
     callback({ requestHeaders: details.requestHeaders });
   });

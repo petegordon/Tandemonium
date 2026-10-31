@@ -10,6 +10,9 @@ import { RoadChunkManager } from './road-chunks.js';
 import { isMobile } from './config.js';
 import { deriveSeed, SALT } from './daily-seed.js';
 import { buildArchPuffs, archTime } from './arch-puffs.js';
+import { buildGrandmaFinish } from './grandma-finish.js';
+import { buildGrandmaHouse, HOUSE } from './props-3d.js';
+import { buildTutorialBoard, boardPose, BOARD_PLACES } from './tutorial-board.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS_FULL = 120;    // ~4.2-unit vertex spacing — covers visible road/tree range
@@ -171,6 +174,8 @@ export class World {
 
     // Race markers (checkpoints + destination)
     this._raceMarkers = [];  // { mesh, roadD, type }
+    /** @type {ReturnType<typeof buildGrandmaFinish>|null} #475 Grandma + props at her house */
+    this._grandmaFinish = null;
   }
 
   _buildGround() {
@@ -987,6 +992,7 @@ export class World {
   setRaceMarkers(level, camera) {
     // Remove old markers + clean up video if any
     this._cleanupDestVideo();
+    this._disposeGrandmaFinish();
     this._raceMarkers.forEach(m => {
       this.scene.remove(m.mesh);
       // Dispose materials and textures to prevent GPU memory leaks
@@ -1033,8 +1039,11 @@ export class World {
       this._raceMarkers.push({ mesh: group, roadD, type: 'checkpoint' });
     }
 
-    // Your Home: chromakey video billboard just ahead of start line, left side
-    {
+    // #503 · the tutorial starts at a 3D "TUTORIAL START" board (end-card style)
+    if (level.isTutorial) {
+      this._addTutorialBoard('start', BOARD_PLACES.start.d, BOARD_PLACES.start.d);
+    } else {
+      // Your Home: chromakey video billboard just ahead of start line, left side
       const homeD = 15;
       const homePt = this.roadPath.getPointAtDistance(homeD);
       const marker = this._createVideoBillboard({
@@ -1048,18 +1057,7 @@ export class World {
       this._raceMarkers.push(marker);
 
       // Clear trees near the billboard so they don't overlap
-      const bx = marker.mesh.position.x;
-      const bz = marker.mesh.position.z;
-      const clearRadius = 5;
-      for (const slot of this._treePool) {
-        if (!slot.active) continue;
-        const dx = slot.mesh.position.x - bx;
-        const dz = slot.mesh.position.z - bz;
-        if (dx * dx + dz * dz < clearRadius * clearRadius) {
-          slot.mesh.visible = false;
-          slot.active = false;
-        }
-      }
+      this._clearTreesAround(marker.mesh.position.x, marker.mesh.position.z, 5);
     }
 
     // Destination marker
@@ -1067,16 +1065,14 @@ export class World {
     const destPt = this.roadPath.getPointAtDistance(destD);
 
     if (level.id === 'grandma' || level.isDaily) {
-      // Grandma's House (and Today's Road, which also rides to Grandma's): chromakey video billboard
-      const marker = this._createVideoBillboard({
-        videoSrc: 'assets/grandma_house_chromakey.mp4',
-        trimStart: 0.00, trimEnd: 5.50,
-        threshold: -0.02, smoothness: 0.110,
-        maskSrc: 'assets/grandma_house_chromakey_mask.png',
-        roadPt: destPt, roadD: destD, lateralOffset: 6,
-        type: 'destination'
-      });
+      // Grandma's House (and Today's Road, which also rides to Grandma's).
+      // #478 · a 3D timber cabin, door turned towards the oncoming riders.
+      const marker = this._buildGrandmaHouse(destPt, destD);
       this._raceMarkers.push(marker);
+      this._addGrandmaFinish(destD);
+    } else if (level.isTutorial) {
+      // #503 · a 3D "TUTORIAL END" board just past the finish line
+      this._addTutorialBoard('end', destD + BOARD_PLACES.end.dAfter, destD);
     } else {
       // Other levels: simple house shape (box + pyramid roof)
       const destGroup = new THREE.Group();
@@ -1120,6 +1116,109 @@ export class World {
         this._createCloudArch(d, archMat, L);
       }
     }
+  }
+
+  /**
+   * #475 · Grandma waving at the roadside, plus her outhouse, woodpile and a
+   * Timber Tandem pine near the house. Her model loads in the background;
+   * until it's in, her marker is an empty group.
+   */
+  _addGrandmaFinish(destD) {
+    const set = buildGrandmaFinish(this.roadPath, destD);
+    for (const m of set.markers) {
+      this.scene.add(m.mesh);
+      this._raceMarkers.push(m);
+      // Clear roadside pines that would stand inside a piece.
+      const px = m.mesh.position.x, pz = m.mesh.position.z;
+      for (const slot of this._treePool) {
+        if (!slot.active) continue;
+        const dx = slot.mesh.position.x - px, dz = slot.mesh.position.z - pz;
+        if (dx * dx + dz * dz < 16) { slot.mesh.visible = false; slot.active = false; }
+      }
+    }
+    // #481 · the finish swing passes the far side of the road: keep it clear of
+    // pines too, so the camera never flies through one.
+    const L = this.roadPath.loopLength;
+    for (const slot of this._treePool) {
+      if (!slot.active || slot.lateralOffset == null) continue;
+      let dd = Math.abs(slot.roadD - destD); if (dd > L / 2) dd = L - dd;
+      if (dd < 9 && slot.lateralOffset < 0 && slot.lateralOffset > -12) { slot.mesh.visible = false; slot.active = false; }
+    }
+    this._grandmaFinish = set;
+    set.grandma.load().catch((e) => console.warn('[grandma] model did not load:', e && e.message));
+  }
+
+  _disposeGrandmaFinish() {
+    if (this._grandmaFinish) {
+      this._grandmaFinish.grandma.dispose();
+      if (this._grandmaFinish.stack) this._grandmaFinish.stack.dispose();
+    }
+    this._grandmaFinish = null;
+  }
+
+  /**
+   * #478 · Grandma's house as a 3D timber cabin (props-3d.js), standing where
+   * the video billboard stood: 6 units off the road on the house's side, set
+   * back so its front sits that far out, door angled towards the riders.
+   */
+  /**
+   * #503 · a tutorial board beside the road at roadD; its glint fires when the
+   * lead bike passes glintD. Clears the trees around it like the start sign did.
+   */
+  _addTutorialBoard(kind, roadD, glintD) {
+    const L = this.roadPath.loopLength || Infinity;
+    const d = Number.isFinite(L) ? ((roadD % L) + L) % L : roadD;
+    const pt = this.roadPath.getPointAtDistance(d);
+    const place = BOARD_PLACES[kind];
+    const pose = boardPose(pt, place.lateral, place.turn);
+    const board = buildTutorialBoard(kind);
+    board.position.set(pose.x, pt.y, pose.z);
+    board.rotation.y = pose.rotY;
+    board.visible = false;
+    this.scene.add(board);
+    this._raceMarkers.push({ mesh: board, roadD: d, type: kind === 'end' ? 'destination' : 'start', board: true, glintD });
+    this._clearTreesAround(pose.x, pose.z, 5.5);
+  }
+
+  /** Hide pooled trees within r metres of (x, z) so nothing grows through a sign. */
+  _clearTreesAround(x, z, r) {
+    for (const slot of this._treePool) {
+      if (!slot.active) continue;
+      const dx = slot.mesh.position.x - x, dz = slot.mesh.position.z - z;
+      if (dx * dx + dz * dz < r * r) { slot.mesh.visible = false; slot.active = false; }
+    }
+  }
+
+  _buildGrandmaHouse(destPt, destD) {
+    if (!this._houseTime) this._houseTime = { value: 0 };
+    const house = buildGrandmaHouse(this._houseTime);
+    const fwdX = Math.sin(destPt.heading), fwdZ = Math.cos(destPt.heading);
+    const rightX = fwdZ, rightZ = -fwdX;
+    const lateral = World.HOUSE_LATERAL + HOUSE.D / 2;
+    house.position.set(destPt.x + rightX * lateral, destPt.y, destPt.z + rightZ * lateral);
+    // door (+z) faces the road (-right), turned World.HOUSE_TURN towards the riders
+    house.rotation.y = destPt.heading - Math.PI / 2 - World.HOUSE_TURN;
+    house.visible = false;
+    this.scene.add(house);
+    return { mesh: house, roadD: destD, type: 'destination', house: true };
+  }
+
+  /**
+   * #478 · the ride's presents fly into the pile at Grandma's. Call at the
+   * finish with how many were collected and where they fly from (the bike).
+   * @returns {boolean} false when this level has no pile (not Grandma's)
+   */
+  startPresentStack(count, fromWorld) {
+    const st = this._grandmaFinish && this._grandmaFinish.stack;
+    if (!st || !(count > 0)) return false;
+    st.start(count, fromWorld);
+    return true;
+  }
+
+  /** Real-time finish effects (the pile), outside the slow-mo world update. */
+  updateFinishFx(dt) {
+    const st = this._grandmaFinish && this._grandmaFinish.stack;
+    if (st) st.update(dt);
   }
 
   /** Create a gold cloud arch at the given distance (same as checkpoint arches). */
@@ -1332,6 +1431,9 @@ export class World {
     this._treeNextD = 0;
     this._treeRngState = seeds.trees;
     this._treeSeedBase = seeds.trees;
+    // ...and place them along the new road. The load callback only ever placed them for the road that
+    // was current when the pine model arrived: every road chosen after that was bare (#506 review).
+    if (this._treeModelReady) this._placeTreesUpTo(this.roadPath.loopLength);
 
     // Clouds: same.
     for (const slot of this._cloudPool || []) {
@@ -1339,6 +1441,7 @@ export class World {
       if (slot.mesh) slot.mesh.visible = false;
     }
     this._cloudNextD = 0;
+    if (this._cloudPool) this._placeCloudsUpTo(this.roadPath.loopLength);
     this._cloudRngState = seeds.clouds;
     this._cloudSeedBase = seeds.clouds;
 
@@ -1385,6 +1488,7 @@ export class World {
 
   clearRaceMarkers() {
     this._cleanupDestVideo();
+    this._disposeGrandmaFinish();
     this._raceMarkers.forEach(m => {
       this.scene.remove(m.mesh);
       // Dispose materials/textures/geometries on the way out. Without
@@ -1455,6 +1559,11 @@ export class World {
       if (!marker.mesh.visible) continue;
       const pt = this.roadPath.getPointAtDistance(marker.roadD);
 
+      // #478 · the house's sparkle runs on its own clock
+      if (marker.house && this._houseTime) this._houseTime.value = t;
+      // #503 · the tutorial boards' bunting + glint
+      if (marker.board) marker.mesh.userData.board.update(t, bikeD, marker.glintD);
+
       // Billboard destination video: offset Y so bottom sits on ground, face camera
       if (marker.billboard) {
         marker.mesh.position.y = pt.y + 3; // half of 6-unit billboard
@@ -1487,8 +1596,10 @@ export class World {
    *   second deformable floor so both viewports look right when the bikes
    *   separate. Sun positioning stays on the primary here; versus
    *   repositions the sun per render pass in game.js.
+   * @param {number} [actorDt] clock for characters that shouldn't slow down
+   *   with the finish cinematic's slow motion (Grandma, #475). Defaults to dt.
    */
-  update(bikePos, bikeD, dt, anchorB = null) {
+  update(bikePos, bikeD, dt, anchorB = null, actorDt = dt) {
     // Default bikeD from position if not provided (backward compat)
     if (bikeD === undefined) {
       bikeD = Math.max(0, bikePos.z);
@@ -1521,6 +1632,14 @@ export class World {
     if (this._raceMarkers.length > 0) {
       this._updateRaceMarkerVisibility(anchors);
       this._updateRaceMarkerHeights(bikeD);
+    }
+
+    // #475 · Grandma waves the riders in on the final approach, then walks to
+    // the finish line. She runs on actorDt (real time during the finish cinematic).
+    const gf = this._grandmaFinish;
+    if (gf && gf.grandma.group.visible && actorDt) {
+      const L = this.roadPath.loopLength;
+      gf.update(((bikeD % L) + L) % L, actorDt, bikePos);
     }
 
     // Floor snap-follow + deform (snap at tileSize to reduce visual pop)
@@ -1595,3 +1714,5 @@ export class World {
 
 World.LEAN_FILL = 0.35;   // #456 · lean riders lighting: the fill's share folded into the hemisphere
 World.SPRITE_ARCH_PUFFS = false;   // #456 · true = the old 16-sprite arches (for A/B)
+World.HOUSE_LATERAL = 4.6;   // #478 · Grandma's house: its front this far off the road centre (house's side)
+World.HOUSE_TURN = 0.5;      // #478 · and turned this far (radians) towards the oncoming riders

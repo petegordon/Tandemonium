@@ -11,6 +11,9 @@ import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway,
 import { colourwayParams, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 import { CrankMotion } from './crank-motion.js';
+import { fallLean } from './crash-tumble.js';
+import { shakeAt } from './crash-wobble.js';
+import { batchSplit, hasParts } from './physics/bike-parts.js';
 import { rebatch } from './bike-batch.js';
 import { dracoDecoderPath } from './draco-path.js';
 
@@ -56,6 +59,8 @@ export class BikeModel {
     this.lean = 0;
     this.leanVelocity = 0;
     this._roughness = 0;   // E-2 cobbles, 0..1
+    this._hitShake = 0;    // #484 versus: a flying part's shake (rad/s², signed) and its age
+    this._hitShakeT = 0;
     this.speed = 0;
     this.distanceTraveled = 0;
     this.crankAngle = 0;
@@ -99,6 +104,11 @@ export class BikeModel {
     // the HUD, the race logic and the cameras never see a difference.
     this.onFall = null;
     this.onReset = null;
+    // #484 crash scene (physics/crash-scene.js): rag dolls + hats; the slow-mo clock; the crash cause
+    this.crashScene = null;
+    this._slowMoStart = 0;
+    this._crashDownSim = 0;
+    this._crashCause = null;
     this.transformOverride = false;
     this._tumbleHandle = null;
 
@@ -415,6 +425,10 @@ export class BikeModel {
         // the fused riders model stood 3.24 m tall on its 4.4 m bike
         this.riderViewScale = Math.max(0.5, Math.min(2, top / 3.24));
         finish();
+        // An outfit picked while these geese were loading (#472): seat it now.
+        const want = this._pendingGooseRiders || getGooseRiderPaths();
+        this._pendingGooseRiders = null;
+        if (want && (want.Captain !== riderPaths.Captain || want.Stoker !== riderPaths.Stoker)) this.setGooseRiders(want);
       });
     }, undefined, (err) => {
       console.error('Failed to load bike model:', this._modelPath, err);
@@ -512,7 +526,8 @@ export class BikeModel {
    * @returns {Promise|undefined} settles once the new geese are seated
    */
   setGooseRiders(paths, disposeOld = true) {
-    if (!this.goose) return;
+    // Still loading the first geese: remember the choice; the load seats it.
+    if (!this.goose) { this._pendingGooseRiders = paths; return; }
     const cur = this._gooseRiderPaths;
     if (cur && cur.Captain === paths.Captain && cur.Stoker === paths.Stoker) return;
     this._gooseRiderPaths = paths;
@@ -620,11 +635,35 @@ export class BikeModel {
    * #456 · the plain bike too (65 meshes): its pedals turn by themselves, so
    * they count as bones. The fused riders model is left alone.
    */
+  /**
+   * #484 versus: a part from the other team's crash hit us. A shove to the lean (`kick`, rad/s, signed) and a
+   * shake that dies away (`shake`, rad/s²). A disturbance, not a crash: ride it out, or over-correct and fall.
+   * NOT scaled by wobbleMultiplier: that is the presets' RANDOM wobble (0 on chill, 0.1 on adventurous) and
+   * would erase a hit you can see coming; the presets' auto-correction already helps the easy ones recover.
+   */
+  addHitWobble(kick, shake) {
+    if (this.fallen) return;
+    this.leanVelocity += kick || 0;
+    this._hitShake = Math.abs(shake || 0) * (kick < 0 ? -1 : 1);
+    this._hitShakeT = 0;
+  }
+
+  /** The hit's shake this frame (rad/s²); 0 once it has died away. */
+  _hitShakeForce(dt) {
+    if (!this._hitShake) return 0;
+    this._hitShakeT += dt;
+    const f = shakeAt(Math.abs(this._hitShake), this._hitShakeT) * Math.sign(this._hitShake);
+    if (this._hitShakeT > 2) this._hitShake = 0;
+    return f;
+  }
+
   _rebatch() {
     if (!this.modelLoaded || this.riderMixer) return;
     const model = this.group.children[0];
     if (!model) return;
-    this.batchStats = rebatch(model, { keep: this.spokeMeshes, movers: this.pedalNodes, batchId: this._batchId });
+    // #484: the parts that fly off in a crash merge on their own (physics/bike-parts.js)
+    this.batchStats = rebatch(model, { keep: this.spokeMeshes, movers: this.pedalNodes, batchId: this._batchId,
+      split: hasParts(model) ? batchSplit : null });
     this._applyEnvMap();
   }
 
@@ -678,11 +717,10 @@ export class BikeModel {
       this.fallElapsed = (this.fallElapsed || 0) + dt;
       // B-2 · the tumble: ease over to the fallen side in 0.4 s with a small
       // bounce at the end, instead of snapping flat on the impact frame.
-      const t = Math.min(1, this.fallElapsed / 0.4);
-      const eased = 1 - Math.pow(1 - t, 3);
-      const bounce = t >= 1 ? Math.sin((this.fallElapsed - 0.4) * 18) * 0.05 * Math.max(0, 1 - (this.fallElapsed - 0.4) * 3) : 0;
-      this.lean = (this._fallLeanTarget || 0) * eased + bounce;
+      // #483: from the lean it crashed at, not from upright (crash-tumble.js).
+      this.lean = fallLean(this._fallLeanStart || 0, this._fallLeanTarget || 0, this.fallElapsed);
       if (this.fallTimer <= 0) this._reset();
+      else if (this.crashScene) this.crashScene.step(dt);   // #484: rag dolls + hats + the bike
       this._applyTransform(dt);
       return;
     }
@@ -818,7 +856,7 @@ export class BikeModel {
 
     this.leanVelocity += (gravity + playerLean + gyro + damping +
       pedalWobble + lowSpeedWobble + pedalLeanKick + dangerWobble + grassWobble +
-      cobbleShake) * dt;
+      cobbleShake + this._hitShakeForce(dt)) * dt;
     this.lean += this.leanVelocity * dt;
 
     // Balance assist: proportional restoring force toward upright
@@ -1059,9 +1097,12 @@ export class BikeModel {
     // bike actually crashed at, and the next four lines destroy both.
     if (this.onFall) this.onFall(this);
     this.fallen = true;
-    this.fallTimer = 1.2;
+    // #484: a slow-mo crash scene asks for longer, in simulated seconds (crash-slowmo.js)
+    this.fallTimer = this._crashDownSim || 1.2;
+    this._crashDownSim = 0;
     this.fallElapsed = 0;
     this.speed = 0;
+    this._fallLeanStart = this.lean || 0;
     this._fallLeanTarget = Math.sign(this.lean || 1) * Math.PI / 2.2;
     this.leanVelocity = 0;
     const terrainY = this.roadPath
@@ -1083,6 +1124,8 @@ export class BikeModel {
     // tumble keeps driving it and the reset is invisible.
     if (this.onReset) this.onReset(this);
     this.fallen = false;
+    this._crashCause = null;
+    this._slowMoStart = 0;
     this.lean = 0;
     this.leanVelocity = 0;
     this.speed = 0;
@@ -1101,6 +1144,8 @@ export class BikeModel {
     this.air = null;
     if (this.onReset) this.onReset(this);
     this.fallen = false;
+    this._crashCause = null;
+    this._slowMoStart = 0;
     this.lean = 0;
     this.leanVelocity = 0;
     this.speed = 0;

@@ -42,28 +42,48 @@ async function open(seed = {}, beforeSolo = null) {
 
 const where = (page) => page.evaluate(() => {
   const g = window._game, skip = document.getElementById('btn-tutorial-skip');
+  const intro = document.getElementById('tutorial-intro');
   return {
     state: g.state,
     tutorial: !!g._tutorialActive,
     level: g.lobby.selectedLevel && g.lobby.selectedLevel.id,
+    // #459 item 6: the intro sheet before the first countdown, START / SKIP TUTORIAL.
+    intro: !!(intro && intro.open && g._intro),
     skipVisible: !!(skip && getComputedStyle(skip).display !== 'none'),  // position:fixed → no offsetParent
     onLevelList: g.lobby._currentStep === g.lobby.levelStep && g.lobby.lobbyEl.style.display !== 'none',
     done: localStorage.getItem('tandemonium_tutorial_done')
   };
 });
+/** Wait for the intro, then START; resolves once the ride is being set up (countdown / calibration). */
+async function startFromIntro(page) {
+  await page.waitForFunction(() => document.getElementById('tutorial-intro')?.open, { timeout: 15000 }).catch(() => {});
+  await page.evaluate(() => document.getElementById('btn-tutorial-intro-start').click());
+  await page.waitForFunction(() => window._game.state !== 'lobby' && !window._game._intro, { timeout: 20000 }).catch(() => {});
+  await sleep(600);
+}
 
-// 1. Fresh profile: SOLO → tutorial, SKIP visible.
+// 1. Fresh profile: SOLO → the tutorial intro (no countdown yet), nothing on record.
 const fresh = await open();
 const first = await where(fresh);
 console.log('fresh SOLO:', JSON.stringify(first));
 
-// 2. SKIP → marked done, back on the level list with Grandma's selected.
-await fresh.evaluate(() => document.getElementById('btn-tutorial-skip').click());
+// 2. SKIP TUTORIAL on the intro → marked done, back on the level list with Grandma's selected.
+await fresh.evaluate(() => document.getElementById('btn-tutorial-intro-skip').click());
+await fresh.waitForFunction(() => !window._game._intro, { timeout: 10000 }).catch(() => {});
 await sleep(600);
 const skipped = await where(fresh);
 skipped.selectedCard = await fresh.evaluate(() => document.querySelector('#level-cards .level-card.selected')?.dataset.levelId);
 console.log('after SKIP:', JSON.stringify(skipped));
 await fresh.browserContext().close();
+
+// 2b. Esc on the intro is SKIP too (B on a pad).
+const escaper = await open();
+await escaper.keyboard.press('Escape');
+await escaper.waitForFunction(() => !window._game._intro, { timeout: 10000 }).catch(() => {});
+await sleep(600);
+const escSkipped = await where(escaper);
+console.log('after Esc on the intro:', JSON.stringify(escSkipped));
+await escaper.browserContext().close();
 
 // 3. Returning player with saved motion tuning from an older build: not forced.
 const returning = await open({ tandemonium_motion_tuning: JSON.stringify({ version: 1, inputType: 'phone' }) });
@@ -71,15 +91,23 @@ const ret = await where(returning);
 console.log('returning player SOLO:', JSON.stringify(ret));
 await returning.browserContext().close();
 
-// 4. Tutorial complete → NEXT: GRANDMA'S starts Grandma's in one tap.
+// 4. START on the intro → the tutorial ride with SKIP on screen; tutorial
+//    complete → NEXT: GRANDMA'S starts Grandma's in one tap.
 const finisher = await open();
+await startFromIntro(finisher);
+const started = await where(finisher);
+console.log('after START:', JSON.stringify(started));
 const screen = await finisher.evaluate(() => {
   window._game._tutorialComplete();
   const next = document.getElementById('btn-tutorial-next');
   const cont = document.getElementById('btn-tutorial-continue');
+  const sheet = document.getElementById('tutorial-complete-sheet');
+  const row = sheet && sheet.querySelector('[slot="actions"]');
   return {
     overlay: document.getElementById('tutorial-complete').classList.contains('visible'),
-    nextVisible: !!(next && next.offsetParent !== null), nextText: next && next.textContent.trim(),
+    // #459 item 15: the result-screen shell, NEXT first in its action row and focused.
+    shell: !!sheet && sheet.hasAttribute('headline') && !!row && row.querySelector('uf-button') === next,
+    nextVisible: !!(next && next.getBoundingClientRect().width > 0), nextText: next && next.textContent.trim(),
     continueText: cont.textContent.trim(),
     done: localStorage.getItem('tandemonium_tutorial_done'),
     skipVisible: getComputedStyle(document.getElementById('btn-tutorial-skip')).display !== 'none',
@@ -124,6 +152,7 @@ const tilter = await open({}, () => {
     if (t !== last) { window.__tiltLog.push([Math.round(performance.now()), t]); last = t; }
   }, 30);
 });
+await startFromIntro(tilter);
 await tilter.waitForFunction(() => (window.__tiltLog || []).some(([, t]) => /recalibrate/i.test(t)), { timeout: 90000 }).catch(() => {});
 const { tiltLog, settledAt } = await tilter.evaluate(() => ({ tiltLog: window.__tiltLog, settledAt: window.__settledAt || 0 }));
 const tiltSteps = [];
@@ -143,6 +172,7 @@ await tilter.browserContext().close();
 // attempt, so finishing after one is not "Natural" (tutorial_clean). Scenario 4
 // above finished with no retry and must have earned it.
 const retrier = await open();
+await startFromIntro(retrier);
 const retried = await retrier.evaluate(async () => {
   const g = window._game;
   g._tutorialPhaseRetry(1, 'Stay on the road!');
@@ -156,13 +186,15 @@ await retrier.browserContext().close();
 const ok =
   tiltOk &&
   screen.natural === true && retried.natural === false && retried.attempts === 2 &&
-  first.tutorial && first.level === 'tutorial' && first.skipVisible && first.done === null &&
-  !skipped.tutorial && skipped.done === 'skip' && skipped.onLevelList && !skipped.skipVisible &&
+  first.intro && first.level === 'tutorial' && first.state === 'lobby' && !first.skipVisible && first.done === null &&
+  !skipped.intro && !skipped.tutorial && skipped.done === 'skip' && skipped.onLevelList && !skipped.skipVisible &&
     skipped.selectedCard === 'grandma' &&
-  !ret.tutorial && ret.onLevelList &&
-  screen.overlay && screen.nextVisible && /GRANDMA/i.test(screen.nextText) && screen.continueText === 'LOBBY' &&
+  !escSkipped.intro && !escSkipped.tutorial && escSkipped.done === 'skip' && escSkipped.onLevelList &&
+  !ret.intro && !ret.tutorial && ret.onLevelList &&
+  !started.intro && started.tutorial && started.level === 'tutorial' && started.skipVisible && started.state !== 'lobby' &&
+  screen.overlay && screen.shell && screen.nextVisible && /GRANDMA/i.test(screen.nextText) && screen.continueText === 'LOBBY' &&
     screen.done === 'complete' && !screen.skipVisible &&
   next.level === 'grandma' && !next.tutorial && ['countdown', 'playing'].includes(next.state) && next.instructionsHidden;
-console.log(ok ? '✔ first SOLO → tutorial with SKIP; SKIP → level list; returning players not forced; NEXT → Grandma\'s; phone tilt calibration passes'
+console.log(ok ? '✔ first SOLO → the intro; SKIP / Esc → level list; START → tutorial with SKIP; returning players not forced; NEXT → Grandma\'s; phone tilt calibration passes'
                : '✖ something is wrong');
 await browser.close(); server.close(); process.exit(ok?0:1);
