@@ -89,6 +89,39 @@ test('on Chill a 10° controller roll asks for under 0.1 lean (it asked for 0.10
   });
 });
 
+test('the ungained path (visual lean, centre, drift) does not depend on the gain at all', () => {
+  // smoke:phone-pad reads getMotionLeanVisual() after a phone remote calibrates
+  // its centre and tilts. Everything that feeds it — calibration, the drift
+  // gate, the "starting a turn" smoothing threshold — must come out the same at
+  // every gain, or a difficulty would change how the geese lean and where the
+  // centre lands. (The smoothing threshold used to compare the GAINED lean
+  // against a fixed 0.05.)
+  keepTune(() => {
+    for (const isGyro of [false, true]) {
+      const runs = [0.25, 0.3, 0.6, 1.0].map((g) => {
+        TUNE.motionGain = g;
+        const im = pad();
+        im.motionOffset = null; im._warmupCount = 0;   // fresh: warm-up then calibration
+        const trace = [];
+        const seq = [...Array(12).fill(0), ...Array(8).fill(35), ...Array(90).fill(35), ...Array(40).fill(-20), ...Array(60).fill(4)];
+        const realNow = performance.now; let t = 1000; performance.now = () => t;
+        try {
+          for (const deg of seq) { t += 1000 / 30; im._applyTilt(deg, isGyro); trace.push([im.getMotionLeanVisual(), im.motionOffset ?? NaN]); }
+        } finally { performance.now = realNow; }
+        return { g, trace, gained: im.getMotionLean() };
+      });
+      const [ref, ...rest] = runs;
+      for (const r of rest) {
+        r.trace.forEach(([v, off], i) => {
+          assert.ok(Math.abs(v - ref.trace[i][0]) < 1e-9, `${isGyro ? 'gyro' : 'phone'} gain ${r.g} sample ${i}: visual ${v} vs ${ref.trace[i][0]}`);
+          assert.ok(Number.isNaN(off) ? Number.isNaN(ref.trace[i][1]) : Math.abs(off - ref.trace[i][1]) < 1e-9, `${isGyro ? 'gyro' : 'phone'} gain ${r.g} sample ${i}: centre ${off} vs ${ref.trace[i][1]}`);
+        });
+        assert.ok(Math.abs(r.gained / r.g - ref.gained / ref.g) < 1e-9, 'only the steering lean scales with the gain');
+      }
+    }
+  });
+});
+
 test('the riders\' lean (visual) is ungained for gyro and phone alike', () => {
   keepTune(() => {
     applyDifficulty('chill');
