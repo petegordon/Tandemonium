@@ -43,7 +43,7 @@ import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import { gyroOnlySteer } from './achievement-defs.js';
 import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
-import { FocusController } from '../shared/ui/focus-controller.js';
+import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
@@ -823,6 +823,9 @@ class Game {
       // Close; modals set their own through js/ui-shell.js). Cleared with the
       // buttons, so no screen inherits another's Back.
       onBack: () => { if (this._overlayBack) this._overlayBack(); },
+      // #517: up / down past the last row (a result screen's buttons) scrolls
+      // what is above them, so a long list of unlocks can be read with the pad.
+      onEdge: (dir) => scrollPage(this._overlayScrollBox(), dir),
     });
     this._overlayBack = null;
 
@@ -6206,7 +6209,14 @@ class Game {
     this._updateOptionsFpsUI();
     this._updateOptionsPhysicsUI();
     this._updateOptionsDisplayTestUI();
-    this._setOverlayButtons(btns, btns.length - 1); // focus Close by default
+    // #517: the pad moves by what is on screen (rows hidden for this build or
+    // controller are skipped, and a row that appears later joins), the focused
+    // option scrolls into view, and focus starts at the top of the card (it
+    // started on Close, below the fold on a TV). B closes it (_pollStartButton).
+    this._overlayBack = null;
+    this._overlayFocus.setSpatial(btns, btns.find((b) => b.getBoundingClientRect().width > 0) || null);
+    const card = document.querySelector('#options-overlay .options-card');
+    if (card) card.scrollTop = 0;
   }
 
   _closeOptions() {
@@ -6462,7 +6472,22 @@ class Game {
     // from closing it is not a fresh press here.
     if (this.phonePad && this.phonePad.panelOpen) { this._overlayAfterPanel = true; return; }
     if (this._overlayAfterPanel) { this._overlayAfterPanel = false; this._overlayFocus.reprime(); }
+    // #517: the right stick scrolls whatever is open (Settings, a long result screen).
+    const gp = this.input.gamepadConnected ? this.input.getGamepadState() : null;
+    if (gp) scrollWithStick(this._overlayScrollBox(), gp.axes[3]);
     this._overlayFocus.poll();
+  }
+
+  /**
+   * #517 · the box the pad scrolls on the open overlay: Settings' card, else
+   * the body of the topmost open sheet that overflows.
+   * @returns {HTMLElement | null}
+   */
+  _overlayScrollBox() {
+    if (this._optionsOpen) return document.querySelector('#options-overlay .options-card');
+    const sheets = /** @type {any[]} */ (Array.from(document.querySelectorAll('uf-sheet[open]')))
+      .filter((s) => s.getBoundingClientRect().width > 0 && s.body && s.body.scrollHeight > s.body.clientHeight + 1);
+    return sheets.length ? sheets[sheets.length - 1].body : null;
   }
 
   // ============================================================
@@ -9381,7 +9406,7 @@ class Game {
     // GRANDMA'S first and focused, #459 item 15), then the Steam Store link.
     const steamStoreBtn = document.getElementById('btn-steam-store');
     const overlayBtns = focusResult(this._overlayFocus, document.getElementById('tutorial-complete-sheet'),
-      { primary: soloNext ? nextBtn : continueBtn, extra: steamStoreBtn ? [steamStoreBtn] : [] });
+      { primary: soloNext ? nextBtn : continueBtn, extra: steamStoreBtn ? [steamStoreBtn] : [], linear: true });   // #517: the slider takes ← / →
     this._overlayFocus.setSlider(slider);
 
     if (isMobile) {
@@ -9429,7 +9454,7 @@ class Game {
 
     document.getElementById('tutorial-complete').classList.add('visible');
 
-    const overlayBtns = focusResult(this._overlayFocus, document.getElementById('tutorial-complete-sheet'), { primary: continueBtn });   // #459
+    const overlayBtns = focusResult(this._overlayFocus, document.getElementById('tutorial-complete-sheet'), { primary: continueBtn, linear: true });   // #459; #517: the slider takes ← / →
     this._overlayFocus.setSlider(slider);
 
     if (isMobile) {

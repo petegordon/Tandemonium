@@ -59,7 +59,7 @@ await new Promise(r => setTimeout(r, 500));
 check(await page.evaluate(() => !document.getElementById('btn-slingshot')), 'no Slingshot button on the root menu');
 await page.evaluate(() => document.getElementById('btn-solo').click());
 await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card-slingshot'), { timeout: 20000 });
-await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
+await page.evaluate(() => { document.querySelector('#level-cards .level-card-slingshot').click(); document.getElementById('btn-start-ride').click(); });   // #517: pick it, then START RIDE
 await waitState('slingGarage', 10000);
 check(await page.evaluate(() => document.getElementById('sling-garage').classList.contains('visible')), 'Solo → Slingshot card opens the garage');
 await shot('1-garage');

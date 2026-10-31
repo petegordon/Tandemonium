@@ -164,7 +164,7 @@ const SHOTS = {
     await sleep(600);
     await page.evaluate(() => document.getElementById('btn-solo').click());
     await sleep(800);
-    await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
+    await page.evaluate(() => { document.querySelector('#level-cards .level-card-slingshot').click(); document.getElementById('btn-start-ride').click(); });   // #517: pick it, then START RIDE
     await sleep(1500);
     await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button'))   /* uf-button since #411 */.find(b => /launch/i.test(b.textContent)).click());
     await page.waitForFunction(() => window._game.state === 'slingAim' && window._game.bike.goose, { timeout: 120000 });
