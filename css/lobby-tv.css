@@ -56,7 +56,8 @@ uf-system-bar#lobby-bar { display: none; }
     justify-self: stretch !important; align-self: center !important; border-radius: var(--uf-radius-lg);
   }
   #lobby #bike-preview-wrap { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; }
-  #lobby #bike-preview-canvas { width: 100% !important; height: min(470px, 48vh) !important; }
+  /* #521: taller (it can't get wider); js/lobby/preview-fit.js keeps the whole bike in view. */
+  #lobby #bike-preview-canvas { width: 100% !important; height: 60vh !important; }
   #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 2.4) !important; font-size: var(--uf-size-2xl) !important; }
   #lobby #bike-name { font-size: var(--uf-size-2xl) !important; line-height: 1.2 !important; top: calc(var(--uf-size-2xl) * -1.7) !important; }
   #lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }

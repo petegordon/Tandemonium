@@ -64,6 +64,7 @@ import { steamTypeIdentity } from './controller-overlay-hud.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, steamTypeGlyphIdentity, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
+import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
@@ -7438,7 +7439,7 @@ export class Lobby {
 
     this._previewScene = new THREE.Scene();
     this._previewScene.fog = new THREE.Fog(0x8b7355, 6, 14);
-    this._previewCamera = new THREE.PerspectiveCamera(28, w / h, 0.1, 100);
+    this._previewCamera = new THREE.PerspectiveCamera(previewFov(w / h), w / h, 0.1, 100);
     this._previewCamera.position.set(0, 1.4, 4.2);
     this._previewCamera.lookAt(0, 0.5, 0);
 
@@ -7452,6 +7453,7 @@ export class Lobby {
         if (!cw || !ch || !this._previewRenderer) return;
         this._previewRenderer.setSize(cw, ch, false);
         this._previewCamera.aspect = cw / ch;
+        this._previewCamera.fov = previewFov(cw / ch);   // #521: a taller box shows more ground, not less bike
         this._previewCamera.updateProjectionMatrix();
       });
       this._previewResize.observe(canvas);
