@@ -178,6 +178,8 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
 | IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only` |
 | IN-19h | IN-19 in the real Steam client with two Steam Controllers on one Puck | M | — |
+| IN-20 | #522 motion gain per difficulty (Chill/tutorial 0.3, Adventurous 0.6, Daredevil 1.0) on phone tilt AND controller gyro: the same roll steers the same; on Chill a 10° gyro roll asks for under 0.1 lean; gyro "degrees for a full lean" never adapts under 35° | A | `smoke:steam-input`, `test/unit/motion-gain` |
+| IN-20h | IN-20 by hand: Chill feels as calm on a Steam Controller / DualSense as on a phone; Daredevil turns sharply on both | M | — |
 
 ## 5. Multi-controller (local co-op and versus)
 
@@ -305,11 +307,12 @@ Two devices on different networks for the M rows.
 | LY-06 | Level step with a pad: ↓ from Chill Ride → START RIDE; ↓ from the far-left / far-right card → the difficulty row, not the system bar (#517) | A | `smoke:tv-nav` |
 | LY-07 | Slingshot card selects like a level; START RIDE opens its garage (#517) | A | `smoke:tv-nav` |
 | LY-08 | Music pill with a pad: the volume picker is navigable, A picks, B closes (#517) | A | `smoke:tv-nav` |
-| LY-09 | Settings with a pad: starts at the top, walks shown options only, stays on screen, right stick scrolls (#517) | A | `smoke:tv-nav` |
+| LY-09 | Settings with a pad: starts at the top, walks shown options only, stays on screen, right stick scrolls (#517). On a desktop/TV (#523): every text at least `--uf-size-sm`, options at least `--uf-size-md`, each choice one row (High \| Medium \| Low \| Auto), sections in two columns; → moves along a row, ↓ to the next row in the same column. Couch check: readable from across the room, lobby and in-ride pause | A | `smoke:tv-nav` |
 | LY-10 | Leaderboard is the same sheet as Help (Close, B, Esc, scrim); category headings readable; Quit is the bar's last pill (#517) | A | `smoke:tv-nav` |
 | LY-11 | First Grandma's finish at 1080p: every unlock shows; ← / → walk the result buttons (#517) | A | `smoke:tv-nav` |
 | LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
 | LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
+| LY-14 | Desktop/TV bike chooser is 60vh tall, clear of the bar, and the whole bike stays in view as it turns (#521) | A | `smoke:lobby-layout` |
 
 ## 12. Data and backend
 

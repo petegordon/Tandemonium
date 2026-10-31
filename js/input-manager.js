@@ -18,6 +18,12 @@ import { SensorFusion } from '../shared/sensor-fusion.js';
 // open question #3. e.g. window.__steamMotionTune = { gyroSign:[1,-1,1] }.
 /** Step for feeding one Steam motion reading across a long frame (see _ingestSteamMotion). */
 const STEAM_MOTION_STEP_MS = 50;
+/** #531 · phone tilt centring: the samples it averages must agree within this (degrees)... */
+const CALIB_STILL_DEG = 4;
+/** ...or, after this many samples without a still window, the median is taken. */
+const CALIB_MAX_TRIES = 60;
+/** Median of a short array. */
+function median(a) { const b = [...a].sort((x, y) => x - y), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
 const STEAM_MOTION_DEFAULTS = {
   gyroScale: 1.0,          // getMotionData rotVel is already rad/s
   accelScale: 1 / 16384,   // Steam Controller accel ~ 16384/g (from live capture)
@@ -802,9 +808,29 @@ export class InputManager {
     this.motionEnabled = !!this._motionBeforeRemote || this.motionReady;
   }
 
+  /**
+   * #531 · re-take phone tilt's centre at the start of a ride (the 3-2-1
+   * countdown): the player is holding the phone the way they'll ride, and a
+   * remote sends at 30 Hz there. Phone tilt only (this device's or a phone
+   * remote's); controller gyro has its own recenter. The lean holds at 0
+   * until the still-phone centre is taken (well inside the countdown).
+   * @returns {boolean} whether a re-centre started
+   */
+  recenterTiltForRide() {
+    const phoneTilt = this._remoteTilt || (this.motionEnabled && !this.gyroConnected && this.motionOffset !== null);
+    if (!phoneTilt) return false;
+    this.startTiltCalibration();
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    return true;
+  }
+
   startTiltCalibration() {
     this._calibrating = true;
     this._calibBuf = [];
+    this._calibTries = 0;
     this._warmupCount = 5; // already warmed up if explicitly called
     // Design B: recenter active Steam Input motion fusions too, so
     // "recalibrate gyro" is no longer a no-op under Steam Input (#296).
@@ -835,11 +861,24 @@ export class InputManager {
 
     if (this._calibrating) {
       this._calibBuf.push(this.rawGamma);
-      if (this._calibBuf.length >= TUNE.calibSamples) {
-        const sum = this._calibBuf.reduce((a, b) => a + b, 0);
-        this.motionOffset = sum / this._calibBuf.length;
-        this._calibrating = false;
-        this._calibBuf = [];
+      this._calibTries = (this._calibTries || 0) + 1;
+      const n = TUNE.calibSamples;
+      if (this._calibBuf.length >= n) {
+        // #531 · phone tilt: the centre is only taken from a still phone (the
+        // last n samples agree within CALIB_STILL_DEG), so a phone being
+        // turned over or held at a slant while it pairs doesn't become
+        // "level". The window slides until it is still; a hand that never
+        // steadies gets the median after CALIB_MAX_TRIES. Gyro is unchanged.
+        const win = this._calibBuf.slice(-n);
+        const still = isGyro || Math.max(...win) - Math.min(...win) <= CALIB_STILL_DEG;
+        if (still || this._calibTries >= CALIB_MAX_TRIES) {
+          this.motionOffset = still ? win.reduce((a, b) => a + b, 0) / n : median(win);
+          this._calibrating = false;
+          this._calibBuf = [];
+          this._calibTries = 0;
+        } else {
+          this._calibBuf = win.slice(1);
+        }
       }
       return;
     }
@@ -866,14 +905,17 @@ export class InputManager {
       // neutral estimate (the bug that made it fuse fast on sharp turns). The
       // floor is why a one-sided pull can always recover (#365) — see
       // driftTaper() for the positive-feedback loop it breaks.
-      const taper = driftTaper(Math.abs(this._smoothedLean));
+      // #522: taper on the UNGAINED lean. _smoothedLean now carries
+      // TUNE.motionGain (0.3 on Chill), so a full held turn would read as a
+      // small lean and the drift tracker would chase it (the phone's B1 bug).
+      const taper = driftTaper(Math.abs(this.motionLeanVisual));
       this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
       this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
     } else {
       // Mobile tilt (gravity-absolute): original always-on EMA + hard 0.3 gate.
       this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
       // Gate on the UNGAINED lean (B1, PR #397 review): _smoothedLean carries
-      // TUNE.mobileTiltGain (0.25), so it never reaches 0.3 and the offset
+      // TUNE.motionGain (0.3 on Chill), so it barely reaches 0.3 and the offset
       // chased every held tilt — washing out turns and leaving the centre
       // off by 10°+ afterwards (the tutorial's "back to center" timed out).
       if (Math.abs(this.motionLeanVisual) < 0.3) {
@@ -923,9 +965,10 @@ export class InputManager {
       }
     }
 
-    // Phone tilt gain (TUNE.mobileTiltGain): the same tilt steers this fraction
-    // as much. Controller gyro keeps its own tuning.
-    if (!isGyro) lean *= (TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1);
+    // Motion gain (#522, TUNE.motionGain, set per difficulty): the same tilt or
+    // roll steers this fraction as much, on phone tilt and controller gyro alike.
+    const gain = Number.isFinite(TUNE.motionGain) ? TUNE.motionGain : 1;
+    lean *= gain;
 
     // Velocity-dependent sensitivity: scale down lean at high speed for stability
     const speedFrac = Math.min(this.bikeSpeed / this.bikeMaxSpeed, 1.0);
@@ -934,7 +977,12 @@ export class InputManager {
 
     // Asymmetric smoothing: less smoothing when initiating a turn (responsive),
     // more smoothing when returning to center (stable)
-    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > 0.05;
+    // #522: the "starting a turn" threshold scales with the gain, so the
+    // ungained (visual) lean and the drift gate it feeds come out the same at
+    // any difficulty. 0.2 (phone) and 0.05 (gyro) of an UNGAINED lean are the
+    // thresholds each had before (0.05 of a lean at the old gains 0.25 and 1).
+    const startAt = (isGyro ? 0.05 : 0.2) * gain;
+    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > startAt;
     const baseSmooth = initiating ? Math.min(outputSmoothing * 1.6, 0.9) : outputSmoothing * 0.7;
     this._prevLeanRaw = lean;
 
@@ -949,7 +997,6 @@ export class InputManager {
     this.motionLean = this._smoothedLean;
     // Every step after the gain (velocity scale, EMA) is linear, so dividing it
     // back out gives exactly the lean the ungained tilt would have produced.
-    const gain = !isGyro && TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1;
     this.motionLeanVisual = gain > 0 ? Math.max(-1, Math.min(1, this._smoothedLean / gain)) : this._smoothedLean;
   }
 
@@ -1398,7 +1445,7 @@ export class InputManager {
   }
 
   /**
-   * The same lean without TUNE.mobileTiltGain: what the player is physically
+   * The same lean without TUNE.motionGain: what the player is physically
    * doing. The riders' body lean shows this, so a gentler steering gain
    * doesn't make the geese look stiff. Physics uses getMotionLean().
    */

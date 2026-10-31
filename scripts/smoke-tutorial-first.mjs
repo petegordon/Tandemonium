@@ -124,7 +124,7 @@ console.log('after NEXT:', JSON.stringify(next));
 await finisher.browserContext().close();
 
 // 5. B1 (PR #397 review): a PHONE player passes the tilt calibration by tilting.
-// Phone tilt steers at TUNE.mobileTiltGain (0.25), so the gained lean can never
+// Phone tilt steers at TUNE.motionGain (0.3 in the tutorial, #522), so the gained lean can never
 // pass the ±0.25 targets; the calibration reads the ungained lean instead. A
 // stand-in player feeds real deviceorientation events into the same
 // InputManager path a phone uses, tilting whichever way the card asks, and

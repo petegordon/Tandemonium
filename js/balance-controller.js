@@ -88,7 +88,7 @@ export class BalanceController {
     let leanInput = 0;
     if (this.input.isPressed('KeyA')) { leanInput -= 1; this.steerFrames.keyboard++; }
     if (this.input.isPressed('KeyD')) { leanInput += 1; this.steerFrames.keyboard++; }
-    // visualLean: the same sum, but with phone tilt before TUNE.mobileTiltGain —
+    // visualLean: the same sum, but with tilt/gyro before TUNE.motionGain (#522) —
     // for the riders' body lean only (the look), never the physics.
     let visualLean = leanInput;
     const motion = this.input.getMotionLean();

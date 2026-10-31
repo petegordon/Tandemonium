@@ -1,4 +1,4 @@
-// B1 (PR #397 review): phone tilt steers at TUNE.mobileTiltGain (0.25), so the
+// B1 (PR #397 review): phone tilt steered at TUNE.mobileTiltGain (0.25; now TUNE.motionGain, #522), so the
 // gained lean tops out at 0.25. The tutorial's tilt calibration waits for a
 // lean strictly past ±0.25, and the drift tracker only paused at |lean| ≥ 0.3,
 // so on a phone the calibration could never pass and every held tilt was
@@ -31,11 +31,11 @@ function hold(im, deg, n) {
 }
 
 test('a full phone tilt passes the ±0.25 calibration targets on the ungained lean', () => {
-  assert.equal(TUNE.mobileTiltGain, 0.25);
+  assert.ok(TUNE.motionGain <= 0.3 && TUNE.mobileTiltGain === TUNE.motionGain, "the old name aliases the shared gain");
   const im = phone();
   hold(im, 0, 30);
   hold(im, -40, 60);
-  assert.ok(im.getMotionLean() >= -0.25 - 1e-9, 'the gained lean can never pass -0.25 — why B1 happened');
+  assert.ok(im.getMotionLean() >= -TUNE.motionGain - 1e-9, 'the gained lean tops out at the gain — why B1 happened');
   assert.ok(im.getMotionLeanVisual() < -0.25, `visual ${im.getMotionLeanVisual()}`);
   hold(im, 40, 120);
   assert.ok(im.getMotionLeanVisual() > 0.25);
