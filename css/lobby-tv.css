@@ -56,7 +56,8 @@ uf-system-bar#lobby-bar { display: none; }
     justify-self: stretch !important; align-self: center !important; border-radius: var(--uf-radius-lg);
   }
   #lobby #bike-preview-wrap { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; }
-  #lobby #bike-preview-canvas { width: 100% !important; height: min(470px, 48vh) !important; }
+  /* #521: taller (it can't get wider); js/lobby/preview-fit.js keeps the whole bike in view. */
+  #lobby #bike-preview-canvas { width: 100% !important; height: 60vh !important; }
   #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 2.4) !important; font-size: var(--uf-size-2xl) !important; }
   #lobby #bike-name { font-size: var(--uf-size-2xl) !important; line-height: 1.2 !important; top: calc(var(--uf-size-2xl) * -1.7) !important; }
   #lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }
@@ -250,3 +251,56 @@ uf-button[size="pill"] > img.bar-avatar {
 body:has(#options-overlay.visible) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
 /* #517 · Help and the Leaderboard own the pad while open: hide the step's highlight under the scrim. */
 body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
+
+/* ── #523 · Settings (the Options overlay) readable from the couch ──
+   The card kept the phone's pixel sizes (11–14px text, 400px wide, one button
+   per line). On a desktop/TV it sits on the kit's text sizes, each choice is
+   one segmented row, and the sections (.opt-section) run in two columns when
+   the card is wide enough. It is a modal, so it takes the whole screen (over
+   the art panel too): two columns of four-button rows need the width.
+   Columns are grid tracks, so the sections side by side start at the same
+   height and the row-first pad navigation (js/row-focus.js) keeps ↓ in its
+   column and ←/→ along a row. The phone layout is unchanged. */
+@media (min-width: 1024px) {
+  #options-overlay .options-card {
+    --gutter: clamp(24px, 2.5vw, 64px);
+    box-sizing: border-box; min-width: 0; max-width: none;
+    width: min(calc(100vw - 2 * var(--gutter)), 1800px);
+    max-height: calc(100vh - 2 * var(--gutter)); max-height: calc(100dvh - 2 * var(--gutter));
+    padding: var(--uf-space-6) var(--uf-space-7); border-radius: var(--uf-radius-lg);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(18em, 34%)), 1fr));   /* two at most */
+    column-gap: var(--uf-space-7); row-gap: var(--uf-space-5); align-items: start;
+    font-size: var(--uf-size-md); text-align: left;
+  }
+  #options-overlay .options-card > h2, #options-overlay .opt-wide { grid-column: 1 / -1; }
+  #options-overlay .options-card > h2 { margin: 0; font: 800 var(--uf-size-2xl)/1.2 var(--uf-font-ui); color: var(--uf-color-fg); text-align: center; }
+  /* A section with nothing shown (Explore without a Maps key) takes no cell. */
+  #options-overlay .opt-section:not(.opt-heading):not(:has(button:not([style*="display:none"]):not([style*="display: none"]))) { display: none; }
+  #options-overlay .opt-section { display: grid; gap: var(--uf-space-2); min-width: 0; }
+  #options-overlay .opt-heading { padding-top: var(--uf-space-4); border-top: 1px solid var(--uf-color-line-soft); }
+  #options-overlay .options-card .label {
+    margin: 0; font: 700 var(--uf-size-md)/1.25 var(--uf-font-ui); letter-spacing: .06em; color: var(--uf-color-fg);
+  }
+  #options-overlay .options-row { flex-direction: row; flex-wrap: nowrap; align-items: stretch; gap: var(--uf-space-3); margin: 0; }
+  #options-overlay .opt-btn {
+    /* equal shares, but never narrower than the longest word: wrap between words, never inside one */
+    flex: 1 1 0; min-width: min-content; width: auto; padding: .45em .5em;
+    font: 700 var(--uf-size-lg)/1.2 var(--uf-font-ui); border-width: 2px; border-radius: var(--uf-radius-md);
+  }
+  #options-overlay .options-row:has(> .opt-btn:only-child) .opt-btn { flex: 0 1 auto; padding-inline: 1.2em; }
+  #options-overlay .options-note { margin: 0; font-size: var(--uf-size-sm); line-height: 1.35; color: rgba(255, 255, 255, .72); }   /* was 30% white */
+  #options-overlay .options-note:empty { display: none; }
+  #options-overlay #options-tourist-btn { justify-self: start; padding: .45em 1.2em; font: 700 var(--uf-size-lg)/1.2 var(--uf-font-ui); }
+  /* Tools row: perf test, tools, dev tools and Close on one line at the bottom. */
+  #options-overlay .opt-tools {
+    display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: var(--uf-space-3);
+    padding-top: var(--uf-space-4); border-top: 1px solid var(--uf-color-line-soft);
+  }
+  #options-overlay #options-perf-btn, #options-overlay #options-devtools-btn, #options-overlay #options-browserdev-btn, #options-overlay #options-close-btn {
+    min-width: 8em; margin: 0; padding: .45em 1.2em; font: 700 var(--uf-size-md)/1.2 var(--uf-font-ui); border-width: 2px; border-radius: var(--uf-radius-md);
+  }
+  #options-overlay #options-close-btn { font-size: var(--uf-size-lg); color: var(--uf-color-fg); }
+  #options-overlay #options-perf-result, #options-overlay #options-browserdev-hint { flex-basis: 100%; min-height: 0; margin: 0; text-align: center; font-size: var(--uf-size-sm); }
+  #options-overlay #options-perf-result:empty, #options-overlay #options-browserdev-hint:empty { display: none; }
+  #options-overlay .gamepad-focus { outline: 3px solid var(--uf-color-fg) !important; outline-offset: 3px; }
+}

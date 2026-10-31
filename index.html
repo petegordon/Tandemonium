@@ -5806,7 +5806,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.61a1d28 | 10-31-2026 18:57</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d7f882c | 10-31-2026 18:59</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6246,105 +6246,140 @@ ON</button>
 <!-- Options overlay (Start button) -->
 <div id="options-overlay">
   <div class="options-card">
-    <h2>Options</h2>
-    <div class="label">Graphics Quality</div>
-    <div class="options-row">
-      <button class="opt-btn" id="opt-high">High</button>
-      <button class="opt-btn" id="opt-medium">Medium</button>
-      <button class="opt-btn" id="opt-low">Low</button>
-      <button class="opt-btn" id="opt-auto">Auto</button>
+    <h2>Settings</h2>
+    <!-- #523: each label + row + note is one .opt-section, so the TV layout
+         (css/lobby-tv.css) lays the sections out in two aligned columns. -->
+    <div class="opt-section">
+      <div class="label">Graphics Quality</div>
+      <div class="options-row">
+        <button class="opt-btn" id="opt-high">High</button>
+        <button class="opt-btn" id="opt-medium">Medium</button>
+        <button class="opt-btn" id="opt-low">Low</button>
+        <button class="opt-btn" id="opt-auto">Auto</button>
+      </div>
+      <div class="options-note" id="opt-quality-note">Some changes take effect on next restart</div>
     </div>
-    <div class="options-note" id="opt-quality-note">Some changes take effect on next restart</div>
-    <div class="label" id="opt-ds-label">DualSense Input Source</div>
-    <div class="options-row" id="opt-ds-row">
-      <button class="opt-btn" id="opt-ds-auto">Auto</button>
-      <button class="opt-btn" id="opt-ds-steam">Steam Input</button>
-      <button class="opt-btn" id="opt-ds-webhid">WebHID</button>
+    <div class="opt-section">
+      <div class="label" id="opt-ds-label">DualSense Input Source</div>
+      <div class="options-row" id="opt-ds-row">
+        <button class="opt-btn" id="opt-ds-auto">Auto</button>
+        <button class="opt-btn" id="opt-ds-steam">Steam Input</button>
+        <button class="opt-btn" id="opt-ds-webhid">WebHID</button>
+      </div>
+      <div class="options-note" id="opt-ds-state">Applied on next launch</div>
     </div>
-    <div class="options-note" id="opt-ds-state">Applied on next launch</div>
-    <div class="label" id="opt-gyro-label">Gyro Steering</div>
-    <div class="options-row" id="opt-gyro-row">
-      <button class="opt-btn" id="opt-gyro-euler">Smoothed</button>
-      <button class="opt-btn" id="opt-gyro-gravity">Gravity</button>
+    <div class="opt-section">
+      <div class="label" id="opt-gyro-label">Gyro Steering</div>
+      <div class="options-row" id="opt-gyro-row">
+        <button class="opt-btn" id="opt-gyro-euler">Smoothed</button>
+        <button class="opt-btn" id="opt-gyro-gravity">Gravity</button>
+      </div>
+      <div class="options-note">Controller gyro only — applies immediately</div>
     </div>
-    <div class="options-note">Controller gyro only — applies immediately</div>
-    <div class="label" id="opt-riders-label">Show Riders</div>
-    <div class="options-row" id="opt-riders-row">
-      <button class="opt-btn" id="opt-riders-on">On</button>
-      <button class="opt-btn" id="opt-riders-off">Off</button>
+    <div class="opt-section">
+      <div class="label" id="opt-riders-label">Show Riders</div>
+      <div class="options-row" id="opt-riders-row">
+        <button class="opt-btn" id="opt-riders-on">On</button>
+        <button class="opt-btn" id="opt-riders-off">Off</button>
+      </div>
+      <div class="options-note">Canadian-goose riders + front camera — applies immediately</div>
     </div>
-    <div class="options-note">Canadian-goose riders + front camera — applies immediately</div>
-    <div class="label" id="opt-solo-label">Show Solo</div>
-    <div class="options-row" id="opt-solo-row">
-      <button class="opt-btn" id="opt-solo-on">On</button>
-      <button class="opt-btn" id="opt-solo-off">Off</button>
+    <div class="opt-section">
+      <div class="label" id="opt-solo-label">Show Solo</div>
+      <div class="options-row" id="opt-solo-row">
+        <button class="opt-btn" id="opt-solo-on">On</button>
+        <button class="opt-btn" id="opt-solo-off">Off</button>
+      </div>
+      <div class="options-note">Solo rides show one goose (the captain) — applies immediately</div>
     </div>
-    <div class="options-note">Solo rides show one goose (the captain) — applies immediately</div>
-    <div class="label" id="opt-outfit-label">Goose Outfits</div>
-    <div class="options-row" id="opt-outfit-row">
-      <button class="opt-btn" id="opt-outfit-victorian">Victorian</button>
-      <button class="opt-btn" id="opt-outfit-cyclists">Cyclists</button>
-      <button class="opt-btn" id="opt-outfit-fancy">Fancy</button>
-      <button class="opt-btn" id="opt-outfit-georgian">Georgian</button>
+    <div class="opt-section">
+      <div class="label" id="opt-outfit-label">Goose Outfits</div>
+      <div class="options-row" id="opt-outfit-row">
+        <button class="opt-btn" id="opt-outfit-victorian">Victorian</button>
+        <button class="opt-btn" id="opt-outfit-cyclists">Cyclists</button>
+        <button class="opt-btn" id="opt-outfit-fancy">Fancy</button>
+        <button class="opt-btn" id="opt-outfit-georgian">Georgian</button>
+      </div>
+      <div class="options-note">Which pair of geese rides the tandem — applies immediately</div>
     </div>
-    <div class="options-note">Which pair of geese rides the tandem — applies immediately</div>
-    <div class="label" id="opt-colour-label">Goose Colours</div>
-    <div class="options-row" id="opt-colour-row">
-      <button class="opt-btn" id="opt-colour-0">Original</button>
-      <button class="opt-btn" id="opt-colour-1">-</button>
-      <button class="opt-btn" id="opt-colour-2">-</button>
-      <button class="opt-btn" id="opt-colour-3">-</button>
+    <div class="opt-section">
+      <div class="label" id="opt-colour-label">Goose Colours</div>
+      <div class="options-row" id="opt-colour-row">
+        <button class="opt-btn" id="opt-colour-0">Original</button>
+        <button class="opt-btn" id="opt-colour-1">-</button>
+        <button class="opt-btn" id="opt-colour-2">-</button>
+        <button class="opt-btn" id="opt-colour-3">-</button>
+      </div>
+      <div class="options-note">Colour changes for the chosen pair (saved per pair) — applies immediately</div>
     </div>
-    <div class="options-note">Colour changes for the chosen pair (saved per pair) — applies immediately</div>
-    <div class="label" id="opt-fps-label">FPS Display</div>
-    <div class="options-row" id="opt-fps-row">
-      <button class="opt-btn" id="opt-fps-on">On</button>
-      <button class="opt-btn" id="opt-fps-off">Off</button>
+    <div class="opt-section">
+      <div class="label" id="opt-fps-label">FPS Display</div>
+      <div class="options-row" id="opt-fps-row">
+        <button class="opt-btn" id="opt-fps-on">On</button>
+        <button class="opt-btn" id="opt-fps-off">Off</button>
+      </div>
+      <div class="options-note">Frame-rate readout, all modes — applies immediately</div>
     </div>
-    <div class="options-note">Frame-rate readout, all modes — applies immediately</div>
     <!-- E-5 · the front door to Tourist Mode. Hidden unless a Maps key is
          present; see _initOptionsOverlay. -->
-    <div class="label" id="opt-tourist-label" style="display:none;">Explore (beta)</div>
-    <button id="options-tourist-btn" style="display:none;">&#128205; Ride real terrain</button>
-    <div class="options-note" id="opt-tourist-note" style="display:none;">Streams Google Photorealistic 3D Tiles &mdash; needs a connection</div>
-    <div class="label" id="opt-physics-label">Crash Physics</div>
-    <div class="options-row" id="opt-physics-row">
-      <button class="opt-btn" id="opt-physics-on">On</button>
-      <button class="opt-btn" id="opt-physics-off">Off</button>
+    <div class="opt-section">
+      <div class="label" id="opt-tourist-label" style="display:none;">Explore (beta)</div>
+      <button id="options-tourist-btn" style="display:none;">&#128205; Ride real terrain</button>
+      <div class="options-note" id="opt-tourist-note" style="display:none;">Streams Google Photorealistic 3D Tiles &mdash; needs a connection</div>
     </div>
-    <div class="options-note">Tumbling crashes, knocked pylons, goose strikes — next ride</div>
+    <div class="opt-section">
+      <div class="label" id="opt-physics-label">Crash Physics</div>
+      <div class="options-row" id="opt-physics-row">
+        <button class="opt-btn" id="opt-physics-on">On</button>
+        <button class="opt-btn" id="opt-physics-off">Off</button>
+      </div>
+      <div class="options-note">Tumbling crashes, knocked pylons, goose strikes — next ride</div>
+    </div>
     <!-- Display testing: overrides on top of Graphics Quality, for tuning a
          weak screen like a TV. Same as ?lines= / ?aa= / ?debug=perf. -->
-    <div class="label" id="opt-dtest-label">Display Testing &mdash; overrides</div>
-    <div class="options-note">Overrides on top of Graphics Quality, for testing a TV or slow screen. The page reloads to apply.</div>
-    <div class="label">Render lines</div>
-    <div class="options-row" id="opt-lines-row">
-      <button class="opt-btn" id="opt-lines-0">Quality default</button>
-      <button class="opt-btn" id="opt-lines-540">540 lines</button>
-      <button class="opt-btn" id="opt-lines-720">720 lines</button>
-      <button class="opt-btn" id="opt-lines-1080">1080 lines</button>
+    <div class="opt-section opt-heading opt-wide">
+      <div class="label" id="opt-dtest-label">Display Testing &mdash; overrides</div>
+      <div class="options-note">Overrides on top of Graphics Quality, for testing a TV or slow screen. The page reloads to apply.</div>
     </div>
-    <div class="label">Edge smoothing</div>
-    <div class="options-row" id="opt-aa-row">
-      <button class="opt-btn" id="opt-aa-tier">Quality default</button>
-      <button class="opt-btn" id="opt-aa-on">On</button>
-      <button class="opt-btn" id="opt-aa-off">Off</button>
+    <div class="opt-section">
+      <div class="label">Render lines</div>
+      <div class="options-row" id="opt-lines-row">
+        <button class="opt-btn" id="opt-lines-0">Quality default</button>
+        <button class="opt-btn" id="opt-lines-540">540 lines</button>
+        <button class="opt-btn" id="opt-lines-720">720 lines</button>
+        <button class="opt-btn" id="opt-lines-1080">1080 lines</button>
+      </div>
     </div>
-    <div class="label">Perf readout</div>
-    <div class="options-row" id="opt-perfhud-row">
-      <button class="opt-btn" id="opt-perfhud-on">On</button>
-      <button class="opt-btn" id="opt-perfhud-off">Off</button>
+    <div class="opt-section">
+      <div class="label">Edge smoothing</div>
+      <div class="options-row" id="opt-aa-row">
+        <button class="opt-btn" id="opt-aa-tier">Quality default</button>
+        <button class="opt-btn" id="opt-aa-on">On</button>
+        <button class="opt-btn" id="opt-aa-off">Off</button>
+      </div>
     </div>
-    <div class="options-row">
-      <button class="opt-btn" id="opt-dtest-reset">Reset to quality defaults</button>
+    <div class="opt-section">
+      <div class="label">Perf readout</div>
+      <div class="options-row" id="opt-perfhud-row">
+        <button class="opt-btn" id="opt-perfhud-on">On</button>
+        <button class="opt-btn" id="opt-perfhud-off">Off</button>
+      </div>
     </div>
-    <div class="options-note" id="opt-dtest-note"></div>
-    <button id="options-perf-btn">Run Perf Test</button>
-    <div id="options-perf-result"></div>
-    <button id="options-devtools-btn">Tools</button>
-    <button id="options-browserdev-btn">Open Dev Tools</button>
-    <div id="options-browserdev-hint"></div>
-    <button id="options-close-btn">Close</button>
+    <div class="opt-section">
+      <div class="label">Reset overrides</div>
+      <div class="options-row">
+        <button class="opt-btn" id="opt-dtest-reset">Reset to quality defaults</button>
+      </div>
+      <div class="options-note" id="opt-dtest-note"></div>
+    </div>
+    <div class="opt-section opt-tools opt-wide">
+      <button id="options-perf-btn">Run Perf Test</button>
+      <div id="options-perf-result"></div>
+      <button id="options-devtools-btn">Tools</button>
+      <button id="options-browserdev-btn">Open Dev Tools</button>
+      <div id="options-browserdev-hint"></div>
+      <button id="options-close-btn">Close</button>
+    </div>
   </div>
 </div>
 

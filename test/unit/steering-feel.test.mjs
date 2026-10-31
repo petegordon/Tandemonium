@@ -54,8 +54,8 @@ test('defaults are the #399 values the config comments state', () => {
   assert.equal(BALANCE_DEFAULTS.gyroOutputSmoothing, 0.4,
     'EMA weight: lower = more smoothing');
   assert.equal(BALANCE_DEFAULTS.steeringFeel, 0.3);
-  // unchanged on purpose
-  assert.equal(BALANCE_DEFAULTS.mobileTiltGain, 0.25);
+  // unchanged on purpose (motionGain replaced the phone-only mobileTiltGain in #522)
+  assert.equal(BALANCE_DEFAULTS.motionGain, 0.3);
   assert.equal(BALANCE_DEFAULTS.gyroDeadzone, 4);
 });
 
