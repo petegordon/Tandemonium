@@ -265,6 +265,9 @@ try {
   await focusAndPick(/btn-solo/i, 'SOLO RIDE');
   // The level step opens on START RIDE with the default level (Grandma's) selected.
   check(await game.evaluate(() => window._game.lobby.selectedLevel?.id) === 'grandma', "Grandma's is the selected level");
+  // #531 · as if the phone was held at a slant while it paired: a bad centre
+  // (20°) with the phone now level. The ride's countdown takes it again.
+  await game.evaluate(() => { window._game.input.motionOffset = 20; });
   await focusAndPick(/start ride/i, 'START RIDE');
   await game.waitForFunction(() => window._game?.state !== 'lobby', { timeout: 15000 }).catch(() => {});
   const st = await game.evaluate(() => window._game.state);
@@ -276,6 +279,9 @@ try {
   catch { playing = false; }
   check(playing, "SOLO Grandma's ride starts, driven from the phone", await game.evaluate(() => window._game?.state));
   if (playing) {
+    const centre = await game.waitForFunction(() => { const i = window._game.input; return !i._calibrating && Math.abs(i.motionOffset) <= 4 ? i.motionOffset : false; }, { timeout: 10000 })
+      .then((h) => h.jsonValue()).catch(async () => game.evaluate(() => ({ offset: window._game.input.motionOffset, calibrating: window._game.input._calibrating })));
+    check(typeof centre === 'number', '#531 the ride re-centres the phone where it is held (a slanted centre from pairing is dropped)', JSON.stringify(centre));
     await sleep(400);
     check(await phoneLayoutFixed() && await hostMode() === 'ride', 'riding: same phone layout; the game reads it as pedals');
     check(await game.evaluate(() => !window._game.input.gamepadConnected), 'riding: the phone is not a pad (ride hints unchanged)');
