@@ -95,6 +95,15 @@ await pads.press(0, 'A', 160);
 check(await until(() => document.getElementById('volume-picker').classList.contains('visible')), 'LY-08 A on Music opens the volume picker');
 const pickerFocus = await until(() => document.querySelector('#volume-picker .vol-btn.gamepad-focus')?.dataset.vol || null);
 check(pickerFocus !== null, 'LY-08 the pad focus moves into the picker', pickerFocus);
+const volSizes = await page.evaluate(() => {
+  const probe = document.createElement('div'); probe.style.fontSize = 'var(--uf-size-md)'; document.body.appendChild(probe);
+  const md = parseFloat(getComputedStyle(probe).fontSize); probe.remove();
+  const btns = [...document.querySelectorAll('#volume-picker .vol-btn')].map((b) => { const r = b.getBoundingClientRect(); return { fs: parseFloat(getComputedStyle(b).fontSize), h: Math.round(r.height), top: r.top, bottom: r.bottom }; });
+  return { md, btns, onScreen: btns.every((b) => b.top >= 0 && b.bottom <= innerHeight) };
+});
+check(volSizes.btns.length === 4 && volSizes.btns.every((b) => b.fs > volSizes.md && b.h >= 2 * volSizes.md) && volSizes.onScreen,
+  'LY-08 the music levels are TV-sized (text above --uf-size-md) and on screen', volSizes);
+await h.shot(page, 'ly08-music-picker');
 await press('UP');
 const upVol = await page.evaluate(() => document.querySelector('#volume-picker .vol-btn.gamepad-focus')?.dataset.vol);
 check(upVol && upVol !== pickerFocus, 'LY-08 ↑ moves along the picker', `${pickerFocus} → ${upVol}`);

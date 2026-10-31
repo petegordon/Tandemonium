@@ -143,6 +143,16 @@ uf-system-bar#lobby-bar { display: none; }
   body > #profile-popup.bar-popup .profile-popup-email { font-size: var(--uf-size-xs) !important; }
   body > #profile-popup.bar-popup button { display: block; width: 100%; box-sizing: border-box; font-size: var(--uf-size-sm) !important; padding: .6em 1em !important; margin: var(--uf-space-2) 0 0 !important; border-radius: var(--uf-radius-md) !important; }
   body > #profile-popup.bar-popup #profile-popup-signin { padding: 0 !important; }
+  /* Music levels (HIGH / MED / LOW / MUTE): readable from the couch. The phone
+     sizes (38×28 buttons, 8px text) were unreadable on a TV. */
+  body > #volume-picker.bar-popup { align-items: stretch; gap: var(--uf-space-2); padding: var(--uf-space-3); border-radius: var(--uf-radius-lg); }
+  body > #volume-picker.bar-popup .vol-btn {
+    width: auto; min-width: 6.5em; height: auto; padding: .5em 1em;
+    font: 800 var(--uf-size-lg)/1.2 var(--uf-font-ui); letter-spacing: .04em;
+    color: var(--uf-color-fg); border-width: 2px; border-radius: var(--uf-radius-md);
+  }
+  body > #volume-picker.bar-popup .vol-btn.active { color: var(--uf-color-accent); }
+  body > #volume-picker.bar-popup .vol-btn[data-vol="0"]::after { content: "\00a0MUTE"; }
 }
 #help-modal .help-credits { align-items: center; gap: var(--uf-space-3); flex-wrap: wrap; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); }
 #help-modal .help-credits button { background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
