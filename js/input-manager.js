@@ -866,14 +866,17 @@ export class InputManager {
       // neutral estimate (the bug that made it fuse fast on sharp turns). The
       // floor is why a one-sided pull can always recover (#365) — see
       // driftTaper() for the positive-feedback loop it breaks.
-      const taper = driftTaper(Math.abs(this._smoothedLean));
+      // #522: taper on the UNGAINED lean. _smoothedLean now carries
+      // TUNE.motionGain (0.3 on Chill), so a full held turn would read as a
+      // small lean and the drift tracker would chase it (the phone's B1 bug).
+      const taper = driftTaper(Math.abs(this.motionLeanVisual));
       this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
       this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
     } else {
       // Mobile tilt (gravity-absolute): original always-on EMA + hard 0.3 gate.
       this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
       // Gate on the UNGAINED lean (B1, PR #397 review): _smoothedLean carries
-      // TUNE.mobileTiltGain (0.25), so it never reaches 0.3 and the offset
+      // TUNE.motionGain (0.3 on Chill), so it barely reaches 0.3 and the offset
       // chased every held tilt — washing out turns and leaving the centre
       // off by 10°+ afterwards (the tutorial's "back to center" timed out).
       if (Math.abs(this.motionLeanVisual) < 0.3) {
@@ -923,9 +926,10 @@ export class InputManager {
       }
     }
 
-    // Phone tilt gain (TUNE.mobileTiltGain): the same tilt steers this fraction
-    // as much. Controller gyro keeps its own tuning.
-    if (!isGyro) lean *= (TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1);
+    // Motion gain (#522, TUNE.motionGain, set per difficulty): the same tilt or
+    // roll steers this fraction as much, on phone tilt and controller gyro alike.
+    const gain = Number.isFinite(TUNE.motionGain) ? TUNE.motionGain : 1;
+    lean *= gain;
 
     // Velocity-dependent sensitivity: scale down lean at high speed for stability
     const speedFrac = Math.min(this.bikeSpeed / this.bikeMaxSpeed, 1.0);
@@ -934,7 +938,12 @@ export class InputManager {
 
     // Asymmetric smoothing: less smoothing when initiating a turn (responsive),
     // more smoothing when returning to center (stable)
-    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > 0.05;
+    // #522: the "starting a turn" threshold scales with the gain, so the
+    // ungained (visual) lean and the drift gate it feeds come out the same at
+    // any difficulty. 0.2 (phone) and 0.05 (gyro) of an UNGAINED lean are the
+    // thresholds each had before (0.05 of a lean at the old gains 0.25 and 1).
+    const startAt = (isGyro ? 0.05 : 0.2) * gain;
+    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > startAt;
     const baseSmooth = initiating ? Math.min(outputSmoothing * 1.6, 0.9) : outputSmoothing * 0.7;
     this._prevLeanRaw = lean;
 
@@ -949,7 +958,6 @@ export class InputManager {
     this.motionLean = this._smoothedLean;
     // Every step after the gain (velocity scale, EMA) is linear, so dividing it
     // back out gives exactly the lean the ungained tilt would have produced.
-    const gain = !isGyro && TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1;
     this.motionLeanVisual = gain > 0 ? Math.max(-1, Math.min(1, this._smoothedLean / gain)) : this._smoothedLean;
   }
 
@@ -1398,7 +1406,7 @@ export class InputManager {
   }
 
   /**
-   * The same lean without TUNE.mobileTiltGain: what the player is physically
+   * The same lean without TUNE.motionGain: what the player is physically
    * doing. The riders' body lean shows this, so a gentler steering gain
    * doesn't make the geese look stiff. Physics uses getMotionLean().
    */

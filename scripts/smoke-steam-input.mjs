@@ -7,7 +7,8 @@
 //          the seat is connected through Steam, gyro lean is read from Steam's
 //          motion data (source 'steam') and follows the tilt both ways, the bound
 //          Steer action takes over when Steam sends no motion, Steam's pedal
-//          actions pedal the bike, and Options says Steam Input has the DualSense
+//          actions pedal the bike, Options says Steam Input has the DualSense, and
+//          on Chill a 10° roll asks for under 0.1 lean (the shared motion gain, #522)
 //   IN-13  Options → DualSense source: Auto / Steam Input / WebHID save the choice
 //          and light the button; the note says it applies on the next launch, and
 //          a relaunch with each choice routes the DualSense accordingly
@@ -124,6 +125,26 @@ console.log('IN-12 gyro from Steam');
   await steam.tilt(H, 0);
   const level = await leanUntil(page, (v) => Math.abs(v) < Math.abs(left) / 2, slow ? 4000 : 30000);
   leanCheck(Math.abs(level) < Math.abs(left) / 2, 'IN-12 level again: lean heads back to centre', { level: +level.toFixed(3), from: +left.toFixed(3) });
+  // #522 · on Chill a gentle 10° roll steers gently: controller gyro now carries
+  // the same per-difficulty motion gain as phone tilt (0.3 on Chill). Wait until
+  // the fusion reads the roll (two steady reads), then compare.
+  await steam.tilt(H, 10);
+  const gentle = await (async () => {
+    const t0 = Date.now(); let prev = null, cur = null;
+    while (Date.now() - t0 < (slow ? 15000 : 30000)) {
+      cur = await page.evaluate(() => {
+        const i = window._game.input;
+        return { diff: window._game.lobby.selectedDifficulty, rel: i.motionRawRelative, lean: i.motionLean || 0, visual: i.getMotionLeanVisual() };
+      });
+      if (prev && Math.abs(Math.abs(cur.rel) - 10) < 5 && Math.abs(cur.visual - prev.visual) < 0.005) return cur;
+      prev = cur; await sleep(300);
+    }
+    return cur;
+  })();
+  check(gentle.diff === 'chill' && Math.abs(gentle.rel) > 7 && Math.abs(gentle.lean) < 0.1 && Math.abs(gentle.lean) <= Math.abs(gentle.visual) * 0.3 + 1e-6,
+    'IN-12 on Chill a 10° roll asks for under 0.1 lean (the motion gain applies to Steam gyro, #522)', gentle);
+  await steam.tilt(H, 0);
+  await leanUntil(page, (v) => Math.abs(v) < 0.02, slow ? 4000 : 30000);
   // Steam's pedal actions pedal the bike.
   // Count the pedal controller's strokes (its tapEvents array is cleared in
   // place, so wrapping push on it sees every stroke).
