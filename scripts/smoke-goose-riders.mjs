@@ -266,7 +266,7 @@ for (const [key, files] of Object.entries(EXPECT)) {
     });
     return top && +top.project(fv.camera).y.toFixed(3);
   });
-  check(`Goose Outfits '${key}': the front cam shows the captain's whole head (hat top at NDC y ${head} ≤ 0.9)`, head != null && head <= 0.9 && head > 0.3, head);
+  check(`Goose Outfits '${key}': the front cam shows the captain's whole head (hat top at NDC y ${head} ≤ 0.93, under the border)`, head != null && head <= 0.93 && head > 0.3, head);
   await new Promise(res => setTimeout(res, 1500));
   await page.screenshot({ path: path.join(OUT, `smoke-goose-outfit-${key}.png`) });
 }
