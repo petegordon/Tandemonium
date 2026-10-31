@@ -227,3 +227,16 @@ uf-system-bar#lobby-bar { display: none; }
   body #phone-pad-panel #btn-ppp-done { min-width: 8em; font-size: var(--uf-size-lg); }
 }
 
+
+/* #517 · the Profile pill shows the signed-in player's picture (Steam or Google)
+   in the icon's place, a little larger than an icon so a face reads. */
+uf-button[size="pill"] > img.bar-avatar {
+  width: 1.5em; height: 1.5em; flex: none; margin: -0.2em 0;
+  border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1.5px currentColor;
+}
+
+/* #517 · Settings (the Options overlay) owns the pad while it is open: the
+   lobby's highlight under it would look like a second focus. */
+body:has(#options-overlay.visible) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
+/* #517 · Help and the Leaderboard own the pad while open: hide the step's highlight under the scrim. */
+body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }

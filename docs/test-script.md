@@ -176,6 +176,8 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-16 | Button prompts follow P1's pad (Xbox / PlayStation / Switch / Steam): lobby glyphs, coach card, stopped-bike hint | A | `smoke:input`, `test/unit/controller-labels` |
 | IN-17 | Unplug the only pad mid-ride: "Your controller disconnected" pause; replug resumes | A | `smoke:disconnect` |
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
+| IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only` |
+| IN-19h | IN-19 in the real Steam client with two Steam Controllers on one Puck | M | — |
 
 ## 5. Multi-controller (local co-op and versus)
 
@@ -300,6 +302,14 @@ Two devices on different networks for the M rows.
 | LY-03 | TV at 3 m: all text readable, focus ring obvious | M | — |
 | LY-04 | Phone portrait and landscape: HUD clear of notches and home bar | M | — |
 | LY-05 | A non-gamer can start a ride without help (playtest protocol) | M | `docs/playtests/2026-11-protocol.md` |
+| LY-06 | Level step with a pad: ↓ from Chill Ride → START RIDE; ↓ from the far-left / far-right card → the difficulty row, not the system bar (#517) | A | `smoke:tv-nav` |
+| LY-07 | Slingshot card selects like a level; START RIDE opens its garage (#517) | A | `smoke:tv-nav` |
+| LY-08 | Music pill with a pad: the volume picker is navigable, A picks, B closes (#517) | A | `smoke:tv-nav` |
+| LY-09 | Settings with a pad: starts at the top, walks shown options only, stays on screen, right stick scrolls (#517) | A | `smoke:tv-nav` |
+| LY-10 | Leaderboard is the same sheet as Help (Close, B, Esc, scrim); category headings readable; Quit is the bar's last pill (#517) | A | `smoke:tv-nav` |
+| LY-11 | First Grandma's finish at 1080p: every unlock shows; ← / → walk the result buttons (#517) | A | `smoke:tv-nav` |
+| LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
+| LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
 
 ## 12. Data and backend
 

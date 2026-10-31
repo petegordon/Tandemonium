@@ -90,12 +90,38 @@ console.log("Grandma's");
     let along = r.marker.roadD - dest.roadD; if (along > L / 2) along -= L; if (along < -L / 2) along += L;
     return { mode: r.mode, along: +along.toFixed(2), clip: w._grandmaFinish.grandma.clip };
   });
+  // #517 · record where she stands every frame from here on, to check she
+  // never walks through her house (its cabin + plinth, plus her own width).
+  await page.evaluate(() => {
+    const r = window._game.world._grandmaFinish.route, g = window._game.world._grandmaFinish.grandma.group;
+    window.__gmaPath = [];
+    const upd = r.update.bind(r);
+    r.update = (...a) => { upd(...a); window.__gmaPath.push([g.position.x, g.position.z, r.mode]); };
+  });
   await page.waitForFunction(() => window._game.world._grandmaFinish.route.mode === 'walk', { timeout: 60000 }).catch(() => {});
   let wk = await walk();
   check(wk.mode === 'walk' && wk.clip === 'walk', 'once the riders pass, Grandma turns round and walks', wk);
   await page.waitForFunction(() => window._game.world._grandmaFinish.route.mode === 'arrived', { timeout: 120000 }).catch(() => {});
   wk = await walk();
   check(wk.mode === 'arrived' && Math.abs(wk.along - 2.2) < 0.01 && wk.clip === 'wave', 'she walks to just past the line, beside the bike, and waves (#481)', wk);
+  const through = await page.evaluate(() => {
+    const w = window._game.world;
+    const house = w._raceMarkers.find((m) => m.house).mesh;
+    house.updateMatrixWorld(true);
+    const inv = house.matrixWorld.clone().invert();
+    const V = house.position.constructor;
+    // the cabin's footprint (HOUSE 5 × 4 plus the 0.25 plinth lip) and Grandma's half-width
+    const hx = 2.5 + 0.25, hz = 2 + 0.25, me = 0.45;
+    let worst = Infinity, at = null;
+    for (const [x, z, mode] of window.__gmaPath || []) {
+      const p = new V(x, house.position.y, z).applyMatrix4(inv);
+      const dx = Math.max(Math.abs(p.x) - hx, 0), dz = Math.max(Math.abs(p.z) - hz, 0);
+      const gap = (dx || dz) ? Math.hypot(dx, dz) : -Math.min(hx - Math.abs(p.x), hz - Math.abs(p.z));
+      if (gap < worst) { worst = gap; at = { mode, local: [+p.x.toFixed(2), +p.z.toFixed(2)] }; }
+    }
+    return { frames: (window.__gmaPath || []).length, gap: +worst.toFixed(2), at };
+  });
+  check(through.frames > 5 && through.gap >= 0.45, 'she walks round her house, never through it (#517)', through);
   check((await state(page)).props[0].y === 0, 'still standing on the ground there', (await state(page)).props[0]);
   await h.shot(page, '5-grandma-at-the-line');
   await page.close();

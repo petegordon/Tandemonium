@@ -235,11 +235,11 @@ console.log('quit (desktop only)');
   check(await desk.evaluate(() => window._game.lobby._stepFocus.items.includes(document.getElementById('bar-quit'))), 'QT-02 desktop: Quit pill is in the pad\'s focus scope');
 
   // Pad-navigable: walk down to the bar, then along it to Quit (bounded).
-  // Quit is second from the left (Help, Quit, Leaderboard, Profile … end pills).
+  // #517: Quit is the bar's last pill (… Controls, Music, Settings, Quit).
   let s = await dlook();
   for (let i = 0; i < 16 && s.focus !== 'bar-quit'; i++) {
     const inBar = (s.focus || '').startsWith('bar-');
-    const dir = !inBar ? 'DOWN' : (s.focus === 'bar-help' ? 'RIGHT' : 'LEFT');
+    const dir = !inBar ? 'DOWN' : 'RIGHT';
     await dpads.tap(0, dir);
     const before = s.focus;
     await until(async () => (await dlook()).focus !== before, 1500);
