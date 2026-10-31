@@ -176,6 +176,8 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-16 | Button prompts follow P1's pad (Xbox / PlayStation / Switch / Steam): lobby glyphs, coach card, stopped-bike hint | A | `smoke:input`, `test/unit/controller-labels` |
 | IN-17 | Unplug the only pad mid-ride: "Your controller disconnected" pause; replug resumes | A | `smoke:disconnect` |
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
+| IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only` |
+| IN-19h | IN-19 in the real Steam client with two Steam Controllers on one Puck | M | — |
 
 ## 5. Multi-controller (local co-op and versus)
 
