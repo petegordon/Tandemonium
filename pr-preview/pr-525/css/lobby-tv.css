@@ -1,0 +1,252 @@
+/* ============================================================
+   Desktop / TV lobby — layout A (#428, mockups on #429)
+   ============================================================
+   The right painting is a fixed panel at its natural shape (504×1017 →
+   535×1080) with the wordmark on its sky; the menus get the rest of the
+   screen. Text sizes come from the kit's automatic ramp (shared/ui/tokens.css:
+   phone sizes below 1024px, TV sizes at 1920px), so nothing here is a
+   per-screen pixel size. The room step (no video since #400) uses it too.
+   
+
+   Loaded after the page's inline <style>, so equal-specificity rules win;
+   !important is used only where the old desktop block sets the same property
+   with higher specificity or !important of its own.                        */
+
+/* The system bar and the mode buttons' second lines are desktop/TV only. */
+uf-system-bar#lobby-bar { display: none; }
+#lobby-mode .uf-button__sub { display: none; }
+
+@media (min-width: 1024px) {
+  uf-system-bar#lobby-bar { display: flex; }
+  #lobby-mode .uf-button__sub { display: block; }
+  /* The art panel's width, for the stage and for kit sheets / the system bar. */
+  :root:has(#lobby:not([style*="none"])) { --uf-stage-inset: 535px; }
+
+  /* ── Frame ── */
+  #lobby {
+    --gutter: clamp(24px, 2.5vw, 64px);
+    --bar-h: calc(var(--uf-size-md) * 3.3 + 16px);   /* matches <uf-system-bar> */
+    display: grid;   /* not !important: the game hides the lobby with an inline display:none */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--uf-stage-inset) !important;
+    grid-template-rows: var(--gutter) minmax(0, 1fr) var(--bar-h) !important;
+    gap: 0 !important; padding: 0 !important; align-items: center !important; overflow: hidden !important;
+    background: radial-gradient(120% 90% at 30% 40%, #161b24 0%, #0a0c11 70%) !important;
+  }
+  #lobby #lobby-img-left { display: none !important; }
+  #lobby #lobby-img-right {
+    grid-column: 3 !important; grid-row: 1 / -1 !important; object-position: center !important;
+    box-shadow: -24px 0 48px rgba(0, 0, 0, .55);
+  }
+  #lobby-wordmark { display: none; }
+  /* tandemonium_title.png at 0.435× (wordmark ≈ 470px wide), centred on the
+     wordmark; the dirt splash and pedals fade into the sky through the mask. */
+  #lobby #lobby-wordmark {
+    display: block; position: fixed; z-index: 3; top: 10px; right: 0; width: var(--uf-stage-inset); height: 200px; pointer-events: none;
+    background: url(../images/tandemonium_title.png) no-repeat;
+    background-size: 668px auto; background-position: calc(var(--uf-stage-inset) / 2 - 334px) -70px;
+    -webkit-mask-image: radial-gradient(ellipse 64% 46% at 50% 46%, #000 72%, transparent 100%);
+            mask-image: radial-gradient(ellipse 64% 46% at 50% 46%, #000 72%, transparent 100%);
+    filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .45));
+  }
+
+  /* ── Stage: the mode screen pairs the bike chooser with the buttons; every other step gets the full width ── */
+  #lobby #bike-carousel {
+    grid-column: 1 !important; grid-row: 2 !important;
+    width: calc(100% - var(--gutter)) !important; margin: 0 0 0 var(--gutter) !important;
+    justify-self: stretch !important; align-self: center !important; border-radius: var(--uf-radius-lg);
+  }
+  #lobby #bike-preview-wrap { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; }
+  #lobby #bike-preview-canvas { width: 100% !important; height: min(470px, 48vh) !important; }
+  #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 2.4) !important; font-size: var(--uf-size-2xl) !important; }
+  #lobby #bike-name { font-size: var(--uf-size-2xl) !important; line-height: 1.2 !important; top: calc(var(--uf-size-2xl) * -1.7) !important; }
+  #lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }
+  #lobby:not(:has(#lobby-mode[active])) #bike-carousel { display: none !important; }
+
+  #lobby .lobby-card {
+    grid-column: 2 !important; grid-row: 2 !important;
+    max-width: none !important; width: 100% !important; height: auto !important; max-height: 100% !important;
+    padding: 0 var(--gutter) !important; margin: 0 !important; overflow: visible !important;
+    display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important;
+    align-self: center !important; justify-self: stretch !important;
+  }
+  #lobby:not(:has(#lobby-mode[active])) .lobby-card { grid-column: 1 / 3 !important; }
+  #lobby .lobby-layout { display: block !important; width: 100%; flex: 0 0 auto !important; }
+  #lobby .lobby-steps-col { width: 100% !important; max-width: none !important; min-width: 0 !important; overflow: visible !important; }
+  #lobby .lobby-step { overflow: visible !important; }
+  #lobby .lobby-prompt { font-size: var(--uf-size-xl) !important; margin: 0 0 var(--uf-space-4) !important; }
+
+  /* The system bar replaces the round toggle columns, the Back hint and the
+     credits footer on every step but the room (css below + lobby-tv.js). */
+  #lobby .lobby-toggle-col,
+  #lobby .lobby-toggles,
+  #lobby .gamepad-back-hint,
+  #lobby #lobby-fixed-back,
+  #lobby .lobby-step .lobby-back,
+  #lobby .lobby-credits { display: none !important; }
+
+  /* ── Mode screen: narrower two-line buttons (sub lines set in index.html) ── */
+  #lobby-mode .lobby-mode-buttons { width: 100% !important; max-width: 22em; gap: var(--uf-space-4) !important; margin: 0 auto; font-size: var(--uf-size-md); }
+  #lobby-mode .lobby-mode-buttons > uf-button:not([size]) {
+    display: block; text-align: left; min-height: 0; padding: var(--uf-space-4) var(--uf-space-5) !important;
+    font-size: var(--uf-size-lg); border-radius: var(--uf-radius-lg);
+  }
+  #lobby-mode #btn-mode-phone, #lobby-mode #btn-mode-connect-hid { align-self: flex-start; font-size: var(--uf-size-sm); }
+
+  /* ── Level select: every card in one row, START RIDE on screen (#428 finding 1) ── */
+  #lobby #level-cards {
+    flex-direction: row !important; width: 100% !important; max-width: none !important;
+    gap: var(--uf-space-5) !important; align-items: stretch !important; padding: var(--uf-space-2) 0 !important;
+  }
+  #lobby .level-card { flex: 1 1 0 !important; min-width: 0 !important; width: auto !important; min-height: 0; padding: var(--uf-space-5) var(--uf-space-5) !important; text-align: left; }
+  #lobby .level-card-top { flex-direction: column !important; align-items: flex-start !important; gap: var(--uf-space-3) !important; }
+  #lobby .level-card-icon { font-size: calc(var(--uf-size-2xl) * 1.25) !important; }
+  #lobby .level-card-name { font-size: var(--uf-size-xl) !important; }
+  #lobby .level-card-desc { font-size: var(--uf-size-md) !important; line-height: 1.35 !important; margin-top: var(--uf-space-2) !important; display: block !important; }
+  #lobby .level-card-daily-rule { font-size: var(--uf-size-xs) !important; display: block; margin-top: 6px; }
+  #lobby .level-card-record { font-size: var(--uf-size-md) !important; margin-top: var(--uf-space-3) !important; }
+  #lobby .difficulty-selector { margin-top: var(--uf-space-5) !important; font-size: var(--uf-size-md) !important; }
+  /* Three equal difficulty buttons, each wide enough for its one-line description
+     (the phone rule caps the row at 160 × --ls, which wrapped them at 1080p). */
+  #lobby .difficulty-selector { width: auto !important; max-width: 100%; }
+  #lobby .difficulty-buttons { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--uf-space-4) !important; }
+  #lobby .difficulty-btn { padding: var(--uf-space-3) var(--uf-space-5) !important; }
+  #lobby .diff-desc { white-space: nowrap; }
+  #lobby #level-extras { margin-top: var(--uf-space-5) !important; }
+  #lobby #btn-start-ride { min-width: 14em; font-size: var(--uf-size-lg) !important; }
+  /* Level select needs the whole width for the cards: drop the art panel
+     (and the wordmark over it); kit sheets and the system bar follow the inset. */
+  :root:has(#lobby:not([style*="none"]) #lobby-level[active]) { --uf-stage-inset: 0px; }
+  #lobby:has(#lobby-level[active]) #lobby-img-right,
+  #lobby:has(#lobby-level[active]) #lobby-wordmark { display: none !important; }
+}
+
+/* ── Popups the system bar opens (moved to <body> on desktop; lobby.js _initSystemBar
+      anchors each just above its pill) ── */
+@media (min-width: 1024px) {
+  body > .bar-popup { position: fixed !important; top: auto !important; right: auto !important; transform: translateX(-50%) !important; z-index: 120 !important; }
+  body > #keyboard-confirm-popup.bar-popup { left: calc((100vw - var(--uf-stage-inset)) / 2) !important; bottom: 50vh !important; transform: translate(-50%, 50%) !important; z-index: 130 !important; }
+  #bar-music.active { border-color: var(--uf-color-accent-line); color: var(--uf-color-accent); }
+  #help-modal .help-credits { margin-top: var(--uf-space-4); padding-top: var(--uf-space-3); border-top: 1px solid var(--uf-color-line-soft); justify-content: flex-start; }
+  /* Controls sheet extras */
+  #controls-sheet .set-feel-end { color: var(--uf-color-fg-muted); font-size: var(--uf-size-xs); }
+  #controls-sheet #set-feel-slider { width: 12em; accent-color: var(--uf-color-accent); }
+}
+#help-modal .help-credits { display: none; }
+@media (min-width: 1024px) { #help-modal .help-credits { display: flex; } }
+
+/* Profile popup in <body>: a compact column at the kit's text sizes (its old
+   desktop rules sized it from the toggle column's --ls scale). */
+@media (min-width: 1024px) {
+  body > #profile-popup.bar-popup { min-width: 0 !important; width: min(22em, 36vw); padding: var(--uf-space-4) !important; border-radius: var(--uf-radius-lg) !important; font-size: var(--uf-size-sm); }
+  body > #profile-popup.bar-popup .profile-popup-content { gap: var(--uf-space-2) !important; }
+  body > #profile-popup.bar-popup .profile-popup-name { font-size: var(--uf-size-md) !important; }
+  body > #profile-popup.bar-popup .profile-popup-email { font-size: var(--uf-size-xs) !important; }
+  body > #profile-popup.bar-popup button { display: block; width: 100%; box-sizing: border-box; font-size: var(--uf-size-sm) !important; padding: .6em 1em !important; margin: var(--uf-space-2) 0 0 !important; border-radius: var(--uf-radius-md) !important; }
+  body > #profile-popup.bar-popup #profile-popup-signin { padding: 0 !important; }
+  /* Music levels (HIGH / MED / LOW / MUTE): readable from the couch. The phone
+     sizes (38×28 buttons, 8px text) were unreadable on a TV. */
+  body > #volume-picker.bar-popup { align-items: stretch; gap: var(--uf-space-2); padding: var(--uf-space-3); border-radius: var(--uf-radius-lg); }
+  body > #volume-picker.bar-popup .vol-btn {
+    width: auto; min-width: 6.5em; height: auto; padding: .5em 1em;
+    font: 800 var(--uf-size-lg)/1.2 var(--uf-font-ui); letter-spacing: .04em;
+    color: var(--uf-color-fg); border-width: 2px; border-radius: var(--uf-radius-md);
+  }
+  body > #volume-picker.bar-popup .vol-btn.active { color: var(--uf-color-accent); }
+  body > #volume-picker.bar-popup .vol-btn[data-vol="0"]::after { content: "\00a0MUTE"; }
+}
+#help-modal .help-credits { align-items: center; gap: var(--uf-space-3); flex-wrap: wrap; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); }
+#help-modal .help-credits button { background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
+
+/* ── Versus: two kit team boxes side by side, every controller in the strip under them ── */
+#lobby-versus .versus-teams { display: flex; align-items: stretch; gap: var(--uf-space-4); width: 100%; margin: 0; }
+#lobby-versus .versus-teams > uf-team { flex: 1 1 0; min-width: 0; }
+#lobby-versus .versus-vs { align-self: center; font: 800 var(--uf-size-xl)/1 var(--uf-font-ui); color: var(--uf-color-fg-muted); opacity: 1; }
+#lobby-versus #versus-roster { width: 100%; margin-top: var(--uf-space-4); }
+#lobby-versus .versus-join-hint { font-size: var(--uf-size-md); color: var(--uf-color-fg); opacity: .85; margin: var(--uf-space-4) 0; }
+@media (min-width: 1024px) {
+  #lobby-versus #btn-versus-continue { min-width: 14em; font-size: var(--uf-size-lg); }
+}
+
+/* ── Captain's room: Online multiplayer | Local multiplayer (#428 round 5) ── */
+.host-tv { display: none; }
+@media (min-width: 1024px) {
+  #lobby-host[active] {
+    display: grid !important; grid-template-columns: minmax(0, auto) minmax(0, 1fr); column-gap: calc(var(--uf-space-7) * 1.5); row-gap: var(--uf-space-3);
+    align-items: start; justify-items: start; text-align: left;
+  }
+  #lobby-host[active] > * { grid-column: 1; margin: 0 !important; }
+  #lobby-host[active] .lobby-prompt, #lobby-host[active] #room-qr, #lobby-host[active] #room-url,
+  #lobby-host[active] .lobby-hint, #lobby-host[active] #local-join-section { display: none !important; }
+  #lobby-host[active] .host-tv { display: block; }
+  #lobby-host[active] #host-online-head { grid-row: 1; }
+  #lobby-host[active] #room-code-display { grid-row: 2; font: 800 calc(var(--uf-size-2xl) * 1.3)/1 var(--uf-font-mono) !important; letter-spacing: .12em !important; color: var(--uf-color-accent); }
+  #lobby-host[active] #room-qr-tv { grid-row: 3; display: inline-grid; }
+  #lobby-host[active] #host-status { grid-row: 4; font-size: var(--uf-size-md) !important; color: var(--uf-color-fg); }
+  #lobby-host[active] #host-status:not(:empty)::before { content: '● '; color: var(--uf-color-accent-2); }
+  #lobby-host[active] #host-local { grid-column: 2; grid-row: 1 / span 4; display: grid; gap: var(--uf-space-3); width: 100%; min-width: 0; }
+  #lobby-host h3 { margin: 0; font: 800 var(--uf-size-xl)/1.2 var(--uf-font-ui); color: var(--uf-color-fg); }
+  #lobby-host .host-tv p { margin: var(--uf-space-1) 0 0; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); max-width: 26em; }
+  #lobby-host #host-team { margin-top: var(--uf-space-2); }
+  #lobby-host[active] #btn-host-online-next { grid-row: 5; }
+  #lobby-host[active] #btn-host-online-next, #lobby-host[active] #btn-host-local-next { min-width: 14em; font-size: var(--uf-size-lg); justify-self: start; }
+  /* Whichever side has the stoker dims the other (2026-10-23). */
+  #lobby-host.host-local-on #host-online-head, #lobby-host.host-local-on #room-code-display,
+  #lobby-host.host-local-on #room-qr-tv, #lobby-host.host-local-on #host-status,
+  #lobby-host.host-local-on #btn-host-online-next,
+  #lobby-host.host-online-on #host-local > h3, #lobby-host.host-online-on #host-local > p,
+  #lobby-host.host-online-on #host-roster, #lobby-host.host-online-on #btn-host-local-next { opacity: .4; }
+}
+/* Narrow layouts have no local seats: the Local button never shows there. */
+@media (max-width: 1023px) { #btn-host-local-next { display: none; } }
+
+/* ── Join with a code: kit keypad (#428 round 3) ── */
+.join-tv { display: none; }
+@media (min-width: 1024px) {
+  #lobby-join .join-tv.on { display: grid; justify-items: center; gap: var(--uf-space-4); }
+  #lobby-join .join-tv h3 { margin: 0; font: 800 var(--uf-size-2xl)/1.15 var(--uf-font-ui); color: var(--uf-color-fg); }
+  #lobby-join .join-tv p { margin: calc(var(--uf-space-3) * -1) 0 0; font-size: var(--uf-size-md); color: var(--uf-color-fg-muted); }
+  #lobby-join:has(.join-tv.on) .lobby-prompt, #lobby-join:has(.join-tv.on) #gamepad-code-spinners { display: none !important; }
+}
+
+/* Ride Together's seat choice: a readable column, not full width. */
+@media (min-width: 1024px) {
+  #lobby-role[active] { max-width: 30em; margin: 0 auto !important; font-size: var(--uf-size-md); }
+  #lobby-role uf-button { font-size: var(--uf-size-lg); padding: var(--uf-space-4) var(--uf-space-5) !important; }
+}
+
+/* ── Phone as controller: a large card over the menus only, QR sized for the
+      couch (#428 round 2). The panel's own CSS is injected at runtime, so these
+      rules carry a leading `body` to outrank it. ── */
+@media (min-width: 1024px) {
+  body #phone-pad-panel { right: var(--uf-stage-inset); }
+  body #phone-pad-panel .ppp-card {
+    width: min(58em, calc(100% - 2 * var(--uf-space-6))); padding: var(--uf-space-6); border-radius: var(--uf-radius-lg); text-align: left;
+    display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--uf-space-6); row-gap: var(--uf-space-3); align-items: start;
+    grid-template-areas: "qr title" "qr steps" "qr status" "qr link" "qr row"; font-size: var(--uf-size-md);
+  }
+  body #phone-pad-panel h2 { grid-area: title; margin: 0; font-size: var(--uf-size-xl); }
+  body #phone-pad-panel .ppp-qr { grid-area: qr; padding: var(--uf-space-4); border-radius: var(--uf-radius-lg); }
+  body #phone-pad-panel .ppp-qr svg { width: min(400px, 38vh); height: min(400px, 38vh); }
+  body #phone-pad-panel .ppp-card::after {
+    grid-area: steps; white-space: pre-line; line-height: 1.7; color: var(--uf-color-fg);
+    content: '1  Open your phone’s camera\A 2  Point it at the code\A 3  Steer and pedal on your phone';
+  }
+  body #phone-pad-panel .ppp-status { grid-area: status; font-size: var(--uf-size-md); min-height: 0; }
+  body #phone-pad-panel .ppp-link { grid-area: link; font-size: var(--uf-size-xs); }
+  body #phone-pad-panel .ppp-row { grid-area: row; justify-content: flex-start; align-self: end; gap: var(--uf-space-3); }
+  body #phone-pad-panel #btn-ppp-done { min-width: 8em; font-size: var(--uf-size-lg); }
+}
+
+
+/* #517 · the Profile pill shows the signed-in player's picture (Steam or Google)
+   in the icon's place, a little larger than an icon so a face reads. */
+uf-button[size="pill"] > img.bar-avatar {
+  width: 1.5em; height: 1.5em; flex: none; margin: -0.2em 0;
+  border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1.5px currentColor;
+}
+
+/* #517 · Settings (the Options overlay) owns the pad while it is open: the
+   lobby's highlight under it would look like a second focus. */
+body:has(#options-overlay.visible) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
+/* #517 · Help and the Leaderboard own the pad while open: hide the step's highlight under the scrim. */
+body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
