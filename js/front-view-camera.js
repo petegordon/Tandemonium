@@ -26,9 +26,12 @@ export class FrontViewCamera {
     // Rig: how the camera sits relative to the bike. Sits just ahead of the
     // front wheel at roughly rider eye level, looking back so the tandem and
     // both riders fill the frame as they come toward you.
-    this.frontDist = 4.6;   // units ahead of bike center, along heading
-    this.height = 1.95;     // camera eye height above the bike origin
-    this.lookHeight = 1.45; // height of the point we aim at (riders)
+    // #524: aimed higher and a little further back so the captain's whole
+    // head (hat included) stays in frame: his hat top sits at about 0.77 of the
+    // way up (it was 0.97, under the frame's border).
+    this.frontDist = 4.8;   // units ahead of bike center, along heading
+    this.height = 2.1;      // camera eye height above the bike origin
+    this.lookHeight = 1.75; // height of the point we aim at (riders)
 
     // Smoothed position/target so the view glides instead of snapping.
     this._pos = new THREE.Vector3();
