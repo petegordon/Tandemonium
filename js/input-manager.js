@@ -18,6 +18,12 @@ import { SensorFusion } from '../shared/sensor-fusion.js';
 // open question #3. e.g. window.__steamMotionTune = { gyroSign:[1,-1,1] }.
 /** Step for feeding one Steam motion reading across a long frame (see _ingestSteamMotion). */
 const STEAM_MOTION_STEP_MS = 50;
+/** #531 · phone tilt centring: the samples it averages must agree within this (degrees)... */
+const CALIB_STILL_DEG = 4;
+/** ...or, after this many samples without a still window, the median is taken. */
+const CALIB_MAX_TRIES = 60;
+/** Median of a short array. */
+function median(a) { const b = [...a].sort((x, y) => x - y), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
 const STEAM_MOTION_DEFAULTS = {
   gyroScale: 1.0,          // getMotionData rotVel is already rad/s
   accelScale: 1 / 16384,   // Steam Controller accel ~ 16384/g (from live capture)
@@ -802,9 +808,29 @@ export class InputManager {
     this.motionEnabled = !!this._motionBeforeRemote || this.motionReady;
   }
 
+  /**
+   * #531 · re-take phone tilt's centre at the start of a ride (the 3-2-1
+   * countdown): the player is holding the phone the way they'll ride, and a
+   * remote sends at 30 Hz there. Phone tilt only (this device's or a phone
+   * remote's); controller gyro has its own recenter. The lean holds at 0
+   * until the still-phone centre is taken (well inside the countdown).
+   * @returns {boolean} whether a re-centre started
+   */
+  recenterTiltForRide() {
+    const phoneTilt = this._remoteTilt || (this.motionEnabled && !this.gyroConnected && this.motionOffset !== null);
+    if (!phoneTilt) return false;
+    this.startTiltCalibration();
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    return true;
+  }
+
   startTiltCalibration() {
     this._calibrating = true;
     this._calibBuf = [];
+    this._calibTries = 0;
     this._warmupCount = 5; // already warmed up if explicitly called
     // Design B: recenter active Steam Input motion fusions too, so
     // "recalibrate gyro" is no longer a no-op under Steam Input (#296).
@@ -835,11 +861,24 @@ export class InputManager {
 
     if (this._calibrating) {
       this._calibBuf.push(this.rawGamma);
-      if (this._calibBuf.length >= TUNE.calibSamples) {
-        const sum = this._calibBuf.reduce((a, b) => a + b, 0);
-        this.motionOffset = sum / this._calibBuf.length;
-        this._calibrating = false;
-        this._calibBuf = [];
+      this._calibTries = (this._calibTries || 0) + 1;
+      const n = TUNE.calibSamples;
+      if (this._calibBuf.length >= n) {
+        // #531 · phone tilt: the centre is only taken from a still phone (the
+        // last n samples agree within CALIB_STILL_DEG), so a phone being
+        // turned over or held at a slant while it pairs doesn't become
+        // "level". The window slides until it is still; a hand that never
+        // steadies gets the median after CALIB_MAX_TRIES. Gyro is unchanged.
+        const win = this._calibBuf.slice(-n);
+        const still = isGyro || Math.max(...win) - Math.min(...win) <= CALIB_STILL_DEG;
+        if (still || this._calibTries >= CALIB_MAX_TRIES) {
+          this.motionOffset = still ? win.reduce((a, b) => a + b, 0) / n : median(win);
+          this._calibrating = false;
+          this._calibBuf = [];
+          this._calibTries = 0;
+        } else {
+          this._calibBuf = win.slice(1);
+        }
       }
       return;
     }
