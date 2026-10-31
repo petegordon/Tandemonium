@@ -248,6 +248,25 @@ for (const [key, files] of Object.entries(EXPECT)) {
   check(`Goose Outfits '${key}': ${files.join(' + ')} seated, old geese gone, legs + feet on the crank`,
     okPaths && okSeats && r.legMoved && r.footSpanMm < 6 && r.btn && r.saved === key &&
     r.seats.Stoker.visible === !solo && r.seats.Captain.visible, r);
+  // #524 · the front rider cam shows the captain's whole head, hat included
+  const head = await page.evaluate(() => {
+    const gm = window._game, b = gm.bike, fv = gm.frontView;
+    if (!fv) return null;
+    fv.reset(); fv.update(b, 0.016);
+    fv.camera.aspect = 1; fv.camera.updateProjectionMatrix(); fv.camera.updateMatrixWorld(true);
+    const root = b.goose.riders.Captain.root; root.updateMatrixWorld(true);
+    const v = new fv.camera.position.constructor(); let top = null;
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      const pos = o.geometry.attributes.position, step = Math.max(1, Math.floor(pos.count / 4000));
+      for (let i = 0; i < pos.count; i += step) {
+        v.fromBufferAttribute(pos, i); if (o.isSkinnedMesh) o.applyBoneTransform(i, v); v.applyMatrix4(o.matrixWorld);
+        if (!top || v.y > top.y) top = v.clone();
+      }
+    });
+    return top && +top.project(fv.camera).y.toFixed(3);
+  });
+  check(`Goose Outfits '${key}': the front cam shows the captain's whole head (hat top at NDC y ${head} ≤ 0.9)`, head != null && head <= 0.9 && head > 0.3, head);
   await new Promise(res => setTimeout(res, 1500));
   await page.screenshot({ path: path.join(OUT, `smoke-goose-outfit-${key}.png`) });
 }
