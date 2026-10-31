@@ -870,8 +870,12 @@ export class BikeModel {
       this.leanVelocity -= this.lean * strength * dt;
     }
 
-    // Gyro centering: when controller is centered but bike is leaned, pull upright
-    if (balanceResult.gyroActive && Math.abs(balanceResult.leanInput) < 0.15) {
+    // Gyro centering: when controller is centered but bike is leaned, pull upright.
+    // #522: the gyro lean now carries TUNE.motionGain, so "centered" is 0.15 of
+    // an UNGAINED lean — otherwise a held moderate turn on Chill (gain 0.3)
+    // would read as centered and be pulled upright.
+    const gyroGain = Number.isFinite(TUNE.motionGain) && TUNE.motionGain > 0 ? TUNE.motionGain : 1;
+    if (balanceResult.gyroActive && Math.abs(balanceResult.leanInput) < 0.15 * gyroGain) {
       this.leanVelocity -= this.lean * 5.0 * dt;
     }
 

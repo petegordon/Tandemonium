@@ -4,6 +4,8 @@
 // lean grows, taper shrinks, correction weakens, lean grows faster — and once
 // past ZERO_AT the correction stopped and the pull could never recover. The
 // taper now has a floor so a slow pull-back stays alive through any lean.
+// #522: the taper reads the UNGAINED lean (gyro now carries TUNE.motionGain),
+// so these checks read getMotionLeanVisual().
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -74,7 +76,7 @@ test('a saturated one-sided gyro pull keeps being corrected and recovers (#365)'
   // Integrated roll runs away under an uncorrected bias, then sits far past a
   // full lean: lean saturates at 1.0, well beyond ZERO_AT.
   feed(im, (i) => Math.min(60, i * 2), 60);
-  assert.ok(Math.abs(im.getMotionLean()) > 0.95, `lean should be saturated, got ${im.getMotionLean()}`);
+  assert.ok(Math.abs(im.getMotionLeanVisual()) > 0.95, `lean should be saturated, got ${im.getMotionLeanVisual()}`);
   const offsetAtSaturation = im.motionOffset;
 
   // Before the floor, the taper was exactly 0 here and motionOffset froze for
@@ -82,11 +84,11 @@ test('a saturated one-sided gyro pull keeps being corrected and recovers (#365)'
   feed(im, () => 60, 60 * 20);   // 20 s of the same one-sided pull
   assert.ok(im.motionOffset > offsetAtSaturation + 10,
     `offset should keep moving toward the pull, went ${offsetAtSaturation.toFixed(2)} → ${im.motionOffset.toFixed(2)}`);
-  assert.ok(Math.abs(im.getMotionLean()) < 0.7,
-    `lean should have come back under ZERO_AT, got ${im.getMotionLean().toFixed(3)}`);
+  assert.ok(Math.abs(im.getMotionLeanVisual()) < 0.7,
+    `lean should have come back under ZERO_AT, got ${im.getMotionLeanVisual().toFixed(3)}`);
 
   feed(im, () => 60, 60 * 40);   // another 40 s — the pull is fully absorbed
-  assert.ok(Math.abs(im.getMotionLean()) < 0.1, `lean should be ~centred, got ${im.getMotionLean().toFixed(3)}`);
+  assert.ok(Math.abs(im.getMotionLeanVisual()) < 0.1, `lean should be ~centred, got ${im.getMotionLeanVisual().toFixed(3)}`);
 });
 
 test('the floor still does not re-centre a quick deliberate corner', () => {
@@ -94,5 +96,5 @@ test('the floor still does not re-centre a quick deliberate corner', () => {
   feed(im, () => 0, 120);
   feed(im, () => 55, 60);   // 1 s full lean — longer than a real corner's peak
   assert.ok(Math.abs(im.motionOffset) < 2, `offset chased the corner to ${im.motionOffset.toFixed(2)}°`);
-  assert.ok(im.getMotionLean() > 0.8, `the corner is still a strong lean, got ${im.getMotionLean().toFixed(3)}`);
+  assert.ok(im.getMotionLeanVisual() > 0.8, `the corner is still a strong lean, got ${im.getMotionLeanVisual().toFixed(3)}`);
 });

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
-import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref } from './config.js';   // B2: un-feeled calibration base
+import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
 import { crashTimeScale, clockHeld } from './crash-slowmo.js';
@@ -8148,7 +8148,9 @@ class Game {
 
     // Observed max range (95th percentile, avoid outliers)
     const p95 = absSamples[Math.floor(absSamples.length * 0.95)];
-    const observedSensitivity = Math.min(60, Math.max(15, p95 * 0.85));
+    // #522: gyro never adapts under GYRO_MIN_SENSITIVITY — small rolls made it
+    // twitchier, which made the player roll less still (a loop down to 15°).
+    const observedSensitivity = observedFullLeanDegrees(p95, isGyro);
 
     // Observed median lean for response curve
     const medianLean = absSamples[Math.floor(absSamples.length * 0.5)];
@@ -8413,9 +8415,9 @@ class Game {
         if (resolved) return;
         if (skipped()) { resolved = true; resolve(); return; }
         // Ungained lean (B1, PR #397 review): phone tilt steers at
-        // TUNE.mobileTiltGain (0.25), so the gained getMotionLean() tops out at
-        // the ±0.25 targets and never passes them. Calibrate on what the
-        // player is physically doing. Controller gyro: identical (gain 1).
+        // TUNE.motionGain (0.3 in the tutorial), so the gained getMotionLean()
+        // tops out near the ±0.25 targets. Calibrate on what the player is
+        // physically doing — phone tilt and controller gyro alike (#522).
         const lean = this.input.getMotionLeanVisual();
         const raw = isGyro ? -this.input._gyroRollAccum : this.input.rawGamma;
         const offset = this.input.motionOffset || 0;
@@ -9492,7 +9494,7 @@ class Game {
         if (s > tiltMax) tiltMax = s;
       }
       const maxRange = Math.max(Math.abs(tiltMin), Math.abs(tiltMax));
-      sensitivity = Math.min(60, Math.max(15, maxRange * 0.85));
+      sensitivity = Math.min(60, Math.max(isGyro ? GYRO_MIN_SENSITIVITY : 15, maxRange * 0.85));   // #522 gyro floor
     } else {
       sensitivity = isGyro ? defaults.gyroSensitivity : defaults.sensitivity;
     }
