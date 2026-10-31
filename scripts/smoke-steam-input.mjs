@@ -11,11 +11,16 @@
 //   IN-13  Options → DualSense source: Auto / Steam Input / WebHID save the choice
 //          and light the button; the note says it applies on the next launch, and
 //          a relaunch with each choice routes the DualSense accordingly
+//   IN-19  two Steam Controllers under Steam Input (two virtual XInput pads, gyro
+//          on the left stick, no action manifest): tilting the controller on the
+//          desk doesn't take Player 1; the one you press on is P1 and its D-pad
+//          moves the menu focus
 //
 // KNOWN checks print "KNOWN BUG" instead of failing, so CI stays green while the
 // bug is open; "FIXED" means turn it into a normal check.
 import { startHarness, sleep, clickId, waitState } from './lib/smoke-harness.mjs';
 import { installFakeSteam, fakeSteam, steamPad, ELECTRON_UA } from './lib/fake-steam.mjs';
+import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
 const h = await startHarness({ port: 8966, outDir: 'tandemonium-steam-input' });
 const { check } = h;
@@ -193,6 +198,42 @@ for (const [pref, steamWants] of [['auto', true], ['steam-input', true], ['webhi
   } else {
     check(s.source === pref && s.steamActive === steamWants, name, s);
   }
+  await page.close();
+}
+
+// ── IN-19: two Steam Controllers — the one you press is Player 1 ──
+console.log('IN-19 two Steam Controllers');
+{
+  // Steam captures both bodies (type 14, no IGA so no actions ever fire) and
+  // shows each as a virtual XInput pad; the layout routes gyro to the left stick.
+  const page = await h.gamePage({
+    userAgent: ELECTRON_UA, storage: { tandemonium_tutorial_done: 'smoke' },
+    before: async (p) => {
+      await installFakeSteam(p, { controllers: [steamPad({ handle: '100', type: '14' }), steamPad({ handle: '101', type: '14' })] });
+      await installFakeGamepads(p, { atBoot: ['xbox', 'xbox'] });
+    },
+  });
+  const pads = fakePads(page);
+  const seat = () => page.evaluate(() => ({
+    p1: window.__controllerManager.getSlot('P1').state,
+    p1Index: window.__controllerManager.getSlot('P1').gamepadIndex,
+    focus: document.querySelector('.gamepad-focus')?.id || '',
+  }));
+  await page.waitForFunction(() => !!document.getElementById('btn-solo'), { timeout: 15000 });
+  await sleep(1500);
+  // The controller on the desk gets bumped: its gyro swings the stick.
+  await pads.stick(1, 'LX', 0.3); await sleep(300);
+  await pads.stick(1, 'LX', -0.2); await sleep(300);
+  await pads.stick(1, 'LX', 0); await sleep(300);
+  let s = await seat();
+  check(s.p1 === 'empty', 'IN-19 tilting a second Steam Controller does not take Player 1', s);
+  await pads.tap(0, 'A'); await sleep(600);
+  s = await seat();
+  check(s.p1 === 'claimed' && s.p1Index === 0, 'IN-19 the controller you press on is Player 1', s);
+  const from = s.focus;
+  await pads.tap(0, 'DOWN');
+  const moved = await page.waitForFunction((f) => (document.querySelector('.gamepad-focus')?.id || '') !== f, { timeout: 8000, polling: 100 }, from).then(() => true).catch(() => false);
+  check(moved, 'IN-19 its D-pad moves the menu focus', { from, to: (await seat()).focus });
   await page.close();
 }
 

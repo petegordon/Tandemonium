@@ -16,6 +16,7 @@ export {
   isPresentableEntry,
   gamepadHasActivity,
   gamepadHasFreshActivity,
+  gamepadHasButtonPress,
   stableIdFor,
   makeSyntheticGamepad,
   resetSynthetic,
