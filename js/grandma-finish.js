@@ -27,6 +27,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { PresentStack } from './present-stack.js';
+import { HOUSE } from './props-3d.js';
 
 export const GRANDMA_MODEL_PATH = 'tandem-3d/goose/goose_grandma.glb';
 export const GRANDMA_CLIPS_PATH = 'tandem-3d/goose/show/goose_stoker_georgian_clips.glb';
@@ -63,7 +64,42 @@ const WAVE_FROM = 70;
  * She walks on real time, not the cinematic's slow motion (see World.update),
  * so `speed` (units/s) is a grandma's stroll that gets her there as the shot lands.
  */
-export const WALK = { toAlong: 2.2, toLateral: 3.4, speed: 2.6, turnTime: 0.6, returnGap: 2 };
+export const WALK = { toAlong: 2.2, toLateral: 3.4, speed: 2.6, turnTime: 0.6, returnGap: 2, clear: 0.6, minLateral: 2.7 };
+
+/**
+ * #478 · where World puts Grandma's house: its front `lateral` off the road
+ * centre (centred on the finish line), turned `turn` radians toward the
+ * oncoming riders. World reads these, so the house and her walk agree.
+ */
+export const HOUSE_SPOT = { lateral: 4.6, turn: 0.5 };
+
+/**
+ * #517 · how far (along, lateral) — same frame as LAYOUT — is from the house's
+ * footprint (its walls plus the 0.25 plinth lip). Negative = inside it.
+ * @param {number} along @param {number} lateral
+ */
+export function houseGap(along, lateral) {
+  const t = HOUSE_SPOT.turn, l = lateral - (HOUSE_SPOT.lateral + HOUSE.D / 2);
+  // road frame → the house's own (x along its front, z out through the door)
+  const u = along * Math.cos(t) - l * Math.sin(t);
+  const v = -along * Math.sin(t) - l * Math.cos(t);
+  const hx = HOUSE.W / 2 + 0.25, hz = HOUSE.D / 2 + 0.25;
+  const dx = Math.abs(u) - hx, dz = Math.abs(v) - hz;
+  return dx > 0 || dz > 0 ? Math.hypot(Math.max(dx, 0), Math.max(dz, 0)) : Math.max(dx, dz);
+}
+
+/**
+ * #517 · her lateral `along` units from the finish on the walk: the straight
+ * drift from where she stood to where she stops, pulled in toward the road
+ * (never past WALK.minLateral, the verge) wherever that would bring her within
+ * WALK.clear of the house — its turned front corner reaches out to ~3.3.
+ * @param {number} along @param {number} k 0..1 along the walk
+ */
+export function walkLateral(along, k) {
+  let lat = LAYOUT.grandma.lateral + (WALK.toLateral - LAYOUT.grandma.lateral) * k;
+  while (lat > WALK.minLateral && houseGap(along, lat) < WALK.clear) lat -= 0.05;
+  return Math.max(WALK.minLateral, lat);
+}
 
 /**
  * #481 · she watches the riders: her head turns up to maxYaw toward them (on
@@ -533,9 +569,11 @@ export class GrandmaRoute {
     this.walked = Math.min(this.length, this.walked + WALK.speed * dt);
     const d = ((this.homeD + this.walked) % this.roadPath.loopLength + this.roadPath.loopLength) % this.roadPath.loopLength;
     const k = this.length > 0 ? this.walked / this.length : 1;
-    const lat = LAYOUT.grandma.lateral + (WALK.toLateral - LAYOUT.grandma.lateral) * k;
-    // face her way: along the road, angled out by the drift
-    const drift = Math.atan2(WALK.toLateral - LAYOUT.grandma.lateral, this.length || 1);
+    const lat = walkLateral(LAYOUT.grandma.along + this.walked, k);   // #517: round the house's corner, not through it
+    // face her way: along the road, angled by where the path heads next
+    const ahead = Math.min(this.length, this.walked + 0.4);
+    const latAhead = walkLateral(LAYOUT.grandma.along + ahead, this.length > 0 ? ahead / this.length : 1);
+    const drift = Math.atan2(latAhead - lat, Math.max(0.05, ahead - this.walked));
     placeBeside(this.roadPath, d, lat, -drift, this.grandma.group);
     this.marker.roadD = d;
     if (this.walked >= this.length) { this.mode = 'arrived'; this.grandma.play('wave'); }

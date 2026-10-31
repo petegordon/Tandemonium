@@ -64,12 +64,18 @@ export function primaryIndex(items, primary = null) {
 /**
  * A result screen's action row onto the FocusController: DOM order, primary
  * focused. Returns the items it registered.
+ *
+ * #517: the row is laid out left to right (and wraps on a phone), so the pad
+ * moves by what is on screen — ← / → along the row, ↑ / ↓ between wrapped
+ * lines. `linear: true` keeps the flat list for a screen whose slider takes
+ * ← / → (tutorial complete's steering feel).
  * @param {import('../shared/ui/focus-controller.js').FocusController} fc
- * @param {Element | null} root @param {{ primary?: HTMLElement | null, extra?: HTMLElement[] }} [opts]
+ * @param {Element | null} root @param {{ primary?: HTMLElement | null, extra?: HTMLElement[], linear?: boolean }} [opts]
  */
-export function focusResult(fc, root, { primary = null, extra = [] } = {}) {
+export function focusResult(fc, root, { primary = null, extra = [], linear = false } = {}) {
   const items = [...shellActions(root), ...extra.filter((el) => el && shown(el))];
-  fc.setItems(items, primaryIndex(items, primary));
+  if (linear) fc.setItems(items, primaryIndex(items, primary));
+  else fc.setSpatial(items, items[primaryIndex(items, primary)] || null);
   return items;
 }
 

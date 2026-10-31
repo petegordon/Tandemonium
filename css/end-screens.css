@@ -44,12 +44,18 @@ uf-sheet .uf-sheet__actions uf-button[hidden] { display: none; }
 #victory-body #victory-left, #victory-body #victory-right { display: grid; gap: var(--uf-space-3); width: 100%; align-items: start; justify-items: center; }
 #victory-body #victory-video { width: min(260px, 60vw); height: auto; aspect-ratio: 1; border-radius: var(--uf-radius-lg); }
 #victory-body #victory-destination { margin: 0; font: 800 var(--uf-size-xl)/1.2 var(--uf-font-ui); color: var(--uf-color-fg); }
-#victory-body #victory-stats { display: grid; gap: var(--uf-space-3); width: 100%; }
+#victory-body #victory-stats { display: grid; gap: var(--uf-space-3); width: 100%; margin-bottom: 0; }   /* #517: the old overlay's 32px pushed a first finish's unlocks below the fold */
 .victory-stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); gap: var(--uf-space-3); width: 100%; }
 #victory-body #victory-coins, #gameover-coins { width: 100%; max-width: 26em; justify-self: center; }
 @media (min-width: 1024px) {
   #victory-body { grid-template-columns: auto minmax(0, 1fr); }
-  #victory-body #pair-panel { grid-column: 1 / -1; }
+  #victory-body #pair-panel, #victory-body #victory-unlocked { grid-column: 1 / -1; }
+  /* #517: four across on a TV (a first Grandma's finish unlocks ten). */
+  #victory-body #victory-unlocked { grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); }
+  /* The gold list is "unlocked this ride": one line per badge, no "Unlocked!" under each. */
+  .end-unlocked uf-achievement .ua-new { display: none; }
+  .end-unlocked uf-achievement .ua-icon { grid-row: auto; }
+  .end-unlocked uf-achievement { align-content: center; }
 }
 
 /* Game over / demo end: centred body. */

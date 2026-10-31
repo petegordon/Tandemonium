@@ -64,6 +64,7 @@
     "smoke:input": "node scripts/smoke-input.mjs",
     "smoke:options": "node scripts/smoke-options.mjs",
     "smoke:lobby-layout": "node scripts/smoke-lobby-layout.mjs",
+    "smoke:tv-nav": "node scripts/smoke-tv-nav.mjs",
     "smoke:online": "node scripts/smoke-online.mjs",
     "smoke:phone-coop": "node scripts/smoke-phone-coop.mjs",
     "smoke:solo-extras": "node scripts/smoke-solo-extras.mjs",
