@@ -309,35 +309,35 @@ try {
     const ride = await game.evaluate(() => ({ speed: window._game.bike?.speed, dist: window._game.bike?.distanceTraveled }));
     check(ride.speed > before + 0.5, 'pedalling on the phone speeds the bike up', JSON.stringify({ before, ...ride }));
 
-    // Pause from the phone, resume with BACK.
+    // Pause from the phone, resume with BACK. #529: paused = the pause menu (_pause); the phone shows its menu pad.
     await phone.click('#btn-pause');
     // Poll (up to 4 s): on a slow runner the tap can take a few game frames to land.
-    await game.waitForFunction(() => window._game._optionsOpen, { timeout: 4000 }).catch(() => {});
-    check(await game.evaluate(() => window._game._optionsOpen), 'Pause on the phone pauses the game');
+    await game.waitForFunction(() => window._game._pause, { timeout: 4000 }).catch(() => {});
+    check(await game.evaluate(() => !!window._game._pause), 'Pause on the phone opens the pause menu (#459)');
     check(await phoneLayoutFixed() && await hostMode() === 'menu', 'paused: same phone layout; the game reads it as a menu pad');
     await press('back');
-    await game.waitForFunction(() => !window._game._optionsOpen, { timeout: 4000 }).catch(() => {});
-    check(await game.evaluate(() => !window._game._optionsOpen), 'BACK on the phone resumes');
+    await game.waitForFunction(() => !window._game._pause, { timeout: 4000 }).catch(() => {});
+    check(await game.evaluate(() => !window._game._pause), 'BACK on the phone resumes');
     check(await phoneLayoutFixed() && await hostMode() === 'ride', 'resumed: same phone layout; pedals again');
 
     // The phone drops mid-ride (asleep / closed), then comes back.
     await phone.evaluate(() => { window.__pad.ws.onclose = null; window.__pad.ws.close(); window.__pad.ws = null; });
-    await game.waitForFunction(() => window._game._optionsOpen && document.getElementById('phone-pad-panel').classList.contains('open'), { timeout: 8000 }).catch(() => {});
-    const drop = await game.evaluate(() => ({ paused: window._game._optionsOpen, panel: document.getElementById('phone-pad-panel').classList.contains('open'), title: document.getElementById('ppp-title').textContent }));
-    check(drop.paused && drop.panel && /DISCONNECTED/.test(drop.title), 'a dropped phone pauses the ride and shows the QR again', JSON.stringify(drop));
+    await game.waitForFunction(() => window._game._pause && document.getElementById('phone-pad-panel').classList.contains('open'), { timeout: 8000 }).catch(() => {});
+    const drop = await game.evaluate(() => ({ paused: !!window._game._pause, panel: document.getElementById('phone-pad-panel').classList.contains('open'), title: document.getElementById('ppp-title').textContent }));
+    check(!!drop.paused && drop.panel && /DISCONNECTED/.test(drop.title), 'a dropped phone pauses the ride and shows the QR again', JSON.stringify(drop));
     // The phone page comes back to the foreground: it reconnects by itself.
     await phone.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     await game.waitForFunction(() => window.__phonePad.status === 'connected', { timeout: 15000 }).catch(() => {});
     await game.waitForFunction(() => !document.getElementById('phone-pad-panel').classList.contains('open'), { timeout: 5000 }).catch(() => {});
-    const back = await game.evaluate(() => ({ status: window.__phonePad.status, panel: document.getElementById('phone-pad-panel').classList.contains('open'), paused: window._game._optionsOpen }));
-    check(back.status === 'connected' && !back.panel && back.paused, 'the phone reconnects; the QR closes and the game stays paused for the player', JSON.stringify(back));
+    const back = await game.evaluate(() => ({ status: window.__phonePad.status, panel: document.getElementById('phone-pad-panel').classList.contains('open'), paused: !!window._game._pause }));
+    check(back.status === 'connected' && !back.panel && !!back.paused, 'the phone reconnects; the QR closes and the game stays paused for the player', JSON.stringify(back));
     const k = await phone.evaluate(() => ({ n: window.__pad.keys.length }));
     const t = await game.evaluate(() => window.__phonePad.takeovers);
     check(k.n === 1 && t === 0, '#454: it came back with its own key (the old QR secret is dropped), not as a takeover', JSON.stringify({ keys: k.n, takeovers: t }));
     check(await phoneLayoutFixed() && await hostMode() === 'menu', 'reconnected while paused: same phone layout; read as a menu pad');
     await press('back');
-    await game.waitForFunction(() => !window._game._optionsOpen && window._game.state === 'playing', { timeout: 8000 }).catch(() => {});
-    check(await game.evaluate(() => !window._game._optionsOpen && window._game.state === 'playing'), 'BACK resumes the ride');
+    await game.waitForFunction(() => !window._game._pause && window._game.state === 'playing', { timeout: 8000 }).catch(() => {});
+    check(await game.evaluate(() => !window._game._pause && window._game.state === 'playing'), 'BACK resumes the ride');
     // PR-05: after the reconnect the phone drives the ride again (pedal + lean).
     await phone.evaluate(() => { window.__tilt = 30; });
     await phone.mouse.move(150, 250); await phone.mouse.down();
