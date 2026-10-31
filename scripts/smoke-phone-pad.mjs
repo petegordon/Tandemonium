@@ -168,7 +168,16 @@ try {
       window.dispatchEvent(e);
     }, 16);
   });
-  await sleep(800);   // level: lets the game's tilt pipeline calibrate its centre
+  // Level until the game's tilt pipeline has calibrated its centre (5 warm-up +
+  // 10 samples). In menus a still phone sends only a ~2/s heartbeat, so this
+  // takes seconds; the old fixed 800 ms often tilted mid-calibration, the centre
+  // averaged in some of the 35° and landed at 15–19°, and "tilt right" then
+  // read 0.36–0.39 (flaky on main too; #522 investigation). Poll, don't sleep.
+  const centred = await game.waitForFunction(() => {
+    const i = window._game.input;
+    return i.motionOffset !== null && !i._calibrating;
+  }, { timeout: 20000, polling: 200 }).then(() => true).catch(() => false);
+  check(centred, 'the game calibrates the phone\'s centre while it is held level');
   // The lean eases in over the game's frames; at headless frame rates that can
   // take a few seconds, so poll (up to 8 s) instead of one fixed wait.
   const leanWait = async (ok) => {

@@ -938,7 +938,12 @@ export class InputManager {
 
     // Asymmetric smoothing: less smoothing when initiating a turn (responsive),
     // more smoothing when returning to center (stable)
-    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > 0.05;
+    // #522: the "starting a turn" threshold scales with the gain, so the
+    // ungained (visual) lean and the drift gate it feeds come out the same at
+    // any difficulty. 0.2 (phone) and 0.05 (gyro) of an UNGAINED lean are the
+    // thresholds each had before (0.05 of a lean at the old gains 0.25 and 1).
+    const startAt = (isGyro ? 0.05 : 0.2) * gain;
+    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > startAt;
     const baseSmooth = initiating ? Math.min(outputSmoothing * 1.6, 0.9) : outputSmoothing * 0.7;
     this._prevLeanRaw = lean;
 
