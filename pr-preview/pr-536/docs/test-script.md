@@ -314,6 +314,7 @@ Two devices on different networks for the M rows.
 | LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
 | LY-14 | Desktop/TV bike chooser is 60vh tall, clear of the bar, and the whole bike stays in view as it turns (#521) | A | `smoke:lobby-layout` |
 | LY-15 | Controls sheet on TV: a focused setting row's green ring is whole, not clipped at the sides (#534) | A | `smoke:tv-nav` |
+| LY-16 | Leaderboard on TV: a focused tab in the top row shows its whole green ring, not clipped by the sheet (#534) | A | `smoke:tv-nav` |
 
 ## 12. Data and backend
 
