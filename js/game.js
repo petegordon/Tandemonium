@@ -33,7 +33,7 @@ import {
   recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
   buildShareStrip, browserStore
 } from './daily-ride.js';
-import { getLevelById, LEVELS, getInstructions, getMedals } from './race-config.js';
+import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
 import { markTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
@@ -120,15 +120,8 @@ export const DROP_TAKEOVER_MS = 20000;
 // A pad must stay gone this long before the ride pauses (USB / BT blips).
 const DROP_DEBOUNCE_MS = 300;
 
-// Tutorial phase boundaries — sequential layout so all phases are visible ahead.
-// D6 (#400): cut to about a minute — pedal (runway) → lean to collect → both
-// together. The separate pylon-weave phase is gone; its recovery measurement
-// (smoothing) now comes from the combined phase, which also alternates sides.
-const TUTORIAL_PHASES = {
-  1: { runwayStart: 0,   contentStart: 30,  contentEnd: 80  },
-  2: { runwayStart: 80,  contentStart: 100, contentEnd: 145 }
-};
-const TUTORIAL_LAST_PHASE = 2;
+// Tutorial phase boundaries (TUTORIAL_PHASES, TUTORIAL_LAST_PHASE) live in
+// race-config.js so the world's phase gates come from the same table (#543).
 
 // Per-phase item layouts at absolute sequential distances
 const TUTORIAL_ITEMS = {
