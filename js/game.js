@@ -9425,10 +9425,13 @@ class Game {
     document.getElementById('tutorial-complete').classList.add('visible');
 
     // Register buttons for gamepad navigation: the sheet's action row (NEXT:
-    // GRANDMA'S first and focused, #459 item 15), then the Steam Store link.
+    // GRANDMA'S first and focused, #459 item 15), the Steam Store link, and
+    // the Steering Feel slider. #544: by position — ↑ / ↓ between the slider
+    // and the buttons, ← / → along the buttons, and ← / → move the slider
+    // only while it is focused.
     const steamStoreBtn = document.getElementById('btn-steam-store');
     const overlayBtns = focusResult(this._overlayFocus, document.getElementById('tutorial-complete-sheet'),
-      { primary: soloNext ? nextBtn : continueBtn, extra: steamStoreBtn ? [steamStoreBtn] : [], linear: true });   // #517: the slider takes ← / →
+      { primary: soloNext ? nextBtn : continueBtn, extra: [slider, steamStoreBtn].filter(Boolean) });
     this._overlayFocus.setSlider(slider);
 
     if (isMobile) {
@@ -9476,7 +9479,7 @@ class Game {
 
     document.getElementById('tutorial-complete').classList.add('visible');
 
-    const overlayBtns = focusResult(this._overlayFocus, document.getElementById('tutorial-complete-sheet'), { primary: continueBtn, linear: true });   // #459; #517: the slider takes ← / →
+    const overlayBtns = focusResult(this._overlayFocus, document.getElementById('tutorial-complete-sheet'), { primary: continueBtn, extra: [slider] });   // #459; #544: the slider is a focus stop, ← / → move it while focused
     this._overlayFocus.setSlider(slider);
 
     if (isMobile) {

@@ -313,6 +313,7 @@ Two devices on different networks for the M rows.
 | LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
 | LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
 | LY-14 | Desktop/TV bike chooser is 60vh tall, clear of the bar, and the whole bike stays in view as it turns (#521) | A | `smoke:lobby-layout` |
+| LY-17 | Tutorial finish with a pad: ↑/↓ between the Steering Feel slider and the buttons, ←/→ along the buttons, ←/→ move the slider only while it is focused (#544) | A | `smoke:tv-nav` |
 
 ## 12. Data and backend
 
