@@ -54,6 +54,7 @@ import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
 import { ControllerOverlayHud, getControllerOverlayPref } from './controller-overlay-hud.js';
 import { isSteamTwinPad } from './input-manager.js';
+import { versusTeamLooks } from './versus/team-looks.js';
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
@@ -1644,6 +1645,8 @@ class Game {
     // controllers. Bikes stagger ±0.8m laterally so they don't overlap on
     // the start line. Team tint comes from the existing bike presets.
     const presets = this.lobby._presetData || {};
+    // Each team's geese wear their own outfit in the team's colour.
+    const looks = versusTeamLooks(getGooseOutfit());
     this.versusRigs = teams.map((t, i) => {
       const rig = new TeamRig({
         id: t.id,
@@ -1654,6 +1657,7 @@ class Game {
         bikeCloneSource: this.bike, // boot bike's GLB is loaded — clone, don't re-fetch
       });
       rig.bike.applyPreset(presets[rig.color.presetKey] || null);
+      rig.bike.setGooseLook(looks[rig.id]);
       rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
       rig.camera.updateProjectionMatrix();
       rig.resetForRace();
@@ -5418,6 +5422,8 @@ class Game {
         rig.dispose(this.scene);
       }
       this.versusRigs = null;
+      // Team Blue's geese share materials with this bike: put the saved colours back.
+      if (this.bike) this.bike.applyGooseColours();
       if (this.versusFrontViews) {
         for (const fv of this.versusFrontViews) fv.dispose();
         this.versusFrontViews = null;

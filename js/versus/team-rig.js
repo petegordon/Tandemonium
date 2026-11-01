@@ -131,6 +131,7 @@ export class TeamRig {
   /** Remove this rig's scene objects and free GPU resources. */
   dispose(scene) {
     scene.remove(this.bike.group);
+    this.bike.disposeOwnGeese();   // a team outfit loaded for this bike alone
     this.bike.group.traverse((child) => {
       if (child.isMesh) {
         // Cloned bikes share geometry (and textures) with the boot bike —
