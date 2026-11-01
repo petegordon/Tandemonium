@@ -163,14 +163,14 @@ for (const size of SIZES) {
     check(probe.overlap && probe.off, 'BL-10 the measure catches a planted overlap and an off-screen control', probe);
   }
 
-  // ── LY-14 · #521: the bike chooser is 60vh tall on desktop/TV, inside its row, and
+  // ── LY-14 · #521/#553: the bike chooser is 51.5vh tall on desktop/TV (top level with RIDE TOGETHER), inside its row, and
   //    the bike still fits across it as it turns side-on ──
   if (size.viewport.width >= 1024) {
     await page.waitForFunction(() => !!window._game.lobby._previewPivot, { timeout: 60000 }).catch(() => {});
     const bc = await page.evaluate(() => {
       const l = window._game.lobby, cv = document.getElementById('bike-preview-canvas'), r = cv.getBoundingClientRect();
       const row = document.getElementById('bike-carousel').getBoundingClientRect(), bar = document.getElementById('lobby-bar')?.getBoundingClientRect();
-      const out = { h: Math.round(r.height), want: Math.round(innerHeight * 0.6), top: Math.round(r.top), bottom: Math.round(r.bottom), barTop: bar ? Math.round(bar.top) : innerHeight, worstX: 0, worstY: 0, fov: +l._previewCamera.fov.toFixed(1) };
+      const out = { h: Math.round(r.height), want: Math.round(innerHeight * 0.515), top: Math.round(r.top), bottom: Math.round(r.bottom), barTop: bar ? Math.round(bar.top) : innerHeight, worstX: 0, worstY: 0, fov: +l._previewCamera.fov.toFixed(1) };
       const p = l._previewPivot, cam = l._previewCamera, keep = p.rotation.y;
       for (let i = 0; i < 12; i++) {
         p.rotation.y = i * Math.PI / 12; p.updateMatrixWorld(true);
@@ -187,7 +187,7 @@ for (const size of SIZES) {
       out.worstX = +out.worstX.toFixed(2); out.worstY = +out.worstY.toFixed(2);
       return out;
     });
-    check(Math.abs(bc.h - bc.want) <= 2 && bc.top >= 0 && bc.bottom <= bc.barTop, `LY-14 ${size.name}: the bike chooser is 60vh tall and clear of the bar`, bc);
+    check(Math.abs(bc.h - bc.want) <= 2 && bc.top >= 0 && bc.bottom <= bc.barTop, `LY-14 ${size.name}: the bike chooser is 51.5vh tall and clear of the bar`, bc);
     check(bc.worstX <= 1 && bc.worstY <= 1, `LY-14 ${size.name}: the whole bike stays in the chooser as it turns`, bc);
     await h.shot(page, `ly14-${size.name.replace(/W+/g, '-')}-bike-chooser`);
   }
