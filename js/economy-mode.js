@@ -20,11 +20,11 @@
 //   'todaysLaunch'  { key, distance, best, earned }
 //   'stageCleared'  { stage }  (the stage just cleared)
 //   'bigAir'        { seconds }
-//   'jackpot'       { stage }
+//   'pot'           { stage }  a pot of gold collected (#546)
 //   'ride'          { mode, kind, newRide, metres, finished, earned }  every
 //                   regular-ride payout (metres/earned: only what is new)
 //   'slingLaunch'   { stage, daily }   the bands let go
-//   'slingRun'      { distance, record, jackpot, fullTrails, straight, daily }
+//   'slingRun'      { distance, record, pot, fullTrails, straight, daily }
 // Pure rules: js/economy.js (scoreRide), js/wallet.js, js/slingshot.js.
 
 import * as analytics from './analytics.js';

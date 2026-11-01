@@ -230,15 +230,15 @@ const r3 = await page.evaluate(() => ({ title: document.getElementById('sling-re
 check(/goal/i.test(r3.title) && r3.stage === 2, `reaching the goal clears the stage ("${r3.title}", now stage ${r3.stage})`);
 await shot('5-goal');
 
-// 10. Stage 2 has a jackpot. First a hay bale: it slows the bike, the run goes on.
+// 10. Stage 2 has a pot of gold. First a hay bale: it slows the bike, the run goes on.
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button, #sling-results uf-button')).find(b => /again/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
 await drag(0, 300, true);
 await waitState('playing', 120000);
 // Put the bike just short of an object, in its lane, rolling at 10 m/s.
-const rollInto = (kind, speed = 10) => page.evaluate(({ kind, speed }) => {
+const rollInto = (kind, speed = 10, back = 3) => page.evaluate(({ kind, speed, back }) => {
   const g = window._game, b = g.bike, it = g._slingProps.items.find(i => i.kind === kind);
-  b.resetToDistance(it.d - 3);
+  b.resetToDistance(it.d - back);
   const h = b.heading;                       // the props' lateral convention: (cos h, −sin h)
   b.position.x += Math.cos(h) * it.offset;
   b.position.z -= Math.sin(h) * it.offset;
@@ -246,7 +246,7 @@ const rollInto = (kind, speed = 10) => page.evaluate(({ kind, speed }) => {
   b.speed = speed;
   g._slingRun.stillT = 0;
   return { d: it.d, offset: it.offset };
-}, { kind, speed });
+}, { kind, speed, back });
 await rollInto('hay');
 await page.waitForFunction(() => window._game._slingProps.items.some(i => i.kind === 'hay' && i.hit), { timeout: 60000, polling: 50 });
 const hay = await page.evaluate(() => ({ speed: window._game.bike.speed, state: window._game.state, toast: document.getElementById('sling-toast').textContent }));
@@ -280,17 +280,47 @@ check(air.state === 'playing' && air.t >= 0.8 && air.bigAirs === bigBefore + 1,
   `a ramp launches the bike (${air.t.toFixed(2)} s up, peak ${air.peak.toFixed(1)} m) and lands Big Air`);
 check(air.cleared, 'flying off the ramp sails clean over the hay bale behind it');
 
-// 13. …then the jackpot billboard: the run ends at double pay.
+// 13. …then the pot of gold (#546): a big pickup in its own lane, under a
+// half-size POT OF GOLD board. Riding through it pays a flat bonus and the run
+// rolls on; the sign over the lane is scenery, not an ending.
+const frames = (n) => page.evaluate((n) => new Promise(r => { let i = 0; const f = () => (++i >= n ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); }), n);
+const potSetup = await page.evaluate(() => {
+  const p = window._game._slingProps;
+  return { pot: !!p.pot, sign: !!(p.potSign && p.potSign.mesh.parent), signItem: p.items.some(i => i.kind !== 'pot' && i.mesh === (p.potSign && p.potSign.mesh)),
+           kinds: [...new Set(p.items.map(i => i.kind))].sort().join(',') };
+});
+check(potSetup.pot && potSetup.sign && !potSetup.signItem, `stage 2 lays out a pot of gold under its sign; the sign is not something to hit (${potSetup.kinds})`);
+// The chase camera's view of it, from a few lengths back.
+await rollInto('pot', 1, 12);
+await frames(6);
+await page.screenshot({ path: path.join(ROOT, 'renders', 'smoke-slingshot-pot.png') });
 const walletBefore = (await wallet()).coins;
-await rollInto('jackpot');
+const pot = await rollInto('pot');
+await page.waitForFunction(() => { const p = window._game._slingProps.pot; return !p || p.hit; }, { timeout: 60000, polling: 50 });
+const got1 = await page.evaluate(() => ({ state: window._game.state, run: !!window._game._slingRun.pot, toast: document.getElementById('sling-toast').textContent,
+                                          shown: window._game._slingProps.pot.mesh.visible }));
+check(got1.state === 'playing' && got1.run && /pot of gold/i.test(got1.toast) && !got1.shown,
+  `riding through the pot collects it ("${got1.toast}") and the run goes on (${got1.state})`);
+// Roll on under the sign and past it: still riding.
+await page.waitForFunction((d) => window._game.bike.distanceTraveled > d || window._game.state !== 'playing', { timeout: 120000, polling: 50 }, pot.d + 6);
+check(await page.evaluate(() => window._game.state === 'playing'), 'the bike rolls on under the sign: it never ends the run');
+// Then a stall: the pot pays its flat bonus on the results, with no ×2.
+await page.evaluate(() => { const g = window._game; g.bike.speed = 0; g.bike.coast.decel = () => 50; });
+await waitState('slingTally', 60000);
+const potLabel = await page.evaluate(() => document.querySelector('#sling-tally .tally-label')?.textContent || '');
 await waitState('slingResults', 60000);
-const jp = await page.evaluate(() => ({ title: document.getElementById('sling-results-sheet').heading, rows: document.querySelector('#sling-results .sling-rows').textContent, coins: JSON.parse(localStorage.getItem('tandemonium_wallet')).coins }));
-check(/jackpot/i.test(jp.title) && /Jackpot/.test(jp.rows) && /Big air/.test(jp.rows) && /×2/.test(jp.rows) && jp.coins > walletBefore, `the jackpot ends the run at double pay ("${jp.title}", +${jp.coins - walletBefore})`);
+const jp = await page.evaluate(() => ({ title: document.getElementById('sling-results-sheet').heading, rows: document.querySelector('#sling-results .sling-rows').textContent,
+                                        coins: JSON.parse(localStorage.getItem('tandemonium_wallet')).coins, save: JSON.parse(localStorage.getItem('tandemonium_slingshot')) }));
+check(/stop/i.test(jp.title) && /Pot of gold/.test(jp.rows) && /Big air/.test(jp.rows) && !/×2/.test(jp.rows) && jp.coins > walletBefore && /pot of gold/i.test(potLabel),
+  `the pot of gold pays its bonus on a normal ending, no ×2 ("${jp.title}", tally "${potLabel}", +${jp.coins - walletBefore})`);
+check(Array.isArray(jp.save.jackpots) && jp.save.jackpots.includes(2), `the pot is cashed on stage 2 (jackpots ${JSON.stringify(jp.save.jackpots)})`);
 
 // 14. Twenty relaunches on the same stage re-arm the ride instead of
 // rebuilding it, and leak nothing into the scene or the heap.
 await page.evaluate(() => Array.from(document.querySelectorAll('#sling-results button, #sling-results uf-button')).find(b => /again/i.test(b.textContent)).click());
 await waitState('slingAim', 60000);
+const cashed = await page.evaluate(() => { const p = window._game._slingProps; return { pot: !!p.pot, sign: !!(p.potSign && p.potSign.mesh.parent) }; });
+check(!cashed.pot && cashed.sign, 'relaunching on stage 2 after cashing it: no pot, the sign stays');
 const loopStart = await page.evaluate(() => {
   const g = window._game;
   window.__rebuilds = 0;

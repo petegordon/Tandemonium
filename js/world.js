@@ -13,6 +13,7 @@ import { buildArchPuffs, archTime } from './arch-puffs.js';
 import { buildGrandmaFinish, HOUSE_SPOT } from './grandma-finish.js';
 import { buildGrandmaHouse, HOUSE } from './props-3d.js';
 import { buildTutorialBoard, boardPose, BOARD_PLACES } from './tutorial-board.js';
+import { tutorialPhaseGates } from './race-config.js';
 
 const GROUND_SIZE = 500;
 const GROUND_SEGS_FULL = 120;    // ~4.2-unit vertex spacing — covers visible road/tree range
@@ -1108,10 +1109,10 @@ export class World {
     // Finish line stripe at the end of every level
     this._createFinishStripe(level.distance);
 
-    // Tutorial: start line + phase boundary arches
+    // Tutorial: start line + phase boundary arches (only before the finish, #543)
     if (level.isTutorial) {
       this._createFinishStripe(0, 0x44ff66, 0x115511);   // Start line (green)
-      for (const d of [80, 158]) {
+      for (const d of tutorialPhaseGates(level.distance)) {
         this._createFinishStripe(d, 0xffd700, 0x444400);
         this._createCloudArch(d, archMat, L);
       }

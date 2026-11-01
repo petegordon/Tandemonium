@@ -99,17 +99,24 @@ function steamControllerLiveOnWebHid() {
   // even while WebHID is streaming. Needed because "streaming" is NOT the same
   // as "has usable gyro" — under a Steam launch the Puck's HID interface keeps
   // delivering STATE reports while the IMU fields inside them stay frozen.
-  if (typeof window !== 'undefined' && window.__webhidFirst === false) return false;
+  return liveWebHidSteamControllers() > 0;
+}
+
+/** How many Steam Controllers are streaming on WebHID right now (pooled or
+ *  claimed), by the same freshness rule as steamControllerLiveOnWebHid. */
+function liveWebHidSteamControllers() {
+  if (typeof window !== 'undefined' && window.__webhidFirst === false) return 0;
   const mgr = _controllerManager;
-  if (!mgr) return false;
+  if (!mgr) return 0;
   const now = performance.now();
   const live = (entry) => !!entry
     && !!entry.driver?.constructor?.needsSiblingFanout
     && entry.hidActiveSince > 0
     && (now - entry.hidActiveSince) < 5000;
-  if (mgr._hidPool) { for (const entry of mgr._hidPool.values()) if (live(entry)) return true; }
-  for (const s of (mgr.slots || [])) if (live(s._hidEntry)) return true;
-  return false;
+  const seen = new Set();
+  if (mgr._hidPool) { for (const entry of mgr._hidPool.values()) if (live(entry)) seen.add(entry); }
+  for (const s of (mgr.slots || [])) if (live(s._hidEntry)) seen.add(s._hidEntry);
+  return seen.size;
 }
 
 // ── Steam virtual XInput pads (#362) ──
@@ -125,9 +132,19 @@ export function isXInputPadId(id) { return XINPUT_ID.test(String(id || '')); }
 /** Steam's controller type ('13' = PS5, '14' = Steam Controller, …) behind a
  *  virtual XInput pad, or null when unknown / not under Steam. */
 export function steamTypeForGamepad(gp, padsOverride = null) {
-  if (!gp || !isXInputPadId(gp.id)) return null;
+  const slot = steamSlotForGamepad(gp, padsOverride);
+  return slot ? String(slot.type) : null;
+}
+
+function steamXInputMap() {
   const steamApi = (typeof window !== 'undefined' && window.steam && window.steam.input) ? window.steam.input : null;
-  const map = steamApi && typeof steamApi.getXInputMap === 'function' ? (steamApi.getXInputMap() || []) : [];
+  return steamApi && typeof steamApi.getXInputMap === 'function' ? (steamApi.getXInputMap() || []) : [];
+}
+
+/** Steam's XInput slot ({ index, handle, type }) behind a virtual XInput pad, or null. */
+function steamSlotForGamepad(gp, padsOverride = null) {
+  if (!gp || !isXInputPadId(gp.id)) return null;
+  const map = steamXInputMap();
   if (!map.length) return null;
   const pads = padsOverride || (navigator.getGamepads ? navigator.getGamepads() : []) || [];
   const xinputPads = [];
@@ -140,7 +157,13 @@ export function steamTypeForGamepad(gp, padsOverride = null) {
   // Steam emitted. A real Xbox pad that Steam is NOT capturing is XInput too
   // and would shift the ranks — refuse to guess rather than mislabel.
   if (xinputPads.length !== slots.length) return null;
-  return slots[k] ? String(slots[k].type) : null;
+  return slots[k] || null;
+}
+
+/** Steam has not said what this pad is: getInputTypeForHandle gives 0 (#535). */
+function isUnknownSteamType(type) {
+  const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
+  return t === '' || t === '0' || /^unknown$/i.test(t);
 }
 
 /**
@@ -150,11 +173,24 @@ export function steamTypeForGamepad(gp, padsOverride = null) {
  * Controller is live on WebHID — if WebHID does not hold one, the XInput pad
  * is that controller's only presence and must stay eligible.
  */
-export function isSteamTwinPad(gp) {
+export function isSteamTwinPad(gp, padsOverride = null) {
   if (!gp || !isXInputPadId(gp.id)) return false;
-  if (!steamControllerLiveOnWebHid()) return false;
-  const t = steamTypeForGamepad(gp);
-  return t != null && isSteamFamilyType(t);
+  const bodies = liveWebHidSteamControllers();
+  if (!bodies) return false;
+  const slot = steamSlotForGamepad(gp, padsOverride);
+  if (!slot) return false;
+  if (isSteamFamilyType(slot.type)) return true;
+  // #535: a Steam Controller switched on after launch keeps type 0 in Steam
+  // (getInputTypeForHandle never names it). When WebHID holds more Steam
+  // Controllers than Steam has named, the first unnamed slots are their
+  // twins; a pad Steam names as something else is never touched.
+  if (!isUnknownSteamType(slot.type)) return false;
+  const map = steamXInputMap();
+  const unnamedTwins = bodies - map.filter((e) => isSteamFamilyType(e.type)).length;
+  if (unnamedTwins <= 0) return false;
+  const unknown = map.filter((e) => isUnknownSteamType(e.type)).sort((a, b) => a.index - b.index);
+  const rank = unknown.findIndex((e) => e.index === slot.index);
+  return rank >= 0 && rank < unnamedTwins;
 }
 
 /**

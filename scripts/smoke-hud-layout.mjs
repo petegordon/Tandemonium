@@ -184,7 +184,7 @@ async function endScreens(label, viewport) {
           ui.renderResults({
             cause: 'goal', daily: false, stageCleared: true, canWishlist: true,
             score: { distance: 1050, isRecord: true, distPay: 210, coinPay: 60, recordPay: 40, stagePay: 300,
-                     jackpotPay: 200, airPay: 30, multiplier: 1.5, total: 1260 },
+                     potPay: 200, airPay: 30, multiplier: 1.5, total: 1260 },
             run: { coins: 12, bigAirs: 3, topSpeed: 21 },
             save: { stage: 4 }, wallet: { coins: 12345 },
             lock: { kind: 'demo', label: "That's the demo's last stage!" },
