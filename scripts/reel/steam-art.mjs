@@ -8,7 +8,7 @@
 // BOOST ribbon and the CHECK POINT flash hidden), one session each:
 //   finish  1 the finish at Grandma's: presents fly to the pile, Grandma at her door
 //   chase   2 chase cam, the cyclists leaning past the roadside geese
-//   crash   3 the crash: rag-doll geese, the tandem coming apart
+//   crash   3 the crash: into a death cone, rag-doll geese, hats off, the tandem coming apart (picked by hand)
 //   versus  4 Versus split screen, 2 v 2
 //   daily   5 local co-op on Today's Road (the Georgian pair)
 //   lobby   6 the TV lobby: geese backdrop + bike chooser
@@ -68,7 +68,7 @@ const SLOTS = {
   pagebg:    { w: 1438, h: 810,  dpr: 1, cam: { deg: -16, dist: 8.5, h: 1.4, look: 0.4,  side: -0.8, fov: 36 }, clouds: SKY_WIDE },
 };
 // which candidate frame each screenshot session keeps (index into its candidates, see each session)
-const PICK = { finish: 2, chase: 2, crash: 0, versus: 2, daily: 1, lobby: 0, start: 0 };
+const PICK = { finish: 2, chase: 2, versus: 2, daily: 1, lobby: 0, start: 0 };
 const SESSIONS = { finish: finishShot, chase: chaseShot, crash: crashShot, versus: versusShot, daily: dailyShot, lobby: lobbyShot, start: startShot };
 
 /** Start a local co-op ride with both bots riding (and collecting). */
@@ -212,22 +212,100 @@ async function chaseShot() {
   await s.close();
 }
 
-/** 3: the crash beat, as played. Both riders lean the same way at once and over they go. */
+/**
+ * 3: the crash beat, as played: the tandem rides square into a death cone (#478) and the crash scene (#484)
+ * goes off: the cone knocked flying with its skull burst, both geese thrown, hats off, the tandem in parts,
+ * the slow-mo moment. Captured from impact through the slow-mo, every CRASH_STEP s, from each CRASH_CAMS camera.
+ */
+// cameras, frozen where they stood at the impact frame: null = the game's own chase camera; else a lower,
+// closer chase: world metres behind the impact point (back), up, to the right (side), aimed `ahead` metres
+// down the road at height `look`; always the game's own 70 degree lens
+const CRASH_CAMS = {
+  game: null,
+  low: { back: 3.8, up: 1.9, side: 0.9, ahead: 1.5, look: 1.5 },
+  r45: { back: 3.3, up: 1.8, side: 3.0, ahead: 1.5, look: 1.6 },
+  l45: { back: 3.3, up: 1.8, side: -3.0, ahead: 1.5, look: 1.6 },
+  r55: { back: 2.6, up: 1.7, side: 3.7, ahead: 1.8, look: 2.0 },
+  l55: { back: 2.6, up: 1.7, side: -3.7, ahead: 1.8, look: 2.0 },
+};
+const CRASH_STEP = Number(process.env.CRASH_STEP || 0.05);
+const CRASH_START = Number(process.env.CRASH_START || 0.2);
+const CRASH_END = Number(process.env.CRASH_END || 1.4);
 async function crashShot() {
-  // Adventurous (the speed that throws the parts); no sway until the lean, or the bots go down on their own
-  // near the start and the ride restarts from Your Home
+  const only = (process.env.CRASH_CAMS || Object.keys(CRASH_CAMS).join(',')).split(',');
+  const riders = process.env.CRASH_RIDERS === 'cyclists' ? CYCLISTS : RIDERS;
   const still0 = { amp: 0, freq: 0.3, phase: 0 };
-  const s = await ride({ difficulty: 'adventurous', sway: { cap: still0, sto: still0 } });
-  // ride out past Your Home first (a crash at the start lands in front of the house), then both lean
-  for (let k = 0; k < 120; k++) {
-    const p = await s.page.evaluate(() => ({ d: window._game.bike.distanceTraveled, st: window._game.state }));
-    if (p.st === 'playing' && p.d > 90) break;
-    await advance(s.page, 0.5);
+  const s = await ride({ difficulty: process.env.CRASH_DIFF || 'chill', riders, sway: { cap: still0, sto: still0 }, cadence: Number(process.env.CRASH_CADENCE || 4.2), collect: 'avoid' });
+  const { page } = s;
+  // ride out past Your Home first (a crash at the start lands in front of the house)
+  const from = Number(process.env.CRASH_FROM || 90);
+  for (let k = 0; k < 200; k++) {
+    const p = await page.evaluate(() => ({ d: window._game.bike.distanceTraveled, st: window._game.state }));
+    if (p.st === 'playing' && p.d > from) break;
+    await advance(page, 0.5);
   }
-  await s.page.evaluate(() => { for (const b of window.__reel.bots) { b.extra = 1; b.steer = 0; b.sway = { amp: 0, freq: 0, phase: 0 }; } });
-  // from the moment the bike goes down: the rag dolls fly, the parts scatter, the red crash vignette fades (~1 s)
-  for (let k = 0; k < 600; k++) { if (await s.page.evaluate(() => !!window._game.bike.fallen)) break; await advance(s.page, 1 / 60); }
-  await candidates(s.page, 'crash', 'screenshot3', [0.8, 1.0, 1.2, 1.4, 1.7]);
+  // the crash scene needs Rapier (vendor/rapier.mjs: the capture blocks the CDN; npm run download-vendors or copy it)
+  await page.waitForFunction(() => !!(window._game.physicsFx && window._game.physicsFx.ready), { timeout: 60000 })
+    .catch(() => { throw new Error('physics FX never got ready (no vendor/rapier.mjs?)'); });
+  // the next cone far enough ahead to line up on: ride straight at it (no dodging)
+  const cone = await page.evaluate(() => {
+    const g = window._game, d = g.bike.distanceTraveled;
+    const om = g.obstacleManager;
+    let it = om._items.filter(i => !i._hidden && i.absoluteD > d + 25 && i.absoluteD < d + 90).sort((a, b) => a.absoluteD - b.absoluteD)[0];
+    // the placement salt varies the cones run to run (some runs have none out here): stand one up the way
+    // _placeItems does, 40 m on
+    if (!it) { it = { absoluteD: d + 40, roadD: (d + 40) % om._loopLen, lateralOffset: 0.5, poolIdx: -1 }; om._items.push(it); }
+    // nothing to hit before it (no dodging now)
+    for (const o of om._items) if (o !== it && o.absoluteD > d - 2 && o.absoluteD < it.absoluteD) o._hidden = true;
+    // and no present parked against the cone (its gold glow sits on the front wheel)
+    if (g.collectibleManager) g.collectibleManager.hideInRange(it.absoluteD - 10, it.absoluteD + 8);
+    for (const b of window.__reel.bots) { b.dodge = false; b.offset = it.lateralOffset; b.collect = false; }
+    return { at: +it.absoluteD.toFixed(1), off: +it.lateralOffset.toFixed(2), from: +d.toFixed(1), fx: !!(g.physicsFx && g.physicsFx.ready) };
+  });
+  console.log("  cone", JSON.stringify(cone)); if (cone.none) throw new Error("no cone ahead");
+  let pre = null;
+  for (let k = 0; k < 1500; k++) {
+    const p = await page.evaluate(() => {
+      const b = window._game.bike;
+      return { fallen: !!b.fallen, x: b.position.x, y: b.position.y, z: b.position.z, h: b.heading, v: +b.speed.toFixed(2), d: +b.distanceTraveled.toFixed(1), lat: +(b._lateralOffset || 0).toFixed(2), cause: b._crashCause };
+    });
+    if (p.fallen) { console.log('  impact', JSON.stringify({ v: pre.v, d: pre.d, lat: pre.lat, cause: p.cause })); break; }
+    pre = p;
+    await advance(page, 1 / 60);
+  }
+  // the red crash vignette (B-2) washes the slow-mo frames: a daylight frame for the store
+  if (process.env.CRASH_VIGNETTE !== 'on') await page.evaluate(() => { const st = document.createElement('style'); st.textContent = '#crash-overlay { display: none !important; }'; document.head.appendChild(st); });
+  // the camera variants, frozen at the impact frame
+  await page.evaluate((pre, cams) => {
+    const g = window._game, R = window.__reel;
+    const fwd = { x: Math.sin(pre.h), z: Math.cos(pre.h) }, right = { x: Math.cos(pre.h), z: -Math.sin(pre.h) };
+    const made = {};
+    for (const [k, c] of Object.entries(cams)) {
+      if (!c) { made[k] = null; continue; }
+      const cam = g.camera.clone();
+      cam.position.set(pre.x - fwd.x * c.back + right.x * c.side, pre.y + c.up, pre.z - fwd.z * c.back + right.z * c.side);
+      const ground = g.world.roadPath.getHeightAtWorld(cam.position.x, cam.position.z, g.bike.roadD);
+      if (cam.position.y < ground + 0.8) cam.position.y = ground + 0.8;
+      cam.lookAt(pre.x + fwd.x * c.ahead, pre.y + c.look, pre.z + fwd.z * c.ahead);
+      made[k] = cam;
+    }
+    window.__crashCams = made; window.__crashCam = null;
+    R.cam = { keys: [] };
+    R._cameraFor = (main) => {
+      const c = window.__crashCams[window.__crashCam]; if (!c) return null;
+      c.aspect = main.aspect; c.fov = main.fov; c.updateProjectionMatrix(); c.updateMatrixWorld(true); return c;
+    };
+  }, pre, CRASH_CAMS);
+  let t = 0, i = 0;
+  for (let at = CRASH_START; at <= CRASH_END + 1e-6; at += CRASH_STEP, i++) {
+    if (at > t) { await advance(page, at - t); t = at; }
+    for (const k of only) {
+      await page.evaluate((k) => { window.__crashCam = k; }, k);
+      await still(page, `crash_${k}_${String(i).padStart(2, '0')}`, 1920, 1080, 1, CAND);
+      t += 2 / 60;   // still() draws two frames
+    }
+  }
+  if (s.errors.length) console.log('  page errors:', s.errors.slice(0, 3));
   await s.close();
 }
 

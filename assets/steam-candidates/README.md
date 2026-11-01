@@ -136,6 +136,8 @@ node scripts/reel/steam-art.mjs crash,versus    # just these screenshot sessions
 SHARP_DIR=<dir with sharp> node scripts/reel/steam-art-compose.mjs
 ```
 
+The crash session (screenshot 3) rides square into a death cone and saves every camera in `CRASH_CAMS` (the game's chase cam plus lower, closer chase angles frozen at the impact frame, the game's 70 degree lens) every `CRASH_STEP` s from `CRASH_START` to `CRASH_END` after impact as `plates/candidates/crash_<cam>_<n>.png`; pick by eye (env: `CRASH_CAMS=l55,r55`, `CRASH_RIDERS=cyclists`, `CRASH_DIFF`, `CRASH_VIGNETTE=on` keeps the red crash vignette). It needs `vendor/rapier.mjs` (`npm run download-vendors`): the capture blocks the CDN, and without Rapier the crash is the canned fall with no rag dolls.
+
 Screenshot sessions are not frame-exact either: re-running one can land a different frame, so look at
 `plates/candidates/` and set `PICK` before composing. Knobs: `PAST` (metres past the line the bike is held, default 2), `SETTLE` (seconds for the presents to
 land and Grandma to reach the door, default 4.6), `POSE` (where the bike is pinned for the art), and the per-slot camera table in `steam-art.mjs` (`deg` 0 = straight in front of the bike,
