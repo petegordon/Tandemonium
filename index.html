@@ -2385,6 +2385,9 @@
     max-width: none;
     margin: 0 auto;
     text-align: center;
+    /* #534: room above the top row of tabs for their focus ring and glow,
+       which the sheet's scrolling body would otherwise clip. */
+    padding-top: 10px;
   }
   /* #506: the sheet's body scrolls (achievements, rides); a thin translucent bar instead of the browser's white one */
   #leaderboard-modal .uf-sheet__body {
