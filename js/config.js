@@ -42,11 +42,12 @@ export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
  */
 /**
  * "Show Solo" setting — when on, a solo ride (one player) shows only the captain
- * goose on the goose tandem; co-op, local and versus always show both. Off by
- * default. Cached by the game; toggling in Options applies on the next frame.
+ * goose on the goose tandem; co-op, local and versus always show both. On by
+ * default; an explicit Off is kept. Cached by the game; toggling in Options
+ * applies on the next frame.
  */
 export function getShowSolo() {
-  try { return localStorage.getItem('tandemonium_show_solo') === 'on'; } catch (e) { return false; }
+  try { return localStorage.getItem('tandemonium_show_solo') !== 'off'; } catch (e) { return true; }
 }
 
 /**

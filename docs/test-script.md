@@ -94,6 +94,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-01 | Tutorial: runway, phase 1 (collect) and phase 2 (collect + dodge) prompts advance; all presents and pylons count; the end screen shows the tally, saves the calibration, the feel slider sets the feel; NEXT offered | A | `smoke:solo-extras` |
 | SR-01h | Lean-steering onto the tutorial presents feels learnable | M | — |
 | SR-01i | Tutorial: the 3D "TUTORIAL START" board beside the start and the "TUTORIAL END" board past the finish (end-card style, bunting flaps, lettering glints as you pass); no "Your Home" video and no box house on the tutorial; Grandma's unchanged (#503) | A | `smoke:tutorial-board`, `test/unit/tutorial-board` |
+| SR-01j | Tutorial: one checkered strip at the finish — the gold phase gate stands at 80 m only, nothing past the 150 m finish line; Grandma's has one finish strip (#543) | A | `smoke:tutorial-board`, `test/unit/race-config` |
 | SR-02 | Tutorial: you cannot fall | A | `test/unit/crash-policy` |
 | SR-03 | Grandma's: clock is held until the first pedal taps, then runs | A | `smoke:ride` |
 | SR-04 | Grandma's: ride to the finish; victory overlay shows time, medal, coins | A | `smoke:economy`, `smoke:achievements` |
@@ -117,6 +118,8 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-14 | Slingshot: garage → buy upgrade → aim → launch → tally | A | `smoke:slingshot` |
 | SR-15 | Slingshot aim on phone (portrait and landscape, real touch) | A | `smoke:slingshot-aim` |
 | SR-16 | Slingshot ramps and big air feel right | M | — |
+| SR-16a | Slingshot pot of gold (#546): from stage 2 a pot of gold sits in its own lane under a half-size POT OF GOLD board; riding through it collects it ("POT OF GOLD! +N" toast), the run goes on, the board over the lane never ends it; the results pay a flat "Pot of gold" row with no ×2; once cashed on a stage (once a day on Today's Launch) the pot is gone and the board stays | A | `smoke:slingshot`, unit `slingshot`, `tutorial-board` |
+| SR-16b | The pot of gold reads as a pot of gold from the chase camera at launch speed, and steering into its lane feels like the skill | M | — |
 | SR-17 | Tourist: hidden without Maps key; two addresses plan a route; arrival result shares | A | `smoke:tourist` |
 | SR-18 | Tourist on real Google 3D tiles: loads, rides, no holes in the road | M | — |
 | SR-19 | Achievements unlock during a ride and appear in the list | A | `smoke:achievements` |
@@ -219,6 +222,7 @@ real-hardware rows stay manual.
 | VS-05 | Versus bot fills an empty seat | A | `test/unit/versus-bot` |
 | VS-06 | Race finishes; results show the winning team; LOBBY returns | A | `smoke:versus` (finish fast-forwarded) |
 | VS-07 | Pad unplug in versus freezes both teams with versus's own notice (no co-op 20 s take-over); replug resumes | A | `smoke:versus` |
+| VS-09 | Versus: the two teams' geese wear different outfits, each in its team's colourway (blue / red) (#538); the lobby bike keeps its saved colours after | A | `smoke:versus` |
 | VS-08 | 2v2 at 1080p holds frame rate on the target PC | M | — |
 
 ## 6. Online co-op (TOGETHER → online)
@@ -313,6 +317,8 @@ Two devices on different networks for the M rows.
 | LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
 | LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
 | LY-14 | Desktop/TV bike chooser is 60vh tall, clear of the bar, and the whole bike stays in view as it turns (#521) | A | `smoke:lobby-layout` |
+| TV-01 | TV (1080p): tutorial coaching — instruction line at `--uf-size-2xl`, phase dots, COLLECT marker, dodge arrow, crash/off-road notes at TV sizes (#541) | A | `smoke:tv-sizes` |
+| TV-02 | TV (1080p): Steering feel's Stable / Responsive at `--uf-size-md` with a bigger track + thumb, on the tutorial finish and in the Controls sheet (#542) | A | `smoke:tv-sizes` |
 
 ## 12. Data and backend
 
