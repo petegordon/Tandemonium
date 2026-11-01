@@ -51,6 +51,14 @@ check(boards.every(b => b.tex === true), 'baked faces loaded (2048 px atlases)')
 check(!ms.some(m => m.video), 'no "Your Home" video billboard on the tutorial');
 check(!ms.some(m => m.type === 'destination' && !m.board), 'no placeholder destination house on the tutorial');
 
+// #543 · one checkered strip at the finish: no road stripe at or past the finish line except the finish itself
+const stripes = await page.evaluate(() => { const w = window._game.world, L = w.roadPath.loopLength;
+  return { L, ds: w._raceMarkers.filter(m => m.type === 'stripe').map(m => Math.round(m.roadD * 10) / 10) }; });
+const tutDist = await page.evaluate(async () => (await import('/js/race-config.js')).LEVELS.find(l => l.isTutorial).distance);
+const atEnd = stripes.ds.filter(d => d >= tutDist - 20);
+check(atEnd.length === 1 && atEnd[0] === tutDist % stripes.L, `${level}: exactly one stripe at the finish (${tutDist} m) — stripes at ${stripes.ds.join(', ')} m`);
+check(stripes.ds.every(d => d <= tutDist), `${level}: no stripe past the finish line`);
+
 // a picture: in front of the end board
 await page.evaluate(() => {
   const g = window._game, m = g.world._raceMarkers.find(q => q.mesh.name === 'tutorial-board-end');
@@ -66,6 +74,8 @@ await page.evaluate(async () => { const { getLevelById } = await import('/js/rac
 ms = await markers();
 check(!ms.some(m => m.board), "grandma: no tutorial boards");
 check(ms.some(m => m.video) && ms.some(m => m.house), 'grandma: keeps the "Your Home" sign and the 3D house');
+const gStripes = await page.evaluate(() => window._game.world._raceMarkers.filter(m => m.type === 'stripe').length);
+check(gStripes === 1, `grandma: one finish stripe (${gStripes})`);
 check(errors.length === 0, `no page errors (${errors.length})`);
 
 await browser.close(); server.close();
