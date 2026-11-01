@@ -316,12 +316,13 @@ Two devices on different networks for the M rows.
 | LY-11 | First Grandma's finish at 1080p: every unlock shows; ← / → walk the result buttons (#517) | A | `smoke:tv-nav` |
 | LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
 | LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
-| LY-14 | Desktop/TV bike chooser is 60vh tall, clear of the bar, and the whole bike stays in view as it turns (#521) | A | `smoke:lobby-layout` |
+| LY-14 | Desktop/TV bike chooser is 51.5vh tall, clear of the bar, and the whole bike stays in view as it turns (#521, #553) | A | `smoke:lobby-layout` |
 | LY-15 | Controls sheet on TV: a focused setting row's green ring is whole, not clipped at the sides (#534) | A | `smoke:tv-nav` |
 | LY-16 | Leaderboard on TV: a focused tab in the top row shows its whole green ring, not clipped by the sheet (#534) | A | `smoke:tv-nav` |
 | LY-17 | Tutorial finish with a pad: ↑/↓ between the Steering Feel slider and the buttons, ←/→ along the buttons, ←/→ move the slider only while it is focused (#544) | A | `smoke:tv-nav` |
 | TV-01 | TV (1080p): tutorial coaching — instruction line at `--uf-size-2xl`, phase dots, COLLECT marker, dodge arrow, crash/off-road notes at TV sizes (#541) | A | `smoke:tv-sizes` |
 | TV-02 | TV (1080p): Steering feel's Stable / Responsive at `--uf-size-md` with a bigger track + thumb, on the tutorial finish and in the Controls sheet (#542) | A | `smoke:tv-sizes` |
+| TV-03 | TV (1080p) first page: dimmed geese-from-behind art fills the stage, the right panel fades into it, the bike chooser sits low with its top level with RIDE TOGETHER, and its arrows read L1 / R1 (LB / RB …) at TV size with a pad (#553) | A | `smoke:tv-sizes` |
 
 ## 12. Data and backend
 
