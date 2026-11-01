@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'b34a781',pr:545,time:'11-01-2026 01:25'}</script><base href="/pr-preview/pr-545/">
+<head><script>window.__BUILD={sha:'08b428a',pr:545,time:'11-01-2026 01:30'}</script><base href="/pr-preview/pr-545/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Tandemonium</title>
@@ -2385,6 +2385,9 @@
     max-width: none;
     margin: 0 auto;
     text-align: center;
+    /* #534: room above the top row of tabs for their focus ring and glow,
+       which the sheet's scrolling body would otherwise clip. */
+    padding-top: 10px;
   }
   /* #506: the sheet's body scrolls (achievements, rides); a thin translucent bar instead of the browser's white one */
   #leaderboard-modal .uf-sheet__body {
@@ -3177,6 +3180,13 @@
   .lobby-toggle.gamepad-focus {
     outline: none;
     box-shadow: var(--uf-focus-ring);
+  }
+  /* #534: a kit setting row draws its own focus (accent border + glow on the
+     row). The outline above sits outside it, where a sheet's scrolling body
+     clips its left and right sides — so settings skip it. */
+  uf-setting.gamepad-focus {
+    outline: none;
+    box-shadow: none;
   }
   .room-code {
     font-size: 36px;
@@ -5806,7 +5816,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b34a781 | 11-01-2026 01:25 (PR #545)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.08b428a | 11-01-2026 01:30 (PR #545)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

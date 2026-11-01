@@ -50,6 +50,28 @@ export function getLevelById(id) {
   return LEVELS.find(l => l.id === id) || LEVELS[0];
 }
 
+// Tutorial phase boundaries — sequential layout so all phases are visible ahead.
+// D6 (#400): cut to about a minute — pedal (runway) → lean to collect → both
+// together. The separate pylon-weave phase is gone; its recovery measurement
+// (smoothing) now comes from the combined phase, which also alternates sides.
+export const TUTORIAL_PHASES = {
+  1: { runwayStart: 0,   contentStart: 30,  contentEnd: 80  },
+  2: { runwayStart: 80,  contentStart: 100, contentEnd: 145 }
+};
+export const TUTORIAL_LAST_PHASE = 2;
+
+/**
+ * Where the tutorial's gold phase gates (stripe + cloud arch) stand: the start
+ * of every phase after the first, and only before the finish line — the
+ * finish has its own stripe (#543: a stale 158 m gate from the old 225 m
+ * tutorial put a second strip just past the finish).
+ */
+export function tutorialPhaseGates(distance, phases = TUTORIAL_PHASES) {
+  return Object.keys(phases).map(Number).sort((a, b) => a - b)
+    .map(p => phases[p].runwayStart)
+    .filter(d => d > 0 && d < distance);
+}
+
 // ============================================================
 // A-5 · Per-difficulty instruction text
 // ============================================================
