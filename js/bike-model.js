@@ -9,7 +9,8 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway, TUNE } from './config.js';
 import { colourwayParams, applyColourway } from './goose-colourways.js';
-import { GooseRiders } from './goose-riders.js';
+import { GooseRiders, disposeTree as disposeGooseTree } from './goose-riders.js';
+import { gooseOutfitPaths } from './goose-outfits.js';
 import { CrankMotion } from './crank-motion.js';
 import { fallLean } from './crash-tumble.js';
 import { shakeAt } from './crash-wobble.js';
@@ -536,6 +537,8 @@ export class BikeModel {
     loader.setDRACOLoader(getDracoLoader());
     this._gooseSwap = goose.swapRiders(loader, paths, disposeOld && !this._sharedGeometry).then(() => {
       if (this.goose !== goose) return; // the bike model was swapped meanwhile
+      // A versus team's own geese that landed after its rig was torn down.
+      if (this._gooseDisposed && this._ownGeese) { this.disposeOwnGeese(); return; }
       this.setSoloRider(this._soloRider);
       this.applyGooseColours();
       this._applyEnvMap();
@@ -546,9 +549,34 @@ export class BikeModel {
   /** Goose Colours: the saved colourway of the current outfit pair on both geese (goose tandem only). */
   applyGooseColours() {
     if (!this.goose) return;
-    const outfit = getGooseOutfit();
-    const params = colourwayParams(outfit, getGooseColourway(outfit));
+    const look = this._gooseLook;
+    const outfit = look ? look.outfit : getGooseOutfit();
+    const params = colourwayParams(outfit, look ? look.colourway : getGooseColourway(outfit));
     for (const [seat, r] of Object.entries(this.goose.riders)) applyColourway(r.root, params[seat] || {});
+  }
+
+  /**
+   * Versus: this bike's geese wear their own outfit + colourway instead of the
+   * saved ones (js/versus/team-looks.js). Geese loaded for another outfit are
+   * this bike's own; disposeOwnGeese() frees them.
+   * @param {{outfit: string, colourway: string}} look
+   */
+  setGooseLook(look) {
+    if (!this.goose || !look) return;
+    this._gooseLook = look;
+    const paths = gooseOutfitPaths(look.outfit);
+    const cur = this._gooseRiderPaths;
+    if (cur && cur.Captain === paths.Captain && cur.Stoker === paths.Stoker) { this.applyGooseColours(); return; }
+    this._ownGeese = true;
+    return this.setGooseRiders(paths, false);
+  }
+
+  /** Free geese this bike loaded for itself (a versus team's outfit), never shared ones. */
+  disposeOwnGeese() {
+    this._gooseDisposed = true;
+    if (!this._ownGeese || !this.goose) return;
+    for (const r of Object.values(this.goose.riders)) disposeGooseTree(r.root);
+    this._ownGeese = false;
   }
 
   /** Show Solo: true shows only the captain goose (goose tandem only; kept until the geese load). */

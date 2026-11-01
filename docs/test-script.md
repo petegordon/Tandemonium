@@ -219,6 +219,7 @@ real-hardware rows stay manual.
 | VS-05 | Versus bot fills an empty seat | A | `test/unit/versus-bot` |
 | VS-06 | Race finishes; results show the winning team; LOBBY returns | A | `smoke:versus` (finish fast-forwarded) |
 | VS-07 | Pad unplug in versus freezes both teams with versus's own notice (no co-op 20 s take-over); replug resumes | A | `smoke:versus` |
+| VS-09 | Versus: the two teams' geese wear different outfits, each in its team's colourway (blue / red) (#538); the lobby bike keeps its saved colours after | A | `smoke:versus` |
 | VS-08 | 2v2 at 1080p holds frame rate on the target PC | M | — |
 
 ## 6. Online co-op (TOGETHER → online)
