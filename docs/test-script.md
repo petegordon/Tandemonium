@@ -118,6 +118,8 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-14 | Slingshot: garage → buy upgrade → aim → launch → tally | A | `smoke:slingshot` |
 | SR-15 | Slingshot aim on phone (portrait and landscape, real touch) | A | `smoke:slingshot-aim` |
 | SR-16 | Slingshot ramps and big air feel right | M | — |
+| SR-16a | Slingshot pot of gold (#546): from stage 2 a pot of gold sits in its own lane under a half-size POT OF GOLD board; riding through it collects it ("POT OF GOLD! +N" toast), the run goes on, the board over the lane never ends it; the results pay a flat "Pot of gold" row with no ×2; once cashed on a stage (once a day on Today's Launch) the pot is gone and the board stays | A | `smoke:slingshot`, unit `slingshot`, `tutorial-board` |
+| SR-16b | The pot of gold reads as a pot of gold from the chase camera at launch speed, and steering into its lane feels like the skill | M | — |
 | SR-17 | Tourist: hidden without Maps key; two addresses plan a route; arrival result shares | A | `smoke:tourist` |
 | SR-18 | Tourist on real Google 3D tiles: loads, rides, no holes in the road | M | — |
 | SR-19 | Achievements unlock during a ride and appear in the list | A | `smoke:achievements` |
