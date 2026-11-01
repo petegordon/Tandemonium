@@ -20,6 +20,39 @@ const kit = () => page.evaluate(() => {
 });
 const K = await kit();
 
+// ── TV-03 · first lobby page: dimmed geese art behind, right panel fades into it (#553) ──
+await page.waitForFunction(() => document.getElementById('lobby-mode')?.hasAttribute('active') && document.getElementById('lobby-img-right').complete, { timeout: 30000, polling: 100 });
+const art = await page.evaluate(() => {
+  const bg = getComputedStyle(document.getElementById('lobby'), '::before');
+  const right = getComputedStyle(document.getElementById('lobby-img-right'));
+  return { bg: bg.backgroundImage, filter: bg.filter, mask: right.maskImage || right.webkitMaskImage };
+});
+check(/large_action_behind/.test(art.bg) && /brightness/.test(art.filter), 'TV-03 first page: the geese painting fills the stage, dimmed', art);
+check(/linear-gradient/.test(art.mask || ''), 'TV-03 first page: the right panel fades into the backdrop', art);
+const tops = await page.evaluate(() => ({
+  chooser: Math.round(document.getElementById('bike-carousel').getBoundingClientRect().top),
+  together: Math.round(document.getElementById('btn-together').getBoundingClientRect().top),
+  chooserBottom: Math.round(document.getElementById('bike-carousel').getBoundingClientRect().bottom),
+  barTop: Math.round(document.getElementById('lobby-bar').getBoundingClientRect().top),
+}));
+check(Math.abs(tops.chooser - tops.together) <= 6 && tops.barTop - tops.chooserBottom >= 24, 'TV-03 first page: the bike chooser sits low, its top level with RIDE TOGETHER', tops);
+// A DualSense driving the menus: the chooser's arrows read L1 / R1, big enough for the couch.
+await page.evaluate(() => {
+  document.body.classList.add('pad-menus');
+  customElements.get('uf-controller-glyph').setDefault({ family: 'playstation' });
+});
+await page.waitForFunction(() => document.querySelector('#bike-prev uf-controller-glyph')?.textContent.trim() === 'L1', { timeout: 10000, polling: 100 });
+const nav = await page.evaluate(() => {
+  const g = (id) => document.querySelector(`#${id} uf-controller-glyph`), ufg = (id) => g(id).querySelector('.ufg');
+  const arrow = getComputedStyle(document.querySelector('#bike-prev .bike-nav-arrow')).display;
+  const r = (id) => ufg(id).getBoundingClientRect(), btn = document.getElementById('bike-prev').getBoundingClientRect();
+  return { prev: g('bike-prev').textContent.trim(), next: g('bike-next').textContent.trim(), font: parseFloat(getComputedStyle(ufg('bike-prev')).fontSize), arrow, fits: r('bike-prev').width <= btn.width && r('bike-next').width > 0 };
+});
+check(nav.prev === 'L1' && nav.next === 'R1' && nav.arrow === 'none', 'TV-03 bike chooser: with a pad the arrows read L1 / R1', nav);
+check(nav.font >= K.md && nav.fits, 'TV-03 bike chooser: L1 / R1 are TV-sized and fit their tabs', { ...nav, md: K.md });
+await h.shot(page, '0-lobby-art');
+await page.evaluate(() => document.body.classList.remove('pad-menus'));
+
 // ── TV-01 · tutorial coaching ──
 const coach = await page.evaluate(() => {
   const g = window._game;
