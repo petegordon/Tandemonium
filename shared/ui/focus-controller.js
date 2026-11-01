@@ -168,10 +168,14 @@ export class FocusController {
       && (!this._canConfirm || this._canConfirm());
 
     if (this._spatial) {
+      // A registered slider that is itself a focus stop takes ←/→ only while
+      // it is focused; elsewhere ←/→ move between items (Tandemonium #544).
+      const onSlider = !!this._slider && this.focusedEl === this._slider;
+      if (onSlider) this._driveSlider(e, prev);
       if (e.up && !prev.up) this._moveDir('up');
       if (e.down && !prev.down) this._moveDir('down');
-      if (e.left && !prev.left) this._moveDir('left');
-      if (e.right && !prev.right) this._moveDir('right');
+      if (!onSlider && e.left && !prev.left) this._moveDir('left');
+      if (!onSlider && e.right && !prev.right) this._moveDir('right');
       if (confirmReady) { this._confirmSpatial(); this._awaitConfirmRelease = true; }
       if (e.b && !prev.b) this.back();
       this._edge = e;
