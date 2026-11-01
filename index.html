@@ -2385,6 +2385,9 @@
     max-width: none;
     margin: 0 auto;
     text-align: center;
+    /* #534: room above the top row of tabs for their focus ring and glow,
+       which the sheet's scrolling body would otherwise clip. */
+    padding-top: 10px;
   }
   /* #506: the sheet's body scrolls (achievements, rides); a thin translucent bar instead of the browser's white one */
   #leaderboard-modal .uf-sheet__body {
@@ -3177,6 +3180,13 @@
   .lobby-toggle.gamepad-focus {
     outline: none;
     box-shadow: var(--uf-focus-ring);
+  }
+  /* #534: a kit setting row draws its own focus (accent border + glow on the
+     row). The outline above sits outside it, where a sheet's scrolling body
+     clips its left and right sides — so settings skip it. */
+  uf-setting.gamepad-focus {
+    outline: none;
+    box-shadow: none;
   }
   .room-code {
     font-size: 36px;
