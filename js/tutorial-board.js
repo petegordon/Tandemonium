@@ -42,7 +42,11 @@ export const BOARD_PLACES = {
   end:   { dAfter: 3, lateral: 5.4, turn: 0.45 }, // just past the finish line (riders' left, like Grandma's house)
 };
 
-export const BOARD_TEXTURE = { start: 'assets/tutorial-board-start.webp', end: 'assets/tutorial-board-end.webp' };
+export const BOARD_TEXTURE = {
+  start: 'assets/tutorial-board-start.webp',
+  end: 'assets/tutorial-board-end.webp',
+  pot: 'assets/tutorial-board-pot.webp',     // #546 · Slingshot's POT OF GOLD sign (built smaller, overhead)
+};
 
 /**
  * World transform of a board beside the road, its face turned towards the
@@ -101,8 +105,8 @@ function frameGeo(w, h, t, depth, hex) {
   return paint(g, hex);
 }
 
-function structureGeometry() {
-  const { W, H, BOTTOM, FRAME, DEPTH, POST, CREST_R } = BOARD;
+function structureGeometry(B = BOARD, overhead = false) {
+  const { W, H, BOTTOM, FRAME, DEPTH, POST, CREST_R } = B;
   const cy = BOTTOM + H / 2, top = BOTTOM + H + FRAME;
   const px = W / 2 - 0.55;                                     // posts sit inside the frame's width
   const parts = [
@@ -118,23 +122,24 @@ function structureGeometry() {
     at(paint(new THREE.BoxGeometry(POST * 2, 0.22, POST * 2), C.iron), px, 0.11, -DEPTH - POST / 2),
     at(paint(new THREE.SphereGeometry(0.13, 10, 7), C.gold), -px, top + 0.36, -DEPTH - POST / 2),
     at(paint(new THREE.SphereGeometry(0.13, 10, 7), C.gold), px, top + 0.36, -DEPTH - POST / 2),
-    // a cross brace between the posts, below the board
-    at(paint(new THREE.BoxGeometry(px * 2, 0.1, 0.08), C.iron), 0, BOTTOM * 0.45, -DEPTH - POST / 2),
+    // a cross brace between the posts, below the board (just under the face on
+    // an overhead sign, so the riders pass beneath it)
+    at(paint(new THREE.BoxGeometry(px * 2, 0.1, 0.08), C.iron), 0, overhead ? BOTTOM - 0.12 : BOTTOM * 0.45, -DEPTH - POST / 2),
     // crest: gold ring (the end card's badge ring) on a dark-red mount
     at(paint(new THREE.TorusGeometry(CREST_R, 0.065, 8, 28), C.gold), 0, top + CREST_R + 0.02, 0.02),
     at(paint(new THREE.CylinderGeometry(CREST_R + 0.02, CREST_R + 0.02, 0.06, 28).rotateX(Math.PI / 2), C.red), 0, top + CREST_R + 0.02, -0.03),
     // the bunting rope, finial to crest to finial (two sagging runs)
-    ...ropeGeos(px, top),
+    ...ropeGeos(px, top, B),
   ];
   return mergeGeometries(parts.map(g => (g.index ? g.toNonIndexed() : g)), false);
 }
 
 /** Rope runs from each finial to the crest's side, sagging. */
-function ropeGeos(px, top) {
+function ropeGeos(px, top, B = BOARD) {
   const out = [];
   for (const side of [-1, 1]) {
-    const a = new THREE.Vector3(side * px, top + 0.36, -BOARD.DEPTH - BOARD.POST / 2 + 0.1);
-    const b = new THREE.Vector3(side * (BOARD.CREST_R + 0.05), top + BOARD.CREST_R + 0.05, 0.03);
+    const a = new THREE.Vector3(side * px, top + 0.36, -B.DEPTH - B.POST / 2 + 0.1);
+    const b = new THREE.Vector3(side * (B.CREST_R + 0.05), top + B.CREST_R + 0.05, 0.03);
     const mid = a.clone().lerp(b, 0.5); mid.y -= 0.22;
     const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
     out.push(paint(new THREE.TubeGeometry(curve, 10, 0.018, 4, false), C.rope));
@@ -143,11 +148,11 @@ function ropeGeos(px, top) {
 }
 
 /** Points along the rope where pennants hang (matches ropeGeos). */
-function ropePoints(px, top, perSide) {
+function ropePoints(px, top, perSide, B = BOARD) {
   const pts = [];
   for (const side of [-1, 1]) {
-    const a = new THREE.Vector3(side * px, top + 0.36, -BOARD.DEPTH - BOARD.POST / 2 + 0.1);
-    const b = new THREE.Vector3(side * (BOARD.CREST_R + 0.05), top + BOARD.CREST_R + 0.05, 0.03);
+    const a = new THREE.Vector3(side * px, top + 0.36, -B.DEPTH - B.POST / 2 + 0.1);
+    const b = new THREE.Vector3(side * (B.CREST_R + 0.05), top + B.CREST_R + 0.05, 0.03);
     const mid = a.clone().lerp(b, 0.5); mid.y -= 0.22;
     const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
     for (let i = 1; i <= perSide; i++) pts.push(curve.getPoint(i / (perSide + 1)));
@@ -156,8 +161,8 @@ function ropePoints(px, top, perSide) {
 }
 
 /** Face quad + crest disc, UV-mapped into the baked atlas. */
-function faceGeometry() {
-  const { W, H, BOTTOM, FRAME, CREST_R, ATLAS_FACE_V, ATLAS_CREST, ATLAS_W, ATLAS_H } = BOARD;
+function faceGeometry(B = BOARD) {
+  const { W, H, BOTTOM, FRAME, CREST_R, ATLAS_FACE_V, ATLAS_CREST, ATLAS_W, ATLAS_H } = B;
   const face = new THREE.PlaneGeometry(W, H);
   const uv = face.attributes.uv;
   for (let i = 0; i < uv.count; i++) uv.setY(i, (1 - ATLAS_FACE_V) + uv.getY(i) * ATLAS_FACE_V);
@@ -176,10 +181,10 @@ function faceGeometry() {
 }
 
 const PENNANT_COLS = [0xb3201f, 0xe8b520, 0xf4e6c4, 0x1d3a8a];
-function buntingGeometry() {
-  const { W, H, BOTTOM, FRAME } = BOARD;
+function buntingGeometry(B = BOARD) {
+  const { W, H, BOTTOM, FRAME } = B;
   const top = BOTTOM + H + FRAME, px = W / 2 - 0.55;
-  const pts = ropePoints(px, top, 5);
+  const pts = ropePoints(px, top, 5, B);
   const pos = [], col = [], sway = [];
   pts.forEach((p, i) => {
     const c = new THREE.Color(PENNANT_COLS[i % PENNANT_COLS.length]);
@@ -242,22 +247,34 @@ function buntingMaterial(uni) {
 // ── the board ──────────────────────────────────────────────────────────────
 
 /**
- * Build a tutorial board. kind: 'start' | 'end'.
+ * Build a tutorial board. kind: 'start' | 'end' | 'pot' (a BOARD_TEXTURE key).
+ * scale: the whole board, uniformly (#546's pot-of-gold sign is about half size).
+ * bottom: world metres from the ground to the bottom of the face (default: the
+ *   full-size board's BOARD.BOTTOM, scaled). overhead: the board stands over a
+ *   lane on tall posts and the riders pass beneath it, so its cross brace moves
+ *   up under the face. texture: a shared, already-loaded face texture (the
+ *   caller keeps it; the board's dispose-by-traverse would otherwise free it).
  * @returns {THREE.Group} with userData.board = { update(t, bikeD, roadD) }
  */
-export function buildTutorialBoard(kind = 'end', { textureLoader = null, anisotropy = 8 } = {}) {
+export function buildTutorialBoard(kind = 'end', { textureLoader = null, anisotropy = 8, texture = null,
+                                                  scale = 1, bottom = null, overhead = false } = {}) {
   const uni = { uTime: { value: 0 }, uGlint: { value: 0 } };
-  const loader = textureLoader || new THREE.TextureLoader();
-  const tex = loader.load(BOARD_TEXTURE[kind]);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = anisotropy;
+  let tex = texture;
+  if (!tex) {
+    const loader = textureLoader || new THREE.TextureLoader();
+    tex = loader.load(BOARD_TEXTURE[kind]);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = anisotropy;
+  }
+  const B = bottom == null ? BOARD : { ...BOARD, BOTTOM: bottom / scale };
 
   const group = new THREE.Group();
   group.name = `tutorial-board-${kind}`;
   const structMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.25 });
-  const structure = new THREE.Mesh(structureGeometry(), structMat);
-  const face = new THREE.Mesh(faceGeometry(), faceMaterial(tex, uni));
-  const bunting = new THREE.Mesh(buntingGeometry(), buntingMaterial(uni));
+  const structure = new THREE.Mesh(structureGeometry(B, overhead), structMat);
+  const face = new THREE.Mesh(faceGeometry(B), faceMaterial(tex, uni));
+  const bunting = new THREE.Mesh(buntingGeometry(B), buntingMaterial(uni));
+  if (scale !== 1) group.scale.setScalar(scale);
   for (const m of [structure, face, bunting]) { m.castShadow = m !== bunting; m.receiveShadow = m !== bunting; group.add(m); }
 
   let glintT0 = -1, passed = false;

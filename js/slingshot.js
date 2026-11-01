@@ -299,8 +299,9 @@ export const LANES = [-1.6, 0, 1.6];
  * you learn. Distances are road distances (rest point included).
  *  - Gate 1 (~45 m, where the aim can reach any lane): one lane of coins, one
  *    hay bale, one clear lane.
- *  - Gate 2 (~110 m, reached by steering): coins, hay, and from stage 2 the
- *    JACKPOT billboard — hit it and the run ends; the first hit on a stage pays double.
+ *  - Gate 2 (~110 m, reached by steering): coins, hay, and from stage 2 a POT
+ *    OF GOLD in the third lane (#546) — ride through it for a flat bonus and the
+ *    run rolls on. It pays once per stage (once a day on Today's Launch).
  *  - Then coin trails all the way to the goal.
  */
 export function planCourse(stage, distance, { seed = null } = {}) {
@@ -312,7 +313,7 @@ export function planCourse(stage, distance, { seed = null } = {}) {
     return l;
   };
   const coins = [], hay = [], ramps = [];
-  let jackpot = null;
+  let pot = null;
   const fan = (d, offset) => { for (let i = 0; i < COINS_PER_TRAIL; i++) coins.push({ d: d - 6 + i * TRAIL_STEP, offset }); };
 
   const g1 = SLING_REST_D + 45, [c1, h1] = pickLanes();
@@ -322,7 +323,7 @@ export function planCourse(stage, distance, { seed = null } = {}) {
   const g2 = SLING_REST_D + 110, [c2, h2, j2] = pickLanes();
   fan(g2, c2);
   hay.push({ d: g2, offset: h2 });
-  if (stage >= 2) jackpot = { d: g2 + 8, offset: j2 };
+  if (stage >= 2) pot = { d: g2 + 8, offset: j2 };
 
   // Ramps: one 7 m short of gate 2's hay bale, in its lane — fast enough
   // (~12 m/s) and you sail over it, too slow and you land in it — then one
@@ -333,7 +334,7 @@ export function planCourse(stage, distance, { seed = null } = {}) {
   coins.push(...planCoinTrails(distance, seed != null ? Math.floor(rng() * 233280) + 1 : 31 * stage + 7, { start: g2 + 40 }));
   // No coin trail sits on a ramp.
   const clear = coins.filter(c => !ramps.some(r => Math.abs(c.d - r.d) < 4 && Math.abs(c.offset - r.offset) < 1.2));
-  return { coins: clear, hay, ramps, jackpot };
+  return { coins: clear, hay, ramps, pot };
 }
 
 // ---- Air ----------------------------------------------------
@@ -365,19 +366,20 @@ export const PAY = {
   recordDivisor: 4,     // 1 coin per 4 m beyond the old best
 };
 
-/** The jackpot billboard: a flat bonus, then the whole run pays double. */
-export function jackpotBonus(stage) {
+/** The pot of gold (#546, was the jackpot billboard): a flat bonus, nothing more. */
+export function potBonus(stage) {
   return 100 + 50 * payStage(stage);
 }
 
 /**
- * Has the jackpot already paid out here? (B5) It pays its bonus and the ×2 the
- * FIRST time it is hit on each stage, and once a day on Today's Launch; later
- * hits still end the run but pay like an ordinary run of that distance.
+ * Has the pot of gold already paid out here? (B5) It pays the FIRST time it is
+ * collected on each stage, and once a day on Today's Launch. Once cashed, the
+ * course leaves it out (the sign stays), so there is nothing to explain.
  * save: a stage save ({ stage, jackpots: [stages paid] }) or Today's Launch's
- * status ({ jackpot: true once paid today }).
+ * status ({ jackpot: true once paid today }). The save fields keep their old
+ * jackpot names, so existing saves stay cashed.
  */
-export function jackpotCashed(save) {
+export function potCashed(save) {
   if (!save) return false;
   if (save.jackpot === true) return true;
   return Array.isArray(save.jackpots) && save.jackpots.includes(Math.max(1, Math.floor(save.stage || 1)));
@@ -385,12 +387,12 @@ export function jackpotCashed(save) {
 
 /**
  * One run's payout.
- * run:  { distance, coins, stageCleared, jackpot, bigAirs }   (distance from the slingshot)
+ * run:  { distance, coins, stageCleared, pot, bigAirs }   (distance from the slingshot)
  * save: { best, runs, stage, jackpots }  — for Today's Launch, the day's status
  *   (best, runs, jackpot) plus the stage
  * coinMult: the wallet's multiplier (js/wallet.js · coinMultiplier). Defaults
  *   to what save.lv would give, for callers that still pass upgrade levels.
- * `jackpotPaid` in the result: this run cashed the jackpot (first hit).
+ * `potPaid` in the result: this run collected an uncashed pot of gold.
  */
 export function scoreRun(run, save, coinMult = slingStats(save.lv).coinMult) {
   const distance = Math.max(0, Math.floor(run.distance || 0));
@@ -402,14 +404,14 @@ export function scoreRun(run, save, coinMult = slingStats(save.lv).coinMult) {
   const recordPay = isRecord && (save.runs || 0) > 0
     ? Math.floor((distance - best) / PAY.recordDivisor) : 0;
   const stagePay = run.stageCleared ? stageBonus(save.stage) : 0;
-  const jackpotPaid = !!run.jackpot && !jackpotCashed(save);
-  const jackpotPay = jackpotPaid ? jackpotBonus(save.stage) : 0;
+  const potPaid = !!run.pot && !potCashed(save);
+  const potPay = potPaid ? potBonus(save.stage) : 0;
   const airPay = (run.bigAirs || 0) * BIG_AIR_PAY;
-  const subtotal = distPay + coinPay + recordPay + stagePay + jackpotPay + airPay;
-  const multiplier = coinMult * (jackpotPaid ? 2 : 1);
+  const subtotal = distPay + coinPay + recordPay + stagePay + potPay + airPay;
+  const multiplier = coinMult;
   const total = Math.floor(subtotal * multiplier);
-  return { distance, distPay, coinPay, recordPay, stagePay, jackpotPay, airPay, subtotal,
-           multiplier, total, isRecord, jackpotPaid, stage: Math.max(1, Math.floor(save.stage || 1)) };
+  return { distance, distPay, coinPay, recordPay, stagePay, potPay, airPay, subtotal,
+           multiplier, total, isRecord, potPaid, stage: Math.max(1, Math.floor(save.stage || 1)) };
 }
 
 // ---- Today's Launch (#400 D11b) ----------------------------
@@ -421,7 +423,7 @@ export function scoreRun(run, save, coinMult = slingStats(save.lv).coinMult) {
  */
 export const TODAYS_LAUNCH_SALT = 101;          // private to this mode: not in daily-seed's SALT table
 export const TODAYS_LAUNCH_LENGTH = 1150;       // past every stage goal, inside one 1200 m lap
-const TODAYS_LAUNCH_LAYOUT_STAGE = 7;           // jackpot billboard on, like a late stage
+const TODAYS_LAUNCH_LAYOUT_STAGE = 7;           // pot of gold on, like a late stage
 
 export function todaysLaunchSeed(key) {
   return deriveSeed(seedFromKey(key), TODAYS_LAUNCH_SALT);
@@ -439,11 +441,11 @@ export function todaysLaunchStatus(save, key) {
     : { key, best: 0, runs: 0, jackpot: false };
 }
 
-/** Bank a Today's Launch run on the save. Returns a NEW save. The jackpot pays once a day (B5). */
+/** Bank a Today's Launch run on the save. Returns a NEW save. The pot of gold pays once a day (B5). */
 export function applyTodaysLaunch(save, key, score) {
   const cur = todaysLaunchStatus(save, key);
   return { ...save, daily: { key, best: Math.max(cur.best, score.distance), runs: cur.runs + 1,
-                             jackpot: cur.jackpot || !!score.jackpotPaid } };
+                             jackpot: cur.jackpot || !!score.potPaid } };
 }
 
 // ---- Save ---------------------------------------------------
@@ -507,7 +509,7 @@ function sanitize(o) {
     s.daily = { key: d.key, best: Math.floor(num(d.best, 0)), runs: Math.floor(num(d.runs, 0)) };
     if (d.jackpot === true) s.daily.jackpot = true;
   }
-  // B5: the stages whose jackpot has paid out.
+  // B5: the stages whose pot of gold has paid out (the field keeps its jackpot name).
   if (Array.isArray(o.jackpots)) {
     s.jackpots = [...new Set(o.jackpots.filter(n => Number.isInteger(n) && n >= 1))].sort((a, b) => a - b);
   }
@@ -552,8 +554,8 @@ export function applyRun(save, run, score) {
   next.runs += 1;
   if (score.isRecord) next.best = score.distance;
   if (run.stageCleared) next.stage += 1;
-  // B5: the jackpot cashed on this stage stays cashed.
-  if (score.jackpotPaid) next.jackpots = [...new Set([...(save.jackpots || []), score.stage || save.stage])];
+  // B5: the pot of gold cashed on this stage stays cashed.
+  if (score.potPaid) next.jackpots = [...new Set([...(save.jackpots || []), score.stage || save.stage])];
   return next;
 }
 
