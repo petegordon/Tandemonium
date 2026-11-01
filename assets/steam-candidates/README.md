@@ -1,5 +1,22 @@
 # Steam store art candidates with the Victorian geese (#357)
 
+**Re-rendered 2026-11-01 from main at dc99f6c** (after #505's bike × geese fit fix and rebuilt
+`goose_tandem.glb`, #507 rag-doll weight, the TV UI work #517-#556, the present pile). What changed
+since the 2026-10-26 set:
+
+- Every capsule and library slot re-rendered and re-framed on the new bike: riders whole (no clipped
+  hats), Grandma and the present pile in frame beside them, faces clear of the lettering.
+- Clouds behind the lettering: the build has clouds now, and the art pass moves a couple of the world's
+  own clouds into each camera's sky (`clouds` per slot in `steam-art.mjs`).
+- The bike is pinned to one pose at the finish (`POSE` in `steam-art.mjs`): the ride is not frame-exact
+  (model loads run on the real clock), so where it stopped drifted by a metre or two between runs and
+  moved the framing. The pile holds every present on the road (the bots miss a few to the lean).
+- A curated set of seven screenshots (was six), best first, all as played with the game's own cameras
+  and HUD, clean: no achievement toasts, coach line / sprint prompt, BOOST ribbon, CHECK POINT flash,
+  crank-fight stamp or crash status text, and no touch pedal pads in Versus. Four rider pairs show
+  (key-art pair, Cyclists, Georgian, Fancy) plus Versus's team outfits. Each session keeps its candidate
+  frames in `plates/candidates/` (git-ignored); the `PICK` table in `steam-art.mjs` chooses.
+
 Rendered in-engine from the real game (`scripts/reel/steam-art.mjs`, built on the trailer capture
 tooling in `scripts/reel/lib.mjs` + `page-bot.js`): one co-op bot ride to Grandma's, the finish
 cinematic frozen a moment after the line, and the same staged scene photographed at every Steamworks
@@ -30,7 +47,8 @@ From partner.steamgames.com/doc/store/assets/standard and /libraryassets:
 - **Library header:** no text (Steam overlays the logo), a balanced frame.
 - **Library logo:** transparent PNG, 1280x720: the existing title (logotype + the pedals logomark).
 - **Page background:** ambient, no text: the wide plate blurred and darkened.
-- **Screenshots:** gameplay as played, chase cam + HUD, no overlays; Steam wants at least five (six here).
+- **Screenshots:** gameplay as played (the game's own cameras + HUD), no toasts or prompts; Steam wants
+  at least five (seven here), ordered best first since the store shows the first ones most.
 - **Icons:** community 184x184; client 32x32 as PNG and as `.ico` (16/32/48, PNG-compressed entries).
 - Every file is under Steam's 5 MB limit.
 
@@ -38,27 +56,29 @@ From partner.steamgames.com/doc/store/assets/standard and /libraryassets:
 
 | Steamworks slot | Required | Candidate | Size | Text rule | Safe area / notes |
 |---|---|---|---|---|---|
-| Header capsule | 920x430 (+460x215) | `header_920x430.png`, `header_460x215.png` | 0.49 / 0.16 MB | title only, 58% width, shadowed | faces clear of the sticker |
-| Small capsule | 462x174 (+231x87) | `small_462x174.png`, `small_231x87.png` | 0.16 / 0.05 MB | logo-first, nearly fills | readable at 231x87 |
-| Main capsule | 1232x706 (+616x353) | `main_1232x706.png`, `main_616x353.png` | 1.01 / 0.32 MB | title only, 60% width, shadowed | faces and Grandma clear |
-| Vertical capsule | 748x896 (+374x448) | `vertical_748x896.png`, `vertical_374x448.png` | 0.86 / 0.26 MB | title only, 86% width, top | faces clear |
+| Header capsule | 920x430 (+460x215) | `header_920x430.png`, `header_460x215.png` | 0.58 / 0.19 MB | title only, 58% width, shadowed | faces clear of the sticker |
+| Small capsule | 462x174 (+231x87) | `small_462x174.png`, `small_231x87.png` | 0.17 / 0.05 MB | logo-first, nearly fills | readable at 231x87 |
+| Main capsule | 1232x706 (+616x353) | `main_1232x706.png`, `main_616x353.png` | 1.10 / 0.36 MB | title only, 60% width, shadowed | faces and Grandma clear |
+| Vertical capsule | 748x896 (+374x448) | `vertical_748x896.png`, `vertical_374x448.png` | 0.87 / 0.28 MB | title only, 86% width, top | faces clear |
 | Library capsule | 600x900 | `library_600x900.png` | 0.65 MB | title only, 88% width, top | faces clear |
-| Library header | 920x430 | `libheader_920x430.png` | 0.30 MB | no text | balanced frame |
-| Library hero | 3840x1240 | `hero_3840x1240.png` | 1.65 MB | no text, no logo | riders + Grandma inside 1720x760 centred box (`checks/hero_safe_area.png`) |
+| Library header | 920x430 | `libheader_920x430.png` | 0.28 MB | no text | balanced frame |
+| Library hero | 3840x1240 | `hero_3840x1240.png` | 1.69 MB | no text, no logo | riders + Grandma inside 1720x760 centred box (`checks/hero_safe_area.png`) |
 | Library logo | 1280 wide / 720 tall, transparent | `library_logo_1280x720.png` | 1.56 MB | logotype + logomark | 1280x720, alpha: yes |
-| Page background | 1438x810 | `pagebg_1438x810.png` | 0.50 MB | no text, blurred + darkened | ambient |
+| Page background | 1438x810 | `pagebg_1438x810.png` | 0.54 MB | no text, blurred + darkened | ambient |
 | Community icon | 184x184 | `community_icon_184x184.png` | 0.08 MB | n/a | from the pedal icon |
 | Client icon | 32x32 .ico | `client_icon.ico` (+`client_icon_32x32.png`) | 10 KB | n/a | 16/32/48 entries |
-| Screenshots | 1920x1080, at least 5 | `screenshot1..6_1920x1080.png` | 1.0-2.1 MB | gameplay only | 1 checkpoint + boost, 2 mid-ride, 3 Grandma's house ahead, 4 the crash, 5 Versus split screen, 6 the start at Your Home |
+| Screenshots | 1920x1080, at least 5 | `screenshot1..7_1920x1080.png` | 1.1-2.4 MB | gameplay only | upload in this order: 1 the finish at Grandma's (finish cinematic: presents fly to the pile, Grandma at her door), 2 chase cam, the Cyclists leaning through scattering geese, 3 the crash (rag-doll geese, handlebars off), 4 Versus 2 v 2 split screen, 5 local co-op on Today's Road (Georgian pair), 6 the TV lobby (geese backdrop + bike chooser), 7 the start at Your Home (Fancy pair) |
 
 ## Still needs a human
 
 - Final picks, and the lettering's exact position per slot (it is placed by the compose script's
   fractions; Steam gives no numeric text-safe margin for capsules, only "legible and not cropped by
   the gallery crop" for the main capsule).
-- The sky is plain in this build (no clouds behind the lettering on the capsule plates).
-- Screenshot 6 shows two achievement toasts and the sprint prompt; a curated screenshot set is a
-  separate pass.
+- The bare grass in the foreground (bottom-left of header/main/hero) has a soft grey smear: that is the
+  ground's own look at that distance in this build, not a capture fault. It sits under Steam's logo zone
+  on the hero.
+- The chase-cam shots (2, 5, 7) show the bike small, as the game's chase camera does; the finish (1) and
+  the crash (3) are the close looks.
 - Which files are currently uploaded to Steamworks: not visible from the repo, check the dashboard.
 
 ## Inventory of the existing art (2026-10-26)
@@ -110,14 +130,14 @@ Community icon 184x184, client icon 32x32 / .ico, page background 1438x810, scre
 ## Regenerating
 
 ```
-node scripts/reel/steam-art.mjs                 # all slots + the crash and versus screenshots
+node scripts/reel/steam-art.mjs                 # all slots + all seven screenshot sessions
 node scripts/reel/steam-art.mjs hero,main       # just these slots (one ride)
-node scripts/reel/steam-art.mjs crash,versus    # just these screenshot sessions
+node scripts/reel/steam-art.mjs crash,versus    # just these screenshot sessions (finish chase crash versus daily lobby start)
 SHARP_DIR=<dir with sharp> node scripts/reel/steam-art-compose.mjs
 ```
 
-Knobs: `PAST` (metres past the line the bike is held, default 2), `SETTLE` (seconds for the presents to
-land and Grandma to reach the door, default 4.6), `CRASH_AT` (seconds after the lean before the crash
-still), and the per-slot camera table in `steam-art.mjs` (`deg` 0 = straight in front of the bike,
+Screenshot sessions are not frame-exact either: re-running one can land a different frame, so look at
+`plates/candidates/` and set `PICK` before composing. Knobs: `PAST` (metres past the line the bike is held, default 2), `SETTLE` (seconds for the presents to
+land and Grandma to reach the door, default 4.6), `POSE` (where the bike is pinned for the art), and the per-slot camera table in `steam-art.mjs` (`deg` 0 = straight in front of the bike,
 negative = the side away from the house; `look` raises the aim so the riders drop in frame; `side` > 0
 pushes the riders right). Lettering size and position per slot: the `SLOTS` table in the compose script.
