@@ -100,6 +100,19 @@ class SlingshotMode {
   }
 
   /**
+   * The save a launch is scored against (js/slingshot.js · scoreRun). Today's
+   * Launch: the day's status (its record bonus is against the day's best, its
+   * pot pays once a day) with the save's stage for pay. A demo replay: the
+   * stage it plays. Otherwise the stage save itself.
+   */
+  _slingScoreSave() {
+    const daily = this._slingDaily;
+    if (daily) return { ...sling.todaysLaunchStatus(this._slingSave, daily.key), stage: this._slingSave.stage };
+    const stage = this._slingPlayStage();
+    return stage !== this._slingSave.stage ? { ...this._slingSave, stage } : this._slingSave;
+  }
+
+  /**
    * The one garage. From the Slingshot it carries LAUNCH (or what the stage
    * needs first); `standalone` (the lobby's GARAGE, an end screen's GARAGE →)
    * is just the wallet and the upgrades, with BACK to the lobby.
@@ -287,7 +300,7 @@ class SlingshotMode {
     this._placeSlingCamera();
 
     // The stage's fixed course: lanes of coins, hay bales and (from stage 2) the
-    // jackpot billboard. It replaces the level's scattered pickups and the
+    // pot of gold, left out once it has paid (its sign stays). It replaces the level's scattered pickups and the
     // random cones — nothing in the way should be a surprise crash.
     const course = this._slingDaily
       ? sling.todaysLaunchCourse(this._slingDaily.key)
@@ -295,7 +308,8 @@ class SlingshotMode {
     this.collectibleManager.replaceItems(course.coins);
     if (this.obstacleManager) this.obstacleManager.replaceItems([]);
     if (this._slingProps) this._slingProps.dispose();
-    this._slingProps = new SlingshotProps(this.scene, this.world.roadPath, course);
+    this._slingProps = new SlingshotProps(this.scene, this.world.roadPath, course,
+      { potCashed: sling.potCashed(this._slingScoreSave()) });
     this.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
     this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
     this.hud.hideTimer();
@@ -560,13 +574,18 @@ class SlingshotMode {
           b.speed *= HAY_KEEP;
           this._playBeep(220, 0.12);
           slingUI.toast('Hay bale!');
-        } else if (hit.kind === 'jackpot') {
-          run.jackpot = true;
-          this._economyEvent('jackpot', { stage: this._slingPlayStage() });
+        } else if (hit.kind === 'pot') {
+          // #546: a pot of gold is a big pickup, not an ending: it pays its flat
+          // bonus at the end of the run (scoreRun · potPay) and the bike rolls on.
+          run.pot = true;
+          this._economyEvent('pot', { stage: this._slingPlayStage() });
+          const bonus = sling.potBonus(this._slingScoreSave().stage);
+          if (!this._slingFx) this._slingFx = new SparkleBurst(this.scene);
+          this._slingFx.burst({ x: b.position.x + Math.sin(b.heading) * 1.5, y: b.position.y + 1.2, z: b.position.z + Math.cos(b.heading) * 1.5 }, { size: 0.7 });
+          slingUI.coinPop(bonus);
+          slingUI.toast(`POT OF GOLD! +${bonus} 🪙`);
           hapticCheckpoint();
           this._playChime(1760, 0.3);
-          this._endSlingRun('jackpot');
-          return true;
         }
       }
     }
@@ -645,23 +664,21 @@ class SlingshotMode {
     // m9: a demo replay of its last stage pays normally, but that goal is already cleared.
     const stage = this._slingPlayStage();
     const replay = !daily && stage !== this._slingSave.stage;
-    const runData = { distance, coins: run.coins, stageCleared: !daily && !replay && cause === 'goal', jackpot: !!run.jackpot, bigAirs: run.bigAirs };
+    const runData = { distance, coins: run.coins, stageCleared: !daily && !replay && cause === 'goal', pot: !!run.pot, bigAirs: run.bigAirs };
     const mult = walletLib.coinMultiplier(this._loadWallet());
     let score;
     if (daily) {
-      // Today's Launch: the record bonus is against the day's best, and it never moves the stage.
-      const today = sling.todaysLaunchStatus(this._slingSave, daily.key);
-      score = sling.scoreRun(runData, { ...today, stage: this._slingSave.stage }, mult);
+      score = sling.scoreRun(runData, this._slingScoreSave(), mult);
       this._slingSave = sling.applyTodaysLaunch(this._slingSave, daily.key, score);
     } else {
-      score = sling.scoreRun(runData, replay ? { ...this._slingSave, stage } : this._slingSave, mult);
+      score = sling.scoreRun(runData, this._slingScoreSave(), mult);
       this._slingSave = sling.applyRun(this._slingSave, runData, score);
     }
     sling.writeSave(this._slingStore(), this._slingSave);
     this._depositCoins(score.total, { mode: daily ? 'todaysLaunch' : 'slingshot', kind: cause });
     // #401: the run, for the Slingshot achievements (Slingshot keeps ride checks off).
     this._economyEvent('slingRun', {
-      distance: score.distance, record: score.isRecord, jackpot: !!run.jackpot, daily: !!daily,
+      distance: score.distance, record: score.isRecord, pot: !!run.pot, daily: !!daily,
       fullTrails: sling.completedTrails(this.collectibleManager ? this.collectibleManager._items : []),
       straight: sling.isStraightShot(score.distance, run.steerAt),
     });
@@ -686,7 +703,9 @@ class SlingshotMode {
     slingUI.hidePull();
     if (this._slingFlag) this._slingFlag.dispose();
     this._slingFlag = new DistanceFlag(this.scene, this.bike.position, this.bike.heading, `${score.distance} m`);
-    const label = { jackpot: 'JACKPOT!', goal: daily ? 'ALL THE WAY!' : 'STAGE GOAL!', crash: 'CRASH!' }[cause] || '';
+    // A stall after the pot of gold calls the pot out (#546); a goal or a crash says so instead.
+    const label = { goal: daily ? 'ALL THE WAY!' : 'STAGE GOAL!', crash: 'CRASH!' }[cause]
+      || (score.potPaid ? `POT OF GOLD! +${score.potPay}` : '');
     slingUI.showTally(
       { distance: score.distance, coins: Math.floor(score.distPay * score.multiplier), label },
       {
