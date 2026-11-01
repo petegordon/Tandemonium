@@ -48,8 +48,14 @@ console.log('SR-01 tutorial');
   const page = await h.gamePage({ storage: {} });
   await sleep(500);
   await clickId(page, 'btn-solo');
+  // #459 item 6: one screen first — "Learn the ride in a minute", START / SKIP TUTORIAL.
+  const intro = await page.waitForFunction(() => document.getElementById('tutorial-intro')?.open && !!window._game._intro, { timeout: 30000 }).then(() => true).catch(() => false);
+  const introText = await page.evaluate(() => ({ pedal: document.getElementById('tutorial-intro-pedal').textContent, steer: document.getElementById('tutorial-intro-steer').textContent, state: window._game.state }));
+  check(intro && /Pedal/.test(introText.pedal) && /Steer/.test(introText.steer) && introText.state === 'lobby', 'SR-01: the tutorial intro shows before the first countdown', introText);
+  await h.shot(page, 'sr01-tutorial-intro');
+  await clickId(page, 'btn-tutorial-intro-start');
   await page.waitForFunction(() => window._game._tutorialActive && window._game.state === 'playing', { timeout: 120000 }).catch(() => {});
-  check(await page.evaluate(() => !!window._game._tutorialActive && window._game.lobby.selectedLevel?.id === 'tutorial'), 'SR-01: a first SOLO ride is the tutorial');
+  check(await page.evaluate(() => !!window._game._tutorialActive && window._game.lobby.selectedLevel?.id === 'tutorial'), 'SR-01: START begins the tutorial; a first SOLO ride is the tutorial');
   await installTeleport(page);
 
   // Runway: the pedal prompt, and real pedal keys move the bike.
@@ -141,6 +147,15 @@ console.log('SR-01 tutorial');
   check(end.saved && Number.isFinite(end.saved.sensitivity) && Number.isFinite(end.saved.deadzone), 'SR-01: the calibration results are saved (sensitivity, deadzone, …)', end.saved);
   check(end.slider && Math.abs(end.after - 0.9) < 1e-6 && end.after !== end.before, 'SR-01: the steering feel slider is shown and moving it sets the feel', { before: end.before, after: end.after });
   check(end.done === 'complete' && end.next, "SR-01: the tutorial is marked done and NEXT: GRANDMA'S is offered", { done: end.done, next: end.next });
+  // #459 item 15: the completion screen is the result-screen shell — NEXT first.
+  const shell = await page.evaluate(() => {
+    const sheet = document.getElementById('tutorial-complete-sheet');
+    const row = sheet && sheet.querySelector('[slot="actions"]');
+    const vis = (b) => b.style.display !== 'none' && b.getBoundingClientRect().width > 0;
+    return { headline: !!sheet && sheet.hasAttribute('headline'), visible: !!sheet && sheet.getBoundingClientRect().width > 0,
+      actions: row ? Array.from(row.querySelectorAll('uf-button')).filter(vis).map((b) => b.id) : [] };
+  });
+  check(shell.headline && shell.visible && shell.actions[0] === 'btn-tutorial-next', 'SR-01: tutorial complete is a headline sheet with NEXT first in its action row', shell);
   await h.shot(page, 'sr01-tutorial-complete');
   await page.close();
 }

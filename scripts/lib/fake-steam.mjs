@@ -63,6 +63,8 @@ function browserFake(init) {
     toggleDevTools: () => ok(false),
     setHeldHidDevices: () => {},
     diag: () => {},
+    // #172: the lobby's QUIT confirm. Counted, never acted on (the page stays up).
+    quit: () => { state.quitCalls = (state.quitCalls || 0) + 1; },
   };
   window.tandemoniumSteam = { isDemo: !!init.isDemo };
   const find = (h) => state.controllers.find((c) => c.handle === String(h));
@@ -103,5 +105,7 @@ export function fakeSteam(page) {
       return call('motion', h, { rotQuat: [0, 0, 0, 1], accel: [16384 * Math.sin(r), 16384 * Math.cos(r), 0], rotVel: [0, 0, 0] });
     },
     achievements: () => page.evaluate(() => window.__fakeSteam.state.achievements.slice()),
+    /** How many times the page asked electronApp.quit() (#172). */
+    quitCalls: () => page.evaluate(() => window.__fakeSteam.state.quitCalls || 0),
   };
 }

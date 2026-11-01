@@ -84,6 +84,8 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | BL-09 | Pad focus starts on a visible control on every lobby step | A | `smoke:flows` |
 | BL-10 | Every lobby step at 390×844, 844×390, 1920×1080 and 4K: every control reachable, none overlapping | A | `smoke:lobby-layout` |
 | BL-11 | Sign-in (web) and profile toggle work; signed-out play still works | M | — |
+| BL-12 | Quit (#172): the desktop app's mode step has a Quit pill next to Help; the pad reaches it, A opens "Quit Tandemonium?" with QUIT focused, B / Esc / CANCEL close it, QUIT asks Electron to quit once; the web build and phones have no Quit | A | `smoke:flows` (QT-01…07) |
+| BL-13 | Modal shell (#459): Help (a kit sheet) opens from the pad's View button, the Help pill and the footer © (at its attributions); B and Esc close it with focus restored and without stepping the lobby back; the Garage closes the same way | A | `smoke:flows` |
 
 ## 2. Solo rides
 
@@ -91,6 +93,8 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 |---|---|---|---|
 | SR-01 | Tutorial: runway, phase 1 (collect) and phase 2 (collect + dodge) prompts advance; all presents and pylons count; the end screen shows the tally, saves the calibration, the feel slider sets the feel; NEXT offered | A | `smoke:solo-extras` |
 | SR-01h | Lean-steering onto the tutorial presents feels learnable | M | — |
+| SR-01i | Tutorial: the 3D "TUTORIAL START" board beside the start and the "TUTORIAL END" board past the finish (end-card style, bunting flaps, lettering glints as you pass); no "Your Home" video and no box house on the tutorial; Grandma's unchanged (#503) | A | `smoke:tutorial-board`, `test/unit/tutorial-board` |
+| SR-01j | Tutorial: one checkered strip at the finish — the gold phase gate stands at 80 m only, nothing past the 150 m finish line; Grandma's has one finish strip (#543) | A | `smoke:tutorial-board`, `test/unit/race-config` |
 | SR-02 | Tutorial: you cannot fall | A | `test/unit/crash-policy` |
 | SR-03 | Grandma's: clock is held until the first pedal taps, then runs | A | `smoke:ride` |
 | SR-04 | Grandma's: ride to the finish; victory overlay shows time, medal, coins | A | `smoke:economy`, `smoke:achievements` |
@@ -98,6 +102,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-05b | Crash: the bike falls once from the lean it crashed at — never pops upright and falls again (#483; Physics FX off shows it) | A | `test/unit/crash-tumble`, `node scripts/reel/crash-probe.mjs --fx off` (manual, GPU) |
 | SR-05c | Crash (Physics FX on): both geese are thrown as rag dolls, hats fly, the view slows for a moment with the clock held, then the riders are back in their seats at the checkpoint (#484) | A | `smoke:physics` (crash scene), `test/unit/crash-ragdoll`, `node scripts/reel/crash-probe.mjs` (manual, GPU) |
 | SR-05d | SR-05c looks right and is funny: no geese through the floor, no jitter, versus slows only the crashing half | M | `node scripts/reel/crash-review.mjs` (review video) |
+| SR-05e | Rag dolls have weight and are not rubbery (#507): no bounce, limbs settle instead of flailing, knees/elbows never fold the wrong way, the neck stays the loose one | A | `npm run sim:ragdoll` (Node, Rapier; `--scene` compares with main), `test/unit/crash-ragdoll` |
 | SR-05e | Crash (Physics FX on, goose tandem): the bike comes apart (wheels roll off, bars and saddles fly), nothing sinks, and it is whole again at the checkpoint (#484) | A | `smoke:physics` (bike apart), `test/unit/crash-bike-apart` |
 | SR-05f | Versus: a part from one team's crash that reaches the other team wobbles it (once), never crashes it outright; never in online modes (#484) | A | `smoke:physics` (versus hit), `test/unit/crash-bike-apart`, `node scripts/reel/crash-review.mjs versus` (manual, GPU) |
 | SR-06 | Helping hand: repeated failure on a checkpoint makes it visibly easier | A | `smoke:helping-hand` |
@@ -105,6 +110,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-08 | Geese and obstacles appear, collide and react | M | `smoke:geese` (riders only) |
 | SR-09 | Game-over buttons: RESTART, END RIDE, SAVE CLIP (only while recording) do what they say; no GARAGE outside Slingshot | A | `smoke:flows`, `smoke:economy` |
 | SR-09h | SAVE CLIP opens the clip preview after a recorded ride | M | — |
+| SR-09i | iPhone: SHARE in the clip preview offers FULL CLIP (20 s) and SHORT CLIP (10 s, FOR MESSAGES); the short one is cut from the same buffer on a keyframe; after the sheet closes a "Save Video, then send it from Photos" hint shows once; pad B steps back out of the choice; desktop unchanged (#408) | A | `smoke:clip-share` |
 | SR-10 | Victory buttons: NEXT LEVEL, PLAY AGAIN, END RIDE | A | `smoke:flows` |
 | SR-11 | Today's Road: same road for two players on the same day; difficulty locked | A | `smoke:daily` |
 | SR-12 | Today's Road ranked: chooser on web, never in demo; share strip has no road spoilers | A | `smoke:ranked` |
@@ -112,6 +118,8 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-14 | Slingshot: garage → buy upgrade → aim → launch → tally | A | `smoke:slingshot` |
 | SR-15 | Slingshot aim on phone (portrait and landscape, real touch) | A | `smoke:slingshot-aim` |
 | SR-16 | Slingshot ramps and big air feel right | M | — |
+| SR-16a | Slingshot pot of gold (#546): from stage 2 a pot of gold sits in its own lane under a half-size POT OF GOLD board; riding through it collects it ("POT OF GOLD! +N" toast), the run goes on, the board over the lane never ends it; the results pay a flat "Pot of gold" row with no ×2; once cashed on a stage (once a day on Today's Launch) the pot is gone and the board stays | A | `smoke:slingshot`, unit `slingshot`, `tutorial-board` |
+| SR-16b | The pot of gold reads as a pot of gold from the chase camera at launch speed, and steering into its lane feels like the skill | M | — |
 | SR-17 | Tourist: hidden without Maps key; two addresses plan a route; arrival result shares | A | `smoke:tourist` |
 | SR-18 | Tourist on real Google 3D tiles: loads, rides, no holes in the road | M | — |
 | SR-19 | Achievements unlock during a ride and appear in the list | A | `smoke:achievements` |
@@ -123,6 +131,11 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-24h | SR-24 looks right: scale, placement, wave reads from the chase camera, no frame drop on Low | M | — |
 | SR-25 | 3D present, death cone and Grandma's house (no video billboards); presents still collect, cones still crash and get knocked flying; after the finish the ride's presents fly into a pile beside Grandma (#478) | A | `smoke:props`, `test/unit/props-3d`, `test/unit/present-stack` |
 | SR-25h | SR-25 looks right: presents and cones read from the chase camera, the pile lands neatly and is seen during the finish swing, no frame drop on Low / phone / Quest | M | `scripts/review-props.mjs`, `scripts/probe-props.mjs` |
+| SR-26 | Bike × geese fit (#505): hips HIP_UP over the socket, feet on the pedals through a crank turn, hands at the grips, body on the saddle, bike's rear end clear of the tyre, for every outfit and Show Solo; measured on the in-game assembly | A | `smoke:fit` (KNOWN BUG lines while the assets are being fixed), `test/unit/fit-rules` |
+| SR-26h | SR-26 looks right in the fit viewer (`npm run fit-viewer`: orbit, snap views, close-ups, X-ray, section plane, markers, nudges) | M | `tools/fit-viewer`, screenshots in `renders/fit/` |
+| SR-27 | Every end screen (game over, victory, tutorial complete, demo end, partner left, versus results) is the result-screen shell: a headline kit sheet, one action row in the shared order, the primary first and focused (#459) | A | `smoke:flows`, `smoke:versus`, `smoke:solo-extras`, `smoke:tutorial`, `smoke:layout` (fits at phone, desktop, TV; screenshots) |
+| SR-28 | First-time SOLO shows the tutorial intro before the countdown: START begins the tutorial (SKIP TUTORIAL on screen, Y / △ on a pad), SKIP / B / Esc skip to the level list (#459) | A | `smoke:tutorial`, `smoke:solo-extras` |
+| SR-29 | Pause menu (#459): Start / Esc / the quick menu's PAUSE mid-ride opens it and the ride (physics + race clock) stops; B / Start / Esc / RESUME continue; SETTINGS opens Options over it and B returns to the menu; View opens Help over it and B returns; RESTART rides again; END RIDE returns to the lobby; in versus P1's Start freezes both teams | A | `smoke:flows`, `smoke:versus`, `test/unit/race-manager` |
 
 ## 3. Ride feel (manual only)
 
@@ -166,6 +179,10 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-16 | Button prompts follow P1's pad (Xbox / PlayStation / Switch / Steam): lobby glyphs, coach card, stopped-bike hint | A | `smoke:input`, `test/unit/controller-labels` |
 | IN-17 | Unplug the only pad mid-ride: "Your controller disconnected" pause; replug resumes | A | `smoke:disconnect` |
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
+| IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only` |
+| IN-19h | IN-19 in the real Steam client with two Steam Controllers on one Puck | M | — |
+| IN-20 | #522 motion gain per difficulty (Chill/tutorial 0.3, Adventurous 0.6, Daredevil 1.0) on phone tilt AND controller gyro: the same roll steers the same; on Chill a 10° gyro roll asks for under 0.1 lean; gyro "degrees for a full lean" never adapts under 35° | A | `smoke:steam-input`, `test/unit/motion-gain` |
+| IN-20h | IN-20 by hand: Chill feels as calm on a Steam Controller / DualSense as on a phone; Daredevil turns sharply on both | M | — |
 
 ## 5. Multi-controller (local co-op and versus)
 
@@ -205,6 +222,7 @@ real-hardware rows stay manual.
 | VS-05 | Versus bot fills an empty seat | A | `test/unit/versus-bot` |
 | VS-06 | Race finishes; results show the winning team; LOBBY returns | A | `smoke:versus` (finish fast-forwarded) |
 | VS-07 | Pad unplug in versus freezes both teams with versus's own notice (no co-op 20 s take-over); replug resumes | A | `smoke:versus` |
+| VS-09 | Versus: the two teams' geese wear different outfits, each in its team's colourway (blue / red) (#538); the lobby bike keeps its saved colours after | A | `smoke:versus` |
 | VS-08 | 2v2 at 1080p holds frame rate on the target PC | M | — |
 
 ## 6. Online co-op (TOGETHER → online)
@@ -290,6 +308,21 @@ Two devices on different networks for the M rows.
 | LY-03 | TV at 3 m: all text readable, focus ring obvious | M | — |
 | LY-04 | Phone portrait and landscape: HUD clear of notches and home bar | M | — |
 | LY-05 | A non-gamer can start a ride without help (playtest protocol) | M | `docs/playtests/2026-11-protocol.md` |
+| LY-06 | Level step with a pad: ↓ from Chill Ride → START RIDE; ↓ from the far-left / far-right card → the difficulty row, not the system bar (#517) | A | `smoke:tv-nav` |
+| LY-07 | Slingshot card selects like a level; START RIDE opens its garage (#517) | A | `smoke:tv-nav` |
+| LY-08 | Music pill with a pad: the volume picker is navigable, A picks, B closes (#517) | A | `smoke:tv-nav` |
+| LY-09 | Settings with a pad: starts at the top, walks shown options only, stays on screen, right stick scrolls (#517). On a desktop/TV (#523): every text at least `--uf-size-sm`, options at least `--uf-size-md`, each choice one row (High \| Medium \| Low \| Auto), sections in two columns; → moves along a row, ↓ to the next row in the same column. Couch check: readable from across the room, lobby and in-ride pause | A | `smoke:tv-nav` |
+| LY-10 | Leaderboard is the same sheet as Help (Close, B, Esc, scrim); category headings readable; Quit is the bar's last pill (#517) | A | `smoke:tv-nav` |
+| LY-11 | First Grandma's finish at 1080p: every unlock shows; ← / → walk the result buttons (#517) | A | `smoke:tv-nav` |
+| LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
+| LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
+| LY-14 | Desktop/TV bike chooser is 51.5vh tall, clear of the bar, and the whole bike stays in view as it turns (#521, #553) | A | `smoke:lobby-layout` |
+| LY-15 | Controls sheet on TV: a focused setting row's green ring is whole, not clipped at the sides (#534) | A | `smoke:tv-nav` |
+| LY-16 | Leaderboard on TV: a focused tab in the top row shows its whole green ring, not clipped by the sheet (#534) | A | `smoke:tv-nav` |
+| LY-17 | Tutorial finish with a pad: ↑/↓ between the Steering Feel slider and the buttons, ←/→ along the buttons, ←/→ move the slider only while it is focused (#544) | A | `smoke:tv-nav` |
+| TV-01 | TV (1080p): tutorial coaching — instruction line at `--uf-size-2xl`, phase dots, COLLECT marker, dodge arrow, crash/off-road notes at TV sizes (#541) | A | `smoke:tv-sizes` |
+| TV-02 | TV (1080p): Steering feel's Stable / Responsive at `--uf-size-md` with a bigger track + thumb, on the tutorial finish and in the Controls sheet (#542) | A | `smoke:tv-sizes` |
+| TV-03 | TV (1080p) first page: dimmed geese-from-behind art fills the stage, the right panel fades into it, the bike chooser sits low with its top level with RIDE TOGETHER, and its arrows read L1 / R1 (LB / RB …) at TV size with a pad (#553) | A | `smoke:tv-sizes` |
 
 ## 12. Data and backend
 

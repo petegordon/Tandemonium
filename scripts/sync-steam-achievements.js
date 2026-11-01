@@ -24,7 +24,7 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const DEBUG = process.argv.includes('--debug');
 
 // ── Read achievements from the definitions module ────────────────
-// #401: all 100. js/achievement-defs.js is ESM, so import it.
+// #401: all 101 (#500 added look_no_thumbs). js/achievement-defs.js is ESM, so import it.
 async function parseAchievementsFromCode() {
   const { pathToFileURL } = require('url');
   const defs = await import(pathToFileURL(path.join(__dirname, '..', 'js', 'achievement-defs.js')).href);
@@ -72,7 +72,7 @@ function describeCondition(id, fallback) {
     pair_10_rides: 'Ride ten times with the same partner',
     pair_100km: 'Ride 100 km with the same partner',
     distance_between_us: 'Ride the distance between you and someone else',
-    // #401 · the 77 new ones (100 in all).
+    // #401 · the 77 new ones (100 in all; #500 makes 101).
     first_pedal: 'Pedal for the first time',
     tutorial_done: 'Finish the Tutorial',
     tutorial_clean: 'Finish the Tutorial without a single retry',
@@ -100,6 +100,7 @@ function describeCondition(id, fallback) {
     no_offroad: 'Finish a level without going off-road',
     no_trees_daily: "Finish Today's Road without hitting a tree",
     new_best: 'Set a new personal best',
+    look_no_thumbs: 'Finish a ride steering only by tilting your controller',
     assist_free: 'Turn down ASSIST when it is offered, then finish',
     terminal_goose: 'Reach 65 km/h',
     boost_25: 'Trigger 25 boosts',
@@ -115,8 +116,8 @@ function describeCondition(id, fallback) {
     sling_1000: 'Fly 1,000 m in one launch',
     big_air: 'Land a Big Air off a ramp',
     frequent_flyer: 'Land 25 Big Airs',
-    jackpot: 'Hit the jackpot billboard',
-    double_down: 'Hit the jackpot on a run that also beats your best distance',
+    jackpot: 'Collect the pot of gold',
+    double_down: 'Collect the pot of gold on a run that also beats your best distance',
     full_trail: 'Grab all 5 coins in a trail',
     straight_shooter: 'Go 300 m without steering after launch',
     medal_key: 'Win a regular-ride medal that unlocks a Slingshot stage',

@@ -134,29 +134,39 @@ export class VersusHud {
   /**
    * Full-screen results overlay. Returns { rematchBtn, lobbyBtn } so the
    * game can wire click handlers + gamepad overlay navigation.
+   *
+   * `geese` (#364): a function rig → geese that team scattered. Each team's
+   * own count sits under its card as the solo screen's 🪿 <uf-stat>, and
+   * like the solo screen it is only shown when > 0.
    */
-  showResults(winner, loser) {
+  showResults(winner, loser, { geese = null } = {}) {
     this.hideResults();
     const el = document.createElement('div');
     el.id = 'versus-results';
     // Kit pieces (#428): a headline <uf-sheet> in the winner's colour, one
-    // <uf-stat variant=card> per team, the actions in the sheet's action row.
+    // <uf-stat variant=card> per team, the actions in the sheet's action row
+    // (#459: the result-screen order — REMATCH, the primary, first).
     // .vr-card stays the body container (economy-mode adds the coin ledger to it).
     const tone = (rig) => (/blue/i.test(rig.color.name) ? 'team-a' : 'team-b');
     const card = (rig, outcome) =>
       `<uf-stat variant="card" tone="${tone(rig)}" label="${rig.color.name}" value="${outcome}"` +
       ` detail="${rig.crashCount} crash${rig.crashCount === 1 ? '' : 'es'} · 🎁 ${rig.collectibles}"></uf-stat>`;
+    const geeseStat = (rig) => {
+      const n = geese ? geese(rig) : 0;
+      return n > 0 ? `<uf-stat class="vr-geese" icon="🪿" value="${n}" label="Geese scattered"></uf-stat>` : '';
+    };
+    const team = (rig, outcome) => `<div class="vr-team">${card(rig, outcome)}${geeseStat(rig)}</div>`;
     el.innerHTML = `
       <uf-sheet open dismissible="false" headline tone="${tone(winner)}" heading="${winner.color.name} wins!" size="md">
         <div class="vr-card">
           <div class="vr-teams">
-            ${card(winner, winner.raceManager.getElapsedFormatted())}
-            ${card(loser, `DNF · ${Math.floor(loser.bike.distanceTraveled)} m`)}
+            ${team(winner, winner.raceManager.getElapsedFormatted())}
+            ${team(loser, `DNF · ${Math.floor(loser.bike.distanceTraveled)} m`)}
           </div>
         </div>
         <div slot="actions">
-          <uf-button id="vr-lobby">LOBBY</uf-button>
           <uf-button variant="accent" id="vr-rematch">REMATCH</uf-button>
+          <uf-button id="vr-lobby">LOBBY</uf-button>
         </div>
       </uf-sheet>`;
     document.body.appendChild(el);

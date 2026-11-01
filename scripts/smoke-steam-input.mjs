@@ -7,15 +7,21 @@
 //          the seat is connected through Steam, gyro lean is read from Steam's
 //          motion data (source 'steam') and follows the tilt both ways, the bound
 //          Steer action takes over when Steam sends no motion, Steam's pedal
-//          actions pedal the bike, and Options says Steam Input has the DualSense
+//          actions pedal the bike, Options says Steam Input has the DualSense, and
+//          on Chill a 10° roll asks for under 0.1 lean (the shared motion gain, #522)
 //   IN-13  Options → DualSense source: Auto / Steam Input / WebHID save the choice
 //          and light the button; the note says it applies on the next launch, and
 //          a relaunch with each choice routes the DualSense accordingly
+//   IN-19  two Steam Controllers under Steam Input (two virtual XInput pads, gyro
+//          on the left stick, no action manifest): tilting the controller on the
+//          desk doesn't take Player 1; the one you press on is P1 and its D-pad
+//          moves the menu focus
 //
 // KNOWN checks print "KNOWN BUG" instead of failing, so CI stays green while the
 // bug is open; "FIXED" means turn it into a normal check.
 import { startHarness, sleep, clickId, waitState } from './lib/smoke-harness.mjs';
 import { installFakeSteam, fakeSteam, steamPad, ELECTRON_UA } from './lib/fake-steam.mjs';
+import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
 const h = await startHarness({ port: 8966, outDir: 'tandemonium-steam-input' });
 const { check } = h;
@@ -119,6 +125,26 @@ console.log('IN-12 gyro from Steam');
   await steam.tilt(H, 0);
   const level = await leanUntil(page, (v) => Math.abs(v) < Math.abs(left) / 2, slow ? 4000 : 30000);
   leanCheck(Math.abs(level) < Math.abs(left) / 2, 'IN-12 level again: lean heads back to centre', { level: +level.toFixed(3), from: +left.toFixed(3) });
+  // #522 · on Chill a gentle 10° roll steers gently: controller gyro now carries
+  // the same per-difficulty motion gain as phone tilt (0.3 on Chill). Wait until
+  // the fusion reads the roll (two steady reads), then compare.
+  await steam.tilt(H, 10);
+  const gentle = await (async () => {
+    const t0 = Date.now(); let prev = null, cur = null;
+    while (Date.now() - t0 < (slow ? 15000 : 30000)) {
+      cur = await page.evaluate(() => {
+        const i = window._game.input;
+        return { diff: window._game.lobby.selectedDifficulty, rel: i.motionRawRelative, lean: i.motionLean || 0, visual: i.getMotionLeanVisual() };
+      });
+      if (prev && Math.abs(Math.abs(cur.rel) - 10) < 5 && Math.abs(cur.visual - prev.visual) < 0.005) return cur;
+      prev = cur; await sleep(300);
+    }
+    return cur;
+  })();
+  check(gentle.diff === 'chill' && Math.abs(gentle.rel) > 7 && Math.abs(gentle.lean) < 0.1 && Math.abs(gentle.lean) <= Math.abs(gentle.visual) * 0.3 + 1e-6,
+    'IN-12 on Chill a 10° roll asks for under 0.1 lean (the motion gain applies to Steam gyro, #522)', gentle);
+  await steam.tilt(H, 0);
+  await leanUntil(page, (v) => Math.abs(v) < 0.02, slow ? 4000 : 30000);
   // Steam's pedal actions pedal the bike.
   // Count the pedal controller's strokes (its tapEvents array is cleared in
   // place, so wrapping push on it sees every stroke).
@@ -193,6 +219,42 @@ for (const [pref, steamWants] of [['auto', true], ['steam-input', true], ['webhi
   } else {
     check(s.source === pref && s.steamActive === steamWants, name, s);
   }
+  await page.close();
+}
+
+// ── IN-19: two Steam Controllers — the one you press is Player 1 ──
+console.log('IN-19 two Steam Controllers');
+{
+  // Steam captures both bodies (type 14, no IGA so no actions ever fire) and
+  // shows each as a virtual XInput pad; the layout routes gyro to the left stick.
+  const page = await h.gamePage({
+    userAgent: ELECTRON_UA, storage: { tandemonium_tutorial_done: 'smoke' },
+    before: async (p) => {
+      await installFakeSteam(p, { controllers: [steamPad({ handle: '100', type: '14' }), steamPad({ handle: '101', type: '14' })] });
+      await installFakeGamepads(p, { atBoot: ['xbox', 'xbox'] });
+    },
+  });
+  const pads = fakePads(page);
+  const seat = () => page.evaluate(() => ({
+    p1: window.__controllerManager.getSlot('P1').state,
+    p1Index: window.__controllerManager.getSlot('P1').gamepadIndex,
+    focus: document.querySelector('.gamepad-focus')?.id || '',
+  }));
+  await page.waitForFunction(() => !!document.getElementById('btn-solo'), { timeout: 15000 });
+  await sleep(1500);
+  // The controller on the desk gets bumped: its gyro swings the stick.
+  await pads.stick(1, 'LX', 0.3); await sleep(300);
+  await pads.stick(1, 'LX', -0.2); await sleep(300);
+  await pads.stick(1, 'LX', 0); await sleep(300);
+  let s = await seat();
+  check(s.p1 === 'empty', 'IN-19 tilting a second Steam Controller does not take Player 1', s);
+  await pads.tap(0, 'A'); await sleep(600);
+  s = await seat();
+  check(s.p1 === 'claimed' && s.p1Index === 0, 'IN-19 the controller you press on is Player 1', s);
+  const from = s.focus;
+  await pads.tap(0, 'DOWN');
+  const moved = await page.waitForFunction((f) => (document.querySelector('.gamepad-focus')?.id || '') !== f, { timeout: 8000, polling: 100 }, from).then(() => true).catch(() => false);
+  check(moved, 'IN-19 its D-pad moves the menu focus', { from, to: (await seat()).focus });
   await page.close();
 }
 

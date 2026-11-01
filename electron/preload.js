@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('electronApp', {
   // Write a line into tandemonium-diag.log. For the states that only occur on
   // a real machine with real controllers, where DevTools isn't practical.
   diag: (msg) => ipcRenderer.send('renderer:diag', String(msg)),
+  // #172: the lobby's QUIT pill (desktop only). main.js calls app.quit(), so
+  // the will-quit hooks run as on a window close.
+  quit: () => ipcRenderer.send('app:quit'),
 });
 
 // #400 B4c: main decides the edition (--demo, TANDEMONIUM_DEMO=1, or the demo

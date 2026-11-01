@@ -4,7 +4,7 @@
 // overlap, at desktop and phone sizes. Everything added in phases A-E was
 // independently placed "top-centre" and ended up in a heap; this is what stops
 // that happening again.
-import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
+import http from 'node:http'; import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import puppeteer from 'puppeteer';
 const ROOT=process.cwd(); const PORT=8945;
 const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml','.glb':'model/gltf-binary','.mp3':'audio/mpeg','.json':'application/json'};
 const server=http.createServer((q,r)=>{const u=decodeURIComponent(q.url.split('?')[0]);const f=path.join(ROOT,u==='/'?'index.html':u);
@@ -94,7 +94,9 @@ async function endScreens(label, viewport) {
   await page.goto(`http://127.0.0.1:${PORT}/index.html`,{waitUntil:'domcontentloaded'});
   await page.waitForFunction(()=>!!window._game,{timeout:30000});
 
-  const res = await page.evaluate(async () => {
+  // One screen at a time: show it, measure it, shoot it (#459: the screenshots
+  // in $TMP/tandemonium-layout are the PR's record of each screen), hide it.
+  await page.evaluate(async () => {
     const g = window._game;
     document.getElementById('tap-to-start')?.remove();
     const { scoreRide } = await import('./js/economy.js');
@@ -134,76 +136,123 @@ async function endScreens(label, viewport) {
       root.scrollTop = 0;
       return out;
     };
-    const out = {};
-
-    // Game over, 5th failure (the Royal House steps in), solo, on a demo build.
-    const go = document.getElementById('gameover-overlay');
-    const help = document.getElementById('gameover-help');
-    help.textContent = '🎩 Sir Winston steps in — no gusts, 1.5× the time, safety on. The Royal Shortcut is open.';
-    help.style.display = '';
-    const goCoins = document.getElementById('gameover-coins');
-    g._renderRideCoins(goCoins, scoreRide({ distance: 212, pickups: 3 }), { coins: 12345 });
-    goCoins.style.display = '';
-    show('btn-gameover-clip', 'btn-restart', 'btn-skip-checkpoint', 'btn-gameover-lobby', 'btn-gameover-garage',
-         'btn-daily-share-gameover', 'btn-wishlist-gameover', 'btn-invite-gameover');
-    go.style.display = 'flex';
-    out.gameover = measure(go);
-    go.style.display = 'none';
-
-    // Victory: a full stats block, a medal + new-best payout, every button.
-    const vo = document.getElementById('victory-overlay');
-    document.getElementById('victory-destination').textContent = "📍 Grandma's House";
-    document.getElementById('victory-stats').innerHTML =
-      '<div class="victory-stats-grid">' +
-      ['Time', '1:02.4', 'Best', '1:05.0', 'Presents', '7 / 8', 'Crashes', '1', 'Top speed', '31 km/h', 'Sync', '82%']
-        .map(t => `<div class="vs-cell">${t}</div>`).join('') + '</div>' +
-      '<div class="victory-stat">🥇 GOLD · NEW BEST</div><div class="victory-stat">2.0 km of real streets</div>';
-    const vCoins = document.getElementById('victory-coins');
-    g._renderRideCoins(vCoins, scoreRide({ distance: 250, pickups: 7, finished: true, medal: 'gold', newBest: true }), { coins: 12345 });
-    vCoins.style.display = '';
-    show('btn-play-again', 'btn-next-level', 'btn-victory-lobby', 'btn-victory-garage',
-         'btn-daily-share-victory', 'btn-wishlist-victory', 'btn-invite-victory');
-    vo.classList.add('visible');
-    out.victory = measure(vo);
-    vo.classList.remove('visible');
-
-    // The demo's end.
-    const de = document.getElementById('demo-end-overlay');
-    de.style.display = 'flex';
-    out.demoEnd = measure(de);
-    de.style.display = 'none';
-
-    // Slingshot garage (every upgrade) and a results card with every row.
-    g._openSlingGarage(0, { standalone: true });
-    out.slingGarage = measure(document.getElementById('sling-garage'));
-    ui.hideGarage();
-    ui.renderResults({
-      cause: 'goal', daily: false, stageCleared: true, canWishlist: true,
-      score: { distance: 1050, isRecord: true, distPay: 210, coinPay: 60, recordPay: 40, stagePay: 300,
-               jackpotPay: 200, airPay: 30, multiplier: 1.5, total: 1260 },
-      run: { coins: 12, bigAirs: 3, topSpeed: 21 },
-      save: { stage: 4 }, wallet: { coins: 12345 },
-      lock: { kind: 'demo', label: "That's the demo's last stage!" },
-    }, { onAgain() {}, onGarage() {}, onLobby() {}, onWishlist() {}, onGoRide() {} });
-    out.slingResults = measure(document.getElementById('sling-results'));
-    ui.hideResults();
-    return out;
+    const $ = (id) => document.getElementById(id);
+    window.__measure = measure;
+    window.__screens = {
+      // Game over, 5th failure (the Royal House steps in), solo, on a demo build.
+      gameover: {
+        root: () => $('gameover-overlay'),
+        show() {
+          const help = $('gameover-help');
+          help.textContent = '🎩 Sir Winston steps in — no gusts, 1.5× the time, safety on. The Royal Shortcut is open.';
+          help.style.display = '';
+          const goCoins = $('gameover-coins');
+          g._renderRideCoins(goCoins, scoreRide({ distance: 212, pickups: 3 }), { coins: 12345 });
+          goCoins.style.display = '';
+          show('btn-gameover-clip', 'btn-restart', 'btn-skip-checkpoint', 'btn-gameover-lobby', 'btn-gameover-garage',
+               'btn-daily-share-gameover', 'btn-wishlist-gameover', 'btn-invite-gameover');
+          $('gameover-overlay').style.display = 'flex';
+        },
+        hide() { $('gameover-overlay').style.display = 'none'; },
+      },
+      // Victory: a full stats block, a medal + new-best payout, every button.
+      victory: {
+        root: () => $('victory-overlay'),
+        show() {
+          $('victory-destination').textContent = "📍 Grandma's House";
+          $('victory-stats').innerHTML =
+            '<div class="victory-stats-grid">' +
+            ['Time', '1:02.4', 'Best', '1:05.0', 'Presents', '7 / 8', 'Crashes', '1', 'Top speed', '31 km/h', 'Sync', '82%']
+              .map(t => `<div class="vs-cell">${t}</div>`).join('') + '</div>' +
+            '<div class="victory-stat">🥇 GOLD · NEW BEST</div><div class="victory-stat">2.0 km of real streets</div>';
+          const vCoins = $('victory-coins');
+          g._renderRideCoins(vCoins, scoreRide({ distance: 250, pickups: 7, finished: true, medal: 'gold', newBest: true }), { coins: 12345 });
+          vCoins.style.display = '';
+          show('btn-play-again', 'btn-next-level', 'btn-victory-lobby', 'btn-victory-garage',
+               'btn-daily-share-victory', 'btn-wishlist-victory', 'btn-invite-victory');
+          $('victory-overlay').classList.add('visible');
+        },
+        hide() { $('victory-overlay').classList.remove('visible'); },
+      },
+      // The demo's end.
+      demoEnd: { root: () => $('demo-end-overlay'), show() { $('demo-end-overlay').style.display = 'flex'; }, hide() { $('demo-end-overlay').style.display = 'none'; } },
+      // Slingshot garage (every upgrade) and a results card with every row.
+      slingGarage: { root: () => $('sling-garage'), show() { g._openSlingGarage(0, { standalone: true }); }, hide() { ui.hideGarage(); g._clearOverlayButtons(); g.state = 'lobby'; } },
+      slingResults: {
+        root: () => $('sling-results'),
+        show() {
+          ui.renderResults({
+            cause: 'goal', daily: false, stageCleared: true, canWishlist: true,
+            score: { distance: 1050, isRecord: true, distPay: 210, coinPay: 60, recordPay: 40, stagePay: 300,
+                     potPay: 200, airPay: 30, multiplier: 1.5, total: 1260 },
+            run: { coins: 12, bigAirs: 3, topSpeed: 21 },
+            save: { stage: 4 }, wallet: { coins: 12345 },
+            lock: { kind: 'demo', label: "That's the demo's last stage!" },
+          }, { onAgain() {}, onGarage() {}, onLobby() {}, onWishlist() {}, onGoRide() {} });
+        },
+        hide() { ui.hideResults(); },
+      },
+      // #459 item 15: tutorial complete (solo: NEXT + LOBBY, the Steam widget), partner left, the stoker's CTA.
+      tutorialComplete: {
+        root: () => $('tutorial-complete'),
+        show() {
+          $('tutorial-complete-stats').innerHTML = 'Attempts: 2 — Practice makes perfect!<br>Presents collected: 7/7<br><span class="calibrated">Steering calibrated to your style!</span>';
+          $('steam-cta').style.display = '';
+          $('btn-tutorial-next').style.display = '';
+          $('btn-tutorial-continue').textContent = 'LOBBY';
+          $('tutorial-complete').classList.add('visible');
+        },
+        hide() { $('tutorial-complete').classList.remove('visible'); $('steam-cta').style.display = 'none'; $('btn-tutorial-next').style.display = 'none'; },
+      },
+      partnerLeft: {
+        root: () => $('disconnect-overlay'),
+        show() { g.mode = 'local'; g._startDropPause('p1'); g._drop.takeoverReady = true; g._renderDropOverlay(); },
+        hide() { g._endDropPause(); g.mode = 'solo'; },
+      },
+      stokerCta: { root: () => $('stoker-cta-overlay'), show() { $('stoker-cta-overlay').style.display = 'flex'; }, hide() { $('stoker-cta-overlay').style.display = 'none'; } },
+      // #459 items 12, 6, 11/18: the pause menu, the tutorial intro, Help (modals on the sheet shell).
+      pause: {
+        root: () => $('pause-sheet'),
+        show() { g.state = 'playing'; g._openPause(); },
+        hide() { g._closePause(); g.state = 'lobby'; },
+      },
+      tutorialIntro: {
+        root: () => $('tutorial-intro'),
+        show() { g._showTutorialIntro(); },
+        hide() { if (g._intro) g._intro.close(); },
+      },
+      help: { root: () => $('help-modal'), show() { g.lobby._openHelp(); }, hide() { g.lobby._closeHelp(); } },
+    };
   });
+  const res = {};
+  for (const name of await page.evaluate(() => Object.keys(window.__screens))) {
+    await page.evaluate((n) => window.__screens[n].show(), name);
+    await page.waitForFunction((n) => window.__screens[n].root().getBoundingClientRect().width > 0, { timeout: 5000 }, name).catch(() => {});
+    res[name] = await page.evaluate((n) => window.__measure(window.__screens[n].root()), name);
+    if (shotDir) await page.screenshot({ path: path.join(shotDir, `${label.replace(/\W+/g, '-')}-${name}.png`) });
+    await page.evaluate((n) => window.__screens[n].hide(), name);
+  }
   await page.close();
   console.log(`\nend screens ${label}`);
   const bad = [];
   for (const [k, v] of Object.entries(res)) {
-    console.log('  ', k.padEnd(13), (v.fits ? '✔ ' : '✖ ') + JSON.stringify(v));
+    console.log('  ', k.padEnd(16), (v.fits ? '✔ ' : '✖ ') + JSON.stringify(v));
     if (!v.fits) bad.push(`${label} ${k}`);
   }
   return bad;
 }
+const shotDir = path.join(os.tmpdir(), 'tandemonium-layout');
+fs.mkdirSync(shotDir, { recursive: true });
 
 const desktop = await check('desktop 1280x800', { width: 1280, height: 800 });
 const phone = await check('phone 390x844', { width: 390, height: 844, isMobile: true, hasTouch: true });
 const endLandscape = await endScreens('landscape phone 844x390', { width: 844, height: 390, isMobile: true, hasTouch: true, isLandscape: true });
 const endPortrait = await endScreens('phone 390x664', { width: 390, height: 664, isMobile: true, hasTouch: true });
+// #459: the same screens on a desktop and a TV (the kit's text ramp), for the record.
+const endDesktop = await endScreens('desktop 1280x800', { width: 1280, height: 800 });
+const endTv = await endScreens('tv 1920x1080', { width: 1920, height: 1080 });
 await browser.close(); server.close();
-const endBad = [...endLandscape, ...endPortrait];
+const endBad = [...endLandscape, ...endPortrait, ...endDesktop, ...endTv];
+console.log(`\nscreenshots: ${shotDir}`);
 if (endBad.length) console.log('\nEND SCREENS THAT DO NOT FIT:', endBad.join(', '));
 process.exit(desktop.length + phone.length + endBad.length === 0 ? 0 : 1);

@@ -8,28 +8,54 @@
    overlay rules (inline <style>) keep positioning the wrappers; the wrappers'
    own backgrounds and padding are neutralised so the sheet's scrim is the one. */
 
-#gameover-overlay, #victory-overlay, #demo-end-overlay, #versus-results, #sling-garage, #sling-results {
+#gameover-overlay, #victory-overlay, #demo-end-overlay, #versus-results, #sling-garage, #sling-results,
+#tutorial-complete, #disconnect-overlay, #stoker-cta-overlay {
   background: transparent !important; padding: 0 !important;
 }
 /* The game shows these with display:flex/grid on the wrapper; the sheet is fixed
    inside it, so the wrapper needs no layout of its own. */
 #victory-overlay.visible { display: block !important; }
+#tutorial-complete.visible { display: block !important; }
 
-/* Action rows: one row of buttons, the primary on the right (kit sheet actions). */
+/* ── The result screen's action row (#459 item 15) ──
+   One row for every end screen, in the markup's order (js/ui-shell.js reads
+   it the same way for the pad): the primary action first, then the other ride
+   actions, RETURN TO ROOM, END RIDE, then the extras. Centred, wrapping on
+   phones; every button in a line shares that line's height. */
 uf-sheet .uf-sheet__actions > div[slot="actions"] { display: contents; }
+/* .uf-sheet__card in the selector: the kit's own rule (flex-end) is injected
+   after this file loads, so an equal-specificity override would lose. */
+uf-sheet .uf-sheet__card > .uf-sheet__actions { justify-content: center; align-items: stretch; }
 uf-sheet .uf-sheet__actions uf-button { margin: 0 !important; width: auto; }
+uf-sheet .uf-sheet__actions uf-button[hidden] { display: none; }
+
+/* Tutorial complete, partner left and the stoker's CTA: centred bodies. */
+#tutorial-complete-sheet .uf-sheet__body, #disconnect-sheet .uf-sheet__body, #stoker-cta-sheet .uf-sheet__body { justify-items: center; text-align: center; }
+#tutorial-complete-sheet #tutorial-complete-stats { margin: 0; font-size: var(--uf-size-md); line-height: 1.6; }
+#tutorial-complete-sheet #steering-feel-wrap { margin: 0; max-width: 24em; }
+#tutorial-complete-sheet #steam-cta { margin: 0 !important; width: 100%; }
+#disconnect-sheet #disconnect-sub { margin: 0; }
+/* A notice, not a win: a sentence at the 2xl size, not the shouted result
+   headline (whose "DISCONNECTED" ran off a phone). */
+#disconnect-sheet .uf-sheet__title { font-size: var(--uf-size-2xl); text-transform: none; letter-spacing: 0; overflow-wrap: anywhere; }
 
 /* Victory: destination video + stats side by side on wide screens. */
 #victory-body { display: grid; gap: var(--uf-space-4); align-items: start; }
 #victory-body #victory-left, #victory-body #victory-right { display: grid; gap: var(--uf-space-3); width: 100%; align-items: start; justify-items: center; }
 #victory-body #victory-video { width: min(260px, 60vw); height: auto; aspect-ratio: 1; border-radius: var(--uf-radius-lg); }
 #victory-body #victory-destination { margin: 0; font: 800 var(--uf-size-xl)/1.2 var(--uf-font-ui); color: var(--uf-color-fg); }
-#victory-body #victory-stats { display: grid; gap: var(--uf-space-3); width: 100%; }
+#victory-body #victory-stats { display: grid; gap: var(--uf-space-3); width: 100%; margin-bottom: 0; }   /* #517: the old overlay's 32px pushed a first finish's unlocks below the fold */
 .victory-stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); gap: var(--uf-space-3); width: 100%; }
 #victory-body #victory-coins, #gameover-coins { width: 100%; max-width: 26em; justify-self: center; }
 @media (min-width: 1024px) {
   #victory-body { grid-template-columns: auto minmax(0, 1fr); }
-  #victory-body #pair-panel { grid-column: 1 / -1; }
+  #victory-body #pair-panel, #victory-body #victory-unlocked { grid-column: 1 / -1; }
+  /* #517: four across on a TV (a first Grandma's finish unlocks ten). */
+  #victory-body #victory-unlocked { grid-template-columns: repeat(auto-fill, minmax(11em, 1fr)); }
+  /* The gold list is "unlocked this ride": one line per badge, no "Unlocked!" under each. */
+  .end-unlocked uf-achievement .ua-new { display: none; }
+  .end-unlocked uf-achievement .ua-icon { grid-row: auto; }
+  .end-unlocked uf-achievement { align-content: center; }
 }
 
 /* Game over / demo end: centred body. */

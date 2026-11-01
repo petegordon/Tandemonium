@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { grandmaCue, retargetClip, buildWoodpile, buildOuthouse, buildTimberTree, buildGrandmaFinish, LAYOUT, WALK } from '../../js/grandma-finish.js';
+import { grandmaCue, retargetClip, buildWoodpile, buildOuthouse, buildTimberTree, buildGrandmaFinish, LAYOUT, WALK, houseGap, walkLateral } from '../../js/grandma-finish.js';
 
 test('grandmaCue: idle far off, wave on the final approach, leave once they pass', () => {
   const L = 1000;
@@ -100,4 +100,18 @@ test('the set: five markers at the finish on the house side, off the road', () =
     assert.ok(Math.abs(m.mesh.position.x) > 2.5, `${m.mesh.name} is off the 5-unit road`);
     assert.ok(Math.abs(m.roadD - 500) < 20, `${m.mesh.name} is near the finish`);
   }
+});
+
+test('#517 · her walk to the line goes round the house, never through its corner', () => {
+  const from = LAYOUT.grandma.along, to = WALK.toAlong;
+  let worst = Infinity;
+  for (let i = 0; i <= 200; i++) {
+    const along = from + (to - from) * (i / 200);
+    const lat = walkLateral(along, i / 200);
+    assert.ok(lat >= WALK.minLateral - 1e-9, 'stays off the road');
+    worst = Math.min(worst, houseGap(along, lat));
+  }
+  assert.ok(worst >= WALK.clear - 0.05, `keeps ${WALK.clear} clear of the house (closest ${worst.toFixed(2)})`);
+  assert.ok(houseGap(1.3, 3.46) < 0, 'the old straight line did cut the corner');
+  assert.equal(walkLateral(to, 1), WALK.toLateral, 'still stops at her spot beside the bike');
 });

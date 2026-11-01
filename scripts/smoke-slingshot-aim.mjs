@@ -95,7 +95,7 @@ async function toSlingshot(first) {
     await new Promise(r => setTimeout(r, 800));
     await page.evaluate(() => document.getElementById('btn-solo').click());
     await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card-slingshot'), { timeout: 20000 });
-    await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
+    await page.evaluate(() => { document.querySelector('#level-cards .level-card-slingshot').click(); document.getElementById('btn-start-ride').click(); });   // #517: pick it, then START RIDE
     await waitState('slingGarage', 20000);
     await page.evaluate(() => Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).find(b => /launch/i.test(b.textContent)).click());
   } else {

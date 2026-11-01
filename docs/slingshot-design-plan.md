@@ -13,7 +13,7 @@ pedals are still there — not certain what they would be used for."*
   - Coasting now uses additive surface drag in `SURFACE_RR`: strip ×0.6, dirt ×1, edge ×1.5, grass ×4.
   - A fresh full pull rolls **346 m on dirt (was 162 m)** and 490 m on the strip. A 12 m swerve onto the edge for coins costs under 10 m.
   - Aim is ±4°, scaled by pull. The guide shows the predicted distance ("≈ 346 m · best") and turns red past the road edge.
-  - Each stage has a fixed course. Gate 1 at 45 m has coins, a hay bale (−40% speed) and a clear lane. Gate 2 at 110 m adds a JACKPOT billboard (flat bonus, then the run pays ×2) from stage 2.
+  - Each stage has a fixed course. Gate 1 at 45 m has coins, a hay bale (−40% speed) and a clear lane. Gate 2 at 110 m adds a POT OF GOLD from stage 2 (#546, replacing the JACKPOT billboard): ride through it for a flat bonus (100 + 50 × stage) and the run rolls on. It pays once per stage, once a day on Today's Launch, and is left off the road once cashed; its half-size POT OF GOLD board (the tutorial boards' style) stands over the lane and never collides.
   - Upgrades are gentler, and goals are 300 / 420 / 540 / 660 / 780 / 900 / 1050 m, all inside one lap.
   - The unit-tested progression simulation takes a 0.8-skill player 2-2-2-2-2-3-3 launches per stage. A maxed bike clears 1,050 m even riding the edge.
 - **End-of-ride signal (Pete).** A flag and a "315 m" sign spring up where the bike stopped. A tally counts the metres up, then the coins they pay, then the results.
@@ -111,7 +111,7 @@ Each has a recommended default; the plan below assumes the default unless you sa
 |---|---|---|
 | D1 | When you drag **left**, should the bike fly **right** (real slingshot / Angry Birds) or **left** (pointer)? | **Real slingshot**, made obvious by a trajectory line. Keep one constant (`AIM_INVERT`) so it flips in one line. |
 | D2 | Where does it launch: the regular loop road, or an open **launch field** built for tossing? | **Road for Phase 1–2** (cheap, playable this week). Aim matters through lane targets on the road. **Field in Phase 4** if the toss proves fun. |
-| D3 | What's the payoff: distance, spectacle, or both? | **Distance gates the stage; spectacle pays.** Spectacle means coins, air and jackpot targets. |
+| D3 | What's the payoff: distance, spectacle, or both? | **Distance gates the stage; spectacle pays.** Spectacle means coins, air and the pot of gold. |
 | D4 | Does this ship in the **Nov 30 demo**? | **No, post-demo side mode**, hidden behind a flag, unless a co-op launch (Phase 5) lands in time. |
 | D5 | How long should a run take, and how many runs to clear a stage? | **15–25 s per run; 2–4 runs per stage.** |
 | D6 | Pedals return later as a **co-op** job, or never? | **Later, as co-op only** (Phase 5): one rider aims, the other powers the pull. Out of v1. *(Pete, 2026-09-28: co-op slingshot is his to design — Phase 5 is a proposal, not planned work.)* |
@@ -169,7 +169,7 @@ The goal: a real choice before every launch, visible before release.
 4. **Lane targets in the first 150 m.** Three lanes (left / centre / right). Each stage places, on fixed per-stage positions so the stage is a puzzle you learn:
    - coin fans,
    - soft stoppers (a goose flock or hay that bleeds 50% speed — funny, not fatal),
-   - one **jackpot** target (a billboard: hit it for ×2 on the run, but the run ends).
+   - one **pot of gold** (#546; it was a jackpot billboard that ended the run at ×2 pay, too hard to explain): ride through it for a flat bonus and keep rolling.
 5. **Economy that works.**
    - Goals **150 / 250 / 400 / 600 / 850 / 1,150 m**. They stay under one lap, which removes T6.
    - Payout about 1 coin per 2 m, plus targets.

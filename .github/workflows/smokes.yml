@@ -33,7 +33,7 @@ jobs:
           - group: ride
             smokes: ride crash helping-hand disruptions lookahead ping economy
           - group: ride-2
-            smokes: achievements quality layout geese physics no-media controller-overlay
+            smokes: achievements quality layout geese physics no-media controller-overlay clip-share
           - group: modes
             smokes: slingshot slingshot-aim tourist host-room grandma props
           - group: controllers
@@ -43,7 +43,7 @@ jobs:
           - group: input
             smokes: input solo-extras
           - group: ui
-            smokes: options lobby-layout
+            smokes: options lobby-layout tv-nav
           - group: online
             smokes: online
           - group: phone
