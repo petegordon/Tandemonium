@@ -7,9 +7,9 @@ const ach = ACHIEVEMENTS.find(a => a.id === 'look_no_thumbs');
 const frames = (o = {}) => ({ keyboard: 0, gamepad: 0, motion: 0, 'gamepad-gyro': 0, ...o });
 const G = GYRO_ONLY_MIN_FRAMES;
 
-test('defined: #101, clean section, in the demo, not hidden, Steam name LOOK_NO_THUMBS', () => {
+test('defined: #100 (last), clean section, in the demo, not hidden, Steam name LOOK_NO_THUMBS', () => {
   assert.ok(ach);
-  assert.equal(ACHIEVEMENTS.length, 101);
+  assert.equal(ACHIEVEMENTS.length, 100);
   assert.equal(ach.section, 'clean');
   assert.equal(ach.demo, true);
   assert.ok(!ach.hidden);
