@@ -304,3 +304,37 @@ body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { ou
   #options-overlay #options-perf-result:empty, #options-overlay #options-browserdev-hint:empty { display: none; }
   #options-overlay .gamepad-focus { outline: 3px solid var(--uf-color-fg) !important; outline-offset: 3px; }
 }
+
+/* ── #541 · tutorial coaching at TV size ──
+   The ride's instruction line, its phase dots, the COLLECT marker, the dodge
+   arrow and the crash / off-road notes were phone pixel sizes; on a TV they
+   take the kit ramp (at 1920px: 2xl ≈ 44px, xl ≈ 36px, lg ≈ 30px). */
+@media (min-width: 1024px) {
+  #tutorial-prompt { top: calc(var(--uf-size-2xl) * 1.6); }
+  #tutorial-prompt-text { font-size: var(--uf-size-2xl); padding: .3em .9em; border-radius: .45em; }
+  #tutorial-phase-dots { gap: calc(var(--uf-size-sm) * .8); margin-top: calc(var(--uf-size-sm) * .8); }
+  .tutorial-dot { width: calc(var(--uf-size-md) * .7); height: calc(var(--uf-size-md) * .7); }
+  #coaching-collect-indicator .collect-icon { font-size: calc(var(--uf-size-2xl) * 2.2); }
+  #coaching-collect-indicator .collect-text { font-size: var(--uf-size-lg); letter-spacing: .15em; }
+  #coaching-dodge-arrow svg { width: calc(var(--uf-size-2xl) * 4); height: calc(var(--uf-size-2xl) * 4); }
+  #coaching-pylon-success { font-size: calc(var(--uf-size-2xl) * 2.5); }
+  #coaching-offroad-warning { font-size: var(--uf-size-xl); }
+  #tutorial-crash-text { font-size: calc(var(--uf-size-2xl) * 1.3); }
+  #tutorial-crash-hint { font-size: var(--uf-size-lg); }
+}
+
+/* ── #542 · Steering feel slider at TV size ──
+   Both copies: the Controls sheet's and the tutorial finish screen's. The end
+   labels read from the couch and the thumb is a real target. */
+@media (min-width: 1024px) {
+  #controls-sheet .set-feel-end { font-size: var(--uf-size-md); }
+  #controls-sheet #set-feel-slider { width: 14em; zoom: 1.6; }
+  .steering-feel-label { font-size: var(--uf-size-md); }
+  .steering-feel-row { gap: calc(var(--uf-size-md) * .6); }
+  .steering-feel-end { font-size: var(--uf-size-md); min-width: 0; }
+  #steering-feel-slider, #steering-feel-slider::-webkit-slider-runnable-track { height: calc(var(--uf-size-md) * .4); border-radius: 999px; }
+  #steering-feel-slider::-webkit-slider-thumb {
+    width: calc(var(--uf-size-md) * 1.5); height: calc(var(--uf-size-md) * 1.5);
+    margin-top: calc(var(--uf-size-md) * -.55);   /* centre the thumb on the track: -(1.5 - .4) / 2 */
+  }
+}
