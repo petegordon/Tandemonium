@@ -11,6 +11,8 @@
 //   LY-10  Leaderboard is a kit sheet like Help (its Close, B closes it); the
 //          desktop app's Quit pill is the bar's last pill.
 //   LY-11  First Grandma's finish: the unlocks fit, ← / → walk the button row.
+//   LY-15  Controls sheet: a focused setting row's ring is whole (#534).
+//   LY-16  Leaderboard: the top tab row shows its whole focus ring (#534).
 import { startHarness, waitState } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
@@ -83,6 +85,20 @@ const sectionPx = await page.evaluate(async () => {
   return t ? parseFloat(getComputedStyle(t).fontSize) : 0;
 });
 check(sectionPx >= 16, 'LY-10 achievement category headings are at least 16px at 1080p', sectionPx);
+// ── LY-16 · the top tab row's focus ring isn't clipped by the sheet ──
+for (let i = 0; i < 6; i++) {
+  if (await page.evaluate(() => !!document.querySelector('#lb-main-tabs .gamepad-focus'))) break;
+  await press('UP');
+}
+const lbRing = await page.evaluate(() => {
+  const f = document.querySelector('#leaderboard-modal .gamepad-focus');
+  if (!f) return null;
+  const cs = getComputedStyle(f), r = f.getBoundingClientRect();
+  const body = document.getElementById('leaderboard-modal').querySelector('.uf-sheet__body').getBoundingClientRect();
+  const ring = cs.outlineStyle === 'none' ? 0 : parseFloat(cs.outlineOffset) + parseFloat(cs.outlineWidth);
+  return { tab: f.textContent.trim(), inTopRow: !!f.closest('#lb-main-tabs'), ringTop: Math.round(r.top - ring), bodyTop: Math.round(body.top) };
+});
+check(lbRing && lbRing.inTopRow && lbRing.ringTop >= lbRing.bodyTop + 2, 'LY-16 a focused tab in the Leaderboard\'s top row shows its whole ring', lbRing);
 await h.shot(page, '2-leaderboard');
 await pads.press(0, 'B', 160);
 check(await until(() => document.getElementById('leaderboard-modal').open === false), 'LY-10 B closes the Leaderboard');
@@ -172,6 +188,25 @@ await h.shot(page, '3-settings');
 await pads.press(0, 'B', 160);
 check(await until(() => !document.getElementById('options-overlay').classList.contains('visible')), 'LY-09 B closes Settings');
 
+// ── LY-15 · Controls sheet focus ring (#534) ──
+await page.evaluate(() => document.getElementById('bar-controls').click());
+check(await until(() => document.getElementById('controls-sheet').open === true), 'LY-15 the Controls pill opens the Controls sheet');
+for (let i = 0; i < 8; i++) {
+  if (await page.evaluate(() => !!document.querySelector('#controls-sheet uf-setting.gamepad-focus'))) break;
+  await press('DOWN');
+}
+const ring = await page.evaluate(() => {
+  const el = document.querySelector('#controls-sheet uf-setting.gamepad-focus');
+  if (!el) return null;
+  const row = el.querySelector('.uf-setting__row'), body = document.getElementById('controls-sheet').querySelector('.uf-sheet__body');
+  const rr = row.getBoundingClientRect(), br = body.getBoundingClientRect();
+  return { id: el.id, outline: getComputedStyle(el).outlineStyle, inside: rr.left >= br.left - 0.5 && rr.right <= br.right + 0.5 };
+});
+check(ring && ring.outline === 'none' && ring.inside, 'LY-15 a focused setting shows only its own ring, inside the sheet (no clipped outline)', ring);
+await h.shot(page, '3b-controls');
+await pads.press(0, 'B', 160);
+check(await until(() => document.getElementById('controls-sheet').open === false), 'LY-15 B closes the Controls sheet');
+
 // ── LY-07 · slingshot ──
 await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());
 await new Promise((r) => setTimeout(r, 400));
@@ -213,5 +248,31 @@ check(f0 && f1 && f1 !== f0, 'LY-11 → moves along the result buttons', `${f0} 
 await press('LEFT');
 const f2 = await page.evaluate(() => window._game._overlayFocus.focused?.id);
 check(f2 === f0, 'LY-11 ← comes back', f2);
+
+// ── LY-17 · tutorial finish (#544): ↑/↓ slider ⇄ buttons, ←/→ along the buttons ──
+await page.evaluate(() => {
+  const g = window._game;
+  document.getElementById('victory-overlay')?.classList.remove('visible');
+  Object.assign(g, { _tutPhase1Samples: [], _tutPhase2Samples: [], _tutPhase2Speeds: [], _tutPhase3Recovery: [] });   // no ride measured: defaults
+  g._tutorialComplete();
+});
+await until(() => document.getElementById('tutorial-complete').classList.contains('visible'));
+await new Promise((r) => setTimeout(r, 600));
+const tf = () => page.evaluate(() => window._game._overlayFocus.focusedEl?.id || null);
+const t0 = await tf();
+await press('RIGHT');
+const t1 = await tf();
+check(t0 === 'btn-tutorial-next' && t1 === 'btn-tutorial-continue', 'LY-17 tutorial finish: focus starts on NEXT: GRANDMA\'S, → moves to LOBBY', { t0, t1 });
+for (let i = 0; i < 3 && (await tf()) !== 'steering-feel-slider'; i++) await press('UP');   // the web build's Steam Store link sits between
+const t2 = await tf();
+const v0 = await page.evaluate(() => Number(document.getElementById('steering-feel-slider').value));
+await pads.press(0, 'RIGHT', 160);
+await new Promise((r) => setTimeout(r, 300));
+const v1 = await page.evaluate(() => Number(document.getElementById('steering-feel-slider').value));
+check(t2 === 'steering-feel-slider' && v1 > v0 && (await tf()) === 'steering-feel-slider', 'LY-17 ↑ reaches the Steering Feel slider and → moves it', { t2, v0, v1 });
+for (let i = 0; i < 3 && !/^btn-tutorial-/.test((await tf()) || ''); i++) await press('DOWN');
+const t3 = await tf();
+check(/^btn-tutorial-(next|continue)$/.test(t3 || ''), 'LY-17 ↓ goes back to the buttons', t3);
+await h.shot(page, '5-tutorial-finish');
 
 await h.finish();

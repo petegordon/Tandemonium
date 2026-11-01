@@ -1,5 +1,6 @@
 // #503 · bake the tutorial billboards' faces (end-card style) into WebP atlases the game loads.
-//   node scripts/bake-tutorial-board.mjs        -> assets/tutorial-board-end.webp, assets/tutorial-board-start.webp
+//   node scripts/bake-tutorial-board.mjs [kind ...]   -> assets/tutorial-board-<kind>.webp (every kind when none is named)
+//   kinds: end, start (the tutorial), pot (#546 · Slingshot's POT OF GOLD sign)
 // Face 2048x1024 on top, crest disc 256x256 below it (js/tutorial-board.js maps the UVs). Needs ffmpeg on PATH.
 import puppeteer from 'puppeteer';
 import { execFileSync } from 'node:child_process';
@@ -12,11 +13,14 @@ const ROOT = path.resolve(HERE, '..');
 export const BOARDS = {
   end:   { title: 'TUTORIAL END',   sub: "Well ridden! Grandma's is next →", crest: '\u{1F3C1}' },
   start: { title: 'TUTORIAL START', sub: 'Lean together. Pedal together.',      crest: '\u{1F6B2}' },
+  pot:   { title: 'POT OF GOLD',    sub: 'Ride through it!',                    crest: '\u{1FA99}' },
 };
+const only = process.argv.slice(2);
+for (const k of only) if (!BOARDS[k]) throw new Error(`unknown board ${k} (${Object.keys(BOARDS).join(', ')})`);
 const browser = await puppeteer.launch({ args: ['--allow-file-access-from-files'] });
 const page = await browser.newPage();
 await page.setViewport({ width: 2048, height: 1280, deviceScaleFactor: 1 });
-for (const [kind, b] of Object.entries(BOARDS)) {
+for (const [kind, b] of Object.entries(BOARDS).filter(([k]) => !only.length || only.includes(k))) {
   const url = pathToFileURL(path.join(HERE, 'tutorial-board', 'face.html')) + '?' + new URLSearchParams(b);
   await page.goto(url, { waitUntil: 'load' });
   await page.evaluate(() => document.fonts.ready);
