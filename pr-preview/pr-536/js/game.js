@@ -33,7 +33,7 @@ import {
   recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
   buildShareStrip, browserStore
 } from './daily-ride.js';
-import { getLevelById, LEVELS, getInstructions, getMedals } from './race-config.js';
+import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
 import { markTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { ContributionTracker } from './contribution-tracker.js';
 import { CollectibleManager } from './collectibles.js';
@@ -54,6 +54,7 @@ import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
 import { ControllerOverlayHud, getControllerOverlayPref } from './controller-overlay-hud.js';
 import { isSteamTwinPad } from './input-manager.js';
+import { versusTeamLooks } from './versus/team-looks.js';
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
@@ -120,15 +121,8 @@ export const DROP_TAKEOVER_MS = 20000;
 // A pad must stay gone this long before the ride pauses (USB / BT blips).
 const DROP_DEBOUNCE_MS = 300;
 
-// Tutorial phase boundaries — sequential layout so all phases are visible ahead.
-// D6 (#400): cut to about a minute — pedal (runway) → lean to collect → both
-// together. The separate pylon-weave phase is gone; its recovery measurement
-// (smoothing) now comes from the combined phase, which also alternates sides.
-const TUTORIAL_PHASES = {
-  1: { runwayStart: 0,   contentStart: 30,  contentEnd: 80  },
-  2: { runwayStart: 80,  contentStart: 100, contentEnd: 145 }
-};
-const TUTORIAL_LAST_PHASE = 2;
+// Tutorial phase boundaries (TUTORIAL_PHASES, TUTORIAL_LAST_PHASE) live in
+// race-config.js so the world's phase gates come from the same table (#543).
 
 // Per-phase item layouts at absolute sequential distances
 const TUTORIAL_ITEMS = {
@@ -1644,6 +1638,8 @@ class Game {
     // controllers. Bikes stagger ±0.8m laterally so they don't overlap on
     // the start line. Team tint comes from the existing bike presets.
     const presets = this.lobby._presetData || {};
+    // Each team's geese wear their own outfit in the team's colour.
+    const looks = versusTeamLooks(getGooseOutfit());
     this.versusRigs = teams.map((t, i) => {
       const rig = new TeamRig({
         id: t.id,
@@ -1654,6 +1650,7 @@ class Game {
         bikeCloneSource: this.bike, // boot bike's GLB is loaded — clone, don't re-fetch
       });
       rig.bike.applyPreset(presets[rig.color.presetKey] || null);
+      rig.bike.setGooseLook(looks[rig.id]);
       rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
       rig.camera.updateProjectionMatrix();
       rig.resetForRace();
@@ -5418,6 +5415,8 @@ class Game {
         rig.dispose(this.scene);
       }
       this.versusRigs = null;
+      // Team Blue's geese share materials with this bike: put the saved colours back.
+      if (this.bike) this.bike.applyGooseColours();
       if (this.versusFrontViews) {
         for (const fv of this.versusFrontViews) fv.dispose();
         this.versusFrontViews = null;

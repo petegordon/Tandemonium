@@ -20,7 +20,7 @@ function scrub(mixer, clip) {
   return a;
 }
 
-function disposeTree(root) {
+export function disposeTree(root) {
   root.traverse((o) => {
     if (!o.isMesh) return;
     if (o.geometry) o.geometry.dispose();
