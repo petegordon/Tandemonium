@@ -338,3 +338,37 @@ body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { ou
     margin-top: calc(var(--uf-size-md) * -.55);   /* centre the thumb on the track: -(1.5 - .4) / 2 */
   }
 }
+
+/* #553 · First page on TV: the House Tandem site's hero treatment. The other
+   painting (geese from behind) fills the stage, dimmed under a dark wash,
+   and the right panel fades into it instead of meeting a hard dark edge. */
+@media (min-width: 1024px) {
+  #lobby:has(#lobby-mode[active])::before {
+    /* Sized to the stage and lifted so both geese heads sit above the chooser and the buttons. */
+    --art-w: calc((100vw - var(--uf-stage-inset)) * 1.08);
+    content: ''; position: fixed; inset: -24px; z-index: -1; pointer-events: none;
+    background:
+      linear-gradient(to bottom, rgba(10, 10, 15, .35) 0%, rgba(10, 10, 15, .6) 60%, rgba(10, 10, 15, .92) 100%),
+      url(../images/large_action_behind.png) 0 calc(var(--art-w) * -0.58) / var(--art-w) auto no-repeat;
+    filter: blur(3px) brightness(.55);
+  }
+  #lobby:has(#lobby-mode[active]) #lobby-img-right {
+    box-shadow: none;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 38%);
+            mask-image: linear-gradient(to right, transparent 0, #000 38%);
+  }
+  /* The bike chooser sits at the bottom, a little clear of the bar, so the heads show above it. */
+  #lobby:has(#lobby-mode[active]) #bike-carousel { align-self: end !important; margin-bottom: calc(var(--gutter) * 1.5) !important; }
+  /* ...and is just tall enough that its top lines up with RIDE TOGETHER (1080p TV). */
+  #lobby:has(#lobby-mode[active]) #bike-preview-canvas { height: 51.5vh !important; }
+}
+
+/* #553 · The bike chooser's arrows name the shoulder buttons that cycle bikes
+   (L1/R1 on a DualSense, LB/RB on Xbox) while a controller drives the menus;
+   mouse and touch keep the arrows. */
+body.pad-menus #bike-carousel .bike-nav-arrow { display: none; }
+#bike-carousel .bike-carousel-nav uf-controller-glyph { pointer-events: none; }
+@media (min-width: 1024px) {
+  #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 3.4) !important; }
+  #bike-carousel .bike-carousel-nav uf-controller-glyph .ufg { --_s: calc(var(--uf-size-2xl) * 1.5); }
+}
