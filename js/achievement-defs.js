@@ -1,11 +1,11 @@
 // ============================================================
-// ACHIEVEMENT DEFINITIONS — the 101, their stats, and the rules (#401, #500)
+// ACHIEVEMENT DEFINITIONS — the 100, their stats, and the rules (#401, #500)
 // ============================================================
 //
 // Pure and DOM-free so the unit tests can import it. js/achievements.js holds
 // the manager (persistence, toasts, Steam, server sync) and the game glue.
 //
-// 101 achievements in the 15 sections of issue #401 (+ #500 Look, No Thumbs):
+// 100 achievements in the 15 sections of issue #401 (+ #500 Look, No Thumbs, which took Half a Klick's place: Steam caps an app at 100):
 //   - 23 existing ids, kept unchanged (anything already earned, and its Steam
 //     id, carries over) — including the 7 per-bike-colour Grandma's ones;
 //   - 77 new ones.
@@ -176,7 +176,6 @@ export const ACHIEVEMENTS = [
   { id: 'sling_stage3',   section: 'sling', name: 'Getting the Hang of It', icon: '3️⃣', desc: 'Clear Slingshot stage 3',       ...count('slingStage', 3), stage: 3 },
   { id: 'sling_stage5',   section: 'sling', name: 'Long Shot',           icon: '5️⃣', desc: 'Clear Slingshot stage 5',             ...count('slingStage', 5), stage: 5, demo: false, full: 'slingStage' },   // spec says demo ✓, but the demo stops at stage 3 (edition.js)
   { id: 'sling_stage7',   section: 'sling', name: 'Slingshot Royalty',   icon: '7️⃣', desc: 'Clear Slingshot stage 7 (1,050 m)',   ...count('slingStage', 7), stage: 7, demo: false, full: 'slingStage' },
-  { id: 'sling_500',      section: 'sling', name: 'Half a Klick',        icon: '📏', desc: '500 m in one launch',                 ...count('slingBest', 500), stage: stageForDistance(500), unit: 'm' },
   { id: 'sling_1000',     section: 'sling', name: 'Kilometre Fling',     icon: '🛫', desc: '1,000 m in one launch',               ...count('slingBest', 1000), stage: stageForDistance(1000), unit: 'm', demo: false, full: 'slingStage' },
   { id: 'big_air',        section: 'sling', name: 'Big Air',             icon: '🪂', desc: 'Land a Big Air off a ramp',           ...count('bigAirs', 1) },
   { id: 'frequent_flyer', section: 'sling', name: 'Frequent Flyer',      icon: '✈️', desc: 'Land 25 Big Airs',                    ...count('bigAirs', 25) },
@@ -253,7 +252,7 @@ export const ACHIEVEMENTS = [
   { id: 'grandma_green',   section: 'colours', name: 'Jungle Express',      icon: '🌿', desc: "Finish Grandma's on the green bike",   condition: grandmaBike('bike_green') },
   { id: 'grandma_yellow',  section: 'colours', name: 'Banana Delivery',     icon: '🍌', desc: "Finish Grandma's on the yellow bike",  condition: grandmaBike('bike_yellow') },
 
-  // ── #500 · added after the 100 (it lives in the Clean riding section; #101 in the list and on Steam) ──
+  // ── #500 · added after the first 100 (Clean riding section, last in the list); sling_500 Half a Klick was dropped to stay at Steam's 100 cap (stage 3 already needs 540 m) ──
   { id: 'look_no_thumbs', section: 'clean', name: 'Look, No Thumbs',     icon: '🎮', desc: 'Finish a ride steering only by tilting your controller', condition: s => fin(s) && s.gyroOnly === true },
 ].map(a => ({ demo: true, hidden: false, ...a }));
 
@@ -269,7 +268,7 @@ export function getDefinition(id) {
 // ============================================================
 //
 // v1 (no `v`) was { cumulativeDistance } — metres from completed rides. v2
-// keeps that number and adds every counter the 101 need. Distance now counts
+// keeps that number and adds every counter the 100 need. Distance now counts
 // every metre of every regular ride (the payout ledger's new metres), so a
 // crashed ride counts too; nothing already counted is lost.
 
@@ -333,7 +332,7 @@ export function opensMedalGate(levelId, medal) {
 
 /**
  * m21 · retroactive credit. A player whose stats predate v2 already has saves
- * that prove some of the 101: personal bests and medals (tandemonium_records),
+ * that prove some of the 100: personal bests and medals (tandemonium_records),
  * Slingshot progress (tandemonium_slingshot), Today's Road days
  * (tandemonium_daily) and the wallet. Fold them in as LOWER BOUNDS: every
  * counter only ever goes up, every list only gains, nothing is lost.

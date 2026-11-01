@@ -4,27 +4,37 @@
  *
  * Reads achievements from js/achievement-defs.js (source of truth, #401),
  * opens Steamworks in a visible browser, waits for login,
- * scrapes current achievements, then adds what code has and Steamworks lacks.
- * Deleting is opt-in (--delete): a deleted achievement is gone for every
- * player who earned it, so without the flag the script only lists what a
- * --delete run would remove.
+ * scrapes current achievements, then:
+ *   1. deletes what Steamworks has and code lacks (opt-in, --delete)
+ *   2. adds what code has and Steamworks lacks
+ *   3. updates display name, description and Hidden where they differ from code
+ *   4. uploads the earned + locked icons (scripts/achievement-icons.js) to every
+ *      achievement that has none on Steamworks (--icons re-uploads all of them)
+ * Deleting is opt-in: a deleted achievement is gone for every player who
+ * earned it, so without --delete the script only lists what it would remove.
+ * Steam caps an app at 100 achievements; the script stops before adding past it.
  *
  * Usage:
- *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--delete] [--allow-empty] [--debug]
+ *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--delete] [--icons] [--no-icons]
+ *                                           [--allow-empty] [--debug]
  *
- * Default appId: 4510250 (playtest). Use 4482940 for main game.
+ * Default appId: steam_appid.txt. 4510250 = playtest, 4482940 = main game.
+ * Nothing is live until someone presses Publish in Steamworks.
  */
 
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const { renderIcons } = require('./achievement-icons');
+
+const STEAM_ACHIEVEMENT_CAP = 100;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const DEBUG = process.argv.includes('--debug');
 
 // ── Read achievements from the definitions module ────────────────
-// #401: all 101 (#500 added look_no_thumbs). js/achievement-defs.js is ESM, so import it.
+// #401: all 100 (#500 added look_no_thumbs, sling_500 dropped for Steam's 100 cap). js/achievement-defs.js is ESM, so import it.
 async function parseAchievementsFromCode() {
   const { pathToFileURL } = require('url');
   const defs = await import(pathToFileURL(path.join(__dirname, '..', 'js', 'achievement-defs.js')).href);
@@ -34,6 +44,7 @@ async function parseAchievementsFromCode() {
     displayName: a.name,
     description: describeCondition(a.id, a.desc),
     hidden: !!a.hidden,
+    icon: a.icon,
   }));
 
   if (entries.length === 0) {
@@ -72,7 +83,7 @@ function describeCondition(id, fallback) {
     pair_10_rides: 'Ride ten times with the same partner',
     pair_100km: 'Ride 100 km with the same partner',
     distance_between_us: 'Ride the distance between you and someone else',
-    // #401 · the 77 new ones (100 in all; #500 makes 101).
+    // #401 · the 77 new ones (#500 look_no_thumbs replaced sling_500: 100 in all, Steam's cap).
     first_pedal: 'Pedal for the first time',
     tutorial_done: 'Finish the Tutorial',
     tutorial_clean: 'Finish the Tutorial without a single retry',
@@ -112,7 +123,6 @@ function describeCondition(id, fallback) {
     sling_stage3: 'Clear Slingshot stage 3',
     sling_stage5: 'Clear Slingshot stage 5',
     sling_stage7: 'Clear Slingshot stage 7 (1,050 m)',
-    sling_500: 'Fly 500 m in one launch',
     sling_1000: 'Fly 1,000 m in one launch',
     big_air: 'Land a Big Air off a ramp',
     frequent_flyer: 'Land 25 Big Airs',
@@ -145,7 +155,7 @@ function describeCondition(id, fallback) {
     versus_close: 'Win a versus race by less than 1 second',
     versus_comeback: 'Win a versus race after trailing at halfway',
     versus_10: 'Win 10 versus races',
-    // Hidden on Steam (set "Hidden" by hand in Steamworks — this script cannot):
+    // Hidden on Steam (the sync sets the Hidden box from `hidden: true` in the defs):
     crashes_10: 'Crash 10 times in total',
     false_start: 'Crash within 3 seconds of GO',
     so_close: 'Crash within 10 m of the finish',
@@ -230,15 +240,28 @@ async function scrapeAchievements(page) {
       const firstLines = firstCellText.split('\n').map(l => l.trim()).filter(l => l);
       const apiName = firstLines[0] || '';
 
-      // Get Display Name: first line of second cell text
-      const secondCellText = cells[1].textContent.trim();
-      const secondLines = secondCellText.split('\n').map(l => l.trim()).filter(l => l);
+      // Display Name and Description: the two spans of the second cell
+      const spans = cells[1].querySelectorAll('span');
+      const secondLines = spans.length >= 2
+        ? [spans[0].textContent.trim(), spans[1].textContent.trim()]
+        : cells[1].textContent.trim().split('\n').map(l => l.trim()).filter(l => l);
       const displayName = secondLines[0] || '';
+      const description = secondLines.slice(1).join(' ');
 
       if (apiName && apiName !== 'API Name') {
         // row.id is Steam's stat/bit id (e.g. "a20_3") — unique even when two
-        // rows share an API name, so deletes can target one row exactly.
-        achievements.push({ apiName, displayName, rowId: row.id || null });
+        // rows share an API name, so deletes can target one row exactly. It is
+        // also what the icon upload needs (statID 20, bit 3).
+        const m = /^a(\d+)_(\d+)$/.exec(row.id || '');
+        achievements.push({
+          apiName, displayName, description,
+          hidden: (cells[3]?.textContent || '').trim() === 'Yes',
+          hasIcon: !!cells[4]?.querySelector('img'),
+          hasGrayIcon: !!cells[5]?.querySelector('img'),
+          rowId: row.id || null,
+          statId: m ? m[1] : null,
+          bit: m ? m[2] : null,
+        });
       }
     }
     return achievements;
@@ -467,6 +490,67 @@ async function addAchievement(page, achievement) {
   }
 }
 
+// ── Update name / description / Hidden of an existing row ────────
+// Opens the row's Edit form, sets the English fields and the Hidden box,
+// saves, and waits for the row to leave edit mode.
+async function updateAchievement(page, rowId, achievement) {
+  return page.evaluate(async (rowId, a) => {
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    let row = document.getElementById(rowId);
+    if (!row) return 'row not found';
+    const editBtn = row.querySelector('input[value="Edit"]');
+    if (!editBtn) return 'no Edit button';
+    editBtn.click();
+    for (let i = 0; i < 20; i++) {
+      await wait(250);
+      row = document.getElementById(rowId);
+      if (row && row.querySelectorAll('input[name="english"]:not([type="hidden"])').length >= 2) break;
+    }
+    const en = [...row.querySelectorAll('input[name="english"]')].filter(e => e.type !== 'hidden');
+    if (en.length < 2) return 'edit form did not open';
+    const set = (el, v) => {
+      el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    set(en[0], a.displayName);
+    set(en[1], a.description);
+    const hidden = row.querySelector('input[type="checkbox"][id$="_hidden"]');
+    if (hidden && hidden.checked !== a.hidden) hidden.click();
+    const save = [...row.querySelectorAll('input[type="submit"]')].find(b => b.value === 'Save');
+    if (!save) return 'no Save button';
+    save.click();
+    for (let i = 0; i < 40; i++) {
+      await wait(250);
+      row = document.getElementById(rowId);
+      if (row && !row.querySelector('input[name="english"]:not([type="hidden"])')) return 'ok';
+    }
+    return 'save did not finish';
+  }, rowId, achievement);
+}
+
+// ── Upload one icon (earned or locked) ───────────────────────────
+// The Edit form posts multipart to /images/uploadachievement with the row's
+// statID + bit and requestType achievement | achievement_gray. Post the same
+// thing straight from the signed-in page; no file dialog involved.
+async function uploadIcon(page, appId, row, filePath, gray) {
+  const b64 = fs.readFileSync(filePath).toString('base64');
+  return page.evaluate(async ({ appId, statId, bit, b64, gray }) => {
+    if (typeof g_sessionID !== 'string') return 'no session id on the page';
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const fd = new FormData();
+    fd.append('sessionid', g_sessionID);
+    fd.append('MAX_FILE_SIZE', '3000000');
+    fd.append('appID', String(appId));
+    fd.append('statID', String(statId));
+    fd.append('bit', String(bit));
+    fd.append('requestType', gray ? 'achievement_gray' : 'achievement');
+    fd.append('image', new Blob([bytes], { type: 'image/jpeg' }), gray ? 'icon_gray.jpg' : 'icon.jpg');
+    const res = await fetch('/images/uploadachievement', { method: 'POST', body: fd, credentials: 'include' });
+    return res.ok ? 'ok' : `HTTP ${res.status}`;
+  }, { appId, statId: row.statId, bit: row.bit, b64, gray });
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 async function main() {
   // App ID: from CLI arg, or read from steam_appid.txt, or prompt
@@ -487,6 +571,8 @@ async function main() {
   const skipDelete = !process.argv.includes('--delete');
   if (process.argv.includes('--no-delete')) console.log('Note: --no-delete is the default now; pass --delete to remove achievements.');
   const allowEmpty = process.argv.includes('--allow-empty');
+  const iconsOff = process.argv.includes('--no-icons');
+  const iconsAll = process.argv.includes('--icons');   // re-upload every icon, not just missing ones
 
   console.log('=== Steam Achievement Sync ===');
   console.log(`App ID: ${appId}`);
@@ -503,6 +589,12 @@ async function main() {
   }
   console.log('');
 
+  if (codeAchievements.length > STEAM_ACHIEVEMENT_CAP) {
+    console.error(`Code defines ${codeAchievements.length} achievements; Steam allows ${STEAM_ACHIEVEMENT_CAP} per app.`);
+    console.error('Nothing changed. Cut the list (js/achievement-defs.js) or get Valve to raise the cap first.');
+    process.exit(1);
+  }
+
   // Launch browser
   console.log('Launching browser — please log in to Steamworks if needed...');
   const browser = await puppeteer.launch({
@@ -510,6 +602,17 @@ async function main() {
     defaultViewport: null,
     args: ['--start-maximized'],
   });
+
+  // Icons are rendered locally before anything touches Steamworks, so a font
+  // or network problem stops the run before it changes anything.
+  let iconFiles = new Map();
+  if (!iconsOff) {
+    console.log('Rendering achievement icons (steam/achievement-icons/)...');
+    const files = await renderIcons(browser, codeAchievements.map(a => ({ id: a.id, icon: a.icon })));
+    iconFiles = new Map(files.map(f => [f.id.toUpperCase(), f]));
+    console.log(`  ${files.length} earned + ${files.length} locked icons ready.`);
+    console.log('');
+  }
 
   const page = await browser.newPage();
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
@@ -620,12 +723,40 @@ async function main() {
   const toAdd = codeAchievements.filter(a => !steamSet.has(a.apiName));
   const toDelete = steamAchievements.filter(a => !codeSet.has(a.apiName));
   const existing = codeAchievements.filter(a => steamSet.has(a.apiName));
+  const differs = (a, s) => s.displayName !== a.displayName || s.description !== a.description || s.hidden !== a.hidden;
+  const toUpdate = existing.filter(a => differs(a, steamSet.get(a.apiName)));
+  const needsIcons = s => iconsAll || !s.hasIcon || !s.hasGrayIcon;
+  const iconCount = iconsOff ? 0
+    : existing.filter(a => needsIcons(steamSet.get(a.apiName))).length + toAdd.length;
 
   console.log('=== Sync Plan ===');
-  console.log(`  Already synced: ${existing.length}`);
+  console.log(`  Already there:  ${existing.length}`);
   console.log(`  To add:         ${toAdd.length}`);
-  console.log(`  To delete:      ${toDelete.length}`);
+  console.log(`  To delete:      ${toDelete.length}${skipDelete && toDelete.length ? ' (skipped without --delete)' : ''}`);
+  console.log(`  To update:      ${toUpdate.length} (name / description / hidden)`);
+  console.log(`  Icons to upload: ${iconsOff ? 'off (--no-icons)' : `${iconCount} achievements`}`);
   console.log('');
+
+  // Steam refuses the 101st achievement; check before deleting anything.
+  const after = steamAchievements.length - (skipDelete ? 0 : toDelete.length) + toAdd.length;
+  if (after > STEAM_ACHIEVEMENT_CAP) {
+    console.error(`That would leave ${after} achievements on Steamworks; the cap is ${STEAM_ACHIEVEMENT_CAP}.`);
+    console.error(skipDelete && toDelete.length
+      ? 'Re-run with --delete to remove the ones no longer in code first.'
+      : 'Nothing changed.');
+    await browser.close();
+    process.exit(1);
+  }
+
+  for (const a of toUpdate) {
+    const s = steamSet.get(a.apiName);
+    const parts = [];
+    if (s.displayName !== a.displayName) parts.push(`name "${s.displayName}" -> "${a.displayName}"`);
+    if (s.description !== a.description) parts.push(`desc "${s.description}" -> "${a.description}"`);
+    if (s.hidden !== a.hidden) parts.push(`hidden ${s.hidden} -> ${a.hidden}`);
+    console.log(`  ~ ${a.apiName}: ${parts.join('; ')}`);
+  }
+  if (toUpdate.length) console.log('');
 
   if (toDelete.length > 0) {
     console.log(skipDelete
@@ -635,8 +766,8 @@ async function main() {
     console.log('');
   }
 
-  if (toAdd.length === 0 && (skipDelete || toDelete.length === 0)) {
-    console.log(toDelete.length ? 'Nothing to add (deletes skipped — see above).' : 'Everything is in sync! Nothing to do.');
+  if (toAdd.length === 0 && toUpdate.length === 0 && iconCount === 0 && (skipDelete || toDelete.length === 0)) {
+    console.log(toDelete.length ? 'Nothing to add or update (deletes skipped — see above).' : 'Everything is in sync! Nothing to do.');
     await browser.close();
     return;
   }
@@ -644,12 +775,6 @@ async function main() {
   if (toAdd.length > 0) {
     console.log('Achievements to ADD (in code but not on Steamworks):');
     for (const a of toAdd) console.log(`  + ${a.apiName} ("${a.displayName}") — ${a.description}`);
-    console.log('');
-  }
-
-  const hiddenOnes = codeAchievements.filter(a => a.hidden).map(a => a.apiName);
-  if (hiddenOnes.length > 0) {
-    console.log('Mark these HIDDEN by hand in Steamworks (the form fill does not): ' + hiddenOnes.join(', '));
     console.log('');
   }
 
@@ -703,6 +828,40 @@ async function main() {
     console.log('');
   }
 
+  // Update pass: re-read the table (adds may have changed it), then fix any
+  // name / description / Hidden that differs — this also sets Hidden on rows
+  // just added, since the add form leaves it unticked.
+  await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+  await waitForTable(page);
+  let live = await scrapeAchievements(page);
+  const liveSet = new Map(live.map(s => [s.apiName, s]));
+  const updateList = codeAchievements.filter(a => liveSet.has(a.apiName) && differs(a, liveSet.get(a.apiName)));
+  if (updateList.length) {
+    console.log('Updating achievements...');
+    for (const a of (DEBUG ? updateList.slice(0, 1) : updateList)) {
+      process.stdout.write(`  Updating ${a.apiName}...`);
+      console.log(' ' + await updateAchievement(page, liveSet.get(a.apiName).rowId, a));
+    }
+    console.log('');
+  }
+
+  // Icon pass: earned + locked icon for every row missing one (or all with --icons).
+  if (!iconsOff) {
+    const iconList = codeAchievements.filter(a => liveSet.has(a.apiName) && needsIcons(liveSet.get(a.apiName)));
+    if (iconList.length) {
+      console.log(`Uploading icons for ${iconList.length} achievements...`);
+      for (const a of (DEBUG ? iconList.slice(0, 1) : iconList)) {
+        const s = liveSet.get(a.apiName);
+        const f = iconFiles.get(a.apiName);
+        if (!s.statId || !f) { console.log(`  ${a.apiName}: skipped (no stat id or icon file)`); continue; }
+        const r1 = await uploadIcon(page, appId, s, f.earned, false);
+        const r2 = await uploadIcon(page, appId, s, f.gray, true);
+        console.log(`  ${a.apiName}: earned ${r1}, locked ${r2}`);
+      }
+      console.log('');
+    }
+  }
+
   // Final scrape to verify
   console.log('Verifying...');
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
@@ -716,11 +875,18 @@ async function main() {
   const missing = codeAchievements.filter(a => !finalNames.includes(a.apiName)).map(a => a.apiName);
   const extra = finalNames.filter(n => !codeSet.has(n));
   const doubled = finalNames.filter((n, i) => finalNames.indexOf(n) !== i);
+  const finalSet = new Map(finalAchievements.map(s => [s.apiName, s]));
+  const stillDiffer = codeAchievements.filter(a => finalSet.has(a.apiName) && differs(a, finalSet.get(a.apiName))).map(a => a.apiName);
+  const noIcon = iconsOff ? [] : codeAchievements
+    .filter(a => finalSet.has(a.apiName) && (!finalSet.get(a.apiName).hasIcon || !finalSet.get(a.apiName).hasGrayIcon))
+    .map(a => a.apiName);
   if (missing.length) console.log(`  Missing:    ${missing.join(', ')}`);
   if (extra.length) console.log(`  Not in code: ${extra.join(', ')}`);
   if (doubled.length) console.log(`  DUPLICATED: ${[...new Set(doubled)].join(', ')}`);
+  if (stillDiffer.length) console.log(`  Text/hidden still differ: ${stillDiffer.join(', ')}`);
+  if (noIcon.length) console.log(`  Still missing an icon: ${noIcon.join(', ')}`);
 
-  if (!missing.length && !doubled.length && (skipDelete || !extra.length)) {
+  if (!missing.length && !doubled.length && !stillDiffer.length && !noIcon.length && (skipDelete || !extra.length)) {
     console.log('SYNC COMPLETE!');
   } else {
     console.log('WARNING: Steamworks does not match the code — review in the browser.');
