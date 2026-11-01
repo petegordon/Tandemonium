@@ -42,11 +42,12 @@ export const CHOOSER_MODEL_PATH = 'tandem-3d/tandem_bicycle.glb';
  */
 /**
  * "Show Solo" setting — when on, a solo ride (one player) shows only the captain
- * goose on the goose tandem; co-op, local and versus always show both. Off by
- * default. Cached by the game; toggling in Options applies on the next frame.
+ * goose on the goose tandem; co-op, local and versus always show both. On by
+ * default; an explicit Off is kept. Cached by the game; toggling in Options
+ * applies on the next frame.
  */
 export function getShowSolo() {
-  try { return localStorage.getItem('tandemonium_show_solo') === 'on'; } catch (e) { return false; }
+  try { return localStorage.getItem('tandemonium_show_solo') !== 'off'; } catch (e) { return true; }
 }
 
 /**
@@ -226,17 +227,18 @@ const SHARED_PHYSICS = {
   // is still 1 — small thumb movements barely steer. See stickResponse().
   stickDeadzone: 0.15,
   stickResponseCurve: 1.8,
-  // Phone tilt steering gain: the lean a given tilt produces is scaled by
-  // this after the deadzone/response curve. 1 = the original feel; 0.25 =
-  // a quarter as sensitive (requested for a phone player who found tilt too
-  // twitchy). Phone tilt only — controller gyro (WebHID/Steam) is unchanged.
-  // Intended (PR #397 review R5): a phone gets BOTH this gain and the default
-  // Steering Feel 0.3 (wider dead zone, more smoothing, more degrees for a full
-  // lean). The two stack on purpose — phone tilt is meant to be the gentlest
-  // input. The riders' body lean and the tutorial's tilt calibration use the
+  // Motion steering gain (#522): the lean a tilt or roll produces is scaled by
+  // this after the dead zone/response curve, for EVERY motion input: phone
+  // tilt and controller gyro (WebHID and Steam getMotionData) alike. It used
+  // to be phone-only (mobileTiltGain 0.25), so a DualSense or Steam Controller
+  // steered up to 4x harder than a phone, even on Chill. Each difficulty
+  // preset sets its own (DIFFICULTY_PRESETS[*].motionGain); this default is
+  // Chill's. The Steam bound-Steer fallback is a stick-like axis, not gained.
+  // It stacks with the default Steering Feel 0.3 on purpose (PR #397 R5).
+  // The riders' body lean and the tutorial's tilt calibration use the
   // ungained lean (InputManager.getMotionLeanVisual), so this only softens
   // steering, not what the player sees or how calibration measures.
-  mobileTiltGain: 0.25,
+  motionGain: 0.3,
   // Shared physics
   leanForce: 12,
   gravityForce: 2.5,
@@ -266,6 +268,12 @@ export const BALANCE_DEFAULTS = { ...SHARED_PHYSICS, ...PLATFORM_TILT_DEFAULTS }
 
 // Mutable runtime tuning (initialized from defaults, adjustable by player)
 export const TUNE = { ...BALANCE_DEFAULTS };
+// Back-compat (#522): the old phone-only name reads and writes the shared gain.
+Object.defineProperty(TUNE, 'mobileTiltGain', {
+  get() { return TUNE.motionGain; },
+  set(v) { TUNE.motionGain = v; },
+  enumerable: false,
+});
 
 // Difficulty presets
 //
@@ -298,6 +306,7 @@ export const DIFFICULTY_PRESETS = {
     autoCorrectionStrength: 6.0, // strong self-righting (ramped per phase)
     pedalLeanKickScale: 0.0,    // no random lean impulse on pedal strokes
     autoSpeed: true,            // bike rolls forward automatically
+    motionGain: 0.3,            // #522: tilt/gyro steer gently (a phone's old feel)
   },
   chill: {
     safetyDefault: true,        // cannot fall; the wobble band teaches the edge
@@ -312,6 +321,7 @@ export const DIFFICULTY_PRESETS = {
     autoCorrectionStrength: 6.0, // strong self-righting
     pedalLeanKickScale: 0.0,    // no random lean impulse
     autoSpeed: true,            // steady cruise speed for smooth, stable riding
+    motionGain: 0.3,            // #522: the same gentle tilt/gyro steering as the tutorial
   },
   adventurous: {
     safetyDefault: false,       // A-5: this is the difficulty that can fall
@@ -325,6 +335,7 @@ export const DIFFICULTY_PRESETS = {
     autoCorrection: true,       // still has auto-correction
     autoCorrectionStrength: 4.0, // helps, but no longer does the riding for you
     pedalLeanKickScale: 0.1,    // barely noticeable pedal kicks
+    motionGain: 0.6,            // #522: sharper tilt/gyro turns
   },
   daredevil: {
     safetyDefault: false,
@@ -338,6 +349,7 @@ export const DIFFICULTY_PRESETS = {
     autoCorrection: true,       // still has auto-correction
     autoCorrectionStrength: 2.5, // barely there — you are riding this one
     pedalLeanKickScale: 0.3,    // light pedal kicks
+    motionGain: 1.0,            // #522: the full lean range from tilt/gyro
   },
 };
 
@@ -377,11 +389,30 @@ export function tuningBaseFromSave(data, values) {
   return out;
 }
 
+/**
+ * #522 · the fewest degrees of controller roll a full gyro lean may take.
+ * Calibration and in-ride adaptation set "degrees for a full lean" from how
+ * far the player rolls; small rolls made it smaller, which made steering
+ * twitchier, so the player rolled less still — a loop that bottomed out at
+ * 15° (a full lean from a flick of the wrist). Phone tilt keeps its 15° floor.
+ */
+export const GYRO_MIN_SENSITIVITY = 35;
+
+/**
+ * In-ride adaptation's "degrees for a full lean" from the 95th-percentile roll
+ * it saw. Gyro never goes under GYRO_MIN_SENSITIVITY (#522); phone tilt keeps 15°.
+ * @param {number} p95 degrees @param {boolean} isGyro
+ */
+export function observedFullLeanDegrees(p95, isGyro) {
+  return Math.min(60, Math.max(isGyro ? GYRO_MIN_SENSITIVITY : 15, p95 * 0.85));
+}
+
 export function setTuningBase(values) {
   if (!values) return;
   for (const k of TUNING_KEYS) {
     if (Number.isFinite(values[k])) TUNING_BASE[k] = values[k];
   }
+  if (TUNING_BASE.gyroSensitivity < GYRO_MIN_SENSITIVITY) TUNING_BASE.gyroSensitivity = GYRO_MIN_SENSITIVITY;
 }
 
 /**
@@ -396,7 +427,7 @@ export function snapshotTuningBase() {
 // Each param's clamp, as applySteeringFeel and calibration apply it.
 const TUNING_BOUNDS = {
   sensitivity: [15, 60], deadzone: [2, 8], outputSmoothing: [0.15, 0.8], responseCurve: [1.0, 2.5],
-  gyroSensitivity: [15, 60], gyroDeadzone: [2, 8], gyroOutputSmoothing: [0.15, 0.8], gyroResponseCurve: [1.0, 2.0],
+  gyroSensitivity: [GYRO_MIN_SENSITIVITY, 60], gyroDeadzone: [2, 8], gyroOutputSmoothing: [0.15, 0.8], gyroResponseCurve: [1.0, 2.0],
 };
 
 /** Saves written from this build on hold the un-feeled base (see migrateSavedTuning). */
@@ -422,8 +453,10 @@ export function migrateSavedTuning(data, defaults = BALANCE_DEFAULTS) {
   if (!data || typeof data !== 'object') return { values, migrated: false };
   for (const k of TUNING_KEYS) if (Number.isFinite(data[k])) values[k] = data[k];
   const feel = data.steeringFeel;
-  if (data[TUNING_SAVE_BASE_FLAG] || !Number.isFinite(feel)) return { values, migrated: false };
   const gyroSave = data.inputType === 'gyro';
+  if (data[TUNING_SAVE_BASE_FLAG] || !Number.isFinite(feel)) {
+    return { values, migrated: raiseGyroFloor(values, gyroSave) };
+  }
   // The scales the pre-fix applySteeringFeel used (senScale had the old, inverted sign).
   const old = { dz: 1.4 - 0.8 * feel, sen: 0.85 + 0.3 * feel, rc: 0.3 - 0.6 * feel };
   for (const k of Object.keys(values)) {
@@ -437,9 +470,20 @@ export function migrateSavedTuning(data, defaults = BALANCE_DEFAULTS) {
     if (/[sS]ensitivity$/.test(k)) base = v / old.sen;
     else if (/[dD]eadzone$/.test(k)) base = v / old.dz;
     else base = v - old.rc;                     // response curve: additive shift
-    values[k] = pinned || !Number.isFinite(base) ? defaults[k] : Math.min(hi, Math.max(lo, base));
+    // (A gyro save's fallback is the GYRO default, not the phone one its key names.)
+    values[k] = pinned || !Number.isFinite(base) ? defaults[bk] : Math.min(hi, Math.max(lo, base));
   }
+  raiseGyroFloor(values, gyroSave);
   return { values, migrated: true };
+}
+
+/** #522: lift a saved gyro "degrees for a full lean" under the floor. @returns {boolean} changed */
+function raiseGyroFloor(values, gyroSave) {
+  let changed = false;
+  for (const k of gyroSave ? ['sensitivity', 'gyroSensitivity'] : ['gyroSensitivity']) {
+    if (Number.isFinite(values[k]) && values[k] < GYRO_MIN_SENSITIVITY) { values[k] = GYRO_MIN_SENSITIVITY; changed = true; }
+  }
+  return changed;
 }
 
 /**
@@ -472,7 +516,7 @@ export function applySteeringFeel(feel) {
   // Apply to gyro params
   TUNE.gyroDeadzone = Math.min(8, Math.max(2, TUNING_BASE.gyroDeadzone * dzScale));
   TUNE.gyroOutputSmoothing = Math.min(0.8, Math.max(0.15, TUNING_BASE.gyroOutputSmoothing * smScale));
-  TUNE.gyroSensitivity = Math.min(60, Math.max(15, TUNING_BASE.gyroSensitivity * senScale));
+  TUNE.gyroSensitivity = Math.min(60, Math.max(GYRO_MIN_SENSITIVITY, TUNING_BASE.gyroSensitivity * senScale));
   TUNE.gyroResponseCurve = Math.min(2.0, Math.max(1.0, TUNING_BASE.gyroResponseCurve + rcShift));
 }
 

@@ -1,11 +1,11 @@
 // ============================================================
-// ACHIEVEMENT DEFINITIONS — the 100, their stats, and the rules (#401)
+// ACHIEVEMENT DEFINITIONS — the 101, their stats, and the rules (#401, #500)
 // ============================================================
 //
 // Pure and DOM-free so the unit tests can import it. js/achievements.js holds
 // the manager (persistence, toasts, Steam, server sync) and the game glue.
 //
-// 100 achievements in the 15 sections of issue #401:
+// 101 achievements in the 15 sections of issue #401 (+ #500 Look, No Thumbs):
 //   - 23 existing ids, kept unchanged (anything already earned, and its Steam
 //     id, carries over) — including the 7 per-bike-colour Grandma's ones;
 //   - 77 new ones.
@@ -19,9 +19,9 @@
 // demo: false marks the 18 rows the spec's Demo column calls full-game only,
 // plus sling_stage5: the spec marks it demo ✓, but DEMO_RULES caps the
 // Slingshot at stage 3, so stage 5 can't be cleared in the demo; and
-// double_down: only Today's Launch (full game) can pair a jackpot with a best;
-// and daily_streak_3/7: the demo rides the weekly road, which feeds no day
-// streak (22 in all).
+// daily_streak_3/7: the demo rides the weekly road, which feeds no day streak
+// (21 in all). double_down left this list with #546: the pot of gold no longer
+// ends the run, so a stage 2-3 run can collect it and go on to a best.
 // `full` says why: an edition rule (js/edition.js · DEMO_RULES) blocks it, or
 // 'scope' — a long-haul goal kept for the full game. The demo never awards
 // them; the stats keep counting, so they unlock on the full game's first check.
@@ -63,6 +63,21 @@ export function stageForDistance(metres) {
 const n = v => (Number.isFinite(v) ? v : 0);
 const len = a => (Array.isArray(a) ? a.length : 0);
 const fin = s => !!(s && s.finishedLevel);
+
+/** Gyro frames a rider needs before a ride counts as steered by tilt (~5 s at 60 fps). */
+export const GYRO_ONLY_MIN_FRAMES = 300;
+
+/**
+ * #500 · Look, No Thumbs: did this rider steer the whole ride by CONTROLLER gyro?
+ * frames = BalanceController.steerFrames for the ride. Phone tilt ('motion'),
+ * keys and the stick/D-pad ('gamepad') each disqualify; controller gyro must
+ * have steered for at least GYRO_ONLY_MIN_FRAMES.
+ */
+export function gyroOnlySteer(frames) {
+  if (!frames) return false;
+  const f = k => Number(frames[k]) || 0;
+  return f('gamepad-gyro') >= GYRO_ONLY_MIN_FRAMES && f('keyboard') === 0 && f('gamepad') === 0 && f('motion') === 0;
+}
 
 /** A counter achievement: condition + lobby progress from one lifetime stat. */
 function count(stat, goal) {
@@ -165,8 +180,8 @@ export const ACHIEVEMENTS = [
   { id: 'sling_1000',     section: 'sling', name: 'Kilometre Fling',     icon: '🛫', desc: '1,000 m in one launch',               ...count('slingBest', 1000), stage: stageForDistance(1000), unit: 'm', demo: false, full: 'slingStage' },
   { id: 'big_air',        section: 'sling', name: 'Big Air',             icon: '🪂', desc: 'Land a Big Air off a ramp',           ...count('bigAirs', 1) },
   { id: 'frequent_flyer', section: 'sling', name: 'Frequent Flyer',      icon: '✈️', desc: 'Land 25 Big Airs',                    ...count('bigAirs', 25) },
-  { id: 'jackpot',        section: 'sling', name: 'Jackpot!',            icon: '🎰', desc: 'Hit the jackpot billboard',           ...count('jackpots', 1) },
-  { id: 'double_down',    section: 'sling', name: 'Double Down',         icon: '🎲', desc: 'Hit the jackpot on a run that also beats your best distance', ...count('doubleDowns', 1), demo: false, full: 'todaysLaunch' },   // spec says demo ✓, but a stage-mode jackpot (≈118 m) can't beat a stage-2+ best; only Today's Launch can
+  { id: 'jackpot',        section: 'sling', name: 'Pot of Gold',         icon: '💰', desc: 'Collect the pot of gold',             ...count('jackpots', 1) },   // #546: id kept for saves + Steam
+  { id: 'double_down',    section: 'sling', name: 'Double Down',         icon: '🎲', desc: 'Collect the pot of gold on a run that also beats your best distance', ...count('doubleDowns', 1) },   // #546: the pot no longer ends the run, so stages 2-3 (the demo) can earn it too
   { id: 'full_trail',     section: 'sling', name: 'Full Trail',          icon: '🪙', desc: 'Grab all 5 coins in a trail',         ...count('fullTrails', 1) },
   { id: 'straight_shooter', section: 'sling', name: 'Straight Shooter',  icon: '📐', desc: 'Go 300 m without steering after launch', ...count('straightShots', 1) },
   { id: 'medal_key',      section: 'sling', name: 'Medal Key',           icon: '🗝️', desc: 'Win a regular-ride medal that unlocks a Slingshot stage', ...count('medalKeys', 1) },
@@ -237,6 +252,9 @@ export const ACHIEVEMENTS = [
   { id: 'grandma_blue',    section: 'colours', name: "Ocean to Grandma's",  icon: '🌊', desc: "Finish Grandma's on the blue bike",    condition: grandmaBike('bike_blue') },
   { id: 'grandma_green',   section: 'colours', name: 'Jungle Express',      icon: '🌿', desc: "Finish Grandma's on the green bike",   condition: grandmaBike('bike_green') },
   { id: 'grandma_yellow',  section: 'colours', name: 'Banana Delivery',     icon: '🍌', desc: "Finish Grandma's on the yellow bike",  condition: grandmaBike('bike_yellow') },
+
+  // ── #500 · added after the 100 (it lives in the Clean riding section; #101 in the list and on Steam) ──
+  { id: 'look_no_thumbs', section: 'clean', name: 'Look, No Thumbs',     icon: '🎮', desc: 'Finish a ride steering only by tilting your controller', condition: s => fin(s) && s.gyroOnly === true },
 ].map(a => ({ demo: true, hidden: false, ...a }));
 
 /** The ids the demo never awards (the spec's Demo column "—"). */
@@ -251,7 +269,7 @@ export function getDefinition(id) {
 // ============================================================
 //
 // v1 (no `v`) was { cumulativeDistance } — metres from completed rides. v2
-// keeps that number and adds every counter the 100 need. Distance now counts
+// keeps that number and adds every counter the 101 need. Distance now counts
 // every metre of every regular ride (the payout ledger's new metres), so a
 // crashed ride counts too; nothing already counted is lost.
 
@@ -315,7 +333,7 @@ export function opensMedalGate(levelId, medal) {
 
 /**
  * m21 · retroactive credit. A player whose stats predate v2 already has saves
- * that prove some of the 100: personal bests and medals (tandemonium_records),
+ * that prove some of the 101: personal bests and medals (tandemonium_records),
  * Slingshot progress (tandemonium_slingshot), Today's Road days
  * (tandemonium_daily) and the wallet. Fold them in as LOWER BOUNDS: every
  * counter only ever goes up, every list only gains, nothing is lost.
@@ -514,13 +532,13 @@ export function applyEvent(prev, type, d = {}, today = null) {
       L.rides += 1;
       noteDay(L, today);
       L.slingBest = Math.max(L.slingBest, Math.floor(n(d.distance)));
-      if (d.jackpot && d.record) L.doubleDowns += 1;
+      if (d.pot && d.record) L.doubleDowns += 1;
       if (n(d.fullTrails) > 0) L.fullTrails += Math.floor(n(d.fullTrails));
       if (d.straight) L.straightShots += 1;
       break;
     case 'stageCleared': L.slingStage = Math.max(L.slingStage, Math.floor(n(d.stage))); break;
     case 'bigAir': L.bigAirs += 1; break;
-    case 'jackpot': L.jackpots += 1; break;
+    case 'pot': L.jackpots += 1; break;   // #546: the pot of gold (the stat keeps its jackpot name)
     case 'todaysLaunch': L.launchDays = addUnique(L.launchDays, d.key); break;
     // ── versus (one device, both teams)
     case 'versus':

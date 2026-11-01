@@ -272,9 +272,9 @@ test('Today\'s Launch: the same course all day, a different one tomorrow', () =>
   const keys = Array.from({ length: 7 }, (_, i) => dailyKey(new Date(Date.UTC(2026, 9, 4 + i, 12))));
   const layouts = new Set(keys.map(k => JSON.stringify(todaysLaunchCourse(k))));
   assert.equal(layouts.size, 7);
-  // It is a real course: coins to the end, a jackpot, ramps, all inside one lap.
+  // It is a real course: coins to the end, a pot of gold, ramps, all inside one lap.
   const c = todaysLaunchCourse(a);
-  assert.ok(c.jackpot && c.ramps.length > 2 && c.coins.length > 20);
+  assert.ok(c.pot && c.ramps.length > 2 && c.coins.length > 20);
   for (const x of c.coins) assert.ok(x.d < TODAYS_LAUNCH_LENGTH + SLING_REST_D);
   assert.ok(TODAYS_LAUNCH_LENGTH + SLING_REST_D < 1200);
 });

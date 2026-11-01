@@ -56,6 +56,10 @@ export function renderGarage(save, wallet, opts = {}) {
   const gSheet = /** @type {any} */ ($('sling-garage-sheet'));
   if (gSheet) {
     gSheet.heading = '🛠️ Garage';
+    // #459: a dismissible sheet (B / Esc / Close = BACK) is opened here and
+    // closed by hideGarage(), never left `open` in the markup — an open
+    // dismissible sheet, even in a hidden wrapper, would take every Esc.
+    gSheet.open = true;
     if (rebuilt) root.appendChild(el('div', null, rebuilt.trim()));   // the rebuild badge, under the headline
   } else root.appendChild(el('h2', null, `🛠️ GARAGE${rebuilt}`));
   root.appendChild(el('div', 'sling-wallet', `${COIN} ${fmt(wallet.coins)} Chaos Coins`));
@@ -161,13 +165,16 @@ export function renderGarage(save, wallet, opts = {}) {
   return buttons;
 }
 
-export function hideGarage() { $('sling-garage').classList.remove('visible'); }
+export function hideGarage() {
+  $('sling-garage').classList.remove('visible');
+  const gSheet = /** @type {any} */ ($('sling-garage-sheet'));
+  if (gSheet && gSheet.open) gSheet.close('api');   // 'api': the game closed it, not the player (slingshot-mode.js listens)
+}
 
 const CAUSE = {
   stall: 'You rolled to a stop',
   crash: 'Chaos! You crashed',
   goal: 'Stage goal reached!',
-  jackpot: 'JACKPOT! Double pay',
 };
 
 /**
@@ -181,10 +188,7 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
   const shell = $('sling-results');
   const root = $('sling-results-body') || shell;
   root.innerHTML = '';
-  // B5: a jackpot already cashed (this stage, or today) ends the run but pays like any other.
-  const title = daily && cause === 'goal' ? "Today's Launch: all the way!"
-    : cause === 'jackpot' && !score.jackpotPaid ? (daily ? "Jackpot! (already cashed today)" : 'Jackpot! (already cashed on this stage)')
-    : (CAUSE[cause] || CAUSE.stall);
+  const title = daily && cause === 'goal' ? "Today's Launch: all the way!" : (CAUSE[cause] || CAUSE.stall);
   const rSheet = /** @type {any} */ ($('sling-results-sheet'));
   if (rSheet) rSheet.heading = title; else root.appendChild(el('h2', null, title));
   root.appendChild(el('div', 'sling-big', `${fmt(score.distance)} m`));
@@ -200,7 +204,7 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
   row(`Chaos Coins (${run.coins})`, `${COIN} ${fmt(score.coinPay)}`);
   if (score.recordPay) row(daily ? "Beat today's best" : 'Record bonus', `${COIN} ${fmt(score.recordPay)}`);
   if (score.stagePay) row('Stage bonus', `${COIN} ${fmt(score.stagePay)}`);
-  if (score.jackpotPay) row('Jackpot', `${COIN} ${fmt(score.jackpotPay)}`);
+  if (score.potPay) row('Pot of gold', `${COIN} ${fmt(score.potPay)}`);
   if (score.airPay) row(`Big air (${run.bigAirs})`, `${COIN} ${fmt(score.airPay)}`);
   if (score.multiplier !== 1) row('Multiplier', `×${score.multiplier.toFixed(2)}`);
   row('Earned', `${COIN} ${fmt(score.total)}`, 'row total');

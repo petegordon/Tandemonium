@@ -56,7 +56,8 @@ uf-system-bar#lobby-bar { display: none; }
     justify-self: stretch !important; align-self: center !important; border-radius: var(--uf-radius-lg);
   }
   #lobby #bike-preview-wrap { flex: 1 1 auto !important; min-width: 0 !important; overflow: hidden !important; }
-  #lobby #bike-preview-canvas { width: 100% !important; height: min(470px, 48vh) !important; }
+  /* #521: taller (it can't get wider); js/lobby/preview-fit.js keeps the whole bike in view. */
+  #lobby #bike-preview-canvas { width: 100% !important; height: 60vh !important; }
   #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 2.4) !important; font-size: var(--uf-size-2xl) !important; }
   #lobby #bike-name { font-size: var(--uf-size-2xl) !important; line-height: 1.2 !important; top: calc(var(--uf-size-2xl) * -1.7) !important; }
   #lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }
@@ -143,6 +144,16 @@ uf-system-bar#lobby-bar { display: none; }
   body > #profile-popup.bar-popup .profile-popup-email { font-size: var(--uf-size-xs) !important; }
   body > #profile-popup.bar-popup button { display: block; width: 100%; box-sizing: border-box; font-size: var(--uf-size-sm) !important; padding: .6em 1em !important; margin: var(--uf-space-2) 0 0 !important; border-radius: var(--uf-radius-md) !important; }
   body > #profile-popup.bar-popup #profile-popup-signin { padding: 0 !important; }
+  /* Music levels (HIGH / MED / LOW / MUTE): readable from the couch. The phone
+     sizes (38×28 buttons, 8px text) were unreadable on a TV. */
+  body > #volume-picker.bar-popup { align-items: stretch; gap: var(--uf-space-2); padding: var(--uf-space-3); border-radius: var(--uf-radius-lg); }
+  body > #volume-picker.bar-popup .vol-btn {
+    width: auto; min-width: 6.5em; height: auto; padding: .5em 1em;
+    font: 800 var(--uf-size-lg)/1.2 var(--uf-font-ui); letter-spacing: .04em;
+    color: var(--uf-color-fg); border-width: 2px; border-radius: var(--uf-radius-md);
+  }
+  body > #volume-picker.bar-popup .vol-btn.active { color: var(--uf-color-accent); }
+  body > #volume-picker.bar-popup .vol-btn[data-vol="0"]::after { content: "\00a0MUTE"; }
 }
 #help-modal .help-credits { align-items: center; gap: var(--uf-space-3); flex-wrap: wrap; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); }
 #help-modal .help-credits button { background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
@@ -227,3 +238,137 @@ uf-system-bar#lobby-bar { display: none; }
   body #phone-pad-panel #btn-ppp-done { min-width: 8em; font-size: var(--uf-size-lg); }
 }
 
+
+/* #517 · the Profile pill shows the signed-in player's picture (Steam or Google)
+   in the icon's place, a little larger than an icon so a face reads. */
+uf-button[size="pill"] > img.bar-avatar {
+  width: 1.5em; height: 1.5em; flex: none; margin: -0.2em 0;
+  border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1.5px currentColor;
+}
+
+/* #517 · Settings (the Options overlay) owns the pad while it is open: the
+   lobby's highlight under it would look like a second focus. */
+body:has(#options-overlay.visible) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
+/* #517 · Help and the Leaderboard own the pad while open: hide the step's highlight under the scrim. */
+body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
+
+/* ── #523 · Settings (the Options overlay) readable from the couch ──
+   The card kept the phone's pixel sizes (11–14px text, 400px wide, one button
+   per line). On a desktop/TV it sits on the kit's text sizes, each choice is
+   one segmented row, and the sections (.opt-section) run in two columns when
+   the card is wide enough. It is a modal, so it takes the whole screen (over
+   the art panel too): two columns of four-button rows need the width.
+   Columns are grid tracks, so the sections side by side start at the same
+   height and the row-first pad navigation (js/row-focus.js) keeps ↓ in its
+   column and ←/→ along a row. The phone layout is unchanged. */
+@media (min-width: 1024px) {
+  #options-overlay .options-card {
+    --gutter: clamp(24px, 2.5vw, 64px);
+    box-sizing: border-box; min-width: 0; max-width: none;
+    width: min(calc(100vw - 2 * var(--gutter)), 1800px);
+    max-height: calc(100vh - 2 * var(--gutter)); max-height: calc(100dvh - 2 * var(--gutter));
+    padding: var(--uf-space-6) var(--uf-space-7); border-radius: var(--uf-radius-lg);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, max(18em, 34%)), 1fr));   /* two at most */
+    column-gap: var(--uf-space-7); row-gap: var(--uf-space-5); align-items: start;
+    font-size: var(--uf-size-md); text-align: left;
+  }
+  #options-overlay .options-card > h2, #options-overlay .opt-wide { grid-column: 1 / -1; }
+  #options-overlay .options-card > h2 { margin: 0; font: 800 var(--uf-size-2xl)/1.2 var(--uf-font-ui); color: var(--uf-color-fg); text-align: center; }
+  /* A section with nothing shown (Explore without a Maps key) takes no cell. */
+  #options-overlay .opt-section:not(.opt-heading):not(:has(button:not([style*="display:none"]):not([style*="display: none"]))) { display: none; }
+  #options-overlay .opt-section { display: grid; gap: var(--uf-space-2); min-width: 0; }
+  #options-overlay .opt-heading { padding-top: var(--uf-space-4); border-top: 1px solid var(--uf-color-line-soft); }
+  #options-overlay .options-card .label {
+    margin: 0; font: 700 var(--uf-size-md)/1.25 var(--uf-font-ui); letter-spacing: .06em; color: var(--uf-color-fg);
+  }
+  #options-overlay .options-row { flex-direction: row; flex-wrap: nowrap; align-items: stretch; gap: var(--uf-space-3); margin: 0; }
+  #options-overlay .opt-btn {
+    /* equal shares, but never narrower than the longest word: wrap between words, never inside one */
+    flex: 1 1 0; min-width: min-content; width: auto; padding: .45em .5em;
+    font: 700 var(--uf-size-lg)/1.2 var(--uf-font-ui); border-width: 2px; border-radius: var(--uf-radius-md);
+  }
+  #options-overlay .options-row:has(> .opt-btn:only-child) .opt-btn { flex: 0 1 auto; padding-inline: 1.2em; }
+  #options-overlay .options-note { margin: 0; font-size: var(--uf-size-sm); line-height: 1.35; color: rgba(255, 255, 255, .72); }   /* was 30% white */
+  #options-overlay .options-note:empty { display: none; }
+  #options-overlay #options-tourist-btn { justify-self: start; padding: .45em 1.2em; font: 700 var(--uf-size-lg)/1.2 var(--uf-font-ui); }
+  /* Tools row: perf test, tools, dev tools and Close on one line at the bottom. */
+  #options-overlay .opt-tools {
+    display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: var(--uf-space-3);
+    padding-top: var(--uf-space-4); border-top: 1px solid var(--uf-color-line-soft);
+  }
+  #options-overlay #options-perf-btn, #options-overlay #options-devtools-btn, #options-overlay #options-browserdev-btn, #options-overlay #options-close-btn {
+    min-width: 8em; margin: 0; padding: .45em 1.2em; font: 700 var(--uf-size-md)/1.2 var(--uf-font-ui); border-width: 2px; border-radius: var(--uf-radius-md);
+  }
+  #options-overlay #options-close-btn { font-size: var(--uf-size-lg); color: var(--uf-color-fg); }
+  #options-overlay #options-perf-result, #options-overlay #options-browserdev-hint { flex-basis: 100%; min-height: 0; margin: 0; text-align: center; font-size: var(--uf-size-sm); }
+  #options-overlay #options-perf-result:empty, #options-overlay #options-browserdev-hint:empty { display: none; }
+  #options-overlay .gamepad-focus { outline: 3px solid var(--uf-color-fg) !important; outline-offset: 3px; }
+}
+
+/* ── #541 · tutorial coaching at TV size ──
+   The ride's instruction line, its phase dots, the COLLECT marker, the dodge
+   arrow and the crash / off-road notes were phone pixel sizes; on a TV they
+   take the kit ramp (at 1920px: 2xl ≈ 44px, xl ≈ 36px, lg ≈ 30px). */
+@media (min-width: 1024px) {
+  #tutorial-prompt { top: calc(var(--uf-size-2xl) * 1.6); }
+  #tutorial-prompt-text { font-size: var(--uf-size-2xl); padding: .3em .9em; border-radius: .45em; }
+  #tutorial-phase-dots { gap: calc(var(--uf-size-sm) * .8); margin-top: calc(var(--uf-size-sm) * .8); }
+  .tutorial-dot { width: calc(var(--uf-size-md) * .7); height: calc(var(--uf-size-md) * .7); }
+  #coaching-collect-indicator .collect-icon { font-size: calc(var(--uf-size-2xl) * 2.2); }
+  #coaching-collect-indicator .collect-text { font-size: var(--uf-size-lg); letter-spacing: .15em; }
+  #coaching-dodge-arrow svg { width: calc(var(--uf-size-2xl) * 4); height: calc(var(--uf-size-2xl) * 4); }
+  #coaching-pylon-success { font-size: calc(var(--uf-size-2xl) * 2.5); }
+  #coaching-offroad-warning { font-size: var(--uf-size-xl); }
+  #tutorial-crash-text { font-size: calc(var(--uf-size-2xl) * 1.3); }
+  #tutorial-crash-hint { font-size: var(--uf-size-lg); }
+}
+
+/* ── #542 · Steering feel slider at TV size ──
+   Both copies: the Controls sheet's and the tutorial finish screen's. The end
+   labels read from the couch and the thumb is a real target. */
+@media (min-width: 1024px) {
+  #controls-sheet .set-feel-end { font-size: var(--uf-size-md); }
+  #controls-sheet #set-feel-slider { width: 14em; zoom: 1.6; }
+  .steering-feel-label { font-size: var(--uf-size-md); }
+  .steering-feel-row { gap: calc(var(--uf-size-md) * .6); }
+  .steering-feel-end { font-size: var(--uf-size-md); min-width: 0; }
+  #steering-feel-slider, #steering-feel-slider::-webkit-slider-runnable-track { height: calc(var(--uf-size-md) * .4); border-radius: 999px; }
+  #steering-feel-slider::-webkit-slider-thumb {
+    width: calc(var(--uf-size-md) * 1.5); height: calc(var(--uf-size-md) * 1.5);
+    margin-top: calc(var(--uf-size-md) * -.55);   /* centre the thumb on the track: -(1.5 - .4) / 2 */
+  }
+}
+
+/* #553 · First page on TV: the House Tandem site's hero treatment. The other
+   painting (geese from behind) fills the stage, dimmed under a dark wash,
+   and the right panel fades into it instead of meeting a hard dark edge. */
+@media (min-width: 1024px) {
+  #lobby:has(#lobby-mode[active])::before {
+    /* Sized to the stage and lifted so both geese heads sit above the chooser and the buttons. */
+    --art-w: calc((100vw - var(--uf-stage-inset)) * 1.08);
+    content: ''; position: fixed; inset: -24px; z-index: -1; pointer-events: none;
+    background:
+      linear-gradient(to bottom, rgba(10, 10, 15, .35) 0%, rgba(10, 10, 15, .6) 60%, rgba(10, 10, 15, .92) 100%),
+      url(../images/large_action_behind.png) 0 calc(var(--art-w) * -0.58) / var(--art-w) auto no-repeat;
+    filter: blur(3px) brightness(.4);
+  }
+  #lobby:has(#lobby-mode[active]) #lobby-img-right {
+    box-shadow: none;
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 38%);
+            mask-image: linear-gradient(to right, transparent 0, #000 38%);
+  }
+  /* The bike chooser sits at the bottom, a little clear of the bar, so the heads show above it. */
+  #lobby:has(#lobby-mode[active]) #bike-carousel { align-self: end !important; margin-bottom: calc(var(--gutter) * 1.5) !important; }
+  /* ...and is just tall enough that its top lines up with RIDE TOGETHER (1080p TV). */
+  #lobby:has(#lobby-mode[active]) #bike-preview-canvas { height: 51.5vh !important; }
+}
+
+/* #553 · The bike chooser's arrows name the shoulder buttons that cycle bikes
+   (L1/R1 on a DualSense, LB/RB on Xbox) while a controller drives the menus;
+   mouse and touch keep the arrows. */
+body.pad-menus #bike-carousel .bike-nav-arrow { display: none; }
+#bike-carousel .bike-carousel-nav uf-controller-glyph { pointer-events: none; }
+@media (min-width: 1024px) {
+  #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 3.4) !important; }
+  #bike-carousel .bike-carousel-nav uf-controller-glyph .ufg { --_s: calc(var(--uf-size-2xl) * 1.5); }
+}

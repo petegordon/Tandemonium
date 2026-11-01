@@ -201,6 +201,21 @@ export function gamepadHasFreshActivity(gp, prevAxes, axisThreshold = DEFAULTS.a
   return false;
 }
 
+/**
+ * Is a button on this Gamepad-API pad pressed right now? The claim rule for
+ * Gamepad-API pads: a controller takes a seat only when someone presses a
+ * button on it. Stick motion never claims — under Steam Input a layout can
+ * route gyro onto the left stick, so tilting (or bumping) a second controller
+ * would otherwise steal Player 1 from the one in your hand.
+ */
+export function gamepadHasButtonPress(gp) {
+  if (!gp) return false;
+  for (const b of gp.buttons) {
+    if (b && (b.pressed || (typeof b.value === 'number' && b.value > 0.5))) return true;
+  }
+  return false;
+}
+
 // ── HidEntry ──
 //
 // One per paired WebHID device. Lives in ControllerManager._hidPool
@@ -1173,9 +1188,9 @@ export class ControllerManager {
       }
     }
 
-    // Claim via Gamepad API activity. Uses gamepadHasFreshActivity
-    // (not gamepadHasActivity) so pinned-stick ghost pads don't get
-    // claimed — only real button presses or stick motion count.
+    // Claim via Gamepad API activity: a button press only. Stick motion
+    // doesn't count — a Steam layout can map gyro onto the stick, so moving
+    // a second controller would steal the seat (see gamepadHasButtonPress).
     const claimedIndices = new Set(
       this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex)
     );
@@ -1186,8 +1201,7 @@ export class ControllerManager {
       if (!this._padAllowed(gp)) continue;
       const releasedAt = this._recentlyReleasedByIndex.get(gp.index);
       if (releasedAt != null && (now - releasedAt) < this.opts.reclaimCooldownMs) continue;
-      const prevAxes = this._prevAxesByIndex.get(gp.index);
-      if (!gamepadHasFreshActivity(gp, prevAxes)) continue;
+      if (!gamepadHasButtonPress(gp)) continue;
       const empty = this.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
       if (!empty) break;
       const info = ControllerRegistry.identifyFromGamepadId(gp.id);

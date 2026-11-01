@@ -18,6 +18,12 @@ import { SensorFusion } from '../shared/sensor-fusion.js';
 // open question #3. e.g. window.__steamMotionTune = { gyroSign:[1,-1,1] }.
 /** Step for feeding one Steam motion reading across a long frame (see _ingestSteamMotion). */
 const STEAM_MOTION_STEP_MS = 50;
+/** #531 · phone tilt centring: the samples it averages must agree within this (degrees)... */
+const CALIB_STILL_DEG = 4;
+/** ...or, after this many samples without a still window, the median is taken. */
+const CALIB_MAX_TRIES = 60;
+/** Median of a short array. */
+function median(a) { const b = [...a].sort((x, y) => x - y), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
 const STEAM_MOTION_DEFAULTS = {
   gyroScale: 1.0,          // getMotionData rotVel is already rad/s
   accelScale: 1 / 16384,   // Steam Controller accel ~ 16384/g (from live capture)
@@ -93,17 +99,24 @@ function steamControllerLiveOnWebHid() {
   // even while WebHID is streaming. Needed because "streaming" is NOT the same
   // as "has usable gyro" — under a Steam launch the Puck's HID interface keeps
   // delivering STATE reports while the IMU fields inside them stay frozen.
-  if (typeof window !== 'undefined' && window.__webhidFirst === false) return false;
+  return liveWebHidSteamControllers() > 0;
+}
+
+/** How many Steam Controllers are streaming on WebHID right now (pooled or
+ *  claimed), by the same freshness rule as steamControllerLiveOnWebHid. */
+function liveWebHidSteamControllers() {
+  if (typeof window !== 'undefined' && window.__webhidFirst === false) return 0;
   const mgr = _controllerManager;
-  if (!mgr) return false;
+  if (!mgr) return 0;
   const now = performance.now();
   const live = (entry) => !!entry
     && !!entry.driver?.constructor?.needsSiblingFanout
     && entry.hidActiveSince > 0
     && (now - entry.hidActiveSince) < 5000;
-  if (mgr._hidPool) { for (const entry of mgr._hidPool.values()) if (live(entry)) return true; }
-  for (const s of (mgr.slots || [])) if (live(s._hidEntry)) return true;
-  return false;
+  const seen = new Set();
+  if (mgr._hidPool) { for (const entry of mgr._hidPool.values()) if (live(entry)) seen.add(entry); }
+  for (const s of (mgr.slots || [])) if (live(s._hidEntry)) seen.add(s._hidEntry);
+  return seen.size;
 }
 
 // ── Steam virtual XInput pads (#362) ──
@@ -119,9 +132,19 @@ export function isXInputPadId(id) { return XINPUT_ID.test(String(id || '')); }
 /** Steam's controller type ('13' = PS5, '14' = Steam Controller, …) behind a
  *  virtual XInput pad, or null when unknown / not under Steam. */
 export function steamTypeForGamepad(gp, padsOverride = null) {
-  if (!gp || !isXInputPadId(gp.id)) return null;
+  const slot = steamSlotForGamepad(gp, padsOverride);
+  return slot ? String(slot.type) : null;
+}
+
+function steamXInputMap() {
   const steamApi = (typeof window !== 'undefined' && window.steam && window.steam.input) ? window.steam.input : null;
-  const map = steamApi && typeof steamApi.getXInputMap === 'function' ? (steamApi.getXInputMap() || []) : [];
+  return steamApi && typeof steamApi.getXInputMap === 'function' ? (steamApi.getXInputMap() || []) : [];
+}
+
+/** Steam's XInput slot ({ index, handle, type }) behind a virtual XInput pad, or null. */
+function steamSlotForGamepad(gp, padsOverride = null) {
+  if (!gp || !isXInputPadId(gp.id)) return null;
+  const map = steamXInputMap();
   if (!map.length) return null;
   const pads = padsOverride || (navigator.getGamepads ? navigator.getGamepads() : []) || [];
   const xinputPads = [];
@@ -134,7 +157,13 @@ export function steamTypeForGamepad(gp, padsOverride = null) {
   // Steam emitted. A real Xbox pad that Steam is NOT capturing is XInput too
   // and would shift the ranks — refuse to guess rather than mislabel.
   if (xinputPads.length !== slots.length) return null;
-  return slots[k] ? String(slots[k].type) : null;
+  return slots[k] || null;
+}
+
+/** Steam has not said what this pad is: getInputTypeForHandle gives 0 (#535). */
+function isUnknownSteamType(type) {
+  const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
+  return t === '' || t === '0' || /^unknown$/i.test(t);
 }
 
 /**
@@ -144,11 +173,24 @@ export function steamTypeForGamepad(gp, padsOverride = null) {
  * Controller is live on WebHID — if WebHID does not hold one, the XInput pad
  * is that controller's only presence and must stay eligible.
  */
-export function isSteamTwinPad(gp) {
+export function isSteamTwinPad(gp, padsOverride = null) {
   if (!gp || !isXInputPadId(gp.id)) return false;
-  if (!steamControllerLiveOnWebHid()) return false;
-  const t = steamTypeForGamepad(gp);
-  return t != null && isSteamFamilyType(t);
+  const bodies = liveWebHidSteamControllers();
+  if (!bodies) return false;
+  const slot = steamSlotForGamepad(gp, padsOverride);
+  if (!slot) return false;
+  if (isSteamFamilyType(slot.type)) return true;
+  // #535: a Steam Controller switched on after launch keeps type 0 in Steam
+  // (getInputTypeForHandle never names it). When WebHID holds more Steam
+  // Controllers than Steam has named, the first unnamed slots are their
+  // twins; a pad Steam names as something else is never touched.
+  if (!isUnknownSteamType(slot.type)) return false;
+  const map = steamXInputMap();
+  const unnamedTwins = bodies - map.filter((e) => isSteamFamilyType(e.type)).length;
+  if (unnamedTwins <= 0) return false;
+  const unknown = map.filter((e) => isUnknownSteamType(e.type)).sort((a, b) => a.index - b.index);
+  const rank = unknown.findIndex((e) => e.index === slot.index);
+  return rank >= 0 && rank < unnamedTwins;
 }
 
 /**
@@ -220,6 +262,36 @@ export function mergeRemoteNavPad(real, nav, swapAB) {
     axes: real ? real.axes : [0, 0, 0, 0],
     buttons,
   };
+}
+
+// Gyro drift-correction taper (see _applyTilt). Full strength near centre,
+// fading linearly over a moderate lean so a deliberate turn is never
+// re-centred — but never reaching zero.
+//
+// TAPER_FLOOR stops the correction ever reaching zero. With a constant
+// uncorrected gyro bias (startup calibration aborted as too noisy — see
+// #365) rawGamma grows steadily: lean grows, so the taper shrinks, so
+// the correction weakens, so lean grows faster. Past ZERO_AT it stopped
+// entirely and could never recover — the "pulls to one side and sticks"
+// report. A floor keeps a slow pull-back alive through sustained leans
+// without meaningfully fighting a real turn: at 0.15 the offset moves
+// with a ~7s time constant, far longer than any deliberate corner but
+// far shorter than a whole ride.
+export const DRIFT_TAPER_FULL_BELOW = 0.2;   // tuning knobs (lean fraction)
+export const DRIFT_TAPER_ZERO_AT = 0.7;
+export const DRIFT_TAPER_FLOOR = 0.15;
+
+/**
+ * Drift-correction strength for a smoothed lean magnitude `L` (0..1).
+ * 1 at L <= FULL_BELOW, linear down to the floor at ZERO_AT, floor beyond.
+ * Exported for tests.
+ * @param {number} L  absolute smoothed lean
+ */
+export function driftTaper(L) {
+  const rawTaper = L <= DRIFT_TAPER_FULL_BELOW ? 1
+    : L >= DRIFT_TAPER_ZERO_AT ? 0
+    : (DRIFT_TAPER_ZERO_AT - L) / (DRIFT_TAPER_ZERO_AT - DRIFT_TAPER_FULL_BELOW);
+  return Math.max(DRIFT_TAPER_FLOOR, rawTaper);
 }
 
 export class InputManager {
@@ -772,9 +844,29 @@ export class InputManager {
     this.motionEnabled = !!this._motionBeforeRemote || this.motionReady;
   }
 
+  /**
+   * #531 · re-take phone tilt's centre at the start of a ride (the 3-2-1
+   * countdown): the player is holding the phone the way they'll ride, and a
+   * remote sends at 30 Hz there. Phone tilt only (this device's or a phone
+   * remote's); controller gyro has its own recenter. The lean holds at 0
+   * until the still-phone centre is taken (well inside the countdown).
+   * @returns {boolean} whether a re-centre started
+   */
+  recenterTiltForRide() {
+    const phoneTilt = this._remoteTilt || (this.motionEnabled && !this.gyroConnected && this.motionOffset !== null);
+    if (!phoneTilt) return false;
+    this.startTiltCalibration();
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    return true;
+  }
+
   startTiltCalibration() {
     this._calibrating = true;
     this._calibBuf = [];
+    this._calibTries = 0;
     this._warmupCount = 5; // already warmed up if explicitly called
     // Design B: recenter active Steam Input motion fusions too, so
     // "recalibrate gyro" is no longer a no-op under Steam Input (#296).
@@ -805,11 +897,24 @@ export class InputManager {
 
     if (this._calibrating) {
       this._calibBuf.push(this.rawGamma);
-      if (this._calibBuf.length >= TUNE.calibSamples) {
-        const sum = this._calibBuf.reduce((a, b) => a + b, 0);
-        this.motionOffset = sum / this._calibBuf.length;
-        this._calibrating = false;
-        this._calibBuf = [];
+      this._calibTries = (this._calibTries || 0) + 1;
+      const n = TUNE.calibSamples;
+      if (this._calibBuf.length >= n) {
+        // #531 · phone tilt: the centre is only taken from a still phone (the
+        // last n samples agree within CALIB_STILL_DEG), so a phone being
+        // turned over or held at a slant while it pairs doesn't become
+        // "level". The window slides until it is still; a hand that never
+        // steadies gets the median after CALIB_MAX_TRIES. Gyro is unchanged.
+        const win = this._calibBuf.slice(-n);
+        const still = isGyro || Math.max(...win) - Math.min(...win) <= CALIB_STILL_DEG;
+        if (still || this._calibTries >= CALIB_MAX_TRIES) {
+          this.motionOffset = still ? win.reduce((a, b) => a + b, 0) / n : median(win);
+          this._calibrating = false;
+          this._calibBuf = [];
+          this._calibTries = 0;
+        } else {
+          this._calibBuf = win.slice(1);
+        }
       }
       return;
     }
@@ -828,24 +933,25 @@ export class InputManager {
       this._driftEma = this.rawGamma;
     } else if (isGyro) {
       // Gyro: taper drift learning + correction by lean magnitude instead of a
-      // hard on/off gate. Full strength near center; fades to zero by a large
-      // lean. This keeps GENTLY correcting through sustained moderate leans —
-      // where drift was creeping toward "fusing to one side" — while never
-      // re-centering a big intentional turn. A brief sharp turn spikes the
-      // lean, so the taper ≈ 0 at its peak and it can't poison the neutral
-      // estimate (the bug that made it fuse fast on sharp turns).
-      const FULL_BELOW = 0.2, ZERO_AT = 0.7; // tuning knobs (lean fraction)
-      const L = Math.abs(this._smoothedLean);
-      const taper = L <= FULL_BELOW ? 1 : L >= ZERO_AT ? 0 : (ZERO_AT - L) / (ZERO_AT - FULL_BELOW);
-      if (taper > 0) {
-        this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
-        this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
-      }
+      // hard on/off gate. Full strength near center; fades to a small floor by
+      // a large lean. This keeps GENTLY correcting through sustained moderate
+      // leans — where drift was creeping toward "fusing to one side" — while
+      // never re-centering a big intentional turn. A brief sharp turn spikes
+      // the lean, so the taper ≈ floor at its peak and it can't poison the
+      // neutral estimate (the bug that made it fuse fast on sharp turns). The
+      // floor is why a one-sided pull can always recover (#365) — see
+      // driftTaper() for the positive-feedback loop it breaks.
+      // #522: taper on the UNGAINED lean. _smoothedLean now carries
+      // TUNE.motionGain (0.3 on Chill), so a full held turn would read as a
+      // small lean and the drift tracker would chase it (the phone's B1 bug).
+      const taper = driftTaper(Math.abs(this.motionLeanVisual));
+      this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
+      this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
     } else {
       // Mobile tilt (gravity-absolute): original always-on EMA + hard 0.3 gate.
       this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
       // Gate on the UNGAINED lean (B1, PR #397 review): _smoothedLean carries
-      // TUNE.mobileTiltGain (0.25), so it never reaches 0.3 and the offset
+      // TUNE.motionGain (0.3 on Chill), so it barely reaches 0.3 and the offset
       // chased every held tilt — washing out turns and leaving the centre
       // off by 10°+ afterwards (the tutorial's "back to center" timed out).
       if (Math.abs(this.motionLeanVisual) < 0.3) {
@@ -895,9 +1001,10 @@ export class InputManager {
       }
     }
 
-    // Phone tilt gain (TUNE.mobileTiltGain): the same tilt steers this fraction
-    // as much. Controller gyro keeps its own tuning.
-    if (!isGyro) lean *= (TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1);
+    // Motion gain (#522, TUNE.motionGain, set per difficulty): the same tilt or
+    // roll steers this fraction as much, on phone tilt and controller gyro alike.
+    const gain = Number.isFinite(TUNE.motionGain) ? TUNE.motionGain : 1;
+    lean *= gain;
 
     // Velocity-dependent sensitivity: scale down lean at high speed for stability
     const speedFrac = Math.min(this.bikeSpeed / this.bikeMaxSpeed, 1.0);
@@ -906,7 +1013,12 @@ export class InputManager {
 
     // Asymmetric smoothing: less smoothing when initiating a turn (responsive),
     // more smoothing when returning to center (stable)
-    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > 0.05;
+    // #522: the "starting a turn" threshold scales with the gain, so the
+    // ungained (visual) lean and the drift gate it feeds come out the same at
+    // any difficulty. 0.2 (phone) and 0.05 (gyro) of an UNGAINED lean are the
+    // thresholds each had before (0.05 of a lean at the old gains 0.25 and 1).
+    const startAt = (isGyro ? 0.05 : 0.2) * gain;
+    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > startAt;
     const baseSmooth = initiating ? Math.min(outputSmoothing * 1.6, 0.9) : outputSmoothing * 0.7;
     this._prevLeanRaw = lean;
 
@@ -921,7 +1033,6 @@ export class InputManager {
     this.motionLean = this._smoothedLean;
     // Every step after the gain (velocity scale, EMA) is linear, so dividing it
     // back out gives exactly the lean the ungained tilt would have produced.
-    const gain = !isGyro && TUNE.mobileTiltGain != null ? TUNE.mobileTiltGain : 1;
     this.motionLeanVisual = gain > 0 ? Math.max(-1, Math.min(1, this._smoothedLean / gain)) : this._smoothedLean;
   }
 
@@ -1370,7 +1481,7 @@ export class InputManager {
   }
 
   /**
-   * The same lean without TUNE.mobileTiltGain: what the player is physically
+   * The same lean without TUNE.motionGain: what the player is physically
    * doing. The riders' body lean shows this, so a gentler steering gain
    * doesn't make the geese look stiff. Physics uses getMotionLean().
    */

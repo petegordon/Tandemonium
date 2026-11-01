@@ -5,7 +5,7 @@ import {
   UPGRADES, upgradeCost, slingStats, launchSpeed, coastDecel, surfaceAt, SURFACE_RR, predictCoast,
   stageGoal, stageBonus, STAGE_GOALS, scoreRun, emptySave, loadSave, writeSave, applyRun,
   buyUpgrade, planCoinTrails, planCourse, LANES, COINS_PER_TRAIL, STORAGE_KEY, SAVE_VERSION, spentOn, RETIRED_UPGRADES,
-  runDistance, dragToAim, aimPose, roadExitDistance, MIN_LAUNCH_PULL, jackpotBonus, jackpotCashed,
+  runDistance, dragToAim, aimPose, roadExitDistance, MIN_LAUNCH_PULL, potBonus, potCashed,
   todaysLaunchStatus, applyTodaysLaunch,
   SLING_POST_D, SLING_REST_D, SLING_PULL_BACK, SLING_MAX_LATERAL, SLING_MAX_AIM, ROAD_HALF_WIDTH
 } from '../../js/slingshot.js';
@@ -117,77 +117,70 @@ test('score: record bonus, stage bonus and the coin multiplier', () => {
   assert.equal(r.total, Math.floor(500 * 1.5));
 });
 
-test('the jackpot: a flat bonus, then the whole run pays double', () => {
+test('the pot of gold (#546): a flat bonus, no multiplier, and the run goes on', () => {
   const save = { ...emptySave(), stage: 3 };
-  const r = scoreRun({ distance: 120, coins: 5, jackpot: true }, save);
-  assert.equal(r.jackpotPay, jackpotBonus(3));
-  assert.equal(r.multiplier, 2);
-  assert.equal(r.total, (60 + 25 + 250) * 2);
-  // A good jackpot beats rolling on to the stage-1 distance.
-  const rolled = scoreRun({ distance: 300 }, save).total;
-  assert.ok(r.total > rolled, `jackpot ${r.total} vs rolling ${rolled}`);
+  const r = scoreRun({ distance: 300, coins: 5, pot: true }, save);
+  assert.equal(r.potPaid, true);
+  assert.equal(r.potPay, potBonus(3));
+  assert.equal(r.multiplier, 1, 'no more x2 on the whole run');
+  assert.equal(r.total, 150 + 25 + potBonus(3));
+  // The pot is just the bonus on top of the same run without it.
+  assert.equal(r.total - scoreRun({ distance: 300, coins: 5 }, save).total, potBonus(3));
+  // With the wallet's multiplier, the bonus is multiplied like any other row.
+  assert.equal(scoreRun({ distance: 300, coins: 5, pot: true }, save, 1.5).total, Math.floor((150 + 25 + potBonus(3)) * 1.5));
 });
 
-// ---- B5 · the jackpot farm and the stage-pay ceiling -----------------------
+// ---- B5 · the pot pays once, and the stage-pay ceiling -------------------
 
 test('B5: stage pay stops growing past the last goal', () => {
   const last = STAGE_GOALS.length;
   assert.equal(stageBonus(last + 1), stageBonus(last));
   assert.equal(stageBonus(50), stageBonus(last));
-  assert.equal(jackpotBonus(50), jackpotBonus(last));
+  assert.equal(potBonus(50), potBonus(last));
   assert.ok(stageBonus(last) > stageBonus(last - 1), 'still rises up to the last stage');
 });
 
-test('B5: the jackpot pays its bonus and the x2 only the first time on each stage', () => {
+test('B5: the pot of gold pays only the first time on each stage', () => {
   let save = { ...emptySave(), stage: 7, best: 900, runs: 30 };
-  const run = { distance: 118, coins: 5, jackpot: true };
+  const run = { distance: 400, coins: 5, pot: true };
+  assert.equal(potCashed(save), false);
   const first = scoreRun(run, save);
-  assert.equal(first.jackpotPaid, true);
-  assert.equal(first.multiplier, 2);
+  assert.equal(first.potPaid, true);
   save = applyRun(save, run, first);
-  assert.deepEqual(save.jackpots, [7]);
-  assert.equal(jackpotCashed(save), true);
+  assert.deepEqual(save.jackpots, [7], 'the save field keeps its old name');
+  assert.equal(potCashed(save), true);
   const again = scoreRun(run, save);
-  assert.equal(again.jackpotPaid, false);
-  assert.equal(again.jackpotPay, 0);
-  assert.equal(again.multiplier, 1);
-  assert.equal(again.total, scoreRun({ distance: 118, coins: 5 }, save).total, 'pays like an ordinary run');
-  // A new stage has its own jackpot.
-  assert.equal(scoreRun(run, { ...save, stage: 8 }).jackpotPaid, true);
+  assert.equal(again.potPaid, false);
+  assert.equal(again.potPay, 0);
+  assert.equal(again.total, scoreRun({ distance: 400, coins: 5 }, save).total, 'pays like an ordinary run');
+  // A new stage has its own pot.
+  assert.equal(potCashed({ ...save, stage: 8 }), false);
+  assert.equal(scoreRun(run, { ...save, stage: 8 }).potPaid, true);
 });
 
-test('B5: repeated jackpot runs cannot out-earn clearing stages', () => {
-  const N = 30;
-  const start = { ...emptySave(), stage: 7, best: 900, runs: 30 };
-  const jack = { distance: 118, coins: 5, jackpot: true };
-  let save = start, farm = 0;
-  for (let i = 0; i < N; i++) { const sc = scoreRun(jack, save); farm += sc.total; save = applyRun(save, jack, sc); }
-  // The same N launches spent clearing the (repeating) last goal instead.
-  const clearRun = { distance: STAGE_GOALS[STAGE_GOALS.length - 1], coins: 5, stageCleared: true };
-  save = start; let clears = 0;
-  for (let i = 0; i < N; i++) { const sc = scoreRun(clearRun, save); clears += sc.total; save = applyRun(save, clearRun, sc); }
-  assert.ok(farm < clears, `${N} jackpot runs paid ${farm}, ${N} clears paid ${clears}`);
-  // Per metre, a repeat jackpot is no better than a clear.
-  const after = scoreRun(jack, applyRun(start, jack, scoreRun(jack, start)));
-  const clear = scoreRun(clearRun, { ...start, best: clearRun.distance });
-  assert.ok(after.total / jack.distance <= clear.total / clearRun.distance,
-    `repeat jackpot ${after.total} for ${jack.distance} m vs clear ${clear.total} for ${clearRun.distance} m`);
+test('B5: an old save that cashed the jackpot keeps the pot cashed', () => {
+  const s = loadSave({ get: () => JSON.stringify({ v: SAVE_VERSION, best: 300, runs: 4, stage: 3, jackpots: [2, 3],
+    daily: { key: '2026-10-05', best: 200, runs: 1, jackpot: true } }) });
+  assert.equal(potCashed(s), true);
+  assert.equal(potCashed({ ...s, stage: 4 }), false);
+  assert.equal(potCashed({ ...todaysLaunchStatus(s, '2026-10-05'), stage: 3 }), true);
 });
 
-test("B5: Today's Launch pays the jackpot at most once a day", () => {
+test("B5: Today's Launch pays the pot of gold at most once a day", () => {
   const key = '2026-10-05';
   let save = emptySave();
-  const run = { distance: 118, coins: 5, jackpot: true };
+  const run = { distance: 300, coins: 5, pot: true };
   const today = () => ({ ...todaysLaunchStatus(save, key), stage: 7 });
   const first = scoreRun(run, today());
-  assert.equal(first.jackpotPaid, true);
+  assert.equal(first.potPaid, true);
   save = applyTodaysLaunch(save, key, first);
   assert.equal(todaysLaunchStatus(save, key).jackpot, true);
+  assert.equal(potCashed(today()), true);
   const again = scoreRun(run, today());
-  assert.equal(again.jackpotPaid, false);
-  assert.equal(again.multiplier, 1);
+  assert.equal(again.potPaid, false);
+  assert.equal(again.potPay, 0);
   // Tomorrow is a new day.
-  assert.equal(scoreRun(run, { ...todaysLaunchStatus(save, '2026-10-06'), stage: 7 }).jackpotPaid, true);
+  assert.equal(scoreRun(run, { ...todaysLaunchStatus(save, '2026-10-06'), stage: 7 }).potPaid, true);
 });
 
 test('a short run is not a record and pays no record bonus', () => {
@@ -333,7 +326,7 @@ test('aim: a full swing reaches the far lane by the first gate (45 m)', () => {
   assert.ok(Math.abs(aimPose(0.3, -1).angle) < Math.abs(aimPose(1, -1).angle), 'aim grows with the pull');
 });
 
-test('course: fixed per stage, lanes that make a choice, jackpot from stage 2', () => {
+test('course: fixed per stage, lanes that make a choice, a pot of gold from stage 2', () => {
   const goal = stageGoal(3) + SLING_REST_D;
   assert.deepEqual(planCourse(3, goal), planCourse(3, goal), 'the same layout every launch');
   assert.notDeepEqual(planCourse(3, goal), planCourse(4, goal), 'a different layout per stage');
@@ -346,10 +339,11 @@ test('course: fixed per stage, lanes that make a choice, jackpot from stage 2', 
     assert.notEqual(gate1Coins[0].offset, c.hay[0].offset, 'coins and hay never share a lane');
     for (const h of c.hay) assert.ok(LANES.includes(h.offset));
     for (const x of c.coins) { assert.ok(x.d < g, 'every coin before the goal'); assert.ok(Math.abs(x.offset) <= 1.8); }
-    if (st === 1) assert.equal(c.jackpot, null, 'stage 1 teaches the lanes first');
+    if (st === 1) assert.equal(c.pot, null, 'stage 1 teaches the lanes first');
     else {
-      assert.ok(c.jackpot && LANES.includes(c.jackpot.offset));
-      assert.notEqual(c.jackpot.offset, c.hay[1].offset);
+      assert.ok(c.pot && LANES.includes(c.pot.offset));
+      assert.notEqual(c.pot.offset, c.hay[1].offset, 'the pot has its own lane');
+      assert.ok(c.pot.d < g, 'the pot is before the goal');
     }
   }
 });
