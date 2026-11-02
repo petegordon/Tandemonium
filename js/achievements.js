@@ -354,6 +354,7 @@ export class AchievementManager {
           progress,
           unit: a.unit || '',
           demoLocked: demo && !a.demo,
+          medal: a.medal || null,                      // { level, rank }: the detail card prints the live times
         };
       });
   }

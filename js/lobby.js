@@ -3785,8 +3785,27 @@ export class Lobby {
       '<div class="ach-detail-badge"><span>' + d.icon + '</span></div>' +
       '<div class="ach-detail-name">' + this._escapeHtml(d.name) + '</div>' +
       '<div class="ach-detail-desc">' + this._escapeHtml(d.desc) + '</div>' +
+      this._medalTimesHtml(d) +
       '<div class="ach-detail-status">' + this._escapeHtml(status) + '</div>' + bar +
       '<div class="ach-detail-count">No. ' + d.n + ' of ' + total + '</div>';
+  }
+
+  /**
+   * A medal achievement's live times, one per difficulty — what "gold on
+   * Grandma's" means in seconds (race-config.js getMedals, so a retune shows
+   * here too). '' for everything else.
+   */
+  _medalTimesHtml(d) {
+    if (!d.medal || d.secret) return '';
+    const level = LEVELS.find(l => l.id === d.medal.level);
+    if (!level) return '';
+    const parts = [['chill', 'Chill'], ['adventurous', 'Adventurous'], ['daredevil', 'Daredevil']].map(([key, label]) => {
+      const m = getMedals(level.id, key);
+      return m ? '<span class="ach-detail-time"><b>' + label + '</b> ' + records.formatTime(m[d.medal.rank]) + '</span>' : '';
+    }).filter(Boolean);
+    if (!parts.length) return '';
+    const rank = d.medal.rank.charAt(0).toUpperCase() + d.medal.rank.slice(1);
+    return '<div class="ach-detail-times">' + records.MEDAL_ICON[d.medal.rank] + ' ' + rank + ' time on ' + this._escapeHtml(level.name) + ': ' + parts.join(' · ') + '</div>';
   }
 
   /** "November 1, 2026" from ms since epoch, or the server's SQLite "2026-11-01 15:00:00" (UTC). */
