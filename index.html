@@ -2510,6 +2510,117 @@
     opacity: 0.35;
     border-color: rgba(255,255,255,0.08);
   }
+  /* #540: each badge is a button (tap / Enter / the pad's A opens its card). */
+  .lb-ach-item {
+    font-family: inherit;
+    color: inherit;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .lb-ach-item:focus { outline: none; }
+  .lb-ach-item:focus-visible,
+  .lb-ach-item.gamepad-focus {
+    opacity: 1;
+    outline: 2px solid var(--uf-color-accent);
+    outline-offset: 2px;
+    box-shadow: 0 0 10px rgba(68, 255, 102, 0.4);
+  }
+  .lb-ach-item.lifting { visibility: hidden; }
+  /* the lifting copy of a badge, on its way to the card */
+  #ach-lift {
+    position: fixed;
+    z-index: calc(var(--uf-z-modal, 1000) + 2);
+    margin: 0;
+    box-sizing: border-box;
+    pointer-events: none;
+    opacity: 1;
+    background: rgba(34, 32, 48, 0.98);
+    border-color: var(--uf-color-accent-2);
+    box-shadow: 0 0 30px rgba(255, 210, 63, 0.45), 0 30px 60px rgba(0, 0, 0, 0.6);
+    transform-origin: 50% 50%;
+  }
+  #ach-lift .lb-ach-name { color: rgba(255,255,255,0.92); }
+  #achievements-modal .uf-sheet__body {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.22) transparent;
+    scrollbar-gutter: stable;
+  }
+  /* The detail card: the reels' end card, on the kit's sizes (reads at TV distance). */
+  .ach-detail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: var(--uf-space-2) 0 var(--uf-space-3);
+    font-size: var(--uf-size-md);
+  }
+  .ach-detail-kicker {
+    font-size: var(--uf-size-sm);
+    font-weight: 700;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--uf-color-fg-muted);
+  }
+  .ach-detail[data-state="earned"] .ach-detail-kicker { color: var(--uf-color-accent-2); }
+  .ach-detail-badge {
+    width: 6em; height: 6em;
+    margin: 0.9em 0 0.7em;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: var(--uf-size-xl);
+    background: radial-gradient(circle at 50% 40%, #3b3352 0%, #1a1a2e 70%);
+    border: 0.18em solid rgba(255,255,255,0.25);
+    box-shadow: 0 0.6em 2em rgba(0,0,0,0.5);
+  }
+  .ach-detail-badge span { font-size: 3.2em; line-height: 1; }
+  .ach-detail[data-state="earned"] .ach-detail-badge {
+    border-color: var(--uf-color-accent-2);
+    box-shadow: 0 0 0 0.4em rgba(255,210,63,0.18), 0 0.6em 2em rgba(0,0,0,0.55);
+  }
+  .ach-detail[data-state="locked"] .ach-detail-badge,
+  .ach-detail[data-state="progress"] .ach-detail-badge,
+  .ach-detail[data-state="full"] .ach-detail-badge { border-style: dashed; }
+  .ach-detail[data-state="locked"] .ach-detail-badge span,
+  .ach-detail[data-state="full"] .ach-detail-badge span { filter: grayscale(1); opacity: 0.6; }
+  .ach-detail[data-state="secret"] .ach-detail-badge span { opacity: 0.7; }
+  .ach-detail-name {
+    font-size: var(--uf-size-2xl);
+    font-weight: 800;
+    line-height: 1.1;
+    color: #fff;
+  }
+  .ach-detail[data-state="earned"] .ach-detail-name { color: var(--uf-color-accent-2); }
+  .ach-detail-desc {
+    margin-top: 0.4em;
+    font-size: var(--uf-size-lg);
+    font-style: italic;
+    color: rgba(255,255,255,0.85);
+    max-width: 24em;
+  }
+  .ach-detail-status {
+    margin-top: 1em;
+    font-size: var(--uf-size-md);
+    font-weight: 600;
+    color: rgba(255,255,255,0.7);
+  }
+  .ach-detail[data-state="earned"] .ach-detail-status { color: var(--uf-color-accent); }
+  .ach-detail[data-state="progress"] .ach-detail-status { color: rgba(255,220,120,0.95); }
+  .ach-detail-bar {
+    width: min(16em, 80%);
+    height: 0.45em;
+    margin-top: 0.5em;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    overflow: hidden;
+  }
+  .ach-detail-bar i { display: block; height: 100%; background: rgba(255,220,120,0.95); }
+  .ach-detail-count {
+    margin-top: 1em;
+    font-size: var(--uf-size-sm);
+    letter-spacing: 0.12em;
+    color: rgba(255,255,255,0.45);
+  }
   /* #401: sections, counter progress, hidden + full-game-only badges */
   /* #517: the category headings read at TV distance (were 11px at every size). */
   .lb-ach-section-title {
@@ -5451,7 +5562,13 @@ ON</button>
         <button class="lobby-toggle active" id="toggle-help" title="Help">
           <span style="font-size:16px;font-weight:700">?</span>
         </button>
+        <!-- #540: 🏆 Leaderboard and ⭐ Achievements, siblings -->
         <button class="lobby-toggle" id="toggle-leaderboard" title="Leaderboard">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.5 3h7v4.5a3.5 3.5 0 0 1-7 0V3z"/><path d="M6.5 5H4a2.5 2.5 0 0 0 2.7 3M13.5 5H16a2.5 2.5 0 0 1-2.7 3"/><path d="M10 11v2.5M7.5 17h5M8.5 13.5h3V17h-3z"/>
+          </svg>
+        </button>
+        <button class="lobby-toggle" id="toggle-achievements" title="Achievements">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5" fill="none"/>
           </svg>
@@ -5852,11 +5969,15 @@ ON</button>
   <uf-system-bar id="lobby-bar" back="hide">
     <!-- #459 item 18: the pad's View/Share button opens Help everywhere (lobby, pause menu); the pill shows that glyph. -->
     <uf-button size="pill" slot="start" id="bar-help"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="8"/><path d="M7.8 7.6a2.3 2.3 0 1 1 3.3 2.1c-.8.4-1.1.9-1.1 1.7M10 14.2v.1"/></svg>Help <uf-controller-glyph button="view" size="sm" class="pad-only"></uf-controller-glyph></uf-button>
-    <uf-button size="pill" slot="start" id="bar-leaderboard"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5"/></svg>Leaderboard</uf-button>
+    <!-- #540: 🏆 Leaderboard and ⭐ Achievements, siblings -->
+    <!-- Leaderboard and Settings are icon-only pills so the bar stays one row with the Achievements pill (Pete, 2026-11-02). -->
+    <uf-button size="pill" slot="start" id="bar-leaderboard" class="bar-icon-only" title="Leaderboard" aria-label="Leaderboard"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3h7v4.5a3.5 3.5 0 0 1-7 0V3z"/><path d="M6.5 5H4a2.5 2.5 0 0 0 2.7 3M13.5 5H16a2.5 2.5 0 0 1-2.7 3"/><path d="M10 11v2.5M7.5 17h5M8.5 13.5h3V17h-3z"/></svg></uf-button>
+    <!-- Achievements: the star + "earned / total" (lobby.js _syncSystemBar keeps the count). -->
+    <uf-button size="pill" slot="start" id="bar-achievements" title="Achievements" aria-label="Achievements"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5"/></svg><span id="bar-achievements-count">0 of 100</span></uf-button>
     <uf-button size="pill" slot="start" id="bar-profile"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>Profile</uf-button>
     <uf-button size="pill" slot="end" id="bar-controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h12a4 4 0 0 1 3.9 4.9l-.8 3.4a2.5 2.5 0 0 1-4.3 1.1L15 16H9l-1.8 2.4a2.5 2.5 0 0 1-4.3-1.1l-.8-3.4A4 4 0 0 1 6 9z"/><path d="M8 12v3M6.5 13.5h3"/></svg><span id="bar-controls-label">Controls</span></uf-button>
-    <uf-button size="pill" slot="end" id="bar-music"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 17V6l9-3v11"/><circle cx="5.5" cy="17" r="2.5"/><circle cx="14.5" cy="14" r="2.5"/></svg>Music</uf-button>
-    <uf-button size="pill" slot="end" id="bar-settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg>Settings</uf-button>
+    <uf-button size="pill" slot="end" id="bar-music" class="bar-icon-only" title="Music" aria-label="Music"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 17V6l9-3v11"/><circle cx="5.5" cy="17" r="2.5"/><circle cx="14.5" cy="14" r="2.5"/></svg></uf-button>
+    <uf-button size="pill" slot="end" id="bar-settings" class="bar-icon-only" title="Settings" aria-label="Settings"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></uf-button>
     <!-- #172: desktop app only (js/app-quit.js canQuitApp), mode step only; lobby.js _syncSystemBar shows it. #517: the far right. -->
     <uf-button size="pill" slot="end" id="bar-quit" style="display:none;" title="Close Tandemonium"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v7"/><path d="M5.6 5.6a6.2 6.2 0 1 0 8.8 0"/></svg>Quit</uf-button>
   </uf-system-bar>
@@ -5892,9 +6013,24 @@ ON</button>
     <canvas id="leaderboard-video" width="360" height="240"></canvas>
     <div class="lb-tabs lb-main-tabs" id="lb-main-tabs"></div>
     <div class="lb-tabs lb-sub-tabs" id="lb-sub-tabs"></div>
-    <div id="lb-achievements"></div>
     <div id="leaderboard-list"></div>
   </div>
+</uf-sheet>
+
+<!-- #540: Achievements, a sibling of the Leaderboard (the bar's pill / the ⭐
+     toggle). All 100 badges by section; each is a button that opens its
+     detail card below. B / Esc / scrim / Close close it. -->
+<uf-sheet id="achievements-modal" heading="Achievements" size="lg">
+  <div class="leaderboard-box">
+    <div id="lb-achievements"></div>
+  </div>
+</uf-sheet>
+
+<!-- #540: one achievement's detail card, over the Achievements sheet: the
+     badge large (it lifts off the grid, as in the reels' lead-in), name, what
+     to do, unlocked + date / locked / progress, and its number. -->
+<uf-sheet id="ach-detail" heading="Achievement" size="md">
+  <div id="ach-detail-card" class="ach-detail"></div>
 </uf-sheet>
 
 <!-- Help modal. #459 item 11: the kit sheet shell (B / Esc / scrim / Close all

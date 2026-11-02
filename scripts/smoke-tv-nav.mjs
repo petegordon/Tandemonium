@@ -80,11 +80,15 @@ const lbShell = await page.evaluate(() => {
   return { sheet: s.tagName.toLowerCase(), close: !!s.querySelector('.uf-sheet__close'), help: document.getElementById('help-modal').tagName.toLowerCase() };
 });
 check(lbOpen && lbShell.sheet === 'uf-sheet' && lbShell.help === 'uf-sheet' && lbShell.close, 'LY-10 the Leaderboard opens as the same kit sheet as Help, with its Close', lbShell);
-const sectionPx = await page.evaluate(async () => {
-  document.querySelector('#lb-main-tabs .lb-tab[data-tab-id="you"]')?.click();
-  for (let i = 0; i < 40 && !document.querySelector('.lb-ach-section-title'); i++) await new Promise((r) => setTimeout(r, 100));
-  const t = document.querySelector('.lb-ach-section-title');
-  return t ? parseFloat(getComputedStyle(t).fontSize) : 0;
+// #540: the badges live in their own Achievements sheet now (smoke:ach-detail
+// walks it); the category-heading size check renders the grid there.
+const sectionPx = await page.evaluate(() => {
+  window._game.lobby._renderAchievements();
+  const t = document.querySelector('#achievements-modal .lb-ach-section-title');
+  if (!t) return 0;
+  const s = document.getElementById('achievements-modal'); s.open = true;
+  const px = parseFloat(getComputedStyle(t).fontSize); s.open = false;
+  return px;
 });
 check(sectionPx >= 16, 'LY-10 achievement category headings are at least 16px at 1080p', sectionPx);
 // ── LY-16 · the top tab row's focus ring isn't clipped by the sheet ──
