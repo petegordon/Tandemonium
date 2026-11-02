@@ -122,6 +122,20 @@ await tvPage.waitForFunction(() => /display /.test(document.getElementById('perf
 const perfLine = await tvPage.evaluate(() => document.getElementById('perf-readout').textContent.split('\n').find((l) => l.startsWith('display ')));
 check(/TV browser · BRAVIA 4K VH2 · screen \d+×\d+/.test(perfLine), 'TV-04 perf readout names the display device', perfLine);
 await h.shot(tvPage, '4-tv-browser');
+// First visit on a TV: the boot veil waits for a press (not a stuck "Loading…"),
+// and a remote key (Enter) lifts it.
+const firstVisit = await h.gamePage({
+  viewport: { width: 960, height: 540, isMobile: true, hasTouch: false }, userAgent: TV_UA, waitGame: false,
+  before: (p) => p.evaluateOnNewDocument(() => { try { localStorage.removeItem('tandemonium_started'); } catch {} }),
+});
+await firstVisit.waitForFunction(() => window._game && window._game.lobby, { timeout: 90000, polling: 100 });
+await firstVisit.waitForFunction(() => /Press any button/.test(document.getElementById('tap-to-start-text')?.textContent || ''), { timeout: 15000, polling: 100 }).catch(() => {});
+const veilText = await firstVisit.evaluate(() => document.getElementById('tap-to-start-text')?.textContent);
+check(veilText === 'Press any button to start', 'TV-04 TV first visit: the boot veil says Press any button to start', veilText);
+await firstVisit.keyboard.press('Enter');
+const lifted = await firstVisit.waitForFunction(() => !document.getElementById('tap-to-start')?.isConnected || document.getElementById('tap-to-start').classList.contains('fade-out') || getComputedStyle(document.getElementById('tap-to-start')).display === 'none', { timeout: 10000, polling: 100 }).then(() => true, () => false);
+check(lifted, 'TV-04 TV first visit: a remote key lifts the boot veil', lifted);
+
 // A phone (touch) with the same width still gets the phone lobby.
 const phonePage = await h.gamePage({ viewport: { width: 412, height: 915, isMobile: true, hasTouch: true }, userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', storage: { tandemonium_tutorial_done: 'smoke' } });
 await phonePage.waitForFunction(() => window._game && window._game.lobby, { timeout: 90000, polling: 100 });
