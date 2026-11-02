@@ -5357,15 +5357,18 @@ ON</button>
 (function() {
   var ua = navigator.userAgent;
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
+  // A TV browser (marked at the top of <head>) boots like the desktop app:
+  // "Press any button to start", dismissed by a remote key or a pad button.
+  var isTV = !isDesktop && !!window.__tandemoniumTV;
   // Mirror config.js isMobile so the boot veil label agrees with the app.
-  var isMobile = !isDesktop && (/Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua) || navigator.maxTouchPoints > 1);
+  var isMobile = !isDesktop && !isTV && (/Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua) || navigator.maxTouchPoints > 1);
   // Desktop (Electron) and mobile both show a "Loading…" veil instead of the
   // "Tap to Start" prompt: desktop dismisses on gamepad input (poll below),
   // mobile auto-dismisses once the Lobby loads (the tap-gate is obsolete — iOS
   // motion permission is requested from a real gesture at ride start). Desktop
   // *browsers* keep the click-to-start prompt (they need the click to dismiss).
   var textEl = document.getElementById('tap-to-start-text');
-  if (isDesktop || isMobile) {
+  if (isDesktop || isTV || isMobile) {
     // #162: name the thing that is loading, and keep the progress bar visible.
     if (textEl) textEl.textContent = 'Loading Tandemonium…';
   } else if (textEl && !navigator.maxTouchPoints) {
@@ -5373,7 +5376,7 @@ ON</button>
     // word, and the click is only there to unlock audio. Say what to do.
     textEl.textContent = 'Click to start';
   }
-  if (isDesktop) {
+  if (isDesktop || isTV) {
     // Poll for gamepad input to dismiss the overlay
     var overlay = document.getElementById('tap-to-start');
     // #428 · 16: once the game has booted, the veil is waiting on the player,
@@ -5833,7 +5836,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.0a68131 | 11-01-2026 20:26</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d0158af | 11-01-2026 21:00</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
