@@ -140,11 +140,13 @@ export const ACHIEVEMENTS = [
   // ── 4. Levels and medals ─────────────────────────────────
   { id: 'home_sweet',     section: 'medals', name: 'Home Sweet Home',    icon: '🏠', desc: "Finish Grandma's",          condition: s => s.finishedLevel === 'grandma' },
   { id: 'perfect_1k',     section: 'medals', name: 'Flawless',           icon: '💮', desc: "Finish Grandma's with no crashes or restarts", condition: s => s.finishedLevel === 'grandma' && s.crashes === 0 && s.restarts === 0 },
-  { id: 'grandma_bronze', section: 'medals', name: 'Cookie',             icon: '🍪', desc: "Win bronze on Grandma's",             condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 1 },
-  { id: 'grandma_silver', section: 'medals', name: 'Tea and Biscuits',   icon: '🫖', desc: "Win silver on Grandma's",             condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 2 },
-  { id: 'grandma_gold',   section: 'medals', name: "Grandma's Favourite", icon: '🥇', desc: "Win gold on Grandma's",              condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 3 },
-  { id: 'daily_gold',     section: 'medals', name: 'Road Scholar',       icon: '📜', desc: "Win gold on any day's Today's Road (practice counts)", condition: s => s.finishedLevel === 'daily' && s.medal === 'gold' },
-  { id: 'all_gold',       section: 'medals', name: 'Gilded Goose',       icon: '👑', desc: 'Win gold on every level',
+  // Medals are times: a share of the road's clock (race-config.js MEDAL_FRACTION), so each
+  // difficulty has its own. `medal` lets the detail card print the live times (lobby.js).
+  { id: 'grandma_bronze', section: 'medals', name: 'Cookie',             icon: '🍪', desc: "Reach Grandma's inside the bronze time — the slowest of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'bronze' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 1 },
+  { id: 'grandma_silver', section: 'medals', name: 'Tea and Biscuits',   icon: '🫖', desc: "Reach Grandma's inside the silver time — the middle of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'silver' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 2 },
+  { id: 'grandma_gold',   section: 'medals', name: "Grandma's Favourite", icon: '🥇', desc: "Reach Grandma's inside the gold time — the fastest of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'gold' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 3 },
+  { id: 'daily_gold',     section: 'medals', name: 'Road Scholar',       icon: '📜', desc: "Finish Today's Road inside its gold time, on any day (practice counts); each difficulty has its own", medal: { level: 'daily', rank: 'gold' }, condition: s => s.finishedLevel === 'daily' && s.medal === 'gold' },
+  { id: 'all_gold',       section: 'medals', name: 'Gilded Goose',       icon: '👑', desc: "Win gold on both timed roads: Grandma's and Today's Road",
     condition: (s, L) => MEDAL_LEVELS.every(id => (L.golds || []).includes(id)),
     progress: L => [MEDAL_LEVELS.filter(id => (L.golds || []).includes(id)).length, MEDAL_LEVELS.length], demo: false, full: 'scope' },
   { id: 'adventurer',     section: 'medals', name: 'Adventurer',         icon: '🧭', desc: 'Finish any level on Adventurous',     condition: s => fin(s) && s.difficulty === 'adventurous' },
@@ -183,7 +185,7 @@ export const ACHIEVEMENTS = [
   { id: 'double_down',    section: 'sling', name: 'Double Down',         icon: '🎲', desc: 'Collect the pot of gold on a run that also beats your best distance', ...count('doubleDowns', 1) },   // #546: the pot no longer ends the run, so stages 2-3 (the demo) can earn it too
   { id: 'full_trail',     section: 'sling', name: 'Full Trail',          icon: '🪙', desc: 'Grab all 5 coins in a trail',         ...count('fullTrails', 1) },
   { id: 'straight_shooter', section: 'sling', name: 'Straight Shooter',  icon: '📐', desc: 'Go 300 m without steering after launch', ...count('straightShots', 1) },
-  { id: 'medal_key',      section: 'sling', name: 'Medal Key',           icon: '🗝️', desc: 'Win a regular-ride medal that unlocks a Slingshot stage', ...count('medalKeys', 1) },
+  { id: 'medal_key',      section: 'sling', name: 'Medal Key',           icon: '🗝️', desc: "Win the medal that opens a Slingshot stage: bronze on Grandma's for stage 4, gold for stage 7", ...count('medalKeys', 1) },
   { id: 'todays_launch',  section: 'sling', name: "Today's Launch",      icon: '🌅', desc: "Fly Today's Launch (the daily Slingshot course)", ...countList('launchDays', 1), demo: false, full: 'todaysLaunch' },
   { id: 'launch_week',    section: 'sling', name: 'Launch Week',         icon: '📅', desc: "Fly Today's Launch on 7 different days", ...countList('launchDays', 7), unit: 'days', demo: false, full: 'todaysLaunch' },
 
