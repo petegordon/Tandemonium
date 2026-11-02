@@ -538,3 +538,20 @@ test('the Steam sync script describes every achievement', () => {
     assert.ok(new RegExp(`\\b${a.id}:`).test(sync), `${a.id} has no Steam description`);
   }
 });
+
+// #540 follow-up: a medal is a time, and each difficulty has its own. The medal
+// achievements say so, and carry the hint the detail card prints the times from.
+test('medal achievements say which time they mean and point the card at it', () => {
+  const medal = ACHIEVEMENTS.filter(a => a.medal);
+  assert.deepEqual(medal.map(a => a.id).sort(), ['daily_gold', 'grandma_bronze', 'grandma_gold', 'grandma_silver']);
+  for (const a of medal) {
+    assert.ok(MEDAL_LEVELS.includes(a.medal.level), `${a.id}: medal level ${a.medal.level} awards medals`);
+    assert.ok(['bronze', 'silver', 'gold'].includes(a.medal.rank), `${a.id}: a real rank`);
+    assert.match(a.desc, new RegExp(`${a.medal.rank} time`), `${a.id}: the description names the ${a.medal.rank} time`);
+    assert.match(a.desc, /each difficulty has its own/, `${a.id}: says the time is per difficulty`);
+  }
+  const allGold = ACHIEVEMENTS.find(a => a.id === 'all_gold');
+  assert.match(allGold.desc, /Grandma's and Today's Road/, 'Gilded Goose names both timed roads');
+  const key = ACHIEVEMENTS.find(a => a.id === 'medal_key');
+  assert.match(key.desc, /bronze on Grandma's for stage 4, gold for stage 7/, 'Medal Key names the gates');
+});
