@@ -249,8 +249,8 @@ uf-button[size="pill"] > img.bar-avatar {
 /* #517 · Settings (the Options overlay) owns the pad while it is open: the
    lobby's highlight under it would look like a second focus. */
 body:has(#options-overlay.visible) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
-/* #517 · Help and the Leaderboard own the pad while open: hide the step's highlight under the scrim. */
-body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
+/* #517 · Help, the Leaderboard and Achievements (#540) own the pad while open: hide the step's highlight under the scrim. */
+body:has(#help-modal[open], #leaderboard-modal[open], #achievements-modal[open]) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
 
 /* ── #523 · Settings (the Options overlay) readable from the couch ──
    The card kept the phone's pixel sizes (11–14px text, 400px wide, one button
