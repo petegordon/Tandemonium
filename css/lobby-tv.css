@@ -249,8 +249,12 @@ uf-button[size="pill"] > img.bar-avatar {
 /* #517 · Settings (the Options overlay) owns the pad while it is open: the
    lobby's highlight under it would look like a second focus. */
 body:has(#options-overlay.visible) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
-/* #517 · Help and the Leaderboard own the pad while open: hide the step's highlight under the scrim. */
-body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
+/* #540 · icon-only pills (Leaderboard, Settings): a round-ish pill, the icon a touch larger, no label gap. */
+#lobby-bar uf-button.bar-icon-only { padding: 0 var(--uf-space-2); gap: 0; min-width: calc(var(--uf-size-md) * 2.2); justify-content: center; }
+#lobby-bar uf-button.bar-icon-only > svg { width: 1.3em; height: 1.3em; }
+
+/* #517 · Help, the Leaderboard and Achievements (#540) own the pad while open: hide the step's highlight under the scrim. */
+body:has(#help-modal[open], #leaderboard-modal[open], #achievements-modal[open]) #lobby .gamepad-focus { outline: none !important; box-shadow: none !important; }
 
 /* ── #523 · Settings (the Options overlay) readable from the couch ──
    The card kept the phone's pixel sizes (11–14px text, 400px wide, one button
@@ -367,6 +371,9 @@ body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { ou
    (L1/R1 on a DualSense, LB/RB on Xbox) while a controller drives the menus;
    mouse and touch keep the arrows. */
 body.pad-menus #bike-carousel .bike-nav-arrow { display: none; }
+/* The phone remote has no L1 / R1: keep the arrows, which take the D-pad focus. */
+body.pad-menus.remote-menus #bike-carousel .bike-nav-arrow { display: inline; }
+body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { display: none !important; }
 #bike-carousel .bike-carousel-nav uf-controller-glyph { pointer-events: none; }
 @media (min-width: 1024px) {
   #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 3.4) !important; }

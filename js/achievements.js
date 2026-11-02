@@ -2,7 +2,7 @@
 // ACHIEVEMENTS — the manager: persistence, events, toasts, Steam
 // ============================================================
 //
-// The 101 definitions, the lifetime stats and the pure rules live in
+// The 100 definitions, the lifetime stats and the pure rules live in
 // js/achievement-defs.js (#401). This file keeps what touches the browser:
 // localStorage, the economy-event listener, Steam, server sync, the toast and
 // the badges — plus the thin readers that turn Game state into the plain
@@ -322,7 +322,7 @@ export class AchievementManager {
   }
 
   /**
-   * What the lobby's badge screen lists: all 101 achievements. Hidden ones
+   * What the lobby's badge screen lists: all 100 achievements. Hidden ones
    * read "???" until earned; counters
    * carry [current, goal] progress; demoLocked marks full-game-only rows.
    */
@@ -332,8 +332,9 @@ export class AchievementManager {
     let live = { dailyStreak: 0 };
     try { live = { dailyStreak: computeStreak(browserStore(), dailyKey()).current }; } catch (e) {}
     return ACHIEVEMENTS
-      .map(a => {
-        const earned = this._earned.has(a.id);
+      .map((a, i) => {
+        const record = this._earned.get(a.id);
+        const earned = !!record;
         const secret = a.hidden && !earned;
         let progress = null;
         if (!earned && !secret && a.progress) {
@@ -341,11 +342,13 @@ export class AchievementManager {
         }
         return {
           id: a.id,
+          n: i + 1,                                   // #540: "No. 12 of 100" on the detail card
           section: a.section,
           name: secret ? '???' : a.name,
           icon: secret ? '❔' : a.icon,
           desc: secret ? 'A hidden achievement' : a.desc,
           earned,
+          earnedAt: record && record.earnedAt ? record.earnedAt : null,   // ms since epoch, or null
           hidden: !!a.hidden,
           secret,
           progress,

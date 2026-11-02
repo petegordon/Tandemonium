@@ -7,7 +7,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoadPath } from './road-path.js';
 import { RoadChunkManager } from './road-chunks.js';
-import { isMobile } from './config.js';
+import { isLowPower } from './config.js';
 import { deriveSeed, SALT } from './daily-seed.js';
 import { buildArchPuffs, archTime } from './arch-puffs.js';
 import { buildGrandmaFinish, HOUSE_SPOT } from './grandma-finish.js';
@@ -570,7 +570,7 @@ export class World {
       // Build a cluster of overlapping spheres for big fluffy shapes
       // On mobile, cap at 6 puffs to reduce draw calls (~60% fewer cloud meshes)
       const puffCount = 10 + Math.floor(this._cloudSeededRandom() * 9);
-      const maxPuffs = isMobile ? Math.min(puffCount, 6) : puffCount;
+      const maxPuffs = isLowPower ? Math.min(puffCount, 6) : puffCount;
       const cloudWidth = 25 + this._cloudSeededRandom() * 40; // 25-65 units wide
       const cloudHeight = 6 + this._cloudSeededRandom() * 8;  // 6-14 units tall
 

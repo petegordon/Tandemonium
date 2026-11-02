@@ -1,4 +1,4 @@
-// #401 · the 101 achievements: the list, the stats, the rules, the demo.
+// #401 · the 100 achievements: the list, the stats, the rules, the demo.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -33,21 +33,21 @@ const SPEC_FULL_ONLY = [
 ];
 
 // Rows per section, in the spec's order.
-const SPEC_SECTIONS = { first: 7, distance: 7, back: 4, medals: 9, clean: 7, speed: 4, collect: 4, sling: 16,
+const SPEC_SECTIONS = { first: 7, distance: 7, back: 4, medals: 9, clean: 7, speed: 4, collect: 4, sling: 15,
   coins: 10, daily: 6, together: 7, versus: 6, chaos: 5, explore: 2, colours: 7 };
 
-test('exactly 101 achievements, unique ids, 7 bike colours', () => {
-  assert.equal(ACHIEVEMENTS.length, 101);
-  assert.equal(new Set(ACHIEVEMENTS.map(a => a.id)).size, 101);
+test('exactly 100 achievements, unique ids, 7 bike colours', () => {
+  assert.equal(ACHIEVEMENTS.length, 100);
+  assert.equal(new Set(ACHIEVEMENTS.map(a => a.id)).size, 100);
   const colours = ACHIEVEMENTS.filter(a => a.section === 'colours');
   assert.equal(colours.length, 7);
   for (const a of colours) assert.match(a.id, /^grandma_/);
 });
 
-test('the 23 existing ids are kept unchanged (78 new)', () => {
+test('the 23 existing ids are kept unchanged (77 new)', () => {
   const ids = new Set(ACHIEVEMENTS.map(a => a.id));
   for (const id of EXISTING) assert.ok(ids.has(id), `${id} is missing`);
-  assert.equal(ACHIEVEMENTS.filter(a => !EXISTING.includes(a.id)).length, 78);
+  assert.equal(ACHIEVEMENTS.filter(a => !EXISTING.includes(a.id)).length, 77);
   // Castle and ghost achievements are gone (#400 D2/D3).
   for (const gone of ['royal', 'perfect_5k', 'beat_ghost']) assert.ok(!ids.has(gone), `${gone} was removed`);
 });
@@ -112,9 +112,9 @@ test('nothing is earned from a fresh start', () => {
 
 // ── the demo ─────────────────────────────────────────────────────
 
-test('the demo-unearnable list is the spec Demo column + the stage cap (21 full-only, 80 demo)', () => {
+test('the demo-unearnable list is the spec Demo column + the stage cap (21 full-only, 79 demo)', () => {
   assert.deepEqual([...DEMO_UNEARNABLE].sort(), [...SPEC_FULL_ONLY].sort());
-  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 80);
+  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 79);
 });
 
 test('each full-only reason matches the edition rules', () => {
@@ -363,14 +363,14 @@ test('manager: an old save keeps everything earned; v1 stats migrate', async () 
   assert.ok(m.getEarnedIds().includes('grandma_red'));
 });
 
-test('manager: badge screen — 101 rows, hidden as ???, colours show, progress', async () => {
+test('manager: badge screen — 100 rows, hidden as ???, colours show, progress', async () => {
   globalThis.localStorage = fakeStorage({ tandemonium_achievements: JSON.stringify([{ id: 'grandma_blue', earnedAt: 1 }]) });
   const { AchievementManager } = await import('../../js/achievements.js');
   const m = new AchievementManager();
   m.demo = false;
   m.record('ride', { mode: 'solo', newRide: true, metres: 50 });
   const defs = m.getAllDefinitions();
-  assert.equal(defs.length, 101);
+  assert.equal(defs.length, 100);
   assert.equal(defs.find(d => d.id === 'grandma_blue').earned, true, 'an earned bike colour shows lit');
   const fs10 = defs.find(d => d.id === 'false_start');
   assert.equal(fs10.name, '???');
@@ -498,7 +498,7 @@ test('manager: an old player is granted what their saves already prove, once (m2
   const m = new AchievementManager();
   const ids = m.getEarnedIds();
   for (const id of ['home_sweet', 'first_km', 'first_finish', 'new_best', 'medal_key', 'coop_first', 'sling_first',
-    'sling_stage1', 'sling_stage3', 'sling_500', 'coin_first', 'coins_1000', 'first_upgrade', 'big_spender',
+    'sling_stage1', 'sling_stage3', 'coin_first', 'coins_1000', 'first_upgrade', 'big_spender',
     'rides_10', 'days_3', 'daily_streak_3']) {
     assert.ok(ids.includes(id), `${id} should be granted (${ids.join(',')})`);
   }
