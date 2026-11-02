@@ -13,6 +13,8 @@
 //   LY-11  First Grandma's finish: the unlocks fit, ← / → walk the button row.
 //   LY-15  Controls sheet: a focused setting row's ring is whole (#534).
 //   LY-16  Leaderboard: the top tab row shows its whole focus ring (#534).
+//   LY-18  Bike chooser by D-pad: ← from RIDE TOGETHER lands on ›, OK changes
+//          the bike; a phone remote alone sees ‹ › arrows, not L1 / R1.
 import { startHarness, waitState } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
@@ -274,5 +276,39 @@ for (let i = 0; i < 3 && !/^btn-tutorial-/.test((await tf()) || ''); i++) await 
 const t3 = await tf();
 check(/^btn-tutorial-(next|continue)$/.test(t3 || ''), 'LY-17 ↓ goes back to the buttons', t3);
 await h.shot(page, '5-tutorial-finish');
+
+// ── LY-18 · the bike chooser by D-pad, with only a phone remote driving the menus ──
+const rp = await h.gamePage({ viewport: { width: 1920, height: 1080 }, storage: { tandemonium_tutorial_done: 'smoke' } });
+const NAV = { left: 4, right: 8, ok: 16 };
+const rpUntil = async (fn, arg, timeout = 8000) => { try { const hnd = await rp.waitForFunction(fn, { timeout, polling: 50 }, arg); return await hnd.jsonValue(); } catch { return null; } };
+const rpFocus = () => rp.evaluate(() => window._game.lobby._stepFocus.focusedEl?.id || null);
+const navTap = async (bit) => {
+  await rp.evaluate((b) => window._game.input.setRemoteNav(true, b), bit);
+  await new Promise((r) => setTimeout(r, 180));
+  await rp.evaluate(() => window._game.input.setRemoteNav(true, 0));
+  await new Promise((r) => setTimeout(r, 220));
+};
+await rp.evaluate(() => window._game.input.setRemoteNav(true, 0));
+await rpUntil(() => document.body.classList.contains('pad-menus') && window._game.lobby._stepFocus.items.length > 0);
+const arrows = await rp.evaluate(() => ({
+  remote: document.body.classList.contains('remote-menus'),
+  arrow: getComputedStyle(document.querySelector('#bike-next .bike-nav-arrow')).display,
+  glyph: getComputedStyle(document.querySelector('#bike-next uf-controller-glyph')).display,
+}));
+check(arrows.remote && arrows.arrow !== 'none' && arrows.glyph === 'none', 'LY-18 phone remote only: the chooser shows ‹ ›, not L1 / R1', arrows);
+await rp.evaluate(() => {
+  const f = window._game.lobby._stepFocus, el = document.getElementById('btn-together');
+  f.focusedEl?.classList.remove('gamepad-focus'); f.focusedEl = el; el.classList.add('gamepad-focus');
+});
+await navTap(NAV.left);
+const onArrow = await rpFocus();
+check(onArrow === 'bike-next', 'LY-18 ← from RIDE TOGETHER lands on the chooser\'s ›', onArrow);
+const name0 = await rp.evaluate(() => document.getElementById('bike-name').textContent);
+await navTap(NAV.ok);
+const name1 = await rpUntil((n) => { const t = document.getElementById('bike-name').textContent; return t !== n ? t : null; }, name0, 4000);
+check(!!name1 && name1 !== name0, 'LY-18 OK on › changes the bike', { name0, name1 });
+await navTap(NAV.right);
+check((await rpFocus()) === 'btn-together', 'LY-18 → goes back to RIDE TOGETHER', await rpFocus());
+await h.shot(rp, '6-bike-chooser-remote');
 
 await h.finish();
